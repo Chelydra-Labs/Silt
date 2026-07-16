@@ -11,6 +11,8 @@
 // turn before resolving the confirmation.
 
 import type { PluginAIChatMessage, PluginContext } from '../../sdk'
+import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
+import { settings as appSettings } from '../../../settings/store.svelte'
 import {
   createAgentSession,
   type AgentOptions,
@@ -45,6 +47,10 @@ function nextId(): string {
 
 export function createAgentController() {
   let messages = $state<AgentMessage[]>([])
+  // The rendered list deliberately omits the provider-facing assistant
+  // tool_calls message. Keep that protocol transcript separately so every
+  // tool result remains correlated on subsequent turns.
+  let transcript = $state<PluginAIChatMessage[]>([])
   let running = $state(false)
   /**
    * Pending staged operation the user must confirm or reject. Set when the
@@ -55,41 +61,18 @@ export function createAgentController() {
   let ctxRef: PluginContext | null = null
   let session: AgentSession | null = null
 
-  /** Convert the rendered message list into the chat-history shape the loop
-   *  consumes (user + assistant + prior tool turns, excluding the
-   *  system prompt the loop prepends itself). */
+  function providerReady(): boolean {
+    return !aiProviderNeedsSetup(appSettings.config?.ai?.chat as any)
+  }
+
+  /** Return the canonical provider-facing transcript, excluding system. */
   function toHistory(): PluginAIChatMessage[] {
-    const out: PluginAIChatMessage[] = []
-    for (const m of messages) {
-      if (m.role === 'user') {
-        out.push({ role: 'user', content: m.content })
-      } else if (m.role === 'assistant') {
-        if (m.toolCall) {
-          out.push({
-            role: 'assistant',
-            content: m.content,
-            tool_calls: [
-              {
-                id: m.toolCall.id,
-                name: m.toolCall.name,
-                arguments: m.toolCall.args
-              }
-            ]
-          })
-        } else {
-          out.push({ role: 'assistant', content: m.content })
-        }
-      } else if (m.role === 'tool' && m.toolResult) {
-        out.push({
-          role: 'tool',
-          tool_call_id: m.toolResult.toolCallId,
-          content: m.toolResult.error
-            ? `Error: ${m.toolResult.error}`
-            : m.toolResult.content
-        })
-      }
-    }
-    return out
+    return transcript.map((message) => ({
+      ...message,
+      ...(message.tool_calls
+        ? { tool_calls: message.tool_calls.map((call) => ({ ...call })) }
+        : {})
+    }))
   }
 
   /** Wire the controller to a PluginContext (set on vault open). */
@@ -106,29 +89,96 @@ export function createAgentController() {
 
   async function send(ctx: PluginContext, text: string) {
     const q = text.trim()
-    if (!q || running || !session) {
-      // Lazily attach if the hub passed a context before onVaultOpen wired
-      // the controller (e.g. in tests).
-      if (!session && ctx) attach(ctx)
-      if (!session) return
-    }
+    if (!q || running) return
+    // Lazily attach if the hub passed a context before onVaultOpen wired
+    // the controller (e.g. in tests).
+    if (!session && ctx) attach(ctx)
+    if (!session) return
+
+    const priorHistory = toHistory()
     const userMsg: AgentMessage = { id: nextId(), role: 'user', content: q }
     messages = [...messages, userMsg]
+    transcript = [...transcript, { role: 'user', content: q }]
     running = true
-    const assistantId = nextId()
-    messages = [
-      ...messages,
-      { id: assistantId, role: 'assistant', content: '' }
-    ]
 
-    const updateAssistant = (content: string) => {
-      messages = messages.map((m) =>
-        m.id === assistantId ? { ...m, content } : m
+    const appendAssistant = (content: string) => {
+      if (!content) return false
+      messages = [...messages, { id: nextId(), role: 'assistant', content }]
+      transcript = [...transcript, { role: 'assistant', content }]
+      return true
+    }
+
+    let streamedAssistantId: string | null = null
+    const updateStreamedAssistant = (content: string) => {
+      if (!content) return
+      if (!streamedAssistantId) {
+        streamedAssistantId = nextId()
+        messages = [
+          ...messages,
+          { id: streamedAssistantId, role: 'assistant', content }
+        ]
+        return
+      }
+      messages = messages.map((message) =>
+        message.id === streamedAssistantId ? { ...message, content } : message
       )
     }
 
+    const finishAssistant = (content: string) => {
+      if (!content) return false
+      if (!streamedAssistantId) return appendAssistant(content)
+      messages = messages.map((message) =>
+        message.id === streamedAssistantId ? { ...message, content } : message
+      )
+      transcript = [...transcript, { role: 'assistant', content }]
+      streamedAssistantId = null
+      return true
+    }
+
+    const appendToolResult = (result: {
+      id: string
+      name: string
+      content: string
+      error?: string
+      truncated?: boolean
+    }) => {
+      messages = [
+        ...messages,
+        {
+          id: nextId(),
+          role: 'tool',
+          content: '',
+          toolResult: {
+            toolCallId: result.id,
+            name: result.name,
+            content: result.content,
+            error: result.error,
+            truncated: result.truncated ?? false
+          }
+        }
+      ]
+    }
+
+    let finalTextShown = false
+
     const opts: AgentOptions = {
-      onAssistantText: (_chunk, acc) => updateAssistant(acc),
+      // A streamed assistant message is created lazily. If the stream later
+      // proves to be a tool-calling turn, remove that provisional text before
+      // the tool cards are appended; final text remains live in the UI.
+      onAssistantText: (_chunk, acc) => updateStreamedAssistant(acc),
+      onAssistantToolCalls: (calls, content) => {
+        if (!calls?.length) return
+        if (streamedAssistantId) {
+          messages = messages.filter(
+            (message) => message.id !== streamedAssistantId
+          )
+          streamedAssistantId = null
+        }
+        transcript = [
+          ...transcript,
+          { role: 'assistant', content, tool_calls: calls }
+        ]
+      },
       onToolCall: (call) => {
         messages = [
           ...messages,
@@ -140,51 +190,38 @@ export function createAgentController() {
           }
         ]
       },
-      onToolResult: (r) => {
-        const truncated = r.result.content.length > 10 * 1024
-        messages = [
-          ...messages,
-          {
-            id: nextId(),
-            role: 'tool',
-            content: '',
-            toolResult: {
-              toolCallId: r.id,
-              name: r.name,
-              content: r.result.content,
-              error: r.result.error,
-              truncated
-            }
-          }
+      onToolMessage: (result) => {
+        transcript = [
+          ...transcript,
+          { role: 'tool', tool_call_id: result.id, content: result.content }
         ]
+        appendToolResult(result)
+      },
+      onDone: (finalText) => {
+        finalTextShown = finishAssistant(finalText)
       },
       onStaging: (event) => {
         // Surface to the UX; the loop blocks until resolveStaging().
         pendingStaging = event
-      },
-      onError: (err) => {
-        const msg = err instanceof Error ? err.message : String(err)
-        updateAssistant(`Error: ${msg}`)
       }
     }
 
     try {
-      const res = await session.run(q, toHistory().slice(0, -2), opts)
+      const res = await session.run(q, priorHistory, opts)
       if (res.cancelled) {
-        updateAssistant(
-          messages.find((m) => m.id === assistantId)?.content + ' [stopped]'
-        )
+        finishAssistant(`${res.text ? `${res.text} ` : ''}[stopped]`)
       } else if (res.hitIterationCap) {
-        updateAssistant(
-          (messages.find((m) => m.id === assistantId)?.content ?? '') +
-            '\n\n[reached iteration limit]'
+        finishAssistant(
+          `${res.text ? `${res.text}\n\n` : ''}[reached iteration limit]`
         )
-      } else {
-        updateAssistant(res.text)
+      } else if (!finalTextShown) {
+        // Keep the controller usable with a session implementation that
+        // returns text without invoking onDone (notably small test doubles).
+        appendAssistant(res.text)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      updateAssistant(`Error: ${msg}`)
+      finishAssistant(`Error: ${msg}`)
     } finally {
       running = false
       pendingStaging = null
@@ -210,6 +247,7 @@ export function createAgentController() {
   function clear() {
     if (running) session?.cancel()
     messages = []
+    transcript = []
     pendingStaging = null
   }
 
@@ -217,6 +255,7 @@ export function createAgentController() {
     detach()
     clearTools()
     messages = []
+    transcript = []
     pendingStaging = null
   }
 
@@ -228,6 +267,7 @@ export function createAgentController() {
     clear,
     dispose,
     resolveStaging,
+    providerReady,
     get messages() {
       return messages
     },

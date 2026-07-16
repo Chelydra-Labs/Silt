@@ -33,7 +33,9 @@ function defaultRows(): Record<string, Record<string, unknown>[]> {
       { raw_path: 'work/urgent', count: 4 },
       { raw_path: 'bug', count: 2 }
     ],
-    'order by indexed_at': [{ path: '/v/Work/Notes/a.md', size: 1024 }]
+    'order by file_date': [
+      { notebook: 'Work', section: 'Notes', page: 'a', file_date: '2026-07-15' }
+    ]
   }
 }
 
@@ -101,7 +103,7 @@ describe('get_vault_statistics', () => {
     expect(res.content).toMatch(/9 page\(s\)/)
     expect(res.content).toMatch(/9 indexed file\(s\)/)
     expect(res.content).toMatch(/work\/urgent: 4/)
-    expect(res.content).toMatch(/Work\/Notes\/a\.md/)
+    expect(res.content).toMatch(/Work\/Notes\/a/)
     // Read-only: no mutator fired.
     expect(mutateFns).toHaveLength(0)
   })
@@ -119,9 +121,7 @@ describe('get_vault_statistics', () => {
     const staleCall = calls.find((c) =>
       c.sql.toLowerCase().includes('as stale_tasks')
     )
-    expect(staleCall?.sql).toMatch(
-      /from tasks t\s+where\s+1\s*=\s*1\s+and\s+t\.due_date/i
-    )
+    expect(staleCall?.sql).toMatch(/from tasks t\s+where\s+t\.due_date/i)
     expect(staleCall?.sql).not.toMatch(/from tasks t\s+and/i)
   })
 
@@ -129,7 +129,13 @@ describe('get_vault_statistics', () => {
     // All-pages query returns three pages; referenced-pages query returns one.
     // The two pages not in the referenced set are the orphans.
     const { ctx } = makeCtx({
-      'from page_links': [{ notebook: 'N', section: 'S', page: 'Linked' }],
+      'from page_links': [
+        {
+          target_notebook: 'N',
+          target_section: 'S',
+          target_page: 'Linked'
+        }
+      ],
       'distinct notebook, section, page from blocks': [
         { notebook: 'N', section: 'S', page: 'Linked' },
         { notebook: 'N', section: 'S', page: 'Orphan1' },
@@ -152,15 +158,72 @@ describe('get_vault_statistics', () => {
 
     // Every aggregation that supports a notebook scope binds 'Work' as a
     // parameter (never interpolates it with quotes — injection safety).
-    const scoped = calls.filter(
-      (c) => c.params.includes('Work') || c.params.includes('%/Work/%')
-    )
+    const scoped = calls.filter((c) => c.params.includes('Work'))
     expect(scoped.length).toBeGreaterThan(0)
+    expect(calls.some((c) => c.sql.includes('LIKE'))).toBe(false)
     for (const { sql } of calls) {
-      // The only 'Work' literals allowed are the LIKE-pattern placeholder
-      // for the path column — never a direct = 'Work' in the SQL text.
       expect(sql).not.toMatch(/=\s*'Work'/i)
     }
+  })
+
+  it('uses target columns for orphan detection and exposes logical paths only', async () => {
+    const absolute = 'C:/Users/chris/Vault/Work/Notes/a.md'
+    const { ctx, calls } = makeCtx({
+      'from page_links': [
+        {
+          target_notebook: 'Work',
+          target_section: 'Notes',
+          target_page: 'Linked'
+        },
+        {
+          target_notebook: null,
+          target_section: null,
+          target_page: null,
+          target_raw: 'RawLinked'
+        }
+      ],
+      'distinct notebook, section, page from blocks': [
+        { notebook: 'Work', section: 'Notes', page: 'Linked' },
+        { notebook: 'Work', section: 'Notes', page: 'ByBlock' },
+        { notebook: 'Work', section: 'Notes', page: 'RawLinked' },
+        { notebook: 'Work', section: 'Notes', page: 'Orphan' }
+      ],
+      'select id, notebook, section, page, raw_content from blocks': [
+        {
+          id: 'target-id',
+          notebook: 'Work',
+          section: 'Notes',
+          page: 'ByBlock',
+          raw_content: ''
+        },
+        {
+          id: 'source-id',
+          notebook: 'Work',
+          section: 'Notes',
+          page: 'Source',
+          raw_content: 'see ((target-id))'
+        },
+        {
+          id: 'raw-target',
+          notebook: 'Work',
+          section: 'Notes',
+          page: 'RawLinked',
+          raw_content: ''
+        }
+      ],
+      'order by file_date': [
+        {
+          notebook: 'Work',
+          section: 'Notes',
+          page: 'Orphan',
+          file_date: '2026-07-15'
+        }
+      ]
+    })
+    const res = await handleGetVaultStatistics(ctx, { scope: 'Work' })
+    expect(res.content).toMatch(/1 orphan page\(s\)/)
+    expect(res.content).not.toContain(absolute)
+    expect(calls.some((c) => c.sql.includes('path LIKE'))).toBe(false)
   })
 
   it('never mutates — every issued statement is a SELECT', async () => {

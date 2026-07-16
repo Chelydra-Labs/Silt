@@ -3,11 +3,10 @@
 // A first-party AI agent that uses tools to search, read, create, and
 // organize notes. Drives ctx.ai.complete with the tool catalog; each turn
 // dispatches registered tools in parallel and feeds results back for the
-// next iteration. This entry wires the registry, loop, chat UX, and per-plugin
-// DB schema; P0 tools are registered on vault open via tools.ts.
+// next iteration. This entry wires the registry, loop, and per-plugin DB
+// schema; P0 tools are registered on vault open via tools.ts.
 
 import type { PluginContext, PluginManifest } from '../../sdk'
-import AgentHub from './AgentHub.svelte'
 import {
   createAgentController,
   getAgentController,
@@ -17,6 +16,7 @@ import { migrateSchema, resetMigrationState } from './db'
 import { clearTools } from './tool-registry'
 import { registerP0Tools, registerP1Tools, registerP2Tools } from './tools'
 import { cleanupExpired } from './staging'
+import { resetAIChatDrawer } from '../../shared/ai-chat/drawer.svelte'
 
 export const manifest: PluginManifest = {
   id: 'silt-ai-agent',
@@ -36,7 +36,6 @@ export const manifest: PluginManifest = {
 
 export default {
   manifest,
-  component: AgentHub,
   onVaultOpen(ctx: PluginContext) {
     const ctl = createAgentController()
     setAgentController(ctl)
@@ -54,12 +53,14 @@ export default {
       })
   },
   onVaultClose() {
+    resetAIChatDrawer()
     getAgentController()?.dispose()
     setAgentController(null)
     clearTools()
     resetMigrationState()
   },
   onShutdown() {
+    resetAIChatDrawer()
     getAgentController()?.dispose()
     setAgentController(null)
     clearTools()

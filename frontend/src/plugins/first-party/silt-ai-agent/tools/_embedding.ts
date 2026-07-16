@@ -4,11 +4,13 @@
 // tools embed a source, gather a candidate pool (recent + FTS-recalled),
 // resolve per-candidate vectors (cache or on-demand embed), and rank by
 // cosine similarity. The cache lives in the plugin's per-vault SQLite store
-// (block_vectors), keyed by (block_id, content_hash) so a content change
-// invalidates only that row.
+// (block_vectors), keyed by block, content hash, embedding identity, and task
+// type so a content/config change invalidates a stale row.
 //
 // A real vec0 + vec_distance_cosine index can replace the cache table later
-// without changing the contract of rankCandidates().
+// without changing the contract of rankCandidates(). Cache identity includes
+// the embedding configuration and task type so model changes cannot silently
+// reuse an incompatible vector.
 
 import type { PluginContext } from '../../../sdk'
 
@@ -18,12 +20,15 @@ export const CANDIDATE_LIMIT = 200
 /** Cache table for on-demand embeddings (lazy-created on first miss). */
 export const CACHE_DDL =
   'CREATE TABLE IF NOT EXISTS block_vectors (' +
-  '  block_id TEXT PRIMARY KEY,' +
+  '  block_id TEXT NOT NULL,' +
   '  content_hash TEXT NOT NULL,' +
+  "  provider TEXT NOT NULL DEFAULT ''," +
   '  model TEXT NOT NULL,' +
   '  dimensions INTEGER NOT NULL,' +
+  "  task_type TEXT NOT NULL DEFAULT ''," +
   '  vector TEXT NOT NULL,' +
-  '  updated_at INTEGER NOT NULL' +
+  '  updated_at INTEGER NOT NULL,' +
+  '  PRIMARY KEY(block_id, content_hash, provider, model, dimensions, task_type)' +
   ')'
 
 export interface CandidateBlock {
@@ -37,6 +42,10 @@ export interface CandidateBlock {
 export interface CachedVector {
   block_id: string
   content_hash: string
+  provider: string
+  model: string
+  dimensions: number
+  task_type: string
   vector: number[]
 }
 
@@ -52,6 +61,7 @@ export function cosine(a: number[], b: number[]): number {
   let magA = 0
   let magB = 0
   for (let i = 0; i < a.length; i++) {
+    if (!Number.isFinite(a[i]) || !Number.isFinite(b[i])) return 0
     dot += a[i] * b[i]
     magA += a[i] * a[i]
     magB += b[i] * b[i]
@@ -82,10 +92,48 @@ export function parseVector(raw: unknown): number[] {
   try {
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed.map((n) => Number(n)).filter((n) => Number.isFinite(n))
+    if (parsed.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+      return []
+    }
+    return parsed as number[]
   } catch {
     return []
   }
+}
+
+interface EmbeddingIdentity {
+  provider: string
+  model: string
+  dimensions: number
+}
+
+const embeddingIdentities = new WeakMap<PluginContext, EmbeddingIdentity>()
+
+function rememberIdentity(
+  ctx: PluginContext,
+  result: unknown,
+  fallbackDimensions = 0
+): EmbeddingIdentity {
+  const r = result as Record<string, unknown>
+  const identity: EmbeddingIdentity = {
+    // Newer hosts may return provider metadata; older hosts intentionally omit
+    // credentials and use the empty value, which still keeps model changes
+    // isolated.
+    provider: String(r.provider ?? r.provider_type ?? ''),
+    model: String(r.model ?? ''),
+    dimensions: Number(r.dimensions ?? fallbackDimensions)
+  }
+  embeddingIdentities.set(ctx, identity)
+  return identity
+}
+
+function validVector(vec: unknown, dimensions: number): vec is number[] {
+  return (
+    Array.isArray(vec) &&
+    vec.length > 0 &&
+    (dimensions <= 0 || vec.length === dimensions) &&
+    vec.every((n) => typeof n === 'number' && Number.isFinite(n))
+  )
 }
 
 /** Embed a single text using the given task type; returns [] on failure. */
@@ -96,7 +144,9 @@ export async function embedOne(
 ): Promise<number[]> {
   try {
     const res = await ctx.ai.embed({ texts: [text], taskType })
-    return res.embeddings[0] ?? []
+    const identity = rememberIdentity(ctx, res, res.embeddings[0]?.length ?? 0)
+    const vector = res.embeddings[0] ?? []
+    return validVector(vector, identity.dimensions) ? vector : []
   } catch {
     return []
   }
@@ -110,7 +160,10 @@ export async function embedBatch(
 ): Promise<number[][] | null> {
   try {
     const res = await ctx.ai.embed({ texts, taskType })
-    return res.embeddings
+    rememberIdentity(ctx, res, res.embeddings[0]?.length ?? 0)
+    return res.embeddings.map((vector) =>
+      validVector(vector, Number(res.dimensions ?? 0)) ? vector : []
+    )
   } catch {
     return null
   }
@@ -185,7 +238,13 @@ export async function rankCandidates(
   const topK = opts.topK ?? 10
   if (queryVec.length === 0 || candidates.length === 0) return []
 
-  const cached = await readCachedVectors(ctx, candidates)
+  const identity = embeddingIdentities.get(ctx)
+  const cached = await readCachedVectors(
+    ctx,
+    candidates,
+    identity,
+    queryVec.length
+  )
   const misses: CandidateBlock[] = []
   for (const c of candidates) {
     const hit = cached.get(c.id)
@@ -199,7 +258,19 @@ export async function rankCandidates(
     const embedded = await embedBatch(ctx, texts, 'RETRIEVAL_DOCUMENT')
     if (embedded) {
       missVectors = embedded
-      await writeCachedVectors(ctx, misses, embedded)
+      const writeIdentity = embeddingIdentities.get(ctx) ??
+        identity ?? {
+          provider: '',
+          model: '',
+          dimensions: queryVec.length
+        }
+      await writeCachedVectors(
+        ctx,
+        misses,
+        embedded,
+        writeIdentity,
+        'RETRIEVAL_DOCUMENT'
+      )
     }
   }
 
@@ -207,7 +278,7 @@ export async function rankCandidates(
   const missById = new Map(misses.map((m, i) => [m.id, missVectors[i] ?? []]))
   for (const c of candidates) {
     const vec = missById.get(c.id) ?? cached.get(c.id)?.vector
-    if (!vec || vec.length === 0) continue
+    if (!vec || !validVector(vec, queryVec.length)) continue
     const score = cosine(queryVec, vec)
     if (score >= minScore) scored.push({ block: c, score })
   }
@@ -256,7 +327,9 @@ async function safeFts(
 /** Read cached vectors for a candidate set. Returns map keyed by block_id. */
 async function readCachedVectors(
   ctx: PluginContext,
-  candidates: CandidateBlock[]
+  candidates: CandidateBlock[],
+  identity: EmbeddingIdentity | undefined,
+  expectedDimensions: number
 ): Promise<Map<string, CachedVector>> {
   if (candidates.length === 0) return new Map()
   const ids = candidates.map((c) => c.id)
@@ -264,7 +337,7 @@ async function readCachedVectors(
   let rows: Record<string, unknown>[] = []
   try {
     const res = await ctx.pluginDb.query(
-      `SELECT block_id, content_hash, vector FROM block_vectors ` +
+      `SELECT block_id, content_hash, provider, model, dimensions, task_type, vector FROM block_vectors ` +
         `WHERE block_id IN (${placeholders})`,
       ids
     )
@@ -279,10 +352,28 @@ async function readCachedVectors(
     const id = String(r.block_id ?? '')
     if (!id) continue
     const vec = parseVector(r.vector)
-    if (vec.length === 0) continue
+    const dimensions = Number(r.dimensions ?? 0)
+    if (!validVector(vec, expectedDimensions)) continue
+    if (dimensions > 0 && dimensions !== vec.length) continue
+    const provider = String(r.provider ?? '')
+    const model = String(r.model ?? '')
+    const taskType = String(r.task_type ?? '')
+    if (identity) {
+      if (provider && identity.provider && provider !== identity.provider)
+        continue
+      if (model && identity.model && model !== identity.model) continue
+      if (taskType && taskType !== 'RETRIEVAL_DOCUMENT') continue
+      // Legacy rows have no identity columns. They are accepted only when
+      // their shape matches the current query; newly written rows are fully
+      // identified and therefore cannot be reused after a model switch.
+    }
     map.set(id, {
       block_id: id,
       content_hash: String(r.content_hash ?? ''),
+      provider,
+      model,
+      dimensions: dimensions || vec.length,
+      task_type: taskType,
       vector: vec
     })
   }
@@ -293,7 +384,9 @@ async function readCachedVectors(
 async function writeCachedVectors(
   ctx: PluginContext,
   blocks: CandidateBlock[],
-  vectors: number[][]
+  vectors: number[][],
+  identity: EmbeddingIdentity,
+  taskType: string
 ): Promise<void> {
   try {
     await ctx.pluginDb.exec(CACHE_DDL)
@@ -303,27 +396,35 @@ async function writeCachedVectors(
     // vectors in memory.
     return
   }
+  // The original Sprint 41 table predates provider/task_type. Keep existing
+  // vaults usable; the identity columns are part of the effective cache key.
+  for (const column of [
+    "ALTER TABLE block_vectors ADD COLUMN provider TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE block_vectors ADD COLUMN task_type TEXT NOT NULL DEFAULT ''"
+  ]) {
+    try {
+      await ctx.pluginDb.exec(column)
+    } catch {
+      // Already migrated is the normal path.
+    }
+  }
   const now = Date.now()
-  // Pull the configured model name once for all rows; the embeddings result
-  // does not carry it, so leave a stable placeholder the lookup ignores.
-  const model = 'default'
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i]
     const vec = vectors[i]
-    if (!vec || vec.length === 0) continue
+    if (!validVector(vec, identity.dimensions || vec?.length || 0)) continue
     try {
       await ctx.pluginDb.exec(
-        `INSERT INTO block_vectors (block_id, content_hash, model, dimensions, vector, updated_at) ` +
-          `VALUES (?, ?, ?, ?, ?, ?) ` +
-          `ON CONFLICT(block_id) DO UPDATE SET ` +
-          `content_hash=excluded.content_hash, model=excluded.model, ` +
-          `dimensions=excluded.dimensions, vector=excluded.vector, ` +
-          `updated_at=excluded.updated_at`,
+        `INSERT OR REPLACE INTO block_vectors ` +
+          `(block_id, content_hash, provider, model, dimensions, task_type, vector, updated_at) ` +
+          `VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           b.id,
           hashOf(b.clean_content),
-          model,
-          vec.length,
+          identity.provider,
+          identity.model,
+          identity.dimensions || vec.length,
+          taskType,
           JSON.stringify(vec),
           now
         ]

@@ -25,7 +25,9 @@ import {
   buildToolCatalog,
   dispatchTool,
   getTools,
-  type StagedPreview
+  type StagedPreview,
+  type ToolResult,
+  type ToolEvidence
 } from './tool-registry'
 import { confirmOperation, rejectOperation } from './staging'
 
@@ -52,8 +54,26 @@ export interface AgentOptions {
   onToolResult?: (result: {
     id: string
     name: string
-    result: { content: string; error?: string }
+    result: {
+      content: string
+      error?: string
+      truncated?: boolean
+      evidence?: ToolEvidence[]
+    }
   }) => void
+  /** Fired when a tool message is ready for the next model iteration. */
+  onToolMessage?: (result: {
+    id: string
+    name: string
+    content: string
+    error?: string
+    truncated?: boolean
+  }) => void
+  /** Fired once for an assistant turn that contains tool calls. */
+  onAssistantToolCalls?: (
+    calls: PluginAICompleteResult['tool_calls'],
+    content: string
+  ) => void
   /**
    * Fired when a tool stages a destructive op. The loop pauses until
    * resolveStaging is called with the same token (the session exposes a
@@ -73,6 +93,8 @@ export interface AgentOptions {
   onError?: (err: unknown) => void
   /** Optional external cancellation; loop also honors the session flag. */
   signal?: AbortSignal
+  /** Internal stream hook used by createAgentSession for direct cancellation. */
+  onStream?: (stream: PluginAIStream) => void
 }
 
 export interface AgentRunResult {
@@ -107,11 +129,89 @@ export function buildSystemPrompt(ctx: PluginContext): string {
 
 /** Truncate a tool result body to TOOL_RESULT_MAX_BYTES with a marker. */
 export function truncateToolResult(content: string): string {
-  if (content.length <= TOOL_RESULT_MAX_BYTES) return content
-  // Slice on the byte budget and append the marker so the model knows there
-  // was more it cannot see (it can re-query with a narrower request).
-  const slice = content.slice(0, TOOL_RESULT_MAX_BYTES)
-  return `${slice}\n[… truncated at 10KB]`
+  const encoder = new TextEncoder()
+  if (encoder.encode(content).byteLength <= TOOL_RESULT_MAX_BYTES)
+    return content
+
+  // Reserve space for the marker. Iterating code points rather than UTF-16
+  // units prevents a byte-boundary cut from leaving a lone surrogate behind.
+  const marker = '\n[… truncated at 10KB]'
+  const markerBytes = encoder.encode(marker).byteLength
+  const contentBudget = Math.max(0, TOOL_RESULT_MAX_BYTES - markerBytes)
+  let bytes = 0
+  let slice = ''
+  for (const character of content) {
+    const characterBytes = encoder.encode(character).byteLength
+    if (bytes + characterBytes > contentBudget) break
+    slice += character
+    bytes += characterBytes
+  }
+  return `${slice}${marker}`
+}
+
+class RunAbortError extends Error {
+  constructor() {
+    super('Agent run cancelled')
+    this.name = 'AbortError'
+  }
+}
+
+function abortError(): RunAbortError {
+  return new RunAbortError()
+}
+
+function raceAbort<T>(
+  promise: PromiseLike<T>,
+  signal?: AbortSignal
+): Promise<T> {
+  if (!signal) return Promise.resolve(promise)
+  if (signal.aborted) {
+    // The caller may have just created a pending staging promise before
+    // noticing the already-aborted signal. Attach a rejection handler even
+    // though this race is already lost, so cleanup can reject that promise
+    // without producing an unhandled rejection.
+    void Promise.resolve(promise).catch(() => {})
+    return Promise.reject(abortError())
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup()
+      reject(abortError())
+    }
+    const cleanup = () => signal.removeEventListener('abort', onAbort)
+    signal.addEventListener('abort', onAbort, { once: true })
+    Promise.resolve(promise).then(
+      (value) => {
+        cleanup()
+        resolve(value)
+      },
+      (error: unknown) => {
+        cleanup()
+        reject(error)
+      }
+    )
+  })
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof RunAbortError ||
+    (error instanceof Error && error.name === 'AbortError')
+  )
+}
+
+function visibleToolResult(
+  res: ToolResult
+): ToolResult & { truncated?: boolean } {
+  if (res.error) return res
+  const truncated =
+    new TextEncoder().encode(res.content).byteLength > TOOL_RESULT_MAX_BYTES
+  return {
+    ...res,
+    content: truncateToolResult(res.content),
+    ...(truncated ? { truncated: true } : {})
+  }
 }
 
 /**
@@ -136,7 +236,8 @@ async function materializeToolMessage(
     stagedToken?: string
     stagedPreview?: StagedPreview
   },
-  opts: AgentOptions
+  opts: AgentOptions,
+  signal?: AbortSignal
 ): Promise<string> {
   if (res.error) {
     return `Error: ${res.error}`
@@ -152,29 +253,31 @@ async function materializeToolMessage(
 
   let confirmed = false
   if (opts.awaitStaging) {
-    confirmed = await opts.awaitStaging(event)
+    confirmed = await raceAbort(opts.awaitStaging(event), signal)
   }
 
   if (!confirmed) {
     try {
-      await rejectOperation(ctx, token)
-    } catch {
+      await raceAbort(rejectOperation(ctx, token), signal)
+    } catch (error: unknown) {
+      if (signal?.aborted || isAbortError(error)) throw error
       /* Token may already be consumed; treat as rejected either way. */
     }
     return `Operation "${preview.summary}" was rejected by the user. Propose a different approach or stop.`
   }
 
   try {
-    const op = await confirmOperation(ctx, token)
+    const op = await raceAbort(confirmOperation(ctx, token), signal)
     const tool = getTools().find((t) => t.name === toolName)
     if (!tool?.commit) {
       return `Error: staged operation "${op.kind}" has no commit handler.`
     }
-    const committed = await tool.commit(ctx, op.params)
+    const committed = await raceAbort(tool.commit(ctx, op.params), signal)
     return committed.error
       ? `Error: ${committed.error}`
       : truncateToolResult(committed.content)
   } catch (e: unknown) {
+    if (signal?.aborted || isAbortError(e)) throw e
     const message = e instanceof Error ? e.message : String(e)
     return `Error: staged operation could not be applied (${message}).`
   }
@@ -188,25 +291,29 @@ async function materializeToolMessage(
 async function consumeStream(
   stream: PluginAIStream,
   onAssistantText?: (chunk: string, acc: string) => void,
-  isCancelled?: () => boolean
+  signal?: AbortSignal
 ): Promise<{ text: string; result: PluginAICompleteResult }> {
   let acc = ''
-  // The stream is an async iterable of content deltas. We drain it for the
-  // live UX, then await result() for the authoritative tool_calls + final
-  // content. result() resolves when the upstream 'done' event fires.
-  for await (const delta of stream) {
-    if (isCancelled?.()) {
-      try {
-        await stream.cancel()
-      } catch {
-        /* best-effort */
-      }
-      break
-    }
-    acc += delta
-    onAssistantText?.(delta, acc)
+  const iterator = stream[Symbol.asyncIterator]()
+  const cancelStream = () => {
+    void stream.cancel().catch(() => {
+      /* best-effort; the abort result is authoritative */
+    })
   }
-  const result = await stream.result()
+  signal?.addEventListener('abort', cancelStream, { once: true })
+  try {
+    // Use explicit next() calls so a stream with no further deltas still races
+    // cancellation instead of waiting forever in for-await.
+    while (true) {
+      const step = await raceAbort(iterator.next(), signal)
+      if (step.done) break
+      acc += step.value
+      onAssistantText?.(step.value, acc)
+    }
+  } finally {
+    signal?.removeEventListener('abort', cancelStream)
+  }
+  const result = await raceAbort(stream.result(), signal)
   // If the model streamed no text but result carries content (e.g. a
   // reasoning-only stream), surface it so the UX shows something.
   if (!acc && result.content) {
@@ -246,17 +353,29 @@ export async function runAgent(
         }
       }
       iterations++
-      const stream = (await ctx.ai.complete({
-        messages,
-        tools: buildToolCatalog(),
-        toolChoice: { mode: 'auto' },
-        stream: true
-      })) as PluginAIStream
+      const stream = (await raceAbort(
+        ctx.ai.complete({
+          // Providers receive a stable request snapshot; later tool-result
+          // appends must not mutate an earlier request retained by a test
+          // double or transport adapter.
+          messages: messages.map((message) => ({
+            ...message,
+            ...(message.tool_calls
+              ? { tool_calls: message.tool_calls.map((call) => ({ ...call })) }
+              : {})
+          })),
+          tools: buildToolCatalog(),
+          toolChoice: { mode: 'auto' },
+          stream: true
+        }),
+        opts.signal
+      )) as PluginAIStream
+      opts.onStream?.(stream)
 
       const { text, result } = await consumeStream(
         stream,
         opts.onAssistantText,
-        cancelled
+        opts.signal
       )
       lastText = text
 
@@ -288,32 +407,98 @@ export async function runAgent(
         content: lastText,
         tool_calls: calls
       })
+      opts.onAssistantToolCalls?.(calls, lastText)
 
       // Dispatch all requested tools in parallel; surface each to the UX.
       // Staged results are NOT fed to the model — they pause the loop until
       // the UX resolves them (onStaging + awaitStaging), then their commit
       // outcome (or a "rejected" message) becomes the tool message.
-      const results = await Promise.all(
+      // The registry currently accepts the signal as an optional extension;
+      // the abort race below also keeps this loop responsive with registries
+      // whose older implementation does not yet consume it.
+      const dispatchWithSignal = dispatchTool as unknown as (
+        ctx: PluginContext,
+        name: string,
+        args: Record<string, unknown>,
+        signal?: AbortSignal
+      ) => Promise<ToolResult>
+      const results = await Promise.allSettled(
         calls.map(async (call) => {
           opts.onToolCall?.({
             id: call.id,
             name: call.name,
             args: call.arguments
           })
-          const res = await dispatchTool(ctx, call.name, call.arguments)
-          opts.onToolResult?.({ id: call.id, name: call.name, result: res })
-          return { call, res }
+          let res: ToolResult
+          try {
+            res = await raceAbort(
+              dispatchWithSignal(ctx, call.name, call.arguments, opts.signal),
+              opts.signal
+            )
+          } catch (error: unknown) {
+            const message =
+              isAbortError(error) || cancelled()
+                ? 'Cancelled before tool completed.'
+                : error instanceof Error
+                  ? error.message
+                  : String(error)
+            res = { content: '', error: message }
+          }
+          const visible = visibleToolResult(res)
+          opts.onToolResult?.({ id: call.id, name: call.name, result: visible })
+          return { call, res: visible }
         })
       )
-      for (const { call, res } of results) {
-        if (cancelled()) break
+      if (cancelled()) {
+        // Promise.allSettled has only waited for the abort races, not for
+        // underlying tools that ignored the signal. Report what each call
+        // managed before cancellation without starting staging/commit work.
+        for (const outcome of results) {
+          if (outcome.status !== 'fulfilled') continue
+          const { call, res } = outcome.value
+          const content = res.error
+            ? `Error: ${res.error}`
+            : res.isStaged
+              ? 'Cancelled before confirmation.'
+              : res.content
+          opts.onToolMessage?.({
+            id: call.id,
+            name: call.name,
+            content,
+            error: res.error,
+            truncated: res.truncated
+          })
+        }
+        return {
+          text: lastText,
+          iterations,
+          cancelled: true,
+          hitIterationCap: false
+        }
+      }
+      for (const outcome of results) {
+        if (outcome.status !== 'fulfilled') {
+          // Each dispatch is expected to convert failures into a ToolResult;
+          // preserve an unexpected rejection as an independent tool error.
+          continue
+        }
+        const { call, res } = outcome.value
         const toolMessage = await materializeToolMessage(
           ctx,
           call.name,
           res,
-          opts
+          opts,
+          opts.signal
         )
         if (cancelled()) break
+        opts.onToolMessage?.({
+          id: call.id,
+          name: call.name,
+          content: toolMessage,
+          error: res.error,
+          truncated:
+            res.truncated || toolMessage.includes('… truncated at 10KB')
+        })
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
@@ -361,36 +546,64 @@ export interface AgentSession {
 }
 
 /**
- * Create a session bound to `ctx` with its own cancellation flag. cancel()
- * flips the flag; the in-flight run observes it between iterations and stops.
+ * Create a session bound to `ctx`. Each run owns its controller, active stream,
+ * and staging waiters so cancelling an older run cannot affect a newer one.
  *
  * Phase 5 staging: when a tool returns a staged result, the loop awaits the
  * `awaitStaging` callback, which resolves when resolveStaging(token, bool)
  * is called from the UX. A token → resolver Map bridges the two sides.
  */
 export function createAgentSession(ctx: PluginContext): AgentSession {
-  // An AbortController per active run is created in run(); cancel() trips it.
-  let controller: AbortController | null = null
-  const pendingStaging = new Map<string, (confirmed: boolean) => void>()
+  type PendingStaging = {
+    resolve: (confirmed: boolean) => void
+    reject: (error: unknown) => void
+  }
+  type ActiveRun = {
+    controller: AbortController
+    stream: PluginAIStream | null
+    pendingStaging: Map<string, PendingStaging>
+    callerSignal?: AbortSignal
+  }
+
+  let activeRun: ActiveRun | null = null
+
+  function cancelRun(run: ActiveRun): void {
+    run.controller.abort()
+    if (run.stream) {
+      void run.stream.cancel().catch(() => {
+        /* best-effort; the abort result is authoritative */
+      })
+    }
+    const error = abortError()
+    for (const pending of run.pendingStaging.values()) pending.reject(error)
+    run.pendingStaging.clear()
+  }
 
   function resolveStaging(token: string, confirmed: boolean): void {
-    const resolve = pendingStaging.get(token)
-    if (!resolve) return
-    pendingStaging.delete(token)
-    resolve(confirmed)
+    const run = activeRun
+    const pending = run?.pendingStaging.get(token)
+    if (!run || !pending) return
+    run.pendingStaging.delete(token)
+    pending.resolve(confirmed)
   }
 
   return {
     async run(userMessage, chatHistory, opts = {}) {
-      controller?.abort()
-      controller = new AbortController()
+      if (activeRun) cancelRun(activeRun)
+      const run: ActiveRun = {
+        controller: new AbortController(),
+        stream: null,
+        pendingStaging: new Map(),
+        callerSignal: opts.signal
+      }
+      activeRun = run
+
+      const onCallerAbort = () => run.controller.abort()
       if (opts.signal) {
         // Chain the caller's signal so either source aborts the run.
-        if (opts.signal.aborted) controller.abort()
+        if (opts.signal.aborted) run.controller.abort()
         else
-          opts.signal.addEventListener('abort', () => controller?.abort(), {
-            once: true
-          })
+          opts.signal.addEventListener('abort', onCallerAbort, { once: true })
       }
       // Bridge onStaging → awaitStaging so the loop pauses until the UX
       // calls resolveStaging. onStaging is already announced by the loop
@@ -400,28 +613,36 @@ export function createAgentSession(ctx: PluginContext): AgentSession {
       const awaitStaging =
         opts.awaitStaging ??
         ((event: StagingEvent): Promise<boolean> => {
-          return new Promise<boolean>((resolve) => {
-            pendingStaging.set(event.token, resolve)
+          return new Promise<boolean>((resolve, reject) => {
+            run.pendingStaging.set(event.token, { resolve, reject })
           })
         })
       try {
         return await runAgent(ctx, userMessage, chatHistory, {
           ...opts,
           awaitStaging,
-          onStaging: opts.onStaging,
-          signal: controller.signal
+          signal: run.controller.signal,
+          onStream: (stream) => {
+            run.stream = stream
+            opts.onStream?.(stream)
+            if (run.controller.signal.aborted) cancelRun(run)
+          }
         })
       } finally {
-        if (controller?.signal.aborted) {
-          // Cancel any staging still awaiting — the loop will not resume them.
-          for (const resolve of pendingStaging.values()) resolve(false)
-          pendingStaging.clear()
-          controller = null
+        if (run.callerSignal) {
+          run.callerSignal.removeEventListener('abort', onCallerAbort)
+        }
+        for (const pending of run.pendingStaging.values()) {
+          pending.reject(abortError())
+        }
+        run.pendingStaging.clear()
+        if (activeRun === run) {
+          activeRun = null
         }
       }
     },
     cancel() {
-      controller?.abort()
+      if (activeRun) cancelRun(activeRun)
     },
     resolveStaging
   }

@@ -22,7 +22,6 @@ import type {
   PanelStatus,
   Proposal
 } from './types'
-import { openWritingAssistantDrawerExclusive } from '../../../lib/drawers.svelte'
 import { editorKey, getEditor } from '../../../lib/editor/editorRegistry.svelte'
 
 export type RunOpts = {
@@ -226,8 +225,6 @@ export function createAssistantController() {
         selectionChecksum: opts.selectionChecksum
       }
     }
-    openWritingAssistantDrawerExclusive()
-
     try {
       const scope = await buildScope(ctx, settings, {
         selectionText: opts.selectionText,

@@ -14,6 +14,8 @@ import { breadcrumb, clampInt } from './_util'
 
 // --- list_tags ------------------------------------------------------------
 
+const MAX_TAGS = 200
+
 export const listTagsToolDef = {
   name: 'list_tags',
   description:
@@ -32,18 +34,30 @@ export async function handleListTags(
 ): Promise<ToolResult> {
   const { rows } = await ctx.sqliteQuery(
     'SELECT raw_path, COUNT(*) AS count FROM tags ' +
-      'GROUP BY raw_path ORDER BY count DESC, raw_path ASC'
+      'GROUP BY raw_path ORDER BY count DESC, raw_path ASC LIMIT ?',
+    [MAX_TAGS]
   )
   if (rows.length === 0) {
     return { content: 'No tags found in the vault.' }
   }
-  const lines = rows.map((r, i) => {
+  const { rows: totalRows } = await ctx.sqliteQuery(
+    'SELECT COUNT(DISTINCT raw_path) AS total FROM tags'
+  )
+  const total = Math.max(
+    rows.length,
+    Number(totalRows[0]?.total ?? rows.length)
+  )
+  const visible = rows.slice(0, MAX_TAGS)
+  const lines = visible.map((r, i) => {
     const tag = String(r.raw_path ?? '')
     const count = Number(r.count ?? 0)
     return `[${i + 1}] #${tag} (${count} block${count === 1 ? '' : 's'})`
   })
+  const more = total - visible.length
   return {
-    content: `${rows.length} tag(s):\n${lines.join('\n')}`
+    content:
+      `${total} tag(s):\n${lines.join('\n')}` +
+      (more > 0 ? `\n…and ${more} more tag(s) not shown.` : '')
   }
 }
 
@@ -146,10 +160,9 @@ export const renameTagToolDef = {
 }
 
 /**
- * Stage a rename_tag operation: count the affected blocks (using queryByTag,
- * which matches raw_path = ? OR raw_path LIKE '<path>/%'), persist the staged
- * op, and return the token + preview. The actual rewrite happens in commit()
- * after the user confirms.
+ * Stage a rename_tag operation: count blocks carrying the exact tag, persist
+ * the staged op, and return the token + preview. The actual rewrite happens in
+ * commit() after the user confirms. Namespace descendants are separate tags.
  */
 export async function handleRenameTag(
   ctx: PluginContext,
@@ -167,10 +180,9 @@ export async function handleRenameTag(
     return { content: '', error: 'old_tag and new_tag must differ' }
   }
 
-  // queryByTag returns the full block rows; we only need the count for the
-  // preview, but commit re-issues the same query to get the live set at
-  // apply time (a block may have been tagged/untagged between stage + confirm).
-  const { rows } = await ctx.queryByTag(oldTag)
+  // Commit re-issues the same exact-tag query to get the live set at apply
+  // time (a block may have been tagged/untagged between stage + confirm).
+  const { rows } = await queryExactTag(ctx, oldTag)
   const affected = rows.length
 
   const token = await stageOperation(ctx, 'rename_tag', {
@@ -211,7 +223,7 @@ export async function commitRenameTag(
     return { content: '', error: 'staged rename_tag params were malformed' }
   }
 
-  const { rows } = await ctx.queryByTag(oldTag)
+  const { rows } = await queryExactTag(ctx, oldTag)
   if (rows.length === 0) {
     return {
       content: `No blocks carry tag #${oldTag}; nothing renamed.`
@@ -226,8 +238,8 @@ export async function commitRenameTag(
     const body = String(r.clean_content ?? '')
     if (!id || !renameRe.test(body)) {
       // The block no longer carries the literal token (e.g. content changed
-      // or the tag was a namespace parent matched via the LIKE '<path>/%'
-      // clause). Skip it — the count must reflect actual rewrites.
+      // or the block changed after staging). Skip it — the count must reflect
+      // actual rewrites.
       renameRe.lastIndex = 0
       continue
     }
@@ -249,6 +261,18 @@ export async function commitRenameTag(
     }
   }
   return { content: summary }
+}
+
+/** Query the same exact-tag set used by both preview and commit. */
+async function queryExactTag(
+  ctx: PluginContext,
+  tag: string
+): Promise<{ rows: Record<string, unknown>[] }> {
+  return ctx.sqliteQuery(
+    'SELECT DISTINCT b.id, b.clean_content FROM blocks b ' +
+      'JOIN tags t ON t.block_id = b.id WHERE t.raw_path = ?',
+    [tag]
+  )
 }
 
 /**

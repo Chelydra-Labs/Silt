@@ -14,6 +14,8 @@ export interface ToolResult {
   content: string
   /** Set when the tool rejected its inputs or failed; surfaces to the model. */
   error?: string
+  /** Vault passages returned by retrieval tools for the shared chat transcript. */
+  evidence?: ToolEvidence[]
   /**
    * Phase 5 staging-token support. When a destructive tool stages a write for
    * user confirmation, isStaged marks the result and stagedToken carries the
@@ -26,6 +28,18 @@ export interface ToolResult {
   isStaged?: boolean
   stagedToken?: string
   stagedPreview?: StagedPreview
+}
+
+/** Structured retrieval metadata kept alongside the model-facing text. */
+export interface ToolEvidence {
+  citationIndex: number
+  blockId: string
+  notebook?: string
+  section?: string
+  page?: string
+  lineNumber?: number
+  snippet?: string
+  title?: string
 }
 
 /**

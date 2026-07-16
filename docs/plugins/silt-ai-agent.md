@@ -1,11 +1,12 @@
 # AI Agent (`silt-ai-agent`)
 
-A first-party AI agent that uses **tools** to search, read, create, and
-organize notes across your vault. Unlike the Q&A and Writing Assistant
-plugins, the agent runs a **multi-step loop**: it decides which tools to
-call, reads their results, and continues until it has enough to answer or
-act. Every step is shown transparently in the chat; destructive operations
-require explicit confirmation.
+A first-party, **headless capability provider** that uses tools to search,
+read, create, and organize notes across your vault. The agent runs a
+**multi-step loop**: it decides which tools to call, reads their results, and
+continues until it has enough to answer or act. Its tool calls, evidence, and
+answers render in the single unified **Silt AI** drawer alongside capabilities
+from Q&A and Writing Assistant. There is no standalone AgentHub surface;
+destructive operations require explicit confirmation in the shared drawer.
 
 **Off by default.** Enable under **Settings → Plugins** (the agent adds no
 settings tab of its own — it inherits the configured chat + embedding
@@ -62,7 +63,7 @@ truth and the change round-trips through one undo step).
      `suggest_link_targets`), also configure an **embedding** model.
    - See [BRING_YOUR_OWN_MODEL.md](../BRING_YOUR_OWN_MODEL.md).
 2. **Settings → Plugins** — enable **AI Agent**.
-3. Open the agent chat from its title-bar icon and state a goal.
+3. Open **Silt AI** from the title bar and state a goal.
 
 Tool-calling works best on models that advertise tool/function support.
 Small local models may misroute calls; the structural arg-validation in the

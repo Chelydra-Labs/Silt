@@ -47,4 +47,13 @@ describe('first-party registry parity with Go FirstPartyPluginIDs (#407)', () =>
       ).toBe(true)
     }
   })
+
+  it('registers the unified AI providers without standalone view components', () => {
+    for (const id of ['silt-ai-qa', 'silt-ai-assistant', 'silt-ai-agent']) {
+      const plugin = firstPartyPlugins().find(
+        (entry) => entry.manifest.id === id
+      )
+      expect(plugin?.component, `${id} should be headless`).toBeUndefined()
+    }
+  })
 })

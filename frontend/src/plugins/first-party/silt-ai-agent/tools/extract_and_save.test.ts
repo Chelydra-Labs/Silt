@@ -339,6 +339,36 @@ describe('extract_and_save', () => {
     expect(parsed.blocks[0]).toMatch(/ok/)
   })
 
+  it('caps extracted item count and field length', () => {
+    const parsed = parseExtraction(
+      JSON.stringify({
+        items: Array.from({ length: 60 }, () => ({
+          front: 'f'.repeat(3_000),
+          back: 'b'.repeat(3_000)
+        }))
+      }),
+      'flashcards'
+    )
+    expect(parsed.blocks).toHaveLength(50)
+    expect(parsed.blocks.every((block) => block.length < 4_100)).toBe(true)
+    expect(parsed.blocks[0]).toContain('…[truncated]')
+  })
+
+  it('caps salvaged raw model output before writing it', async () => {
+    const { ctx, createBlock } = makeCtx({
+      sources: SOURCES,
+      completeContent: 'not json ' + 'x'.repeat(20_000)
+    })
+    await handleExtractAndSave(ctx, {
+      source_block_ids: ['src-1'],
+      mode: 'summary',
+      target: TARGET
+    })
+    const text = (createBlock.mock.calls[0][0] as { text: string }).text
+    expect(text.length).toBeLessThan(8_300)
+    expect(text).toContain('…[truncated]')
+  })
+
   it('exposes the tool def shape', () => {
     expect(extractAndSaveToolDef.name).toBe('extract_and_save')
     expect(extractAndSaveToolDef.parameters.required).toEqual([

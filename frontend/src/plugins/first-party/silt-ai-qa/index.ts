@@ -2,11 +2,10 @@
 //
 // Off by default. Builds an incremental vector index in the plugin SQLite
 // store (sqlite-vec), hybrid-retrieves with FTS5, and answers via
-// ctx.ai.complete (streaming when available). Surfaces: right drawer (AI
-// Assistant) toggled from the title bar + bespoke settings page.
+// ctx.ai.complete (streaming when available). The lifecycle provider maintains
+// the index for the unified AI drawer and exposes a bespoke settings page.
 
 import type { PluginContext, PluginManifest } from '../../sdk'
-import QAHub from './QAHub.svelte'
 import QASettings from './QASettings.svelte'
 import {
   createQAController,
@@ -15,7 +14,6 @@ import {
 } from './state.svelte'
 import { resetIndexState } from './embed_index'
 import { resolveSettings } from './settings'
-import { resetAISearchDrawer } from './drawer.svelte'
 
 export const manifest: PluginManifest = {
   id: 'silt-ai-qa',
@@ -36,7 +34,6 @@ let offConfig: (() => void) | null = null
 
 export default {
   manifest,
-  component: QAHub,
   settingsPageComponent: QASettings,
   onVaultOpen(ctx: PluginContext) {
     const ctl = createQAController()
@@ -82,7 +79,6 @@ export default {
     offBlock?.()
     offConfig?.()
     offSave = offBlock = offConfig = null
-    resetAISearchDrawer()
     getQAController()?.dispose()
     setQAController(null)
     resetIndexState()
@@ -92,7 +88,6 @@ export default {
     offBlock?.()
     offConfig?.()
     offSave = offBlock = offConfig = null
-    resetAISearchDrawer()
     getQAController()?.dispose()
     setQAController(null)
     resetIndexState()

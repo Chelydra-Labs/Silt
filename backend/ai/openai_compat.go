@@ -128,28 +128,19 @@ func openaiToolChoice(tc *ToolChoice) any {
 	return nil
 }
 
-// rawToOpenAIArgs renders a JSON RawMessage (object) as the stringified JSON
-// OpenAI expects in a tool-call's arguments field. Empty → "{}".
+// rawToOpenAIArgs renders a JSON object as the stringified JSON OpenAI expects
+// in a tool-call's arguments field. Invalid/non-object caller arguments are
+// normalized at the shared boundary before they are sent.
 func rawToOpenAIArgs(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return "{}"
-	}
-	return string(raw)
+	return string(normalizeToolArguments(raw))
 }
 
 // openaiArgsToRaw turns OpenAI's stringified-JSON arguments into the raw JSON
-// object bytes the unified ToolCall carries. Non-JSON strings are wrapped as a
-// JSON string so they round-trip safely.
+// object bytes the unified ToolCall carries. Invalid or non-object arguments
+// become {} because ToolCall.Arguments has one object-shaped contract.
 func openaiArgsToRaw(s string) json.RawMessage {
 	trimmed := strings.TrimSpace(s)
-	if trimmed == "" {
-		return nil
-	}
-	if json.Valid([]byte(trimmed)) {
-		return json.RawMessage(trimmed)
-	}
-	b, _ := json.Marshal(s)
-	return b
+	return normalizeToolArguments(json.RawMessage(trimmed))
 }
 
 // normalizeSchemaObject returns a non-empty JSON object schema, defaulting to

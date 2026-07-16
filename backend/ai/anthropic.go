@@ -367,14 +367,7 @@ func anthropicToolChoiceFromRequest(tc *ToolChoice) any {
 // valid JSON object for Anthropic's tool_use input field (defaults to {} when
 // empty or non-object).
 func anthropicInputFromRaw(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return json.RawMessage(`{}`)
-	}
-	var v any
-	if json.Unmarshal(raw, &v) != nil {
-		return json.RawMessage(`{}`)
-	}
-	return raw
+	return normalizeToolArguments(raw)
 }
 
 // jsonString wraps a plain string as a JSON-encoded RawMessage.

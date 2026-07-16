@@ -61,16 +61,13 @@
   } from './lib/editor/editorRegistry.svelte'
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import PluginModalHost from './components/PluginModalHost.svelte'
-  import AISearchDrawer from './plugins/first-party/silt-ai-qa/AISearchDrawer.svelte'
   import { aiAssistantChrome } from './plugins/first-party/silt-ai-qa/state.svelte'
-  import { aiSearchDrawer } from './plugins/first-party/silt-ai-qa/drawer.svelte'
-  import WritingAssistantDrawer from './plugins/first-party/silt-ai-assistant/WritingAssistantDrawer.svelte'
   import { writingAssistantChrome } from './plugins/first-party/silt-ai-assistant/state.svelte'
-  import { writingAssistantDrawer } from './plugins/first-party/silt-ai-assistant/drawer.svelte'
+  import AIChatDrawer from './plugins/shared/ai-chat/AIChatDrawer.svelte'
   import {
-    toggleAISearchDrawerExclusive,
-    toggleWritingAssistantDrawerExclusive
-  } from './lib/drawers.svelte'
+    aiChatDrawer,
+    toggleAIChatDrawer
+  } from './plugins/shared/ai-chat/drawer.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
   import ToastContainer from './components/ToastContainer.svelte'
@@ -1383,14 +1380,10 @@
       bind:sidebarCollapsed
       {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
-      onAIAssistantClick={aiAssistantChrome.available
-        ? () => toggleAISearchDrawerExclusive()
+      onAIClick={aiAssistantChrome.available || writingAssistantChrome.available
+        ? () => toggleAIChatDrawer()
         : undefined}
-      aiAssistantOpen={aiSearchDrawer.open}
-      onWritingAssistantClick={writingAssistantChrome.available
-        ? () => toggleWritingAssistantDrawerExclusive()
-        : undefined}
-      writingAssistantOpen={writingAssistantDrawer.open}
+      aiOpen={aiChatDrawer.open}
     >
       {#if activeView === 'notes'}
         <TabStrip
@@ -1735,8 +1728,7 @@
             </div>
           {/if}
         </div>
-        <AISearchDrawer />
-        <WritingAssistantDrawer />
+        <AIChatDrawer />
       </div>
     </div>
   {/if}

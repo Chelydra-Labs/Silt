@@ -3,11 +3,11 @@
 
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { ACTION_CATALOG } from './catalog'
-import { isActionEnabled } from './catalog'
-import { openWritingAssistantDrawerExclusive } from '../../../lib/drawers.svelte'
-import { resetWritingAssistantDrawer } from './drawer.svelte'
-import WritingAssistantHub from './WritingAssistantHub.svelte'
 import AssistantSettings from './AssistantSettings.svelte'
+import {
+  AI_CHAT_COMMAND_EVENT,
+  type AIChatCommandDetail
+} from '../../shared/ai-chat/commands'
 import {
   createAssistantController,
   setAssistantController,
@@ -47,21 +47,6 @@ function selectionTextFromEditor(editor: unknown): string {
  *  selection. The selected text is captured so we can validate the range is
  *  still valid when the AI response arrives (positions drift if the user
  *  edits during streaming). */
-function selectionRangeFromEditor(
-  editor: unknown
-): { from: number; to: number; text: string } | null {
-  try {
-    const state = (editor as { state?: any })?.state
-    const sel = state?.selection
-    if (!sel || sel.from === sel.to) return null
-    const text = state.doc.textBetween(sel.from, sel.to, '\n') ?? ''
-    if (!text) return null
-    return { from: sel.from, to: sel.to, text }
-  } catch {
-    return null
-  }
-}
-
 /**
  * Register slash commands for the full catalog. Enabled state is enforced at
  * invoke time so settings toggles apply without re-registering.
@@ -74,27 +59,12 @@ function registerSlashCommands(ctx: PluginContext) {
       description: action.slashDescription,
       icon: action.icon,
       onSelect: (editor) => {
-        const c = getAssistantController()
-        if (!c) return
-        c.loadSettings()
-        if (!isActionEnabled(c.settings, action.id)) {
-          openWritingAssistantDrawerExclusive()
-          void c.run(ctx, action.id, {})
-          return
-        }
         const selectionText = selectionTextFromEditor(editor)
-        const range = selectionRangeFromEditor(editor)
-        openWritingAssistantDrawerExclusive()
-        void c.run(ctx, action.id, {
-          selectionText,
-          ...(range
-            ? {
-                selectionFrom: range.from,
-                selectionTo: range.to,
-                selectionChecksum: range.text
-              }
-            : {})
-        })
+        const detail: AIChatCommandDetail = {
+          text: `/${action.id}`,
+          request: { selectionText }
+        }
+        window.dispatchEvent(new CustomEvent(AI_CHAT_COMMAND_EVENT, { detail }))
       }
     })
   }
@@ -102,7 +72,6 @@ function registerSlashCommands(ctx: PluginContext) {
 
 export default {
   manifest,
-  component: WritingAssistantHub,
   settingsPageComponent: AssistantSettings,
   onVaultOpen(ctx: PluginContext) {
     const ctl = createAssistantController()
@@ -118,12 +87,10 @@ export default {
     getAssistantController()?.dispose()
     setAssistantController(null)
     syncWritingAssistantChrome(null)
-    resetWritingAssistantDrawer()
   },
   onShutdown() {
     getAssistantController()?.dispose()
     setAssistantController(null)
     syncWritingAssistantChrome(null)
-    resetWritingAssistantDrawer()
   }
 }

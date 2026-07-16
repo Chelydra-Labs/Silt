@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -213,5 +214,74 @@ func TestCompleteStream_AccumulatesToolCallDeltas(t *testing.T) {
 	}
 	if toolFrags[0].ID != "call_1" || toolFrags[0].Name != "search_notes" {
 		t.Errorf("first delta = %+v, want id+name", toolFrags[0])
+	}
+}
+
+func TestParseOpenAISSE_RejectsOversizedToolArguments(t *testing.T) {
+	var body bytes.Buffer
+	fragment := strings.Repeat("x", 512*1024)
+	for total := 0; total <= MaxStreamBytes; total += len(fragment) {
+		payload, err := json.Marshal(map[string]any{
+			"choices": []map[string]any{{"delta": map[string]any{
+				"tool_calls": []map[string]any{{"index": 0, "function": map[string]any{"arguments": fragment}}},
+			}}},
+		})
+		if err != nil {
+			t.Fatalf("marshal chunk: %v", err)
+		}
+		fmt.Fprintf(&body, "data: %s\n\n", payload)
+	}
+
+	_, err := parseOpenAISSE(&body, "m", func(string) error { return nil }, nil)
+	if err == nil {
+		t.Fatal("expected oversized tool arguments to fail")
+	}
+	ae, ok := err.(*AIError)
+	if !ok || ae.Kind != ErrServer {
+		t.Fatalf("want ErrServer, got %v", err)
+	}
+	if !strings.Contains(ae.Message, "tool arguments") {
+		t.Errorf("error = %q, want tool-argument cap message", ae.Message)
+	}
+}
+
+func TestParseOpenAISSE_RejectsTooManyMalformedFrames(t *testing.T) {
+	body := strings.NewReader(strings.Join([]string{
+		"data: not-json",
+		"data: still-not-json",
+		"data: definitely-not-json",
+		"data: [DONE]",
+		"",
+	}, "\n"))
+	_, err := parseOpenAISSE(body, "m", func(string) error { return nil }, nil)
+	if err == nil {
+		t.Fatal("expected too many malformed SSE frames to fail")
+	}
+	ae, ok := err.(*AIError)
+	if !ok || ae.Kind != ErrServer {
+		t.Fatalf("want ErrServer, got %v", err)
+	}
+}
+
+func TestParseOpenAISSE_MissingDoneIsToleratedWhenProviderFinished(t *testing.T) {
+	body := strings.NewReader(`data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n")
+	res, err := parseOpenAISSE(body, "m", func(string) error { return nil }, nil)
+	if err != nil {
+		t.Fatalf("parseOpenAISSE: %v", err)
+	}
+	if res.Content != "ok" {
+		t.Errorf("content = %q, want ok", res.Content)
+	}
+}
+
+func TestParseOpenAISSE_IncompleteToolArgumentsWithoutDoneFail(t *testing.T) {
+	body := strings.NewReader(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"q\":"}}]}}]}` + "\n")
+	_, err := parseOpenAISSE(body, "m", func(string) error { return nil }, nil)
+	if err == nil {
+		t.Fatal("expected incomplete tool arguments to fail")
+	}
+	ae, ok := err.(*AIError)
+	if !ok || ae.Kind != ErrServer {
+		t.Fatalf("want ErrServer, got %v", err)
 	}
 }

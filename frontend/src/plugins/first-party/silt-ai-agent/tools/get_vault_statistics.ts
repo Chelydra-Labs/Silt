@@ -75,29 +75,33 @@ export async function handleGetVaultStatistics(
   const fileCount = await runSingle(
     ctx,
     scoped
-      ? 'SELECT COUNT(*) as total_files FROM files WHERE path LIKE ?'
+      ? `SELECT COUNT(DISTINCT notebook || char(31) || section || char(31) || page) ` +
+          'as total_files FROM blocks WHERE notebook = ?'
       : 'SELECT COUNT(*) as total_files FROM files',
-    scoped ? [`%/${scope}/%`] : []
+    scoped ? [scope] : []
   )
 
   // tasks/status — the tasks table has no notebook column; JOIN blocks to
   // apply the scope. Only TODO/DOING/DONE are valid statuses, but a stray
   // value would surface here rather than be silently dropped.
   const taskFrom = scoped
-    ? 'FROM tasks t JOIN blocks b ON b.id = t.block_id WHERE b.notebook = ?'
-    : 'FROM tasks t WHERE 1 = 1'
+    ? 'FROM tasks t JOIN blocks b ON b.id = t.block_id'
+    : 'FROM tasks t'
+  const taskWhere = scoped ? 'WHERE b.notebook = ?' : ''
   const taskParams: unknown[] = scoped ? [scope] : []
   const tasksByStatus = await runCounts(
     ctx,
-    `SELECT t.status, COUNT(*) as count ${taskFrom} GROUP BY t.status`,
+    `SELECT t.status, COUNT(*) as count ${taskFrom} ${taskWhere} GROUP BY t.status`,
     taskParams,
     'status'
   )
+  const staleWhere = scoped
+    ? 'WHERE b.notebook = ? AND t.due_date IS NOT NULL AND t.due_date < ? AND t.status != ?'
+    : 'WHERE t.due_date IS NOT NULL AND t.due_date < ? AND t.status != ?'
   const staleTaskCount = await runSingle(
     ctx,
-    `SELECT COUNT(*) as stale_tasks ${taskFrom} ` +
-      `AND t.due_date IS NOT NULL AND t.due_date < ? AND t.status != 'DONE'`,
-    scoped ? [scope, ctx.today] : [ctx.today]
+    `SELECT COUNT(*) as stale_tasks ${taskFrom} ${staleWhere}`,
+    scoped ? [scope, ctx.today, 'DONE'] : [ctx.today, 'DONE']
   )
 
   // Orphan pages: a (notebook, section, page) tuple with no inbound
@@ -105,7 +109,8 @@ export async function handleGetVaultStatistics(
   // inbound reference anywhere rescues the whole page.
   const orphanCount = await runOrphanPageCount(ctx, scoped, scope)
 
-  // Top tags + recently edited files. mtime is unix-nanos; ordering works.
+  // Top tags + recently indexed logical pages. Absolute file paths never cross
+  // the model boundary; notebook/page metadata is the index's safe identity.
   const tagUsage = await runCounts(
     ctx,
     scoped
@@ -158,10 +163,12 @@ export async function handleGetVaultStatistics(
   }
 
   if (recentEdits.length > 0) {
-    const lines = recentEdits.map((r) => `  - ${r.path} (size ${r.size} bytes)`)
-    sections.push(`Recently indexed files (${RECENT_N}): \n${lines.join('\n')}`)
+    const lines = recentEdits.map((r) =>
+      r.fileDate ? `  - ${r.path} (file date ${r.fileDate})` : `  - ${r.path}`
+    )
+    sections.push(`Recently indexed pages (${RECENT_N}): \n${lines.join('\n')}`)
   } else {
-    sections.push('Recently indexed files: (none)')
+    sections.push('Recently indexed pages: (none)')
   }
 
   return { content: sections.join('\n\n') }
@@ -216,39 +223,128 @@ function formatKv(
  * `((uuid))` backlinks via the blocks table's existing refs projection; the
  * result is a count of pages NOT in that referenced set.
  *
- * "Approximate" because a wiki link to a non-existent page still counts as
- * a reference (and so rescues a real page with the same name); this is fine
- * for a stats summary, not a hard guarantee.
+ * "Approximate" because unresolved or ambiguous wiki links cannot be assigned
+ * to a page tuple; this is fine for a stats summary, not a hard guarantee.
  */
 async function runOrphanPageCount(
   ctx: PluginContext,
   scoped: boolean,
   scope: string
 ): Promise<Map<string, unknown>> {
-  // Collect all distinct pages that DO have an inbound link.
-  const refParams: unknown[] = []
-  const refWhere = scoped ? 'WHERE b.notebook = ?' : ''
-  if (scoped) refParams.push(scope)
+  // Collect target pages from resolved wiki links. The source page is not the
+  // page being referenced; using source columns here under-counts inbound
+  // links whenever a page links out to a different page.
+  const targetClauses: string[] = []
+  const targetParams: unknown[] = []
+  if (scoped) {
+    // Keep unresolved target_raw rows for the JS resolver below; resolved
+    // rows can be filtered in SQL without losing deferred links.
+    targetClauses.push('(target_notebook = ? OR target_notebook IS NULL)')
+    targetParams.push(scope)
+  }
   const referenced = await ctx.sqliteQuery(
-    `SELECT DISTINCT b.notebook, b.section, b.page FROM page_links pl ` +
-      `JOIN blocks b ON b.id = pl.source_block_id ${refWhere}`,
-    refParams
+    `SELECT DISTINCT target_notebook, target_section, target_page, target_raw ` +
+      `FROM page_links${
+        targetClauses.length > 0 ? ` WHERE ${targetClauses.join(' AND ')}` : ''
+      }`,
+    targetParams
   )
   const referencedKeys = new Set(
-    referenced.rows.map((r) =>
-      pageKey(
-        String(r.notebook ?? ''),
-        String(r.section ?? ''),
-        String(r.page ?? '')
+    referenced.rows
+      .filter(
+        (r) =>
+          r.target_notebook != null &&
+          r.target_section != null &&
+          r.target_page != null
       )
-    )
+      .map((r) =>
+        pageKey(
+          String(r.target_notebook),
+          String(r.target_section),
+          String(r.target_page)
+        )
+      )
   )
 
   // All pages in scope.
+  const pageWhere = scoped ? 'WHERE notebook = ?' : ''
+  const pageParams: unknown[] = scoped ? [scope] : []
   const allPages = await ctx.sqliteQuery(
-    `SELECT DISTINCT notebook, section, page FROM blocks ${refWhere}`,
-    refParams
+    `SELECT DISTINCT notebook, section, page FROM blocks ${pageWhere}`,
+    pageParams
   )
+
+  // ((uuid)) references are indexed in blocks.raw_content rather than
+  // page_links. Resolve those block ids to their target page tuples in JS so
+  // this remains correct even when a ref points across notebooks.
+  const blockRefs = await ctx.sqliteQuery(
+    'SELECT id, notebook, section, page, raw_content FROM blocks',
+    []
+  )
+  const pageByBlock = new Map<string, string>()
+  const pageLocations: PageLocation[] = []
+  const pageLocationKeys = new Set<string>()
+  for (const r of blockRefs.rows) {
+    const id = String(r.id ?? '')
+      .trim()
+      .toLowerCase()
+    const location = {
+      notebook: String(r.notebook ?? ''),
+      section: String(r.section ?? ''),
+      page: String(r.page ?? '')
+    }
+    const locationKey = pageKey(
+      location.notebook,
+      location.section,
+      location.page
+    )
+    if (!pageLocationKeys.has(locationKey)) {
+      pageLocationKeys.add(locationKey)
+      pageLocations.push(location)
+    }
+    if (!id) continue
+    pageByBlock.set(id, locationKey)
+  }
+  // Current page_links rows may retain target_raw while target_* is NULL
+  // because resolution is intentionally deferred by the indexer. Resolve the
+  // raw path against the indexed page inventory as an equivalent fallback.
+  for (const r of referenced.rows) {
+    if (r.target_notebook != null) continue
+    const target = (String(r.target_raw ?? '').split('|')[0] ?? '')
+      .split('#')[0]
+      .trim()
+    if (!target) continue
+    const parts = target
+      .split('/')
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0)
+    const page = parts.at(-1) ?? ''
+    const section = parts.length >= 2 ? parts.at(-2) : undefined
+    const notebook = parts.length >= 3 ? parts.at(-3) : undefined
+    const matches = pageLocations.filter(
+      (location) =>
+        location.page === page &&
+        (section === undefined || location.section === section) &&
+        (notebook === undefined || location.notebook === notebook) &&
+        (!scoped || location.notebook === scope)
+    )
+    if (matches.length === 1) {
+      referencedKeys.add(
+        pageKey(matches[0].notebook, matches[0].section, matches[0].page)
+      )
+    }
+  }
+  for (const r of blockRefs.rows) {
+    const raw = String(r.raw_content ?? '')
+    for (const match of raw.matchAll(/\(\(([^()\s]+)\)\)/g)) {
+      const targetKey = pageByBlock.get((match[1] ?? '').toLowerCase())
+      if (!targetKey) continue
+      if (!scoped || targetKey.startsWith(`${scope}\u{1f}/`)) {
+        referencedKeys.add(targetKey)
+      }
+    }
+  }
+
   let orphanCount = 0
   for (const r of allPages.rows) {
     const key = pageKey(
@@ -265,10 +361,16 @@ async function runOrphanPageCount(
 
 interface RecentEditRow {
   path: string
-  size: number
+  fileDate: string
 }
 
-/** Most-recently-indexed files (by indexed_at desc). */
+interface PageLocation {
+  notebook: string
+  section: string
+  page: string
+}
+
+/** Most-recently-indexed logical pages (by file_date desc). */
 async function runRecentEdits(
   ctx: PluginContext,
   scoped: boolean,
@@ -276,13 +378,16 @@ async function runRecentEdits(
 ): Promise<RecentEditRow[]> {
   const { rows } = await ctx.sqliteQuery(
     scoped
-      ? 'SELECT path, size FROM files WHERE path LIKE ? ORDER BY indexed_at DESC LIMIT ?'
-      : 'SELECT path, size FROM files ORDER BY indexed_at DESC LIMIT ?',
-    scoped ? [`%/${scope}/%`, RECENT_N] : [RECENT_N]
+      ? 'SELECT notebook, section, page, MAX(file_date) as file_date FROM blocks WHERE notebook = ? GROUP BY notebook, section, page ORDER BY file_date DESC LIMIT ?'
+      : 'SELECT notebook, section, page, MAX(file_date) as file_date FROM blocks GROUP BY notebook, section, page ORDER BY file_date DESC LIMIT ?',
+    scoped ? [scope, RECENT_N] : [RECENT_N]
   )
   return rows.map((r) => ({
-    path: String(r.path ?? ''),
-    size: Number(r.size ?? 0)
+    path: [r.notebook, r.section, r.page]
+      .map((value) => String(value ?? '').trim())
+      .filter((value) => value.length > 0)
+      .join('/'),
+    fileDate: String(r.file_date ?? '')
   }))
 }
 

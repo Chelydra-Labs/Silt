@@ -58,10 +58,9 @@ registerPlugin({
   source: 'first-party'
 })
 // silt-ai-qa (#224–#228): semantic search + RAG Q&A. Off by default; needs
-// ai + plugin-db. Sidebar panel + bespoke settings page.
+// ai + plugin-db. Headless lifecycle provider for the unified AI drawer.
 registerPlugin({
   manifest: AIQAPlugin.manifest,
-  component: AIQAPlugin.component,
   settingsPageComponent: AIQAPlugin.settingsPageComponent,
   onVaultOpen: AIQAPlugin.onVaultOpen,
   onVaultClose: AIQAPlugin.onVaultClose,
@@ -69,10 +68,10 @@ registerPlugin({
   source: 'first-party'
 })
 // silt-ai-assistant (#229–#233): Writing Assistant — curated writing actions
-// with accept/reject. Off by default; ai + content-mutate.
+// with accept/reject. Off by default; ai + content-mutate. Headless lifecycle
+// provider for slash commands and the unified AI drawer.
 registerPlugin({
   manifest: AIAssistantPlugin.manifest,
-  component: AIAssistantPlugin.component,
   settingsPageComponent: AIAssistantPlugin.settingsPageComponent,
   onVaultOpen: AIAssistantPlugin.onVaultOpen,
   onVaultClose: AIAssistantPlugin.onVaultClose,
@@ -81,10 +80,10 @@ registerPlugin({
 })
 // silt-ai-agent (#596): AI agent that uses tools to search, read, create, and
 // organize notes. Drives ctx.ai.complete with a tool catalog; off by default;
-// ai + content-mutate + plugin-db + read-files.
+// ai + content-mutate + plugin-db + read-files. Headless lifecycle provider for
+// the unified AI drawer.
 registerPlugin({
   manifest: AIAgentPlugin.manifest,
-  component: AIAgentPlugin.component,
   onVaultOpen: AIAgentPlugin.onVaultOpen,
   onVaultClose: AIAgentPlugin.onVaultClose,
   onShutdown: AIAgentPlugin.onShutdown,

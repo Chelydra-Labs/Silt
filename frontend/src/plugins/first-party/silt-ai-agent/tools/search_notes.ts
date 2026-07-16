@@ -125,7 +125,19 @@ export async function handleSearchNotes(
       `    ${snippet.replace(/\n/g, '\n    ')}`
     ].join('\n')
   })
-  return { content: `${passages.length} result(s):\n\n${lines.join('\n\n')}` }
+  return {
+    content: `${passages.length} result(s):\n\n${lines.join('\n\n')}`,
+    evidence: passages.map((p) => ({
+      citationIndex: p.citeIndex,
+      blockId: p.blockId,
+      notebook: p.notebook,
+      section: p.section,
+      page: p.page,
+      lineNumber: p.lineNumber,
+      snippet: p.text.slice(0, 200),
+      title: breadcrumb(p.notebook, p.section, p.page)
+    }))
+  }
 }
 
 function normalizeFilters(raw: unknown): SearchFilters {

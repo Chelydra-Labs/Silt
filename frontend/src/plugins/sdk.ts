@@ -953,13 +953,12 @@ export interface SiltPlugin {
   onShutdown?: () => void
 }
 
-// A renderable, registered plugin. First-party plugins supply a compiled
-// Svelte component; on-disk (third-party) plugins supply one via the loader
-// host when possible.
+// A registered plugin. First-party plugins may be headless capability
+// providers and omit a component; on-disk plugins receive a loader fallback.
 export interface RegisteredPlugin {
   manifest: PluginManifest
-  /** Svelte component rendered for the plugin's view. */
-  component: any
+  /** Optional Svelte component rendered for the plugin's navigable view. */
+  component?: any
   /**
    * Optional primary sidebar component (#321). When the plugin's view is
    * the active sidebar context, `Sidebar.svelte` resolves this component

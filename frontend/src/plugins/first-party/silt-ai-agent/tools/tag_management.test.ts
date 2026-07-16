@@ -58,6 +58,27 @@ describe('list_tags', () => {
     const res = await handleListTags(ctx, {})
     expect(res.content).toMatch(/no tags found/i)
   })
+
+  it('caps the tag list and reports omitted tags', async () => {
+    const rows = Array.from({ length: 200 }, (_, i) => ({
+      raw_path: `tag/${i}`,
+      count: 1
+    }))
+    const calls: { sql: string; params: unknown[] }[] = []
+    const ctx = {
+      sqliteQuery: vi.fn(async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params: [...(params ?? [])] })
+        return sql.includes('COUNT(DISTINCT')
+          ? { rows: [{ total: 250 }], truncated: false }
+          : { rows, truncated: false }
+      })
+    } as unknown as PluginContext
+    const res = await handleListTags(ctx, {})
+    expect(calls[0].sql).toMatch(/LIMIT \?/i)
+    expect(calls[0].params).toEqual([200])
+    expect(res.content).toContain('250 tag(s)')
+    expect(res.content).toContain('…and 50 more tag(s)')
+  })
 })
 
 // --- find_untagged --------------------------------------------------------
@@ -146,6 +167,7 @@ describe('find_untagged', () => {
 function makeRenameCtx(opts: { queryByTagRows?: Record<string, unknown>[] }): {
   ctx: PluginContext
   queryByTag: ReturnType<typeof vi.fn>
+  sqliteQuery: ReturnType<typeof vi.fn>
   pluginDbExec: ReturnType<typeof vi.fn>
   mutateBlock: ReturnType<typeof vi.fn>
 } {
@@ -153,10 +175,15 @@ function makeRenameCtx(opts: { queryByTagRows?: Record<string, unknown>[] }): {
     rows: opts.queryByTagRows ?? [],
     truncated: false
   }))
+  const sqliteQuery = vi.fn(async () => ({
+    rows: opts.queryByTagRows ?? [],
+    truncated: false
+  }))
   const pluginDbExec = vi.fn(async () => undefined)
   const mutateBlock = vi.fn(async () => true)
   const ctx = {
     queryByTag,
+    sqliteQuery,
     pluginDb: {
       exec: pluginDbExec,
       query: vi.fn(async () => ({ rows: [], truncated: false })),
@@ -164,7 +191,7 @@ function makeRenameCtx(opts: { queryByTagRows?: Record<string, unknown>[] }): {
     },
     mutateBlock
   } as unknown as PluginContext
-  return { ctx, queryByTag, pluginDbExec, mutateBlock }
+  return { ctx, queryByTag, sqliteQuery, pluginDbExec, mutateBlock }
 }
 
 describe('rename_tag (handler — staging)', () => {
@@ -190,8 +217,12 @@ describe('rename_tag (handler — staging)', () => {
     expect(res.stagedPreview?.summary).toContain('#work')
     expect(res.stagedPreview?.summary).toContain('#work/urgent')
     expect(res.stagedPreview?.summary).toContain('2 blocks')
-    // Counted via queryByTag (the live block lookup).
-    expect(queryByTag).toHaveBeenCalledWith('work')
+    // Counted via the exact-tag SQL lookup.
+    expect(queryByTag).not.toHaveBeenCalled()
+    expect(ctx.sqliteQuery).toHaveBeenCalledWith(
+      expect.stringContaining('t.raw_path = ?'),
+      ['work']
+    )
     // Persisted the staged op via pluginDb.exec (INSERT INTO staging_tokens).
     expect(pluginDbExec).toHaveBeenCalled()
     // Did NOT rewrite any block yet — that happens on confirm.
@@ -199,10 +230,13 @@ describe('rename_tag (handler — staging)', () => {
   })
 
   it('strips a leading # from input tag paths', async () => {
-    const { ctx, queryByTag } = makeRenameCtx({ queryByTagRows: [] })
+    const { ctx } = makeRenameCtx({ queryByTagRows: [] })
     await handleRenameTag(ctx, { old_tag: '#work', new_tag: '#biz' })
-    // queryByTag receives the de-hashed form.
-    expect(queryByTag).toHaveBeenCalledWith('work')
+    // The exact-tag query receives the de-hashed form.
+    expect(ctx.sqliteQuery).toHaveBeenCalledWith(
+      expect.stringContaining('t.raw_path = ?'),
+      ['work']
+    )
   })
 
   it('rejects identical old_tag/new_tag', async () => {
@@ -273,9 +307,12 @@ describe('rename_tag (commit — after confirm)', () => {
   it('honours params stored at stage time, not a later model call', async () => {
     // commit reads old_tag/new_tag from the params record, so the model
     // cannot mutate the staged op by issuing another handler call.
-    const { ctx, queryByTag } = makeRenameCtx({ queryByTagRows: [] })
+    const { ctx, sqliteQuery } = makeRenameCtx({ queryByTagRows: [] })
     await commitRenameTag(ctx, { old_tag: 'staged-old', new_tag: 'staged-new' })
-    expect(queryByTag).toHaveBeenCalledWith('staged-old')
+    expect(sqliteQuery).toHaveBeenCalledWith(
+      expect.stringContaining('t.raw_path = ?'),
+      ['staged-old']
+    )
   })
 
   it('reports the real count when nothing matches at apply time', async () => {
@@ -287,6 +324,41 @@ describe('rename_tag (commit — after confirm)', () => {
     expect(res.error).toBeUndefined()
     expect(mutateBlock).not.toHaveBeenCalled()
     expect(res.content).toMatch(/nothing renamed/i)
+  })
+
+  it('keeps exact-tag preview and commit counts aligned', async () => {
+    const exactRows = [{ id: 'b1', clean_content: 'a #work' }]
+    const queryByTag = vi.fn(async () => ({
+      rows: [...exactRows, { id: 'b2', clean_content: 'a #work/child' }],
+      truncated: false
+    }))
+    const sqliteQuery = vi.fn(async () => ({
+      rows: exactRows,
+      truncated: false
+    }))
+    const mutateBlock = vi.fn(async () => true)
+    const ctx = {
+      queryByTag,
+      sqliteQuery,
+      pluginDb: {
+        exec: vi.fn(async () => undefined),
+        query: vi.fn(async () => ({ rows: [], truncated: false })),
+        migrate: vi.fn()
+      },
+      mutateBlock
+    } as unknown as PluginContext
+
+    const preview = await handleRenameTag(ctx, {
+      old_tag: 'work',
+      new_tag: 'biz'
+    })
+    const committed = await commitRenameTag(ctx, {
+      old_tag: 'work',
+      new_tag: 'biz'
+    })
+    expect(preview.stagedPreview?.affectedCount).toBe(1)
+    expect(committed.content).toMatch(/in 1 block/)
+    expect(mutateBlock).toHaveBeenCalledTimes(1)
   })
 
   it('errors on malformed staged params', async () => {
@@ -302,6 +374,10 @@ describe('rename_tag (commit — after confirm)', () => {
     ]
     const ctx = {
       queryByTag: vi.fn(async () => ({
+        rows: queryByTagRows,
+        truncated: false
+      })),
+      sqliteQuery: vi.fn(async () => ({
         rows: queryByTagRows,
         truncated: false
       })),

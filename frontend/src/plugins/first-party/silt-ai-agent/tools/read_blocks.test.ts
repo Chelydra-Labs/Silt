@@ -25,7 +25,7 @@ function makeCtx(blocks: B[]): PluginContext {
         const parentIn = sql.match(/parent_id IN \(([^)]*)\)/)
         const nParent = parentIn ? parentIn[1].split(',').length : 0
         const parents = (params ?? []).slice(0, nParent) as string[]
-        const excludes = (params ?? []).slice(nParent) as string[]
+        const excludes = (params ?? []).slice(nParent, -1) as string[]
         const rows = [...byId.values()].filter(
           (b) =>
             b.parent_id !== null &&
@@ -154,6 +154,28 @@ describe('read_blocks', () => {
     // No context fetched → parent p1 never resolved.
     expect(res.content).not.toContain('Context:')
     expect(res.content).not.toContain('parent [p1]')
+  })
+
+  it('truncates oversized output with a visible marker', async () => {
+    const ctx = makeCtx([
+      {
+        id: 'huge',
+        clean_content: 'x'.repeat(40_000),
+        notebook: 'N',
+        section: 'S',
+        page: 'P',
+        type: 'NOTE',
+        parent_id: null,
+        depth: 0,
+        line_number: 1
+      }
+    ])
+    const res = await handleReadBlocks(ctx, {
+      block_ids: ['huge'],
+      include_context: false
+    })
+    expect(res.content.length).toBeLessThanOrEqual(32_000)
+    expect(res.content).toContain('[output truncated: size limit reached]')
   })
 
   it('exposes the tool def shape', () => {

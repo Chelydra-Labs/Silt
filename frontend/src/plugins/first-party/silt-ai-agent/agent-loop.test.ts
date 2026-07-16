@@ -186,6 +186,16 @@ describe('agent-loop', () => {
     expect(out).toMatch(/… truncated at 10KB/)
   })
 
+  it('truncates Unicode results by UTF-8 bytes without splitting a code point', () => {
+    const big = '😀'.repeat(TOOL_RESULT_MAX_BYTES)
+    const out = truncateToolResult(big)
+    const bytes = new TextEncoder().encode(out).byteLength
+
+    expect(bytes).toBeLessThanOrEqual(TOOL_RESULT_MAX_BYTES)
+    expect(new TextDecoder().decode(new TextEncoder().encode(out))).toBe(out)
+    expect(out).toMatch(/… truncated at 10KB/)
+  })
+
   it('createAgentSession.cancel aborts the in-flight run', async () => {
     registerTool({
       name: 'loop',
@@ -207,6 +217,195 @@ describe('agent-loop', () => {
     })
     const res = await p
     expect(res.cancelled).toBe(true)
+  })
+
+  it('cancelling while awaiting staging terminates the run', async () => {
+    registerTool({
+      name: 'stage',
+      description: 'stage',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => ({
+        content: '',
+        isStaged: true,
+        stagedToken: 'pending-token',
+        stagedPreview: { kind: 'stage', summary: 'Stage an operation' }
+      })
+    })
+    const ctx = mockCtx(() =>
+      mockStream({
+        content: '',
+        model: 'm',
+        tool_calls: [{ id: 'tc-stage', name: 'stage', arguments: {} }]
+      })
+    )
+    const session = createAgentSession(ctx)
+    let staged = false
+    const run = session.run('stage it', [], {
+      onStaging: () => {
+        staged = true
+        session.cancel()
+      }
+    })
+
+    const res = await run
+    expect(staged).toBe(true)
+    expect(res.cancelled).toBe(true)
+  })
+
+  it('cancels the active stream directly even when it has no next delta', async () => {
+    let releaseNext: ((step: IteratorResult<string>) => void) | null = null
+    const stream = {
+      streamId: 'waiting',
+      toolDeltas: [],
+      cancel: vi.fn(async () => {
+        releaseNext?.({ done: true, value: '' })
+      }),
+      result: vi.fn(async () => ({ content: 'late', model: 'm' })),
+      [Symbol.asyncIterator]() {
+        return {
+          next: () =>
+            new Promise<IteratorResult<string>>((resolve) => {
+              releaseNext = resolve
+            }),
+          [Symbol.asyncIterator]() {
+            return this
+          }
+        }
+      }
+    } as unknown as PluginAIStream
+    const ctx = mockCtx(() => stream)
+    const session = createAgentSession(ctx)
+    const run = session.run('wait', [])
+    await vi.waitFor(() => expect(releaseNext).not.toBeNull())
+
+    session.cancel()
+    const res = await run
+    expect(res.cancelled).toBe(true)
+    expect(stream.cancel).toHaveBeenCalled()
+  })
+
+  it('a new run is not aborted by cleanup from the cancelled old run', async () => {
+    let oldReleaseNext: ((step: IteratorResult<string>) => void) | null = null
+    const oldStream = {
+      streamId: 'old',
+      toolDeltas: [],
+      cancel: vi.fn(async () => {
+        oldReleaseNext?.({ done: true, value: '' })
+      }),
+      result: vi.fn(async () => ({ content: 'old', model: 'm' })),
+      [Symbol.asyncIterator]() {
+        return {
+          next: () =>
+            new Promise<IteratorResult<string>>((resolve) => {
+              oldReleaseNext = resolve
+            }),
+          [Symbol.asyncIterator]() {
+            return this
+          }
+        }
+      }
+    } as unknown as PluginAIStream
+    let completeCalls = 0
+    const ctx = mockCtx(() => {
+      completeCalls++
+      return completeCalls === 1
+        ? oldStream
+        : mockStream({ content: 'new answer', model: 'm' })
+    })
+    const session = createAgentSession(ctx)
+    const oldRun = session.run('old', [])
+    await vi.waitFor(() => expect(oldReleaseNext).not.toBeNull())
+
+    const newRun = session.run('new', [])
+    const newResult = await newRun
+    const oldResult = await oldRun
+
+    expect(newResult.cancelled).toBe(false)
+    expect(newResult.text).toBe('new answer')
+    expect(oldResult.cancelled).toBe(true)
+  })
+
+  it('surfaces a failed parallel tool and its successful sibling', async () => {
+    registerTool({
+      name: 'fails',
+      description: 'fails',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => {
+        throw new Error('failed deliberately')
+      }
+    })
+    registerTool({
+      name: 'succeeds',
+      description: 'succeeds',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => ({ content: 'sibling result' })
+    })
+    const messages: { id: string; content: string; error?: string }[] = []
+    const ctx = mockCtx((n) =>
+      n === 1
+        ? mockStream({
+            content: '',
+            model: 'm',
+            tool_calls: [
+              { id: 'bad', name: 'fails', arguments: {} },
+              { id: 'good', name: 'succeeds', arguments: {} }
+            ]
+          })
+        : mockStream({ content: 'done', model: 'm' })
+    )
+
+    const res = await runAgent(ctx, 'run both', [], {
+      onToolMessage: (message) => messages.push(message)
+    })
+
+    expect(res.cancelled).toBe(false)
+    expect(messages).toEqual([
+      expect.objectContaining({
+        id: 'bad',
+        content: 'Error: failed deliberately'
+      }),
+      expect.objectContaining({ id: 'good', content: 'sibling result' })
+    ])
+  })
+
+  it('reports partial results and returns promptly when parallel dispatch is cancelled', async () => {
+    registerTool({
+      name: 'slow-a',
+      description: 'slow a',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => new Promise(() => {})
+    })
+    registerTool({
+      name: 'slow-b',
+      description: 'slow b',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => new Promise(() => {})
+    })
+    const controller = new AbortController()
+    const partial: { id: string; content: string; error?: string }[] = []
+    const ctx = mockCtx(() =>
+      mockStream({
+        content: '',
+        model: 'm',
+        tool_calls: [
+          { id: 'a', name: 'slow-a', arguments: {} },
+          { id: 'b', name: 'slow-b', arguments: {} }
+        ]
+      })
+    )
+
+    const run = runAgent(ctx, 'cancel both', [], {
+      signal: controller.signal,
+      onToolCall: (call) => {
+        if (call.id === 'b') controller.abort()
+      },
+      onToolMessage: (message) => partial.push(message)
+    })
+    const res = await run
+
+    expect(res.cancelled).toBe(true)
+    expect(partial).toHaveLength(2)
+    expect(partial.every((message) => message.error)).toBe(true)
   })
 })
 

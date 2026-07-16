@@ -92,7 +92,7 @@
       manager.
     </p>
   </div>
-{:else if ctx}
+{:else if ctx && plugin.component}
   {@const Plugin = plugin.component}
   <Plugin {ctx} manifest={plugin.manifest} {focusBlockId} {focusKey} />
 {/if}

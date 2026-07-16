@@ -2,10 +2,16 @@
 
 Silt plugins extend the app with new views and capabilities. There are two kinds:
 
-- **First-party plugins** (`silt-tasks`, `silt-attachments`) are bundled with the app and ship as compiled Svelte components.
+- **First-party plugins** are bundled with the app; plugins with navigable views ship compiled Svelte components, while headless providers may ship lifecycle modules only.
 - **Third-party plugins** are authored by anyone, packaged as a **`.silt-plugin`** archive, and installed via the in-app **Plugin Manager**.
 
 Both kinds use the **exact same PluginContext SDK** — the built-in plugins are reference implementations of the same contract a third-party plugin uses.
+
+Not every plugin needs a navigable view. `RegisteredPlugin.component` is
+optional, so a plugin may be a headless capability provider that contributes
+lifecycle hooks, settings, commands, events, or services without rendering a
+plugin page. AI chat is one unified host-owned **Silt AI** drawer; AI plugins
+provide capabilities to it instead of adding separate chat surfaces.
 
 > silt-tasks is the **first plugin to define multiple internal display modes** — one semantic surface (tasks) rendered three ways (List / Board / Calendar) over a single grouping-first engine. This is the pattern when a single concern needs multiple visualizations: one plugin, one hub state, and a mode switcher that flips the renderer without re-querying. A unified sidebar swaps its content based on the active mode rather than mounting a separate per-mode sidebar.
 
@@ -15,7 +21,8 @@ Both kinds use the **exact same PluginContext SDK** — the built-in plugins are
 
 ## 1. The PluginContext SDK
 
-Every plugin receives a `PluginContext` when it loads and (for first-party) as a prop to its view component:
+Every plugin receives a `PluginContext` when it loads and, when a first-party
+plugin declares a view component, as a prop to that component:
 
 ```ts
 interface PluginContext {
@@ -822,11 +829,11 @@ Plugins that need AI call the **user-configured** model server through
 **Settings → AI Provider** (see `docs/BRING_YOUR_OWN_MODEL.md`); the plugin
 never sees the endpoint URL, model name, or API key.
 
-**Reference consumers:** `silt-ai-summary` (note banner), `silt-ai-qa` (RAG
-Q&A), `silt-ai-assistant` (Writing Assistant — curated actions with a
-plugin-local accept/reject proposal flow; see
-`docs/plugins/silt-ai-assistant.md`), and `silt-ai-agent` (tool-using agent
-loop; see `docs/plugins/silt-ai-agent.md`).
+**Reference consumers:** `silt-ai-summary` (note banner), and the headless
+AI capability providers `silt-ai-qa` (retrieval and citations),
+`silt-ai-assistant` (writing proposals), and `silt-ai-agent` (the tool-using
+agent loop). Their results render in the unified Silt AI drawer; the provider
+docs describe each capability and its lifecycle.
 
 Gated by the `ai` capability. Declare it in the manifest:
 

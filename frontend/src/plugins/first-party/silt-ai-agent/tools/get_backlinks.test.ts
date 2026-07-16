@@ -19,7 +19,31 @@ function makeCtx(opts: {
       rows: opts.embeds?.[id] ?? [],
       truncated: false
     })),
-    sqliteQuery: vi.fn(async (_sql: string, params?: unknown[]) => {
+    sqliteQuery: vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('raw_content LIKE')) {
+        const rows: Record<string, unknown>[] = []
+        for (const [id, refs] of Object.entries(opts.backlinks ?? {})) {
+          for (const ref of refs) {
+            rows.push({
+              id: ref.id,
+              page: ref.page,
+              clean_content: ref.snippet,
+              raw_content: `((` + id + `))`
+            })
+          }
+        }
+        for (const [id, refs] of Object.entries(opts.embeds ?? {})) {
+          for (const ref of refs) {
+            rows.push({
+              id: ref.id,
+              page: ref.page,
+              clean_content: ref.snippet,
+              raw_content: `{{embed:${id}}}`
+            })
+          }
+        }
+        return { rows, truncated: false }
+      }
       // resolveTargetIds: SELECT DISTINCT id FROM blocks WHERE page = ? [AND ...]
       const page = String(params?.[0] ?? '')
       return {
@@ -87,15 +111,16 @@ describe('get_backlinks', () => {
 
     const withEmbeds = await handleGetBacklinks(ctx, { target: UUID })
     expect(withEmbeds.content).toContain('embed')
-    expect(ctx.getEmbeds).toHaveBeenCalled()
+    expect(ctx.sqliteQuery).toHaveBeenCalledWith(
+      expect.stringContaining('raw_content LIKE'),
+      expect.any(Array)
+    )
 
-    ;(ctx.getEmbeds as ReturnType<typeof vi.fn>).mockClear()
     const noEmbeds = await handleGetBacklinks(ctx, {
       target: UUID,
       include_embeds: false
     })
     expect(noEmbeds.content).not.toContain('embed')
-    expect(ctx.getEmbeds).not.toHaveBeenCalled()
   })
 
   it('dedupes refs by source id across multiple page blocks', async () => {
@@ -110,6 +135,24 @@ describe('get_backlinks', () => {
     const res = await handleGetBacklinks(ctx, { target: 'Page' })
     // 'dup' appears only once despite two source ids both surfacing it.
     expect((res.content.match(/block dup/g) ?? []).length).toBe(1)
+  })
+
+  it('caps results and clamps the requested limit', async () => {
+    const refs = Array.from({ length: 30 }, (_, i) => ({
+      id: `src-${i}`,
+      page: 'P',
+      snippet: 'ref'
+    }))
+    const ctx = makeCtx({ backlinks: { [UUID]: refs } })
+    const res = await handleGetBacklinks(ctx, {
+      target: UUID,
+      include_embeds: false
+    })
+    expect((res.content.match(/^- \[backlink\]/gm) ?? []).length).toBe(20)
+    const batchCall = (
+      ctx.sqliteQuery as ReturnType<typeof vi.fn>
+    ).mock.calls.find((call) => String(call[0]).includes('raw_content LIKE'))
+    expect(batchCall?.[1]?.at(-1)).toBe(20)
   })
 
   it('exposes the tool def shape', () => {

@@ -1,8 +1,8 @@
 // Agent tool #598 — read_blocks.
 //
 // Fetches block contents by UUID so the agent can read what search_notes (or a
-// backlink) surfaced. Capped at 20 ids per call to bound output size; unknown
-// ids are skipped with a warning line rather than failing the whole call (a
+// backlink) surfaced. Capped at 20 ids and a fixed output budget; unknown ids
+// are skipped with a warning line rather than failing the whole call (a
 // stale id from the model should not abort a read of 19 good ones). With
 // include_context (default), the parent block + immediate siblings are fetched
 // so the model sees the surrounding prose, not an orphaned fragment.
@@ -14,7 +14,7 @@ import { breadcrumb } from './_util'
 export const readBlocksToolDef = {
   name: 'read_blocks',
   description:
-    'Read the full content of up to 20 blocks by UUID. Returns each block ' +
+    'Read the full content of up to 20 blocks by UUID within a bounded output. Returns each block ' +
     'with its location breadcrumb and (optionally) its parent and sibling ' +
     'blocks for context. Unknown ids are skipped with a warning.',
   parameters: {
@@ -47,6 +47,9 @@ interface BlockRow {
 }
 
 const MAX_BLOCK_IDS = 20
+const MAX_CONTEXT_SIBLINGS = 40
+const MAX_OUTPUT_BYTES = 32_000
+const OUTPUT_TRUNCATION_MARKER = '[output truncated: size limit reached]'
 
 const BLOCK_SELECT =
   'SELECT id, clean_content, notebook, section, page, type, parent_id, ' +
@@ -106,12 +109,23 @@ export async function handleReadBlocks(
   }
 
   const sections: string[] = []
+  const evidence: NonNullable<ToolResult['evidence']> = []
   let i = 0
   for (const id of ids) {
     const block = found.get(id)
     if (!block) continue
     i++
     sections.push(formatBlock(i, block))
+    evidence.push({
+      citationIndex: i,
+      blockId: block.id,
+      notebook: block.notebook,
+      section: block.section,
+      page: block.page,
+      lineNumber: block.line_number,
+      snippet: (block.clean_content ?? '').slice(0, 200),
+      title: breadcrumb(block.notebook, block.section, block.page)
+    })
     if (includeContext) {
       const ctxLines = formatContext(block, parents, siblingsByParent)
       if (ctxLines.length > 0) {
@@ -126,7 +140,7 @@ export async function handleReadBlocks(
   if (out.length === 0) {
     return { content: 'No blocks found for the given ids.' }
   }
-  return { content: out.join('\n\n') }
+  return { content: capOutput(out.join('\n\n')), evidence }
 }
 
 async function fetchByIds(
@@ -156,10 +170,12 @@ async function fetchByParentIds(
   const excludePh = excludeIds.map(() => '?').join(',')
   const sql =
     excludeIds.length > 0
-      ? `${BLOCK_SELECT} WHERE parent_id IN (${parentPh}) AND id NOT IN (${excludePh}) ORDER BY line_number`
-      : `${BLOCK_SELECT} WHERE parent_id IN (${parentPh}) ORDER BY line_number`
+      ? `${BLOCK_SELECT} WHERE parent_id IN (${parentPh}) AND id NOT IN (${excludePh}) ORDER BY line_number LIMIT ?`
+      : `${BLOCK_SELECT} WHERE parent_id IN (${parentPh}) ORDER BY line_number LIMIT ?`
   const params =
-    excludeIds.length > 0 ? [...parentIds, ...excludeIds] : parentIds
+    excludeIds.length > 0
+      ? [...parentIds, ...excludeIds, MAX_CONTEXT_SIBLINGS]
+      : [...parentIds, MAX_CONTEXT_SIBLINGS]
   const { rows } = await ctx.sqliteQuery(sql, params)
   const map = new Map<string, BlockRow[]>()
   for (const r of rows) {
@@ -209,10 +225,28 @@ function formatContext(
     lines.push(`parent [${parent.id}]: ${preview(parent.clean_content)}`)
   }
   const siblings = pid ? (siblingsByParent.get(pid) ?? []) : []
-  for (const s of siblings) {
+  for (const s of siblings.slice(0, MAX_CONTEXT_SIBLINGS)) {
     lines.push(`sibling [${s.id}]: ${preview(s.clean_content)}`)
   }
   return lines
+}
+
+function capOutput(text: string): string {
+  const encoder = new TextEncoder()
+  if (encoder.encode(text).length <= MAX_OUTPUT_BYTES) return text
+  const suffix = `\n\n${OUTPUT_TRUNCATION_MARKER}`
+  const available = Math.max(
+    0,
+    MAX_OUTPUT_BYTES - encoder.encode(suffix).length
+  )
+  let low = 0
+  let high = text.length
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2)
+    if (encoder.encode(text.slice(0, middle)).length <= available) low = middle
+    else high = middle - 1
+  }
+  return `${text.slice(0, low).trimEnd()}${suffix}`
 }
 
 function preview(text: string | null, max = 160): string {

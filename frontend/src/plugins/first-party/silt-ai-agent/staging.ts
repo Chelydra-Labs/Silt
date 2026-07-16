@@ -104,9 +104,10 @@ export class StagingError extends Error {
  * and return the stored operation. Throws StagingError on any failure so the
  * caller can branch on `code` (e.g. expired vs. replayed).
  *
- * The SELECT … WHERE used = 0 guards the read; the UPDATE … WHERE used = 0
- * guards the write, so a concurrent confirm on the same token cannot double-
- * redeem even if two calls race.
+ * The conditional UPDATE is the database claim. The SDK currently exposes no
+ * affected-row count, so calls in this webview are serialized per token and
+ * the row is read back immediately after the claim. A future SDK result with
+ * `changes`/`rowsAffected` is also honored when available.
  */
 export async function confirmOperation(
   ctx: PluginContext,
@@ -115,7 +116,59 @@ export async function confirmOperation(
   if (!isValidTokenFormat(token)) {
     throw new StagingError('invalid_format', 'invalid staging token format')
   }
-  const now = Date.now()
+  return withTokenLock(token, async () => {
+    const now = Date.now()
+    const row = await readToken(ctx, token)
+    validateClaimable(row, now)
+
+    // The expiry predicate belongs on the UPDATE, not only on the preceding
+    // SELECT. It prevents a token that expires between those statements from
+    // being redeemed.
+    const execResult = await ctx.pluginDb.exec(
+      `UPDATE staging_tokens SET used = 1
+         WHERE token = ? AND used = 0 AND expires_at > ? AND plugin_id = ?`,
+      [token, now, PLUGIN_ID]
+    )
+    const changes = affectedRows(execResult)
+    if (changes === 0) {
+      throwClaimFailure(await readToken(ctx, token), now)
+    }
+
+    // Older SDKs return void from exec. Under the per-token lock, a read-back
+    // confirms that this call owns the claim; SDKs that expose changes have
+    // already provided the stronger direct confirmation above.
+    const claimed = await readToken(ctx, token)
+    if (Number(claimed?.used) !== 1) {
+      throwClaimFailure(claimed, now)
+    }
+    return decodeOperation(claimed?.operation)
+  })
+}
+
+type TokenRow = Record<string, unknown> | undefined
+
+const tokenLocks = new Map<string, Promise<void>>()
+
+async function withTokenLock<T>(
+  token: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const previous = tokenLocks.get(token) ?? Promise.resolve()
+  let release!: () => void
+  const current = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  tokenLocks.set(token, current)
+  await previous
+  try {
+    return await fn()
+  } finally {
+    release()
+    if (tokenLocks.get(token) === current) tokenLocks.delete(token)
+  }
+}
+
+async function readToken(ctx: PluginContext, token: string): Promise<TokenRow> {
   const { rows } = await ctx.pluginDb.query(
     `SELECT operation, plugin_id, expires_at, used
        FROM staging_tokens
@@ -123,12 +176,12 @@ export async function confirmOperation(
       LIMIT 1`,
     [token]
   )
-  const row = rows[0]
-  if (!row) {
-    throw new StagingError('not_found', 'staging token not found')
-  }
-  // Check used BEFORE expiry so a redeemed-then-aged token reports as replay,
-  // not as expired (replay is the more actionable diagnostic for the user).
+  return rows[0]
+}
+
+function validateClaimable(row: TokenRow, now: number): void {
+  if (!row) throw new StagingError('not_found', 'staging token not found')
+  // Check used BEFORE expiry so a redeemed-then-aged token reports as replay.
   if (Number(row.used) !== 0) {
     throw new StagingError(
       'already_used',
@@ -144,14 +197,31 @@ export async function confirmOperation(
       'staging token does not belong to this plugin'
     )
   }
-  // Atomic claim: only flips if the row is still unused. If a concurrent
-  // confirm raced and claimed it first, this affects 0 rows and we treat the
-  // token as already used.
-  await ctx.pluginDb.exec(
-    `UPDATE staging_tokens SET used = 1 WHERE token = ? AND used = 0`,
-    [token]
-  )
-  return decodeOperation(row.operation)
+}
+
+function throwClaimFailure(row: TokenRow, now: number): never {
+  if (!row) throw new StagingError('not_found', 'staging token not found')
+  if (Number(row.used) !== 0) {
+    throw new StagingError(
+      'already_used',
+      'staging token has already been used'
+    )
+  }
+  if (Number(row.expires_at) <= now) {
+    throw new StagingError('expired', 'staging token has expired')
+  }
+  throw new StagingError('already_used', 'staging token claim was lost')
+}
+
+/** Accept the common affected-row envelopes used by SQLite bridges. */
+function affectedRows(result: unknown): number | undefined {
+  if (typeof result === 'number') return result
+  if (!result || typeof result !== 'object') return undefined
+  const r = result as Record<string, unknown>
+  for (const key of ['changes', 'rowsAffected', 'affectedRows']) {
+    if (typeof r[key] === 'number') return r[key] as number
+  }
+  return undefined
 }
 
 function decodeOperation(raw: unknown): StagedOperation {
@@ -186,11 +256,22 @@ export async function rejectOperation(
   token: string
 ): Promise<boolean> {
   if (!isValidTokenFormat(token)) return false
-  await ctx.pluginDb.exec(
-    `UPDATE staging_tokens SET used = 1 WHERE token = ?`,
-    [token]
-  )
-  return true
+  return withTokenLock(token, async () => {
+    const now = Date.now()
+    const row = await readToken(ctx, token)
+    if (!row || Number(row.used) !== 0 || Number(row.expires_at) <= now) {
+      return false
+    }
+    const execResult = await ctx.pluginDb.exec(
+      `UPDATE staging_tokens SET used = 1
+         WHERE token = ? AND used = 0 AND expires_at > ? AND plugin_id = ?`,
+      [token, now, PLUGIN_ID]
+    )
+    const changes = affectedRows(execResult)
+    if (changes === 0) return false
+    const claimed = await readToken(ctx, token)
+    return Number(claimed?.used) === 1
+  })
 }
 
 /**

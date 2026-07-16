@@ -79,4 +79,22 @@ describe('TitleBar', () => {
     expect(wordmark).toHaveClass('text-surface-titlebar-text')
     expect(wordmark).not.toHaveClass('text-accent-primary-start')
   })
+
+  it('keeps standard search separate from one unified AI button', async () => {
+    const onAI = vi.fn()
+    render(TitleBar, {
+      props: {
+        sidebarCollapsed: false,
+        onSearchClick: () => {},
+        onAIClick: onAI
+      }
+    })
+    await tick()
+
+    expect(screen.getByRole('button', { name: 'Search' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Silt AI' })).toBeTruthy()
+    expect(
+      screen.queryByRole('button', { name: 'Writing Assistant' })
+    ).toBeNull()
+  })
 })

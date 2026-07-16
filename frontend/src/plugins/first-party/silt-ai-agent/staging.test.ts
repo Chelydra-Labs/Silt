@@ -163,6 +163,37 @@ describe('stageOperation + confirmOperation', () => {
     expect(rows.get(token)?.used).toBe(1)
   })
 
+  it('redeems a token only once when confirms race', async () => {
+    const { ctx, rows } = makeCtx()
+    const token = await stageOperation(ctx, 'delete_blocks', { ids: ['b1'] })
+
+    const results = await Promise.allSettled([
+      confirmOperation(ctx, token),
+      confirmOperation(ctx, token)
+    ])
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    const rejected = results.filter(
+      (r): r is PromiseRejectedResult => r.status === 'rejected'
+    )
+    expect(rejected).toHaveLength(1)
+    expect(rejected[0].reason).toMatchObject({ code: 'already_used' })
+    expect(rows.get(token)?.used).toBe(1)
+  })
+
+  it('serializes reject against confirm through the same claim path', async () => {
+    const { ctx, rows } = makeCtx()
+    const token = await stageOperation(ctx, 'delete_blocks', { ids: ['b1'] })
+    const [confirmed, rejected] = await Promise.allSettled([
+      confirmOperation(ctx, token),
+      rejectOperation(ctx, token)
+    ])
+
+    const confirmWon = confirmed.status === 'fulfilled'
+    const rejectWon = rejected.status === 'fulfilled' && rejected.value === true
+    expect(Number(confirmWon) + Number(rejectWon)).toBe(1)
+    expect(rows.get(token)?.used).toBe(1)
+  })
+
   it('uses parameterized SQL (never interpolates user values)', async () => {
     const { ctx, execCalls, queryCalls } = makeCtx()
     const token = await stageOperation(ctx, 'rename_tag', {

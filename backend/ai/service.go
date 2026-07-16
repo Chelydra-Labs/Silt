@@ -132,6 +132,21 @@ type ToolCall struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
+// normalizeToolArguments enforces the unified ToolCall contract at every
+// provider boundary: arguments are always a JSON object. Providers sometimes
+// return malformed JSON or a scalar/array; coercing those values to {} avoids
+// leaking an invalid shape into the agent loop while preserving valid objects.
+func normalizeToolArguments(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err == nil && object != nil {
+		return raw
+	}
+	return json.RawMessage(`{}`)
+}
+
 // ToolChoice constrains which tool (if any) the model must call (#595).
 type ToolChoice struct {
 	Mode     string `json:"mode"`                // auto|required|none|force

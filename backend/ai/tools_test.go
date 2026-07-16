@@ -94,6 +94,82 @@ func TestCompleteOpenAI_EncodesToolsAndParsesToolCalls(t *testing.T) {
 	}
 }
 
+func TestCompleteOpenAI_NormalizesNonObjectToolArguments(t *testing.T) {
+	cases := []struct {
+		name string
+		args string
+	}{
+		{name: "string", args: `"hello"`},
+		{name: "number", args: `42`},
+		{name: "array", args: `[1,2,3]`},
+		{name: "malformed", args: `{not-json`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"model": "m",
+					"choices": []map[string]any{{"message": map[string]any{
+						"tool_calls": []map[string]any{{
+							"id":       "call_invalid",
+							"function": map[string]any{"name": "search_notes", "arguments": tc.args},
+						}},
+					}}},
+				})
+			}))
+			defer srv.Close()
+
+			res, err := Complete(context.Background(), CompleteRequest{
+				Provider: AIProvider{BaseURL: srv.URL, Model: "m"},
+				Messages: []ChatMessage{{Role: RoleUser, Content: "find meetings"}},
+			})
+			if err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if len(res.ToolCalls) != 1 {
+				t.Fatalf("tool_calls = %d, want 1", len(res.ToolCalls))
+			}
+			if got := string(res.ToolCalls[0].Arguments); got != "{}" {
+				t.Errorf("arguments = %q, want {}", got)
+			}
+		})
+	}
+}
+
+func TestToolArgumentNormalizersCoerceInvalidShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  json.RawMessage
+	}{
+		{name: "string", raw: json.RawMessage(`"hello"`)},
+		{name: "number", raw: json.RawMessage(`42`)},
+		{name: "array", raw: json.RawMessage(`[1,2,3]`)},
+		{name: "malformed", raw: json.RawMessage(`{not-json`)},
+		{name: "empty", raw: nil},
+	}
+	normalizers := []struct {
+		name string
+		fn   func(json.RawMessage) json.RawMessage
+	}{
+		{name: "openai", fn: func(raw json.RawMessage) json.RawMessage { return openaiArgsToRaw(string(raw)) }},
+		{name: "anthropic", fn: anthropicInputFromRaw},
+		{name: "google", fn: googleArgsFromRaw},
+	}
+	for _, normalizer := range normalizers {
+		for _, tc := range cases {
+			t.Run(normalizer.name+"/"+tc.name, func(t *testing.T) {
+				if got := string(normalizer.fn(tc.raw)); got != "{}" {
+					t.Errorf("normalized arguments = %q, want {}", got)
+				}
+			})
+		}
+	}
+	if got := string(normalizeToolArguments(json.RawMessage(`{"q":"meetings"}`))); got != `{"q":"meetings"}` {
+		t.Errorf("valid object changed = %q", got)
+	}
+}
+
 func TestCompleteOpenAI_ToolChoiceForceEncodesObject(t *testing.T) {
 	var captured chatRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -228,6 +304,47 @@ func TestCompleteAnthropic_RealToolsAdditiveAndDecoded(t *testing.T) {
 	}
 	if args["q"] != "meetings" {
 		t.Errorf("args.q = %v", args["q"])
+	}
+}
+
+func TestCompleteAnthropic_NormalizesNonObjectToolArguments(t *testing.T) {
+	cases := []struct {
+		name  string
+		input any
+	}{
+		{name: "string", input: "hello"},
+		{name: "number", input: 42},
+		{name: "array", input: []any{1, 2, 3}},
+		{name: "malformed", input: "{not-json"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"content": []map[string]any{{
+						"type": "tool_use", "id": "toolu_invalid", "name": "search_notes", "input": tc.input,
+					}},
+					"model": "claude-sonnet-5",
+				})
+			}))
+			defer srv.Close()
+
+			res, err := Complete(context.Background(), CompleteRequest{
+				Provider: AIProvider{ProviderType: ProviderAnthropic, BaseURL: srv.URL, Model: "claude-sonnet-5"},
+				Messages: []ChatMessage{{Role: RoleUser, Content: "find meetings"}},
+				Tools:    []ToolDef{dummyTool()},
+			})
+			if err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if len(res.ToolCalls) != 1 {
+				t.Fatalf("tool_calls = %d, want 1", len(res.ToolCalls))
+			}
+			if got := string(res.ToolCalls[0].Arguments); got != "{}" {
+				t.Errorf("arguments = %q, want {}", got)
+			}
+		})
 	}
 }
 
@@ -394,6 +511,47 @@ func TestCompleteGoogle_EncodesFunctionDeclarationsAndParsesFunctionCall(t *test
 	}
 }
 
+func TestCompleteGoogle_NormalizesNonObjectToolArguments(t *testing.T) {
+	cases := []struct {
+		name string
+		args any
+	}{
+		{name: "string", args: "hello"},
+		{name: "number", args: 42},
+		{name: "array", args: []any{1, 2, 3}},
+		{name: "malformed", args: "{not-json"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"candidates": []map[string]any{{"content": map[string]any{
+						"parts": []map[string]any{{"functionCall": map[string]any{
+							"id": "call_invalid", "name": "search_notes", "args": tc.args,
+						}}},
+					}}},
+				})
+			}))
+			defer srv.Close()
+
+			res, err := Complete(context.Background(), CompleteRequest{
+				Provider: AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, Model: "gemini-2.0-flash"},
+				Messages: []ChatMessage{{Role: RoleUser, Content: "find meetings"}},
+			})
+			if err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if len(res.ToolCalls) != 1 {
+				t.Fatalf("tool_calls = %d, want 1", len(res.ToolCalls))
+			}
+			if got := string(res.ToolCalls[0].Arguments); got != "{}" {
+				t.Errorf("arguments = %q, want {}", got)
+			}
+		})
+	}
+}
+
 func TestCompleteGoogle_PreservesOpaqueFunctionCallID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -423,6 +581,75 @@ func TestCompleteGoogle_PreservesOpaqueFunctionCallID(t *testing.T) {
 	tc := res.ToolCalls[0]
 	if tc.Name != "search_notes" || tc.ID != "call_google_01" {
 		t.Errorf("tool_call = %+v, want name search_notes and id call_google_01", tc)
+	}
+}
+
+func TestCompleteGoogle_RoundTripsOpaqueFunctionCallIDWithFunctionName(t *testing.T) {
+	var captured []googleGenerateRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req googleGenerateRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Errorf("parse request: %v", err)
+		}
+		captured = append(captured, req)
+		w.Header().Set("Content-Type", "application/json")
+		if len(captured) == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"candidates": []map[string]any{{"content": map[string]any{
+					"parts": []map[string]any{{"functionCall": map[string]any{
+						"id": "call_google_opaque", "name": "search_notes", "args": map[string]any{"q": "meetings"},
+					}}},
+				}}},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []map[string]any{{"content": map[string]any{
+				"parts": []map[string]any{{"text": "done"}},
+			}}},
+		})
+	}))
+	defer srv.Close()
+
+	provider := AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, Model: "gemini-2.0-flash"}
+	first, err := Complete(context.Background(), CompleteRequest{
+		Provider: provider,
+		Messages: []ChatMessage{{Role: RoleUser, Content: "find meetings"}},
+		Tools:    []ToolDef{dummyTool()},
+	})
+	if err != nil {
+		t.Fatalf("first Complete: %v", err)
+	}
+	if len(first.ToolCalls) != 1 || first.ToolCalls[0].Name != "search_notes" || first.ToolCalls[0].ID != "call_google_opaque" {
+		t.Fatalf("first tool call = %+v", first.ToolCalls)
+	}
+
+	_, err = Complete(context.Background(), CompleteRequest{
+		Provider: provider,
+		Messages: []ChatMessage{
+			{Role: RoleUser, Content: "find meetings"},
+			{Role: RoleAssistant, ToolCalls: first.ToolCalls},
+			{Role: RoleTool, ToolCallID: first.ToolCalls[0].ID, Content: `{"count":3}`},
+		},
+		Tools: []ToolDef{dummyTool()},
+	})
+	if err != nil {
+		t.Fatalf("second Complete: %v", err)
+	}
+	if len(captured) != 2 {
+		t.Fatalf("requests = %d, want 2", len(captured))
+	}
+	contents := captured[1].Contents
+	if len(contents) != 3 || len(contents[2].Parts) != 1 || contents[2].Parts[0].FunctionResponse == nil {
+		t.Fatalf("second request contents = %+v", contents)
+	}
+	response := contents[2].Parts[0].FunctionResponse
+	if response.Name != "search_notes" {
+		t.Errorf("functionResponse name = %q, want search_notes", response.Name)
+	}
+	if response.ID != "call_google_opaque" {
+		t.Errorf("functionResponse id = %q, want call_google_opaque", response.ID)
 	}
 }
 

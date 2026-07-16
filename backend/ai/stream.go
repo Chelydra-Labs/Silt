@@ -46,10 +46,15 @@ type ToolCallDelta struct {
 // the final CompleteResult.ToolCalls).
 type StreamToolDeltaFn func(delta ToolCallDelta) error
 
-// MaxStreamBytes bounds the total accumulated content of a single streamed
-// completion. Mirrors MaxResponseBytes intent for chat (much smaller than
-// embedding batches) while still allowing long answers.
+// MaxStreamBytes bounds the total accumulated content and each tool-call's
+// arguments in a streamed completion. Mirrors MaxResponseBytes intent for chat
+// (much smaller than embedding batches) while still allowing long answers.
 const MaxStreamBytes = 10 * 1024 * 1024 // 10 MB
+
+// maxMalformedSSEFrames allows an isolated provider hiccup without making a
+// stream unusable, but prevents a mostly-invalid response from being reported
+// as a successful completion.
+const maxMalformedSSEFrames = 3
 
 // streamChatChunk is one OpenAI-compatible SSE data payload.
 type streamChatChunk struct {
@@ -196,9 +201,12 @@ func parseOpenAISSE(r io.Reader, fallbackModel string, onDelta StreamDeltaFn, on
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var (
-		content strings.Builder
-		model   = fallbackModel
-		usage   *AIUsage
+		content         strings.Builder
+		model           = fallbackModel
+		usage           *AIUsage
+		malformedFrames int
+		sawDone         bool
+		sawFinishReason bool
 	)
 	// toolAccum reassembles a single tool call from streamed fragments.
 	type toolAccum struct {
@@ -224,12 +232,17 @@ func parseOpenAISSE(r io.Reader, fallbackModel string, onDelta StreamDeltaFn, on
 			continue
 		}
 		if payload == "[DONE]" {
+			sawDone = true
 			break
 		}
 		var chunk streamChatChunk
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			// Skip malformed chunks rather than aborting a mostly-good stream;
-			// a single bad frame is not fatal for chat UX.
+			malformedFrames++
+			// A single malformed frame is not fatal for chat UX, but a stream
+			// that is mostly malformed must not be reported as a success.
+			if malformedFrames >= maxMalformedSSEFrames {
+				return CompleteResult{}, &AIError{Kind: ErrServer, Message: fmt.Sprintf("stream contains too many malformed SSE frames (at least %d)", maxMalformedSSEFrames)}
+			}
 			continue
 		}
 		if chunk.Model != "" {
@@ -246,6 +259,9 @@ func parseOpenAISSE(r io.Reader, fallbackModel string, onDelta StreamDeltaFn, on
 			continue
 		}
 		choice := chunk.Choices[0]
+		if choice.FinishReason != nil && *choice.FinishReason != "" {
+			sawFinishReason = true
+		}
 		// Content delta.
 		if choice.Delta.Content != "" {
 			if content.Len()+len(choice.Delta.Content) > MaxStreamBytes {
@@ -275,6 +291,9 @@ func parseOpenAISSE(r io.Reader, fallbackModel string, onDelta StreamDeltaFn, on
 					frag.Name = d.Function.Name
 				}
 				if d.Function.Arguments != "" {
+					if a.args.Len()+len(d.Function.Arguments) > MaxStreamBytes {
+						return CompleteResult{}, &AIError{Kind: ErrServer, Message: fmt.Sprintf("stream tool arguments for call %d exceed %d-byte cap", d.Index, MaxStreamBytes)}
+					}
 					a.args.WriteString(d.Function.Arguments)
 					frag.ArgumentsFragment = d.Function.Arguments
 				}
@@ -288,6 +307,17 @@ func parseOpenAISSE(r io.Reader, fallbackModel string, onDelta StreamDeltaFn, on
 	}
 	if err := scanner.Err(); err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("read stream: %v", err)}
+	}
+	if !sawDone && !sawFinishReason {
+		// Several providers legitimately close an SSE response without [DONE].
+		// Keep that tolerant behavior when the ending is ambiguous, but a partially
+		// assembled tool argument is clear evidence that the response was truncated.
+		for _, idx := range accumOrder {
+			a := accum[idx]
+			if a.args.Len() > 0 && !json.Valid([]byte(a.args.String())) {
+				return CompleteResult{}, &AIError{Kind: ErrServer, Message: fmt.Sprintf("stream ended before tool arguments for call %d were complete", idx)}
+			}
+		}
 	}
 
 	// Reassemble accumulated tool calls in arrival order.

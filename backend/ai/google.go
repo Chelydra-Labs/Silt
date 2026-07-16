@@ -235,12 +235,10 @@ func googleBuildToolConfig(tc *ToolChoice, schema json.RawMessage) *googleToolCo
 }
 
 // googleArgsFromRaw normalizes a tool-call arguments RawMessage into the JSON
-// object bytes Google's functionCall.args expects (defaults to {} when empty).
+// object bytes Google's functionCall.args expects (defaults to {} when empty or
+// non-object).
 func googleArgsFromRaw(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 {
-		return json.RawMessage(`{}`)
-	}
-	return raw
+	return normalizeToolArguments(raw)
 }
 
 // googleToolResponse renders a tool-result content string as the JSON object

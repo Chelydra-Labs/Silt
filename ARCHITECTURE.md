@@ -536,6 +536,15 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   reasoning) so every plugin consumer receives reasoning-free text — see
   `frontend/src/plugins/stripReasoning.ts`.
 
+**Unified AI surface.** AI chat has one right-side drawer, opened by the
+titlebar's **Silt AI** control when AI is available. The ordinary Search
+control remains a separate, unchanged surface. The drawer renders a typed
+transcript of text, evidence/citations, tool calls, tool results, proposals,
+staged confirmations, and status entries. The agent tool loop is the default
+orchestrator; retrieval contributes evidence and citations, while writing
+actions contribute reviewable proposals. AI-capable plugins provide these
+capabilities and lifecycle services rather than owning separate chat views.
+
 Signatures and per-binding doc-comments live in `app.go` and the `app_*.go`
 files; this list is the contract surface, not the source.
 
@@ -960,7 +969,7 @@ ListPlugins() → .system/plugins/<id>/ folders (skip .disabled sentinel)
         │
         ▼
 resolve each id:
-   first-party registry (bundled Svelte component)  ──► always available
+   first-party registry (bundled entry; optional Svelte component) ─► always available
    on-disk → ReadPluginSource(id) → Blob URL → import(/* @vite-ignore */)
         │
         ▼
@@ -973,6 +982,12 @@ plugin.onVaultOpen(ctx)             ←   plugin lifecycle hook
 App view router renders plugin:<id> via PluginView (incl. the silt-tasks hub)
 
 Per-plugin load failures are collected and surfaced (PluginView shows a load-error notice) without aborting boot. The `plugins:changed` Wails event (emitted after install/uninstall/enable/disable) re-runs discovery.
+
+`RegisteredPlugin.component` is optional. `PluginView` skips a registered
+plugin that has no component, allowing headless capability providers to keep
+their lifecycle hooks, settings, event subscriptions, and SDK-backed services
+without adding a navigable view. The unified AI drawer is the host-owned
+surface for the first-party AI capability providers.
 
 **Vault-switch lifecycle.** The Go `vault:closing` event fires before teardown so the loader can run every plugin's `onVaultClose`/`onShutdown` hook and clear the session registry; it also resets the unified Tasks hub state (`resetTaskHubState` in `first-party/silt-tasks/state.svelte.ts`) so a switched vault doesn't inherit the previous display mode, scope, grouping, filters, saved views, or `focusDate`. A `loadedPlugins.loadersReady` flag gates `PluginContext` construction in `Sidebar.svelte` and `PluginView.svelte`: the flag flips to `false` at the start of teardown and back to `true` once the next `loadPlugins` completes, so a sidebar that remounts during the clear→re-register window never captures a stale/empty session token (and `makePluginContext` is simply not called against a half-torn-down registry). The derived context re-runs on the flag, so the moment the new vault's plugins resolve the sidebar re-binds cleanly.
 

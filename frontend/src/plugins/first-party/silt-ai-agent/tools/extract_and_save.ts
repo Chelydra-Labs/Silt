@@ -58,6 +58,11 @@ export const extractAndSaveToolDef = {
 }
 
 const MAX_SOURCE_IDS = 20
+const MAX_EXTRACTED_ITEMS = 50
+const MAX_FIELD_LENGTH = 2_000
+const MAX_SUMMARY_LENGTH = 4_000
+const MAX_SALVAGE_LENGTH = 8_000
+const TRUNCATION_MARKER = '…[truncated]'
 
 type ExtractionMode = 'summary' | 'flashcards' | 'qa_pairs' | 'action_items'
 
@@ -264,12 +269,15 @@ export async function handleExtractAndSave(
   // the user's call still produced a page and the agent can retry with a
   // follow-up turn. The body prefers the specific error message when set.
   if (parsed.blocks.length === 0) {
-    const detail =
+    const detail = truncate(
       parsed.warning ??
-      `model output did not match the ${mode} schema; raw response saved as a block`
+        `model output did not match the ${mode} schema; raw response saved as a block`,
+      MAX_FIELD_LENGTH
+    )
+    const raw = rawContent.trim()
     const rawBlock =
-      rawContent.trim().length > 0
-        ? `\n\nRaw model response:\n\n${rawContent.trim()}`
+      raw.length > 0
+        ? `\n\nRaw model response:\n\n${truncate(raw, MAX_SALVAGE_LENGTH)}`
         : ''
     const salvagedBody = `> ⚠ extraction failed (${mode}): ${detail}${rawBlock}`
     parsed = {
@@ -333,7 +341,10 @@ async function fetchSourceBlocks(
 function renderSourcesForPrompt(sources: SourceBlock[]): string {
   return sources
     .map((s, i) => {
-      const body = s.clean_content.replace(/\n/g, '\n  ')
+      const body = truncate(s.clean_content, MAX_FIELD_LENGTH).replace(
+        /\n/g,
+        '\n  '
+      )
       return `[${i + 1}] block ${s.id}:\n  ${body}`
     })
     .join('\n\n')
@@ -403,7 +414,10 @@ export function parseExtraction(
         warning: 'summary missing or empty'
       }
     }
-    return { blocks: [summary], salvaged: false }
+    return {
+      blocks: [truncate(summary, MAX_SUMMARY_LENGTH)],
+      salvaged: false
+    }
   }
 
   const items = Array.isArray(obj.items) ? obj.items : null
@@ -415,6 +429,7 @@ export function parseExtraction(
     }
   }
   const blocks = items
+    .slice(0, MAX_EXTRACTED_ITEMS)
     .map((it, i) => renderItem(mode, it, i))
     .filter((s) => s.length > 0)
   if (blocks.length === 0) {
@@ -436,21 +451,21 @@ function renderItem(
   if (item === null || typeof item !== 'object') return ''
   const o = item as Record<string, unknown>
   if (mode === 'flashcards') {
-    const front = String(o.front ?? '').trim()
-    const back = String(o.back ?? '').trim()
+    const front = truncate(String(o.front ?? '').trim(), MAX_FIELD_LENGTH)
+    const back = truncate(String(o.back ?? '').trim(), MAX_FIELD_LENGTH)
     if (!front || !back) return ''
     return `**Q${index + 1}: ${front}**\n${back}`
   }
   if (mode === 'qa_pairs') {
-    const q = String(o.question ?? '').trim()
-    const a = String(o.answer ?? '').trim()
+    const q = truncate(String(o.question ?? '').trim(), MAX_FIELD_LENGTH)
+    const a = truncate(String(o.answer ?? '').trim(), MAX_FIELD_LENGTH)
     if (!q || !a) return ''
     return `**Q${index + 1}: ${q}**\n${a}`
   }
   if (mode === 'action_items') {
-    const title = String(o.title ?? '').trim()
+    const title = truncate(String(o.title ?? '').trim(), MAX_FIELD_LENGTH)
     if (!title) return ''
-    const due = String(o.due_date ?? '').trim()
+    const due = truncate(String(o.due_date ?? '').trim(), 32)
     const dueSuffix =
       due && /^\d{4}-\d{2}-\d{2}$/.test(due) ? ` [due:: ${due}]` : ''
     return `- [ ] ${title}${dueSuffix}`
@@ -476,4 +491,10 @@ function extractJson(raw: string): string {
   const end = trimmed.lastIndexOf(closer)
   if (end <= start) return ''
   return trimmed.slice(start, end + 1)
+}
+
+function truncate(value: string, max: number): string {
+  if (value.length <= max) return value
+  const keep = Math.max(0, max - TRUNCATION_MARKER.length)
+  return `${value.slice(0, keep)}${TRUNCATION_MARKER}`
 }
