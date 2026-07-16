@@ -273,9 +273,10 @@ describe('AIProviderTab', () => {
     it('Arrow/Home/End move the active segment (roving tabindex)', async () => {
       render(AIProviderTab)
       await ready()
-      const tablist = screen.getByRole('tablist', {
-        name: /AI settings views/i
+      const nav = screen.getByRole('navigation', {
+        name: /AI settings sections/i
       })
+      const tablist = within(nav).getByRole('tablist')
       const setup = screen.getByRole('tab', { name: /^Setup$/i })
       const advanced = screen.getByRole('tab', { name: /^Advanced$/i })
       expect(setup.getAttribute('aria-selected')).toBe('true')
@@ -293,6 +294,32 @@ describe('AIProviderTab', () => {
       ).toBeInTheDocument()
       await fireEvent.keyDown(tablist, { key: 'End' })
       expect(advanced.getAttribute('aria-selected')).toBe('true')
+    })
+
+    it('shows embedding empty-state CTA when RAG is on without an embedding model', async () => {
+      mocks.GetAIProviderConfig.mockResolvedValue({
+        ...structuredClone(mocks.configState),
+        features: {
+          enabled: true,
+          rag_enabled: true,
+          summaries_enabled: false
+        },
+        embedding: {
+          provider_type: 'openai-compatible',
+          base_url: '',
+          model: '',
+          has_key: false,
+          timeout_ms: 60000
+        }
+      })
+      render(AIProviderTab)
+      await ready()
+      expect(
+        screen.getByText(/Semantic search needs an embedding model/i)
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: /Set up embedding/i })
+      ).toBeInTheDocument()
     })
 
     it('calls UpdateAIFeatures when Enable AI is toggled', async () => {

@@ -343,6 +343,8 @@ export function createQAController() {
     // Keep prior citations visible until a new answer lands.
     panelStatus = 'asking'
     errorMessage = ''
+    // Clear prior degrade so a healthy search does not keep showing the banner.
+    searchDegradeReason = null
     let assistantStarted = false
 
     try {

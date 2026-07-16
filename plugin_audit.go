@@ -527,20 +527,19 @@ func looksLikeAbsolutePath(s string) bool {
 	if len(s) < 3 {
 		return false
 	}
-	// Windows drive or UNC / POSIX absolute.
+	// Windows drive path (C:\… or C:/…).
 	if (s[0] >= 'A' && s[0] <= 'Z' || s[0] >= 'a' && s[0] <= 'z') && s[1] == ':' {
 		return true
 	}
-	if strings.HasPrefix(s, "\\\\") || strings.HasPrefix(s, "/") {
-		// Avoid treating vault-relative "notebook/section" as absolute: require
-		// a second path segment that looks filesystem-like, or known roots.
-		if strings.HasPrefix(s, "/Users/") || strings.HasPrefix(s, "/home/") ||
-			strings.HasPrefix(s, "/var/") || strings.HasPrefix(s, "/tmp/") {
-			return true
-		}
-		if strings.HasPrefix(s, "\\\\") {
-			return true
-		}
+	// UNC.
+	if strings.HasPrefix(s, "\\\\") {
+		return true
+	}
+	// POSIX absolute: any /-prefixed string with a path separator (covers
+	// /home, /mnt, /media, /srv, /opt, /root, /data, …). Vault-relative
+	// "notebook/section" has no leading slash and is left alone.
+	if s[0] == '/' && strings.Contains(s[1:], "/") {
+		return true
 	}
 	return false
 }

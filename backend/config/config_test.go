@@ -290,8 +290,12 @@ func TestDefaults_AIFeaturesOffByDefault(t *testing.T) {
 
 // TestNormalize_MigratesAIFeaturesFromDisabled: legacy per-plugin enables map
 // into ai.features once, and AI ids are stripped from plugins.disabled.
+// Derivation requires the legacy opt-in seed marker so partial disabled lists
+// cannot silently enable AI.
 func TestNormalize_MigratesAIFeaturesFromDisabled(t *testing.T) {
-	// All four disabled → features stay off.
+	seeded := map[string]any{seededOptInDisabledKey: []string{AIPluginQA, AIPluginAssistant}}
+
+	// All four disabled → features stay off (seeded or not).
 	cfg := normalize(SystemConfig{
 		Plugins: PluginsConfig{
 			Disabled: []string{
@@ -312,11 +316,11 @@ func TestNormalize_MigratesAIFeaturesFromDisabled(t *testing.T) {
 		t.Fatal("migration marker must be set")
 	}
 
-	// Agent enabled (not in disabled) → master on.
+	// Agent enabled (not in disabled) + seed marker → master on.
 	cfg2 := normalize(SystemConfig{
 		Plugins: PluginsConfig{
 			Disabled:       []string{AIPluginSummary, AIPluginQA, AIPluginAssistant},
-			PluginSettings: map[string]any{},
+			PluginSettings: cloneSettings(seeded),
 		},
 	})
 	if !cfg2.AI.Features.Enabled {
@@ -330,7 +334,7 @@ func TestNormalize_MigratesAIFeaturesFromDisabled(t *testing.T) {
 	cfg3 := normalize(SystemConfig{
 		Plugins: PluginsConfig{
 			Disabled:       []string{AIPluginSummary, AIPluginAssistant, AIPluginAgent},
-			PluginSettings: map[string]any{},
+			PluginSettings: cloneSettings(seeded),
 		},
 	})
 	if !cfg3.AI.Features.Enabled || !cfg3.AI.Features.RAGEnabled {
@@ -341,7 +345,7 @@ func TestNormalize_MigratesAIFeaturesFromDisabled(t *testing.T) {
 	cfg4 := normalize(SystemConfig{
 		Plugins: PluginsConfig{
 			Disabled:       []string{AIPluginQA, AIPluginAssistant, AIPluginAgent},
-			PluginSettings: map[string]any{},
+			PluginSettings: cloneSettings(seeded),
 		},
 	})
 	if !cfg4.AI.Features.Enabled || !cfg4.AI.Features.SummariesEnabled {
@@ -354,6 +358,33 @@ func TestNormalize_MigratesAIFeaturesFromDisabled(t *testing.T) {
 	if cfg4.AI.Features.Enabled {
 		t.Fatal("post-migration normalize must not re-enable features from empty disabled")
 	}
+
+	// Partial unseeded listing must not enable AI (legacy hand-edit / never-normalized).
+	partial := normalize(SystemConfig{
+		Plugins: PluginsConfig{
+			Disabled:       []string{AIPluginSummary},
+			PluginSettings: map[string]any{},
+		},
+	})
+	if partial.AI.Features.Enabled || partial.AI.Features.RAGEnabled || partial.AI.Features.SummariesEnabled {
+		t.Fatalf("partial unseeded disabled must keep features off; got %+v", partial.AI.Features)
+	}
+	if partial.Plugins.PluginSettings[aiFeaturesMigratedKey] != true {
+		t.Fatal("partial vault must still be marked migrated")
+	}
+	for _, id := range partial.Plugins.Disabled {
+		if IsFirstPartyAIPlugin(id) {
+			t.Errorf("AI id %q must be stripped even when features stay off", id)
+		}
+	}
+}
+
+func cloneSettings(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // TestNormalize_ClampsAIFeatureDependents: RAG/summaries cannot stay on when

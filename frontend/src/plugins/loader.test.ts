@@ -279,6 +279,8 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
       getSlashCommands().some((c) => c.id === 'silt-ai-assistant:test-ai-cmd')
     ).toBe(false)
     expect(mockUnregisterSession).toHaveBeenCalled()
+    expect(mockClosePluginDB).toHaveBeenCalledWith('silt-ai-agent')
+    expect(mockClosePluginDB).toHaveBeenCalledWith('silt-ai-assistant')
   })
 
   it('vault:closing resets the unified task hub state #326 item 1', async () => {

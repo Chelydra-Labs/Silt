@@ -16,7 +16,11 @@ import {
   type AIChatEntry,
   type ProposalEntry
 } from './types'
-import { agentStatusMessage, toolStatusLabel } from './agent-status'
+import {
+  agentStatusMessage,
+  isLiveAgentStatus,
+  toolStatusLabel
+} from './agent-status'
 import { parseCitations } from '../../first-party/silt-ai-qa/rag'
 import type { RetrievedPassage } from '../../shared/retrieval/hybrid'
 import type { ToolEvidence } from '../../first-party/silt-ai-agent/tool-registry'
@@ -57,6 +61,14 @@ export interface AIChatCapability {
 
 export interface CapabilityRegistration {
   makeDefault?: boolean
+}
+
+function findLiveAgentStatus(
+  transcript: readonly AIChatEntry[]
+): AIChatEntry | undefined {
+  return transcript.find(
+    (e) => e.kind === 'status' && isLiveAgentStatus(e.status)
+  )
 }
 
 export function createAgentCapability(): AIChatCapability {
@@ -128,13 +140,11 @@ export function createAgentCapability(): AIChatCapability {
         },
         onToolCall: (call) => {
           if (stale()) return
-          // Promote the live status line so the shell shows a friendly tool
-          // label instead of a binary "running" flag (#629).
-          const thinking = context.transcript.find(
-            (e) => e.kind === 'status' && e.status === 'thinking'
-          )
-          if (thinking) {
-            context.update(thinking.id, (entry) =>
+          // Promote any non-terminal status line so multi-step tool runs
+          // keep updating the shell (exact 'thinking' match only worked once).
+          const live = findLiveAgentStatus(context.transcript)
+          if (live) {
+            context.update(live.id, (entry) =>
               entry.kind === 'status'
                 ? {
                     ...entry,
@@ -155,11 +165,9 @@ export function createAgentCapability(): AIChatCapability {
         },
         onToolResult: ({ result }) => {
           if (stale()) return
-          const toolStatus = context.transcript.find(
-            (e) => e.kind === 'status' && e.status === 'running_tool'
-          )
-          if (toolStatus) {
-            context.update(toolStatus.id, (entry) =>
+          const live = findLiveAgentStatus(context.transcript)
+          if (live) {
+            context.update(live.id, (entry) =>
               entry.kind === 'status'
                 ? {
                     ...entry,
@@ -223,13 +231,7 @@ export function createAgentCapability(): AIChatCapability {
         },
         onStaging: (event) => {
           if (stale()) return
-          const liveStatus = context.transcript.find(
-            (e) =>
-              e.kind === 'status' &&
-              (e.status === 'thinking' ||
-                e.status === 'running_tool' ||
-                e.status === 'reviewing')
-          )
+          const liveStatus = findLiveAgentStatus(context.transcript)
           if (liveStatus) {
             context.update(liveStatus.id, (entry) =>
               entry.kind === 'status'
@@ -262,16 +264,25 @@ export function createAgentCapability(): AIChatCapability {
           context.update(confirmation.id, (entry) =>
             entry.kind === 'confirmation' ? { ...entry, state: outcome } : entry
           )
-          const liveStatus = context.transcript.find(
-            (e) => e.kind === 'status' && e.status === 'waiting_confirmation'
-          )
-          if (liveStatus && outcome === 'confirmed') {
+          const liveStatus = findLiveAgentStatus(context.transcript)
+          if (!liveStatus) return
+          if (outcome === 'confirmed') {
             context.update(liveStatus.id, (entry) =>
               entry.kind === 'status'
                 ? {
                     ...entry,
                     status: 'applying',
                     message: agentStatusMessage('applying')
+                  }
+                : entry
+            )
+          } else if (outcome === 'rejected') {
+            context.update(liveStatus.id, (entry) =>
+              entry.kind === 'status'
+                ? {
+                    ...entry,
+                    status: 'reviewing',
+                    message: 'Rejected — re-planning…'
                   }
                 : entry
             )

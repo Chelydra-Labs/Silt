@@ -7,7 +7,6 @@
 // schema; P0 tools are registered on vault open via tools.ts.
 
 import type { PluginContext, PluginManifest } from '../../sdk'
-import { agentChrome } from './state.svelte'
 import { migrateSchema } from './db'
 import { clearTools } from './tool-registry'
 import { registerP0Tools, registerP1Tools, registerP2Tools } from './tools'
@@ -32,11 +31,9 @@ export const manifest: PluginManifest = {
 export default {
   manifest,
   onVaultOpen(ctx: PluginContext) {
-    // The unified AI drawer is the agent's surface. The titlebar control and
-    // command entry gate on this flag, which is true only while the agent
-    // plugin is enabled and a valid session exists for privileged SDK calls.
-    agentChrome.available = true
     // Register P0 + P1 + P2 tools so the agent loop has a catalog before it runs.
+    // Drawer availability is gated by getAIAvailability().drawerAvailable
+    // (ai.features + session), not a separate chrome flag.
     registerP0Tools()
     registerP1Tools()
     registerP2Tools()
@@ -49,12 +46,10 @@ export default {
       })
   },
   onVaultClose() {
-    agentChrome.available = false
     resetAIChatDrawer()
     clearTools()
   },
   onShutdown() {
-    agentChrome.available = false
     resetAIChatDrawer()
     clearTools()
   }

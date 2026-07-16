@@ -56,3 +56,16 @@ export function agentStatusMessage(
       return 'Something went wrong'
   }
 }
+
+/** Non-terminal statuses that the rolling activity line may promote through. */
+const LIVE_AGENT_STATUSES = new Set<AgentActivityStatus>([
+  'thinking',
+  'running_tool',
+  'reviewing',
+  'waiting_confirmation',
+  'applying'
+])
+
+export function isLiveAgentStatus(status: string): boolean {
+  return LIVE_AGENT_STATUSES.has(status as AgentActivityStatus)
+}

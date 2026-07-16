@@ -313,7 +313,7 @@
     {#if ctl?.showStaleBanner}
       <div
         class="flex items-start gap-3 p-3.5 rounded-lg bg-status-warn/5 border border-status-warn/30"
-        role="status"
+        role="alert"
       >
         <span
           class="material-symbols-outlined text-status-warn text-icon-md flex-shrink-0 mt-0.5"
@@ -354,7 +354,7 @@
     {#if ctl?.searchDegradeReason}
       <div
         class="flex items-start gap-3 p-3.5 rounded-lg bg-status-warn/5 border border-status-warn/30"
-        role="status"
+        role="alert"
       >
         <span
           class="material-symbols-outlined text-status-warn text-icon-md flex-shrink-0 mt-0.5"

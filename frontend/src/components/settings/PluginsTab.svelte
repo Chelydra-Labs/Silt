@@ -734,9 +734,8 @@
                 </dd>
               </dl>
 
-              {#if hasBespokeSettings(card.id)}
-                <!-- #214: this plugin renders settings via a dedicated tab;
-                     offer a one-click switch instead of dead text. -->
+              {#if hasBespokeSettings(card.id) && !card.managedInAI}
+                <!-- #214: dedicated settings tab (not the unified AI tab). -->
                 <div>
                   <div
                     class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
@@ -758,7 +757,7 @@
                     </p>
                   {/if}
                 </div>
-              {:else if card.settingsSchema && card.settingsSchema.length > 0}
+              {:else if card.settingsSchema && card.settingsSchema.length > 0 && !card.managedInAI}
                 <div>
                   <div
                     class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"

@@ -177,6 +177,23 @@
     }
   }
 
+  /** Jump to the visible embedding model control (sync card or split section). */
+  async function focusEmbeddingSetup() {
+    await selectSegment('ai-setup')
+    if (ai.syncProviders) {
+      document
+        .getElementById('ai-embedding-model')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      document.getElementById('ai-embedding-model')?.focus?.()
+    } else {
+      ai.activeRole = 'embedding'
+      await tick()
+      document
+        .getElementById('ai-embedding-section')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }
+
   // Drop Capabilities selection when the feature is turned off.
   $effect(() => {
     if (!showCapabilities && activeSegment === 'ai-capabilities') {
@@ -242,7 +259,6 @@
       <div
         class="flex flex-wrap gap-1 p-1 rounded-xl bg-surface-panel/40 border border-surface-panel-border/80 max-w-md"
         role="tablist"
-        aria-label="AI settings views"
         aria-orientation="horizontal"
         tabindex="-1"
         onkeydown={handleSegmentKeydown}
@@ -254,7 +270,7 @@
             id="ai-seg-tab-{seg.id}"
             bind:this={segmentTabRefs[i]}
             aria-selected={activeSegment === seg.id}
-            aria-controls={seg.id}
+            aria-controls="{seg.id}-panel"
             tabindex={activeSegment === seg.id ? 0 : -1}
             class="flex-1 px-3 py-1.5 rounded-lg text-type-xs font-label-sm-bold transition-all border-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 {activeSegment ===
             seg.id
@@ -272,307 +288,342 @@
       class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-6 pb-6 pt-6 space-y-6"
     >
       {#if activeSegment === 'ai-setup'}
-        <!-- Features first: enablement before plumbing (#632). -->
-        <section
-          aria-label="AI features"
-          class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4 space-y-4"
-          id="ai-setup"
+        <div
+          id="ai-setup-panel"
+          role="tabpanel"
+          aria-labelledby="ai-seg-tab-ai-setup"
+          class="space-y-6"
         >
-          <div>
-            <h3 class="text-text-primary text-type-md font-semibold m-0">
-              Features
-            </h3>
-            <p class="text-text-muted text-type-xs font-label-sm m-0 mt-0.5">
-              Turn AI on once, then choose optional capabilities.
-            </p>
-          </div>
-
-          <div class="flex items-start justify-between gap-4">
-            <div class="space-y-0.5 min-w-0">
-              <span
-                id="ai-enable-label"
-                class="text-text-primary text-type-md font-semibold block"
-              >
-                Enable AI
-              </span>
-              <span class="text-text-muted text-type-xs font-label-sm block">
-                Chat with your vault, writing help, and tools. Uses your chat
-                model.
-              </span>
-            </div>
-            <label
-              class="flex items-center cursor-pointer select-none"
-              for="ai-enable"
-            >
-              <input
-                id="ai-enable"
-                type="checkbox"
-                class="keyring-switch peer sr-only"
-                aria-labelledby="ai-enable-label"
-                checked={features.enabled === true}
-                disabled={ai.featuresSaving}
-                onchange={(e) =>
-                  void ai.updateFeatures({ enabled: e.currentTarget.checked })}
-              />
-              <span
-                aria-hidden="true"
-                class="keyring-switch-track"
-                class:on={features.enabled === true}
-              ></span>
-            </label>
-          </div>
-
-          <div
-            class="ml-3 pl-3 border-l border-surface-panel-border space-y-3"
-            class:opacity-50={features.enabled !== true}
+          <!-- Features first: enablement before plumbing (#632). -->
+          <section
+            aria-label="AI features"
+            class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4 space-y-4"
+            aria-busy={ai.featuresSaving}
           >
-            <div class="flex items-start justify-between gap-4">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 class="text-text-primary text-type-md font-semibold m-0">
+                  Features
+                </h3>
+                <p
+                  class="text-text-muted text-type-xs font-label-sm m-0 mt-0.5"
+                >
+                  Turn AI on once, then choose optional capabilities.
+                </p>
+              </div>
+              {#if ai.featuresSaving}
+                <span
+                  class="inline-flex items-center gap-1.5 text-text-muted text-type-xs font-label-sm"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <span
+                    class="material-symbols-outlined text-icon-sm animate-spin"
+                    aria-hidden="true">progress_activity</span
+                  >
+                  Saving…
+                </span>
+              {/if}
+            </div>
+
+            <div
+              class="flex flex-col sm:flex-row sm:items-start justify-between gap-4"
+            >
               <div class="space-y-0.5 min-w-0">
                 <span
-                  id="ai-rag-label"
-                  class="text-text-primary text-type-sm font-semibold block"
+                  id="ai-enable-label"
+                  class="text-text-primary text-type-md font-semibold block"
                 >
-                  Semantic search
+                  Enable AI
                 </span>
                 <span class="text-text-muted text-type-xs font-label-sm block">
-                  Find notes by meaning. Needs an embedding model.
+                  Chat with your vault, writing help, and tools. Uses your chat
+                  model.
                 </span>
               </div>
               <label
-                class="flex items-center select-none"
-                class:cursor-pointer={features.enabled === true}
-                class:cursor-not-allowed={features.enabled !== true}
-                for="ai-rag"
-                title={features.enabled !== true
-                  ? 'Enable AI first'
-                  : undefined}
+                class="flex items-center cursor-pointer select-none"
+                for="ai-enable"
               >
                 <input
-                  id="ai-rag"
+                  id="ai-enable"
                   type="checkbox"
                   class="keyring-switch peer sr-only"
-                  aria-labelledby="ai-rag-label"
-                  checked={features.rag_enabled === true}
-                  disabled={ai.featuresSaving || features.enabled !== true}
+                  aria-labelledby="ai-enable-label"
+                  checked={features.enabled === true}
+                  disabled={ai.featuresSaving}
                   onchange={(e) =>
                     void ai.updateFeatures({
-                      rag_enabled: e.currentTarget.checked
+                      enabled: e.currentTarget.checked
                     })}
                 />
                 <span
                   aria-hidden="true"
                   class="keyring-switch-track"
-                  class:on={features.rag_enabled === true}
-                  class:disabled={features.enabled !== true}
+                  class:on={features.enabled === true}
                 ></span>
               </label>
             </div>
 
-            {#if ai.ragNeedsEmbeddingSetup}
+            <div
+              class="ml-3 pl-3 border-l border-surface-panel-border space-y-3"
+              class:opacity-50={features.enabled !== true}
+            >
               <div
-                class="bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-lg p-3 flex items-start gap-2"
-                role="status"
+                class="flex flex-col sm:flex-row sm:items-start justify-between gap-4"
               >
-                <span
-                  class="material-symbols-outlined text-accent-primary-start text-icon-md flex-shrink-0"
-                  aria-hidden="true">link</span
-                >
-                <div class="text-type-xs font-body-md text-text-primary">
-                  Semantic search needs an embedding model.
-                  <a
-                    href="#ai-embedding-section"
-                    class="text-accent-primary-start underline font-label-sm-bold ml-1"
-                    onclick={(e) => {
-                      e.preventDefault()
-                      document
-                        .getElementById('ai-embedding-section')
-                        ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                    }}>Set up embedding</a
+                <div class="space-y-0.5 min-w-0">
+                  <span
+                    id="ai-rag-label"
+                    class="text-text-primary text-type-sm font-semibold block"
                   >
+                    Semantic search
+                  </span>
+                  <span
+                    class="text-text-muted text-type-xs font-label-sm block"
+                  >
+                    Find notes by meaning. Needs an embedding model.
+                  </span>
                 </div>
+                <label
+                  class="flex items-center select-none"
+                  class:cursor-pointer={features.enabled === true}
+                  class:cursor-not-allowed={features.enabled !== true}
+                  for="ai-rag"
+                  title={features.enabled !== true
+                    ? 'Enable AI first'
+                    : undefined}
+                >
+                  <input
+                    id="ai-rag"
+                    type="checkbox"
+                    class="keyring-switch peer sr-only"
+                    aria-labelledby="ai-rag-label"
+                    checked={features.rag_enabled === true}
+                    disabled={ai.featuresSaving || features.enabled !== true}
+                    onchange={(e) =>
+                      void ai.updateFeatures({
+                        rag_enabled: e.currentTarget.checked
+                      })}
+                  />
+                  <span
+                    aria-hidden="true"
+                    class="keyring-switch-track"
+                    class:on={features.rag_enabled === true}
+                    class:disabled={features.enabled !== true}
+                  ></span>
+                </label>
               </div>
-            {:else if features.rag_enabled === true && qaStaleReason}
+
+              {#if ai.ragNeedsEmbeddingSetup}
+                <div
+                  class="bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-lg p-3 flex items-start gap-2"
+                  role="status"
+                >
+                  <span
+                    class="material-symbols-outlined text-accent-primary-start text-icon-md flex-shrink-0"
+                    aria-hidden="true">link</span
+                  >
+                  <div class="text-type-xs font-body-md text-text-primary">
+                    Semantic search needs an embedding model.
+                    <button
+                      type="button"
+                      class="text-accent-primary-start underline font-label-sm-bold ml-1 bg-transparent border-none cursor-pointer p-0"
+                      onclick={() => void focusEmbeddingSetup()}
+                    >
+                      Set up embedding
+                    </button>
+                  </div>
+                </div>
+              {:else if features.rag_enabled === true && qaStaleReason}
+                <div
+                  class="bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-lg p-3 flex items-start gap-2"
+                  role="alert"
+                >
+                  <span
+                    class="material-symbols-outlined text-accent-primary-start text-icon-md flex-shrink-0"
+                    aria-hidden="true">warning</span
+                  >
+                  <div class="text-type-xs font-body-md text-text-primary">
+                    Semantic search index may be out of date: {qaStaleReason}.
+                    Rebuild from Search settings for accurate results.
+                  </div>
+                </div>
+              {:else if features.rag_enabled === true && qaSearchDegrade}
+                <div
+                  class="bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-lg p-3 flex items-start gap-2"
+                  role="alert"
+                >
+                  <span
+                    class="material-symbols-outlined text-accent-primary-start text-icon-md flex-shrink-0"
+                    aria-hidden="true">warning</span
+                  >
+                  <div class="text-type-xs font-body-md text-text-primary">
+                    Search is degraded: {qaSearchDegrade}
+                  </div>
+                </div>
+              {/if}
+
               <div
-                class="bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-lg p-3 flex items-start gap-2"
-                role="status"
+                class="flex flex-col sm:flex-row sm:items-start justify-between gap-4"
+              >
+                <div class="space-y-0.5 min-w-0">
+                  <span
+                    id="ai-summaries-label"
+                    class="text-text-primary text-type-sm font-semibold block"
+                  >
+                    Note summaries
+                  </span>
+                  <span
+                    class="text-text-muted text-type-xs font-label-sm block"
+                  >
+                    Show a short summary banner on notes.
+                  </span>
+                </div>
+                <label
+                  class="flex items-center select-none"
+                  class:cursor-pointer={features.enabled === true}
+                  class:cursor-not-allowed={features.enabled !== true}
+                  for="ai-summaries"
+                  title={features.enabled !== true
+                    ? 'Enable AI first'
+                    : undefined}
+                >
+                  <input
+                    id="ai-summaries"
+                    type="checkbox"
+                    class="keyring-switch peer sr-only"
+                    aria-labelledby="ai-summaries-label"
+                    checked={features.summaries_enabled === true}
+                    disabled={ai.featuresSaving || features.enabled !== true}
+                    onchange={(e) =>
+                      void ai.updateFeatures({
+                        summaries_enabled: e.currentTarget.checked
+                      })}
+                  />
+                  <span
+                    aria-hidden="true"
+                    class="keyring-switch-track"
+                    class:on={features.summaries_enabled === true}
+                    class:disabled={features.enabled !== true}
+                  ></span>
+                </label>
+              </div>
+            </div>
+
+            {#if ai.featuresError}
+              <p class="text-error text-type-xs m-0" role="alert">
+                {ai.featuresError}
+              </p>
+            {/if}
+          </section>
+
+          <!-- Intro & nudge banner -->
+          <section aria-label="AI provider overview">
+            <p
+              class="text-text-primary text-type-md font-body-md leading-relaxed"
+            >
+              Connect Silt to an AI model to power chat, writing help, semantic
+              search, and note summaries. Choose a setup mode below to get
+              started.
+            </p>
+            {#if ai.needsSetup}
+              <div
+                class="mt-4 bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-xl p-4 flex items-start gap-3"
               >
                 <span
-                  class="material-symbols-outlined text-accent-primary-start text-icon-md flex-shrink-0"
-                  aria-hidden="true">warning</span
+                  class="material-symbols-outlined text-accent-primary-start text-icon-lg mt-0.5 flex-shrink-0"
+                  aria-hidden="true">lightbulb</span
                 >
-                <div class="text-type-xs font-body-md text-text-primary">
-                  Semantic search index may be out of date: {qaStaleReason}.
-                  Rebuild from Search settings for accurate results.
-                </div>
-              </div>
-            {:else if features.rag_enabled === true && qaSearchDegrade}
-              <div
-                class="bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-lg p-3 flex items-start gap-2"
-                role="status"
-              >
-                <span
-                  class="material-symbols-outlined text-accent-primary-start text-icon-md flex-shrink-0"
-                  aria-hidden="true">warning</span
+                <div
+                  class="flex-1 text-type-sm font-body-md text-text-primary leading-relaxed"
                 >
-                <div class="text-type-xs font-body-md text-text-primary">
-                  Search is degraded: {qaSearchDegrade}
+                  <strong class="text-accent-primary-start"
+                    >Set up an AI provider.</strong
+                  >
+                  Leave on <em>Local</em> if you are running Ollama on
+                  localhost, or switch to a cloud provider like
+                  <em>Google AI</em>
+                  or
+                  <em>OpenAI</em> for remote API access.
                 </div>
               </div>
             {/if}
+          </section>
 
-            <div class="flex items-start justify-between gap-4">
-              <div class="space-y-0.5 min-w-0">
+          <!-- Setup Mode & Sync toggle (Pill switch layout) -->
+          <section aria-label="Configuration Mode" class="space-y-3">
+            <div
+              class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+            >
+              <div class="space-y-0.5">
                 <span
-                  id="ai-summaries-label"
-                  class="text-text-primary text-type-sm font-semibold block"
+                  id="sync-providers-label"
+                  class="text-text-primary text-type-md font-semibold block"
                 >
-                  Note summaries
+                  Sync chat and embedding providers
                 </span>
                 <span class="text-text-muted text-type-xs font-label-sm block">
-                  Show a short summary banner on notes.
+                  Recommended. Share the same credentials, provider type, and
+                  base URL for both roles.
                 </span>
               </div>
               <label
-                class="flex items-center select-none"
-                class:cursor-pointer={features.enabled === true}
-                class:cursor-not-allowed={features.enabled !== true}
-                for="ai-summaries"
-                title={features.enabled !== true
-                  ? 'Enable AI first'
-                  : undefined}
+                class="flex items-center cursor-pointer select-none"
+                for="sync-providers-toggle"
               >
                 <input
-                  id="ai-summaries"
+                  id="sync-providers-toggle"
                   type="checkbox"
                   class="keyring-switch peer sr-only"
-                  aria-labelledby="ai-summaries-label"
-                  checked={features.summaries_enabled === true}
-                  disabled={ai.featuresSaving || features.enabled !== true}
+                  aria-labelledby="sync-providers-label"
+                  checked={ai.syncProviders}
                   onchange={(e) =>
-                    void ai.updateFeatures({
-                      summaries_enabled: e.currentTarget.checked
-                    })}
+                    void ai.toggleSyncProviders(e.currentTarget.checked)}
                 />
                 <span
                   aria-hidden="true"
                   class="keyring-switch-track"
-                  class:on={features.summaries_enabled === true}
-                  class:disabled={features.enabled !== true}
+                  class:on={ai.syncProviders}
                 ></span>
               </label>
             </div>
-          </div>
 
-          {#if ai.featuresError}
-            <p class="text-error text-type-xs m-0" role="alert">
-              {ai.featuresError}
-            </p>
-          {/if}
-        </section>
-
-        <!-- Intro & nudge banner -->
-        <section aria-label="AI provider overview">
-          <p
-            class="text-text-primary text-type-md font-body-md leading-relaxed"
-          >
-            Connect Silt to an AI model to power chat, writing help, semantic
-            search, and note summaries. Choose a setup mode below to get
-            started.
-          </p>
-          {#if ai.needsSetup}
-            <div
-              class="mt-4 bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-xl p-4 flex items-start gap-3"
-            >
-              <span
-                class="material-symbols-outlined text-accent-primary-start text-icon-lg mt-0.5 flex-shrink-0"
-                aria-hidden="true">lightbulb</span
-              >
+            <!-- Split Role switcher (only visible in split mode) -->
+            {#if !ai.syncProviders}
               <div
-                class="flex-1 text-type-sm font-body-md text-text-primary leading-relaxed"
+                class="flex p-1 rounded-xl bg-surface-panel/40 border border-surface-panel-border/80 max-w-xs"
+                role="tablist"
+                aria-label="AI Role Switcher"
               >
-                <strong class="text-accent-primary-start"
-                  >Set up an AI provider.</strong
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={ai.activeRole === 'chat'}
+                  onclick={() => (ai.activeRole = 'chat')}
+                  class="flex-1 py-1.5 px-3 rounded-lg text-type-xs font-label-sm-bold transition-all cursor-pointer {ai.activeRole ===
+                  'chat'
+                    ? 'bg-accent-primary-start text-surface-app shadow-md'
+                    : 'text-text-muted hover:text-text-primary'}"
                 >
-                Leave on <em>Local</em> if you are running Ollama on localhost,
-                or switch to a cloud provider like <em>Google AI</em> or
-                <em>OpenAI</em> for remote API access.
+                  Chat Model
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={ai.activeRole === 'embedding'}
+                  onclick={() => (ai.activeRole = 'embedding')}
+                  class="flex-1 py-1.5 px-3 rounded-lg text-type-xs font-label-sm-bold transition-all cursor-pointer {ai.activeRole ===
+                  'embedding'
+                    ? 'bg-accent-primary-start text-surface-app shadow-md'
+                    : 'text-text-muted hover:text-text-primary'}"
+                >
+                  Embedding Model
+                </button>
               </div>
-            </div>
-          {/if}
-        </section>
-
-        <!-- Setup Mode & Sync toggle (Pill switch layout) -->
-        <section aria-label="Configuration Mode" class="space-y-3">
-          <div
-            class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-          >
-            <div class="space-y-0.5">
-              <span
-                id="sync-providers-label"
-                class="text-text-primary text-type-md font-semibold block"
-              >
-                Sync chat and embedding providers
-              </span>
-              <span class="text-text-muted text-type-xs font-label-sm block">
-                Recommended. Share the same credentials, provider type, and base
-                URL for both roles.
-              </span>
-            </div>
-            <label
-              class="flex items-center cursor-pointer select-none"
-              for="sync-providers-toggle"
-            >
-              <input
-                id="sync-providers-toggle"
-                type="checkbox"
-                class="keyring-switch peer sr-only"
-                aria-labelledby="sync-providers-label"
-                checked={ai.syncProviders}
-                onchange={(e) =>
-                  void ai.toggleSyncProviders(e.currentTarget.checked)}
-              />
-              <span
-                aria-hidden="true"
-                class="keyring-switch-track"
-                class:on={ai.syncProviders}
-              ></span>
-            </label>
-          </div>
-
-          <!-- Split Role switcher (only visible in split mode) -->
-          {#if !ai.syncProviders}
-            <div
-              class="flex p-1 rounded-xl bg-surface-panel/40 border border-surface-panel-border/80 max-w-xs"
-              role="tablist"
-              aria-label="AI Role Switcher"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={ai.activeRole === 'chat'}
-                onclick={() => (ai.activeRole = 'chat')}
-                class="flex-1 py-1.5 px-3 rounded-lg text-type-xs font-label-sm-bold transition-all cursor-pointer {ai.activeRole ===
-                'chat'
-                  ? 'bg-accent-primary-start text-surface-app shadow-md'
-                  : 'text-text-muted hover:text-text-primary'}"
-              >
-                Chat Model
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={ai.activeRole === 'embedding'}
-                onclick={() => (ai.activeRole = 'embedding')}
-                class="flex-1 py-1.5 px-3 rounded-lg text-type-xs font-label-sm-bold transition-all cursor-pointer {ai.activeRole ===
-                'embedding'
-                  ? 'bg-accent-primary-start text-surface-app shadow-md'
-                  : 'text-text-muted hover:text-text-primary'}"
-              >
-                Embedding Model
-              </button>
-            </div>
-          {/if}
-        </section>
+            {/if}
+          </section>
+        </div>
       {/if}
       <!-- /Setup view (features + intro + sync). Snippets stay at config root. -->
 
@@ -1300,11 +1351,9 @@
       {/snippet}
 
       {#if activeSegment === 'ai-setup'}
-        <!-- Main Config Area — provider cards sit indented under section labels
-         (same rail pattern as Features nested toggles). -->
-        <div class="space-y-4">
-          <!-- Sync Mode: renders the chat card representing both configurations -->
-          <!-- Split Mode: renders both cards, using CSS 'hidden' on the inactive one so Vitest can query them -->
+        <!-- Provider cards (same Setup view; panel chrome is above snippets). -->
+        <div class="space-y-4" aria-labelledby="ai-seg-tab-ai-setup">
+          <!-- Sync Mode: chat card represents both configs. Split: hide inactive via CSS. -->
           <section
             aria-labelledby="chat-heading"
             class:hidden={!ai.syncProviders && ai.activeRole !== 'chat'}
@@ -1346,12 +1395,12 @@
           </section>
         </div>
       {/if}
-      <!-- /Setup view -->
+      <!-- /Setup provider cards -->
 
       <!-- Capabilities view -->
       {#if activeSegment === 'ai-capabilities' && showCapabilities}
         <div
-          id="ai-capabilities"
+          id="ai-capabilities-panel"
           class="space-y-6"
           role="tabpanel"
           aria-labelledby="ai-seg-tab-ai-capabilities"
@@ -1430,7 +1479,7 @@
       <!-- Advanced view -->
       {#if activeSegment === 'ai-advanced'}
         <div
-          id="ai-advanced"
+          id="ai-advanced-panel"
           class="space-y-3"
           role="tabpanel"
           aria-labelledby="ai-seg-tab-ai-advanced"

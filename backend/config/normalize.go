@@ -270,17 +270,23 @@ func normalize(cfg SystemConfig) SystemConfig {
 // plugins.disabled → ai.features migration (#632) runs exactly once per vault.
 const aiFeaturesMigratedKey = "_ai_features_migrated"
 
+// seededOptInDisabledKey is the legacy marker written by seedOptInDisabledPlugins
+// (removed in #632). Presence proves the vault once tracked the full opt-in AI
+// set, so absence from plugins.disabled is a real user enable — not a partial
+// YAML list that never listed the other AI ids (e.g. only silt-ai-summary).
+const seededOptInDisabledKey = "_seeded_opt_in_disabled"
+
 // migrateAIFeaturesFromPlugins derives ai.features from the legacy per-plugin
 // disabled list on first load after #632, then removes first-party AI ids from
 // plugins.disabled. Subsequent loads leave features alone (user edits win).
 //
-// Mapping (plugin NOT in disabled ⇒ feature on):
+// Mapping (plugin NOT in disabled ⇒ feature on), only when wasSeeded:
 //   - silt-ai-agent or silt-ai-assistant enabled → Features.Enabled
 //   - silt-ai-qa enabled → Features.RAGEnabled (+ Enabled)
 //   - silt-ai-summary enabled → Features.SummariesEnabled (+ Enabled)
 //
-// Vaults that never listed the AI plugins (pre-feature configs where YAML
-// replaced Defaults' disabled slice) are treated as all-disabled for safety.
+// Unseeded / partial disabled lists fall through to the safe all-off default
+// so a vault with disabled: [silt-ai-summary] alone cannot silently enable AI.
 func migrateAIFeaturesFromPlugins(cfg SystemConfig) SystemConfig {
 	if cfg.Plugins.PluginSettings == nil {
 		cfg.Plugins.PluginSettings = map[string]any{}
@@ -296,9 +302,6 @@ func migrateAIFeaturesFromPlugins(cfg SystemConfig) SystemConfig {
 		disabled[id] = true
 	}
 
-	// Only derive when the vault still carries AI ids in disabled OR has never
-	// been migrated. Fresh Defaults have empty disabled + Features all false —
-	// migration still marks so we don't re-run.
 	agentOn := !disabled[AIPluginAgent]
 	assistantOn := !disabled[AIPluginAssistant]
 	qaOn := !disabled[AIPluginQA]
@@ -306,10 +309,14 @@ func migrateAIFeaturesFromPlugins(cfg SystemConfig) SystemConfig {
 
 	// If none of the four AI ids appear in disabled at all, this may be a
 	// pre-AI-plugin config OR a post-#632 fresh vault. Prefer safe default
-	// (features stay zero) unless Features was already explicitly set in YAML.
+	// (features stay zero).
 	anyAIListed := disabled[AIPluginAgent] || disabled[AIPluginAssistant] ||
 		disabled[AIPluginQA] || disabled[AIPluginSummary]
-	if anyAIListed {
+	_, wasSeeded := cfg.Plugins.PluginSettings[seededOptInDisabledKey]
+	// Absence from disabled means "enabled" only when the vault previously
+	// tracked the full opt-in set (seed marker). Partial unseeded listings
+	// must not flip Features on.
+	if anyAIListed && wasSeeded {
 		if agentOn || assistantOn || qaOn || summaryOn {
 			cfg.AI.Features.Enabled = true
 		}
@@ -321,9 +328,6 @@ func migrateAIFeaturesFromPlugins(cfg SystemConfig) SystemConfig {
 			cfg.AI.Features.Enabled = true
 			cfg.AI.Features.SummariesEnabled = true
 		}
-		// agent/assistant alone already set Enabled above
-		_ = agentOn
-		_ = assistantOn
 	}
 
 	cfg.Plugins.Disabled = stripFirstPartyAIFromDisabled(cfg.Plugins.Disabled)
@@ -343,21 +347,4 @@ func stripFirstPartyAIFromDisabled(disabled []string) []string {
 		out = append(out, id)
 	}
 	return out
-}
-
-func stringSliceFromAny(v any) []string {
-	switch t := v.(type) {
-	case []string:
-		return append([]string(nil), t...)
-	case []any:
-		out := make([]string, 0, len(t))
-		for _, e := range t {
-			if s, ok := e.(string); ok && s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
 }

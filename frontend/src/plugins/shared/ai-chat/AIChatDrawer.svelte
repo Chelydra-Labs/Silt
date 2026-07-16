@@ -52,8 +52,8 @@
   })
 
   function onAIChatCommand(event: Event) {
-    // Gate on master AI enablement, not only agentChrome (session may lag a
-    // feature flip until the next vault reload).
+    // Gate on master AI enablement + session (session may lag a feature flip
+    // until the next vault reload).
     if (!getAIAvailability().drawerAvailable) return
     const detail = (event as CustomEvent<AIChatCommandDetail>).detail
     if (!detail?.text) return

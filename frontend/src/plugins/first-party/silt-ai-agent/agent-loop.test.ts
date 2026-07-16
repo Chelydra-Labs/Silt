@@ -38,7 +38,8 @@ function mockStream(
 }
 
 function mockCtx(
-  completeImpl: (calls: number) => PluginAIStream
+  completeImpl: (calls: number) => PluginAIStream,
+  auditEvent: ReturnType<typeof vi.fn> = vi.fn(async () => {})
 ): PluginContext {
   let calls = 0
   return {
@@ -54,7 +55,8 @@ function mockCtx(
         embeddings: [],
         model: 'e',
         dimensions: 0
-      }))
+      })),
+      auditEvent
     }
   } as unknown as PluginContext
 }
@@ -72,14 +74,20 @@ describe('agent-loop', () => {
       handler: async () => ({ content: 'found it' })
     })
 
-    const calls: string[] = []
+    const auditEvent = vi.fn(async () => {})
     const ctx = mockCtx((n) => {
       if (n === 1) {
         // First turn: model requests a tool call.
         return mockStream({
           content: '',
           model: 'm',
-          tool_calls: [{ id: 'tc1', name: 'lookup', arguments: {} }]
+          tool_calls: [
+            {
+              id: 'tc1',
+              name: 'lookup',
+              arguments: { secret: 'vault body must not leak' }
+            }
+          ]
         })
       }
       // Second turn: model produces the final answer (no tool calls).
@@ -88,7 +96,7 @@ describe('agent-loop', () => {
         'answer is ',
         'found it.'
       ])
-    })
+    }, auditEvent)
 
     const toolCalls: { name: string }[] = []
     const toolResults: { content: string }[] = []
@@ -108,6 +116,22 @@ describe('agent-loop', () => {
     expect(toolResults).toHaveLength(1)
     expect(toolResults[0].content).toBe('found it')
     expect(chunks.join('')).toBe('The answer is found it.')
+
+    // Lean audit payloads: metadata only — never raw args / vault bodies.
+    const payloads = auditEvent.mock.calls.map(
+      (c) => c[0] as Record<string, unknown>
+    )
+    expect(payloads.length).toBeGreaterThanOrEqual(2)
+    for (const p of payloads) {
+      expect(p.kind).toBe('tool_call')
+      expect(p.tool).toBe('lookup')
+      expect(p).not.toHaveProperty('arguments')
+      expect(p).not.toHaveProperty('args')
+      expect(p).not.toHaveProperty('content')
+      expect(JSON.stringify(p)).not.toContain('vault body')
+    }
+    expect(payloads.some((p) => p.status === 'start')).toBe(true)
+    expect(payloads.some((p) => p.status === 'ok')).toBe(true)
   })
 
   it('returns immediately when no tool calls (single-shot answer)', async () => {
