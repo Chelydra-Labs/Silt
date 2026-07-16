@@ -274,105 +274,129 @@ func TestNormalize_NeverNil(t *testing.T) {
 // writes a silt-tasks entry covering every key the frontend loaders
 // (settings.ts) read, and Active contains silt-tasks (Phase 10 / #429
 // retired the standalone silt-calendar and silt-kanban ids).
-// TestDefaults_AIPluginsOffByDefault pins Sprint 20/22 product choice: AI
-// plugins ship disabled so a fresh vault never phones a model until the user
-// opts in (silt-ai-summary #220, silt-ai-qa #224, silt-ai-agent).
-func TestDefaults_AIPluginsOffByDefault(t *testing.T) {
+// TestDefaults_AIFeaturesOffByDefault pins #632: AI product features ship off
+// and first-party AI plugins are not listed in plugins.disabled.
+func TestDefaults_AIFeaturesOffByDefault(t *testing.T) {
 	d := Defaults()
-	disabled := map[string]bool{}
+	if d.AI.Features.Enabled || d.AI.Features.RAGEnabled || d.AI.Features.SummariesEnabled {
+		t.Fatalf("Defaults AI features must be off; got %+v", d.AI.Features)
+	}
 	for _, id := range d.Plugins.Disabled {
-		disabled[id] = true
-	}
-	for _, id := range []string{"silt-ai-summary", "silt-ai-qa", "silt-ai-assistant", "silt-ai-agent"} {
-		if !disabled[id] {
-			t.Errorf("Defaults().Plugins.Disabled missing %q (AI plugins must ship off by default)", id)
+		if IsFirstPartyAIPlugin(id) {
+			t.Errorf("Defaults().Plugins.Disabled must not list first-party AI %q", id)
 		}
 	}
 }
 
-// TestNormalize_SeedsSiltAIQADisabledOnUpgrade: a pre-Sprint-22 config that
-// only lists silt-ai-summary in disabled must gain silt-ai-qa on normalize so
-// upgraded vaults do not auto-enable Q&A (PR #540 review).
-func TestNormalize_SeedsSiltAIQADisabledOnUpgrade(t *testing.T) {
+// TestNormalize_MigratesAIFeaturesFromDisabled: legacy per-plugin enables map
+// into ai.features once, and AI ids are stripped from plugins.disabled.
+func TestNormalize_MigratesAIFeaturesFromDisabled(t *testing.T) {
+	// All four disabled → features stay off.
 	cfg := normalize(SystemConfig{
 		Plugins: PluginsConfig{
-			Disabled:       []string{"silt-ai-summary"},
+			Disabled: []string{
+				AIPluginSummary, AIPluginQA, AIPluginAssistant, AIPluginAgent,
+			},
 			PluginSettings: map[string]any{},
 		},
 	})
-	found := false
+	if cfg.AI.Features.Enabled || cfg.AI.Features.RAGEnabled || cfg.AI.Features.SummariesEnabled {
+		t.Fatalf("all-disabled vault must keep features off; got %+v", cfg.AI.Features)
+	}
 	for _, id := range cfg.Plugins.Disabled {
-		if id == "silt-ai-qa" {
-			found = true
-			break
+		if IsFirstPartyAIPlugin(id) {
+			t.Errorf("AI id %q must be stripped from disabled after migration", id)
 		}
 	}
-	if !found {
-		t.Fatalf("normalize must append silt-ai-qa to disabled on upgrade; got %v", cfg.Plugins.Disabled)
+	if cfg.Plugins.PluginSettings[aiFeaturesMigratedKey] != true {
+		t.Fatal("migration marker must be set")
 	}
-	// Second normalize must not re-append after user enables (remove from disabled).
-	cfg.Plugins.Disabled = []string{"silt-ai-summary"} // user enabled Q&A
-	cfg = normalize(cfg)
-	for _, id := range cfg.Plugins.Disabled {
-		if id == "silt-ai-qa" {
-			t.Fatal("normalize must not re-disable silt-ai-qa after seed marker is set")
-		}
+
+	// Agent enabled (not in disabled) → master on.
+	cfg2 := normalize(SystemConfig{
+		Plugins: PluginsConfig{
+			Disabled:       []string{AIPluginSummary, AIPluginQA, AIPluginAssistant},
+			PluginSettings: map[string]any{},
+		},
+	})
+	if !cfg2.AI.Features.Enabled {
+		t.Fatal("agent not disabled must set Features.Enabled")
+	}
+	if cfg2.AI.Features.RAGEnabled || cfg2.AI.Features.SummariesEnabled {
+		t.Fatalf("only agent on should not enable RAG/summaries; got %+v", cfg2.AI.Features)
+	}
+
+	// QA enabled → RAG + master.
+	cfg3 := normalize(SystemConfig{
+		Plugins: PluginsConfig{
+			Disabled:       []string{AIPluginSummary, AIPluginAssistant, AIPluginAgent},
+			PluginSettings: map[string]any{},
+		},
+	})
+	if !cfg3.AI.Features.Enabled || !cfg3.AI.Features.RAGEnabled {
+		t.Fatalf("qa enabled must set Enabled+RAG; got %+v", cfg3.AI.Features)
+	}
+
+	// Summary enabled → summaries + master.
+	cfg4 := normalize(SystemConfig{
+		Plugins: PluginsConfig{
+			Disabled:       []string{AIPluginQA, AIPluginAssistant, AIPluginAgent},
+			PluginSettings: map[string]any{},
+		},
+	})
+	if !cfg4.AI.Features.Enabled || !cfg4.AI.Features.SummariesEnabled {
+		t.Fatalf("summary enabled must set Enabled+Summaries; got %+v", cfg4.AI.Features)
+	}
+
+	// Second normalize must not re-derive after user turns features off.
+	cfg4.AI.Features = AIFeaturesConfig{}
+	cfg4 = normalize(cfg4)
+	if cfg4.AI.Features.Enabled {
+		t.Fatal("post-migration normalize must not re-enable features from empty disabled")
 	}
 }
 
-// TestNormalize_SeedsSiltAIAssistantDisabledOnUpgrade: upgraded vaults must
-// gain silt-ai-assistant in disabled exactly once (Sprint 23 / #230).
-func TestNormalize_SeedsSiltAIAssistantDisabledOnUpgrade(t *testing.T) {
+// TestNormalize_ClampsAIFeatureDependents: RAG/summaries cannot stay on when
+// master is off.
+func TestNormalize_ClampsAIFeatureDependents(t *testing.T) {
 	cfg := normalize(SystemConfig{
-		Plugins: PluginsConfig{
-			Disabled:       []string{"silt-ai-summary", "silt-ai-qa"},
-			PluginSettings: map[string]any{},
+		AI: AIConfig{
+			Features: AIFeaturesConfig{
+				Enabled:          false,
+				RAGEnabled:       true,
+				SummariesEnabled: true,
+			},
 		},
+		Plugins: PluginsConfig{PluginSettings: map[string]any{aiFeaturesMigratedKey: true}},
 	})
-	found := false
-	for _, id := range cfg.Plugins.Disabled {
-		if id == "silt-ai-assistant" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("normalize must append silt-ai-assistant to disabled on upgrade; got %v", cfg.Plugins.Disabled)
-	}
-	cfg.Plugins.Disabled = []string{"silt-ai-summary", "silt-ai-qa"} // user enabled Writing Assistant
-	cfg = normalize(cfg)
-	for _, id := range cfg.Plugins.Disabled {
-		if id == "silt-ai-assistant" {
-			t.Fatal("normalize must not re-disable silt-ai-assistant after seed marker is set")
-		}
+	if cfg.AI.Features.RAGEnabled || cfg.AI.Features.SummariesEnabled {
+		t.Fatalf("dependents must clamp when master off; got %+v", cfg.AI.Features)
 	}
 }
 
-// TestNormalize_SeedsSiltAIAgentDisabledOnUpgrade: upgraded vaults must gain
-// silt-ai-agent in disabled exactly once.
-func TestNormalize_SeedsSiltAIAgentDisabledOnUpgrade(t *testing.T) {
-	cfg := normalize(SystemConfig{
-		Plugins: PluginsConfig{
-			Disabled:       []string{"silt-ai-summary", "silt-ai-qa", "silt-ai-assistant"},
-			PluginSettings: map[string]any{},
-		},
-	})
-	found := false
-	for _, id := range cfg.Plugins.Disabled {
-		if id == "silt-ai-agent" {
-			found = true
-			break
-		}
+func TestAIPluginLoadEnabled(t *testing.T) {
+	off := AIFeaturesConfig{}
+	on := AIFeaturesConfig{Enabled: true}
+	rag := AIFeaturesConfig{Enabled: true, RAGEnabled: true}
+	sum := AIFeaturesConfig{Enabled: true, SummariesEnabled: true}
+
+	if AIPluginLoadEnabled(off, AIPluginAgent) {
+		t.Error("agent off when master off")
 	}
-	if !found {
-		t.Fatalf("normalize must append silt-ai-agent to disabled on upgrade; got %v", cfg.Plugins.Disabled)
+	if !AIPluginLoadEnabled(on, AIPluginAgent) || !AIPluginLoadEnabled(on, AIPluginAssistant) {
+		t.Error("agent+assistant on when master on")
 	}
-	cfg.Plugins.Disabled = []string{"silt-ai-summary", "silt-ai-qa", "silt-ai-assistant"} // user enabled Agent
-	cfg = normalize(cfg)
-	for _, id := range cfg.Plugins.Disabled {
-		if id == "silt-ai-agent" {
-			t.Fatal("normalize must not re-disable silt-ai-agent after seed marker is set")
-		}
+	if AIPluginLoadEnabled(on, AIPluginQA) {
+		t.Error("qa requires RAG")
+	}
+	if !AIPluginLoadEnabled(rag, AIPluginQA) {
+		t.Error("qa on when RAG on")
+	}
+	if AIPluginLoadEnabled(on, AIPluginSummary) {
+		t.Error("summary requires flag")
+	}
+	if !AIPluginLoadEnabled(sum, AIPluginSummary) {
+		t.Error("summary on when flag on")
 	}
 }
 

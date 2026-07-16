@@ -147,17 +147,25 @@ type AIPublicProvider struct {
 	Dimensions      *int     `json:"dimensions,omitempty"`
 }
 
-// AIPublicConfig is the AI Provider page's full read view: both provider blocks
-// (key-scrubbed) plus the keyring toggle and availability state. KeyringAvailable
-// is false when no keyring store is wired (tests); KeyringUnusableFor lists the
-// provider kinds ("chat"/"embedding") whose keyring lookup reported unavailable
-// (headless Linux / locked session) so the page can show a fallback warning.
+// AIPublicConfig is the AI settings page's full read view: both provider blocks
+// (key-scrubbed), product feature flags (#632), plus the keyring toggle and
+// availability state. KeyringAvailable is false when no keyring store is wired
+// (tests); KeyringUnusableFor lists the provider kinds ("chat"/"embedding")
+// whose keyring lookup reported unavailable so the page can show a fallback warning.
 type AIPublicConfig struct {
-	Chat               AIPublicProvider `json:"chat"`
-	Embedding          AIPublicProvider `json:"embedding"`
-	UseKeyring         bool             `json:"use_keyring"`
-	KeyringAvailable   bool             `json:"keyring_available"`
-	KeyringUnusableFor []string         `json:"keyring_unusable_for,omitempty"`
+	Chat               AIPublicProvider        `json:"chat"`
+	Embedding          AIPublicProvider        `json:"embedding"`
+	Features           config.AIFeaturesConfig `json:"features"`
+	UseKeyring         bool                    `json:"use_keyring"`
+	KeyringAvailable   bool                    `json:"keyring_available"`
+	KeyringUnusableFor []string                `json:"keyring_unusable_for,omitempty"`
+}
+
+// AIFeaturesPatch is the input to UpdateAIFeatures (#632).
+type AIFeaturesPatch struct {
+	Enabled          *bool `json:"enabled,omitempty"`
+	RAGEnabled       *bool `json:"rag_enabled,omitempty"`
+	SummariesEnabled *bool `json:"summaries_enabled,omitempty"`
 }
 
 // PluginAIChatMessage is one chat message crossing the plugin→service boundary.
@@ -307,6 +315,7 @@ func (a *App) GetAIProviderConfig() (AIPublicConfig, error) {
 	a.configMu.RLock()
 	chat := a.cfg.AI.Chat
 	emb := a.cfg.AI.Embedding
+	features := a.cfg.AI.Features
 	useKeyring := a.aiUseKeyringLocked()
 	chatUser := a.aiKeyringUser("chat")
 	embUser := a.aiKeyringUser("embedding")
@@ -321,6 +330,7 @@ func (a *App) GetAIProviderConfig() (AIPublicConfig, error) {
 		UseKeyring:         useKeyring,
 		KeyringAvailable:   keyringAvailable,
 		KeyringUnusableFor: aiUnusableList(chatUnavail, embUnavail),
+		Features:           features,
 		Chat: AIPublicProvider{
 			ProviderType:    chat.ProviderType,
 			BaseURL:         chat.BaseURL,
@@ -340,6 +350,32 @@ func (a *App) GetAIProviderConfig() (AIPublicConfig, error) {
 			TimeoutMs:    emb.TimeoutMs,
 		},
 	}, nil
+}
+
+// UpdateAIFeatures applies a product-level AI enablement patch (#632) and
+// persists atomically. Dependents are clamped when master is off.
+func (a *App) UpdateAIFeatures(patch AIFeaturesPatch) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+
+	f := a.cfg.AI.Features
+	if patch.Enabled != nil {
+		f.Enabled = *patch.Enabled
+	}
+	if patch.RAGEnabled != nil {
+		f.RAGEnabled = *patch.RAGEnabled
+	}
+	if patch.SummariesEnabled != nil {
+		f.SummariesEnabled = *patch.SummariesEnabled
+	}
+	a.cfg.AI.Features = f
+	a.cfg.AI = config.NormalizeAIConfig(a.cfg.AI)
+	return a.saveConfigTracked(a.cfg)
 }
 
 // aiUnusableList returns the provider kinds whose keyring lookup reported
