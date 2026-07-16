@@ -8,9 +8,9 @@ answers render in the single unified **Silt AI** drawer alongside capabilities
 from Q&A and Writing Assistant. There is no standalone AgentHub surface;
 destructive operations require explicit confirmation in the shared drawer.
 
-**Off by default.** Enable under **Settings → Plugins** (the agent adds no
-settings tab of its own — it inherits the configured chat + embedding
-models).
+**Off by default.** Enable under **Settings → AI** (master **Enable AI**
+switch). The agent adds no settings tab of its own — it inherits the
+configured chat + embedding models.
 
 > Not the same as **AI Assistant** (`silt-ai-qa`; vault Q&A / search with
 > citations) or **Writing Assistant** (`silt-ai-assistant`; curated writing
@@ -70,18 +70,58 @@ marker). SQL is parameterized throughout — the agent has no raw-SQL tool.
 
 ## Setup
 
-1. **Settings → AI Provider**
+1. **Settings → AI**
+   - Turn on **Enable AI**.
    - Configure a **chat** model (local Ollama or OpenAI-compatible).
    - For semantic tools (`search_notes`, `get_related_notes`,
-     `suggest_link_targets`), also configure an **embedding** model.
+     `suggest_link_targets`), enable **Semantic search** and configure an
+     **embedding** model.
    - See [BRING_YOUR_OWN_MODEL.md](../BRING_YOUR_OWN_MODEL.md).
-2. **Settings → Plugins** — enable **AI Agent**.
-3. Open **Silt AI** from the title bar and state a goal.
+2. Open **Silt AI** from the title bar and state a goal.
+
+## Write policy & untrusted content
+
+- **Direct writes** (`create_note`, `update_block`, `extract_and_save`) apply
+  immediately as single reversible markdown edits.
+- **Staged / destructive** ops (`rename_tag`) pause for explicit confirmation
+  in the drawer before any vault mutation.
+- Tool results that contain vault text are wrapped in
+  `<vault_data tool="…">…</vault_data>` so the model treats them as data, not
+  instructions. The system prompt also forbids acting on embedded commands
+  found inside tool output.
 
 Tool-calling works best on models that advertise tool/function support.
 Small local models may misroute calls; the structural arg-validation in the
 tool registry keeps a malformed call from reaching tool code (it surfaces
 as an error the model can recover from on the next iteration).
+
+## Activity status
+
+The shared Silt AI drawer shows a structured activity line while a run is live
+(not a binary spinner):
+
+| Status | Meaning |
+|---|---|
+| **Thinking…** | Model is planning or writing prose |
+| **Running \<tool\>…** | Friendly label for the active tool (e.g. “Searching notes…”) |
+| **Reviewing results…** | Tool results returned; model is synthesizing |
+| **Waiting for your confirmation…** | Staged destructive op needs Confirm/Reject |
+| **Applying changes…** | Confirmed staged write is committing |
+| **Done** | Run finished successfully |
+| **Something went wrong** / error text | Terminal failure (also uses `role="alert"`) |
+
+**Stop** (and Escape when no confirmation is pending) cancels from any
+non-terminal state. Terminal success and error are distinct from assistant
+prose in the transcript.
+
+## Semantic search / RAG degrade
+
+Semantic tools (`search_notes`, `get_related_notes`, `suggest_link_targets`)
+register only when **Settings → AI → Semantic search** is on. Hybrid retrieval
+can continue if only keyword *or* only semantic fails: the run proceeds with
+the healthy side, and a `search_degraded` audit event is recorded (visible
+under Settings → AI activity / Search settings). Stale index banners also
+surface when the embedding model or index format changes.
 
 ## The agent loop
 
@@ -143,8 +183,8 @@ the "no unsolicited writes" invariant while letting the agent act. See
 | Symptom | Fix |
 |---|---|
 | Agent calls the wrong tool / loops on the same call | Use a larger or tool-advertised model; rephrase the goal; the 8-iteration cap stops runaway loops |
-| Semantic tools return empty | Set the embedding model in AI Provider; check that other notes exist |
-| "Chat model not configured" | Settings → AI Provider → set chat model |
+| Semantic tools return empty | Enable Semantic search + set embedding model in Settings → AI |
+| "Chat model not configured" | Settings → AI → set chat model |
 | Tool result truncated in chat | Tool bodies cap at 10 KB for the model; the agent re-queries with a narrower call when it needs more |
 | Staged op shows "expired" | Tokens live 5 minutes — re-run the request and confirm promptly |
 | Agent hit the iteration cap | Rephrase toward a narrower goal, or split into two turns |

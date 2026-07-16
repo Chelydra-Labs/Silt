@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"silt/backend/config"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 	"silt/backend/semver"
@@ -97,6 +98,22 @@ func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
 	// and the frontend SDK can distinguish "disabled" from "ungranted" and
 	// show the right message without parsing the error string.
 	if a.isPluginDisabled(pluginID) {
+		derr := &plugins.CapabilityDeniedError{
+			Plugin:     pluginID,
+			Capability: string(cap),
+			Requested:  plugins.QualGranted,
+			Disabled:   true,
+		}
+		a.configMu.RUnlock()
+		a.recordCapabilityDenied(pluginID, string(cap))
+		return derr
+	}
+	// #632: first-party AI modules are product-gated by ai.features, not only
+	// plugins.disabled. Reject CapAI (and all caps) when the feature flags
+	// would not load the module — so a stale session after a missed frontend
+	// teardown cannot keep calling complete/embed/audit.
+	if config.IsFirstPartyAIPlugin(pluginID) &&
+		!config.AIPluginLoadEnabled(a.cfg.AI.Features, pluginID) {
 		derr := &plugins.CapabilityDeniedError{
 			Plugin:     pluginID,
 			Capability: string(cap),

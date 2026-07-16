@@ -19,10 +19,16 @@ type FileFilter struct {
 	Pattern     string
 }
 
-// emit sends a Wails event to the frontend. No-ops when wailsApp is nil
+// emit sends a Wails event to the frontend. When eventEmit is set (tests),
+// that hook is used instead so stream/tool-delta payloads can be asserted
+// without a live Wails runtime (#631). Otherwise no-ops when wailsApp is nil
 // (tests have no Wails lifecycle, so event emission is silently skipped
 // to preserve the pre-migration test behavior).
 func (a *App) emit(name string, data ...any) {
+	if a.eventEmit != nil {
+		a.eventEmit(name, data...)
+		return
+	}
 	if a.wailsApp == nil {
 		return
 	}

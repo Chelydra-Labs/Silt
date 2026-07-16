@@ -225,7 +225,7 @@
         <p>Choose an AI provider before starting a conversation.</p>
       </div>
       <button type="button" class="text-button" onclick={onOpenSettings}
-        >Open AI Provider</button
+        >Open AI settings</button
       >
     </div>
   {/if}
@@ -427,6 +427,8 @@
         <div
           role={entry.status === 'error' ? 'alert' : 'status'}
           class:error-status={entry.status === 'error'}
+          class:done-status={entry.status === 'done'}
+          class:stopped-status={entry.status === 'stopped'}
           class="status-line"
         >
           <span class="status-pulse" aria-hidden="true"></span>
@@ -857,6 +859,20 @@
   }
   .error-status .status-pulse {
     background: var(--color-error);
+    box-shadow: none;
+  }
+  .done-status {
+    color: var(--color-status-success, var(--color-accent-primary-start));
+  }
+  .done-status .status-pulse {
+    background: var(--color-status-success, var(--color-accent-primary-start));
+    box-shadow: none;
+  }
+  .stopped-status {
+    color: var(--color-text-muted);
+  }
+  .stopped-status .status-pulse {
+    background: var(--color-text-muted);
     box-shadow: none;
   }
   .composer-wrap {

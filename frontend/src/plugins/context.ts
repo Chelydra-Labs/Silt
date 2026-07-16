@@ -778,7 +778,27 @@ export function makePluginContext(
           }))
           .catch((err) => {
             throw normalizeAIError(err)
-          })
+          }),
+      // Structured agent audit (#630). Binding may be absent until regenerate;
+      // failures are swallowed so audit never breaks the agent loop.
+      auditEvent: async (event) => {
+        try {
+          const bind = await import('../../bindings/silt/app.js')
+          const fn = (
+            bind as unknown as {
+              PluginAIAuditEvent?: (
+                pluginID: string,
+                sessionToken: string,
+                eventJSON: string
+              ) => Promise<void>
+            }
+          ).PluginAIAuditEvent
+          if (typeof fn !== 'function') return
+          await fn(pluginID, sessionToken ?? '', JSON.stringify(event ?? {}))
+        } catch {
+          /* best-effort diagnostic only */
+        }
+      }
     }
   }
 }
@@ -843,12 +863,18 @@ function createAIStream(
 
   const payloadOf = (ev: any) => (ev?.data !== undefined ? ev.data : ev)
 
-  const offDelta = Events.On('ai:complete:delta', (ev: any) => {
+  // Owner-scoped event names (#635): backend emits ai:complete:*:<pluginID>.
+  const deltaEv = `ai:complete:delta:${pluginID}`
+  const doneEv = `ai:complete:done:${pluginID}`
+  const toolDeltaEv = `ai:complete:tool-delta:${pluginID}`
+  const errorEv = `ai:complete:error:${pluginID}`
+
+  const offDelta = Events.On(deltaEv, (ev: any) => {
     const p = payloadOf(ev)
     if (!p || p.stream_id !== streamId) return
     push({ kind: 'delta', text: String(p.delta ?? '') })
   })
-  const offDone = Events.On('ai:complete:done', (ev: any) => {
+  const offDone = Events.On(doneEv, (ev: any) => {
     const p = payloadOf(ev)
     if (!p || p.stream_id !== streamId) return
     const content = stripReasoningContent(String(p.content ?? ''))
@@ -871,7 +897,7 @@ function createAIStream(
   // progressive tool UX can drain it; the reassembled calls also arrive on the
   // done event above. Filtered to this stream_id like the other listeners.
   const toolDeltas: PluginAIToolCallDelta[] = []
-  const offToolDelta = Events.On('ai:complete:tool-delta', (ev: any) => {
+  const offToolDelta = Events.On(toolDeltaEv, (ev: any) => {
     const p = payloadOf(ev)
     if (!p || p.stream_id !== streamId) return
     toolDeltas.push({
@@ -881,7 +907,7 @@ function createAIStream(
       arguments_fragment: p.arguments_fragment ?? undefined
     })
   })
-  const offError = Events.On('ai:complete:error', (ev: any) => {
+  const offError = Events.On(errorEv, (ev: any) => {
     const p = payloadOf(ev)
     if (!p || p.stream_id !== streamId) return
     const err = normalizeAIError({

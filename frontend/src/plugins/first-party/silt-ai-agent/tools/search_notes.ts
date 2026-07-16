@@ -96,7 +96,15 @@ export async function handleSearchNotes(
     filterPassages:
       filters.notebook || filters.section || filters.type
         ? async (passages) => filterPassages(ctx, passages, filters)
-        : undefined
+        : undefined,
+    onDegraded: (info) => {
+      void ctx.ai.auditEvent?.({
+        kind: 'search_degraded',
+        tool: 'search_notes',
+        side: info.side,
+        status: 'degraded'
+      })
+    }
   }
 
   let passages

@@ -42,7 +42,7 @@ export const manifest: PluginManifest = {
   author: 'Silt',
   description:
     'A dismissible highlight at the top of each note with a 2–3 sentence summary plus any new tasks, risks, and decisions. Requires an AI provider.',
-  icon: 'auto_awesome',
+  icon: 'notes',
   // first-party ⇒ implicitly granted (no per-capability prompt). The plugin
   // needs `ai` (ctx.ai.complete) and `plugin-db` (the content-hash cache).
   capabilities: { ai: true, 'plugin-db': true }
@@ -143,7 +143,7 @@ function mountForPage(
       pluginID: PLUGIN_ID,
       kind: 'note-banner',
       label: 'AI summary',
-      icon: 'auto_awesome',
+      icon: 'notes',
       component: SummaryBanner
     })
   } else {
@@ -153,7 +153,7 @@ function mountForPage(
       kind: 'status-bar-item',
       // Label reflects WHY the chip is showing so the affordance is honest.
       label: opts.onDemandOnly ? 'Generate AI summary' : 'Show AI summary',
-      icon: 'auto_awesome',
+      icon: 'notes',
       onClick: () => {
         const ctl = controller
         if (!ctl) return
@@ -257,7 +257,7 @@ export default {
           pluginID: PLUGIN_ID,
           kind: 'note-banner',
           label: 'AI summary',
-          icon: 'auto_awesome',
+          icon: 'notes',
           component: SummaryBannerLoading
         })
       }

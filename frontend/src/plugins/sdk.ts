@@ -704,6 +704,15 @@ export interface PluginAIApi {
     /** Google-specific: RETRIEVAL_DOCUMENT (index) or RETRIEVAL_QUERY (search). */
     taskType?: string
   }) => Promise<PluginAIEmbedResult>
+  /**
+   * Append a structured agent audit event (tool_call, staging_decision, …).
+   * Sensitive fields are redacted server-side (#630). Best-effort; failures
+   * are swallowed so audit never breaks the agent loop.
+   */
+  auditEvent?: (event: {
+    kind: string
+    [key: string]: unknown
+  }) => Promise<void>
 }
 
 /** Shared fields for `ctx.ai.complete`. */

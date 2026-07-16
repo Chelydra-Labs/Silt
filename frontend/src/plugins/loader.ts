@@ -20,6 +20,12 @@ import { initGrants } from './grants.svelte'
 import { resetTaskHubState } from './first-party/silt-tasks/state.svelte'
 import { resetTasksSettings } from './first-party/silt-tasks/settings'
 import DiskPluginNotice from './DiskPluginNotice.svelte'
+import {
+  isFirstPartyAIPlugin,
+  shouldLoadAIPlugin,
+  AI_PLUGIN_AGENT
+} from './shared/ai-chat/availability'
+import { reconcileAgentTools } from './first-party/silt-ai-agent/tools'
 
 // Whether the lifecycle wiring (vault:closing subscription) has been installed.
 // Lives at module scope so repeated loadPlugins calls do not double-subscribe.
@@ -158,29 +164,57 @@ export async function loadPlugins(
     }
   }
 
-  // First-party plugins: always available but the user can disable them via
-  // Settings → Plugins (stored in config.yaml plugins.disabled). Uninstall is
-  // not available for bundled plugins.
+  // First-party plugins: user-disableable via Settings → Plugins
+  // (plugins.disabled). First-party AI modules are gated by ai.features
+  // instead (#632) so the Plugins tab is not the product switch.
   const disabledIds = new Set(settings.config?.plugins?.disabled ?? [])
   for (const fp of firstPartyPlugins()) {
-    if (disabledIds.has(fp.manifest.id)) continue
-    if (!plugins.has(fp.manifest.id)) {
-      // Register a session token for first-party plugins too (#151).
-      let fpToken = sessionTokens.get(fp.manifest.id)
-      if (!fpToken) {
-        try {
-          fpToken = await RegisterPluginSession(fp.manifest.id)
-          sessionTokens.set(fp.manifest.id, fpToken)
-        } catch {
-          // Best-effort: if session registration fails (e.g. vault not
-          // loaded yet), continue with no token — the SDK passes '' which
-          // the Go side rejects for session-gated bindings.
-        }
+    const id = fp.manifest.id
+    if (isFirstPartyAIPlugin(id)) {
+      if (!shouldLoadAIPlugin(id)) continue
+    } else if (disabledIds.has(id)) {
+      continue
+    }
+    if (plugins.has(id)) continue
+    // Already live from a prior loadPlugins under the same desired set —
+    // carry over without re-running init/onVaultOpen (avoids double-register
+    // of slash commands / surfaces on feature-flag toggles).
+    const existing = loadedPlugins.plugins.get(id)
+    if (existing) {
+      plugins.set(id, existing)
+      // Agent tools are filtered by RAG at register time; re-apply when the
+      // agent is reused across a RAG-only feature flip (#632).
+      if (id === AI_PLUGIN_AGENT) {
+        reconcileAgentTools()
       }
-      const ctx = makePluginContext(fp.manifest.id, fpToken)
-      fp.init?.(ctx)
-      fp.onVaultOpen?.(ctx)
-      plugins.set(fp.manifest.id, fp)
+      continue
+    }
+    // Register a session token for first-party plugins too (#151).
+    let fpToken = sessionTokens.get(id)
+    if (!fpToken) {
+      try {
+        fpToken = await RegisterPluginSession(id)
+        sessionTokens.set(id, fpToken)
+      } catch {
+        // Best-effort: if session registration fails (e.g. vault not
+        // loaded yet), continue with no token — the SDK passes '' which
+        // the Go side rejects for session-gated bindings.
+      }
+    }
+    const ctx = makePluginContext(id, fpToken)
+    fp.init?.(ctx)
+    fp.onVaultOpen?.(ctx)
+    plugins.set(id, fp)
+  }
+
+  // Reconcile: tear down anything that was loaded but is not in the desired
+  // set (AI feature off, plugin disabled, disk plugin removed). Without this,
+  // loadPlugins only builds a new map and swaps it — slash commands, surfaces,
+  // sessions, and event-bus subs would linger after Enable AI / RAG / summaries
+  // flip off (#632).
+  for (const id of [...loadedPlugins.plugins.keys()]) {
+    if (!plugins.has(id)) {
+      teardownPlugin(id)
     }
   }
 

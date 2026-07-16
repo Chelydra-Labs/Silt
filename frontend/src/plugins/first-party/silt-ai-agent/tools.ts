@@ -7,7 +7,8 @@
 // vault open replaces cleanly.
 
 import type { AgentToolDef } from './tool-registry'
-import { registerTool } from './tool-registry'
+import { registerTool, unregisterTool } from './tool-registry'
+import { getAIAvailability } from '../../shared/ai-chat/availability'
 import { getBacklinksToolDef, handleGetBacklinks } from './tools/get_backlinks'
 import { createNoteToolDef, handleCreateNote } from './tools/create_note'
 import { queryTasksToolDef, handleQueryTasks } from './tools/query_tasks'
@@ -39,6 +40,13 @@ import {
   handleExtractAndSave
 } from './tools/extract_and_save'
 
+/** Tools that need embeddings / RAG; omitted from the catalog when RAG is off. */
+export const RAG_TOOL_NAMES = new Set([
+  'search_notes',
+  'get_related_notes',
+  'suggest_link_targets'
+])
+
 const P0_TOOLS: AgentToolDef[] = [
   { ...searchNotesToolDef, handler: handleSearchNotes },
   { ...readBlocksToolDef, handler: handleReadBlocks },
@@ -65,19 +73,41 @@ const P2_TOOLS: AgentToolDef[] = [
   { ...extractAndSaveToolDef, handler: handleExtractAndSave }
 ]
 
+function registerFiltered(tools: AgentToolDef[]): void {
+  const ragOn = getAIAvailability().ragEnabled
+  for (const tool of tools) {
+    if (!ragOn && RAG_TOOL_NAMES.has(tool.name)) {
+      unregisterTool(tool.name)
+      continue
+    }
+    registerTool(tool)
+  }
+}
+
 /** Register all Phase-4 P0 tools (idempotent — re-registers by name). */
 export function registerP0Tools(): void {
-  for (const tool of P0_TOOLS) registerTool(tool)
+  registerFiltered(P0_TOOLS)
 }
 
 /** Register all Phase-6 P1 tools (idempotent — re-registers by name). */
 export function registerP1Tools(): void {
-  for (const tool of P1_TOOLS) registerTool(tool)
+  registerFiltered(P1_TOOLS)
 }
 
 /** Register all Phase-7 P2 tools (idempotent — re-registers by name). */
 export function registerP2Tools(): void {
-  for (const tool of P2_TOOLS) registerTool(tool)
+  registerFiltered(P2_TOOLS)
+}
+
+/**
+ * Re-apply RAG gating against the current ai.features flags. Safe to call
+ * when the agent plugin is carried over across loadPlugins without re-init
+ * (e.g. master AI stays on while Semantic search flips).
+ */
+export function reconcileAgentTools(): void {
+  registerP0Tools()
+  registerP1Tools()
+  registerP2Tools()
 }
 
 // Re-export so callers (e.g. tests, index wiring) don't need the per-tool

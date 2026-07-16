@@ -258,11 +258,11 @@
   function errorMessage(e: SummaryError | undefined): string {
     if (!e) return "Couldn't generate a summary."
     if (e.code === 'unconfigured')
-      return 'Configure an AI provider in Settings → AI Provider to generate summaries.'
+      return 'Configure an AI provider in Settings → AI to generate summaries.'
     if (e.code === 'oversized')
       // The note hasn't shrunk, so a retry deterministically fails the same
       // way — point at the setting by name instead of implying retryability.
-      return 'This note exceeds the "Max note size" limit (Settings → AI Summary). Split the note or raise the limit.'
+      return 'This note exceeds the "Max note size" limit (Settings → AI → Note summaries). Split the note or raise the limit.'
     if (e.code === 'fetch-failed')
       return "Couldn't read this note's content. The vault may be busy — try again."
     return `Couldn't generate a summary. ${e.message ?? ''}`.trim()
@@ -307,16 +307,15 @@
     <div class="body">
       {#if unconfigured}
         <p class="line muted">
-          Configure an AI provider in <strong
-            >Settings &rarr; AI Provider</strong
-          > to generate summaries.
+          Configure an AI provider in <strong>Settings &rarr; AI</strong> to generate
+          summaries.
         </p>
         <button
           type="button"
           class="inline-cta"
           onclick={() => ctx.openSettings('ai')}
         >
-          Open AI Provider settings
+          Open AI settings
         </button>
       {:else if isError}
         <div class="error-row">
@@ -327,9 +326,9 @@
             <button
               type="button"
               class="inline-cta"
-              onclick={() => ctx.openSettings('plugin:silt-ai-summary')}
+              onclick={() => ctx.openSettings('ai')}
             >
-              Open AI Summary settings
+              Open AI settings
             </button>
           {:else}
             <button

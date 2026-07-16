@@ -20,8 +20,8 @@
     decisions the LLM extracted.
   </p>
   <p class="muted">
-    Configure the model in <strong>Settings → AI Provider</strong>. Tune facets,
-    length, and timing in <strong>Settings → AI Summary</strong>.
+    Configure the model in <strong>Settings → AI</strong>. Tune facets, length,
+    and timing in <strong>Settings → AI → Note summaries</strong>.
   </p>
 </section>
 

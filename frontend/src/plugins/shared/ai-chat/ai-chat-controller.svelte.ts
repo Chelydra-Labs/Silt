@@ -16,6 +16,11 @@ import {
   type AIChatEntry,
   type ProposalEntry
 } from './types'
+import {
+  agentStatusMessage,
+  isLiveAgentStatus,
+  toolStatusLabel
+} from './agent-status'
 import { parseCitations } from '../../first-party/silt-ai-qa/rag'
 import type { RetrievedPassage } from '../../shared/retrieval/hybrid'
 import type { ToolEvidence } from '../../first-party/silt-ai-agent/tool-registry'
@@ -56,6 +61,14 @@ export interface AIChatCapability {
 
 export interface CapabilityRegistration {
   makeDefault?: boolean
+}
+
+function findLiveAgentStatus(
+  transcript: readonly AIChatEntry[]
+): AIChatEntry | undefined {
+  return transcript.find(
+    (e) => e.kind === 'status' && isLiveAgentStatus(e.status)
+  )
 }
 
 export function createAgentCapability(): AIChatCapability {
@@ -126,6 +139,21 @@ export function createAgentCapability(): AIChatCapability {
           ]
         },
         onToolCall: (call) => {
+          if (stale()) return
+          // Promote any non-terminal status line so multi-step tool runs
+          // keep updating the shell (exact 'thinking' match only worked once).
+          const live = findLiveAgentStatus(context.transcript)
+          if (live) {
+            context.update(live.id, (entry) =>
+              entry.kind === 'status'
+                ? {
+                    ...entry,
+                    status: 'running_tool',
+                    message: `${toolStatusLabel(call.name)}…`
+                  }
+                : entry
+            )
+          }
           context.append(
             toolCallEntry({
               role: 'assistant',
@@ -137,6 +165,18 @@ export function createAgentCapability(): AIChatCapability {
         },
         onToolResult: ({ result }) => {
           if (stale()) return
+          const live = findLiveAgentStatus(context.transcript)
+          if (live) {
+            context.update(live.id, (entry) =>
+              entry.kind === 'status'
+                ? {
+                    ...entry,
+                    status: 'reviewing',
+                    message: agentStatusMessage('reviewing')
+                  }
+                : entry
+            )
+          }
           for (const evidence of result.evidence ?? []) {
             const key = `${evidence.blockId}:${evidence.citationIndex}`
             citationPassages.push({
@@ -190,6 +230,19 @@ export function createAgentCapability(): AIChatCapability {
           )
         },
         onStaging: (event) => {
+          if (stale()) return
+          const liveStatus = findLiveAgentStatus(context.transcript)
+          if (liveStatus) {
+            context.update(liveStatus.id, (entry) =>
+              entry.kind === 'status'
+                ? {
+                    ...entry,
+                    status: 'waiting_confirmation',
+                    message: agentStatusMessage('waiting_confirmation')
+                  }
+                : entry
+            )
+          }
           context.append(
             confirmationEntry({
               role: 'system',
@@ -211,6 +264,29 @@ export function createAgentCapability(): AIChatCapability {
           context.update(confirmation.id, (entry) =>
             entry.kind === 'confirmation' ? { ...entry, state: outcome } : entry
           )
+          const liveStatus = findLiveAgentStatus(context.transcript)
+          if (!liveStatus) return
+          if (outcome === 'confirmed') {
+            context.update(liveStatus.id, (entry) =>
+              entry.kind === 'status'
+                ? {
+                    ...entry,
+                    status: 'applying',
+                    message: agentStatusMessage('applying')
+                  }
+                : entry
+            )
+          } else if (outcome === 'rejected') {
+            context.update(liveStatus.id, (entry) =>
+              entry.kind === 'status'
+                ? {
+                    ...entry,
+                    status: 'reviewing',
+                    message: 'Rejected — re-planning…'
+                  }
+                : entry
+            )
+          }
         },
         onDone: (finalText) => {
           if (stale()) return
@@ -440,7 +516,21 @@ export function createAIChatController(initialContext?: PluginContext) {
       // Only the current run owns the busy/active lifecycle. A stopped/cleared
       // run already reset these (and finalized streaming) in stop()/clear().
       if (live()) {
-        remove(runningStatus.id)
+        // Terminal success is a distinct status line (not just SR announce).
+        // Error/stopped already appended their own entries; do not clobber them.
+        if (lastOutcome === 'complete') {
+          update(runningStatus.id, (e) =>
+            e.kind === 'status'
+              ? {
+                  ...e,
+                  status: 'done',
+                  message: agentStatusMessage('done')
+                }
+              : e
+          )
+        } else {
+          remove(runningStatus.id)
+        }
         activeRunStatusId = null
         finalizeStreaming()
         busy = false

@@ -3,18 +3,67 @@ package config
 import "strings"
 
 // AIConfig holds the shared chat-LLM and embedding-model provider configuration
-// (Sprint 20). The two are INDEPENDENT: a user may run a local Ollama chat model
-// and a cloud embedding endpoint, or any other combination. Both chat and
-// embedding call OpenAI-compatible endpoints; providerType only nudges the
-// default base URL + whether a key is expected.
+// (Sprint 20) plus product-level feature enablement (#632). Chat and embedding
+// providers are INDEPENDENT: a user may run a local Ollama chat model and a
+// cloud embedding endpoint, or any other combination.
 type AIConfig struct {
 	Chat      AIProviderConfig `yaml:"chat" json:"chat"`
 	Embedding AIProviderConfig `yaml:"embedding" json:"embedding"`
+	// Features is the user-facing AI product switch (#632): one master enable
+	// plus dependent RAG / summaries toggles. First-party AI plugins load from
+	// these flags, not from independent Plugins-tab toggles.
+	Features AIFeaturesConfig `yaml:"features" json:"features"`
 	// UseKeyring, when true (default), stores provider API keys in the OS
 	// credential store instead of plaintext config.yaml (#218). Tri-state so
 	// "unset" stays distinguishable from "explicitly false" through the Load →
 	// normalize path. nil reads as true downstream.
 	UseKeyring *bool `yaml:"use_keyring,omitempty" json:"use_keyring,omitempty"`
+}
+
+// AIFeaturesConfig is the product-level AI enablement model (#632).
+// Defaults are all false (opt-in). NormalizeAIConfig clamps dependents when
+// master is off so impossible combinations cannot persist.
+type AIFeaturesConfig struct {
+	// Enabled is the master "Enable AI" switch: agent drawer, writing assistant.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// RAGEnabled gates semantic search / Q&A index and agent retrieval tools.
+	// Requires Enabled; embedding readiness is enforced in the UI/loader, not here.
+	RAGEnabled bool `yaml:"rag_enabled" json:"rag_enabled"`
+	// SummariesEnabled gates the note-summary banner. Requires Enabled.
+	SummariesEnabled bool `yaml:"summaries_enabled" json:"summaries_enabled"`
+}
+
+// First-party AI plugin IDs driven by AIFeaturesConfig (not plugins.disabled).
+const (
+	AIPluginAgent     = "silt-ai-agent"
+	AIPluginQA        = "silt-ai-qa"
+	AIPluginAssistant = "silt-ai-assistant"
+	AIPluginSummary   = "silt-ai-summary"
+)
+
+// IsFirstPartyAIPlugin reports whether id is one of the four AI capability modules.
+func IsFirstPartyAIPlugin(id string) bool {
+	switch id {
+	case AIPluginAgent, AIPluginQA, AIPluginAssistant, AIPluginSummary:
+		return true
+	default:
+		return false
+	}
+}
+
+// AIPluginLoadEnabled reports whether a first-party AI plugin should register
+// a session under the current feature flags. Non-AI ids return false.
+func AIPluginLoadEnabled(features AIFeaturesConfig, pluginID string) bool {
+	switch pluginID {
+	case AIPluginAgent, AIPluginAssistant:
+		return features.Enabled
+	case AIPluginQA:
+		return features.Enabled && features.RAGEnabled
+	case AIPluginSummary:
+		return features.Enabled && features.SummariesEnabled
+	default:
+		return false
+	}
 }
 
 // AIProviderConfig is one provider endpoint (chat OR embedding). It is the unit
@@ -85,15 +134,20 @@ func IsValidAIReasoningEffort(s string) bool {
 	return validAIReasoningEfforts[s]
 }
 
-// NormalizeAIConfig applies the AI provider normalization rules. Exported so
-// the dedicated UpdateAIProviderConfig binding can normalize a single patch the
-// same way the full-config normalize path does.
+// NormalizeAIConfig applies the AI provider normalization rules and feature
+// dependency clamps. Exported so the dedicated UpdateAIProviderConfig binding
+// can normalize a single patch the same way the full-config normalize path does.
 func NormalizeAIConfig(ai AIConfig) AIConfig {
 	if ai.UseKeyring == nil {
 		ai.UseKeyring = boolPtr(true)
 	}
 	ai.Chat = normalizeAIProvider(ai.Chat, true)
 	ai.Embedding = normalizeAIProvider(ai.Embedding, false)
+	// Dependents cannot outlive the master switch (#632).
+	if !ai.Features.Enabled {
+		ai.Features.RAGEnabled = false
+		ai.Features.SummariesEnabled = false
+	}
 	return ai
 }
 

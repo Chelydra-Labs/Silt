@@ -194,12 +194,12 @@ export function createAssistantController() {
     const meta = enabledActions(settings).find((a) => a.id === actionId)
     if (meta?.needsChat && !chatReady()) {
       panelStatus = 'no-chat-provider'
-      errorMessage = 'Configure a chat model in Settings → AI Provider.'
+      errorMessage = 'Configure a chat model in Settings → AI.'
       return
     }
     if (meta?.needsEmbed && !embedReady()) {
       panelStatus = 'no-embedding-provider'
-      errorMessage = 'Configure an embedding model in Settings → AI Provider.'
+      errorMessage = 'Configure an embedding model in Settings → AI.'
       return
     }
 

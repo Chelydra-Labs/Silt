@@ -78,6 +78,58 @@ func TestCompleteGoogle_Success(t *testing.T) {
 	}
 }
 
+// TestCompleteGoogle_ResolvesToolResultNameFromIndex: a tool result that
+// carries only an opaque call id must resolve its function name from the prior
+// assistant tool_call via the single-pass id→name index, emitting
+// functionResponse{name=resolved, id=call_id} (#637).
+func TestCompleteGoogle_ResolvesToolResultNameFromIndex(t *testing.T) {
+	var captured googleGenerateRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []map[string]any{
+				{"content": map[string]any{"parts": []map[string]any{{"text": "done"}}}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, APIKey: "k", Model: "gemini-2.0-flash"},
+		Messages: []ChatMessage{
+			{Role: "user", Content: "find notes"},
+			{Role: RoleAssistant, ToolCalls: []ToolCall{
+				{ID: "call_99", Name: "search_notes", Arguments: json.RawMessage(`{"q":"x"}`)},
+			}},
+			{Role: RoleTool, ToolCallID: "call_99", Content: "found it"},
+			{Role: "user", Content: "thanks"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete google: %v", err)
+	}
+
+	var fr *googleFunctionResp
+	for _, c := range captured.Contents {
+		for _, p := range c.Parts {
+			if p.FunctionResponse != nil {
+				fr = p.FunctionResponse
+			}
+		}
+	}
+	if fr == nil {
+		t.Fatal("google: request had no functionResponse part")
+	}
+	if fr.Name != "search_notes" {
+		t.Errorf("functionResponse.name = %q, want search_notes (resolved from call_99 via the index)", fr.Name)
+	}
+	if fr.ID != "call_99" {
+		t.Errorf("functionResponse.id = %q, want call_99", fr.ID)
+	}
+}
+
 func TestCompleteGoogle_ModelsPathPrefix(t *testing.T) {
 	var capturedPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

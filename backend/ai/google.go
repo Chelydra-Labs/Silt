@@ -284,9 +284,23 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 	// does not accept role:"system" in contents[]. Remaining messages map
 	// assistant→model; tool turns are encoded as functionCall/functionResponse
 	// parts (#595).
+	//
+	// Single-pass id→name index for tool results (#637): O(1) lookup instead of
+	// scanning prior assistant turns for every RoleTool message.
+	toolCallNameByID := make(map[string]string)
+	for _, m := range req.Messages {
+		if m.Role != RoleAssistant {
+			continue
+		}
+		for _, tc := range m.ToolCalls {
+			if tc.ID != "" {
+				toolCallNameByID[tc.ID] = tc.Name
+			}
+		}
+	}
 	var system *googleContent
 	var contents []googleContent
-	for messageIndex, m := range req.Messages {
+	for _, m := range req.Messages {
 		if m.Role == RoleSystem {
 			if system == nil {
 				system = &googleContent{Parts: []googleTextPart{{Text: m.Content}}}
@@ -296,27 +310,16 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 			continue
 		}
 		// Tool result → user turn with a functionResponse part. Resolve the
-		// function name from the preceding assistant call when the tool result
-		// carries an opaque call id. Older name-based histories fall back to
-		// treating ToolCallID as the function name.
+		// function name from the id→name index when the tool result carries an
+		// opaque call id. Older name-based histories fall back to treating
+		// ToolCallID as the function name.
 		if m.Role == RoleTool {
 			name := m.ToolCallID
 			id := ""
-			matched := false
-			for i := messageIndex - 1; i >= 0 && !matched; i-- {
-				if req.Messages[i].Role != RoleAssistant {
-					continue
-				}
-				for _, tc := range req.Messages[i].ToolCalls {
-					if tc.ID != m.ToolCallID {
-						continue
-					}
-					name = tc.Name
-					if tc.ID != "" && tc.ID != tc.Name {
-						id = tc.ID
-					}
-					matched = true
-					break
+			if resolved, ok := toolCallNameByID[m.ToolCallID]; ok && resolved != "" {
+				name = resolved
+				if m.ToolCallID != "" && m.ToolCallID != resolved {
+					id = m.ToolCallID
 				}
 			}
 			contents = append(contents, googleContent{

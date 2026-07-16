@@ -416,3 +416,125 @@ func TestTeardownVaultServices_ClearsInMemoryAudit(t *testing.T) {
 		t.Errorf("audit writers still running after teardown")
 	}
 }
+
+func TestRedactAIAuditFields_AllowlistOnly(t *testing.T) {
+	in := map[string]any{
+		"tool":         "search_notes",
+		"status":       "ok",
+		"staged":       true,
+		"note":         "private note text",
+		"summary":      "should not leak",
+		"details":      "more private",
+		"content":      "secret body",
+		"tool_call_id": "call_1",
+		"outcome":      "confirmed",
+		"side":         "vector",
+	}
+	out := redactAIAuditFields(in)
+	if out["tool"] != "search_notes" {
+		t.Errorf("tool = %v", out["tool"])
+	}
+	if out["status"] != "ok" {
+		t.Errorf("status = %v", out["status"])
+	}
+	if out["staged"] != true {
+		t.Errorf("staged = %v", out["staged"])
+	}
+	if out["tool_call_id"] != "call_1" {
+		t.Errorf("tool_call_id = %v", out["tool_call_id"])
+	}
+	if out["outcome"] != "confirmed" {
+		t.Errorf("outcome = %v", out["outcome"])
+	}
+	if out["side"] != "vector" {
+		t.Errorf("side = %v", out["side"])
+	}
+	for _, banned := range []string{"note", "summary", "details", "content"} {
+		if _, ok := out[banned]; ok {
+			t.Errorf("%s must be dropped, got %v", banned, out[banned])
+		}
+	}
+}
+
+func TestPluginAIAuditEvent_RejectsOversizedJSON(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.cfg.AI.Features.Enabled = true
+	app.configMu.Unlock()
+	tok, err := app.RegisterPluginSession("silt-ai-agent")
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	huge := `{"kind":"tool_call","status":"ok","pad":"` + strings.Repeat("x", maxPluginAIAuditEventJSONBytes) + `"}`
+	err = app.PluginAIAuditEvent("silt-ai-agent", tok, huge)
+	if err == nil {
+		t.Fatal("expected error for oversized event JSON")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error = %v, want exceeds cap", err)
+	}
+}
+
+func TestPluginAIAuditEvent_AppendsRedacted(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.cfg.AI.Features.Enabled = true
+	app.configMu.Unlock()
+	// First-party AI plugin exercises CapAI + feature gate + allowlist path.
+	tok, err := app.RegisterPluginSession("silt-ai-agent")
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	err = app.PluginAIAuditEvent("silt-ai-agent", tok, `{"kind":"tool_call","tool":"search_notes","note":"private note text","content":"nope","status":"ok"}`)
+	if err != nil {
+		t.Fatalf("PluginAIAuditEvent: %v", err)
+	}
+	entries, err := app.GetAIAudit()
+	if err != nil {
+		t.Fatalf("GetAIAudit: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].Kind != "tool_call" {
+		t.Errorf("kind = %q", entries[0].Kind)
+	}
+	if entries[0].Status != "ok" {
+		t.Errorf("status = %q", entries[0].Status)
+	}
+	if strings.Contains(string(entries[0].Detail), "nope") {
+		t.Errorf("detail leaked content: %s", entries[0].Detail)
+	}
+	if strings.Contains(string(entries[0].Detail), "private note") {
+		t.Errorf("detail leaked note: %s", entries[0].Detail)
+	}
+	if !strings.Contains(string(entries[0].Detail), "search_notes") {
+		t.Errorf("detail missing tool: %s", entries[0].Detail)
+	}
+}
+
+// Stale session after AI master off: PluginAIAuditEvent must deny CapAI even
+// when the session token is still registered (#632).
+func TestPluginAIAuditEvent_RejectsWhenAIFeaturesOff(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.cfg.AI.Features.Enabled = true
+	app.configMu.Unlock()
+	tok, err := app.RegisterPluginSession("silt-ai-agent")
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	app.configMu.Lock()
+	app.cfg.AI.Features.Enabled = false
+	app.configMu.Unlock()
+	err = app.PluginAIAuditEvent("silt-ai-agent", tok, `{"kind":"tool_call","status":"ok"}`)
+	if err == nil {
+		t.Fatal("expected CapAI denial when Features.Enabled=false")
+	}
+}

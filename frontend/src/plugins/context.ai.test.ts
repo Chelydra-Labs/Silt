@@ -348,15 +348,15 @@ describe('ctx.ai.complete stream (#226)', () => {
 
     // Let listeners attach.
     await Promise.resolve()
-    mocks.emitEvent('ai:complete:delta', {
+    mocks.emitEvent('ai:complete:delta:p', {
       stream_id: 'sid-1',
       delta: 'Hel'
     })
-    mocks.emitEvent('ai:complete:delta', {
+    mocks.emitEvent('ai:complete:delta:p', {
       stream_id: 'sid-1',
       delta: 'lo'
     })
-    mocks.emitEvent('ai:complete:done', {
+    mocks.emitEvent('ai:complete:done:p', {
       stream_id: 'sid-1',
       content: 'Hello',
       model: 'm'
@@ -407,18 +407,18 @@ describe('ctx.ai.complete stream (#226)', () => {
       }
     })()
     await Promise.resolve()
-    mocks.emitEvent('ai:complete:tool-delta', {
+    mocks.emitEvent('ai:complete:tool-delta:p', {
       stream_id: 'sid-tool',
       index: 0,
       id: 'call_1',
       name: 'search_notes'
     })
-    mocks.emitEvent('ai:complete:tool-delta', {
+    mocks.emitEvent('ai:complete:tool-delta:p', {
       stream_id: 'sid-tool',
       index: 0,
       arguments_fragment: '{"q":"x"}'
     })
-    mocks.emitEvent('ai:complete:done', {
+    mocks.emitEvent('ai:complete:done:p', {
       stream_id: 'sid-tool',
       content: '',
       model: 'm',

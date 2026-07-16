@@ -74,14 +74,15 @@ vi.mock('../../../bindings/silt/app.js', () => ({
   EnsureDomainPack: vi.fn().mockResolvedValue(undefined),
   CancelSpellcheckDownload: vi.fn(),
   GetLanguagePackContent: vi.fn(),
-  GetDomainPackWords: vi.fn().mockResolvedValue([])
+  GetDomainPackWords: vi.fn().mockResolvedValue([]),
+  UpdateAIFeatures: vi.fn()
 }))
 vi.mock('../../plugins/store.svelte', () => ({
   loadedPlugins: mocks.loadedPlugins
 }))
 vi.mock('../../settings/store.svelte', () => ({
   settings: mocks.settings,
-  loadConfig: vi.fn().mockResolvedValue(undefined),
+  loadConfig: vi.fn().mockResolvedValue(true),
   saveConfig: vi.fn().mockResolvedValue(undefined),
   reloadFromBackend: vi.fn().mockResolvedValue(undefined)
 }))

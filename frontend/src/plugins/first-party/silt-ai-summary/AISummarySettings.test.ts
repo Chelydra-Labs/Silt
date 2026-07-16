@@ -2,32 +2,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/svelte'
 import type { PluginContext } from '../../sdk'
 
-// The settings store is read for enabled-state + the unconfigured nudge, and
-// saveConfig is called on the enable/disable toggle. Mock both.
-const { mockSettings, mockSaveConfig, mockLoadPlugins, mockTeardown } =
-  vi.hoisted(() => ({
-    mockSettings: {
-      config: {
-        plugins: { disabled: ['silt-ai-summary'], plugin_settings: {} },
-        ai: { chat: { model: 'qwen3:30b', provider_type: 'local' } }
+// Settings store is read for the unconfigured nudge only (#632: enablement
+// lives under Settings → AI → Features, not plugins.disabled).
+const { mockSettings } = vi.hoisted(() => ({
+  mockSettings: {
+    config: {
+      plugins: { disabled: [], plugin_settings: {} },
+      ai: {
+        chat: { model: 'qwen3:30b', provider_type: 'local' },
+        features: { enabled: true, summaries_enabled: true }
       }
-    },
-    mockSaveConfig: vi.fn(async () => true),
-    mockLoadPlugins: vi.fn(async () => ({
-      plugins: new Map(),
-      loadersReady: true
-    })),
-    mockTeardown: vi.fn()
-  }))
+    }
+  }
+}))
 
 vi.mock('../../../settings/store.svelte', () => ({
   settings: mockSettings,
-  saveConfig: mockSaveConfig,
+  saveConfig: vi.fn(),
   loadConfig: vi.fn()
-}))
-vi.mock('../../loader', () => ({
-  loadPlugins: mockLoadPlugins,
-  teardownPlugin: mockTeardown
 }))
 
 import AISummarySettings from './AISummarySettings.svelte'
@@ -43,23 +35,13 @@ function makeCtx(): PluginContext {
       max_note_chars: 12000,
       dismissed_notes: []
     })),
-    updatePluginSetting: vi.fn(async () => true)
+    updatePluginSetting: vi.fn(async () => true),
+    openSettings: vi.fn()
   } as unknown as PluginContext
 }
 
 describe('AISummarySettings', () => {
   beforeEach(() => {
-    mockSaveConfig.mockReset()
-    mockLoadPlugins.mockReset()
-    mockTeardown.mockReset()
-    mockSaveConfig.mockResolvedValue(true)
-    mockLoadPlugins.mockResolvedValue({
-      plugins: new Map(),
-      loadersReady: true
-    })
-    // Start each test with the plugin disabled (enabled=false) so the toggle
-    // exercises the enable path.
-    mockSettings.config.plugins.disabled = ['silt-ai-summary']
     mockSettings.config.ai.chat.model = 'qwen3:30b'
   })
 
@@ -72,38 +54,37 @@ describe('AISummarySettings', () => {
       }
     })
     expect(getByText('AI Summary')).toBeTruthy()
-    // The summary-length select loads from ctx.getPluginSettings.
     expect(await findByLabelText(/Summary length/i)).toBeTruthy()
+  })
+
+  it('points enablement at Settings → AI Features (no plugins.disabled toggle)', async () => {
+    const ctx = makeCtx()
+    const { findByRole, queryByRole } = render(AISummarySettings, {
+      props: {
+        ctx,
+        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as any
+      }
+    })
+    expect(
+      await findByRole('region', { name: /Managed enablement/i })
+    ).toBeTruthy()
+    // No independent enable switch remains on this page.
+    expect(
+      queryByRole('checkbox', { name: /Enable note summaries/i })
+    ).toBeNull()
+    expect(queryByRole('checkbox', { name: /Generate summaries/i })).toBeNull()
   })
 
   it('shows the unconfigured nudge when no chat model is configured', () => {
     mockSettings.config.ai.chat.model = ''
-    const { getByText } = render(AISummarySettings, {
+    const { getByText, getByRole } = render(AISummarySettings, {
       props: {
         ctx: makeCtx(),
         manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as any
       }
     })
     expect(getByText(/No AI provider is configured/i)).toBeTruthy()
-  })
-
-  it('toggling enabled writes plugins.disabled + reloads the plugin', async () => {
-    const ctx = makeCtx()
-    const { findByLabelText } = render(AISummarySettings, {
-      props: {
-        ctx,
-        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as any
-      }
-    })
-    const toggle = (await findByLabelText(
-      /Generate summaries/i
-    )) as HTMLInputElement
-    // Currently disabled → toggle is unchecked; enabling removes it from the list.
-    await fireEvent.click(toggle)
-    expect(mockSaveConfig).toHaveBeenCalledTimes(1)
-    const savedCfg = (mockSaveConfig.mock.calls as any[])[0][0]
-    expect(savedCfg.plugins.disabled).not.toContain('silt-ai-summary')
-    expect(mockLoadPlugins).toHaveBeenCalled()
+    expect(getByRole('button', { name: /Open AI settings/i })).toBeTruthy()
   })
 
   it('changing summary length persists via ctx.updatePluginSetting', async () => {
@@ -137,7 +118,6 @@ describe('AISummarySettings', () => {
     })
     const radios = await findAllByRole('radio')
     expect(radios).toHaveLength(2)
-    // Default settings (auto_on_open=true, on_demand_only=false) → "auto" checked.
     const withinGroup = radios.filter((r) => group.contains(r))
     expect(withinGroup).toHaveLength(2)
     const autoRadio = withinGroup.find((r) =>
@@ -154,10 +134,8 @@ describe('AISummarySettings', () => {
         manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as any
       }
     })
-    // Wait for load, then click the Risks checkbox.
     await findAllByRole('checkbox')
     const checkboxes = await findAllByRole('checkbox')
-    // The first checkbox is the Enabled toggle; facets follow.
     const risks = checkboxes.find((c) =>
       c.closest('label')?.textContent?.includes('Risks')
     )!

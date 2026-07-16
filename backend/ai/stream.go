@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -184,11 +185,11 @@ func streamOpenAI(ctx context.Context, req CompleteRequest, model, baseURL strin
 
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return CompleteResult{}, &AIError{Kind: ErrTimeout, Message: fmt.Sprintf("request timed out after %s: %v", timeout, err)}
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return CompleteResult{}, &AIError{Kind: ErrCanceled, Message: fmt.Sprintf("stream canceled: %v", err)}
 		}
-		if ctx.Err() == context.Canceled {
-			return CompleteResult{}, &AIError{Kind: ErrTimeout, Message: fmt.Sprintf("stream cancelled: %v", err)}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return CompleteResult{}, &AIError{Kind: ErrTimeout, Message: fmt.Sprintf("request timed out after %s: %v", timeout, err)}
 		}
 		return CompleteResult{}, &AIError{Kind: ErrUnreachable, Message: err.Error()}
 	}
@@ -284,6 +285,12 @@ func parseOpenAISSE(r io.Reader, fallbackModel string, onDelta StreamDeltaFn, on
 			}
 			content.WriteString(choice.Delta.Content)
 			if err := onDelta(choice.Delta.Content); err != nil {
+				// A consumer cancel (Stop / vault close) returns context.Canceled;
+				// classify it as such so the audit/UX shows "canceled", not a
+				// generic abort or timeout (#628 cancel contract).
+				if errors.Is(err, context.Canceled) {
+					return CompleteResult{}, &AIError{Kind: ErrCanceled, Message: fmt.Sprintf("stream canceled: %v", err)}
+				}
 				return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("stream consumer aborted: %v", err)}
 			}
 		}
@@ -321,12 +328,18 @@ func parseOpenAISSE(r io.Reader, fallbackModel string, onDelta StreamDeltaFn, on
 			}
 			if onToolDelta != nil {
 				if err := onToolDelta(frag); err != nil {
+					if errors.Is(err, context.Canceled) {
+						return CompleteResult{}, &AIError{Kind: ErrCanceled, Message: fmt.Sprintf("stream tool canceled: %v", err)}
+					}
 					return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("stream tool consumer aborted: %v", err)}
 				}
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return CompleteResult{}, &AIError{Kind: ErrCanceled, Message: fmt.Sprintf("stream canceled: %v", err)}
+		}
 		return CompleteResult{}, &AIError{Kind: ErrUnknown, Message: fmt.Sprintf("read stream: %v", err)}
 	}
 	if !sawDone && !sawFinishReason {

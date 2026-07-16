@@ -8,11 +8,11 @@ export function formatAIError(e: unknown): string {
   const msg = (err?.message || '').trim()
   switch (code) {
     case 'unauthorized':
-      return 'AI provider rejected the request (unauthorized). Check your API key in Settings → AI Provider.'
+      return 'AI provider rejected the request (unauthorized). Check your API key in Settings → AI.'
     case 'rate-limited':
       return 'AI provider rate limit reached. Wait a moment and try again.'
     case 'model-missing':
-      return 'Chat model is missing or invalid. Configure a model in Settings → AI Provider.'
+      return 'Chat model is missing or invalid. Configure a model in Settings → AI.'
     case 'timeout':
       return 'AI request timed out. Try a shorter selection or retry.'
     case 'unreachable':

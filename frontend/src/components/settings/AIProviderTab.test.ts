@@ -55,7 +55,12 @@ const mocks = vi.hoisted(() => {
     },
     use_keyring: true,
     keyring_available: true,
-    keyring_unusable_for: [] as string[]
+    keyring_unusable_for: [] as string[],
+    features: {
+      enabled: false,
+      rag_enabled: false,
+      summaries_enabled: false
+    }
   }
   return {
     configState: structuredClone(defaultConfig),
@@ -85,6 +90,7 @@ const mocks = vi.hoisted(() => {
     ],
     GetAIProviderConfig: vi.fn(),
     UpdateAIProviderConfig: vi.fn(),
+    UpdateAIFeatures: vi.fn(),
     SetAIAPIKey: vi.fn(),
     CopyAIAPIKey: vi.fn(),
     ClearAIAPIKey: vi.fn(),
@@ -101,6 +107,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('../../../bindings/silt/app.js', () => ({
   GetAIProviderConfig: mocks.GetAIProviderConfig,
   UpdateAIProviderConfig: mocks.UpdateAIProviderConfig,
+  UpdateAIFeatures: mocks.UpdateAIFeatures,
   SetAIAPIKey: mocks.SetAIAPIKey,
   CopyAIAPIKey: mocks.CopyAIAPIKey,
   ClearAIAPIKey: mocks.ClearAIAPIKey,
@@ -112,6 +119,40 @@ vi.mock('../../../bindings/silt/app.js', () => ({
   UpdatePluginSetting: mocks.UpdatePluginSetting
 }))
 
+vi.mock('../../settings/store.svelte', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../settings/store.svelte')>()
+  return {
+    ...actual,
+    loadConfig: vi.fn().mockResolvedValue(true),
+    // Preserve the binding path so stale-index tests still see UpdatePluginSetting.
+    updatePluginSetting: (...args: unknown[]) =>
+      mocks.UpdatePluginSetting(...args)
+  }
+})
+
+vi.mock('../../plugins/loader', () => ({
+  loadPlugins: vi.fn().mockResolvedValue({ plugins: new Map(), errors: [] }),
+  getSessionToken: vi.fn(() => undefined)
+}))
+
+vi.mock('../../plugins/context', () => ({
+  makePluginContext: vi.fn((id: string) => ({ pluginID: id }))
+}))
+
+// Fine-tuning embeds are heavy; stub so Features/provider tests stay focused.
+vi.mock('../../plugins/first-party/silt-ai-qa/QASettings.svelte', () => ({
+  default: () => null
+}))
+vi.mock(
+  '../../plugins/first-party/silt-ai-assistant/AssistantSettings.svelte',
+  () => ({ default: () => null })
+)
+vi.mock(
+  '../../plugins/first-party/silt-ai-summary/AISummarySettings.svelte',
+  () => ({ default: () => null })
+)
+
 import AIProviderTab from './AIProviderTab.svelte'
 
 describe('AIProviderTab', () => {
@@ -119,6 +160,7 @@ describe('AIProviderTab', () => {
     mocks.resetConfig()
     mocks.GetAIProviderConfig.mockReset()
     mocks.UpdateAIProviderConfig.mockReset()
+    mocks.UpdateAIFeatures.mockReset()
     mocks.SetAIAPIKey.mockReset()
     mocks.CopyAIAPIKey.mockReset()
     mocks.ClearAIAPIKey.mockReset()
@@ -133,6 +175,7 @@ describe('AIProviderTab', () => {
       structuredClone(mocks.configState)
     )
     mocks.UpdateAIProviderConfig.mockResolvedValue(undefined)
+    mocks.UpdateAIFeatures.mockResolvedValue(undefined)
     mocks.SetAIAPIKey.mockResolvedValue(undefined)
     mocks.CopyAIAPIKey.mockResolvedValue(undefined)
     mocks.ClearAIAPIKey.mockResolvedValue(undefined)
@@ -162,6 +205,154 @@ describe('AIProviderTab', () => {
       ).toBeInTheDocument()
     )
   }
+
+  describe('features card', () => {
+    it('renders Enable AI and nested feature toggles', async () => {
+      render(AIProviderTab)
+      await ready()
+      expect(
+        screen.getByRole('checkbox', { name: /Enable AI/i })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: /Semantic search/i })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: /Note summaries/i })
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('checkbox', { name: /Semantic search/i })
+      ).toBeDisabled()
+    })
+
+    it('renders Setup and Advanced segment nav (Capabilities only when AI is on)', async () => {
+      render(AIProviderTab)
+      await ready()
+      const nav = screen.getByRole('navigation', {
+        name: /AI settings sections/i
+      })
+      expect(nav).toBeInTheDocument()
+      expect(screen.getByRole('tab', { name: /^Setup$/i })).toBeInTheDocument()
+      expect(
+        screen.getByRole('tab', { name: /^Advanced$/i })
+      ).toBeInTheDocument()
+      // Master AI off in default mock config → no Capabilities segment.
+      expect(screen.queryByRole('tab', { name: /^Capabilities$/i })).toBeNull()
+    })
+
+    it('shows Capabilities segment when master AI is enabled', async () => {
+      mocks.GetAIProviderConfig.mockResolvedValue({
+        ...structuredClone(mocks.configState),
+        features: {
+          enabled: true,
+          rag_enabled: false,
+          summaries_enabled: false
+        }
+      })
+      render(AIProviderTab)
+      await ready()
+      expect(
+        screen.getByRole('tab', { name: /^Capabilities$/i })
+      ).toBeInTheDocument()
+    })
+
+    it('switches views when Advanced is selected (hides Features, shows Advanced)', async () => {
+      render(AIProviderTab)
+      await ready()
+      expect(
+        screen.getByRole('checkbox', { name: /Enable AI/i })
+      ).toBeInTheDocument()
+      await fireEvent.click(screen.getByRole('tab', { name: /^Advanced$/i }))
+      expect(screen.queryByRole('checkbox', { name: /Enable AI/i })).toBeNull()
+      expect(screen.getByText(/Advanced Options/i)).toBeInTheDocument()
+      await fireEvent.click(screen.getByRole('tab', { name: /^Setup$/i }))
+      expect(
+        screen.getByRole('checkbox', { name: /Enable AI/i })
+      ).toBeInTheDocument()
+    })
+
+    it('Arrow/Home/End move the active segment (roving tabindex)', async () => {
+      render(AIProviderTab)
+      await ready()
+      const nav = screen.getByRole('navigation', {
+        name: /AI settings sections/i
+      })
+      const tablist = within(nav).getByRole('tablist')
+      const setup = screen.getByRole('tab', { name: /^Setup$/i })
+      const advanced = screen.getByRole('tab', { name: /^Advanced$/i })
+      expect(setup.getAttribute('aria-selected')).toBe('true')
+      expect(setup.getAttribute('tabindex')).toBe('0')
+      setup.focus()
+      await fireEvent.keyDown(tablist, { key: 'ArrowRight' })
+      expect(advanced.getAttribute('aria-selected')).toBe('true')
+      expect(advanced.getAttribute('tabindex')).toBe('0')
+      expect(setup.getAttribute('tabindex')).toBe('-1')
+      expect(screen.getByText(/Advanced Options/i)).toBeInTheDocument()
+      await fireEvent.keyDown(tablist, { key: 'Home' })
+      expect(setup.getAttribute('aria-selected')).toBe('true')
+      expect(
+        screen.getByRole('checkbox', { name: /Enable AI/i })
+      ).toBeInTheDocument()
+      await fireEvent.keyDown(tablist, { key: 'End' })
+      expect(advanced.getAttribute('aria-selected')).toBe('true')
+    })
+
+    it('shows embedding empty-state CTA when RAG is on without an embedding model', async () => {
+      mocks.GetAIProviderConfig.mockResolvedValue({
+        ...structuredClone(mocks.configState),
+        features: {
+          enabled: true,
+          rag_enabled: true,
+          summaries_enabled: false
+        },
+        embedding: {
+          provider_type: 'openai-compatible',
+          base_url: '',
+          model: '',
+          has_key: false,
+          timeout_ms: 60000
+        }
+      })
+      render(AIProviderTab)
+      await ready()
+      expect(
+        screen.getByText(/Semantic search needs an embedding model/i)
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: /Set up embedding/i })
+      ).toBeInTheDocument()
+    })
+
+    it('calls UpdateAIFeatures when Enable AI is toggled', async () => {
+      render(AIProviderTab)
+      await ready()
+      const master = screen.getByRole('checkbox', { name: /Enable AI/i })
+      await fireEvent.click(master)
+      await waitFor(() => {
+        expect(mocks.UpdateAIFeatures).toHaveBeenCalledWith({ enabled: true })
+      })
+    })
+
+    it('enables nested Semantic search after master is on', async () => {
+      mocks.GetAIProviderConfig.mockResolvedValue({
+        ...structuredClone(mocks.configState),
+        features: {
+          enabled: true,
+          rag_enabled: false,
+          summaries_enabled: false
+        }
+      })
+      render(AIProviderTab)
+      await ready()
+      const rag = screen.getByRole('checkbox', { name: /Semantic search/i })
+      expect(rag).not.toBeDisabled()
+      await fireEvent.click(rag)
+      await waitFor(() => {
+        expect(mocks.UpdateAIFeatures).toHaveBeenCalledWith({
+          rag_enabled: true
+        })
+      })
+    })
+  })
 
   describe('initial render', () => {
     it('renders both provider cards with the config-sourced field values', async () => {
@@ -241,7 +432,12 @@ describe('AIProviderTab', () => {
         },
         use_keyring: true,
         keyring_available: true,
-        keyring_unusable_for: []
+        keyring_unusable_for: [],
+        features: {
+          enabled: false,
+          rag_enabled: false,
+          summaries_enabled: false
+        }
       }
       mocks.GetAIProviderConfig.mockResolvedValue(
         structuredClone(mocks.configState)
@@ -277,7 +473,12 @@ describe('AIProviderTab', () => {
         },
         use_keyring: true,
         keyring_available: true,
-        keyring_unusable_for: []
+        keyring_unusable_for: [],
+        features: {
+          enabled: false,
+          rag_enabled: false,
+          summaries_enabled: false
+        }
       }
       mocks.GetAIProviderConfig.mockResolvedValue(
         structuredClone(mocks.configState)
@@ -313,7 +514,12 @@ describe('AIProviderTab', () => {
         },
         use_keyring: true,
         keyring_available: true,
-        keyring_unusable_for: []
+        keyring_unusable_for: [],
+        features: {
+          enabled: false,
+          rag_enabled: false,
+          summaries_enabled: false
+        }
       }
       mocks.GetAIProviderConfig.mockResolvedValue(
         structuredClone(mocks.configState)
@@ -1004,9 +1210,14 @@ describe('AIProviderTab', () => {
   })
 
   describe('keyring section', () => {
+    async function goAdvanced() {
+      await fireEvent.click(screen.getByRole('tab', { name: /^Advanced$/i }))
+    }
+
     it('toggling calls SetUseKeyring with the new value', async () => {
       render(AIProviderTab)
       await ready()
+      await goAdvanced()
 
       const toggle = document.getElementById(
         'ai-keyring-toggle'
@@ -1027,6 +1238,7 @@ describe('AIProviderTab', () => {
       )
       render(AIProviderTab)
       await ready()
+      await goAdvanced()
 
       const warning = screen.getByText(/No OS keyring/i)
       expect(warning).toBeInTheDocument()
@@ -1064,9 +1276,14 @@ describe('AIProviderTab', () => {
       return screen.getByText('Plugin AI calls', { exact: true })
     }
 
+    async function goAdvanced() {
+      await fireEvent.click(screen.getByRole('tab', { name: /^Advanced$/i }))
+    }
+
     it('expanding the <details> loads the audit log via GetAIAudit', async () => {
       render(AIProviderTab)
       await ready()
+      await goAdvanced()
 
       await fireEvent.click(summaryEl())
 
@@ -1079,6 +1296,7 @@ describe('AIProviderTab', () => {
     it('Clear log calls ClearAIAudit and empties the table', async () => {
       render(AIProviderTab)
       await ready()
+      await goAdvanced()
 
       await fireEvent.click(summaryEl())
       await screen.findByText('summarizer')
@@ -1099,6 +1317,7 @@ describe('AIProviderTab', () => {
       mocks.GetAIAudit.mockRejectedValue(new Error('db locked'))
       render(AIProviderTab)
       await ready()
+      await goAdvanced()
 
       await fireEvent.click(summaryEl())
 
@@ -1116,6 +1335,7 @@ describe('AIProviderTab', () => {
       ).mockResolvedValue(structuredClone(mocks.auditState))
       render(AIProviderTab)
       await ready()
+      await goAdvanced()
 
       await fireEvent.click(summaryEl())
 
@@ -1150,6 +1370,7 @@ describe('AIProviderTab', () => {
       ])
       render(AIProviderTab)
       await ready()
+      await goAdvanced()
 
       await fireEvent.click(summaryEl())
       await screen.findByText('summarizer')

@@ -42,14 +42,24 @@ import (
 	"time"
 )
 
-// AI stream event names pushed to the frontend (#226). Payload is always a
-// single object (ev.data on the JS side).
+// AI stream event name prefixes (#226). Owner-scoped full names append
+// ":"+pluginID so concurrent plugin streams do not share a global bus (#635).
+// Payload still includes plugin_id for debugging.
 const (
 	aiEventCompleteDelta     = "ai:complete:delta"
 	aiEventCompleteDone      = "ai:complete:done"
 	aiEventCompleteError     = "ai:complete:error"
 	aiEventCompleteToolDelta = "ai:complete:tool-delta"
 )
+
+// aiStreamEventName returns the owner-scoped Wails event name for a stream
+// event base + pluginID (#635).
+func aiStreamEventName(base, pluginID string) string {
+	if pluginID == "" {
+		return base
+	}
+	return base + ":" + pluginID
+}
 
 // aiStreamBufferCap is the max number of unconsumed delta events buffered per
 // stream before the producer aborts (backpressure). Generous for UI consumers
@@ -147,17 +157,25 @@ type AIPublicProvider struct {
 	Dimensions      *int     `json:"dimensions,omitempty"`
 }
 
-// AIPublicConfig is the AI Provider page's full read view: both provider blocks
-// (key-scrubbed) plus the keyring toggle and availability state. KeyringAvailable
-// is false when no keyring store is wired (tests); KeyringUnusableFor lists the
-// provider kinds ("chat"/"embedding") whose keyring lookup reported unavailable
-// (headless Linux / locked session) so the page can show a fallback warning.
+// AIPublicConfig is the AI settings page's full read view: both provider blocks
+// (key-scrubbed), product feature flags (#632), plus the keyring toggle and
+// availability state. KeyringAvailable is false when no keyring store is wired
+// (tests); KeyringUnusableFor lists the provider kinds ("chat"/"embedding")
+// whose keyring lookup reported unavailable so the page can show a fallback warning.
 type AIPublicConfig struct {
-	Chat               AIPublicProvider `json:"chat"`
-	Embedding          AIPublicProvider `json:"embedding"`
-	UseKeyring         bool             `json:"use_keyring"`
-	KeyringAvailable   bool             `json:"keyring_available"`
-	KeyringUnusableFor []string         `json:"keyring_unusable_for,omitempty"`
+	Chat               AIPublicProvider        `json:"chat"`
+	Embedding          AIPublicProvider        `json:"embedding"`
+	Features           config.AIFeaturesConfig `json:"features"`
+	UseKeyring         bool                    `json:"use_keyring"`
+	KeyringAvailable   bool                    `json:"keyring_available"`
+	KeyringUnusableFor []string                `json:"keyring_unusable_for,omitempty"`
+}
+
+// AIFeaturesPatch is the input to UpdateAIFeatures (#632).
+type AIFeaturesPatch struct {
+	Enabled          *bool `json:"enabled,omitempty"`
+	RAGEnabled       *bool `json:"rag_enabled,omitempty"`
+	SummariesEnabled *bool `json:"summaries_enabled,omitempty"`
 }
 
 // PluginAIChatMessage is one chat message crossing the plugin→service boundary.
@@ -307,6 +325,7 @@ func (a *App) GetAIProviderConfig() (AIPublicConfig, error) {
 	a.configMu.RLock()
 	chat := a.cfg.AI.Chat
 	emb := a.cfg.AI.Embedding
+	features := a.cfg.AI.Features
 	useKeyring := a.aiUseKeyringLocked()
 	chatUser := a.aiKeyringUser("chat")
 	embUser := a.aiKeyringUser("embedding")
@@ -321,6 +340,7 @@ func (a *App) GetAIProviderConfig() (AIPublicConfig, error) {
 		UseKeyring:         useKeyring,
 		KeyringAvailable:   keyringAvailable,
 		KeyringUnusableFor: aiUnusableList(chatUnavail, embUnavail),
+		Features:           features,
 		Chat: AIPublicProvider{
 			ProviderType:    chat.ProviderType,
 			BaseURL:         chat.BaseURL,
@@ -340,6 +360,49 @@ func (a *App) GetAIProviderConfig() (AIPublicConfig, error) {
 			TimeoutMs:    emb.TimeoutMs,
 		},
 	}, nil
+}
+
+// UpdateAIFeatures applies a product-level AI enablement patch (#632) and
+// persists atomically. Dependents are clamped when master is off. Live a.cfg
+// is only updated after a successful save so a failed persist does not leave
+// memory and disk diverged until restart.
+func (a *App) UpdateAIFeatures(patch AIFeaturesPatch) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+
+	// Candidate copy: mutate offline, then publish only if write succeeds.
+	next := a.cfg
+	f := next.AI.Features
+	if patch.Enabled != nil {
+		f.Enabled = *patch.Enabled
+	}
+	if patch.RAGEnabled != nil {
+		f.RAGEnabled = *patch.RAGEnabled
+	}
+	if patch.SummariesEnabled != nil {
+		f.SummariesEnabled = *patch.SummariesEnabled
+	}
+	next.AI.Features = f
+	wasOn := a.cfg.AI.Features.Enabled
+	next.AI = config.NormalizeAIConfig(next.AI)
+	if err := a.saveConfigTracked(next); err != nil {
+		return err
+	}
+	a.cfg = next
+	// Master AI just turned off: cancel any in-flight provider streams so they
+	// stop consuming tokens/cost immediately instead of running to their
+	// per-call timeout. Frontend teardown calls PluginAICancelStream, but that
+	// binding rejects once the AI capability grant is revoked on the next
+	// session check, so shutdown must not depend on it (#632).
+	if wasOn && !next.AI.Features.Enabled {
+		a.cancelAllAIStreams()
+	}
+	return nil
 }
 
 // aiUnusableList returns the provider kinds whose keyring lookup reported
@@ -826,6 +889,14 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 // The caller's a.wg.Add(1) is balanced when the stream goroutine finishes.
 // drainDone is deferred inside the goroutine so vault-close waits for the stream.
 func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveModel string, req ai.CompleteRequest, drainDone func()) (ai.CompleteResult, error) {
+	// Owner-scoped stream events are named ":<pluginID>"; an empty id would
+	// fall back to the global unscoped bus (#635). Preflight validates this, but
+	// assert structurally so a future refactor cannot silently regress it.
+	if pluginID == "" {
+		a.wg.Done()
+		drainDone()
+		return ai.CompleteResult{}, &ai.AIError{Kind: ai.ErrBadRequest, Message: "plugin_id is required for a streamed completion"}
+	}
 	streamID, err := newAIStreamID()
 	if err != nil {
 		a.wg.Done()
@@ -875,10 +946,10 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 		case <-time.After(aiStreamReadyWait):
 		case <-streamCtx.Done():
 			a.auditAI(pluginID, aiChatKind, provider.BaseURL, effectiveModel, "cancelled", nil)
-			a.emit(aiEventCompleteError, map[string]any{
+			a.emit(aiStreamEventName(aiEventCompleteError, pluginID), map[string]any{
 				"stream_id": streamID,
 				"plugin_id": pluginID,
-				"kind":      string(ai.ErrTimeout),
+				"kind":      string(ai.ErrCanceled),
 				"message":   "stream cancelled before start",
 			})
 			return
@@ -886,12 +957,13 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 
 		// Fan-out deltas to Wails events on a separate goroutine so the SSE
 		// parser only blocks on the bounded channel (backpressure), not on IPC.
+		// Event names are owner-scoped by pluginID (#635).
 		emitDone := make(chan struct{})
 		go func() {
 			defer close(emitDone)
 			idx := 0
 			for delta := range deltaCh {
-				a.emit(aiEventCompleteDelta, map[string]any{
+				a.emit(aiStreamEventName(aiEventCompleteDelta, pluginID), map[string]any{
 					"stream_id": streamID,
 					"plugin_id": pluginID,
 					"delta":     delta,
@@ -907,7 +979,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 		go func() {
 			defer close(emitToolDone)
 			for frag := range toolDeltaCh {
-				a.emit(aiEventCompleteToolDelta, map[string]any{
+				a.emit(aiStreamEventName(aiEventCompleteToolDelta, pluginID), map[string]any{
 					"stream_id":          streamID,
 					"plugin_id":          pluginID,
 					"index":              frag.Index,
@@ -953,7 +1025,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 			if e, ok := callErr.(*ai.AIError); ok {
 				kind, msg = string(e.Kind), e.Message
 			}
-			a.emit(aiEventCompleteError, map[string]any{
+			a.emit(aiStreamEventName(aiEventCompleteError, pluginID), map[string]any{
 				"stream_id": streamID,
 				"plugin_id": pluginID,
 				"kind":      kind,
@@ -974,7 +1046,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 		if result.Usage != nil {
 			payload["usage"] = result.Usage
 		}
-		a.emit(aiEventCompleteDone, payload)
+		a.emit(aiStreamEventName(aiEventCompleteDone, pluginID), payload)
 	}()
 
 	return ai.CompleteResult{StreamID: streamID, Model: effectiveModel}, nil
@@ -1009,6 +1081,30 @@ func (a *App) PluginAICancelStream(pluginID, sessionToken, streamID string) erro
 	}
 	a.aiStreamsMu.Unlock()
 	return nil
+}
+
+// cancelAllAIStreams aborts every in-flight streamed completion. Used when AI
+// is turned off so active provider requests stop immediately instead of
+// running to their per-call timeout. Mirrors PluginAICancelStream's per-stream
+// teardown (close the ready gate, then cancel) but for the whole map. The
+// ready gate is closed so a producer still blocked on the ready handshake
+// observes the cancel (#632).
+func (a *App) cancelAllAIStreams() {
+	a.aiStreamsMu.Lock()
+	sessions := make([]*aiStreamSession, 0, len(a.aiStreams))
+	for _, s := range a.aiStreams {
+		sessions = append(sessions, s)
+	}
+	a.aiStreamsMu.Unlock()
+	// Cancel outside the lock: each stream's goroutine re-acquires aiStreamsMu
+	// in its cleanup defer to delete itself, so holding it across cancel() would
+	// self-deadlock.
+	for _, s := range sessions {
+		if s.ready != nil {
+			s.readyOnce.Do(func() { close(s.ready) })
+		}
+		s.cancel()
+	}
 }
 
 // PluginAIStreamReady signals that the frontend has attached Events.On
@@ -1052,6 +1148,55 @@ func (a *App) requirePluginSession(pluginID, sessionToken string) error {
 	if !ok || owner != pluginID {
 		return fmt.Errorf("invalid plugin session")
 	}
+	return nil
+}
+
+// maxPluginAIAuditEventJSONBytes rejects oversized event payloads before
+// json.Unmarshal so CapAI plugins cannot force multi-megabyte allocations
+// (the on-disk Detail cap is only 2 KiB after filtering).
+const maxPluginAIAuditEventJSONBytes = 8 * 1024
+
+// maxPluginAIAuditKindLen bounds the kind string stored on each log row.
+const maxPluginAIAuditKindLen = 64
+
+// PluginAIAuditEvent appends a structured agent/tool/staging audit row to the
+// AI audit log (#630). Gated by CapAI + session. eventJSON is a JSON object;
+// only allowlisted metadata keys are retained (never freeform note bodies).
+func (a *App) PluginAIAuditEvent(pluginID, sessionToken, eventJSON string) error {
+	if err := a.requirePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapAI); err != nil {
+		return err
+	}
+	eventJSON = strings.TrimSpace(eventJSON)
+	if eventJSON == "" {
+		return &ai.AIError{Kind: ai.ErrBadRequest, Message: "event JSON is required"}
+	}
+	if len(eventJSON) > maxPluginAIAuditEventJSONBytes {
+		return &ai.AIError{
+			Kind:    ai.ErrBadRequest,
+			Message: fmt.Sprintf("event JSON exceeds %d-byte cap", maxPluginAIAuditEventJSONBytes),
+		}
+	}
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(eventJSON), &fields); err != nil {
+		return &ai.AIError{Kind: ai.ErrBadRequest, Message: fmt.Sprintf("invalid event JSON: %v", err)}
+	}
+	kind, _ := fields["kind"].(string)
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		kind = "event"
+	}
+	if len(kind) > maxPluginAIAuditKindLen {
+		return &ai.AIError{
+			Kind:    ai.ErrBadRequest,
+			Message: fmt.Sprintf("event kind exceeds %d characters", maxPluginAIAuditKindLen),
+		}
+	}
+	// Drop the kind key from detail fields; it is stored on the entry.
+	delete(fields, "kind")
+	a.auditAIEvent(pluginID, kind, fields)
 	return nil
 }
 

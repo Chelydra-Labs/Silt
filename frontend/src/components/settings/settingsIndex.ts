@@ -265,6 +265,44 @@ const CORE_INDEX: SettingsIndexEntry[] = [
     keywords: ['audit', 'calls', 'history', 'tokens', 'ai'],
     sectionId: 'ai'
   },
+  {
+    label: 'Enable AI features',
+    keywords: [
+      'master',
+      'toggle',
+      'semantic search',
+      'rag',
+      'summaries',
+      'writing'
+    ],
+    sectionId: 'ai',
+    anchorId: 'ai-setup'
+  },
+  {
+    label: 'Writing Assistant actions',
+    keywords: ['draft', 'rewrite', 'clarity', 'tasks', 'tags', 'proposals'],
+    sectionId: 'ai',
+    anchorId: 'ai-writing-tuning'
+  },
+  {
+    label: 'Semantic search index',
+    keywords: [
+      'hybrid',
+      'balance',
+      'context breadth',
+      'rebuild',
+      'embedding',
+      'qa'
+    ],
+    sectionId: 'ai',
+    anchorId: 'ai-search-tuning'
+  },
+  {
+    label: 'Note summaries',
+    keywords: ['banner', 'auto_on_open', 'facets', 'summary length'],
+    sectionId: 'ai',
+    anchorId: 'ai-summary-tuning'
+  },
 
   // Hotkeys
   {
@@ -329,6 +367,8 @@ function pluginEntries(): SettingsIndexEntry[] {
   const seen = new Set<string>()
   for (const plugin of loadedPlugins.plugins.values()) {
     if (!plugin.settingsPageComponent) continue
+    // First-party AI fine-tuning is indexed under sectionId 'ai' above.
+    if (plugin.manifest.id.startsWith('silt-ai-')) continue
     const id = `plugin:${plugin.manifest.id}`
     if (seen.has(id)) continue
     seen.add(id)
@@ -341,6 +381,7 @@ function pluginEntries(): SettingsIndexEntry[] {
   for (const surface of getSurfaces('settings-panel')) {
     const id = `plugin:${surface.pluginID}`
     if (seen.has(id)) continue
+    if (surface.pluginID.startsWith('silt-ai-')) continue
     const plugin = loadedPlugins.plugins.get(surface.pluginID)
     if (!plugin) continue
     seen.add(id)

@@ -431,18 +431,181 @@ var (
 const maxAIAuditEntries = 500
 
 // AIAuditEntry is one row of the plugin AI audit log. Content is NEVER recorded
-// — only the endpoint host, model, outcome, and a token-usage summary.
+// — only the endpoint host, model, outcome, and a token-usage summary. Kind may
+// also be agent-side events (tool_call, staging_decision, …) with Detail holding
+// redacted structured fields (#630).
 type AIAuditEntry struct {
 	Plugin string `json:"plugin"`
-	Kind   string `json:"kind"`   // "chat" | "embed"
+	Kind   string `json:"kind"`   // "chat" | "embed" | "tool_call" | "staging_decision" | …
 	Host   string `json:"host"`   // provider host (no path/query), best-effort
 	Model  string `json:"model"`  // model the call targeted
-	Status string `json:"status"` // "ok" | normalized error kind | "error"
+	Status string `json:"status"` // "ok" | normalized error kind | "error" | event outcome
 	At     string `json:"at"`     // RFC3339
 	// Usage summary (present only on success and when the provider returned it).
 	PromptTokens     *int `json:"prompt_tokens,omitempty"`
 	CompletionTokens *int `json:"completion_tokens,omitempty"`
 	TotalTokens      *int `json:"total_tokens,omitempty"`
+	// Detail is a redacted JSON object for structured agent events (#630).
+	// Omitted for chat/embed rows.
+	Detail json.RawMessage `json:"detail,omitempty"`
+}
+
+// maxAIAuditDetailBytes caps serialized Detail JSON so a plugin cannot flood
+// ai.log with huge tool argument dumps (#630).
+const maxAIAuditDetailBytes = 2 * 1024
+
+// allowedAIAuditDetailKeys is the closed set of structured agent/tool audit
+// fields that may be persisted to ai.log (synced with the vault). Anything
+// else — note, summary, details, freeform message bodies — is dropped so
+// private vault text cannot ride an arbitrary eventJSON key (#630).
+//
+// INVARIANT: this set is closed against freeform-text keys BY DESIGN. It MUST
+// never include keys whose values could carry user/authored text or paths
+// (e.g. content, note, message, error, body, path, detail, args, query). Only
+// short developer-shaped identifiers belong here; the redactor relies on this
+// so a path or vault snippet embedded inside a longer string has nowhere to
+// land. Add a key only if its value is a bounded scalar (id / label / count).
+var allowedAIAuditDetailKeys = map[string]struct{}{
+	"tool":         {},
+	"tool_call_id": {},
+	"status":       {},
+	"outcome":      {},
+	"staged":       {},
+	"side":         {},
+	"iteration":    {},
+	"error_kind":   {},
+	"plugin":       {},
+	// Server-only backstop marker when detail JSON is oversized.
+	"detail_truncated": {},
+}
+
+// redactAIAuditFields filters to the allowlisted metadata keys and coerces
+// values to short safe scalars (no nested freeform blobs).
+func redactAIAuditFields(fields map[string]any) map[string]any {
+	if fields == nil {
+		return nil
+	}
+	out := make(map[string]any, len(fields))
+	for k, v := range fields {
+		lk := strings.ToLower(strings.TrimSpace(k))
+		if _, ok := allowedAIAuditDetailKeys[lk]; !ok {
+			continue
+		}
+		if safe, ok := coerceAIAuditScalar(v); ok {
+			out[lk] = safe
+		}
+	}
+	return out
+}
+
+// coerceAIAuditScalar keeps only bool / number / short non-path strings.
+func coerceAIAuditScalar(v any) (any, bool) {
+	switch t := v.(type) {
+	case bool:
+		return t, true
+	case float64:
+		return t, true
+	case float32:
+		return float64(t), true
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case json.Number:
+		if f, err := t.Float64(); err == nil {
+			return f, true
+		}
+		return nil, false
+	case string:
+		s := t
+		if looksLikeAbsolutePath(s) {
+			return "[path]", true
+		}
+		if len(s) > 64 {
+			s = s[:64] + "…"
+		}
+		return s, true
+	default:
+		return nil, false
+	}
+}
+
+func looksLikeAbsolutePath(s string) bool {
+	if len(s) < 3 {
+		return false
+	}
+	// Windows drive path (C:\… or C:/…).
+	if (s[0] >= 'A' && s[0] <= 'Z' || s[0] >= 'a' && s[0] <= 'z') && s[1] == ':' {
+		return true
+	}
+	// UNC.
+	if strings.HasPrefix(s, "\\\\") {
+		return true
+	}
+	// POSIX absolute: any /-prefixed string with a path separator (covers
+	// /home, /mnt, /media, /srv, /opt, /root, /data, …). Vault-relative
+	// "notebook/section" has no leading slash and is left alone.
+	if s[0] == '/' && strings.Contains(s[1:], "/") {
+		return true
+	}
+	return false
+}
+
+// auditAIEvent appends a structured agent event (tool_call, staging_decision, …)
+// with redacted fields to the AI audit log (#630).
+func (a *App) auditAIEvent(pluginID, kind string, fields map[string]any) {
+	redacted := redactAIAuditFields(fields)
+	status := "ok"
+	if s, ok := redacted["status"].(string); ok && s != "" {
+		status = s
+	} else if s, ok := redacted["outcome"].(string); ok && s != "" {
+		status = s
+	}
+	var detail json.RawMessage
+	if len(redacted) > 0 {
+		raw, err := json.Marshal(redacted)
+		if err == nil {
+			// Byte-cap must leave valid JSON; mid-object truncation breaks the
+			// frontend Recent AI activity parser. Per-field truncation usually
+			// keeps us under the cap; this is a hard backstop only.
+			if len(raw) > maxAIAuditDetailBytes {
+				raw = []byte(`{"detail_truncated":true}`)
+			}
+			detail = raw
+		}
+	}
+	entry := AIAuditEntry{
+		Plugin: pluginID,
+		Kind:   kind,
+		Status: status,
+		At:     time.Now().Format(time.RFC3339),
+		Detail: detail,
+	}
+	a.appendAIAuditEntry(entry)
+}
+
+// appendAIAuditEntry is the shared in-memory + on-disk append path for chat,
+// embed, and structured agent events.
+func (a *App) appendAIAuditEntry(entry AIAuditEntry) {
+	a.vaultMu.RLock()
+	vaultPathSnapshot := a.vaultPath
+	a.vaultMu.RUnlock()
+	aiAuditMu.Lock()
+	aiAudit = append(aiAudit, entry)
+	if len(aiAudit) > maxAIAuditEntries {
+		aiAudit = aiAudit[len(aiAudit)-maxAIAuditEntries:]
+	}
+	w := currentAIAuditWriter()
+	if w != nil {
+		select {
+		case w.ch <- &aiAuditOp{entry: &entry}:
+		default:
+			log.Printf("auditAI: writer queue full; dropping on-disk write for plugin %q", entry.Plugin)
+		}
+	} else {
+		appendAIAuditLine(vaultPathSnapshot, &entry)
+	}
+	aiAuditMu.Unlock()
 }
 
 // auditAI appends one AI audit entry. host is the provider endpoint (already
@@ -476,40 +639,8 @@ func (a *App) auditAI(pluginID, kind, host, model, status string, usage *ai.AIUs
 		entry.CompletionTokens = usage.CompletionTokens
 		entry.TotalTokens = usage.TotalTokens
 	}
-	// Snapshot vaultPath under vaultMu BEFORE acquiring aiAuditMu so the
-	// w==nil inline path never reads a.vaultPath unsynchronized. A concurrent
-	// lifecycle transition (CloseVault/SwitchVault/MoveVault) can flip or nil
-	// a.vaultPath while an in-flight AI call — whose audit fires after the
-	// caller released vaultMu — reaches this point; reading it unlocked would
-	// be a data race AND could route the audit entry to the wrong vault
-	// (#452 cross-vault leak). Mirrors ClearAIAudit's snapshot. The writer
-	// branches below use w.vaultPath (captured at writer start), not this
-	// snapshot, so only the rare inline fallback (writer not running) reads
-	// it. Lock order vaultMu -> aiAuditMu matches ClearAIAudit.
-	a.vaultMu.RLock()
-	vaultPathSnapshot := a.vaultPath
-	a.vaultMu.RUnlock()
-	aiAuditMu.Lock()
-	aiAudit = append(aiAudit, entry)
-	if len(aiAudit) > maxAIAuditEntries {
-		aiAudit = aiAudit[len(aiAudit)-maxAIAuditEntries:]
-	}
-	// Decouple the on-disk write from the lock: enqueue onto the background
-	// writer's channel (non-blocking — the 256-slot buffer handles burst rates
-	// far beyond any plugin's allotment). If the writer is not running, fall
-	// back to inline I/O so behavior is identical for tests that don't start
-	// the writer (#446, mirrors #235).
-	w := currentAIAuditWriter()
-	if w != nil {
-		select {
-		case w.ch <- &aiAuditOp{entry: &entry}:
-		default:
-			log.Printf("auditAI: writer queue full; dropping on-disk write for plugin %q", pluginID)
-		}
-	} else {
-		appendAIAuditLine(vaultPathSnapshot, &entry)
-	}
-	aiAuditMu.Unlock()
+	// Snapshot + append via shared path (vaultMu → aiAuditMu ordering).
+	a.appendAIAuditEntry(entry)
 }
 
 // GetAIAudit returns a copy of the in-memory AI audit log (#216).

@@ -768,3 +768,57 @@ func TestCompleteGoogle_EncodesToolResultAsFunctionResponse(t *testing.T) {
 		t.Errorf("response.count = %v, want 3", resp["count"])
 	}
 }
+
+// Pins #637 single-pass id→name index: two prior tool_calls with distinct ids
+// must resolve to the correct function names on the tool-result turn (O(1)
+// map lookup, not an O(n) scan that could mis-associate names).
+func TestCompleteGoogle_MultiToolResultNameIndex(t *testing.T) {
+	var captured googleGenerateRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []map[string]any{
+				{"content": map[string]any{"parts": []map[string]any{{"text": "ok"}}}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	tools := []ToolDef{
+		dummyTool(),
+		{Name: "read_blocks", Description: "read", Parameters: json.RawMessage(`{"type":"object"}`)},
+	}
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, Model: "gemini-2.0-flash"},
+		Messages: []ChatMessage{
+			{Role: RoleUser, Content: "search then read"},
+			{Role: RoleAssistant, ToolCalls: []ToolCall{
+				{ID: "call_a", Name: "search_notes", Arguments: json.RawMessage(`{"q":"x"}`)},
+				{ID: "call_b", Name: "read_blocks", Arguments: json.RawMessage(`{"ids":["1"]}`)},
+			}},
+			{Role: RoleTool, ToolCallID: "call_a", Content: `{"hits":1}`},
+			{Role: RoleTool, ToolCallID: "call_b", Content: `{"text":"body"}`},
+		},
+		Tools: tools,
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	// user, model(2 functionCalls), user(functionResponse a), user(functionResponse b)
+	if len(captured.Contents) != 4 {
+		t.Fatalf("contents = %d, want 4; got %+v", len(captured.Contents), captured.Contents)
+	}
+	frA := captured.Contents[2].Parts[0].FunctionResponse
+	frB := captured.Contents[3].Parts[0].FunctionResponse
+	if frA == nil || frB == nil {
+		t.Fatalf("missing functionResponse parts: a=%+v b=%+v", captured.Contents[2], captured.Contents[3])
+	}
+	if frA.Name != "search_notes" || frA.ID != "call_a" {
+		t.Errorf("first tool result = name=%q id=%q, want search_notes/call_a", frA.Name, frA.ID)
+	}
+	if frB.Name != "read_blocks" || frB.ID != "call_b" {
+		t.Errorf("second tool result = name=%q id=%q, want read_blocks/call_b", frB.Name, frB.ID)
+	}
+}

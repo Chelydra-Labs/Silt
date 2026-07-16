@@ -9,11 +9,46 @@ vi.mock('../../../settings/ai-setup', () => ({
 vi.mock('../../../settings/store.svelte', () => ({
   settings: { config: { ai: { chat: { provider_type: 'openai-compatible' } } } }
 }))
+
+// Shared so the hoisted default mock and the mockImplementationOnce override stay in sync.
+type AgentRunOptions = {
+  onToolCall?: (c: {
+    id: string
+    name: string
+    args: Record<string, unknown>
+  }) => void
+  onToolResult?: (r: {
+    id: string
+    name: string
+    result: { content: string }
+  }) => void
+  onStaging?: (e: {
+    token: string
+    preview: {
+      kind: string
+      summary: string
+      details: string
+      affectedCount: number
+    }
+  }) => void
+  onStagingOutcome?: (token: string, outcome: string) => void
+  onDone?: (text: string) => void
+}
+
+const agentMocks = vi.hoisted(() => ({
+  run: vi.fn(
+    async (_text: string, _history: unknown, _opts: AgentRunOptions) => ({
+      text: 'done'
+    })
+  ),
+  cancel: vi.fn(),
+  resolveStaging: vi.fn()
+}))
 vi.mock('../../first-party/silt-ai-agent/agent-loop', () => ({
   createAgentSession: () => ({
-    run: vi.fn(),
-    cancel: vi.fn(),
-    resolveStaging: vi.fn()
+    run: agentMocks.run,
+    cancel: agentMocks.cancel,
+    resolveStaging: agentMocks.resolveStaging
   })
 }))
 vi.mock('./capabilities/writing-capability', () => ({
@@ -98,6 +133,27 @@ describe('AI chat controller — proposal accept/discard failure handling', () =
     expect(controller.transcript).toEqual([])
     expect(controller.busy).toBe(false)
 
+    controller.dispose()
+  })
+
+  it('leaves a done status entry after a successful run', async () => {
+    const controller = createAIChatController()
+    controller.attach(pluginContextStub())
+    const stub: AIChatCapability = {
+      id: 'stub',
+      run: async () => {
+        /* no-op success */
+      }
+    }
+    controller.registerCapability(stub, { makeDefault: true })
+    await controller.send('hello')
+    expect(controller.lastOutcome).toBe('complete')
+    expect(
+      controller.transcript.some(
+        (e) =>
+          e.kind === 'status' && e.status === 'done' && e.message === 'Done'
+      )
+    ).toBe(true)
     controller.dispose()
   })
 
@@ -224,6 +280,69 @@ describe('AI chat controller — proposal accept/discard failure handling', () =
     controller.clear()
     expect(controller.lastOutcome).toBeNull()
     expect(controller.transcript).toEqual([])
+    controller.dispose()
+  })
+
+  it('promotes the live status line across multi-step tools and staging reject', async () => {
+    agentMocks.run.mockImplementationOnce(
+      async (_text: string, _history: unknown, opts: AgentRunOptions) => {
+        opts.onToolCall?.({ id: 't1', name: 'search_notes', args: {} })
+        opts.onToolResult?.({
+          id: 't1',
+          name: 'search_notes',
+          result: { content: 'hits' }
+        })
+        opts.onToolCall?.({ id: 't2', name: 'read_blocks', args: {} })
+        opts.onToolResult?.({
+          id: 't2',
+          name: 'read_blocks',
+          result: { content: 'body' }
+        })
+        opts.onStaging?.({
+          token: 'stg-1',
+          preview: {
+            kind: 'update_block',
+            summary: 'Update note',
+            details: '',
+            affectedCount: 1
+          }
+        })
+        opts.onStagingOutcome?.('stg-1', 'rejected')
+        opts.onToolCall?.({ id: 't3', name: 'list_tags', args: {} })
+        opts.onDone?.('all set')
+        return { text: 'all set' }
+      }
+    )
+
+    const controller = createAIChatController()
+    controller.attach(pluginContextStub())
+    // Default capability is agent-tools (createAgentCapability).
+    await controller.send('multi step')
+
+    const statuses = controller.transcript
+      .filter((e) => e.kind === 'status')
+      .map((e) =>
+        e.kind === 'status' ? { status: e.status, message: e.message } : null
+      )
+    // Final terminal status is done; intermediate promotions must have updated
+    // the single live line (not stuck on the first tool's "thinking" only).
+    expect(statuses.some((s) => s?.status === 'done')).toBe(true)
+    // Confirmation card reflects reject.
+    expect(
+      controller.transcript.some(
+        (e) => e.kind === 'confirmation' && e.state === 'rejected'
+      )
+    ).toBe(true)
+    // At least two tool-call entries were recorded for the multi-step run.
+    expect(
+      controller.transcript.filter((e) => e.kind === 'tool-call').length
+    ).toBeGreaterThanOrEqual(2)
+    // Reject path must not leave the line stuck on waiting_confirmation.
+    expect(
+      controller.transcript.some(
+        (e) => e.kind === 'status' && e.status === 'waiting_confirmation'
+      )
+    ).toBe(false)
     controller.dispose()
   })
 

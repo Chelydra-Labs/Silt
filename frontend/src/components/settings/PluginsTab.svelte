@@ -69,6 +69,8 @@
     updateUrl?: string
     /** True when a newer version is available (#111). */
     updateAvailable?: boolean
+    /** First-party AI modules: enablement lives under Settings → AI (#632). */
+    managedInAI?: boolean
   }
 
   /** Human label for a capability id. */
@@ -154,15 +156,20 @@
       )
       for (const fp of fps) {
         const m = fp.manifest as any
+        // First-party AI modules are managed under Settings → AI (#632).
+        const managedAI =
+          typeof m.id === 'string' && m.id.startsWith('silt-ai-')
         merged.push({
           id: m.id,
           name: m.name || m.id,
           version: m.version || '—',
           author: m.author || 'Silt',
-          description: m.description || '',
+          description: managedAI
+            ? `${m.description || ''} Managed in Settings → AI.`
+            : m.description || '',
           icon: m.icon || 'extension',
           source: 'first-party',
-          disabled: fpDisabled.has(m.id),
+          disabled: managedAI ? false : fpDisabled.has(m.id),
           hasIndex: true,
           requestedCapabilities: m.capabilities,
           grantedCapabilities: m.capabilities
@@ -171,8 +178,9 @@
               )
             : undefined,
           loadError: errs.find((e) => e.id === m.id)?.message,
-          settingsSchema: m.settings as SettingSchema[] | undefined
-        })
+          settingsSchema: m.settings as SettingSchema[] | undefined,
+          managedInAI: managedAI
+        } as Card)
       }
       // On-disk plugins (skip any shadowed by a first-party id).
       for (const p of disk as any[]) {
@@ -418,6 +426,7 @@
   <!-- Install flow -->
   <section class="mb-6">
     <button
+      type="button"
       onclick={chooseArchive}
       class="bg-accent-primary-glow border border-accent-primary-start/30 text-accent-primary-start font-label-sm-bold px-3 py-2 rounded flex items-center gap-2 hover:brightness-110 hover:border-accent-primary-start transition-all cursor-pointer"
     >
@@ -611,7 +620,7 @@
                     type="button"
                     onclick={() => onSwitchTab?.('ai')}
                     disabled={!onSwitchTab}
-                    title="Open AI Provider settings"
+                    title="Open AI settings"
                     class="inline-flex items-center gap-0.5 text-type-3xs text-accent-primary-start bg-accent-primary-glow border border-accent-primary-start/30 rounded px-1.5 py-0.5 uppercase tracking-wider hover:bg-accent-primary-start/20 hover:border-accent-primary-start/60 transition-all motion-reduce:transition-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60 disabled:cursor-default disabled:opacity-70"
                   >
                     AI setup needed
@@ -639,18 +648,33 @@
               </span>
             </button>
 
-            <button
-              onclick={() => toggle(card)}
-              title={card.disabled ? 'Enable' : 'Disable'}
-              aria-label={`${card.name}: ${card.disabled ? 'Enable' : 'Disable'}`}
-              class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
-            >
-              <span class="material-symbols-outlined text-icon-lg">
-                {card.disabled ? 'toggle_off' : 'toggle_on'}
-              </span>
-            </button>
+            {#if card.managedInAI}
+              <button
+                type="button"
+                onclick={() => onSwitchTab?.('ai')}
+                disabled={!onSwitchTab}
+                title="Managed in Settings → AI"
+                aria-label={`${card.name}: managed in AI settings`}
+                class="text-type-2xs font-label-sm-bold text-accent-primary-start border border-accent-primary-start/30 rounded px-2 py-1 bg-accent-primary-glow/30 hover:bg-accent-primary-start/20 cursor-pointer disabled:opacity-70 disabled:cursor-default"
+              >
+                AI settings
+              </button>
+            {:else}
+              <button
+                type="button"
+                onclick={() => toggle(card)}
+                title={card.disabled ? 'Enable' : 'Disable'}
+                aria-label={`${card.name}: ${card.disabled ? 'Enable' : 'Disable'}`}
+                class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
+              >
+                <span class="material-symbols-outlined text-icon-lg">
+                  {card.disabled ? 'toggle_off' : 'toggle_on'}
+                </span>
+              </button>
+            {/if}
             {#if card.source === 'disk'}
               <button
+                type="button"
                 onclick={() => uninstall(card)}
                 title="Uninstall"
                 aria-label={`${card.name}: Uninstall`}
@@ -713,9 +737,8 @@
                 </dd>
               </dl>
 
-              {#if hasBespokeSettings(card.id)}
-                <!-- #214: this plugin renders settings via a dedicated tab;
-                     offer a one-click switch instead of dead text. -->
+              {#if hasBespokeSettings(card.id) && !card.managedInAI}
+                <!-- #214: dedicated settings tab (not the unified AI tab). -->
                 <div>
                   <div
                     class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
@@ -737,7 +760,7 @@
                     </p>
                   {/if}
                 </div>
-              {:else if card.settingsSchema && card.settingsSchema.length > 0}
+              {:else if card.settingsSchema && card.settingsSchema.length > 0 && !card.managedInAI}
                 <div>
                   <div
                     class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"

@@ -223,6 +223,31 @@ describe('extract_and_save', () => {
     expect(userMsg).toContain('Postgres uses MVCC')
   })
 
+  it('prepends the shared SECURITY preamble to the nested system prompt (#633)', async () => {
+    const { ctx, complete } = makeCtx({
+      sources: SOURCES,
+      completeContent: JSON.stringify({ summary: 'ok.' })
+    })
+    await handleExtractAndSave(ctx, {
+      source_block_ids: ['src-1'],
+      mode: 'summary',
+      target: TARGET
+    })
+    const req = complete.mock.calls[0][0] as {
+      messages: { role: string; content: string }[]
+    }
+    const sys = req.messages.find((m) => m.role === 'system')?.content ?? ''
+    // The nested complete processes the same untrusted vault text as the agent
+    // loop, so the shared SECURITY framing must carry system-prompt priority
+    // (not only the user-message caveat).
+    expect(sys).toContain('SECURITY:')
+    expect(sys).toContain('untrusted DATA')
+    // Untrusted source text stays hard-delimited as DATA in the user message.
+    const user = req.messages.find((m) => m.role === 'user')?.content ?? ''
+    expect(user).toContain('<vault_data tool="extract_and_save">')
+    expect(user).toContain('</vault_data>')
+  })
+
   it('falls back to a salvage block when the model returns non-JSON', async () => {
     const { ctx, createBlock } = makeCtx({
       sources: SOURCES,

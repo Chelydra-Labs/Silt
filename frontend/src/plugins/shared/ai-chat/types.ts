@@ -61,8 +61,18 @@ export interface ConfirmationEntry extends EntryBase {
   state?: 'pending' | 'confirmed' | 'rejected' | 'failed'
 }
 
+/** Transcript status kinds (includes legacy aliases used by writing capability). */
 export type ChatStatus =
-  'thinking' | 'running' | 'stopped' | 'iteration-limit' | 'error'
+  | 'thinking'
+  | 'running'
+  | 'running_tool'
+  | 'reviewing'
+  | 'waiting_confirmation'
+  | 'applying'
+  | 'done'
+  | 'stopped'
+  | 'iteration-limit'
+  | 'error'
 
 export interface StatusEntry extends EntryBase {
   kind: 'status'

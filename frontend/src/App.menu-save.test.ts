@@ -51,7 +51,8 @@ vi.mock('../bindings/silt/app.js', () => {
     UnlinkNotebook: vi.fn(noop),
     CreateStandaloneTask: vi.fn(async () => 'tsk'),
     MarkFrontendReady: vi.fn(noop),
-    GetStartupEvents: bindings.GetStartupEvents
+    GetStartupEvents: bindings.GetStartupEvents,
+    UpdateAIFeatures: vi.fn(noop)
   }
 })
 

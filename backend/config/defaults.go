@@ -132,11 +132,9 @@ func Defaults() SystemConfig {
 			// silt-tasks is the unified task surface (Phase 9 / #431),
 			// succeeding the retired standalone silt-calendar / silt-kanban.
 			Active: []string{"silt-tasks"},
-			// silt-ai-summary (#220) ships OFF by default: it is the first plugin
-			// that sends note content to an external LLM endpoint, so the user
-			// opts in explicitly (Plugins tab) after configuring a provider.
-			// AI plugins ship OFF by default (summary + Q&A + Writing Assistant + Agent).
-			Disabled: []string{"silt-ai-summary", "silt-ai-qa", "silt-ai-assistant", "silt-ai-agent"},
+			// First-party AI modules are gated by ai.features (#632), not
+			// plugins.disabled. Disabled stays empty for fresh vaults.
+			Disabled: []string{},
 			PluginSettings: map[string]any{
 				// silt-tasks is the unified hub (Phase 9 / #431). Every key
 				// the frontend loaders read (settings.ts) is seeded so a
@@ -199,13 +197,13 @@ func Defaults() SystemConfig {
 			},
 		},
 		// AI providers ship unconfigured (Sprint 20): no chat model, no
-		// embedding model, no endpoint. The AI Provider page's empty-state
-		// nudge fires until the user configures one. UseKeyring defaults
-		// true so the first key a user enters lands in the OS keyring, not
-		// plaintext config.yaml (#218).
+		// embedding model, no endpoint. Features ship OFF (#632) so a fresh
+		// vault never phones a model until the user enables AI. UseKeyring
+		// defaults true so the first key lands in the OS keyring (#218).
 		AI: AIConfig{
 			Chat:       AIProviderConfig{ProviderType: AIProviderLocal, BaseURL: DefaultAIBaseURL},
 			Embedding:  AIProviderConfig{ProviderType: AIProviderLocal, BaseURL: DefaultAIBaseURL},
+			Features:   AIFeaturesConfig{}, // all false
 			UseKeyring: boolPtr(true),
 		},
 	}

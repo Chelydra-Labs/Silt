@@ -10,14 +10,16 @@ import {
   ftsRowsToHits as sharedFtsRowsToHits,
   hybridRetrieve as sharedHybridRetrieve,
   rerankPassages as sharedRerankPassages,
-  RetrieveError
+  RetrieveError,
+  type HybridDegradeInfo,
+  type RetrieveOptions
 } from '../../shared/retrieval/retrieve'
 import type { RetrievedPassage } from '../../shared/retrieval/hybrid'
 import { vectorSearch } from './embed_index'
 import type { QASettings } from './types'
 
 export { RetrieveError }
-export type { RetrievedPassage }
+export type { RetrievedPassage, HybridDegradeInfo }
 
 /** Map fullTextSearch rows to RankedHit (block id + snippet). */
 export const ftsRowsToHits = sharedFtsRowsToHits
@@ -33,7 +35,16 @@ export const rerankPassages = sharedRerankPassages
 export async function hybridRetrieve(
   ctx: PluginContext,
   question: string,
-  settings: QASettings
+  settings: QASettings,
+  onDegraded?: (info: HybridDegradeInfo) => void
 ): Promise<RetrievedPassage[]> {
-  return sharedHybridRetrieve(ctx, question, settings, vectorSearch)
+  const opts: RetrieveOptions = {
+    hybrid_weight: settings.hybrid_weight,
+    top_k: settings.top_k,
+    min_score: settings.min_score,
+    max_context_chars: settings.max_context_chars,
+    rerank_enabled: settings.rerank_enabled,
+    onDegraded
+  }
+  return sharedHybridRetrieve(ctx, question, opts, vectorSearch)
 }

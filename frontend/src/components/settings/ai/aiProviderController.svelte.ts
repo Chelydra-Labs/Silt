@@ -23,6 +23,20 @@ import {
   GetAIAudit,
   ClearAIAudit
 } from '../../../../bindings/silt/app.js'
+import * as appBindings from '../../../../bindings/silt/app.js'
+// Binding regenerated with Phase 2; typed loosely so partial IDE caches don't block.
+const UpdateAIFeatures = (
+  appBindings as unknown as {
+    UpdateAIFeatures: (patch: {
+      enabled?: boolean
+      rag_enabled?: boolean
+      summaries_enabled?: boolean
+    }) => Promise<void>
+  }
+).UpdateAIFeatures
+import { loadConfig } from '../../../settings/store.svelte'
+import { loadPlugins } from '../../../plugins/loader'
+import { getActiveLocation } from '../../../plugins/location.svelte'
 import type * as main from '../../../../bindings/silt/models.js'
 import type * as aiTypes from '../../../../bindings/silt/backend/ai/models.js'
 
@@ -188,6 +202,21 @@ export function createAIProviderController() {
     try {
       config = toPlain(await GetAIProviderConfig())
       if (config) {
+        // Ensure features object exists for older snapshots / partial mocks.
+        const cfg = config as {
+          features?: {
+            enabled: boolean
+            rag_enabled: boolean
+            summaries_enabled: boolean
+          }
+        }
+        if (!cfg.features) {
+          cfg.features = {
+            enabled: false,
+            rag_enabled: false,
+            summaries_enabled: false
+          }
+        }
         // Sync-by-default if providers match type, url, and key status.
         const sameType =
           config.chat.provider_type === config.embedding.provider_type
@@ -202,6 +231,61 @@ export function createAIProviderController() {
       loadError = e instanceof Error ? e.message : String(e)
     } finally {
       loading = false
+    }
+  }
+
+  let featuresSaving = $state(false)
+  let featuresError = $state<string | null>(null)
+
+  async function updateFeatures(patch: {
+    enabled?: boolean
+    rag_enabled?: boolean
+    summaries_enabled?: boolean
+  }): Promise<void> {
+    if (!config) return
+    featuresSaving = true
+    featuresError = null
+    const features = (
+      config as {
+        features?: {
+          enabled?: boolean
+          rag_enabled?: boolean
+          summaries_enabled?: boolean
+        }
+      }
+    ).features
+    // Optimistic local clamp: dependents require master on.
+    const next = {
+      enabled: patch.enabled ?? features?.enabled ?? false,
+      rag_enabled: patch.rag_enabled ?? features?.rag_enabled ?? false,
+      summaries_enabled:
+        patch.summaries_enabled ?? features?.summaries_enabled ?? false
+    }
+    if (!next.enabled) {
+      next.rag_enabled = false
+      next.summaries_enabled = false
+    }
+    ;(config as unknown as { features: typeof next }).features = next
+    try {
+      await UpdateAIFeatures(patch)
+      config = toPlain(await GetAIProviderConfig())
+      // Reload system config + plugins so loader/chrome pick up the flags.
+      const refreshed = await loadConfig()
+      if (!refreshed) {
+        // The backend persisted the flags, but the live store could not refresh.
+        // Do not reconcile plugins from a stale snapshot; surface it and let
+        // the next successful refresh (or app reload) reconcile (#632).
+        featuresError =
+          'AI features saved, but the live configuration could not be refreshed — enablement will reconcile on the next reload.'
+        return
+      }
+      const loc = getActiveLocation()
+      await loadPlugins(loc.notebook ?? '', loc.section ?? '', loc.page ?? '')
+    } catch (e) {
+      featuresError = e instanceof Error ? e.message : String(e)
+      await reload()
+    } finally {
+      featuresSaving = false
     }
   }
 
@@ -703,8 +787,27 @@ export function createAIProviderController() {
       return auditError
     },
     // derived summaries
+    get featuresSaving() {
+      return featuresSaving
+    },
+    get featuresError() {
+      return featuresError
+    },
     get needsSetup() {
       return needsSetup
+    },
+    get ragNeedsEmbeddingSetup() {
+      const f = (
+        config as {
+          features?: { enabled?: boolean; rag_enabled?: boolean }
+        } | null
+      )?.features
+      if (!f?.enabled || !f?.rag_enabled || !config) return false
+      return aiProviderNeedsSetup({
+        provider_type: config.embedding.provider_type,
+        model: config.embedding.model,
+        has_key: config.embedding.has_key
+      })
     },
     get tuningSummary(): string {
       if (!config) return ''
@@ -753,6 +856,7 @@ export function createAIProviderController() {
     },
     // actions
     reload,
+    updateFeatures,
     loadModels,
     refreshModels,
     advancedFieldError,
