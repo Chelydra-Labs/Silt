@@ -426,6 +426,7 @@
   <!-- Install flow -->
   <section class="mb-6">
     <button
+      type="button"
       onclick={chooseArchive}
       class="bg-accent-primary-glow border border-accent-primary-start/30 text-accent-primary-start font-label-sm-bold px-3 py-2 rounded flex items-center gap-2 hover:brightness-110 hover:border-accent-primary-start transition-all cursor-pointer"
     >
@@ -660,6 +661,7 @@
               </button>
             {:else}
               <button
+                type="button"
                 onclick={() => toggle(card)}
                 title={card.disabled ? 'Enable' : 'Disable'}
                 aria-label={`${card.name}: ${card.disabled ? 'Enable' : 'Disable'}`}
@@ -672,6 +674,7 @@
             {/if}
             {#if card.source === 'disk'}
               <button
+                type="button"
                 onclick={() => uninstall(card)}
                 title="Uninstall"
                 aria-label={`${card.name}: Uninstall`}

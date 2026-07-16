@@ -880,6 +880,14 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 // The caller's a.wg.Add(1) is balanced when the stream goroutine finishes.
 // drainDone is deferred inside the goroutine so vault-close waits for the stream.
 func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveModel string, req ai.CompleteRequest, drainDone func()) (ai.CompleteResult, error) {
+	// Owner-scoped stream events are named ":<pluginID>"; an empty id would
+	// fall back to the global unscoped bus (#635). Preflight validates this, but
+	// assert structurally so a future refactor cannot silently regress it.
+	if pluginID == "" {
+		a.wg.Done()
+		drainDone()
+		return ai.CompleteResult{}, &ai.AIError{Kind: ai.ErrBadRequest, Message: "plugin_id is required for a streamed completion"}
+	}
 	streamID, err := newAIStreamID()
 	if err != nil {
 		a.wg.Done()

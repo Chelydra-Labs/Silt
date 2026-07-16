@@ -313,3 +313,71 @@ func TestParseOpenAISSE_IncompleteToolArgumentsWithoutDoneFail(t *testing.T) {
 		t.Fatalf("want ErrServer, got %v", err)
 	}
 }
+
+// TestCompleteStream_CancelBeforeConnect_IsCanceled: a context already
+// canceled when the call starts must surface ErrCanceled (the Stop UX),
+// never ErrTimeout — the buffered path already gets this right (#628).
+func TestCompleteStream_CancelBeforeConnect_IsCanceled(t *testing.T) {
+	srv := sseChatServer(t, []string{`{"choices":[{"delta":{"content":"x"}}]}`})
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // canceled before the upstream request is made
+	_, err := CompleteStream(ctx, CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m", ProviderType: ProviderOpenAICompatible},
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	}, func(string) error { return nil }, nil)
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind != ErrCanceled {
+		t.Errorf("kind = %q, want canceled", e.Kind)
+	}
+}
+
+// TestCompleteStream_ConsumerCancel_IsCanceled: when the delta consumer
+// aborts with context.Canceled (the app_ai backpressure path when Stop is
+// pressed mid-answer), the stream must classify as ErrCanceled, not a generic
+// abort or timeout (#628 cancel contract on the streaming path).
+func TestCompleteStream_ConsumerCancel_IsCanceled(t *testing.T) {
+	srv := sseChatServer(t, []string{`{"choices":[{"delta":{"content":"x"}}]}`})
+	defer srv.Close()
+
+	_, err := CompleteStream(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m", ProviderType: ProviderOpenAICompatible},
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	}, func(string) error {
+		return context.Canceled
+	}, nil)
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind != ErrCanceled {
+		t.Errorf("kind = %q, want canceled", e.Kind)
+	}
+}
+
+// TestCompleteStream_ToolConsumerCancel_IsCanceled: the tool-delta consumer
+// path mirrors the content-delta path.
+func TestCompleteStream_ToolConsumerCancel_IsCanceled(t *testing.T) {
+	srv := sseChatServer(t, []string{
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"search_notes","arguments":"{}"}}]}}]}`,
+	})
+	defer srv.Close()
+
+	_, err := CompleteStream(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m", ProviderType: ProviderOpenAICompatible},
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+	}, func(string) error { return nil }, func(ToolCallDelta) error {
+		return context.Canceled
+	})
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind != ErrCanceled {
+		t.Errorf("kind = %q, want canceled", e.Kind)
+	}
+}

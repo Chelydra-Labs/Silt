@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -691,5 +692,35 @@ func TestOverallSendTimeout_UsesTimeoutMs(t *testing.T) {
 	}
 	if d > 2*time.Minute {
 		t.Errorf("overall too large: %v", d)
+	}
+}
+
+// TestComplete_OversizedSuccessIsNotRetried: a 2xx response whose body exceeds
+// the cap is deterministic (the provider returns the same body every time), so
+// it must not burn the retry budget — one hit, non-transient kind (#628).
+func TestComplete_OversizedSuccessIsNotRetried(t *testing.T) {
+	withFastRetry(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		// One byte over the cap so the read-path size guard fires on a 2xx.
+		_, _ = w.Write(bytes.Repeat([]byte("a"), MaxResponseBytes+1))
+	}))
+	defer srv.Close()
+
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m"},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	})
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind == ErrServer || e.Kind == ErrRateLimited {
+		t.Errorf("kind = %q must be non-transient (not server/rate-limited) so it is not retried", e.Kind)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("hits = %d, want 1 (oversized 2xx must not be retried)", got)
 	}
 }

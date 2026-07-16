@@ -458,16 +458,23 @@ const maxAIAuditDetailBytes = 2 * 1024
 // fields that may be persisted to ai.log (synced with the vault). Anything
 // else — note, summary, details, freeform message bodies — is dropped so
 // private vault text cannot ride an arbitrary eventJSON key (#630).
+//
+// INVARIANT: this set is closed against freeform-text keys BY DESIGN. It MUST
+// never include keys whose values could carry user/authored text or paths
+// (e.g. content, note, message, error, body, path, detail, args, query). Only
+// short developer-shaped identifiers belong here; the redactor relies on this
+// so a path or vault snippet embedded inside a longer string has nowhere to
+// land. Add a key only if its value is a bounded scalar (id / label / count).
 var allowedAIAuditDetailKeys = map[string]struct{}{
-	"tool":          {},
-	"tool_call_id":  {},
-	"status":        {},
-	"outcome":       {},
-	"staged":        {},
-	"side":          {},
-	"iteration":     {},
-	"error_kind":    {},
-	"plugin":        {},
+	"tool":         {},
+	"tool_call_id": {},
+	"status":       {},
+	"outcome":      {},
+	"staged":       {},
+	"side":         {},
+	"iteration":    {},
+	"error_kind":   {},
+	"plugin":       {},
 	// Server-only backstop marker when detail JSON is oversized.
 	"detail_truncated": {},
 }

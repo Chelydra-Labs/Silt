@@ -352,6 +352,24 @@ func TestNormalize_MigratesAIFeaturesFromDisabled(t *testing.T) {
 		t.Fatalf("summary enabled must set Enabled+Summaries; got %+v", cfg4.AI.Features)
 	}
 
+	// All four enabled (none in disabled) + seed marker ⇒ every feature on.
+	// A power user who enabled all four must not see AI silently turn off on
+	// upgrade just because the legacy disabled list is empty (#632).
+	cfg5 := normalize(SystemConfig{
+		Plugins: PluginsConfig{
+			Disabled:       nil,
+			PluginSettings: cloneSettings(seeded),
+		},
+	})
+	if !cfg5.AI.Features.Enabled || !cfg5.AI.Features.RAGEnabled || !cfg5.AI.Features.SummariesEnabled {
+		t.Fatalf("all-four-enabled seeded vault must turn all features on; got %+v", cfg5.AI.Features)
+	}
+	for _, id := range cfg5.Plugins.Disabled {
+		if IsFirstPartyAIPlugin(id) {
+			t.Errorf("AI id %q must be stripped from disabled after migration", id)
+		}
+	}
+
 	// Second normalize must not re-derive after user turns features off.
 	cfg4.AI.Features = AIFeaturesConfig{}
 	cfg4 = normalize(cfg4)

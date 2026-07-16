@@ -309,14 +309,28 @@ func migrateAIFeaturesFromPlugins(cfg SystemConfig) SystemConfig {
 
 	// If none of the four AI ids appear in disabled at all, this may be a
 	// pre-AI-plugin config OR a post-#632 fresh vault. Prefer safe default
-	// (features stay zero).
+	// (features stay zero) — UNLESS the vault was seeded, in which case an
+	// empty disabled list means the user deliberately removed every AI id.
 	anyAIListed := disabled[AIPluginAgent] || disabled[AIPluginAssistant] ||
 		disabled[AIPluginQA] || disabled[AIPluginSummary]
 	_, wasSeeded := cfg.Plugins.PluginSettings[seededOptInDisabledKey]
 	// Absence from disabled means "enabled" only when the vault previously
 	// tracked the full opt-in set (seed marker). Partial unseeded listings
 	// must not flip Features on.
-	if anyAIListed && wasSeeded {
+	switch {
+	case !wasSeeded:
+		// Unseeded / partial listings cannot disambiguate "enabled" from
+		// "never listed" — leave features at the safe all-off default.
+	case !anyAIListed:
+		// Seeded vault with no AI ids disabled ⇒ the user removed all four
+		// from the legacy opt-out list, i.e. explicitly enabled every AI
+		// plugin. Upgrading such a vault must not silently turn AI off.
+		cfg.AI.Features.Enabled = true
+		cfg.AI.Features.RAGEnabled = true
+		cfg.AI.Features.SummariesEnabled = true
+	default:
+		// Seeded vault with at least one AI id still disabled: derive per
+		// plugin (absence from disabled ⇒ feature on).
 		if agentOn || assistantOn || qaOn || summaryOn {
 			cfg.AI.Features.Enabled = true
 		}

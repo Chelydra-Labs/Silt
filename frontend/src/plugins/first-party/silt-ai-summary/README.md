@@ -73,14 +73,14 @@ fallback (parse → retry → summary-only) so you always get at least a summary
 - **Regenerate (↻)** forces a fresh extraction for the current note, bypassing
   the cache.
 - Unconfigured and oversized states include a **settings deep-link** CTA that
-  jumps straight to Settings → AI Provider (or this plugin's settings tab).
+  jumps straight to Settings → AI (or this plugin's settings tab).
 
 ## Privacy
 
 Note content (the cleaned text of the note's blocks) is sent to **your
 configured AI endpoint** to produce the summary. Nothing else leaves your
 device. Every call is audit-logged — open
-**Settings → AI Provider → Recent AI activity** to see the call log (plugin,
+**Settings → AI → Recent AI activity** to see the call log (plugin,
 model, status, token counts). Message content and embedding vectors are never
 recorded.
 
@@ -105,7 +105,7 @@ memory and never the source of truth for your notes (markdown is).
   clean prose. If tags still appear, the summary predates the fix — click
   **Regenerate** to refresh it.
 - **"Configure an AI provider" nudge won't go away** — set a chat model in
-  Settings → AI Provider. Local providers (Ollama) need no key; cloud providers
+  Settings → AI. Local providers (Ollama) need no key; cloud providers
   need an API key.
 - **Empty summary / "Nothing to highlight"** — the note has no extractable
   content, or the model returned nothing usable. Try Regenerate, or a stronger
@@ -114,7 +114,7 @@ memory and never the source of truth for your notes (markdown is).
   Lower **Max note size** or use a faster model. Generation runs off the UI
   thread; the editor stays responsive.
 - **Stale banner after switching models** — switch the chat model in
-  Settings → AI Provider and click Regenerate; the cache invalidates on model
+  Settings → AI and click Regenerate; the cache invalidates on model
   change automatically.
 
 ## For developers

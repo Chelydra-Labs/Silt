@@ -390,7 +390,11 @@ func sendOnce(ctx context.Context, pr providerRequest, timeoutMs *int) (raw []by
 		return nil, resp.StatusCode, 0, &AIError{Kind: classifyStatus(resp.StatusCode), Status: resp.StatusCode, Message: fmt.Sprintf("read response: %v", readErr)}
 	}
 	if int64(len(raw)) > MaxResponseBytes {
-		return nil, resp.StatusCode, 0, &AIError{Kind: ErrServer, Status: resp.StatusCode, Message: fmt.Sprintf("response body exceeds %d-byte cap", MaxResponseBytes)}
+		// A success (2xx) body that exceeds the cap is deterministic, not a
+		// transient 5xx — the provider will return the same oversized body on
+		// every retry, so classify by status (2xx → ErrUnknown, non-transient)
+		// rather than hard-coding ErrServer and burning the retry budget (#628).
+		return nil, resp.StatusCode, 0, &AIError{Kind: classifyStatus(resp.StatusCode), Status: resp.StatusCode, Message: fmt.Sprintf("response body exceeds %d-byte cap", MaxResponseBytes)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Let the provider parse its structured error body for better fidelity;

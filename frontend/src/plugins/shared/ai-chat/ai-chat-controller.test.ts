@@ -10,8 +10,37 @@ vi.mock('../../../settings/store.svelte', () => ({
   settings: { config: { ai: { chat: { provider_type: 'openai-compatible' } } } }
 }))
 
+// Shared so the hoisted default mock and the mockImplementationOnce override stay in sync.
+type AgentRunOptions = {
+  onToolCall?: (c: {
+    id: string
+    name: string
+    args: Record<string, unknown>
+  }) => void
+  onToolResult?: (r: {
+    id: string
+    name: string
+    result: { content: string }
+  }) => void
+  onStaging?: (e: {
+    token: string
+    preview: {
+      kind: string
+      summary: string
+      details: string
+      affectedCount: number
+    }
+  }) => void
+  onStagingOutcome?: (token: string, outcome: string) => void
+  onDone?: (text: string) => void
+}
+
 const agentMocks = vi.hoisted(() => ({
-  run: vi.fn(async () => ({ text: 'done' })),
+  run: vi.fn(
+    async (_text: string, _history: unknown, _opts: AgentRunOptions) => ({
+      text: 'done'
+    })
+  ),
   cancel: vi.fn(),
   resolveStaging: vi.fn()
 }))
@@ -256,33 +285,7 @@ describe('AI chat controller — proposal accept/discard failure handling', () =
 
   it('promotes the live status line across multi-step tools and staging reject', async () => {
     agentMocks.run.mockImplementationOnce(
-      async (
-        _text: string,
-        _history: unknown,
-        opts: {
-          onToolCall?: (c: {
-            id: string
-            name: string
-            args: Record<string, unknown>
-          }) => void
-          onToolResult?: (r: {
-            id: string
-            name: string
-            result: { content: string }
-          }) => void
-          onStaging?: (e: {
-            token: string
-            preview: {
-              kind: string
-              summary: string
-              details: string
-              affectedCount: number
-            }
-          }) => void
-          onStagingOutcome?: (token: string, outcome: string) => void
-          onDone?: (text: string) => void
-        }
-      ) => {
+      async (_text: string, _history: unknown, opts: AgentRunOptions) => {
         opts.onToolCall?.({ id: 't1', name: 'search_notes', args: {} })
         opts.onToolResult?.({
           id: 't1',

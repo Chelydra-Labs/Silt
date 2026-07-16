@@ -8,6 +8,7 @@ import type {
   PluginContext
 } from '../../sdk'
 import {
+  buildSystemPrompt,
   createAgentSession,
   MAX_ITERATIONS,
   runAgent,
@@ -74,7 +75,7 @@ describe('agent-loop', () => {
       handler: async () => ({ content: 'found it' })
     })
 
-    const auditEvent = vi.fn(async () => {})
+    const auditEvent = vi.fn(async (_payload: Record<string, unknown>) => {})
     const ctx = mockCtx((n) => {
       if (n === 1) {
         // First turn: model requests a tool call.
@@ -247,6 +248,20 @@ describe('agent-loop', () => {
     expect(bytes).toBeLessThanOrEqual(TOOL_RESULT_MAX_BYTES)
     expect(new TextDecoder().decode(new TextEncoder().encode(out))).toBe(out)
     expect(out).toMatch(/… truncated at 10KB/)
+  })
+
+  it('buildSystemPrompt frames untrusted vault content + the write policy (#629/#633)', () => {
+    const ctx = mockCtx(() => mockStream({ content: '', model: 'm' }))
+    const prompt = buildSystemPrompt(ctx)
+    // Untrusted-data framing carries system-prompt priority (shared preamble).
+    expect(prompt).toContain('SECURITY:')
+    expect(prompt).toContain('untrusted DATA')
+    expect(prompt).toContain('<vault_data')
+    // Write/staging policy documents the direct-vs-staged contract.
+    expect(prompt).toContain('WRITE POLICY')
+    expect(prompt).toContain('confirmation')
+    // Active notebook is surfaced so the model knows its scope.
+    expect(prompt).toContain('Active notebook: Work')
   })
 
   it('createAgentSession.cancel aborts the in-flight run', async () => {
