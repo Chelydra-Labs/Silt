@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -419,11 +420,15 @@ func TestTeardownVaultServices_ClearsInMemoryAudit(t *testing.T) {
 
 func TestRedactAIAuditFields_DropsSensitive(t *testing.T) {
 	in := map[string]any{
-		"tool":    "search_notes",
-		"content": "secret body",
-		"path":    `C:\Users\chris\Vault\note.md`,
-		"status":  "ok",
-		"note":    "short",
+		"tool":         "search_notes",
+		"content":      "secret body",
+		"path":         `C:\Users\chris\Vault\note.md`,
+		"status":       "ok",
+		"note":         "short",
+		"message_text": "should not leak",
+		"tool_args":    map[string]any{"q": "secret"},
+		"call_arguments": "raw",
+		"params":       map[string]any{"x": 1},
 	}
 	out := redactAIAuditFields(in)
 	if out["content"] != "[redacted]" {
@@ -432,11 +437,53 @@ func TestRedactAIAuditFields_DropsSensitive(t *testing.T) {
 	if out["path"] != "[redacted]" {
 		t.Errorf("path = %v, want [redacted]", out["path"])
 	}
+	if out["message_text"] != "[redacted]" {
+		t.Errorf("message_text = %v, want [redacted]", out["message_text"])
+	}
+	if out["tool_args"] != "[redacted]" {
+		t.Errorf("tool_args = %v, want [redacted]", out["tool_args"])
+	}
+	if out["call_arguments"] != "[redacted]" {
+		t.Errorf("call_arguments = %v, want [redacted]", out["call_arguments"])
+	}
+	if out["params"] != "[redacted]" {
+		t.Errorf("params = %v, want [redacted]", out["params"])
+	}
 	if out["tool"] != "search_notes" {
 		t.Errorf("tool = %v", out["tool"])
 	}
 	if out["status"] != "ok" {
 		t.Errorf("status = %v", out["status"])
+	}
+}
+
+func TestAuditAIEvent_DetailOverCapIsValidJSON(t *testing.T) {
+	// Force a post-marshal payload larger than the detail cap while still
+	// using non-sensitive keys so field truncation does not shrink it first.
+	app := newTestApp(t)
+	resetAIAuditState(t)
+	fields := map[string]any{}
+	// Many short status-like keys → large object without hitting 200-char string trim.
+	for i := 0; i < 400; i++ {
+		fields[fmt.Sprintf("k%03d", i)] = "x"
+	}
+	app.auditAIEvent("silt-ai-agent", "tool_call", fields)
+	entries, err := app.GetAIAudit()
+	if err != nil {
+		t.Fatalf("GetAIAudit: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if len(entries[0].Detail) == 0 {
+		t.Fatal("detail empty")
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(entries[0].Detail, &parsed); err != nil {
+		t.Fatalf("detail is not valid JSON: %v\nraw=%s", err, entries[0].Detail)
+	}
+	if parsed["detail_truncated"] != true {
+		t.Errorf("parsed = %#v, want detail_truncated=true", parsed)
 	}
 }
 

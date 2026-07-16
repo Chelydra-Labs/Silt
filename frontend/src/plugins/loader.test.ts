@@ -18,11 +18,15 @@ const mockUnregisterSession = vi.hoisted(() =>
 const mockEventsOn = vi.hoisted(() =>
   vi.fn((_event: string, _cb: (payload: unknown) => void) => () => {})
 )
+const mockClosePluginDB = vi.hoisted(() =>
+  vi.fn(() => Promise.resolve(undefined))
+)
 vi.mock('../../bindings/silt/app.js', () => ({
   ListPlugins: mockListPlugins,
   ReadPluginSource: mockReadPluginSource,
   RegisterPluginSession: mockRegisterSession,
-  UnregisterPluginSession: mockUnregisterSession
+  UnregisterPluginSession: mockUnregisterSession,
+  ClosePluginDB: mockClosePluginDB
 }))
 // Events.On returns a per-listener disposer (v3 contract). The mock mirrors
 // that so cleanupPlugin / clearAllSubscribers can call the captured disposer
@@ -203,6 +207,78 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
 
     await loadPlugins('Personal', '', '')
     expect(loadedPlugins.loadersReady).toBe(true)
+  })
+
+  it('tears down first-party AI plugins when ai.features disables them (#632)', async () => {
+    // Disabling Enable AI must tear down sessions (and slash/surfaces via
+    // teardownPlugin), not leave a stale loadedPlugins entry after the map swap.
+    const { loadPlugins } = await import('./loader')
+    const { loadedPlugins } = await import('./store.svelte')
+    const { settings } = await import('../settings/store.svelte')
+    const {
+      registerSlashCommand,
+      getSlashCommands,
+      resetSlashRegistryForTests
+    } = await import('../lib/editor/slash-registry')
+    const { setGrantsForTests, resetGrantsForTests } =
+      await import('./grants.svelte')
+
+    mockListPlugins.mockResolvedValue([])
+    mockRegisterSession.mockResolvedValue('ai-session')
+    mockUnregisterSession.mockClear()
+    mockClosePluginDB.mockClear()
+    resetSlashRegistryForTests()
+    resetGrantsForTests()
+    // First-party IDs get all caps in setGrantsForTests; seed any plugin id.
+    setGrantsForTests({ 'silt-ai-assistant': ['editor-schema'] })
+
+    settings.config = {
+      plugins: { disabled: [], active: [], plugin_settings: {} },
+      ai: {
+        features: {
+          enabled: true,
+          rag_enabled: false,
+          summaries_enabled: false
+        },
+        chat: {},
+        embedding: {}
+      }
+    } as any
+
+    await loadPlugins('Work', '', '')
+    expect(loadedPlugins.plugins.has('silt-ai-agent')).toBe(true)
+    expect(loadedPlugins.plugins.has('silt-ai-assistant')).toBe(true)
+    expect(loadedPlugins.plugins.has('silt-ai-qa')).toBe(false)
+
+    registerSlashCommand({
+      id: 'silt-ai-assistant:test-ai-cmd',
+      label: 'Test AI',
+      pluginID: 'silt-ai-assistant',
+      onSelect: () => {}
+    })
+    expect(
+      getSlashCommands().some((c) => c.id === 'silt-ai-assistant:test-ai-cmd')
+    ).toBe(true)
+
+    settings.config = {
+      ...settings.config!,
+      ai: {
+        ...(settings.config as any).ai,
+        features: {
+          enabled: false,
+          rag_enabled: false,
+          summaries_enabled: false
+        }
+      }
+    } as any
+
+    await loadPlugins('Work', '', '')
+    expect(loadedPlugins.plugins.has('silt-ai-agent')).toBe(false)
+    expect(loadedPlugins.plugins.has('silt-ai-assistant')).toBe(false)
+    expect(
+      getSlashCommands().some((c) => c.id === 'silt-ai-assistant:test-ai-cmd')
+    ).toBe(false)
+    expect(mockUnregisterSession).toHaveBeenCalled()
   })
 
   it('vault:closing resets the unified task hub state #326 item 1', async () => {

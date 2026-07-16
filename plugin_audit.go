@@ -455,8 +455,9 @@ type AIAuditEntry struct {
 const maxAIAuditDetailBytes = 2 * 1024
 
 // redactAIAuditFields drops or truncates sensitive keys before audit persistence.
-// Keys whose names contain path/content/body/text (case-insensitive) are replaced
-// with "[redacted]"; absolute path-like strings and long values are truncated.
+// Keys whose names contain path/content/body/text/args/arguments/params
+// (case-insensitive substring) are replaced with "[redacted]"; absolute
+// path-like strings and long values are truncated.
 func redactAIAuditFields(fields map[string]any) map[string]any {
 	if fields == nil {
 		return nil
@@ -464,15 +465,26 @@ func redactAIAuditFields(fields map[string]any) map[string]any {
 	out := make(map[string]any, len(fields))
 	for k, v := range fields {
 		lk := strings.ToLower(k)
-		if strings.Contains(lk, "content") || strings.Contains(lk, "body") ||
-			strings.Contains(lk, "path") || lk == "text" || lk == "args" ||
-			lk == "arguments" || lk == "params" {
+		if isSensitiveAIAuditKey(lk) {
 			out[k] = "[redacted]"
 			continue
 		}
 		out[k] = redactAIAuditValue(v)
 	}
 	return out
+}
+
+// isSensitiveAIAuditKey reports whether a lowercased field name should be fully
+// redacted. Substring match so message_text / tool_args / call_arguments etc.
+// cannot slip past exact-key checks into a synced ai.log (#630).
+func isSensitiveAIAuditKey(lk string) bool {
+	return strings.Contains(lk, "content") ||
+		strings.Contains(lk, "body") ||
+		strings.Contains(lk, "path") ||
+		strings.Contains(lk, "text") ||
+		strings.Contains(lk, "args") ||
+		strings.Contains(lk, "arguments") ||
+		strings.Contains(lk, "params")
 }
 
 func redactAIAuditValue(v any) any {
@@ -538,8 +550,11 @@ func (a *App) auditAIEvent(pluginID, kind string, fields map[string]any) {
 	if len(redacted) > 0 {
 		raw, err := json.Marshal(redacted)
 		if err == nil {
+			// Byte-cap must leave valid JSON; mid-object truncation breaks the
+			// frontend Recent AI activity parser. Per-field truncation usually
+			// keeps us under the cap; this is a hard backstop only.
 			if len(raw) > maxAIAuditDetailBytes {
-				raw = append(raw[:maxAIAuditDetailBytes], []byte("…")...)
+				raw = []byte(`{"detail_truncated":true}`)
 			}
 			detail = raw
 		}

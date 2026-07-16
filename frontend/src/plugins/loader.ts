@@ -173,23 +173,41 @@ export async function loadPlugins(
     } else if (disabledIds.has(id)) {
       continue
     }
-    if (!plugins.has(id)) {
-      // Register a session token for first-party plugins too (#151).
-      let fpToken = sessionTokens.get(id)
-      if (!fpToken) {
-        try {
-          fpToken = await RegisterPluginSession(id)
-          sessionTokens.set(id, fpToken)
-        } catch {
-          // Best-effort: if session registration fails (e.g. vault not
-          // loaded yet), continue with no token — the SDK passes '' which
-          // the Go side rejects for session-gated bindings.
-        }
+    if (plugins.has(id)) continue
+    // Already live from a prior loadPlugins under the same desired set —
+    // carry over without re-running init/onVaultOpen (avoids double-register
+    // of slash commands / surfaces on feature-flag toggles).
+    const existing = loadedPlugins.plugins.get(id)
+    if (existing) {
+      plugins.set(id, existing)
+      continue
+    }
+    // Register a session token for first-party plugins too (#151).
+    let fpToken = sessionTokens.get(id)
+    if (!fpToken) {
+      try {
+        fpToken = await RegisterPluginSession(id)
+        sessionTokens.set(id, fpToken)
+      } catch {
+        // Best-effort: if session registration fails (e.g. vault not
+        // loaded yet), continue with no token — the SDK passes '' which
+        // the Go side rejects for session-gated bindings.
       }
-      const ctx = makePluginContext(id, fpToken)
-      fp.init?.(ctx)
-      fp.onVaultOpen?.(ctx)
-      plugins.set(id, fp)
+    }
+    const ctx = makePluginContext(id, fpToken)
+    fp.init?.(ctx)
+    fp.onVaultOpen?.(ctx)
+    plugins.set(id, fp)
+  }
+
+  // Reconcile: tear down anything that was loaded but is not in the desired
+  // set (AI feature off, plugin disabled, disk plugin removed). Without this,
+  // loadPlugins only builds a new map and swaps it — slash commands, surfaces,
+  // sessions, and event-bus subs would linger after Enable AI / RAG / summaries
+  // flip off (#632).
+  for (const id of [...loadedPlugins.plugins.keys()]) {
+    if (!plugins.has(id)) {
+      teardownPlugin(id)
     }
   }
 
