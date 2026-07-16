@@ -118,17 +118,45 @@ func TestCompleteStream_CancelMidStream(t *testing.T) {
 	}
 }
 
-func TestCompleteStream_NativeProviderRejected(t *testing.T) {
-	_, err := CompleteStream(context.Background(), CompleteRequest{
-		Provider: AIProvider{BaseURL: "https://generativelanguage.googleapis.com", Model: "g", ProviderType: ProviderGoogle},
+func TestCompleteStream_NativeProviderBufferedFallback(t *testing.T) {
+	// Native providers have no SSE streaming; CompleteStream must fall back to
+	// a buffered non-stream Complete and emit the content as one delta.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("anthropic path = %q, want /v1/messages", r.URL.Path)
+		}
+		resp := map[string]any{
+			"id":   "msg_01",
+			"type": "message",
+			"role": "assistant",
+			"content": []map[string]any{
+				{"type": "text", "text": "native reply"},
+			},
+			"model":       "claude-sonnet-5",
+			"stop_reason": "end_turn",
+			"usage":       map[string]any{"input_tokens": 5, "output_tokens": 3},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	var got []string
+	res, err := CompleteStream(context.Background(), CompleteRequest{
+		Provider: AIProvider{ProviderType: ProviderAnthropic, BaseURL: srv.URL, APIKey: "k", Model: "claude-sonnet-5"},
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
-	}, func(string) error { return nil }, nil)
-	if err == nil {
-		t.Fatal("expected error for native google streaming")
+	}, func(delta string) error {
+		got = append(got, delta)
+		return nil
+	}, nil)
+	if err != nil {
+		t.Fatalf("CompleteStream: %v", err)
 	}
-	ae, ok := err.(*AIError)
-	if !ok || ae.Kind != ErrBadRequest {
-		t.Fatalf("want ErrBadRequest, got %v", err)
+	if res.Content != "native reply" {
+		t.Errorf("content = %q, want native reply", res.Content)
+	}
+	if len(got) != 1 || got[0] != "native reply" {
+		t.Errorf("deltas = %v, want [native reply]", got)
 	}
 }
 

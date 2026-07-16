@@ -5,9 +5,10 @@
 // and delivers content deltas via a callback so the App layer can push them
 // over Wails events without buffering the full response first.
 //
-// Native Google/Anthropic streaming is intentionally out of scope for v1 —
-// CompleteStream returns ErrBadRequest for those provider types so callers
-// fall back to non-stream Complete or surface a clear error.
+// Native Google/Anthropic have no SSE streaming implementation in v1. Rather
+// than reject (which broke the agent loop, which always requests stream=true),
+// CompleteStream falls back to a buffered non-stream Complete and emits the
+// full content as one delta so the stream contract holds transparently.
 
 package ai
 
@@ -122,10 +123,20 @@ func CompleteStream(ctx context.Context, req CompleteRequest, onDelta StreamDelt
 	}
 	switch req.Provider.ProviderType {
 	case ProviderGoogle, ProviderAnthropic:
-		return CompleteResult{}, &AIError{
-			Kind:    ErrBadRequest,
-			Message: "streaming is not supported for native " + req.Provider.ProviderType + " providers; use an OpenAI-compatible or local endpoint, or call complete without stream",
+		// No SSE streaming for native providers in v1. Fall back to a buffered
+		// non-stream completion and emit the full content as one delta so the
+		// stream contract (deltas + final result) holds transparently for
+		// callers (the agent loop) that always request stream=true.
+		result, err := Complete(ctx, req)
+		if err != nil {
+			return CompleteResult{}, err
 		}
+		if result.Content != "" {
+			if err := onDelta(result.Content); err != nil {
+				return result, err
+			}
+		}
+		return result, nil
 	default:
 		return streamOpenAI(ctx, req, model, baseURL, onDelta, onToolDelta)
 	}
