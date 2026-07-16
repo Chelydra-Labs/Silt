@@ -8,7 +8,7 @@
 
 import type { PluginContext, PluginManifest } from '../../sdk'
 import { agentChrome } from './state.svelte'
-import { migrateSchema, resetMigrationState } from './db'
+import { migrateSchema } from './db'
 import { clearTools } from './tool-registry'
 import { registerP0Tools, registerP1Tools, registerP2Tools } from './tools'
 import { cleanupExpired } from './staging'
@@ -25,8 +25,7 @@ export const manifest: PluginManifest = {
   capabilities: {
     ai: true,
     'content-mutate': true,
-    'plugin-db': true,
-    'read-files': true
+    'plugin-db': true
   }
 }
 
@@ -53,12 +52,10 @@ export default {
     agentChrome.available = false
     resetAIChatDrawer()
     clearTools()
-    resetMigrationState()
   },
   onShutdown() {
     agentChrome.available = false
     resetAIChatDrawer()
     clearTools()
-    resetMigrationState()
   }
 }

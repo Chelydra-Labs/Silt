@@ -21,15 +21,11 @@ CREATE TABLE IF NOT EXISTS staging_tokens (
 CREATE INDEX IF NOT EXISTS idx_staging_expires ON staging_tokens(expires_at);
 `
 
-let migrated = false
-
-export function resetMigrationState(): void {
-  migrated = false
-}
-
-/** Run the v1 migration once per process. Safe to call on every vault open. */
+/** Run the v1 migration. Safe on every vault open — the Go side tracks
+ *  PRAGMA user_version per-vault-DB and no-ops when already applied, so no
+ *  global flag is needed (a module-level flag would race on rapid vault
+ *  switches, letting a detached Vault-A migration stamp the flag after Vault B
+ *  opens and skip Vault B's schema). */
 export async function migrateSchema(ctx: PluginContext): Promise<void> {
-  if (migrated) return
   await ctx.pluginDb.migrate(MIGRATION_V1, MIGRATION_V1_SQL)
-  migrated = true
 }
