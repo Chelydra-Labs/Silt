@@ -1,18 +1,15 @@
 // Agent tool #603 — update_block (identity-preserving prose edit).
 //
 // Replaces a block's body text via ctx.mutateBlock, which preserves the
-// block's UUID and identity. For TASK blocks the new content must not strip
-// or alter the value of any existing task-metadata tokens (status, owner, due,
-// priority) or the checkbox state — those have dedicated tools
-// (setTaskDueDate, setTaskOwner, setTaskPriority, updateBlockState) and
-// silently changing them via a prose rewrite would be data loss. NOTE/HEADER
-// blocks may be rewritten freely.
-//
-// Single-block updates do NOT stage: the change is reversible prose and the
-// mutation round-trips through the markdown file (source of truth). A future
-// bulk variant that touches many blocks at once would route through the
-// Phase 5 staging protocol (see staging.ts), but this single-block tool is
-// non-staged.
+// block's UUID and identity. TASK metadata (status, owner, due, priority, …)
+// lives in STRUCTURED columns, not in clean_content — clean_content is the
+// token-stripped prose, and MutateBlock re-renders the markdown from the
+// preserved structured fields. So update_block is a prose-only edit: for TASK
+// blocks we strip any leading checkbox and [key:: value] metadata tokens the
+// model supplied, so it cannot inject conflicting tokens into the re-rendered
+// markdown (which would ambiguity-resolve against the preserved fields on the
+// next parse). Dedicated tools change metadata; NOTE/HEADER blocks rewrite
+// freely. Single-block updates are not staged (reversible prose, one undo).
 
 import type { PluginContext } from '../../../sdk'
 import type { ToolResult } from '../tool-registry'
@@ -20,12 +17,12 @@ import type { ToolResult } from '../tool-registry'
 export const updateBlockToolDef = {
   name: 'update_block',
   description:
-    "Rewrite a block's prose body by UUID, preserving its identity and " +
-    '(for TASK blocks) existing metadata values. For TASK blocks, the new ' +
-    'content must retain the original values of any [status::], [owner::], ' +
-    '[due::], or [priority::] tokens and the checkbox state — use the ' +
-    'dedicated tools to change those. NOTE/HEADER blocks may be rewritten ' +
-    'freely. ' +
+    "Rewrite a block's prose body by UUID, preserving its identity. " +
+    'TASK metadata (status/owner/due/priority) is stored in structured ' +
+    'fields, not the prose, so it is preserved automatically — for TASK ' +
+    'blocks any checkbox or [key:: value] tokens in the supplied content ' +
+    'are stripped before writing (use the dedicated tools to change ' +
+    'metadata). NOTE/HEADER blocks may be rewritten freely. ' +
     "Optional tags override the block's tags.",
   parameters: {
     type: 'object',
@@ -46,16 +43,6 @@ export const updateBlockToolDef = {
       }
     }
   }
-}
-
-/** Metadata tokens whose removal or value change would be silent data loss. */
-const TASK_TOKEN_KEYS = ['status', 'owner', 'due', 'priority'] as const
-
-/** A captured metadata token: key + raw bracketed text + value. */
-interface TaskToken {
-  key: string
-  raw: string
-  value: string
 }
 
 export async function handleUpdateBlock(
@@ -81,40 +68,36 @@ export async function handleUpdateBlock(
   if (!row) {
     return { content: '', error: `block ${blockId} not found` }
   }
-  const currentContent = String(row.clean_content ?? '')
   const type = String(row.type ?? '').toUpperCase()
+  const isTask = type === 'TASK'
 
-  // 2. TASK blocks: reject if the new content changes/removes any existing
-  //    metadata value or the checkbox state.
-  if (type === 'TASK') {
-    const changed = findStrippedTokens(currentContent, newContent)
-    if (changed.length > 0) {
+  // 2. Compute the body to write. For TASK blocks, strip any checkbox and
+  //    metadata tokens the model supplied so the prose cannot inject tokens
+  //    that would conflict with the structured fields MutateBlock preserves.
+  //    For non-task blocks with a tag override, fold tags in as #hashtags.
+  let body: string
+  if (isTask) {
+    body = stripTaskMetadata(newContent)
+    if (!body) {
       return {
         content: '',
         error:
-          'Cannot change or remove task metadata (status/owner/due/priority). ' +
-          'Use specific tools to change them. Changed/removed: ' +
-          changed.join(', ')
+          'content had no prose after stripping task metadata; supply a description'
       }
     }
+  } else if (tagOverride !== null) {
+    body = applyInlineTags(newContent, tagOverride)
+  } else {
+    body = newContent
   }
 
-  // 3. Compute the body to write. For non-task blocks with a tag override,
-  //    fold the tags into the body as #hashtags before mutating. For TASK
-  //    blocks, setTaskTags applies the override after the body rewrite.
-  const isTask = type === 'TASK'
-  const body =
-    !isTask && tagOverride !== null
-      ? applyInlineTags(newContent, tagOverride)
-      : newContent
-
-  // 4. Mutate the block body.
+  // 3. Mutate the block body.
   const ok = await ctx.mutateBlock(blockId, body)
   if (!ok) {
     return { content: '', error: `mutateBlock failed for block ${blockId}` }
   }
 
-  // 5. Apply the tag override for TASK blocks via the dedicated API.
+  // 4. Apply the tag override for TASK blocks via the dedicated API.
   if (isTask && tagOverride !== null) {
     const tags = normalizeTags(tagOverride)
     const tagOk = await ctx.setTaskTags(blockId, tags)
@@ -131,75 +114,29 @@ export async function handleUpdateBlock(
   }
 }
 
-/**
- * Compare old vs new content and list which task-metadata tokens (or the
- * checkbox state) the rewrite would change or remove. Token values are trimmed
- * before comparison so harmless whitespace normalization remains allowed.
- * Changed tokens are returned as old -> new pairs; removed tokens are returned
- * as their raw value so the error message is actionable. An empty array means
- * the rewrite is safe.
- */
-export function findStrippedTokens(
-  oldContent: string,
-  newContent: string
-): string[] {
-  const stripped: string[] = []
+// GFM task-list checkbox at the start of a line (`- [ ]`, `- [x]`, `- [/]`,
+// `- [~]`). `mutateBlock` writes CleanText; the checkbox is re-emitted from
+// the structured Status by the serializer, so a model-supplied checkbox must
+// be stripped to avoid a doubled marker in the re-rendered markdown.
+const TASK_CHECKBOX_RE = /^\s*[-*+]\s*\[[ xX/~]\]\s*/
 
-  const oldTokens = new Map<string, TaskToken>()
-  for (const t of extractTaskTokens(oldContent)) oldTokens.set(t.key, t)
-  const newTokens = new Map<string, TaskToken>()
-  for (const t of extractTaskTokens(newContent)) newTokens.set(t.key, t)
-
-  // Each metadata key in the old content must still be present with the same
-  // value. New metadata keys are allowed; dedicated tools can set them later.
-  for (const key of TASK_TOKEN_KEYS) {
-    const oldTok = oldTokens.get(key)
-    if (!oldTok) continue
-    const newTok = newTokens.get(key)
-    if (!newTok) {
-      stripped.push(oldTok.raw)
-    } else if (oldTok.value !== newTok.value) {
-      stripped.push(`${oldTok.raw} -> ${newTok.raw}`)
-    }
-  }
-
-  // Checkbox state — a TASK's status is encoded as `- [ ]`/`- [x]`/`- [~]`.
-  // Removing the checkbox would silently drop the task from the task index.
-  const oldCheck = extractCheckbox(oldContent)
-  const newCheck = extractCheckbox(newContent)
-  if (oldCheck !== null && newCheck === null) {
-    stripped.push(`checkbox: ${oldCheck.raw}`)
-  }
-
-  return stripped
-}
+// A [key:: value] metadata token (the parser's TaskTokenRegex shape). Any such
+// token in the model's content is metadata, not prose, and is stripped so it
+// cannot conflict with the structured fields the backend owns.
+const TASK_TOKEN_RE = /\[[a-z][a-z0-9_]*\s*::\s*[^\]]*\]/gi
 
 /**
- * Extract the four supported metadata tokens from a task body. Token form is
- * case-insensitive `[key:: value]`. The regex tolerates surrounding whitespace
- * and arbitrary value content up to the closing bracket.
+ * Strip a leading task checkbox and every [key:: value] metadata token from a
+ * TASK body, returning the pure prose. This keeps update_block a prose edit:
+ * the backend preserves structured metadata, and the model cannot inject
+ * tokens that would ambiguity-resolve against those fields on the next parse.
  */
-function extractTaskTokens(text: string): TaskToken[] {
-  const out: TaskToken[] = []
-  const re = /\[(status|owner|due|priority)\s*::\s*([^\]]*)\]/gi
-  for (const m of text.matchAll(re)) {
-    out.push({
-      key: m[1].toLowerCase(),
-      raw: m[0],
-      value: (m[2] ?? '').trim()
-    })
-  }
-  return out
-}
-
-/**
- * Extract the GFM task-list checkbox at the start of the first line. Returns
- * the raw marker ("- [ ]", "- [x]", "- [~]") or null when none is present.
- */
-function extractCheckbox(text: string): { raw: string } | null {
-  const m = text.match(/^\s*[-*+]\s*\[([ xX~])\]/)
-  if (!m) return null
-  return { raw: m[0].trim() }
+export function stripTaskMetadata(text: string): string {
+  return text
+    .replace(TASK_CHECKBOX_RE, '')
+    .replace(TASK_TOKEN_RE, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
 }
 
 /** Append a tags array to a body as space-separated #hashtags. */

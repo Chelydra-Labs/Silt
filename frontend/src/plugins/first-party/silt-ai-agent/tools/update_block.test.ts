@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PluginContext } from '../../../sdk'
 import { clearTools } from '../tool-registry'
 import {
-  findStrippedTokens,
   handleUpdateBlock,
+  stripTaskMetadata,
   updateBlockToolDef
 } from './update_block'
 
@@ -51,104 +51,46 @@ describe('update_block', () => {
     expect(res.content).toContain('b1')
   })
 
-  it('updates a TASK block when tokens are preserved', async () => {
-    const original =
-      '- [x] Ship the agent tools [status:: DONE] [due:: 2026-07-20]'
-    const rewritten =
-      '- [x] Ship the agent tools (revised) [status:: DONE] [due:: 2026-07-20]'
+  it('updates a TASK block prose (clean_content is prose-only in storage)', async () => {
+    // TASK clean_content holds the token-stripped description; metadata lives
+    // in structured columns preserved by the backend.
     const { ctx, mutateBlock } = makeCtx({
-      row: { clean_content: original, type: 'TASK' }
+      row: { clean_content: 'Ship the agent tools', type: 'TASK' }
     })
     const res = await handleUpdateBlock(ctx, {
       block_id: 't1',
-      content: rewritten
+      content: 'Ship the agent tools (revised)'
     })
     expect(res.error).toBeUndefined()
-    expect(mutateBlock).toHaveBeenCalledWith('t1', rewritten)
+    expect(mutateBlock).toHaveBeenCalledWith(
+      't1',
+      'Ship the agent tools (revised)'
+    )
   })
 
-  it('rejects a TASK rewrite that strips [status::]', async () => {
-    const original = '- [x] Ship [status:: DONE] [due:: 2026-07-20]'
-    const rewritten = '- [x] Ship (no metadata anymore)'
+  it('strips a checkbox and injected metadata tokens from a TASK rewrite', async () => {
     const { ctx, mutateBlock } = makeCtx({
-      row: { clean_content: original, type: 'TASK' }
+      row: { clean_content: 'Build feature', type: 'TASK' }
     })
     const res = await handleUpdateBlock(ctx, {
       block_id: 't2',
-      content: rewritten
+      content: '- [ ] Build feature [owner:: mallory] [due:: 2099-01-01]'
     })
-    expect(res.error).toMatch(/Cannot change or remove task metadata/)
-    expect(res.error).toMatch(/status/i)
-    expect(res.error).toMatch(/due/i)
-    expect(mutateBlock).not.toHaveBeenCalled()
+    expect(res.error).toBeUndefined()
+    // Only the prose reaches mutateBlock; structured metadata is untouched.
+    expect(mutateBlock).toHaveBeenCalledWith('t2', 'Build feature')
   })
 
-  it('rejects a TASK rewrite that strips [due::] but keeps status', async () => {
-    const original = '- [ ] Build feature [status:: TODO] [due:: 2026-08-01]'
-    const rewritten = '- [ ] Build feature [status:: TODO]'
+  it('rejects a TASK rewrite that is only tokens/checkbox (no prose)', async () => {
     const { ctx, mutateBlock } = makeCtx({
-      row: { clean_content: original, type: 'TASK' }
+      row: { clean_content: 'whatever', type: 'TASK' }
     })
     const res = await handleUpdateBlock(ctx, {
       block_id: 't3',
-      content: rewritten
+      content: '- [x] [status:: DONE] [owner:: alice]'
     })
-    expect(res.error).toMatch(/Cannot change or remove task metadata/)
-    expect(res.error).toMatch(/due/i)
+    expect(res.error).toMatch(/no prose after stripping task metadata/i)
     expect(mutateBlock).not.toHaveBeenCalled()
-  })
-
-  it('rejects a TASK rewrite that strips the checkbox state', async () => {
-    const original = '- [x] Done thing [status:: DONE]'
-    // No checkbox at all → status encoding removed.
-    const rewritten = 'Done thing [status:: DONE]'
-    const { ctx, mutateBlock } = makeCtx({
-      row: { clean_content: original, type: 'TASK' }
-    })
-    const res = await handleUpdateBlock(ctx, {
-      block_id: 't4',
-      content: rewritten
-    })
-    expect(res.error).toMatch(/Cannot change or remove task metadata/)
-    expect(res.error).toMatch(/checkbox/)
-    expect(mutateBlock).not.toHaveBeenCalled()
-  })
-
-  it('rejects a TASK rewrite that changes existing metadata values', async () => {
-    const original =
-      '- [ ] Ship it [status:: TODO] [owner:: alice] ' +
-      '[due:: 2026-08-01] [priority:: 2]'
-    const rewritten =
-      '- [ ] Ship it [status:: DOING] [owner:: bob] ' +
-      '[due:: 2026-08-02] [priority:: 1]'
-    const { ctx, mutateBlock } = makeCtx({
-      row: { clean_content: original, type: 'TASK' }
-    })
-    const res = await handleUpdateBlock(ctx, {
-      block_id: 't-values',
-      content: rewritten
-    })
-
-    expect(res.error).toMatch(/Cannot change or remove task metadata/)
-    expect(res.error).toMatch(/status/i)
-    expect(res.error).toMatch(/owner/i)
-    expect(res.error).toMatch(/due/i)
-    expect(res.error).toMatch(/priority/i)
-    expect(mutateBlock).not.toHaveBeenCalled()
-  })
-
-  it('allows adding tokens that were not present before', async () => {
-    const original = '- [ ] Open task'
-    const rewritten = '- [ ] Open task [status:: TODO] [due:: 2026-09-01]'
-    const { ctx, mutateBlock } = makeCtx({
-      row: { clean_content: original, type: 'TASK' }
-    })
-    const res = await handleUpdateBlock(ctx, {
-      block_id: 't5',
-      content: rewritten
-    })
-    expect(res.error).toBeUndefined()
-    expect(mutateBlock).toHaveBeenCalledWith('t5', rewritten)
   })
 
   it('errors when the block is not found', async () => {
@@ -175,19 +117,16 @@ describe('update_block', () => {
 
   it('applies a tag override for a TASK via setTaskTags', async () => {
     const { ctx, mutateBlock, setTaskTags } = makeCtx({
-      row: {
-        clean_content: '- [ ] Task [status:: TODO]',
-        type: 'TASK'
-      }
+      row: { clean_content: 'Task', type: 'TASK' }
     })
     const res = await handleUpdateBlock(ctx, {
       block_id: 't',
-      content: '- [ ] Task [status:: TODO]',
+      content: 'Task',
       tags: ['work/urgent', 'bug']
     })
     expect(res.error).toBeUndefined()
-    // Body is mutated first (unchanged here), then tags applied.
-    expect(mutateBlock).toHaveBeenCalled()
+    // Body (prose) mutated first, then tags applied via the dedicated API.
+    expect(mutateBlock).toHaveBeenCalledWith('t', 'Task')
     expect(setTaskTags).toHaveBeenCalledWith('t', ['work/urgent', 'bug'])
   })
 
@@ -218,25 +157,14 @@ describe('update_block', () => {
     expect(noBody.error).toMatch(/content/)
   })
 
-  it('findStrippedTokens is exported and detects all four keys + checkbox', () => {
-    expect(findStrippedTokens('[status:: TODO]', '[status:: TODO]')).toEqual([])
+  it('stripTaskMetadata removes checkbox + tokens and collapses whitespace', () => {
+    expect(stripTaskMetadata('- [x] Do thing')).toBe('Do thing')
     expect(
-      findStrippedTokens('[status:: TODO]', '[status ::   TODO ]')
-    ).toEqual([])
-    expect(findStrippedTokens('[status:: TODO]', '[status:: DONE]')).toEqual([
-      '[status:: TODO] -> [status:: DONE]'
-    ])
-    expect(findStrippedTokens('[due:: X]', 'no tokens')).toEqual(['[due:: X]'])
-    expect(
-      findStrippedTokens(
-        '[owner:: alice] [priority:: 2]',
-        '[owner:: alice]'
-      ).sort()
-    ).toEqual(['[priority:: 2]'])
-    // Checkbox stripping.
-    expect(findStrippedTokens('- [x] done', 'no checkbox')).toEqual([
-      'checkbox: - [x]'
-    ])
+      stripTaskMetadata('- [ ] Do thing [owner:: alice] [due:: 2026-08-01]')
+    ).toBe('Do thing')
+    expect(stripTaskMetadata('Plain prose')).toBe('Plain prose')
+    expect(stripTaskMetadata('  - [~]   A   [p:: 2]   B  ')).toBe('A B')
+    expect(stripTaskMetadata('- [x] [status:: DONE]')).toBe('')
   })
 
   it('exposes the tool def shape', () => {
