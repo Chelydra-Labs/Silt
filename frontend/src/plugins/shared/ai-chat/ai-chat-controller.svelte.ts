@@ -202,6 +202,16 @@ export function createAgentCapability(): AIChatCapability {
             })
           )
         },
+        onStagingOutcome: (token, outcome) => {
+          if (stale()) return
+          const confirmation = context.transcript.find(
+            (entry) => entry.kind === 'confirmation' && entry.token === token
+          )
+          if (!confirmation) return
+          context.update(confirmation.id, (entry) =>
+            entry.kind === 'confirmation' ? { ...entry, state: outcome } : entry
+          )
+        },
         onDone: (finalText) => {
           if (stale()) return
           // Keep citation numbering identical to the retrieval prompt. The
@@ -406,6 +416,10 @@ export function createAIChatController(initialContext?: PluginContext) {
 
     try {
       await capability.run(prompt, runContext)
+      // Success only: catch/stop own 'error'/'stopped'. Setting complete in
+      // finally would clobber a catch-path 'error' and invert the a11y
+      // announcement (screen readers always heard "complete" after failures).
+      if (live()) lastOutcome = 'complete'
     } catch (error) {
       if (live()) {
         lastOutcome = 'error'
@@ -424,7 +438,6 @@ export function createAIChatController(initialContext?: PluginContext) {
         remove(runningStatus.id)
         activeRunStatusId = null
         finalizeStreaming()
-        lastOutcome = 'complete'
         busy = false
         activeCapability = null
       }
@@ -485,17 +498,24 @@ export function createAIChatController(initialContext?: PluginContext) {
     activeCapability = null
   }
 
-  function resolveStaging(token: string, confirmed: boolean) {
+  function setConfirmationState(
+    token: string,
+    state: 'pending' | 'confirmed' | 'rejected' | 'failed'
+  ) {
     const confirmation = transcript.find(
       (entry) => entry.kind === 'confirmation' && entry.token === token
     )
-    if (confirmation) {
-      update(confirmation.id, (entry) =>
-        entry.kind === 'confirmation'
-          ? { ...entry, state: confirmed ? 'confirmed' : 'rejected' }
-          : entry
-      )
-    }
+    if (!confirmation) return
+    update(confirmation.id, (entry) =>
+      entry.kind === 'confirmation' ? { ...entry, state } : entry
+    )
+  }
+
+  function resolveStaging(token: string, confirmed: boolean) {
+    // Reject is final (user intent). Confirm stays pending until the agent
+    // loop finishes confirmOperation+commit — otherwise a commit failure
+    // leaves the card saying "confirmed" while the model sees an error.
+    if (!confirmed) setConfirmationState(token, 'rejected')
     pendingConfirmation = null
     ;(
       activeCapability ?? capabilities.get(defaultCapabilityId)

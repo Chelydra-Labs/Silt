@@ -12,6 +12,7 @@ import {
   MAX_ITERATIONS,
   runAgent,
   truncateToolResult,
+  wrapUntrustedToolResult,
   TOOL_RESULT_MAX_BYTES,
   type StagingEvent
 } from './agent-loop'
@@ -184,6 +185,13 @@ describe('agent-loop', () => {
     const out = truncateToolResult(big)
     expect(out.length).toBeLessThan(big.length)
     expect(out).toMatch(/… truncated at 10KB/)
+  })
+
+  it('wraps vault tool results in hard untrusted-data delimiters', () => {
+    const wrapped = wrapUntrustedToolResult('search_notes', 'vault body')
+    expect(wrapped).toContain('<<<UNTRUSTED_VAULT_DATA tool=search_notes>>>')
+    expect(wrapped).toContain('vault body')
+    expect(wrapped).toContain('<<<END_UNTRUSTED_VAULT_DATA>>>')
   })
 
   it('truncates Unicode results by UTF-8 bytes without splitting a code point', () => {
@@ -364,7 +372,10 @@ describe('agent-loop', () => {
         id: 'bad',
         content: 'Error: failed deliberately'
       }),
-      expect.objectContaining({ id: 'good', content: 'sibling result' })
+      expect.objectContaining({
+        id: 'good',
+        content: wrapUntrustedToolResult('succeeds', 'sibling result')
+      })
     ])
   })
 

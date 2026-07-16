@@ -58,7 +58,7 @@ export interface ConfirmationEntry extends EntryBase {
   summary: string
   details?: string
   affectedCount?: number
-  state?: 'pending' | 'confirmed' | 'rejected'
+  state?: 'pending' | 'confirmed' | 'rejected' | 'failed'
 }
 
 export type ChatStatus =

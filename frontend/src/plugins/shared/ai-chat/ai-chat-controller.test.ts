@@ -161,6 +161,50 @@ describe('AI chat controller — proposal accept/discard failure handling', () =
     const entry = controller.transcript.find((e) => e.id === 'streaming-entry')
     expect(entry?.kind).toBe('text')
     expect((entry as { streaming?: boolean })?.streaming).toBeFalsy()
+    expect(controller.lastOutcome).toBe('stopped')
+    controller.dispose()
+  })
+
+  it('sets lastOutcome to error when the capability run rejects', async () => {
+    const controller = createAIChatController()
+    controller.attach(pluginContextStub())
+    const stub: AIChatCapability = {
+      id: 'stub',
+      run: async () => {
+        throw new Error('provider blew up')
+      }
+    }
+    controller.registerCapability(stub, { makeDefault: true })
+
+    await controller.send('hello')
+
+    expect(controller.lastOutcome).toBe('error')
+    expect(
+      controller.transcript.some(
+        (entry) => entry.kind === 'status' && entry.status === 'error'
+      )
+    ).toBe(true)
+    expect(controller.busy).toBe(false)
+    controller.dispose()
+  })
+
+  it('sets lastOutcome to complete on a successful run', async () => {
+    const controller = createAIChatController()
+    controller.attach(pluginContextStub())
+    const stub: AIChatCapability = {
+      id: 'stub',
+      run: async (_text, context) => {
+        context.append(
+          textEntry({ role: 'assistant', content: 'done', streaming: false })
+        )
+      }
+    }
+    controller.registerCapability(stub, { makeDefault: true })
+
+    await controller.send('hello')
+
+    expect(controller.lastOutcome).toBe('complete')
+    expect(controller.busy).toBe(false)
     controller.dispose()
   })
 })
