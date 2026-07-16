@@ -135,14 +135,14 @@
     aria-labelledby="silt-settings-tab-{section}"
     tabindex="0"
     class="flex-1 min-h-0 focus:outline-none custom-scrollbar"
-    class:flex={['editor', 'hotkeys'].includes(section) ||
+    class:flex={['editor', 'hotkeys', 'ai'].includes(section) ||
       themeEditorSession.open}
-    class:flex-col={['editor', 'hotkeys'].includes(section) ||
+    class:flex-col={['editor', 'hotkeys', 'ai'].includes(section) ||
       themeEditorSession.open}
-    class:overflow-hidden={['editor', 'hotkeys'].includes(section) ||
+    class:overflow-hidden={['editor', 'hotkeys', 'ai'].includes(section) ||
       themeEditorSession.open}
     class:overflow-y-auto={!(
-      ['editor', 'hotkeys'].includes(section) || themeEditorSession.open
+      ['editor', 'hotkeys', 'ai'].includes(section) || themeEditorSession.open
     )}
   >
     {#if settings.loading && !settings.config && section !== 'general'}
@@ -185,7 +185,7 @@
     {:else if section === 'appearance'}
       <AppearanceTab />
     {:else if section === 'ai'}
-      <AIProviderTab />
+      <AIProviderTab {ringAnchor} />
     {:else if section === 'hotkeys'}
       <HotkeysTab {ringAnchor} />
     {:else if section === 'plugins'}

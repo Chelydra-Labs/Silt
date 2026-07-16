@@ -83,6 +83,19 @@ describe('resolveSettingsSectionId — invalid-section fallback', () => {
     )
   })
 
+  it('maps legacy AI plugin section ids to Settings → AI', () => {
+    const knownWithAi = [...known, 'ai']
+    expect(resolveSettingsSectionId('plugin:silt-ai-qa', knownWithAi)).toBe(
+      'ai'
+    )
+    expect(
+      resolveSettingsSectionId('plugin:silt-ai-summary', knownWithAi)
+    ).toBe('ai')
+    expect(
+      resolveSettingsSectionId('plugin:silt-ai-assistant', knownWithAi)
+    ).toBe('ai')
+  })
+
   it('falls back when the id is absent/empty', () => {
     expect(resolveSettingsSectionId(undefined, known)).toBe(
       FALLBACK_SETTINGS_SECTION

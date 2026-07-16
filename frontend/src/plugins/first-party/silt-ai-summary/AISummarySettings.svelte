@@ -15,9 +15,11 @@
     activeNotebook?: string
     activeSection?: string
     activePage?: string
+    /** When true, render as a section of Settings → AI (no page chrome). */
+    embedded?: boolean
   }
   // Location props are part of the settings-page surface contract; unused here.
-  let { ctx, manifest }: Props = $props()
+  let { ctx, manifest, embedded = false }: Props = $props()
 
   // Chat-provider readiness nudge (shared with Plugins badge + banner).
   let unconfigured = $derived(aiProviderNeedsSetup(settings.config?.ai?.chat))
@@ -62,16 +64,41 @@
   }
 </script>
 
-<div class="p-6 max-w-3xl space-y-6">
-  <header class="space-y-1">
-    <h2 id="aisettings-title" class="text-text-primary text-type-xl font-bold">
-      {manifest?.name ?? 'AI Summary'}
-    </h2>
-    <p class="text-text-muted text-type-md font-body-md leading-relaxed">
-      {manifest?.description ??
-        'A dismissible highlight at the top of each note with a summary plus new tasks, risks, and decisions.'}
-    </p>
-  </header>
+<div
+  class:p-6={!embedded}
+  class="space-y-6 {embedded ? 'w-full' : 'max-w-4xl mx-auto w-full'}"
+>
+  {#if !embedded}
+    <header class="space-y-1">
+      <h2
+        id="aisettings-title"
+        class="text-text-primary text-type-xl font-bold"
+      >
+        {manifest?.name ?? 'AI Summary'}
+      </h2>
+      <p class="text-text-muted text-type-md font-body-md leading-relaxed">
+        {manifest?.description ??
+          'A dismissible highlight at the top of each note with a summary plus new tasks, risks, and decisions.'}
+      </p>
+    </header>
+
+    <section
+      class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4"
+      aria-label="Managed enablement"
+    >
+      <p class="text-text-muted text-type-sm m-0">
+        Enablement is managed under
+        <button
+          type="button"
+          class="text-accent-primary-start underline bg-transparent border-none p-0 cursor-pointer font-inherit"
+          onclick={() => ctx.openSettings('ai')}
+        >
+          Settings → AI → Features
+        </button>
+        (Note summaries). This page is fine-tuning only.
+      </p>
+    </section>
+  {/if}
 
   {#if unconfigured}
     <div
@@ -98,42 +125,26 @@
     </div>
   {/if}
 
-  <section
-    class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4"
-    aria-label="Managed enablement"
-  >
-    <p class="text-text-muted text-type-sm m-0">
-      Enablement is managed under
-      <button
-        type="button"
-        class="text-accent-primary-start underline bg-transparent border-none p-0 cursor-pointer font-inherit"
-        onclick={() => ctx.openSettings('ai')}
+  {#if !embedded}
+    <section aria-label="Privacy information">
+      <div
+        class="flex items-start gap-3 p-4 rounded-xl bg-surface-panel/10 border border-surface-panel-border border-l-4 border-l-accent-primary-start"
       >
-        Settings → AI → Features
-      </button>
-      (Note summaries). This page is fine-tuning only.
-    </p>
-  </section>
-
-  <!-- Privacy Callout -->
-  <section aria-label="Privacy information">
-    <div
-      class="flex items-start gap-3 p-4 rounded-xl bg-surface-panel/10 border border-surface-panel-border border-l-4 border-l-accent-primary-start"
-    >
-      <span
-        class="material-symbols-outlined text-text-muted text-icon-lg flex-shrink-0 mt-0.5"
-        aria-hidden="true">shield</span
-      >
-      <p class="text-text-primary text-type-sm font-body-md leading-relaxed">
-        Note content is sent only to your configured AI endpoint — local or
-        remote — to generate the summary. No other note data is sent. See
-        <strong class="text-accent-primary-start"
-          >Settings &rarr; AI &rarr; Recent AI activity</strong
+        <span
+          class="material-symbols-outlined text-text-muted text-icon-lg flex-shrink-0 mt-0.5"
+          aria-hidden="true">shield</span
         >
-        for the call log.
-      </p>
-    </div>
-  </section>
+        <p class="text-text-primary text-type-sm font-body-md leading-relaxed">
+          Note content is sent only to your configured AI endpoint — local or
+          remote — to generate the summary. No other note data is sent. See
+          <strong class="text-accent-primary-start"
+            >Settings &rarr; AI &rarr; Plugin AI calls</strong
+          >
+          for the call log.
+        </p>
+      </div>
+    </section>
+  {/if}
 
   {#if loaded}
     <div class="space-y-4">

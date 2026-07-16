@@ -262,7 +262,7 @@
     if (e.code === 'oversized')
       // The note hasn't shrunk, so a retry deterministically fails the same
       // way — point at the setting by name instead of implying retryability.
-      return 'This note exceeds the "Max note size" limit (Settings → AI Summary). Split the note or raise the limit.'
+      return 'This note exceeds the "Max note size" limit (Settings → AI → Note summaries). Split the note or raise the limit.'
     if (e.code === 'fetch-failed')
       return "Couldn't read this note's content. The vault may be busy — try again."
     return `Couldn't generate a summary. ${e.message ?? ''}`.trim()
@@ -326,9 +326,9 @@
             <button
               type="button"
               class="inline-cta"
-              onclick={() => ctx.openSettings('plugin:silt-ai-summary')}
+              onclick={() => ctx.openSettings('ai')}
             >
-              Open AI Summary settings
+              Open AI settings
             </button>
           {:else}
             <button

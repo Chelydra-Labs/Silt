@@ -498,7 +498,7 @@ describe('SummaryBanner', () => {
     expect(ctx.openSettings).toHaveBeenCalledWith('ai')
   })
 
-  it('renders an "Open AI Summary settings" CTA for oversized errors', () => {
+  it('renders an "Open AI settings" CTA for oversized errors', () => {
     // The oversized error can't be retried into success — point at the limit
     // setting via a deep-link instead of leaving the user with text alone.
     setPageState({
@@ -512,10 +512,10 @@ describe('SummaryBanner', () => {
     const { getByRole } = render(SummaryBanner, {
       props: { ctx, onDismiss: () => {} }
     })
-    const cta = getByRole('button', { name: /Open AI Summary settings/i })
+    const cta = getByRole('button', { name: /Open AI settings/i })
     expect(cta).toBeTruthy()
     fireEvent.click(cta)
-    expect(ctx.openSettings).toHaveBeenCalledWith('plugin:silt-ai-summary')
+    expect(ctx.openSettings).toHaveBeenCalledWith('ai')
   })
 
   it('shows Retry for fetch-failed errors (transient/retryable)', () => {

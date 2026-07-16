@@ -21,7 +21,7 @@ export const manifest: PluginManifest = {
   author: 'Silt',
   description:
     'AI agent that uses tools to search, read, create, and organize notes in your vault.',
-  icon: 'smart_toy',
+  icon: 'psychology',
   capabilities: {
     ai: true,
     'content-mutate': true,

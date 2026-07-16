@@ -37,9 +37,11 @@ export const SETTINGS_GROUP_LABELS: Record<SettingsGroup, string> = {
 
 /**
  * The unified content width each section's body uses is applied directly by
- * each tab's root container (form-style tabs center at `max-w-4xl`; grid/list
- * tabs like themes/plugins/AI use `max-w-6xl`). There is no `width` field on
- * SettingsSection — the per-tab class is the single source of truth.
+ * each tab's root container (form-style tabs center at `max-w-4xl mx-auto`;
+ * grid/list tabs like themes/plugins use `max-w-6xl mx-auto`). There is no
+ * `width` field on SettingsSection — the per-tab class is the single source
+ * of truth. Settings → AI is form-style (`max-w-4xl`) including feature
+ * fine-tuning embeds.
  */
 export interface SettingsSection {
   id: string
@@ -87,27 +89,25 @@ export function getSettingsSections(): SettingsSection[] {
   // First-party: compiled Svelte settings page. Visually indented under the
   // Plugins group divider to signal parent/child, but still a direct nav
   // target (a real tab) — see SettingsNav.
+  // First-party AI fine-tuning lives on Settings → AI (not sibling tabs).
   for (const plugin of loadedPlugins.plugins.values()) {
-    if (plugin.settingsPageComponent) {
-      pluginSections.push({
-        id: `plugin:${plugin.manifest.id}`,
-        label: plugin.manifest.name,
-        icon: plugin.manifest.icon ?? 'tune',
-        description: `${plugin.manifest.name} settings`,
-        // AI plugins belong under Intelligence (alongside AI Provider), not
-        // Customize with the rest of the plugin bespoke-settings tabs.
-        group: plugin.manifest.id.startsWith('silt-ai-')
-          ? 'intelligence'
-          : 'customize',
-        plugin
-      })
-    }
+    if (!plugin.settingsPageComponent) continue
+    if (plugin.manifest.id.startsWith('silt-ai-')) continue
+    pluginSections.push({
+      id: `plugin:${plugin.manifest.id}`,
+      label: plugin.manifest.name,
+      icon: plugin.manifest.icon ?? 'tune',
+      description: `${plugin.manifest.name} settings`,
+      group: 'customize',
+      plugin
+    })
   }
   // Third-party: 'settings-panel' iframe surface (one per plugin).
   const seen = new Set(pluginSections.map((s) => s.id))
   for (const surface of settingsSurfaces) {
     const id = `plugin:${surface.pluginID}`
     if (seen.has(id)) continue
+    if (surface.pluginID.startsWith('silt-ai-')) continue
     const plugin = loadedPlugins.plugins.get(surface.pluginID)
     if (plugin) {
       pluginSections.push({
@@ -115,19 +115,14 @@ export function getSettingsSections(): SettingsSection[] {
         label: plugin.manifest.name,
         icon: plugin.manifest.icon ?? 'tune',
         description: `${plugin.manifest.name} settings`,
-        group: plugin.manifest.id.startsWith('silt-ai-')
-          ? 'intelligence'
-          : 'customize',
+        group: 'customize',
         plugin
       })
       seen.add(id)
     }
   }
 
-  // Built-ins first (stable order), then plugin tabs. AI plugin settings
-  // share the intelligence group with AI Provider — if they were appended
-  // after Customize plugins, SettingsNav would emit a second "Intelligence"
-  // divider and Svelte's keyed each would throw each_key_duplicate.
+  // Built-ins first (stable order), then non-AI plugin tabs.
   const core: SettingsSection[] = [
     {
       id: 'general',
@@ -213,6 +208,17 @@ export function getSettingsSections(): SettingsSection[] {
 export const FALLBACK_SETTINGS_SECTION = 'general'
 
 /**
+ * Legacy first-party AI settings tabs are folded into Settings → AI. Map old
+ * openSettings / deep-link ids so bookmarks and banners keep working.
+ */
+export const AI_SETTINGS_SECTION_ALIASES: Record<string, string> = {
+  'plugin:silt-ai-qa': 'ai',
+  'plugin:silt-ai-assistant': 'ai',
+  'plugin:silt-ai-summary': 'ai',
+  'plugin:silt-ai-agent': 'ai'
+}
+
+/**
  * Resolve a requested settings-section id to a known one, falling back to the
  * default when it is absent or unknown. Pure (takes the known-id list) so it
  * can be unit-tested without mounting the reactive registry. Centralizes the
@@ -223,7 +229,7 @@ export function resolveSettingsSectionId(
   requested: string | undefined | null,
   knownIds: string[]
 ): string {
-  return requested && knownIds.includes(requested)
-    ? requested
-    : FALLBACK_SETTINGS_SECTION
+  if (!requested) return FALLBACK_SETTINGS_SECTION
+  const mapped = AI_SETTINGS_SECTION_ALIASES[requested] ?? requested
+  return knownIds.includes(mapped) ? mapped : FALLBACK_SETTINGS_SECTION
 }

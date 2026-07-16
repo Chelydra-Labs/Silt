@@ -22,7 +22,7 @@ export const manifest: PluginManifest = {
   author: 'Silt',
   description:
     'Search your vault by keyword and meaning, and get cited answers from your notes. Requires chat + search models.',
-  icon: 'auto_awesome',
+  icon: 'manage_search',
   capabilities: { ai: true, 'plugin-db': true }
 }
 

@@ -26,9 +26,11 @@
     activeNotebook?: string
     activeSection?: string
     activePage?: string
+    /** When true, render as a section of Settings → AI (no page chrome). */
+    embedded?: boolean
   }
   // Location props are part of the settings-page surface contract; unused here.
-  let { ctx, manifest }: Props = $props()
+  let { ctx, manifest, embedded = false }: Props = $props()
 
   let local = $state<QASettings>({ ...DEFAULT_SETTINGS })
   let loaded = $state(false)
@@ -106,66 +108,192 @@
   }
 </script>
 
-<div class="qa-settings">
-  <h2 class="title">{manifest?.name ?? 'Semantic search'}</h2>
-  <p class="lede">
-    {manifest?.description ??
-      'Tune search balance and the note index. Turn semantic search on under Settings → AI → Features.'}
-  </p>
+<div
+  class:p-6={!embedded}
+  class="space-y-6 {embedded ? 'w-full' : 'max-w-4xl mx-auto w-full'}"
+>
+  {#if !embedded}
+    <header class="space-y-1">
+      <h2 class="text-text-primary text-type-xl font-bold m-0">
+        {manifest?.name ?? 'Semantic search'}
+      </h2>
+      <p class="text-text-muted text-type-md font-body-md leading-relaxed m-0">
+        {manifest?.description ??
+          'Tune search balance and the note index. Turn semantic search on under Settings → AI → Features.'}
+      </p>
+    </header>
 
-  <section class="card" aria-label="Managed enablement">
-    <p class="hint">
-      Enablement is managed under
-      <button
-        type="button"
-        class="link"
-        onclick={() => ctx.openSettings?.('ai' as any)}
-      >
-        Settings → AI → Features
-      </button>
-      (Semantic search). This page is fine-tuning only.
-    </p>
-  </section>
+    <section
+      class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4"
+      aria-label="Managed enablement"
+    >
+      <p class="text-text-muted text-type-sm font-body-md m-0 leading-relaxed">
+        Enablement is managed under
+        <button
+          type="button"
+          class="text-accent-primary-start underline bg-transparent border-none p-0 cursor-pointer font-inherit"
+          onclick={() => ctx.openSettings?.('ai' as any)}
+        >
+          Settings → AI → Features
+        </button>
+        (Semantic search). This page is fine-tuning only.
+      </p>
+    </section>
+  {/if}
 
-  <section class="card">
-    <h3>Models</h3>
-    <p class="hint">
-      Chat and search models are configured on the
-      <button
-        type="button"
-        class="link"
-        onclick={() => ctx.openSettings?.('ai' as any)}
+  <!-- Models readiness -->
+  <section
+    class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
+    aria-labelledby="qa-models-heading"
+  >
+    <div class="space-y-0.5">
+      <h3
+        id="qa-models-heading"
+        class="text-text-primary text-type-md font-semibold m-0"
       >
-        Settings → AI
-      </button>
-      page. The search model powers the search index; chat answers questions. See
-      BRING_YOUR_OWN_MODEL in the docs.
-    </p>
-    <ul class="status-list">
-      <li>Chat: {chatUnconfigured ? 'not configured' : 'ready'}</li>
-      <li>Search model: {embedUnconfigured ? 'not configured' : 'ready'}</li>
+        Models
+      </h3>
+      <p class="text-text-muted text-type-xs font-label-sm m-0">
+        Chat and embedding models are configured on
+        <button
+          type="button"
+          class="text-accent-primary-start underline bg-transparent border-none p-0 cursor-pointer font-inherit"
+          onclick={() => ctx.openSettings?.('ai' as any)}
+        >
+          Settings → AI
+        </button>
+        . The embedding model powers the search index; chat answers questions.
+      </p>
+    </div>
+
+    <ul class="list-none m-0 p-0 space-y-2" aria-label="Model readiness">
+      <li
+        class="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border/60"
+      >
+        <span class="flex items-center gap-2 text-text-primary text-type-sm">
+          <span
+            class="material-symbols-outlined text-icon-md text-text-muted"
+            aria-hidden="true">chat</span
+          >
+          Chat
+        </span>
+        {#if chatUnconfigured}
+          <span
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-status-warn/10 border border-status-warn/30 text-status-warn text-type-2xs font-label-sm-bold uppercase tracking-wide"
+          >
+            Not configured
+          </span>
+        {:else}
+          <span
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent-primary-glow/30 border border-accent-primary-start/30 text-accent-primary-start text-type-2xs font-label-sm-bold uppercase tracking-wide"
+          >
+            Ready
+          </span>
+        {/if}
+      </li>
+      <li
+        class="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-surface-panel/40 border border-surface-panel-border/60"
+      >
+        <span class="flex items-center gap-2 text-text-primary text-type-sm">
+          <span
+            class="material-symbols-outlined text-icon-md text-text-muted"
+            aria-hidden="true">travel_explore</span
+          >
+          Embedding (search index)
+        </span>
+        {#if embedUnconfigured}
+          <span
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-status-warn/10 border border-status-warn/30 text-status-warn text-type-2xs font-label-sm-bold uppercase tracking-wide"
+          >
+            Not configured
+          </span>
+        {:else}
+          <span
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent-primary-glow/30 border border-accent-primary-start/30 text-accent-primary-start text-type-2xs font-label-sm-bold uppercase tracking-wide"
+          >
+            Ready
+          </span>
+        {/if}
+      </li>
     </ul>
+
+    {#if chatUnconfigured || embedUnconfigured}
+      <button
+        type="button"
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-primary-start text-surface-app font-label-sm-bold text-type-xs hover:brightness-110 transition-all cursor-pointer border-none"
+        onclick={() => ctx.openSettings?.('ai' as any)}
+      >
+        Open AI settings
+      </button>
+    {/if}
   </section>
 
-  <section class="card">
-    <h3>Index</h3>
-    <label class="row">
-      <input
-        type="checkbox"
-        checked={local.auto_reembed}
-        disabled={!loaded}
-        onchange={(e) =>
-          void saveKey(
-            'auto_reembed',
-            (e.currentTarget as HTMLInputElement).checked
-          )}
-      />
-      <span>Auto-update search index on save</span>
+  <!-- Index -->
+  <section
+    class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-4"
+    aria-labelledby="qa-index-heading"
+  >
+    <div class="space-y-0.5">
+      <h3
+        id="qa-index-heading"
+        class="text-text-primary text-type-md font-semibold m-0"
+      >
+        Search index
+      </h3>
+      <p class="text-text-muted text-type-xs font-label-sm m-0">
+        Rebuild after changing the embedding model or when results look stale.
+      </p>
+    </div>
+
+    <label
+      class="flex items-start justify-between gap-4 cursor-pointer select-none"
+      for="qa-auto-reembed"
+    >
+      <span class="min-w-0 space-y-0.5">
+        <span
+          class="text-text-primary text-type-sm font-semibold block"
+          id="qa-auto-reembed-label"
+        >
+          Auto-update on save
+        </span>
+        <span class="text-text-muted text-type-xs font-label-sm block">
+          Re-index a note when you save it. Off = manual rebuild only.
+        </span>
+      </span>
+      <span class="flex items-center flex-shrink-0">
+        <input
+          id="qa-auto-reembed"
+          type="checkbox"
+          class="keyring-switch peer sr-only"
+          aria-labelledby="qa-auto-reembed-label"
+          checked={local.auto_reembed}
+          disabled={!loaded}
+          onchange={(e) =>
+            void saveKey(
+              'auto_reembed',
+              (e.currentTarget as HTMLInputElement).checked
+            )}
+        />
+        <span
+          aria-hidden="true"
+          class="keyring-switch-track"
+          class:on={local.auto_reembed}
+          class:disabled={!loaded}
+        ></span>
+      </span>
     </label>
-    <label class="field">
-      <span>Notebook scope (comma-separated; empty = all)</span>
+
+    <label class="flex flex-col gap-1.5" for="qa-notebook-scope">
+      <span
+        class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
+      >
+        Notebook scope
+      </span>
       <input
+        id="qa-notebook-scope"
         type="text"
+        class="w-full max-w-md rounded-lg border border-surface-panel-border bg-surface-panel/40 px-3 py-2 text-type-sm text-text-primary outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start disabled:opacity-50"
+        placeholder="Empty = all notebooks"
         value={local.notebook_scope.join(', ')}
         disabled={!loaded}
         onchange={(e) => {
@@ -177,294 +305,367 @@
           void saveKey('notebook_scope', scope)
         }}
       />
+      <span class="text-text-muted text-type-2xs font-label-sm">
+        Comma-separated notebook names. Leave empty to index the whole vault.
+      </span>
     </label>
+
     {#if ctl?.showStaleBanner}
-      <div class="stale-banner" role="status">
-        <strong>Search index needs updating</strong>
-        <p>{ctl.settings.stale_reason}. Rebuild for accurate results.</p>
-        <div class="stale-actions">
-          <button
-            type="button"
-            class="primary warn"
-            disabled={rebuildBusy || embedUnconfigured}
-            onclick={() => void onRebuild()}
-          >
-            Rebuild now
-          </button>
-          <button
-            type="button"
-            class="ghost"
-            onclick={() => ctl.dismissStaleBanner()}>Later</button
-          >
+      <div
+        class="flex items-start gap-3 p-3.5 rounded-lg bg-status-warn/5 border border-status-warn/30"
+        role="status"
+      >
+        <span
+          class="material-symbols-outlined text-status-warn text-icon-md flex-shrink-0 mt-0.5"
+          aria-hidden="true">warning</span
+        >
+        <div class="flex-1 min-w-0 space-y-2">
+          <div>
+            <strong class="text-text-primary text-type-sm font-semibold block">
+              Search index needs updating
+            </strong>
+            <p
+              class="text-text-muted text-type-xs font-body-md m-0 mt-0.5 leading-relaxed"
+            >
+              {ctl.settings.stale_reason}. Rebuild for accurate results.
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-status-warn text-surface-app font-label-sm-bold text-type-xs border-none cursor-pointer hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={rebuildBusy || embedUnconfigured}
+              onclick={() => void onRebuild()}
+            >
+              Rebuild now
+            </button>
+            <button
+              type="button"
+              class="inline-flex items-center px-3 py-1.5 rounded-lg border border-surface-panel-border bg-transparent text-text-primary font-label-sm-bold text-type-xs cursor-pointer hover:bg-surface-panel/40"
+              onclick={() => ctl.dismissStaleBanner()}
+            >
+              Later
+            </button>
+          </div>
         </div>
       </div>
     {/if}
+
     {#if ctl?.searchDegradeReason}
-      <div class="stale-banner" role="status">
-        <strong>Search running in degraded mode</strong>
-        <p>{ctl.searchDegradeReason}</p>
+      <div
+        class="flex items-start gap-3 p-3.5 rounded-lg bg-status-warn/5 border border-status-warn/30"
+        role="status"
+      >
+        <span
+          class="material-symbols-outlined text-status-warn text-icon-md flex-shrink-0 mt-0.5"
+          aria-hidden="true">warning</span
+        >
+        <div class="min-w-0">
+          <strong class="text-text-primary text-type-sm font-semibold block">
+            Search running in degraded mode
+          </strong>
+          <p
+            class="text-text-muted text-type-xs font-body-md m-0 mt-0.5 leading-relaxed"
+          >
+            {ctl.searchDegradeReason}
+          </p>
+        </div>
       </div>
     {/if}
-    <div class="index-status" role="status">
+
+    <div
+      class="flex flex-wrap items-center gap-x-3 gap-y-1 text-type-xs font-label-sm text-text-muted"
+      role="status"
+      aria-live="polite"
+    >
       {#if ctl?.progress}
-        Status: {ctl.progress.status}
+        <span class="inline-flex items-center gap-1">
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true">database</span
+          >
+          Status: {ctl.progress.status}
+        </span>
         {#if ctl.progress.chunkCount != null}
-          · {ctl.progress.chunkCount} notes indexed
+          <span>· {ctl.progress.chunkCount} notes indexed</span>
         {/if}
         {#if ctl.progress.model}
-          · search model {ctl.progress.model}
+          <span>· model {ctl.progress.model}</span>
         {/if}
         {#if ctl.progress.dimensions}
-          · {ctl.progress.dimensions}d
+          <span>· {ctl.progress.dimensions}d</span>
         {/if}
         {#if ctl.progress.lastError}
-          · error: {ctl.progress.lastError}
+          <span class="text-status-danger"
+            >· error: {ctl.progress.lastError}</span
+          >
         {/if}
       {:else}
-        Status: idle
+        <span>Status: idle</span>
       {/if}
     </div>
+
     <button
       type="button"
-      class="primary"
-      class:warn={Boolean(local.stale_reason)}
+      class="inline-flex items-center gap-1.5 self-start px-3.5 py-2 rounded-lg font-label-sm-bold text-type-xs border-none cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed {local.stale_reason
+        ? 'bg-status-warn text-surface-app hover:brightness-110'
+        : 'bg-accent-primary-start text-surface-app hover:brightness-110'}"
       disabled={rebuildBusy || embedUnconfigured}
       onclick={() => void onRebuild()}
     >
+      <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
+        >{rebuildBusy ? 'progress_activity' : 'sync'}</span
+      >
       {rebuildBusy ? 'Updating…' : 'Update search index'}
     </button>
   </section>
 
-  <section class="card">
-    <h3>Search</h3>
+  <!-- Search tuning -->
+  <section
+    class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-5"
+    aria-labelledby="qa-search-heading"
+  >
+    <div class="space-y-0.5">
+      <h3
+        id="qa-search-heading"
+        class="text-text-primary text-type-md font-semibold m-0"
+      >
+        Search
+      </h3>
+      <p class="text-text-muted text-type-xs font-label-sm m-0">
+        Balance keyword vs meaning, and how much context the model sees.
+      </p>
+    </div>
+
     {#if loaded}
-      <PresetControl
-        label="Search Balance"
-        tooltipText="How should your search work? Keyword search finds notes containing your exact words. Semantic search finds notes with similar meaning even if the words are different."
-        tooltipTechnical="Technical: Hybrid weight in Reciprocal Rank Fusion. 0.0 = pure keyword, 1.0 = pure semantic. Fine-tune under Advanced below."
-        options={[...SEARCH_BALANCE_PRESETS]}
-        value={local.hybrid_weight}
-        onchange={(v) => void saveKey('hybrid_weight', v)}
-      />
-      <PresetControl
-        label="Context Breadth"
-        tooltipText="How many of your notes should the AI read before answering? More notes means broader synthesis but slower responses."
-        tooltipTechnical="Technical: Top-K retrieval count + max context characters (character budget in the prompt). No hard ceiling — scales to your model's context window."
-        options={CONTEXT_BREADTH_PRESETS.map((p) => ({
-          value: p.value,
-          label: p.label,
-          description: p.description
-        }))}
-        value={contextBreadthKey === '__custom__' ? '' : contextBreadthKey}
-        onchange={(v) => onContextBreadthChange(String(v))}
-      />
-      <!-- Single Advanced disclosure for Search Balance + Context Breadth (#626).
-           Search Balance already exposes Advanced via PresetControl; Context
-           Breadth custom limits share one details here so the page is not two
-           nested Advanced sections. -->
-      <details class="adv-details">
-        <summary>Advanced</summary>
-        <label class="field">
-          <span>Hybrid weight (Search Balance)</span>
-          <input
-            type="number"
-            min="0"
-            max="1"
-            step="0.05"
-            value={local.hybrid_weight}
-            onchange={(e) =>
-              void saveKey(
-                'hybrid_weight',
-                Number((e.currentTarget as HTMLInputElement).value)
-              )}
-          />
-        </label>
-        <label class="field">
-          <span>Notes to retrieve (top-k)</span>
-          <input
-            type="number"
-            min="1"
-            max="100"
-            value={local.top_k}
-            onchange={(e) =>
-              void saveKey(
-                'top_k',
-                Number((e.currentTarget as HTMLInputElement).value)
-              )}
-          />
-        </label>
-        <label class="field">
-          <span>Context budget (characters)</span>
-          <input
-            type="number"
-            min="1000"
-            value={local.max_context_chars}
-            onchange={(e) =>
-              void saveKey(
-                'max_context_chars',
-                Number((e.currentTarget as HTMLInputElement).value)
-              )}
-          />
-        </label>
-      </details>
-      <label class="row">
-        <input
-          type="checkbox"
-          checked={local.rerank_enabled}
-          onchange={(e) =>
-            void saveKey(
-              'rerank_enabled',
-              (e.currentTarget as HTMLInputElement).checked
-            )}
+      <div class="space-y-5">
+        <PresetControl
+          label="Search Balance"
+          tooltipText="How should your search work? Keyword search finds notes containing your exact words. Semantic search finds notes with similar meaning even if the words are different."
+          tooltipTechnical="Technical: Hybrid weight in Reciprocal Rank Fusion. 0.0 = pure keyword, 1.0 = pure semantic. Fine-tune under Advanced below."
+          options={[...SEARCH_BALANCE_PRESETS]}
+          value={local.hybrid_weight}
+          onchange={(v) => void saveKey('hybrid_weight', v)}
         />
-        <span>Smart Re-ranking</span>
-        <InfoTooltip
-          text="After finding matching notes, re-evaluates and re-orders them for higher accuracy. Improves answer quality but adds a brief delay."
-          technical="Technical: Cross-encoder reranking on the top-N fused candidates before context injection."
-          label="What is Smart Re-ranking?"
+        <PresetControl
+          label="Context Breadth"
+          tooltipText="How many of your notes should the AI read before answering? More notes means broader synthesis but slower responses."
+          tooltipTechnical="Technical: Top-K retrieval count + max context characters (character budget in the prompt). No hard ceiling — scales to your model's context window."
+          options={CONTEXT_BREADTH_PRESETS.map((p) => ({
+            value: p.value,
+            label: p.label,
+            description: p.description
+          }))}
+          value={contextBreadthKey === '__custom__' ? '' : contextBreadthKey}
+          onchange={(v) => onContextBreadthChange(String(v))}
         />
-      </label>
+
+        <!-- Single Advanced disclosure for Search Balance + Context Breadth (#626). -->
+        <details
+          class="group bg-surface-panel/10 border border-surface-panel-border rounded-xl"
+        >
+          <summary
+            class="flex items-center justify-between p-3.5 cursor-pointer select-none list-none focus:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start rounded-xl"
+          >
+            <span class="flex items-center gap-2">
+              <span
+                class="material-symbols-outlined text-icon-md text-text-muted"
+                aria-hidden="true">tune</span
+              >
+              <span class="text-type-sm font-semibold text-text-primary"
+                >Advanced</span
+              >
+            </span>
+            <span
+              class="material-symbols-outlined text-icon-md text-text-muted transition-transform group-open:rotate-180"
+              aria-hidden="true">expand_more</span
+            >
+          </summary>
+          <div
+            class="px-3.5 pb-4 border-t border-surface-panel-border/30 pt-4 space-y-3"
+          >
+            <label
+              class="flex flex-col gap-1.5 max-w-xs"
+              for="qa-hybrid-weight"
+            >
+              <span
+                class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
+              >
+                Hybrid weight (Search Balance)
+              </span>
+              <input
+                id="qa-hybrid-weight"
+                type="number"
+                min="0"
+                max="1"
+                step="0.05"
+                class="w-full rounded-lg border border-surface-panel-border bg-surface-panel/40 px-3 py-2 text-type-sm text-text-primary outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start"
+                value={local.hybrid_weight}
+                onchange={(e) =>
+                  void saveKey(
+                    'hybrid_weight',
+                    Number((e.currentTarget as HTMLInputElement).value)
+                  )}
+              />
+            </label>
+            <label class="flex flex-col gap-1.5 max-w-xs" for="qa-top-k">
+              <span
+                class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
+              >
+                Notes to retrieve (top-k)
+              </span>
+              <input
+                id="qa-top-k"
+                type="number"
+                min="1"
+                max="100"
+                class="w-full rounded-lg border border-surface-panel-border bg-surface-panel/40 px-3 py-2 text-type-sm text-text-primary outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start"
+                value={local.top_k}
+                onchange={(e) =>
+                  void saveKey(
+                    'top_k',
+                    Number((e.currentTarget as HTMLInputElement).value)
+                  )}
+              />
+            </label>
+            <label class="flex flex-col gap-1.5 max-w-xs" for="qa-max-context">
+              <span
+                class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
+              >
+                Context budget (characters)
+              </span>
+              <input
+                id="qa-max-context"
+                type="number"
+                min="1000"
+                class="w-full rounded-lg border border-surface-panel-border bg-surface-panel/40 px-3 py-2 text-type-sm text-text-primary outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start"
+                value={local.max_context_chars}
+                onchange={(e) =>
+                  void saveKey(
+                    'max_context_chars',
+                    Number((e.currentTarget as HTMLInputElement).value)
+                  )}
+              />
+            </label>
+          </div>
+        </details>
+
+        <label
+          class="flex items-start justify-between gap-4 cursor-pointer select-none"
+          for="qa-rerank"
+        >
+          <span class="min-w-0 space-y-0.5">
+            <span
+              class="flex items-center gap-1.5 text-text-primary text-type-sm font-semibold"
+              id="qa-rerank-label"
+            >
+              Smart re-ranking
+              <InfoTooltip
+                text="After finding matching notes, re-evaluates and re-orders them for higher accuracy. Improves answer quality but adds a brief delay."
+                technical="Technical: Cross-encoder reranking on the top-N fused candidates before context injection."
+                label="What is Smart Re-ranking?"
+              />
+            </span>
+            <span class="text-text-muted text-type-xs font-label-sm block">
+              Re-score retrieved notes by similarity to your question.
+            </span>
+          </span>
+          <span class="flex items-center flex-shrink-0">
+            <input
+              id="qa-rerank"
+              type="checkbox"
+              class="keyring-switch peer sr-only"
+              aria-labelledby="qa-rerank-label"
+              checked={local.rerank_enabled}
+              onchange={(e) =>
+                void saveKey(
+                  'rerank_enabled',
+                  (e.currentTarget as HTMLInputElement).checked
+                )}
+            />
+            <span
+              aria-hidden="true"
+              class="keyring-switch-track"
+              class:on={local.rerank_enabled}
+            ></span>
+          </span>
+        </label>
+      </div>
+    {:else}
+      <p class="text-text-muted text-type-sm m-0" role="status">
+        Loading search settings…
+      </p>
     {/if}
   </section>
 
-  <section class="card">
-    <h3>Privacy</h3>
-    <p class="hint">
-      Note content is sent to your configured search and chat endpoints when you
-      build the search index or ask a question. Local (Ollama) endpoints keep
-      data on this machine. Cloud endpoints process content per that provider's
-      policy. The search index lives only in the plugin database and is deleted
-      on uninstall.
-    </p>
-  </section>
+  {#if !embedded}
+    <section aria-label="Privacy information">
+      <div
+        class="flex items-start gap-3 p-4 rounded-xl bg-surface-panel/10 border border-surface-panel-border border-l-4 border-l-accent-primary-start"
+      >
+        <span
+          class="material-symbols-outlined text-text-muted text-icon-lg flex-shrink-0 mt-0.5"
+          aria-hidden="true">shield</span
+        >
+        <p
+          class="text-text-primary text-type-sm font-body-md leading-relaxed m-0"
+        >
+          Note content is sent to your configured search and chat endpoints when
+          you build the search index or ask a question. Local (Ollama) endpoints
+          keep data on this machine. Cloud endpoints process content per that
+          provider's policy. The search index lives only in the plugin database
+          and is deleted on uninstall. See
+          <strong class="text-accent-primary-start"
+            >Settings &rarr; AI &rarr; Plugin AI calls</strong
+          >
+          for the call log.
+        </p>
+      </div>
+    </section>
+  {/if}
 </div>
 
 <style>
-  .qa-settings {
-    max-width: 40rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding: 0.25rem 0 2rem;
+  /* Switch track — same contract as Settings → AI (AIProviderTab). */
+  .keyring-switch-track {
+    width: 36px;
+    height: 20px;
+    border-radius: 9999px;
+    background: var(--color-surface-panel-border);
+    position: relative;
+    flex-shrink: 0;
+    margin-top: 2px;
+    transition: background-color 0.15s ease;
   }
-  .title {
-    margin: 0;
-    font-size: 1.1rem;
+  .keyring-switch-track.on {
+    background: var(--color-accent-primary-start);
   }
-  .lede {
-    margin: 0;
-    opacity: 0.85;
-    line-height: 1.45;
+  .keyring-switch-track.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
-  .card {
-    border: 1px solid var(--surface-panel-border, #2a2a30);
-    border-radius: 0.5rem;
-    padding: 0.85rem 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.65rem;
+  .keyring-switch-track::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 9999px;
+    background: var(--color-surface-app);
+    transition: transform 0.15s ease;
   }
-  .card h3 {
-    margin: 0;
-    font-size: 0.9rem;
+  .keyring-switch-track.on::after {
+    transform: translateX(16px);
   }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+  .keyring-switch:focus-visible + .keyring-switch-track {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: 2px;
   }
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
+  details > summary::-webkit-details-marker {
+    display: none;
   }
-  .field input[type='text'],
-  .field input[type='number'] {
-    padding: 0.35rem 0.5rem;
-    border-radius: 0.35rem;
-    border: 1px solid var(--surface-panel-border, #2a2a30);
-    background: var(--surface-input, #121216);
-    color: inherit;
-  }
-  .hint {
-    font-size: 0.8rem;
-    opacity: 0.75;
-    margin: 0;
-    line-height: 1.4;
-  }
-  .primary {
-    align-self: flex-start;
-    border: none;
-    border-radius: 0.4rem;
-    padding: 0.4rem 0.85rem;
-    background: var(--accent-primary-start, #6366f1);
-    color: #fff;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .primary:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .status-list {
-    margin: 0;
-    padding-left: 1.1rem;
-  }
-  .index-status {
-    font-size: 0.8rem;
-    opacity: 0.85;
-  }
-  .link {
-    background: none;
-    border: none;
-    color: var(--accent-primary-start, #6366f1);
-    cursor: pointer;
-    padding: 0;
-    font: inherit;
-    text-decoration: underline;
-  }
-  .adv-details {
-    font-size: 0.8rem;
-  }
-  .adv-details summary {
-    cursor: pointer;
-    opacity: 0.8;
-    margin-bottom: 0.35rem;
-  }
-  .primary.warn {
-    background: color-mix(in srgb, var(--color-status-warn, #fbbf24) 85%, #000);
-    color: #1a1a1a;
-  }
-  .stale-banner {
-    border: 1px solid
-      color-mix(in srgb, var(--color-status-warn, #fbbf24) 50%, transparent);
-    background: color-mix(
-      in srgb,
-      var(--color-status-warn, #fbbf24) 12%,
-      transparent
-    );
-    border-radius: 0.4rem;
-    padding: 0.65rem 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-  .stale-banner p {
-    margin: 0;
-    font-size: 0.85rem;
-    opacity: 0.9;
-  }
-  .stale-actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-  .ghost {
-    border: 1px solid var(--surface-panel-border, #2a2a30);
-    background: transparent;
-    border-radius: 0.4rem;
-    padding: 0.35rem 0.75rem;
-    cursor: pointer;
-    color: inherit;
+  details > summary {
+    list-style: none;
   }
 </style>
