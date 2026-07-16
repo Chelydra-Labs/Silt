@@ -749,6 +749,12 @@ func TestPluginAIComplete_RejectsMalformedTools(t *testing.T) {
 			choice:     &PluginAIToolChoice{Mode: "force", ToolName: "ghost"},
 			wantSubstr: "unknown tool",
 		},
+		{
+			name:       "force without tool_name",
+			tools:      []PluginAIToolDef{{Name: "search_notes"}},
+			choice:     &PluginAIToolChoice{Mode: "force"},
+			wantSubstr: "force",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

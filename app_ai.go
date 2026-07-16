@@ -1156,7 +1156,10 @@ func validateAITools(tools []PluginAIToolDef, choice *PluginAIToolChoice) error 
 	default:
 		return fmt.Errorf("tool_choice.mode %q must be one of auto, required, none, force", choice.Mode)
 	}
-	if choice.Mode == ai.ToolChoiceForce && strings.TrimSpace(choice.ToolName) != "" {
+	if choice.Mode == ai.ToolChoiceForce {
+		if strings.TrimSpace(choice.ToolName) == "" {
+			return fmt.Errorf(`tool_choice.mode "force" requires tool_name`)
+		}
 		for _, t := range tools {
 			if t.Name == choice.ToolName {
 				return nil
