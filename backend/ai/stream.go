@@ -51,6 +51,10 @@ type StreamToolDeltaFn func(delta ToolCallDelta) error
 // (much smaller than embedding batches) while still allowing long answers.
 const MaxStreamBytes = 10 * 1024 * 1024 // 10 MB
 
+// MaxStreamToolCalls bounds the number of distinct tool calls a single stream
+// may accumulate, so a misbehaving endpoint cannot allocate unbounded entries.
+const MaxStreamToolCalls = 128
+
 // maxMalformedSSEFrames allows an isolated provider hiccup without making a
 // stream unusable, but prevents a mostly-invalid response from being reported
 // as a successful completion.
@@ -276,6 +280,12 @@ func parseOpenAISSE(r io.Reader, fallbackModel string, onDelta StreamDeltaFn, on
 		for _, d := range choice.Delta.ToolCalls {
 			a, ok := accum[d.Index]
 			if !ok {
+				// Bound the number of distinct tool calls so a misbehaving
+				// endpoint cannot drive unbounded allocation with many indices
+				// (each call's args are already capped by MaxStreamBytes).
+				if len(accum) >= MaxStreamToolCalls {
+					return CompleteResult{}, &AIError{Kind: ErrServer, Message: fmt.Sprintf("stream exceeded %d distinct tool-call limit", MaxStreamToolCalls)}
+				}
 				a = &toolAccum{}
 				accum[d.Index] = a
 				accumOrder = append(accumOrder, d.Index)

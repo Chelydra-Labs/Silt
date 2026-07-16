@@ -124,28 +124,42 @@ func completeAnthropic(ctx context.Context, req CompleteRequest, model, baseURL 
 	// pass through, with tool-bearing turns encoded as content blocks.
 	var system strings.Builder
 	var msgs []anthropicMessage
+	// Anthropic requires every tool_result for a multi-tool_use assistant turn
+	// to arrive in a SINGLE user message. The agent loop emits one RoleTool
+	// message per parallel tool call, so buffer consecutive tool results and
+	// flush them as one user turn when a non-tool message arrives (or at end).
+	var pendingToolResults []map[string]any
+	flushToolResults := func() {
+		if len(pendingToolResults) == 0 {
+			return
+		}
+		msgs = append(msgs, anthropicMessage{
+			Role:    RoleUser,
+			Content: marshalContentBlocks(pendingToolResults),
+		})
+		pendingToolResults = nil
+	}
 	for _, m := range req.Messages {
 		if m.Role == "system" {
+			flushToolResults()
 			if system.Len() > 0 {
 				system.WriteString("\n\n")
 			}
 			system.WriteString(m.Content)
 			continue
 		}
-		// Tool result → user turn carrying a tool_result content block keyed
-		// to the prior tool_use id (Anthropic's tool-result wire shape).
+		// Tool result → buffer a tool_result content block keyed to the prior
+		// tool_use id (Anthropic's tool-result wire shape).
 		if m.Role == RoleTool {
-			block := map[string]any{
+			pendingToolResults = append(pendingToolResults, map[string]any{
 				"type":        "tool_result",
 				"tool_use_id": m.ToolCallID,
 				"content":     m.Content,
-			}
-			msgs = append(msgs, anthropicMessage{
-				Role:    RoleUser,
-				Content: marshalContentBlocks([]map[string]any{block}),
 			})
 			continue
 		}
+		// Any non-tool turn terminates the current tool-result run.
+		flushToolResults()
 		// Assistant turn that requested tools → assistant turn with tool_use
 		// blocks (plus an optional leading text block when Content is set).
 		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
@@ -173,6 +187,7 @@ func completeAnthropic(ctx context.Context, req CompleteRequest, model, baseURL 
 		}
 		msgs = append(msgs, anthropicMessage{Role: role, Content: jsonString(m.Content)})
 	}
+	flushToolResults()
 	// max_tokens is mandatory for Anthropic. Default when the caller omits it.
 	maxTokens := anthropicDefaultMaxTokens
 	if req.MaxTokens != nil && *req.MaxTokens > 0 {

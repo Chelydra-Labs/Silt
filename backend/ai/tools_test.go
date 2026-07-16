@@ -348,6 +348,58 @@ func TestCompleteAnthropic_NormalizesNonObjectToolArguments(t *testing.T) {
 	}
 }
 
+// TestCompleteAnthropic_CoalescesParallelToolResults guards the multi-tool
+// contract: a run of RoleTool messages (one per parallel tool call) must be
+// encoded as a SINGLE user turn carrying all tool_result blocks, not one user
+// turn per result (which desyncs Anthropic's tool loop).
+func TestCompleteAnthropic_CoalescesParallelToolResults(t *testing.T) {
+	var captured anthropicRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{{"type": "text", "text": "done"}},
+			"model":   "claude-sonnet-5",
+		})
+	}))
+	defer srv.Close()
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{ProviderType: ProviderAnthropic, BaseURL: srv.URL, Model: "claude-sonnet-5"},
+		Messages: []ChatMessage{
+			{Role: RoleUser, Content: "find meetings"},
+			{Role: RoleAssistant, Content: "", ToolCalls: []ToolCall{
+				{ID: "toolu_a", Name: "search_notes", Arguments: json.RawMessage(`{"q":"m"}`)},
+				{ID: "toolu_b", Name: "read_blocks", Arguments: json.RawMessage(`{"block_ids":["x"]}`)},
+			}},
+			{Role: RoleTool, ToolCallID: "toolu_a", Content: "result a"},
+			{Role: RoleTool, ToolCallID: "toolu_b", Content: "result b"},
+		},
+		Tools: []ToolDef{dummyTool()},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	// Expect: user, assistant(2 tool_use), user(2 tool_result) = 3 messages.
+	if len(captured.Messages) != 3 {
+		t.Fatalf("messages = %d, want 3 (tool results must coalesce into one user turn): %+v", len(captured.Messages), captured.Messages)
+	}
+	if captured.Messages[2].Role != RoleUser {
+		t.Fatalf("third message role = %q, want user", captured.Messages[2].Role)
+	}
+	var blocks []map[string]any
+	if err := json.Unmarshal(captured.Messages[2].Content, &blocks); err != nil {
+		t.Fatalf("third message content is not a block array: %v", err)
+	}
+	if len(blocks) != 2 || blocks[0]["type"] != "tool_result" || blocks[1]["type"] != "tool_result" {
+		t.Fatalf("third message blocks = %+v, want two tool_result blocks", blocks)
+	}
+	ids := []any{blocks[0]["tool_use_id"], blocks[1]["tool_use_id"]}
+	if !((ids[0] == "toolu_a" && ids[1] == "toolu_b") || (ids[0] == "toolu_b" && ids[1] == "toolu_a")) {
+		t.Fatalf("tool_use_ids = %v, want toolu_a+toolu_b", ids)
+	}
+}
+
 // TestCompleteAnthropic_StructuredOutputUnchangedWithCallerTools guards the
 // regression: when ResponseSchema is set, the structured_output path dominates
 // — the response content is the JSON-stringified tool input, with no ToolCalls
