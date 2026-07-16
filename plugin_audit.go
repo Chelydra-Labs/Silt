@@ -431,18 +431,151 @@ var (
 const maxAIAuditEntries = 500
 
 // AIAuditEntry is one row of the plugin AI audit log. Content is NEVER recorded
-// — only the endpoint host, model, outcome, and a token-usage summary.
+// — only the endpoint host, model, outcome, and a token-usage summary. Kind may
+// also be agent-side events (tool_call, staging_decision, …) with Detail holding
+// redacted structured fields (#630).
 type AIAuditEntry struct {
 	Plugin string `json:"plugin"`
-	Kind   string `json:"kind"`   // "chat" | "embed"
+	Kind   string `json:"kind"`   // "chat" | "embed" | "tool_call" | "staging_decision" | …
 	Host   string `json:"host"`   // provider host (no path/query), best-effort
 	Model  string `json:"model"`  // model the call targeted
-	Status string `json:"status"` // "ok" | normalized error kind | "error"
+	Status string `json:"status"` // "ok" | normalized error kind | "error" | event outcome
 	At     string `json:"at"`     // RFC3339
 	// Usage summary (present only on success and when the provider returned it).
 	PromptTokens     *int `json:"prompt_tokens,omitempty"`
 	CompletionTokens *int `json:"completion_tokens,omitempty"`
 	TotalTokens      *int `json:"total_tokens,omitempty"`
+	// Detail is a redacted JSON object for structured agent events (#630).
+	// Omitted for chat/embed rows.
+	Detail json.RawMessage `json:"detail,omitempty"`
+}
+
+// maxAIAuditDetailBytes caps serialized Detail JSON so a plugin cannot flood
+// ai.log with huge tool argument dumps (#630).
+const maxAIAuditDetailBytes = 2 * 1024
+
+// redactAIAuditFields drops or truncates sensitive keys before audit persistence.
+// Keys whose names contain path/content/body/text (case-insensitive) are replaced
+// with "[redacted]"; absolute path-like strings and long values are truncated.
+func redactAIAuditFields(fields map[string]any) map[string]any {
+	if fields == nil {
+		return nil
+	}
+	out := make(map[string]any, len(fields))
+	for k, v := range fields {
+		lk := strings.ToLower(k)
+		if strings.Contains(lk, "content") || strings.Contains(lk, "body") ||
+			strings.Contains(lk, "path") || lk == "text" || lk == "args" ||
+			lk == "arguments" || lk == "params" {
+			out[k] = "[redacted]"
+			continue
+		}
+		out[k] = redactAIAuditValue(v)
+	}
+	return out
+}
+
+func redactAIAuditValue(v any) any {
+	switch t := v.(type) {
+	case string:
+		s := t
+		if looksLikeAbsolutePath(s) {
+			return "[path]"
+		}
+		if len(s) > 200 {
+			return s[:200] + "…"
+		}
+		return s
+	case map[string]any:
+		return redactAIAuditFields(t)
+	case []any:
+		if len(t) > 20 {
+			t = t[:20]
+		}
+		out := make([]any, len(t))
+		for i, item := range t {
+			out[i] = redactAIAuditValue(item)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func looksLikeAbsolutePath(s string) bool {
+	if len(s) < 3 {
+		return false
+	}
+	// Windows drive or UNC / POSIX absolute.
+	if (s[0] >= 'A' && s[0] <= 'Z' || s[0] >= 'a' && s[0] <= 'z') && s[1] == ':' {
+		return true
+	}
+	if strings.HasPrefix(s, "\\\\") || strings.HasPrefix(s, "/") {
+		// Avoid treating vault-relative "notebook/section" as absolute: require
+		// a second path segment that looks filesystem-like, or known roots.
+		if strings.HasPrefix(s, "/Users/") || strings.HasPrefix(s, "/home/") ||
+			strings.HasPrefix(s, "/var/") || strings.HasPrefix(s, "/tmp/") {
+			return true
+		}
+		if strings.HasPrefix(s, "\\\\") {
+			return true
+		}
+	}
+	return false
+}
+
+// auditAIEvent appends a structured agent event (tool_call, staging_decision, …)
+// with redacted fields to the AI audit log (#630).
+func (a *App) auditAIEvent(pluginID, kind string, fields map[string]any) {
+	redacted := redactAIAuditFields(fields)
+	status := "ok"
+	if s, ok := redacted["status"].(string); ok && s != "" {
+		status = s
+	} else if s, ok := redacted["outcome"].(string); ok && s != "" {
+		status = s
+	}
+	var detail json.RawMessage
+	if len(redacted) > 0 {
+		raw, err := json.Marshal(redacted)
+		if err == nil {
+			if len(raw) > maxAIAuditDetailBytes {
+				raw = append(raw[:maxAIAuditDetailBytes], []byte("…")...)
+			}
+			detail = raw
+		}
+	}
+	entry := AIAuditEntry{
+		Plugin: pluginID,
+		Kind:   kind,
+		Status: status,
+		At:     time.Now().Format(time.RFC3339),
+		Detail: detail,
+	}
+	a.appendAIAuditEntry(entry)
+}
+
+// appendAIAuditEntry is the shared in-memory + on-disk append path for chat,
+// embed, and structured agent events.
+func (a *App) appendAIAuditEntry(entry AIAuditEntry) {
+	a.vaultMu.RLock()
+	vaultPathSnapshot := a.vaultPath
+	a.vaultMu.RUnlock()
+	aiAuditMu.Lock()
+	aiAudit = append(aiAudit, entry)
+	if len(aiAudit) > maxAIAuditEntries {
+		aiAudit = aiAudit[len(aiAudit)-maxAIAuditEntries:]
+	}
+	w := currentAIAuditWriter()
+	if w != nil {
+		select {
+		case w.ch <- &aiAuditOp{entry: &entry}:
+		default:
+			log.Printf("auditAI: writer queue full; dropping on-disk write for plugin %q", entry.Plugin)
+		}
+	} else {
+		appendAIAuditLine(vaultPathSnapshot, &entry)
+	}
+	aiAuditMu.Unlock()
 }
 
 // auditAI appends one AI audit entry. host is the provider endpoint (already
@@ -476,40 +609,8 @@ func (a *App) auditAI(pluginID, kind, host, model, status string, usage *ai.AIUs
 		entry.CompletionTokens = usage.CompletionTokens
 		entry.TotalTokens = usage.TotalTokens
 	}
-	// Snapshot vaultPath under vaultMu BEFORE acquiring aiAuditMu so the
-	// w==nil inline path never reads a.vaultPath unsynchronized. A concurrent
-	// lifecycle transition (CloseVault/SwitchVault/MoveVault) can flip or nil
-	// a.vaultPath while an in-flight AI call — whose audit fires after the
-	// caller released vaultMu — reaches this point; reading it unlocked would
-	// be a data race AND could route the audit entry to the wrong vault
-	// (#452 cross-vault leak). Mirrors ClearAIAudit's snapshot. The writer
-	// branches below use w.vaultPath (captured at writer start), not this
-	// snapshot, so only the rare inline fallback (writer not running) reads
-	// it. Lock order vaultMu -> aiAuditMu matches ClearAIAudit.
-	a.vaultMu.RLock()
-	vaultPathSnapshot := a.vaultPath
-	a.vaultMu.RUnlock()
-	aiAuditMu.Lock()
-	aiAudit = append(aiAudit, entry)
-	if len(aiAudit) > maxAIAuditEntries {
-		aiAudit = aiAudit[len(aiAudit)-maxAIAuditEntries:]
-	}
-	// Decouple the on-disk write from the lock: enqueue onto the background
-	// writer's channel (non-blocking — the 256-slot buffer handles burst rates
-	// far beyond any plugin's allotment). If the writer is not running, fall
-	// back to inline I/O so behavior is identical for tests that don't start
-	// the writer (#446, mirrors #235).
-	w := currentAIAuditWriter()
-	if w != nil {
-		select {
-		case w.ch <- &aiAuditOp{entry: &entry}:
-		default:
-			log.Printf("auditAI: writer queue full; dropping on-disk write for plugin %q", pluginID)
-		}
-	} else {
-		appendAIAuditLine(vaultPathSnapshot, &entry)
-	}
-	aiAuditMu.Unlock()
+	// Snapshot + append via shared path (vaultMu → aiAuditMu ordering).
+	a.appendAIAuditEntry(entry)
 }
 
 // GetAIAudit returns a copy of the in-memory AI audit log (#216).

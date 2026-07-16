@@ -570,3 +570,126 @@ func TestComplete_DoesNotRetryClientError(t *testing.T) {
 		t.Errorf("hits = %d, want 1 (4xx must not retry)", got)
 	}
 }
+
+func TestComplete_RetryAfterHonored(t *testing.T) {
+	// A 429 with Retry-After must wait at least that long (capped) before the
+	// next attempt. Use a single non-zero backoff slot so the schedule is
+	// Retry-After-dominated rather than the default 500ms/1.5s ladder.
+	saved := retryBackoff
+	retryBackoff = []time.Duration{10 * time.Millisecond}
+	t.Cleanup(func() { retryBackoff = saved })
+
+	var hits atomic.Int32
+	var firstAt atomic.Int64
+	var secondAt atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		if n == 1 {
+			firstAt.Store(time.Now().UnixNano())
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
+		secondAt.Store(time.Now().UnixNano())
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "m",
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	res, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m"},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if res.Content != "ok" {
+		t.Errorf("content = %q, want ok", res.Content)
+	}
+	// Retry-After=1s with ±25% jitter → wait in [0.75s, 1.25s]. Allow slack.
+	elapsed := time.Since(start)
+	if elapsed < 700*time.Millisecond {
+		t.Errorf("elapsed %v, want >= ~750ms (Retry-After with jitter floor)", elapsed)
+	}
+	if hits.Load() != 2 {
+		t.Errorf("hits = %d, want 2", hits.Load())
+	}
+	if firstAt.Load() == 0 || secondAt.Load() == 0 {
+		t.Fatal("missing attempt timestamps")
+	}
+	gap := time.Duration(secondAt.Load() - firstAt.Load())
+	if gap < 700*time.Millisecond {
+		t.Errorf("inter-attempt gap %v, want >= ~750ms", gap)
+	}
+}
+
+func TestComplete_CancelDuringBackoff_IsCanceled(t *testing.T) {
+	// Cancel during a long backoff must surface ErrCanceled, not timeout.
+	saved := retryBackoff
+	retryBackoff = []time.Duration{5 * time.Second}
+	t.Cleanup(func() { retryBackoff = saved })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := Complete(ctx, CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m"},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	})
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind != ErrCanceled {
+		t.Errorf("kind = %q, want canceled", e.Kind)
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	if d := parseRetryAfter("2"); d != 2*time.Second {
+		t.Errorf("seconds: got %v", d)
+	}
+	if d := parseRetryAfter("999"); d != maxRetryAfter {
+		t.Errorf("cap: got %v, want %v", d, maxRetryAfter)
+	}
+	if d := parseRetryAfter(""); d != 0 {
+		t.Errorf("empty: got %v", d)
+	}
+	// HTTP-date a few seconds in the future.
+	future := time.Now().Add(3 * time.Second).UTC().Format(http.TimeFormat)
+	if d := parseRetryAfter(future); d < 1*time.Second || d > maxRetryAfter {
+		t.Errorf("http-date: got %v", d)
+	}
+}
+
+func TestJitterDuration_ZeroStaysZero(t *testing.T) {
+	if d := jitterDuration(0); d != 0 {
+		t.Errorf("got %v, want 0", d)
+	}
+}
+
+func TestOverallSendTimeout_UsesTimeoutMs(t *testing.T) {
+	ms := 1000
+	d := overallSendTimeout(&ms)
+	// 1000ms * (1+2) + 500ms + 1500ms + 30s*2 + margin ≈ large but finite.
+	if d < 3*time.Second {
+		t.Errorf("overall too small: %v", d)
+	}
+	if d > 2*time.Minute {
+		t.Errorf("overall too large: %v", d)
+	}
+}

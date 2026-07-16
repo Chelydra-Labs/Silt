@@ -42,14 +42,24 @@ import (
 	"time"
 )
 
-// AI stream event names pushed to the frontend (#226). Payload is always a
-// single object (ev.data on the JS side).
+// AI stream event name prefixes (#226). Owner-scoped full names append
+// ":"+pluginID so concurrent plugin streams do not share a global bus (#635).
+// Payload still includes plugin_id for debugging.
 const (
 	aiEventCompleteDelta     = "ai:complete:delta"
 	aiEventCompleteDone      = "ai:complete:done"
 	aiEventCompleteError     = "ai:complete:error"
 	aiEventCompleteToolDelta = "ai:complete:tool-delta"
 )
+
+// aiStreamEventName returns the owner-scoped Wails event name for a stream
+// event base + pluginID (#635).
+func aiStreamEventName(base, pluginID string) string {
+	if pluginID == "" {
+		return base
+	}
+	return base + ":" + pluginID
+}
 
 // aiStreamBufferCap is the max number of unconsumed delta events buffered per
 // stream before the producer aborts (backpressure). Generous for UI consumers
@@ -911,10 +921,10 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 		case <-time.After(aiStreamReadyWait):
 		case <-streamCtx.Done():
 			a.auditAI(pluginID, aiChatKind, provider.BaseURL, effectiveModel, "cancelled", nil)
-			a.emit(aiEventCompleteError, map[string]any{
+			a.emit(aiStreamEventName(aiEventCompleteError, pluginID), map[string]any{
 				"stream_id": streamID,
 				"plugin_id": pluginID,
-				"kind":      string(ai.ErrTimeout),
+				"kind":      string(ai.ErrCanceled),
 				"message":   "stream cancelled before start",
 			})
 			return
@@ -922,12 +932,13 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 
 		// Fan-out deltas to Wails events on a separate goroutine so the SSE
 		// parser only blocks on the bounded channel (backpressure), not on IPC.
+		// Event names are owner-scoped by pluginID (#635).
 		emitDone := make(chan struct{})
 		go func() {
 			defer close(emitDone)
 			idx := 0
 			for delta := range deltaCh {
-				a.emit(aiEventCompleteDelta, map[string]any{
+				a.emit(aiStreamEventName(aiEventCompleteDelta, pluginID), map[string]any{
 					"stream_id": streamID,
 					"plugin_id": pluginID,
 					"delta":     delta,
@@ -943,7 +954,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 		go func() {
 			defer close(emitToolDone)
 			for frag := range toolDeltaCh {
-				a.emit(aiEventCompleteToolDelta, map[string]any{
+				a.emit(aiStreamEventName(aiEventCompleteToolDelta, pluginID), map[string]any{
 					"stream_id":          streamID,
 					"plugin_id":          pluginID,
 					"index":              frag.Index,
@@ -989,7 +1000,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 			if e, ok := callErr.(*ai.AIError); ok {
 				kind, msg = string(e.Kind), e.Message
 			}
-			a.emit(aiEventCompleteError, map[string]any{
+			a.emit(aiStreamEventName(aiEventCompleteError, pluginID), map[string]any{
 				"stream_id": streamID,
 				"plugin_id": pluginID,
 				"kind":      kind,
@@ -1010,7 +1021,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 		if result.Usage != nil {
 			payload["usage"] = result.Usage
 		}
-		a.emit(aiEventCompleteDone, payload)
+		a.emit(aiStreamEventName(aiEventCompleteDone, pluginID), payload)
 	}()
 
 	return ai.CompleteResult{StreamID: streamID, Model: effectiveModel}, nil
@@ -1088,6 +1099,35 @@ func (a *App) requirePluginSession(pluginID, sessionToken string) error {
 	if !ok || owner != pluginID {
 		return fmt.Errorf("invalid plugin session")
 	}
+	return nil
+}
+
+// PluginAIAuditEvent appends a structured agent/tool/staging audit row to the
+// AI audit log (#630). Gated by CapAI + session. eventJSON is a JSON object;
+// sensitive keys (content/body/text/path) are redacted and long strings truncated.
+func (a *App) PluginAIAuditEvent(pluginID, sessionToken, eventJSON string) error {
+	if err := a.requirePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapAI); err != nil {
+		return err
+	}
+	eventJSON = strings.TrimSpace(eventJSON)
+	if eventJSON == "" {
+		return &ai.AIError{Kind: ai.ErrBadRequest, Message: "event JSON is required"}
+	}
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(eventJSON), &fields); err != nil {
+		return &ai.AIError{Kind: ai.ErrBadRequest, Message: fmt.Sprintf("invalid event JSON: %v", err)}
+	}
+	kind, _ := fields["kind"].(string)
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		kind = "event"
+	}
+	// Drop the kind key from detail fields; it is stored on the entry.
+	delete(fields, "kind")
+	a.auditAIEvent(pluginID, kind, fields)
 	return nil
 }
 

@@ -29,9 +29,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -276,10 +279,14 @@ const (
 	// ErrUnreachable — DNS resolution or TCP connection failed (provider down,
 	// wrong host, offline).
 	ErrUnreachable AIErrorKind = "unreachable"
-	// ErrTimeout — the call exceeded its deadline (context canceled/deadline
-	// exceeded). Distinct from unreachable so the UI can suggest "slow model"
-	// vs "wrong endpoint".
+	// ErrTimeout — the call exceeded its deadline (context deadline exceeded).
+	// Distinct from unreachable so the UI can suggest "slow model" vs "wrong
+	// endpoint". User/app cancellation uses ErrCanceled instead (#628).
 	ErrTimeout AIErrorKind = "timeout"
+	// ErrCanceled — the caller's context was canceled (Stop, vault close) before
+	// a deadline. Distinct from timeout so the UI does not suggest raising the
+	// timeout for an intentional abort (#628).
+	ErrCanceled AIErrorKind = "canceled"
 	// ErrUnauthorized — 401. The configured key is missing, wrong, or expired.
 	ErrUnauthorized AIErrorKind = "unauthorized"
 	// ErrForbidden — 403. The key is valid but lacks permission for the model.
@@ -333,11 +340,20 @@ type providerRequest struct {
 	classifyErr func(raw []byte, status int) *AIError
 }
 
+// maxRetryAfter caps how long we honor a provider Retry-After header so a
+// hostile or misconfigured endpoint cannot stall the call for minutes (#628).
+const maxRetryAfter = 30 * time.Second
+
+// overallTimeoutMargin is added to the computed overall deadline envelope so
+// scheduling jitter and timer resolution do not race the last attempt (#628).
+const overallTimeoutMargin = 250 * time.Millisecond
+
 // sendOnce builds and sends one attempt. It is the per-attempt half of
 // sendWithRetry: timeout + request build + send + response size cap + status
-// classification. buildReq is invoked once (a fresh request per attempt is the
-// caller's responsibility in sendWithRetry).
-func sendOnce(ctx context.Context, pr providerRequest, timeoutMs *int) ([]byte, int, *AIError) {
+// classification. On transient HTTP errors the Retry-After header (when present)
+// is returned so sendWithRetry can honor it. A fresh request per attempt is the
+// caller's responsibility in sendWithRetry.
+func sendOnce(ctx context.Context, pr providerRequest, timeoutMs *int) (raw []byte, status int, retryAfter time.Duration, aiErr *AIError) {
 	timeout := DefaultTimeout
 	if timeoutMs != nil && *timeoutMs > 0 {
 		timeout = time.Duration(*timeoutMs) * time.Millisecond
@@ -348,7 +364,7 @@ func sendOnce(ctx context.Context, pr providerRequest, timeoutMs *int) ([]byte, 
 	req, err := http.NewRequestWithContext(ctx, pr.method, pr.url, bytes.NewReader(pr.body))
 	if err != nil {
 		// Malformed URL — surface as unreachable; the caller's base URL is bad.
-		return nil, 0, &AIError{Kind: ErrUnreachable, Message: fmt.Sprintf("build request: %v", err)}
+		return nil, 0, 0, &AIError{Kind: ErrUnreachable, Message: fmt.Sprintf("build request: %v", err)}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if pr.setHeaders != nil {
@@ -357,37 +373,116 @@ func sendOnce(ctx context.Context, pr providerRequest, timeoutMs *int) ([]byte, 
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		// Distinguish timeout from generic transport failure so the UI can hint
-		// "slow model / raise timeout" vs "endpoint unreachable".
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, 0, &AIError{Kind: ErrTimeout, Message: fmt.Sprintf("request timed out after %s: %v", timeout, err)}
+		// Distinguish cancel / deadline / generic transport so the UI can hint
+		// "stopped" vs "slow model / raise timeout" vs "endpoint unreachable".
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, 0, 0, &AIError{Kind: ErrCanceled, Message: fmt.Sprintf("request canceled: %v", err)}
 		}
-		return nil, 0, &AIError{Kind: ErrUnreachable, Message: err.Error()}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, 0, 0, &AIError{Kind: ErrTimeout, Message: fmt.Sprintf("request timed out after %s: %v", timeout, err)}
+		}
+		return nil, 0, 0, &AIError{Kind: ErrUnreachable, Message: err.Error()}
 	}
 	defer resp.Body.Close()
 
 	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBytes+1))
 	if readErr != nil {
-		return nil, resp.StatusCode, &AIError{Kind: classifyStatus(resp.StatusCode), Status: resp.StatusCode, Message: fmt.Sprintf("read response: %v", readErr)}
+		return nil, resp.StatusCode, 0, &AIError{Kind: classifyStatus(resp.StatusCode), Status: resp.StatusCode, Message: fmt.Sprintf("read response: %v", readErr)}
 	}
 	if int64(len(raw)) > MaxResponseBytes {
-		return nil, resp.StatusCode, &AIError{Kind: ErrServer, Status: resp.StatusCode, Message: fmt.Sprintf("response body exceeds %d-byte cap", MaxResponseBytes)}
+		return nil, resp.StatusCode, 0, &AIError{Kind: ErrServer, Status: resp.StatusCode, Message: fmt.Sprintf("response body exceeds %d-byte cap", MaxResponseBytes)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Let the provider parse its structured error body for better fidelity;
 		// fall back to status-based classification + trimmed body.
+		var e *AIError
 		if pr.classifyErr != nil {
-			if e := pr.classifyErr(raw, resp.StatusCode); e != nil {
-				return nil, resp.StatusCode, e
+			e = pr.classifyErr(raw, resp.StatusCode)
+		}
+		if e == nil {
+			msg := strings.TrimSpace(string(raw))
+			if len(msg) > 500 {
+				msg = msg[:500] + "…"
 			}
+			e = &AIError{Kind: classifyStatus(resp.StatusCode), Status: resp.StatusCode, Message: msg}
 		}
-		msg := strings.TrimSpace(string(raw))
-		if len(msg) > 500 {
-			msg = msg[:500] + "…"
+		ra := time.Duration(0)
+		if isTransient(e) {
+			ra = parseRetryAfter(resp.Header.Get("Retry-After"))
 		}
-		return nil, resp.StatusCode, &AIError{Kind: classifyStatus(resp.StatusCode), Status: resp.StatusCode, Message: msg}
+		return nil, resp.StatusCode, ra, e
 	}
-	return raw, resp.StatusCode, nil
+	return raw, resp.StatusCode, 0, nil
+}
+
+// parseRetryAfter interprets an HTTP Retry-After value as either delta-seconds
+// or an HTTP-date. Returns 0 when missing/unparseable. Caps at maxRetryAfter.
+func parseRetryAfter(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		d := time.Duration(secs) * time.Second
+		if d > maxRetryAfter {
+			return maxRetryAfter
+		}
+		return d
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		d := time.Until(t)
+		if d <= 0 {
+			return 0
+		}
+		if d > maxRetryAfter {
+			return maxRetryAfter
+		}
+		return d
+	}
+	return 0
+}
+
+// jitterDuration applies ±25% randomized jitter to a backoff delay (#628).
+// Zero and negative inputs stay zero so withFastRetry tests remain instant.
+func jitterDuration(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	// Factor in [0.75, 1.25].
+	factor := 0.75 + rand.Float64()*0.5
+	return time.Duration(float64(d) * factor)
+}
+
+// overallSendTimeout is the wall-clock envelope for the full retry sequence:
+// per-attempt budget × (1 + retries) + sum(backoff) + margin (#628).
+func overallSendTimeout(timeoutMs *int) time.Duration {
+	perAttempt := DefaultTimeout
+	if timeoutMs != nil && *timeoutMs > 0 {
+		perAttempt = time.Duration(*timeoutMs) * time.Millisecond
+	}
+	var backoffSum time.Duration
+	for _, d := range retryBackoff {
+		backoffSum += d
+	}
+	// Cap Retry-After waits at maxRetryAfter per gap so the envelope still
+	// bounds a hostile Retry-After path.
+	retryGaps := len(retryBackoff)
+	return perAttempt*time.Duration(1+retryGaps) + backoffSum + maxRetryAfter*time.Duration(retryGaps) + overallTimeoutMargin
+}
+
+// aiErrorFromContext maps a parent context error during retry backoff to a
+// typed AIError: cancel stays cancel, deadline stays timeout (#628).
+func aiErrorFromContext(err error) *AIError {
+	if err == nil {
+		return &AIError{Kind: ErrTimeout, Message: "aborted during retry backoff"}
+	}
+	if errors.Is(err, context.Canceled) {
+		return &AIError{Kind: ErrCanceled, Message: fmt.Sprintf("aborted during retry backoff: %v", err)}
+	}
+	return &AIError{Kind: ErrTimeout, Message: fmt.Sprintf("aborted during retry backoff: %v", err)}
 }
 
 // classifyStatus maps an HTTP status to a normalized AIErrorKind. Centralized so
@@ -439,32 +534,48 @@ var retryBackoff = []time.Duration{
 // sendWithRetry wraps sendOnce with bounded retry on transient provider errors
 // (5xx / 429). Each attempt gets its own per-call timeout — sendOnce derives a
 // fresh context.WithTimeout every call — so one slow response does not eat the
-// retry budget, and the caller's ctx still bounds the whole sequence (a
-// cancellation during backoff aborts immediately rather than waiting out the
-// timer).
+// retry budget. An overall deadline envelope bounds the full sequence (attempts
+// + backoff + Retry-After). Cancellation during backoff surfaces as
+// ErrCanceled; overall/per-attempt deadline as ErrTimeout (#628).
 func sendWithRetry(ctx context.Context, pr providerRequest, timeoutMs *int) ([]byte, int, *AIError) {
 	if len(pr.body) > MaxRequestBytes {
 		return nil, 0, &AIError{Kind: ErrBadRequest, Message: fmt.Sprintf("request body exceeds %d-byte cap", MaxRequestBytes)}
 	}
+	// Overall envelope so retries cannot run unbounded wall-clock time.
+	ctx, cancel := context.WithTimeout(ctx, overallSendTimeout(timeoutMs))
+	defer cancel()
+
 	var last *AIError
 	var lastStatus int
 	for attempt := 0; attempt <= len(retryBackoff); attempt++ {
-		raw, status, aiErr := sendOnce(ctx, pr, timeoutMs)
+		raw, status, retryAfter, aiErr := sendOnce(ctx, pr, timeoutMs)
 		if aiErr == nil {
 			return raw, status, nil
 		}
 		last, lastStatus = aiErr, status
-		// Non-transient errors (4xx, transport) return immediately — no retry.
+		// Non-transient errors (4xx, transport, cancel) return immediately.
 		if !isTransient(aiErr) {
 			return raw, status, aiErr
 		}
 		// Transient: wait before the next attempt, unless this was the last try.
 		if attempt < len(retryBackoff) {
-			timer := time.NewTimer(retryBackoff[attempt])
+			base := retryBackoff[attempt]
+			if retryAfter > base {
+				base = retryAfter
+			}
+			wait := jitterDuration(base)
+			if wait <= 0 {
+				// Zero backoff (tests): still honor cancel between attempts.
+				if err := ctx.Err(); err != nil {
+					return nil, lastStatus, aiErrorFromContext(err)
+				}
+				continue
+			}
+			timer := time.NewTimer(wait)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return nil, lastStatus, &AIError{Kind: ErrTimeout, Message: fmt.Sprintf("aborted during retry backoff: %v", ctx.Err())}
+				return nil, lastStatus, aiErrorFromContext(ctx.Err())
 			case <-timer.C:
 			}
 		}

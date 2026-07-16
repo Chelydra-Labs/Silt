@@ -243,6 +243,11 @@ type App struct {
 	// aiStreamsMu. Entries are removed when the stream finishes or is cancelled.
 	aiStreamsMu sync.Mutex
 	aiStreams   map[string]*aiStreamSession
+
+	// eventEmit, when non-nil, replaces wails Event.Emit so tests can capture
+	// stream events without a live Wails runtime (#631). Production leaves
+	// this nil and emit() uses wailsApp.Event.Emit.
+	eventEmit func(name string, data ...any)
 }
 
 // aiStreamSession is one in-flight PluginAIComplete(stream=true) call.

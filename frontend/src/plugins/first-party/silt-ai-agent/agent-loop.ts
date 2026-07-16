@@ -307,6 +307,12 @@ async function materializeToolMessage(
       return `Error: could not reject operation "${preview.summary}" (${message}). The token may still be redeemable.`
     }
     opts.onStagingOutcome?.(token, 'rejected')
+    void ctx.ai.auditEvent?.({
+      kind: 'staging_decision',
+      tool: toolName,
+      outcome: 'rejected',
+      status: 'rejected'
+    })
     return `Operation "${preview.summary}" was rejected by the user. Propose a different approach or stop.`
   }
 
@@ -315,14 +321,32 @@ async function materializeToolMessage(
     const tool = getTools().find((t) => t.name === toolName)
     if (!tool?.commit) {
       opts.onStagingOutcome?.(token, 'failed')
+      void ctx.ai.auditEvent?.({
+        kind: 'staging_decision',
+        tool: toolName,
+        outcome: 'failed',
+        status: 'failed'
+      })
       return `Error: staged operation "${op.kind}" has no commit handler.`
     }
     const committed = await raceAbort(tool.commit(ctx, op.params), signal)
     if (committed.error) {
       opts.onStagingOutcome?.(token, 'failed')
+      void ctx.ai.auditEvent?.({
+        kind: 'staging_decision',
+        tool: toolName,
+        outcome: 'failed',
+        status: 'failed'
+      })
       return `Error: ${committed.error}`
     }
     opts.onStagingOutcome?.(token, 'confirmed')
+    void ctx.ai.auditEvent?.({
+      kind: 'staging_decision',
+      tool: toolName,
+      outcome: 'confirmed',
+      status: 'confirmed'
+    })
     return wrapUntrustedToolResult(toolName, committed.content)
   } catch (e: unknown) {
     // Abort after confirmOperation may have already marked the token used=1
@@ -487,6 +511,12 @@ export async function runAgent(
                 name: call.name,
                 args: call.arguments
               })
+              void ctx.ai.auditEvent?.({
+                kind: 'tool_call',
+                tool: call.name,
+                tool_call_id: call.id,
+                status: 'start'
+              })
               res = await raceAbort(
                 dispatchTool(ctx, call.name, call.arguments),
                 opts.signal
@@ -506,6 +536,18 @@ export async function runAgent(
           // the assistant tool_call without a result (a provider protocol
           // error on the next turn). Convert any such throw into the result.
           const visible = visibleToolResult(res)
+          void ctx.ai.auditEvent?.({
+            kind: 'tool_call',
+            tool: call.name,
+            tool_call_id: call.id,
+            status: visible.error
+              ? 'error'
+              : visible.isStaged
+                ? 'staged'
+                : 'ok',
+            // Do not send raw args/content — server redacts, but keep payload lean.
+            staged: Boolean(visible.isStaged)
+          })
           try {
             opts.onToolResult?.({
               id: call.id,

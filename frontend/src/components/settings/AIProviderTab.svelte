@@ -20,6 +20,7 @@
   import PresetControl from './PresetControl.svelte'
   import InfoTooltip from './InfoTooltip.svelte'
   import { getEmbeddingCapabilities } from '../../settings/modelCapabilities'
+  import { getQAController } from '../../plugins/first-party/silt-ai-qa/state.svelte'
 
   type Props = Record<string, never>
   let {}: Props = $props()
@@ -36,6 +37,15 @@
       summaries_enabled?: boolean
     }) => Promise<void>
   }
+
+  // Degraded semantic index signal (#630): surface QA stale_reason when RAG on.
+  const qaStaleReason = $derived.by(() => {
+    try {
+      return getQAController()?.settings?.stale_reason ?? null
+    } catch {
+      return null
+    }
+  })
 
   // Features live on AIPublicConfig after Phase 2; cast for partial type caches.
   const features = $derived(
@@ -208,6 +218,20 @@
                     ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
                 }}>Set up embedding</a
               >
+            </div>
+          </div>
+        {:else if features.rag_enabled === true && qaStaleReason}
+          <div
+            class="bg-accent-primary-glow/20 border border-accent-primary-start/30 rounded-lg p-3 flex items-start gap-2"
+            role="status"
+          >
+            <span
+              class="material-symbols-outlined text-accent-primary-start text-icon-md flex-shrink-0"
+              aria-hidden="true">warning</span
+            >
+            <div class="text-type-xs font-body-md text-text-primary">
+              Semantic search index may be out of date: {qaStaleReason}. Rebuild
+              from Search settings for accurate results.
             </div>
           </div>
         {/if}

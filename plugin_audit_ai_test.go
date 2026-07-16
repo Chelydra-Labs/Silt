@@ -416,3 +416,61 @@ func TestTeardownVaultServices_ClearsInMemoryAudit(t *testing.T) {
 		t.Errorf("audit writers still running after teardown")
 	}
 }
+
+func TestRedactAIAuditFields_DropsSensitive(t *testing.T) {
+	in := map[string]any{
+		"tool":    "search_notes",
+		"content": "secret body",
+		"path":    `C:\Users\chris\Vault\note.md`,
+		"status":  "ok",
+		"note":    "short",
+	}
+	out := redactAIAuditFields(in)
+	if out["content"] != "[redacted]" {
+		t.Errorf("content = %v, want [redacted]", out["content"])
+	}
+	if out["path"] != "[redacted]" {
+		t.Errorf("path = %v, want [redacted]", out["path"])
+	}
+	if out["tool"] != "search_notes" {
+		t.Errorf("tool = %v", out["tool"])
+	}
+	if out["status"] != "ok" {
+		t.Errorf("status = %v", out["status"])
+	}
+}
+
+func TestPluginAIAuditEvent_AppendsRedacted(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.configMu.Unlock()
+	tok, err := app.RegisterPluginSession("silt-tasks")
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	err = app.PluginAIAuditEvent("silt-tasks", tok, `{"kind":"tool_call","tool":"search_notes","content":"nope","status":"ok"}`)
+	if err != nil {
+		t.Fatalf("PluginAIAuditEvent: %v", err)
+	}
+	entries, err := app.GetAIAudit()
+	if err != nil {
+		t.Fatalf("GetAIAudit: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].Kind != "tool_call" {
+		t.Errorf("kind = %q", entries[0].Kind)
+	}
+	if entries[0].Status != "ok" {
+		t.Errorf("status = %q", entries[0].Status)
+	}
+	if strings.Contains(string(entries[0].Detail), "nope") {
+		t.Errorf("detail leaked content: %s", entries[0].Detail)
+	}
+	if !strings.Contains(string(entries[0].Detail), "search_notes") {
+		t.Errorf("detail missing tool: %s", entries[0].Detail)
+	}
+}

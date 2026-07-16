@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -267,6 +268,140 @@ func TestPluginAIComplete_Stream_RejectsInvalidSession(t *testing.T) {
 	}
 	if err := app.PluginAIStreamReady("silt-tasks", "bad-token", "any"); err == nil {
 		t.Fatal("ready with bad session must fail")
+	}
+}
+
+func TestPluginAIComplete_Stream_EmitsToolDeltas(t *testing.T) {
+	// #631: injectable emit captures owner-scoped tool-delta + done tool_calls.
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.configMu.Unlock()
+
+	type captured struct {
+		name string
+		data map[string]any
+	}
+	var (
+		mu   sync.Mutex
+		got  []captured
+		done = make(chan struct{})
+	)
+	app.eventEmit = func(name string, data ...any) {
+		var payload map[string]any
+		if len(data) > 0 {
+			if m, ok := data[0].(map[string]any); ok {
+				payload = m
+			}
+		}
+		mu.Lock()
+		got = append(got, captured{name: name, data: payload})
+		if strings.HasPrefix(name, aiEventCompleteDone) || strings.HasPrefix(name, aiEventCompleteError) {
+			select {
+			case <-done:
+			default:
+				close(done)
+			}
+		}
+		mu.Unlock()
+	}
+
+	// SSE with split tool_calls fragments (OpenAI stream shape).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		chunks := []string{
+			`data: {"model":"m","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"search_notes","arguments":""}}]}}]}`,
+			`data: {"model":"m","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"q\":"}}]}}]}`,
+			`data: {"model":"m","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"x\"}"}}]}}]}`,
+			`data: {"model":"m","choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+			`data: [DONE]`,
+		}
+		for _, c := range chunks {
+			fmt.Fprint(w, c+"\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "test")
+
+	const pluginID = "silt-tasks"
+	tok, err := app.RegisterPluginSession(pluginID)
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+	res, err := app.PluginAIComplete(pluginID, tok, PluginAICompleteInput{
+		Messages: []PluginAIChatMessage{{Role: "user", Content: "ping"}},
+		Stream:   true,
+	})
+	if err != nil {
+		t.Fatalf("stream start: %v", err)
+	}
+	if err := app.PluginAIStreamReady(pluginID, tok, res.StreamID); err != nil {
+		t.Fatalf("ready: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for stream done/error emit")
+	}
+
+	// Drain stream goroutine.
+	wgDone := make(chan struct{})
+	go func() {
+		app.vaultClosingWG.Wait()
+		close(wgDone)
+	}()
+	select {
+	case <-wgDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("vaultClosingWG did not drain")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	wantToolEvent := aiStreamEventName(aiEventCompleteToolDelta, pluginID)
+	wantDoneEvent := aiStreamEventName(aiEventCompleteDone, pluginID)
+	var toolDeltas int
+	var sawDone bool
+	for _, e := range got {
+		if e.name == wantToolEvent {
+			toolDeltas++
+			if e.data["stream_id"] != res.StreamID {
+				t.Errorf("tool-delta stream_id = %v, want %s", e.data["stream_id"], res.StreamID)
+			}
+			if e.data["plugin_id"] != pluginID {
+				t.Errorf("tool-delta plugin_id = %v", e.data["plugin_id"])
+			}
+		}
+		if e.name == wantDoneEvent {
+			sawDone = true
+			tcs, ok := e.data["tool_calls"]
+			if !ok {
+				t.Fatal("done payload missing tool_calls")
+			}
+			// tool_calls is []ai.ToolCall; JSON-ish via map may keep typed slice.
+			raw, _ := json.Marshal(tcs)
+			if !strings.Contains(string(raw), "search_notes") {
+				t.Errorf("done tool_calls = %s, want search_notes", raw)
+			}
+			if !strings.Contains(string(raw), "call_1") {
+				t.Errorf("done tool_calls = %s, want call_1", raw)
+			}
+		}
+		// Must not emit unscoped global names for this stream.
+		if e.name == aiEventCompleteToolDelta || e.name == aiEventCompleteDone {
+			t.Errorf("unscoped event %q emitted; want owner-scoped names", e.name)
+		}
+	}
+	if toolDeltas == 0 {
+		t.Fatal("expected at least one owner-scoped tool-delta emit")
+	}
+	if !sawDone {
+		t.Fatal("expected owner-scoped done emit")
 	}
 }
 
