@@ -5,6 +5,7 @@
   import { getSessionToken } from '../../loader'
   import ChatShell from './ChatShell.svelte'
   import { createAIChatController } from './ai-chat-controller.svelte'
+  import { agentChrome } from '../../first-party/silt-ai-agent/state.svelte'
   import {
     aiChatDrawer,
     closeAIChatDrawer,
@@ -30,6 +31,10 @@
   })
 
   function onAIChatCommand(event: Event) {
+    // The unified drawer is the agent's surface: without the agent enabled
+    // there is no valid session to service the command, so ignore it rather
+    // than open a broken drawer. (Unified AI enablement tracked in #632.)
+    if (!agentChrome.available) return
     const detail = (event as CustomEvent<AIChatCommandDetail>).detail
     if (!detail?.text) return
     queuedCommand = detail
