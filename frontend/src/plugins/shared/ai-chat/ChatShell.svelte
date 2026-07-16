@@ -156,7 +156,9 @@
 
   $effect(() => {
     if (busy) {
-      completionAnnouncement = ''
+      // Announce work started without narrating streamed tokens (which would
+      // flood assistive tech). The completion line below closes the loop.
+      completionAnnouncement = 'Silt is responding.'
     } else if (wasBusy) {
       completionAnnouncement = 'AI response complete.'
     }
@@ -274,6 +276,7 @@
             type="button"
             class="utility-summary"
             aria-expanded={expanded[entry.id] ?? false}
+            aria-controls={`${entry.id}-details`}
             onclick={() => toggleExpanded(entry.id)}
           >
             <span
@@ -290,7 +293,7 @@
             >
           </button>
           {#if expanded[entry.id]}
-            <pre>{safeJson(entry.args)}</pre>
+            <pre id={`${entry.id}-details`}>{safeJson(entry.args)}</pre>
           {/if}
         </article>
       {:else if entry.kind === 'tool-result'}
@@ -299,6 +302,7 @@
             type="button"
             class="utility-summary"
             aria-expanded={expanded[entry.id] ?? false}
+            aria-controls={`${entry.id}-details`}
             onclick={() => toggleExpanded(entry.id)}
           >
             <span
@@ -316,7 +320,7 @@
             >
           </button>
           {#if expanded[entry.id]}
-            <pre>{entry.error ?? entry.output}</pre>
+            <pre id={`${entry.id}-details`}>{entry.error ?? entry.output}</pre>
           {/if}
         </article>
       {:else if entry.kind === 'proposal'}
@@ -402,7 +406,11 @@
           </div>
         {/if}
       {:else if entry.kind === 'status'}
-        <div class:error-status={entry.status === 'error'} class="status-line">
+        <div
+          role={entry.status === 'error' ? 'alert' : 'status'}
+          class:error-status={entry.status === 'error'}
+          class="status-line"
+        >
           <span class="status-pulse" aria-hidden="true"></span>
           <span>{entry.message}</span>
         </div>

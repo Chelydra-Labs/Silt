@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte'
-  import { fly } from 'svelte/transition'
+  import { onDestroy, tick } from 'svelte'
+  import { fly, fade } from 'svelte/transition'
   import { makePluginContext } from '../../context'
   import { getSessionToken } from '../../loader'
   import ChatShell from './ChatShell.svelte'
@@ -18,6 +18,8 @@
 
   let open = $derived(aiChatDrawer.open)
   let queuedCommand = $state<AIChatCommandDetail | null>(null)
+  let drawerEl = $state<HTMLElement | null>(null)
+  let isMobile = $state(false)
   let ctx = $derived.by(() => {
     if (!open) return null
     return makePluginContext(PLUGIN_ID, getSessionToken(PLUGIN_ID) ?? undefined)
@@ -47,6 +49,43 @@
     void chat.send(command.text, command.request)
   })
 
+  // Focus lifecycle: on open, remember the element that had focus (the
+  // titlebar toggle) and move focus into the drawer; on close, restore it so
+  // keyboard users are not stranded on a removed node.
+  $effect(() => {
+    if (!open) return
+    const lastFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
+    void tick().then(() => {
+      const composer = document.getElementById(
+        'ai-chat-composer'
+      ) as HTMLTextAreaElement | null
+      if (composer && !composer.disabled) {
+        composer.focus()
+      } else {
+        drawerEl?.focus()
+      }
+    })
+    return () => {
+      if (lastFocused?.isConnected) lastFocused.focus()
+    }
+  })
+
+  // The drawer behaves as a modal only on small viewports, where it covers the
+  // application. Track the breakpoint so aria-modal + the backdrop apply only
+  // then (desktop keeps it a non-modal side panel).
+  $effect(() => {
+    const mq = window.matchMedia('(max-width: 900px)')
+    const sync = () => {
+      isMobile = mq.matches
+    }
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  })
+
   function onWindowKeydown(event: KeyboardEvent) {
     if (event.key !== 'Escape' || !aiChatDrawer.open) return
     event.preventDefault()
@@ -71,10 +110,25 @@
 </script>
 
 {#if open && ctx}
-  <aside
+  {#if isMobile}
+    <button
+      type="button"
+      class="ai-chat-scrim"
+      aria-label="Close Silt AI"
+      transition:fade={{ duration: 150 }}
+      onclick={closeAIChatDrawer}
+    ></button>
+  {/if}
+  <div
+    id="silt-ai-drawer"
     transition:fly={{ x: 28, duration: 180 }}
     class="ai-chat-drawer"
+    class:mobile={isMobile}
+    role="dialog"
+    aria-modal={isMobile || undefined}
     aria-label="Silt AI"
+    tabindex="-1"
+    bind:this={drawerEl}
   >
     {#snippet drawerActions()}
       <button
@@ -103,7 +157,7 @@
       onNavigateEvidence={navigateEvidence}
       onClear={chat.clear}
     />
-  </aside>
+  </div>
 {/if}
 
 <style>
@@ -119,6 +173,16 @@
     flex-direction: column;
     overflow: hidden;
     z-index: 20;
+  }
+
+  .ai-chat-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 49;
+    border: 0;
+    padding: 0;
+    background: color-mix(in srgb, var(--color-surface-app) 55%, transparent);
+    cursor: default;
   }
 
   .close-button {
@@ -140,13 +204,11 @@
     outline-offset: 1px;
   }
 
-  @media (max-width: 900px) {
-    .ai-chat-drawer {
-      position: fixed;
-      inset: 0 0 0 auto;
-      max-width: min(380px, 92vw);
-      box-shadow: -8px 0 32px var(--color-surface-app);
-      z-index: 50;
-    }
+  .mobile {
+    position: fixed;
+    inset: 0 0 0 auto;
+    max-width: min(380px, 92vw);
+    box-shadow: -8px 0 32px var(--color-surface-app);
+    z-index: 50;
   }
 </style>

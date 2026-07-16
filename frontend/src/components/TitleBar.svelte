@@ -136,7 +136,8 @@
         type="button"
         onclick={onAIClick}
         aria-label="Silt AI"
-        aria-pressed={aiOpen}
+        aria-expanded={aiOpen}
+        aria-controls="silt-ai-drawer"
         title="Silt AI"
         class="flex items-center justify-center h-9 w-9 rounded-lg transition-colors cursor-pointer border-none bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         class:text-accent-primary-start={aiOpen}
