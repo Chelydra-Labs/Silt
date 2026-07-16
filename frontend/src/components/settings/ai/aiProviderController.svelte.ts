@@ -270,7 +270,15 @@ export function createAIProviderController() {
       await UpdateAIFeatures(patch)
       config = toPlain(await GetAIProviderConfig())
       // Reload system config + plugins so loader/chrome pick up the flags.
-      await loadConfig()
+      const refreshed = await loadConfig()
+      if (!refreshed) {
+        // The backend persisted the flags, but the live store could not refresh.
+        // Do not reconcile plugins from a stale snapshot; surface it and let
+        // the next successful refresh (or app reload) reconcile (#632).
+        featuresError =
+          'AI features saved, but the live configuration could not be refreshed — enablement will reconcile on the next reload.'
+        return
+      }
       const loc = getActiveLocation()
       await loadPlugins(loc.notebook ?? '', loc.section ?? '', loc.page ?? '')
     } catch (e) {

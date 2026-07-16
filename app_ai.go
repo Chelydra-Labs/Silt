@@ -388,11 +388,20 @@ func (a *App) UpdateAIFeatures(patch AIFeaturesPatch) error {
 		f.SummariesEnabled = *patch.SummariesEnabled
 	}
 	next.AI.Features = f
+	wasOn := a.cfg.AI.Features.Enabled
 	next.AI = config.NormalizeAIConfig(next.AI)
 	if err := a.saveConfigTracked(next); err != nil {
 		return err
 	}
 	a.cfg = next
+	// Master AI just turned off: cancel any in-flight provider streams so they
+	// stop consuming tokens/cost immediately instead of running to their
+	// per-call timeout. Frontend teardown calls PluginAICancelStream, but that
+	// binding rejects once the AI capability grant is revoked on the next
+	// session check, so shutdown must not depend on it (#632).
+	if wasOn && !next.AI.Features.Enabled {
+		a.cancelAllAIStreams()
+	}
 	return nil
 }
 
@@ -1072,6 +1081,30 @@ func (a *App) PluginAICancelStream(pluginID, sessionToken, streamID string) erro
 	}
 	a.aiStreamsMu.Unlock()
 	return nil
+}
+
+// cancelAllAIStreams aborts every in-flight streamed completion. Used when AI
+// is turned off so active provider requests stop immediately instead of
+// running to their per-call timeout. Mirrors PluginAICancelStream's per-stream
+// teardown (close the ready gate, then cancel) but for the whole map. The
+// ready gate is closed so a producer still blocked on the ready handshake
+// observes the cancel (#632).
+func (a *App) cancelAllAIStreams() {
+	a.aiStreamsMu.Lock()
+	sessions := make([]*aiStreamSession, 0, len(a.aiStreams))
+	for _, s := range a.aiStreams {
+		sessions = append(sessions, s)
+	}
+	a.aiStreamsMu.Unlock()
+	// Cancel outside the lock: each stream's goroutine re-acquires aiStreamsMu
+	// in its cleanup defer to delete itself, so holding it across cancel() would
+	// self-deadlock.
+	for _, s := range sessions {
+		if s.ready != nil {
+			s.readyOnce.Do(func() { close(s.ready) })
+		}
+		s.cancel()
+	}
 }
 
 // PluginAIStreamReady signals that the frontend has attached Events.On

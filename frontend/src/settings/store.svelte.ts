@@ -31,8 +31,14 @@ export const settings = $state({
   pendingExternal: false
 })
 
-/** Load the system config from the Go backend into the store. */
-export async function loadConfig(): Promise<void> {
+/**
+ * Load the system config from the Go backend into the store. Returns true when
+ * the store was refreshed, false when the refresh failed (settings.error is set
+ * in that case). Callers that reconcile derived state (e.g. plugin loading from
+ * feature flags) must skip/revert reconciliation on false so they do not act on
+ * a stale snapshot (#632).
+ */
+export async function loadConfig(): Promise<boolean> {
   settings.loading = true
   settings.error = ''
   try {
@@ -51,8 +57,10 @@ export async function loadConfig(): Promise<void> {
     // on the Go side, so a broken config.yaml isn't silently masked).
     const loadErr = await GetConfigLoadError()
     if (loadErr) settings.error = loadErr
+    return true
   } catch (e) {
     settings.error = errMsg(e)
+    return false
   } finally {
     settings.loading = false
   }

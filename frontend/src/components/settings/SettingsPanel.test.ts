@@ -82,7 +82,7 @@ vi.mock('../../plugins/store.svelte', () => ({
 }))
 vi.mock('../../settings/store.svelte', () => ({
   settings: mocks.settings,
-  loadConfig: vi.fn().mockResolvedValue(undefined),
+  loadConfig: vi.fn().mockResolvedValue(true),
   saveConfig: vi.fn().mockResolvedValue(undefined),
   reloadFromBackend: vi.fn().mockResolvedValue(undefined)
 }))

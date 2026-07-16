@@ -124,7 +124,7 @@ vi.mock('../../settings/store.svelte', async (importOriginal) => {
     await importOriginal<typeof import('../../settings/store.svelte')>()
   return {
     ...actual,
-    loadConfig: vi.fn().mockResolvedValue(undefined),
+    loadConfig: vi.fn().mockResolvedValue(true),
     // Preserve the binding path so stale-index tests still see UpdatePluginSetting.
     updatePluginSetting: (...args: unknown[]) =>
       mocks.UpdatePluginSetting(...args)

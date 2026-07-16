@@ -407,3 +407,70 @@ func TestPluginAIComplete_Stream_EmitsToolDeltas(t *testing.T) {
 
 // Ensure json import stays used if future tests drop encoder usage.
 var _ = json.Marshal
+
+// TestUpdateAIFeatures_DisablingCancelsInFlightStreams: turning master AI off
+// must abort any in-flight provider stream immediately instead of letting it
+// run to its per-call timeout (consuming tokens/cost) — the frontend teardown
+// path (PluginAICancelStream) rejects once the AI grant is revoked, so the
+// cancel cannot depend on it (#632).
+func TestUpdateAIFeatures_DisablingCancelsInFlightStreams(t *testing.T) {
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.cfg.AI.Features.Enabled = true
+	app.configMu.Unlock()
+
+	srv, firstDelta := sseHoldServer(t)
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "test")
+
+	tok, err := app.RegisterPluginSession("silt-tasks")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+	res, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+		Messages: []PluginAIChatMessage{{Role: "user", Content: "ping"}},
+		Stream:   true,
+	})
+	if err != nil {
+		t.Fatalf("PluginAIComplete stream start: %v", err)
+	}
+	if err := app.PluginAIStreamReady("silt-tasks", tok, res.StreamID); err != nil {
+		t.Fatalf("PluginAIStreamReady: %v", err)
+	}
+	select {
+	case <-firstDelta:
+	case <-time.After(5 * time.Second):
+		t.Fatal("stream did not emit first delta after ready")
+	}
+
+	app.aiStreamsMu.Lock()
+	live := len(app.aiStreams)
+	app.aiStreamsMu.Unlock()
+	if live != 1 {
+		t.Fatalf("expected 1 live stream before disable, got %d", live)
+	}
+
+	if err := app.UpdateAIFeatures(AIFeaturesPatch{Enabled: boolPtrAI(false)}); err != nil {
+		t.Fatalf("UpdateAIFeatures: %v", err)
+	}
+
+	// The stream's drain must be released (goroutine cancelled + Done'd).
+	waitDone := make(chan struct{})
+	go func() {
+		app.vaultClosingWG.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("vaultClosingWG.Wait() did not return after AI off — stream was not cancelled")
+	}
+	// Cleanup defer must have removed the cancelled stream.
+	app.aiStreamsMu.Lock()
+	gone := app.aiStreams[res.StreamID] == nil
+	app.aiStreamsMu.Unlock()
+	if !gone {
+		t.Error("expected the disabled stream to be removed from aiStreams")
+	}
+}
