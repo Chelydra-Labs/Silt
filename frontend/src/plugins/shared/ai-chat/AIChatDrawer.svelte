@@ -221,7 +221,7 @@
   .ai-chat-scrim {
     position: fixed;
     inset: 0;
-    z-index: 49;
+    z-index: 60;
     border: 0;
     padding: 0;
     background: color-mix(in srgb, var(--color-surface-app) 55%, transparent);
@@ -252,6 +252,6 @@
     inset: 0 0 0 auto;
     max-width: min(380px, 92vw);
     box-shadow: -8px 0 32px var(--color-surface-app);
-    z-index: 50;
+    z-index: 61;
   }
 </style>

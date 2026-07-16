@@ -160,7 +160,18 @@
       // flood assistive tech). The completion line below closes the loop.
       completionAnnouncement = 'Silt is responding.'
     } else if (wasBusy) {
-      completionAnnouncement = 'AI response complete.'
+      // Outcome-specific: the transition out of busy is caused by stop/error/
+      // completion, and the most recent status entry records which. Announcing
+      // "complete" on a stop or error would mislead assistive-tech users.
+      const lastStatus = [...transcript]
+        .reverse()
+        .find((e) => e.kind === 'status')
+      completionAnnouncement =
+        lastStatus?.status === 'error'
+          ? 'AI response ended with an error.'
+          : lastStatus?.status === 'stopped'
+            ? 'AI response stopped.'
+            : 'AI response complete.'
     }
     wasBusy = busy
   })
@@ -359,7 +370,6 @@
             class="confirmation-card"
             bind:this={confirmationEl}
             role="alertdialog"
-            aria-modal="true"
             aria-labelledby={`confirmation-title-${entry.id}`}
             aria-describedby={`confirmation-summary-${entry.id}`}
             tabindex="-1"

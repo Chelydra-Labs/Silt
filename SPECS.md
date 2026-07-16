@@ -728,8 +728,8 @@ export interface PluginAIToolChoice {
 export interface PluginAIToolCall {
   id: string;            // correlates the tool-result message with this call
   name: string;
-  arguments: string;     // JSON-encoded object
-}
+  arguments: Record<string, unknown>; // raw JSON object (unwrapped from
+}                        // OpenAI's stringified form by the host)
 
 // PluginAICompleteRequest gains optional tools + tool_choice
 interface PluginAICompleteRequest {
