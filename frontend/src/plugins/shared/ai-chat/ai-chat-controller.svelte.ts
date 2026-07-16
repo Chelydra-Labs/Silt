@@ -389,6 +389,19 @@ export function createAIChatController(initialContext?: PluginContext) {
     )?.resolveStaging?.(token, confirmed)
   }
 
+  // Surface an apply/discard failure as a transcript error entry and leave
+  // the proposal in its prior state (pending where possible) so the user can
+  // retry, instead of letting the rejected promise strand the card in limbo.
+  function reportProposalError(verb: string, error: unknown): void {
+    append(
+      statusEntry({
+        role: 'system',
+        status: 'error',
+        message: `Could not ${verb} proposal: ${error instanceof Error ? error.message : String(error)}`
+      })
+    )
+  }
+
   async function acceptProposal(id: string) {
     const proposal = transcript.find(
       (entry): entry is ProposalEntry =>
@@ -396,9 +409,13 @@ export function createAIChatController(initialContext?: PluginContext) {
     )
     if (!proposal || proposal.state === 'accepted') return
     const owner = entryOwners.get(id)
-    await (owner ? capabilities.get(owner) : undefined)?.acceptProposal?.(
-      proposal
-    )
+    const capability = owner ? capabilities.get(owner) : undefined
+    try {
+      await capability?.acceptProposal?.(proposal)
+    } catch (error) {
+      reportProposalError('apply', error)
+      return
+    }
     update(id, (entry) =>
       entry.kind === 'proposal' ? { ...entry, state: 'accepted' } : entry
     )
@@ -411,9 +428,13 @@ export function createAIChatController(initialContext?: PluginContext) {
     )
     if (!proposal || proposal.state === 'discarded') return
     const owner = entryOwners.get(id)
-    await (owner ? capabilities.get(owner) : undefined)?.discardProposal?.(
-      proposal
-    )
+    const capability = owner ? capabilities.get(owner) : undefined
+    try {
+      await capability?.discardProposal?.(proposal)
+    } catch (error) {
+      reportProposalError('discard', error)
+      return
+    }
     update(id, (entry) =>
       entry.kind === 'proposal' ? { ...entry, state: 'discarded' } : entry
     )
