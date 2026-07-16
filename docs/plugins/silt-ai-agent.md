@@ -36,24 +36,37 @@ model** below).
 
 ### Tool catalog
 
-Eleven tools, registered in three tiers. Read-only tools run inline;
-`rename_tag` is staged (destructive); `create_note` / `update_block` /
-`extract_and_save` write but are reversible (markdown is the source of
-truth and the change round-trips through one undo step).
+Thirteen tools, registered in three tiers. Most are read-only and run inline.
+Three tiers of write safety apply:
 
-| Tier | Tool | What it does |
-|---|---|---|
-| **P0** | `search_notes` | Hybrid keyword + semantic search; returns ranked blocks with id, location, snippet, score |
-| | `read_blocks` | Read up to 20 blocks by UUID, with optional parent/sibling context |
-| | `get_backlinks` | List blocks that reference a target (UUID or page path), incl. transclusion embeds |
-| | `query_tasks` | Filter tasks by status / owner / priority / due date / tags / blocked state |
-| | `create_note` | Append a NOTE block to a page (creating the page if needed); returns the new block id |
-| **P1** | `get_related_notes` | Semantic "more like this" — embed the source, rank candidates by cosine similarity |
-| | `update_block` | Rewrite a block's prose by UUID, preserving identity and (for TASK) metadata tokens |
-| | `tag_management` | Three operations: `list_tags` (usage counts), `find_untagged` (triage), `rename_tag` (**staged** — bulk hashtag rewrite) |
-| **P2** | `get_vault_statistics` | Read-only vault health summary: block/task counts, orphans, stale tasks, top tags, recent edits |
-| | `suggest_link_targets` | Rank blocks the source might link to, excluding already-linked targets |
-| | `extract_and_save` | Read source blocks, run a structured extraction (summary / flashcards / QA pairs / action items), save as a cited new note |
+- **Read-only** — query the vault and return text; no mutation.
+- **Direct write** — append or rewrite markdown. These are *not* staged: each is
+  a single, reversible edit (markdown is the source of truth and each change is
+  one undo step). `extract_and_save` only ever writes to a brand-new page, so
+  source blocks are never touched.
+- **Staged (destructive)** — `rename_tag` rewrites the hashtag token across
+  every matching block in one shot, so it routes through the confirmation gate
+  in **Safety model** below before any block is touched.
+
+| Tier | Tool | Safety | Parameters |
+|---|---|---|---|
+| **P0** | `search_notes` | read-only | `query` (req), `top_k?` (1–50, default 10), `filters?` `{notebook?, section?, type?}` |
+| | `read_blocks` | read-only | `block_ids` (req, max 20), `include_context?` (default true — parent + siblings) |
+| | `get_backlinks` | read-only | `target` (req, UUID or page path), `include_embeds?` (default true), `max_results?` (1–100, default 20) |
+| | `query_tasks` | read-only | `status?`, `owner?`, `priority_min?` (1–3), `due_before?`, `due_after?`, `tags?`, `notebook?`, `is_blocked?`, `limit?` (1–50, default 20) |
+| | `create_note` | direct write | `page` (req), `content` (req), `notebook?` (default = active), `section?`, `tags?` |
+| **P1** | `get_related_notes` | read-only | `block_id` (req), `top_k?` (1–50, default 10), `min_score?` (0–1, default 0.5) |
+| | `update_block` | direct write | `block_id` (req), `content` (req), `tags?` (TASK → `setTaskTags`; else folded as `#hashtags`) |
+| | `list_tags` | read-only | _(none)_ — tag paths with usage counts, top 200 |
+| | `find_untagged` | read-only | `scope?` (notebook), `limit?` (1–100, default 20) — TASK blocks with no tags |
+| | `rename_tag` | **staged** | `old_tag` (req), `new_tag` (req) — bulk `#hashtag` rewrite |
+| **P2** | `get_vault_statistics` | read-only | `scope?` (notebook) — block/task counts, orphans, stale tasks, top tags, recent edits |
+| | `suggest_link_targets` | read-only | `block_id` (req), `max_suggestions?` (1–20, default 5) — excludes already-linked targets |
+| | `extract_and_save` | direct write | `source_block_ids` (req, max 20), `mode` (req: `summary`\|`flashcards`\|`qa_pairs`\|`action_items`), `target` (req: `{notebook, page, section?}`) |
+
+Required parameters are marked `(req)`; others are optional. Every tool result
+fed to the model is capped at 10 KB (larger bodies carry a visible `[… truncated]`
+marker). SQL is parameterized throughout — the agent has no raw-SQL tool.
 
 ## Setup
 

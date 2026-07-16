@@ -535,6 +535,14 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `content` (the OpenAI-compatible leak; native providers already separate
   reasoning) so every plugin consumer receives reasoning-free text — see
   `frontend/src/plugins/stripReasoning.ts`.
+  This tool-calling surface re-opens the autonomous-agent-loop exclusion the
+  earlier `silt-ai-assistant` spike doc recorded as out of scope: the agent
+  (`silt-ai-agent`) is **user-invoked only** (nothing runs until a message is
+  sent), tool calls are **transparent** (every call + result renders in the
+  shared drawer), and **destructive operations are staged** behind a
+  single-use confirmation token (`rename_tag` today; future delete/merge/bulk
+  tools follow the same gate) — preserving the "no unsolicited writes"
+  invariant while letting the agent act. See `docs/plugins/silt-ai-agent.md`.
 
 **Unified AI surface.** AI chat has one right-side drawer, opened by the
 titlebar's **Silt AI** control when AI is available. The ordinary Search
