@@ -258,10 +258,15 @@ async function materializeToolMessage(
 
   if (!confirmed) {
     try {
+      // rejectOperation returns false when the token is already consumed/
+      // expired (treat as rejected either way); a genuine DB error throws and
+      // is surfaced so the model/user knows the token state is uncertain
+      // rather than masking a failure as a successful reject.
       await raceAbort(rejectOperation(ctx, token), signal)
     } catch (error: unknown) {
       if (signal?.aborted || isAbortError(error)) throw error
-      /* Token may already be consumed; treat as rejected either way. */
+      const message = error instanceof Error ? error.message : String(error)
+      return `Error: could not reject operation "${preview.summary}" (${message}). The token may still be redeemable.`
     }
     return `Operation "${preview.summary}" was rejected by the user. Propose a different approach or stop.`
   }
@@ -424,17 +429,26 @@ export async function runAgent(
       ) => Promise<ToolResult>
       const results = await Promise.allSettled(
         calls.map(async (call) => {
-          opts.onToolCall?.({
-            id: call.id,
-            name: call.name,
-            args: call.arguments
-          })
+          // Pre-dispatch gate: if the run was already cancelled (Stop pressed
+          // during the model call), do NOT start the tool — direct-write tools
+          // would otherwise mutate the vault after the user stopped. (An
+          // already-in-flight IPC call can't be cancelled mid-flight; this
+          // gate prevents starting new mutations after cancel.)
           let res: ToolResult
           try {
-            res = await raceAbort(
-              dispatchWithSignal(ctx, call.name, call.arguments, opts.signal),
-              opts.signal
-            )
+            if (opts.signal?.aborted) {
+              res = { content: '', error: 'Cancelled before tool completed.' }
+            } else {
+              opts.onToolCall?.({
+                id: call.id,
+                name: call.name,
+                args: call.arguments
+              })
+              res = await raceAbort(
+                dispatchWithSignal(ctx, call.name, call.arguments, opts.signal),
+                opts.signal
+              )
+            }
           } catch (error: unknown) {
             const message =
               isAbortError(error) || cancelled()
@@ -444,8 +458,20 @@ export async function runAgent(
                   : String(error)
             res = { content: '', error: message }
           }
+          // The dispatch callback must never reject: a thrown UX/visible
+          // callback would otherwise drop this call's tool message and leave
+          // the assistant tool_call without a result (a provider protocol
+          // error on the next turn). Convert any such throw into the result.
           const visible = visibleToolResult(res)
-          opts.onToolResult?.({ id: call.id, name: call.name, result: visible })
+          try {
+            opts.onToolResult?.({
+              id: call.id,
+              name: call.name,
+              result: visible
+            })
+          } catch {
+            /* a UX callback error must not abort the tool-result protocol */
+          }
           return { call, res: visible }
         })
       )

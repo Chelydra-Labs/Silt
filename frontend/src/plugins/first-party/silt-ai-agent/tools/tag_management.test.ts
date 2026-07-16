@@ -392,6 +392,46 @@ describe('rename_tag (commit — after confirm)', () => {
     expect(res.content).toContain('1 block') // b1 succeeded
     expect(res.error).toMatch(/mutateBlock failed/)
   })
+
+  it('rejects replacement-string metacharacters / invalid grammar at stage', async () => {
+    const { ctx } = makeRenameCtx({})
+    const dollar = await handleRenameTag(ctx, {
+      old_tag: 'work',
+      new_tag: 'ev$&il'
+    })
+    expect(dollar.error).toMatch(/letters, numbers/)
+    const spaces = await handleRenameTag(ctx, {
+      old_tag: 'work',
+      new_tag: 'two words'
+    })
+    expect(spaces.error).toMatch(/letters, numbers/)
+  })
+
+  it('does not interpret $ patterns in the replacement (function replacer)', async () => {
+    // A clean newTag that happens to contain '$' would be rejected by the
+    // grammar guard; this asserts the commit path itself is safe by using a
+    // valid tag and confirming no match-text leaks into the rewritten body.
+    const { ctx, mutateBlock } = makeRenameCtx({
+      queryByTagRows: [{ id: 'b1', clean_content: 'do #work now' }]
+    })
+    const res = await commitRenameTag(ctx, {
+      old_tag: 'work',
+      new_tag: 'done'
+    })
+    expect(res.error).toBeUndefined()
+    const written = mutateBlock.mock.calls[0]?.[1] as string
+    expect(written).toBe('do #done now')
+    expect(written).not.toContain('work')
+  })
+
+  it('rejects malformed staged params with invalid grammar', async () => {
+    const { ctx } = makeRenameCtx({})
+    const res = await commitRenameTag(ctx, {
+      old_tag: 'work',
+      new_tag: 'bad$tag'
+    })
+    expect(res.error).toMatch(/malformed/)
+  })
 })
 
 describe('tool def shapes', () => {

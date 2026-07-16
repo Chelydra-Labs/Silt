@@ -179,6 +179,12 @@ export async function handleRenameTag(
   if (oldTag === newTag) {
     return { content: '', error: 'old_tag and new_tag must differ' }
   }
+  if (!isValidTagPath(oldTag) || !isValidTagPath(newTag)) {
+    return {
+      content: '',
+      error: 'tags may only contain letters, numbers, "/", "_" and "-"'
+    }
+  }
 
   // Commit re-issues the same exact-tag query to get the live set at apply
   // time (a block may have been tagged/untagged between stage + confirm).
@@ -219,7 +225,12 @@ export async function commitRenameTag(
 ): Promise<ToolResult> {
   const oldTag = stripLeadingHash(String(params.old_tag ?? '').trim())
   const newTag = stripLeadingHash(String(params.new_tag ?? '').trim())
-  if (!oldTag || !newTag) {
+  if (
+    !oldTag ||
+    !newTag ||
+    !isValidTagPath(oldTag) ||
+    !isValidTagPath(newTag)
+  ) {
     return { content: '', error: 'staged rename_tag params were malformed' }
   }
 
@@ -244,7 +255,10 @@ export async function commitRenameTag(
       continue
     }
     renameRe.lastIndex = 0
-    const next = body.replace(renameRe, `#${newTag}`)
+    // Function replacer: a string replacement would interpret $&, $', etc. in
+    // newTag as match references and corrupt the body. The grammar check above
+    // bounds newTag to tag chars, but the function form is the safe contract.
+    const next = body.replace(renameRe, () => `#${newTag}`)
     const ok = await ctx.mutateBlock(id, next)
     if (ok) {
       renamed++
@@ -289,6 +303,14 @@ function buildTagRegex(tag: string): RegExp {
 /** Strip an optional leading '#' from a tag path (users often include it). */
 function stripLeadingHash(s: string): string {
   return s.startsWith('#') ? s.slice(1) : s
+}
+
+/** Canonical tag grammar: letters, numbers, "/", "_", "-". Used to reject
+ *  replacement-string metacharacters ($ &, spaces, newlines) in rename targets. */
+const TAG_PATH_RE = /^[A-Za-z0-9/_-]+$/
+
+function isValidTagPath(tag: string): boolean {
+  return TAG_PATH_RE.test(tag)
 }
 
 // --- Tool defs with handlers wired (consumed by registerP1Tools) ---------

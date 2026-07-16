@@ -47,14 +47,15 @@ export function isValidTokenFormat(token: unknown): token is string {
 export function generateToken(): string {
   const bytes = new Uint8Array(TOKEN_HEX_LEN / 2)
   const cryptoObj = (globalThis as { crypto?: Crypto }).crypto
-  if (cryptoObj?.getRandomValues) {
-    cryptoObj.getRandomValues(bytes)
-  } else {
-    // Defensive only — Silt's webview always exposes globalThis.crypto.
-    for (let i = 0; i < bytes.length; i++) {
-      bytes[i] = Math.floor(Math.random() * 256)
-    }
+  if (!cryptoObj?.getRandomValues) {
+    // Fail closed: a Math.random fallback would silently weaken the 128-bit
+    // token claim. Silt's webview (and jsdom) always expose WebCrypto, so this
+    // throw only fires in a genuinely broken environment.
+    throw new Error(
+      'crypto.getRandomValues is unavailable; cannot generate a staging token'
+    )
   }
+  cryptoObj.getRandomValues(bytes)
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
@@ -117,21 +118,22 @@ export async function confirmOperation(
     throw new StagingError('invalid_format', 'invalid staging token format')
   }
   return withTokenLock(token, async () => {
-    const now = Date.now()
+    const checkedAt = Date.now()
     const row = await readToken(ctx, token)
-    validateClaimable(row, now)
+    validateClaimable(row, checkedAt)
 
-    // The expiry predicate belongs on the UPDATE, not only on the preceding
-    // SELECT. It prevents a token that expires between those statements from
-    // being redeemed.
+    // The UPDATE is the real claim; re-read the clock immediately before it so
+    // a slow claim (GC pause between SELECT and UPDATE) cannot redeem a token
+    // that expired in the gap. The expiry predicate lives on the UPDATE.
+    const claimAt = Date.now()
     const execResult = await ctx.pluginDb.exec(
       `UPDATE staging_tokens SET used = 1
          WHERE token = ? AND used = 0 AND expires_at > ? AND plugin_id = ?`,
-      [token, now, PLUGIN_ID]
+      [token, claimAt, PLUGIN_ID]
     )
     const changes = affectedRows(execResult)
     if (changes === 0) {
-      throwClaimFailure(await readToken(ctx, token), now)
+      throwClaimFailure(await readToken(ctx, token), Date.now())
     }
 
     // Older SDKs return void from exec. Under the per-token lock, a read-back
@@ -139,7 +141,7 @@ export async function confirmOperation(
     // already provided the stronger direct confirmation above.
     const claimed = await readToken(ctx, token)
     if (Number(claimed?.used) !== 1) {
-      throwClaimFailure(claimed, now)
+      throwClaimFailure(claimed, Date.now())
     }
     return decodeOperation(claimed?.operation)
   })
@@ -257,15 +259,17 @@ export async function rejectOperation(
 ): Promise<boolean> {
   if (!isValidTokenFormat(token)) return false
   return withTokenLock(token, async () => {
-    const now = Date.now()
+    const checkedAt = Date.now()
     const row = await readToken(ctx, token)
-    if (!row || Number(row.used) !== 0 || Number(row.expires_at) <= now) {
+    if (!row || Number(row.used) !== 0 || Number(row.expires_at) <= checkedAt) {
       return false
     }
+    // Fresh clock for the claim UPDATE (mirrors confirmOperation).
+    const claimAt = Date.now()
     const execResult = await ctx.pluginDb.exec(
       `UPDATE staging_tokens SET used = 1
          WHERE token = ? AND used = 0 AND expires_at > ? AND plugin_id = ?`,
-      [token, now, PLUGIN_ID]
+      [token, claimAt, PLUGIN_ID]
     )
     const changes = affectedRows(execResult)
     if (changes === 0) return false
