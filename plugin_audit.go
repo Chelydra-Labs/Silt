@@ -454,63 +454,72 @@ type AIAuditEntry struct {
 // ai.log with huge tool argument dumps (#630).
 const maxAIAuditDetailBytes = 2 * 1024
 
-// redactAIAuditFields drops or truncates sensitive keys before audit persistence.
-// Keys whose names contain path/content/body/text/args/arguments/params
-// (case-insensitive substring) are replaced with "[redacted]"; absolute
-// path-like strings and long values are truncated.
+// allowedAIAuditDetailKeys is the closed set of structured agent/tool audit
+// fields that may be persisted to ai.log (synced with the vault). Anything
+// else — note, summary, details, freeform message bodies — is dropped so
+// private vault text cannot ride an arbitrary eventJSON key (#630).
+var allowedAIAuditDetailKeys = map[string]struct{}{
+	"tool":          {},
+	"tool_call_id":  {},
+	"status":        {},
+	"outcome":       {},
+	"staged":        {},
+	"side":          {},
+	"iteration":     {},
+	"error_kind":    {},
+	"plugin":        {},
+	// Server-only backstop marker when detail JSON is oversized.
+	"detail_truncated": {},
+}
+
+// redactAIAuditFields filters to the allowlisted metadata keys and coerces
+// values to short safe scalars (no nested freeform blobs).
 func redactAIAuditFields(fields map[string]any) map[string]any {
 	if fields == nil {
 		return nil
 	}
 	out := make(map[string]any, len(fields))
 	for k, v := range fields {
-		lk := strings.ToLower(k)
-		if isSensitiveAIAuditKey(lk) {
-			out[k] = "[redacted]"
+		lk := strings.ToLower(strings.TrimSpace(k))
+		if _, ok := allowedAIAuditDetailKeys[lk]; !ok {
 			continue
 		}
-		out[k] = redactAIAuditValue(v)
+		if safe, ok := coerceAIAuditScalar(v); ok {
+			out[lk] = safe
+		}
 	}
 	return out
 }
 
-// isSensitiveAIAuditKey reports whether a lowercased field name should be fully
-// redacted. Substring match so message_text / tool_args / call_arguments etc.
-// cannot slip past exact-key checks into a synced ai.log (#630).
-func isSensitiveAIAuditKey(lk string) bool {
-	return strings.Contains(lk, "content") ||
-		strings.Contains(lk, "body") ||
-		strings.Contains(lk, "path") ||
-		strings.Contains(lk, "text") ||
-		strings.Contains(lk, "args") ||
-		strings.Contains(lk, "arguments") ||
-		strings.Contains(lk, "params")
-}
-
-func redactAIAuditValue(v any) any {
+// coerceAIAuditScalar keeps only bool / number / short non-path strings.
+func coerceAIAuditScalar(v any) (any, bool) {
 	switch t := v.(type) {
+	case bool:
+		return t, true
+	case float64:
+		return t, true
+	case float32:
+		return float64(t), true
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case json.Number:
+		if f, err := t.Float64(); err == nil {
+			return f, true
+		}
+		return nil, false
 	case string:
 		s := t
 		if looksLikeAbsolutePath(s) {
-			return "[path]"
+			return "[path]", true
 		}
-		if len(s) > 200 {
-			return s[:200] + "…"
+		if len(s) > 64 {
+			s = s[:64] + "…"
 		}
-		return s
-	case map[string]any:
-		return redactAIAuditFields(t)
-	case []any:
-		if len(t) > 20 {
-			t = t[:20]
-		}
-		out := make([]any, len(t))
-		for i, item := range t {
-			out[i] = redactAIAuditValue(item)
-		}
-		return out
+		return s, true
 	default:
-		return v
+		return nil, false
 	}
 }
 

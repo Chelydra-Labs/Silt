@@ -270,6 +270,31 @@ describe('AIProviderTab', () => {
       ).toBeInTheDocument()
     })
 
+    it('Arrow/Home/End move the active segment (roving tabindex)', async () => {
+      render(AIProviderTab)
+      await ready()
+      const tablist = screen.getByRole('tablist', {
+        name: /AI settings views/i
+      })
+      const setup = screen.getByRole('tab', { name: /^Setup$/i })
+      const advanced = screen.getByRole('tab', { name: /^Advanced$/i })
+      expect(setup.getAttribute('aria-selected')).toBe('true')
+      expect(setup.getAttribute('tabindex')).toBe('0')
+      setup.focus()
+      await fireEvent.keyDown(tablist, { key: 'ArrowRight' })
+      expect(advanced.getAttribute('aria-selected')).toBe('true')
+      expect(advanced.getAttribute('tabindex')).toBe('0')
+      expect(setup.getAttribute('tabindex')).toBe('-1')
+      expect(screen.getByText(/Advanced Options/i)).toBeInTheDocument()
+      await fireEvent.keyDown(tablist, { key: 'Home' })
+      expect(setup.getAttribute('aria-selected')).toBe('true')
+      expect(
+        screen.getByRole('checkbox', { name: /Enable AI/i })
+      ).toBeInTheDocument()
+      await fireEvent.keyDown(tablist, { key: 'End' })
+      expect(advanced.getAttribute('aria-selected')).toBe('true')
+    })
+
     it('calls UpdateAIFeatures when Enable AI is toggled', async () => {
       render(AIProviderTab)
       await ready()

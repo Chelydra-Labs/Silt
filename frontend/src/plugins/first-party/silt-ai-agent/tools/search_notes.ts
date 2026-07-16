@@ -102,8 +102,7 @@ export async function handleSearchNotes(
         kind: 'search_degraded',
         tool: 'search_notes',
         side: info.side,
-        status: 'degraded',
-        detail: info.message
+        status: 'degraded'
       })
     }
   }

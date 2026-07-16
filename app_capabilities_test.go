@@ -365,10 +365,16 @@ func TestGrants_Migration(t *testing.T) {
 // plugins.disabled; requireGrant correctly rejects disabled plugins
 // (#359). Clear Disabled for this test so we exercise grant seeding, not
 // the disabled gate (covered by TestRequireGrant_DisabledFirstPartyRejected).
+// First-party AI modules are also product-gated by ai.features (#632); enable
+// all flags so this test isolates grant seeding from the feature gate
+// (covered by TestRequireGrant_AIFeatureFlagsGateFirstPartyAI).
 func TestGrants_FirstPartyAlwaysSeeded(t *testing.T) {
 	app := newTestApp(t)
 	app.configMu.Lock()
 	app.cfg.Plugins.Disabled = nil
+	app.cfg.AI.Features.Enabled = true
+	app.cfg.AI.Features.RAGEnabled = true
+	app.cfg.AI.Features.SummariesEnabled = true
 	app.configMu.Unlock()
 	for id := range plugins.FirstPartyPluginIDs {
 		for cap := range plugins.KnownCapabilities {
@@ -419,6 +425,43 @@ func mustReadFile(t *testing.T, path string) []byte {
 // =========================================================================
 // #359: disabled-plugin state enforced at the binding layer
 // =========================================================================
+
+// requireGrant rejects first-party AI plugins when ai.features would not load
+// them (#632) — even with a live session token and full first-party grants.
+func TestRequireGrant_AIFeatureFlagsGateFirstPartyAI(t *testing.T) {
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.cfg.AI.Features.Enabled = false
+	app.cfg.AI.Features.RAGEnabled = false
+	app.cfg.AI.Features.SummariesEnabled = false
+	app.configMu.Unlock()
+
+	// Master off → agent cannot exercise CapAI (or any cap via requireGrant).
+	if err := app.requireGrant("silt-ai-agent", plugins.CapAI); err == nil {
+		t.Fatal("silt-ai-agent must be rejected when Features.Enabled=false")
+	}
+	// Enable master only → agent+assistant ok; qa/summary still off.
+	app.configMu.Lock()
+	app.cfg.AI.Features.Enabled = true
+	app.configMu.Unlock()
+	if err := app.requireGrant("silt-ai-agent", plugins.CapAI); err != nil {
+		t.Fatalf("silt-ai-agent with master on: %v", err)
+	}
+	if err := app.requireGrant("silt-ai-qa", plugins.CapAI); err == nil {
+		t.Fatal("silt-ai-qa must be rejected when RAGEnabled=false")
+	}
+	app.configMu.Lock()
+	app.cfg.AI.Features.RAGEnabled = true
+	app.configMu.Unlock()
+	if err := app.requireGrant("silt-ai-qa", plugins.CapAI); err != nil {
+		t.Fatalf("silt-ai-qa with RAG on: %v", err)
+	}
+	// Non-AI first-party still granted regardless of AI features.
+	if err := app.requireGrant("silt-tasks", plugins.CapWriteFiles); err != nil {
+		t.Fatalf("silt-tasks should not be gated by AI features: %v", err)
+	}
+}
 
 // requireGrant rejects a first-party plugin that is in the config.yaml
 // plugins.disabled list — even though seedFirstPartyGrants gave it every

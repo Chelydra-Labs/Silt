@@ -559,11 +559,12 @@ func sendWithRetry(ctx context.Context, pr providerRequest, timeoutMs *int) ([]b
 		}
 		// Transient: wait before the next attempt, unless this was the last try.
 		if attempt < len(retryBackoff) {
-			base := retryBackoff[attempt]
-			if retryAfter > base {
-				base = retryAfter
+			// Jitter the local ladder only; Retry-After is a floor that must
+			// not be shortened by negative jitter (#628).
+			wait := jitterDuration(retryBackoff[attempt])
+			if retryAfter > wait {
+				wait = retryAfter
 			}
-			wait := jitterDuration(base)
 			if wait <= 0 {
 				// Zero backoff (tests): still honor cancel between attempts.
 				if err := ctx.Err(); err != nil {

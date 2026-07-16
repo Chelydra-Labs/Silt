@@ -99,6 +99,17 @@ export function registerP2Tools(): void {
   registerFiltered(P2_TOOLS)
 }
 
+/**
+ * Re-apply RAG gating against the current ai.features flags. Safe to call
+ * when the agent plugin is carried over across loadPlugins without re-init
+ * (e.g. master AI stays on while Semantic search flips).
+ */
+export function reconcileAgentTools(): void {
+  registerP0Tools()
+  registerP1Tools()
+  registerP2Tools()
+}
+
 // Re-export so callers (e.g. tests, index wiring) don't need the per-tool
 // module paths. The alias-tagged export keeps listTagsTool/findUntaggedTool
 // visible here too, even though they are referenced via the array above.

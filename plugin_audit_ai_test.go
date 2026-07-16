@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -418,72 +417,63 @@ func TestTeardownVaultServices_ClearsInMemoryAudit(t *testing.T) {
 	}
 }
 
-func TestRedactAIAuditFields_DropsSensitive(t *testing.T) {
+func TestRedactAIAuditFields_AllowlistOnly(t *testing.T) {
 	in := map[string]any{
 		"tool":         "search_notes",
-		"content":      "secret body",
-		"path":         `C:\Users\chris\Vault\note.md`,
 		"status":       "ok",
-		"note":         "short",
-		"message_text": "should not leak",
-		"tool_args":    map[string]any{"q": "secret"},
-		"call_arguments": "raw",
-		"params":       map[string]any{"x": 1},
+		"staged":       true,
+		"note":         "private note text",
+		"summary":      "should not leak",
+		"details":      "more private",
+		"content":      "secret body",
+		"tool_call_id": "call_1",
+		"outcome":      "confirmed",
+		"side":         "vector",
 	}
 	out := redactAIAuditFields(in)
-	if out["content"] != "[redacted]" {
-		t.Errorf("content = %v, want [redacted]", out["content"])
-	}
-	if out["path"] != "[redacted]" {
-		t.Errorf("path = %v, want [redacted]", out["path"])
-	}
-	if out["message_text"] != "[redacted]" {
-		t.Errorf("message_text = %v, want [redacted]", out["message_text"])
-	}
-	if out["tool_args"] != "[redacted]" {
-		t.Errorf("tool_args = %v, want [redacted]", out["tool_args"])
-	}
-	if out["call_arguments"] != "[redacted]" {
-		t.Errorf("call_arguments = %v, want [redacted]", out["call_arguments"])
-	}
-	if out["params"] != "[redacted]" {
-		t.Errorf("params = %v, want [redacted]", out["params"])
-	}
 	if out["tool"] != "search_notes" {
 		t.Errorf("tool = %v", out["tool"])
 	}
 	if out["status"] != "ok" {
 		t.Errorf("status = %v", out["status"])
 	}
+	if out["staged"] != true {
+		t.Errorf("staged = %v", out["staged"])
+	}
+	if out["tool_call_id"] != "call_1" {
+		t.Errorf("tool_call_id = %v", out["tool_call_id"])
+	}
+	if out["outcome"] != "confirmed" {
+		t.Errorf("outcome = %v", out["outcome"])
+	}
+	if out["side"] != "vector" {
+		t.Errorf("side = %v", out["side"])
+	}
+	for _, banned := range []string{"note", "summary", "details", "content"} {
+		if _, ok := out[banned]; ok {
+			t.Errorf("%s must be dropped, got %v", banned, out[banned])
+		}
+	}
 }
 
-func TestAuditAIEvent_DetailOverCapIsValidJSON(t *testing.T) {
-	// Force a post-marshal payload larger than the detail cap while still
-	// using non-sensitive keys so field truncation does not shrink it first.
+func TestPluginAIAuditEvent_RejectsOversizedJSON(t *testing.T) {
 	app := newTestApp(t)
 	resetAIAuditState(t)
-	fields := map[string]any{}
-	// Many short status-like keys → large object without hitting 200-char string trim.
-	for i := 0; i < 400; i++ {
-		fields[fmt.Sprintf("k%03d", i)] = "x"
-	}
-	app.auditAIEvent("silt-ai-agent", "tool_call", fields)
-	entries, err := app.GetAIAudit()
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.cfg.AI.Features.Enabled = true
+	app.configMu.Unlock()
+	tok, err := app.RegisterPluginSession("silt-ai-agent")
 	if err != nil {
-		t.Fatalf("GetAIAudit: %v", err)
+		t.Fatalf("session: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("entries = %d, want 1", len(entries))
+	huge := `{"kind":"tool_call","status":"ok","pad":"` + strings.Repeat("x", maxPluginAIAuditEventJSONBytes) + `"}`
+	err = app.PluginAIAuditEvent("silt-ai-agent", tok, huge)
+	if err == nil {
+		t.Fatal("expected error for oversized event JSON")
 	}
-	if len(entries[0].Detail) == 0 {
-		t.Fatal("detail empty")
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal(entries[0].Detail, &parsed); err != nil {
-		t.Fatalf("detail is not valid JSON: %v\nraw=%s", err, entries[0].Detail)
-	}
-	if parsed["detail_truncated"] != true {
-		t.Errorf("parsed = %#v, want detail_truncated=true", parsed)
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error = %v, want exceeds cap", err)
 	}
 }
 
@@ -492,12 +482,14 @@ func TestPluginAIAuditEvent_AppendsRedacted(t *testing.T) {
 	resetAIAuditState(t)
 	app.configMu.Lock()
 	app.cfg.Plugins.Disabled = nil
+	app.cfg.AI.Features.Enabled = true
 	app.configMu.Unlock()
-	tok, err := app.RegisterPluginSession("silt-tasks")
+	// First-party AI plugin exercises CapAI + feature gate + allowlist path.
+	tok, err := app.RegisterPluginSession("silt-ai-agent")
 	if err != nil {
 		t.Fatalf("session: %v", err)
 	}
-	err = app.PluginAIAuditEvent("silt-tasks", tok, `{"kind":"tool_call","tool":"search_notes","content":"nope","status":"ok"}`)
+	err = app.PluginAIAuditEvent("silt-ai-agent", tok, `{"kind":"tool_call","tool":"search_notes","note":"private note text","content":"nope","status":"ok"}`)
 	if err != nil {
 		t.Fatalf("PluginAIAuditEvent: %v", err)
 	}
@@ -517,7 +509,32 @@ func TestPluginAIAuditEvent_AppendsRedacted(t *testing.T) {
 	if strings.Contains(string(entries[0].Detail), "nope") {
 		t.Errorf("detail leaked content: %s", entries[0].Detail)
 	}
+	if strings.Contains(string(entries[0].Detail), "private note") {
+		t.Errorf("detail leaked note: %s", entries[0].Detail)
+	}
 	if !strings.Contains(string(entries[0].Detail), "search_notes") {
 		t.Errorf("detail missing tool: %s", entries[0].Detail)
+	}
+}
+
+// Stale session after AI master off: PluginAIAuditEvent must deny CapAI even
+// when the session token is still registered (#632).
+func TestPluginAIAuditEvent_RejectsWhenAIFeaturesOff(t *testing.T) {
+	app := newTestApp(t)
+	resetAIAuditState(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.cfg.AI.Features.Enabled = true
+	app.configMu.Unlock()
+	tok, err := app.RegisterPluginSession("silt-ai-agent")
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	app.configMu.Lock()
+	app.cfg.AI.Features.Enabled = false
+	app.configMu.Unlock()
+	err = app.PluginAIAuditEvent("silt-ai-agent", tok, `{"kind":"tool_call","status":"ok"}`)
+	if err == nil {
+		t.Fatal("expected CapAI denial when Features.Enabled=false")
 	}
 }

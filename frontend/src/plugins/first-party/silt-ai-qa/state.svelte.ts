@@ -362,8 +362,7 @@ export function createQAController() {
         void ctx.ai.auditEvent?.({
           kind: 'search_degraded',
           side: info.side,
-          status: 'degraded',
-          detail: info.message
+          status: 'degraded'
         })
       })
       if (passages.length === 0) {

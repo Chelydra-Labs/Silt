@@ -22,8 +22,10 @@ import { resetTasksSettings } from './first-party/silt-tasks/settings'
 import DiskPluginNotice from './DiskPluginNotice.svelte'
 import {
   isFirstPartyAIPlugin,
-  shouldLoadAIPlugin
+  shouldLoadAIPlugin,
+  AI_PLUGIN_AGENT
 } from './shared/ai-chat/availability'
+import { reconcileAgentTools } from './first-party/silt-ai-agent/tools'
 
 // Whether the lifecycle wiring (vault:closing subscription) has been installed.
 // Lives at module scope so repeated loadPlugins calls do not double-subscribe.
@@ -180,6 +182,11 @@ export async function loadPlugins(
     const existing = loadedPlugins.plugins.get(id)
     if (existing) {
       plugins.set(id, existing)
+      // Agent tools are filtered by RAG at register time; re-apply when the
+      // agent is reused across a RAG-only feature flip (#632).
+      if (id === AI_PLUGIN_AGENT) {
+        reconcileAgentTools()
+      }
       continue
     }
     // Register a session token for first-party plugins too (#151).

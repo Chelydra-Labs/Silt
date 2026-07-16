@@ -363,7 +363,9 @@ func (a *App) GetAIProviderConfig() (AIPublicConfig, error) {
 }
 
 // UpdateAIFeatures applies a product-level AI enablement patch (#632) and
-// persists atomically. Dependents are clamped when master is off.
+// persists atomically. Dependents are clamped when master is off. Live a.cfg
+// is only updated after a successful save so a failed persist does not leave
+// memory and disk diverged until restart.
 func (a *App) UpdateAIFeatures(patch AIFeaturesPatch) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -373,7 +375,9 @@ func (a *App) UpdateAIFeatures(patch AIFeaturesPatch) error {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 
-	f := a.cfg.AI.Features
+	// Candidate copy: mutate offline, then publish only if write succeeds.
+	next := a.cfg
+	f := next.AI.Features
 	if patch.Enabled != nil {
 		f.Enabled = *patch.Enabled
 	}
@@ -383,9 +387,13 @@ func (a *App) UpdateAIFeatures(patch AIFeaturesPatch) error {
 	if patch.SummariesEnabled != nil {
 		f.SummariesEnabled = *patch.SummariesEnabled
 	}
-	a.cfg.AI.Features = f
-	a.cfg.AI = config.NormalizeAIConfig(a.cfg.AI)
-	return a.saveConfigTracked(a.cfg)
+	next.AI.Features = f
+	next.AI = config.NormalizeAIConfig(next.AI)
+	if err := a.saveConfigTracked(next); err != nil {
+		return err
+	}
+	a.cfg = next
+	return nil
 }
 
 // aiUnusableList returns the provider kinds whose keyring lookup reported
@@ -1102,9 +1110,17 @@ func (a *App) requirePluginSession(pluginID, sessionToken string) error {
 	return nil
 }
 
+// maxPluginAIAuditEventJSONBytes rejects oversized event payloads before
+// json.Unmarshal so CapAI plugins cannot force multi-megabyte allocations
+// (the on-disk Detail cap is only 2 KiB after filtering).
+const maxPluginAIAuditEventJSONBytes = 8 * 1024
+
+// maxPluginAIAuditKindLen bounds the kind string stored on each log row.
+const maxPluginAIAuditKindLen = 64
+
 // PluginAIAuditEvent appends a structured agent/tool/staging audit row to the
 // AI audit log (#630). Gated by CapAI + session. eventJSON is a JSON object;
-// sensitive keys (content/body/text/path) are redacted and long strings truncated.
+// only allowlisted metadata keys are retained (never freeform note bodies).
 func (a *App) PluginAIAuditEvent(pluginID, sessionToken, eventJSON string) error {
 	if err := a.requirePluginSession(pluginID, sessionToken); err != nil {
 		return err
@@ -1116,6 +1132,12 @@ func (a *App) PluginAIAuditEvent(pluginID, sessionToken, eventJSON string) error
 	if eventJSON == "" {
 		return &ai.AIError{Kind: ai.ErrBadRequest, Message: "event JSON is required"}
 	}
+	if len(eventJSON) > maxPluginAIAuditEventJSONBytes {
+		return &ai.AIError{
+			Kind:    ai.ErrBadRequest,
+			Message: fmt.Sprintf("event JSON exceeds %d-byte cap", maxPluginAIAuditEventJSONBytes),
+		}
+	}
 	var fields map[string]any
 	if err := json.Unmarshal([]byte(eventJSON), &fields); err != nil {
 		return &ai.AIError{Kind: ai.ErrBadRequest, Message: fmt.Sprintf("invalid event JSON: %v", err)}
@@ -1124,6 +1146,12 @@ func (a *App) PluginAIAuditEvent(pluginID, sessionToken, eventJSON string) error
 	kind = strings.TrimSpace(kind)
 	if kind == "" {
 		kind = "event"
+	}
+	if len(kind) > maxPluginAIAuditKindLen {
+		return &ai.AIError{
+			Kind:    ai.ErrBadRequest,
+			Message: fmt.Sprintf("event kind exceeds %d characters", maxPluginAIAuditKindLen),
+		}
 	}
 	// Drop the kind key from detail fields; it is stored on the entry.
 	delete(fields, "kind")

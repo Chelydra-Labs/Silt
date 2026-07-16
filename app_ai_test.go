@@ -246,6 +246,56 @@ func TestPluginAIComplete_DeniesBadSession(t *testing.T) {
 	}
 }
 
+// Stale session after Features.Enabled flip: CapAI must deny even with a live token (#632).
+func TestPluginAIComplete_RejectsWhenAIFeaturesOff(t *testing.T) {
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.cfg.AI.Features.Enabled = true
+	app.configMu.Unlock()
+	tok, err := app.RegisterPluginSession("silt-ai-agent")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+	app.configMu.Lock()
+	app.cfg.AI.Features.Enabled = false
+	app.configMu.Unlock()
+	_, err = app.PluginAIComplete("silt-ai-agent", tok, PluginAICompleteInput{
+		Messages: []PluginAIChatMessage{{Role: "user", Content: "x"}},
+	})
+	if err == nil {
+		t.Fatal("PluginAIComplete must deny silt-ai-agent when Features.Enabled=false")
+	}
+	if _, ok := err.(*plugins.CapabilityDeniedError); !ok {
+		t.Errorf("want *CapabilityDeniedError, got %T (%v)", err, err)
+	}
+}
+
+func TestPluginAIEmbed_RejectsWhenAIFeaturesOff(t *testing.T) {
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.cfg.AI.Features.Enabled = true
+	app.cfg.AI.Features.RAGEnabled = true
+	app.configMu.Unlock()
+	tok, err := app.RegisterPluginSession("silt-ai-qa")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+	app.configMu.Lock()
+	app.cfg.AI.Features.RAGEnabled = false
+	app.configMu.Unlock()
+	_, err = app.PluginAIEmbed("silt-ai-qa", tok, PluginAIEmbedInput{
+		Texts: []string{"hello"},
+	})
+	if err == nil {
+		t.Fatal("PluginAIEmbed must deny silt-ai-qa when RAGEnabled=false")
+	}
+	if _, ok := err.(*plugins.CapabilityDeniedError); !ok {
+		t.Errorf("want *CapabilityDeniedError, got %T (%v)", err, err)
+	}
+}
+
 // --- Success paths via httptest -----------------------------------------
 
 // pointAIProviderAt sets the chat (or embedding) provider config to target the

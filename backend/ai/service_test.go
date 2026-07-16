@@ -612,10 +612,10 @@ func TestComplete_RetryAfterHonored(t *testing.T) {
 	if res.Content != "ok" {
 		t.Errorf("content = %q, want ok", res.Content)
 	}
-	// Retry-After=1s with ±25% jitter → wait in [0.75s, 1.25s]. Allow slack.
+	// Retry-After=1s is a floor (not shortened by jitter). Allow small slack.
 	elapsed := time.Since(start)
-	if elapsed < 700*time.Millisecond {
-		t.Errorf("elapsed %v, want >= ~750ms (Retry-After with jitter floor)", elapsed)
+	if elapsed < 950*time.Millisecond {
+		t.Errorf("elapsed %v, want >= ~1s (Retry-After floor)", elapsed)
 	}
 	if hits.Load() != 2 {
 		t.Errorf("hits = %d, want 2", hits.Load())
@@ -624,8 +624,8 @@ func TestComplete_RetryAfterHonored(t *testing.T) {
 		t.Fatal("missing attempt timestamps")
 	}
 	gap := time.Duration(secondAt.Load() - firstAt.Load())
-	if gap < 700*time.Millisecond {
-		t.Errorf("inter-attempt gap %v, want >= ~750ms", gap)
+	if gap < 950*time.Millisecond {
+		t.Errorf("inter-attempt gap %v, want >= ~1s", gap)
 	}
 }
 

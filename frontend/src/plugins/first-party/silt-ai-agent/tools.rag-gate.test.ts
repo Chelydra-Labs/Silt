@@ -161,4 +161,20 @@ describe('RAG tool gating (#632)', () => {
       expect(names.has(name)).toBe(true)
     }
   })
+
+  it('reconcileAgentTools re-applies RAG filter without full re-init', async () => {
+    const { reconcileAgentTools } = await import('./tools')
+    mockAvailability.ragEnabled = true
+    reconcileAgentTools()
+    expect(getTools().some((t) => t.name === 'search_notes')).toBe(true)
+
+    mockAvailability.ragEnabled = false
+    reconcileAgentTools()
+    expect(getTools().some((t) => t.name === 'search_notes')).toBe(false)
+    expect(getTools().some((t) => t.name === 'read_blocks')).toBe(true)
+
+    mockAvailability.ragEnabled = true
+    reconcileAgentTools()
+    expect(getTools().some((t) => t.name === 'search_notes')).toBe(true)
+  })
 })

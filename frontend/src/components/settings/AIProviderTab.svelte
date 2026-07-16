@@ -7,7 +7,7 @@
   // probe, model discovery, and the audit log. The IPC bindings live in the
   // controller so this view never touches IPC directly. See the controller
   // for behavior; this file is layout + a11y only.
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import {
     createAIProviderController,
     LOCAL_DEFAULT,
@@ -118,6 +118,8 @@
   })
 
   let activeSegment = $state<AiSegmentId>('ai-setup')
+  // Roving-tabindex refs for the Setup / Capabilities / Advanced segment bar.
+  let segmentTabRefs: HTMLButtonElement[] = $state([])
 
   function segmentForAnchor(
     anchor: string | null | undefined
@@ -142,12 +144,37 @@
     return null
   }
 
-  function selectSegment(id: AiSegmentId) {
+  async function selectSegment(id: AiSegmentId) {
     if (id === 'ai-capabilities' && !showCapabilities) {
       activeSegment = 'ai-setup'
       return
     }
     activeSegment = id
+    await tick()
+    const idx = segments.findIndex((s) => s.id === id)
+    segmentTabRefs[idx]?.focus()
+  }
+
+  // WAI-ARIA tabs: Arrow/Home/End move selection within the segment tablist
+  // (inactive tabs use tabindex=-1 so Tab leaves the group).
+  function handleSegmentKeydown(e: KeyboardEvent) {
+    const list = segments
+    if (list.length === 0) return
+    const idx = list.findIndex((s) => s.id === activeSegment)
+    const cur = idx >= 0 ? idx : 0
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      void selectSegment(list[(cur + 1) % list.length].id)
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      void selectSegment(list[(cur - 1 + list.length) % list.length].id)
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      void selectSegment(list[0].id)
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      void selectSegment(list[list.length - 1].id)
+    }
   }
 
   // Drop Capabilities selection when the feature is turned off.
@@ -216,12 +243,16 @@
         class="flex flex-wrap gap-1 p-1 rounded-xl bg-surface-panel/40 border border-surface-panel-border/80 max-w-md"
         role="tablist"
         aria-label="AI settings views"
+        aria-orientation="horizontal"
+        tabindex="-1"
+        onkeydown={handleSegmentKeydown}
       >
-        {#each segments as seg (seg.id)}
+        {#each segments as seg, i (seg.id)}
           <button
             type="button"
             role="tab"
             id="ai-seg-tab-{seg.id}"
+            bind:this={segmentTabRefs[i]}
             aria-selected={activeSegment === seg.id}
             aria-controls={seg.id}
             tabindex={activeSegment === seg.id ? 0 : -1}
@@ -229,7 +260,7 @@
             seg.id
               ? 'bg-surface-app text-accent-primary-start shadow-sm'
               : 'bg-transparent text-text-muted hover:text-text-primary'}"
-            onclick={() => selectSegment(seg.id)}
+            onclick={() => void selectSegment(seg.id)}
           >
             {seg.label}
           </button>
