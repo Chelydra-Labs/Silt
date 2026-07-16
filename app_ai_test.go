@@ -718,6 +718,84 @@ func TestPluginAIComplete_ToolMessageThreadsToProvider(t *testing.T) {
 	}
 }
 
+// --- Tool/tool_choice boundary validation (#595 hardening) ---------------
+
+// TestPluginAIComplete_RejectsMalformedTools verifies tools + tool_choice are
+// validated at the plugin boundary (bad-request) before rate-limiting or HTTP.
+func TestPluginAIComplete_RejectsMalformedTools(t *testing.T) {
+	app := newTestApp(t)
+	tok, _ := app.RegisterPluginSession("silt-tasks")
+
+	cases := []struct {
+		name       string
+		tools      []PluginAIToolDef
+		choice     *PluginAIToolChoice
+		wantSubstr string
+	}{
+		{
+			name:       "empty tool name",
+			tools:      []PluginAIToolDef{{Name: "  ", Parameters: json.RawMessage(`{"type":"object"}`)}},
+			wantSubstr: "non-empty name",
+		},
+		{
+			name:       "unknown tool_choice mode",
+			tools:      []PluginAIToolDef{{Name: "search_notes"}},
+			choice:     &PluginAIToolChoice{Mode: "bogus"},
+			wantSubstr: "tool_choice.mode",
+		},
+		{
+			name:       "force references unknown tool",
+			tools:      []PluginAIToolDef{{Name: "search_notes"}},
+			choice:     &PluginAIToolChoice{Mode: "force", ToolName: "ghost"},
+			wantSubstr: "unknown tool",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+				Messages:   []PluginAIChatMessage{{Role: "user", Content: "x"}},
+				Tools:      tc.tools,
+				ToolChoice: tc.choice,
+			})
+			if err == nil {
+				t.Fatalf("expected bad-request rejection, got nil")
+			}
+			aiErr, ok := err.(*ai.AIError)
+			if !ok || aiErr.Kind != ai.ErrBadRequest {
+				t.Fatalf("expected bad-request AIError, got %v", err)
+			}
+			if !containsStr(aiErr.Message, tc.wantSubstr) {
+				t.Fatalf("error %q does not contain %q", aiErr.Message, tc.wantSubstr)
+			}
+		})
+	}
+}
+
+// TestPluginAIComplete_AcceptsForceOnKnownTool verifies a "force" tool_choice
+// naming a declared tool passes the boundary gate and reaches the provider.
+func TestPluginAIComplete_AcceptsForceOnKnownTool(t *testing.T) {
+	app := newTestApp(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "m",
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}}},
+		})
+	}))
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "m")
+	tok, _ := app.RegisterPluginSession("silt-tasks")
+
+	_, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+		Messages:   []PluginAIChatMessage{{Role: "user", Content: "x"}},
+		Tools:      []PluginAIToolDef{{Name: "search_notes"}},
+		ToolChoice: &PluginAIToolChoice{Mode: "force", ToolName: "search_notes"},
+	})
+	if err != nil {
+		t.Fatalf("expected accepted force choice, got %v", err)
+	}
+}
+
 // --- Reasoning-effort gate (Fix D) ---------------------------------------
 
 func TestUpdateAIProviderConfig_RejectsInvalidReasoningEffort(t *testing.T) {

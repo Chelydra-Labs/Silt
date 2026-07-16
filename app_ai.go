@@ -763,6 +763,13 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 			return ai.CompleteResult{}, &ai.AIError{Kind: ai.ErrBadRequest, Message: fmt.Sprintf("invalid reasoning_effort %q: must be one of none, minimal, low, medium, high, xhigh, max", *input.ReasoningEffort)}
 		}
 	}
+	// Validate tools + tool_choice at the boundary so a malformed request
+	// fails fast (bad-request) before snapshotting config or rate-limiting.
+	// Providers normalize inconsistently; this keeps one source of truth.
+	if verr := validateAITools(input.Tools, input.ToolChoice); verr != nil {
+		a.wg.Done()
+		return ai.CompleteResult{}, &ai.AIError{Kind: ai.ErrBadRequest, Message: verr.Error()}
+	}
 	provider, configuredModel, drainDone, err := a.withAIPreflight(pluginID, sessionToken, "chat")
 	if err != nil {
 		a.wg.Done()
@@ -1128,6 +1135,36 @@ func toAIToolChoice(in *PluginAIToolChoice) *ai.ToolChoice {
 		return nil
 	}
 	return &ai.ToolChoice{Mode: in.Mode, ToolName: in.ToolName}
+}
+
+// validateAITools rejects malformed tool definitions and tool_choice at the
+// plugin boundary. Tool names must be non-empty; tool_choice.mode must be a
+// known value; a "force" choice must name a declared tool. Providers each
+// normalize tool_choice in their own shape and only partially coerce bad
+// input, so this keeps a single source of truth before rate-limiting or HTTP.
+func validateAITools(tools []PluginAIToolDef, choice *PluginAIToolChoice) error {
+	for _, t := range tools {
+		if strings.TrimSpace(t.Name) == "" {
+			return fmt.Errorf("tool definitions must each carry a non-empty name")
+		}
+	}
+	if choice == nil {
+		return nil
+	}
+	switch choice.Mode {
+	case ai.ToolChoiceAuto, ai.ToolChoiceRequired, ai.ToolChoiceNone, ai.ToolChoiceForce:
+	default:
+		return fmt.Errorf("tool_choice.mode %q must be one of auto, required, none, force", choice.Mode)
+	}
+	if choice.Mode == ai.ToolChoiceForce && strings.TrimSpace(choice.ToolName) != "" {
+		for _, t := range tools {
+			if t.Name == choice.ToolName {
+				return nil
+			}
+		}
+		return fmt.Errorf("tool_choice forces unknown tool %q", choice.ToolName)
+	}
+	return nil
 }
 
 // migrateAIKeysToKeyring moves any plaintext AI API keys found in config.yaml
