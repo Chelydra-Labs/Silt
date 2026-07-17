@@ -583,9 +583,16 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// #218: move any plaintext AI provider keys into the OS keyring on first
 	// run after upgrade. Best-effort + idempotent — if the keyring is off or
 	// unavailable, plaintext keys are left in config (the documented fallback).
-	// Runs AFTER applyConfigLocked so a.cfg is populated, and performs no
-	// keyring I/O under the locks.
-	// Caller holds vaultMu.Lock — use the locked variant (Lock→RLock deadlocks).
+	// Runs AFTER applyConfigLocked so a.cfg is populated. Keyring writes run
+	// UNDER the caller's vaultMu hold (locked variant) so a concurrent
+	// SwitchVault/MoveVault cutover cannot retarget the write to another
+	// vault (#654). Caller holds vaultMu.Lock — use the locked variant
+	// (Lock→RLock deadlocks).
+	//
+	// Path-scoped keyring user ids need the target vault path before migrate
+	// (teardown cleared a.vaultPath; the final assignment below is after the
+	// watcher starts). Set it here so migrate does not hash an empty path.
+	a.vaultPath = vaultPath
 	a.migrateAIKeysToKeyringLocked()
 
 	// F3: verify linked-notebook fingerprints before the vault scan. Legacy
