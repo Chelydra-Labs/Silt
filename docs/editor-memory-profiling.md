@@ -28,19 +28,13 @@ At the `max_open_tabs` cap (default **8**, hard cap **32**, normalized in
 
 ## Shipped optimization: editor teardown in Source view
 
-A tab held in **Source view** is a read-only markdown projection — there is no
-reason to keep its full TipTap editor alive. As of this sprint the
-Edit/Source switch lives in `VirtualScrollContainer`: Source mode renders only
-`MarkdownSourceViewer` and does **not** mount `TipTapEditor`. Svelte destroys
-the editor (ProseMirror doc + NodeViews + listeners) on the switch and
-rebuilds it from `blocks` on return to Edit (content is on disk via auto-save).
+A tab held in **Source view** uses an editable textarea (`MarkdownSourceViewer`)
+and does **not** mount `TipTapEditor`. Svelte destroys the ProseMirror editor
+(NodeViews + listeners) on the switch and rebuilds it from `blocks` on return
+to Edit after Source saves via `SavePageMarkdown`. Source still holds a focus
+lease and a light buffer, but pays no ProseMirror cost.
 
-This is the highest-leverage, lowest-risk lever because Source mode is
-read-only: no in-flight edits can be lost, and the content round-trips through
-the on-disk file. The trade-off is a **scroll/cursor reset** on an
-Edit→Source→Edit round-trip (the remounted editor starts at the top), which is
-acceptable for a deliberate view switch and is the sanctioned default from the
-sprint plan (snapshot/restore was deferred as higher-complexity).
+Scroll (#319) and caret (#331) restore across Edit↔Source round-trips.
 
 Lifecycle correctness relied on by this change:
 - `TipTapEditor.onDestroy` flushes the pending save, then releases the focus

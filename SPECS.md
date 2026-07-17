@@ -971,7 +971,7 @@ commands `/h1` `/h2` `/h3` `/note` `/task`.
 Per-page Edit (WYSIWYG) ↔ Source (raw markdown) toggle. The toggle is a
 floating icon button in the editor's action bar (announced via `aria-pressed`
 + `aria-keyshortcuts`) plus the `toggle_view_mode` hotkey (default
-`Ctrl+Shift+V`, remappable per-vault). Source view is read-only and renders
+`Ctrl+Shift+V`, remappable per-vault). Source view is editable raw markdown and renders
 the raw on-disk markdown with **Shiki syntax highlighting** driven by the
 active theme's color tokens; it falls back to plain text until the
 highlighter resolves and on any error.
