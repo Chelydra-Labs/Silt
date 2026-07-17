@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -280,6 +281,137 @@ func TestCopyAIAPIKey_HoldsVaultLockAcrossResolveAndWrite(t *testing.T) {
 	}
 	// Keyring path blanks config keys when store succeeds — either empty or
 	// absent is fine; the secret must not appear under a different role leak.
+	if aCfg.AI.Embedding.APIKey != "" && aCfg.AI.Embedding.APIKey != secret {
+		t.Fatalf("unexpected embedding config key on vault A: %q", aCfg.AI.Embedding.APIKey)
+	}
+}
+
+// TestCopyAIAPIKey_SwitchVaultInterleave is the #654 dual-vault regression:
+// while CopyAIAPIKey holds vaultMu.R across a blocked keyring Get, SwitchVault
+// must not complete; after copy finishes, switch proceeds and vault B never
+// receives vault A's secret.
+func TestCopyAIAPIKey_SwitchVaultInterleave(t *testing.T) {
+	app := newTestApp(t)
+	// newTestApp bypasses startup/initializeVaultServices — wire the
+	// vault-scoped AI context so SwitchVault's cancel path is non-nil.
+	app.vaultCtx, app.vaultCtxCancel = context.WithCancel(context.Background())
+	if err := vault.SaveSettings(&vault.AppSettings{
+		VaultPath:   app.vaultPath,
+		ActiveTheme: "silt-graphite",
+		ThemeMode:   "dark",
+	}); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+
+	fake := keyring.NewFake()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+
+	const secret = "vault-a-only-secret"
+	app.keyringStore = fake
+	if err := app.SetAIAPIKey("chat", secret); err != nil {
+		t.Fatalf("SetAIAPIKey: %v", err)
+	}
+	app.vaultMu.RLock()
+	aChatUser := app.aiKeyringUser("chat")
+	aEmbUser := app.aiKeyringUser("embedding")
+	firstVault := app.vaultPath
+	app.vaultMu.RUnlock()
+
+	app.keyringStore = &blockingKeyring{inner: fake, entered: entered, release: release}
+
+	secondVault := t.TempDir()
+	if err := scaffoldVaultForTest(t, secondVault); err != nil {
+		t.Fatalf("scaffold second vault: %v", err)
+	}
+
+	copyDone := make(chan error, 1)
+	go func() { copyDone <- app.CopyAIAPIKey("chat", "embedding") }()
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("CopyAIAPIKey did not reach keyring Get in time")
+	}
+
+	switchDone := make(chan error, 1)
+	go func() { switchDone <- app.SwitchVault(secondVault) }()
+
+	// While copy holds R, exclusive SwitchVault must not complete.
+	select {
+	case err := <-switchDone:
+		t.Fatalf("SwitchVault completed while CopyAIAPIKey held vaultMu.R: err=%v", err)
+	case <-time.After(200 * time.Millisecond):
+		// expected: still blocked on vaultMu.Lock
+	}
+
+	close(release)
+
+	select {
+	case err := <-copyDone:
+		if err != nil {
+			t.Fatalf("CopyAIAPIKey: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("CopyAIAPIKey did not finish after keyring release")
+	}
+
+	// Full reinit after cutover can be slow under the test harness — budget generously.
+	select {
+	case err := <-switchDone:
+		if err != nil {
+			t.Fatalf("SwitchVault: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("SwitchVault did not complete after CopyAIAPIKey released vaultMu.R")
+	}
+	t.Cleanup(func() { _ = app.CloseVault() })
+
+	// Copy completed against vault A: embedding slot on A's keyring has the secret.
+	got, err := fake.Get(keyringService, aEmbUser)
+	if err != nil || got != secret {
+		t.Fatalf("vault A embedding keyring after copy: got %q err=%v, want %q", got, err, secret)
+	}
+	if got, err := fake.Get(keyringService, aChatUser); err != nil || got != secret {
+		t.Fatalf("vault A chat keyring after copy: got %q err=%v, want %q", got, err, secret)
+	}
+
+	// Vault B must never hold A's secret in config or path-scoped keyring ids.
+	bCfg, err := config.Load(secondVault)
+	if err != nil {
+		t.Fatalf("load second vault config: %v", err)
+	}
+	if bCfg.AI.Chat.APIKey == secret || bCfg.AI.Embedding.APIKey == secret {
+		t.Fatalf("second vault config has source secret: chat=%q emb=%q",
+			bCfg.AI.Chat.APIKey, bCfg.AI.Embedding.APIKey)
+	}
+	app.vaultMu.RLock()
+	bChatUser := app.aiKeyringUser("chat")
+	bEmbUser := app.aiKeyringUser("embedding")
+	finalPath := app.vaultPath
+	app.vaultMu.RUnlock()
+	wantB, err := filepath.Abs(secondVault)
+	if err != nil {
+		t.Fatalf("Abs second vault: %v", err)
+	}
+	if finalPath != wantB && finalPath != secondVault {
+		t.Fatalf("vaultPath after SwitchVault = %q, want %q", finalPath, wantB)
+	}
+	if bChatUser == aChatUser || bEmbUser == aEmbUser {
+		t.Fatalf("vault B keyring user ids collided with vault A (path scope broken)")
+	}
+	if got, err := fake.Get(keyringService, bEmbUser); err == nil && got == secret {
+		t.Fatalf("vault B embedding keyring has vault A secret")
+	}
+	if got, err := fake.Get(keyringService, bChatUser); err == nil && got == secret {
+		t.Fatalf("vault B chat keyring has vault A secret")
+	}
+
+	// A's on-disk config was not blanked into a wrong path mid-copy.
+	aCfg, err := config.Load(firstVault)
+	if err != nil {
+		t.Fatalf("load first vault config: %v", err)
+	}
 	if aCfg.AI.Embedding.APIKey != "" && aCfg.AI.Embedding.APIKey != secret {
 		t.Fatalf("unexpected embedding config key on vault A: %q", aCfg.AI.Embedding.APIKey)
 	}

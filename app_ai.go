@@ -642,9 +642,10 @@ func (a *App) SetUseKeyring(on bool) error {
 		return err
 	}
 	// Turning keyring on: opportunistically migrate any plaintext keys now so
-	// the user sees them leave config.yaml without a restart.
+	// the user sees them leave config.yaml without a restart. We already hold
+	// vaultMu.R — use the locked variant (do not re-enter vaultMu).
 	if on {
-		a.migrateAIKeysToKeyring()
+		a.migrateAIKeysToKeyringLocked()
 	}
 	return nil
 }
@@ -1350,16 +1351,26 @@ func validateAITools(tools []PluginAIToolDef, choice *PluginAIToolChoice) error 
 // is in the keyring the config field is blanked, so a re-run finds nothing to
 // migrate. Best-effort and silent — if the keyring is unavailable, the plaintext
 // key is LEFT in config (the documented fallback; the provider page surfaces the
-// unavailability). No locks are held during keyring writes so a D-Bus timeout
-// cannot stall startup. Called from initializeVaultServices.
+// unavailability).
+//
+// Acquires vaultMu.RLock. Callers that already hold vaultMu (R or exclusive)
+// must use migrateAIKeysToKeyringLocked instead — RWMutex is not re-entrant for
+// Lock→RLock, and initializeVaultServices runs under exclusive Lock (#654).
 func (a *App) migrateAIKeysToKeyring() {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	a.migrateAIKeysToKeyringLocked()
+}
+
+// migrateAIKeysToKeyringLocked is the lock-held body of migrateAIKeysToKeyring.
+// Caller MUST hold vaultMu (RLock or Lock). Does not acquire vaultMu.
+// Keyring I/O runs under the caller's vaultMu hold so SwitchVault/MoveVault
+// cutover cannot retarget the write; vault open/switch is rare and user-driven.
+func (a *App) migrateAIKeysToKeyringLocked() {
 	if a.keyringStore == nil {
 		return
 	}
-	// Snapshot any plaintext keys + the toggle + the keyring user keys.
-	a.vaultMu.RLock()
 	if a.vaultPath == "" {
-		a.vaultMu.RUnlock()
 		return
 	}
 	a.configMu.RLock()
@@ -1372,11 +1383,10 @@ func (a *App) migrateAIKeysToKeyring() {
 		}
 	}
 	a.configMu.RUnlock()
-	a.vaultMu.RUnlock()
 	if !useKeyring || len(todo) == 0 {
 		return
 	}
-	// Keyring writes with no locks held.
+	// Keyring writes without configMu (may be slow on some platforms).
 	migrated := map[string]bool{}
 	for _, p := range todo {
 		if err := a.keyringStore.Set(keyringService, p.user, p.key); err == nil {
@@ -1387,8 +1397,6 @@ func (a *App) migrateAIKeysToKeyring() {
 		return
 	}
 	// Blank the migrated config fields and persist once.
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	changed := false

@@ -585,7 +585,8 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// unavailable, plaintext keys are left in config (the documented fallback).
 	// Runs AFTER applyConfigLocked so a.cfg is populated, and performs no
 	// keyring I/O under the locks.
-	a.migrateAIKeysToKeyring()
+	// Caller holds vaultMu.Lock — use the locked variant (Lock→RLock deadlocks).
+	a.migrateAIKeysToKeyringLocked()
 
 	// F3: verify linked-notebook fingerprints before the vault scan. Legacy
 	// links (pre-F3, no fingerprint) get one assigned silently; mismatched
