@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { onMount, onDestroy, getContext, setContext } from 'svelte'
+  import { onMount, onDestroy, getContext, setContext, tick } from 'svelte'
+  import { Editor } from '@tiptap/core'
+  import StarterKit from '@tiptap/starter-kit'
   import {
     ResolveBlockReference,
     MutateBlock
@@ -7,6 +9,17 @@
   import { Events } from '@wailsio/runtime'
   import RichText from './RichText.svelte'
   import { coerceIPCError } from '../lib/ipcError'
+  import {
+    SiltInlineMarkExtensions,
+    BlockReferenceNode,
+    PageLinkNode,
+    MentionNode
+  } from '../lib/editor/schema'
+  import {
+    legacyTokenizeInline,
+    serializeInlineContent
+  } from '../lib/editor/converters'
+  import type { NodeJSON } from '../lib/editor/types'
 
   // Per-branch chain of embed UUIDs currently being rendered. Each
   // EmbedPortal inherits its ancestor's chain via Svelte context, checks
@@ -45,8 +58,9 @@
   let ref = $state<any>(null)
   let loading = $state(true)
   let editing = $state(false)
-  let editEl = $state<HTMLDivElement | null>(null)
-  let saveTimer: any = null
+  let editorHost = $state<HTMLDivElement | null>(null)
+  let nestedEditor: Editor | null = null
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
   let offEvent: (() => void) | null = null
   let persistError = $state('')
 
@@ -54,7 +68,7 @@
     loading = true
     try {
       ref = await ResolveBlockReference(uuid)
-    } catch (e) {
+    } catch {
       ref = { exists: false }
     } finally {
       loading = false
@@ -87,27 +101,128 @@
     }
   }
 
-  function handleInput(e: Event) {
-    const text = (e.target as HTMLDivElement).innerText.replace(/[\r\n]+/g, ' ')
+  // MutateBlock stores single-line clean_text; collapse any accidental
+  // multi-paragraph output from the nested editor.
+  function textFromEditor(ed: Editor): string {
+    const json = ed.getJSON()
+    const parts: string[] = []
+    for (const block of json.content ?? []) {
+      if (block.content) {
+        parts.push(serializeInlineContent(block.content as NodeJSON[]))
+      }
+    }
+    return parts.join(' ').replace(/[\r\n]+/g, ' ')
+  }
+
+  function scheduleSave(text: string) {
     if (ref) ref.clean_text = text
     persistError = ''
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
+      saveTimer = null
       void persist(text)
     }, 500)
   }
 
-  function focusIn() {
-    editing = true
+  function destroyNestedEditor() {
+    if (nestedEditor) {
+      nestedEditor.destroy()
+      nestedEditor = null
+    }
   }
 
-  function focusOut() {
-    editing = false
-    if (saveTimer) {
-      clearTimeout(saveTimer)
-      saveTimer = null
-      const text = editEl?.innerText.replace(/[\r\n]+/g, ' ') ?? ''
+  function mountNestedEditor() {
+    if (!editorHost || nestedEditor || !ref) return
+
+    const inline = legacyTokenizeInline(ref.clean_text || '')
+    nestedEditor = new Editor({
+      element: editorHost,
+      extensions: [
+        // Inline-only subset: no EmbedNode (would re-enter portals).
+        StarterKit.configure({
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltInlineMarkExtensions,
+        BlockReferenceNode,
+        PageLinkNode,
+        MentionNode
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: inline.length > 0 ? inline : undefined
+          }
+        ]
+      },
+      editorProps: {
+        attributes: {
+          class:
+            'text-text-primary text-sm leading-relaxed focus:outline-none min-h-5 whitespace-pre-wrap break-words',
+          role: 'textbox',
+          'aria-label': 'Edit embedded block'
+        },
+        // Keep clean_text single-line: Enter does not split paragraphs.
+        handleKeyDown: (_view, event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            return true
+          }
+          return false
+        }
+      },
+      onUpdate: ({ editor: ed }) => {
+        scheduleSave(textFromEditor(ed))
+      }
+    })
+    // scrollIntoView needs layout APIs jsdom lacks; skip scroll in tests.
+    try {
+      nestedEditor.commands.focus('end', { scrollIntoView: false })
+    } catch {
+      /* ignore focus failures in non-browser environments */
+    }
+  }
+
+  async function startEditing() {
+    if (editing || !ref?.exists) return
+    editing = true
+    await tick()
+    mountNestedEditor()
+  }
+
+  function stopEditing() {
+    if (!editing) return
+    if (nestedEditor) {
+      const text = textFromEditor(nestedEditor)
+      if (ref) ref.clean_text = text
+      if (saveTimer) {
+        clearTimeout(saveTimer)
+        saveTimer = null
+      }
       void persist(text)
+      destroyNestedEditor()
+    }
+    editing = false
+  }
+
+  function handleEditorFocusOut(e: FocusEvent) {
+    const next = e.relatedTarget as Node | null
+    if (editorHost && next && editorHost.contains(next)) return
+    stopEditing()
+  }
+
+  function handlePreviewKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      void startEditing()
     }
   }
 
@@ -138,6 +253,7 @@
   onDestroy(() => {
     if (offEvent) offEvent()
     if (saveTimer) clearTimeout(saveTimer)
+    destroyNestedEditor()
   })
 </script>
 
@@ -176,20 +292,24 @@
       >
       embed · {ref.notebook} › {ref.section} › {ref.page}
     </div>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      bind:this={editEl}
-      contenteditable="true"
-      role="textbox"
-      tabindex="0"
-      oninput={handleInput}
-      onfocus={focusIn}
-      onblur={focusOut}
-      class="text-text-primary text-sm leading-relaxed focus:outline-none min-h-5 whitespace-pre-wrap break-words"
-    >
-      {#if editing}
-        {ref.clean_text}
-      {:else}
+    {#if editing}
+      <!-- Nested TipTap mounts only while focused (#661). -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        bind:this={editorHost}
+        class="min-h-5"
+        onfocusout={handleEditorFocusOut}
+      ></div>
+    {:else}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        role="textbox"
+        tabindex="0"
+        aria-label="Embedded block preview — activate to edit"
+        onclick={() => void startEditing()}
+        onkeydown={handlePreviewKeydown}
+        class="text-text-primary text-sm leading-relaxed focus:outline-none min-h-5 whitespace-pre-wrap break-words cursor-text"
+      >
         <RichText
           text={ref.clean_text || ''}
           notebook={ref.notebook}
@@ -197,8 +317,8 @@
           page={ref.page}
           fileDate={ref.file_date}
         />
-      {/if}
-    </div>
+      </div>
+    {/if}
     {#if persistError}
       <div class="text-type-2xs text-error mt-1 flex items-center gap-1">
         <span class="material-symbols-outlined text-type-xs">error</span>

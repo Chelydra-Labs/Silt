@@ -1,53 +1,94 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import type { ParsedBlock } from '../../lib/editor/types'
   import { themeState } from '../../theme/store.svelte'
   import {
     highlightMarkdown,
     tokensToShikiTheme
   } from '../../lib/editor/useMarkdownHighlighter'
+  import { savePageMarkdown } from '../../lib/editor/savePageMarkdown'
+  import {
+    AcquireFocusLock,
+    ReleaseFocusLock,
+    RefreshFocusLock
+  } from '../../../bindings/silt/app.js'
 
-  // MarkdownSourceViewer — renders the raw markdown representation of the
-  // page's blocks as a read-only <pre> with line numbers (#171). Shows the
-  // exact on-disk representation including formatting marks (bold, italic,
-  // color spans, alignment markers, etc.). "Copy as Markdown" copies the
-  // full content to the clipboard. Syntax is highlighted via Shiki, driven
-  // by the active theme's tokens (#194); until the highlighter resolves
-  // (and on any error) the plain text is rendered so the view never blocks.
+  // MarkdownSourceViewer — editable Source mode (#660) with optional read-only
+  // Shiki highlight (#171/#194). Reconstructs markdown from blocks as the
+  // initial buffer; debounced save writes via SavePageMarkdown.
 
   interface Props {
     blocks: ParsedBlock[]
     filePath: string
+    notebook?: string
+    section?: string
+    page?: string
+    onBlocksSaved?: (blocks: ParsedBlock[]) => void
+    /** When true (default), body is an editable textarea with debounced save. */
+    editable?: boolean
   }
 
-  let { blocks, filePath }: Props = $props()
+  let {
+    blocks,
+    filePath,
+    notebook = '',
+    section = '',
+    page = '',
+    onBlocksSaved,
+    editable = true
+  }: Props = $props()
 
-  // Reconstruct the raw markdown from blocks. Each block becomes one line
-  // with its raw_text (which includes bullet markers, heading hashes, task
-  // checkboxes, and formatted clean_text).
-  function reconstructMarkdown(blocks: ParsedBlock[]): string {
+  function reconstructMarkdown(source: ParsedBlock[]): string {
     const lines: string[] = []
-    for (const block of blocks) {
+    for (const block of source) {
       const indent = '  '.repeat(block.depth || 0)
-      let line = block.raw_text || block.clean_text || ''
+      const line = block.raw_text || block.clean_text || ''
       lines.push(indent + line)
     }
     return lines.join('\n')
   }
 
-  let markdown = $derived(reconstructMarkdown(blocks))
-  let lineCount = $derived(markdown.split('\n').length)
+  let buffer = $state('')
+  let dirty = $state(false)
+  let saveError = $state<string | null>(null)
+  let conflictStatus = $state<string | null>(null)
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  let heartbeatInterval: ReturnType<typeof setInterval> | null = null
+  let hasFocusLock = false
+  /** Fingerprint of last applied external blocks (ids + raw_text). */
+  let lastBlocksKey = $state<string | null>(null)
+
+  let lineCount = $derived(Math.max(1, buffer.split('\n').length))
+
+  function blocksKey(source: ParsedBlock[]): string {
+    return source
+      .map((b) => `${b.id}\0${b.raw_text ?? b.clean_text ?? ''}`)
+      .join('\n')
+  }
+
+  // External blocks prop: seed / reset when clean; keep local buffer when dirty.
+  $effect(() => {
+    const next = blocks
+    const key = blocksKey(next)
+    if (lastBlocksKey === null) {
+      buffer = reconstructMarkdown(next)
+      lastBlocksKey = key
+      return
+    }
+    if (key === lastBlocksKey) return
+    if (!dirty) {
+      buffer = reconstructMarkdown(next)
+      lastBlocksKey = key
+      conflictStatus = null
+      saveError = null
+    } else {
+      conflictStatus =
+        'External change detected — save or reload to pick up remote edits.'
+    }
+  })
 
   // Resolve the effective (mode-resolved) token map + concrete dark/light
   // mode from the theme store. "system" follows prefers-color-scheme.
-  //
-  // The theme store re-injects editor CSS on an OS dark↔light flip but does
-  // NOT change themeState.mode or its token maps, so a $derived that read
-  // only themeState + a one-shot matchMedia() call would miss the flip and
-  // leave the Source view's Shiki colors stale. Track the OS scheme in
-  // $state and keep it in sync with an MQL listener so the highlight
-  // re-derives on a live OS scheme change (#194 AC: re-highlights on theme
-  // mode change — covers the system-mode path).
   let systemLight = $state(
     typeof window !== 'undefined' &&
       !!window.matchMedia?.('(prefers-color-scheme: light)').matches
@@ -74,24 +115,19 @@
     effectiveMode === 'light' ? themeState.lightTokens : themeState.darkTokens
   )
 
-  // Re-highlight whenever the source, theme tokens, or mode change (#194 AC:
-  // re-highlights on theme mode change). Shiki loads the markdown grammar
-  // lazily on the first call, so the result is async; a monotonic sequence
-  // guards against out-of-order resolves (a slow earlier highlight landing
-  // after a newer one). Before the first resolve, highlightedHtml is null and
-  // the template falls back to plain text.
+  // Shiki only in read-only mode (editable uses plain textarea).
   let highlightedHtml = $state<string | null>(null)
   let highlightSeq = 0
   $effect(() => {
-    const md = markdown
+    if (editable) {
+      highlightedHtml = null
+      return
+    }
+    const md = buffer
     const t = tokens
     const mode = effectiveMode
     const seq = ++highlightSeq
     void (async () => {
-      // highlightMarkdown is expected to return null (never throw), but a
-      // stray rejection must degrade to the plain-text fallback rather than
-      // surface an unhandled rejection — highlighting is cosmetic, the
-      // source text is the load-bearing content.
       let html: string | null = null
       try {
         html = await highlightMarkdown(md, tokensToShikiTheme(t, mode))
@@ -102,12 +138,6 @@
     })()
   })
 
-  // Copy feedback: a transient status announced to assistive tech so the
-  // button isn't a silent action. Cleared after a short delay. The timer is
-  // cleared on unmount so toggling back to Edit (which unmounts this viewer)
-  // mid-countdown doesn't leave a pending callback writing to a destroyed
-  // component (a Svelte 5 dev-mode warning — this PR removes console warnings,
-  // so don't reintroduce one here).
   let copyStatus = $state<{ kind: 'ok' | 'err'; msg: string } | null>(null)
   let copyStatusTimer: ReturnType<typeof setTimeout> | null = null
   function setCopyStatus(kind: 'ok' | 'err', msg: string): void {
@@ -118,23 +148,118 @@
       copyStatusTimer = null
     }, 2500)
   }
-  onDestroy(() => {
-    if (copyStatusTimer) clearTimeout(copyStatusTimer)
-  })
+
   async function copyAsMarkdown(): Promise<void> {
     try {
-      await navigator.clipboard.writeText(markdown)
+      await navigator.clipboard.writeText(buffer)
       setCopyStatus('ok', 'Copied markdown to clipboard.')
     } catch {
       setCopyStatus('err', 'Failed to copy — clipboard unavailable.')
     }
   }
+
+  function scheduleSave(): void {
+    if (!editable || !notebook || !page) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      saveTimer = null
+      void flushSave()
+    }, 500)
+  }
+
+  async function flushSave(): Promise<void> {
+    if (!editable || !notebook || !page || !dirty) return
+    const md = buffer
+    try {
+      const saved = await savePageMarkdown(notebook, section, page, md)
+      // Only clear dirty if buffer still matches what we saved.
+      if (buffer === md) {
+        dirty = false
+        conflictStatus = null
+      }
+      saveError = null
+      onBlocksSaved?.(saved)
+    } catch (e) {
+      saveError = e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  function onInput(e: Event): void {
+    const el = e.currentTarget as HTMLTextAreaElement
+    buffer = el.value
+    dirty = true
+    saveError = null
+    scheduleSave()
+  }
+
+  async function acquireLock(): Promise<void> {
+    if (!editable || !notebook || !page) return
+    try {
+      await AcquireFocusLock(notebook, section, page)
+      hasFocusLock = true
+      if (heartbeatInterval) clearInterval(heartbeatInterval)
+      heartbeatInterval = setInterval(() => {
+        if (!hasFocusLock) return
+        RefreshFocusLock(notebook, section, page).catch(() => {})
+      }, 20000)
+    } catch (e) {
+      console.error('MarkdownSourceViewer: AcquireFocusLock failed:', e)
+    }
+  }
+
+  async function releaseLock(): Promise<void> {
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval)
+      heartbeatInterval = null
+    }
+    if (!hasFocusLock) return
+    hasFocusLock = false
+    if (!notebook || !page) return
+    try {
+      await ReleaseFocusLock(notebook, section, page)
+    } catch (e) {
+      console.error('MarkdownSourceViewer: ReleaseFocusLock failed:', e)
+    }
+  }
+
+  onMount(() => {
+    if (editable) void acquireLock()
+  })
+
+  onDestroy(() => {
+    if (copyStatusTimer) clearTimeout(copyStatusTimer)
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      // Best-effort flush on unmount when dirty.
+      if (dirty && notebook && page) {
+        void savePageMarkdown(notebook, section, page, buffer)
+          .then((saved) => onBlocksSaved?.(saved))
+          .catch(() => {})
+      }
+    }
+    void releaseLock()
+  })
 </script>
 
 <div class="source-viewer">
   <div class="source-header">
     <span class="file-path" title={filePath}>{filePath}</span>
     <div class="header-actions">
+      {#if saveError}
+        <span
+          class="save-status save-status--err"
+          role="alert"
+          aria-live="assertive">Save failed: {saveError}</span
+        >
+      {:else if conflictStatus}
+        <span class="save-status" role="status" aria-live="polite"
+          >{conflictStatus}</span
+        >
+      {:else if dirty}
+        <span class="save-status" role="status" aria-live="polite"
+          >Unsaved…</span
+        >
+      {/if}
       <button
         type="button"
         class="copy-btn"
@@ -159,16 +284,29 @@
   </div>
   <div
     class="source-body"
-    role="document"
-    aria-label="Source view of {filePath}"
+    role={editable ? undefined : 'document'}
+    aria-label={editable ? undefined : `Source view of ${filePath}`}
   >
     <div class="line-numbers" aria-hidden="true">
       {#each Array(lineCount) as _, i}
         <span class="line-num">{i + 1}</span>
       {/each}
     </div>
-    <pre
-      class="source-code">{#if highlightedHtml}{@html highlightedHtml}{:else}{markdown}{/if}</pre>
+    {#if editable}
+      <textarea
+        class="source-code source-textarea"
+        value={buffer}
+        oninput={onInput}
+        onfocus={() => {
+          if (!hasFocusLock) void acquireLock()
+        }}
+        spellcheck="false"
+        aria-label="Markdown source of {filePath}"
+        rows={lineCount}></textarea>
+    {:else}
+      <pre
+        class="source-code">{#if highlightedHtml}{@html highlightedHtml}{:else}{buffer}{/if}</pre>
+    {/if}
   </div>
 </div>
 
@@ -177,6 +315,7 @@
     display: flex;
     flex-direction: column;
     height: 100%;
+    min-height: 12rem;
     background: var(--color-surface-panel);
   }
 
@@ -184,6 +323,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
     padding: 6px 12px;
     border-bottom: 1px solid var(--color-surface-panel-border);
     flex-shrink: 0;
@@ -195,6 +335,14 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
   }
 
   .copy-btn {
@@ -223,13 +371,15 @@
     font-size: 14px;
   }
 
-  .copy-status {
+  .copy-status,
+  .save-status {
     font-size: 0.7rem;
     color: var(--color-text-muted);
     white-space: nowrap;
   }
 
-  .copy-status--err {
+  .copy-status--err,
+  .save-status--err {
     color: var(--color-status-danger);
   }
 
@@ -237,6 +387,7 @@
     display: flex;
     overflow: auto;
     flex: 1;
+    min-height: 0;
   }
 
   .line-numbers {
@@ -267,5 +418,23 @@
     white-space: pre-wrap;
     word-break: break-word;
     flex: 1;
+  }
+
+  .source-textarea {
+    resize: none;
+    border: none;
+    outline: none;
+    background: transparent;
+    width: 100%;
+    min-height: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+
+  .source-textarea:focus {
+    outline: 1px solid
+      color-mix(in srgb, var(--color-accent-primary-start) 40%, transparent);
+    outline-offset: -1px;
+    border-radius: 2px;
   }
 </style>

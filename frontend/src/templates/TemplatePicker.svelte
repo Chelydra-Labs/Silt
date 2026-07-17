@@ -27,6 +27,7 @@
   } from './store.svelte'
   import { pushNotification } from '../notifications/store.svelte'
   import { coerceIPCError } from '../lib/ipcError'
+  import { renderTemplatePreview } from './renderTemplatePreview'
 
   interface Props {
     mode: 'new-page' | 'insert'
@@ -53,6 +54,7 @@
   let placeholderValues = $state<Record<string, string>>({})
   let pageName = $state('')
   let preview = $state('')
+  let previewHtml = $derived(renderTemplatePreview(preview))
   let previewLoading = $state(false)
   let creating = $state(false)
   /** Field-level errors for required placeholders (#650). */
@@ -537,8 +539,14 @@
             {#if previewLoading}
               <p class="text-sm text-text-muted">Rendering preview…</p>
             {/if}
-            <pre
-              class="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-text-primary">{preview}</pre>
+            <!-- Rendered WYSIWYG preview (#663); unresolved {{tokens}} are chips. -->
+            <div
+              class="tpl-preview prose-preview text-sm leading-relaxed text-text-primary"
+              data-testid="template-preview"
+              aria-label="Template preview"
+            >
+              {@html previewHtml}
+            </div>
           </div>
 
           <!-- Placeholder form + page-name -->
@@ -686,6 +694,69 @@
 </div>
 
 <style>
-  /* Import the store for the status live-region. The $state proxy is reactive
-     in the template above; this style block is just for scoped polish. */
+  /* Rendered preview (#663): compact markdown + placeholder chips. */
+  .tpl-preview :global(h1) {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 0.5rem 0 0.35rem;
+  }
+  .tpl-preview :global(h2) {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0.45rem 0 0.3rem;
+  }
+  .tpl-preview :global(h3),
+  .tpl-preview :global(h4),
+  .tpl-preview :global(h5),
+  .tpl-preview :global(h6) {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0.4rem 0 0.25rem;
+  }
+  .tpl-preview :global(p) {
+    margin: 0.25rem 0;
+  }
+  .tpl-preview :global(ul),
+  .tpl-preview :global(ol) {
+    margin: 0.25rem 0;
+    padding-left: 1.25rem;
+  }
+  .tpl-preview :global(code) {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.85em;
+    background: color-mix(in srgb, var(--color-surface-panel) 80%, transparent);
+    padding: 0.05em 0.3em;
+    border-radius: 3px;
+  }
+  .tpl-preview :global(pre) {
+    margin: 0.35rem 0;
+    padding: 0.5rem 0.65rem;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--color-surface-panel) 90%, transparent);
+    overflow-x: auto;
+  }
+  .tpl-preview :global(blockquote) {
+    margin: 0.35rem 0;
+    padding-left: 0.75rem;
+    border-left: 3px solid var(--color-accent-primary-start);
+    color: var(--color-text-muted);
+  }
+  .tpl-preview :global(.tpl-placeholder-chip) {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.05em 0.4em;
+    margin: 0 0.1em;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-secondary-start) 18%,
+      transparent
+    );
+    border: 1px solid
+      color-mix(in srgb, var(--color-accent-secondary-start) 40%, transparent);
+    color: var(--color-accent-secondary-start);
+    white-space: nowrap;
+  }
 </style>

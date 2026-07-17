@@ -922,3 +922,94 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	}
 	return nil
 }
+
+// SavePageMarkdown writes raw markdown body for a page (editable Source mode
+// #660). Preserves YAML frontmatter, uses the atomic write chain (same as
+// SaveFileBlocks), re-indexes, and returns the re-parsed block list so the
+// frontend can refresh without a second round-trip.
+func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]parser.ParsedBlock, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.db == nil {
+		return nil, fmt.Errorf("vault database not loaded")
+	}
+
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safePage == "" {
+		return nil, fmt.Errorf("invalid path metadata")
+	}
+
+	source := a.resolveSourceByName(safeNotebook)
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+	if err != nil {
+		return nil, fmt.Errorf("resolve notebook dir: %w", err)
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return nil, fmt.Errorf("path escapes notebook root")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var result []parser.ParsedBlock
+	var writeErr error
+	a.coordinator.LockFileWrite(filePath, func() {
+		contentBytes, err := os.ReadFile(filePath)
+		if err != nil && !os.IsNotExist(err) {
+			writeErr = fmt.Errorf("failed to read existing file: %w", err)
+			return
+		}
+		frontmatter, _ := parser.SplitFrontmatter(string(contentBytes))
+		if frontmatter == "" {
+			today := time.Now().Format("2006-01-02")
+			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
+				strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
+		}
+
+		// Body is the user-edited source. Normalize to end with a single newline.
+		body := markdown
+		if body != "" && !strings.HasSuffix(body, "\n") {
+			body += "\n"
+		}
+		newContent := frontmatter
+		if !strings.HasSuffix(newContent, "\n") {
+			newContent += "\n"
+		}
+		newContent += body
+
+		a.tracker.RegisterWrite(filePath)
+		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+			writeErr = err
+			return
+		}
+
+		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(
+			newContent, safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab,
+		)
+		if parseErr != nil {
+			writeErr = fmt.Errorf("parse after source save: %w", parseErr)
+			return
+		}
+		var idxErr error
+		a.coordinator.WithDBWrite(func() {
+			idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
+		})
+		if idxErr != nil {
+			log.Printf("SavePageMarkdown: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+		}
+		result = parsedBlocks
+		for _, b := range parsedBlocks {
+			if b.ID != "" {
+				a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, b.FileDate)
+			}
+		}
+	})
+
+	if writeErr != nil {
+		return nil, writeErr
+	}
+	return result, nil
+}

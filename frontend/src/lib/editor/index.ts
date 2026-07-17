@@ -84,3 +84,10 @@ export type {
   NodeJSON,
   DocJSON
 } from './types'
+export {
+  extractHeadings,
+  extractHeadingsFromEditor,
+  jumpToHeading,
+  activeHeadingId
+} from './outline'
+export type { OutlineHeading } from './outline'

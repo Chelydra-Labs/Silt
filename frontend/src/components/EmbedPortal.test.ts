@@ -132,7 +132,7 @@ describe('EmbedPortal (#127)', () => {
     )
   })
 
-  it('persists edits via MutateBlock (debounced)', async () => {
+  it('persists edits via MutateBlock (debounced) after focus mounts TipTap', async () => {
     vi.useFakeTimers()
     mocks.resolveBlockReference.mockResolvedValue({
       exists: true,
@@ -145,13 +145,23 @@ describe('EmbedPortal (#127)', () => {
     })
     mocks.mutateBlock.mockResolvedValue(undefined)
     render(EmbedPortal, { props: { uuid: FIXTURE_UUID } })
+    await waitFor(() => {
+      expect(screen.getByLabelText(/embedded block preview/i)).toBeTruthy()
+    })
+
+    // Unfocused: RichText preview. Activate to mount nested TipTap (#661).
+    const preview = screen.getByLabelText(/embedded block preview/i)
+    await fireEvent.click(preview)
     await tick()
-    // Find the contenteditable and simulate input.
-    const editable = document.querySelector('[contenteditable="true"]')
+
+    const editable = document.querySelector(
+      '[contenteditable="true"]'
+    ) as HTMLElement | null
+    expect(editable).toBeTruthy()
     if (editable) {
+      // TipTap/ProseMirror: set text and dispatch input so onUpdate runs.
       editable.textContent = 'edited content'
       await fireEvent.input(editable)
-      // Advance past the 500ms debounce.
       vi.advanceTimersByTime(600)
       await vi.waitFor(() => {
         expect(mocks.mutateBlock).toHaveBeenCalledWith(
