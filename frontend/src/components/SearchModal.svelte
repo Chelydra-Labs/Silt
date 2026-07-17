@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { SearchBlocksPaged } from '../../bindings/silt/app.js'
+  import {
+    SearchBlocksPaged,
+    ListNavigation,
+    QueryTagHierarchy
+  } from '../../bindings/silt/app.js'
   import { STANDALONE_TASKS_NOTEBOOK } from '../lib/standaloneTasksNav'
 
   interface TaskResult {
@@ -40,12 +44,15 @@
   let offset = $state(0)
   const pageSize = 20
 
-  // Phase 6 filters (#186 global enhancements): scope (vault vs incl-linked),
-  // category (block type), and sort. Driven by the chips/segmented controls
-  // below the search input; an empty typeFilter = "All types".
+  // Filters: scope (vault vs incl-linked), category (block type), sort,
+  // notebook, and tag (#186 / #655). Empty notebook/tag = no filter.
   let scopeVaultOnly = $state(false)
   let typeFilter = $state('')
   let sortMode = $state<'relevance' | 'recency'>('relevance')
+  let notebookFilter = $state('')
+  let tagFilter = $state('')
+  let notebookOptions = $state<string[]>([])
+  let tagOptions = $state<string[]>([])
 
   const TYPE_CHIPS: { id: string; label: string }[] = [
     { id: '', label: 'All' },
@@ -53,6 +60,17 @@
     { id: 'NOTE', label: 'Notes' },
     { id: 'HEADER', label: 'Headings' }
   ]
+
+  function filterSig(
+    q: string,
+    type: string,
+    sort: string,
+    vaultOnly: boolean,
+    notebook: string,
+    tag: string
+  ): string {
+    return `${q}|${type}|${sort}|${vaultOnly}|${notebook}|${tag}`
+  }
 
   // Re-run search whenever the query OR a filter changes (debounced). Resets to
   // the first page so the modal always shows the top-ranked matches for the
@@ -63,6 +81,8 @@
     void typeFilter
     void sortMode
     void scopeVaultOnly
+    void notebookFilter
+    void tagFilter
     if (!trimmed) {
       results = []
       selectedIdx = 0
@@ -84,19 +104,36 @@
   async function performSearch(q: string, off: number, replace: boolean) {
     // Capture the full filter state at call time so a stale response (from a
     // different query OR a toggled chip/scope/sort) is detected on resolution.
-    const sig = `${q}|${typeFilter}|${sortMode}|${scopeVaultOnly}`
+    const sig = filterSig(
+      q,
+      typeFilter,
+      sortMode,
+      scopeVaultOnly,
+      notebookFilter,
+      tagFilter
+    )
     loading = true
     try {
       const res: SearchResult = await SearchBlocksPaged(q, off, pageSize, {
-        notebook: '',
+        notebook: notebookFilter,
         section: '',
-        tag: '',
+        tag: tagFilter,
         type: typeFilter,
         sort: sortMode,
         vaultOnly: scopeVaultOnly
       })
       // Guard against a stale response landing after a newer query/filter.
-      if (sig !== `${query.trim()}|${typeFilter}|${sortMode}|${scopeVaultOnly}`)
+      if (
+        sig !==
+        filterSig(
+          query.trim(),
+          typeFilter,
+          sortMode,
+          scopeVaultOnly,
+          notebookFilter,
+          tagFilter
+        )
+      )
         return
       if (replace) {
         results = res.results || []
@@ -111,6 +148,42 @@
       console.error('Search query failed:', e)
     } finally {
       if (query.trim() === q) loading = false
+    }
+  }
+
+  function flattenTags(
+    nodes: { path?: string; children?: unknown[] }[],
+    out: string[] = []
+  ): string[] {
+    for (const n of nodes) {
+      if (n.path) out.push(n.path)
+      if (Array.isArray(n.children) && n.children.length > 0) {
+        flattenTags(
+          n.children as { path?: string; children?: unknown[] }[],
+          out
+        )
+      }
+    }
+    return out
+  }
+
+  async function loadFilterOptions(): Promise<void> {
+    try {
+      const tree = await ListNavigation()
+      notebookOptions = (tree?.notebooks ?? [])
+        .map((n: { name: string }) => n.name)
+        .filter((n: string) => n && n !== STANDALONE_TASKS_NOTEBOOK)
+        .sort((a: string, b: string) => a.localeCompare(b))
+    } catch (e) {
+      console.error('SearchModal: ListNavigation failed:', e)
+      notebookOptions = []
+    }
+    try {
+      const tags = (await QueryTagHierarchy()) || []
+      tagOptions = flattenTags(tags).sort((a, b) => a.localeCompare(b))
+    } catch (e) {
+      console.error('SearchModal: QueryTagHierarchy failed:', e)
+      tagOptions = []
     }
   }
 
@@ -146,6 +219,15 @@
     })
   }
 
+  /** True when focus is on notebook/tag (or other non-query) form controls so
+   *  capture-phase result navigation does not steal select/input keys. */
+  function isSecondaryFilterFocused(): boolean {
+    const active = document.activeElement as HTMLElement | null
+    if (!active || active === inputEl) return false
+    const tag = active.tagName
+    return tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA'
+  }
+
   function handleKeyDown(e: KeyboardEvent) {
     // Tab must remain normal focus order so Vault/Linked, sort, clear, results,
     // and "Replace in vault…" stay keyboard-reachable. Cycle type chips with
@@ -158,6 +240,13 @@
       cycleTypeChip(e.key === 'ArrowRight' ? 1 : -1)
       return
     }
+    // Escape always closes; other nav keys leave form controls alone.
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      onClose()
+      return
+    }
+    if (isSecondaryFilterFocused()) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       if (results.length > 0) {
@@ -175,9 +264,6 @@
       if (results[selectedIdx]) {
         selectResult(results[selectedIdx])
       }
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      onClose()
     }
   }
 
@@ -222,6 +308,7 @@
     if (inputEl) {
       inputEl.focus()
     }
+    void loadFilterOptions()
 
     window.addEventListener('keydown', handleKeyDown, true)
     return () => {
@@ -338,6 +425,39 @@
         {/each}
       </div>
 
+      <!-- Notebook filter (#655). -->
+      <label class="flex items-center gap-1 text-type-xs text-text-muted">
+        <span class="sr-only">Notebook</span>
+        <select
+          aria-label="Filter by notebook"
+          bind:value={notebookFilter}
+          class="max-w-[9rem] rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary cursor-pointer"
+        >
+          <option value="">All notebooks</option>
+          {#each notebookOptions as nb (nb)}
+            <option value={nb}>{nb}</option>
+          {/each}
+        </select>
+      </label>
+
+      <!-- Tag filter (#655): free text + datalist from indexed hierarchy. -->
+      <label class="flex items-center gap-1 text-type-xs text-text-muted">
+        <span class="sr-only">Tag</span>
+        <input
+          type="text"
+          list="search-tag-options"
+          aria-label="Filter by tag"
+          placeholder="Tag…"
+          bind:value={tagFilter}
+          class="w-28 rounded-md border border-surface-modal-border bg-surface-modal px-1.5 py-1 text-type-xs text-text-primary placeholder:text-text-muted"
+        />
+        <datalist id="search-tag-options">
+          {#each tagOptions as tag (tag)}
+            <option value={tag}></option>
+          {/each}
+        </datalist>
+      </label>
+
       <!-- Sort: Relevance vs Recent (segmented). -->
       <div
         class="ml-auto flex rounded-lg overflow-hidden border border-surface-modal-border"
@@ -362,6 +482,51 @@
         >
       </div>
     </div>
+
+    <!-- Active notebook/tag filter chips (individually clearable) (#655). -->
+    {#if notebookFilter || tagFilter}
+      <div
+        class="flex items-center gap-2 px-4 py-1.5 border-b border-surface-modal-border flex-wrap"
+        aria-label="Active filters"
+      >
+        {#if notebookFilter}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 rounded-full border border-accent-primary-start/40 bg-accent-primary-start/10 px-2 py-0.5 text-type-xs text-accent-primary-start cursor-pointer"
+            aria-label="Clear notebook filter"
+            onclick={() => (notebookFilter = '')}
+          >
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">menu_book</span
+            >
+            {notebookFilter}
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">close</span
+            >
+          </button>
+        {/if}
+        {#if tagFilter}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 rounded-full border border-accent-primary-start/40 bg-accent-primary-start/10 px-2 py-0.5 text-type-xs text-accent-primary-start cursor-pointer"
+            aria-label="Clear tag filter"
+            onclick={() => (tagFilter = '')}
+          >
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">sell</span
+            >
+            {tagFilter}
+            <span
+              class="material-symbols-outlined text-icon-xs"
+              aria-hidden="true">close</span
+            >
+          </button>
+        {/if}
+      </div>
+    {/if}
 
     {#if query.trim() && total > 0}
       <div

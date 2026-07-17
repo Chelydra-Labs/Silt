@@ -65,6 +65,12 @@ export function classifySlashCommand(commandId: string): SlashIntent | null {
       return { kind: 'convert', blockType: 'headerBlock', depth: 2 }
     case 'h3':
       return { kind: 'convert', blockType: 'headerBlock', depth: 3 }
+    case 'h4':
+      return { kind: 'convert', blockType: 'headerBlock', depth: 4 }
+    case 'h5':
+      return { kind: 'convert', blockType: 'headerBlock', depth: 5 }
+    case 'h6':
+      return { kind: 'convert', blockType: 'headerBlock', depth: 6 }
     case 'note':
       return { kind: 'convert', blockType: 'noteBlock' }
     case 'quote':

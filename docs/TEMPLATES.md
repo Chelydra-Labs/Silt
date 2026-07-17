@@ -264,7 +264,7 @@ You **cannot** overwrite or delete a built-in template (they are embedded in the
 | `SaveUserTemplate(t)` | `void` | Validate + atomic write. Builtin ids rejected. Emits `templates:changed`. |
 | `DeleteUserTemplate(id)` | `void` | Remove file. Builtin ids rejected. Emits `templates:changed`. |
 | `ReloadTemplates()` | `void` | Cache flush + `templates:changed`. |
-| `CreatePageFromTemplate(...)` | `string` | Render + write new page (frontmatter + body) + index. Returns the date. |
+| `CreatePageFromTemplate(...)` | `string` | Render + write new page (frontmatter + body) + index. Returns the date. If the target path already exists, returns IPC error `page_exists` and does not clobber. |
 
 ### The `builtin://` namespace
 

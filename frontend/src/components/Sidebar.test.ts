@@ -8,6 +8,15 @@ const mocks = vi.hoisted(() => ({
   createSection: vi.fn(),
   createPage: vi.fn(),
   pickNotebookFolder: vi.fn(),
+  pickLinkedNotebook: vi.fn(),
+  unlinkNotebook: vi.fn(),
+  renamePage: vi.fn(),
+  renameSection: vi.fn(),
+  renameNotebook: vi.fn(),
+  deletePage: vi.fn(),
+  deleteSection: vi.fn(),
+  deleteNotebook: vi.fn(),
+  revealNotebookInOS: vi.fn(),
   getNavOrder: vi.fn(),
   setNavOrder: vi.fn(),
   movePage: vi.fn(),
@@ -34,6 +43,15 @@ vi.mock('../../bindings/silt/app.js', () => ({
   CreateSection: mocks.createSection,
   CreatePage: mocks.createPage,
   PickNotebookFolder: mocks.pickNotebookFolder,
+  PickLinkedNotebook: mocks.pickLinkedNotebook,
+  UnlinkNotebook: mocks.unlinkNotebook,
+  RenamePage: mocks.renamePage,
+  RenameSection: mocks.renameSection,
+  RenameNotebook: mocks.renameNotebook,
+  DeletePage: mocks.deletePage,
+  DeleteSection: mocks.deleteSection,
+  DeleteNotebook: mocks.deleteNotebook,
+  RevealNotebookInOS: mocks.revealNotebookInOS,
   GetNavOrder: mocks.getNavOrder,
   SetNavOrder: mocks.setNavOrder,
   MovePage: mocks.movePage,
@@ -600,5 +618,239 @@ describe('Sidebar', () => {
     sidebarScroller.dispatchEvent(new Event('scroll', { bubbles: true }))
     await flush()
     expect(screen.queryByRole('menu', { name: 'Actions' })).toBeNull()
+  })
+
+  // --- #653 notebook context menu ------------------------------------------
+
+  it('right-click notebook row opens context menu with rename/reveal/delete (#653)', async () => {
+    mocks.listNavigation.mockResolvedValue(NAV_TREE)
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    // Open notebook dropdown (role=button switcher), then context-menu a row.
+    const switcher = screen
+      .getByText('Active Notebook')
+      .closest('[role="button"]')!
+    await fireEvent.click(switcher)
+    await flush()
+    const notebookBtn = screen.getAllByText('Personal')[0].closest('button')!
+    await fireEvent.contextMenu(notebookBtn)
+    await flush()
+
+    expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: /Rename/i })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: /Reveal in file manager/i })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: /Delete/i })
+    ).toBeInTheDocument()
+  })
+
+  it('linked notebook context menu omits Rename (#653 review)', async () => {
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Synced',
+          source: 'linked:abc',
+          sections: []
+        },
+        { name: 'Work', sections: [] }
+      ]
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const switcher = screen
+      .getByText('Active Notebook')
+      .closest('[role="button"]')!
+    await fireEvent.click(switcher)
+    await flush()
+    const notebookBtn = screen.getAllByText('Synced')[0].closest('button')!
+    await fireEvent.contextMenu(notebookBtn)
+    await flush()
+
+    expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /Rename/i })).toBeNull()
+    expect(
+      screen.getByRole('menuitem', { name: /Reveal in file manager/i })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: /Unlink/i })
+    ).toBeInTheDocument()
+  })
+
+  it('notebook context Rename opens Rename Notebook dialog (#653/#651)', async () => {
+    mocks.listNavigation.mockResolvedValue(NAV_TREE)
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const switcher = screen
+      .getByText('Active Notebook')
+      .closest('[role="button"]')!
+    await fireEvent.click(switcher)
+    await flush()
+    const notebookBtn = screen.getAllByText('Personal')[0].closest('button')!
+    await fireEvent.contextMenu(notebookBtn)
+    await flush()
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Rename/i }))
+    await flush()
+
+    expect(
+      screen.getByRole('dialog', { name: 'Rename Notebook' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: /Rename Notebook/i })
+    ).toBeInTheDocument()
+  })
+
+  it('page context Rename opens Rename Page dialog (#651)', async () => {
+    mocks.listNavigation.mockResolvedValue(NAV_TREE)
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const pageBtn = screen.getByText('Daily').closest('button')!
+    await fireEvent.contextMenu(pageBtn)
+    await flush()
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Rename/i }))
+    await flush()
+
+    expect(
+      screen.getByRole('dialog', { name: 'Rename Page' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: /Rename Page/i })
+    ).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('New page name…')).toBeInTheDocument()
+  })
+
+  it('delete confirm for vault page mentions trash (#646)', async () => {
+    mocks.listNavigation.mockResolvedValue(NAV_TREE)
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const pageBtn = screen.getByText('Daily').closest('button')!
+    await fireEvent.contextMenu(pageBtn)
+    await flush()
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Delete/i }))
+    await flush()
+
+    expect(
+      screen.getByRole('dialog', { name: 'Confirm delete' })
+    ).toBeInTheDocument()
+    expect(screen.getByText(/\.system\/trash\//)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+  })
+
+  it('delete confirm for linked page warns permanent deletion (#646)', async () => {
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Synced',
+          source: 'linked:abc',
+          sections: [{ name: 'Notes', pages: [{ name: 'Plan', count: 1 }] }]
+        }
+      ]
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Synced',
+        activeSection: 'Notes',
+        activePage: 'Plan',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const pageBtn = screen.getByText('Plan').closest('button')!
+    await fireEvent.contextMenu(pageBtn)
+    await flush()
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Delete/i }))
+    await flush()
+
+    expect(screen.getByText(/Permanently delete page/i)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Delete permanently' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/cannot be recovered from Silt/i)
+    ).toBeInTheDocument()
+    // Must not claim vault trash recovery for linked content.
+    expect(
+      screen.queryByText(/You can recover it from there manually/)
+    ).toBeNull()
   })
 })

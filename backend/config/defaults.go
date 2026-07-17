@@ -86,10 +86,14 @@ func Defaults() SystemConfig {
 			"format_highlight":   "Ctrl+Shift+H",
 			"format_subscript":   "Ctrl+Shift,",
 			"format_superscript": "Ctrl+.",
-			// Heading level hotkeys (#169). Standard heading-level bindings.
+			// Heading level hotkeys (#169 / #645). H4–H6 use Alt+5..7 because
+			// Ctrl+Alt+4 is reserved for set_task.
 			"set_h1":   "Ctrl+Alt+1",
 			"set_h2":   "Ctrl+Alt+2",
 			"set_h3":   "Ctrl+Alt+3",
+			"set_h4":   "Ctrl+Alt+5",
+			"set_h5":   "Ctrl+Alt+6",
+			"set_h6":   "Ctrl+Alt+7",
 			"set_note": "Ctrl+Alt+0",
 			"set_task": "Ctrl+Alt+4",
 			// Text alignment hotkeys (#173). Standard alignment bindings.

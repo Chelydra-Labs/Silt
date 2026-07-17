@@ -26,6 +26,7 @@
     clearTemplateStatus
   } from './store.svelte'
   import { pushNotification } from '../notifications/store.svelte'
+  import { coerceIPCError } from '../lib/ipcError'
 
   interface Props {
     mode: 'new-page' | 'insert'
@@ -54,6 +55,12 @@
   let preview = $state('')
   let previewLoading = $state(false)
   let creating = $state(false)
+  /** Field-level errors for required placeholders (#650). */
+  let placeholderErrors = $state<Record<string, string>>({})
+  /** When CreatePageFromTemplate hits page_exists (#652). */
+  let pageExistsCollision = $state(false)
+  /** Name that collided — Open existing must use this, not a later rename. */
+  let collidedPageName = $state('')
   let listRefs: HTMLButtonElement[] = $state([])
   let searchEl: HTMLInputElement | null = $state(null)
   let pageNameEl: HTMLInputElement | null = $state(null)
@@ -166,10 +173,42 @@
     // Touch selectedId so the effect re-runs on change; then reset.
     void id
     placeholderValues = {}
+    placeholderErrors = {}
+    pageExistsCollision = false
+    collidedPageName = ''
   })
+
+  /** Built-in auto-filled placeholders — never required-block (#650). */
+  const AUTO_PLACEHOLDERS = new Set(['date', 'time', 'iso_date', 'weekday'])
+
+  function firstMissingRequired(): string | null {
+    const placeholders = selectedSummary?.placeholders ?? []
+    for (const ph of placeholders) {
+      if (!ph.required) continue
+      if (AUTO_PLACEHOLDERS.has(ph.name)) continue
+      // Caller form value wins; otherwise a declared Default satisfies required
+      // the same way the backend renderer substitutes it when the var is omitted.
+      const val = (placeholderValues[ph.name] ?? '').trim()
+      const declaredDefault = (ph.default ?? '').trim()
+      if (!val && !declaredDefault) return ph.name
+    }
+    return null
+  }
+
+  let requiredBlocked = $derived(firstMissingRequired() !== null)
 
   function selectTemplate(id: string): void {
     selectedId = id
+  }
+
+  function openExistingPage(): void {
+    const name = collidedPageName.trim() || pageName.trim()
+    pageExistsCollision = false
+    collidedPageName = ''
+    if (!name) return
+    window.dispatchEvent(new CustomEvent('focus-page-title'))
+    onCreatedPage?.(name)
+    onClose()
   }
 
   // Keyboard navigation on the flat filtered list.
@@ -222,6 +261,36 @@
 
   async function handleConfirm(): Promise<void> {
     if (!selectedId) return
+
+    // Enforce required placeholders before any IPC (#650).
+    const missing = firstMissingRequired()
+    if (missing) {
+      const next: Record<string, string> = {}
+      for (const ph of selectedSummary?.placeholders ?? []) {
+        if (
+          ph.required &&
+          !AUTO_PLACEHOLDERS.has(ph.name) &&
+          !(placeholderValues[ph.name] ?? '').trim() &&
+          !(ph.default ?? '').trim()
+        ) {
+          next[ph.name] = 'Required'
+        }
+      }
+      placeholderErrors = next
+      setTemplateStatus({
+        kind: 'error',
+        message: `Fill in required field: ${missing}`
+      })
+      const el = document.getElementById(
+        `tpl-ph-${missing}`
+      ) as HTMLInputElement | null
+      el?.focus()
+      return
+    }
+    placeholderErrors = {}
+    pageExistsCollision = false
+    collidedPageName = ''
+
     creating = true
 
     // Plugin templates are resolved via the plugin://<plugin-id>/<template-id>
@@ -264,7 +333,23 @@
         onClose()
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const ipc = coerceIPCError(e)
+      if (mode === 'new-page' && ipc.code === 'page_exists') {
+        // Collision: keep picker open so the user can rename or open existing (#652).
+        // Snapshot the name that exists so "Open existing" stays correct if the
+        // user edits the field toward a new name.
+        const existing = pageName.trim()
+        pageExistsCollision = true
+        collidedPageName = existing
+        setTemplateStatus({
+          kind: 'error',
+          message: `A page named “${existing}” already exists. Rename it, or open the existing page.`
+        })
+        pageNameEl?.focus()
+        pageNameEl?.select()
+        return
+      }
+      const msg = ipc.message
       setTemplateStatus({ kind: 'error', message: msg })
       pushNotification({
         kind: 'error',
@@ -500,11 +585,35 @@
                       id="tpl-ph-{ph.name}"
                       type="text"
                       value={placeholderValues[ph.name] ?? ''}
-                      oninput={(e) =>
-                        (placeholderValues[ph.name] = e.currentTarget.value)}
+                      oninput={(e) => {
+                        placeholderValues[ph.name] = e.currentTarget.value
+                        if (placeholderErrors[ph.name]) {
+                          const { [ph.name]: _, ...rest } = placeholderErrors
+                          placeholderErrors = rest
+                        }
+                      }}
+                      aria-invalid={placeholderErrors[ph.name]
+                        ? 'true'
+                        : undefined}
+                      aria-describedby={placeholderErrors[ph.name]
+                        ? `tpl-ph-err-${ph.name}`
+                        : undefined}
                       placeholder={ph.default || `{{${ph.name}}}`}
-                      class="w-full rounded-lg border border-surface-modal-border bg-surface-modal px-3 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none"
+                      class="w-full rounded-lg border bg-surface-modal px-3 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:border-accent-primary-start focus:outline-none {placeholderErrors[
+                        ph.name
+                      ]
+                        ? 'border-status-danger'
+                        : 'border-surface-modal-border'}"
                     />
+                    {#if placeholderErrors[ph.name]}
+                      <p
+                        id="tpl-ph-err-{ph.name}"
+                        class="mt-0.5 text-xs text-status-danger"
+                        role="alert"
+                      >
+                        {placeholderErrors[ph.name]}
+                      </p>
+                    {/if}
                   </div>
                 {/each}
               </div>
@@ -542,15 +651,33 @@
           >
             Cancel
           </button>
+          {#if pageExistsCollision && mode === 'new-page'}
+            <button
+              type="button"
+              onclick={() => openExistingPage()}
+              class="rounded-lg border border-surface-modal-border px-4 py-2 text-sm text-text-primary transition-colors hover:bg-hover"
+            >
+              Open existing
+            </button>
+          {/if}
           <button
             onclick={() => void handleConfirm()}
             disabled={!selectedId ||
               creating ||
               (mode === 'new-page' && !pageName.trim())}
-            title="Confirm (Enter or Ctrl+Enter)"
-            class="rounded-lg bg-accent-primary-start px-4 py-2 text-sm font-medium text-text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-disabled={requiredBlocked ? 'true' : undefined}
+            title={requiredBlocked
+              ? 'Fill in required placeholders first'
+              : 'Confirm (Enter or Ctrl+Enter)'}
+            class="rounded-lg bg-accent-primary-start px-4 py-2 text-sm font-medium text-text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 {requiredBlocked
+              ? 'opacity-60 ring-1 ring-status-danger/50'
+              : ''}"
           >
-            {creating ? '…' : confirmLabel}
+            {creating
+              ? '…'
+              : pageExistsCollision
+                ? 'Create with new name'
+                : confirmLabel}
           </button>
         </div>
       </div>

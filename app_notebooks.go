@@ -262,6 +262,35 @@ func (a *App) UnlinkNotebook(id string) error {
 	return nil
 }
 
+// RevealNotebookInOS opens the notebook's on-disk folder in the OS file
+// manager (vault notebook under the vault root, or a linked notebook's
+// external root). Used by the sidebar context menu (#653).
+func (a *App) RevealNotebookInOS(notebook string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	name := strings.TrimSpace(notebook)
+	if name == "" {
+		return fmt.Errorf("notebook name is required")
+	}
+	source := a.resolveSourceByName(name)
+	dir, err := a.resolveNotebookDir(name, source)
+	if err != nil {
+		return err
+	}
+	// Vault notebooks must stay under the vault root (resolveNotebookDir
+	// contract). Linked roots are external by design and fingerprint-bound.
+	if !strings.HasPrefix(source, "linked:") && !isPathWithinRoot(dir, a.vaultPath) {
+		return fmt.Errorf("notebook path escapes vault root")
+	}
+	if _, err := os.Stat(dir); err != nil {
+		return fmt.Errorf("notebook folder not found: %w", err)
+	}
+	return openNative(dir)
+}
+
 // PickLinkedNotebook opens the native folder picker and links the chosen
 // external folder. Returns the linked notebook, or a zero value (no error) when
 // the user cancels.

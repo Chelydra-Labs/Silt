@@ -2,11 +2,15 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
 const mocks = vi.hoisted(() => ({
-  SearchBlocksPaged: vi.fn()
+  SearchBlocksPaged: vi.fn(),
+  ListNavigation: vi.fn(),
+  QueryTagHierarchy: vi.fn()
 }))
 
 vi.mock('../../bindings/silt/app.js', () => ({
-  SearchBlocksPaged: mocks.SearchBlocksPaged
+  SearchBlocksPaged: mocks.SearchBlocksPaged,
+  ListNavigation: mocks.ListNavigation,
+  QueryTagHierarchy: mocks.QueryTagHierarchy
 }))
 
 import SearchModal from './SearchModal.svelte'
@@ -14,6 +18,8 @@ import SearchModal from './SearchModal.svelte'
 describe('SearchModal keyboard a11y', () => {
   beforeEach(() => {
     mocks.SearchBlocksPaged.mockReset()
+    mocks.ListNavigation.mockReset()
+    mocks.QueryTagHierarchy.mockReset()
     mocks.SearchBlocksPaged.mockResolvedValue({
       results: [],
       total: 0,
@@ -21,6 +27,15 @@ describe('SearchModal keyboard a11y', () => {
       limit: 20,
       has_more: false
     })
+    mocks.ListNavigation.mockResolvedValue({
+      notebooks: [
+        { name: 'Work', sections: [] },
+        { name: 'Personal', sections: [] }
+      ]
+    })
+    mocks.QueryTagHierarchy.mockResolvedValue([
+      { name: 'project', path: 'project', count: 2, children: [] }
+    ])
   })
   afterEach(() => cleanup())
 
@@ -74,5 +89,119 @@ describe('SearchModal keyboard a11y', () => {
           b.closest('[data-type-chips]')
       )
     expect(pressed?.textContent).toContain('Tasks')
+  })
+
+  it('passes notebook and tag filters to SearchBlocksPaged (#655)', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    await vi.waitFor(() => {
+      expect(screen.getByRole('option', { name: 'Work' })).toBeInTheDocument()
+    })
+
+    const notebookSelect = screen.getByLabelText(
+      'Filter by notebook'
+    ) as HTMLSelectElement
+    notebookSelect.value = 'Work'
+    await fireEvent.change(notebookSelect)
+    const tagInput = screen.getByLabelText('Filter by tag')
+    await fireEvent.input(tagInput, { target: { value: 'project' } })
+
+    // Active filter chips appear when filters are set.
+    expect(screen.getByLabelText('Clear notebook filter')).toBeInTheDocument()
+    expect(screen.getByLabelText('Clear tag filter')).toBeInTheDocument()
+
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'hello' } })
+
+    await vi.waitFor(() => {
+      const calls = mocks.SearchBlocksPaged.mock.calls
+      const match = calls.find(
+        (c) =>
+          c[0] === 'hello' &&
+          c[3]?.notebook === 'Work' &&
+          c[3]?.tag === 'project'
+      )
+      expect(match).toBeTruthy()
+    })
+
+    await fireEvent.click(screen.getByLabelText('Clear notebook filter'))
+    expect(notebookSelect.value).toBe('')
+  })
+
+  it('does not steal Arrow/Enter from notebook select or tag input', async () => {
+    const onJump = vi.fn()
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: '1',
+          notebook: 'Work',
+          section: '',
+          page: 'A',
+          file_date: '',
+          clean_content: 'hello'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump }
+    })
+    await vi.waitFor(() => {
+      expect(screen.getByRole('option', { name: 'Work' })).toBeInTheDocument()
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'hello' } })
+    await vi.waitFor(() => {
+      expect(mocks.SearchBlocksPaged).toHaveBeenCalled()
+    })
+
+    const notebookSelect = screen.getByLabelText('Filter by notebook')
+    notebookSelect.focus()
+    const enterEvt = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true
+    })
+    window.dispatchEvent(enterEvt)
+    // Capture handler must not preventDefault / jump when select is focused.
+    expect(enterEvt.defaultPrevented).toBe(false)
+    expect(onJump).not.toHaveBeenCalled()
+
+    const tagInput = screen.getByLabelText('Filter by tag')
+    tagInput.focus()
+    const arrowEvt = new KeyboardEvent('keydown', {
+      key: 'ArrowDown',
+      bubbles: true,
+      cancelable: true
+    })
+    window.dispatchEvent(arrowEvt)
+    expect(arrowEvt.defaultPrevented).toBe(false)
+  })
+
+  it('sends empty notebook/tag when filters are cleared (#655)', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'x' } })
+    await vi.waitFor(() => {
+      expect(mocks.SearchBlocksPaged).toHaveBeenCalled()
+    })
+    const filters =
+      mocks.SearchBlocksPaged.mock.calls[
+        mocks.SearchBlocksPaged.mock.calls.length - 1
+      ][3]
+    expect(filters.notebook).toBe('')
+    expect(filters.tag).toBe('')
   })
 })

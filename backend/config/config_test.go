@@ -925,8 +925,11 @@ func TestDefaults_FormattingConfig(t *testing.T) {
 			t.Errorf("defaults hotkeys missing %q", key)
 		}
 	}
-	// Heading level hotkeys (#169).
-	for _, key := range []string{"set_h1", "set_h2", "set_h3", "set_note", "set_task"} {
+	// Heading level hotkeys (#169 / #645).
+	for _, key := range []string{
+		"set_h1", "set_h2", "set_h3", "set_h4", "set_h5", "set_h6",
+		"set_note", "set_task",
+	} {
 		if _, ok := d.Hotkeys[key]; !ok {
 			t.Errorf("defaults hotkeys missing %q", key)
 		}

@@ -2,9 +2,9 @@
   import type { Editor } from 'svelte-tiptap'
 
   // SelectionBubble — a floating popover above non-collapsed text selection
-  // (#168). Shows the same format buttons as the toolbar in a tighter
+  // (#168 / #643). Shows the same format buttons as the toolbar in a tighter
   // layout. Auto-dismisses on Esc, click outside, or selection collapse.
-  // role="menu" with arrow-key navigation.
+  // role="menu" with roving tabindex + arrow-key navigation (WAI-ARIA menu).
 
   interface Props {
     editor: Editor | null
@@ -16,6 +16,8 @@
   let { editor, activeMarks, selectionEmpty, selectionCoords }: Props = $props()
 
   let show = $derived(!selectionEmpty && selectionCoords !== null)
+  let focusIdx = $state(0)
+  let menuEl = $state<HTMLDivElement | null>(null)
 
   const QUICK_BUTTONS = [
     { id: 'bold', icon: 'format_bold', label: 'Bold', mark: 'bold' },
@@ -54,16 +56,79 @@
       editor.chain().focus().toggleMark(mark).run()
     }
   }
+
+  function focusButton(idx: number): void {
+    const n = QUICK_BUTTONS.length
+    const next = ((idx % n) + n) % n
+    focusIdx = next
+    // DOM focus after Svelte applies the new tabindex.
+    queueMicrotask(() => {
+      const btn = menuEl?.querySelectorAll<HTMLElement>(
+        '[role="menuitemcheckbox"]'
+      )[next]
+      btn?.focus()
+    })
+  }
+
+  function handleKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      // Restore editor focus; selection collapse is owned by the editor.
+      editor?.chain().focus().run()
+      return
+    }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      focusButton(focusIdx + 1)
+      return
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      focusButton(focusIdx - 1)
+      return
+    }
+    if (e.key === 'Home') {
+      e.preventDefault()
+      focusButton(0)
+      return
+    }
+    if (e.key === 'End') {
+      e.preventDefault()
+      focusButton(QUICK_BUTTONS.length - 1)
+      return
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      const btn = QUICK_BUTTONS[focusIdx]
+      if (btn) handleAction(btn.id, btn.mark)
+    }
+  }
+
+  // Do NOT auto-focus when the bubble appears: mouse/Shift+Arrow selection
+  // must leave focus in the editor so typing replaces the selection and
+  // arrows keep extending it. Keyboard users Tab into the menu (first button
+  // has tabindex 0) or click a button; then arrow/Enter/Esc work (#643 review).
+  $effect(() => {
+    if (show) {
+      focusIdx = 0
+    }
+  })
 </script>
 
 {#if show && selectionCoords}
+  <!-- tabindex=-1 so the menu container can receive keydown when a child is focused (bubbles). -->
   <div
+    bind:this={menuEl}
     class="selection-bubble"
     role="menu"
+    tabindex="-1"
     aria-label="Format selection"
+    aria-orientation="horizontal"
     style="left: {selectionCoords.left}px; top: {selectionCoords.top - 8}px"
+    onkeydown={handleKeydown}
   >
-    {#each QUICK_BUTTONS as btn (btn.id)}
+    {#each QUICK_BUTTONS as btn, i (btn.id)}
       <button
         type="button"
         class="bubble-btn"
@@ -71,7 +136,11 @@
         aria-checked={activeMarks.has(btn.mark)}
         aria-label={btn.label}
         role="menuitemcheckbox"
-        onclick={() => handleAction(btn.id, btn.mark)}
+        tabindex={i === focusIdx ? 0 : -1}
+        onclick={() => {
+          focusIdx = i
+          handleAction(btn.id, btn.mark)
+        }}
       >
         <span class="material-symbols-outlined" aria-hidden="true"
           >{btn.icon}</span
@@ -116,6 +185,17 @@
       transparent
     );
     color: var(--color-text-primary);
+  }
+
+  .bubble-btn:focus-visible {
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-start) 20%,
+      transparent
+    );
+    color: var(--color-text-primary);
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: 1px;
   }
 
   .bubble-btn.active {

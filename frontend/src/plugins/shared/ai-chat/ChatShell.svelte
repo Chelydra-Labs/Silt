@@ -1,6 +1,9 @@
 <script lang="ts">
   import { tick, type Snippet } from 'svelte'
+  import { Browser } from '@wailsio/runtime'
   import type { AIChatEntry, ConfirmationEntry, EvidenceTarget } from './types'
+  import { renderChatMarkdown } from './renderChatMarkdown'
+  import { isSafeLinkHref } from '../../../lib/editor/converters/validate'
 
   interface Props {
     title?: string
@@ -102,6 +105,51 @@
       transcriptEl.clientHeight
     stickToBottom = distance < 32
   }
+
+  // Markdown {@html} emits bare <a href>. Route safe absolute links through
+  // the OS browser so the Wails webview is not navigated away (AboutTab
+  // convention). Always preventDefault on transcript anchors so unsafe hrefs
+  // cannot navigate the webview either. Attached via $effect for a11y.
+  function isOpenableExternalHref(href: string): boolean {
+    if (!href || !isSafeLinkHref(href)) return false
+    // Protocol-relative and path-relative are not OS-browser targets.
+    if (
+      href.startsWith('//') ||
+      href.startsWith('#') ||
+      href.startsWith('/') ||
+      href.startsWith('./') ||
+      href.startsWith('../')
+    ) {
+      return false
+    }
+    try {
+      const u = new URL(href)
+      return (
+        u.protocol === 'http:' ||
+        u.protocol === 'https:' ||
+        u.protocol === 'mailto:'
+      )
+    } catch {
+      return false
+    }
+  }
+
+  function onTranscriptClick(e: MouseEvent): void {
+    const a = (e.target as HTMLElement | null)?.closest?.('a')
+    if (!a || !transcriptEl?.contains(a)) return
+    const href = a.getAttribute('href')
+    if (!href) return
+    e.preventDefault()
+    if (!isOpenableExternalHref(href)) return
+    Browser.OpenURL(href)
+  }
+
+  $effect(() => {
+    const el = transcriptEl
+    if (!el) return
+    el.addEventListener('click', onTranscriptClick)
+    return () => el.removeEventListener('click', onTranscriptClick)
+  })
 
   function focusableWithin(element: HTMLElement): HTMLElement[] {
     return Array.from(
@@ -265,7 +313,14 @@
           <span class="entry-label"
             >{entry.role === 'user' ? 'You' : 'Silt'}</span
           >
-          <div class="message-copy">{entry.content}</div>
+          {#if entry.role === 'assistant'}
+            <!-- Assistant replies are markdown; sanitize before {@html}. -->
+            <div class="message-copy message-md">
+              {@html renderChatMarkdown(entry.content)}
+            </div>
+          {:else}
+            <div class="message-copy">{entry.content}</div>
+          {/if}
           {#if entry.streaming}
             <span class="stream-caret" aria-hidden="true"></span>
           {/if}
@@ -638,6 +693,73 @@
     margin-top: 0.2rem;
     white-space: pre-wrap;
     line-height: 1.55;
+  }
+  /* Rendered assistant markdown: block elements own their spacing. */
+  .message-md {
+    white-space: normal;
+  }
+  .message-md :global(p) {
+    margin: 0 0 0.55em;
+  }
+  .message-md :global(p:last-child) {
+    margin-bottom: 0;
+  }
+  .message-md :global(h1),
+  .message-md :global(h2),
+  .message-md :global(h3),
+  .message-md :global(h4),
+  .message-md :global(h5),
+  .message-md :global(h6) {
+    margin: 0.75em 0 0.35em;
+    font-family: var(--font-headline);
+    line-height: 1.25;
+  }
+  .message-md :global(h1) {
+    font-size: 1.25rem;
+  }
+  .message-md :global(h2) {
+    font-size: 1.1rem;
+  }
+  .message-md :global(h3),
+  .message-md :global(h4),
+  .message-md :global(h5),
+  .message-md :global(h6) {
+    font-size: 1rem;
+  }
+  .message-md :global(ul),
+  .message-md :global(ol) {
+    margin: 0.35em 0 0.55em;
+    padding-left: 1.35em;
+  }
+  .message-md :global(li) {
+    margin: 0.15em 0;
+  }
+  .message-md :global(pre) {
+    margin: 0.45em 0;
+    padding: 0.55em 0.7em;
+    overflow-x: auto;
+    border-radius: 0.45rem;
+    background: color-mix(in srgb, var(--color-surface-card) 80%, transparent);
+    border: 1px solid var(--color-surface-card-border);
+    font-size: 0.85em;
+  }
+  .message-md :global(code) {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.9em;
+  }
+  .message-md :global(:not(pre) > code) {
+    padding: 0.1em 0.3em;
+    border-radius: 0.25rem;
+    background: color-mix(in srgb, var(--color-surface-card) 70%, transparent);
+  }
+  .message-md :global(blockquote) {
+    margin: 0.45em 0;
+    padding-left: 0.75em;
+    border-left: 3px solid var(--color-accent-primary-start);
+    color: var(--color-text-muted);
+  }
+  .message-md :global(a) {
+    color: var(--color-accent-primary-start);
   }
   .user-message {
     align-self: flex-end;
