@@ -122,6 +122,19 @@ describe('color helper (#385)', () => {
     expect(ink === '#0a0a0a' || ink === '#000000').toBe(true)
   })
 
+  it('deriveInkOnAccent picks white on near-black fills', () => {
+    expect(deriveInkOnAccent('#0a0a0a')).toBe('#ffffff')
+  })
+
+  it('deriveInkOnAccent may use pure black on medium indigo', () => {
+    // #6366f1 often needs pure black for 4.5:1 when near-black falls short
+    const ink = deriveInkOnAccent('#6366f1')
+    expect(ink === '#0a0a0a' || ink === '#000000').toBe(true)
+    const ratio = contrastRatioWCAG(ink, '#6366f1')
+    expect(ratio).not.toBeNull()
+    expect(ratio!).toBeGreaterThanOrEqual(4.5)
+  })
+
   it('opaque start passes through effectiveAccentFill', () => {
     expect(effectiveAccentFill('#0d9488', '#0c0c0e')).toBe('#0d9488')
   })

@@ -9,7 +9,7 @@
   import type { ParsedBlock } from '../lib/editor'
   import {
     snapshotEditCaret,
-    resolveCaretInDoc,
+    applyEditCaret,
     type EditCaretSnapshot
   } from '../lib/editor/editCaretRestore'
   import type { Editor } from 'svelte-tiptap'
@@ -360,6 +360,11 @@
   let savedEditScroll = 0
   let savedEditCaret: EditCaretSnapshot | null = null
   let pendingRestore = false
+  // TipTap's blocks→setContent $effect often runs after onCreate/onReady and
+  // wipes the first setTextSelection. Keep the snapshot for one re-apply pass
+  // after content sync + layout frames (PLAN #331 task 3).
+  let pendingCaretReapply: EditCaretSnapshot | null = null
+  let caretRestoreGen = 0
 
   // $effect.pre runs ahead of the DOM update, so containerEl.scrollTop and the
   // live editor selection still reflect Edit mode at the unmount boundary —
@@ -370,9 +375,15 @@
       savedEditScroll = containerEl.scrollTop
       savedEditCaret = snapshotEditCaret(editorInstance)
       pendingRestore = true
+      pendingCaretReapply = null
+      caretRestoreGen++
     }
     prevViewMode = cur
   })
+
+  function tryApplyCaret(snap: EditCaretSnapshot | null): void {
+    applyEditCaret(editorInstance, snap)
+  }
 
   async function handleEditorReady() {
     if (!pendingRestore) return
@@ -380,38 +391,69 @@
     const target = savedEditScroll
     const caret = savedEditCaret
     savedEditCaret = null
+    const gen = ++caretRestoreGen
+    pendingCaretReapply = caret
 
     // Wait for bind:editorInstance + NodeView flush before touching selection.
     await tick()
+    if (gen !== caretRestoreGen) return
 
     // Caret first: setTextSelection can scroll the view; we re-apply scrollTop
     // afterward so #319 still wins for viewport position.
-    if (caret && editorInstance) {
-      const pos = resolveCaretInDoc(editorInstance.state.doc, caret)
-      if (pos != null) {
-        try {
-          editorInstance.commands.setTextSelection(pos)
-          editorInstance.commands.focus()
-        } catch {
-          // Stale/clamped pos after external edit — fall through to scroll-only.
-        }
+    tryApplyCaret(caret)
+
+    // TipTap may setContent from blocks in a sibling $effect after onReady —
+    // re-apply once the microtask/tick queue drains so we win that race.
+    await tick()
+    if (gen !== caretRestoreGen) return
+    tryApplyCaret(pendingCaretReapply)
+
+    if (target > 0 && containerEl) {
+      // Restore once the remounted NodeViews have flushed. Async renderers
+      // (KaTeX/Mermaid lazy load, Shiki debounce) settle AFTER the first frame
+      // and grow scrollHeight, so a single rAF would clamp too early on
+      // math/diagram-heavy pages. Re-clamp across a couple of frames: each clamps
+      // to the largest valid offset, settling at `target` once the doc is tall
+      // enough (and never overscrolling if it shrank).
+      const restoreScroll = () => {
+        if (!containerEl) return
+        containerEl.scrollTop = Math.min(target, containerEl.scrollHeight)
+      }
+      requestAnimationFrame(() => {
+        if (gen !== caretRestoreGen) return
+        tryApplyCaret(pendingCaretReapply)
+        restoreScroll()
+        requestAnimationFrame(() => {
+          if (gen !== caretRestoreGen) return
+          tryApplyCaret(pendingCaretReapply)
+          restoreScroll()
+          // End the remount re-apply window; later external edits must not jump.
+          if (gen === caretRestoreGen) pendingCaretReapply = null
+        })
+      })
+    } else {
+      // No scroll target — still clear after a second tick for setContent race.
+      await tick()
+      if (gen === caretRestoreGen) {
+        tryApplyCaret(pendingCaretReapply)
+        pendingCaretReapply = null
       }
     }
-
-    if (target <= 0 || !containerEl) return
-    // Restore once the remounted NodeViews have flushed. Async renderers
-    // (KaTeX/Mermaid lazy load, Shiki debounce) settle AFTER the first frame
-    // and grow scrollHeight, so a single rAF would clamp too early on
-    // math/diagram-heavy pages. Re-clamp across a couple of frames: each clamps
-    // to the largest valid offset, settling at `target` once the doc is tall
-    // enough (and never overscrolling if it shrank).
-    const restore = () => {
-      if (!containerEl) return
-      containerEl.scrollTop = Math.min(target, containerEl.scrollHeight)
-    }
-    requestAnimationFrame(restore)
-    requestAnimationFrame(() => requestAnimationFrame(restore))
   }
+
+  // When blocks change while a remount restore is still open, TipTap's
+  // setContent path may have just run — re-apply caret once after that flush.
+  $effect(() => {
+    const key = `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
+    const snap = untrack(() => pendingCaretReapply)
+    const gen = untrack(() => caretRestoreGen)
+    if (!snap || !editorInstance) return
+    void key
+    void tick().then(() => {
+      if (gen !== caretRestoreGen || pendingCaretReapply !== snap) return
+      tryApplyCaret(snap)
+    })
+  })
 </script>
 
 <div

@@ -25,7 +25,11 @@ export {
   computeDragImageOffset
 } from './siltInlineDragHandle'
 export { UniqueBlockIds, freshId } from './uniqueIdPlugin'
-export { snapshotEditCaret, resolveCaretInDoc } from './editCaretRestore'
+export {
+  snapshotEditCaret,
+  resolveCaretInDoc,
+  applyEditCaret
+} from './editCaretRestore'
 export type { EditCaretSnapshot } from './editCaretRestore'
 export {
   SiltBlockKeymaps,

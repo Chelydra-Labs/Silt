@@ -544,3 +544,29 @@ func rgbDistance(t *testing.T, a, b string) float64 {
 	db := float64(ab) - float64(bb)
 	return math.Sqrt(dr*dr + dg*dg + db*db)
 }
+
+// TestDeriveInkOnAccent pins omit-path ink picks for common accent fills (#624).
+func TestDeriveInkOnAccent(t *testing.T) {
+	// cyber_forest light primary teal — white fails AA; dark ink required.
+	teal := DeriveInkOnAccent("#0d9488")
+	if teal != "#0a0a0a" && teal != "#000000" {
+		t.Errorf("teal ink = %q, want near/pure black", teal)
+	}
+	if r, ok := ContrastRatio(teal, "#0d9488"); !ok || r < 4.5 {
+		t.Errorf("teal ink contrast = %.2f, want >= 4.5", r)
+	}
+
+	// Near-black fill → white label.
+	if got := DeriveInkOnAccent("#0a0a0a"); got != "#ffffff" {
+		t.Errorf("near-black fill ink = %q, want #ffffff", got)
+	}
+
+	// Medium indigo often needs pure black when near-black is short of 4.5.
+	indigo := DeriveInkOnAccent("#6366f1")
+	if indigo != "#0a0a0a" && indigo != "#000000" {
+		t.Errorf("indigo ink = %q, want near/pure black", indigo)
+	}
+	if r, ok := ContrastRatio(indigo, "#6366f1"); !ok || r < 4.5 {
+		t.Errorf("indigo ink contrast = %.2f, want >= 4.5", r)
+	}
+}

@@ -170,7 +170,10 @@ func streamOpenAI(ctx context.Context, req CompleteRequest, model, baseURL strin
 	}
 
 	timeoutMs := req.Provider.TimeoutMs
-	// Overall envelope bounds connect retries + the successful stream body.
+	// Overall envelope bounds the full retry sequence (attempts + backoff +
+	// Retry-After). Each connect attempt also nests a per-attempt timeout that
+	// bounds that attempt's Do + (on success) SSE body read — same single-shot
+	// stream budget as pre-#640, with room for retries in the parent envelope.
 	ctx, cancel := context.WithTimeout(ctx, overallSendTimeout(timeoutMs))
 	defer cancel()
 
@@ -234,10 +237,11 @@ func streamOpenAIConnect(ctx context.Context, req CompleteRequest, baseURL strin
 // body is drained/closed and never returned. On 2xx the live body is returned
 // for SSE parsing (caller closes).
 func streamOpenAIConnectOnce(ctx context.Context, req CompleteRequest, baseURL string, body []byte, perAttempt time.Duration) (*http.Response, time.Duration, *AIError) {
+	// Request is bound to attemptCtx (not the parent overall ctx alone): the
+	// per-attempt deadline covers connect + the committed SSE body for this
+	// attempt. cancelOnCloseBody defers cancel() until Body.Close so we do not
+	// kill the stream immediately on Do success; it does not extend the deadline.
 	attemptCtx, cancel := context.WithTimeout(ctx, perAttempt)
-	// On success we must NOT cancel until the caller finishes reading the body.
-	// Cancel only on error paths; on success the overall envelope still bounds
-	// the stream via the parent ctx attached to the request.
 	httpReq, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, baseURL+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		cancel()
@@ -277,10 +281,8 @@ func streamOpenAIConnectOnce(ctx context.Context, req CompleteRequest, baseURL s
 		return nil, ra, aiErr
 	}
 
-	// Commit: keep the body open for SSE. Detach the per-attempt cancel from
-	// killing the body by replacing the request context... Actually the body
-	// is already tied to attemptCtx. If we cancel now, the body read fails.
-	// Hold cancel until the caller closes the body by wrapping Close.
+	// Commit: hand body to SSE parse. Do not cancel() here — that would abort
+	// the body mid-stream. cancelOnCloseBody runs cancel when the caller closes.
 	resp.Body = &cancelOnCloseBody{ReadCloser: resp.Body, cancel: cancel}
 	return resp, 0, nil
 }

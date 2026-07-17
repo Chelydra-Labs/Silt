@@ -81,3 +81,23 @@ export function resolveCaretInDoc(
   const offset = Math.min(Math.max(0, snapshot.offsetInBlock), maxOffset)
   return matchPos + 1 + offset
 }
+
+/**
+ * Apply a caret snapshot to a live editor. Returns true when selection was set.
+ * Safe against destroyed editors and resolve failures (scroll-only fallback).
+ */
+export function applyEditCaret(
+  editor: Editor | null | undefined,
+  snapshot: EditCaretSnapshot | null | undefined
+): boolean {
+  if (!editor || !snapshot || editor.isDestroyed) return false
+  const pos = resolveCaretInDoc(editor.state.doc, snapshot)
+  if (pos == null) return false
+  try {
+    editor.commands.setTextSelection(pos)
+    editor.commands.focus()
+    return true
+  } catch {
+    return false
+  }
+}

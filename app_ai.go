@@ -286,13 +286,14 @@ func (a *App) aiUseKeyringLocked() bool {
 	return a.cfg.AI.UseKeyring == nil || *a.cfg.AI.UseKeyring
 }
 
-// resolveAIKeyUnlocked resolves a provider API key with NO configMu/vaultMu held
-// (the caller has already snapshotted what it needs — including the precomputed
-// keyring user key — and released the locks, so a slow/unavailable keyring
-// cannot stall config or vault access). It tries the OS keyring first when
-// enabled + present, and falls back to the config value on not-found OR on
-// keyring-unavailable (headless Linux / locked session). The returned
-// unavailable flag lets the caller surface a one-time warning.
+// resolveAIKeyUnlocked resolves a provider API key without taking configMu.
+// It does not take vaultMu either, but callers MAY hold vaultMu.RLock across
+// the call (CopyAIAPIKey / setAIAPIKeyLocked do, so a slow keyring cannot race
+// SwitchVault). Prefer releasing locks for pure read paths (GetAIProviderConfig)
+// so keyring latency does not stall unrelated vault writers. Tries the OS
+// keyring first when enabled + present, and falls back to the config value on
+// not-found OR keyring-unavailable (headless Linux / locked session). The
+// returned unavailable flag lets the caller surface a one-time warning.
 func (a *App) resolveAIKeyUnlocked(user string, useKeyring bool, configKey string) (key string, unavailable bool) {
 	if !useKeyring || a.keyringStore == nil {
 		return strings.TrimSpace(configKey), false

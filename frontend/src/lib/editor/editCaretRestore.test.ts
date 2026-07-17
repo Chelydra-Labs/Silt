@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest'
-import { snapshotEditCaret, resolveCaretInDoc } from './editCaretRestore'
+import { describe, it, expect, vi } from 'vitest'
+import {
+  snapshotEditCaret,
+  resolveCaretInDoc,
+  applyEditCaret
+} from './editCaretRestore'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 
 /** Minimal Editor stub for snapshotEditCaret (stable-id walk + $from.start). */
@@ -178,5 +182,40 @@ describe('resolveCaretInDoc', () => {
   it('clamps a negative offset to 0', () => {
     const doc = makeDoc([{ id: 'a', pos: 10, contentSize: 5 }])
     expect(resolveCaretInDoc(doc, { blockId: 'a', offsetInBlock: -3 })).toBe(11)
+  })
+})
+
+describe('applyEditCaret', () => {
+  it('returns false without editor or snapshot', () => {
+    expect(applyEditCaret(null, { blockId: 'a', offsetInBlock: 0 })).toBe(false)
+    expect(applyEditCaret({} as any, null)).toBe(false)
+  })
+
+  it('sets selection when resolve succeeds', () => {
+    const setTextSelection = vi.fn()
+    const focus = vi.fn()
+    const editor = {
+      isDestroyed: false,
+      state: {
+        doc: makeDoc([{ id: 'a', pos: 0, contentSize: 10 }])
+      },
+      commands: { setTextSelection, focus }
+    } as any
+    expect(applyEditCaret(editor, { blockId: 'a', offsetInBlock: 3 })).toBe(
+      true
+    )
+    expect(setTextSelection).toHaveBeenCalledWith(4) // 0+1+3
+    expect(focus).toHaveBeenCalled()
+  })
+
+  it('returns false when the block id is missing', () => {
+    const editor = {
+      isDestroyed: false,
+      state: { doc: makeDoc([{ id: 'other', pos: 0, contentSize: 5 }]) },
+      commands: { setTextSelection: vi.fn(), focus: vi.fn() }
+    } as any
+    expect(applyEditCaret(editor, { blockId: 'gone', offsetInBlock: 0 })).toBe(
+      false
+    )
   })
 })
