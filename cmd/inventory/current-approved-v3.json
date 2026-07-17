@@ -725,6 +725,10 @@
         "signature": "ResolveQuarantinedLinks() ([]QuarantinedLinkInfo, error)"
       },
       {
+        "name": "RevealNotebookInOS",
+        "signature": "RevealNotebookInOS(notebook string) error"
+      },
+      {
         "name": "RevokeCapability",
         "signature": "RevokeCapability(pluginID, capability string) error"
       },
