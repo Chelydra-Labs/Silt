@@ -27,7 +27,8 @@ plugin-owned; answers and evidence render in the shared typed transcript.
    - Configure a **chat** model (local Ollama or OpenAI-compatible).
    - Configure an **embedding** model independently (e.g. `nomic-embed-text`).
    - See [BRING_YOUR_OWN_MODEL.md](../BRING_YOUR_OWN_MODEL.md).
-2. **Settings → AI Assistant** (fine-tuning only when Semantic search is on)
+2. **Settings → AI → Capabilities** (fine-tuning only when Semantic search is on;
+   Semantic search section)
    - Optionally limit **notebook scope**.
    - Click **Rebuild index** (first run). Progress shows in the settings page.
 3. Open **Silt AI** from the title bar and ask a question.

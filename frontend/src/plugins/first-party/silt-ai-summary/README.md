@@ -33,8 +33,9 @@ note; a status-bar chip lets you re-show it.
 
 ## Enable
 
-1. Open **Settings → Plugins** and enable **AI Summary**.
-2. Open **Settings → AI Summary** to tune what it shows (facets, length, timing).
+1. Open **Settings → AI → Features**, turn on **Enable AI**, then **Note summaries**.
+2. Open **Settings → AI → Capabilities** (Note summaries section) to tune what it
+   shows (facets, length, timing).
 
 It needs an AI provider configured (see below) before it generates anything.
 Without one, the banner shows a one-line "configure a provider" nudge and
@@ -54,7 +55,7 @@ fallback (parse → retry → summary-only) so you always get at least a summary
 
 ## Tune it
 
-**Settings → AI Summary** exposes:
+**Settings → AI → Capabilities** (Note summaries) exposes:
 
 - **When to generate** — automatically on note open, or only when you click
   Regenerate (on-demand).

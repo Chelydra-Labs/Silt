@@ -12,7 +12,8 @@ than a standalone assistant surface.
 
 **Off by default.** Enable under **Settings → AI → Features → Enable AI**
 (master switch). There is no independent Plugins-tab toggle. Writing fine-tuning
-lives under **Settings → Writing Assistant** when AI is on.
+lives under **Settings → AI → Capabilities** (Writing Assistant section) when AI
+is on.
 
 > Not the same as **AI Assistant** (`silt-ai-qa`), which is vault Q&A / search.
 > Writing Assistant transforms and proposes edits; Q&A answers questions with
@@ -36,7 +37,7 @@ lives under **Settings → Writing Assistant** when AI is on.
    - Configure a **chat** model (local Ollama or OpenAI-compatible).
    - For related-note suggestions, also configure an **embedding** model.
    - See [BRING_YOUR_OWN_MODEL.md](../BRING_YOUR_OWN_MODEL.md).
-2. **Settings → Writing Assistant** (fine-tuning only)
+2. **Settings → AI → Capabilities** (fine-tuning only; Writing Assistant section)
    - Toggle individual actions.
    - Optionally set tag constraints and advanced prompt overrides.
 3. Open **Silt AI** from the title bar, or run a slash command in the editor
@@ -94,10 +95,10 @@ They operate on the current selection when present, otherwise the active note.
 
 | Symptom | Fix |
 |---|---|
-| No writing action in Silt AI | Enable Writing Assistant in settings |
+| No writing action in Silt AI | Enable AI under Settings → AI → Features |
 | “Chat model not configured” | Settings → AI → set chat model |
 | Related notes empty / blocked | Set embedding model; ensure other notes exist |
-| Action missing from slash menu | Enable that action under Writing Assistant settings |
+| Action missing from slash menu | Enable that action under Settings → AI → Capabilities |
 | Large note truncated | Raise “Max input characters” or select a smaller range |
 
 ## Related
