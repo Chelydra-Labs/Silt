@@ -17,7 +17,8 @@
     DeletePage,
     DeleteSection,
     DeleteNotebook,
-    MovePage
+    MovePage,
+    RevealNotebookInOS
   } from '../../bindings/silt/app.js'
   import { NavOrderManager, sortByName } from '../lib/sidebar/navOrder'
   import { DragDropManager } from '../lib/sidebar/useDragDrop'
@@ -29,6 +30,7 @@
   import {
     linkedNotebookId,
     isLinkedNotebook,
+    deleteDisposition,
     deleteTargetLabel,
     reconcileActiveAfterDelete,
     findNotebook
@@ -147,13 +149,15 @@
     label: string
   } | null>(null)
 
-  // True when the delete target is a LINKED notebook. Deleting a linked
-  // notebook UNLINKS it (files untouched) — the confirm copy must say so
-  // rather than the vault-trash message (#100).
-  let deleteTargetLinked = $derived(
-    !!deleteTarget &&
-      deleteTarget.level === 'notebook' &&
-      isLinkedNotebook(findNotebook(tree, deleteTarget.notebook))
+  // trash | unlink | permanent — linked page/section hard-delete must not
+  // claim vault trash recovery (#100 / #646).
+  let deleteTargetDisposition = $derived(
+    deleteTarget ? deleteDisposition(tree, deleteTarget) : 'trash'
+  )
+  let contextMenuUnlink = $derived(
+    !!contextMenu &&
+      contextMenu.level === 'notebook' &&
+      isLinkedNotebook(findNotebook(tree, contextMenu.notebook))
   )
 
   // Nav order for drag-to-reorder (#68). Explicit ordering from config.yaml;
@@ -581,6 +585,17 @@
     }
   }
 
+  async function handleContextReveal() {
+    if (!contextMenu || contextMenu.level !== 'notebook') return
+    const notebook = contextMenu.notebook
+    contextMenu = null
+    try {
+      await RevealNotebookInOS(notebook)
+    } catch (e) {
+      console.error('Reveal notebook failed:', e)
+    }
+  }
+
   async function confirmDelete() {
     if (!deleteTarget) return
     const target = deleteTarget
@@ -726,6 +741,10 @@
               {#each tree.notebooks as nb (nb.name)}
                 <button
                   onclick={() => handleSelectNotebook(nb.name)}
+                  oncontextmenu={(e) => {
+                    showNotebookDropdown = false
+                    openContextMenu(e, 'notebook', nb.name)
+                  }}
                   class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent"
                 >
                   <span
@@ -1029,21 +1048,35 @@
         role="dialog"
         aria-modal="true"
         aria-label={editingMode === 'rename'
-          ? `Rename ${createMode}`
-          : `New ${createMode}`}
+          ? `Rename ${createMode === 'page' ? 'Page' : createMode === 'notebook' ? 'Notebook' : 'Section'}`
+          : `New ${createMode === 'page' ? 'Page' : createMode === 'notebook' ? 'Notebook' : 'Section'}`}
         tabindex="-1"
         class="relative w-full max-w-md glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden"
       >
         <div class="px-5 py-4 border-b border-surface-modal-border">
           <h2 class="font-headline-md text-headline-md text-text-primary">
             {editingMode === 'rename' ? 'Rename' : 'New'}
-            {createMode === 'notebook' ? 'Notebook' : 'Section'}
+            {createMode === 'page'
+              ? 'Page'
+              : createMode === 'notebook'
+                ? 'Notebook'
+                : 'Section'}
           </h2>
           <p class="text-text-muted text-type-sm font-body-md mt-0.5">
             {#if createMode === 'notebook'}
               in this vault
             {:else if createMode === 'section'}
               in {activeNotebook}
+            {:else if createMode === 'page'}
+              {#if renameCtx?.section}
+                {renameCtx.notebook} › {renameCtx.section}
+              {:else if renameCtx}
+                {renameCtx.notebook}
+              {:else if activeSection}
+                {activeNotebook} › {activeSection}
+              {:else}
+                {activeNotebook}
+              {/if}
             {:else if activeSection}
               {activeNotebook} › {activeSection}
             {:else}
@@ -1060,10 +1093,14 @@
             placeholder={editingMode === 'rename'
               ? createMode === 'notebook'
                 ? 'New notebook name…'
-                : 'New section name…'
+                : createMode === 'page'
+                  ? 'New page name…'
+                  : 'New section name…'
               : createMode === 'notebook'
                 ? 'Notebook name…'
-                : 'Section name…'}
+                : createMode === 'page'
+                  ? 'Page name…'
+                  : 'Section name…'}
             class="w-full bg-surface-modal border border-surface-modal-border rounded-lg px-3 py-2.5 text-text-primary text-icon-sm font-body-md outline-none focus:border-accent-primary-start transition-colors"
           />
           {#if createError}
@@ -1132,14 +1169,22 @@
     <span class="material-symbols-outlined text-icon-md">edit</span>
     Rename
   </button>
+  {#if contextMenu?.level === 'notebook'}
+    <button type="button" onclick={handleContextReveal} role="menuitem">
+      <span class="material-symbols-outlined text-icon-md">folder_open</span>
+      Reveal in file manager
+    </button>
+  {/if}
   <button
     type="button"
     onclick={handleContextDelete}
     role="menuitem"
     class="text-status-danger"
   >
-    <span class="material-symbols-outlined text-icon-md">delete</span>
-    Delete
+    <span class="material-symbols-outlined text-icon-md"
+      >{contextMenuUnlink ? 'link_off' : 'delete'}</span
+    >
+    {contextMenuUnlink ? 'Unlink' : 'Delete'}
   </button>
 </ContextMenu>
 
@@ -1162,16 +1207,41 @@
       class="relative w-full max-w-sm glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden"
     >
       <div class="px-5 py-4 border-b border-surface-modal-border">
-        <h2 class="font-headline-md text-headline-md text-text-primary">
-          {deleteTargetLinked
-            ? 'Unlink Notebook?'
-            : `Delete ${deleteTarget.level}?`}
+        <h2
+          class="font-headline-md text-headline-md text-text-primary flex items-center gap-2"
+        >
+          <span
+            class="material-symbols-outlined text-icon-lg {deleteTargetDisposition ===
+            'trash'
+              ? 'text-status-danger'
+              : deleteTargetDisposition === 'permanent'
+                ? 'text-status-warn'
+                : 'text-status-danger'}"
+            aria-hidden="true"
+            >{deleteTargetDisposition === 'unlink'
+              ? 'link_off'
+              : deleteTargetDisposition === 'permanent'
+                ? 'warning'
+                : 'delete'}</span
+          >
+          {#if deleteTargetDisposition === 'unlink'}
+            Unlink Notebook?
+          {:else if deleteTargetDisposition === 'permanent'}
+            Permanently delete {deleteTarget.level}?
+          {:else}
+            Delete {deleteTarget.level}?
+          {/if}
         </h2>
         <p class="text-text-muted text-type-sm font-body-md mt-1">
-          {#if deleteTargetLinked}
+          {#if deleteTargetDisposition === 'unlink'}
             Unlinking <strong>{deleteTarget.label}</strong> stops indexing it.
             Its files are left <strong>completely untouched</strong> — re-link the
             folder later to index it again.
+          {:else if deleteTargetDisposition === 'permanent'}
+            This will <strong>permanently delete</strong>
+            {deleteTarget.label} from the external linked folder. It is
+            <strong>not</strong> moved to vault
+            <code>.system/trash/</code> and cannot be recovered from Silt.
           {:else}
             This will move the {deleteTarget.label} to
             <code>.system/trash/</code>. You can recover it from there manually.
@@ -1189,7 +1259,11 @@
           onclick={confirmDelete}
           class="px-4 py-2 rounded-lg bg-status-danger/20 border border-status-danger/40 text-status-danger font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
         >
-          {deleteTargetLinked ? 'Unlink' : 'Delete'}
+          {deleteTargetDisposition === 'unlink'
+            ? 'Unlink'
+            : deleteTargetDisposition === 'permanent'
+              ? 'Delete permanently'
+              : 'Delete'}
         </button>
       </div>
     </div>

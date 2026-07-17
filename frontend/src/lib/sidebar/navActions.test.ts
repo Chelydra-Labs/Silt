@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest'
 import {
   linkedNotebookId,
   isLinkedNotebook,
+  deleteDisposition,
   deleteTargetLabel,
+  entityTitle,
   reconcileActiveAfterDelete,
   findNotebook,
   type DeleteTarget
@@ -54,6 +56,77 @@ describe('isLinkedNotebook', () => {
 
   it('returns false for a vault notebook', () => {
     expect(isLinkedNotebook({ name: 'Work', sections: [] })).toBe(false)
+  })
+})
+
+describe('deleteDisposition', () => {
+  const vaultTree: NavigationTree = {
+    notebooks: [{ name: 'Work', sections: [] }]
+  }
+  const linkedTree: NavigationTree = {
+    notebooks: [
+      {
+        name: 'Synced',
+        sections: [],
+        source: 'linked:abc'
+      }
+    ]
+  }
+
+  it('returns trash for vault page/section/notebook', () => {
+    expect(
+      deleteDisposition(vaultTree, {
+        level: 'page',
+        notebook: 'Work',
+        section: 'S',
+        page: 'P'
+      })
+    ).toBe('trash')
+    expect(
+      deleteDisposition(vaultTree, {
+        level: 'section',
+        notebook: 'Work',
+        section: 'S'
+      })
+    ).toBe('trash')
+    expect(
+      deleteDisposition(vaultTree, { level: 'notebook', notebook: 'Work' })
+    ).toBe('trash')
+  })
+
+  it('returns unlink for a linked notebook', () => {
+    expect(
+      deleteDisposition(linkedTree, {
+        level: 'notebook',
+        notebook: 'Synced'
+      })
+    ).toBe('unlink')
+  })
+
+  it('returns permanent for page/section inside a linked notebook (#646)', () => {
+    expect(
+      deleteDisposition(linkedTree, {
+        level: 'page',
+        notebook: 'Synced',
+        section: 'S',
+        page: 'P'
+      })
+    ).toBe('permanent')
+    expect(
+      deleteDisposition(linkedTree, {
+        level: 'section',
+        notebook: 'Synced',
+        section: 'S'
+      })
+    ).toBe('permanent')
+  })
+})
+
+describe('entityTitle', () => {
+  it('maps each create/rename level to a title word (#651)', () => {
+    expect(entityTitle('notebook')).toBe('Notebook')
+    expect(entityTitle('section')).toBe('Section')
+    expect(entityTitle('page')).toBe('Page')
   })
 })
 

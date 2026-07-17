@@ -42,6 +42,26 @@ export function isLinkedNotebook(nb: NavNotebook | undefined): boolean {
 }
 
 /**
+ * How a delete should be framed and executed for a given target.
+ *
+ * - `trash` — vault content moves to `.system/trash/`
+ * - `unlink` — linked notebook is unregistered; external files untouched
+ * - `permanent` — page/section inside a linked notebook is hard-deleted in
+ *   place (never vault-trashed; #100 / #646)
+ */
+export type DeleteDisposition = 'trash' | 'unlink' | 'permanent'
+
+export function deleteDisposition(
+  tree: NavigationTree,
+  target: DeleteTarget
+): DeleteDisposition {
+  const linked = isLinkedNotebook(findNotebook(tree, target.notebook))
+  if (!linked) return 'trash'
+  if (target.level === 'notebook') return 'unlink'
+  return 'permanent'
+}
+
+/**
  * Build the human-readable label shown in the delete-confirmation dialog.
  * Pure string assembly — pulled out so the label format is testable and
  * consistent across the context-menu and any future delete entry point.
@@ -52,6 +72,15 @@ export function deleteTargetLabel(target: DeleteTarget): string {
   if (level === 'section' && section)
     return `section "${section}" and all its pages`
   return `notebook "${notebook}" and all its content`
+}
+
+/** Capitalized entity name for create/rename dialog titles (#651). */
+export function entityTitle(
+  level: 'notebook' | 'section' | 'page'
+): 'Notebook' | 'Section' | 'Page' {
+  if (level === 'notebook') return 'Notebook'
+  if (level === 'section') return 'Section'
+  return 'Page'
 }
 
 /**
