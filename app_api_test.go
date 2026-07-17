@@ -2190,6 +2190,36 @@ func TestRevealNotebookInOS_ResolvesVaultAndLinked(t *testing.T) {
 	}
 }
 
+// TestRevealNotebookInOS_VaultGuardRejectsSymlinkEscape pins the
+// isPathWithinRoot guard: a vault notebook dir that is a symlink to a path
+// outside the vault must not be opened.
+func TestRevealNotebookInOS_VaultGuardRejectsSymlinkEscape(t *testing.T) {
+	app := newTestApp(t)
+	orig := openNative
+	var opened int
+	openNative = func(path string) error {
+		opened++
+		return nil
+	}
+	t.Cleanup(func() { openNative = orig })
+
+	outside := t.TempDir()
+	nbPath := filepath.Join(app.vaultPath, "EscapeNB")
+	if err := os.Symlink(outside, nbPath); err != nil {
+		t.Skipf("symlink not available: %v", err)
+	}
+	err := app.RevealNotebookInOS("EscapeNB")
+	if err == nil {
+		t.Fatal("expected reveal of symlink-escaped notebook to fail")
+	}
+	if !strings.Contains(err.Error(), "escapes vault root") {
+		t.Fatalf("error = %v, want escapes vault root", err)
+	}
+	if opened != 0 {
+		t.Fatalf("openNative called %d times, want 0", opened)
+	}
+}
+
 // TestVaultNotebookOps_RejectLinkedNameCollision locks the global name-uniqueness
 // invariant from the VAULT side (#100): CreateNotebook / OpenNotebook /
 // RenameNotebook refuse a name that collides with a registered linked notebook,

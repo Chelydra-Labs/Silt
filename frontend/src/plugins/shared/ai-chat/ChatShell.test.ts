@@ -1,5 +1,19 @@
 import { fireEvent, render, waitFor } from '@testing-library/svelte'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+
+const browserMocks = vi.hoisted(() => ({
+  OpenURL: vi.fn()
+}))
+
+vi.mock('@wailsio/runtime', () => ({
+  Browser: {
+    OpenURL: browserMocks.OpenURL
+  },
+  Events: {
+    On: vi.fn(() => () => {})
+  }
+}))
+
 import ChatShell from './ChatShell.svelte'
 import {
   confirmationEntry,
@@ -88,6 +102,10 @@ function everyEntry(): AIChatEntry[] {
 }
 
 describe('ChatShell', () => {
+  beforeEach(() => {
+    browserMocks.OpenURL.mockReset()
+  })
+
   it('renders every result kind and navigates evidence', async () => {
     const value = props(everyEntry())
     const { getByText, getAllByText, getByRole } = render(ChatShell, {
@@ -148,6 +166,26 @@ describe('ChatShell', () => {
     expect(md?.textContent).not.toContain('**bold**')
     // User messages stay plain text (escaped), not HTML.
     expect(getByText('keep **raw** for user')).toBeInTheDocument()
+  })
+
+  it('opens markdown links via Browser.OpenURL instead of webview navigation', async () => {
+    const { container } = render(ChatShell, {
+      props: props([
+        textEntry({
+          id: 'a1',
+          role: 'assistant',
+          content: 'See [docs](https://example.com/docs) for more.'
+        })
+      ])
+    })
+    const link = container.querySelector(
+      '.message-md a[href="https://example.com/docs"]'
+    ) as HTMLAnchorElement | null
+    expect(link).toBeTruthy()
+    await fireEvent.click(link!)
+    expect(browserMocks.OpenURL).toHaveBeenCalledWith(
+      'https://example.com/docs'
+    )
   })
 
   it('sends on Enter, preserves Shift+Enter, and stops on scoped Escape', async () => {

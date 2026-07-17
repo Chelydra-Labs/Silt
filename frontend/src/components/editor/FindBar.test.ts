@@ -39,7 +39,7 @@ describe('FindBar', () => {
   })
   afterEach(() => cleanup())
 
-  it('Alt+Enter triggers replace-all when replace row is open (#656)', async () => {
+  it('Alt+Enter on replace input triggers replace-all once (#656)', async () => {
     const replaceAllInPage = vi.fn()
     const editor = {
       isEditable: true,
@@ -54,11 +54,17 @@ describe('FindBar', () => {
       }
     } as any
 
-    render(FindBar, {
+    const { getByLabelText } = render(FindBar, {
       props: { editor, onClose: vi.fn() }
     })
 
+    const replaceInput = getByLabelText('Replace with')
+    replaceInput.focus()
+    await fireEvent.keyDown(replaceInput, { key: 'Enter', altKey: true })
+    expect(replaceAllInPage).toHaveBeenCalledTimes(1)
+
+    // Window-level handler must not double-fire replace-all.
     await fireEvent.keyDown(window, { key: 'Enter', altKey: true })
-    expect(replaceAllInPage).toHaveBeenCalled()
+    expect(replaceAllInPage).toHaveBeenCalledTimes(1)
   })
 })

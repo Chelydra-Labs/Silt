@@ -272,12 +272,10 @@
       e.preventDefault()
       wholeWord = !wholeWord
     } else if (e.altKey && (e.key === 'r' || e.key === 'R') && !e.shiftKey) {
-      // Alt+R toggles regex; Alt+Enter is replace-all (handled on inputs).
+      // Alt+R toggles regex; Alt+Enter replace-all is handled only on the
+      // find/replace inputs (handleKeydown) so it cannot double-fire.
       e.preventDefault()
       regexp = !regexp
-    } else if (e.altKey && e.key === 'Enter' && findBarState.replaceOpen) {
-      e.preventDefault()
-      doReplaceAll()
     }
   }}
 />

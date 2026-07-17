@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick, type Snippet } from 'svelte'
+  import { Browser } from '@wailsio/runtime'
   import type { AIChatEntry, ConfirmationEntry, EvidenceTarget } from './types'
   import { renderChatMarkdown } from './renderChatMarkdown'
 
@@ -103,6 +104,26 @@
       transcriptEl.clientHeight
     stickToBottom = distance < 32
   }
+
+  // Markdown {@html} emits bare <a href>. Route through the OS browser so the
+  // Wails webview is not navigated away from the app (AboutTab convention).
+  // Attached via $effect (not template onclick) so the log region stays a
+  // non-interactive container for a11y.
+  function onTranscriptClick(e: MouseEvent): void {
+    const a = (e.target as HTMLElement | null)?.closest?.('a')
+    if (!a || !transcriptEl?.contains(a)) return
+    const href = a.getAttribute('href')
+    if (!href || href.startsWith('#') || href.startsWith('javascript:')) return
+    e.preventDefault()
+    Browser.OpenURL(href)
+  }
+
+  $effect(() => {
+    const el = transcriptEl
+    if (!el) return
+    el.addEventListener('click', onTranscriptClick)
+    return () => el.removeEventListener('click', onTranscriptClick)
+  })
 
   function focusableWithin(element: HTMLElement): HTMLElement[] {
     return Array.from(

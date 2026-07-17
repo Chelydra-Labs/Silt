@@ -280,6 +280,11 @@ func (a *App) RevealNotebookInOS(notebook string) error {
 	if err != nil {
 		return err
 	}
+	// Vault notebooks must stay under the vault root (resolveNotebookDir
+	// contract). Linked roots are external by design and fingerprint-bound.
+	if !strings.HasPrefix(source, "linked:") && !isPathWithinRoot(dir, a.vaultPath) {
+		return fmt.Errorf("notebook path escapes vault root")
+	}
 	if _, err := os.Stat(dir); err != nil {
 		return fmt.Errorf("notebook folder not found: %w", err)
 	}
