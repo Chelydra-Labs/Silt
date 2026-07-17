@@ -1,4 +1,18 @@
 <script lang="ts">
+  import { OpenDevTools } from '../../../bindings/silt/app.js'
+  import { pushNotification } from '../../notifications/store.svelte'
+
+  async function openDevTools(): Promise<void> {
+    try {
+      await OpenDevTools()
+    } catch (e) {
+      console.error('OpenDevTools failed:', e)
+      pushNotification({
+        kind: 'error',
+        message: 'Could not open DevTools. Is Dev Mode enabled?'
+      })
+    }
+  }
 </script>
 
 <div class="p-6 max-w-4xl mx-auto w-full space-y-6">
@@ -26,11 +40,31 @@
         <p class="text-text-muted text-type-xs font-body-md leading-relaxed">
           Inspect the DOM, view console errors, and debug rendering issues.
         </p>
-        <p class="text-text-muted text-type-xs font-body-md leading-relaxed">
-          Press <kbd
-            class="inline-block px-1.5 py-0.5 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-2xs font-mono"
-            >Ctrl+Shift+F12</kbd
-          > to open DevTools at any time.
+        <ul
+          class="text-text-muted text-type-xs font-body-md leading-relaxed list-disc pl-5 space-y-1"
+        >
+          <li>
+            Press <kbd
+              class="inline-block px-1.5 py-0.5 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-2xs font-mono"
+              >Ctrl+Shift+F12</kbd
+            > (View → Open Developer Tools)
+          </li>
+          <li>Right-click in the editor and choose <strong>Inspect</strong></li>
+        </ul>
+        <button
+          type="button"
+          class="px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm font-body-md hover:bg-surface-panel/80"
+          onclick={openDevTools}
+        >
+          Open DevTools
+        </button>
+        <p class="text-text-muted text-type-2xs font-body-md leading-relaxed">
+          If Dev Mode was off when the app launched, restart after enabling it
+          so the webview is created with DevTools support. Runtime Inspect and
+          the shortcut work once the flag is on
+          <em>and</em> the window was created with DevTools enabled (or
+          <code>SILT_DEBUG=1</code>). Production builds may need a
+          DevTools-enabled build for the inspector to appear.
         </p>
       </div>
 

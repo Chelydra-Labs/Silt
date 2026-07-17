@@ -6,6 +6,7 @@ import type {
   TaskStatus
 } from './sdk'
 import { localToday } from './sdk'
+import { captureUiLocation } from './ui-location'
 import { stripReasoningContent } from './stripReasoning'
 import {
   PluginRawQuery,
@@ -120,7 +121,16 @@ function normalizeAIError(err: unknown): {
         : typeof e.kind === 'string'
           ? e.kind
           : 'unknown'
-    const message = typeof e.message === 'string' ? e.message : String(err)
+    // Never String(object) — that yields "[object Object]" for IPC shapes
+    // that only carry code/kind without a message field.
+    const message =
+      typeof e.message === 'string' && e.message.trim()
+        ? e.message
+        : typeof e.error === 'string' && e.error.trim()
+          ? e.error
+          : code !== 'unknown'
+            ? code
+            : 'AI request failed'
     const status =
       typeof e.status === 'number' ? (e.status as number) : undefined
     return { code, status, message }
@@ -177,6 +187,9 @@ export function makePluginContext(
     get activePage() {
       return loc.page
     },
+    // UI location snapshot (#680): active page triple + focused block + open
+    // tabs. Host-owned identifiers only; App registers the tabs provider.
+    getUiLocation: () => captureUiLocation(),
     // Local-day anchor (#118): the webview's local timezone is the OS
     // timezone, identical to the Go backend's time.Local, so this is
     // resolved in-process (no IPC). Plugins compare against it instead of
@@ -851,6 +864,13 @@ function createAIStream(
       resultReject = reject
     }
   )
+  // Error events reject resultPromise as soon as they arrive, often before
+  // the consumer awaits stream.result(). Attach a no-op handler so the
+  // interim rejection is not reported as "Uncaught (in promise)" while still
+  // letting later awaiters observe the same rejection.
+  void resultPromise.catch(() => {
+    /* handled when consumer awaits result() / iterator throws */
+  })
 
   const push = (item: QueueItem) => {
     queue.push(item)

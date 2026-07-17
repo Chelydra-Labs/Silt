@@ -22,7 +22,7 @@ configured chat + embedding models.
 ## What it does
 
 1. **Receives a goal** from the chat input (e.g. "find my overdue tasks in
-   the Work notebook and draft a follow-up note").
+   the Work notebook and draft a follow-up note", or a general question).
 2. **Plans + calls tools** — up to 8 iterations per turn. Each iteration
    sends the conversation + the tool catalog to the chat model; if the model
    requests tools, they dispatch in parallel and their results feed the next
@@ -30,9 +30,31 @@ configured chat + embedding models.
 3. **Answers** in plain prose when no further tool use is needed, streamed
    live into the chat.
 
+The agent is a **general-purpose assistant** with vault tools: it answers
+non-vault questions directly when tools are unnecessary, and **prefers the
+notebook** (search/read tools + current page) when notes are relevant. This
+differs from **AI Q&A** (`silt-ai-qa`), which answers only from retrieved
+excerpts with citations.
+
 The agent **never writes unsolicited**. Read-only tools run inline; any
 destructive operation is staged behind a confirmation gate (see **Safety
 model** below).
+
+### UI location context
+
+On every agent run, the system prompt includes a **UI location snapshot**
+captured at run start (mid-run navigation is ignored for that turn):
+
+| Field | Source | Notes |
+|---|---|---|
+| Current page | Active notebook / section / page | Path form `notebook/section/page`, or `(none)` |
+| Focused block id | Editor **caret** block when on the active page | Not multi-range selection; cleared on unmount/tab close/empty caret; `(none)` when absent |
+| Open tabs | All open editor tabs across notebooks (preview + pinned) | Marks which tab is active; may be broader than the per-notebook tab strip |
+
+Location is **identifiers only** — not full page bodies. The agent uses tools
+(`read_blocks`, `search_notes`, etc.) to load content. Deictic phrases like
+"this page", "here", and "open tabs" resolve from this snapshot. Plugins read
+the same data via `ctx.getUiLocation()`.
 
 ### Tool catalog
 

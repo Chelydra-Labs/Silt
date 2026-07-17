@@ -684,6 +684,23 @@ export interface PluginContext {
   activeNotebook: string;
   activeSection: string;
   activePage: string;
+  /**
+   * UI location snapshot (identifiers only): active page triple, optional
+   * focused/selected block id, and open tabs. Never includes full page bodies.
+   */
+  getUiLocation: () => {
+    notebook: string;
+    section: string;
+    page: string;
+    blockId?: string;
+    openTabs: Array<{
+      notebook: string;
+      section: string;
+      page: string;
+      preview?: boolean;
+      active: boolean;
+    }>;
+  };
   /** Today's date in the user's LOCAL timezone as YYYY-MM-DD. */
   today: string;
   // Read-only SQL against the in-memory index (SELECT / WITH only).

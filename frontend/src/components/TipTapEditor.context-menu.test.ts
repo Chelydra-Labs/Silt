@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => {
     acquireFocusLock: vi.fn().mockResolvedValue(undefined),
     refreshFocusLock: vi.fn().mockResolvedValue(undefined),
     releaseFocusLock: vi.fn().mockResolvedValue(undefined),
+    openDevTools: vi.fn().mockResolvedValue(undefined),
     distinctOwners: vi.fn(async (prefix = '') => {
       const p = (prefix ?? '').toLowerCase()
       if (!p) return allOwners.slice()
@@ -65,6 +66,7 @@ vi.mock('../../bindings/silt/app.js', () => ({
   AcquireFocusLock: mocks.acquireFocusLock,
   RefreshFocusLock: mocks.refreshFocusLock,
   ReleaseFocusLock: mocks.releaseFocusLock,
+  OpenDevTools: mocks.openDevTools,
   // TipTapEditor seeds the @-mention owner list on mount/focus (#184).
   DistinctOwners: mocks.distinctOwners
 }))
@@ -93,9 +95,16 @@ vi.mock('@wailsio/runtime', () => ({
   }
 }))
 
+const settingsMock = vi.hoisted(() => ({
+  config: null as null | {
+    ui?: { open_devtools_on_startup?: boolean }
+  }
+}))
+
 vi.mock('../settings/store.svelte', () => ({
-  settings: { config: null },
-  saveConfig: vi.fn()
+  settings: settingsMock,
+  saveConfig: vi.fn(),
+  appendDismissedTip: vi.fn()
 }))
 
 vi.mock('../theme/store.svelte', () => ({
@@ -236,6 +245,7 @@ describe('TipTapEditor context menu', () => {
   })
 
   it('has role=menuitem on every menu button', async () => {
+    settingsMock.config = null
     const blocks = [mkBlock('NOTE', { clean_text: 'hello' })]
     const { container, unmount } = render(TipTapEditor, {
       props: {
@@ -254,10 +264,63 @@ describe('TipTapEditor context menu', () => {
     await openContextMenu(container)
 
     const menuItems = container.querySelectorAll('[role="menuitem"]')
-    // 6 standard + 4 block-scoped = 10
+    // 6 standard + 4 block-scoped = 10 (Inspect only when Dev Mode on)
     expect(menuItems.length).toBe(10)
+    expect(container.textContent).not.toContain('Inspect')
 
     unmount()
+  })
+
+  it('shows Inspect when Dev Mode is on (#679)', async () => {
+    settingsMock.config = { ui: { open_devtools_on_startup: true } }
+    const blocks = [mkBlock('NOTE', { clean_text: 'hello' })]
+    const { container, unmount } = render(TipTapEditor, {
+      props: {
+        notebook: 'NB',
+        section: 'S',
+        page: 'P',
+        blocks,
+        onUpdate: () => {}
+      }
+    })
+
+    await waitFor(() => {
+      expect(container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+
+    await openContextMenu(container)
+
+    expect(container.textContent).toContain('Inspect')
+    const menuItems = container.querySelectorAll('[role="menuitem"]')
+    // 10 base + Inspect
+    expect(menuItems.length).toBe(11)
+
+    unmount()
+    settingsMock.config = null
+  })
+
+  it('hides Inspect when Dev Mode is off (#679)', async () => {
+    settingsMock.config = { ui: { open_devtools_on_startup: false } }
+    const blocks = [mkBlock('NOTE', { clean_text: 'hello' })]
+    const { container, unmount } = render(TipTapEditor, {
+      props: {
+        notebook: 'NB',
+        section: 'S',
+        page: 'P',
+        blocks,
+        onUpdate: () => {}
+      }
+    })
+
+    await waitFor(() => {
+      expect(container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+
+    await openContextMenu(container)
+    expect(container.textContent).not.toContain('Inspect')
+
+    unmount()
+    settingsMock.config = null
   })
 
   it('navigates items with ArrowDown/ArrowUp', async () => {

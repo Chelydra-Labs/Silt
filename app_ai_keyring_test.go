@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"silt/backend/keyring"
 )
@@ -141,6 +142,98 @@ func TestResolveAIKey_KeyringFirstConfigFallback(t *testing.T) {
 	if res.Content != "Bearer from-keyring" {
 		t.Errorf("expected the keyring key to be used, got content=%q", res.Content)
 	}
+}
+
+// TestInitializeVaultServices_MigrateUnderExclusiveLock pins the #654
+// deadlock fix: initializeVaultServices runs under vaultMu.Lock and must call
+// migrateAIKeysToKeyringLocked (not the public self-locking migrate). With a
+// non-nil keyring store + plaintext config key, the old public path RLock'd
+// under exclusive Lock and hung forever.
+func TestInitializeVaultServices_MigrateUnderExclusiveLock(t *testing.T) {
+	app := newTestApp(t)
+	fake := withFakeKeyring(t, app)
+
+	const secret = "legacy-under-init"
+	app.configMu.Lock()
+	app.cfg.AI.Chat.APIKey = secret
+	if err := app.saveConfigTracked(app.cfg); err != nil {
+		app.configMu.Unlock()
+		t.Fatalf("saveConfigTracked: %v", err)
+	}
+	app.configMu.Unlock()
+
+	vaultPath := app.vaultPath
+	done := make(chan error, 1)
+	go func() {
+		app.vaultMu.Lock()
+		defer app.vaultMu.Unlock()
+		// Match production cutover: exclusive lock → teardown → reinit.
+		app.teardownVaultServices()
+		done <- app.initializeVaultServices(vaultPath)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("initializeVaultServices under exclusive Lock: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("initializeVaultServices deadlocked under exclusive vaultMu.Lock with keyring store — migrate must use locked variant (#654)")
+	}
+
+	app.vaultMu.RLock()
+	chatUser := app.aiKeyringUser("chat")
+	finalPath := app.vaultPath
+	app.vaultMu.RUnlock()
+	if finalPath != vaultPath {
+		t.Fatalf("vaultPath after init = %q, want %q", finalPath, vaultPath)
+	}
+	got, err := fake.Get(keyringService, chatUser)
+	if err != nil || got != secret {
+		t.Fatalf("keyring after init migrate: got %q err=%v, want %q", got, err, secret)
+	}
+	app.configMu.RLock()
+	cfgKey := app.cfg.AI.Chat.APIKey
+	app.configMu.RUnlock()
+	if cfgKey != "" {
+		t.Fatalf("config chat key should be blanked after migrate, got %q", cfgKey)
+	}
+	t.Cleanup(func() { _ = app.CloseVault() })
+}
+
+// TestMigrateAIKeysToKeyringLocked_UnderExclusiveLock is a narrow pin: the
+// locked migrate body must complete while the caller holds vaultMu.Lock
+// (public migrateAIKeysToKeyring would deadlock on RLock).
+func TestMigrateAIKeysToKeyringLocked_UnderExclusiveLock(t *testing.T) {
+	app := newTestApp(t)
+	fake := withFakeKeyring(t, app)
+	const secret = "locked-migrate-secret"
+	app.configMu.Lock()
+	app.cfg.AI.Chat.APIKey = secret
+	app.configMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		app.vaultMu.Lock()
+		defer app.vaultMu.Unlock()
+		app.migrateAIKeysToKeyringLocked()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("migrateAIKeysToKeyringLocked deadlocked under exclusive vaultMu.Lock")
+	}
+
+	got, err := fake.Get(keyringService, app.aiKeyringUser("chat"))
+	if err != nil || got != secret {
+		t.Fatalf("keyring after locked migrate: got %q err=%v, want %q", got, err, secret)
+	}
+	app.configMu.RLock()
+	if app.cfg.AI.Chat.APIKey != "" {
+		t.Fatalf("config key not blanked: %q", app.cfg.AI.Chat.APIKey)
+	}
+	app.configMu.RUnlock()
 }
 
 func TestMigrateAIKeysToKeyring_MovesPlaintext(t *testing.T) {

@@ -8,6 +8,9 @@
 // window.go.main.App can't tell a plugin's raw import from the SDK bridge's own
 // legitimate use, so it only ever produced a false-positive warning on boot.
 
+import type { UiLocationSnapshot } from './ui-location'
+export type { UiLocationSnapshot, UiLocationTab } from './ui-location'
+
 export type TaskStatus = 'TODO' | 'DOING' | 'DONE'
 
 /**
@@ -141,6 +144,13 @@ export interface PluginContext {
   activeSection: string
   /** Active page — same reactivity as activeNotebook. */
   activePage: string
+  /**
+   * Snapshot of UI location for the agent and other plugins (#680): active
+   * notebook/section/page, optional focused/selected block id, and open tabs
+   * (identifiers only — never full page bodies). Capture at use time; do not
+   * cache across turns if you need live navigation.
+   */
+  getUiLocation: () => UiLocationSnapshot
   /**
    * Today's date in the user's LOCAL timezone as YYYY-MM-DD. Read this
    * instead of SQLite's `date('now')` (UTC) so date comparisons match the
