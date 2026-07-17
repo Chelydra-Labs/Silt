@@ -52,6 +52,27 @@
       depth: 3,
       icon: 'title'
     },
+    {
+      id: 'h4',
+      label: 'Heading 4',
+      type: 'headerBlock',
+      depth: 4,
+      icon: 'title'
+    },
+    {
+      id: 'h5',
+      label: 'Heading 5',
+      type: 'headerBlock',
+      depth: 5,
+      icon: 'title'
+    },
+    {
+      id: 'h6',
+      label: 'Heading 6',
+      type: 'headerBlock',
+      depth: 6,
+      icon: 'title'
+    },
     { id: 'note', label: 'Text', type: 'noteBlock', icon: 'notes' },
     { id: 'task', label: 'Task', type: 'taskBlock', icon: 'check_box' }
   ]

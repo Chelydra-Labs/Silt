@@ -12,22 +12,14 @@ describe('classifySlashCommand', () => {
     })
   })
 
-  it('classifies heading levels with depth', () => {
-    expect(classifySlashCommand('h1')).toEqual({
-      kind: 'convert',
-      blockType: 'headerBlock',
-      depth: 1
-    })
-    expect(classifySlashCommand('h2')).toEqual({
-      kind: 'convert',
-      blockType: 'headerBlock',
-      depth: 2
-    })
-    expect(classifySlashCommand('h3')).toEqual({
-      kind: 'convert',
-      blockType: 'headerBlock',
-      depth: 3
-    })
+  it('classifies heading levels with depth (H1–H6)', () => {
+    for (let depth = 1; depth <= 6; depth++) {
+      expect(classifySlashCommand(`h${depth}`)).toEqual({
+        kind: 'convert',
+        blockType: 'headerBlock',
+        depth
+      })
+    }
   })
 
   it('classifies a note conversion (no depth)', () => {

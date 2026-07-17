@@ -32,15 +32,17 @@ describe('HeadingLevelMenu', () => {
     expect(trigger.textContent).toContain('H1')
   })
 
-  it('opens menu with 5 options on click', async () => {
+  it('opens menu with H1–H6 plus Text and Task (#645)', async () => {
     const editor = makeMockEditor('noteBlock') as any
-    const { getByRole, getAllByRole } = render(HeadingLevelMenu, {
+    const { getByRole, getAllByRole, getByText } = render(HeadingLevelMenu, {
       props: { editor }
     })
     const trigger = getByRole('button')
     await fireEvent.click(trigger)
     const items = getAllByRole('menuitemradio')
-    expect(items).toHaveLength(5)
+    expect(items).toHaveLength(8)
+    expect(getByText('Heading 4')).toBeInTheDocument()
+    expect(getByText('Heading 6')).toBeInTheDocument()
   })
 
   it('dispatches silt:change-block-type on selection', async () => {
@@ -66,7 +68,7 @@ describe('HeadingLevelMenu', () => {
       props: { editor }
     })
     await fireEvent.click(getByRole('button'))
-    expect(queryAllByRole('menuitemradio')).toHaveLength(5)
+    expect(queryAllByRole('menuitemradio')).toHaveLength(8)
 
     await fireEvent.click(document.body)
 

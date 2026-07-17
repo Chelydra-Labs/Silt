@@ -627,13 +627,19 @@ function buildConfigDrivenShortcuts(
     return true
   }
 
-  // Heading level shortcuts (#169).
+  // Heading level shortcuts (#169 / #645).
   map[pm('set_h1', 'Mod-Alt-1')] = () =>
     convertToBlock(editor, 'headerBlock', 1)
   map[pm('set_h2', 'Mod-Alt-2')] = () =>
     convertToBlock(editor, 'headerBlock', 2)
   map[pm('set_h3', 'Mod-Alt-3')] = () =>
     convertToBlock(editor, 'headerBlock', 3)
+  map[pm('set_h4', 'Mod-Alt-5')] = () =>
+    convertToBlock(editor, 'headerBlock', 4)
+  map[pm('set_h5', 'Mod-Alt-6')] = () =>
+    convertToBlock(editor, 'headerBlock', 5)
+  map[pm('set_h6', 'Mod-Alt-7')] = () =>
+    convertToBlock(editor, 'headerBlock', 6)
   map[pm('set_note', 'Mod-Alt-0')] = () => convertToBlock(editor, 'noteBlock')
   map[pm('set_task', 'Mod-Alt-4')] = () => convertToBlock(editor, 'taskBlock')
 

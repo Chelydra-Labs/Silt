@@ -618,6 +618,9 @@ body {
   --editor-heading-h1-size: 1.75em;
   --editor-heading-h2-size: 1.4em;
   --editor-heading-h3-size: 1.2em;
+  --editor-heading-h4-size: 1.1em;
+  --editor-heading-h5-size: 1.05em;
+  --editor-heading-h6-size: 1em;
 }
 .ProseMirror > div[data-type='header'] {
   font-family: var(--font-headline, var(--font-body, sans-serif));
@@ -636,9 +639,35 @@ body {
   font-size: var(--editor-heading-h3-size);
   font-weight: 600;
 }
+.ProseMirror > div[data-type='header'][data-depth='4'] {
+  font-size: var(--editor-heading-h4-size);
+  font-weight: 600;
+  padding-top: 8px;
+}
+.ProseMirror > div[data-type='header'][data-depth='5'] {
+  font-size: var(--editor-heading-h5-size);
+  font-weight: 600;
+  padding-top: 6px;
+}
+.ProseMirror > div[data-type='header'][data-depth='6'] {
+  font-size: var(--editor-heading-h6-size);
+  font-weight: 600;
+  padding-top: 4px;
+  opacity: 0.95;
+}
 
-/* Placeholder text for empty blocks. */
-.ProseMirror p.is-editor-empty:first-child::before {
+/* Placeholder text for empty blocks.
+   TipTap default examples target `p`; Silt top-level nodes are custom
+   div[data-type=note|task|header] blocks (#649). Keep the `p` selector for
+   any nested/legacy path. */
+.ProseMirror p.is-editor-empty:first-child::before,
+.ProseMirror > div[data-type='note'].is-editor-empty:first-child::before,
+.ProseMirror > div[data-type='task'].is-editor-empty:first-child::before,
+.ProseMirror > div[data-type='header'].is-editor-empty:first-child::before,
+.ProseMirror p.is-empty:first-child::before,
+.ProseMirror > div[data-type='note'].is-empty:first-child::before,
+.ProseMirror > div[data-type='task'].is-empty:first-child::before,
+.ProseMirror > div[data-type='header'].is-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
   color: var(--color-text-muted);

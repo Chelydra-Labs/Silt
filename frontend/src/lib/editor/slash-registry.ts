@@ -204,6 +204,27 @@ registerSlashCommand({
   hotkey: 'set_h3'
 })
 registerSlashCommand({
+  id: 'h4',
+  label: 'Heading 4',
+  description: 'Convert the block to an H4',
+  icon: 'format_size',
+  hotkey: 'set_h4'
+})
+registerSlashCommand({
+  id: 'h5',
+  label: 'Heading 5',
+  description: 'Convert the block to an H5',
+  icon: 'format_size',
+  hotkey: 'set_h5'
+})
+registerSlashCommand({
+  id: 'h6',
+  label: 'Heading 6',
+  description: 'Convert the block to an H6',
+  icon: 'format_size',
+  hotkey: 'set_h6'
+})
+registerSlashCommand({
   id: 'note',
   label: 'Plain note',
   description: 'Convert the block to a plain note (strip header / task)',
