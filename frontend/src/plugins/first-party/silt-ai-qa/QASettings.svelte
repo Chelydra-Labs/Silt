@@ -333,7 +333,7 @@
           <div class="flex flex-wrap gap-2">
             <button
               type="button"
-              class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-status-warn text-surface-app font-label-sm-bold text-type-xs border-none cursor-pointer hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+              class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-status-warn/40 bg-status-warn/15 text-status-warn font-label-sm-bold text-type-xs cursor-pointer hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={rebuildBusy || embedUnconfigured}
               onclick={() => void onRebuild()}
             >
@@ -407,9 +407,9 @@
 
     <button
       type="button"
-      class="inline-flex items-center gap-1.5 self-start px-3.5 py-2 rounded-lg font-label-sm-bold text-type-xs border-none cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed {local.stale_reason
-        ? 'bg-status-warn text-surface-app hover:brightness-110'
-        : 'bg-accent-primary-start text-text-on-accent hover:brightness-110'}"
+      class="inline-flex items-center gap-1.5 self-start px-3.5 py-2 rounded-lg font-label-sm-bold text-type-xs cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed {local.stale_reason
+        ? 'border border-status-warn/40 bg-status-warn/15 text-status-warn hover:brightness-110'
+        : 'border-none bg-accent-primary-start text-text-on-accent hover:brightness-110'}"
       disabled={rebuildBusy || embedUnconfigured}
       onclick={() => void onRebuild()}
     >
