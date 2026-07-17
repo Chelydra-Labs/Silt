@@ -381,3 +381,206 @@ func TestCompleteStream_ToolConsumerCancel_IsCanceled(t *testing.T) {
 		t.Errorf("kind = %q, want canceled", e.Kind)
 	}
 }
+
+// --- #640: pre-byte streaming retry matrix (mirrors service_test.go) --------
+
+func writeSSEOK(w http.ResponseWriter, content string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	fmt.Fprintf(w, "data: {\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", content)
+	fmt.Fprint(w, "data: [DONE]\n\n")
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func TestCompleteStream_RetriesTransientThenSucceeds(t *testing.T) {
+	withFastRetry(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) == 1 {
+			http.Error(w, "transient", http.StatusInternalServerError)
+			return
+		}
+		writeSSEOK(w, "ok")
+	}))
+	defer srv.Close()
+
+	var deltas strings.Builder
+	res, err := CompleteStream(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m", ProviderType: ProviderOpenAICompatible},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	}, func(d string) error {
+		deltas.WriteString(d)
+		return nil
+	}, nil)
+	if err != nil {
+		t.Fatalf("CompleteStream after retry: %v", err)
+	}
+	if res.Content != "ok" || deltas.String() != "ok" {
+		t.Errorf("content=%q deltas=%q, want ok", res.Content, deltas.String())
+	}
+	if got := hits.Load(); got != 2 {
+		t.Errorf("hits = %d, want 2 (1 failed + 1 succeeded)", got)
+	}
+}
+
+func TestCompleteStream_RetriesTransientExhausted(t *testing.T) {
+	withFastRetry(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	_, err := CompleteStream(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m", ProviderType: ProviderOpenAICompatible},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	}, func(string) error { return nil }, nil)
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind != ErrServer {
+		t.Errorf("kind = %q, want server", e.Kind)
+	}
+	wantHits := int32(1 + len(retryBackoff))
+	if got := hits.Load(); got != wantHits {
+		t.Errorf("hits = %d, want %d", got, wantHits)
+	}
+}
+
+func TestCompleteStream_DoesNotRetryClientError(t *testing.T) {
+	withFastRetry(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "bad", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	_, err := CompleteStream(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m", ProviderType: ProviderOpenAICompatible},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	}, func(string) error { return nil }, nil)
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind != ErrBadRequest {
+		t.Errorf("kind = %q, want bad-request", e.Kind)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("hits = %d, want 1 (4xx must not retry)", got)
+	}
+}
+
+func TestCompleteStream_RetryAfterHonored(t *testing.T) {
+	saved := retryBackoff
+	retryBackoff = []time.Duration{10 * time.Millisecond}
+	t.Cleanup(func() { retryBackoff = saved })
+
+	var hits atomic.Int32
+	var firstAt, secondAt atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		if n == 1 {
+			firstAt.Store(time.Now().UnixNano())
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
+		secondAt.Store(time.Now().UnixNano())
+		writeSSEOK(w, "ok")
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	res, err := CompleteStream(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m", ProviderType: ProviderOpenAICompatible},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	}, func(string) error { return nil }, nil)
+	if err != nil {
+		t.Fatalf("CompleteStream: %v", err)
+	}
+	if res.Content != "ok" {
+		t.Errorf("content = %q, want ok", res.Content)
+	}
+	if elapsed := time.Since(start); elapsed < 950*time.Millisecond {
+		t.Errorf("elapsed %v, want >= ~1s (Retry-After floor)", elapsed)
+	}
+	if hits.Load() != 2 {
+		t.Errorf("hits = %d, want 2", hits.Load())
+	}
+	gap := time.Duration(secondAt.Load() - firstAt.Load())
+	if gap < 950*time.Millisecond {
+		t.Errorf("inter-attempt gap %v, want >= ~1s", gap)
+	}
+}
+
+func TestCompleteStream_CancelDuringBackoff_IsCanceled(t *testing.T) {
+	saved := retryBackoff
+	retryBackoff = []time.Duration{5 * time.Second}
+	t.Cleanup(func() { retryBackoff = saved })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := CompleteStream(ctx, CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m", ProviderType: ProviderOpenAICompatible},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	}, func(string) error { return nil }, nil)
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind != ErrCanceled {
+		t.Errorf("kind = %q, want canceled", e.Kind)
+	}
+}
+
+// TestCompleteStream_NoRetryAfterBytesFlow: once SSE content has been delivered
+// to the consumer, a subsequent disconnect must not open a second HTTP attempt.
+func TestCompleteStream_NoRetryAfterBytesFlow(t *testing.T) {
+	withFastRetry(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		// Abrupt close without [DONE] — mid-stream failure, not pre-byte.
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+	}))
+	defer srv.Close()
+
+	_, err := CompleteStream(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m", ProviderType: ProviderOpenAICompatible},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	}, func(string) error { return nil }, nil)
+	if err == nil {
+		t.Fatal("expected error after mid-stream disconnect")
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("hits = %d, want 1 (no retry after SSE bytes flowed)", got)
+	}
+}

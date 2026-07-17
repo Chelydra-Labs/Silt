@@ -144,6 +144,9 @@ func CompleteStream(ctx context.Context, req CompleteRequest, onDelta StreamDelt
 }
 
 // streamOpenAI issues stream=true against /v1/chat/completions and parses SSE.
+// Transient 5xx/429 on the connection/status phase are retried with the same
+// budget as buffered sendWithRetry (#640). Once a 2xx body is obtained, SSE
+// parsing is never retried (partial tool-call state is unsafe to replay).
 func streamOpenAI(ctx context.Context, req CompleteRequest, model, baseURL string, onDelta StreamDeltaFn, onToolDelta StreamToolDeltaFn) (CompleteResult, error) {
 	reasoning := req.ReasoningEffort
 	if reasoning == nil {
@@ -166,16 +169,79 @@ func streamOpenAI(ctx context.Context, req CompleteRequest, model, baseURL strin
 		return CompleteResult{}, &AIError{Kind: ErrBadRequest, Message: fmt.Sprintf("request body exceeds %d-byte cap", MaxRequestBytes)}
 	}
 
-	timeout := DefaultTimeout
-	if req.Provider.TimeoutMs != nil && *req.Provider.TimeoutMs > 0 {
-		timeout = time.Duration(*req.Provider.TimeoutMs) * time.Millisecond
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	timeoutMs := req.Provider.TimeoutMs
+	// Overall envelope bounds connect retries + the successful stream body.
+	ctx, cancel := context.WithTimeout(ctx, overallSendTimeout(timeoutMs))
 	defer cancel()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	resp, err := streamOpenAIConnect(ctx, req, baseURL, body, timeoutMs)
 	if err != nil {
-		return CompleteResult{}, &AIError{Kind: ErrUnreachable, Message: fmt.Sprintf("build request: %v", err)}
+		return CompleteResult{}, err
+	}
+	defer resp.Body.Close()
+
+	return parseOpenAISSE(resp.Body, model, onDelta, onToolDelta)
+}
+
+// streamOpenAIConnect establishes a 2xx streaming response, retrying only
+// transient pre-byte failures (5xx/429 status before any SSE is handed to the
+// consumer). Each attempt gets a fresh per-call timeout under the parent
+// overall envelope. On success the caller owns resp.Body and must close it.
+func streamOpenAIConnect(ctx context.Context, req CompleteRequest, baseURL string, body []byte, timeoutMs *int) (*http.Response, error) {
+	perAttempt := DefaultTimeout
+	if timeoutMs != nil && *timeoutMs > 0 {
+		perAttempt = time.Duration(*timeoutMs) * time.Millisecond
+	}
+
+	var last *AIError
+	for attempt := 0; attempt <= len(retryBackoff); attempt++ {
+		resp, retryAfter, aiErr := streamOpenAIConnectOnce(ctx, req, baseURL, body, perAttempt)
+		if aiErr == nil {
+			return resp, nil
+		}
+		last = aiErr
+		if !isTransient(aiErr) {
+			return nil, aiErr
+		}
+		if attempt >= len(retryBackoff) {
+			break
+		}
+		wait := jitterDuration(retryBackoff[attempt])
+		if retryAfter > wait {
+			wait = retryAfter
+		}
+		if wait <= 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, aiErrorFromContext(err)
+			}
+			continue
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, aiErrorFromContext(ctx.Err())
+		case <-timer.C:
+		}
+	}
+	if last == nil {
+		last = &AIError{Kind: ErrServer, Message: "stream connect retries exhausted"}
+	}
+	return nil, last
+}
+
+// streamOpenAIConnectOnce performs one connect+status attempt. On non-2xx the
+// body is drained/closed and never returned. On 2xx the live body is returned
+// for SSE parsing (caller closes).
+func streamOpenAIConnectOnce(ctx context.Context, req CompleteRequest, baseURL string, body []byte, perAttempt time.Duration) (*http.Response, time.Duration, *AIError) {
+	attemptCtx, cancel := context.WithTimeout(ctx, perAttempt)
+	// On success we must NOT cancel until the caller finishes reading the body.
+	// Cancel only on error paths; on success the overall envelope still bounds
+	// the stream via the parent ctx attached to the request.
+	httpReq, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		cancel()
+		return nil, 0, &AIError{Kind: ErrUnreachable, Message: fmt.Sprintf("build request: %v", err)}
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
@@ -185,26 +251,54 @@ func streamOpenAI(ctx context.Context, req CompleteRequest, model, baseURL strin
 
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return CompleteResult{}, &AIError{Kind: ErrCanceled, Message: fmt.Sprintf("stream canceled: %v", err)}
+		cancel()
+		if errors.Is(attemptCtx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			return nil, 0, &AIError{Kind: ErrCanceled, Message: fmt.Sprintf("stream canceled: %v", err)}
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return CompleteResult{}, &AIError{Kind: ErrTimeout, Message: fmt.Sprintf("request timed out after %s: %v", timeout, err)}
+		if errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
+			return nil, 0, &AIError{Kind: ErrTimeout, Message: fmt.Sprintf("request timed out after %s: %v", perAttempt, err)}
 		}
-		return CompleteResult{}, &AIError{Kind: ErrUnreachable, Message: err.Error()}
+		return nil, 0, &AIError{Kind: ErrUnreachable, Message: err.Error()}
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		cancel()
 		msg := strings.TrimSpace(string(raw))
 		if len(msg) > 500 {
 			msg = msg[:500] + "…"
 		}
-		return CompleteResult{}, &AIError{Kind: classifyStatus(resp.StatusCode), Status: resp.StatusCode, Message: msg}
+		aiErr := &AIError{Kind: classifyStatus(resp.StatusCode), Status: resp.StatusCode, Message: msg}
+		ra := time.Duration(0)
+		if isTransient(aiErr) {
+			ra = parseRetryAfter(resp.Header.Get("Retry-After"))
+		}
+		return nil, ra, aiErr
 	}
 
-	return parseOpenAISSE(resp.Body, model, onDelta, onToolDelta)
+	// Commit: keep the body open for SSE. Detach the per-attempt cancel from
+	// killing the body by replacing the request context... Actually the body
+	// is already tied to attemptCtx. If we cancel now, the body read fails.
+	// Hold cancel until the caller closes the body by wrapping Close.
+	resp.Body = &cancelOnCloseBody{ReadCloser: resp.Body, cancel: cancel}
+	return resp, 0, nil
+}
+
+// cancelOnCloseBody cancels the per-attempt context when the stream body is
+// closed so the WithTimeout resources are released after SSE finishes.
+type cancelOnCloseBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	if b.cancel != nil {
+		b.cancel()
+		b.cancel = nil
+	}
+	return err
 }
 
 // parseOpenAISSE reads an OpenAI-compatible SSE body and invokes onDelta for
