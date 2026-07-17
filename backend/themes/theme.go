@@ -550,29 +550,10 @@ func (t *Theme) BGVoid(mode string) string {
 // default; oklch backgrounds fall back through the cache to the embedded
 // default on the launch path.
 func HexToRGB(s string) (r, g, b uint8, ok bool) {
-	s = strings.TrimSpace(s)
-	if len(s) == 0 || s[0] != '#' {
-		return 0, 0, 0, false
-	}
-	hex := s[1:]
-	var full string
-	switch len(hex) {
-	case 3:
-		full = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
-	case 6:
-		full = hex
-	case 8:
-		full = hex[0:6]
-	default:
-		return 0, 0, 0, false
-	}
-	ri, ok1 := parseHexByte(full[0:2])
-	gi, ok2 := parseHexByte(full[2:4])
-	bi, ok3 := parseHexByte(full[4:6])
-	if !ok1 || !ok2 || !ok3 {
-		return 0, 0, 0, false
-	}
-	return ri, gi, bi, true
+	// Share the hex grammar with hexToRGBA (contrast.go); drop alpha — window
+	// backgrounds are opaque and callers only need RGB.
+	r, g, b, _, ok = hexToRGBA(s)
+	return r, g, b, ok
 }
 
 func parseHexByte(s string) (uint8, bool) {

@@ -139,10 +139,11 @@ func TestResolveAccentOn_TranslucentStart(t *testing.T) {
 	if got != "#ff00ff" {
 		t.Errorf("authored On: got %q, want #ff00ff", got)
 	}
-	// No surface + translucent → safe dark fill → white ink.
+	// No surface + translucent → pass start through (no dark-biased composite);
+	// DeriveInkOnAccent then picks ink from the uncomposited RGB channels.
 	got = resolveAccentOn(AccentTriple{Start: "rgba(255,255,255,0.1)"}, "")
-	if got != "#ffffff" {
-		t.Errorf("translucent without surface: on-ink = %q, want #ffffff", got)
+	if got != "#0a0a0a" && got != "#000000" {
+		t.Errorf("translucent without surface: on-ink = %q, want dark ink from white RGB", got)
 	}
 }
 

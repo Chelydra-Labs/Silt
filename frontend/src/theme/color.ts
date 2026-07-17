@@ -156,7 +156,8 @@ export function effectiveAccentFill(start: string, surfaceBG: string): string {
   const a = src.alpha === undefined ? 1 : src.alpha
   if (a >= 0.999) return start
   const dst = parse(surfaceBG.trim()) as RgbColor | undefined
-  if (!dst) return '#000000'
+  // Unparseable surface: do not bias dark (#000). Let deriveInkOnAccent use start.
+  if (!dst) return start
   const r = Math.round(((src.r ?? 0) * a + (dst.r ?? 0) * (1 - a)) * 255)
   const g = Math.round(((src.g ?? 0) * a + (dst.g ?? 0) * (1 - a)) * 255)
   const b = Math.round(((src.b ?? 0) * a + (dst.b ?? 0) * (1 - a)) * 255)

@@ -138,4 +138,10 @@ describe('color helper (#385)', () => {
   it('opaque start passes through effectiveAccentFill', () => {
     expect(effectiveAccentFill('#0d9488', '#0c0c0e')).toBe('#0d9488')
   })
+
+  it('unparseable surface returns start (no dark-biased composite)', () => {
+    expect(effectiveAccentFill('rgba(255,255,255,0.1)', 'not-a-color')).toBe(
+      'rgba(255,255,255,0.1)'
+    )
+  })
 })

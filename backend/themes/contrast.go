@@ -60,8 +60,9 @@ func resolveAccentOn(t AccentTriple, surfaceBG string) string {
 // effectiveAccentFill returns an opaque color representing how start paints
 // over surfaceBG. Opaque starts pass through; translucent starts are
 // source-over composited so DeriveInkOnAccent matches the rendered CTA fill.
-// When Start is translucent and surfaceBG is unparseable, returns near-black so
-// white ink is chosen (readable on dark-first defaults; authors should set On).
+// When Start is translucent and surfaceBG is unparseable, return start so
+// DeriveInkOnAccent decides from the authored color (not a dark-biased black
+// composite). Authors should set On for solid CTAs when possible.
 func effectiveAccentFill(start, surfaceBG string) string {
 	r, g, b, a, ok := parseColorRGBA(start)
 	if !ok {
@@ -72,7 +73,7 @@ func effectiveAccentFill(start, surfaceBG string) string {
 	}
 	sr, sg, sb, sok := parseColorAny(surfaceBG)
 	if !sok {
-		return "#000000"
+		return start
 	}
 	// source-over: out = src*α + dst*(1-α)
 	or := uint8(float64(r)*a + float64(sr)*(1-a) + 0.5)
