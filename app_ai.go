@@ -481,7 +481,9 @@ func (a *App) UpdateAIProviderConfig(which string, patch AIProviderPatch) error 
 // the OS keyring (and blanked from plaintext config.yaml). If the keyring is off
 // or unavailable, the key falls back to config.yaml so the feature still works
 // on a headless/locked machine. Trims surrounding whitespace. The keyring write
-// happens with no locks held so a D-Bus timeout cannot stall config access.
+// runs under vaultMu.RLock (blocks Switch/Move cutover, not other readers) so a
+// concurrent vault switch cannot retarget the write. configMu is released
+// during keyring I/O so a D-Bus timeout cannot stall unrelated config readers.
 // (#218.)
 func (a *App) SetAIAPIKey(which, key string) error {
 	if err := aiValidateWhich(which); err != nil {
@@ -489,6 +491,14 @@ func (a *App) SetAIAPIKey(which, key string) error {
 	}
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
+	return a.setAIAPIKeyLocked(which, key)
+}
+
+// setAIAPIKeyLocked writes a provider API key. Caller MUST hold vaultMu.RLock
+// for the whole call so SwitchVault/MoveVault cannot cut over mid-write.
+// configMu is taken internally (R then W); do not hold configMu when calling.
+// Used by SetAIAPIKey and CopyAIAPIKey (#641) to avoid RWMutex re-entrancy.
+func (a *App) setAIAPIKeyLocked(which, key string) error {
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
@@ -575,8 +585,9 @@ func (a *App) ClearAIAPIKey(which string) error {
 // No-op (returns nil) when the source has no key, so toggling sync for a
 // keyless provider does not error or clobber the destination. Resolves the
 // source via the same keyring-first/config-fallback path as every other key
-// read, then routes the store through SetAIAPIKey (which handles keyring-vs-
-// config placement, model-cache invalidation, and saveConfigTracked).
+// read, then stores via setAIAPIKeyLocked under one continuous vaultMu.RLock
+// so a concurrent SwitchVault/MoveVault cannot retarget the write to a
+// different vault (#641).
 func (a *App) CopyAIAPIKey(from, to string) error {
 	if err := aiValidateWhich(from); err != nil {
 		return err
@@ -587,9 +598,13 @@ func (a *App) CopyAIAPIKey(from, to string) error {
 	if from == to {
 		return nil
 	}
+	// Hold vaultMu.R for the whole copy: resolve + destination write must
+	// observe the same vault identity. RWMutex is not re-entrant, so we call
+	// setAIAPIKeyLocked (not public SetAIAPIKey). Keyring I/O under R is the
+	// same tradeoff as SetAIAPIKey — blocks writers (switch/move), not readers.
 	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
-		a.vaultMu.RUnlock()
 		return fmt.Errorf("vault not loaded")
 	}
 	a.configMu.RLock()
@@ -597,16 +612,12 @@ func (a *App) CopyAIAPIKey(from, to string) error {
 	fromUser := a.aiKeyringUser(from)
 	fromConfigKey := aiConfigBlock(a.cfg.AI, from).APIKey
 	a.configMu.RUnlock()
-	a.vaultMu.RUnlock()
-	// Resolve the source key with no locks held (the keyring may be slow or
-	// unavailable), then store it into the destination via the standard path.
-	// Locks are fully released before SetAIAPIKey re-acquires them — no
-	// re-entrancy on the RWMutex.
+
 	key, _ := a.resolveAIKeyUnlocked(fromUser, useKeyring, fromConfigKey)
 	if key == "" {
 		return nil
 	}
-	return a.SetAIAPIKey(to, key)
+	return a.setAIAPIKeyLocked(to, key)
 }
 
 // SetUseKeyring toggles whether AI provider keys are stored in the OS keyring
