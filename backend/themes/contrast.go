@@ -1,6 +1,7 @@
 package themes
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -46,18 +47,47 @@ func ContrastRatio(a, b string) (ratio float64, ok bool) {
 
 // resolveAccentOn returns the on-accent label ink for a triple: the authored
 // On when set, otherwise a black/white pick derived from Start so solid
-// accent buttons stay readable without a v1 migration.
-func resolveAccentOn(t AccentTriple) string {
+// accent buttons stay readable without a v1 migration. surfaceBG is the mode's
+// app surface (or other CTA backdrop) used when Start is translucent so contrast
+// is measured against the painted fill, not the uncomposited RGB channels.
+func resolveAccentOn(t AccentTriple, surfaceBG string) string {
 	if on := strings.TrimSpace(t.On); on != "" {
 		return on
 	}
-	return DeriveInkOnAccent(t.Start)
+	return DeriveInkOnAccent(effectiveAccentFill(t.Start, surfaceBG))
+}
+
+// effectiveAccentFill returns an opaque color representing how start paints
+// over surfaceBG. Opaque starts pass through; translucent starts are
+// source-over composited so DeriveInkOnAccent matches the rendered CTA fill.
+// When Start is translucent and surfaceBG is unparseable, returns near-black so
+// white ink is chosen (readable on dark-first defaults; authors should set On).
+func effectiveAccentFill(start, surfaceBG string) string {
+	r, g, b, a, ok := parseColorRGBA(start)
+	if !ok {
+		return start
+	}
+	if a >= 0.999 {
+		return start
+	}
+	sr, sg, sb, sok := parseColorAny(surfaceBG)
+	if !sok {
+		return "#000000"
+	}
+	// source-over: out = src*α + dst*(1-α)
+	or := uint8(float64(r)*a + float64(sr)*(1-a) + 0.5)
+	og := uint8(float64(g)*a + float64(sg)*(1-a) + 0.5)
+	ob := uint8(float64(b)*a + float64(sb)*(1-a) + 0.5)
+	return fmt.Sprintf("#%02x%02x%02x", or, og, ob)
 }
 
 // DeriveInkOnAccent picks near-black, pure black, or white label ink for a
 // solid fill of start so WCAG AA (4.5:1) is met when possible. Medium accents
 // (e.g. cyber_forest light teal #0d9488) need dark ink; pure black is used
 // when near-black falls short of 4.5:1 (e.g. indigo #6366f1).
+//
+// Callers that may receive translucent Start should pass effectiveAccentFill
+// first (see resolveAccentOn); ContrastRatio deliberately drops alpha.
 func DeriveInkOnAccent(start string) string {
 	const (
 		nearBlack = "#0a0a0a"
@@ -131,31 +161,37 @@ func linear(c uint8) float64 {
 // components, which strconv.ParseFloat accepts with a nil error — return
 // ok=false.
 //
-// Asymmetry with isValidColor: only the 3 RGB components are parsed from
-// rgb()/rgba() (the loop below reads parts[0..2]); the alpha channel is never
-// read, so it is dropped rather than validated. Therefore a malformed alpha
-// (e.g. rgba(12,12,14,NaN)) is ACCEPTED here even though isValidColor rejects
-// it. This is deliberate — luminance is defined over opaque colors — and is
-// pinned by TestContrastRatio_AcceptedColorForms. Do not add an alpha guard
-// here without updating that contract.
+// Alpha is dropped (luminance is defined over opaque colors). See parseColorRGBA
+// when compositing translucent fills. Pinned by TestContrastRatio_AcceptedColorForms.
 func parseColorAny(s string) (r, g, b uint8, ok bool) {
+	r, g, b, _, ok = parseColorRGBA(s)
+	return r, g, b, ok
+}
+
+// parseColorRGBA is parseColorAny plus the alpha channel (1.0 when omitted).
+// Used by effectiveAccentFill to composite translucent accent starts.
+func parseColorRGBA(s string) (r, g, b uint8, a float64, ok bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
 	if s[0] == '#' {
-		r, g, b, ok = HexToRGB(s)
-		return r, g, b, ok
+		r, g, b, a, ok = hexToRGBA(s)
+		return r, g, b, a, ok
 	}
 	// OKLCH resolves through the Oklab inverse to sRGB so contrast math works
 	// on OKLCH-authored tokens without a separate code path.
 	if strings.HasPrefix(s, "oklch(") && strings.HasSuffix(s, ")") {
 		lch, ok := parseOKLCH(s)
 		if !ok {
-			return 0, 0, 0, false
+			return 0, 0, 0, 0, false
 		}
 		r, g, b := oklchToSRGB(lch.L, lch.C, lch.H)
-		return r, g, b, true
+		a := 1.0
+		if lch.hasAlpha {
+			a = lch.alpha
+		}
+		return r, g, b, a, true
 	}
 	inner, wantParts := "", 0
 	switch {
@@ -164,11 +200,11 @@ func parseColorAny(s string) (r, g, b uint8, ok bool) {
 	case strings.HasPrefix(s, "rgb(") && strings.HasSuffix(s, ")"):
 		inner, wantParts = s[len("rgb("):len(s)-1], 3
 	default:
-		return 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
 	parts := strings.Split(inner, ",")
 	if len(parts) != wantParts {
-		return 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
 	ch := [3]uint8{}
 	for i := 0; i < 3; i++ {
@@ -180,26 +216,71 @@ func parseColorAny(s string) (r, g, b uint8, ok bool) {
 		}
 		v, err := strconv.ParseFloat(num, 64)
 		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
-			return 0, 0, 0, false
+			return 0, 0, 0, 0, false
 		}
 		if percent {
 			if v < 0 || v > 100 {
-				return 0, 0, 0, false
+				return 0, 0, 0, 0, false
 			}
 			ch[i] = uint8(v/100*255 + 0.5)
 		} else {
 			if v < 0 || v > 255 {
-				return 0, 0, 0, false
+				return 0, 0, 0, 0, false
 			}
 			ch[i] = uint8(v + 0.5)
 		}
 	}
+	a = 1.0
 	if wantParts == 4 {
 		alphaStr := strings.TrimSpace(parts[3])
-		alpha, err := strconv.ParseFloat(alphaStr, 64)
-		if err != nil || alpha < 0 || alpha > 1 {
-			return 0, 0, 0, false
+		// CSS Color 4 percent alpha (e.g. 50%).
+		if strings.HasSuffix(alphaStr, "%") {
+			num := alphaStr[:len(alphaStr)-1]
+			v, err := strconv.ParseFloat(num, 64)
+			if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 100 {
+				return 0, 0, 0, 0, false
+			}
+			a = v / 100
+		} else {
+			alpha, err := strconv.ParseFloat(alphaStr, 64)
+			if err != nil || math.IsNaN(alpha) || math.IsInf(alpha, 0) || alpha < 0 || alpha > 1 {
+				return 0, 0, 0, 0, false
+			}
+			a = alpha
 		}
 	}
-	return ch[0], ch[1], ch[2], true
+	return ch[0], ch[1], ch[2], a, true
+}
+
+// hexToRGBA parses #rgb / #rrggbb / #rrggbbaa, returning alpha 1.0 when omitted.
+func hexToRGBA(s string) (r, g, b uint8, a float64, ok bool) {
+	s = strings.TrimSpace(s)
+	if len(s) == 0 || s[0] != '#' {
+		return 0, 0, 0, 0, false
+	}
+	hex := s[1:]
+	var full string
+	a = 1.0
+	switch len(hex) {
+	case 3:
+		full = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
+	case 6:
+		full = hex
+	case 8:
+		full = hex[0:6]
+		ai, okA := parseHexByte(hex[6:8])
+		if !okA {
+			return 0, 0, 0, 0, false
+		}
+		a = float64(ai) / 255.0
+	default:
+		return 0, 0, 0, 0, false
+	}
+	ri, ok1 := parseHexByte(full[0:2])
+	gi, ok2 := parseHexByte(full[2:4])
+	bi, ok3 := parseHexByte(full[4:6])
+	if !ok1 || !ok2 || !ok3 {
+		return 0, 0, 0, 0, false
+	}
+	return ri, gi, bi, a, true
 }

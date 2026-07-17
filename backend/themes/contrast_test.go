@@ -103,16 +103,46 @@ func TestContrastRatio_AcceptedColorForms(t *testing.T) {
 	}
 	// NaN/Inf in an RGB component are rejected (strconv.ParseFloat
 	// accepts them with nil error; without the non-finite guard the
-	// harness would coerce NaN->0 and return a bogus ratio). Note: a
-	// NaN in the ALPHA channel (e.g. rgba(12,12,14,NaN)) is NOT rejected
-	// here — the harness intentionally drops alpha (luminance is over
-	// opaque colors), so alpha-NaN never reaches a range check. The
-	// validator (isValidColor) rejects alpha-NaN because it validates
-	// the full color spec; see TestIsValidColor.
-	for _, bad := range []string{"rgba(NaN,0,0,0.5)", "rgb(Inf,0,0)", "rgb(-Inf,0,0)"} {
+	// harness would coerce NaN->0 and return a bogus ratio). Alpha-NaN
+	// is also rejected (parseColorRGBA validates alpha for compositing).
+	for _, bad := range []string{
+		"rgba(NaN,0,0,0.5)", "rgb(Inf,0,0)", "rgb(-Inf,0,0)", "rgba(12,12,14,NaN)",
+	} {
 		if _, ok := ContrastRatio(bad, "#fff"); ok {
-			t.Errorf("expected %q to be rejected (non-finite RGB component), got ok", bad)
+			t.Errorf("expected %q to be rejected (non-finite component), got ok", bad)
 		}
+	}
+}
+
+// TestResolveAccentOn_TranslucentStart composites translucent accent.start
+// against the app surface before picking on-ink (review: uncomposited RGB
+// treats rgba(255,255,255,.1) as white → black ink on a nearly-black fill).
+func TestResolveAccentOn_TranslucentStart(t *testing.T) {
+	darkSurface := "#0c0c0e"
+	// Translucent white on dark app → painted fill is near-black → white ink.
+	got := resolveAccentOn(AccentTriple{Start: "rgba(255,255,255,0.1)"}, darkSurface)
+	if got != "#ffffff" {
+		t.Errorf("translucent white on dark surface: on-ink = %q, want #ffffff", got)
+	}
+	// Same via 8-digit hex (~0.1 alpha).
+	got = resolveAccentOn(AccentTriple{Start: "#ffffff1a"}, darkSurface)
+	if got != "#ffffff" {
+		t.Errorf("translucent #ffffff1a on dark surface: on-ink = %q, want #ffffff", got)
+	}
+	// Opaque teal still prefers near-black (unchanged solid path).
+	got = resolveAccentOn(AccentTriple{Start: "#0d9488"}, darkSurface)
+	if got != "#0a0a0a" && got != "#000000" {
+		t.Errorf("opaque teal: on-ink = %q, want dark ink", got)
+	}
+	// Authored On wins even for translucent start.
+	got = resolveAccentOn(AccentTriple{Start: "rgba(255,255,255,0.1)", On: "#ff00ff"}, darkSurface)
+	if got != "#ff00ff" {
+		t.Errorf("authored On: got %q, want #ff00ff", got)
+	}
+	// No surface + translucent → safe dark fill → white ink.
+	got = resolveAccentOn(AccentTriple{Start: "rgba(255,255,255,0.1)"}, "")
+	if got != "#ffffff" {
+		t.Errorf("translucent without surface: on-ink = %q, want #ffffff", got)
 	}
 }
 

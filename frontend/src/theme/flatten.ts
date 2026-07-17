@@ -15,7 +15,7 @@ import type {
   Typography
 } from './types'
 import { SURFACE_PARENT, SURFACE_ZONES } from './types'
-import { deriveInkOnAccent } from './color'
+import { deriveInkOnAccent, effectiveAccentFill } from './color'
 
 interface ZoneCss {
   name: SurfaceZone
@@ -238,14 +238,19 @@ export function flattenTheme(
   out['--color-text-muted'] = m.text_muted.trim()
   out['--color-text-disabled'] = m.text_disabled.trim()
 
+  // App surface is the CTA backdrop for compositing translucent starts.
+  const appBG = m.surfaces.app.bg?.trim() ?? ''
   out['--color-accent-primary-start'] = m.accent.primary.start
   out['--color-accent-primary-end'] = m.accent.primary.end
   out['--color-accent-primary-glow'] = m.accent.primary.glow
-  out['--color-accent-primary-on'] = resolveAccentOn(m.accent.primary)
+  out['--color-accent-primary-on'] = resolveAccentOn(m.accent.primary, appBG)
   out['--color-accent-secondary-start'] = m.accent.secondary.start
   out['--color-accent-secondary-end'] = m.accent.secondary.end
   out['--color-accent-secondary-glow'] = m.accent.secondary.glow
-  out['--color-accent-secondary-on'] = resolveAccentOn(m.accent.secondary)
+  out['--color-accent-secondary-on'] = resolveAccentOn(
+    m.accent.secondary,
+    appBG
+  )
   out['--color-text-on-accent'] = out['--color-accent-primary-on']
 
   out['--color-status-warn'] = m.status.warn
@@ -265,8 +270,8 @@ export function flattenTheme(
   return out
 }
 
-function resolveAccentOn(t: AccentTriple): string {
+function resolveAccentOn(t: AccentTriple, surfaceBG: string): string {
   const on = t.on?.trim()
   if (on) return on
-  return deriveInkOnAccent(t.start)
+  return deriveInkOnAccent(effectiveAccentFill(t.start, surfaceBG))
 }

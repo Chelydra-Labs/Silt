@@ -6,12 +6,32 @@
 
 import type { Editor } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import { findActiveBlock } from './keymaps'
 
 export type EditCaretSnapshot = {
   blockId: string
   /** Offset from the start of the block's content (not a raw doc position). */
   offsetInBlock: number
+}
+
+/**
+ * Nearest ancestor with a stable block id (attrs.id). Broader than the keymap
+ * helper `findActiveBlock` / BLOCK_TYPES: code blocks, tables, and details also
+ * carry ids (schema + uniqueIdPlugin) and are common caret contexts. Keymap
+ * BLOCK_TYPES intentionally omits codeBlock (different content model for merge);
+ * caret restore only needs identity, not outliner semantics.
+ */
+function findStableIdBlock(
+  editor: Editor
+): { node: ProseMirrorNode; depth: number } | null {
+  const $from = editor.state.selection.$from
+  for (let d = $from.depth; d >= 1; d--) {
+    const node = $from.node(d)
+    const id = node.attrs?.id
+    if (typeof id === 'string' && id.length > 0) {
+      return { node, depth: d }
+    }
+  }
+  return null
 }
 
 /**
@@ -23,10 +43,9 @@ export function snapshotEditCaret(
 ): EditCaretSnapshot | null {
   if (!editor?.state?.selection?.$from) return null
   try {
-    const active = findActiveBlock(editor)
+    const active = findStableIdBlock(editor)
     if (!active) return null
-    const blockId = active.node.attrs?.id as string | null | undefined
-    if (!blockId) return null
+    const blockId = active.node.attrs.id as string
     const $from = editor.state.selection.$from
     // start(depth) is the first content position inside the block node.
     const offsetInBlock = Math.max(0, $from.pos - $from.start(active.depth))

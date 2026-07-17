@@ -363,14 +363,16 @@ func (t *Theme) Flatten(mode string) map[string]string {
 	out["--color-text-disabled"] = strings.TrimSpace(m.TextDisabled)
 
 	// Accents (on = label ink for solid fills using start; derived when omitted).
+	// App surface is the CTA backdrop for compositing translucent starts.
+	appBG := strings.TrimSpace(m.Surfaces.App.BG)
 	out["--color-accent-primary-start"] = m.Accent.Primary.Start
 	out["--color-accent-primary-end"] = m.Accent.Primary.End
 	out["--color-accent-primary-glow"] = m.Accent.Primary.Glow
-	out["--color-accent-primary-on"] = resolveAccentOn(m.Accent.Primary)
+	out["--color-accent-primary-on"] = resolveAccentOn(m.Accent.Primary, appBG)
 	out["--color-accent-secondary-start"] = m.Accent.Secondary.Start
 	out["--color-accent-secondary-end"] = m.Accent.Secondary.End
 	out["--color-accent-secondary-glow"] = m.Accent.Secondary.Glow
-	out["--color-accent-secondary-on"] = resolveAccentOn(m.Accent.Secondary)
+	out["--color-accent-secondary-on"] = resolveAccentOn(m.Accent.Secondary, appBG)
 	// Semantic alias for solid primary CTAs (Tailwind text-text-on-accent).
 	out["--color-text-on-accent"] = out["--color-accent-primary-on"]
 
