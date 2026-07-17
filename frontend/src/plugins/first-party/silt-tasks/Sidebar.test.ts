@@ -105,7 +105,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
       return () => {}
     },
     ...overrides
-  }
+  } as PluginContext
 }
 
 const MANIFEST: PluginManifest = {

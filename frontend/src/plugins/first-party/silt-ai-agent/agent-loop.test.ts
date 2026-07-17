@@ -261,7 +261,8 @@ describe('agent-loop', () => {
     expect(prompt).toContain('WRITE POLICY')
     expect(prompt).toContain('confirmation')
     // Active notebook is surfaced so the model knows its scope.
-    expect(prompt).toContain('Active notebook: Work')
+    expect(prompt).toContain('Current page:')
+    expect(prompt).toMatch(/Work/)
   })
 
   it('buildSystemPrompt allows general chat and prefers notebook when relevant (#678)', () => {
@@ -323,6 +324,35 @@ describe('agent-loop', () => {
     expect(prompt).toContain('Current page: (none)')
     expect(prompt).toContain('Focused block id: (none)')
     expect(prompt).toContain('Open tabs: (none)')
+  })
+
+  it('runAgent freezes UI location at run start (#680)', async () => {
+    let call = 0
+    const getUiLocation = vi.fn(() => {
+      call += 1
+      return {
+        notebook: call === 1 ? 'Recipes' : 'Other',
+        section: 'Baking',
+        page: call === 1 ? 'Pie' : 'Moved',
+        openTabs: []
+      }
+    })
+    const ctx = {
+      ...mockCtx(() => mockStream({ content: 'done', model: 'm' }, ['done'])),
+      getUiLocation
+    } as PluginContext
+
+    await runAgent(ctx, 'hello', [])
+    // Snapshot once at start; system message must not re-call getUiLocation
+    // for later iterations (single-iteration final answer here).
+    expect(getUiLocation).toHaveBeenCalledTimes(1)
+    const complete = ctx.ai.complete as ReturnType<typeof vi.fn>
+    const firstCall = complete.mock.calls[0]?.[0]
+    const system = firstCall?.messages?.find(
+      (m: { role: string }) => m.role === 'system'
+    )
+    expect(system?.content).toContain('Current page: Recipes/Baking/Pie')
+    expect(system?.content).not.toContain('Other/Baking/Moved')
   })
 
   it('createAgentSession.cancel aborts the in-flight run', async () => {

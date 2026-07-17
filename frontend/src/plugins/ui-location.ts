@@ -48,9 +48,11 @@ export function setOpenTabsProvider(provider: OpenTabsProvider | null): void {
 }
 
 /**
- * Record the latest editor selection/focus block. Called from the shell when
- * selection:changed fires (or tests). Cleared when the user navigates away
- * from that page or on vault close.
+ * Record the latest editor caret/selection block. Called when
+ * selection:changed fires (or tests). Pass no `blockId` (or empty) to clear
+ * the focused block while keeping the page triple — avoids stale ids after
+ * the caret leaves a block. Cross-page leakage is also blocked in
+ * captureUiLocation (page triple must match active location).
  */
 export function recordSelectionFocus(payload: {
   notebook: string
@@ -58,17 +60,37 @@ export function recordSelectionFocus(payload: {
   page: string
   blockId?: string
 }): void {
+  const blockId = payload.blockId?.trim() || undefined
   lastSelection = {
     notebook: payload.notebook || '',
     section: payload.section || '',
     page: payload.page || '',
-    blockId: payload.blockId || undefined
+    ...(blockId ? { blockId } : {})
   }
 }
 
 /** Drop focused-block memory (vault close / explicit reset). */
 export function clearSelectionFocus(): void {
   lastSelection = null
+}
+
+/**
+ * Clear focused-block memory only if it belongs to the given page (editor
+ * unmount, tab close). Leaves selection for other pages intact.
+ */
+export function clearSelectionFocusIfPage(
+  notebook: string,
+  section: string,
+  page: string
+): void {
+  if (
+    lastSelection &&
+    lastSelection.notebook === (notebook || '') &&
+    lastSelection.section === (section || '') &&
+    lastSelection.page === (page || '')
+  ) {
+    lastSelection = null
+  }
 }
 
 /**
@@ -109,7 +131,9 @@ export function formatUiLocationForPrompt(loc: UiLocationSnapshot): string {
       ? loc.section
         ? `${loc.notebook}/${loc.section}/${loc.page}`
         : `${loc.notebook}/${loc.page}`
-      : '(none)'
+      : loc.notebook
+        ? `${loc.notebook} (no page open)`
+        : '(none)'
 
   const blockLine = loc.blockId
     ? `Focused block id: ${loc.blockId}`
@@ -134,11 +158,11 @@ export function formatUiLocationForPrompt(loc: UiLocationSnapshot): string {
   return [
     'UI LOCATION (identifiers only — use tools to load content):',
     `Current page: ${pagePath}`,
-    `Active notebook: ${loc.notebook || '(none)'}`,
-    `Active section: ${loc.section || '(none)'}`,
-    `Active page: ${loc.page || '(none)'}`,
     blockLine,
     tabsBlock,
+    // Tabs list is vault-wide (all notebooks), not only the active notebook strip.
+    'Open tabs include every open editor tab across notebooks; the strip may show a subset.',
+    'Focused block id is the caret block when present (not a multi-range selection).',
     'Resolve "this page", "here", and "open tabs" from this snapshot.',
     'Mid-run navigation is ignored for this turn; the snapshot is fixed at run start.'
   ].join('\n')

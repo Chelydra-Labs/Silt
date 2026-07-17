@@ -752,26 +752,37 @@ func (a *App) SetOpenDevtoolsOnStartup(value bool) error {
 }
 
 // OpenDevTools opens the webview developer tools when Dev Mode is enabled
-// (#679). No-op (returns nil) when the flag is off or the main window is
-// unavailable — production builds without the Wails devtools tag may also
-// no-op at the platform layer.
+// (#679). No-op (returns nil) when the flag is off, SILT_DEBUG is unset, the
+// main window is unavailable, or no vault is loaded — production builds
+// without the Wails devtools tag may also no-op at the platform layer.
+//
+// Runtime gate matches launch-time shouldOpenDevtools: vault config flag OR
+// SILT_DEBUG=1. Vault is not required when SILT_DEBUG is set (process-global).
 func (a *App) OpenDevTools() error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return fmt.Errorf("vault not loaded")
-	}
-	a.configMu.RLock()
-	enabled := a.cfg.UI.OpenDevtoolsOnStartup != nil && *a.cfg.UI.OpenDevtoolsOnStartup
-	a.configMu.RUnlock()
-	if !enabled {
+	if a.mainWindow == nil {
 		return nil
 	}
-	if a.mainWindow == nil {
+	if !a.devToolsRuntimeEnabled() {
 		return nil
 	}
 	a.mainWindow.OpenDevTools()
 	return nil
+}
+
+// devToolsRuntimeEnabled reports whether runtime OpenDevTools should proceed.
+// Mirrors shouldOpenDevtools (main.go): SILT_DEBUG=1 or vault Dev Mode flag.
+func (a *App) devToolsRuntimeEnabled() bool {
+	if strings.EqualFold(os.Getenv("SILT_DEBUG"), "1") {
+		return true
+	}
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return false
+	}
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	return a.cfg.UI.OpenDevtoolsOnStartup != nil && *a.cfg.UI.OpenDevtoolsOnStartup
 }
 
 // GetPluginSettingsForNotebook resolves a plugin's settings map for the

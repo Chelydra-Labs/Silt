@@ -1,11 +1,16 @@
 <script lang="ts">
   import { OpenDevTools } from '../../../bindings/silt/app.js'
+  import { pushNotification } from '../../notifications/store.svelte'
 
   async function openDevTools(): Promise<void> {
     try {
       await OpenDevTools()
     } catch (e) {
       console.error('OpenDevTools failed:', e)
+      pushNotification({
+        kind: 'error',
+        message: 'Could not open DevTools. Is Dev Mode enabled?'
+      })
     }
   }
 </script>
@@ -42,7 +47,7 @@
             Press <kbd
               class="inline-block px-1.5 py-0.5 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-2xs font-mono"
               >Ctrl+Shift+F12</kbd
-            > (View → Toggle Developer Tools)
+            > (View → Open Developer Tools)
           </li>
           <li>Right-click in the editor and choose <strong>Inspect</strong></li>
         </ul>
@@ -54,10 +59,12 @@
           Open DevTools
         </button>
         <p class="text-text-muted text-type-2xs font-body-md leading-relaxed">
-          Opening DevTools on startup still requires a restart after enabling
-          Dev Mode. Runtime Inspect works immediately once the flag is on.
-          Production builds may need a DevTools-enabled build for the inspector
-          to appear.
+          If Dev Mode was off when the app launched, restart after enabling it
+          so the webview is created with DevTools support. Runtime Inspect and
+          the shortcut work once the flag is on
+          <em>and</em> the window was created with DevTools enabled (or
+          <code>SILT_DEBUG=1</code>). Production builds may need a
+          DevTools-enabled build for the inspector to appear.
         </p>
       </div>
 

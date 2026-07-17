@@ -12,6 +12,7 @@ const emptyResult: SqliteQueryResult = { rows: [], truncated: false }
  */
 export const v2CtxStubs: Pick<
   PluginContext,
+  | 'getUiLocation'
   | 'queryByTag'
   | 'queryByDateRange'
   | 'fullTextSearch'
@@ -74,6 +75,12 @@ export const v2CtxStubs: Pick<
   | 'getNavigationTree'
   | 'addTaskComment'
 > = {
+  getUiLocation: () => ({
+    notebook: '',
+    section: '',
+    page: '',
+    openTabs: []
+  }),
   queryByTag: () => Promise.resolve(emptyResult),
   queryByDateRange: () => Promise.resolve(emptyResult),
   fullTextSearch: () => Promise.resolve(emptyResult),

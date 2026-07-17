@@ -104,7 +104,10 @@
     deleteBlock
   } from '../lib/editor/clipboard'
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
-  import { recordSelectionFocus } from '../plugins/ui-location'
+  import {
+    clearSelectionFocusIfPage,
+    recordSelectionFocus
+  } from '../plugins/ui-location'
   import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
   import { isSystemDark } from '../lib/systemTheme.svelte'
 
@@ -1026,6 +1029,9 @@
 
   onDestroy(() => {
     stopHeartbeat()
+    // Drop caret-block memory for this page so the agent does not keep a
+    // stale block id after the editor unmounts (#680 harden).
+    clearSelectionFocusIfPage(notebook, section, page)
     // Cancel any pending owner-fetch / mention-refine timers so they don't
     // fire after teardown (#332).
     if (mentionQueryTimer) {

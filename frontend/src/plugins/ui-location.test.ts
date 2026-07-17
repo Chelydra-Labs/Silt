@@ -3,6 +3,7 @@ import { setActiveLocation } from './location.svelte'
 import {
   captureUiLocation,
   clearSelectionFocus,
+  clearSelectionFocusIfPage,
   formatUiLocationForPrompt,
   recordSelectionFocus,
   setOpenTabsProvider
@@ -74,6 +75,37 @@ describe('ui-location', () => {
       section: '',
       page: 'Notes'
     })
+    expect(captureUiLocation().blockId).toBeUndefined()
+  })
+
+  it('clears block id when a later selection has no block id', () => {
+    setActiveLocation('Work', 'Journal', 'Daily')
+    recordSelectionFocus({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      blockId: 'block-old'
+    })
+    expect(captureUiLocation().blockId).toBe('block-old')
+    recordSelectionFocus({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily'
+    })
+    expect(captureUiLocation().blockId).toBeUndefined()
+  })
+
+  it('clearSelectionFocusIfPage only clears matching page', () => {
+    setActiveLocation('Work', 'Journal', 'Daily')
+    recordSelectionFocus({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      blockId: 'block-1'
+    })
+    clearSelectionFocusIfPage('Work', 'Journal', 'Other')
+    expect(captureUiLocation().blockId).toBe('block-1')
+    clearSelectionFocusIfPage('Work', 'Journal', 'Daily')
     expect(captureUiLocation().blockId).toBeUndefined()
   })
 

@@ -152,7 +152,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
       return () => {}
     },
     ...overrides
-  }
+  } as PluginContext
 }
 
 // A row factory covering every TaskDetail field the unified query projects

@@ -157,7 +157,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     notify: mocks.notify,
     on: () => () => {},
     ...overrides
-  }
+  } as PluginContext
 }
 
 // A row factory covering every TaskDetail field the query/projects so the

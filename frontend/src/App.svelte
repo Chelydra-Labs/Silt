@@ -71,6 +71,7 @@
   import { setActiveLocation } from './plugins/location.svelte'
   import {
     clearSelectionFocus,
+    clearSelectionFocusIfPage,
     setOpenTabsProvider
   } from './plugins/ui-location'
   import ToastContainer from './components/ToastContainer.svelte'
@@ -279,6 +280,10 @@
   }
 
   function handleCloseTab(id: string): void {
+    const closing = openTabs.find((t) => t.id === id)
+    if (closing) {
+      clearSelectionFocusIfPage(closing.notebook, closing.section, closing.page)
+    }
     const result = closeTabState({ tabs: openTabs, activeId: activeTabId }, id)
     openTabs = result.tabs
     activeTabId = result.activeId

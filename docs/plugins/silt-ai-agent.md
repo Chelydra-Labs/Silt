@@ -47,9 +47,9 @@ captured at run start (mid-run navigation is ignored for that turn):
 
 | Field | Source | Notes |
 |---|---|---|
-| Current page | Active notebook / section / page | Path form `notebook/section/page` or `(none)` |
-| Focused block id | Editor selection/caret when on the active page | Omitted / `(none)` when no block is focused |
-| Open tabs | All open editor tabs (preview + pinned) | Marks which tab is active |
+| Current page | Active notebook / section / page | Path form `notebook/section/page`, or `(none)` |
+| Focused block id | Editor **caret** block when on the active page | Not multi-range selection; cleared on unmount/tab close/empty caret; `(none)` when absent |
+| Open tabs | All open editor tabs across notebooks (preview + pinned) | Marks which tab is active; may be broader than the per-notebook tab strip |
 
 Location is **identifiers only** — not full page bodies. The agent uses tools
 (`read_blocks`, `search_notes`, etc.) to load content. Deictic phrases like
