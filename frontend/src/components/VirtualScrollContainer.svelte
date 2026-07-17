@@ -443,17 +443,18 @@
 
   // When blocks change while a remount restore is still open, TipTap's
   // setContent path may have just run — re-apply caret once after that flush.
-  // Only fingerprint blocks while a restore is pending (avoids O(n) id-join on
-  // every edit for large pages).
+  // Early-return when no restore is pending so we do not subscribe to blocks
+  // during normal typing. While open, read length + ends only (not a full id join).
   $effect(() => {
     const snap = pendingCaretReapply
     if (!snap || !editorInstance) return
     const n = blocks.length
-    const head = n > 0 ? blocks[0].id : ''
-    const tail = n > 1 ? blocks[n - 1].id : head
-    const key = `${n}:${head}:${tail}`
+    void n
+    if (n > 0) {
+      void blocks[0].id
+      void blocks[n - 1].id
+    }
     const gen = caretRestoreGen
-    void key
     void tick().then(() => {
       if (gen !== caretRestoreGen || pendingCaretReapply !== snap) return
       tryApplyCaret(snap)
