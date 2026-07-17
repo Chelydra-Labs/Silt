@@ -2088,7 +2088,7 @@
 
   .meta-suggest-item.selected {
     background: var(--color-accent-primary-start);
-    color: var(--color-surface-app-text);
+    color: var(--color-text-on-accent);
   }
 
   .meta-suggest-key {
@@ -2133,7 +2133,7 @@
 
   .mention-suggest-item.selected {
     background: var(--color-accent-primary-start);
-    color: var(--color-surface-app-text);
+    color: var(--color-text-on-accent);
   }
 
   .mention-suggest-at {

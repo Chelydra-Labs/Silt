@@ -11,7 +11,9 @@ import (
 
 	"silt/backend/ai"
 	"silt/backend/config"
+	"silt/backend/keyring"
 	"silt/backend/plugins"
+	"silt/backend/vault"
 )
 
 // --- Config page bindings ------------------------------------------------
@@ -153,6 +155,133 @@ func TestCopyAIAPIKey_RejectsBadWhich(t *testing.T) {
 	}
 	if err := app.CopyAIAPIKey("chat", "bogus"); err == nil {
 		t.Error("CopyAIAPIKey should reject an unknown destination role")
+	}
+}
+
+// blockingKeyring delays Get until release is closed so tests can prove
+// CopyAIAPIKey holds vaultMu.R across resolve + write (#641).
+type blockingKeyring struct {
+	inner   *keyring.Fake
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingKeyring) Available() bool { return true }
+
+func (b *blockingKeyring) Set(service, user, secret string) error {
+	return b.inner.Set(service, user, secret)
+}
+
+func (b *blockingKeyring) Get(service, user string) (string, error) {
+	// Signal that resolve has started under vaultMu.R, then wait.
+	select {
+	case <-b.entered:
+		// already closed
+	default:
+		close(b.entered)
+	}
+	<-b.release
+	return b.inner.Get(service, user)
+}
+
+func (b *blockingKeyring) Delete(service, user string) error {
+	return b.inner.Delete(service, user)
+}
+
+// TestCopyAIAPIKey_HoldsVaultLockAcrossResolveAndWrite is the #641 regression:
+// previously CopyAIAPIKey released vaultMu before resolve + SetAIAPIKey, so a
+// SwitchVault/MoveVault in that window could land vault A's secret in vault B.
+// The fix holds vaultMu.R for the whole copy so exclusive cutover cannot run
+// mid-operation.
+func TestCopyAIAPIKey_HoldsVaultLockAcrossResolveAndWrite(t *testing.T) {
+	app := newTestApp(t)
+
+	fake := keyring.NewFake()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+
+	const secret = "vault-a-only-secret"
+	// Plant the source key with a plain fake, then re-wrap so Copy's resolve Get blocks.
+	app.keyringStore = fake
+	if err := app.SetAIAPIKey("chat", secret); err != nil {
+		t.Fatalf("SetAIAPIKey: %v", err)
+	}
+	// Capture vault-A keyring user ids before any path change.
+	app.vaultMu.RLock()
+	aChatUser := app.aiKeyringUser("chat")
+	aEmbUser := app.aiKeyringUser("embedding")
+	firstVault := app.vaultPath
+	app.vaultMu.RUnlock()
+
+	app.keyringStore = &blockingKeyring{inner: fake, entered: entered, release: release}
+
+	copyDone := make(chan error, 1)
+	go func() { copyDone <- app.CopyAIAPIKey("chat", "embedding") }()
+
+	// Wait until Copy is inside resolve (must hold vaultMu.R).
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("CopyAIAPIKey did not reach keyring Get in time")
+	}
+
+	// Exclusive cutover (SwitchVault/MoveVault) needs vaultMu.Lock. While copy
+	// holds R, TryLock must fail — that is the race window #641 closed.
+	if app.vaultMu.TryLock() {
+		app.vaultMu.Unlock()
+		t.Fatal("vaultMu.TryLock succeeded while CopyAIAPIKey held R — race window reopened")
+	}
+
+	// Finish the copy on vault A.
+	close(release)
+	select {
+	case err := <-copyDone:
+		if err != nil {
+			t.Fatalf("CopyAIAPIKey: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CopyAIAPIKey did not finish after keyring release")
+	}
+
+	// After copy, exclusive lock is available again.
+	if !app.vaultMu.TryLock() {
+		t.Fatal("vaultMu.TryLock failed after CopyAIAPIKey released R")
+	}
+	app.vaultMu.Unlock()
+
+	// Copy completed against vault A: embedding slot on A's keyring has the secret.
+	got, err := fake.Get(keyringService, aEmbUser)
+	if err != nil || got != secret {
+		t.Fatalf("vault A embedding keyring after copy: got %q err=%v, want %q", got, err, secret)
+	}
+	// Chat source still present on A.
+	if got, err := fake.Get(keyringService, aChatUser); err != nil || got != secret {
+		t.Fatalf("vault A chat keyring after copy: got %q err=%v, want %q", got, err, secret)
+	}
+
+	// Simulate a post-copy switch: a freshly scaffolded vault B must not already
+	// contain A's secret in config (copy never wrote under B's path).
+	secondVault := t.TempDir()
+	if err := vault.ScaffoldVault(secondVault); err != nil {
+		t.Fatalf("scaffold second vault: %v", err)
+	}
+	bCfg, err := config.Load(secondVault)
+	if err != nil {
+		t.Fatalf("load second vault config: %v", err)
+	}
+	if bCfg.AI.Chat.APIKey == secret || bCfg.AI.Embedding.APIKey == secret {
+		t.Fatalf("second vault config already has source secret: chat=%q emb=%q",
+			bCfg.AI.Chat.APIKey, bCfg.AI.Embedding.APIKey)
+	}
+	// And A's on-disk config was not blanked into a wrong path mid-copy.
+	aCfg, err := config.Load(firstVault)
+	if err != nil {
+		t.Fatalf("load first vault config: %v", err)
+	}
+	// Keyring path blanks config keys when store succeeds — either empty or
+	// absent is fine; the secret must not appear under a different role leak.
+	if aCfg.AI.Embedding.APIKey != "" && aCfg.AI.Embedding.APIKey != secret {
+		t.Fatalf("unexpected embedding config key on vault A: %q", aCfg.AI.Embedding.APIKey)
 	}
 }
 

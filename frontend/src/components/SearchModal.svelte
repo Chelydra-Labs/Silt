@@ -302,7 +302,7 @@
           type="button"
           class="px-2.5 py-1 text-type-xs font-label-sm-bold transition-colors border-none cursor-pointer"
           class:bg-accent-primary-start={scopeVaultOnly}
-          class:text-surface-app={scopeVaultOnly}
+          class:text-text-on-accent={scopeVaultOnly}
           class:text-text-muted={!scopeVaultOnly}
           aria-pressed={scopeVaultOnly}
           onclick={() => (scopeVaultOnly = true)}
@@ -312,7 +312,7 @@
           type="button"
           class="px-2.5 py-1 text-type-xs font-label-sm-bold transition-colors border-none cursor-pointer"
           class:bg-accent-primary-start={!scopeVaultOnly}
-          class:text-surface-app={!scopeVaultOnly}
+          class:text-text-on-accent={!scopeVaultOnly}
           class:text-text-muted={scopeVaultOnly}
           aria-pressed={!scopeVaultOnly}
           onclick={() => (scopeVaultOnly = false)}
@@ -328,7 +328,7 @@
             data-type-chip={chip.id}
             class="px-2 py-1 rounded-md text-type-xs font-label-sm-bold transition-colors border cursor-pointer"
             class:bg-accent-primary-start={typeFilter === chip.id}
-            class:text-surface-app={typeFilter === chip.id}
+            class:text-text-on-accent={typeFilter === chip.id}
             class:bg-transparent={typeFilter !== chip.id}
             class:text-text-muted={typeFilter !== chip.id}
             class:border-surface-modal-border={typeFilter !== chip.id}
@@ -346,7 +346,7 @@
           type="button"
           class="px-2.5 py-1 text-type-xs font-label-sm-bold transition-colors border-none cursor-pointer"
           class:bg-accent-primary-start={sortMode === 'relevance'}
-          class:text-surface-app={sortMode === 'relevance'}
+          class:text-text-on-accent={sortMode === 'relevance'}
           class:text-text-muted={sortMode !== 'relevance'}
           aria-pressed={sortMode === 'relevance'}
           onclick={() => (sortMode = 'relevance')}>Relevance</button
@@ -355,7 +355,7 @@
           type="button"
           class="px-2.5 py-1 text-type-xs font-label-sm-bold transition-colors border-none cursor-pointer"
           class:bg-accent-primary-start={sortMode === 'recency'}
-          class:text-surface-app={sortMode === 'recency'}
+          class:text-text-on-accent={sortMode === 'recency'}
           class:text-text-muted={sortMode !== 'recency'}
           aria-pressed={sortMode === 'recency'}
           onclick={() => (sortMode = 'recency')}>Recent</button

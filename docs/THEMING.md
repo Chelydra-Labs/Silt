@@ -56,7 +56,7 @@ Silt components never reference a concrete hue like "teal" or "indigo". Instead 
 
 Each theme decides which concrete colors map onto `primary` and `secondary`. Cyber Forest maps teal → primary and indigo → secondary. Your theme can map *any* two hues onto them. This is what lets every theme restyle the whole app without per-theme code.
 
-Each accent is a **triple**: `start` / `end` (a gradient pair) plus `glow` (a translucent version used for soft halos).
+Each accent is a **quadruple in practice**: `start` / `end` (a gradient pair), `glow` (a translucent soft halo), and `on` (label ink for solid fills using `start`). When `on` is omitted on a user theme, Flatten derives near-black / white (or pure black when needed) from the relative luminance of `start` so solid CTAs stay readable without a migration.
 
 ### First-class themes
 
@@ -84,7 +84,7 @@ Every theme is a JSON object. The tables below list **every token the validator 
 
 > This table mirrors the validator in `backend/themes/validate.go`. The two are kept in sync by hand: when you add a token to the schema, add a row here **and** an entry there. (There is no automated coupling today — the doc is the author-facing reference, the Go validator is the enforcement.)
 >
-> **These are the ONLY `--color-*` custom properties the theme engine emits.** If you are authoring a Svelte component or CSS rule, use only the CSS variables listed below. A reference to a token not in this table will silently fall back to its hardcoded default — which is always dark-mode-tuned and will render invisible in light themes. The complete emitted color set: the surface-zone tokens (`--color-surface-<zone>`, `--color-surface-<zone>-border`, `--color-surface-<zone>-text` for each of the 7 zones), `--color-hover`, `--color-active`, `--color-border-active`, `--color-border-focus`, `--color-text-primary`, `--color-text-muted`, `--color-text-disabled`, the accents (`--color-accent-primary/-secondary-{start,end,glow}`), the status colors (`--color-status-{warn,danger,success}`), the themeable error family (`--color-error`, `--color-error-bg`, `--color-error-border`), and the editor interaction tokens (`--color-editor-{caret,selection,selection-text,link,link-hover,highlight}`). Per-zone background overlays emit `--silt-bg-<zone>-*` (non-color) tokens.
+> **These are the ONLY `--color-*` custom properties the theme engine emits.** If you are authoring a Svelte component or CSS rule, use only the CSS variables listed below. A reference to a token not in this table will silently fall back to its hardcoded default — which is always dark-mode-tuned and will render invisible in light themes. The complete emitted color set: the surface-zone tokens (`--color-surface-<zone>`, `--color-surface-<zone>-border`, `--color-surface-<zone>-text` for each of the 9 zones), `--color-hover`, `--color-active`, `--color-border-active`, `--color-border-focus`, `--color-text-primary`, `--color-text-muted`, `--color-text-disabled`, the accents (`--color-accent-primary/-secondary-{start,end,glow,on}`), the semantic on-accent alias (`--color-text-on-accent` = primary `on`), the status colors (`--color-status-{warn,danger,success}`), the themeable error family (`--color-error`, `--color-error-bg`, `--color-error-border`), and the editor interaction tokens (`--color-editor-{caret,selection,selection-text,link,link-hover,highlight}`). Per-zone background overlays emit `--silt-bg-<zone>-*` (non-color) tokens.
 
 ### Identity (top-level, not per-mode)
 
@@ -134,9 +134,12 @@ These apply on **every** surface — the same gesture reads the same way everywh
 | `accent.primary.start` | `--color-accent-primary-start` | "go/done" gradient start. |
 | `accent.primary.end` | `--color-accent-primary-end` | "go/done" gradient end. |
 | `accent.primary.glow` | `--color-accent-primary-glow` | "go/done" soft halo (usually `rgba(...)`). |
+| `accent.primary.on` | `--color-accent-primary-on` | Label ink on solid primary fills (optional; derived when omitted). |
 | `accent.secondary.start` | `--color-accent-secondary-start` | "in-progress" gradient start. |
 | `accent.secondary.end` | `--color-accent-secondary-end` | "in-progress" gradient end. |
 | `accent.secondary.glow` | `--color-accent-secondary-glow` | "in-progress" soft halo. |
+| `accent.secondary.on` | `--color-accent-secondary-on` | Label ink on solid secondary fills (optional; derived when omitted). |
+| *(semantic)* | `--color-text-on-accent` | Alias of primary `on` — use for solid primary CTAs (`text-text-on-accent`). |
 
 ### `status` — warn / danger / success (per-mode)
 
@@ -378,6 +381,7 @@ Silt targets **WCAG 2.2**. Your theme is checked against the shipped palette; ai
 | Each zone's `text` on its own `bg` (every authored zone) | **≥ 4.5:1** | AA |
 | `text_muted` on zone backgrounds | **≥ 4.5:1** | AA |
 | `accent.primary.start` / `accent.secondary.start` on `surfaces.app.bg` (non-text UI) | **≥ 3:1** | AA (non-text) |
+| `accent.*.on` / `--color-text-on-accent` on the matching `accent.*.start` (solid CTA labels) | **≥ 4.5:1** | AA (text) |
 | `border_focus` on `surfaces.app.bg` (**Stark only**) | **≥ 3.0:1** | AA (non-text) — Stark-only hard invariant |
 
 > **Advisory / WCAG-exempt (inactive UI) — not hard-gated.** `text_disabled` is WCAG 1.4.3-exempt ("text that is part of an inactive user interface component"). The CI gate (`contrast_test.go`) logs its ratio for audit but does NOT assert a 4.5:1 floor — every shipped theme intentionally renders disabled text at ~2–3:1 so it reads as disabled. Don't over-engineer disabled text to a 4.5:1 target that isn't enforced. Likewise, `border_focus` on non-Stark themes is audit-only (a subtle ~2.5–3:1 hairline by design); only Stark's border-led AAA model hard-asserts the 3.0:1 floor in the row above.

@@ -26,6 +26,12 @@ export {
 } from './siltInlineDragHandle'
 export { UniqueBlockIds, freshId } from './uniqueIdPlugin'
 export {
+  snapshotEditCaret,
+  resolveCaretInDoc,
+  applyEditCaret
+} from './editCaretRestore'
+export type { EditCaretSnapshot } from './editCaretRestore'
+export {
   SiltBlockKeymaps,
   convertToBlock,
   setBlockAlign,

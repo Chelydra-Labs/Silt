@@ -140,17 +140,25 @@ vi.mock('../../plugins/context', () => ({
   makePluginContext: vi.fn((id: string) => ({ pluginID: id }))
 }))
 
-// Fine-tuning embeds are heavy; stub so Features/provider tests stay focused.
-vi.mock('../../plugins/first-party/silt-ai-qa/QASettings.svelte', () => ({
-  default: () => null
-}))
+// Fine-tuning embeds are heavy; use lightweight stubs that still mount so
+// progressive-disclosure tests can assert presence (#639).
+vi.mock('../../plugins/first-party/silt-ai-qa/QASettings.svelte', async () => {
+  const mod = await import('./__stubs__/QASettings.stub.svelte')
+  return { default: mod.default }
+})
 vi.mock(
   '../../plugins/first-party/silt-ai-assistant/AssistantSettings.svelte',
-  () => ({ default: () => null })
+  async () => {
+    const mod = await import('./__stubs__/AssistantSettings.stub.svelte')
+    return { default: mod.default }
+  }
 )
 vi.mock(
   '../../plugins/first-party/silt-ai-summary/AISummarySettings.svelte',
-  () => ({ default: () => null })
+  async () => {
+    const mod = await import('./__stubs__/AISummarySettings.stub.svelte')
+    return { default: mod.default }
+  }
 )
 
 import AIProviderTab from './AIProviderTab.svelte'
@@ -253,6 +261,85 @@ describe('AIProviderTab', () => {
       expect(
         screen.getByRole('tab', { name: /^Capabilities$/i })
       ).toBeInTheDocument()
+    })
+
+    it('master AI off: no Capabilities segment and no fine-tuning embeds', async () => {
+      // Default mock: features.enabled=false.
+      render(AIProviderTab)
+      await ready()
+      expect(screen.queryByRole('tab', { name: /^Capabilities$/i })).toBeNull()
+      expect(document.getElementById('ai-writing-tuning')).toBeNull()
+      expect(document.getElementById('ai-search-tuning')).toBeNull()
+      expect(document.getElementById('ai-summary-tuning')).toBeNull()
+      expect(screen.queryByTestId('assistant-settings-embed')).toBeNull()
+      expect(screen.queryByTestId('qa-settings-embed')).toBeNull()
+      expect(screen.queryByTestId('ai-summary-settings-embed')).toBeNull()
+    })
+
+    it('master AI on: Capabilities shows Writing Assistant embed', async () => {
+      mocks.GetAIProviderConfig.mockResolvedValue({
+        ...structuredClone(mocks.configState),
+        features: {
+          enabled: true,
+          rag_enabled: false,
+          summaries_enabled: false
+        }
+      })
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(
+        screen.getByRole('tab', { name: /^Capabilities$/i })
+      )
+      expect(document.getElementById('ai-writing-tuning')).toBeInTheDocument()
+      expect(screen.getByTestId('assistant-settings-embed')).toBeInTheDocument()
+      expect(screen.getByText('Writing Assistant')).toBeInTheDocument()
+      // Nested flags off → no Search/Summary embeds.
+      expect(document.getElementById('ai-search-tuning')).toBeNull()
+      expect(document.getElementById('ai-summary-tuning')).toBeNull()
+      expect(screen.queryByTestId('qa-settings-embed')).toBeNull()
+      expect(screen.queryByTestId('ai-summary-settings-embed')).toBeNull()
+    })
+
+    it('master + rag_enabled: Semantic search embed present', async () => {
+      mocks.GetAIProviderConfig.mockResolvedValue({
+        ...structuredClone(mocks.configState),
+        features: {
+          enabled: true,
+          rag_enabled: true,
+          summaries_enabled: false
+        }
+      })
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(
+        screen.getByRole('tab', { name: /^Capabilities$/i })
+      )
+      expect(document.getElementById('ai-search-tuning')).toBeInTheDocument()
+      expect(screen.getByTestId('qa-settings-embed')).toBeInTheDocument()
+      expect(screen.getByTestId('assistant-settings-embed')).toBeInTheDocument()
+      expect(screen.queryByTestId('ai-summary-settings-embed')).toBeNull()
+    })
+
+    it('master + summaries_enabled: Note summaries embed present', async () => {
+      mocks.GetAIProviderConfig.mockResolvedValue({
+        ...structuredClone(mocks.configState),
+        features: {
+          enabled: true,
+          rag_enabled: false,
+          summaries_enabled: true
+        }
+      })
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(
+        screen.getByRole('tab', { name: /^Capabilities$/i })
+      )
+      expect(document.getElementById('ai-summary-tuning')).toBeInTheDocument()
+      expect(
+        screen.getByTestId('ai-summary-settings-embed')
+      ).toBeInTheDocument()
+      expect(screen.getByTestId('assistant-settings-embed')).toBeInTheDocument()
+      expect(screen.queryByTestId('qa-settings-embed')).toBeNull()
     })
 
     it('switches views when Advanced is selected (hides Features, shows Advanced)', async () => {

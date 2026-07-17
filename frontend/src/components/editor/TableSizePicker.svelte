@@ -375,7 +375,7 @@
     border: none;
     border-radius: 6px;
     background: var(--color-accent-primary-start);
-    color: var(--color-surface-popover);
+    color: var(--color-text-on-accent);
     font-size: 0.85rem;
     font-weight: 600;
     cursor: pointer;

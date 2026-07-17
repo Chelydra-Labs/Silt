@@ -143,11 +143,15 @@ type Accent struct {
 	Secondary AccentTriple `json:"secondary"`
 }
 
-// AccentTriple is a start/end/glow gradient triple.
+// AccentTriple is a start/end/glow gradient triple plus on-accent label ink.
+// On is the preferred text/icon color for solid fills using Start (WCAG AA
+// 4.5:1). When omitted on user themes, Flatten derives black/white from Start
+// luminance; first-party themes always author an explicit value.
 type AccentTriple struct {
 	Start string `json:"start"`
 	End   string `json:"end"`
 	Glow  string `json:"glow"`
+	On    string `json:"on,omitempty"`
 }
 
 // Status holds warn/danger/success semantic colors. Success is required in
@@ -358,13 +362,19 @@ func (t *Theme) Flatten(mode string) map[string]string {
 	out["--color-text-muted"] = strings.TrimSpace(m.TextMuted)
 	out["--color-text-disabled"] = strings.TrimSpace(m.TextDisabled)
 
-	// Accents.
+	// Accents (on = label ink for solid fills using start; derived when omitted).
+	// App surface is the CTA backdrop for compositing translucent starts.
+	appBG := strings.TrimSpace(m.Surfaces.App.BG)
 	out["--color-accent-primary-start"] = m.Accent.Primary.Start
 	out["--color-accent-primary-end"] = m.Accent.Primary.End
 	out["--color-accent-primary-glow"] = m.Accent.Primary.Glow
+	out["--color-accent-primary-on"] = resolveAccentOn(m.Accent.Primary, appBG)
 	out["--color-accent-secondary-start"] = m.Accent.Secondary.Start
 	out["--color-accent-secondary-end"] = m.Accent.Secondary.End
 	out["--color-accent-secondary-glow"] = m.Accent.Secondary.Glow
+	out["--color-accent-secondary-on"] = resolveAccentOn(m.Accent.Secondary, appBG)
+	// Semantic alias for solid primary CTAs (Tailwind text-text-on-accent).
+	out["--color-text-on-accent"] = out["--color-accent-primary-on"]
 
 	// Status.
 	out["--color-status-warn"] = m.Status.Warn
@@ -540,29 +550,10 @@ func (t *Theme) BGVoid(mode string) string {
 // default; oklch backgrounds fall back through the cache to the embedded
 // default on the launch path.
 func HexToRGB(s string) (r, g, b uint8, ok bool) {
-	s = strings.TrimSpace(s)
-	if len(s) == 0 || s[0] != '#' {
-		return 0, 0, 0, false
-	}
-	hex := s[1:]
-	var full string
-	switch len(hex) {
-	case 3:
-		full = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
-	case 6:
-		full = hex
-	case 8:
-		full = hex[0:6]
-	default:
-		return 0, 0, 0, false
-	}
-	ri, ok1 := parseHexByte(full[0:2])
-	gi, ok2 := parseHexByte(full[2:4])
-	bi, ok3 := parseHexByte(full[4:6])
-	if !ok1 || !ok2 || !ok3 {
-		return 0, 0, 0, false
-	}
-	return ri, gi, bi, true
+	// Share the hex grammar with hexToRGBA (contrast.go); drop alpha — window
+	// backgrounds are opaque and callers only need RGB.
+	r, g, b, _, ok = hexToRGBA(s)
+	return r, g, b, ok
 }
 
 func parseHexByte(s string) (uint8, bool) {

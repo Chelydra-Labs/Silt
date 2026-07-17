@@ -144,3 +144,61 @@ export function contrastRatioWCAG(fg: string, bg: string): number | null {
   if (!parse(fg) || !parse(bg)) return null
   return wcagContrast(fg, bg)
 }
+
+/**
+ * Opaque fill representing how `start` paints over `surfaceBG` (mirrors Go
+ * effectiveAccentFill). Translucent starts are source-over composited so
+ * on-accent ink matches the rendered CTA, not uncomposited RGB channels.
+ */
+export function effectiveAccentFill(start: string, surfaceBG: string): string {
+  const src = parse(start.trim()) as RgbColor | undefined
+  if (!src) return start
+  const a = src.alpha === undefined ? 1 : src.alpha
+  if (a >= 0.999) return start
+  const dst = parse(surfaceBG.trim()) as RgbColor | undefined
+  // Unparseable surface: do not bias dark (#000). Let deriveInkOnAccent use start.
+  if (!dst) return start
+  const r = Math.round(((src.r ?? 0) * a + (dst.r ?? 0) * (1 - a)) * 255)
+  const g = Math.round(((src.g ?? 0) * a + (dst.g ?? 0) * (1 - a)) * 255)
+  const b = Math.round(((src.b ?? 0) * a + (dst.b ?? 0) * (1 - a)) * 255)
+  return formatHex({
+    mode: 'rgb',
+    r: r / 255,
+    g: g / 255,
+    b: b / 255
+  })
+}
+
+/**
+ * Label ink for solid accent fills (mirrors Go DeriveInkOnAccent). Prefers
+ * near-black / white that meet 4.5:1; pure black when near-black falls short
+ * (medium indigos). Used when AccentTriple.on is omitted at flatten time.
+ * Callers with possibly-translucent start should pass effectiveAccentFill first.
+ */
+export function deriveInkOnAccent(start: string): string {
+  const nearBlack = '#0a0a0a'
+  const pureBlack = '#000000'
+  const white = '#ffffff'
+  const cands = [nearBlack, pureBlack, white].map((ink) => ({
+    ink,
+    ratio: contrastRatioWCAG(ink, start)
+  }))
+  const passing = cands.filter((c) => c.ratio !== null && c.ratio >= 4.5) as {
+    ink: string
+    ratio: number
+  }[]
+  if (passing.length > 0) {
+    const best = passing.reduce((a, b) => (b.ratio > a.ratio ? b : a))
+    if (best.ink === pureBlack) {
+      const near = passing.find((c) => c.ink === nearBlack)
+      if (near) return nearBlack
+    }
+    return best.ink
+  }
+  const ranked = cands.filter((c) => c.ratio !== null) as {
+    ink: string
+    ratio: number
+  }[]
+  if (ranked.length === 0) return white
+  return ranked.reduce((a, b) => (b.ratio > a.ratio ? b : a)).ink
+}

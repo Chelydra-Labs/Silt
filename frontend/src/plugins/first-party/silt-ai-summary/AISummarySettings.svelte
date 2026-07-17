@@ -116,7 +116,7 @@
         </p>
         <button
           type="button"
-          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-primary-start text-surface-app font-label-sm-bold text-type-xs hover:brightness-110 transition-all cursor-pointer"
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-primary-start text-text-on-accent font-label-sm-bold text-type-xs hover:brightness-110 transition-all cursor-pointer"
           onclick={() => ctx.openSettings('ai')}
         >
           Open AI settings

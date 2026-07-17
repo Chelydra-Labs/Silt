@@ -103,16 +103,47 @@ func TestContrastRatio_AcceptedColorForms(t *testing.T) {
 	}
 	// NaN/Inf in an RGB component are rejected (strconv.ParseFloat
 	// accepts them with nil error; without the non-finite guard the
-	// harness would coerce NaN->0 and return a bogus ratio). Note: a
-	// NaN in the ALPHA channel (e.g. rgba(12,12,14,NaN)) is NOT rejected
-	// here — the harness intentionally drops alpha (luminance is over
-	// opaque colors), so alpha-NaN never reaches a range check. The
-	// validator (isValidColor) rejects alpha-NaN because it validates
-	// the full color spec; see TestIsValidColor.
-	for _, bad := range []string{"rgba(NaN,0,0,0.5)", "rgb(Inf,0,0)", "rgb(-Inf,0,0)"} {
+	// harness would coerce NaN->0 and return a bogus ratio). Alpha-NaN
+	// is also rejected (parseColorRGBA validates alpha for compositing).
+	for _, bad := range []string{
+		"rgba(NaN,0,0,0.5)", "rgb(Inf,0,0)", "rgb(-Inf,0,0)", "rgba(12,12,14,NaN)",
+	} {
 		if _, ok := ContrastRatio(bad, "#fff"); ok {
-			t.Errorf("expected %q to be rejected (non-finite RGB component), got ok", bad)
+			t.Errorf("expected %q to be rejected (non-finite component), got ok", bad)
 		}
+	}
+}
+
+// TestResolveAccentOn_TranslucentStart composites translucent accent.start
+// against the app surface before picking on-ink (review: uncomposited RGB
+// treats rgba(255,255,255,.1) as white → black ink on a nearly-black fill).
+func TestResolveAccentOn_TranslucentStart(t *testing.T) {
+	darkSurface := "#0c0c0e"
+	// Translucent white on dark app → painted fill is near-black → white ink.
+	got := resolveAccentOn(AccentTriple{Start: "rgba(255,255,255,0.1)"}, darkSurface)
+	if got != "#ffffff" {
+		t.Errorf("translucent white on dark surface: on-ink = %q, want #ffffff", got)
+	}
+	// Same via 8-digit hex (~0.1 alpha).
+	got = resolveAccentOn(AccentTriple{Start: "#ffffff1a"}, darkSurface)
+	if got != "#ffffff" {
+		t.Errorf("translucent #ffffff1a on dark surface: on-ink = %q, want #ffffff", got)
+	}
+	// Opaque teal still prefers near-black (unchanged solid path).
+	got = resolveAccentOn(AccentTriple{Start: "#0d9488"}, darkSurface)
+	if got != "#0a0a0a" && got != "#000000" {
+		t.Errorf("opaque teal: on-ink = %q, want dark ink", got)
+	}
+	// Authored On wins even for translucent start.
+	got = resolveAccentOn(AccentTriple{Start: "rgba(255,255,255,0.1)", On: "#ff00ff"}, darkSurface)
+	if got != "#ff00ff" {
+		t.Errorf("authored On: got %q, want #ff00ff", got)
+	}
+	// No surface + translucent → pass start through (no dark-biased composite);
+	// DeriveInkOnAccent then picks ink from the uncomposited RGB channels.
+	got = resolveAccentOn(AccentTriple{Start: "rgba(255,255,255,0.1)"}, "")
+	if got != "#0a0a0a" && got != "#000000" {
+		t.Errorf("translucent without surface: on-ink = %q, want dark ink from white RGB", got)
 	}
 }
 
@@ -227,6 +258,21 @@ func assertZoneContrast(t *testing.T, th *Theme) {
 			if r := approxRatio(t, fg, appBG); r < 3.0 {
 				t.Errorf("%s [%s]: accent %s on surface-app = %.2f:1, want >= 3.0 (AA non-text)",
 					th.ID, mode, fg, r)
+			}
+		}
+		// On-accent label ink vs accent start: solid CTA text must meet AA 4.5:1.
+		for _, pair := range []struct{ on, start, label string }{
+			{flat["--color-accent-primary-on"], flat["--color-accent-primary-start"], "primary"},
+			{flat["--color-accent-secondary-on"], flat["--color-accent-secondary-start"], "secondary"},
+			{flat["--color-text-on-accent"], flat["--color-accent-primary-start"], "text-on-accent"},
+		} {
+			if pair.on == "" || pair.start == "" {
+				t.Errorf("%s [%s]: missing on-accent tokens for %s", th.ID, mode, pair.label)
+				continue
+			}
+			if r := approxRatio(t, pair.on, pair.start); r < 4.5 {
+				t.Errorf("%s [%s]: %s on %s start = %.2f:1, want >= 4.5 (AA text on accent)",
+					th.ID, mode, pair.label, pair.start, r)
 			}
 		}
 		// border-focus ≥ 3.0 is a hard invariant only for Stark; others are audit-only.
@@ -498,4 +544,30 @@ func rgbDistance(t *testing.T, a, b string) float64 {
 	dg := float64(ag) - float64(bg)
 	db := float64(ab) - float64(bb)
 	return math.Sqrt(dr*dr + dg*dg + db*db)
+}
+
+// TestDeriveInkOnAccent pins omit-path ink picks for common accent fills (#624).
+func TestDeriveInkOnAccent(t *testing.T) {
+	// cyber_forest light primary teal — white fails AA; dark ink required.
+	teal := DeriveInkOnAccent("#0d9488")
+	if teal != "#0a0a0a" && teal != "#000000" {
+		t.Errorf("teal ink = %q, want near/pure black", teal)
+	}
+	if r, ok := ContrastRatio(teal, "#0d9488"); !ok || r < 4.5 {
+		t.Errorf("teal ink contrast = %.2f, want >= 4.5", r)
+	}
+
+	// Near-black fill → white label.
+	if got := DeriveInkOnAccent("#0a0a0a"); got != "#ffffff" {
+		t.Errorf("near-black fill ink = %q, want #ffffff", got)
+	}
+
+	// Medium indigo often needs pure black when near-black is short of 4.5.
+	indigo := DeriveInkOnAccent("#6366f1")
+	if indigo != "#0a0a0a" && indigo != "#000000" {
+		t.Errorf("indigo ink = %q, want near/pure black", indigo)
+	}
+	if r, ok := ContrastRatio(indigo, "#6366f1"); !ok || r < 4.5 {
+		t.Errorf("indigo ink contrast = %.2f, want >= 4.5", r)
+	}
 }

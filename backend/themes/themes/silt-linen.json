@@ -1,155 +1,256 @@
 {
-  "schema_version": "2.0.0",
-  "id": "silt-linen",
-  "name": "Linen",
   "author": "Chelydra Labs",
   "description": "Easy-on-the-eyes linen paper: warm grey-taupe canvas with a woven grain texture, soft slate-blue and muted lilac accents.",
-  "typography": {
-    "font_family": "'Mulish', sans-serif",
-    "mono_font_family": "'Fira Code', monospace",
-    "headline_font": "'Sora', sans-serif",
-    "scale": {
-      "size": { "xs": "0.75rem", "sm": "0.875rem", "base": "1.0625rem", "lg": "1.1875rem", "xl": "1.375rem", "2xl": "1.75rem" },
-      "line_height": { "tight": "1.25", "normal": "1.65", "relaxed": "1.85" },
-      "weight": { "normal": "400", "medium": "500", "semibold": "600" }
-    }
-  },
+  "id": "silt-linen",
   "modes": {
     "dark": {
-      "surfaces": {
-        "app": { "bg": "#242220", "border": "#383431", "text": "#e8e3d8" },
-        "editor": {
-          "bg": "#2b2825",
-          "border": "#443f3a",
-          "text": "#e8e3d8",
-          "background": {
-            "image": "repeating-linear-gradient(0deg, rgba(236,229,216,0.8) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(236,229,216,0.8) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
-            "size": "tile",
-            "opacity": 0.08,
-            "blend": "overlay"
-          }
+      "accent": {
+        "primary": {
+          "end": "#5d97ab",
+          "glow": "rgba(127, 179, 196, 0.12)",
+          "on": "#0a0a0a",
+          "start": "#7fb3c4"
         },
-        "panel": { "bg": "#2d2a27", "border": "#443f3a", "text": "#e8e3d8" },
-        "modal": { "bg": "#302c29", "border": "#57504a", "text": "#e8e3d8" },
-        "card": { "bg": "#312e2a", "border": "#443f3a", "text": "#e8e3d8" },
-        "popover": { "bg": "#383431", "border": "#665d54", "text": "#e8e3d8" },
-        "titlebar": { "bg": "#181613", "border": "#2c2925", "text": "#e8e3d8" },
-        "activitybar": { "bg": "#1e1c1a", "border": "#322f2b", "text": "#e8e3d8" }
+        "secondary": {
+          "end": "#847cb0",
+          "glow": "rgba(168, 163, 212, 0.10)",
+          "on": "#0a0a0a",
+          "start": "#a8a3d4"
+        }
       },
-      "hover": "#383431",
       "active": "#403c38",
       "border_active": "#57504a",
       "border_focus": "#6e655c",
-      "text_muted": "#b9b0a1",
-      "text_disabled": "#574f45",
-      "accent": {
-        "primary": {
-          "start": "#7fb3c4",
-          "end": "#5d97ab",
-          "glow": "rgba(127, 179, 196, 0.12)"
-        },
-        "secondary": {
-          "start": "#a8a3d4",
-          "end": "#847cb0",
-          "glow": "rgba(168, 163, 212, 0.10)"
-        }
-      },
-      "status": {
-        "warn": "#e0b566",
-        "danger": "#d27878",
-        "success": "#7a9a6a"
-      },
-      "error": {
-        "fg": "#e09090",
-        "bg": "#2a1715",
-        "border": "#5a3030"
-      },
-      "radius": { "sm": "8px", "md": "12px", "lg": "16px", "xl": "20px", "full": "9999px" },
-      "spacing": { "sm": "8px", "md": "12px", "lg": "20px", "xl": "32px" },
-      "shadow": {
-        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 35%, transparent)",
-        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 30%, transparent)",
-        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 25%, transparent)"
-      },
       "editor": {
         "caret": "#7fb3c4",
-        "selection": "rgba(125,179,196,0.25)",
-        "selection_text": "#e8e3d8",
+        "highlight": "rgba(224,181,102,0.30)",
         "link": "#a8a3d4",
         "link_hover": "#847cb0",
-        "highlight": "rgba(224,181,102,0.30)"
-      }
+        "selection": "rgba(125,179,196,0.25)",
+        "selection_text": "#e8e3d8"
+      },
+      "error": {
+        "bg": "#2a1715",
+        "border": "#5a3030",
+        "fg": "#e09090"
+      },
+      "hover": "#383431",
+      "radius": {
+        "full": "9999px",
+        "lg": "16px",
+        "md": "12px",
+        "sm": "8px",
+        "xl": "20px"
+      },
+      "shadow": {
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 25%, transparent)",
+        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 30%, transparent)",
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 35%, transparent)"
+      },
+      "spacing": {
+        "lg": "20px",
+        "md": "12px",
+        "sm": "8px",
+        "xl": "32px"
+      },
+      "status": {
+        "danger": "#d27878",
+        "success": "#7a9a6a",
+        "warn": "#e0b566"
+      },
+      "surfaces": {
+        "activitybar": {
+          "bg": "#1e1c1a",
+          "border": "#322f2b",
+          "text": "#e8e3d8"
+        },
+        "app": {
+          "bg": "#242220",
+          "border": "#383431",
+          "text": "#e8e3d8"
+        },
+        "card": {
+          "bg": "#312e2a",
+          "border": "#443f3a",
+          "text": "#e8e3d8"
+        },
+        "editor": {
+          "background": {
+            "blend": "overlay",
+            "image": "repeating-linear-gradient(0deg, rgba(236,229,216,0.8) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(236,229,216,0.8) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+            "opacity": 0.08,
+            "size": "tile"
+          },
+          "bg": "#2b2825",
+          "border": "#443f3a",
+          "text": "#e8e3d8"
+        },
+        "modal": {
+          "bg": "#302c29",
+          "border": "#57504a",
+          "text": "#e8e3d8"
+        },
+        "panel": {
+          "bg": "#2d2a27",
+          "border": "#443f3a",
+          "text": "#e8e3d8"
+        },
+        "popover": {
+          "bg": "#383431",
+          "border": "#665d54",
+          "text": "#e8e3d8"
+        },
+        "titlebar": {
+          "bg": "#181613",
+          "border": "#2c2925",
+          "text": "#e8e3d8"
+        }
+      },
+      "text_disabled": "#574f45",
+      "text_muted": "#b9b0a1"
     },
     "light": {
+      "accent": {
+        "primary": {
+          "end": "#3a7383",
+          "glow": "rgba(74, 138, 156, 0.10)",
+          "on": "#0a0a0a",
+          "start": "#4a8a9c"
+        },
+        "secondary": {
+          "end": "#565b8e",
+          "glow": "rgba(104, 109, 163, 0.08)",
+          "on": "#ffffff",
+          "start": "#686da3"
+        }
+      },
+      "active": "#decfa9",
+      "border_active": "#bfb094",
+      "border_focus": "#8c7e65",
+      "editor": {
+        "caret": "#427b8b",
+        "highlight": "rgba(176,132,40,0.25)",
+        "link": "#686da3",
+        "link_hover": "#565b8e",
+        "selection": "rgba(74,138,156,0.20)",
+        "selection_text": "#2b2a27"
+      },
+      "error": {
+        "bg": "#fbe8e6",
+        "border": "#d6a0a0",
+        "fg": "#9a3a3a"
+      },
+      "hover": "#eae2d0",
+      "radius": {
+        "full": "9999px",
+        "lg": "16px",
+        "md": "12px",
+        "sm": "8px",
+        "xl": "20px"
+      },
+      "shadow": {
+        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 15%, transparent)",
+        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 18%, transparent)",
+        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 22%, transparent)"
+      },
+      "spacing": {
+        "lg": "20px",
+        "md": "12px",
+        "sm": "8px",
+        "xl": "32px"
+      },
+      "status": {
+        "danger": "#b85555",
+        "success": "#4a7a4a",
+        "warn": "#856018"
+      },
       "surfaces": {
-        "app": { "bg": "#fdfbf7", "border": "#dfd7c8", "text": "#2b2a27" },
+        "activitybar": {
+          "bg": "#ebdcc4",
+          "border": "#dfd7c8",
+          "text": "#2b2a27",
+          "text_disabled": "#908472",
+          "text_muted": "#594c3e"
+        },
+        "app": {
+          "bg": "#fdfbf7",
+          "border": "#dfd7c8",
+          "text": "#2b2a27"
+        },
+        "card": {
+          "bg": "#ffffff",
+          "border": "#dfd7c8",
+          "text": "#2b2a27"
+        },
+        "editor": {
+          "background": {
+            "blend": "multiply",
+            "image": "repeating-linear-gradient(0deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+            "opacity": 0.1,
+            "size": "tile"
+          },
+          "bg": "#fbfaf6",
+          "border": "#e8dfd0",
+          "text": "#2b2a27"
+        },
+        "modal": {
+          "bg": "#ffffff",
+          "border": "#cbbfae",
+          "text": "#2b2a27"
+        },
+        "panel": {
+          "bg": "#ffffff",
+          "border": "#e2d8c7",
+          "text": "#2b2a27"
+        },
+        "popover": {
+          "bg": "#ffffff",
+          "border": "#bbaea2",
+          "text": "#2b2a27"
+        },
         "sidebar": {
           "bg": "#f5ede0",
           "border": "#dfd7c8",
           "text": "#2b2a27",
-          "text_muted": "#594c3e",
-          "text_disabled": "#908472"
+          "text_disabled": "#908472",
+          "text_muted": "#594c3e"
         },
-        "editor": {
-          "bg": "#fbfaf6",
-          "border": "#e8dfd0",
+        "titlebar": {
+          "bg": "#ebdcc4",
+          "border": "#dfd7c8",
           "text": "#2b2a27",
-          "background": {
-            "image": "repeating-linear-gradient(0deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), repeating-linear-gradient(90deg, rgba(60,48,36,0.55) 0 1px, transparent 1px 5px), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
-            "size": "tile",
-            "opacity": 0.1,
-            "blend": "multiply"
-          }
-        },
-        "panel": { "bg": "#ffffff", "border": "#e2d8c7", "text": "#2b2a27" },
-        "card": { "bg": "#ffffff", "border": "#dfd7c8", "text": "#2b2a27" },
-        "modal": { "bg": "#ffffff", "border": "#cbbfae", "text": "#2b2a27" },
-        "popover": { "bg": "#ffffff", "border": "#bbaea2", "text": "#2b2a27" },
-        "titlebar": { "bg": "#ebdcc4", "border": "#dfd7c8", "text": "#2b2a27", "text_muted": "#594c3e", "text_disabled": "#908472" },
-        "activitybar": { "bg": "#ebdcc4", "border": "#dfd7c8", "text": "#2b2a27", "text_muted": "#594c3e", "text_disabled": "#908472" }
-      },
-      "hover": "#eae2d0",
-      "active": "#decfa9",
-      "border_active": "#bfb094",
-      "border_focus": "#8c7e65",
-      "text_muted": "#594c3e",
-      "text_disabled": "#908472",
-      "accent": {
-        "primary": {
-          "start": "#4a8a9c",
-          "end": "#3a7383",
-          "glow": "rgba(74, 138, 156, 0.10)"
-        },
-        "secondary": {
-          "start": "#686da3",
-          "end": "#565b8e",
-          "glow": "rgba(104, 109, 163, 0.08)"
+          "text_disabled": "#908472",
+          "text_muted": "#594c3e"
         }
       },
-      "status": {
-        "warn": "#856018",
-        "danger": "#b85555",
-        "success": "#4a7a4a"
+      "text_disabled": "#908472",
+      "text_muted": "#594c3e"
+    }
+  },
+  "name": "Linen",
+  "schema_version": "2.0.0",
+  "typography": {
+    "font_family": "'Mulish', sans-serif",
+    "headline_font": "'Sora', sans-serif",
+    "mono_font_family": "'Fira Code', monospace",
+    "scale": {
+      "line_height": {
+        "normal": "1.65",
+        "relaxed": "1.85",
+        "tight": "1.25"
       },
-      "error": {
-        "fg": "#9a3a3a",
-        "bg": "#fbe8e6",
-        "border": "#d6a0a0"
+      "size": {
+        "2xl": "1.75rem",
+        "base": "1.0625rem",
+        "lg": "1.1875rem",
+        "sm": "0.875rem",
+        "xl": "1.375rem",
+        "xs": "0.75rem"
       },
-      "radius": { "sm": "8px", "md": "12px", "lg": "16px", "xl": "20px", "full": "9999px" },
-      "spacing": { "sm": "8px", "md": "12px", "lg": "20px", "xl": "32px" },
-      "shadow": {
-        "sm": "0 1px 2px color-mix(in oklch, var(--color-surface-app) 22%, transparent)",
-        "md": "0 4px 12px color-mix(in oklch, var(--color-surface-app) 18%, transparent)",
-        "lg": "0 12px 32px color-mix(in oklch, var(--color-surface-app) 15%, transparent)"
-      },
-      "editor": {
-        "caret": "#427b8b",
-        "selection": "rgba(74,138,156,0.20)",
-        "selection_text": "#2b2a27",
-        "link": "#686da3",
-        "link_hover": "#565b8e",
-        "highlight": "rgba(176,132,40,0.25)"
+      "weight": {
+        "medium": "500",
+        "normal": "400",
+        "semibold": "600"
       }
     }
   }

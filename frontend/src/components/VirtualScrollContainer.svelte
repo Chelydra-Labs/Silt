@@ -7,6 +7,11 @@
   import FindBar from './editor/FindBar.svelte'
   import { findBarState } from '../lib/editor/search/findBarState.svelte'
   import type { ParsedBlock } from '../lib/editor'
+  import {
+    snapshotEditCaret,
+    applyEditCaret,
+    type EditCaretSnapshot
+  } from '../lib/editor/editCaretRestore'
   import type { Editor } from 'svelte-tiptap'
   import type { ViewMode } from '../lib/tabs'
   import EditorUtilityBar from './editor/EditorUtilityBar.svelte'
@@ -347,48 +352,114 @@
     return new Date().toISOString().slice(0, 10)
   })
 
-  // --- Scroll preservation across the Edit↔Source round-trip (#319) ---
-  // Sprint 15's editor-teardown optimization unmounts TipTapEditor while a
-  // tab is in Source view; returning to Edit rebuilt the editor from scratch
-  // and reset the scroll position. Capture the live offset the instant we
-  // leave Edit (before the DOM patch collapses the container height) and
-  // restore it once the remounted editor signals readiness. Cursor restore is
-  // a tracked follow-up; scroll offset is the cheap, high-value slice.
+  // --- Edit↔Source restore: scroll (#319) + caret (#331) ---
+  // Sprint 15's editor-teardown unmounts TipTap in Source view. Raw PM
+  // positions die with the editor, so we snapshot scrollTop plus a stable
+  // blockId + relative offset, then re-apply after onReady.
   let prevViewMode: ViewMode = untrack(() => viewMode)
   let savedEditScroll = 0
+  let savedEditCaret: EditCaretSnapshot | null = null
   let pendingRestore = false
+  // TipTap's blocks→setContent $effect often runs after onCreate/onReady and
+  // wipes the first setTextSelection. Keep the snapshot for one re-apply pass
+  // after content sync + layout frames (PLAN #331 task 3).
+  let pendingCaretReapply: EditCaretSnapshot | null = null
+  let caretRestoreGen = 0
 
-  // $effect.pre runs ahead of the DOM update, so containerEl.scrollTop still
-  // reflects Edit mode at the exact moment the editor is about to unmount —
-  // a regular $effect would read an already-clamped value.
+  // $effect.pre runs ahead of the DOM update, so containerEl.scrollTop and the
+  // live editor selection still reflect Edit mode at the unmount boundary —
+  // a regular $effect would read post-teardown state.
   $effect.pre(() => {
     const cur = viewMode
     if (prevViewMode === 'edit' && cur === 'source' && containerEl) {
       savedEditScroll = containerEl.scrollTop
+      savedEditCaret = snapshotEditCaret(editorInstance)
       pendingRestore = true
+      pendingCaretReapply = null
+      caretRestoreGen++
     }
     prevViewMode = cur
   })
+
+  function tryApplyCaret(snap: EditCaretSnapshot | null): void {
+    applyEditCaret(editorInstance, snap)
+  }
 
   async function handleEditorReady() {
     if (!pendingRestore) return
     pendingRestore = false
     const target = savedEditScroll
-    if (target <= 0 || !containerEl) return
-    // Restore once the remounted NodeViews have flushed. Async renderers
-    // (KaTeX/Mermaid lazy load, Shiki debounce) settle AFTER the first frame
-    // and grow scrollHeight, so a single rAF would clamp too early on
-    // math/diagram-heavy pages. Re-clamp across a couple of frames: each clamps
-    // to the largest valid offset, settling at `target` once the doc is tall
-    // enough (and never overscrolling if it shrank).
+    const caret = savedEditCaret
+    savedEditCaret = null
+    const gen = ++caretRestoreGen
+    pendingCaretReapply = caret
+
+    // Wait for bind:editorInstance + NodeView flush before touching selection.
     await tick()
-    const restore = () => {
-      if (!containerEl) return
-      containerEl.scrollTop = Math.min(target, containerEl.scrollHeight)
+    if (gen !== caretRestoreGen) return
+
+    // Caret first: setTextSelection can scroll the view; we re-apply scrollTop
+    // afterward so #319 still wins for viewport position.
+    tryApplyCaret(caret)
+
+    // TipTap may setContent from blocks in a sibling $effect after onReady —
+    // re-apply once the microtask/tick queue drains so we win that race.
+    await tick()
+    if (gen !== caretRestoreGen) return
+    tryApplyCaret(pendingCaretReapply)
+
+    if (target > 0 && containerEl) {
+      // Restore once the remounted NodeViews have flushed. Async renderers
+      // (KaTeX/Mermaid lazy load, Shiki debounce) settle AFTER the first frame
+      // and grow scrollHeight, so a single rAF would clamp too early on
+      // math/diagram-heavy pages. Re-clamp across a couple of frames: each clamps
+      // to the largest valid offset, settling at `target` once the doc is tall
+      // enough (and never overscrolling if it shrank).
+      const restoreScroll = () => {
+        if (!containerEl) return
+        containerEl.scrollTop = Math.min(target, containerEl.scrollHeight)
+      }
+      requestAnimationFrame(() => {
+        if (gen !== caretRestoreGen) return
+        tryApplyCaret(pendingCaretReapply)
+        restoreScroll()
+        requestAnimationFrame(() => {
+          if (gen !== caretRestoreGen) return
+          tryApplyCaret(pendingCaretReapply)
+          restoreScroll()
+          // End the remount re-apply window; later external edits must not jump.
+          if (gen === caretRestoreGen) pendingCaretReapply = null
+        })
+      })
+    } else {
+      // No scroll target — still clear after a second tick for setContent race.
+      await tick()
+      if (gen === caretRestoreGen) {
+        tryApplyCaret(pendingCaretReapply)
+        pendingCaretReapply = null
+      }
     }
-    requestAnimationFrame(restore)
-    requestAnimationFrame(() => requestAnimationFrame(restore))
   }
+
+  // When blocks change while a remount restore is still open, TipTap's
+  // setContent path may have just run — re-apply caret once after that flush.
+  // Early-return when no restore is pending so we do not subscribe to blocks
+  // during normal typing. While open, read length + ends only (not a full id join).
+  $effect(() => {
+    const snap = pendingCaretReapply
+    if (!snap || !editorInstance) return
+    const n = blocks.length
+    void n
+    if (n > 0) {
+      void blocks[0].id
+      void blocks[n - 1].id
+    }
+    const gen = caretRestoreGen
+    void tick().then(() => {
+      if (gen !== caretRestoreGen || pendingCaretReapply !== snap) return
+      tryApplyCaret(snap)
+    })
+  })
 </script>
 
 <div
@@ -477,8 +548,8 @@
                  doc + NodeViews + listeners) down on the switch, so a tab held
                  in Source view pays no editor memory cost (#178). Returning to
                  Edit remounts it and rebuilds from `blocks` (content is on disk
-                 via auto-save); the Edit scroll offset is restored on the
-                 round-trip (#319), cursor position remains a follow-up. -->
+                  via auto-save); scroll (#319) and caret (#331) restore on
+                  the remounted editor's onReady. -->
             <MarkdownSourceViewer
               {blocks}
               filePath="{notebook}/{section}/{page}.md"

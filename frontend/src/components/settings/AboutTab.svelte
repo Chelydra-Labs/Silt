@@ -110,7 +110,7 @@
           disabled={updateState.status === 'checking' ||
             updateState.status === 'downloading' ||
             updateState.status === 'installing'}
-          class="font-label-sm-bold text-type-sm px-3 py-1.5 rounded-md bg-accent-primary-start text-surface-app hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed border-none cursor-pointer"
+          class="font-label-sm-bold text-type-sm px-3 py-1.5 rounded-md bg-accent-primary-start text-text-on-accent hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed border-none cursor-pointer"
         >
           {updateState.status === 'checking'
             ? 'Checking…'
@@ -152,7 +152,7 @@
                   type="button"
                   onclick={onInstall}
                   disabled={installInFlight}
-                  class="font-label-sm-bold text-type-sm px-3 py-1.5 rounded-md bg-accent-primary-start text-surface-app hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed border-none cursor-pointer"
+                  class="font-label-sm-bold text-type-sm px-3 py-1.5 rounded-md bg-accent-primary-start text-text-on-accent hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed border-none cursor-pointer"
                 >
                   {installInFlight ? 'Downloading…' : 'Install update'}
                 </button>

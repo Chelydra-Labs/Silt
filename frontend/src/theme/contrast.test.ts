@@ -59,22 +59,24 @@ describe('autoFixLightness', () => {
 })
 
 describe('coreContrastPairs', () => {
-  it('measures the five core pairs from a token map', () => {
+  it('measures the six core pairs from a token map', () => {
     const pairs = coreContrastPairs({
       '--color-surface-app': '#0e0f12',
       '--color-surface-app-text': '#dee3e6',
       '--color-text-muted': '#8b8b94',
       '--color-accent-primary-start': '#2dd4bf',
+      '--color-text-on-accent': '#0a0a0a',
       '--color-error': '#e8728a',
       '--color-error-bg': '#171015',
       '--color-surface-editor': '#111216',
       '--color-surface-editor-text': '#dee3e6'
     })
-    expect(pairs).toHaveLength(5)
+    expect(pairs).toHaveLength(6)
     expect(pairs.map((p) => p.id)).toEqual([
       'app-text',
       'muted-text',
       'accent',
+      'text-on-accent',
       'error',
       'editor-text'
     ])

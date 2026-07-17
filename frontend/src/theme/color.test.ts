@@ -11,7 +11,9 @@ import {
   deriveHover,
   deriveActive,
   deriveDisabled,
-  contrastRatioWCAG
+  contrastRatioWCAG,
+  deriveInkOnAccent,
+  effectiveAccentFill
 } from './color'
 
 describe('color helper (#385)', () => {
@@ -103,5 +105,43 @@ describe('color helper (#385)', () => {
     expect(deriveHover('nope')).toBeNull()
     expect(deriveActive('nope')).toBeNull()
     expect(deriveDisabled('nope')).toBeNull()
+  })
+
+  it('effectiveAccentFill composites translucent start over surface', () => {
+    // rgba(255,255,255,0.1) on #0c0c0e → near-black, not solid white
+    const fill = effectiveAccentFill('rgba(255,255,255,0.1)', '#0c0c0e')
+    expect(fill).toMatch(/^#[0-9a-f]{6}$/i)
+    // Painted fill must be dark (not #ffffff)
+    expect(fill.toLowerCase()).not.toBe('#ffffff')
+    const ink = deriveInkOnAccent(fill)
+    expect(ink).toBe('#ffffff')
+  })
+
+  it('deriveInkOnAccent picks dark ink on solid teal', () => {
+    const ink = deriveInkOnAccent('#0d9488')
+    expect(ink === '#0a0a0a' || ink === '#000000').toBe(true)
+  })
+
+  it('deriveInkOnAccent picks white on near-black fills', () => {
+    expect(deriveInkOnAccent('#0a0a0a')).toBe('#ffffff')
+  })
+
+  it('deriveInkOnAccent may use pure black on medium indigo', () => {
+    // #6366f1 often needs pure black for 4.5:1 when near-black falls short
+    const ink = deriveInkOnAccent('#6366f1')
+    expect(ink === '#0a0a0a' || ink === '#000000').toBe(true)
+    const ratio = contrastRatioWCAG(ink, '#6366f1')
+    expect(ratio).not.toBeNull()
+    expect(ratio!).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('opaque start passes through effectiveAccentFill', () => {
+    expect(effectiveAccentFill('#0d9488', '#0c0c0e')).toBe('#0d9488')
+  })
+
+  it('unparseable surface returns start (no dark-biased composite)', () => {
+    expect(effectiveAccentFill('rgba(255,255,255,0.1)', 'not-a-color')).toBe(
+      'rgba(255,255,255,0.1)'
+    )
   })
 })

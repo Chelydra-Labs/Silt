@@ -347,7 +347,7 @@
   }
   .toggle.on {
     background: var(--color-accent-primary-start);
-    color: var(--color-surface-popover);
+    color: var(--color-text-on-accent);
     border-color: var(--color-accent-primary-start);
   }
   .nav-btn:disabled,

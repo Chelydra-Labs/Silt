@@ -685,7 +685,7 @@
               type="button"
               onclick={() => void commitSaveNew()}
               data-testid="tasks-hub-save-view-commit"
-              class="px-2 py-1 rounded text-type-xs font-label-sm bg-accent-primary-start text-text-primary border-none cursor-pointer"
+              class="px-2 py-1 rounded text-type-xs font-label-sm bg-accent-primary-start text-text-on-accent border-none cursor-pointer"
               >Save</button
             >
           </div>
@@ -729,7 +729,7 @@
               type="button"
               onclick={() => void commitRename()}
               data-testid="tasks-hub-rename-view-commit"
-              class="px-2 py-1 rounded text-type-xs font-label-sm bg-accent-primary-start text-text-primary border-none cursor-pointer"
+              class="px-2 py-1 rounded text-type-xs font-label-sm bg-accent-primary-start text-text-on-accent border-none cursor-pointer"
               >Rename</button
             >
           </div>
@@ -829,7 +829,7 @@
           title={`${m.label} mode (Ctrl+Shift+V)`}
           class="flex items-center gap-1.5 px-2.5 py-1 rounded text-type-sm font-label-sm transition-colors border-none cursor-pointer {hubState.displayMode ===
           m.value
-            ? 'bg-accent-primary-start text-text-primary'
+            ? 'bg-accent-primary-start text-text-on-accent'
             : 'bg-transparent text-text-muted hover:bg-hover hover:text-text-primary'}"
         >
           <span

@@ -27,9 +27,10 @@ var expectedV2ColorKeys = []string{
 	"--color-hover", "--color-active", "--color-border-active", "--color-border-focus",
 	// Text-emphasis levels.
 	"--color-text-primary", "--color-text-muted", "--color-text-disabled",
-	// Accents.
-	"--color-accent-primary-start", "--color-accent-primary-end", "--color-accent-primary-glow",
-	"--color-accent-secondary-start", "--color-accent-secondary-end", "--color-accent-secondary-glow",
+	// Accents (start/end/glow + on-ink) and semantic text-on-accent alias.
+	"--color-accent-primary-start", "--color-accent-primary-end", "--color-accent-primary-glow", "--color-accent-primary-on",
+	"--color-accent-secondary-start", "--color-accent-secondary-end", "--color-accent-secondary-glow", "--color-accent-secondary-on",
+	"--color-text-on-accent",
 	// Status.
 	"--color-status-warn", "--color-status-danger", "--color-status-success",
 	// Themeable error family.

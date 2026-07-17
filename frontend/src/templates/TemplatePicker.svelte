@@ -548,7 +548,7 @@
               creating ||
               (mode === 'new-page' && !pageName.trim())}
             title="Confirm (Enter or Ctrl+Enter)"
-            class="rounded-lg bg-accent-primary-start px-4 py-2 text-sm font-medium text-surface-app transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            class="rounded-lg bg-accent-primary-start px-4 py-2 text-sm font-medium text-text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {creating ? '…' : confirmLabel}
           </button>

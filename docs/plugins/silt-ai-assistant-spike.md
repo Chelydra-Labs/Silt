@@ -9,7 +9,7 @@ Target models: local small models (Qwen3-class MoE, Gemma-class) via OpenAI-comp
 |---|---|---|
 | Plugin id | `silt-ai-assistant` | Matches milestone issues |
 | Display name | **Writing Assistant** | Avoids collision with `silt-ai-qa` product name “AI Assistant” |
-| Settings tab | Settings → Writing Assistant | `plugin:silt-ai-assistant` |
+| Settings tab | Settings → AI → Capabilities (Writing Assistant; was standalone `plugin:silt-ai-assistant`) | deep-link aliases → `ai` |
 
 ## Evaluation summary
 
