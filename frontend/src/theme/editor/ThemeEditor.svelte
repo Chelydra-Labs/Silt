@@ -488,9 +488,11 @@
       p('accent.primary.start'),
       p('accent.primary.end'),
       p('accent.primary.glow'),
+      p('accent.primary.on'),
       p('accent.secondary.start'),
       p('accent.secondary.end'),
       p('accent.secondary.glow'),
+      p('accent.secondary.on'),
       p('hover'),
       p('active'),
       p('border_active'),
@@ -935,6 +937,13 @@
               onReset={() => wc.resetPath(wc.modePath('accent.primary.glow'))}
             />
             <OklchColorField
+              label="Primary on-accent (button label ink)"
+              value={wc.draft.modes[mode()].accent.primary.on ?? ''}
+              bgForContrast={wc.draft.modes[mode()].accent.primary.start}
+              onchange={(v) => wc.setColor(wc.modePath('accent.primary.on'), v)}
+              onReset={() => wc.resetPath(wc.modePath('accent.primary.on'))}
+            />
+            <OklchColorField
               label="Secondary start"
               value={wc.draft.modes[mode()].accent.secondary.start}
               onchange={(v) =>
@@ -955,6 +964,14 @@
               onchange={(v) =>
                 wc.setColor(wc.modePath('accent.secondary.glow'), v)}
               onReset={() => wc.resetPath(wc.modePath('accent.secondary.glow'))}
+            />
+            <OklchColorField
+              label="Secondary on-accent (button label ink)"
+              value={wc.draft.modes[mode()].accent.secondary.on ?? ''}
+              bgForContrast={wc.draft.modes[mode()].accent.secondary.start}
+              onchange={(v) =>
+                wc.setColor(wc.modePath('accent.secondary.on'), v)}
+              onReset={() => wc.resetPath(wc.modePath('accent.secondary.on'))}
             />
             <!-- Derived interaction tokens (#529): collapsible; lock/reset. -->
             <details

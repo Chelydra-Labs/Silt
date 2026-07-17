@@ -863,7 +863,7 @@
                   <span
                     class="text-type-xs font-label-sm-bold w-5 h-5 flex items-center justify-center rounded-full"
                     class:bg-accent-primary-start={isToday}
-                    class:text-surface-app={isToday}
+                    class:text-text-on-accent={isToday}
                     class:text-text-muted={!isToday && !inMonth}
                     class:text-text-primary={!isToday && inMonth}
                     >{day.getDate()}</span
@@ -994,7 +994,7 @@
                   <span
                     class="inline-flex items-center justify-center w-7 h-7 rounded-full text-type-md font-label-sm-bold mt-1"
                     class:bg-accent-primary-start={isToday}
-                    class:text-surface-app={isToday}
+                    class:text-text-on-accent={isToday}
                     class:text-text-primary={!isToday}>{day.getDate()}</span
                   >
                 </div>

@@ -229,6 +229,21 @@ func assertZoneContrast(t *testing.T, th *Theme) {
 					th.ID, mode, fg, r)
 			}
 		}
+		// On-accent label ink vs accent start: solid CTA text must meet AA 4.5:1.
+		for _, pair := range []struct{ on, start, label string }{
+			{flat["--color-accent-primary-on"], flat["--color-accent-primary-start"], "primary"},
+			{flat["--color-accent-secondary-on"], flat["--color-accent-secondary-start"], "secondary"},
+			{flat["--color-text-on-accent"], flat["--color-accent-primary-start"], "text-on-accent"},
+		} {
+			if pair.on == "" || pair.start == "" {
+				t.Errorf("%s [%s]: missing on-accent tokens for %s", th.ID, mode, pair.label)
+				continue
+			}
+			if r := approxRatio(t, pair.on, pair.start); r < 4.5 {
+				t.Errorf("%s [%s]: %s on %s start = %.2f:1, want >= 4.5 (AA text on accent)",
+					th.ID, mode, pair.label, pair.start, r)
+			}
+		}
 		// border-focus ≥ 3.0 is a hard invariant only for Stark; others are audit-only.
 		focusR := approxRatio(t, flat["--color-border-focus"], appBG)
 		if isStark && focusR < 3.0 {

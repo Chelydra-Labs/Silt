@@ -94,9 +94,13 @@
   --color-accent-primary-start: #2dd4bf;
   --color-accent-primary-end: #0d9488;
   --color-accent-primary-glow: rgba(20, 184, 166, 0.15);
+  --color-accent-primary-on: #0a0a0a;
   --color-accent-secondary-start: #6366f1;
   --color-accent-secondary-end: #a855f7;
   --color-accent-secondary-glow: rgba(168, 85, 247, 0.12);
+  --color-accent-secondary-on: #000000;
+  /* Label ink on solid primary accent fills (WCAG AA 4.5:1 vs primary start). */
+  --color-text-on-accent: var(--color-accent-primary-on);
 
   /* Status (semantic: warn/danger/success). */
   --color-status-warn: #fbbf24;

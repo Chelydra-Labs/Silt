@@ -143,11 +143,15 @@ type Accent struct {
 	Secondary AccentTriple `json:"secondary"`
 }
 
-// AccentTriple is a start/end/glow gradient triple.
+// AccentTriple is a start/end/glow gradient triple plus on-accent label ink.
+// On is the preferred text/icon color for solid fills using Start (WCAG AA
+// 4.5:1). When omitted on user themes, Flatten derives black/white from Start
+// luminance; first-party themes always author an explicit value.
 type AccentTriple struct {
 	Start string `json:"start"`
 	End   string `json:"end"`
 	Glow  string `json:"glow"`
+	On    string `json:"on,omitempty"`
 }
 
 // Status holds warn/danger/success semantic colors. Success is required in
@@ -358,13 +362,17 @@ func (t *Theme) Flatten(mode string) map[string]string {
 	out["--color-text-muted"] = strings.TrimSpace(m.TextMuted)
 	out["--color-text-disabled"] = strings.TrimSpace(m.TextDisabled)
 
-	// Accents.
+	// Accents (on = label ink for solid fills using start; derived when omitted).
 	out["--color-accent-primary-start"] = m.Accent.Primary.Start
 	out["--color-accent-primary-end"] = m.Accent.Primary.End
 	out["--color-accent-primary-glow"] = m.Accent.Primary.Glow
+	out["--color-accent-primary-on"] = resolveAccentOn(m.Accent.Primary)
 	out["--color-accent-secondary-start"] = m.Accent.Secondary.Start
 	out["--color-accent-secondary-end"] = m.Accent.Secondary.End
 	out["--color-accent-secondary-glow"] = m.Accent.Secondary.Glow
+	out["--color-accent-secondary-on"] = resolveAccentOn(m.Accent.Secondary)
+	// Semantic alias for solid primary CTAs (Tailwind text-text-on-accent).
+	out["--color-text-on-accent"] = out["--color-accent-primary-on"]
 
 	// Status.
 	out["--color-status-warn"] = m.Status.Warn

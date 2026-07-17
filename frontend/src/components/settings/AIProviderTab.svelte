@@ -603,7 +603,7 @@
                   onclick={() => (ai.activeRole = 'chat')}
                   class="flex-1 py-1.5 px-3 rounded-lg text-type-xs font-label-sm-bold transition-all cursor-pointer {ai.activeRole ===
                   'chat'
-                    ? 'bg-accent-primary-start text-surface-app shadow-md'
+                    ? 'bg-accent-primary-start text-text-on-accent shadow-md'
                     : 'text-text-muted hover:text-text-primary'}"
                 >
                   Chat Model
@@ -615,7 +615,7 @@
                   onclick={() => (ai.activeRole = 'embedding')}
                   class="flex-1 py-1.5 px-3 rounded-lg text-type-xs font-label-sm-bold transition-all cursor-pointer {ai.activeRole ===
                   'embedding'
-                    ? 'bg-accent-primary-start text-surface-app shadow-md'
+                    ? 'bg-accent-primary-start text-text-on-accent shadow-md'
                     : 'text-text-muted hover:text-text-primary'}"
                 >
                   Embedding Model
@@ -782,7 +782,7 @@
                     disabled={!ai.apiKeyInputs[which].trim() ||
                       ai.savingKey[which]}
                     aria-label="Save key"
-                    class="px-2 py-1 bg-accent-primary-start text-surface-app rounded-md font-label-sm-bold text-type-2xs hover:brightness-110 transition-all cursor-pointer"
+                    class="px-2 py-1 bg-accent-primary-start text-text-on-accent rounded-md font-label-sm-bold text-type-2xs hover:brightness-110 transition-all cursor-pointer"
                     class:hidden={!ai.apiKeyInputs[which].trim()}
                   >
                     Save

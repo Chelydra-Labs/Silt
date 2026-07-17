@@ -220,7 +220,7 @@
     {#if chatUnconfigured || embedUnconfigured}
       <button
         type="button"
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-primary-start text-surface-app font-label-sm-bold text-type-xs hover:brightness-110 transition-all cursor-pointer border-none"
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-primary-start text-text-on-accent font-label-sm-bold text-type-xs hover:brightness-110 transition-all cursor-pointer border-none"
         onclick={() => ctx.openSettings?.('ai' as any)}
       >
         Open AI settings
@@ -409,7 +409,7 @@
       type="button"
       class="inline-flex items-center gap-1.5 self-start px-3.5 py-2 rounded-lg font-label-sm-bold text-type-xs border-none cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed {local.stale_reason
         ? 'bg-status-warn text-surface-app hover:brightness-110'
-        : 'bg-accent-primary-start text-surface-app hover:brightness-110'}"
+        : 'bg-accent-primary-start text-text-on-accent hover:brightness-110'}"
       disabled={rebuildBusy || embedUnconfigured}
       onclick={() => void onRebuild()}
     >

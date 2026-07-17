@@ -1673,7 +1673,7 @@
                           })
                         )
                       }}
-                      class="px-4 py-2 rounded-lg bg-accent-primary-start border border-accent-primary-start/40 text-surface-app font-label-sm-bold hover:brightness-110 transition-all cursor-pointer flex items-center gap-2"
+                      class="px-4 py-2 rounded-lg bg-accent-primary-start border border-accent-primary-start/40 text-text-on-accent font-label-sm-bold hover:brightness-110 transition-all cursor-pointer flex items-center gap-2"
                     >
                       <span
                         class="material-symbols-outlined text-icon-lg"

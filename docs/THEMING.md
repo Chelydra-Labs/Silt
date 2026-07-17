@@ -56,7 +56,7 @@ Silt components never reference a concrete hue like "teal" or "indigo". Instead 
 
 Each theme decides which concrete colors map onto `primary` and `secondary`. Cyber Forest maps teal → primary and indigo → secondary. Your theme can map *any* two hues onto them. This is what lets every theme restyle the whole app without per-theme code.
 
-Each accent is a **triple**: `start` / `end` (a gradient pair) plus `glow` (a translucent version used for soft halos).
+Each accent is a **quadruple in practice**: `start` / `end` (a gradient pair), `glow` (a translucent soft halo), and `on` (label ink for solid fills using `start`). When `on` is omitted on a user theme, Flatten derives near-black / white (or pure black when needed) from the relative luminance of `start` so solid CTAs stay readable without a migration.
 
 ### First-class themes
 
@@ -134,9 +134,12 @@ These apply on **every** surface — the same gesture reads the same way everywh
 | `accent.primary.start` | `--color-accent-primary-start` | "go/done" gradient start. |
 | `accent.primary.end` | `--color-accent-primary-end` | "go/done" gradient end. |
 | `accent.primary.glow` | `--color-accent-primary-glow` | "go/done" soft halo (usually `rgba(...)`). |
+| `accent.primary.on` | `--color-accent-primary-on` | Label ink on solid primary fills (optional; derived when omitted). |
 | `accent.secondary.start` | `--color-accent-secondary-start` | "in-progress" gradient start. |
 | `accent.secondary.end` | `--color-accent-secondary-end` | "in-progress" gradient end. |
 | `accent.secondary.glow` | `--color-accent-secondary-glow` | "in-progress" soft halo. |
+| `accent.secondary.on` | `--color-accent-secondary-on` | Label ink on solid secondary fills (optional; derived when omitted). |
+| *(semantic)* | `--color-text-on-accent` | Alias of primary `on` — use for solid primary CTAs (`text-text-on-accent`). |
 
 ### `status` — warn / danger / success (per-mode)
 
@@ -378,6 +381,7 @@ Silt targets **WCAG 2.2**. Your theme is checked against the shipped palette; ai
 | Each zone's `text` on its own `bg` (every authored zone) | **≥ 4.5:1** | AA |
 | `text_muted` on zone backgrounds | **≥ 4.5:1** | AA |
 | `accent.primary.start` / `accent.secondary.start` on `surfaces.app.bg` (non-text UI) | **≥ 3:1** | AA (non-text) |
+| `accent.*.on` / `--color-text-on-accent` on the matching `accent.*.start` (solid CTA labels) | **≥ 4.5:1** | AA (text) |
 | `border_focus` on `surfaces.app.bg` (**Stark only**) | **≥ 3.0:1** | AA (non-text) — Stark-only hard invariant |
 
 > **Advisory / WCAG-exempt (inactive UI) — not hard-gated.** `text_disabled` is WCAG 1.4.3-exempt ("text that is part of an inactive user interface component"). The CI gate (`contrast_test.go`) logs its ratio for audit but does NOT assert a 4.5:1 floor — every shipped theme intentionally renders disabled text at ~2–3:1 so it reads as disabled. Don't over-engineer disabled text to a 4.5:1 target that isn't enforced. Likewise, `border_focus` on non-Stark themes is audit-only (a subtle ~2.5–3:1 hairline by design); only Stark's border-led AAA model hard-asserts the 3.0:1 floor in the row above.

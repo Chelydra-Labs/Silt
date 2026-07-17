@@ -70,8 +70,8 @@ func validV2Mode() Mode {
 		TextMuted:    "#8b8b94",
 		TextDisabled: "#4b5563",
 		Accent: Accent{
-			Primary:   AccentTriple{Start: "#2dd4bf", End: "#0d9488", Glow: "rgba(20, 184, 166, 0.15)"},
-			Secondary: AccentTriple{Start: "#6366f1", End: "#a855f7", Glow: "rgba(168, 85, 247, 0.12)"},
+			Primary:   AccentTriple{Start: "#2dd4bf", End: "#0d9488", Glow: "rgba(20, 184, 166, 0.15)", On: "#0a0a0a"},
+			Secondary: AccentTriple{Start: "#6366f1", End: "#a855f7", Glow: "rgba(168, 85, 247, 0.12)", On: "#000000"},
 		},
 		Status: Status{Warn: "#fbbf24", Danger: "#f43f5e", Success: "#22c55e"},
 		Error:  Error{FG: "#ffb4ab", BG: "#93000a", Border: "#7d2a2a"},
@@ -92,8 +92,8 @@ func validV2ModeLight() Mode {
 		TextMuted:    "#4d5667",
 		TextDisabled: "#94a3b8",
 		Accent: Accent{
-			Primary:   AccentTriple{Start: "#0d9488", End: "#115e59", Glow: "rgba(13, 148, 136, 0.10)"},
-			Secondary: AccentTriple{Start: "#4f46e5", End: "#7c3aed", Glow: "rgba(79, 70, 229, 0.08)"},
+			Primary:   AccentTriple{Start: "#0d9488", End: "#115e59", Glow: "rgba(13, 148, 136, 0.10)", On: "#0a0a0a"},
+			Secondary: AccentTriple{Start: "#4f46e5", End: "#7c3aed", Glow: "rgba(79, 70, 229, 0.08)", On: "#ffffff"},
 		},
 		Status: Status{Warn: "#d97706", Danger: "#e11d48", Success: "#16a34a"},
 		Error:  Error{FG: "#ba1a1a", BG: "#ffdad6", Border: "#93000a"},

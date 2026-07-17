@@ -241,13 +241,18 @@ func validateOptionalColor(field, value string) ValidationErrors {
 	return nil
 }
 
-// validateTriple checks a start/end/glow accent triple. Glow is commonly a
-// translucent rgba(); all three must be present and valid colors.
+// validateTriple checks a start/end/glow accent triple plus optional on-ink.
+// Glow is commonly a translucent rgba(); start/end/glow must be present and
+// valid colors. On is optional (Flatten derives it when omitted) but must be a
+// valid color when present.
 func validateTriple(prefix string, t AccentTriple) ValidationErrors {
 	var errs ValidationErrors
 	errs = append(errs, validateColorField(prefix+".start", t.Start)...)
 	errs = append(errs, validateColorField(prefix+".end", t.End)...)
 	errs = append(errs, validateColorField(prefix+".glow", t.Glow)...)
+	if strings.TrimSpace(t.On) != "" {
+		errs = append(errs, validateColorField(prefix+".on", t.On)...)
+	}
 	return errs
 }
 

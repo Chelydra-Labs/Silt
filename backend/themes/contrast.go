@@ -44,6 +44,74 @@ func ContrastRatio(a, b string) (ratio float64, ok bool) {
 	return (lighter + 0.05) / (darker + 0.05), true
 }
 
+// resolveAccentOn returns the on-accent label ink for a triple: the authored
+// On when set, otherwise a black/white pick derived from Start so solid
+// accent buttons stay readable without a v1 migration.
+func resolveAccentOn(t AccentTriple) string {
+	if on := strings.TrimSpace(t.On); on != "" {
+		return on
+	}
+	return DeriveInkOnAccent(t.Start)
+}
+
+// DeriveInkOnAccent picks near-black, pure black, or white label ink for a
+// solid fill of start so WCAG AA (4.5:1) is met when possible. Medium accents
+// (e.g. cyber_forest light teal #0d9488) need dark ink; pure black is used
+// when near-black falls short of 4.5:1 (e.g. indigo #6366f1).
+func DeriveInkOnAccent(start string) string {
+	const (
+		nearBlack = "#0a0a0a"
+		pureBlack = "#000000"
+		white     = "#ffffff"
+	)
+	type cand struct {
+		ink   string
+		ratio float64
+		ok    bool
+	}
+	cands := []cand{
+		{nearBlack, 0, false},
+		{pureBlack, 0, false},
+		{white, 0, false},
+	}
+	for i := range cands {
+		cands[i].ratio, cands[i].ok = ContrastRatio(cands[i].ink, start)
+	}
+	// Prefer any candidate that meets AA text contrast.
+	var bestPass *cand
+	for i := range cands {
+		c := &cands[i]
+		if !c.ok || c.ratio < 4.5 {
+			continue
+		}
+		if bestPass == nil || c.ratio > bestPass.ratio {
+			bestPass = c
+		}
+	}
+	if bestPass != nil {
+		// Prefer near-black over pure black when both pass (softer on bright fills).
+		if bestPass.ink == pureBlack {
+			for i := range cands {
+				if cands[i].ink == nearBlack && cands[i].ok && cands[i].ratio >= 4.5 {
+					return nearBlack
+				}
+			}
+		}
+		return bestPass.ink
+	}
+	// No AA candidate: pick the highest ratio (still better than a fixed default).
+	best := cands[0]
+	for _, c := range cands[1:] {
+		if c.ok && (!best.ok || c.ratio > best.ratio) {
+			best = c
+		}
+	}
+	if best.ok {
+		return best.ink
+	}
+	return white
+}
+
 // linear converts an 8-bit sRGB channel to its linearized value using
 // the WCAG 2.x transfer function. The legacy 0.03928 threshold is used
 // (the value the WCAG 2.0/2.1 normative text specifies).

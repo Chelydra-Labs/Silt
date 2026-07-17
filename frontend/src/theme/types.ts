@@ -109,6 +109,8 @@ export interface AccentTriple {
   start: string
   end: string
   glow: string
+  /** Label ink for solid fills using start. Omitted → derived at flatten. */
+  on?: string
 }
 
 export interface Radius {
