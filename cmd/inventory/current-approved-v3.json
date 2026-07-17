@@ -1,6 +1,6 @@
 {
   "schema": "current-approved-v3",
-  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json",
+  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update ./cmd/inventory/current-approved-v3.json",
   "description": "Approved Wails v3 IPC surface snapshot. The CI parity gate fails on any missing/extra/changed *App method signature versus this file. Other sections (events, frontend imports) are tracked for review visibility and refreshed whenever the fixture is regenerated.",
   "inventory": {
     "methods": [
@@ -363,6 +363,10 @@
       {
         "name": "OpenAttachment",
         "signature": "OpenAttachment(notebook, relPath string) error"
+      },
+      {
+        "name": "OpenDevTools",
+        "signature": "OpenDevTools() error"
       },
       {
         "name": "OpenNotebook",
@@ -948,6 +952,7 @@
       "frontend/src/components/settings/AIProviderTab.test.ts",
       "frontend/src/components/settings/AboutTab.svelte",
       "frontend/src/components/settings/AboutTab.test.ts",
+      "frontend/src/components/settings/DevTab.svelte",
       "frontend/src/components/settings/EditorTab.spellcheck.test.ts",
       "frontend/src/components/settings/EditorTab.svelte",
       "frontend/src/components/settings/GeneralTab.svelte",
@@ -1039,6 +1044,8 @@
       "frontend/src/plugins/loader.test.ts",
       "frontend/src/plugins/loader.ts",
       "frontend/src/plugins/loader.vault-close.test.ts",
+      "frontend/src/plugins/shared/ai-chat/ChatShell.svelte",
+      "frontend/src/plugins/shared/ai-chat/ChatShell.test.ts",
       "frontend/src/settings/store.svelte.test.ts",
       "frontend/src/settings/store.svelte.ts",
       "frontend/src/templates/TemplatePicker.test.ts",

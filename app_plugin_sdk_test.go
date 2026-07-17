@@ -46,3 +46,22 @@ func TestSetOpenDevtoolsOnStartup(t *testing.T) {
 		t.Errorf("expected persisted OpenDevtoolsOnStartup false, got %v", loaded.UI.OpenDevtoolsOnStartup)
 	}
 }
+
+// TestOpenDevTools_GatedOnDevMode covers #679: OpenDevTools is a no-op when
+// Dev Mode is off, and does not panic when mainWindow is nil (unit harness).
+func TestOpenDevTools_GatedOnDevMode(t *testing.T) {
+	app := newTestApp(t)
+
+	// Flag off (default) → no error, no panic with nil mainWindow.
+	if err := app.OpenDevTools(); err != nil {
+		t.Fatalf("OpenDevTools with flag off: %v", err)
+	}
+
+	if err := app.SetOpenDevtoolsOnStartup(true); err != nil {
+		t.Fatalf("SetOpenDevtoolsOnStartup(true): %v", err)
+	}
+	// Flag on, mainWindow still nil → still no panic.
+	if err := app.OpenDevTools(); err != nil {
+		t.Fatalf("OpenDevTools with flag on, nil window: %v", err)
+	}
+}

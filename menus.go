@@ -78,6 +78,12 @@ func setupMenus(app *application.App, siltApp *App) {
 	viewMenu.Add("Settings...").SetAccelerator("Ctrl+,").OnClick(safeMenuCallback("settings", func(ctx *application.Context) {
 		siltApp.emit("menu:settings")
 	}))
+	// Dev Mode Inspect (#679). OpenDevTools is a no-op when the flag is off.
+	viewMenu.Add("Toggle Developer Tools").SetAccelerator("Ctrl+Shift+F12").OnClick(safeMenuCallback("open-devtools", func(ctx *application.Context) {
+		if err := siltApp.OpenDevTools(); err != nil {
+			log.Printf("OpenDevTools: %v", err)
+		}
+	}))
 
 	// --- Help ---
 	helpMenu := menu.AddSubmenu("Help")

@@ -240,6 +240,7 @@ func main() {
 	// EnableFileDrop lets OS files dragged onto a `data-file-drop-target`
 	// element raise WindowFilesDropped; setupMainWindowEvents routes only the
 	// Appearance-target drop to the theme importer.
+	devToolsOn := shouldOpenDevtools()
 	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:                  "Silt",
 		Width:                  1024,
@@ -248,7 +249,10 @@ func main() {
 		Frameless:              true,
 		BackgroundColour:       launchBackgroundColour(),
 		EnableFileDrop:         true,
-		OpenInspectorOnStartup: shouldOpenDevtools(),
+		OpenInspectorOnStartup: devToolsOn,
+		// Enable platform DevTools when Dev Mode / SILT_DEBUG is on so
+		// runtime OpenDevTools and Inspect work beyond debug builds (#679).
+		DevToolsEnabled: devToolsOn,
 	})
 	// Bind window-event hooks on the concrete *WebviewWindow straight after
 	// creation, before it is narrowed to the application.Window interface.

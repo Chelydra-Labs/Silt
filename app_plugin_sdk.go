@@ -751,6 +751,29 @@ func (a *App) SetOpenDevtoolsOnStartup(value bool) error {
 	return a.saveConfigTracked(a.cfg)
 }
 
+// OpenDevTools opens the webview developer tools when Dev Mode is enabled
+// (#679). No-op (returns nil) when the flag is off or the main window is
+// unavailable — production builds without the Wails devtools tag may also
+// no-op at the platform layer.
+func (a *App) OpenDevTools() error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.RLock()
+	enabled := a.cfg.UI.OpenDevtoolsOnStartup != nil && *a.cfg.UI.OpenDevtoolsOnStartup
+	a.configMu.RUnlock()
+	if !enabled {
+		return nil
+	}
+	if a.mainWindow == nil {
+		return nil
+	}
+	a.mainWindow.OpenDevTools()
+	return nil
+}
+
 // GetPluginSettingsForNotebook resolves a plugin's settings map for the
 // ACTIVE notebook, applying the co-located per-notebook override layer (#133).
 //

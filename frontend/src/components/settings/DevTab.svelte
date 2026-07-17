@@ -1,4 +1,13 @@
 <script lang="ts">
+  import { OpenDevTools } from '../../../bindings/silt/app.js'
+
+  async function openDevTools(): Promise<void> {
+    try {
+      await OpenDevTools()
+    } catch (e) {
+      console.error('OpenDevTools failed:', e)
+    }
+  }
 </script>
 
 <div class="p-6 max-w-4xl mx-auto w-full space-y-6">
@@ -26,11 +35,29 @@
         <p class="text-text-muted text-type-xs font-body-md leading-relaxed">
           Inspect the DOM, view console errors, and debug rendering issues.
         </p>
-        <p class="text-text-muted text-type-xs font-body-md leading-relaxed">
-          Press <kbd
-            class="inline-block px-1.5 py-0.5 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-2xs font-mono"
-            >Ctrl+Shift+F12</kbd
-          > to open DevTools at any time.
+        <ul
+          class="text-text-muted text-type-xs font-body-md leading-relaxed list-disc pl-5 space-y-1"
+        >
+          <li>
+            Press <kbd
+              class="inline-block px-1.5 py-0.5 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-2xs font-mono"
+              >Ctrl+Shift+F12</kbd
+            > (View → Toggle Developer Tools)
+          </li>
+          <li>Right-click in the editor and choose <strong>Inspect</strong></li>
+        </ul>
+        <button
+          type="button"
+          class="px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm font-body-md hover:bg-surface-panel/80"
+          onclick={openDevTools}
+        >
+          Open DevTools
+        </button>
+        <p class="text-text-muted text-type-2xs font-body-md leading-relaxed">
+          Opening DevTools on startup still requires a restart after enabling
+          Dev Mode. Runtime Inspect works immediately once the flag is on.
+          Production builds may need a DevTools-enabled build for the inspector
+          to appear.
         </p>
       </div>
 
