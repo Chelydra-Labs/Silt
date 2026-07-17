@@ -128,6 +128,28 @@ describe('ChatShell', () => {
     ).toBeInTheDocument()
   })
 
+  it('renders assistant markdown as HTML, not raw syntax', () => {
+    const { container, getByText } = render(ChatShell, {
+      props: props([
+        textEntry({
+          id: 'a1',
+          role: 'assistant',
+          content: '**bold** and a list:\n\n- one\n- two'
+        }),
+        textEntry({
+          id: 'u1',
+          role: 'user',
+          content: 'keep **raw** for user'
+        })
+      ])
+    })
+    const md = container.querySelector('.message-md')
+    expect(md?.querySelector('strong')?.textContent).toBe('bold')
+    expect(md?.textContent).not.toContain('**bold**')
+    // User messages stay plain text (escaped), not HTML.
+    expect(getByText('keep **raw** for user')).toBeInTheDocument()
+  })
+
   it('sends on Enter, preserves Shift+Enter, and stops on scoped Escape', async () => {
     const value = props()
     const { getByLabelText, rerender } = render(ChatShell, { props: value })
