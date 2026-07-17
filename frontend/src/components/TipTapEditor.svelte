@@ -70,6 +70,7 @@
   import { DistinctOwners } from '../../bindings/silt/app.js'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
+  import { OpenDevTools } from '../../bindings/silt/app.js'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
   import BlockPickerModal from './BlockPickerModal.svelte'
@@ -103,6 +104,7 @@
     deleteBlock
   } from '../lib/editor/clipboard'
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
+  import { recordSelectionFocus } from '../plugins/ui-location'
   import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
   import { isSystemDark } from '../lib/systemTheme.svelte'
 
@@ -799,6 +801,8 @@
         page,
         blockId
       })
+      // Feed agent UI-location snapshot (#680).
+      recordSelectionFocus({ notebook, section, page, blockId })
     },
     onFocus: () => {
       isFocused = true
@@ -1569,6 +1573,20 @@
     editorInstance?.chain().focus().unsetAllMarks().run()
     closeContextMenu()
   }
+
+  /** Dev Mode Inspect (#679) — opens webview DevTools when the flag is on. */
+  async function handleInspect(): Promise<void> {
+    closeContextMenu()
+    try {
+      await OpenDevTools()
+    } catch (e) {
+      console.error('OpenDevTools failed:', e)
+    }
+  }
+
+  let devModeEnabled = $derived(
+    settings.config?.ui?.open_devtools_on_startup === true
+  )
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1762,6 +1780,21 @@
           >
           Clear Formatting
         </button>
+
+        {#if devModeEnabled}
+          <div class="context-menu-separator"></div>
+          <button
+            type="button"
+            class="context-menu-item"
+            role="menuitem"
+            onclick={handleInspect}
+          >
+            <span class="material-symbols-outlined text-icon-md"
+              >bug_report</span
+            >
+            Inspect
+          </button>
+        {/if}
       </div>
     </div>
   {/if}

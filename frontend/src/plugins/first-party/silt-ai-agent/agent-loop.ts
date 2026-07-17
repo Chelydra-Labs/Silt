@@ -22,6 +22,11 @@ import type {
   PluginAIStream
 } from '../../sdk'
 import {
+  captureUiLocation,
+  formatUiLocationForPrompt,
+  type UiLocationSnapshot
+} from '../../ui-location'
+import {
   buildToolCatalog,
   dispatchTool,
   getTools,
@@ -117,21 +122,45 @@ export interface AgentRunResult {
 }
 
 /**
- * Build the system prompt from the registered tool catalog + live vault
- * context. The model needs to know which tools exist and that it operates on
- * the active notebook.
+ * Build the system prompt from the registered tool catalog + UI location
+ * snapshot (#678 general chat, #680 page/block/tabs). Pass `location` from
+ * run start so mid-run navigation is ignored for the turn.
  */
-export function buildSystemPrompt(ctx: PluginContext): string {
+export function buildSystemPrompt(
+  ctx: PluginContext,
+  location?: UiLocationSnapshot
+): string {
   const tools = getTools()
   const toolLines = tools.length
     ? tools.map((t) => `- ${t.name}: ${t.description}`).join('\n')
     : '- (no tools registered)'
-  const notebook = ctx.activeNotebook || '(none)'
+  const raw =
+    location ??
+    (typeof ctx.getUiLocation === 'function'
+      ? ctx.getUiLocation()
+      : captureUiLocation())
+  // Prefer explicit snapshot fields; fall back to live ctx getters for tests
+  // that only stub activeNotebook.
+  const loc: UiLocationSnapshot = {
+    notebook: raw.notebook || ctx.activeNotebook || '',
+    section: raw.section || ctx.activeSection || '',
+    page: raw.page || ctx.activePage || '',
+    ...(raw.blockId ? { blockId: raw.blockId } : {}),
+    openTabs: raw.openTabs ?? []
+  }
   return [
-    "You are Silt AI Agent, an assistant that works inside the user's note vault.",
-    `Active notebook: ${notebook}.`,
+    'You are Silt AI Agent, a general-purpose assistant with first-class access',
+    "to the user's Silt note vault via tools.",
+    'Answer general knowledge and non-vault questions directly when vault tools',
+    'are unnecessary — do not refuse solely because a topic is outside Silt',
+    'product docs or outside the vault.',
+    "When the user's notes may answer the question, prefer searching and reading",
+    'the vault (and the current page from UI LOCATION) and ground answers in',
+    'that material when applicable.',
     'Use the available tools to search, read, create, and organize notes.',
     'When you have enough information, answer the user directly without calling more tools.',
+    '',
+    formatUiLocationForPrompt(loc),
     '',
     UNTRUSTED_CONTENT_SECURITY,
     '',
@@ -139,6 +168,8 @@ export function buildSystemPrompt(ctx: PluginContext): string {
     'update_block, extract_and_save) apply immediately as single reversible edits.',
     'Destructive bulk ops (rename_tag) are staged and require user confirmation',
     'before any vault mutation.',
+    'For page-relative writes ("this page", "here"), target the Current page from',
+    'UI LOCATION unless the user names a different path.',
     '',
     'Available tools:',
     toolLines
@@ -409,8 +440,14 @@ export async function runAgent(
   opts: AgentOptions = {}
 ): Promise<AgentRunResult> {
   const cancelled = () => Boolean(opts.signal?.aborted)
+  // Snapshot UI location once at run start (#680) so mid-run navigation is ignored.
+  const location: UiLocationSnapshot =
+    typeof ctx.getUiLocation === 'function'
+      ? ctx.getUiLocation()
+      : captureUiLocation()
+  const systemPrompt = buildSystemPrompt(ctx, location)
   const messages: PluginAIChatMessage[] = [
-    { role: 'system', content: buildSystemPrompt(ctx) },
+    { role: 'system', content: systemPrompt },
     ...chatHistory,
     { role: 'user', content: userMessage }
   ]

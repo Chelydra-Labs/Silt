@@ -264,6 +264,67 @@ describe('agent-loop', () => {
     expect(prompt).toContain('Active notebook: Work')
   })
 
+  it('buildSystemPrompt allows general chat and prefers notebook when relevant (#678)', () => {
+    const ctx = mockCtx(() => mockStream({ content: '', model: 'm' }))
+    const prompt = buildSystemPrompt(ctx)
+    expect(prompt).toMatch(/general-purpose assistant/i)
+    expect(prompt).toMatch(/do not refuse solely because/i)
+    expect(prompt).toMatch(/prefer searching and reading/i)
+    expect(prompt).not.toMatch(/only answer about Silt/i)
+    expect(prompt).not.toMatch(/refuse.*non-vault/i)
+  })
+
+  it('buildSystemPrompt includes UI location snapshot (#680)', () => {
+    const ctx = mockCtx(() => mockStream({ content: '', model: 'm' }))
+    const prompt = buildSystemPrompt(ctx, {
+      notebook: 'Recipes',
+      section: 'Baking',
+      page: 'Pie',
+      blockId: 'block-pie-1',
+      openTabs: [
+        {
+          notebook: 'Recipes',
+          section: 'Baking',
+          page: 'Pie',
+          active: true
+        },
+        {
+          notebook: 'Recipes',
+          section: 'Baking',
+          page: 'Bread',
+          preview: true,
+          active: false
+        }
+      ]
+    })
+    expect(prompt).toContain('Current page: Recipes/Baking/Pie')
+    expect(prompt).toContain('Focused block id: block-pie-1')
+    expect(prompt).toContain('Recipes/Baking/Pie (active)')
+    expect(prompt).toContain('Recipes/Baking/Bread (preview)')
+    expect(prompt).toContain('identifiers only')
+    expect(prompt).toContain('this page')
+    // Must not dump page body content.
+    expect(prompt).not.toMatch(/flour|sugar|ingredients/i)
+  })
+
+  it('buildSystemPrompt marks missing location explicitly (#680)', () => {
+    const ctx = {
+      ...mockCtx(() => mockStream({ content: '', model: 'm' })),
+      activeNotebook: '',
+      activeSection: '',
+      activePage: ''
+    } as PluginContext
+    const prompt = buildSystemPrompt(ctx, {
+      notebook: '',
+      section: '',
+      page: '',
+      openTabs: []
+    })
+    expect(prompt).toContain('Current page: (none)')
+    expect(prompt).toContain('Focused block id: (none)')
+    expect(prompt).toContain('Open tabs: (none)')
+  })
+
   it('createAgentSession.cancel aborts the in-flight run', async () => {
     registerTool({
       name: 'loop',

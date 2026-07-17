@@ -69,6 +69,10 @@
   } from './plugins/shared/ai-chat/drawer.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
+  import {
+    clearSelectionFocus,
+    setOpenTabsProvider
+  } from './plugins/ui-location'
   import ToastContainer from './components/ToastContainer.svelte'
   import Onboarding from './components/Onboarding.svelte'
   import { pushNotification } from './notifications/store.svelte'
@@ -175,6 +179,22 @@
   // read ctx.activeNotebook/Section/Page via live getters backed by this state.
   $effect(() => {
     setActiveLocation(activeNotebook, activeSection, activePage)
+  })
+
+  // Register open-tabs provider for agent UI location (#680). Cleared on unmount.
+  $effect(() => {
+    const tabs = openTabs
+    const activeId = activeTabId
+    setOpenTabsProvider(() =>
+      tabs.map((t) => ({
+        notebook: t.notebook,
+        section: t.section,
+        page: t.page,
+        preview: t.preview,
+        active: t.id === activeId
+      }))
+    )
+    return () => setOpenTabsProvider(null)
   })
 
   // --- Tab management (#142) -----------------------------------------------
@@ -863,6 +883,7 @@
       openTabs = []
       activeTabId = ''
       activeView = 'notes'
+      clearSelectionFocus()
       // Drop any editor reconciliation handles tied to the old vault so a
       // teardown that bypassed Svelte $effect cleanup can't leave a stale
       // editor buffer flushing into the new vault (#345).
@@ -1158,6 +1179,7 @@
       await CloseVault()
       // Re-query rather than assume — CloseVault is the source of truth.
       isInitialized = await IsVaultInitialized()
+      clearSelectionFocus()
       activeNotebook = ''
       activeSection = ''
       activePage = ''

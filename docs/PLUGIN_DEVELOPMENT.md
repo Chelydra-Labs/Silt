@@ -30,6 +30,23 @@ interface PluginContext {
   activeSection: string
   activePage: string
 
+  // UI location snapshot (identifiers only): active page triple, optional
+  // focused/selected block id, and open tabs. Used by the AI agent for
+  // "this page" / open-tabs context; never includes full page bodies.
+  getUiLocation: () => {
+    notebook: string
+    section: string
+    page: string
+    blockId?: string
+    openTabs: Array<{
+      notebook: string
+      section: string
+      page: string
+      preview?: boolean
+      active: boolean
+    }>
+  }
+
   // Read-only SQL against the in-memory index. Only SELECT / WITH are allowed.
   sqliteQuery: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[]; truncated: boolean }>
 

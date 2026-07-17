@@ -6,6 +6,7 @@ import type {
   TaskStatus
 } from './sdk'
 import { localToday } from './sdk'
+import { captureUiLocation } from './ui-location'
 import { stripReasoningContent } from './stripReasoning'
 import {
   PluginRawQuery,
@@ -177,6 +178,9 @@ export function makePluginContext(
     get activePage() {
       return loc.page
     },
+    // UI location snapshot (#680): active page triple + focused block + open
+    // tabs. Host-owned identifiers only; App registers the tabs provider.
+    getUiLocation: () => captureUiLocation(),
     // Local-day anchor (#118): the webview's local timezone is the OS
     // timezone, identical to the Go backend's time.Local, so this is
     // resolved in-process (no IPC). Plugins compare against it instead of
