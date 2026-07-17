@@ -452,7 +452,7 @@ type TaskQueryFilter struct {
 All bindings hang off the single Wails v3 service (`*App` registered via `application.NewServiceWithOptions`) and are
 auto-exposed to the frontend as JSON RPC. Grouped by domain:
 
-- **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `UpdateBlockState`
+- **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `SavePageMarkdown` (raw source body), `UpdateBlockState`
   (task-checkbox transition + atomic file rewrite + re-index),
   `MutateBlock`, `QueryTasks` (dashboard filter query). **Task dependencies**:
   `SetTaskBlockedBy` / `PluginSetTaskBlockedBy` (cycle-checked
