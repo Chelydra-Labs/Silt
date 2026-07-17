@@ -297,6 +297,160 @@ describe('Edit↔Source scroll preservation (#319)', () => {
   })
 })
 
+describe('Edit↔Source caret restoration (#331)', () => {
+  let scrollTopVal = 0
+  let scrollHeightVal = 1000
+  const origScrollTop = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    'scrollTop'
+  )
+  const origScrollHeight = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    'scrollHeight'
+  )
+
+  function seedCaret(blockId: string, from: number, contentStart: number) {
+    ;(globalThis as any).__tiptapStubSeed = {
+      from,
+      $from: {
+        depth: 1,
+        pos: from,
+        start: (d: number) => (d === 1 ? contentStart : 0),
+        node: (d: number) =>
+          d === 1
+            ? { type: { name: 'noteBlock' }, attrs: { id: blockId } }
+            : { type: { name: 'doc' }, attrs: {} }
+      }
+    }
+  }
+
+  function seedDoc(blocks: { id: string; pos: number; contentSize: number }[]) {
+    ;(globalThis as any).__tiptapStubDoc = {
+      descendants(f: (node: any, pos: number) => boolean | void) {
+        for (const b of blocks) {
+          if (
+            f(
+              { attrs: { id: b.id }, content: { size: b.contentSize } },
+              b.pos
+            ) === false
+          ) {
+            break
+          }
+        }
+      }
+    }
+  }
+
+  beforeEach(() => {
+    mocks.onToggleViewMode.mockClear()
+    scrollTopVal = 0
+    scrollHeightVal = 1000
+    delete (globalThis as any).__tiptapStubSeed
+    delete (globalThis as any).__tiptapStubDoc
+    delete (globalThis as any).__tiptapStubSelection
+    Object.defineProperty(HTMLElement.prototype, 'scrollTop', {
+      configurable: true,
+      get() {
+        return scrollTopVal
+      },
+      set(v: number) {
+        scrollTopVal = v
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get() {
+        return scrollHeightVal
+      }
+    })
+  })
+  afterEach(() => {
+    if (origScrollTop)
+      Object.defineProperty(HTMLElement.prototype, 'scrollTop', origScrollTop)
+    if (origScrollHeight)
+      Object.defineProperty(
+        HTMLElement.prototype,
+        'scrollHeight',
+        origScrollHeight
+      )
+    delete (globalThis as any).__tiptapStubSeed
+    delete (globalThis as any).__tiptapStubDoc
+    delete (globalThis as any).__tiptapStubSelection
+    cleanup()
+  })
+
+  it('restores selection after Edit→Source→Edit when the block still exists', async () => {
+    // contentStart 1, from 7 → offset 6; remount doc block at pos 0 size 20
+    // → resolve to 0 + 1 + 6 = 7
+    seedCaret('block-a', 7, 1)
+    seedDoc([{ id: 'block-a', pos: 0, contentSize: 20 }])
+
+    const { rerender } = render(VirtualScrollContainer, {
+      props: baseProps()
+    })
+    scrollTopVal = 320
+    rerender({ ...baseProps(), viewMode: 'source' })
+    scrollTopVal = 0
+    // Clear seed so remount doesn't re-bind capture selection; keep doc for resolve.
+    delete (globalThis as any).__tiptapStubSeed
+    rerender(baseProps())
+
+    await waitFor(() => {
+      expect((globalThis as any).__tiptapStubSelection).toBe(7)
+    })
+    await waitFor(() => {
+      expect(scrollTopVal).toBe(320)
+    })
+  })
+
+  it('still restores scroll when the block id is missing (scroll-only fallback)', async () => {
+    seedCaret('stale-id', 5, 1)
+    seedDoc([{ id: 'other', pos: 0, contentSize: 10 }])
+
+    const { rerender } = render(VirtualScrollContainer, {
+      props: baseProps()
+    })
+    scrollTopVal = 200
+    rerender({ ...baseProps(), viewMode: 'source' })
+    scrollTopVal = 0
+    delete (globalThis as any).__tiptapStubSeed
+    rerender(baseProps())
+
+    await waitFor(() => {
+      expect(scrollTopVal).toBe(200)
+    })
+    // No matching block → setTextSelection never called (or not with a resolve).
+    expect((globalThis as any).__tiptapStubSelection).toBeUndefined()
+  })
+
+  it('clamps caret offset when the block content shrank', async () => {
+    // offset 50, content size 4 → clamp to 4 → pos 0+1+4 = 5
+    seedCaret('block-a', 51, 1)
+    seedDoc([{ id: 'block-a', pos: 0, contentSize: 4 }])
+
+    const { rerender } = render(VirtualScrollContainer, {
+      props: baseProps()
+    })
+    scrollTopVal = 100
+    rerender({ ...baseProps(), viewMode: 'source' })
+    scrollTopVal = 0
+    delete (globalThis as any).__tiptapStubSeed
+    rerender(baseProps())
+
+    await waitFor(() => {
+      expect((globalThis as any).__tiptapStubSelection).toBe(5)
+    })
+  })
+
+  it('does not force a caret jump on a cold Edit open', async () => {
+    seedCaret('block-a', 9, 1)
+    seedDoc([{ id: 'block-a', pos: 0, contentSize: 20 }])
+    render(VirtualScrollContainer, { props: baseProps() })
+    await new Promise((r) => setTimeout(r, 0))
+    expect((globalThis as any).__tiptapStubSelection).toBeUndefined()
+  })
+})
+
 // Wiki-link [[Page#Heading]] scroll-to-heading + retry logic (#545 harden).
 // Exercises tryScrollToTarget: success, retry-after-load, give-up, and
 // block-id scroll.

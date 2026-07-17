@@ -7,6 +7,11 @@
   import FindBar from './editor/FindBar.svelte'
   import { findBarState } from '../lib/editor/search/findBarState.svelte'
   import type { ParsedBlock } from '../lib/editor'
+  import {
+    snapshotEditCaret,
+    resolveCaretInDoc,
+    type EditCaretSnapshot
+  } from '../lib/editor/editCaretRestore'
   import type { Editor } from 'svelte-tiptap'
   import type { ViewMode } from '../lib/tabs'
   import EditorUtilityBar from './editor/EditorUtilityBar.svelte'
@@ -347,24 +352,23 @@
     return new Date().toISOString().slice(0, 10)
   })
 
-  // --- Scroll preservation across the Edit↔Source round-trip (#319) ---
-  // Sprint 15's editor-teardown optimization unmounts TipTapEditor while a
-  // tab is in Source view; returning to Edit rebuilt the editor from scratch
-  // and reset the scroll position. Capture the live offset the instant we
-  // leave Edit (before the DOM patch collapses the container height) and
-  // restore it once the remounted editor signals readiness. Cursor restore is
-  // a tracked follow-up; scroll offset is the cheap, high-value slice.
+  // --- Edit↔Source restore: scroll (#319) + caret (#331) ---
+  // Sprint 15's editor-teardown unmounts TipTap in Source view. Raw PM
+  // positions die with the editor, so we snapshot scrollTop plus a stable
+  // blockId + relative offset, then re-apply after onReady.
   let prevViewMode: ViewMode = untrack(() => viewMode)
   let savedEditScroll = 0
+  let savedEditCaret: EditCaretSnapshot | null = null
   let pendingRestore = false
 
-  // $effect.pre runs ahead of the DOM update, so containerEl.scrollTop still
-  // reflects Edit mode at the exact moment the editor is about to unmount —
-  // a regular $effect would read an already-clamped value.
+  // $effect.pre runs ahead of the DOM update, so containerEl.scrollTop and the
+  // live editor selection still reflect Edit mode at the unmount boundary —
+  // a regular $effect would read post-teardown state.
   $effect.pre(() => {
     const cur = viewMode
     if (prevViewMode === 'edit' && cur === 'source' && containerEl) {
       savedEditScroll = containerEl.scrollTop
+      savedEditCaret = snapshotEditCaret(editorInstance)
       pendingRestore = true
     }
     prevViewMode = cur
@@ -374,6 +378,26 @@
     if (!pendingRestore) return
     pendingRestore = false
     const target = savedEditScroll
+    const caret = savedEditCaret
+    savedEditCaret = null
+
+    // Wait for bind:editorInstance + NodeView flush before touching selection.
+    await tick()
+
+    // Caret first: setTextSelection can scroll the view; we re-apply scrollTop
+    // afterward so #319 still wins for viewport position.
+    if (caret && editorInstance) {
+      const pos = resolveCaretInDoc(editorInstance.state.doc, caret)
+      if (pos != null) {
+        try {
+          editorInstance.commands.setTextSelection(pos)
+          editorInstance.commands.focus()
+        } catch {
+          // Stale/clamped pos after external edit — fall through to scroll-only.
+        }
+      }
+    }
+
     if (target <= 0 || !containerEl) return
     // Restore once the remounted NodeViews have flushed. Async renderers
     // (KaTeX/Mermaid lazy load, Shiki debounce) settle AFTER the first frame
@@ -381,7 +405,6 @@
     // math/diagram-heavy pages. Re-clamp across a couple of frames: each clamps
     // to the largest valid offset, settling at `target` once the doc is tall
     // enough (and never overscrolling if it shrank).
-    await tick()
     const restore = () => {
       if (!containerEl) return
       containerEl.scrollTop = Math.min(target, containerEl.scrollHeight)
@@ -477,8 +500,8 @@
                  doc + NodeViews + listeners) down on the switch, so a tab held
                  in Source view pays no editor memory cost (#178). Returning to
                  Edit remounts it and rebuilds from `blocks` (content is on disk
-                 via auto-save); the Edit scroll offset is restored on the
-                 round-trip (#319), cursor position remains a follow-up. -->
+                  via auto-save); scroll (#319) and caret (#331) restore on
+                  the remounted editor's onReady. -->
             <MarkdownSourceViewer
               {blocks}
               filePath="{notebook}/{section}/{page}.md"
