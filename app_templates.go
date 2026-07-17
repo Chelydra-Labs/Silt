@@ -242,8 +242,9 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return "", fmt.Errorf("failed to create parent directory: %w", err)
 	}
+	// Fast-path existence check (no lock). Re-checked under LockFileWrite so a
+	// concurrent create cannot clobber between Stat and write (#652 race).
 	if _, err := os.Stat(filePath); err == nil {
-		// Do not clobber; signal so the picker can offer rename / open existing (#652).
 		return "", NewIPCError(
 			CodePageExists,
 			fmt.Sprintf("a page named %q already exists", safePage),
@@ -259,6 +260,13 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 
 	var writeErr error
 	a.coordinator.LockFileWrite(filePath, func() {
+		if _, err := os.Stat(filePath); err == nil {
+			writeErr = NewIPCError(
+				CodePageExists,
+				fmt.Sprintf("a page named %q already exists", safePage),
+			)
+			return
+		}
 		a.tracker.RegisterWrite(filePath)
 		if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
 			writeErr = err
@@ -276,6 +284,10 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 		}
 	})
 	if writeErr != nil {
+		// Preserve typed page_exists; wrap other write failures.
+		if _, ok := writeErr.(*IPCError); ok {
+			return "", writeErr
+		}
 		return "", fmt.Errorf("failed to write templated page: %w", writeErr)
 	}
 	return safeDate, nil

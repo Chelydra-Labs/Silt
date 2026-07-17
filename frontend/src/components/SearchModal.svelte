@@ -219,6 +219,15 @@
     })
   }
 
+  /** True when focus is on notebook/tag (or other non-query) form controls so
+   *  capture-phase result navigation does not steal select/input keys. */
+  function isSecondaryFilterFocused(): boolean {
+    const active = document.activeElement as HTMLElement | null
+    if (!active || active === inputEl) return false
+    const tag = active.tagName
+    return tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA'
+  }
+
   function handleKeyDown(e: KeyboardEvent) {
     // Tab must remain normal focus order so Vault/Linked, sort, clear, results,
     // and "Replace in vault…" stay keyboard-reachable. Cycle type chips with
@@ -231,6 +240,13 @@
       cycleTypeChip(e.key === 'ArrowRight' ? 1 : -1)
       return
     }
+    // Escape always closes; other nav keys leave form controls alone.
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      onClose()
+      return
+    }
+    if (isSecondaryFilterFocused()) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       if (results.length > 0) {
@@ -248,9 +264,6 @@
       if (results[selectedIdx]) {
         selectResult(results[selectedIdx])
       }
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      onClose()
     }
   }
 

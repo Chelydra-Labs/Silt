@@ -59,6 +59,8 @@
   let placeholderErrors = $state<Record<string, string>>({})
   /** When CreatePageFromTemplate hits page_exists (#652). */
   let pageExistsCollision = $state(false)
+  /** Name that collided — Open existing must use this, not a later rename. */
+  let collidedPageName = $state('')
   let listRefs: HTMLButtonElement[] = $state([])
   let searchEl: HTMLInputElement | null = $state(null)
   let pageNameEl: HTMLInputElement | null = $state(null)
@@ -173,6 +175,7 @@
     placeholderValues = {}
     placeholderErrors = {}
     pageExistsCollision = false
+    collidedPageName = ''
   })
 
   /** Built-in auto-filled placeholders — never required-block (#650). */
@@ -198,8 +201,11 @@
     selectedId = id
   }
 
-  function openExistingPage(name: string): void {
+  function openExistingPage(): void {
+    const name = collidedPageName.trim() || pageName.trim()
     pageExistsCollision = false
+    collidedPageName = ''
+    if (!name) return
     window.dispatchEvent(new CustomEvent('focus-page-title'))
     onCreatedPage?.(name)
     onClose()
@@ -283,6 +289,7 @@
     }
     placeholderErrors = {}
     pageExistsCollision = false
+    collidedPageName = ''
 
     creating = true
 
@@ -329,10 +336,14 @@
       const ipc = coerceIPCError(e)
       if (mode === 'new-page' && ipc.code === 'page_exists') {
         // Collision: keep picker open so the user can rename or open existing (#652).
+        // Snapshot the name that exists so "Open existing" stays correct if the
+        // user edits the field toward a new name.
+        const existing = pageName.trim()
         pageExistsCollision = true
+        collidedPageName = existing
         setTemplateStatus({
           kind: 'error',
-          message: `A page named “${pageName.trim()}” already exists. Rename it, or open the existing page.`
+          message: `A page named “${existing}” already exists. Rename it, or open the existing page.`
         })
         pageNameEl?.focus()
         pageNameEl?.select()
@@ -643,7 +654,7 @@
           {#if pageExistsCollision && mode === 'new-page'}
             <button
               type="button"
-              onclick={() => openExistingPage(pageName.trim())}
+              onclick={() => openExistingPage()}
               class="rounded-lg border border-surface-modal-border px-4 py-2 text-sm text-text-primary transition-colors hover:bg-hover"
             >
               Open existing

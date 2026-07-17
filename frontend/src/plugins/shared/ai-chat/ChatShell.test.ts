@@ -188,6 +188,39 @@ describe('ChatShell', () => {
     )
   })
 
+  it('does not open protocol-relative or javascript links', async () => {
+    const { container } = render(ChatShell, {
+      props: props([
+        textEntry({
+          id: 'a1',
+          role: 'assistant',
+          content:
+            '[bad](//evil.example/x) and [js](javascript:alert(1)) and [ok](https://safe.example)'
+        })
+      ])
+    })
+    const bad = container.querySelector(
+      'a[href="//evil.example/x"]'
+    ) as HTMLAnchorElement | null
+    const js = container.querySelector(
+      'a[href^="javascript"]'
+    ) as HTMLAnchorElement | null
+    if (bad) {
+      await fireEvent.click(bad)
+      expect(browserMocks.OpenURL).not.toHaveBeenCalled()
+    }
+    if (js) {
+      await fireEvent.click(js)
+      expect(browserMocks.OpenURL).not.toHaveBeenCalled()
+    }
+    const ok = container.querySelector(
+      'a[href="https://safe.example"]'
+    ) as HTMLAnchorElement | null
+    expect(ok).toBeTruthy()
+    await fireEvent.click(ok!)
+    expect(browserMocks.OpenURL).toHaveBeenCalledWith('https://safe.example')
+  })
+
   it('sends on Enter, preserves Shift+Enter, and stops on scoped Escape', async () => {
     const value = props()
     const { getByLabelText, rerender } = render(ChatShell, { props: value })

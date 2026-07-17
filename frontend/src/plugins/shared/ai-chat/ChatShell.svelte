@@ -3,6 +3,7 @@
   import { Browser } from '@wailsio/runtime'
   import type { AIChatEntry, ConfirmationEntry, EvidenceTarget } from './types'
   import { renderChatMarkdown } from './renderChatMarkdown'
+  import { isSafeLinkHref } from '../../../lib/editor/converters/validate'
 
   interface Props {
     title?: string
@@ -105,16 +106,41 @@
     stickToBottom = distance < 32
   }
 
-  // Markdown {@html} emits bare <a href>. Route through the OS browser so the
-  // Wails webview is not navigated away from the app (AboutTab convention).
-  // Attached via $effect (not template onclick) so the log region stays a
-  // non-interactive container for a11y.
+  // Markdown {@html} emits bare <a href>. Route safe absolute links through
+  // the OS browser so the Wails webview is not navigated away (AboutTab
+  // convention). Always preventDefault on transcript anchors so unsafe hrefs
+  // cannot navigate the webview either. Attached via $effect for a11y.
+  function isOpenableExternalHref(href: string): boolean {
+    if (!href || !isSafeLinkHref(href)) return false
+    // Protocol-relative and path-relative are not OS-browser targets.
+    if (
+      href.startsWith('//') ||
+      href.startsWith('#') ||
+      href.startsWith('/') ||
+      href.startsWith('./') ||
+      href.startsWith('../')
+    ) {
+      return false
+    }
+    try {
+      const u = new URL(href)
+      return (
+        u.protocol === 'http:' ||
+        u.protocol === 'https:' ||
+        u.protocol === 'mailto:'
+      )
+    } catch {
+      return false
+    }
+  }
+
   function onTranscriptClick(e: MouseEvent): void {
     const a = (e.target as HTMLElement | null)?.closest?.('a')
     if (!a || !transcriptEl?.contains(a)) return
     const href = a.getAttribute('href')
-    if (!href || href.startsWith('#') || href.startsWith('javascript:')) return
+    if (!href) return
     e.preventDefault()
+    if (!isOpenableExternalHref(href)) return
     Browser.OpenURL(href)
   }
 

@@ -131,6 +131,61 @@ describe('SearchModal keyboard a11y', () => {
     expect(notebookSelect.value).toBe('')
   })
 
+  it('does not steal Arrow/Enter from notebook select or tag input', async () => {
+    const onJump = vi.fn()
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: '1',
+          notebook: 'Work',
+          section: '',
+          page: 'A',
+          file_date: '',
+          clean_content: 'hello'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump }
+    })
+    await vi.waitFor(() => {
+      expect(screen.getByRole('option', { name: 'Work' })).toBeInTheDocument()
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'hello' } })
+    await vi.waitFor(() => {
+      expect(mocks.SearchBlocksPaged).toHaveBeenCalled()
+    })
+
+    const notebookSelect = screen.getByLabelText('Filter by notebook')
+    notebookSelect.focus()
+    const enterEvt = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true
+    })
+    window.dispatchEvent(enterEvt)
+    // Capture handler must not preventDefault / jump when select is focused.
+    expect(enterEvt.defaultPrevented).toBe(false)
+    expect(onJump).not.toHaveBeenCalled()
+
+    const tagInput = screen.getByLabelText('Filter by tag')
+    tagInput.focus()
+    const arrowEvt = new KeyboardEvent('keydown', {
+      key: 'ArrowDown',
+      bubbles: true,
+      cancelable: true
+    })
+    window.dispatchEvent(arrowEvt)
+    expect(arrowEvt.defaultPrevented).toBe(false)
+  })
+
   it('sends empty notebook/tag when filters are cleared (#655)', async () => {
     render(SearchModal, {
       props: { onClose: vi.fn(), onJump: vi.fn() }

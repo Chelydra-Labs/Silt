@@ -178,7 +178,15 @@
     cursor: pointer;
   }
 
-  .bubble-btn:hover,
+  .bubble-btn:hover {
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-start) 20%,
+      transparent
+    );
+    color: var(--color-text-primary);
+  }
+
   .bubble-btn:focus-visible {
     background: color-mix(
       in srgb,
@@ -186,7 +194,8 @@
       transparent
     );
     color: var(--color-text-primary);
-    outline: none;
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: 1px;
   }
 
   .bubble-btn.active {

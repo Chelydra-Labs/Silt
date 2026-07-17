@@ -413,8 +413,11 @@ describe('TemplatePicker (#55)', () => {
       })
     )
 
+    // Rename the field after collision — Open existing must still use Standup.
+    await fireEvent.input(input, { target: { value: 'Standup 2' } })
     await fireEvent.click(screen.getByText('Open existing'))
     expect(onCreatedPage).toHaveBeenCalledWith('Standup')
+    expect(onCreatedPage).not.toHaveBeenCalledWith('Standup 2')
     expect(onClose).toHaveBeenCalled()
   })
 
