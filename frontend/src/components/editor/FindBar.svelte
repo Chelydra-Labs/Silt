@@ -72,6 +72,10 @@
     if (e.key === 'Escape') {
       e.preventDefault()
       close()
+    } else if (e.key === 'Enter' && e.altKey) {
+      // Alt+Enter → Replace All when the replace row is open (#656).
+      e.preventDefault()
+      if (findBarState.replaceOpen) doReplaceAll()
     } else if (e.key === 'Enter') {
       e.preventDefault()
       if (!editor || !query) return
@@ -224,12 +228,13 @@
       <input
         type="text"
         aria-label="Replace with"
-        aria-keyshortcuts="Ctrl+H"
+        aria-keyshortcuts="Alt+Enter"
         placeholder="Replace"
         autocomplete="off"
         spellcheck="false"
         bind:value={replaceValue}
         class="find-input"
+        onkeydown={handleKeydown}
       />
       <button
         type="button"
@@ -266,9 +271,13 @@
     } else if (e.altKey && (e.key === 'w' || e.key === 'W')) {
       e.preventDefault()
       wholeWord = !wholeWord
-    } else if (e.altKey && (e.key === 'r' || e.key === 'R')) {
+    } else if (e.altKey && (e.key === 'r' || e.key === 'R') && !e.shiftKey) {
+      // Alt+R toggles regex; Alt+Enter is replace-all (handled on inputs).
       e.preventDefault()
       regexp = !regexp
+    } else if (e.altKey && e.key === 'Enter' && findBarState.replaceOpen) {
+      e.preventDefault()
+      doReplaceAll()
     }
   }}
 />
