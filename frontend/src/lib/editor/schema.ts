@@ -310,7 +310,118 @@ export const NoteBlock = Node.create({
   },
 
   addInputRules() {
+    // Markdown-as-you-type (#657). Order matters: callout before generic quote.
+    // Handlers mirror task/bullet rules — only fire at start of a noteBlock.
+    type IRArgs = Parameters<NonNullable<InputRule['handler']>>[0]
+    const atNoteStart = (state: IRArgs['state'], range: IRArgs['range']) => {
+      const $start = state.doc.resolve(range.from)
+      if ($start.parentOffset !== range.from - $start.start()) return null
+      const depth = $start.depth
+      const nodePos = $start.before(depth)
+      const node = $start.node(depth)
+      if (node.type.name !== 'noteBlock') return null
+      return { nodePos, node }
+    }
+
+    const toCallout = (
+      state: IRArgs['state'],
+      nodePos: number,
+      node: { attrs: Record<string, unknown>; nodeSize: number },
+      variantRaw: string
+    ) => {
+      const calloutType = state.schema.nodes.calloutBlock
+      const paragraphType = state.schema.nodes.paragraph
+      if (!calloutType) return null
+      const variant = normalizeCalloutVariant(variantRaw)
+      const children = paragraphType ? [paragraphType.create()] : []
+      const callout = calloutType.create(
+        {
+          id: node.attrs.id,
+          variant,
+          file_date: node.attrs.file_date || ''
+        },
+        children
+      )
+      return state.tr.replaceWith(nodePos, nodePos + node.nodeSize, callout)
+    }
+
     return [
+      // Full paste/type path: `> [!note] ` before the generic `> ` rule can fire
+      // on a single keystroke (e.g. paste). Character-by-character typing hits
+      // `> ` first, then the quote-body rule below.
+      new InputRule({
+        find: /^>\s\[!([a-zA-Z0-9_-]+)\]\s$/,
+        handler: (({ state, range, match }: IRArgs) => {
+          const ctx = atNoteStart(state, range)
+          if (!ctx) return null
+          return toCallout(state, ctx.nodePos, ctx.node, match[1] ?? 'note')
+        }) as unknown as InputRule['handler']
+      }),
+      // After `> ` became a quote, typing `[!warning] ` promotes to callout.
+      new InputRule({
+        find: /^\[!([a-zA-Z0-9_-]+)\]\s$/,
+        handler: (({ state, range, match }: IRArgs) => {
+          const ctx = atNoteStart(state, range)
+          if (!ctx || !ctx.node.attrs.quote) return null
+          return toCallout(state, ctx.nodePos, ctx.node, match[1] ?? 'note')
+        }) as unknown as InputRule['handler']
+      }),
+      // Blockquote: `> ` → noteBlock quote attr (#657 / #188 model).
+      new InputRule({
+        find: /^>\s$/,
+        handler: (({ state, range }: IRArgs) => {
+          const ctx = atNoteStart(state, range)
+          if (!ctx) return null
+          const tr = state.tr.delete(range.from, range.to)
+          tr.setNodeMarkup(ctx.nodePos, undefined, {
+            ...ctx.node.attrs,
+            quote: '> ',
+            bullet: ''
+          })
+          return tr
+        }) as unknown as InputRule['handler']
+      }),
+      // Headings: `# ` … `###### ` → headerBlock depth (#657).
+      new InputRule({
+        find: /^(#{1,6})\s$/,
+        handler: (({ state, range, match }: IRArgs) => {
+          const ctx = atNoteStart(state, range)
+          if (!ctx) return null
+          const headerType = state.schema.nodes.headerBlock
+          if (!headerType) return null
+          const level = match[1]?.length ?? 1
+          const tr = state.tr.delete(range.from, range.to)
+          tr.setNodeMarkup(ctx.nodePos, headerType, {
+            id: ctx.node.attrs.id,
+            depth: level,
+            align: ctx.node.attrs.align || 'left',
+            file_date: ctx.node.attrs.file_date || ''
+          })
+          return tr
+        }) as unknown as InputRule['handler']
+      }),
+      // Code fence: ``` or ```lang + space/newline → codeBlock (#657).
+      new InputRule({
+        find: /^```([a-zA-Z0-9_+-]*)[\s\n]$/,
+        handler: (({ state, range, match }: IRArgs) => {
+          const ctx = atNoteStart(state, range)
+          if (!ctx) return null
+          const codeType = state.schema.nodes.codeBlock
+          if (!codeType) return null
+          const language = match[1] ?? ''
+          const codeNode = codeType.create({
+            id: ctx.node.attrs.id,
+            language,
+            file_date: ctx.node.attrs.file_date || ''
+          })
+          const tr = state.tr.replaceWith(
+            ctx.nodePos,
+            ctx.nodePos + ctx.node.nodeSize,
+            codeNode
+          )
+          return tr
+        }) as unknown as InputRule['handler']
+      }),
       new InputRule({
         find: /^\s*([-*+])\s$/,
         handler: (({
@@ -427,6 +538,30 @@ export const SiltBlockExtensions = [NoteBlock, TaskBlock, HeaderBlock]
 // `> [!variant]`, exactly like a quote — no parser change.
 export type CalloutVariant =
   'note' | 'info' | 'tip' | 'warning' | 'danger' | 'success' | 'quote'
+
+/** Normalize typed/Obsidian aliases to a Silt callout variant (#657). */
+export function normalizeCalloutVariant(raw: string): CalloutVariant {
+  const key = raw.trim().toLowerCase()
+  const aliases: Record<string, CalloutVariant> = {
+    note: 'note',
+    info: 'info',
+    tip: 'tip',
+    hint: 'tip',
+    important: 'tip',
+    warning: 'warning',
+    caution: 'warning',
+    attention: 'warning',
+    danger: 'danger',
+    error: 'danger',
+    failure: 'danger',
+    success: 'success',
+    check: 'success',
+    done: 'success',
+    quote: 'quote',
+    cite: 'quote'
+  }
+  return aliases[key] ?? 'note'
+}
 
 export const CALLOUT_VARIANTS: Record<
   CalloutVariant,

@@ -9,12 +9,15 @@ export {
   CalloutBlock,
   CodeBlock,
   MentionNode,
+  CALLOUT_VARIANTS,
+  normalizeCalloutVariant,
   SiltBlockExtensions,
   SiltInlineMarkExtensions,
   SiltColorMarkExtensions,
   SiltDetailsExtensions,
   SiltTableExtensions
 } from './schema'
+export type { CalloutVariant } from './schema'
 export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
 export {

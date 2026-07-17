@@ -11,7 +11,14 @@ import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { DOMParser as PmDOMParser, Node as PmNode } from '@tiptap/pm/model'
 import { SiltBlockExtensions } from './index'
-import { BlockReferenceNode, InlineMathNode, MentionNode } from './schema'
+import {
+  BlockReferenceNode,
+  CalloutBlock,
+  CodeBlock,
+  InlineMathNode,
+  MentionNode,
+  normalizeCalloutVariant
+} from './schema'
 
 function schemaFor() {
   const ed = new Editor({
@@ -267,5 +274,136 @@ describe('InlineMathNode input rule — $...$ auto-trigger (#328)', () => {
     // Surrounding prose survives.
     expect(editor.getText()).toBe('energy is  here')
     expect(countMathNodes(editor)).toBe(1)
+  })
+})
+
+// ---- Markdown-as-you-type input rules (#657) --------------------------------
+function makeMarkdownRuleEditor(): Editor {
+  return track(
+    new Editor({
+      extensions: [
+        StarterKit.configure({
+          // paragraph kept — calloutBlock content is block+ and seeds a paragraph.
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensions,
+        CalloutBlock,
+        CodeBlock
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          { type: 'noteBlock', attrs: { id: 'test-id', depth: 0, bullet: '' } }
+        ]
+      }
+    })
+  )
+}
+
+function firstBlockOfType(
+  editor: Editor,
+  type: string
+): { name: string; attrs: Record<string, unknown> } | null {
+  let found: { name: string; attrs: Record<string, unknown> } | null = null
+  editor.state.doc.forEach((node) => {
+    if (!found && node.type.name === type) {
+      found = {
+        name: node.type.name,
+        attrs: { ...node.attrs } as Record<string, unknown>
+      }
+    }
+  })
+  return found
+}
+
+describe('markdown-as-you-type input rules (#657)', () => {
+  it('normalizes callout variant aliases', () => {
+    expect(normalizeCalloutVariant('WARNING')).toBe('warning')
+    expect(normalizeCalloutVariant('error')).toBe('danger')
+    expect(normalizeCalloutVariant('hint')).toBe('tip')
+    expect(normalizeCalloutVariant('unknown-xyz')).toBe('note')
+  })
+
+  it('converts # / ## / ### prefixes to headerBlock depths', () => {
+    for (const level of [1, 2, 3, 4, 5, 6] as const) {
+      const editor = makeMarkdownRuleEditor()
+      typeText(editor, `${'#'.repeat(level)} `)
+      const header = firstBlockOfType(editor, 'headerBlock')
+      expect(header, `expected header for level ${level}`).not.toBeNull()
+      expect(header!.attrs.depth).toBe(level)
+    }
+  })
+
+  it('converts > space to a quote noteBlock', () => {
+    const editor = makeMarkdownRuleEditor()
+    typeText(editor, '> ')
+    const note = firstBlockOfType(editor, 'noteBlock')
+    expect(note).not.toBeNull()
+    expect(note!.attrs.quote).toBe('> ')
+    expect(note!.attrs.bullet).toBe('')
+  })
+
+  it('converts > then [!warning] space to calloutBlock (typed path)', () => {
+    // Character-by-character: `> ` becomes a quote first, then `[!warning] `
+    // promotes the quote note to a callout (#657).
+    const editor = makeMarkdownRuleEditor()
+    typeText(editor, '> [!warning] ')
+    const callout = firstBlockOfType(editor, 'calloutBlock')
+    expect(callout).not.toBeNull()
+    expect(callout!.attrs.variant).toBe('warning')
+  })
+
+  it('converts pasted > [!tip] space to calloutBlock in one match', () => {
+    const editor = makeMarkdownRuleEditor()
+    editor.commands.focus()
+    // Insert the full prefix then a trailing space via handleTextInput so the
+    // full-line callout rule can match without intermediate quote conversion.
+    editor.commands.insertContent('> [!tip]')
+    const pos = editor.state.selection.from
+    const handled = editor.view.someProp('handleTextInput', (f) =>
+      (
+        f as (
+          view: unknown,
+          from: number,
+          to: number,
+          text: string
+        ) => boolean | null
+      )(editor.view, pos, pos, ' ')
+    )
+    if (!handled) editor.commands.insertContent(' ')
+    const callout = firstBlockOfType(editor, 'calloutBlock')
+    expect(callout).not.toBeNull()
+    expect(callout!.attrs.variant).toBe('tip')
+  })
+
+  it('converts triple-backtick fence to codeBlock with language', () => {
+    const editor = makeMarkdownRuleEditor()
+    typeText(editor, '```ts ')
+    const code = firstBlockOfType(editor, 'codeBlock')
+    expect(code).not.toBeNull()
+    expect(code!.attrs.language).toBe('ts')
+  })
+
+  it('converts bare triple-backtick fence to codeBlock', () => {
+    const editor = makeMarkdownRuleEditor()
+    typeText(editor, '``` ')
+    const code = firstBlockOfType(editor, 'codeBlock')
+    expect(code).not.toBeNull()
+    expect(code!.attrs.language).toBe('')
+  })
+
+  it('still converts bullet markers (regression)', () => {
+    const editor = makeMarkdownRuleEditor()
+    typeText(editor, '- ')
+    const note = firstBlockOfType(editor, 'noteBlock')
+    expect(note).not.toBeNull()
+    expect(note!.attrs.bullet).toBe('- ')
   })
 })
