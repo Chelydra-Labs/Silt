@@ -279,7 +279,8 @@ registerSlashCommand({
 })
 
 // --- Callouts / admonitions (#180) ----------------------------------------
-// `/callout` opens a variant picker; the per-variant commands insert directly.
+// `/callout` inserts a default note callout; per-variant slash cmds insert
+// directly. Change variant later via the NodeView icon picker (#658).
 registerSlashCommand({
   id: 'callout',
   label: 'Callout',

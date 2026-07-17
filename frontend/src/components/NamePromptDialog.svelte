@@ -3,14 +3,19 @@
 
   /**
    * Named prompt dialog for Save as / Rename (#531). Focuses the text field
-   * on open; validates non-empty trim; Esc / backdrop cancel.
+   * on open; validates non-empty trim; Esc / backdrop cancel; Ctrl/Cmd+Enter
+   * submits (#662).
    */
   interface Props {
     title: string
     label?: string
     initialValue?: string
+    placeholder?: string
     confirmLabel?: string
     cancelLabel?: string
+    /** Server/async error shown under the field (parent keeps dialog open). */
+    errorMessage?: string
+    busy?: boolean
     onConfirm: (value: string) => void
     onCancel: () => void
     dataTestId?: string
@@ -20,8 +25,11 @@
     title,
     label = 'Name',
     initialValue = '',
+    placeholder = '',
     confirmLabel = 'Save',
     cancelLabel = 'Cancel',
+    errorMessage = '',
+    busy = false,
     onConfirm,
     onCancel,
     dataTestId
@@ -61,9 +69,13 @@
       onCancel()
       return
     }
-    if (e.key === 'Enter' && e.target === inputRef) {
+    // Enter or Ctrl/Cmd+Enter submits (#662).
+    if (
+      e.key === 'Enter' &&
+      (e.target === inputRef || e.ctrlKey || e.metaKey)
+    ) {
       e.preventDefault()
-      submit()
+      if (!busy) submit()
       return
     }
     if (e.key === 'Tab' && dialogRef) {
@@ -133,8 +145,10 @@
         type="text"
         class="mt-1.5 w-full h-9 px-2.5 rounded-md bg-surface-panel border border-surface-panel-border text-text-primary font-body-md text-type-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
         bind:value
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error && dataTestId
+        {placeholder}
+        disabled={busy}
+        aria-invalid={error || errorMessage ? true : undefined}
+        aria-describedby={(error || errorMessage) && dataTestId
           ? `${dataTestId}-error`
           : undefined}
         data-testid={dataTestId ? `${dataTestId}-input` : undefined}
@@ -142,14 +156,14 @@
           if (error) error = null
         }}
       />
-      {#if error}
+      {#if error || errorMessage}
         <p
           id={dataTestId ? `${dataTestId}-error` : undefined}
           class="mt-1.5 text-type-2xs font-label-sm text-status-danger"
           role="status"
           aria-live="polite"
         >
-          {error}
+          {error || errorMessage}
         </p>
       {/if}
     </div>
@@ -165,8 +179,9 @@
       <button
         type="button"
         onclick={submit}
+        disabled={busy}
         data-testid={dataTestId ? `${dataTestId}-confirm` : undefined}
-        class="px-4 py-2 rounded-lg font-label-sm-bold transition-all cursor-pointer border bg-accent-primary-start/20 border-accent-primary-start/40 text-text-primary hover:brightness-110"
+        class="px-4 py-2 rounded-lg font-label-sm-bold transition-all cursor-pointer border bg-accent-primary-start/20 border-accent-primary-start/40 text-text-primary hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {confirmLabel}
       </button>

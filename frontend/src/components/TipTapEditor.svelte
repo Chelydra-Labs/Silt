@@ -69,6 +69,7 @@
   } from '../lib/editor'
   import { DistinctOwners } from '../../bindings/silt/app.js'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
+  import ChoiceDialog from './ChoiceDialog.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
   import { OpenDevTools } from '../../bindings/silt/app.js'
   import { pushNotification } from '../notifications/store.svelte'
@@ -174,6 +175,9 @@
     }
   })
   let showTemplatePicker = $state(false)
+  // Pending template insert when the page is non-empty and the cursor is not
+  // at the end (#664). ChoiceDialog offers insert-at-cursor vs append-to-end.
+  let pendingTemplateBlocks = $state<ParsedBlock[] | null>(null)
   // Block-embed picker (#593): selecting /embed opens BlockPickerModal; picking
   // a block inserts a complete {{embed:UUID}} token (rendered as a live
   // EmbedPortal by the existing tokenizer/NodeView pipeline).
@@ -1335,15 +1339,69 @@
     }
   }
 
-  // Insert rendered template blocks at the cursor. Called by the TemplatePicker
-  // (insert mode) via onInsertBlocks. The blocksToDoc converter produces
-  // ProseMirror node JSON; insertContent inserts at the current selection.
-  // UniqueBlockIds (appendTransaction) guards against any UUID collision.
-  function handleTemplateInsert(blocks: ParsedBlock[]): void {
+  // True when the page has no meaningful content (empty trailing note only).
+  function isEditorEffectivelyEmpty(editor: Editor): boolean {
+    const text = editor.state.doc.textContent.trim()
+    if (text.length > 0) return false
+    // Allow a single empty note/header; anything else counts as non-empty.
+    let blockCount = 0
+    editor.state.doc.forEach(() => {
+      blockCount += 1
+    })
+    return blockCount <= 1
+  }
+
+  // Cursor is at (or past) the end of the last block's content.
+  function isCursorAtDocEnd(editor: Editor): boolean {
+    const from = editor.state.selection.$from
+    const end = editor.state.doc.content.size
+    // Selection at or after the last position inside the doc.
+    return from.pos >= end - 1
+  }
+
+  function insertTemplateBlocks(
+    blocks: ParsedBlock[],
+    mode: 'cursor' | 'append'
+  ): void {
     if (!editorInstance || editorInstance.isDestroyed) return
     const doc = blocksToDoc(blocks)
-    editorInstance.commands.insertContent(doc.content)
+    if (mode === 'append') {
+      const end = editorInstance.state.doc.content.size
+      editorInstance.commands.insertContentAt(end, doc.content)
+    } else {
+      editorInstance.commands.insertContent(doc.content)
+    }
     editorInstance.commands.focus()
+  }
+
+  // Insert rendered template blocks. Empty pages insert immediately; non-empty
+  // pages with the cursor mid-content confirm first (#664).
+  function handleTemplateInsert(blocks: ParsedBlock[]): void {
+    if (!editorInstance || editorInstance.isDestroyed) return
+    if (
+      isEditorEffectivelyEmpty(editorInstance) ||
+      isCursorAtDocEnd(editorInstance)
+    ) {
+      insertTemplateBlocks(blocks, 'cursor')
+      return
+    }
+    pendingTemplateBlocks = blocks
+  }
+
+  function confirmTemplateAtCursor(): void {
+    if (!pendingTemplateBlocks) return
+    insertTemplateBlocks(pendingTemplateBlocks, 'cursor')
+    pendingTemplateBlocks = null
+  }
+
+  function confirmTemplateAppend(): void {
+    if (!pendingTemplateBlocks) return
+    insertTemplateBlocks(pendingTemplateBlocks, 'append')
+    pendingTemplateBlocks = null
+  }
+
+  function cancelTemplateInsert(): void {
+    pendingTemplateBlocks = null
   }
 
   // --- Block embed picker (#593) -------------------------------------------
@@ -1979,6 +2037,19 @@
     mode="insert"
     onClose={() => (showTemplatePicker = false)}
     onInsertBlocks={handleTemplateInsert}
+  />
+{/if}
+
+{#if pendingTemplateBlocks}
+  <ChoiceDialog
+    title="Insert template?"
+    message="This page already has content. Insert the template at the cursor, or append it at the end?"
+    primaryLabel="Insert at cursor"
+    secondaryLabel="Append to end"
+    dataTestId="template-insert-choice"
+    onPrimary={confirmTemplateAtCursor}
+    onSecondary={confirmTemplateAppend}
+    onCancel={cancelTemplateInsert}
   />
 {/if}
 
