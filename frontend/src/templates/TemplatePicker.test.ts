@@ -290,6 +290,85 @@ describe('TemplatePicker (#55)', () => {
     expect(onInsertBlocks).not.toHaveBeenCalled()
   })
 
+  it('blocks create when a required placeholder is empty (#650)', async () => {
+    const { CreatePageFromTemplate } =
+      await import('../../bindings/silt/app.js')
+    const createFn = CreatePageFromTemplate as ReturnType<typeof vi.fn>
+    createFn.mockClear()
+    mocks.setTemplateStatus.mockClear()
+    const onCreatedPage = vi.fn()
+    render(TemplatePicker, {
+      props: {
+        mode: 'new-page',
+        notebook: 'Work',
+        section: '',
+        onClose: vi.fn(),
+        onCreatedPage
+      }
+    })
+    await fireEvent.click(screen.getByText('Meeting Notes'))
+    expect(screen.getByText('Placeholders')).toBeInTheDocument()
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'Standup' } })
+    await fireEvent.click(screen.getByText('Create Page'))
+    await vi.waitFor(() => {
+      expect(mocks.setTemplateStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'error',
+          message: expect.stringContaining('meeting_title')
+        })
+      )
+    })
+    expect(createFn).not.toHaveBeenCalled()
+    expect(onCreatedPage).not.toHaveBeenCalled()
+    expect(screen.getByText('Required')).toBeInTheDocument()
+  })
+
+  it('surfaces page_exists with open-existing choice (#652)', async () => {
+    const { CreatePageFromTemplate } =
+      await import('../../bindings/silt/app.js')
+    const createFn = CreatePageFromTemplate as ReturnType<typeof vi.fn>
+    createFn.mockReset()
+    createFn.mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({
+          code: 'page_exists',
+          message: 'a page named "Standup" already exists'
+        })
+      )
+    )
+    mocks.setTemplateStatus.mockClear()
+    const onCreatedPage = vi.fn()
+    const onClose = vi.fn()
+    render(TemplatePicker, {
+      props: {
+        mode: 'new-page',
+        notebook: 'Work',
+        section: '',
+        onClose,
+        onCreatedPage
+      }
+    })
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: 'Standup' } })
+    await fireEvent.click(screen.getByText('Create Page'))
+    await vi.waitFor(() => {
+      expect(screen.getByText('Open existing')).toBeInTheDocument()
+    })
+    expect(onCreatedPage).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(mocks.setTemplateStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'error',
+        message: expect.stringContaining('already exists')
+      })
+    )
+
+    await fireEvent.click(screen.getByText('Open existing'))
+    expect(onCreatedPage).toHaveBeenCalledWith('Standup')
+    expect(onClose).toHaveBeenCalled()
+  })
+
   it('groups plugin templates under Plugins / <plugin_id> (#96)', () => {
     mocks.templatesState.items.push({
       id: 'kanban-sprint',

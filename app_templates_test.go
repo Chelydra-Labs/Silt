@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -388,16 +389,24 @@ func TestCreatePageFromTemplate_IPC_DoesNotClobber(t *testing.T) {
 	os.MkdirAll(filepath.Join(app.vaultPath, "Work", "Projects"), 0o755)
 	// Pre-create the page.
 	existing := filepath.Join(app.vaultPath, "Work", "Projects", "Existing.md")
-	writeFile(t, existing, "---\nnotebook: Work\nsection: Projects\npage: Existing\ndate: 2026-01-01\ntags: []\n---\n# Existing content\n")
+	original := "---\nnotebook: Work\nsection: Projects\npage: Existing\ndate: 2026-01-01\ntags: []\n---\n# Existing content\n"
+	writeFile(t, existing, original)
 
 	_, err := app.CreatePageFromTemplate("Work", "Projects", "Existing", "", "notes", map[string]string{"title": "Should Not Override"})
-	if err != nil {
-		t.Fatalf("CreatePageFromTemplate on existing: %v", err)
+	if err == nil {
+		t.Fatal("CreatePageFromTemplate on existing page should return page_exists error")
 	}
-	// The existing file should be untouched.
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodePageExists {
+		t.Fatalf("error = %v, want IPCError code %q", err, CodePageExists)
+	}
+	// The existing file should be byte-identical (no clobber).
 	raw, _ := os.ReadFile(existing)
-	if strings.Contains(string(raw), "Should Not Override") {
+	if string(raw) != original {
 		t.Error("CreatePageFromTemplate should not clobber an existing page")
+	}
+	if strings.Contains(string(raw), "Should Not Override") {
+		t.Error("CreatePageFromTemplate should not write template content over existing page")
 	}
 }
 

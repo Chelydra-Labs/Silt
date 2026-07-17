@@ -40,6 +40,10 @@ const (
 	// CodeCapabilityDenied: a plugin SDK binding was rejected for lack of a
 	// granted capability (plugins.CapabilityDeniedError).
 	CodeCapabilityDenied IPCErrorCode = "capability_denied"
+	// CodePageExists: CreatePageFromTemplate refused to write because the
+	// target page path already exists (no clobber; #652). Frontend offers
+	// rename or open-existing.
+	CodePageExists IPCErrorCode = "page_exists"
 )
 
 // IPCError carries a machine-readable Code across the Wails boundary so the

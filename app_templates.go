@@ -243,7 +243,11 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 		return "", fmt.Errorf("failed to create parent directory: %w", err)
 	}
 	if _, err := os.Stat(filePath); err == nil {
-		return safeDate, nil // already exists — don't clobber
+		// Do not clobber; signal so the picker can offer rename / open existing (#652).
+		return "", NewIPCError(
+			CodePageExists,
+			fmt.Sprintf("a page named %q already exists", safePage),
+		)
 	}
 
 	scaffoldFrontmatter := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
