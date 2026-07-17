@@ -255,14 +255,19 @@ func streamOpenAIConnectOnce(ctx context.Context, req CompleteRequest, baseURL s
 
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
+		// Capture cause BEFORE cancel() — cancel forces Canceled and would
+		// misclassify dial/TLS/refused as "stream canceled" (mirrors sendOnce).
+		cerr := attemptCtx.Err()
+		parentErr := ctx.Err()
 		cancel()
-		if errors.Is(attemptCtx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		switch {
+		case errors.Is(cerr, context.Canceled) || errors.Is(parentErr, context.Canceled):
 			return nil, 0, &AIError{Kind: ErrCanceled, Message: fmt.Sprintf("stream canceled: %v", err)}
-		}
-		if errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
+		case errors.Is(cerr, context.DeadlineExceeded):
 			return nil, 0, &AIError{Kind: ErrTimeout, Message: fmt.Sprintf("request timed out after %s: %v", perAttempt, err)}
+		default:
+			return nil, 0, &AIError{Kind: ErrUnreachable, Message: err.Error()}
 		}
-		return nil, 0, &AIError{Kind: ErrUnreachable, Message: err.Error()}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

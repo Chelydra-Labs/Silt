@@ -384,6 +384,50 @@ func TestCompleteStream_ToolConsumerCancel_IsCanceled(t *testing.T) {
 
 // --- #640: pre-byte streaming retry matrix (mirrors service_test.go) --------
 
+func TestCompleteStream_UnreachableIsTyped(t *testing.T) {
+	// Closed port on loopback: connection refused → ErrUnreachable, not
+	// ErrCanceled. Regression for cancel()-before-classify in streamOpenAIConnectOnce.
+	_, err := CompleteStream(context.Background(), CompleteRequest{
+		Provider: AIProvider{
+			BaseURL:      "http://127.0.0.1:1",
+			Model:        "m",
+			TimeoutMs:    intPtr(500),
+			ProviderType: ProviderOpenAICompatible,
+		},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	}, func(string) error { return nil }, nil)
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind != ErrUnreachable {
+		t.Errorf("kind = %q, want %q (message: %s)", e.Kind, ErrUnreachable, e.Message)
+	}
+}
+
+func TestCompleteStream_TimeoutIsTyped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+	}))
+	defer srv.Close()
+	_, err := CompleteStream(context.Background(), CompleteRequest{
+		Provider: AIProvider{
+			BaseURL:      srv.URL,
+			Model:        "m",
+			TimeoutMs:    intPtr(50),
+			ProviderType: ProviderOpenAICompatible,
+		},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	}, func(string) error { return nil }, nil)
+	e, ok := err.(*AIError)
+	if !ok {
+		t.Fatalf("want *AIError, got %T (%v)", err, err)
+	}
+	if e.Kind != ErrTimeout {
+		t.Errorf("kind = %q, want %q (message: %s)", e.Kind, ErrTimeout, e.Message)
+	}
+}
+
 func writeSSEOK(w http.ResponseWriter, content string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	fmt.Fprintf(w, "data: {\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", content)

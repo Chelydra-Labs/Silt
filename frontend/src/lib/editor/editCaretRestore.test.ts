@@ -13,6 +13,8 @@ function makeEditor(opts: {
   depth?: number
   pos?: number
   contentStart?: number
+  /** Per-depth content starts when the matched id is not at leaf depth. */
+  contentStarts?: Record<number, number>
   /** Extra ancestors from outer→inner (excluding the leaf block at depth). */
   ancestors?: { type: string; id?: string | null }[]
 }): any {
@@ -21,6 +23,7 @@ function makeEditor(opts: {
   const blockId = opts.blockId === undefined ? 'block-a' : opts.blockId
   const pos = opts.pos ?? 5
   const contentStart = opts.contentStart ?? 1
+  const contentStarts = opts.contentStarts ?? {}
   const ancestors = opts.ancestors ?? []
   return {
     state: {
@@ -29,7 +32,10 @@ function makeEditor(opts: {
         $from: {
           depth,
           pos,
-          start: (d: number) => (d === depth ? contentStart : 0),
+          start: (d: number) => {
+            if (contentStarts[d] !== undefined) return contentStarts[d]
+            return d === depth ? contentStart : 0
+          },
           node: (d: number) => {
             if (d === depth) {
               return {
@@ -116,13 +122,14 @@ describe('snapshotEditCaret', () => {
 
   it('captures caret inside a table via the table node id', () => {
     // Selection in a cell: paragraph (no id) → tableCell → tableRow → table(id)
+    // Matched id is table at depth 1; offset = pos - start(1) = 20 - 5 = 15.
     const snap = snapshotEditCaret(
       makeEditor({
         blockType: 'paragraph',
         blockId: null,
         depth: 4,
         pos: 20,
-        contentStart: 10,
+        contentStarts: { 1: 5 },
         ancestors: [
           { type: 'table', id: 'table-1' },
           { type: 'tableRow', id: null },
@@ -130,14 +137,7 @@ describe('snapshotEditCaret', () => {
         ]
       })
     )
-    // Nearest id is table at depth 1; start(1)=0 in stub → offset = pos - 0
-    // But we want offset relative to the table node. Stub returns contentStart
-    // only for d===depth (4). For table at d=1, start returns 0.
-    // Fix the stub: start should return contentStart for the matched depth.
-    // With current stub, offset = 20 - 0 = 20 when matching table at depth 1.
-    // That's acceptable for the identity assertion; re-check with better start.
-    expect(snap?.blockId).toBe('table-1')
-    expect(snap).not.toBeNull()
+    expect(snap).toEqual({ blockId: 'table-1', offsetInBlock: 15 })
   })
 
   it('prefers the innermost stable-id ancestor', () => {
