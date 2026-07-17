@@ -121,7 +121,16 @@ function normalizeAIError(err: unknown): {
         : typeof e.kind === 'string'
           ? e.kind
           : 'unknown'
-    const message = typeof e.message === 'string' ? e.message : String(err)
+    // Never String(object) — that yields "[object Object]" for IPC shapes
+    // that only carry code/kind without a message field.
+    const message =
+      typeof e.message === 'string' && e.message.trim()
+        ? e.message
+        : typeof e.error === 'string' && e.error.trim()
+          ? e.error
+          : code !== 'unknown'
+            ? code
+            : 'AI request failed'
     const status =
       typeof e.status === 'number' ? (e.status as number) : undefined
     return { code, status, message }
@@ -855,6 +864,13 @@ function createAIStream(
       resultReject = reject
     }
   )
+  // Error events reject resultPromise as soon as they arrive, often before
+  // the consumer awaits stream.result(). Attach a no-op handler so the
+  // interim rejection is not reported as "Uncaught (in promise)" while still
+  // letting later awaiters observe the same rejection.
+  void resultPromise.catch(() => {
+    /* handled when consumer awaits result() / iterator throws */
+  })
 
   const push = (item: QueueItem) => {
     queue.push(item)

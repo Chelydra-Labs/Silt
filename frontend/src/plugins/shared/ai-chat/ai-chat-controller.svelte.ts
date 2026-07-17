@@ -25,6 +25,7 @@ import { parseCitations } from '../../first-party/silt-ai-qa/rag'
 import type { RetrievedPassage } from '../../shared/retrieval/hybrid'
 import type { ToolEvidence } from '../../first-party/silt-ai-agent/tool-registry'
 import { createWritingCapability } from './capabilities/writing-capability'
+import { formatAIError } from '../formatAIError'
 
 export interface AIChatRequestOptions {
   selectionText?: string
@@ -504,11 +505,12 @@ export function createAIChatController(initialContext?: PluginContext) {
     } catch (error) {
       if (live()) {
         lastOutcome = 'error'
+        // PluginAIError is a plain object — String(error) is "[object Object]".
         append(
           statusEntry({
             role: 'system',
             status: 'error',
-            message: error instanceof Error ? error.message : String(error)
+            message: formatAIError(error)
           })
         )
       }

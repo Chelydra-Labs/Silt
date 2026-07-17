@@ -36,6 +36,7 @@ import {
 } from './tool-registry'
 import { confirmOperation, rejectOperation } from './staging'
 import { UNTRUSTED_CONTENT_SECURITY } from './security'
+import { formatAIError } from '../../shared/formatAIError'
 
 export const MAX_ITERATIONS = 8
 /** Tool result bodies above this many bytes are truncated for the model. */
@@ -559,9 +560,7 @@ export async function runAgent(
             const message =
               isAbortError(error) || cancelled()
                 ? 'Cancelled before tool completed.'
-                : error instanceof Error
-                  ? error.message
-                  : String(error)
+                : formatAIError(error)
             res = { content: '', error: message }
           }
           // The dispatch callback must never reject: a thrown UX/visible
