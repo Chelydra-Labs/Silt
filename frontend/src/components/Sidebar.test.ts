@@ -662,6 +662,52 @@ describe('Sidebar', () => {
     ).toBeInTheDocument()
   })
 
+  it('linked notebook context menu omits Rename (#653 review)', async () => {
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Synced',
+          source: 'linked:abc',
+          sections: []
+        },
+        { name: 'Work', sections: [] }
+      ]
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const switcher = screen
+      .getByText('Active Notebook')
+      .closest('[role="button"]')!
+    await fireEvent.click(switcher)
+    await flush()
+    const notebookBtn = screen.getAllByText('Synced')[0].closest('button')!
+    await fireEvent.contextMenu(notebookBtn)
+    await flush()
+
+    expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /Rename/i })).toBeNull()
+    expect(
+      screen.getByRole('menuitem', { name: /Reveal in file manager/i })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: /Unlink/i })
+    ).toBeInTheDocument()
+  })
+
   it('notebook context Rename opens Rename Notebook dialog (#653/#651)', async () => {
     mocks.listNavigation.mockResolvedValue(NAV_TREE)
     render(Sidebar, {

@@ -76,7 +76,7 @@ describe('SelectionBubble', () => {
     expect(getByLabelText('Italic').getAttribute('aria-checked')).toBe('false')
   })
 
-  it('navigates with ArrowRight and activates with Enter (#643)', async () => {
+  it('navigates with ArrowRight and activates with Enter when focused (#643)', async () => {
     const run = vi.fn()
     const toggleMark = vi.fn().mockReturnValue({ run })
     const chain = vi.fn(() => ({
@@ -97,14 +97,31 @@ describe('SelectionBubble', () => {
     })
 
     const menu = getByRole('menu', { name: 'Format selection' })
+    // Explicit focus (Tab/click) — bubble must not steal focus on show.
     getByLabelText('Bold').focus()
     await fireEvent.keyDown(menu, { key: 'ArrowRight' })
-    // focusIdx updates synchronously; Enter activates the new index.
     await fireEvent.keyDown(menu, { key: 'Enter' })
     expect(toggleMark).toHaveBeenCalledWith('italic')
   })
 
-  it('Esc returns focus to the editor (#643)', async () => {
+  it('does not auto-focus a bubble button when selection appears', () => {
+    const editor = {
+      isActive: vi.fn(() => false),
+      chain: vi.fn()
+    } as any
+    const { getByLabelText } = render(SelectionBubble, {
+      props: {
+        editor,
+        activeMarks: new Set<string>(),
+        selectionEmpty: false,
+        selectionCoords: coords
+      }
+    })
+    // Focus stays outside the bubble until the user Tabs/clicks in.
+    expect(document.activeElement).not.toBe(getByLabelText('Bold'))
+  })
+
+  it('Esc returns focus to the editor when menu has focus (#643)', async () => {
     const run = vi.fn()
     const editor = {
       isActive: vi.fn(() => false),
@@ -113,7 +130,7 @@ describe('SelectionBubble', () => {
       }))
     } as any
 
-    const { getByRole } = render(SelectionBubble, {
+    const { getByLabelText, getByRole } = render(SelectionBubble, {
       props: {
         editor,
         activeMarks: new Set<string>(),
@@ -121,6 +138,7 @@ describe('SelectionBubble', () => {
         selectionCoords: coords
       }
     })
+    getByLabelText('Bold').focus()
     const menu = getByRole('menu', { name: 'Format selection' })
     await fireEvent.keyDown(menu, { key: 'Escape' })
     expect(run).toHaveBeenCalled()

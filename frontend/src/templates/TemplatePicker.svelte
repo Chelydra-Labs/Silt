@@ -183,8 +183,11 @@
     for (const ph of placeholders) {
       if (!ph.required) continue
       if (AUTO_PLACEHOLDERS.has(ph.name)) continue
+      // Caller form value wins; otherwise a declared Default satisfies required
+      // the same way the backend renderer substitutes it when the var is omitted.
       const val = (placeholderValues[ph.name] ?? '').trim()
-      if (!val) return ph.name
+      const declaredDefault = (ph.default ?? '').trim()
+      if (!val && !declaredDefault) return ph.name
     }
     return null
   }
@@ -261,7 +264,8 @@
         if (
           ph.required &&
           !AUTO_PLACEHOLDERS.has(ph.name) &&
-          !(placeholderValues[ph.name] ?? '').trim()
+          !(placeholderValues[ph.name] ?? '').trim() &&
+          !(ph.default ?? '').trim()
         ) {
           next[ph.name] = 'Required'
         }

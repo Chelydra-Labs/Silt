@@ -1165,10 +1165,14 @@
   onClose={closeContextMenu}
   ariaLabel="Actions"
 >
-  <button type="button" onclick={handleContextRename} role="menuitem">
-    <span class="material-symbols-outlined text-icon-md">edit</span>
-    Rename
-  </button>
+  {#if !contextMenuUnlink}
+    <!-- Linked notebooks cannot be renamed in place (ARCHITECTURE §3.1);
+         RenameNotebook refuses them — omit the dead-end menu item. -->
+    <button type="button" onclick={handleContextRename} role="menuitem">
+      <span class="material-symbols-outlined text-icon-md">edit</span>
+      Rename
+    </button>
+  {/if}
   {#if contextMenu?.level === 'notebook'}
     <button type="button" onclick={handleContextReveal} role="menuitem">
       <span class="material-symbols-outlined text-icon-md">folder_open</span>

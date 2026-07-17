@@ -105,11 +105,13 @@
     }
   }
 
-  // When the bubble appears, move focus to the first action so keyboard users
-  // can operate it without a mouse (#643).
+  // Do NOT auto-focus when the bubble appears: mouse/Shift+Arrow selection
+  // must leave focus in the editor so typing replaces the selection and
+  // arrows keep extending it. Keyboard users Tab into the menu (first button
+  // has tabindex 0) or click a button; then arrow/Enter/Esc work (#643 review).
   $effect(() => {
     if (show) {
-      focusButton(0)
+      focusIdx = 0
     }
   })
 </script>

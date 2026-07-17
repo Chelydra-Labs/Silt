@@ -290,6 +290,55 @@ describe('TemplatePicker (#55)', () => {
     expect(onInsertBlocks).not.toHaveBeenCalled()
   })
 
+  it('allows create when required placeholder has a declared default', async () => {
+    const prevItems = mocks.templatesState.items
+    mocks.templatesState.items = [
+      {
+        id: 'with-default',
+        title: 'With Default',
+        description: '',
+        category: 'notes',
+        icon: 'note',
+        source: 'user',
+        placeholders: [
+          {
+            name: 'topic',
+            description: 'Topic',
+            required: true,
+            default: 'General'
+          } as any
+        ]
+      } as any
+    ]
+    try {
+      const { CreatePageFromTemplate } =
+        await import('../../bindings/silt/app.js')
+      const createFn = CreatePageFromTemplate as ReturnType<typeof vi.fn>
+      createFn.mockReset()
+      createFn.mockResolvedValue('2026-06-15')
+      const onCreatedPage = vi.fn()
+      render(TemplatePicker, {
+        props: {
+          mode: 'new-page',
+          notebook: 'Work',
+          section: '',
+          onClose: vi.fn(),
+          onCreatedPage
+        }
+      })
+      await fireEvent.click(screen.getByText('With Default'))
+      const input = screen.getByLabelText('Page name') as HTMLInputElement
+      await fireEvent.input(input, { target: { value: 'Note' } })
+      await fireEvent.click(screen.getByText('Create Page'))
+      await vi.waitFor(() => {
+        expect(createFn).toHaveBeenCalled()
+      })
+      expect(onCreatedPage).toHaveBeenCalledWith('Note')
+    } finally {
+      mocks.templatesState.items = prevItems
+    }
+  })
+
   it('blocks create when a required placeholder is empty (#650)', async () => {
     const { CreatePageFromTemplate } =
       await import('../../bindings/silt/app.js')
