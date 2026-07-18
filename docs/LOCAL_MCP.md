@@ -22,7 +22,7 @@ directly — tools call the same content paths as the app UI.
 | HTTP | Origin allowlist (localhost / empty); **required** `Content-Type: application/json` on POST (empty rejected). |
 | Stdio | `silt mcp` logs to **stderr only**; stdout is JSON-RPC only. |
 | Discovery | `silt mcp` reads `<UserConfigDir>/silt/mcp-endpoint.json` (written on host start) then falls back to port 17887. |
-| Health | `GET /health` is unauthenticated on loopback (presence only; no vault data). |
+| Health | `GET /health` is **intentionally unauthenticated** on loopback so `silt mcp` can discover a running host without the bearer token. It returns only a short presence/version string — no vault paths, tools, or secrets. Any local process can probe it; treat multi-tenant shared machines accordingly. |
 | Writes | Opt-in grant (`write_enabled`). No delete/move/bulk tools. |
 | Audit | `<vault>/.system/logs/mcp-audit.jsonl` — client, tool, vault path hash, outcome, redacted args (no note bodies). |
 

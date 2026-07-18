@@ -105,10 +105,13 @@ func (h *Host) Endpoint() string {
 }
 
 // Start brings up the MCP host for the given vault bridge and config.
-// Idempotent restart: Stop then start. When cfg.Enabled is false, only Stop.
+// Idempotent restart: stop then start. Endpoint discovery file is kept across
+// mid-restart so `silt mcp` does not lose the port during vault switch; it is
+// rewritten on successful HTTP bind and cleared on final stop / disable / bind failure.
 func (h *Host) Start(bridge Bridge, cfg Config) error {
 	cfg = NormalizeConfig(cfg)
-	h.Stop()
+	// Keep endpoint file during restart; clear only on terminal outcomes below.
+	h.stop(false)
 
 	h.mu.Lock()
 	h.cfg = cfg
@@ -117,12 +120,14 @@ func (h *Host) Start(bridge Bridge, cfg Config) error {
 	if !cfg.Enabled {
 		h.state = "disabled"
 		h.mu.Unlock()
+		ClearEndpointFile()
 		return nil
 	}
 	if bridge == nil || bridge.VaultPath() == "" {
 		h.state = "no_vault"
 		h.errMsg = "open a vault to start local MCP"
 		h.mu.Unlock()
+		ClearEndpointFile()
 		return nil
 	}
 	h.state = "starting"
@@ -131,6 +136,7 @@ func (h *Host) Start(bridge Bridge, cfg Config) error {
 	token, err := h.ensureToken()
 	if err != nil {
 		h.setError(fmt.Sprintf("auth token: %v", err))
+		ClearEndpointFile()
 		return err
 	}
 
@@ -171,8 +177,13 @@ func (h *Host) Start(bridge Bridge, cfg Config) error {
 	if cfg.HTTPEnabled {
 		if err := h.startHTTP(srv, token, cfg.HTTPPort); err != nil {
 			h.setError(err.Error())
+			// Listener is down; drop stale discovery so clients do not dial a dead port.
+			ClearEndpointFile()
 			return err
 		}
+	} else {
+		// No HTTP listener — stdio proxy cannot dial; clear any prior endpoint.
+		ClearEndpointFile()
 	}
 
 	h.mu.Lock()
@@ -198,8 +209,17 @@ func (h *Host) RunStdio(ctx context.Context) error {
 	return srv.Run(ctx, &mcpsdk.StdioTransport{})
 }
 
-// Stop drains and closes the HTTP listener. Safe when not running.
+// Stop drains and closes the HTTP listener and clears the discovery endpoint
+// file. Safe when not running. Prefer Start's internal stop(false) for restarts.
 func (h *Host) Stop() {
+	h.stop(true)
+}
+
+// stop shuts down HTTP resources. When clearEndpoint is true, removes the
+// discovery file (final stop / disable). When false, leaves the file so a
+// concurrent silt mcp discovery still sees the last-known port until the new
+// Start rewrites it or clears on failure.
+func (h *Host) stop(clearEndpoint bool) {
 	h.mu.Lock()
 	httpSrv := h.httpSrv
 	ln := h.listener
@@ -222,7 +242,9 @@ func (h *Host) Stop() {
 	if ln != nil {
 		_ = ln.Close()
 	}
-	ClearEndpointFile()
+	if clearEndpoint {
+		ClearEndpointFile()
+	}
 	if aud != nil {
 		// Don't close MemoryAuditor shared across tests (Options.Auditor).
 		if _, ok := aud.(*MemoryAuditor); !ok {

@@ -490,12 +490,67 @@ func TestEndpointFile_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestHost_RestartKeepsEndpointUntilRewrite ensures vault-switch restart does
+// not wipe the discovery file before the new listener is up (and rewrites it).
+func TestHost_RestartKeepsEndpointUntilRewrite(t *testing.T) {
+	kr := keyring.NewFake()
+	h := NewHost(Options{Keyring: kr, Auditor: &MemoryAuditor{}, Version: "test"})
+	p1 := freePort(t)
+	if err := h.Start(&fakeBridge{path: t.TempDir()}, Config{Enabled: true, HTTPEnabled: true, HTTPPort: p1}); err != nil {
+		t.Fatal(err)
+	}
+	ep1 := h.Endpoint()
+	if ep1 == "" {
+		t.Fatal("expected endpoint after first start")
+	}
+	if err := WriteEndpointFile(ep1); err != nil {
+		t.Skipf("endpoint file: %v", err)
+	}
+	// Mid-restart stop must not clear the file.
+	h.stop(false)
+	if got := ReadEndpointFile(); got != ep1 {
+		t.Fatalf("after stop(false) endpoint file=%q want %q", got, ep1)
+	}
+	p2 := freePort(t)
+	if err := h.Start(&fakeBridge{path: t.TempDir()}, Config{Enabled: true, HTTPEnabled: true, HTTPPort: p2}); err != nil {
+		t.Fatal(err)
+	}
+	defer h.Stop()
+	ep2 := h.Endpoint()
+	if ep2 == "" || ep2 == ep1 {
+		// Ports differ so endpoints should differ; file should match new.
+		t.Logf("ep1=%s ep2=%s", ep1, ep2)
+	}
+	if got := ReadEndpointFile(); got != ep2 {
+		t.Fatalf("after restart endpoint file=%q want %q", got, ep2)
+	}
+}
+
+func TestHost_DisableClearsEndpointFile(t *testing.T) {
+	kr := keyring.NewFake()
+	h := NewHost(Options{Keyring: kr, Auditor: &MemoryAuditor{}, Version: "test"})
+	port := freePort(t)
+	if err := h.Start(&fakeBridge{path: t.TempDir()}, Config{Enabled: true, HTTPEnabled: true, HTTPPort: port}); err != nil {
+		t.Fatal(err)
+	}
+	if ReadEndpointFile() == "" {
+		t.Skip("endpoint file not written (config dir?)")
+	}
+	if err := h.Start(&fakeBridge{path: t.TempDir()}, Config{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadEndpointFile(); got != "" {
+		t.Fatalf("expected cleared endpoint after disable, got %q", got)
+	}
+}
+
 func TestRedactArgs_NoBodies(t *testing.T) {
 	m := RedactArgs(map[string]any{
-		"query":    "secret note body text",
-		"notebook": "Work",
-		"text":     "should not appear",
-		"blocks":   []any{1, 2, 3},
+		"query":     "secret note body text",
+		"notebook":  "Work",
+		"text":      "should not appear",
+		"blocks":    []any{1, 2, 3},
+		"block_ids": []string{"id-a", "id-b"},
 	})
 	raw, _ := json.Marshal(m)
 	s := string(raw)
@@ -507,6 +562,53 @@ func TestRedactArgs_NoBodies(t *testing.T) {
 	}
 	if m["blocks_count"] != 3 {
 		t.Fatalf("blocks_count: %v", m["blocks_count"])
+	}
+	ids, ok := m["block_ids"].([]string)
+	if !ok || len(ids) != 2 || ids[0] != "id-a" {
+		t.Fatalf("block_ids: %v", m["block_ids"])
+	}
+}
+
+func TestTools_UpdateBlocksAuditsBlockIDsAndTypeDefault(t *testing.T) {
+	bridge := &fakeBridge{path: t.TempDir()}
+	cs, aud := connectTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "update_blocks",
+		Arguments: map[string]any{
+			"notebook": "Work",
+			"section":  "Sec",
+			"page":     "P",
+			"blocks": []any{
+				map[string]any{"id": "blk-1", "text": "no type field"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("%s", toolText(t, res))
+	}
+	var found bool
+	for _, e := range aud.Entries {
+		if e.Tool != "update_blocks" || e.Outcome != "ok" {
+			continue
+		}
+		found = true
+		meta := e.ArgsMeta
+		if meta == nil {
+			t.Fatalf("expected ArgsMeta on audit entry: %+v", e)
+		}
+		if meta["type_defaulted_count"] == nil {
+			t.Fatalf("expected type_defaulted_count in audit: %+v", meta)
+		}
+		raw, _ := json.Marshal(meta)
+		if !strings.Contains(string(raw), "blk-1") {
+			t.Fatalf("expected block id in audit meta: %s", raw)
+		}
+	}
+	if !found {
+		t.Fatalf("no ok update_blocks audit: %+v", aud.Entries)
 	}
 }
 

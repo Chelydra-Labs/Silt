@@ -278,7 +278,19 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		Name:        "update_blocks",
 		Description: "Identity-preserving page update: replace page blocks. Prefer keeping existing block ids. Requires write grant. Confirm before edits. No delete/move/bulk tools exist.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in updateBlocksIn) (*mcp.CallToolResult, any, error) {
-		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "blocks": make([]any, len(in.Blocks))}
+		blockIDs := make([]string, 0, len(in.Blocks))
+		for _, b := range in.Blocks {
+			if id := strings.TrimSpace(b.ID); id != "" {
+				blockIDs = append(blockIDs, id)
+			}
+		}
+		args := map[string]any{
+			"notebook":  in.Notebook,
+			"section":   in.Section,
+			"page":      in.Page,
+			"blocks":    make([]any, len(in.Blocks)),
+			"block_ids": blockIDs,
+		}
 		if !env.writeOK() {
 			env.record("update_blocks", "denied", "write not granted", args)
 			return toolErr("write tools are disabled — enable write grant in Silt Settings → AI → Local MCP")
@@ -296,6 +308,7 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 			return toolErr(fmt.Sprintf("at most %d blocks per update", MaxBlocksRead))
 		}
 		parsed := make([]parser.ParsedBlock, 0, len(in.Blocks))
+		typeDefaulted := 0
 		for i, b := range in.Blocks {
 			if utf8.RuneCountInString(b.Text) > MaxBlockTextRunes {
 				env.record("update_blocks", "error", "block too large", args)
@@ -303,7 +316,9 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 			}
 			bt := parser.BlockType(strings.ToUpper(strings.TrimSpace(b.Type)))
 			if bt == "" {
+				// Explicit omit → NOTE; garbage types still hard-error below.
 				bt = parser.BlockNote
+				typeDefaulted++
 			}
 			if bt != parser.BlockTask && bt != parser.BlockNote && bt != parser.BlockHeader {
 				env.record("update_blocks", "error", "bad type", args)
@@ -316,6 +331,9 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 				CleanText: b.Text,
 			}
 			parsed = append(parsed, pb)
+		}
+		if typeDefaulted > 0 {
+			args["type_defaulted_count"] = typeDefaulted
 		}
 		if err := env.bridge.UpdateBlocks(ctx, in.Notebook, in.Section, in.Page, parsed); err != nil {
 			env.record("update_blocks", "error", err.Error(), args)

@@ -125,6 +125,24 @@ func RedactArgs(args map[string]any) map[string]any {
 			default:
 				out["blocks_present"] = true
 			}
+		case "block_ids":
+			// Non-secret UUIDs for forensic correlation with read_page.
+			switch ids := v.(type) {
+			case []string:
+				out["block_ids"] = ids
+				out["block_ids_count"] = len(ids)
+			case []any:
+				clean := make([]string, 0, len(ids))
+				for _, id := range ids {
+					if s, ok := id.(string); ok && s != "" {
+						clean = append(clean, s)
+					}
+				}
+				out["block_ids"] = clean
+				out["block_ids_count"] = len(clean)
+			default:
+				out["block_ids_present"] = true
+			}
 		default:
 			// Safe identifiers and numbers only.
 			switch v.(type) {
