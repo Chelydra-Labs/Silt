@@ -62,6 +62,8 @@
   let hasFocusLock = false
   /** Fingerprint of last applied external blocks (ids + raw_text). */
   let lastBlocksKey = $state<string | null>(null)
+  /** Fingerprint of blocks we just saved — skip false conflict on self-refresh. */
+  let lastSelfSavedKey: string | null = null
   let seedSeq = 0
 
   let lineCount = $derived(Math.max(1, buffer.split('\n').length))
@@ -110,6 +112,11 @@
       conflictPending = false
       saveError = null
       void seedFromDiskOrBlocks(next)
+    } else if (lastSelfSavedKey && key === lastSelfSavedKey) {
+      // Parent re-applied our own onBlocksSaved payload while the user kept
+      // typing — not an external conflict.
+      lastSelfSavedKey = null
+      lastBlocksKey = key
     } else {
       // Keep lastBlocksKey so we only surface once per external key change.
       lastBlocksKey = key
@@ -207,6 +214,9 @@
     savePhase = 'saving'
     try {
       const saved = await savePageMarkdown(notebook, section, page, md)
+      // Stamp before parent refresh so the blocks $effect can ignore self-saves
+      // when the user typed during the IPC round-trip.
+      lastSelfSavedKey = blocksKey(saved)
       // Only clear dirty if buffer still matches what we saved.
       if (buffer === md) {
         dirty = false
@@ -369,7 +379,45 @@
       <textarea
         class="source-code source-textarea"
         value={buffer}
+        wrap="off"
         oninput={onInput}
+        onkeydown={(e) => {
+          // Tab inserts indent; Shift+Tab removes a leading tab/spaces.
+          if (e.key !== 'Tab') return
+          e.preventDefault()
+          const ta = e.currentTarget as HTMLTextAreaElement
+          const start = ta.selectionStart
+          const end = ta.selectionEnd
+          const val = ta.value
+          if (e.shiftKey) {
+            const lineStart = val.lastIndexOf('\n', start - 1) + 1
+            const lead = val.slice(lineStart, lineStart + 2)
+            let remove = 0
+            if (lead.startsWith('\t')) remove = 1
+            else if (lead.startsWith('  ')) remove = 2
+            if (remove === 0) return
+            const next = val.slice(0, lineStart) + val.slice(lineStart + remove)
+            buffer = next
+            dirty = true
+            saveError = null
+            scheduleSave()
+            queueMicrotask(() => {
+              ta.selectionStart = ta.selectionEnd = Math.max(
+                lineStart,
+                start - remove
+              )
+            })
+            return
+          }
+          const next = val.slice(0, start) + '\t' + val.slice(end)
+          buffer = next
+          dirty = true
+          saveError = null
+          scheduleSave()
+          queueMicrotask(() => {
+            ta.selectionStart = ta.selectionEnd = start + 1
+          })
+        }}
         onfocus={() => {
           if (!hasFocusLock) void acquireLock()
         }}

@@ -22,6 +22,9 @@
   let triggerEl = $state<HTMLButtonElement | null>(null)
   let menuEl = $state<HTMLDivElement | null>(null)
   let activeIndex = $state(0)
+  let menuDomId = $derived(
+    `callout-variant-menu-${(node.attrs.id as string) || 'pending'}`
+  )
 
   function focusActiveMenuitem() {
     if (!menuEl) return
@@ -105,6 +108,12 @@
       e.preventDefault()
       const [key] = VARIANTS[activeIndex] ?? []
       if (key) selectVariant(key)
+      return
+    }
+    // Tab leaves the menu; close so focus does not land in the editor behind
+    // an open popup.
+    if (e.key === 'Tab') {
+      menuOpen = false
     }
   }
 </script>
@@ -122,6 +131,7 @@
       aria-label="Callout type: {cfg.label}. Change variant"
       aria-haspopup="menu"
       aria-expanded={menuOpen}
+      aria-controls={menuOpen ? menuDomId : undefined}
       contenteditable="false"
       onclick={(e) => {
         e.preventDefault()
@@ -136,6 +146,7 @@
     {#if menuOpen}
       <div
         bind:this={menuEl}
+        id={menuDomId}
         class="silt-callout-variant-menu absolute left-0 top-full z-50 mt-1 min-w-[10rem] rounded-lg border border-surface-panel-border bg-surface-panel shadow-xl py-1"
         role="menu"
         aria-label="Callout variant"

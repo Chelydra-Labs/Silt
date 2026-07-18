@@ -437,11 +437,17 @@ func TestSavePageMarkdown_PreservesFrontmatterAndRoundTrips(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 	written := string(writtenBytes)
-	if !strings.Contains(written, "notebook: Work") && !strings.Contains(written, `notebook: "Work"`) {
-		// Frontmatter may be quoted by renderer — accept either form.
-		if !strings.Contains(written, "---\n") {
-			t.Errorf("expected frontmatter preserved, got:\n%s", written)
-		}
+	// Frontmatter must lead the file (not a body thematic break).
+	if !strings.HasPrefix(written, "---\n") {
+		t.Fatalf("expected file to start with YAML frontmatter, got:\n%s", written)
+	}
+	endFM := strings.Index(written[4:], "\n---\n")
+	if endFM < 0 {
+		t.Fatalf("expected closing frontmatter fence, got:\n%s", written)
+	}
+	fmBlock := written[:endFM+8] // include both fences
+	if !strings.Contains(fmBlock, "notebook:") {
+		t.Errorf("frontmatter missing notebook key, got:\n%s", fmBlock)
 	}
 	if !strings.Contains(written, "# New heading") {
 		t.Errorf("expected new body, got:\n%s", written)
@@ -458,9 +464,9 @@ func TestSavePageMarkdown_PreservesFrontmatterAndRoundTrips(t *testing.T) {
 
 // TestSavePageMarkdown_SerializesAgainstMutateBlock locks the race window
 // where Source unmount flush and embed MutateBlock target the same page.
-// Both must complete without panic; final file must contain the source body
-// (last full-file writer) or the mutated line if MutateBlock won after —
-// either way the coordinator must not deadlock under concurrent load.
+// Contract: no deadlock under concurrent load; writers serialize on the
+// per-block + file locks. SavePageMarkdown's body is authoritative (it does
+// not merge concurrent MutateBlock text) — product conflict UX is Source-side.
 func TestSavePageMarkdown_SerializesAgainstMutateBlock(t *testing.T) {
 	app := newTestApp(t)
 	notebook, section, page := "Work", "Journal", "RacePage"

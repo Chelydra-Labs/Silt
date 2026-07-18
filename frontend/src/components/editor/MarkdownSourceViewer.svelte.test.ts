@@ -402,4 +402,53 @@ describe('MarkdownSourceViewer', () => {
       vi.useRealTimers()
     }
   })
+
+  it('does not show conflict when parent re-applies our own save while typing (#660)', async () => {
+    vi.useFakeTimers()
+    const savedBlocks = [mkBlock('# Saved body')]
+    let resolveSave!: (v: typeof savedBlocks) => void
+    mocks.savePageMarkdown.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve
+        })
+    )
+    try {
+      const { rerender } = render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page',
+          onBlocksSaved: (saved: ReturnType<typeof mkBlock>[]) => {
+            void rerender({
+              blocks: saved,
+              filePath: 'Work/Page.md',
+              notebook: 'Work',
+              section: 'Sec',
+              page: 'Page',
+              onBlocksSaved: () => {}
+            })
+          }
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => expect(screen.getByRole('textbox')).toBeTruthy())
+      const ta = screen.getByRole('textbox', { name: /markdown source/i })
+      await fireEvent.input(ta, { target: { value: '# First save' } })
+      await vi.advanceTimersByTimeAsync(500)
+      expect(mocks.savePageMarkdown).toHaveBeenCalled()
+      // Type again while IPC is in flight.
+      await fireEvent.input(ta, { target: { value: '# First save more' } })
+      resolveSave(savedBlocks)
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /keep mine/i })).toBeNull()
+      })
+      expect((ta as HTMLTextAreaElement).value).toBe('# First save more')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

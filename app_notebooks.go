@@ -964,9 +964,10 @@ func (a *App) FetchPageMarkdown(notebook, section, page string) (string, error) 
 // frontend can refresh without a second round-trip.
 //
 // Per-block write-intent locking mirrors SaveFileBlocks: we lock every block
-// currently on the page so a concurrent MutateBlock (e.g. embed edit) cannot
-// interleave with the full-file rewrite and get clobbered by a stale Source
-// buffer flush after focus-lease release.
+// currently on the page so a concurrent MutateBlock cannot interleave mid-
+// rewrite (no torn file / partial index). The body argument is authoritative —
+// SavePageMarkdown does not merge concurrent MutateBlock text into the buffer;
+// Source-mode conflict UI + focus lease own that product decision.
 func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]parser.ParsedBlock, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -1011,9 +1012,11 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 			}
 			frontmatter, _ := parser.SplitFrontmatter(string(contentBytes))
 			if frontmatter == "" {
+				// Match writePageFileLocked: quote the display names (not only
+				// sanitized path segments) so frontmatter stays user-facing.
 				today := time.Now().Format("2006-01-02")
 				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
-					strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
+					strconv.Quote(notebook), strconv.Quote(section), strconv.Quote(page), strconv.Quote(today))
 			}
 
 			// Body is the user-edited source. Normalize to end with a single newline.
