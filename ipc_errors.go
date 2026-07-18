@@ -47,6 +47,9 @@ const (
 	CodeInvalidNavigationPath IPCErrorCode = "invalid_navigation_path"
 	CodeNavigationNotFound    IPCErrorCode = "navigation_not_found"
 	CodeNavigationConflict    IPCErrorCode = "navigation_conflict"
+	CodeNavigationUnavailable IPCErrorCode = "navigation_unavailable"
+	CodeNavigationDuplicate   IPCErrorCode = "navigation_duplicate"
+	CodeNavigationReveal      IPCErrorCode = "navigation_reveal_failed"
 )
 
 // IPCError carries a machine-readable Code across the Wails boundary so the

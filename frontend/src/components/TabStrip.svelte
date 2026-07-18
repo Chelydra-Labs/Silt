@@ -2,8 +2,7 @@
   import type { TabEntry } from '../lib/tabs'
   import { fade, fly } from 'svelte/transition'
   import ContextMenu from './ContextMenu.svelte'
-  import { pushNotification } from '../notifications/store.svelte'
-  import { ResolvePageLink } from '../../bindings/silt/app.js'
+  import { copyPagePath, copyPageReference } from '../lib/pageActions'
 
   interface Props {
     tabs: TabEntry[]
@@ -76,37 +75,13 @@
   // Plain vault path — human-readable path only (sibling of wiki-link copy).
   async function handleCopyPagePath(tab: TabEntry): Promise<void> {
     closeContextMenu()
-    const path = [tab.notebook, tab.section, tab.page].filter(Boolean).join('/')
-    try {
-      await navigator.clipboard.writeText(path)
-    } catch {
-      pushNotification({
-        kind: 'error',
-        message: 'Copy failed: clipboard could not be written.'
-      })
-    }
+    await copyPagePath(tab)
   }
 
   // Wiki-link reference [[shortest-unique-path]] via ResolvePageLink (#545).
   async function handleCopyPageReference(tab: TabEntry): Promise<void> {
     closeContextMenu()
-    const full = [tab.notebook, tab.section, tab.page].filter(Boolean).join('/')
-    try {
-      const resolved = await ResolvePageLink(full)
-      const shortest =
-        resolved?.exists && resolved.shortest ? resolved.shortest : full
-      await navigator.clipboard.writeText(`[[${shortest}]]`)
-    } catch {
-      // Fall back to the full path form so copy still produces a useful link.
-      try {
-        await navigator.clipboard.writeText(`[[${full}]]`)
-      } catch {
-        pushNotification({
-          kind: 'error',
-          message: 'Copy failed: clipboard could not be written.'
-        })
-      }
-    }
+    await copyPageReference(tab)
   }
 
   // Roving tabindex: the active tab (or the first tab if none active) is the
@@ -266,8 +241,12 @@
           role="tab"
           id="silt-tab-{tab.id}"
           aria-selected={tab.id === activeTabId}
-          aria-controls="silt-tabpanel"
+          aria-controls={contextMenu.open && contextMenu.tab?.id === tab.id
+            ? 'silt-tabpanel tab-context-menu'
+            : 'silt-tabpanel'}
           aria-label={tabTooltip(tab)}
+          aria-haspopup="menu"
+          aria-expanded={contextMenu.open && contextMenu.tab?.id === tab.id}
           tabindex={i === focusedIndex ? 0 : -1}
           title={tabTooltip(tab)}
           class="tab-button group"
@@ -338,6 +317,7 @@
     anchorEl={contextMenu.anchorEl}
     onClose={closeContextMenu}
     ariaLabel="Tab actions"
+    menuId="tab-context-menu"
   >
     {#if contextMenu.tab}
       {@const targetTab = contextMenu.tab}

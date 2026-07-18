@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
   deleteSection: vi.fn(),
   deleteNotebook: vi.fn(),
   revealNotebookInOS: vi.fn(),
+  revealPageInOS: vi.fn(),
+  duplicatePage: vi.fn(),
+  resolvePageLink: vi.fn(),
   getNavOrder: vi.fn(),
   setNavNotebookOrder: vi.fn(),
   setNavSectionOrder: vi.fn(),
@@ -60,6 +63,9 @@ vi.mock('../../bindings/silt/app.js', () => ({
   DeleteSection: mocks.deleteSection,
   DeleteNotebook: mocks.deleteNotebook,
   RevealNotebookInOS: mocks.revealNotebookInOS,
+  RevealPageInOS: mocks.revealPageInOS,
+  DuplicatePage: mocks.duplicatePage,
+  ResolvePageLink: mocks.resolvePageLink,
   GetNavOrder: mocks.getNavOrder,
   SetNavNotebookOrder: mocks.setNavNotebookOrder,
   SetNavSectionOrder: mocks.setNavSectionOrder,
@@ -123,6 +129,13 @@ describe('Sidebar', () => {
     mocks.createNotebook.mockReset()
     mocks.createSection.mockReset()
     mocks.createPage.mockReset()
+    mocks.duplicatePage.mockReset().mockResolvedValue(undefined)
+    mocks.revealPageInOS.mockReset().mockResolvedValue(undefined)
+    mocks.revealNotebookInOS.mockReset().mockResolvedValue(undefined)
+    mocks.resolvePageLink.mockReset().mockResolvedValue({
+      exists: true,
+      shortest: 'Daily'
+    })
     mocks.renameSection.mockReset().mockResolvedValue(undefined)
     mocks.pickNotebookFolder.mockReset()
     mocks.getNavOrder.mockReset()
@@ -886,7 +899,7 @@ describe('Sidebar', () => {
       screen.getByRole('treeitem', { name: /Journal/ })
     )
     await fireEvent.click(
-      screen.getByRole('menuitem', { name: /New page in section/i })
+      screen.getByRole('menuitem', { name: /New Page Here/i })
     )
     await flush()
     expect(mocks.createPage).toHaveBeenCalledWith(
@@ -1143,5 +1156,334 @@ describe('Sidebar', () => {
     })
     expect(favorite).toBeDisabled()
     expect(screen.getByText('Linked notebook offline')).toBeInTheDocument()
+  })
+
+  it('duplicates a nested page and opens it through the supplied callback', async () => {
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Work',
+          sections: [
+            {
+              name: 'Projects',
+              path: 'Projects',
+              pages: [],
+              children: [
+                {
+                  name: 'Active',
+                  path: 'Projects/Active',
+                  pages: [{ name: 'Plan', count: 1 }]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    })
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [
+        { notebook: 'Work', path: 'Projects' },
+        { notebook: 'Work', path: 'Projects/Active' }
+      ],
+      recent_pages: [],
+      favorites: []
+    })
+    const onSelectPage = vi.fn()
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage,
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Plan' }))
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Duplicate/ }))
+    await fireEvent.input(screen.getByTestId('sidebar-action-prompt-input'), {
+      target: { value: 'Plan copy' }
+    })
+    await fireEvent.click(screen.getByTestId('sidebar-action-prompt-confirm'))
+    await flush()
+    expect(mocks.duplicatePage).toHaveBeenCalledWith(
+      'Work',
+      'Projects/Active',
+      'Plan',
+      'Plan copy'
+    )
+    expect(onSelectPage).toHaveBeenCalledWith(
+      'Work',
+      'Projects/Active',
+      'Plan copy'
+    )
+  })
+
+  it('keeps the duplicate prompt open with grounded typed conflict copy', async () => {
+    mocks.duplicatePage.mockRejectedValueOnce(
+      new Error('{"code":"navigation_conflict","message":"collision"}')
+    )
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Daily' }))
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Duplicate/ }))
+    await fireEvent.click(screen.getByTestId('sidebar-action-prompt-confirm'))
+    await flush()
+    expect(
+      screen.getByRole('dialog', { name: 'Duplicate Page' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('A page with that name already exists in this section.')
+    ).toBeInTheDocument()
+  })
+
+  it('copies page path and shortest reference with canonical nested identity', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const page = screen.getByRole('treeitem', { name: 'Daily' })
+    await fireEvent.contextMenu(page)
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Copy Page Path' })
+    )
+    expect(writeText).toHaveBeenLastCalledWith('Work/Journal/Daily')
+    await fireEvent.contextMenu(page)
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Copy Page Reference' })
+    )
+    await flush()
+    expect(mocks.resolvePageLink).toHaveBeenCalledWith('Work/Journal/Daily')
+    expect(writeText).toHaveBeenLastCalledWith('[[Daily]]')
+  })
+
+  it('creates a child section at the canonical parent path', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(
+      screen.getByRole('treeitem', { name: /Journal/ })
+    )
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: /New child section/ })
+    )
+    await fireEvent.input(screen.getByTestId('sidebar-action-prompt-input'), {
+      target: { value: 'Archive' }
+    })
+    await fireEvent.click(screen.getByTestId('sidebar-action-prompt-confirm'))
+    await flush()
+    expect(mocks.createSection).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Archive'
+    )
+  })
+
+  it('announces typed reveal failures and disables unavailable linked actions', async () => {
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Offline',
+          source: 'linked:x',
+          disconnected: true,
+          sections: [
+            {
+              name: 'Notes',
+              path: 'Notes',
+              pages: [{ name: 'Plan', count: 1 }]
+            }
+          ]
+        }
+      ]
+    })
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Offline', path: 'Notes' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Offline',
+        activeSection: 'Notes',
+        activePage: 'Plan',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Plan' }))
+    expect(screen.getByRole('menuitem', { name: /Duplicate/ })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: /Reveal/ })).toBeDisabled()
+    expect(
+      screen.getByRole('menuitem', { name: 'Copy Page Path' })
+    ).toBeEnabled()
+  })
+
+  it('surfaces a typed page reveal failure with grounded copy', async () => {
+    mocks.revealPageInOS.mockRejectedValueOnce(
+      new Error('{"code":"navigation_reveal_failed","message":"shell failed"}')
+    )
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Daily' }))
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Reveal/ }))
+    await flush()
+    expect(mocks.revealPageInOS).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Daily'
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The item could not be revealed in the file manager.'
+    )
+  })
+
+  it('copies and reveals a notebook through source-aware actions', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Synced',
+          source: 'linked:x',
+          root_path: '/mnt/synced',
+          sections: []
+        }
+      ]
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Synced',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.click(
+      screen.getByText('Active Notebook').closest('[role="button"]')!
+    )
+    const notebook = screen.getAllByText('Synced')[1].closest('button')!
+    await fireEvent.contextMenu(notebook)
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Copy Notebook Path' })
+    )
+    expect(writeText).toHaveBeenCalledWith('/mnt/synced')
+    await fireEvent.contextMenu(notebook)
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Reveal/ }))
+    expect(mocks.revealNotebookInOS).toHaveBeenCalledWith('Synced')
+  })
+
+  it('opens the tree context menu from the keyboard and restores trigger focus', async () => {
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const section = screen.getByRole('treeitem', { name: /Journal/ })
+    section.focus()
+    await fireEvent.keyDown(section, { key: 'F10', shiftKey: true })
+    expect(section).toHaveAttribute('aria-haspopup', 'menu')
+    expect(section).toHaveAttribute('aria-controls', 'sidebar-context-menu')
+    await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+    await flush()
+    expect(document.activeElement).toBe(section)
   })
 })

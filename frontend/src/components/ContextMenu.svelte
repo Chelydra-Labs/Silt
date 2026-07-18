@@ -23,6 +23,7 @@
     backdropTestId?: string
     /** Optional data-testid for the menu container (used by consumer tests). */
     menuTestId?: string
+    menuId?: string
     /** Menu item slot. */
     children?: Snippet
   }
@@ -35,6 +36,7 @@
     ariaLabel = 'Actions',
     backdropTestId,
     menuTestId,
+    menuId,
     children
   }: Props = $props()
 
@@ -219,6 +221,7 @@
       style:top={(menuPos?.top ?? anchor.y) + 'px'}
       style:visibility={menuPos ? 'visible' : 'hidden'}
       role="menu"
+      id={menuId}
       tabindex="-1"
       aria-label={ariaLabel}
       data-testid={menuTestId}

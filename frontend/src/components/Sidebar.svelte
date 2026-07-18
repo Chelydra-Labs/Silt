@@ -21,6 +21,8 @@
     DeleteNotebook,
     MovePage,
     RevealNotebookInOS,
+    RevealPageInOS,
+    DuplicatePage,
     GetNavigationPreferences,
     SetNavigationSectionExpanded,
     SetFavoritePage
@@ -59,6 +61,8 @@
   } from '../lib/sidebar/navActions'
   import ContextMenu from './ContextMenu.svelte'
   import NamePromptDialog from './NamePromptDialog.svelte'
+  import { coerceIPCError } from '../lib/ipcError'
+  import { copyPagePath, copyPageReference, copyText } from '../lib/pageActions'
   import SettingsNav from './settings/SettingsNav.svelte'
 
   import type { PluginContext, PluginManifest } from '../plugins/sdk'
@@ -155,6 +159,16 @@
   let newName = $state('')
   let createError = $state('')
   let creating = $state(false)
+  let actionPrompt = $state<{
+    kind: 'duplicate' | 'child-section'
+    notebook: string
+    section: string
+    page?: string
+    initialValue: string
+  } | null>(null)
+  let actionPromptError = $state('')
+  let actionBusy = $state(false)
+  let actionError = $state('')
 
   // Context menu state (#62)
   let contextMenu = $state<{
@@ -312,6 +326,24 @@
       section: contextMenu.section ?? '',
       page: contextMenu.page ?? ''
     }
+  })
+  let contextNotebook = $derived(
+    contextMenu ? findNotebook(tree, contextMenu.notebook) : undefined
+  )
+  let contextUnavailable = $derived(!!contextNotebook?.disconnected)
+  let contextMenuTargetId = $derived.by(() => {
+    if (!contextMenu) return ''
+    if (contextMenu.level === 'notebook') {
+      return `notebook:${encodeURIComponent(contextMenu.notebook)}`
+    }
+    if (contextMenu.level === 'section') {
+      return sectionNodeId(contextMenu.notebook, contextMenu.section ?? '')
+    }
+    return pageNodeId({
+      notebook: contextMenu.notebook,
+      section: contextMenu.section ?? '',
+      page: contextMenu.page ?? ''
+    })
   })
   let favoriteKeys = $derived(
     new Set(preferences.favorites.map((ref) => locatorKey(ref)))
@@ -804,7 +836,7 @@
         window.dispatchEvent(new CustomEvent('focus-page-title'))
       }, 100)
     } catch (e) {
-      console.error('CreatePage inline failed:', e)
+      actionError = navigationActionError(e, 'create')
     } finally {
       creating = false
     }
@@ -865,13 +897,22 @@
   }
 
   async function handleContextReveal() {
-    if (!contextMenu || contextMenu.level !== 'notebook') return
-    const notebook = contextMenu.notebook
+    if (!contextMenu || contextUnavailable) return
+    const target = contextMenu
     contextMenu = null
     try {
-      await RevealNotebookInOS(notebook)
+      if (target.level === 'notebook') {
+        await RevealNotebookInOS(target.notebook)
+      } else if (target.level === 'page') {
+        await RevealPageInOS(
+          target.notebook,
+          target.section ?? '',
+          target.page ?? ''
+        )
+      }
+      actionError = ''
     } catch (e) {
-      console.error('Reveal notebook failed:', e)
+      actionError = navigationActionError(e, 'reveal')
     }
   }
 
@@ -882,12 +923,128 @@
   }
 
   function handleContextNewPage() {
-    if (!contextMenu || contextMenu.level !== 'section') return
+    if (!contextMenu || contextMenu.level === 'notebook' || contextUnavailable)
+      return
     const section = contextMenu.section ?? ''
     contextMenu = null
     activeSection = section
     onSelectSection(section)
     void handleCreatePageInline(section)
+  }
+
+  function navigationActionError(
+    error: unknown,
+    action: 'duplicate' | 'reveal' | 'create'
+  ): string {
+    const parsed = coerceIPCError(error)
+    switch (parsed.code) {
+      case 'page_exists':
+      case 'navigation_conflict':
+        return action === 'duplicate'
+          ? 'A page with that name already exists in this section.'
+          : 'An item with that name already exists here.'
+      case 'invalid_navigation_path':
+        return 'That name cannot be used here.'
+      case 'navigation_not_found':
+        return 'That page is no longer available.'
+      case 'navigation_unavailable':
+        return 'This linked notebook is offline or unavailable.'
+      case 'navigation_reveal_failed':
+        return 'The item could not be revealed in the file manager.'
+      case 'navigation_duplicate':
+        return 'The page could not be duplicated.'
+      default:
+        return (
+          parsed.message ||
+          (action === 'reveal'
+            ? 'The item could not be revealed in the file manager.'
+            : 'The action could not be completed.')
+        )
+    }
+  }
+
+  function handleContextCopyPage(kind: 'path' | 'reference') {
+    const ref = contextMenuPageRef
+    contextMenu = null
+    if (!ref) return
+    void (kind === 'path' ? copyPagePath(ref) : copyPageReference(ref))
+  }
+
+  function handleContextCopyNotebook() {
+    if (!contextMenu || contextMenu.level !== 'notebook') return
+    const notebook = contextNotebook
+    const text = notebook?.root_path || contextMenu.notebook
+    contextMenu = null
+    void copyText(text)
+  }
+
+  function openDuplicatePrompt() {
+    if (!contextMenuPageRef || contextUnavailable) return
+    actionPrompt = {
+      kind: 'duplicate',
+      ...contextMenuPageRef,
+      initialValue: `${contextMenuPageRef.page} copy`
+    }
+    actionPromptError = ''
+    contextMenu = null
+  }
+
+  function openChildSectionPrompt() {
+    if (!contextMenu || contextMenu.level !== 'section' || contextUnavailable)
+      return
+    actionPrompt = {
+      kind: 'child-section',
+      notebook: contextMenu.notebook,
+      section: contextMenu.section ?? '',
+      initialValue: ''
+    }
+    actionPromptError = ''
+    contextMenu = null
+  }
+
+  function closeActionPrompt() {
+    if (actionBusy) return
+    actionPrompt = null
+    actionPromptError = ''
+  }
+
+  async function confirmActionPrompt(name: string) {
+    if (!actionPrompt) return
+    const prompt = actionPrompt
+    actionBusy = true
+    actionPromptError = ''
+    try {
+      if (prompt.kind === 'duplicate') {
+        await DuplicatePage(
+          prompt.notebook,
+          prompt.section,
+          prompt.page ?? '',
+          name
+        )
+        await loadNavigation()
+        onSelectPage(prompt.notebook, prompt.section, name)
+      } else {
+        await CreateSection(prompt.notebook, prompt.section, name)
+        const childPath = prompt.section ? `${prompt.section}/${name}` : name
+        await loadNavigation()
+        activeNotebook = prompt.notebook
+        activeSection = childPath
+        onSelectSection(childPath)
+        if (prompt.section && !expandedSections.has(prompt.section)) {
+          toggleSection(prompt.section)
+        }
+        if (!expandedSections.has(childPath)) toggleSection(childPath)
+      }
+      actionPrompt = null
+      actionError = ''
+    } catch (e) {
+      actionPromptError = navigationActionError(
+        e,
+        prompt.kind === 'duplicate' ? 'duplicate' : 'create'
+      )
+    } finally {
+      actionBusy = false
+    }
   }
 
   async function confirmDelete() {
@@ -1052,12 +1209,19 @@
             {:else}
               {#each tree.notebooks as nb (nb.name)}
                 <button
+                  id={`notebook-menu-${encodeURIComponent(nb.name)}`}
                   onclick={() => handleSelectNotebook(nb.name)}
                   oncontextmenu={(e) => {
-                    showNotebookDropdown = false
                     openContextMenu(e, 'notebook', nb.name)
                   }}
                   class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent"
+                  aria-haspopup="menu"
+                  aria-expanded={contextMenuTargetId ===
+                    `notebook:${encodeURIComponent(nb.name)}`}
+                  aria-controls={contextMenuTargetId ===
+                  `notebook:${encodeURIComponent(nb.name)}`
+                    ? 'sidebar-context-menu'
+                    : undefined}
                 >
                   <span
                     class="material-symbols-outlined text-accent-primary-start text-icon-lg"
@@ -1272,6 +1436,7 @@
                 {dropTarget}
                 {dragItem}
                 {focusedTreeItemId}
+                {contextMenuTargetId}
                 onTreeItemFocus={setFocusedTreeItem}
                 onToggleSection={toggleSection}
                 onSelectPage={handleSelectPage}
@@ -1355,6 +1520,15 @@
                       : -1}
                     aria-level="1"
                     aria-selected={isActive}
+                    aria-haspopup="menu"
+                    aria-controls={contextMenuTargetId ===
+                    pageNodeId({
+                      notebook: activeNotebook,
+                      section: '',
+                      page: pg.name
+                    })
+                      ? 'sidebar-context-menu'
+                      : undefined}
                   >
                     {#if isActive}
                       <span
@@ -1422,6 +1596,27 @@
       >
     </div>
   {/if}
+  {#if actionError}
+    <div
+      class="fixed bottom-4 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-2xl border border-status-danger/40 bg-surface-sidebar"
+      role="alert"
+      aria-live="assertive"
+    >
+      <span
+        class="material-symbols-outlined text-status-danger text-icon-lg"
+        aria-hidden="true">error</span
+      >
+      <span class="text-surface-sidebar-text text-type-md font-body-md"
+        >{actionError}</span
+      >
+      <button
+        type="button"
+        class="ml-2 border-none bg-transparent text-surface-sidebar-text-muted cursor-pointer"
+        aria-label="Dismiss error"
+        onclick={() => (actionError = '')}>Dismiss</button
+      >
+    </div>
+  {/if}
 
   <!-- Shared create/rename dialog (#662) — NamePromptDialog for all nav CRUD. -->
   {#if createMode}
@@ -1436,6 +1631,30 @@
       dataTestId="sidebar-name-prompt"
       onConfirm={(value) => void handleCreate(value)}
       onCancel={closeNamePrompt}
+    />
+  {/if}
+  {#if actionPrompt}
+    <NamePromptDialog
+      title={actionPrompt.kind === 'duplicate'
+        ? 'Duplicate Page'
+        : 'New Child Section'}
+      label={actionPrompt.kind === 'duplicate' ? 'Page name' : 'Section name'}
+      initialValue={actionPrompt.initialValue}
+      placeholder={actionPrompt.kind === 'duplicate'
+        ? 'Duplicate page name…'
+        : 'Child section name…'}
+      confirmLabel={actionBusy
+        ? actionPrompt.kind === 'duplicate'
+          ? 'Duplicating…'
+          : 'Creating…'
+        : actionPrompt.kind === 'duplicate'
+          ? 'Duplicate'
+          : 'Create'}
+      errorMessage={actionPromptError}
+      busy={actionBusy}
+      dataTestId="sidebar-action-prompt"
+      onConfirm={(value) => void confirmActionPrompt(value)}
+      onCancel={closeActionPrompt}
     />
   {/if}
 
@@ -1467,16 +1686,67 @@
   anchorEl={contextMenu?.anchorEl ?? null}
   onClose={closeContextMenu}
   ariaLabel="Actions"
+  menuId="sidebar-context-menu"
 >
   {#if !contextMenuUnlink}
     <!-- Linked notebooks cannot be renamed in place (ARCHITECTURE §3.1);
          RenameNotebook refuses them — omit the dead-end menu item. -->
-    <button type="button" onclick={handleContextRename} role="menuitem">
+    <button
+      type="button"
+      onclick={handleContextRename}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
       <span class="material-symbols-outlined text-icon-md">edit</span>
       Rename
     </button>
   {/if}
   {#if contextMenuPageRef}
+    <button
+      type="button"
+      onclick={openDuplicatePrompt}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >file_copy</span
+      >
+      Duplicate…
+    </button>
+    <button
+      type="button"
+      onclick={() => handleContextCopyPage('path')}
+      role="menuitem"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >content_copy</span
+      >
+      Copy Page Path
+    </button>
+    <button
+      type="button"
+      onclick={() => handleContextCopyPage('reference')}
+      role="menuitem"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >link</span
+      >
+      Copy Page Reference
+    </button>
+    <button
+      type="button"
+      onclick={handleContextReveal}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >folder_open</span
+      >
+      Reveal in file manager
+    </button>
     <button type="button" onclick={handleContextFavorite} role="menuitem">
       <span class="material-symbols-outlined text-icon-md" aria-hidden="true">
         {favoriteKeys.has(locatorKey(contextMenuPageRef))
@@ -1488,16 +1758,48 @@
         : 'Add to favorites'}
     </button>
   {/if}
-  {#if contextMenu?.level === 'section'}
-    <button type="button" onclick={handleContextNewPage} role="menuitem">
+  {#if contextMenu?.level === 'section' || contextMenu?.level === 'page'}
+    <button
+      type="button"
+      onclick={handleContextNewPage}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
       <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
         >note_add</span
       >
-      New page in section
+      New Page Here
+    </button>
+  {/if}
+  {#if contextMenu?.level === 'section'}
+    <button
+      type="button"
+      onclick={openChildSectionPrompt}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >create_new_folder</span
+      >
+      New child section…
     </button>
   {/if}
   {#if contextMenu?.level === 'notebook'}
-    <button type="button" onclick={handleContextReveal} role="menuitem">
+    <button type="button" onclick={handleContextCopyNotebook} role="menuitem">
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >content_copy</span
+      >
+      Copy Notebook Path
+    </button>
+    <button
+      type="button"
+      onclick={handleContextReveal}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
       <span class="material-symbols-outlined text-icon-md">folder_open</span>
       Reveal in file manager
     </button>
@@ -1506,6 +1808,8 @@
     type="button"
     onclick={handleContextDelete}
     role="menuitem"
+    disabled={contextUnavailable && !contextMenuUnlink}
+    aria-disabled={contextUnavailable && !contextMenuUnlink}
     class="text-status-danger"
   >
     <span class="material-symbols-outlined text-icon-md"

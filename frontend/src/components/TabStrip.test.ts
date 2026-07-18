@@ -488,8 +488,12 @@ describe('TabStrip (#142)', () => {
         props: defaultProps({ tabs, activeTabId: 'tab-Site' })
       })
       const tab = screen.getAllByRole('tab')[0]
+      expect(tab).toHaveAttribute('aria-haspopup', 'menu')
+      expect(tab).toHaveAttribute('aria-expanded', 'false')
       await fireEvent.contextMenu(tab)
 
+      expect(tab).toHaveAttribute('aria-expanded', 'true')
+      expect(tab.getAttribute('aria-controls')).toContain('tab-context-menu')
       expect(menuItem('Close Other Tabs')).toBeTruthy()
       expect(menuItem('Close Tabs to Right')).toBeTruthy()
       expect(menuItem('Copy Page Path')).toBeTruthy()

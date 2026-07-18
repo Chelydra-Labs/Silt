@@ -32,6 +32,7 @@
     dropTarget?: DropTarget | null
     dragItem?: { level: string; name: string; section?: string } | null
     focusedTreeItemId?: string
+    contextMenuTargetId?: string
     onTreeItemFocus?: (id: string) => void
     onToggleSection: (path: string) => void
     onSelectPage: (section: string, page: string) => void
@@ -79,6 +80,7 @@
     dropTarget = null,
     dragItem = null,
     focusedTreeItemId = '',
+    contextMenuTargetId = '',
     onTreeItemFocus = () => {},
     onToggleSection,
     onSelectPage,
@@ -155,6 +157,10 @@
     aria-level={depth + 1}
     aria-expanded={isExpanded}
     aria-selected={activeSection === sectionKey}
+    aria-haspopup="menu"
+    aria-controls={contextMenuTargetId === treeItemId
+      ? 'sidebar-context-menu'
+      : undefined}
   >
     <span
       class="material-symbols-outlined text-icon-md transition-transform"
@@ -260,6 +266,15 @@
               : -1}
             aria-level={depth + 2}
             aria-selected={isActive}
+            aria-haspopup="menu"
+            aria-controls={contextMenuTargetId ===
+            pageNodeId({
+              notebook: activeNotebook,
+              section: sectionKey,
+              page: pg.name
+            })
+              ? 'sidebar-context-menu'
+              : undefined}
           >
             {#if isActive}
               <span
@@ -283,6 +298,7 @@
             {dropTarget}
             {dragItem}
             {focusedTreeItemId}
+            {contextMenuTargetId}
             {onTreeItemFocus}
             {onToggleSection}
             {onSelectPage}

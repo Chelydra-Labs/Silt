@@ -161,6 +161,10 @@
         "signature": "DownloadUpdate(assetURL string) (string, error)"
       },
       {
+        "name": "DuplicatePage",
+        "signature": "DuplicatePage(notebook, section, page, targetName string) error"
+      },
+      {
         "name": "EnablePlugin",
         "signature": "EnablePlugin(pluginID string) error"
       },
@@ -757,6 +761,10 @@
         "signature": "RevealNotebookInOS(notebook string) error"
       },
       {
+        "name": "RevealPageInOS",
+        "signature": "RevealPageInOS(notebook, section, page string) error"
+      },
+      {
         "name": "RevokeCapability",
         "signature": "RevokeCapability(pluginID, capability string) error"
       },
@@ -979,7 +987,6 @@
       "frontend/src/components/SearchModal.test.ts",
       "frontend/src/components/Sidebar.svelte",
       "frontend/src/components/Sidebar.test.ts",
-      "frontend/src/components/TabStrip.svelte",
       "frontend/src/components/TabStrip.test.ts",
       "frontend/src/components/TagSidebarPanel.svelte",
       "frontend/src/components/TagsExplorer.svelte",
@@ -1024,6 +1031,8 @@
       "frontend/src/lib/editor/useAutosave.ts",
       "frontend/src/lib/editor/useFocusLock.test.ts",
       "frontend/src/lib/editor/useFocusLock.ts",
+      "frontend/src/lib/pageActions.test.ts",
+      "frontend/src/lib/pageActions.ts",
       "frontend/src/lib/sidebar/navOrder.test.ts",
       "frontend/src/lib/sidebar/navOrder.ts",
       "frontend/src/lib/sidebar/useDragDrop.test.ts",
