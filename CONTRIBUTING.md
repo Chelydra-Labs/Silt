@@ -154,6 +154,9 @@ import went stale, the type-check fails the build).
 push:
 
 - **`go test -race -count=1 ./...`** when any `.go` file changed.
+- **IPC binding-parity check** (`go run -tags tools ./cmd/inventory/ -compare`)
+  when any `.go` file changed — catches approved-methods manifest drift before
+  CI does and prints the `-update` regen command on failure.
 
 This is intentionally a *fast local gate* — it catches Go regressions in
 seconds before you push, so you're not waiting on CI for a broken build.
