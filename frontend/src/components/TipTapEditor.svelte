@@ -309,23 +309,29 @@
     }
   }
 
-  // --- Inline link URL input (#168) ----------------------------------------
-  function openLinkInput(): void {
+  // --- Inline link URL input (#168 / #689) ---------------------------------
+  // Opens for insert or edit. Existing links are never removed here — the
+  // selection bubble exposes Edit/Open/Copy/Remove explicitly (#689).
+  function openLinkInput(prefill?: string): void {
     if (!editorInstance || editorInstance.isDestroyed) return
     const { selection } = editorInstance.state
     if (selection.empty) return
-    // If already linked, remove instead of prompting.
-    if (editorInstance.isActive('link')) {
-      editorInstance.chain().focus().unsetLink().run()
-      return
-    }
     try {
       const coords = editorInstance.view.coordsAtPos(selection.from)
       linkInputCoords = { left: coords.left, top: coords.bottom }
     } catch {
       linkInputCoords = null
     }
-    linkInputValue = ''
+    let initial = prefill ?? ''
+    if (!initial && editorInstance.isActive('link')) {
+      try {
+        const attrs = editorInstance.getAttributes('link') as { href?: string }
+        initial = attrs?.href ?? ''
+      } catch {
+        initial = ''
+      }
+    }
+    linkInputValue = initial
     showLinkInput = true
   }
 
@@ -333,7 +339,9 @@
     if (!editorInstance || editorInstance.isDestroyed) return
     const url = linkInputValue.trim()
     if (url) {
-      editorInstance.chain().focus().toggleLink({ href: url }).run()
+      // setLink updates an existing mark or applies a new one without toggle
+      // flip-flop when the selection is already linked (#689 edit path).
+      editorInstance.chain().focus().setLink({ href: url }).run()
     } else {
       editorInstance.chain().focus().run()
     }
@@ -958,8 +966,9 @@
   })
 
   // Global event listeners for cross-component hotkeys.
-  function onOpenLinkInput(): void {
-    openLinkInput()
+  function onOpenLinkInput(e: Event): void {
+    const detail = (e as CustomEvent<{ href?: string }>).detail
+    openLinkInput(detail?.href)
   }
   function onChangeBlockType(e: Event): void {
     const detail = (e as CustomEvent).detail
