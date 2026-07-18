@@ -109,12 +109,12 @@
               {#each groupActions as action (action.id)}
                 {@const binding = shortcutBinding(action.id, hotkeys)}
                 <div
-                  class="grid grid-cols-[minmax(0,1fr)_auto] gap-3 items-center px-3 py-2 border-b last:border-b-0 border-surface-panel-border/70"
+                  class="flex gap-3 items-center px-3 py-2 border-b last:border-b-0 border-surface-panel-border/70"
                 >
-                  <dt class="text-type-sm text-text-primary min-w-0">
+                  <dt class="flex-1 text-type-sm text-text-primary min-w-0">
                     {action.label}
                   </dt>
-                  <dd class="m-0">
+                  <dd class="m-0 shrink-0">
                     {#if binding}
                       <span class="flex items-center justify-end gap-1.5">
                         {#if action.defaultBinding && binding !== action.defaultBinding}

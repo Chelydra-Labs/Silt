@@ -278,11 +278,9 @@
   }
 </script>
 
-<div
-  class="h-full min-h-0 grid grid-cols-[minmax(15rem,0.75fr)_minmax(20rem,1.5fr)] max-lg:grid-cols-1"
->
+<div class="h-full min-h-0 grid grid-cols-3 max-lg:grid-cols-1">
   <section
-    class="min-h-0 flex flex-col border-r max-lg:border-r-0 max-lg:border-b border-surface-panel-border"
+    class="col-span-1 min-h-0 flex flex-col border-r max-lg:border-r-0 max-lg:border-b border-surface-panel-border"
     aria-label="Templates"
   >
     <div class="p-4 border-b border-surface-panel-border space-y-3">
@@ -361,7 +359,10 @@
     </div>
   </section>
 
-  <section class="min-h-0 flex flex-col" aria-label="Template editor">
+  <section
+    class="col-span-2 max-lg:col-span-1 min-h-0 flex flex-col"
+    aria-label="Template editor"
+  >
     {#if loadingBody}
       <p class="empty" role="status">Loading template…</p>
     {:else if !draft}
