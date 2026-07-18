@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { onMount, tick } from 'svelte'
   import type { TabEntry } from '../lib/tabs'
   import { fade, fly } from 'svelte/transition'
   import ContextMenu from './ContextMenu.svelte'
   import { copyPagePath, copyPageReference } from '../lib/pageActions'
+  import { hiddenTabIds } from '../lib/tabOverflow'
 
   interface Props {
     tabs: TabEntry[]
@@ -35,6 +37,74 @@
     anchor: null,
     anchorEl: null,
     tab: null
+  })
+
+  let wrapperEl = $state<HTMLDivElement | null>(null)
+  let stripEl = $state<HTMLDivElement | null>(null)
+  let hiddenIds = $state<string[]>([])
+  let overflowButton = $state<HTMLButtonElement | null>(null)
+  let overflowMenuOpen = $state(false)
+  let measureFrame: number | null = null
+  let hiddenTabs = $derived(tabs.filter((tab) => hiddenIds.includes(tab.id)))
+
+  function measureOverflow() {
+    if (!stripEl) return
+    const bounds = stripEl.getBoundingClientRect()
+    if (stripEl.scrollWidth <= stripEl.clientWidth + 1) {
+      hiddenIds = []
+      overflowMenuOpen = false
+      return
+    }
+    hiddenIds = hiddenTabIds(
+      { left: bounds.left, right: bounds.right - 40 },
+      tabs.flatMap((tab, index) => {
+        const rect = tabRefs[index]?.getBoundingClientRect()
+        return rect ? [{ id: tab.id, left: rect.left, right: rect.right }] : []
+      })
+    )
+  }
+
+  function scheduleOverflowMeasure() {
+    if (measureFrame !== null) cancelAnimationFrame(measureFrame)
+    measureFrame = requestAnimationFrame(() => {
+      measureFrame = null
+      measureOverflow()
+    })
+  }
+
+  function selectOverflowTab(id: string) {
+    overflowMenuOpen = false
+    onSelectTab(id)
+    void tick().then(() => {
+      const index = tabs.findIndex((tab) => tab.id === id)
+      tabRefs[index]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+      scheduleOverflowMeasure()
+    })
+  }
+
+  function closeOverflowTab(id: string) {
+    overflowMenuOpen = false
+    onCloseTab(id)
+    void tick().then(scheduleOverflowMeasure)
+  }
+
+  onMount(() => {
+    void tick().then(scheduleOverflowMeasure)
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(scheduleOverflowMeasure)
+    if (wrapperEl) observer?.observe(wrapperEl)
+    if (stripEl) observer?.observe(stripEl)
+    return () => {
+      observer?.disconnect()
+      if (measureFrame !== null) cancelAnimationFrame(measureFrame)
+    }
+  })
+
+  $effect(() => {
+    tabs
+    void tick().then(scheduleOverflowMeasure)
   })
 
   function handleTabContextMenu(e: MouseEvent, tab: TabEntry): void {
@@ -224,14 +294,20 @@
 </script>
 
 {#if tabs.length > 0}
-  <div class="tab-strip-wrapper">
+  <div
+    class="tab-strip-wrapper"
+    bind:this={wrapperEl}
+    class:has-overflow={hiddenTabs.length > 0}
+  >
     <div
+      bind:this={stripEl}
       class="tab-strip"
       role="tablist"
       aria-label="Open pages"
       aria-orientation="horizontal"
       tabindex="-1"
       onkeydown={handleTablistKeydown}
+      onscroll={scheduleOverflowMeasure}
     >
       {#each tabs as tab, i (tab.id)}
         <button
@@ -309,7 +385,75 @@
         </button>
       {/each}
     </div>
+    {#if hiddenTabs.length > 0}
+      <button
+        bind:this={overflowButton}
+        type="button"
+        class="tab-overflow-button"
+        aria-label={`${hiddenTabs.length} hidden ${hiddenTabs.length === 1 ? 'tab' : 'tabs'}`}
+        aria-haspopup="menu"
+        aria-expanded={overflowMenuOpen}
+        aria-controls="tab-overflow-menu"
+        title="Show hidden tabs"
+        onclick={() => (overflowMenuOpen = !overflowMenuOpen)}
+      >
+        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+          >more_horiz</span
+        >
+      </button>
+    {/if}
   </div>
+
+  <ContextMenu
+    open={overflowMenuOpen && hiddenTabs.length > 0}
+    anchor={overflowButton
+      ? {
+          x: overflowButton.getBoundingClientRect().right,
+          y: overflowButton.getBoundingClientRect().bottom
+        }
+      : null}
+    anchorEl={overflowButton}
+    onClose={() => (overflowMenuOpen = false)}
+    ariaLabel="Hidden tabs"
+    menuId="tab-overflow-menu"
+  >
+    {#each hiddenTabs as tab (tab.id)}
+      <div role="none" class="overflow-tab-row">
+        <button
+          type="button"
+          role="menuitem"
+          aria-label={`Switch to ${tab.page}`}
+          onclick={() => selectOverflowTab(tab.id)}
+        >
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true"
+          >
+            {tab.saveError
+              ? 'error'
+              : tab.dirty
+                ? 'circle'
+                : tab.preview
+                  ? 'visibility'
+                  : 'description'}
+          </span>
+          <span class:italic={tab.preview} class="truncate">{tab.page}</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          class="overflow-close"
+          aria-label={`Close ${tab.page}`}
+          onclick={() => closeOverflowTab(tab.id)}
+        >
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true">close</span
+          >
+        </button>
+      </div>
+    {/each}
+  </ContextMenu>
 
   <ContextMenu
     open={contextMenu.open}
@@ -422,6 +566,54 @@
     position: relative;
     z-index: 10;
     top: 1px;
+  }
+  .tab-strip-wrapper.has-overflow::after {
+    content: '';
+    position: absolute;
+    right: 2.35rem;
+    top: 0;
+    bottom: 0;
+    width: 2rem;
+    pointer-events: none;
+    background: linear-gradient(
+      to right,
+      transparent,
+      var(--color-surface-titlebar)
+    );
+  }
+  .tab-overflow-button {
+    position: absolute;
+    right: 0.25rem;
+    top: 0.25rem;
+    z-index: 3;
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid var(--color-surface-titlebar-border);
+    border-radius: 0.5rem;
+    background: color-mix(
+      in srgb,
+      var(--color-surface-titlebar) 94%,
+      transparent
+    );
+    color: var(--color-surface-titlebar-text-muted);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+  }
+  .tab-overflow-button:hover,
+  .tab-overflow-button:focus-visible {
+    color: var(--color-accent-primary-start);
+    outline: 2px solid
+      color-mix(in srgb, var(--color-accent-primary-start) 55%, transparent);
+  }
+  .overflow-tab-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  :global([data-context-menu-root] .overflow-tab-row .overflow-close) {
+    width: auto;
+    padding-inline: 0.45rem;
   }
 
   .tab-strip {

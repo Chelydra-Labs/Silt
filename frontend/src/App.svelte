@@ -28,6 +28,8 @@
   import VirtualScrollContainer from './components/VirtualScrollContainer.svelte'
   import TabStrip from './components/TabStrip.svelte'
   import SearchModal from './components/SearchModal.svelte'
+  import QuickSwitcher from './components/QuickSwitcher.svelte'
+  import PageBreadcrumb from './components/PageBreadcrumb.svelte'
   import GlobalReplaceModal from './components/editor/GlobalReplaceModal.svelte'
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
@@ -98,6 +100,13 @@
     type ViewMode
   } from './lib/tabs'
   import { nextView } from './lib/viewCycle'
+  import {
+    flattenNavigation,
+    notebookNavigationMetadata,
+    type NotebookNavigationMetadata,
+    type NavigationCatalogItem
+  } from './lib/navigationCatalog'
+  import type { NavigationPreferences } from './lib/sidebar/types'
   import {
     isStandaloneTaskRef,
     routeJumpTarget
@@ -276,6 +285,41 @@
       activeSection = tab.section
       activePage = tab.page
     }
+  }
+
+  function selectNotebookContext(notebook: string): void {
+    activeNotebook = notebook
+    const notebookTabs = openTabs
+      .filter((tab) => tab.notebook === notebook)
+      .sort((a, b) => b.lastActivatedAt - a.lastActivatedAt)
+    activeTabId = notebookTabs[0]?.id ?? ''
+    if (activeTabId) syncActiveFromTab()
+    else {
+      activeSection = ''
+      activePage = ''
+    }
+  }
+
+  function openSectionContext(section: string): void {
+    const destination = navigationCatalog.find(
+      (item) =>
+        item.notebook === activeNotebook &&
+        !item.disconnected &&
+        (item.section === section || item.section.startsWith(`${section}/`))
+    )
+    if (destination) openPage(destination, 'preview')
+    else {
+      activeSection = section
+      activePage = ''
+    }
+  }
+
+  function openFromQuickSwitcher(
+    item: NavigationCatalogItem,
+    mode: OpenPageMode
+  ): void {
+    openPage(item, mode)
+    activeView = 'notes'
   }
 
   function handleSelectTab(id: string): void {
@@ -468,6 +512,21 @@
     }
   }
   let showSearch = $state(false)
+  let showQuickSwitcher = $state(false)
+  let navigationCatalog = $state<NavigationCatalogItem[]>([])
+  let navigationNotebookMetadata = $state<
+    Record<string, NotebookNavigationMetadata>
+  >({})
+  let navigationPreferences = $state<NavigationPreferences>({
+    expanded_sections: [],
+    recent_pages: [],
+    favorites: []
+  })
+  let navigationCatalogLoading = $state(true)
+  let navigationCatalogError = $state('')
+  let activeNotebookMetadata = $derived(
+    navigationNotebookMetadata[activeNotebook]
+  )
   let showGlobalReplace = $state(false)
   // Global standalone-task quick-add overlay (#368). Opened by the new_task
   // hotkey (default Ctrl+Shift+N). Creates a task in <vault>/.silt/tasks.md
@@ -1421,6 +1480,7 @@
       bind:sidebarCollapsed
       {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
+      onSwitcherClick={() => (showQuickSwitcher = true)}
       onAIClick={getAIAvailability().drawerAvailable
         ? () => toggleAIChatDrawer()
         : undefined}
@@ -1543,20 +1603,7 @@
           bind:collapsed={sidebarCollapsed}
           {sidebarWidth}
           {sidebarDragging}
-          onSelectNotebook={(nb) => {
-            activeNotebook = nb
-            // Per-notebook tab scoping: activate the MRU tab for the new
-            // notebook (or clear if none exist for it).
-            const notebookTabs = openTabs
-              .filter((t) => t.notebook === nb)
-              .sort((a, b) => b.lastActivatedAt - a.lastActivatedAt)
-            if (notebookTabs.length > 0) {
-              activeTabId = notebookTabs[0].id
-            } else {
-              activeTabId = ''
-            }
-            syncActiveFromTab()
-          }}
+          onSelectNotebook={selectNotebookContext}
           onSelectSection={(sec) => (activeSection = sec)}
           onSelectPage={(nb, sec, pg) => {
             // Single-click opens in preview mode (industry-standard parity, #142).
@@ -1567,6 +1614,16 @@
             openPage({ notebook: nb, section: sec, page: pg }, 'pin')
           }}
           onSelectView={(v) => (activeView = v)}
+          onNavigationLoaded={(tree) => {
+            navigationCatalog = flattenNavigation(tree)
+            navigationNotebookMetadata = notebookNavigationMetadata(tree)
+          }}
+          onNavigationPreferencesLoaded={(preferences) =>
+            (navigationPreferences = preferences)}
+          onNavigationStatus={(loading, error) => {
+            navigationCatalogLoading = loading
+            navigationCatalogError = error
+          }}
           onPageMoved={(nb, fromSection, toSection, page) => {
             // A page was dragged across sections in the sidebar (#177). Update
             // the open tab for this specific page+section so its section field
@@ -1610,6 +1667,25 @@
             </div>
           {/if}
           {#if activeView === 'notes'}
+            <PageBreadcrumb
+              notebook={activeNotebook}
+              section={activeSection}
+              page={activePage}
+              {activeView}
+              linked={activeNotebookMetadata?.linked ?? false}
+              disconnected={activeNotebookMetadata?.disconnected ?? false}
+              onSelectNotebook={selectNotebookContext}
+              onSelectSection={openSectionContext}
+              onOpenPage={() =>
+                openPage(
+                  {
+                    notebook: activeNotebook,
+                    section: activeSection,
+                    page: activePage
+                  },
+                  'activate-only'
+                )}
+            />
             {#if notesReady}
               <div
                 id="silt-tabpanel"
@@ -1783,6 +1859,19 @@
         showSearch = false
         showGlobalReplace = true
       }}
+    />
+  {/if}
+
+  {#if showQuickSwitcher}
+    <QuickSwitcher
+      catalog={navigationCatalog}
+      recents={navigationPreferences.recent_pages}
+      loading={navigationCatalogLoading}
+      error={navigationCatalogError}
+      onRetry={() =>
+        window.dispatchEvent(new CustomEvent('refresh-navigation'))}
+      onOpen={openFromQuickSwitcher}
+      onClose={() => (showQuickSwitcher = false)}
     />
   {/if}
 

@@ -91,6 +91,9 @@
     onSelectPage: (notebook: string, section: string, page: string) => void
     onPinPage: (notebook: string, section: string, page: string) => void
     onSelectView: (view: string) => void
+    onNavigationLoaded?: (tree: NavigationTree) => void
+    onNavigationPreferencesLoaded?: (preferences: NavigationPreferences) => void
+    onNavigationStatus?: (loading: boolean, error: string) => void
     onPageMoved?: (
       notebook: string,
       fromSection: string,
@@ -114,6 +117,9 @@
     onSelectPage,
     onPinPage,
     onSelectView,
+    onNavigationLoaded,
+    onNavigationPreferencesLoaded,
+    onNavigationStatus,
     onPageMoved
   }: Props = $props()
 
@@ -393,10 +399,12 @@
   )
 
   async function loadNavigation() {
+    onNavigationStatus?.(true, '')
     try {
       const data = await ListNavigation()
       if (!data) return
       tree = normalizeNavigationTree(data)
+      onNavigationLoaded?.(tree)
       navigationError = ''
       const next = reconcileActive(tree, {
         notebook: activeNotebook,
@@ -414,6 +422,7 @@
         e instanceof Error ? e.message : 'Navigation could not be loaded.'
     } finally {
       navigationLoading = false
+      onNavigationStatus?.(false, navigationError)
     }
   }
 
@@ -429,6 +438,7 @@
         recent_pages: loaded?.recent_pages ?? [],
         favorites: loaded?.favorites ?? []
       }
+      onNavigationPreferencesLoaded?.(preferences)
       expandedSections = expandedPathsForNotebook(preferences, activeNotebook)
       lastExpandedActive = ''
       preferencesError = ''

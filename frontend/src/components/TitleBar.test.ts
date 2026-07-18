@@ -97,4 +97,17 @@ describe('TitleBar', () => {
       screen.queryByRole('button', { name: 'Writing Assistant' })
     ).toBeNull()
   })
+
+  it('offers a separate discoverable page switcher control', async () => {
+    const onSwitcherClick = vi.fn()
+    render(TitleBar, {
+      props: {
+        sidebarCollapsed: false,
+        onSearchClick: () => {},
+        onSwitcherClick
+      }
+    })
+    await screen.getByRole('button', { name: 'Switch page' }).click()
+    expect(onSwitcherClick).toHaveBeenCalledOnce()
+  })
 })
