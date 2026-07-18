@@ -18,9 +18,11 @@ type Bridge interface {
 	ListNavigation(ctx context.Context) (parser.NavigationTree, error)
 	CreatePage(ctx context.Context, notebook, section, page, dateStr string) (string, error)
 	// UpdateBlocks identity-preserving: replaces page body while keeping block
-	// IDs when the client supplies them (SaveFileBlocks path).
+	// IDs when the client supplies them (SaveFileBlocks path). Page must already
+	// exist — callers should not use this to create pages.
 	UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock) error
-	MutateBlock(ctx context.Context, blockID, newText string) error
+	// PageExists reports whether the notebook/section/page file is on disk.
+	PageExists(ctx context.Context, notebook, section, page string) (bool, error)
 	VaultPath() string
 }
 

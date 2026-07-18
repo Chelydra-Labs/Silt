@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"silt/backend/core"
 	"silt/backend/db"
 	"silt/backend/parser"
 	"sort"
@@ -53,14 +54,19 @@ type pageLinksRewriteResult struct {
 // the other page's inbound links (#545 review fix).
 //
 // Acquires a per-source-file LockFileWrite for each rewrite so it cannot race
-// autosave. Structural rename/delete callers that already hold those file
-// locks must use rewriteInboundPageLinksWithJournal(..., true) to avoid
-// non-reentrant deadlock (#691).
+// autosave. Structural callers pass heldPaths (normalized lock set) so sources
+// already locked skip re-entry; any source not in the set still takes
+// LockFileWrite (#691).
 func (a *App) rewriteInboundPageLinks(oldNB, oldSec, oldPage, newNB, newSec, newPage string) {
-	a.rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage, nil, false)
+	a.rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage, nil, nil)
 }
 
-func (a *App) rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage string, journal map[string]renameLinkJournalEntry, callerHoldsFileLocks bool) {
+// rewriteInboundPageLinksWithJournal rewrites inbound wiki-links. heldPaths is
+// the normalized set of file locks the structural caller already holds; when
+// non-nil, sources in that set skip LockFileWrite (non-reentrant). Sources not
+// in the set still take LockFileWrite so a late-arriving inbound file cannot
+// race autosave (#691).
+func (a *App) rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage string, journal map[string]renameLinkJournalEntry, heldPaths map[string]bool) {
 	if a.db == nil || oldPage == "" || newPage == "" {
 		return
 	}
@@ -153,7 +159,7 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, 
 
 		// Acquire the per-file write lock so the rewrite cannot race a
 		// concurrent SaveFileBlocks (autosave) on the same source file —
-		// unless the structural caller already holds every affected path (#691).
+		// unless the structural caller already holds this exact path (#691).
 		writeOK := false
 		doRewrite := func() {
 			contentBytes, err := os.ReadFile(filePath)
@@ -186,7 +192,8 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, 
 			}
 			writeOK = true
 		}
-		if callerHoldsFileLocks {
+		held := heldPaths != nil && heldPaths[core.NormalizeFileLockPath(filePath)]
+		if held {
 			doRewrite()
 		} else {
 			a.coordinator.LockFileWrite(filePath, doRewrite)

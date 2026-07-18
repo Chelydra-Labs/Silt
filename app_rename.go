@@ -423,7 +423,7 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 
 		// 4. Rewrite inbound [[…]] wiki-links BEFORE clearing the old index,
 		// so the resolution-based rewrite sees the pre-rename page inventory.
-		a.rewriteInboundPageLinksWithJournal(safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage, nil, true)
+		a.rewriteInboundPageLinksWithJournal(safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage, nil, lockPathSet(lockPaths))
 
 		// 5. Clear old index entries + re-index at new path.
 		a.coordinator.WithDBWrite(func() {
@@ -536,7 +536,7 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 
 		// 5. Rewrite inbound [[…]] BEFORE clearing the old index, so the
 		// resolution-based rewrite sees the pre-move page inventory (#545).
-		a.rewriteInboundPageLinksWithJournal(safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage, nil, true)
+		a.rewriteInboundPageLinksWithJournal(safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage, nil, lockPathSet(lockPaths))
 
 		// 6. Clear old index entries + re-index at the new path. These run
 		// unconditionally — even if the frontmatter write failed, the file
@@ -718,7 +718,7 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 				}
 			}
 			for _, file := range files {
-				a.rewriteInboundPageLinksWithJournal(safeNotebook, file.oldSection, file.page, safeNotebook, file.newSection, file.page, linkJournal, true)
+				a.rewriteInboundPageLinksWithJournal(safeNotebook, file.oldSection, file.page, safeNotebook, file.newSection, file.page, linkJournal, lockPathSet(lockPaths))
 			}
 			for _, file := range files {
 				a.coordinator.WithDBWrite(func() {

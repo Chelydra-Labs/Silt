@@ -82,9 +82,13 @@ func (f *fakeBridge) UpdateBlocks(ctx context.Context, notebook, section, page s
 	return nil
 }
 
-func (f *fakeBridge) MutateBlock(ctx context.Context, blockID, newText string) error {
-	_, _, _ = ctx, blockID, newText
-	return nil
+func (f *fakeBridge) PageExists(ctx context.Context, notebook, section, page string) (bool, error) {
+	_ = ctx
+	if f.pages == nil {
+		return false, nil
+	}
+	_, ok := f.pages[notebook+"\x00"+section+"\x00"+page]
+	return ok, nil
 }
 
 func freePort(t *testing.T) int {
@@ -446,7 +450,12 @@ func TestTools_WriteWithoutGrantRejected(t *testing.T) {
 }
 
 func TestTools_UpdateBlocksWithGrant(t *testing.T) {
-	bridge := &fakeBridge{path: t.TempDir()}
+	bridge := &fakeBridge{
+		path: t.TempDir(),
+		pages: map[string][]parser.ParsedBlock{
+			"Work\x00Sec\x00P": {{ID: "id-1", Type: parser.BlockNote, CleanText: "old"}},
+		},
+	}
 	cs, _ := connectTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
 	ctx := context.Background()
 	res, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{
@@ -475,8 +484,32 @@ func TestTools_UpdateBlocksWithGrant(t *testing.T) {
 	}
 }
 
+func TestTools_UpdateBlocksMissingPageRejected(t *testing.T) {
+	bridge := &fakeBridge{path: t.TempDir(), pages: map[string][]parser.ParsedBlock{}}
+	cs, _ := connectTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "update_blocks",
+		Arguments: map[string]any{
+			"notebook": "Work", "section": "", "page": "Missing",
+			"blocks": []any{map[string]any{"type": "NOTE", "text": "x"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected missing page rejection")
+	}
+	if bridge.writes != 0 {
+		t.Fatalf("writes=%d", bridge.writes)
+	}
+}
+
 func TestTools_UpdateBlocksEmptyRejected(t *testing.T) {
-	bridge := &fakeBridge{path: t.TempDir()}
+	bridge := &fakeBridge{
+		path:  t.TempDir(),
+		pages: map[string][]parser.ParsedBlock{"Work\x00\x00P": {}},
+	}
 	cs, _ := connectTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
 	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
 		Name: "update_blocks",
@@ -628,7 +661,12 @@ func TestRedactArgs_NoBodies(t *testing.T) {
 }
 
 func TestTools_UpdateBlocksAuditsBlockIDsAndTypeDefault(t *testing.T) {
-	bridge := &fakeBridge{path: t.TempDir()}
+	bridge := &fakeBridge{
+		path: t.TempDir(),
+		pages: map[string][]parser.ParsedBlock{
+			"Work\x00Sec\x00P": {{ID: "blk-1", Type: parser.BlockNote}},
+		},
+	}
 	cs, aud := connectTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
 	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
 		Name: "update_blocks",

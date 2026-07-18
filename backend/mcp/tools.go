@@ -276,7 +276,7 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "update_blocks",
-		Description: "Identity-preserving page update: replace page blocks. Prefer keeping existing block ids. Requires write grant. Confirm before edits. No delete/move/bulk tools exist.",
+		Description: "Identity-preserving update of an existing page's blocks. Prefer keeping existing block ids. Fails if the page does not exist — use create_page first. Requires write grant. Confirm before edits. No delete/move/bulk tools exist.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in updateBlocksIn) (*mcp.CallToolResult, any, error) {
 		blockIDs := make([]string, 0, len(in.Blocks))
 		for _, b := range in.Blocks {
@@ -298,6 +298,15 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		if env.bridge == nil {
 			env.record("update_blocks", "error", "no vault", args)
 			return toolErr("no vault open")
+		}
+		exists, exErr := env.bridge.PageExists(ctx, in.Notebook, in.Section, in.Page)
+		if exErr != nil {
+			env.record("update_blocks", "error", exErr.Error(), args)
+			return toolErr(exErr.Error())
+		}
+		if !exists {
+			env.record("update_blocks", "error", "page does not exist", args)
+			return toolErr("page does not exist; use create_page first")
 		}
 		if len(in.Blocks) == 0 {
 			env.record("update_blocks", "error", "empty blocks", args)

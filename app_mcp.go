@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 
 	"silt/backend/db"
 	"silt/backend/mcp"
@@ -12,14 +14,17 @@ import (
 
 // mcpBridge adapts *App to mcp.Bridge so tools call the same content paths
 // as the UI / Plugin* APIs (single vault writer).
+//
+// vaultPath is a snapshot taken while the caller already holds vaultMu
+// (R or W). VaultPath() must not take vaultMu — Host.Start is invoked from
+// syncMCPHostLocked under exclusive vaultMu.Lock, and a nested RLock deadlocks.
 type mcpBridge struct {
-	app *App
+	app       *App
+	vaultPath string
 }
 
 func (b mcpBridge) VaultPath() string {
-	b.app.vaultMu.RLock()
-	defer b.app.vaultMu.RUnlock()
-	return b.app.vaultPath
+	return b.vaultPath
 }
 
 func (b mcpBridge) SearchBlocksPaged(ctx context.Context, query string, offset, limit int, filters db.SearchFilters) (parser.SearchResult, error) {
@@ -52,9 +57,37 @@ func (b mcpBridge) UpdateBlocks(ctx context.Context, notebook, section, page str
 	return b.app.SaveFileBlocks(notebook, section, page, blocks)
 }
 
-func (b mcpBridge) MutateBlock(ctx context.Context, blockID, newText string) error {
+func (b mcpBridge) PageExists(ctx context.Context, notebook, section, page string) (bool, error) {
 	_ = ctx
-	return b.app.MutateBlock(blockID, newText)
+	// Resolve the same path SaveFileBlocks would use without creating it.
+	b.app.vaultMu.RLock()
+	defer b.app.vaultMu.RUnlock()
+	if b.app.db == nil || b.app.vaultPath == "" {
+		return false, fmt.Errorf("no vault open")
+	}
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safePage == "" {
+		return false, fmt.Errorf("invalid path")
+	}
+	source := b.app.resolveSourceByName(safeNotebook)
+	notebookDir, err := b.app.resolveNotebookDir(safeNotebook, source)
+	if err != nil {
+		return false, err
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return false, fmt.Errorf("path escapes notebook root")
+	}
+	_, err = os.Stat(filePath)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 // ensureMCPHost lazily constructs the host (tests may leave it nil).
@@ -71,7 +104,7 @@ func (a *App) ensureMCPHost() *mcp.Host {
 
 // syncMCPHost starts or stops the MCP host from the current vault + config.
 // Takes vaultMu.RLock. Do not call while holding vaultMu.Lock — use
-// syncMCPHostLocked from initializeVaultServices instead (deadlock).
+// syncMCPHostLocked from initializeVaultServices instead.
 func (a *App) syncMCPHost() {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -79,14 +112,18 @@ func (a *App) syncMCPHost() {
 }
 
 // syncMCPHostLocked is the body of syncMCPHost when the caller already holds
-// vaultMu (R or W). initializeVaultServices runs under exclusive Lock.
+// vaultMu (R or exclusive Lock). initializeVaultServices runs under exclusive
+// Lock — the bridge must snapshot vaultPath so Host.Start never re-enters
+// vaultMu via Bridge.VaultPath().
 func (a *App) syncMCPHostLocked() {
 	h := a.ensureMCPHost()
 	a.configMu.RLock()
 	cfg := a.cfg.AI.LocalMCP
 	a.configMu.RUnlock()
 
+	// Caller holds vaultMu — read fields directly (no nested RLock).
 	hasVault := a.vaultPath != "" && a.db != nil
+	vaultSnap := a.vaultPath
 
 	if !cfg.Enabled || !hasVault {
 		h.Stop()
@@ -94,7 +131,8 @@ func (a *App) syncMCPHostLocked() {
 		_ = h.Start(nil, cfg)
 		return
 	}
-	if err := h.Start(mcpBridge{app: a}, cfg); err != nil {
+	bridge := mcpBridge{app: a, vaultPath: vaultSnap}
+	if err := h.Start(bridge, cfg); err != nil {
 		log.Printf("mcp: start failed: %v", err)
 	}
 }
