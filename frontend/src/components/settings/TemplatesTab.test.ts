@@ -254,6 +254,15 @@ describe('TemplatesTab', () => {
     )
     expect(screen.getByLabelText('Markdown body')).toHaveValue('# Current body')
     expect(screen.getByLabelText('Template ID')).toHaveValue('current')
+    expect(screen.getByText('Saved')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await fireEvent.input(screen.getByLabelText('Markdown body'), {
+      target: { value: '# Edited current body' }
+    })
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   })
 
   it('surfaces lazy-load and current-page read failures without losing the list', async () => {

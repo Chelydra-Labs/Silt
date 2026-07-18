@@ -379,10 +379,9 @@ func (a *App) GetPluginRegistry() (parser.PluginRegistry, error) {
 	return registry, nil
 }
 
-// GetSystemConfig returns the parsed system config (a value copy under the
-// read lock). The map/slice fields are shared references that are only ever
-// replaced wholesale under the write lock, so they are safe to read/marshal
-// after the lock is released.
+// GetSystemConfig returns an independent snapshot of the parsed system config.
+// IPC callers must not be able to mutate maps and slices in the live config
+// after the read lock is released.
 func (a *App) GetSystemConfig() (config.SystemConfig, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -391,7 +390,7 @@ func (a *App) GetSystemConfig() (config.SystemConfig, error) {
 	}
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
-	return a.cfg, nil
+	return config.Clone(a.cfg), nil
 }
 
 // GetConfigLoadError returns the error from the initial config.yaml load (if
@@ -452,26 +451,47 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 	if err := config.ValidateHotkeys(cfg.Hotkeys); err != nil {
 		return err
 	}
-	return a.mutateConfig(func(current *config.SystemConfig) error {
+	// Clone the frontend snapshot before the serialized mutation. Besides
+	// preventing stale navigation state from being adopted, this keeps mutable
+	// maps and slices in the caller's value out of the live config on failure.
+	incoming := config.Clone(cfg)
+	var quarantined []map[string]string
+	err := a.mutateConfig(func(current *config.SystemConfig) error {
 		// SaveSystemConfig remains for unrelated settings, but navigation state
 		// is backend-owned and must never be replaced by a stale whole snapshot.
-		cfg.UI.NavOrder = cloneNavOrder(current.UI.NavOrder)
-		cfg.UI.OpenTabs = append([]config.TabRef(nil), current.UI.OpenTabs...)
+		// The linked-notebook registry is likewise backend-owned: a snapshot
+		// taken before a link was added must not remove that link.
+		incoming.UI.NavOrder = cloneNavOrder(current.UI.NavOrder)
+		incoming.UI.OpenTabs = append([]config.TabRef(nil), current.UI.OpenTabs...)
 		if current.UI.ActiveTab == nil {
-			cfg.UI.ActiveTab = nil
+			incoming.UI.ActiveTab = nil
 		} else {
 			active := *current.UI.ActiveTab
-			cfg.UI.ActiveTab = &active
+			incoming.UI.ActiveTab = &active
 		}
-		cfg.UI.ExpandedSections = append([]config.NavigationSectionRef(nil), current.UI.ExpandedSections...)
-		cfg.UI.RecentPages = append([]config.RecentPage(nil), current.UI.RecentPages...)
-		cfg.UI.Favorites = append([]config.NavigationPageRef(nil), current.UI.Favorites...)
-		cfg.AI.Chat.APIKey = current.AI.Chat.APIKey
-		cfg.AI.Embedding.APIKey = current.AI.Embedding.APIKey
-		*current = cfg
-		a.spacesPerTab = cfg.Editor.TabIndentSpaces
+		incoming.UI.ExpandedSections = append([]config.NavigationSectionRef(nil), current.UI.ExpandedSections...)
+		incoming.UI.RecentPages = append([]config.RecentPage(nil), current.UI.RecentPages...)
+		incoming.UI.Favorites = append([]config.NavigationPageRef(nil), current.UI.Favorites...)
+		incoming.LinkedNotebooks = append([]config.LinkedNotebook(nil), current.LinkedNotebooks...)
+		incoming.AI.Chat.APIKey = current.AI.Chat.APIKey
+		incoming.AI.Embedding.APIKey = current.AI.Embedding.APIKey
+		// Treat this like a config reload for linked-notebook security: frontend
+		// snapshots are not trusted sources for roots or their fingerprints.
+		quarantined = a.reconcileLinkedNotebookSecurityLocked(&incoming)
+		*current = incoming
+		a.spacesPerTab = incoming.Editor.TabIndentSpaces
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	a.configMu.Lock()
+	a.seedFirstPartyGrants()
+	a.configMu.Unlock()
+	for _, q := range quarantined {
+		a.emit("linked-notebook:quarantined", q)
+	}
+	return nil
 }
 
 // applyConfig stores the parsed config under configMu, applies the live
@@ -496,6 +516,19 @@ func (a *App) applyConfig(cfg config.SystemConfig) {
 func (a *App) applyConfigLocked(cfg config.SystemConfig) []map[string]string {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
+	quarantined := a.reconcileLinkedNotebookSecurityLocked(&cfg)
+	a.cfg = cfg
+	if cfg.Editor.TabIndentSpaces > 0 {
+		a.spacesPerTab = cfg.Editor.TabIndentSpaces
+	}
+	a.seedFirstPartyGrants()
+	return quarantined
+}
+
+// reconcileLinkedNotebookSecurityLocked applies the trusted-root rules to a
+// candidate config. The caller holds configMu and commits the candidate after
+// this function returns.
+func (a *App) reconcileLinkedNotebookSecurityLocked(cfg *config.SystemConfig) []map[string]string {
 	// F3: when a config reloads from disk (fsnotify), preserve the in-memory
 	// RootFingerprint for each linked notebook and quarantine any link whose
 	// root changed or was added by an external edit. The M2 (synced-vault)
@@ -569,11 +602,6 @@ func (a *App) applyConfigLocked(cfg config.SystemConfig) []map[string]string {
 			delete(a.quarantinedLinks, id)
 		}
 	}
-	a.cfg = cfg
-	if cfg.Editor.TabIndentSpaces > 0 {
-		a.spacesPerTab = cfg.Editor.TabIndentSpaces
-	}
-	a.seedFirstPartyGrants()
 	return quarantined
 }
 

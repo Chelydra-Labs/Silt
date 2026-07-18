@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -204,6 +205,24 @@ func TestDeleteSection_NavOrderUsesPathBoundary(t *testing.T) {
 	}
 	if got := order.Pages["TestNB/Archive"]; len(got) != 1 || got[0] != "Kept" {
 		t.Fatalf("deleting A removed Archive ordering: %+v", order.Pages)
+	}
+}
+
+func TestMigrateNavOrderKeys_NestedPathsAndCollisionAreDeterministic(t *testing.T) {
+	order := map[string][]string{
+		"TestNB/Projects":        {"Projects"},
+		"TestNB/Projects/Active": {"Active"},
+		// A pre-existing destination is overwritten by the migrated source.
+		"TestNB/Archive": {"old"},
+	}
+	migrateNavOrderKeys(order, "TestNB/Projects", "TestNB/Archive")
+
+	want := map[string][]string{
+		"TestNB/Archive":        {"Projects"},
+		"TestNB/Archive/Active": {"Active"},
+	}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("migrated nav order = %#v, want %#v", order, want)
 	}
 }
 

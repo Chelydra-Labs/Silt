@@ -176,7 +176,7 @@
         plugin_id: ''
       }
       selectedId = ''
-      baseline = JSON.stringify({ ...draft, id: '', title: '', body: '' })
+      baseline = JSON.stringify(draft)
     } catch (caught) {
       error = caught instanceof Error ? caught.message : String(caught)
     } finally {

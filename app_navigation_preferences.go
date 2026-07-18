@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,16 +31,7 @@ func (a *App) mutateConfigLocked(mut func(*config.SystemConfig) error) error {
 
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
-	next := a.cfg
-	next.UI.NavOrder = cloneNavOrder(a.cfg.UI.NavOrder)
-	next.UI.OpenTabs = append([]config.TabRef(nil), a.cfg.UI.OpenTabs...)
-	if a.cfg.UI.ActiveTab != nil {
-		active := *a.cfg.UI.ActiveTab
-		next.UI.ActiveTab = &active
-	}
-	next.UI.ExpandedSections = append([]config.NavigationSectionRef(nil), a.cfg.UI.ExpandedSections...)
-	next.UI.RecentPages = append([]config.RecentPage(nil), a.cfg.UI.RecentPages...)
-	next.UI.Favorites = append([]config.NavigationPageRef(nil), a.cfg.UI.Favorites...)
+	next := config.Clone(a.cfg)
 	if err := mut(&next); err != nil {
 		return err
 	}
@@ -82,9 +74,6 @@ func (a *App) SetNavigationSectionExpanded(notebook, sectionPath string, expande
 	}
 	if _, err := validateSectionPath(sectionPath, false); err != nil {
 		return invalidNavigationPath(err)
-	}
-	if notebook == "" || sectionPath == "" {
-		return fmt.Errorf("notebook and section path are required")
 	}
 	return a.mutateConfig(func(cfg *config.SystemConfig) error {
 		items := append([]config.NavigationSectionRef(nil), cfg.UI.ExpandedSections...)
@@ -216,22 +205,10 @@ func (a *App) reconcileNavigationSection(notebook, oldPath, newPath string, remo
 				cfg.UI.NavOrder.Sections[oldParentKey] = removeNavOrderValue(cfg.UI.NavOrder.Sections[oldParentKey], newLeaf)
 				cfg.UI.NavOrder.Sections[newParentKey] = appendUniqueNavOrderValue(cfg.UI.NavOrder.Sections[newParentKey], newLeaf)
 			}
-			for key, values := range cfg.UI.NavOrder.Sections {
-				prefix := notebook + "/" + oldPath
-				if key == prefix || strings.HasPrefix(key, prefix+"/") {
-					newKey := notebook + "/" + newPath + strings.TrimPrefix(key, prefix)
-					delete(cfg.UI.NavOrder.Sections, key)
-					cfg.UI.NavOrder.Sections[newKey] = values
-				}
-			}
-			for key, pages := range cfg.UI.NavOrder.Pages {
-				prefix := notebook + "/" + oldPath
-				if key == prefix || strings.HasPrefix(key, prefix+"/") {
-					newKey := notebook + "/" + newPath + strings.TrimPrefix(key, prefix)
-					delete(cfg.UI.NavOrder.Pages, key)
-					cfg.UI.NavOrder.Pages[newKey] = pages
-				}
-			}
+			prefix := notebook + "/" + oldPath
+			newPrefix := notebook + "/" + newPath
+			migrateNavOrderKeys(cfg.UI.NavOrder.Sections, prefix, newPrefix)
+			migrateNavOrderKeys(cfg.UI.NavOrder.Pages, prefix, newPrefix)
 		}
 
 		expanded := make([]config.NavigationSectionRef, 0, len(cfg.UI.ExpandedSections))
@@ -349,6 +326,33 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// migrateNavOrderKeys snapshots matching keys before changing the map. A
+// migrated source deliberately overwrites an existing destination key, while
+// snapshotting makes that overwrite independent of map iteration behavior.
+func migrateNavOrderKeys(order map[string][]string, oldPrefix, newPrefix string) {
+	keys := make([]string, 0)
+	for key := range order {
+		if key == oldPrefix || strings.HasPrefix(key, oldPrefix+"/") {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	entries := make([]struct {
+		key    string
+		values []string
+	}, 0, len(keys))
+	for _, key := range keys {
+		entries = append(entries, struct {
+			key    string
+			values []string
+		}{key: newPrefix + strings.TrimPrefix(key, oldPrefix), values: order[key]})
+		delete(order, key)
+	}
+	for _, entry := range entries {
+		order[entry.key] = entry.values
+	}
 }
 
 func (a *App) reconcileNavigationPage(notebook, section, oldPage, newPage string, remove bool) error {
@@ -479,18 +483,8 @@ func (a *App) reconcileNavigationNotebook(oldName, newName string, remove bool) 
 				}
 			}
 		} else if oldName != newName {
-			for key, values := range cfg.UI.NavOrder.Pages {
-				if key == oldName || strings.HasPrefix(key, oldName+"/") {
-					delete(cfg.UI.NavOrder.Pages, key)
-					cfg.UI.NavOrder.Pages[newName+strings.TrimPrefix(key, oldName)] = values
-				}
-			}
-			for key, values := range cfg.UI.NavOrder.Sections {
-				if key == oldName || strings.HasPrefix(key, oldName+"/") {
-					delete(cfg.UI.NavOrder.Sections, key)
-					cfg.UI.NavOrder.Sections[newName+strings.TrimPrefix(key, oldName)] = values
-				}
-			}
+			migrateNavOrderKeys(cfg.UI.NavOrder.Pages, oldName, newName)
+			migrateNavOrderKeys(cfg.UI.NavOrder.Sections, oldName, newName)
 		}
 		pages := func(ref config.NavigationPageRef) (config.NavigationPageRef, bool) {
 			if ref.Notebook != oldName {
