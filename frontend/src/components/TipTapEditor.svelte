@@ -315,7 +315,9 @@
   function openLinkInput(prefill?: string): void {
     if (!editorInstance || editorInstance.isDestroyed) return
     const { selection } = editorInstance.state
-    if (selection.empty) return
+    const inLink = editorInstance.isActive('link')
+    // New links need a non-empty selection; edit can open with the caret in a link.
+    if (selection.empty && !inLink && prefill == null) return
     try {
       const coords = editorInstance.view.coordsAtPos(selection.from)
       linkInputCoords = { left: coords.left, top: coords.bottom }
@@ -323,7 +325,7 @@
       linkInputCoords = null
     }
     let initial = prefill ?? ''
-    if (!initial && editorInstance.isActive('link')) {
+    if (!initial && inLink) {
       try {
         const attrs = editorInstance.getAttributes('link') as { href?: string }
         initial = attrs?.href ?? ''

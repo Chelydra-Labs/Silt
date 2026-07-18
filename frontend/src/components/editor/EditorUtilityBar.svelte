@@ -29,12 +29,19 @@
   .unified-utility-bar {
     display: flex;
     align-items: center;
-    height: 38px;
-    padding: 0 16px;
+    min-height: 38px;
+    height: auto;
+    padding: 4px 16px;
     background: color-mix(in srgb, var(--color-surface-panel) 95%, transparent);
     backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--color-surface-panel-border);
     flex-shrink: 0;
     z-index: 15;
+    min-width: 0;
+    max-width: 100%;
+    overflow: visible;
+    /* Enable container queries for FormatToolbar label collapse at ≤600px. */
+    container-type: inline-size;
+    container-name: editor-utility-bar;
   }
 </style>
