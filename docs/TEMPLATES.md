@@ -194,10 +194,10 @@ placeholders:                               # optional; drives the picker form
 
 1. Click the **content_copy** icon in the sidebar (next to **New Page**), or press **Ctrl+Shift+T**.
 2. Search or browse the template list (grouped by category).
-3. Select a template — the right pane shows a live preview with today's date/time.
-4. Fill in any placeholders (user-declared fields appear below the preview).
-5. The **page name** field is pre-filled with `Page YYYY-MM-DD` and focused — you can edit it before confirming, or just press **Enter** to use the default.
-6. Click **Create Page**. The new page is created with the rendered Markdown, opens in the editor, and the inline title at the top of the page is focused and selected so you can immediately overwrite the name (the file is renamed on debounce via `RenamePage`, the OneNote model).
+  3. Select a template — the right pane shows a **rendered** live preview (headings, lists, callouts) with today's date/time. Unresolved `{{placeholders}}` appear as chips; the preview updates as you fill the form.
+  4. Fill in any placeholders (user-declared fields appear below the preview).
+  5. The **page name** field is pre-filled with `Page YYYY-MM-DD` and focused — you can edit it before confirming, or just press **Enter** to use the default.
+  6. Click **Create Page**. The new page is created with the rendered Markdown, opens in the editor, and the inline title at the top of the page is focused and selected so you can immediately overwrite the name (the file is renamed on debounce via `RenamePage`, the OneNote model).
 
 ### Insert at cursor
 
@@ -205,6 +205,7 @@ placeholders:                               # optional; drives the picker form
 2. Select a template from the slash menu.
 3. Fill in any placeholders.
 4. Click **Insert**. The rendered blocks are inserted at the cursor position.
+5. If the page already has content and the cursor is **not** at the end, Silt asks whether to **Insert at cursor** or **Append to end** (empty pages and end-of-doc inserts skip the prompt).
 
 > Inserted blocks get **fresh UUIDs** automatically (the editor's `UniqueBlockIds` extension), so inserting the same template twice never creates duplicate block IDs.
 

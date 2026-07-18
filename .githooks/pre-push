@@ -73,6 +73,17 @@ if [ -n "$GO_CHANGED" ]; then
     echo "ERROR: Go tests failed! Push aborted."
     exit 1
   fi
+
+  # IPC binding-parity gate: catch approved-methods manifest drift before CI
+  # (cheap; prints the -update regen command on failure).
+  echo "Checking IPC binding parity..."
+  go run -tags tools ./cmd/inventory/ -compare cmd/inventory/current-approved-v3.json
+  if [ $? -ne 0 ]; then
+    echo "ERROR: IPC binding parity check failed — manifest is stale."
+    echo "  Regenerate with: go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json"
+    echo "  Then commit cmd/inventory/current-approved-v3.json with your Go change."
+    exit 1
+  fi
   echo "Running withAIPreflight defer-contract analyzer..."
   VETTOOL="./.gobins/withaipreflightdefer"
   # go build -o produces .exe on Windows when no extension is specified;

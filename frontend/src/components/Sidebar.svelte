@@ -36,6 +36,7 @@
     findNotebook
   } from '../lib/sidebar/navActions'
   import ContextMenu from './ContextMenu.svelte'
+  import NamePromptDialog from './NamePromptDialog.svelte'
   import SettingsNav from './settings/SettingsNav.svelte'
 
   import type { PluginContext, PluginManifest } from '../plugins/sdk'
@@ -127,7 +128,6 @@
   let newName = $state('')
   let createError = $state('')
   let creating = $state(false)
-  let modalInputEl = $state<HTMLInputElement | null>(null)
 
   // Context menu state (#62)
   let contextMenu = $state<{
@@ -364,7 +364,6 @@
     renameCtx = null
     newName = ''
     createError = ''
-    setTimeout(() => modalInputEl?.focus(), 0)
   }
 
   function openRename(
@@ -379,7 +378,48 @@
     renameCtx = { level, notebook, section, page }
     newName = currentName
     createError = ''
-    setTimeout(() => modalInputEl?.focus(), 0)
+  }
+
+  function namePromptTitle(): string {
+    const kind =
+      createMode === 'page'
+        ? 'Page'
+        : createMode === 'notebook'
+          ? 'Notebook'
+          : 'Section'
+    return editingMode === 'rename' ? `Rename ${kind}` : `New ${kind}`
+  }
+
+  function namePromptLabel(): string {
+    if (createMode === 'notebook') return 'Notebook name'
+    if (createMode === 'page') return 'Page name'
+    return 'Section name'
+  }
+
+  function namePromptPlaceholder(): string {
+    if (editingMode === 'rename') {
+      if (createMode === 'notebook') return 'New notebook name…'
+      if (createMode === 'page') return 'New page name…'
+      return 'New section name…'
+    }
+    if (createMode === 'notebook') return 'Notebook name…'
+    if (createMode === 'page') return 'Page name…'
+    return 'Section name…'
+  }
+
+  function namePromptConfirmLabel(): string {
+    if (creating) {
+      return editingMode === 'rename' ? 'Renaming…' : 'Creating…'
+    }
+    return editingMode === 'rename' ? 'Rename' : 'Create'
+  }
+
+  function closeNamePrompt() {
+    if (creating) return
+    createMode = ''
+    createError = ''
+    renameCtx = null
+    newName = ''
   }
 
   async function handleOpenNotebookFolder() {
@@ -398,7 +438,9 @@
     } catch (e) {
       createError = e instanceof Error ? e.message : String(e)
       createMode = 'notebook'
-      setTimeout(() => modalInputEl?.focus(), 0)
+      editingMode = 'create'
+      renameCtx = null
+      newName = ''
     } finally {
       creating = false
     }
@@ -426,9 +468,10 @@
     }
   }
 
-  async function handleCreate() {
-    const trimmed = newName.trim()
+  async function handleCreate(nameFromDialog?: string) {
+    const trimmed = (nameFromDialog ?? newName).trim()
     if (trimmed === '') return
+    newName = trimmed
     creating = true
     createError = ''
     try {
@@ -487,22 +530,11 @@
       createMode = ''
       newName = ''
       renameCtx = null
+      createError = ''
     } catch (e) {
       createError = e instanceof Error ? e.message : String(e)
     } finally {
       creating = false
-    }
-  }
-
-  function handleModalKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      e.stopPropagation()
-      handleCreate()
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      e.stopPropagation()
-      createMode = ''
     }
   }
 
@@ -1033,107 +1065,20 @@
     </div>
   {/if}
 
-  <!-- Inline create/rename modal -->
+  <!-- Shared create/rename dialog (#662) — NamePromptDialog for all nav CRUD. -->
   {#if createMode}
-    <div
-      class="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[160] flex items-start justify-center pt-32"
-    >
-      <button
-        tabindex="-1"
-        aria-label="Close dialog"
-        onclick={() => (createMode = '')}
-        class="absolute inset-0 cursor-default border-none bg-transparent p-0"
-      ></button>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={editingMode === 'rename'
-          ? `Rename ${createMode === 'page' ? 'Page' : createMode === 'notebook' ? 'Notebook' : 'Section'}`
-          : `New ${createMode === 'page' ? 'Page' : createMode === 'notebook' ? 'Notebook' : 'Section'}`}
-        tabindex="-1"
-        class="relative w-full max-w-md glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden"
-      >
-        <div class="px-5 py-4 border-b border-surface-modal-border">
-          <h2 class="font-headline-md text-headline-md text-text-primary">
-            {editingMode === 'rename' ? 'Rename' : 'New'}
-            {createMode === 'page'
-              ? 'Page'
-              : createMode === 'notebook'
-                ? 'Notebook'
-                : 'Section'}
-          </h2>
-          <p class="text-text-muted text-type-sm font-body-md mt-0.5">
-            {#if createMode === 'notebook'}
-              in this vault
-            {:else if createMode === 'section'}
-              in {activeNotebook}
-            {:else if createMode === 'page'}
-              {#if renameCtx?.section}
-                {renameCtx.notebook} › {renameCtx.section}
-              {:else if renameCtx}
-                {renameCtx.notebook}
-              {:else if activeSection}
-                {activeNotebook} › {activeSection}
-              {:else}
-                {activeNotebook}
-              {/if}
-            {:else if activeSection}
-              {activeNotebook} › {activeSection}
-            {:else}
-              choose a section first
-            {/if}
-          </p>
-        </div>
-        <div class="px-5 py-4">
-          <input
-            bind:this={modalInputEl}
-            bind:value={newName}
-            onkeydown={handleModalKeydown}
-            type="text"
-            placeholder={editingMode === 'rename'
-              ? createMode === 'notebook'
-                ? 'New notebook name…'
-                : createMode === 'page'
-                  ? 'New page name…'
-                  : 'New section name…'
-              : createMode === 'notebook'
-                ? 'Notebook name…'
-                : createMode === 'page'
-                  ? 'Page name…'
-                  : 'Section name…'}
-            class="w-full bg-surface-modal border border-surface-modal-border rounded-lg px-3 py-2.5 text-text-primary text-icon-sm font-body-md outline-none focus:border-accent-primary-start transition-colors"
-          />
-          {#if createError}
-            <p class="text-error text-type-sm font-body-md mt-2">
-              {createError}
-            </p>
-          {/if}
-        </div>
-        <div
-          class="flex items-center justify-end gap-2 px-5 py-3 border-t border-surface-modal-border"
-        >
-          <button
-            onclick={() => (createMode = '')}
-            class="px-4 py-2 rounded-lg text-text-muted hover:text-text-primary font-label-sm-bold transition-colors border-none bg-transparent cursor-pointer"
-          >
-            Cancel
-          </button>
-          <button
-            onclick={handleCreate}
-            disabled={creating || !newName.trim()}
-            class="px-4 py-2 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {creating
-              ? editingMode === 'rename'
-                ? 'Renaming…'
-                : 'Creating…'
-              : editingMode === 'rename'
-                ? 'Rename'
-                : 'Create'}
-          </button>
-        </div>
-      </div>
-    </div>
+    <NamePromptDialog
+      title={namePromptTitle()}
+      label={namePromptLabel()}
+      initialValue={newName}
+      placeholder={namePromptPlaceholder()}
+      confirmLabel={namePromptConfirmLabel()}
+      errorMessage={createError}
+      busy={creating}
+      dataTestId="sidebar-name-prompt"
+      onConfirm={(value) => void handleCreate(value)}
+      onCancel={closeNamePrompt}
+    />
   {/if}
 
   <!-- Sidebar Footer -->

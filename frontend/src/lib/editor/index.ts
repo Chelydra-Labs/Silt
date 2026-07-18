@@ -9,12 +9,15 @@ export {
   CalloutBlock,
   CodeBlock,
   MentionNode,
+  CALLOUT_VARIANTS,
+  normalizeCalloutVariant,
   SiltBlockExtensions,
   SiltInlineMarkExtensions,
   SiltColorMarkExtensions,
   SiltDetailsExtensions,
   SiltTableExtensions
 } from './schema'
+export type { CalloutVariant } from './schema'
 export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
 export {
@@ -81,3 +84,10 @@ export type {
   NodeJSON,
   DocJSON
 } from './types'
+export {
+  extractHeadings,
+  extractHeadingsFromEditor,
+  jumpToHeading,
+  activeHeadingId
+} from './outline'
+export type { OutlineHeading } from './outline'

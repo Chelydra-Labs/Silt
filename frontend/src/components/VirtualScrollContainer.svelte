@@ -4,6 +4,7 @@
   import { Events } from '@wailsio/runtime'
   import TipTapEditor from './TipTapEditor.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
+  import OutlinePanel from './editor/OutlinePanel.svelte'
   import FindBar from './editor/FindBar.svelte'
   import { findBarState } from '../lib/editor/search/findBarState.svelte'
   import type { ParsedBlock } from '../lib/editor'
@@ -90,6 +91,7 @@
   let hasFirstEdit = false
   let handledTargetKey = $state('')
   let scrollAttemptCount = 0
+  let outlineOpen = $state(false)
 
   // Editor status state
   let dirty = $state(false)
@@ -472,121 +474,139 @@
     <EditorUtilityBar editor={editorInstance} {activeMarks} />
   {/if}
 
-  <!-- containerEl is intentionally NOT a flex container. The .silt-texture-
+  <div class="flex flex-1 min-h-0">
+    <!-- containerEl is intentionally NOT a flex container. The .silt-texture-
        surface::before overlay (index.css) uses position:sticky with
        height:100vh + margin-bottom:-100vh to pin the theme's paper texture
        across the scroll viewport. That cancel trick relies on BLOCK flow —
        when this element was `flex flex-col`, the ::before became a flex item
        and the vh/negative-margin pair stopped cancelling, which collapsed the
        content geometry and broke scrolling on textured themes (Linen). -->
-  <div
-    bind:this={containerEl}
-    class="silt-texture-surface flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-surface-editor min-h-0"
-  >
-    <div class="relative z-[1] flex flex-col">
-      <nav
-        class="mb-6 flex items-center gap-1.5 text-text-muted/60 text-type-xs font-medium tracking-wider uppercase font-body"
-      >
-        <span class="hover:text-text-primary transition-colors cursor-pointer"
-          >{notebook}</span
+    <div
+      bind:this={containerEl}
+      class="silt-texture-surface flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-surface-editor min-h-0"
+    >
+      <div class="relative z-[1] flex flex-col">
+        <nav
+          class="mb-6 flex items-center gap-1.5 text-text-muted/60 text-type-xs font-medium tracking-wider uppercase font-body"
         >
-        {#if section}
+          <span class="hover:text-text-primary transition-colors cursor-pointer"
+            >{notebook}</span
+          >
+          {#if section}
+            <span
+              class="material-symbols-outlined text-icon-xs text-text-muted/30"
+              >chevron_right</span
+            >
+            <span
+              class="hover:text-text-primary transition-colors cursor-pointer"
+              >{section}</span
+            >
+          {/if}
           <span
             class="material-symbols-outlined text-icon-xs text-text-muted/30"
             >chevron_right</span
           >
-          <span class="hover:text-text-primary transition-colors cursor-pointer"
-            >{section}</span
+          <span
+            class="text-accent-primary-start/90 tracking-normal normal-case font-semibold"
+            >{displayTitle}</span
           >
-        {/if}
-        <span class="material-symbols-outlined text-icon-xs text-text-muted/30"
-          >chevron_right</span
-        >
-        <span
-          class="text-accent-primary-start/90 tracking-normal normal-case font-semibold"
-          >{displayTitle}</span
-        >
-      </nav>
+        </nav>
 
-      <header class="mb-8">
-        <h1
-          bind:this={titleEl}
-          contenteditable="true"
-          spellcheck="false"
-          oninput={handleTitleInput}
-          onkeydown={handleTitleKeydown}
-          onblur={handleTitleBlur}
-          onfocus={() => (titleFocused = true)}
-          class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1 outline-none rounded-sm transition-colors"
-          style="border-bottom: 1px solid transparent; padding-bottom: 1px;"
-          aria-label="Page title"
-        >
-          {displayTitle}
-        </h1>
-        <p class="text-text-muted/60 text-sm font-body-sm">
-          {formatDate(pageDate)}
-        </p>
-      </header>
-
-      <div class="max-w-4xl w-full flex-1 flex flex-col gap-4">
-        {#if loadError}
-          <div
-            class="text-error py-8 text-center font-body-md border border-error-border bg-error-bg rounded-lg flex flex-col items-center gap-3"
+        <header class="mb-8">
+          <h1
+            bind:this={titleEl}
+            contenteditable="true"
+            spellcheck="false"
+            oninput={handleTitleInput}
+            onkeydown={handleTitleKeydown}
+            onblur={handleTitleBlur}
+            onfocus={() => (titleFocused = true)}
+            class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1 outline-none rounded-sm transition-colors"
+            style="border-bottom: 1px solid transparent; padding-bottom: 1px;"
+            aria-label="Page title"
           >
-            <div>Failed to load page: {loadError}</div>
-            <button
-              onclick={() => loadPage()}
-              class="px-4 py-1.5 rounded-lg bg-error/20 border border-error-border text-error font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
+            {displayTitle}
+          </h1>
+          <p class="text-text-muted/60 text-sm font-body-sm">
+            {formatDate(pageDate)}
+          </p>
+        </header>
+
+        <div class="max-w-4xl w-full flex-1 flex flex-col gap-4">
+          {#if loadError}
+            <div
+              class="text-error py-8 text-center font-body-md border border-error-border bg-error-bg rounded-lg flex flex-col items-center gap-3"
             >
-              Retry
-            </button>
-          </div>
-        {:else}
-          {#if viewMode === 'source'}
-            <!-- Source view (#171/#194): a read-only projection. TipTapEditor
-                 is NOT mounted here — Svelte tears the whole editor (ProseMirror
-                 doc + NodeViews + listeners) down on the switch, so a tab held
-                 in Source view pays no editor memory cost (#178). Returning to
-                 Edit remounts it and rebuilds from `blocks` (content is on disk
-                  via auto-save); scroll (#319) and caret (#331) restore on
-                  the remounted editor's onReady. -->
-            <MarkdownSourceViewer
-              {blocks}
-              filePath="{notebook}/{section}/{page}.md"
-            />
+              <div>Failed to load page: {loadError}</div>
+              <button
+                onclick={() => loadPage()}
+                class="px-4 py-1.5 rounded-lg bg-error/20 border border-error-border text-error font-label-sm-bold hover:brightness-110 transition-all cursor-pointer"
+              >
+                Retry
+              </button>
+            </div>
           {:else}
-            <TipTapEditor
-              {notebook}
-              {section}
-              {page}
-              {blocks}
-              {activeFocusedBlockAncestors}
-              {onBlockFocus}
-              {onBlockBlur}
-              onUpdate={handleBlocksUpdated}
-              onReady={handleEditorReady}
-              bind:editorInstance
-              bind:activeMarks
-              bind:wordCount
-              onSaveStateChange={(s) => {
-                dirty = s.dirty
-                saveError = s.error
-                savePhase = s.phase
-                onSaveStateChange?.(s)
-              }}
-            />
+            {#if viewMode === 'source'}
+              <!-- Source view (#171/#194/#660): editable markdown. TipTapEditor
+                 is NOT mounted here — Svelte tears the whole editor down on
+                 the switch (#178). Returning to Edit remounts from `blocks`
+                 (updated via onBlocksSaved after source save). -->
+              <MarkdownSourceViewer
+                {blocks}
+                {notebook}
+                {section}
+                {page}
+                filePath="{notebook}/{section}/{page}.md"
+                onBlocksSaved={(saved) => {
+                  blocks = saved
+                }}
+              />
+            {:else}
+              <TipTapEditor
+                {notebook}
+                {section}
+                {page}
+                {blocks}
+                {activeFocusedBlockAncestors}
+                {onBlockFocus}
+                {onBlockBlur}
+                onUpdate={handleBlocksUpdated}
+                onReady={handleEditorReady}
+                bind:editorInstance
+                bind:activeMarks
+                bind:wordCount
+                onSaveStateChange={(s) => {
+                  dirty = s.dirty
+                  saveError = s.error
+                  savePhase = s.phase
+                  onSaveStateChange?.(s)
+                }}
+              />
+            {/if}
           {/if}
-        {/if}
 
-        {#if loading}
-          <div class="flex justify-center py-6">
-            <span class="text-accent-primary-start font-body-md animate-pulse"
-              >Loading...</span
-            >
-          </div>
-        {/if}
+          {#if loading}
+            <div class="flex justify-center py-6">
+              <span class="text-accent-primary-start font-body-md animate-pulse"
+                >Loading...</span
+              >
+            </div>
+          {/if}
+        </div>
       </div>
     </div>
+
+    {#if outlineOpen && viewMode === 'edit'}
+      <OutlinePanel
+        editor={editorInstance}
+        scrollParent={containerEl}
+        open={true}
+        onToggle={() => {
+          outlineOpen = false
+        }}
+      />
+    {/if}
   </div>
 
   <!-- Floating Editor Actions Bar -->
@@ -625,6 +645,25 @@
     >
       <span class="material-symbols-outlined text-icon-lg">text_format</span>
     </button>
+
+    {#if viewMode === 'edit'}
+      <button
+        type="button"
+        onclick={() => {
+          outlineOpen = !outlineOpen
+        }}
+        class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
+        class:text-accent-primary-start={outlineOpen}
+        class:text-text-muted={!outlineOpen}
+        title={outlineOpen ? 'Hide outline' : 'Show outline'}
+        aria-label="Toggle document outline"
+        aria-pressed={outlineOpen}
+      >
+        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+          >list</span
+        >
+      </button>
+    {/if}
 
     <div class="w-px h-4 bg-surface-popover-border mx-0.5"></div>
 

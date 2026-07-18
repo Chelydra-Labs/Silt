@@ -177,6 +177,10 @@
         "signature": "FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error)"
       },
       {
+        "name": "FetchPageMarkdown",
+        "signature": "FetchPageMarkdown(notebook, section, page string) (string, error)"
+      },
+      {
         "name": "FetchSubtree",
         "signature": "FetchSubtree(blockID string) ([]parser.ParsedBlock, error)"
       },
@@ -745,6 +749,10 @@
         "signature": "SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error"
       },
       {
+        "name": "SavePageMarkdown",
+        "signature": "SavePageMarkdown(notebook, section, page, markdown string) ([]parser.ParsedBlock, error)"
+      },
+      {
         "name": "SaveSubtreeBlocks",
         "signature": "SaveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (bool, error)"
       },
@@ -948,6 +956,8 @@
       "frontend/src/components/editor/EmbedBlockNodeView.svelte",
       "frontend/src/components/editor/GlobalReplaceModal.svelte",
       "frontend/src/components/editor/GlobalReplaceModal.test.ts",
+      "frontend/src/components/editor/MarkdownSourceViewer.svelte",
+      "frontend/src/components/editor/MarkdownSourceViewer.svelte.test.ts",
       "frontend/src/components/editor/PluginNoteBanners.test.ts",
       "frontend/src/components/settings/AIProviderTab.test.ts",
       "frontend/src/components/settings/AboutTab.svelte",
@@ -970,6 +980,7 @@
       "frontend/src/components/settings/ai/aiProviderController.svelte.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
       "frontend/src/lib/editor/nodeview-test-harness.ts",
+      "frontend/src/lib/editor/pageMarkdown.ts",
       "frontend/src/lib/editor/spellcheck/customDictionary.svelte.ts",
       "frontend/src/lib/editor/spellcheck/dictionary.test.ts",
       "frontend/src/lib/editor/spellcheck/dictionary.ts",

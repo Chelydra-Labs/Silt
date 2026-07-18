@@ -380,6 +380,144 @@ func TestSaveFileBlocks_PreservesNonBlockLines(t *testing.T) {
 	}
 }
 
+func TestFetchPageMarkdown_ReturnsBodyWithoutFrontmatter(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "Work", "Journal", "SourceSeed"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	content := "---\nnotebook: Work\nsection: Journal\npage: SourceSeed\ndate: 2026-07-17\ntags: []\n---\n" +
+		"# Title <!-- id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa -->\n\n" +
+		"```go\nfmt.Println(1)\n```\n"
+	writeFile(t, filePath, content)
+	// Index so vault is consistent (FetchPageMarkdown only needs the file).
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, "2026-07-17", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.SaveFileBlocks(notebook, section, page, blocks); err != nil {
+		t.Fatalf("SaveFileBlocks seed: %v", err)
+	}
+
+	body, err := app.FetchPageMarkdown(notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageMarkdown: %v", err)
+	}
+	if strings.Contains(body, "notebook:") {
+		t.Errorf("body should not include frontmatter, got:\n%s", body)
+	}
+	if !strings.Contains(body, "# Title") || !strings.Contains(body, "```go") {
+		t.Errorf("expected heading + fence in body, got:\n%s", body)
+	}
+}
+
+func TestSavePageMarkdown_PreservesFrontmatterAndRoundTrips(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "Work", "Journal", "SourceEdit"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	content := "---\nnotebook: Work\nsection: Journal\npage: SourceEdit\ndate: 2026-07-17\ntags: []\n---\n" +
+		"# Old <!-- id: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb -->\n"
+	writeFile(t, filePath, content)
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, "2026-07-17", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.SaveFileBlocks(notebook, section, page, blocks); err != nil {
+		t.Fatalf("SaveFileBlocks seed: %v", err)
+	}
+
+	newBody := "# New heading\n\n- [ ] task from source\n"
+	saved, err := app.SavePageMarkdown(notebook, section, page, newBody)
+	if err != nil {
+		t.Fatalf("SavePageMarkdown: %v", err)
+	}
+	if len(saved) == 0 {
+		t.Fatal("expected re-parsed blocks")
+	}
+	writtenBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	written := string(writtenBytes)
+	// Frontmatter must lead the file (not a body thematic break).
+	if !strings.HasPrefix(written, "---\n") {
+		t.Fatalf("expected file to start with YAML frontmatter, got:\n%s", written)
+	}
+	endFM := strings.Index(written[4:], "\n---\n")
+	if endFM < 0 {
+		t.Fatalf("expected closing frontmatter fence, got:\n%s", written)
+	}
+	fmBlock := written[:endFM+8] // include both fences
+	if !strings.Contains(fmBlock, "notebook:") {
+		t.Errorf("frontmatter missing notebook key, got:\n%s", fmBlock)
+	}
+	if !strings.Contains(written, "# New heading") {
+		t.Errorf("expected new body, got:\n%s", written)
+	}
+	// Fetch should return body without frontmatter.
+	body, err := app.FetchPageMarkdown(notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageMarkdown: %v", err)
+	}
+	if !strings.Contains(body, "# New heading") {
+		t.Errorf("FetchPageMarkdown body missing heading: %s", body)
+	}
+}
+
+// TestSavePageMarkdown_SerializesAgainstMutateBlock locks the race window
+// where Source unmount flush and embed MutateBlock target the same page.
+// Contract: no deadlock under concurrent load; writers serialize on the
+// per-block + file locks. SavePageMarkdown's body is authoritative (it does
+// not merge concurrent MutateBlock text) — product conflict UX is Source-side.
+func TestSavePageMarkdown_SerializesAgainstMutateBlock(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "Work", "Journal", "RacePage"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	blockID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	content := "---\nnotebook: Work\nsection: Journal\npage: RacePage\ndate: 2026-07-17\ntags: []\n---\n" +
+		"- [ ] original task <!-- id: " + blockID + " -->\n"
+	writeFile(t, filePath, content)
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, "2026-07-17", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.SaveFileBlocks(notebook, section, page, blocks); err != nil {
+		t.Fatalf("SaveFileBlocks seed: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for i := 0; i < 10; i++ {
+		wg.Add(2)
+		go func(n int) {
+			defer wg.Done()
+			body := fmt.Sprintf("# source rewrite %d\n\n- [ ] from source\n", n)
+			if _, e := app.SavePageMarkdown(notebook, section, page, body); e != nil {
+				errs <- e
+			}
+		}(i)
+		go func(n int) {
+			defer wg.Done()
+			if e := app.MutateBlock(blockID, fmt.Sprintf("mutated %d", n)); e != nil {
+				// block_being_edited or not-found after rewrite is acceptable;
+				// deadlock/panic is not.
+				if !strings.Contains(e.Error(), "being edited") &&
+					!strings.Contains(e.Error(), "not found") &&
+					!strings.Contains(e.Error(), "block_being_edited") {
+					errs <- e
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Errorf("unexpected concurrent error: %v", e)
+	}
+	// File must still be readable and parseable.
+	if _, err := app.FetchPageMarkdown(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageMarkdown after race: %v", err)
+	}
+}
+
 func TestSearchBlocks_FuzzySearch(t *testing.T) {
 	app := newTestApp(t)
 

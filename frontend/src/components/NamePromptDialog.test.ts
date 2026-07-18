@@ -71,6 +71,25 @@ describe('NamePromptDialog', () => {
     expect(onCancel).toHaveBeenCalledTimes(1)
   })
 
+  it('disables Cancel and ignores Esc while busy', async () => {
+    const onCancel = vi.fn()
+    render(NamePromptDialog, {
+      props: {
+        title: 'Rename',
+        initialValue: 'x',
+        busy: true,
+        dataTestId: 'busy-name',
+        onConfirm: vi.fn(),
+        onCancel
+      }
+    })
+    const cancel = screen.getByTestId('busy-name-cancel') as HTMLButtonElement
+    expect(cancel.disabled).toBe(true)
+    await fireEvent.click(cancel)
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onCancel).not.toHaveBeenCalled()
+  })
+
   it('confirms on Enter in the name field', async () => {
     const onConfirm = vi.fn()
     render(NamePromptDialog, {

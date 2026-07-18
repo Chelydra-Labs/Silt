@@ -452,7 +452,7 @@ type TaskQueryFilter struct {
 All bindings hang off the single Wails v3 service (`*App` registered via `application.NewServiceWithOptions`) and are
 auto-exposed to the frontend as JSON RPC. Grouped by domain:
 
-- **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `UpdateBlockState`
+- **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `FetchPageMarkdown` / `SavePageMarkdown` (raw source body), `UpdateBlockState`
   (task-checkbox transition + atomic file rewrite + re-index),
   `MutateBlock`, `QueryTasks` (dashboard filter query). **Task dependencies**:
   `SetTaskBlockedBy` / `PluginSetTaskBlockedBy` (cycle-checked
@@ -684,7 +684,7 @@ Pipeline (single source of truth shared with SPECS.md §6.5 / docs/TEMPLATES.md)
 
 **IPC.** `ListTemplates`, `GetTemplate`, `RenderTemplate`, `RenderTemplateBlocks`, `SaveUserTemplate`, `DeleteUserTemplate`, `ReloadTemplates`, `RegisterPluginTemplates`/`UnregisterPluginTemplates` (plugin-provided templates, deduped last), `CreatePageFromTemplate`. Emits `templates:changed`. `CreatePageFromTemplate` renders + prepends standard frontmatter + writes atomically + indexes, composing with the `CreatePage` path. If the target page already exists it returns IPC error code `page_exists` and does not clobber.
 
-**Frontend** (`frontend/src/templates`): `store.svelte.ts` (`templatesState` listing + `templates:changed` subscription); `TemplatePicker.svelte` (modal: search, category groups, live preview, placeholder form; new-page or insert-at-cursor). Entry points: New Page → From Template (`Ctrl+Shift+T`) and the `/template` slash command.
+**Frontend** (`frontend/src/templates`): `store.svelte.ts` (`templatesState` listing + `templates:changed` subscription); `TemplatePicker.svelte` (modal: search, category groups, **rendered** live preview via marked + DOMPurify with `{{placeholder}}` chips, placeholder form; new-page or insert-at-cursor with mid-page insert confirmation). Entry points: New Page → From Template (`Ctrl+Shift+T`) and the `/template` slash command.
 
 
 4.6 System Tray & Native Menus (#501, #503)
@@ -787,7 +787,7 @@ NodeView components (`TaskBlockView`, `NoteBlockView`, `HeaderBlockView`) render
 
 **Smart Graph NodeViews.** Three additional schema nodes render Smart Graph syntax as live, interactive elements inside the editor. The converter layer (`frontend/src/lib/editor/converters.ts`) tokenizes `clean_text` and emits the corresponding node types inline within the parent `noteBlock`; on save, the textual tokens are reconstructed byte-for-byte so the on-disk file is round-trip identical.
 
-- `embedNode` (block-level, atomic) — `{{embed:uuid}}` becomes a live `EmbedPortal` NodeView. The portal fetches the referenced block via `ResolveBlockReference` and renders it as a nested live view.
+- `embedNode` (block-level, atomic) — `{{embed:uuid}}` becomes a live `EmbedPortal` NodeView. The portal fetches the referenced block via `ResolveBlockReference` and renders it as a nested live view. Display uses `RichText`; on focus, a schema-subset TipTap editor mounts for inline marks + chips, serializing back through `serializeInlineContent` → debounced `MutateBlock` (single-line `CleanText`; newlines still collapse).
 - `blockReferenceNode` (inline, atomic) — `((uuid))` becomes a clickable `BlockReferenceChip` NodeView that navigates to the referenced block via the `navigate-to-block` DOM event.
 - `pageLinkNode` (inline, atomic) — `[[target]]` / `[[target#heading|alias]]` becomes a clickable `PageLinkChip` NodeView. Resolution is `ResolvePageLink` (shortest unique path); click dispatches `navigate-to-page` (optional heading scroll). A derived `page_links` table (FK cascade from `blocks`) indexes outbound targets for rename rewrite.
 
@@ -799,9 +799,9 @@ Each tab carries a `viewMode: 'edit' | 'source'` on its `TabEntry` (`frontend/sr
 
 **Persistence.** `viewMode` seeds from the per-vault `editor.default_view_mode` when a tab is created, survives navigation within a session, and persists across restarts on `TabRef.view_mode` in the vault `config.yaml` (the per-vault UI tier — never SQLite; §0 rule 4). Only `"source"` is written (absence = Edit); `normalize()` collapses any other value to `""`. `GetOpenTabs`/`SetOpenTabs` round-trip it as part of the existing `TabRef`.
 
-**Source view.** `MarkdownSourceViewer.svelte` renders the reconstructed raw markdown as a read-only `role="document"` `<pre>` with a line-number gutter and "Copy as Markdown". Syntax is highlighted by **Shiki** via `useMarkdownHighlighter.ts`: a lazy singleton over the markdown grammar, fed by `tokensToShikiTheme` — the single place Shiki meets the Silt theme, mapping the effective `--color-*` token map to a Shiki custom theme. The viewer re-highlights on source / theme-token / mode change (race-guarded async `$effect`) and falls back to plain text until the highlighter resolves and on any error.
+**Source view.** `MarkdownSourceViewer.svelte` is an **editable** raw-markdown surface (textarea + line gutter + "Copy as Markdown"). The buffer seeds from on-disk body via `FetchPageMarkdown` (reconstructed block `raw_text` is fallback only); debounced writes go through `SavePageMarkdown` (preserves YAML frontmatter, atomic write + re-index, returns the re-parsed block list). Dirty buffers block auto-save on external block refreshes until the user chooses Keep mine / Reload; clean buffers re-fetch. Focus lease is acquired while Source is mounted (same TTL path as Edit). When `editable={false}`, the viewer falls back to a read-only Shiki-highlighted `<pre>` (tests / future read-only hosts).
 
-**Editor teardown in Source view.** The Edit/Source switch lives in `VirtualScrollContainer`: Source mode renders only `MarkdownSourceViewer` and does **not** mount `TipTapEditor`, so a tab held in Source view pays no editor memory cost (Svelte destroys the ProseMirror editor + NodeViews + listeners on the switch; it rebuilds from `blocks` on return to Edit, since content is on disk via auto-save). Lifecycle safety: `TipTapEditor.onDestroy` flushes the pending save and releases the focus lease, and `hasFirstEdit` is container-scoped so edit-to-pin can't double-fire across a remount. See `docs/editor-memory-profiling.md` for the cost model and the data-gated recommendation.
+**Editor teardown in Source view.** The Edit/Source switch lives in `VirtualScrollContainer`: Source mode renders only `MarkdownSourceViewer` and does **not** mount `TipTapEditor`, so a tab held in Source view pays no ProseMirror memory cost (Svelte destroys the editor + NodeViews + listeners on the switch; it rebuilds from `blocks` on return to Edit after Source saves). Lifecycle safety: `TipTapEditor.onDestroy` flushes the pending save and releases the focus lease, and `hasFirstEdit` is container-scoped so edit-to-pin can't double-fire across a remount. See `docs/editor-memory-profiling.md` for the cost model.
 
 **Scroll preservation across the round-trip.** `VirtualScrollContainer` captures `containerEl.scrollTop` in a `$effect.pre` the instant a tab leaves Edit (before the editor unmounts and the container height collapses) and restores it after the remounted editor signals readiness — `TipTapEditor` surfaces its internal `editorReady` state to the parent via an `onReady` callback fired in `onCreate`. Restore waits one tick + animation frame (so remounted NodeViews have measured) and clamps to the current scroll height (a doc may have shortened via autosave/fsnotify while the tab was in Source).
 

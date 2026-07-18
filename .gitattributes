@@ -18,3 +18,8 @@ frontend/package-lock.json merge=union
 *.sh   text eol=lf
 *.yml  text eol=lf
 *.yaml text eol=lf
+
+# Pin committed git hooks to LF. Hooks run via /bin/sh (Git Bash on Windows);
+# a CRLF blob would surface as "/bin/sh\r: bad interpreter" and silently break
+# the pre-commit/pre-push gates for Windows contributors. Matches the *.sh rule.
+.githooks/* text eol=lf
