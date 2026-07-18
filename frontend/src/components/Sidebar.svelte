@@ -606,9 +606,11 @@
       )
     } else if (
       event.key.length === 1 &&
+      !event.shiftKey &&
       !event.ctrlKey &&
       !event.metaKey &&
-      !event.altKey
+      !event.altKey &&
+      /^[\p{L}\p{N}]$/u.test(event.key)
     ) {
       typeahead += event.key.toLocaleLowerCase()
       if (typeaheadTimer) clearTimeout(typeaheadTimer)

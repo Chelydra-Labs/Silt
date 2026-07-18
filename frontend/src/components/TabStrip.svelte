@@ -317,9 +317,7 @@
           role="tab"
           id="silt-tab-{tab.id}"
           aria-selected={tab.id === activeTabId}
-          aria-controls={contextMenu.open && contextMenu.tab?.id === tab.id
-            ? 'silt-tabpanel tab-context-menu'
-            : 'silt-tabpanel'}
+          aria-controls="silt-tabpanel"
           aria-label={tabTooltip(tab)}
           aria-haspopup="menu"
           aria-expanded={contextMenu.open && contextMenu.tab?.id === tab.id}

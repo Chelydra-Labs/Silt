@@ -191,7 +191,9 @@ export class DragDropManager {
         this.deps.navOrder.current.sections[orderKey]
       )
       const names = sorted.map((s) => s.name)
-      const fromIdx = names.indexOf(this.dragItem.name.split('/').at(-1) ?? '')
+      const dragLeaf =
+        this.dragItem.name.split('/').at(-1) ?? this.dragItem.name
+      const fromIdx = names.indexOf(dragLeaf)
       const targetLeaf = targetName.split('/').at(-1) ?? ''
       const toIdx = names.indexOf(targetLeaf)
       if (fromIdx === -1 || toIdx === -1) {
@@ -202,9 +204,7 @@ export class DragDropManager {
       const insertAt = this.dropTarget?.before
         ? names.indexOf(targetLeaf)
         : names.indexOf(targetLeaf) + 1
-      names.splice(insertAt, 0, this.dragItem.name)
-      names[insertAt] =
-        this.dragItem.name.split('/').at(-1) ?? this.dragItem.name
+      names.splice(insertAt, 0, dragLeaf)
       await this.deps.navOrder.persistSectionOrder(notebook, parentPath, names)
     } else if (level === 'page' && section !== undefined) {
       // Reorder among pages within a section. The `section` parameter is

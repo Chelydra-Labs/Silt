@@ -120,107 +120,111 @@ func (a *App) resolveSourceByNameLocked(notebookName string) string {
 // tree is a true tree: each section may carry `Children []NavigationSection`
 // for arbitrarily-deep nesting.
 func (a *App) ListNavigation() (parser.NavigationTree, error) {
-	a.vaultMu.RLock()
-	if a.vaultPath == "" {
-		a.vaultMu.RUnlock()
-		return parser.NavigationTree{}, fmt.Errorf("vault not loaded")
-	}
-
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	// 1. Block counts per (source, notebook, section, page) from the index.
-	// Source is part of the key so a linked notebook sharing a display name
-	// with a vault notebook gets its own counts (#100). Lease-aware package
-	// API — no raw SQLDB() across vault teardown.
-	counts := map[nspKey]int{}
-	if a.db != nil {
-		a.coordinator.WithDBRead(func() {
-			rows, err := a.db.CountBlocksGroupedByPage()
-			if err != nil {
-				// Match prior soft behavior: empty counts on query failure
-				// (including ErrDBClosed during vault switch).
-				return
-			}
-			for _, row := range rows {
-				counts[nspKey{row.Source, row.Notebook, row.Section, row.Page}] = row.Count
-			}
-		})
-	}
-
-	tree := parser.NavigationTree{Notebooks: []parser.NavigationNotebook{}}
-	nbEntries, err := os.ReadDir(a.vaultPath)
-	if err != nil {
-		a.vaultMu.RUnlock()
-		return tree, fmt.Errorf("failed to read vault: %w", err)
-	}
-
-	for _, nbE := range nbEntries {
-		nbName := nbE.Name()
-		if !nbE.IsDir() || strings.HasPrefix(nbName, ".") {
-			continue
+	tree, err := func() (parser.NavigationTree, error) {
+		a.vaultMu.RLock()
+		defer a.vaultMu.RUnlock()
+		if a.vaultPath == "" {
+			return parser.NavigationTree{}, fmt.Errorf("vault not loaded")
 		}
-		nbPath := filepath.Join(a.vaultPath, nbName)
-		rootPages, childSections := a.walkSections(nbPath, nbName, "", config.LinkedNotebooksVaultSource, counts)
-		var sections []parser.NavigationSection
-		// Direct .md files at the notebook root form the section-less
-		// group (Name = ""), surfaced first in the sidebar.
-		if len(rootPages) > 0 {
-			sections = append(sections, parser.NavigationSection{
-				Name:  "",
-				Pages: rootPages,
+
+		a.wg.Add(1)
+		defer a.wg.Done()
+
+		// 1. Block counts per (source, notebook, section, page) from the index.
+		// Source is part of the key so a linked notebook sharing a display name
+		// with a vault notebook gets its own counts (#100). Lease-aware package
+		// API — no raw SQLDB() across vault teardown.
+		counts := map[nspKey]int{}
+		if a.db != nil {
+			a.coordinator.WithDBRead(func() {
+				rows, err := a.db.CountBlocksGroupedByPage()
+				if err != nil {
+					// Match prior soft behavior: empty counts on query failure
+					// (including ErrDBClosed during vault switch).
+					return
+				}
+				for _, row := range rows {
+					counts[nspKey{row.Source, row.Notebook, row.Section, row.Page}] = row.Count
+				}
 			})
 		}
-		sections = append(sections, childSections...)
-		tree.Notebooks = append(tree.Notebooks, parser.NavigationNotebook{
-			Name:     nbName,
-			Sections: sections,
-			Source:   "vault",
-		})
-	}
 
-	// 2. Linked notebooks prefer their live filesystem tree. The index is only
-	// used while a trusted root is unavailable, preserving the last known tree
-	// during offline sync outages.
-	a.configMu.RLock()
-	links := append([]config.LinkedNotebook(nil), a.cfg.LinkedNotebooks...)
-	a.configMu.RUnlock()
-	for _, ln := range links {
-		src := ln.Source()
-		var sections []parser.NavigationSection
-		disconnected := false
-		if linkedRoot, resolveErr := a.resolveNotebookDir(ln.DisplayName, src); resolveErr == nil {
-			if info, statErr := os.Stat(linkedRoot); statErr == nil && info.IsDir() {
-				rootPages, childSections := a.walkSections(linkedRoot, ln.DisplayName, "", src, counts)
-				if len(rootPages) > 0 {
-					sections = append(sections, parser.NavigationSection{Name: "", Pages: rootPages})
+		tree := parser.NavigationTree{Notebooks: []parser.NavigationNotebook{}}
+		nbEntries, err := os.ReadDir(a.vaultPath)
+		if err != nil {
+			return tree, fmt.Errorf("failed to read vault: %w", err)
+		}
+
+		for _, nbE := range nbEntries {
+			nbName := nbE.Name()
+			if !nbE.IsDir() || strings.HasPrefix(nbName, ".") {
+				continue
+			}
+			nbPath := filepath.Join(a.vaultPath, nbName)
+			rootPages, childSections := a.walkSections(nbPath, nbName, "", config.LinkedNotebooksVaultSource, counts)
+			var sections []parser.NavigationSection
+			// Direct .md files at the notebook root form the section-less
+			// group (Name = ""), surfaced first in the sidebar.
+			if len(rootPages) > 0 {
+				sections = append(sections, parser.NavigationSection{
+					Name:  "",
+					Pages: rootPages,
+				})
+			}
+			sections = append(sections, childSections...)
+			tree.Notebooks = append(tree.Notebooks, parser.NavigationNotebook{
+				Name:     nbName,
+				Sections: sections,
+				Source:   "vault",
+			})
+		}
+
+		// 2. Linked notebooks prefer their live filesystem tree. The index is only
+		// used while a trusted root is unavailable, preserving the last known tree
+		// during offline sync outages.
+		a.configMu.RLock()
+		links := append([]config.LinkedNotebook(nil), a.cfg.LinkedNotebooks...)
+		a.configMu.RUnlock()
+		for _, ln := range links {
+			src := ln.Source()
+			var sections []parser.NavigationSection
+			disconnected := false
+			if linkedRoot, resolveErr := a.resolveNotebookDir(ln.DisplayName, src); resolveErr == nil {
+				if info, statErr := os.Stat(linkedRoot); statErr == nil && info.IsDir() {
+					rootPages, childSections := a.walkSections(linkedRoot, ln.DisplayName, "", src, counts)
+					if len(rootPages) > 0 {
+						sections = append(sections, parser.NavigationSection{Name: "", Pages: rootPages})
+					}
+					sections = append(sections, childSections...)
+				} else {
+					disconnected = true
 				}
-				sections = append(sections, childSections...)
 			} else {
 				disconnected = true
 			}
-		} else {
-			disconnected = true
-		}
-		if disconnected {
-			sections = reconstructIndexedSections(counts, src, ln.DisplayName)
+			if disconnected {
+				sections = reconstructIndexedSections(counts, src, ln.DisplayName)
+			}
+
+			tree.Notebooks = append(tree.Notebooks, parser.NavigationNotebook{
+				Name:         ln.DisplayName,
+				Source:       src,
+				RootPath:     ln.RootPath,
+				Disconnected: disconnected,
+				Sections:     sections,
+			})
 		}
 
-		tree.Notebooks = append(tree.Notebooks, parser.NavigationNotebook{
-			Name:         ln.DisplayName,
-			Source:       src,
-			RootPath:     ln.RootPath,
-			Disconnected: disconnected,
-			Sections:     sections,
+		// Mix vault + linked notebooks alphabetically by name for a unified tree.
+		sort.Slice(tree.Notebooks, func(i, j int) bool {
+			return tree.Notebooks[i].Name < tree.Notebooks[j].Name
 		})
+		tree = normalizeNavTree(tree)
+		return tree, nil
+	}()
+	if err != nil {
+		return tree, err
 	}
-
-	// Mix vault + linked notebooks alphabetically by name for a unified tree.
-	sort.Slice(tree.Notebooks, func(i, j int) bool {
-		return tree.Notebooks[i].Name < tree.Notebooks[j].Name
-	})
-	tree = normalizeNavTree(tree)
-	a.vaultMu.RUnlock()
 	if err := a.reconcileNavigationAgainstTree(tree); err != nil {
 		log.Printf("ListNavigation: preference reconciliation failed: %v", err)
 	}

@@ -1565,4 +1565,43 @@ describe('Sidebar', () => {
     await flush()
     expect(document.activeElement).toBe(section)
   })
+
+  it('leaves shifted printable hotkeys for global handlers while retaining typeahead', async () => {
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const meetings = screen.getByRole('treeitem', { name: /Meetings/ })
+    const journal = screen.getByRole('treeitem', { name: /Journal/ })
+    const globalKeydown = vi.fn()
+    window.addEventListener('keydown', globalKeydown)
+    meetings.focus()
+
+    const shiftedQuestion = new KeyboardEvent('keydown', {
+      key: '?',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    meetings.dispatchEvent(shiftedQuestion)
+    expect(shiftedQuestion.defaultPrevented).toBe(false)
+    expect(globalKeydown).toHaveBeenCalledWith(shiftedQuestion)
+    expect(document.activeElement).toBe(meetings)
+
+    await fireEvent.keyDown(meetings, { key: 'j' })
+    await flush()
+    expect(document.activeElement).toBe(journal)
+    window.removeEventListener('keydown', globalKeydown)
+  })
 })

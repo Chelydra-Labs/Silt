@@ -640,7 +640,7 @@ describe('TabStrip (#142)', () => {
       await fireEvent.contextMenu(tab)
 
       expect(tab).toHaveAttribute('aria-expanded', 'true')
-      expect(tab.getAttribute('aria-controls')).toContain('tab-context-menu')
+      expect(tab).toHaveAttribute('aria-controls', 'silt-tabpanel')
       expect(menuItem('Close Other Tabs')).toBeTruthy()
       expect(menuItem('Close Tabs to Right')).toBeTruthy()
       expect(menuItem('Copy Page Path')).toBeTruthy()
@@ -653,6 +653,31 @@ describe('TabStrip (#142)', () => {
         )
       expect(closeOnly).toBeTruthy()
       expect(menuItem('Copy Page Reference')).toBeTruthy()
+    })
+
+    it('restores focus and closes the menu on Escape without changing tab controls', async () => {
+      const tabs = [mkTab({ notebook: 'Work', section: '', page: 'Site' })]
+      render(TabStrip, {
+        props: defaultProps({ tabs, activeTabId: 'tab-Site' })
+      })
+      const tab = screen.getAllByRole('tab')[0]
+      await fireEvent.contextMenu(tab)
+      const menu = screen.getByRole('menu', { name: 'Tab actions' })
+      const closeTab = screen
+        .getAllByRole('menuitem')
+        .find(
+          (el) =>
+            el.textContent?.replace(/\s+/g, ' ').trim() === 'close Close Tab'
+        )!
+      expect(document.activeElement).toBe(closeTab)
+
+      await fireEvent.keyDown(menu, { key: 'Escape' })
+
+      expect(document.activeElement).toBe(tab)
+      expect(tab).toHaveAttribute('aria-haspopup', 'menu')
+      expect(tab).toHaveAttribute('aria-expanded', 'false')
+      expect(tab).toHaveAttribute('aria-controls', 'silt-tabpanel')
+      expect(screen.queryByRole('menu', { name: 'Tab actions' })).toBeNull()
     })
 
     it('shows Pin Tab only for preview tabs', async () => {

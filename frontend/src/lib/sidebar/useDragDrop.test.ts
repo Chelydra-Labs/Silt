@@ -180,6 +180,55 @@ describe('DragDropManager', () => {
     ])
   })
 
+  it('persists only leaf names for deeply nested section reorder', async () => {
+    const { SetNavSectionOrder } = await import('../../../bindings/silt/app.js')
+    const nested: NavSection[] = [
+      {
+        name: 'Projects',
+        path: 'Projects',
+        pages: [],
+        children: [
+          {
+            name: 'Active',
+            path: 'Projects/Active',
+            pages: [],
+            children: [
+              { name: 'One', path: 'Projects/Active/One', pages: [] },
+              { name: 'Two', path: 'Projects/Active/Two', pages: [] }
+            ]
+          }
+        ]
+      }
+    ]
+    const deps = makeDeps({ getActiveNotebookSections: () => nested })
+    const dnd = new DragDropManager(deps)
+    const event = makeDragEvent()
+
+    dnd.handleDragStart(
+      event,
+      'section',
+      'Projects/Active/One',
+      'Projects/Active'
+    )
+    dnd.handleDragOver(event, 'section', 'Projects/Active/Two')
+    await dnd.handleDrop(
+      event,
+      'section',
+      'Projects/Active/Two',
+      'Work',
+      'Projects/Active'
+    )
+
+    expect(SetNavSectionOrder).toHaveBeenCalledWith('Work', 'Projects/Active', [
+      'Two',
+      'One'
+    ])
+    const persistedNames = vi.mocked(SetNavSectionOrder).mock.calls.at(-1)?.[2]
+    expect(persistedNames?.every((name: string) => !name.includes('/'))).toBe(
+      true
+    )
+  })
+
   it('handleDrop reorders root-level pages via persistPageOrder (#369)', async () => {
     const { SetNavPageOrder } = await import('../../../bindings/silt/app.js')
     // Synthetic root section (name === '') supplies the section-less page

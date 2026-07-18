@@ -1,3 +1,74 @@
+<script module lang="ts">
+  interface RecentPageRef {
+    notebook: string
+    section: string
+    page: string
+  }
+
+  export function createRecentPageRecorder(
+    persist: (ref: RecentPageRef) => Promise<unknown>,
+    refresh: () => void,
+    onError: (error: unknown) => void,
+    delay = 250
+  ) {
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null
+    let generation = 0
+    let pending = 0
+    let refreshNeeded = false
+
+    function scheduleRefresh(): void {
+      if (refreshTimer) clearTimeout(refreshTimer)
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null
+        refreshNeeded = false
+        refresh()
+      }, delay)
+    }
+
+    return {
+      record(ref: RecentPageRef): void {
+        const requestGeneration = generation
+        pending += 1
+        if (refreshTimer) clearTimeout(refreshTimer)
+        refreshTimer = null
+        void persist(ref)
+          .then(() => {
+            if (requestGeneration !== generation) return
+            refreshNeeded = true
+          })
+          .catch(onError)
+          .finally(() => {
+            if (requestGeneration !== generation) return
+            pending -= 1
+            if (pending === 0 && refreshNeeded) scheduleRefresh()
+          })
+      },
+      invalidate(): void {
+        generation += 1
+        pending = 0
+        refreshNeeded = false
+        if (refreshTimer) clearTimeout(refreshTimer)
+        refreshTimer = null
+      }
+    }
+  }
+
+  export function resolveBreadcrumbSectionSelection(
+    currentSection: string,
+    currentPage: string,
+    selectedSection: string
+  ): { section: string; page: string } {
+    const pageIsWithinSelection =
+      !!currentPage &&
+      (currentSection === selectedSection ||
+        currentSection.startsWith(`${selectedSection}/`))
+    return {
+      section: selectedSection,
+      page: pageIsWithinSelection ? currentPage : ''
+    }
+  }
+</script>
+
 <script lang="ts">
   import { onMount, tick } from 'svelte'
   import {
@@ -261,12 +332,15 @@
     recordRecentActivation(ref)
   }
 
+  const recentPageRecorder = createRecentPageRecorder(
+    (ref) => RecordRecentPage(ref.notebook, ref.section, ref.page),
+    () =>
+      window.dispatchEvent(new CustomEvent('navigation-preferences-changed')),
+    (error) => console.error('RecordRecentPage failed:', error)
+  )
+
   function recordRecentActivation(ref: PageRef): void {
-    void RecordRecentPage(ref.notebook, ref.section, ref.page)
-      .then(() =>
-        window.dispatchEvent(new CustomEvent('navigation-preferences-changed'))
-      )
-      .catch((e) => console.error('RecordRecentPage failed:', e))
+    recentPageRecorder.record(ref)
   }
   const trackRecentSave = createRecentSaveTracker((tabId) => {
     const tab = openTabs.find((candidate) => candidate.id === tabId)
@@ -329,17 +403,13 @@
   }
 
   function openSectionContext(section: string): void {
-    const destination = navigationCatalog.find(
-      (item) =>
-        item.notebook === activeNotebook &&
-        !item.disconnected &&
-        (item.section === section || item.section.startsWith(`${section}/`))
+    const selection = resolveBreadcrumbSectionSelection(
+      activeSection,
+      activePage,
+      section
     )
-    if (destination) openPage(destination, 'preview')
-    else {
-      activeSection = section
-      activePage = ''
-    }
+    activeSection = selection.section
+    activePage = selection.page
   }
 
   function openFromQuickSwitcher(
@@ -1025,10 +1095,10 @@
       'plugins:changed',
       () => void handlePluginsChanged()
     )
-    const offTemplateDraftVaultClosing = Events.On(
-      'vault:closing',
-      clearRetainedTemplateDraft
-    )
+    const offTemplateDraftVaultClosing = Events.On('vault:closing', () => {
+      clearRetainedTemplateDraft()
+      recentPageRecorder.invalidate()
+    })
     // `vault:moved` fires after a successful vault Move/Copy-Switch (#141).
     // The backend has already reinitialized services at the new path; reset
     // navigation, close settings, and reload the (vault-scoped) config store
@@ -1281,6 +1351,7 @@
       offPluginsChanged()
       offVaultMoved()
       offTemplateDraftVaultClosing()
+      recentPageRecorder.invalidate()
       offConfigChangedReload()
       offSettingsMismatch()
       offGrantsMigration()
