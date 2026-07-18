@@ -452,7 +452,7 @@ type TaskQueryFilter struct {
 All bindings hang off the single Wails v3 service (`*App` registered via `application.NewServiceWithOptions`) and are
 auto-exposed to the frontend as JSON RPC. Grouped by domain:
 
-- **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `SavePageMarkdown` (raw source body), `UpdateBlockState`
+- **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `FetchPageMarkdown` / `SavePageMarkdown` (raw source body), `UpdateBlockState`
   (task-checkbox transition + atomic file rewrite + re-index),
   `MutateBlock`, `QueryTasks` (dashboard filter query). **Task dependencies**:
   `SetTaskBlockedBy` / `PluginSetTaskBlockedBy` (cycle-checked
@@ -799,7 +799,7 @@ Each tab carries a `viewMode: 'edit' | 'source'` on its `TabEntry` (`frontend/sr
 
 **Persistence.** `viewMode` seeds from the per-vault `editor.default_view_mode` when a tab is created, survives navigation within a session, and persists across restarts on `TabRef.view_mode` in the vault `config.yaml` (the per-vault UI tier — never SQLite; §0 rule 4). Only `"source"` is written (absence = Edit); `normalize()` collapses any other value to `""`. `GetOpenTabs`/`SetOpenTabs` round-trip it as part of the existing `TabRef`.
 
-**Source view.** `MarkdownSourceViewer.svelte` is an **editable** raw-markdown surface (textarea + line gutter + "Copy as Markdown"). The buffer seeds from reconstructed block `raw_text`; debounced writes go through `SavePageMarkdown` (preserves YAML frontmatter, atomic write + re-index, returns the re-parsed block list). Dirty buffers are not overwritten by external block refreshes; clean buffers re-seed. Focus lease is acquired while Source is mounted (same TTL path as Edit). When `editable={false}`, the viewer falls back to a read-only Shiki-highlighted `<pre>` (tests / future read-only hosts).
+**Source view.** `MarkdownSourceViewer.svelte` is an **editable** raw-markdown surface (textarea + line gutter + "Copy as Markdown"). The buffer seeds from on-disk body via `FetchPageMarkdown` (reconstructed block `raw_text` is fallback only); debounced writes go through `SavePageMarkdown` (preserves YAML frontmatter, atomic write + re-index, returns the re-parsed block list). Dirty buffers block auto-save on external block refreshes until the user chooses Keep mine / Reload; clean buffers re-fetch. Focus lease is acquired while Source is mounted (same TTL path as Edit). When `editable={false}`, the viewer falls back to a read-only Shiki-highlighted `<pre>` (tests / future read-only hosts).
 
 **Editor teardown in Source view.** The Edit/Source switch lives in `VirtualScrollContainer`: Source mode renders only `MarkdownSourceViewer` and does **not** mount `TipTapEditor`, so a tab held in Source view pays no ProseMirror memory cost (Svelte destroys the editor + NodeViews + listeners on the switch; it rebuilds from `blocks` on return to Edit after Source saves). Lifecycle safety: `TipTapEditor.onDestroy` flushes the pending save and releases the focus lease, and `hasFirstEdit` is container-scoped so edit-to-pin can't double-fire across a remount. See `docs/editor-memory-profiling.md` for the cost model.
 

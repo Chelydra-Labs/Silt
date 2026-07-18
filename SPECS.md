@@ -971,19 +971,27 @@ commands `/h1` `/h2` `/h3` `/note` `/task`.
 Per-page Edit (WYSIWYG) ↔ Source (raw markdown) toggle. The toggle is a
 floating icon button in the editor's action bar (announced via `aria-pressed`
 + `aria-keyshortcuts`) plus the `toggle_view_mode` hotkey (default
-`Ctrl+Shift+V`, remappable per-vault). Source view is editable raw markdown and renders
-the raw on-disk markdown with **Shiki syntax highlighting** driven by the
-active theme's color tokens; it falls back to plain text until the
-highlighter resolves and on any error.
+`Ctrl+Shift+V`, remappable per-vault). Source view is **editable** raw
+markdown: the buffer seeds from the on-disk page body (`FetchPageMarkdown`),
+debounced writes go through `SavePageMarkdown` (frontmatter preserved, atomic
+write + re-index), and dirty buffers prompt Keep mine / Reload on external
+change. Read-only hosts may still use Shiki-highlighted projection.
 
 The mode is **per-tab**: each tab keeps its own
 mode, sticky within a session and **persisted across restarts** on
 `TabRef.view_mode` in the vault `config.yaml` (only `source` is written;
 absence means the Edit default). A freshly-opened tab starts in
 `editor.default_view_mode`. Switching a tab to Source **unmounts its
-TipTapEditor** (the editor is destroyed and rebuilt from the on-disk file on
-return to Edit), so a tab held in Source view pays no editor memory cost;
-the Edit scroll offset is restored across the round-trip.
+TipTapEditor** (the editor is destroyed and rebuilt from saved blocks on
+return to Edit), so a tab held in Source view pays no ProseMirror memory cost;
+Edit scroll/caret restore across the round-trip.
+
+**Markdown-as-you-type.** At the start of a note, typing `#`–`######`, `>`,
+`` ``` ``, or `> [!variant]` + space converts to heading / quote / code fence /
+callout (slash menu and toolbar remain available).
+
+**Outline.** An optional outline panel lists H1–H6 headings, supports
+click-to-jump, scroll-spy active heading, and per-heading collapse.
 
 ### Rich blocks & editor interactions
 

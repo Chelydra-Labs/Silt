@@ -24,8 +24,8 @@
 
   let headings = $state<OutlineHeading[]>([])
   let activeId = $state<string | null>(null)
-  /** Depths that are collapsed (children of this depth hidden). */
-  let collapsedDepths = $state<Set<number>>(new Set())
+  /** Heading ids whose subtree is collapsed. */
+  let collapsedIds = $state<Set<string>>(new Set())
 
   function refresh() {
     headings = extractHeadingsFromEditor(editor)
@@ -61,14 +61,15 @@
   })
 
   function isVisible(item: OutlineHeading, index: number): boolean {
-    // Hide if any ancestor depth is collapsed.
+    // Hide if any ancestor heading id is collapsed (walk parent chain only).
+    let depth = item.depth
     for (let i = index - 1; i >= 0; i--) {
       const prev = headings[i]
       if (!prev) continue
-      if (prev.depth < item.depth && collapsedDepths.has(prev.depth)) {
-        return false
+      if (prev.depth < depth) {
+        if (collapsedIds.has(prev.id)) return false
+        depth = prev.depth
       }
-      if (prev.depth < item.depth) break
     }
     return true
   }
@@ -80,11 +81,11 @@
     return !!next && next.depth > item.depth
   }
 
-  function toggleDepth(depth: number) {
-    const next = new Set(collapsedDepths)
-    if (next.has(depth)) next.delete(depth)
-    else next.add(depth)
-    collapsedDepths = next
+  function toggleCollapse(id: string) {
+    const next = new Set(collapsedIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    collapsedIds = next
   }
 
   function onClick(item: OutlineHeading) {
@@ -140,16 +141,16 @@
                     <button
                       type="button"
                       class="shrink-0 p-0 w-5 h-5 flex items-center justify-center border-none bg-transparent text-text-muted cursor-pointer rounded hover:bg-hover"
-                      aria-label={collapsedDepths.has(item.depth)
+                      aria-label={collapsedIds.has(item.id)
                         ? 'Expand'
                         : 'Collapse'}
-                      aria-expanded={!collapsedDepths.has(item.depth)}
-                      onclick={() => toggleDepth(item.depth)}
+                      aria-expanded={!collapsedIds.has(item.id)}
+                      onclick={() => toggleCollapse(item.id)}
                     >
                       <span
                         class="material-symbols-outlined text-icon-sm"
                         aria-hidden="true"
-                        >{collapsedDepths.has(item.depth)
+                        >{collapsedIds.has(item.id)
                           ? 'chevron_right'
                           : 'expand_more'}</span
                       >

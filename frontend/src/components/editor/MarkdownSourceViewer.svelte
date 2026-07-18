@@ -6,7 +6,10 @@
     highlightMarkdown,
     tokensToShikiTheme
   } from '../../lib/editor/useMarkdownHighlighter'
-  import { savePageMarkdown } from '../../lib/editor/savePageMarkdown'
+  import {
+    fetchPageMarkdown,
+    savePageMarkdown
+  } from '../../lib/editor/pageMarkdown'
   import {
     AcquireFocusLock,
     ReleaseFocusLock,
@@ -14,8 +17,8 @@
   } from '../../../bindings/silt/app.js'
 
   // MarkdownSourceViewer — editable Source mode (#660) with optional read-only
-  // Shiki highlight (#171/#194). Reconstructs markdown from blocks as the
-  // initial buffer; debounced save writes via SavePageMarkdown.
+  // Shiki highlight (#171/#194). Seeds from on-disk body via FetchPageMarkdown;
+  // reconstructMarkdown is fallback only. Debounced save via SavePageMarkdown.
 
   interface Props {
     blocks: ParsedBlock[]
@@ -51,12 +54,15 @@
   let buffer = $state('')
   let dirty = $state(false)
   let saveError = $state<string | null>(null)
-  let conflictStatus = $state<string | null>(null)
+  let conflictPending = $state(false)
+  let savePhase = $state<'idle' | 'saving' | 'saved' | 'error'>('idle')
   let saveTimer: ReturnType<typeof setTimeout> | null = null
+  let savedClearTimer: ReturnType<typeof setTimeout> | null = null
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null
   let hasFocusLock = false
   /** Fingerprint of last applied external blocks (ids + raw_text). */
   let lastBlocksKey = $state<string | null>(null)
+  let seedSeq = 0
 
   let lineCount = $derived(Math.max(1, buffer.split('\n').length))
 
@@ -66,24 +72,52 @@
       .join('\n')
   }
 
-  // External blocks prop: seed / reset when clean; keep local buffer when dirty.
+  async function seedFromDiskOrBlocks(source: ParsedBlock[]): Promise<void> {
+    const seq = ++seedSeq
+    const canFetch = Boolean(notebook && page)
+    if (canFetch) {
+      try {
+        const body = await fetchPageMarkdown(notebook, section, page)
+        if (seq !== seedSeq) return
+        if (body.trim() !== '') {
+          buffer = body
+          return
+        }
+      } catch (e) {
+        console.error('MarkdownSourceViewer: fetchPageMarkdown failed:', e)
+      }
+    }
+    if (seq !== seedSeq) return
+    if (source.length > 0) {
+      buffer = reconstructMarkdown(source)
+    } else {
+      buffer = ''
+    }
+  }
+
+  // External blocks prop: seed / reset when clean; conflict chooser when dirty.
   $effect(() => {
     const next = blocks
     const key = blocksKey(next)
     if (lastBlocksKey === null) {
-      buffer = reconstructMarkdown(next)
       lastBlocksKey = key
+      void seedFromDiskOrBlocks(next)
       return
     }
     if (key === lastBlocksKey) return
     if (!dirty) {
-      buffer = reconstructMarkdown(next)
       lastBlocksKey = key
-      conflictStatus = null
+      conflictPending = false
       saveError = null
+      void seedFromDiskOrBlocks(next)
     } else {
-      conflictStatus =
-        'External change detected — save or reload to pick up remote edits.'
+      // Keep lastBlocksKey so we only surface once per external key change.
+      lastBlocksKey = key
+      conflictPending = true
+      if (saveTimer) {
+        clearTimeout(saveTimer)
+        saveTimer = null
+      }
     }
   })
 
@@ -159,7 +193,7 @@
   }
 
   function scheduleSave(): void {
-    if (!editable || !notebook || !page) return
+    if (!editable || !notebook || !page || conflictPending) return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       saveTimer = null
@@ -168,20 +202,47 @@
   }
 
   async function flushSave(): Promise<void> {
-    if (!editable || !notebook || !page || !dirty) return
+    if (!editable || !notebook || !page || !dirty || conflictPending) return
     const md = buffer
+    savePhase = 'saving'
     try {
       const saved = await savePageMarkdown(notebook, section, page, md)
       // Only clear dirty if buffer still matches what we saved.
       if (buffer === md) {
         dirty = false
-        conflictStatus = null
+        savePhase = 'saved'
+        if (savedClearTimer) clearTimeout(savedClearTimer)
+        savedClearTimer = setTimeout(() => {
+          if (savePhase === 'saved') savePhase = 'idle'
+          savedClearTimer = null
+        }, 2000)
+      } else {
+        savePhase = 'idle'
       }
       saveError = null
       onBlocksSaved?.(saved)
     } catch (e) {
       saveError = e instanceof Error ? e.message : String(e)
+      savePhase = 'error'
     }
+  }
+
+  function keepMine(): void {
+    conflictPending = false
+    // User intentionally overwrites remote; allow save of current buffer.
+    if (dirty) scheduleSave()
+  }
+
+  function reloadFromDisk(): void {
+    conflictPending = false
+    dirty = false
+    saveError = null
+    savePhase = 'idle'
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    void seedFromDiskOrBlocks(blocks)
   }
 
   function onInput(e: Event): void {
@@ -189,6 +250,7 @@
     buffer = el.value
     dirty = true
     saveError = null
+    if (savePhase === 'saved' || savePhase === 'error') savePhase = 'idle'
     scheduleSave()
   }
 
@@ -228,13 +290,16 @@
 
   onDestroy(() => {
     if (copyStatusTimer) clearTimeout(copyStatusTimer)
+    if (savedClearTimer) clearTimeout(savedClearTimer)
     if (saveTimer) {
       clearTimeout(saveTimer)
-      // Best-effort flush on unmount when dirty.
-      if (dirty && notebook && page) {
+      // Best-effort flush on unmount when dirty (not during conflict).
+      if (dirty && notebook && page && !conflictPending) {
         void savePageMarkdown(notebook, section, page, buffer)
           .then((saved) => onBlocksSaved?.(saved))
-          .catch(() => {})
+          .catch((e) => {
+            console.error('MarkdownSourceViewer: unmount flush failed:', e)
+          })
       }
     }
     void releaseLock()
@@ -245,16 +310,24 @@
   <div class="source-header">
     <span class="file-path" title={filePath}>{filePath}</span>
     <div class="header-actions">
-      {#if saveError}
+      {#if conflictPending}
+        <span class="save-status" role="status" aria-live="polite"
+          >External change detected</span
+        >
+        <button type="button" class="conflict-btn" onclick={keepMine}>
+          Keep mine
+        </button>
+        <button type="button" class="conflict-btn" onclick={reloadFromDisk}>
+          Reload
+        </button>
+      {:else if saveError}
         <span
           class="save-status save-status--err"
           role="alert"
           aria-live="assertive">Save failed: {saveError}</span
         >
-      {:else if conflictStatus}
-        <span class="save-status" role="status" aria-live="polite"
-          >{conflictStatus}</span
-        >
+      {:else if savePhase === 'saved'}
+        <span class="save-status" role="status" aria-live="polite">Saved</span>
       {:else if dirty}
         <span class="save-status" role="status" aria-live="polite"
           >Unsaved…</span
@@ -345,7 +418,8 @@
     flex-shrink: 0;
   }
 
-  .copy-btn {
+  .copy-btn,
+  .conflict-btn {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -358,7 +432,8 @@
     cursor: pointer;
   }
 
-  .copy-btn:hover {
+  .copy-btn:hover,
+  .conflict-btn:hover {
     background: color-mix(
       in srgb,
       var(--color-accent-primary-start) 15%,
@@ -415,8 +490,8 @@
     font-size: 0.8rem;
     line-height: 1.6;
     color: var(--color-text-primary);
-    white-space: pre-wrap;
-    word-break: break-word;
+    white-space: pre;
+    word-break: normal;
     flex: 1;
   }
 

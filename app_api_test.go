@@ -380,6 +380,82 @@ func TestSaveFileBlocks_PreservesNonBlockLines(t *testing.T) {
 	}
 }
 
+func TestFetchPageMarkdown_ReturnsBodyWithoutFrontmatter(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "Work", "Journal", "SourceSeed"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	content := "---\nnotebook: Work\nsection: Journal\npage: SourceSeed\ndate: 2026-07-17\ntags: []\n---\n" +
+		"# Title <!-- id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa -->\n\n" +
+		"```go\nfmt.Println(1)\n```\n"
+	writeFile(t, filePath, content)
+	// Index so vault is consistent (FetchPageMarkdown only needs the file).
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, "2026-07-17", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.SaveFileBlocks(notebook, section, page, blocks); err != nil {
+		t.Fatalf("SaveFileBlocks seed: %v", err)
+	}
+
+	body, err := app.FetchPageMarkdown(notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageMarkdown: %v", err)
+	}
+	if strings.Contains(body, "notebook:") {
+		t.Errorf("body should not include frontmatter, got:\n%s", body)
+	}
+	if !strings.Contains(body, "# Title") || !strings.Contains(body, "```go") {
+		t.Errorf("expected heading + fence in body, got:\n%s", body)
+	}
+}
+
+func TestSavePageMarkdown_PreservesFrontmatterAndRoundTrips(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "Work", "Journal", "SourceEdit"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	content := "---\nnotebook: Work\nsection: Journal\npage: SourceEdit\ndate: 2026-07-17\ntags: []\n---\n" +
+		"# Old <!-- id: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb -->\n"
+	writeFile(t, filePath, content)
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, "2026-07-17", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.SaveFileBlocks(notebook, section, page, blocks); err != nil {
+		t.Fatalf("SaveFileBlocks seed: %v", err)
+	}
+
+	newBody := "# New heading\n\n- [ ] task from source\n"
+	saved, err := app.SavePageMarkdown(notebook, section, page, newBody)
+	if err != nil {
+		t.Fatalf("SavePageMarkdown: %v", err)
+	}
+	if len(saved) == 0 {
+		t.Fatal("expected re-parsed blocks")
+	}
+	writtenBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	written := string(writtenBytes)
+	if !strings.Contains(written, "notebook: Work") && !strings.Contains(written, `notebook: "Work"`) {
+		// Frontmatter may be quoted by renderer — accept either form.
+		if !strings.Contains(written, "---\n") {
+			t.Errorf("expected frontmatter preserved, got:\n%s", written)
+		}
+	}
+	if !strings.Contains(written, "# New heading") {
+		t.Errorf("expected new body, got:\n%s", written)
+	}
+	// Fetch should return body without frontmatter.
+	body, err := app.FetchPageMarkdown(notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageMarkdown: %v", err)
+	}
+	if !strings.Contains(body, "# New heading") {
+		t.Errorf("FetchPageMarkdown body missing heading: %s", body)
+	}
+}
+
 func TestSearchBlocks_FuzzySearch(t *testing.T) {
 	app := newTestApp(t)
 

@@ -4,7 +4,7 @@
 // the fallback (plain text until the highlighter resolves + on error),
 // theme-change re-highlight, the Copy button, line numbers, and ARIA roles.
 // Read-only highlight paths use editable={false}; default editable mode uses
-// a textarea.
+// a textarea. Editable seeds prefer fetchPageMarkdown over reconstruct.
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   // resolves (pending) — each test picks the behaviour.
   highlight: vi.fn(),
   savePageMarkdown: vi.fn(),
+  fetchPageMarkdown: vi.fn(),
   AcquireFocusLock: vi.fn().mockResolvedValue(undefined),
   ReleaseFocusLock: vi.fn().mockResolvedValue(undefined),
   RefreshFocusLock: vi.fn().mockResolvedValue(undefined)
@@ -52,8 +53,9 @@ vi.mock('../../lib/editor/useMarkdownHighlighter', () => ({
   highlightMarkdown: (code: string, theme: unknown) =>
     mocks.highlight(code, theme)
 }))
-vi.mock('../../lib/editor/savePageMarkdown', () => ({
-  savePageMarkdown: (...args: unknown[]) => mocks.savePageMarkdown(...args)
+vi.mock('../../lib/editor/pageMarkdown', () => ({
+  savePageMarkdown: (...args: unknown[]) => mocks.savePageMarkdown(...args),
+  fetchPageMarkdown: (...args: unknown[]) => mocks.fetchPageMarkdown(...args)
 }))
 vi.mock('../../../bindings/silt/app.js', () => ({
   AcquireFocusLock: (...args: unknown[]) => mocks.AcquireFocusLock(...args),
@@ -86,12 +88,16 @@ const BLOCKS: ParsedBlock[] = [
   mkBlock('**bold** and *italic*')
 ]
 
+const FETCH_BODY = '# From disk\n\nFetched body content'
+
 const ro = { editable: false as const }
 
 describe('MarkdownSourceViewer', () => {
   beforeEach(() => {
     mocks.highlight.mockReset()
     mocks.savePageMarkdown.mockReset()
+    mocks.fetchPageMarkdown.mockReset()
+    mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
     mocks.AcquireFocusLock.mockClear()
     mocks.ReleaseFocusLock.mockClear()
     mocks.RefreshFocusLock.mockClear()
@@ -274,7 +280,7 @@ describe('MarkdownSourceViewer', () => {
     }
   })
 
-  it('renders an editable textarea by default (#660)', () => {
+  it('renders an editable textarea seeded from fetchPageMarkdown (#660)', async () => {
     render(MarkdownSourceViewer, {
       props: {
         blocks: BLOCKS,
@@ -284,9 +290,16 @@ describe('MarkdownSourceViewer', () => {
         page: 'Page'
       }
     })
-    const ta = screen.getByRole('textbox', { name: /markdown source/i })
+    const ta = await waitFor(() =>
+      screen.getByRole('textbox', { name: /markdown source/i })
+    )
     expect(ta).toBeInstanceOf(HTMLTextAreaElement)
-    expect((ta as HTMLTextAreaElement).value).toContain('# Heading')
+    await waitFor(() => {
+      expect((ta as HTMLTextAreaElement).value).toContain(
+        'Fetched body content'
+      )
+    })
+    expect(mocks.fetchPageMarkdown).toHaveBeenCalledWith('Work', '', 'Page')
   })
 
   it('debounces savePageMarkdown on edit (#660)', async () => {
@@ -302,6 +315,8 @@ describe('MarkdownSourceViewer', () => {
           page: 'Page'
         }
       })
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
       const ta = screen.getByRole('textbox', { name: /markdown source/i })
       await fireEvent.input(ta, { target: { value: '# Edited\nline2' } })
       expect(mocks.savePageMarkdown).not.toHaveBeenCalled()
@@ -312,6 +327,77 @@ describe('MarkdownSourceViewer', () => {
         'Page',
         '# Edited\nline2'
       )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('blocks auto-save on external blocks change until Keep mine; Reload resets (#660)', async () => {
+    vi.useFakeTimers()
+    mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Heading')])
+    mocks.fetchPageMarkdown
+      .mockResolvedValueOnce(FETCH_BODY)
+      .mockResolvedValueOnce('# Reloaded from disk')
+    try {
+      const { rerender } = render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page'
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => expect(screen.getByRole('textbox')).toBeTruthy())
+      const ta = screen.getByRole('textbox', { name: /markdown source/i })
+      await fireEvent.input(ta, { target: { value: '# Local dirty edit' } })
+      // External blocks change while dirty → conflict, no save.
+      await rerender({
+        blocks: [mkBlock('# Remote heading'), mkBlock('remote body')],
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      })
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /keep mine/i })).toBeTruthy()
+      )
+      await vi.advanceTimersByTimeAsync(500)
+      expect(mocks.savePageMarkdown).not.toHaveBeenCalled()
+
+      // Keep mine allows save of local buffer.
+      await fireEvent.click(screen.getByRole('button', { name: /keep mine/i }))
+      await vi.advanceTimersByTimeAsync(500)
+      expect(mocks.savePageMarkdown).toHaveBeenCalledWith(
+        'Work',
+        'Sec',
+        'Page',
+        '# Local dirty edit'
+      )
+      mocks.savePageMarkdown.mockClear()
+
+      // Dirty again, then Reload discards and re-fetches.
+      await fireEvent.input(ta, { target: { value: '# Dirty again' } })
+      await rerender({
+        blocks: [mkBlock('# Another remote')],
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      })
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /reload/i })).toBeTruthy()
+      )
+      await fireEvent.click(screen.getByRole('button', { name: /reload/i }))
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => {
+        expect((ta as HTMLTextAreaElement).value).toContain(
+          'Reloaded from disk'
+        )
+      })
+      await vi.advanceTimersByTimeAsync(500)
+      expect(mocks.savePageMarkdown).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }

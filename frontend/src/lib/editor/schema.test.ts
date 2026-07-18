@@ -341,6 +341,16 @@ describe('markdown-as-you-type input rules (#657)', () => {
     }
   })
 
+  it('undo after # space restores noteBlock (#657)', () => {
+    const editor = makeMarkdownRuleEditor()
+    typeText(editor, '# ')
+    expect(firstBlockOfType(editor, 'headerBlock')).not.toBeNull()
+    editor.commands.undo()
+    const note = firstBlockOfType(editor, 'noteBlock')
+    expect(note).not.toBeNull()
+    expect(firstBlockOfType(editor, 'headerBlock')).toBeNull()
+  })
+
   it('converts > space to a quote noteBlock', () => {
     const editor = makeMarkdownRuleEditor()
     typeText(editor, '> ')

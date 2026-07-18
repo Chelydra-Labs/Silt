@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import { NodeViewWrapper, NodeViewContent } from 'svelte-tiptap'
   import type { NodeViewProps } from '@tiptap/core'
   import {
@@ -19,7 +20,18 @@
   let menuOpen = $state(false)
   let wrapperEl = $state<HTMLDivElement | null>(null)
   let triggerEl = $state<HTMLButtonElement | null>(null)
+  let menuEl = $state<HTMLDivElement | null>(null)
   let activeIndex = $state(0)
+
+  function focusActiveMenuitem() {
+    if (!menuEl) return
+    const items = menuEl.querySelectorAll<HTMLButtonElement>(
+      '[role=menuitemradio]'
+    )
+    const btn = items[activeIndex]
+    if (btn) btn.focus()
+    else menuEl.focus()
+  }
 
   $effect(() => {
     if (!menuOpen) return
@@ -32,12 +44,20 @@
     return () => document.removeEventListener('click', onClick)
   })
 
+  // Keep keyboard focus on the active menuitem while open.
+  $effect(() => {
+    if (!menuOpen) return
+    void activeIndex
+    tick().then(() => focusActiveMenuitem())
+  })
+
   function openMenu() {
     activeIndex = Math.max(
       0,
       VARIANTS.findIndex(([key]) => key === variant)
     )
     menuOpen = true
+    tick().then(() => focusActiveMenuitem())
   }
 
   function selectVariant(next: CalloutVariant) {
@@ -115,6 +135,7 @@
     </button>
     {#if menuOpen}
       <div
+        bind:this={menuEl}
         class="silt-callout-variant-menu absolute left-0 top-full z-50 mt-1 min-w-[10rem] rounded-lg border border-surface-panel-border bg-surface-panel shadow-xl py-1"
         role="menu"
         aria-label="Callout variant"

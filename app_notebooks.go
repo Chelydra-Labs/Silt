@@ -923,6 +923,41 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	return nil
 }
 
+// FetchPageMarkdown returns the on-disk markdown *body* for a page (no YAML
+// frontmatter). Used to seed editable Source mode so multi-line regions and
+// unmanaged prose match the file, not a reconstruct-from-blocks projection.
+func (a *App) FetchPageMarkdown(notebook, section, page string) (string, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.db == nil {
+		return "", fmt.Errorf("vault database not loaded")
+	}
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection := sanitizePathSegment(section)
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safePage == "" {
+		return "", fmt.Errorf("invalid path metadata")
+	}
+	source := a.resolveSourceByName(safeNotebook)
+	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+	if err != nil {
+		return "", fmt.Errorf("resolve notebook dir: %w", err)
+	}
+	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+	if !isPathWithinRoot(filePath, notebookDir) {
+		return "", fmt.Errorf("path escapes notebook root")
+	}
+	contentBytes, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read page markdown: %w", err)
+	}
+	_, body := parser.SplitFrontmatter(string(contentBytes))
+	return body, nil
+}
+
 // SavePageMarkdown writes raw markdown body for a page (editable Source mode
 // #660). Preserves YAML frontmatter, uses the atomic write chain (same as
 // SaveFileBlocks), re-indexes, and returns the re-parsed block list so the
@@ -998,7 +1033,10 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 			idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
 		})
 		if idxErr != nil {
-			log.Printf("SavePageMarkdown: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+			// Fail loud: disk write already landed, but search/graph would lag.
+			// Surface so the UI does not claim a fully successful save.
+			writeErr = fmt.Errorf("re-index after source save failed: %w", idxErr)
+			return
 		}
 		result = parsedBlocks
 		for _, b := range parsedBlocks {

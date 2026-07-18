@@ -140,8 +140,11 @@
     const vars = { ...placeholderValues }
     if (!id) {
       preview = ''
+      previewLoading = false
       return
     }
+    // Clear stale HTML immediately so a previous template does not flash.
+    preview = ''
     previewLoading = true
     // Abort guard: if selection/values change before the IPC resolves, drop
     // the stale result (the next $effect run will pick up the new one). The
