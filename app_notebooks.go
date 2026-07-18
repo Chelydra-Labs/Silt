@@ -909,6 +909,12 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	var writeErr error
 	a.coordinator.LockBlocksWrite(blockIDs, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
+			// After waiting for structural locks, refuse to recreate a path
+			// that rename/delete already moved away (#691).
+			if _, err := os.Stat(filePath); os.IsNotExist(err) {
+				writeErr = fmt.Errorf("page file no longer exists (moved or deleted): %s", filePath)
+				return
+			}
 			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks)
 		})
 	}) // LockBlocksWrite
@@ -1021,6 +1027,12 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 	var writeErr error
 	a.coordinator.LockBlocksWrite(beforeIDs, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
+			// After waiting for structural locks, refuse to recreate a path
+			// that rename/delete already moved away (#691).
+			if _, err := os.Stat(filePath); os.IsNotExist(err) {
+				writeErr = fmt.Errorf("page file no longer exists (moved or deleted): %s", filePath)
+				return
+			}
 			contentBytes, err := os.ReadFile(filePath)
 			if err != nil && !os.IsNotExist(err) {
 				writeErr = fmt.Errorf("failed to read existing file: %w", err)

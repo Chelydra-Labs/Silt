@@ -2,6 +2,7 @@ package core
 
 import (
 	"database/sql"
+	"path/filepath"
 	"sort"
 	"sync"
 )
@@ -59,6 +60,24 @@ func (ec *ExecutionCoordinator) getFileEntry(path string) *fileMutexEntry {
 	return iface.(*fileMutexEntry)
 }
 
+// NormalizeFileLockPath returns a stable lock key for path. Empty input stays
+// empty. Non-empty paths are cleaned; absolute form is preferred so the same
+// file is not locked under two string identities (e.g. rel vs abs).
+//
+// LockFileWrite keys are exact-path identity only: locking a directory does
+// NOT exclude writers on descendant file paths. Structural ops that os.Rename
+// a directory must LockPathsWrite every affected file path (see #691).
+func NormalizeFileLockPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(path)
+	if abs, err := filepath.Abs(cleaned); err == nil {
+		return abs
+	}
+	return cleaned
+}
+
 // LockFileWrite runs task while holding the per-file write mutex for path,
 // serializing app-driven and watcher-driven file mutations. It tolerates
 // concurrent ReleaseFileMutex: after acquiring entry.mu it re-checks that
@@ -66,7 +85,15 @@ func (ec *ExecutionCoordinator) getFileEntry(path string) *fileMutexEntry {
 // caller replaced) it while we waited, we drop the orphaned lock and retry
 // against the fresh entry. No in-flight holder is ever invalidated — release
 // only prevents NEW callers from serializing against the deleted entry.
+//
+// path is normalized (see NormalizeFileLockPath). Directory keys do not cover
+// descendant files — use LockPathsWrite for structural renames/deletes.
 func (ec *ExecutionCoordinator) LockFileWrite(path string, task func()) {
+	path = NormalizeFileLockPath(path)
+	if path == "" {
+		task()
+		return
+	}
 	for {
 		entry := ec.getFileEntry(path)
 		entry.mu.Lock()
@@ -79,6 +106,76 @@ func (ec *ExecutionCoordinator) LockFileWrite(path string, task func()) {
 	}
 }
 
+// LockPathsWrite acquires per-file write locks for all paths (normalized,
+// sorted, deduped) before running task. Used by structural ops (section/
+// notebook rename, tree delete) so concurrent page saves on exact file paths
+// cannot interleave with os.Rename of a parent directory (#691).
+//
+// Acquisition order is sorted path order to avoid AB-BA deadlock with other
+// multi-path callers. Tolerates concurrent ReleaseFileMutex the same way as
+// LockBlocksWrite: stale entries abort the partial set and retry.
+//
+// Lock order with other coordinator locks: block locks OUTSIDE file locks;
+// multi-file sets are acquired as a unit in sorted order; DB locks inside.
+func (ec *ExecutionCoordinator) LockPathsWrite(paths []string, task func()) {
+	sorted := normalizeAndSortLockPaths(paths)
+	if len(sorted) == 0 {
+		task()
+		return
+	}
+	if len(sorted) == 1 {
+		ec.LockFileWrite(sorted[0], task)
+		return
+	}
+
+	for {
+		acquired := make([]*fileMutexEntry, 0, len(sorted))
+		stale := false
+		for _, path := range sorted {
+			entry := ec.getFileEntry(path)
+			entry.mu.Lock()
+			if current, ok := ec.ioMu.Load(path); !ok || current != entry {
+				entry.mu.Unlock()
+				stale = true
+				break
+			}
+			acquired = append(acquired, entry)
+		}
+		if stale {
+			for i := len(acquired) - 1; i >= 0; i-- {
+				acquired[i].mu.Unlock()
+			}
+			continue
+		}
+		func() {
+			defer unlockFileEntries(acquired)
+			task()
+		}()
+		return
+	}
+}
+
+func normalizeAndSortLockPaths(paths []string) []string {
+	sorted := make([]string, 0, len(paths))
+	seen := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		n := NormalizeFileLockPath(p)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		sorted = append(sorted, n)
+	}
+	sort.Strings(sorted)
+	return sorted
+}
+
+func unlockFileEntries(entries []*fileMutexEntry) {
+	for i := len(entries) - 1; i >= 0; i-- {
+		entries[i].mu.Unlock()
+	}
+}
+
 // ReleaseFileMutex evicts the per-file mutex for path, bounding ioMu growth.
 // Safe to call concurrently with LockFileWrite: it simply deletes the map
 // entry, so any waiter that later re-checks the map (after acquiring the
@@ -87,7 +184,7 @@ func (ec *ExecutionCoordinator) LockFileWrite(path string, task func()) {
 // Unlock — this never invalidates a holder. Idempotent: a no-op if there is
 // no entry for path.
 func (ec *ExecutionCoordinator) ReleaseFileMutex(path string) {
-	ec.ioMu.Delete(path)
+	ec.ioMu.Delete(NormalizeFileLockPath(path))
 }
 
 // getBlockEntry returns the current blockMutexEntry for blockID, creating it on

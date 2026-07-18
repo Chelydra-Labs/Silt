@@ -17,6 +17,24 @@ import (
 
 // --- Rename / Delete lifecycle (#62, #83) ---------------------------------
 
+// collectMarkdownFilePaths walks root and returns every .md file path under it.
+// Used so structural rename/delete can LockPathsWrite every descendant page
+// before os.Rename — directory lock keys alone do not exclude page saves (#691).
+func collectMarkdownFilePaths(root string) ([]string, error) {
+	var paths []string
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+			return nil
+		}
+		paths = append(paths, path)
+		return nil
+	})
+	return paths, err
+}
+
 type renameHooks struct {
 	writeFileAtomic   func(string, []byte) error
 	indexFile         func(*App, string, string, string, string, []parser.ParsedBlock, []string, ...string) error
@@ -150,21 +168,22 @@ func (a *App) rollbackRename(
 	var rollbackErrs []error
 
 	// Restore inbound-link sources while the renamed tree is still at newDir.
+	// Caller already holds LockPathsWrite on these paths (and descendants); do
+	// not re-enter LockFileWrite (#691 non-reentrant).
 	for path, entry := range linkJournal {
-		a.coordinator.LockFileWrite(path, func() {
-			a.tracker.RegisterWrite(path)
-			if err := parser.WriteFileAtomic(path, entry.content); err != nil {
-				rollbackErrs = append(rollbackErrs, fmt.Errorf("restore inbound links %s: %w", path, err))
-				return
-			}
-			if err := a.reindexFileContent(path, entry.source, entry.notebook, entry.section, entry.page, entry.content, false); err != nil {
-				rollbackErrs = append(rollbackErrs, fmt.Errorf("restore inbound index %s: %w", path, err))
-			}
-		})
+		a.tracker.RegisterWrite(path)
+		if err := parser.WriteFileAtomic(path, entry.content); err != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore inbound links %s: %w", path, err))
+			continue
+		}
+		if err := a.reindexFileContent(path, entry.source, entry.notebook, entry.section, entry.page, entry.content, false); err != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore inbound index %s: %w", path, err))
+		}
 	}
 
 	// Restore every descendant's original bytes before moving the directory
 	// back. The rollback path deliberately bypasses the forward-write hook.
+	// Caller holds structural file locks for the forward op (#691).
 	for _, file := range files {
 		path := filepath.Join(newDir, file.relPath)
 		a.tracker.RegisterWrite(path)
@@ -340,9 +359,12 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 	defer a.wg.Done()
 
 	var runErr error
-	// Lock the notebook root to prevent interleaving with the scanner.
-	nbRoot := notebookDir
-	a.coordinator.LockFileWrite(nbRoot, func() {
+	lockPaths := []string{oldFile, newFile}
+	lockPaths = append(lockPaths, a.collectInboundSourcePaths([]struct{ nb, sec, page string }{
+		{safeNotebook, safeSection, safeOldPage},
+	})...)
+	// Lock page + inbound sources so concurrent saves cannot interleave (#691).
+	a.coordinator.LockPathsWrite(lockPaths, func() {
 		// 1. Read the file content before renaming.
 		contentBytes, err := os.ReadFile(oldFile)
 		if err != nil {
@@ -372,7 +394,7 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 
 		// 4. Rewrite inbound [[…]] wiki-links BEFORE clearing the old index,
 		// so the resolution-based rewrite sees the pre-rename page inventory.
-		a.rewriteInboundPageLinks(safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage)
+		a.rewriteInboundPageLinksWithJournal(safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage, nil, true)
 
 		// 5. Clear old index entries + re-index at new path.
 		a.coordinator.WithDBWrite(func() {
@@ -441,8 +463,12 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 	defer a.wg.Done()
 
 	var runErr error
-	nbRoot := notebookDir
-	a.coordinator.LockFileWrite(nbRoot, func() {
+	lockPaths := []string{oldFile, newFile}
+	lockPaths = append(lockPaths, a.collectInboundSourcePaths([]struct{ nb, sec, page string }{
+		{safeNotebook, safeFrom, safePage},
+	})...)
+	// Lock page + inbound sources so concurrent saves cannot interleave (#691).
+	a.coordinator.LockPathsWrite(lockPaths, func() {
 		// 1. Ensure the target section directory exists (handles nested
 		// sections like "Projects/Active" and the section-less root, which
 		// is the notebook dir itself).
@@ -481,7 +507,7 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 
 		// 5. Rewrite inbound [[…]] BEFORE clearing the old index, so the
 		// resolution-based rewrite sees the pre-move page inventory (#545).
-		a.rewriteInboundPageLinks(safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage)
+		a.rewriteInboundPageLinksWithJournal(safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage, nil, true)
 
 		// 6. Clear old index entries + re-index at the new path. These run
 		// unconditionally — even if the frontmatter write failed, the file
@@ -558,12 +584,37 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	lockPaths, err := collectMarkdownFilePaths(oldDir)
+	if err != nil {
+		return err
+	}
+	// Build rename targets for inbound-source lock collection (pre-lock).
+	var renameTargets []struct{ nb, sec, page string }
+	for _, p := range lockPaths {
+		rel, relErr := filepath.Rel(oldDir, p)
+		if relErr != nil {
+			continue
+		}
+		relSlash := filepath.ToSlash(rel)
+		parts := strings.Split(relSlash, "/")
+		page := strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
+		oldSection := safeOldSection
+		if len(parts) > 1 {
+			oldSection += "/" + strings.Join(parts[:len(parts)-1], "/")
+		}
+		renameTargets = append(renameTargets, struct{ nb, sec, page string }{safeNotebook, oldSection, page})
+	}
+	lockPaths = append(lockPaths, a.collectInboundSourcePaths(renameTargets)...)
+
 	var files []renameFileSnapshot
 	configSnapshot := a.snapshotConfig()
 	linkJournal := make(map[string]renameLinkJournalEntry)
 	configAttempted := false
 	var runErr error
-	a.coordinator.LockFileWrite(notebookDir, func() {
+	// Lock every descendant page path + inbound sources so concurrent saves
+	// cannot interleave with the directory rename (#691). Directory keys alone
+	// are not hierarchical in the coordinator.
+	a.coordinator.LockPathsWrite(lockPaths, func() {
 		_ = filepath.WalkDir(oldDir, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				runErr = walkErr
@@ -622,7 +673,7 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 			}
 		}
 		for _, file := range files {
-			a.rewriteInboundPageLinksWithJournal(safeNotebook, file.oldSection, file.page, safeNotebook, file.newSection, file.page, linkJournal)
+			a.rewriteInboundPageLinksWithJournal(safeNotebook, file.oldSection, file.page, safeNotebook, file.newSection, file.page, linkJournal, true)
 		}
 		for _, file := range files {
 			a.coordinator.WithDBWrite(func() {
@@ -699,11 +750,35 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	lockPaths, err := collectMarkdownFilePaths(oldDir)
+	if err != nil {
+		return err
+	}
+	var renameTargets []struct{ nb, sec, page string }
+	for _, p := range lockPaths {
+		rel, relErr := filepath.Rel(oldDir, p)
+		if relErr != nil {
+			continue
+		}
+		relSlash := filepath.ToSlash(rel)
+		parts := strings.Split(relSlash, "/")
+		var section, page string
+		if len(parts) == 1 {
+			page = strings.TrimSuffix(parts[0], ".md")
+		} else {
+			section = strings.Join(parts[:len(parts)-1], "/")
+			page = strings.TrimSuffix(parts[len(parts)-1], ".md")
+		}
+		renameTargets = append(renameTargets, struct{ nb, sec, page string }{safeOldNotebook, section, page})
+	}
+	lockPaths = append(lockPaths, a.collectInboundSourcePaths(renameTargets)...)
+
 	var runErr error
 	configSnapshot := a.snapshotConfig()
 	linkJournal := make(map[string]renameLinkJournalEntry)
 	configAttempted := false
-	a.coordinator.LockFileWrite(oldDir, func() {
+	// Lock every descendant page path + inbound sources before renaming (#691).
+	a.coordinator.LockPathsWrite(lockPaths, func() {
 		// 1. Walk all .md files under the old notebook recursively and
 		// read their content BEFORE renaming.
 		var files []renameFileSnapshot
@@ -901,10 +976,15 @@ func (a *App) DeleteSection(notebook, section string) error {
 	defer a.wg.Done()
 
 	linked := strings.HasPrefix(source, "linked:")
+	lockPaths, err := collectMarkdownFilePaths(secPath)
+	if err != nil {
+		return err
+	}
 	var runErr error
 	type deletedPage struct{ path, section, page string }
 	var pages []deletedPage
-	a.coordinator.LockFileWrite(secPath, func() {
+	// Lock every page under the section before trashing the tree (#691).
+	a.coordinator.LockPathsWrite(lockPaths, func() {
 		_ = filepath.WalkDir(secPath, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				runErr = walkErr
@@ -978,8 +1058,13 @@ func (a *App) DeleteNotebook(notebook string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	lockPaths, err := collectMarkdownFilePaths(nbPath)
+	if err != nil {
+		return err
+	}
 	var runErr error
-	a.coordinator.LockFileWrite(nbPath, func() {
+	// Lock every page under the notebook before trashing the tree (#691).
+	a.coordinator.LockPathsWrite(lockPaths, func() {
 		// Walk the subtree BEFORE trashing to collect file paths and their
 		// (section, page) for per-page index cleanup via the typed API.
 		type pageInfo struct {
