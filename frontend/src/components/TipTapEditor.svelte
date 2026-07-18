@@ -178,6 +178,7 @@
   // Pending template insert when the page is non-empty and the cursor is not
   // at the end (#664). ChoiceDialog offers insert-at-cursor vs append-to-end.
   let pendingTemplateBlocks = $state<ParsedBlock[] | null>(null)
+  let templateInsertReturnFocus = $state<HTMLElement | null>(null)
   // Block-embed picker (#593): selecting /embed opens BlockPickerModal; picking
   // a block inserts a complete {{embed:UUID}} token (rendered as a live
   // EmbedPortal by the existing tokenizer/NodeView pipeline).
@@ -1385,23 +1386,32 @@
       insertTemplateBlocks(blocks, 'cursor')
       return
     }
+    // Capture focus before the dialog mounts so restore works for
+    // programmatic open (not only button-click paths).
+    templateInsertReturnFocus =
+      (document.activeElement as HTMLElement | null) ?? null
     pendingTemplateBlocks = blocks
+  }
+
+  function clearTemplateInsertDialog(): void {
+    pendingTemplateBlocks = null
+    templateInsertReturnFocus = null
   }
 
   function confirmTemplateAtCursor(): void {
     if (!pendingTemplateBlocks) return
     insertTemplateBlocks(pendingTemplateBlocks, 'cursor')
-    pendingTemplateBlocks = null
+    clearTemplateInsertDialog()
   }
 
   function confirmTemplateAppend(): void {
     if (!pendingTemplateBlocks) return
     insertTemplateBlocks(pendingTemplateBlocks, 'append')
-    pendingTemplateBlocks = null
+    clearTemplateInsertDialog()
   }
 
   function cancelTemplateInsert(): void {
-    pendingTemplateBlocks = null
+    clearTemplateInsertDialog()
   }
 
   // --- Block embed picker (#593) -------------------------------------------
@@ -2046,6 +2056,7 @@
     message="This page already has content. Insert the template at the cursor, or append it at the end?"
     primaryLabel="Insert at cursor"
     secondaryLabel="Append to end"
+    returnFocusTo={templateInsertReturnFocus}
     dataTestId="template-insert-choice"
     onPrimary={confirmTemplateAtCursor}
     onSecondary={confirmTemplateAppend}

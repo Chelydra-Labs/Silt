@@ -1,6 +1,6 @@
 {
   "schema": "current-approved-v3",
-  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json",
+  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update ./cmd/inventory/current-approved-v3.json",
   "description": "Approved Wails v3 IPC surface snapshot. The CI parity gate fails on any missing/extra/changed *App method signature versus this file. Other sections (events, frontend imports) are tracked for review visibility and refreshed whenever the fixture is regenerated.",
   "inventory": {
     "methods": [
@@ -175,6 +175,10 @@
       {
         "name": "FetchPageBlocks",
         "signature": "FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBlock, error)"
+      },
+      {
+        "name": "FetchPageMarkdown",
+        "signature": "FetchPageMarkdown(notebook, section, page string) (string, error)"
       },
       {
         "name": "FetchSubtree",
@@ -1034,7 +1038,7 @@
       "frontend/src/components/settings/VaultArchiveModal.svelte",
       "frontend/src/components/settings/VaultArchiveModal.test.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
-      "frontend/src/lib/editor/savePageMarkdown.ts",
+      "frontend/src/lib/editor/pageMarkdown.ts",
       "frontend/src/plugins/context.ai.test.ts",
       "frontend/src/plugins/context.ts",
       "frontend/src/plugins/events.test.ts",

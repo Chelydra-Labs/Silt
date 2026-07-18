@@ -1,12 +1,13 @@
 /**
  * Render a template body for the picker preview (#663).
- * Uses the same marked + DOMPurify pipeline as AI chat markdown, then wraps
- * unresolved `{{placeholder}}` tokens as styled chip spans.
+ * Uses a local Marked instance (not the shared marked singleton) so options
+ * do not leak into AI chat or other consumers, then wraps unresolved
+ * `{{placeholder}}` tokens as styled chip spans.
  */
-import { marked } from 'marked'
+import { Marked } from 'marked'
 import DOMPurify from 'dompurify'
 
-marked.setOptions({
+const previewMarked = new Marked({
   gfm: true,
   breaks: true
 })
@@ -36,7 +37,7 @@ export function injectPlaceholderChips(source: string): string {
 export function renderTemplatePreview(source: string): string {
   if (!source) return ''
   const withChips = injectPlaceholderChips(source)
-  const raw = marked.parse(withChips, { async: false }) as string
+  const raw = previewMarked.parse(withChips, { async: false }) as string
   return DOMPurify.sanitize(raw, {
     USE_PROFILES: { html: true },
     ADD_ATTR: ['data-placeholder', 'class'],

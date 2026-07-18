@@ -11,6 +11,8 @@
     primaryLabel: string
     secondaryLabel: string
     cancelLabel?: string
+    /** Prefer this over mount-time activeElement for programmatic open. */
+    returnFocusTo?: HTMLElement | null
     onPrimary: () => void
     onSecondary: () => void
     onCancel: () => void
@@ -23,6 +25,7 @@
     primaryLabel,
     secondaryLabel,
     cancelLabel = 'Cancel',
+    returnFocusTo = null,
     onPrimary,
     onSecondary,
     onCancel,
@@ -66,12 +69,16 @@
   }
 
   onMount(() => {
-    previouslyFocused = document.activeElement as HTMLElement | null
+    // Prefer caller-supplied target (programmatic open); else capture current
+    // focus before we move it into the dialog.
+    previouslyFocused =
+      returnFocusTo ?? (document.activeElement as HTMLElement | null)
     window.addEventListener('keydown', handleKeydown, true)
     tick().then(() => dialogRef?.focus())
     return () => {
       window.removeEventListener('keydown', handleKeydown, true)
-      previouslyFocused?.focus?.()
+      const target = returnFocusTo ?? previouslyFocused
+      target?.focus?.()
     }
   })
 </script>
