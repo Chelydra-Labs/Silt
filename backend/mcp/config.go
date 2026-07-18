@@ -5,9 +5,75 @@
 // instance. Default OFF.
 package mcp
 
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+)
+
 // DefaultHTTPPort is the preferred loopback port when HTTP is enabled and the
 // user has not chosen another. If bind fails, the host may fall back to :0.
 const DefaultHTTPPort = 17887
+
+// EndpointFileName is written under the user config dir so `silt mcp` can
+// discover a non-default loopback port without scanning.
+const EndpointFileName = "mcp-endpoint.json"
+
+// EndpointFile holds the last-known loopback MCP base URL (no secrets).
+type EndpointFile struct {
+	Endpoint string `json:"endpoint"`
+}
+
+// EndpointFilePath returns <UserConfigDir>/silt/mcp-endpoint.json.
+func EndpointFilePath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "silt", EndpointFileName), nil
+}
+
+// WriteEndpointFile persists the loopback base URL for stdio discovery.
+func WriteEndpointFile(endpoint string) error {
+	path, err := EndpointFilePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.Marshal(EndpointFile{Endpoint: endpoint})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o600)
+}
+
+// ReadEndpointFile returns the last written endpoint, or empty if missing.
+func ReadEndpointFile() string {
+	path, err := EndpointFilePath()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var ef EndpointFile
+	if json.Unmarshal(b, &ef) != nil {
+		return ""
+	}
+	return ef.Endpoint
+}
+
+// ClearEndpointFile removes the discovery file (best-effort on Stop).
+func ClearEndpointFile() {
+	path, err := EndpointFilePath()
+	if err != nil {
+		return
+	}
+	_ = os.Remove(path)
+}
 
 // KeyringService is the OS keyring service name for the MCP bearer token.
 const KeyringService = "Silt"

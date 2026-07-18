@@ -222,6 +222,7 @@ func (h *Host) Stop() {
 	if ln != nil {
 		_ = ln.Close()
 	}
+	ClearEndpointFile()
 	if aud != nil {
 		// Don't close MemoryAuditor shared across tests (Options.Auditor).
 		if _, ok := aud.(*MemoryAuditor); !ok {
@@ -312,6 +313,10 @@ func (h *Host) startHTTP(srv *mcpsdk.Server, token string, port int) error {
 			h.setError(err.Error())
 		}
 	}()
+	// Publish endpoint for `silt mcp` discovery (non-default ports).
+	if err := WriteEndpointFile(fmt.Sprintf("http://%s", ln.Addr().String())); err != nil {
+		log.Printf("mcp: endpoint file: %v", err)
+	}
 	return nil
 }
 
@@ -322,10 +327,10 @@ func (h *Host) authMiddleware(token string, next http.Handler) http.Handler {
 			http.Error(w, "origin not allowed", http.StatusForbidden)
 			return
 		}
-		// Content-Type for mutating methods.
+		// Content-Type required for mutating methods (reject empty / non-JSON).
 		if r.Method == http.MethodPost || r.Method == http.MethodPut {
-			ct := r.Header.Get("Content-Type")
-			if ct != "" && !strings.HasPrefix(strings.ToLower(ct), "application/json") {
+			ct := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+			if ct == "" || !strings.HasPrefix(ct, "application/json") {
 				http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
 				return
 			}

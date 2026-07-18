@@ -7,14 +7,22 @@ directly — tools call the same content paths as the app UI.
 
 **Default: off.** Enable under **Settings → AI → Local MCP**.
 
+## Packaging notes
+
+- **OpenCode:** sample config in `docs/opencode-mcp.sample.json`; Settings can copy a snippet.
+- **Claude Desktop:** `integrations/claude-desktop/manifest.json` is a **manifest skeleton** for MCPB packaging — pack/sign is a follow-up (not a one-click ship in this release). Skill: `integrations/silt-agent/SKILL.md`.
+- **ChatGPT Desktop / Codex:** configure stdio `silt mcp` + skill path; see client notes in Settings → AI → Local MCP.
+
 ## Security model
 
 | Rule | Behavior |
 |------|----------|
 | Bind | `127.0.0.1` only (loopback). Never non-loopback. |
 | Auth | Bearer token in OS keyring (`Silt` / `mcp-local-auth-token`). |
-| HTTP | Origin allowlist (localhost / empty); `Content-Type: application/json` on POST. |
+| HTTP | Origin allowlist (localhost / empty); **required** `Content-Type: application/json` on POST (empty rejected). |
 | Stdio | `silt mcp` logs to **stderr only**; stdout is JSON-RPC only. |
+| Discovery | `silt mcp` reads `<UserConfigDir>/silt/mcp-endpoint.json` (written on host start) then falls back to port 17887. |
+| Health | `GET /health` is unauthenticated on loopback (presence only; no vault data). |
 | Writes | Opt-in grant (`write_enabled`). No delete/move/bulk tools. |
 | Audit | `<vault>/.system/logs/mcp-audit.jsonl` — client, tool, vault path hash, outcome, redacted args (no note bodies). |
 
@@ -36,7 +44,8 @@ silt mcp
 ```
 
 Proxies stdio JSON-RPC to the running instance’s loopback HTTP endpoint using
-the keyring token. Requires Silt open with Local MCP enabled.
+the keyring token. Requires Silt open with Local MCP enabled. Non-default ports
+are discovered via the endpoint file Silt writes on start (or pass `--url`).
 
 ### Streamable HTTP
 

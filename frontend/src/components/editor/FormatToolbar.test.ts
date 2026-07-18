@@ -207,6 +207,17 @@ describe('FormatToolbar', () => {
     expect((getByLabelText('Italic') as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it('disables marks when TipTap can() throws (fail closed)', () => {
+    const editor = makeMockEditor() as any
+    editor.can = () => {
+      throw new Error('can boom')
+    }
+    const { getByLabelText } = render(FormatToolbar, {
+      props: { editor, ...baseProps }
+    })
+    expect((getByLabelText('Bold') as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('Esc closes an open overflow menu before returning to the editor', async () => {
     const editor = makeMockEditor() as any
     const { getByLabelText, getByRole, queryByLabelText } = render(
@@ -221,6 +232,33 @@ describe('FormatToolbar', () => {
     await fireEvent.keyDown(toolbar, { key: 'Escape' })
     await tick()
     expect(queryByLabelText('Highlight')).toBeNull()
+  })
+
+  it('second Esc after menu close returns focus to the editor', async () => {
+    const editor = makeMockEditor() as any
+    const focusRun = vi.fn()
+    editor.chain = vi.fn(() => ({
+      focus: () => ({
+        toggleMark: () => ({ run: () => {} }),
+        unsetLink: () => ({ run: () => {} }),
+        unsetAllMarks: () => ({ run: () => {} }),
+        run: focusRun
+      }),
+      toggleMark: () => ({ run: () => {} }),
+      unsetLink: () => ({ run: () => {} }),
+      unsetAllMarks: () => ({ run: () => {} })
+    }))
+    const { getByLabelText, getByRole } = render(FormatToolbar, {
+      props: { editor, ...baseProps }
+    })
+    await fireEvent.click(getByLabelText('More formatting'))
+    const toolbar = getByRole('toolbar')
+    await fireEvent.keyDown(toolbar, { key: 'Escape' })
+    await tick()
+    await fireEvent.keyDown(toolbar, { key: 'Escape' })
+    await tick()
+    expect(editor.chain).toHaveBeenCalled()
+    expect(focusRun).toHaveBeenCalled()
   })
 
   it('ArrowRight moves focus across top-level toolbar controls', async () => {

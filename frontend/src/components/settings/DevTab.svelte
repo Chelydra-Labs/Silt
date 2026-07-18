@@ -49,7 +49,10 @@
               >Ctrl+Shift+F12</kbd
             > (View → Open Developer Tools)
           </li>
-          <li>Right-click in the editor and choose <strong>Inspect</strong></li>
+          <li>
+            Right-click the editor, sidebar, tabs, empty content, or Tasks
+            manage menu and choose <strong>Inspect</strong>
+          </li>
         </ul>
         <button
           type="button"

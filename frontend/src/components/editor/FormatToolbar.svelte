@@ -198,7 +198,8 @@
       if (typeof can.toggleMark === 'function') return !!can.toggleMark(mark)
       return !!can.chain?.().focus().toggleMark(mark).run()
     } catch {
-      return true
+      // Fail closed: never enable a silent no-op when can() throws (#690).
+      return false
     }
   }
 
@@ -672,8 +673,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
     border: none;
     border-radius: 6px;
     background: transparent;
@@ -687,7 +690,7 @@
 
   .toolbar-menu-trigger {
     width: auto;
-    min-width: 28px;
+    min-width: 32px;
     padding: 0 6px;
     gap: 2px;
   }

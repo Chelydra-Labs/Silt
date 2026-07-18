@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -15,6 +16,14 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// ErrPageMovedOrDeleted is returned when a save acquires the file lock but the
+// path no longer exists (rename/delete won the race). Prefix is stable for FE.
+var ErrPageMovedOrDeleted = errors.New("page_moved")
+
+func errPageMovedOrDeleted(filePath string) error {
+	return fmt.Errorf("%w: page file no longer exists (moved or deleted): %s", ErrPageMovedOrDeleted, filePath)
+}
 
 // CreateNotebook creates a top-level notebook folder under the vault root.
 func (a *App) CreateNotebook(name string) error {
@@ -912,7 +921,7 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 			// After waiting for structural locks, refuse to recreate a path
 			// that rename/delete already moved away (#691).
 			if _, err := os.Stat(filePath); os.IsNotExist(err) {
-				writeErr = fmt.Errorf("page file no longer exists (moved or deleted): %s", filePath)
+				writeErr = errPageMovedOrDeleted(filePath)
 				return
 			}
 			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks)
@@ -1030,7 +1039,7 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 			// After waiting for structural locks, refuse to recreate a path
 			// that rename/delete already moved away (#691).
 			if _, err := os.Stat(filePath); os.IsNotExist(err) {
-				writeErr = fmt.Errorf("page file no longer exists (moved or deleted): %s", filePath)
+				writeErr = errPageMovedOrDeleted(filePath)
 				return
 			}
 			contentBytes, err := os.ReadFile(filePath)

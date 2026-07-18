@@ -119,21 +119,27 @@ func loadMCPToken() (string, error) {
 }
 
 func discoverMCPEndpoint(token string) string {
-	// Try settings-derived port then default.
-	candidates := []string{
-		fmt.Sprintf("http://127.0.0.1:%d", mcp.DefaultHTTPPort),
+	// Prefer last-written endpoint file (covers non-default ports), then default.
+	candidates := make([]string, 0, 3)
+	if ep := mcp.ReadEndpointFile(); ep != "" {
+		candidates = append(candidates, strings.TrimRight(ep, "/"))
 	}
-	if settings, err := vault.LoadSettings(); err == nil && settings.VaultPath != "" {
-		// Port may differ; still try default first. Future: write endpoint file.
-		_ = settings
+	candidates = append(candidates, fmt.Sprintf("http://127.0.0.1:%d", mcp.DefaultHTTPPort))
+	if settings, err := vault.LoadSettings(); err == nil {
+		_ = settings // reserved: future vault-scoped endpoint hints
 	}
 	client := &http.Client{Timeout: 800 * time.Millisecond}
+	seen := map[string]bool{}
 	for _, base := range candidates {
+		if base == "" || seen[base] {
+			continue
+		}
+		seen[base] = true
 		req, err := http.NewRequest(http.MethodGet, strings.TrimRight(base, "/")+"/health", nil)
 		if err != nil {
 			continue
 		}
-		// Health is unauthenticated.
+		// Health is unauthenticated (loopback discovery only).
 		resp, err := client.Do(req)
 		if err != nil {
 			continue

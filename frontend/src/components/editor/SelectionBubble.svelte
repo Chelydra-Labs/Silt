@@ -161,22 +161,64 @@
     })
   }
 
+  let submenuFocus = $state(0)
+
+  function submenuItems(): HTMLButtonElement[] {
+    if (!menuEl) return []
+    return Array.from(
+      menuEl.querySelectorAll<HTMLButtonElement>('.bubble-submenu button')
+    )
+  }
+
+  function focusSubmenu(i: number): void {
+    const items = submenuItems()
+    if (!items.length) return
+    const next = ((i % items.length) + items.length) % items.length
+    submenuFocus = next
+    items[next]?.focus()
+  }
+
   function handleKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
       if (linkMenuOpen) {
         linkMenuOpen = false
+        submenuFocus = 0
         return
       }
       if (moreOpen) {
         moreOpen = false
+        submenuFocus = 0
         return
       }
       editor?.chain().focus().run()
       return
     }
-    if (linkMenuOpen || moreOpen) return
+    // Arrow roving inside More / link submenus (#689 harden).
+    if (linkMenuOpen || moreOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        e.preventDefault()
+        focusSubmenu(submenuFocus + 1)
+        return
+      }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault()
+        focusSubmenu(submenuFocus - 1)
+        return
+      }
+      if (e.key === 'Home') {
+        e.preventDefault()
+        focusSubmenu(0)
+        return
+      }
+      if (e.key === 'End') {
+        e.preventDefault()
+        focusSubmenu(submenuItems().length - 1)
+        return
+      }
+      return
+    }
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
       e.preventDefault()
       focusTop(focusIdx + 1)
@@ -204,6 +246,10 @@
       } else {
         moreOpen = !moreOpen
         linkMenuOpen = false
+        if (moreOpen) {
+          submenuFocus = 0
+          queueMicrotask(() => focusSubmenu(0))
+        }
       }
     }
   }

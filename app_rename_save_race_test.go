@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,5 +151,154 @@ func TestRenameNotebook_SerializesAgainstSaveFileBlocks(t *testing.T) {
 	}
 	if _, err := app.FetchPageBlocks(newNB, section, page); err != nil {
 		t.Fatalf("index at new notebook: %v", err)
+	}
+}
+
+// TestRenameSection_SerializesAgainstSavePageMarkdown covers Source-mode save
+// vs section rename (#691 race matrix).
+func TestRenameSection_SerializesAgainstSavePageMarkdown(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "MdRaceNB", "OldSec", "Page1"
+	blockID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	_ = seedRacePage(t, app, notebook, section, page, blockID, "original md")
+
+	marker := "MD_SAVE_" + time.Now().Format("150405.000")
+	body := marker + "\n\n- [ ] task line\n"
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var saveErr, renameErr error
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		_, saveErr = app.SavePageMarkdown(notebook, section, page, body)
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		renameErr = app.RenameSection(notebook, section, "NewSec")
+	}()
+	close(start)
+	wg.Wait()
+
+	if renameErr != nil {
+		t.Fatalf("RenameSection: %v", renameErr)
+	}
+	oldPath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	newPath := filepath.Join(app.vaultPath, notebook, "NewSec", page+".md")
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("ghost at old path")
+	}
+	content, err := os.ReadFile(newPath)
+	if err != nil {
+		t.Fatalf("new path: %v", err)
+	}
+	if saveErr == nil && !strings.Contains(string(content), marker) {
+		t.Fatalf("successful markdown save lost\n%s", content)
+	}
+	if saveErr != nil && !errors.Is(saveErr, ErrPageMovedOrDeleted) && !strings.Contains(saveErr.Error(), "page_moved") {
+		t.Logf("save erred (acceptable if fail-loud): %v", saveErr)
+	}
+}
+
+// TestRenameSection_SerializesAgainstMutateBlock covers single-block mutate
+// vs section rename (#691).
+func TestRenameSection_SerializesAgainstMutateBlock(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "MutRaceNB", "OldSec", "Page1"
+	blockID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	_ = seedRacePage(t, app, notebook, section, page, blockID, "mutate original")
+
+	marker := "MUT_" + time.Now().Format("150405.000")
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var mutErr, renameErr error
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		mutErr = app.MutateBlock(blockID, marker)
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		renameErr = app.RenameSection(notebook, section, "NewSec")
+	}()
+	close(start)
+	wg.Wait()
+
+	if renameErr != nil {
+		t.Fatalf("RenameSection: %v", renameErr)
+	}
+	oldPath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	newPath := filepath.Join(app.vaultPath, notebook, "NewSec", page+".md")
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("ghost at old path")
+	}
+	content, err := os.ReadFile(newPath)
+	if err != nil {
+		t.Fatalf("new path: %v", err)
+	}
+	// Mutate either landed before rename (marker present) or failed after move.
+	if mutErr == nil && !strings.Contains(string(content), marker) {
+		t.Fatalf("successful mutate lost\n%s", content)
+	}
+	if mutErr != nil {
+		t.Logf("mutate erred (acceptable): %v", mutErr)
+	}
+	if _, err := app.FetchPageBlocks(notebook, "NewSec", page); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+}
+
+// TestDeleteSection_SerializesAgainstSaveFileBlocks ensures tree delete multi-
+// locks descendants so a concurrent save cannot recreate a deleted path.
+func TestDeleteSection_SerializesAgainstSaveFileBlocks(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "DelRaceNB", "Doomed", "Page1"
+	blockID := "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+	blocks := seedRacePage(t, app, notebook, section, page, blockID, "to delete")
+	blocks[0].RawText = "AFTER_DELETE_ATTEMPT <!-- id: " + blockID + " -->"
+	blocks[0].CleanText = "AFTER_DELETE_ATTEMPT"
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var saveErr, delErr error
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		saveErr = app.SaveFileBlocks(notebook, section, page, blocks)
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		delErr = app.DeleteSection(notebook, section)
+	}()
+	close(start)
+	wg.Wait()
+
+	if delErr != nil {
+		t.Fatalf("DeleteSection: %v", delErr)
+	}
+	// Section path should be gone (trashed or removed).
+	secPath := filepath.Join(app.vaultPath, notebook, section)
+	if st, err := os.Stat(secPath); err == nil && st.IsDir() {
+		// May still exist empty in some trash flows — page file must not be live content.
+		pagePath := filepath.Join(secPath, page+".md")
+		if _, err := os.Stat(pagePath); err == nil {
+			// If save won first then delete, file is gone; if both raced, no live page.
+			t.Logf("page still at %s after delete (checking trash)", pagePath)
+		}
+	}
+	if saveErr == nil {
+		// Save succeeded before delete — delete should still have removed the tree.
+		if _, err := os.Stat(filepath.Join(app.vaultPath, notebook, section, page+".md")); err == nil {
+			t.Fatal("live page remained after DeleteSection completed")
+		}
 	}
 }

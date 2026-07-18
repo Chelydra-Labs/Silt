@@ -387,6 +387,109 @@ func TestTools_WriteWithoutGrantRejected(t *testing.T) {
 	}
 }
 
+func TestTools_UpdateBlocksWithGrant(t *testing.T) {
+	bridge := &fakeBridge{path: t.TempDir()}
+	cs, _ := connectTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
+	ctx := context.Background()
+	res, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "update_blocks",
+		Arguments: map[string]any{
+			"notebook": "Work",
+			"section":  "Sec",
+			"page":     "P",
+			"blocks": []any{
+				map[string]any{"id": "id-1", "type": "NOTE", "text": "hello"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("update_blocks: %s", toolText(t, res))
+	}
+	if bridge.writes != 1 {
+		t.Fatalf("writes=%d", bridge.writes)
+	}
+	key := "Work\x00Sec\x00P"
+	if len(bridge.pages[key]) != 1 || bridge.pages[key][0].CleanText != "hello" {
+		t.Fatalf("pages: %+v", bridge.pages[key])
+	}
+}
+
+func TestTools_UpdateBlocksEmptyRejected(t *testing.T) {
+	bridge := &fakeBridge{path: t.TempDir()}
+	cs, _ := connectTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "update_blocks",
+		Arguments: map[string]any{
+			"notebook": "Work", "section": "", "page": "P", "blocks": []any{},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected empty wipe rejection")
+	}
+	if bridge.writes != 0 {
+		t.Fatalf("writes=%d", bridge.writes)
+	}
+}
+
+func TestHost_ContentTypeRequired(t *testing.T) {
+	kr := keyring.NewFake()
+	h := NewHost(Options{Keyring: kr, Auditor: &MemoryAuditor{}, Version: "test"})
+	port := freePort(t)
+	if err := h.Start(&fakeBridge{path: t.TempDir()}, Config{Enabled: true, HTTPEnabled: true, HTTPPort: port}); err != nil {
+		t.Fatal(err)
+	}
+	defer h.Stop()
+
+	req, _ := http.NewRequest(http.MethodPost, h.Endpoint()+"/", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+h.Token())
+	// No Content-Type
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("empty CT: status=%d", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, h.Endpoint()+"/", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+h.Token())
+	req.Header.Set("Content-Type", "text/plain")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("text/plain: status=%d", resp.StatusCode)
+	}
+}
+
+func TestEndpointFile_RoundTrip(t *testing.T) {
+	// Isolate config dir via temp HOME/USERPROFILE is platform-specific;
+	// exercise Write/Read against a path we control by temporarily writing
+	// through the public API when UserConfigDir is available.
+	ep := "http://127.0.0.1:19999"
+	if err := WriteEndpointFile(ep); err != nil {
+		t.Skipf("UserConfigDir unavailable: %v", err)
+	}
+	t.Cleanup(ClearEndpointFile)
+	got := ReadEndpointFile()
+	if got != ep {
+		t.Fatalf("got %q want %q", got, ep)
+	}
+	ClearEndpointFile()
+	if ReadEndpointFile() != "" {
+		t.Fatal("expected empty after clear")
+	}
+}
+
 func TestRedactArgs_NoBodies(t *testing.T) {
 	m := RedactArgs(map[string]any{
 		"query":    "secret note body text",

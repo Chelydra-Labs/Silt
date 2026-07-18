@@ -148,6 +148,17 @@
     }
   }
 
+  async function copyMCPToken() {
+    try {
+      if (!mcpToken) mcpToken = (await GetLocalMCPToken()) || ''
+      if (!mcpToken) return
+      await navigator.clipboard.writeText(mcpToken)
+      mcpTokenVisible = true
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
   async function copyMCPHint() {
     try {
       await navigator.clipboard.writeText(
@@ -156,6 +167,39 @@
     } catch (e) {
       console.error(e)
     }
+  }
+
+  function clientInstallNotes(): { title: string; body: string }[] {
+    const ep = mcpStatus?.endpoint || `http://127.0.0.1:${mcpPort}`
+    const bin = 'silt' // path to Silt binary / `silt mcp`
+    return [
+      {
+        title: 'OpenCode',
+        body:
+          mcpHint ||
+          JSON.stringify(
+            {
+              mcp: {
+                silt: {
+                  type: 'local',
+                  command: [bin, 'mcp'],
+                  enabled: true
+                }
+              }
+            },
+            null,
+            2
+          )
+      },
+      {
+        title: 'Claude Desktop',
+        body: `1. Enable Local MCP here and copy the auth token.\n2. Install the MCPB from integrations/claude-desktop (or add a stdio server):\n   command: ${bin}\n   args: ["mcp"]\n3. Copy integrations/silt-agent/SKILL.md into your Claude skills folder.\n4. Endpoint (HTTP clients): ${ep}\nSee docs/LOCAL_MCP.md.`
+      },
+      {
+        title: 'ChatGPT Desktop / Codex',
+        body: `Configure a local MCP server with command "${bin} mcp" (stdio). Paste the bearer token only if the client uses HTTP to ${ep}. Install the Silt skill from integrations/silt-agent/SKILL.md. See docs/LOCAL_MCP.md.`
+      }
+    ]
   }
 
   // Degraded semantic index / hybrid search signals (#630).
@@ -803,9 +847,16 @@
                 <button
                   type="button"
                   class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
+                  onclick={() => void copyMCPToken()}
+                >
+                  Copy token
+                </button>
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
                   onclick={() => void copyMCPHint()}
                 >
-                  Copy install snippet
+                  Copy OpenCode snippet
                 </button>
               </div>
               {#if mcpTokenVisible && mcpToken}
@@ -814,6 +865,33 @@
                   <code class="text-text-primary select-all">{mcpToken}</code>
                 </p>
               {/if}
+
+              <div class="space-y-2" aria-label="Client install notes">
+                <p class="text-text-primary text-type-xs font-semibold m-0">
+                  Client setup
+                </p>
+                {#each clientInstallNotes() as note (note.title)}
+                  <details
+                    class="rounded-md border border-surface-panel-border bg-surface-panel/30 p-2"
+                  >
+                    <summary
+                      class="text-text-primary text-type-xs font-semibold cursor-pointer"
+                    >
+                      {note.title}
+                    </summary>
+                    <pre
+                      class="text-text-muted text-type-2xs m-0 mt-2 whitespace-pre-wrap break-words font-mono">{note.body}</pre>
+                    <button
+                      type="button"
+                      class="mt-2 px-2 py-1 rounded-md bg-surface-panel text-text-primary text-type-2xs border border-surface-panel-border cursor-pointer"
+                      onclick={() =>
+                        void navigator.clipboard.writeText(note.body)}
+                    >
+                      Copy {note.title} notes
+                    </button>
+                  </details>
+                {/each}
+              </div>
             </div>
 
             {#if mcpError}
