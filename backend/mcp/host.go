@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -321,6 +322,9 @@ func (h *Host) startHTTP(srv *mcpsdk.Server, token string, port int) error {
 	httpSrv := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	h.mu.Lock()
@@ -372,19 +376,23 @@ func (h *Host) authMiddleware(token string, next http.Handler) http.Handler {
 	})
 }
 
+// isAllowedOrigin accepts empty (non-browser), "null" (some local clients),
+// and exact loopback hostnames only. Prefix matching is intentionally avoided
+// so http://127.0.0.1.evil.com cannot spoof the CSRF Origin check.
 func isAllowedOrigin(origin string) bool {
 	o := strings.ToLower(strings.TrimSpace(origin))
-	switch {
-	case o == "null":
+	if o == "" || o == "null" {
 		return true
-	case strings.HasPrefix(o, "http://127.0.0.1"),
-		strings.HasPrefix(o, "http://localhost"),
-		strings.HasPrefix(o, "https://127.0.0.1"),
-		strings.HasPrefix(o, "https://localhost"):
-		return true
-	default:
+	}
+	u, err := url.Parse(o)
+	if err != nil {
 		return false
 	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	host := u.Hostname()
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
 }
 
 // AssertLoopbackAddr returns an error if addr is not a loopback TCP address.

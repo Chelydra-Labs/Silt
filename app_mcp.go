@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 
-	"silt/backend/config"
 	"silt/backend/db"
 	"silt/backend/mcp"
 	"silt/backend/parser"
@@ -123,19 +122,20 @@ func (a *App) GetLocalMCPConfig() mcp.Config {
 }
 
 // SetLocalMCPConfig patches and persists local MCP settings, then resyncs the host.
+// Persistence goes through saveConfigTracked (same as other atomic setters) so
+// the config watcher suppresses self-writes and concurrent setters cannot
+// clobber this patch via a raw config.Save race.
 func (a *App) SetLocalMCPConfig(enabled, httpEnabled, writeEnabled bool, httpPort int) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
 	a.vaultMu.RLock()
-	path := a.vaultPath
-	a.vaultMu.RUnlock()
-	if path == "" {
+	if a.vaultPath == "" {
+		a.vaultMu.RUnlock()
 		return fmt.Errorf("no vault open")
 	}
 
 	a.configMu.Lock()
-	cfg := a.cfg
 	local := mcp.NormalizeConfig(mcp.Config{
 		Enabled:      enabled,
 		HTTPEnabled:  httpEnabled,
@@ -147,13 +147,14 @@ func (a *App) SetLocalMCPConfig(enabled, httpEnabled, writeEnabled bool, httpPor
 		local.HTTPEnabled = true
 		local = mcp.NormalizeConfig(local)
 	}
-	cfg.AI.LocalMCP = local
-	a.cfg = cfg
+	a.cfg.AI.LocalMCP = local
+	saveErr := a.saveConfigTracked(a.cfg)
 	a.configMu.Unlock()
-
-	if err := config.Save(path, cfg); err != nil {
-		return err
+	a.vaultMu.RUnlock()
+	if saveErr != nil {
+		return saveErr
 	}
+	// After locks released — sync takes vaultMu/configMu internally.
 	a.syncMCPHost()
 	return nil
 }

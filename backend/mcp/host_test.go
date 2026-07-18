@@ -185,6 +185,43 @@ func TestHost_AuthReject(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("evil origin: status=%d", resp.StatusCode)
 	}
+
+	// Prefix-spoof must not pass (hostname must be exact loopback).
+	req, _ = http.NewRequest(http.MethodPost, ep+"/", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+h.Token())
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://127.0.0.1.evil.com")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("spoofed origin prefix: status=%d", resp.StatusCode)
+	}
+}
+
+func TestIsAllowedOrigin(t *testing.T) {
+	cases := []struct {
+		o    string
+		want bool
+	}{
+		{"", true},
+		{"null", true},
+		{"http://127.0.0.1", true},
+		{"http://127.0.0.1:17887", true},
+		{"https://localhost", true},
+		{"http://[::1]", true},
+		{"http://127.0.0.1.evil.com", false},
+		{"http://localhost.attacker.tld", false},
+		{"https://evil.example", false},
+		{"ftp://127.0.0.1", false},
+	}
+	for _, tc := range cases {
+		if got := isAllowedOrigin(tc.o); got != tc.want {
+			t.Errorf("isAllowedOrigin(%q)=%v want %v", tc.o, got, tc.want)
+		}
+	}
 }
 
 func TestHost_DisabledAndNoVault(t *testing.T) {

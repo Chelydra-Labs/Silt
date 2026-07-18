@@ -246,8 +246,10 @@ func TestRenameSection_SerializesAgainstMutateBlock(t *testing.T) {
 	if mutErr == nil && !strings.Contains(string(content), marker) {
 		t.Fatalf("successful mutate lost\n%s", content)
 	}
-	if mutErr != nil {
-		t.Logf("mutate erred (acceptable): %v", mutErr)
+	if mutErr != nil && !errors.Is(mutErr, ErrPageMovedOrDeleted) &&
+		!strings.Contains(mutErr.Error(), "page_moved") &&
+		!strings.Contains(mutErr.Error(), "no such file") {
+		t.Logf("mutate erred (acceptable if fail-loud): %v", mutErr)
 	}
 	if _, err := app.FetchPageBlocks(notebook, "NewSec", page); err != nil {
 		t.Fatalf("index: %v", err)

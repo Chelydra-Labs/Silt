@@ -483,6 +483,12 @@ func (a *App) MutateBlock(blockID, newText string) error {
 				writeErr = blockBeingEditedError()
 				return
 			}
+			// After waiting for structural locks, refuse a renamed-away path
+			// with the same typed sentinel as SaveFileBlocks (#691).
+			if _, err := os.Stat(filePath); os.IsNotExist(err) {
+				writeErr = errPageMovedOrDeleted(filePath)
+				return
+			}
 			contentBytes, err := os.ReadFile(filePath)
 			if err != nil {
 				writeErr = err
