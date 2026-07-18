@@ -10,7 +10,12 @@ const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
   tasksSettings: {} as Record<string, unknown>,
-  blockChangedCallbacks: [] as Array<() => void>
+  blockChangedCallbacks: [] as Array<() => void>,
+  openDevTools: vi.fn().mockResolvedValue(undefined)
+}))
+
+const settingsMock = vi.hoisted(() => ({
+  config: null as null | { ui?: { open_devtools_on_startup?: boolean } }
 }))
 
 vi.mock('@wailsio/runtime', () => ({
@@ -35,6 +40,14 @@ vi.mock('@wailsio/runtime', () => ({
     Map: () => ({}),
     Any: {}
   }
+}))
+
+vi.mock('../../../../bindings/silt/app.js', () => ({
+  OpenDevTools: mocks.openDevTools
+}))
+
+vi.mock('../../../settings/store.svelte', () => ({
+  settings: settingsMock
 }))
 
 import Sidebar from './Sidebar.svelte'
@@ -154,6 +167,8 @@ async function flush() {
 
 describe('silt-tasks Sidebar (#432)', () => {
   beforeEach(async () => {
+    settingsMock.config = null
+    mocks.openDevTools.mockReset().mockResolvedValue(undefined)
     mocks.sqliteQuery.mockReset()
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
     mocks.tasksSettings = {}
@@ -474,6 +489,40 @@ describe('silt-tasks Sidebar (#432)', () => {
     await fireEvent.contextMenu(row)
     await flush()
     expect(screen.getByTestId('manage-view-menu')).toBeInTheDocument()
+  })
+
+  it('shows Inspect on manage menu when Dev Mode is on (#683)', async () => {
+    settingsMock.config = { ui: { open_devtools_on_startup: true } }
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    expect(screen.getByTestId('manage-inspect')).toBeInTheDocument()
+    await fireEvent.click(screen.getByTestId('manage-inspect'))
+    expect(mocks.openDevTools).toHaveBeenCalled()
+  })
+
+  it('hides Inspect on manage menu when Dev Mode is off (#683)', async () => {
+    settingsMock.config = { ui: { open_devtools_on_startup: false } }
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    expect(screen.queryByTestId('manage-inspect')).toBeNull()
   })
 
   it('right-clicking a SYSTEM view does NOT open the manage menu', async () => {

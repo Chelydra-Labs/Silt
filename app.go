@@ -49,6 +49,9 @@ type App struct {
 	// mainWindow is the primary webview window, stored so RequestClose can
 	// hide it to the tray without going through v3's unexported windows map.
 	mainWindow application.Window
+	// openDevToolsMenuItem is View → Open Developer Tools. Enabled when Dev
+	// Mode or SILT_DEBUG is on (#684); nil until setupMenus runs.
+	openDevToolsMenuItem *application.MenuItem
 	// startupEvents captures events emitted before the frontend mounted.
 	// emitOrQueue appends here (in addition to emitting) until
 	// MarkFrontendReady flips frontendReady; GetStartupEvents drains the slice
@@ -412,6 +415,8 @@ func (a *App) teardownVaultServices() {
 	}
 	a.coordinator = nil
 	a.vaultPath = ""
+	// Drop Dev Mode menu enablement unless SILT_DEBUG keeps it on (#684).
+	a.syncOpenDevToolsMenuItemEnabled(strings.EqualFold(os.Getenv("SILT_DEBUG"), "1"))
 	// Session security aggregates are vault-scoped in practice; clear on
 	// vault close so the next vault doesn't inherit denial badges (#518).
 	if a.securityStats != nil {
@@ -596,6 +601,14 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// (teardown cleared a.vaultPath; the final assignment below is after the
 	// watcher starts). Set it here so migrate does not hash an empty path.
 	a.vaultPath = vaultPath
+	// vaultMu held exclusively — pass enablement without re-locking (#684).
+	devToolsMenuOn := strings.EqualFold(os.Getenv("SILT_DEBUG"), "1")
+	if !devToolsMenuOn {
+		a.configMu.RLock()
+		devToolsMenuOn = a.cfg.UI.OpenDevtoolsOnStartup != nil && *a.cfg.UI.OpenDevtoolsOnStartup
+		a.configMu.RUnlock()
+	}
+	a.syncOpenDevToolsMenuItemEnabled(devToolsMenuOn)
 	a.migrateAIKeysToKeyringLocked()
 
 	// F3: verify linked-notebook fingerprints before the vault scan. Legacy

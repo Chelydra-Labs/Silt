@@ -4,11 +4,21 @@ import TabStrip from './TabStrip.svelte'
 import type { TabEntry } from '../lib/tabs'
 
 const mocks = vi.hoisted(() => ({
-  resolvePageLink: vi.fn()
+  resolvePageLink: vi.fn(),
+  openDevTools: vi.fn().mockResolvedValue(undefined)
 }))
 
 vi.mock('../../bindings/silt/app.js', () => ({
-  ResolvePageLink: mocks.resolvePageLink
+  ResolvePageLink: mocks.resolvePageLink,
+  OpenDevTools: mocks.openDevTools
+}))
+
+const settingsMock = vi.hoisted(() => ({
+  config: null as null | { ui?: { open_devtools_on_startup?: boolean } }
+}))
+
+vi.mock('../settings/store.svelte', () => ({
+  settings: settingsMock
 }))
 
 function mkTab(
@@ -54,11 +64,15 @@ function defaultProps(
 }
 
 describe('TabStrip (#142)', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    settingsMock.config = null
+  })
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    settingsMock.config = null
   })
 
   it('renders nothing when there are no tabs', () => {
@@ -654,6 +668,29 @@ describe('TabStrip (#142)', () => {
         )
       expect(closeOnly).toBeTruthy()
       expect(menuItem('Copy Page Reference')).toBeTruthy()
+      expect(screen.queryByRole('menuitem', { name: /Inspect/i })).toBeNull()
+    })
+
+    it('shows Inspect when Dev Mode is on (#683)', async () => {
+      settingsMock.config = { ui: { open_devtools_on_startup: true } }
+      const tabs = [mkTab({ notebook: 'Work', section: '', page: 'Site' })]
+      render(TabStrip, {
+        props: defaultProps({ tabs, activeTabId: 'tab-Site' })
+      })
+      await fireEvent.contextMenu(screen.getAllByRole('tab')[0])
+      expect(menuItem('Inspect')).toBeTruthy()
+      await fireEvent.click(menuItem('Inspect'))
+      expect(mocks.openDevTools).toHaveBeenCalled()
+    })
+
+    it('hides Inspect when Dev Mode is off (#683)', async () => {
+      settingsMock.config = { ui: { open_devtools_on_startup: false } }
+      const tabs = [mkTab({ notebook: 'Work', section: '', page: 'Site' })]
+      render(TabStrip, {
+        props: defaultProps({ tabs, activeTabId: 'tab-Site' })
+      })
+      await fireEvent.contextMenu(screen.getAllByRole('tab')[0])
+      expect(screen.queryByRole('menuitem', { name: /Inspect/i })).toBeNull()
     })
 
     it('restores focus and closes the menu on Escape without changing tab controls', async () => {

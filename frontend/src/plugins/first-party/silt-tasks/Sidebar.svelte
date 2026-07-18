@@ -41,6 +41,7 @@
   import { viewMatchesState } from './savedViews'
   import { persistSavedViews } from './settings'
   import ContextMenu from '../../../components/ContextMenu.svelte'
+  import { isDevMode, openInspect } from '../../../lib/devModeInspect'
 
   interface Props {
     ctx: PluginContext
@@ -1088,6 +1089,23 @@
       >
       <span>Delete…</span>
     </button>
+    {#if isDevMode()}
+      <div class="context-menu-separator" aria-hidden="true"></div>
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="manage-inspect"
+        onclick={() => {
+          closeManageMenu()
+          void openInspect()
+        }}
+      >
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+          >bug_report</span
+        >
+        <span>Inspect</span>
+      </button>
+    {/if}
   </ContextMenu>
 {/if}
 

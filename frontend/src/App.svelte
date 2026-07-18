@@ -129,6 +129,8 @@
     toggleFocusMode,
     toggleTypewriterMode
   } from './settings/store.svelte'
+  import { isDevMode, openInspect } from './lib/devModeInspect'
+  import ContextMenu from './components/ContextMenu.svelte'
   import { initEditorTokens } from './settings/editor-tokens.svelte'
   import { initThemes } from './theme/store.svelte'
   import { initTemplates } from './templates/store.svelte'
@@ -264,6 +266,22 @@
   let sidebarWidth = $state(256)
   let manuallyCollapsed = $state(false)
   let sidebarDragging = $state(false)
+
+  // Dev Mode–only Inspect on empty content chrome (#683) — no other menu there.
+  let emptyChromeMenu = $state<{
+    open: boolean
+    anchor: { x: number; y: number } | null
+  }>({ open: false, anchor: null })
+
+  function openEmptyChromeInspectMenu(e: MouseEvent): void {
+    if (!isDevMode()) return
+    e.preventDefault()
+    emptyChromeMenu = { open: true, anchor: { x: e.clientX, y: e.clientY } }
+  }
+
+  function closeEmptyChromeMenu(): void {
+    emptyChromeMenu = { open: false, anchor: null }
+  }
 
   // Sync active navigation to the reactive plugin location (#69). Plugins
   // read ctx.activeNotebook/Section/Page via live getters backed by this state.
@@ -1916,8 +1934,11 @@
                 {/each}
               </div>
             {:else}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <!-- Dev Mode Inspect only; no native menu on empty chrome (#683). -->
               <div
                 class="flex-1 flex flex-col items-center justify-center text-center px-8 select-none"
+                oncontextmenu={openEmptyChromeInspectMenu}
               >
                 <span
                   class="material-symbols-outlined text-text-muted text-display-sm mb-4 opacity-40"
@@ -2043,6 +2064,30 @@
 
   {#if showShortcutHelp}
     <ShortcutHelp onClose={() => (showShortcutHelp = false)} />
+  {/if}
+
+  {#if emptyChromeMenu.open && isDevMode()}
+    <ContextMenu
+      open={emptyChromeMenu.open}
+      anchor={emptyChromeMenu.anchor}
+      onClose={closeEmptyChromeMenu}
+      ariaLabel="Developer actions"
+      menuId="empty-chrome-context-menu"
+    >
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => {
+          closeEmptyChromeMenu()
+          void openInspect()
+        }}
+      >
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+          >bug_report</span
+        >
+        Inspect
+      </button>
+    </ContextMenu>
   {/if}
 
   {#if showGlobalReplace}

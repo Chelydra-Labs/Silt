@@ -95,3 +95,18 @@ func TestOpenDevTools_NoVault(t *testing.T) {
 		t.Fatalf("OpenDevTools with empty vaultPath: %v", err)
 	}
 }
+
+// TestSyncOpenDevToolsMenuItem_NilSafe covers #684: menu sync is a no-op when
+// setupMenus has not run (unit harness has no MenuItem).
+func TestSyncOpenDevToolsMenuItem_NilSafe(t *testing.T) {
+	app := newTestApp(t)
+	app.syncOpenDevToolsMenuItem()
+	app.syncOpenDevToolsMenuItemEnabled(true)
+	app.syncOpenDevToolsMenuItemEnabled(false)
+	if err := app.SetOpenDevtoolsOnStartup(true); err != nil {
+		t.Fatalf("SetOpenDevtoolsOnStartup with nil menu item: %v", err)
+	}
+	if err := app.SetOpenDevtoolsOnStartup(false); err != nil {
+		t.Fatalf("SetOpenDevtoolsOnStartup(false) with nil menu item: %v", err)
+	}
+}

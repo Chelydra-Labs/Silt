@@ -64,6 +64,7 @@
   import NamePromptDialog from './NamePromptDialog.svelte'
   import { coerceIPCError } from '../lib/ipcError'
   import { copyPagePath, copyPageReference, copyText } from '../lib/pageActions'
+  import { isDevMode, openInspect } from '../lib/devModeInspect'
   import SettingsNav from './settings/SettingsNav.svelte'
   import { settings } from '../settings/store.svelte'
   import { shortcutBinding } from '../settings/shortcutActions'
@@ -1890,6 +1891,22 @@
     >
     {contextMenuUnlink ? 'Unlink' : 'Delete'}
   </button>
+  {#if isDevMode()}
+    <div class="context-menu-separator" aria-hidden="true"></div>
+    <button
+      type="button"
+      role="menuitem"
+      onclick={() => {
+        closeContextMenu()
+        void openInspect()
+      }}
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >bug_report</span
+      >
+      Inspect
+    </button>
+  {/if}
 </ContextMenu>
 
 <!-- Delete confirmation dialog (#62) -->

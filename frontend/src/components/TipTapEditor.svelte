@@ -71,7 +71,7 @@
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import ChoiceDialog from './ChoiceDialog.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
-  import { OpenDevTools } from '../../bindings/silt/app.js'
+  import { isDevMode, openInspect } from '../lib/devModeInspect'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
   import BlockPickerModal from './BlockPickerModal.svelte'
@@ -1648,19 +1648,13 @@
     closeContextMenu()
   }
 
-  /** Dev Mode Inspect (#679) — opens webview DevTools when the flag is on. */
+  /** Dev Mode Inspect (#679/#683) — opens webview DevTools when the flag is on. */
   async function handleInspect(): Promise<void> {
     closeContextMenu()
-    try {
-      await OpenDevTools()
-    } catch (e) {
-      console.error('OpenDevTools failed:', e)
-    }
+    await openInspect()
   }
 
-  let devModeEnabled = $derived(
-    settings.config?.ui?.open_devtools_on_startup === true
-  )
+  let devModeEnabled = $derived(isDevMode())
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
