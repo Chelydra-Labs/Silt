@@ -18,8 +18,16 @@ const mocks = vi.hoisted(() => ({
   deleteNotebook: vi.fn(),
   revealNotebookInOS: vi.fn(),
   getNavOrder: vi.fn(),
-  setNavOrder: vi.fn(),
+  setNavNotebookOrder: vi.fn(),
+  setNavSectionOrder: vi.fn(),
+  setNavPageOrder: vi.fn(),
+  clearNavNotebookOrder: vi.fn(),
+  clearNavSectionOrder: vi.fn(),
+  clearNavPageOrder: vi.fn(),
   movePage: vi.fn(),
+  getNavigationPreferences: vi.fn(),
+  setNavigationSectionExpanded: vi.fn(),
+  setFavoritePage: vi.fn(),
   queryTagHierarchy: vi.fn().mockResolvedValue([]),
   // The silt-tasks sidebar queries counts/facets on mount via ctx.sqliteQuery.
   // Return empty aggregates so the sidebar renders its empty state cleanly.
@@ -53,8 +61,16 @@ vi.mock('../../bindings/silt/app.js', () => ({
   DeleteNotebook: mocks.deleteNotebook,
   RevealNotebookInOS: mocks.revealNotebookInOS,
   GetNavOrder: mocks.getNavOrder,
-  SetNavOrder: mocks.setNavOrder,
+  SetNavNotebookOrder: mocks.setNavNotebookOrder,
+  SetNavSectionOrder: mocks.setNavSectionOrder,
+  SetNavPageOrder: mocks.setNavPageOrder,
+  ClearNavNotebookOrder: mocks.clearNavNotebookOrder,
+  ClearNavSectionOrder: mocks.clearNavSectionOrder,
+  ClearNavPageOrder: mocks.clearNavPageOrder,
   MovePage: mocks.movePage,
+  GetNavigationPreferences: mocks.getNavigationPreferences,
+  SetNavigationSectionExpanded: mocks.setNavigationSectionExpanded,
+  SetFavoritePage: mocks.setFavoritePage,
   QueryTagHierarchy: mocks.queryTagHierarchy
 }))
 
@@ -107,10 +123,23 @@ describe('Sidebar', () => {
     mocks.createNotebook.mockReset()
     mocks.createSection.mockReset()
     mocks.createPage.mockReset()
+    mocks.renameSection.mockReset().mockResolvedValue(undefined)
     mocks.pickNotebookFolder.mockReset()
     mocks.getNavOrder.mockReset()
-    mocks.setNavOrder.mockReset()
+    mocks.setNavNotebookOrder.mockReset().mockResolvedValue(undefined)
+    mocks.setNavSectionOrder.mockReset().mockResolvedValue(undefined)
+    mocks.setNavPageOrder.mockReset().mockResolvedValue(undefined)
+    mocks.clearNavNotebookOrder.mockReset().mockResolvedValue(undefined)
+    mocks.clearNavSectionOrder.mockReset().mockResolvedValue(undefined)
+    mocks.clearNavPageOrder.mockReset().mockResolvedValue(undefined)
     mocks.movePage.mockReset()
+    mocks.getNavigationPreferences.mockReset().mockResolvedValue({
+      expanded_sections: [],
+      recent_pages: [],
+      favorites: []
+    })
+    mocks.setNavigationSectionExpanded.mockReset().mockResolvedValue(undefined)
+    mocks.setFavoritePage.mockReset().mockResolvedValue(undefined)
     mocks.listNavigation.mockResolvedValue(NAV_TREE)
     mocks.sqliteQuery
       .mockReset()
@@ -120,7 +149,6 @@ describe('Sidebar', () => {
       sections: {},
       pages: {}
     })
-    mocks.setNavOrder.mockResolvedValue(undefined)
     mocks.movePage.mockResolvedValue(undefined)
     // Reset the plugin store to empty between tests so a test cannot leak
     // a registered sidebarComponent into the next (#321 isolation).
@@ -778,6 +806,97 @@ describe('Sidebar', () => {
     expect(screen.getByPlaceholderText('New page name…')).toBeInTheDocument()
   })
 
+  it('renames a nested section with its canonical next path', async () => {
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Work',
+          sections: [
+            {
+              name: 'Projects',
+              path: 'Projects',
+              pages: [],
+              children: [
+                {
+                  name: 'Active',
+                  path: 'Projects/Active',
+                  pages: []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    })
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Projects' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    await fireEvent.contextMenu(
+      screen.getByRole('treeitem', { name: /Active/ })
+    )
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Rename/i }))
+    await fireEvent.input(screen.getByTestId('sidebar-name-prompt-input'), {
+      target: { value: 'Current' }
+    })
+    await fireEvent.click(screen.getByTestId('sidebar-name-prompt-confirm'))
+    await flush()
+
+    expect(mocks.renameSection).toHaveBeenCalledWith(
+      'Work',
+      'Projects/Active',
+      'Projects/Current'
+    )
+  })
+
+  it('exposes section page creation through the keyboard-operable menu', async () => {
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(
+      screen.getByRole('treeitem', { name: /Journal/ })
+    )
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: /New page in section/i })
+    )
+    await flush()
+    expect(mocks.createPage).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Untitled',
+      ''
+    )
+  })
+
   it('delete confirm for vault page mentions trash (#646)', async () => {
     mocks.listNavigation.mockResolvedValue(NAV_TREE)
     render(Sidebar, {
@@ -852,5 +971,177 @@ describe('Sidebar', () => {
     expect(
       screen.queryByText(/You can recover it from there manually/)
     ).toBeNull()
+  })
+
+  it('restores expansion and uses one roving tree tab stop', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const tree = screen.getByRole('tree', { name: 'Work pages' })
+    const items = Array.from(
+      tree.querySelectorAll<HTMLElement>('[role="treeitem"]')
+    )
+    expect(items.filter((item) => item.tabIndex === 0)).toHaveLength(1)
+    expect(screen.getByText('Daily')).toBeInTheDocument()
+    expect(mocks.setNavigationSectionExpanded).not.toHaveBeenCalled()
+  })
+
+  it('moves tree focus with arrows and activates a page with Enter', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    const onSelectPage = vi.fn()
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage,
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const journal = screen.getByRole('treeitem', {
+      name: /Journal/
+    }) as HTMLElement
+    journal.focus()
+    await fireEvent.keyDown(journal, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(
+      screen.getByRole('treeitem', { name: 'Daily' })
+    )
+    await fireEvent.keyDown(document.activeElement!, { key: 'Enter' })
+    expect(onSelectPage).toHaveBeenCalledWith('Work', 'Journal', 'Daily')
+  })
+
+  it('persists manual collapse with one narrow call', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.click(screen.getByRole('treeitem', { name: /Journal/ }))
+    expect(mocks.setNavigationSectionExpanded).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      false
+    )
+    expect(mocks.setNavigationSectionExpanded).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the previous tree visible and offers retry after refresh fails', async () => {
+    mocks.listNavigation
+      .mockResolvedValueOnce(NAV_TREE)
+      .mockRejectedValueOnce(new Error('disk busy'))
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    window.dispatchEvent(new CustomEvent('refresh-navigation'))
+    await flush()
+    expect(
+      screen.getByText(/previous list is still available/i)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('treeitem', { name: /Journal/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Try again' })
+    ).toBeInTheDocument()
+  })
+
+  it('shows linked favorites as offline with their full accessible path', async () => {
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Synced',
+          source: 'linked:x',
+          disconnected: true,
+          sections: [
+            {
+              name: 'Deep',
+              path: 'Projects/Deep',
+              pages: [{ name: 'Plan', count: 1 }]
+            }
+          ]
+        }
+      ]
+    })
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [],
+      recent_pages: [],
+      favorites: [
+        { notebook: 'Synced', section: 'Projects/Deep', page: 'Plan' }
+      ]
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Synced',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const favorite = screen.getByRole('button', {
+      name: 'Synced / Projects/Deep / Plan — Linked notebook offline'
+    })
+    expect(favorite).toBeDisabled()
+    expect(screen.getByText('Linked notebook offline')).toBeInTheDocument()
   })
 })

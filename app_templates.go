@@ -214,8 +214,11 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizeSectionPath(section)
+	safeSection, sectionErr := validateSectionPath(section, true)
 	safePage := sanitizePathSegment(page)
+	if sectionErr != nil {
+		return "", invalidNavigationPath(sectionErr)
+	}
 	if safeNotebook == "" || safePage == "" {
 		return "", fmt.Errorf("notebook and page names are required (section is optional)")
 	}

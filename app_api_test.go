@@ -2187,6 +2187,15 @@ func TestListNavigation_LinkedDisconnectedWhenRootMissing(t *testing.T) {
 		ID: "ghost", RootPath: filepath.Join(t.TempDir(), "does-not-exist"), DisplayName: "Ghost",
 	}}
 	app.configMu.Unlock()
+	if err := app.SetNavigationSectionExpanded("Ghost", "Empty/Section", true); err != nil {
+		t.Fatalf("SetNavigationSectionExpanded: %v", err)
+	}
+	if err := app.SetFavoritePage("Ghost", "Empty/Section", "Missing", true); err != nil {
+		t.Fatalf("SetFavoritePage: %v", err)
+	}
+	if err := app.RecordRecentPage("Ghost", "Empty/Section", "Missing"); err != nil {
+		t.Fatalf("RecordRecentPage: %v", err)
+	}
 
 	tree, err := app.ListNavigation()
 	if err != nil {
@@ -2204,6 +2213,78 @@ func TestListNavigation_LinkedDisconnectedWhenRootMissing(t *testing.T) {
 	}
 	if !found.Disconnected {
 		t.Error("expected Disconnected=true when the linked root is missing/offline")
+	}
+	prefs, err := app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences: %v", err)
+	}
+	if len(prefs.ExpandedSections) != 1 || prefs.ExpandedSections[0].Path != "Empty/Section" {
+		t.Fatalf("offline fallback pruned expanded linked section: %+v", prefs.ExpandedSections)
+	}
+	if len(prefs.Favorites) != 1 || prefs.Favorites[0].Page != "Missing" {
+		t.Fatalf("offline fallback pruned favorite linked page: %+v", prefs.Favorites)
+	}
+	if len(prefs.RecentPages) != 1 || prefs.RecentPages[0].Page != "Missing" {
+		t.Fatalf("offline fallback pruned recent linked page: %+v", prefs.RecentPages)
+	}
+}
+
+func TestListNavigation_LinkedOnlinePreservesNestedAndEmptySections(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ext, "Projects", "Active"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(ext, "Projects", "Active", "Site.md"), "---\nnotebook: Linked\nsection: Projects/Active\npage: Site\n---\n# Site\n")
+	if _, err := app.LinkNotebook(ext); err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	app.configMu.Lock()
+	name := app.cfg.LinkedNotebooks[0].DisplayName
+	app.configMu.Unlock()
+	tree, err := app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation: %v", err)
+	}
+	var linked *parser.NavigationNotebook
+	for i := range tree.Notebooks {
+		if tree.Notebooks[i].Name == name {
+			linked = &tree.Notebooks[i]
+			break
+		}
+	}
+	if linked == nil || linked.Disconnected {
+		t.Fatalf("linked notebook should be online: %+v", linked)
+	}
+	var projects *parser.NavigationSection
+	for i := range linked.Sections {
+		if linked.Sections[i].Path == "Projects" {
+			projects = &linked.Sections[i]
+			break
+		}
+	}
+	if projects == nil || len(projects.Children) != 1 || projects.Children[0].Path != "Projects/Active" {
+		t.Fatalf("nested linked tree missing: %+v", linked.Sections)
+	}
+	if err := os.MkdirAll(filepath.Join(ext, "Empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tree, err = app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation refresh: %v", err)
+	}
+	for _, nb := range tree.Notebooks {
+		if nb.Name == name {
+			found := false
+			for _, sec := range nb.Sections {
+				if sec.Path == "Empty" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("empty linked section missing: %+v", nb.Sections)
+			}
+		}
 	}
 }
 

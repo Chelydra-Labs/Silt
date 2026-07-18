@@ -145,12 +145,15 @@ const LinkedNotebooksVaultSource = "vault"
 // ordering, the open-tab set). Stored in the YAML tier (per-vault) per
 // ARCHITECTURE §0 rule #2.
 type UIConfig struct {
-	SidebarWidth      int      `yaml:"sidebar_width" json:"sidebar_width"`
-	NavOrder          NavOrder `yaml:"nav_order,omitempty" json:"nav_order,omitempty"`
-	OpenTabs          []TabRef `yaml:"open_tabs,omitempty" json:"open_tabs,omitempty"`
-	ActiveTab         *TabRef  `yaml:"active_tab,omitempty" json:"active_tab,omitempty"`
-	EnablePreviewTabs *bool    `yaml:"enable_preview_tabs,omitempty" json:"enable_preview_tabs,omitempty"`
-	MaxOpenTabs       int      `yaml:"max_open_tabs,omitempty" json:"max_open_tabs,omitempty"`
+	SidebarWidth      int                    `yaml:"sidebar_width" json:"sidebar_width"`
+	NavOrder          NavOrder               `yaml:"nav_order,omitempty" json:"nav_order,omitempty"`
+	OpenTabs          []TabRef               `yaml:"open_tabs,omitempty" json:"open_tabs,omitempty"`
+	ActiveTab         *TabRef                `yaml:"active_tab,omitempty" json:"active_tab,omitempty"`
+	ExpandedSections  []NavigationSectionRef `yaml:"expanded_sections,omitempty" json:"expanded_sections,omitempty"`
+	RecentPages       []RecentPage           `yaml:"recent_pages,omitempty" json:"recent_pages,omitempty"`
+	Favorites         []NavigationPageRef    `yaml:"favorites,omitempty" json:"favorites,omitempty"`
+	EnablePreviewTabs *bool                  `yaml:"enable_preview_tabs,omitempty" json:"enable_preview_tabs,omitempty"`
+	MaxOpenTabs       int                    `yaml:"max_open_tabs,omitempty" json:"max_open_tabs,omitempty"`
 	// ShowFormatToolbar controls the persistent format toolbar visibility
 	// (#168). Default true; users who want outliner-minimal density can hide
 	// it from Settings. The bubble, slash commands, hotkeys, and hover menu
@@ -171,6 +174,28 @@ type UIConfig struct {
 	OpenDevtoolsOnStartup *bool `yaml:"open_devtools_on_startup,omitempty" json:"open_devtools_on_startup,omitempty"`
 	// Formatting holds inline-formatting-related UI toggles (#168 Phase 3, #170).
 	Formatting FormattingConfig `yaml:"formatting,omitempty" json:"formatting,omitempty"`
+}
+
+// NavigationSectionRef is the canonical identity of a section in a vault.
+// Path is relative to Notebook and uses forward slashes at the IPC boundary.
+type NavigationSectionRef struct {
+	Notebook string `yaml:"notebook" json:"notebook"`
+	Path     string `yaml:"path" json:"path"`
+}
+
+// NavigationPageRef is the canonical identity of a page. Section is empty for
+// a page directly under the notebook root.
+type NavigationPageRef struct {
+	Notebook string `yaml:"notebook" json:"notebook"`
+	Section  string `yaml:"section" json:"section"`
+	Page     string `yaml:"page" json:"page"`
+}
+
+// RecentPage records a successfully opened or saved page. Unix seconds keep
+// the YAML compact and make the value stable across platforms.
+type RecentPage struct {
+	NavigationPageRef `yaml:"inline" json:",inline"`
+	OpenedAt          int64 `yaml:"opened_at" json:"opened_at"`
 }
 
 // FormattingConfig holds per-vault toggles for inline formatting features.

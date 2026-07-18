@@ -494,7 +494,7 @@ func (a *App) PluginCreateSection(pluginID, sessionToken, notebook, section stri
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return err
 	}
-	return a.CreateSection(notebook, section)
+	return a.CreateSection(notebook, "", section)
 }
 
 // PluginCreateNotebook wraps the core CreateNotebook for the SDK.

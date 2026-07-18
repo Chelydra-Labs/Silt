@@ -107,6 +107,106 @@ func TestListNavigation_DeepNesting(t *testing.T) {
 	}
 }
 
+func TestNestedNavigationCRUD_ReconcilesPreferences(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.CreateSection("TestNB", "Projects", "Active"); err != nil {
+		t.Fatalf("CreateSection: %v", err)
+	}
+	if _, err := app.CreatePage("TestNB", "Projects/Active", "Site", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+	if err := app.SetNavigationSectionExpanded("TestNB", "Projects", true); err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	if err := app.SetFavoritePage("TestNB", "Projects/Active", "Site", true); err != nil {
+		t.Fatalf("favorite: %v", err)
+	}
+	if err := app.RecordRecentPage("TestNB", "Projects/Active", "Site"); err != nil {
+		t.Fatalf("recent: %v", err)
+	}
+	if err := app.RenameSection("TestNB", "Projects", "Archive"); err != nil {
+		t.Fatalf("RenameSection: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(app.vaultPath, "TestNB", "Archive", "Active", "Site.md")); err != nil {
+		t.Fatalf("nested page after section rename: %v", err)
+	}
+	prefs, err := app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences: %v", err)
+	}
+	if len(prefs.ExpandedSections) != 1 || prefs.ExpandedSections[0].Path != "Archive" {
+		t.Fatalf("expanded refs not reconciled: %+v", prefs.ExpandedSections)
+	}
+	if len(prefs.Favorites) != 1 || prefs.Favorites[0].Section != "Archive/Active" {
+		t.Fatalf("favorites not reconciled: %+v", prefs.Favorites)
+	}
+	if len(prefs.RecentPages) != 1 || prefs.RecentPages[0].Section != "Archive/Active" {
+		t.Fatalf("recents not reconciled: %+v", prefs.RecentPages)
+	}
+	if err := app.DeleteSection("TestNB", "Archive"); err != nil {
+		t.Fatalf("DeleteSection: %v", err)
+	}
+	prefs, err = app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences after delete: %v", err)
+	}
+	if len(prefs.Favorites) != 0 || len(prefs.RecentPages) != 0 || len(prefs.ExpandedSections) != 0 {
+		t.Fatalf("deleted subtree left stale prefs: %+v", prefs)
+	}
+}
+
+func TestNavigationPreferenceMutationsAreSerialized(t *testing.T) {
+	app := newTestApp(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			section := "Projects/" + string(rune('A'+i))
+			if err := app.SetNavigationSectionExpanded("TestNB", section, true); err != nil {
+				t.Errorf("expand %d: %v", i, err)
+			}
+			if err := app.SetFavoritePage("TestNB", section, "Page", true); err != nil {
+				t.Errorf("favorite %d: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	prefs, err := app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences: %v", err)
+	}
+	if len(prefs.ExpandedSections) != 12 || len(prefs.Favorites) != 12 {
+		t.Fatalf("concurrent mutations lost state: expanded=%d favorites=%d", len(prefs.ExpandedSections), len(prefs.Favorites))
+	}
+}
+
+func TestDeleteSection_NavOrderUsesPathBoundary(t *testing.T) {
+	app := newTestApp(t)
+	if _, err := app.CreatePage("TestNB", "A", "Removed", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage A: %v", err)
+	}
+	if _, err := app.CreatePage("TestNB", "Archive", "Kept", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage Archive: %v", err)
+	}
+	if err := app.SetNavPageOrder("TestNB", "A", []string{"Removed"}); err != nil {
+		t.Fatalf("SetNavPageOrder A: %v", err)
+	}
+	if err := app.SetNavPageOrder("TestNB", "Archive", []string{"Kept"}); err != nil {
+		t.Fatalf("SetNavPageOrder Archive: %v", err)
+	}
+	if err := app.DeleteSection("TestNB", "A"); err != nil {
+		t.Fatalf("DeleteSection: %v", err)
+	}
+	order, err := app.GetNavOrder()
+	if err != nil {
+		t.Fatalf("GetNavOrder: %v", err)
+	}
+	if got := order.Pages["TestNB/Archive"]; len(got) != 1 || got[0] != "Kept" {
+		t.Fatalf("deleting A removed Archive ordering: %+v", order.Pages)
+	}
+}
+
 // --- Config UI block tests (#63, #68) ---
 
 func TestGetSetSidebarWidth_RoundTrip(t *testing.T) {
@@ -151,15 +251,17 @@ func TestSetSidebarWidth_Clamps(t *testing.T) {
 	}
 }
 
-func TestGetSetNavOrder_RoundTrip(t *testing.T) {
+func TestNarrowNavOrder_RoundTrip(t *testing.T) {
 	app := newTestApp(t)
 
-	order := config.NavOrder{
-		Notebooks: []string{"Personal", "Work"},
-		Sections:  map[string][]string{"Work": {"Projects", "Inbox"}},
+	if err := app.SetNavNotebookOrder([]string{"Personal", "Work"}); err != nil {
+		t.Fatalf("SetNavNotebookOrder: %v", err)
 	}
-	if err := app.SetNavOrder(order); err != nil {
-		t.Fatalf("SetNavOrder: %v", err)
+	if err := app.SetNavSectionOrder("Work", "", []string{"Projects", "Inbox"}); err != nil {
+		t.Fatalf("SetNavSectionOrder: %v", err)
+	}
+	if err := app.SetNavPageOrder("Work", "Projects", []string{"Site"}); err != nil {
+		t.Fatalf("SetNavPageOrder: %v", err)
 	}
 
 	got, err := app.GetNavOrder()
@@ -171,6 +273,48 @@ func TestGetSetNavOrder_RoundTrip(t *testing.T) {
 	}
 	if len(got.Sections["Work"]) != 2 || got.Sections["Work"][0] != "Projects" {
 		t.Fatalf("nav order sections: got %v", got.Sections["Work"])
+	}
+}
+
+func TestNavOrderNarrowMutationsPreserveStaleClientKeys(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.SetNavPageOrder("TestNB", "First", []string{"One"}); err != nil {
+		t.Fatalf("first page order: %v", err)
+	}
+	if err := app.SetNavPageOrder("TestNB", "Second", []string{"Two"}); err != nil {
+		t.Fatalf("second page order: %v", err)
+	}
+	if err := app.SetNavSectionOrder("TestNB", "", []string{"First", "Second"}); err != nil {
+		t.Fatalf("section order: %v", err)
+	}
+	// This models two independent clients whose snapshots were both stale when
+	// they issued their writes: each narrow mutation must retain the other key.
+	if err := app.SetNavPageOrder("TestNB", "First", []string{"One", "Updated"}); err != nil {
+		t.Fatalf("updated first page order: %v", err)
+	}
+	order, err := app.GetNavOrder()
+	if err != nil {
+		t.Fatalf("GetNavOrder: %v", err)
+	}
+	if got := order.Pages["TestNB/Second"]; len(got) != 1 || got[0] != "Two" {
+		t.Fatalf("stale client lost unrelated page key: %+v", order.Pages)
+	}
+	if got := order.Sections["TestNB"]; len(got) != 2 || got[1] != "Second" {
+		t.Fatalf("stale client lost section order: %+v", order.Sections)
+	}
+
+	if _, err := app.CreatePage("TestNB", "Second", "Two", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+	if err := app.RenameSection("TestNB", "Second", "Renamed"); err != nil {
+		t.Fatalf("RenameSection: %v", err)
+	}
+	order, err = app.GetNavOrder()
+	if err != nil {
+		t.Fatalf("GetNavOrder after reconciliation: %v", err)
+	}
+	if got := order.Pages["TestNB/First"]; len(got) != 2 || got[1] != "Updated" {
+		t.Fatalf("reconciliation lost unrelated page key: %+v", order.Pages)
 	}
 }
 
@@ -622,12 +766,12 @@ func TestMovePage_UpdatesNavOrder_BothSectionKeys(t *testing.T) {
 	}
 
 	// Seed nav_order so we can verify the page is removed from the old list.
-	app.SetNavOrder(config.NavOrder{
-		Pages: map[string][]string{
-			"TestNB/SecA": {"Alpha", "Beta"},
-			"TestNB/SecB": {"Gamma"},
-		},
-	})
+	if err := app.SetNavPageOrder("TestNB", "SecA", []string{"Alpha", "Beta"}); err != nil {
+		t.Fatalf("SetNavPageOrder SecA: %v", err)
+	}
+	if err := app.SetNavPageOrder("TestNB", "SecB", []string{"Gamma"}); err != nil {
+		t.Fatalf("SetNavPageOrder SecB: %v", err)
+	}
 
 	if err := app.MovePage("TestNB", "SecA", "SecB", "Alpha"); err != nil {
 		t.Fatalf("MovePage: %v", err)

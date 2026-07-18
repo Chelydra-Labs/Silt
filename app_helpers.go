@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -77,6 +78,37 @@ func sanitizeSectionPath(s string) string {
 		}
 	}
 	return strings.Join(out, "/")
+}
+
+// validateSectionPath accepts only a canonical relative path. Unlike the old
+// sanitizer it never silently drops traversal components, because doing so can
+// make a requested locator identify a different sibling section.
+func validateSectionPath(s string, allowEmpty bool) (string, error) {
+	if s == "" {
+		if allowEmpty {
+			return "", nil
+		}
+		return "", fmt.Errorf("section path is required")
+	}
+	if strings.ContainsRune(s, 0) || strings.ContainsAny(s, "\\") {
+		return "", fmt.Errorf("section path must be a relative slash-separated path")
+	}
+	parts := strings.Split(s, "/")
+	for i, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "\\") || strings.IndexFunc(part, func(r rune) bool { return r < 32 }) >= 0 {
+			return "", fmt.Errorf("invalid section path %q", s)
+		}
+		parts[i] = part
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+func invalidNavigationPath(err error) error {
+	if err == nil {
+		return nil
+	}
+	return NewIPCError(CodeInvalidNavigationPath, err.Error())
 }
 
 // isPathWithinRoot reports whether target is the same as or a descendant of

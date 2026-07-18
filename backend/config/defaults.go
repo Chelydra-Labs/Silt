@@ -173,7 +173,10 @@ func Defaults() SystemConfig {
 				Sections: map[string][]string{},
 				Pages:    map[string][]string{},
 			},
-			OpenTabs: []TabRef{},
+			OpenTabs:         []TabRef{},
+			ExpandedSections: []NavigationSectionRef{},
+			RecentPages:      []RecentPage{},
+			Favorites:        []NavigationPageRef{},
 			// EnablePreviewTabs defaults to true (industry-standard parity). Stored as
 			// a *bool so "unset" is distinguishable from "explicitly false";
 			// the frontend treats nil as true.

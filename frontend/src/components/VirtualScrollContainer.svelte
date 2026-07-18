@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from 'svelte'
+  import { onDestroy, tick, untrack } from 'svelte'
   import { FetchPageBlocks, RenamePage } from '../../bindings/silt/app.js'
   import { Events } from '@wailsio/runtime'
   import TipTapEditor from './TipTapEditor.svelte'
@@ -367,6 +367,14 @@
   // after content sync + layout frames (PLAN #331 task 3).
   let pendingCaretReapply: EditCaretSnapshot | null = null
   let caretRestoreGen = 0
+
+  // A remount restore can still have tick/rAF callbacks queued when Source
+  // navigation or test cleanup destroys this instance. Invalidate them so a
+  // stale snapshot cannot target the next editor instance.
+  onDestroy(() => {
+    caretRestoreGen++
+    pendingCaretReapply = null
+  })
 
   // $effect.pre runs ahead of the DOM update, so containerEl.scrollTop and the
   // live editor selection still reflect Edit mode at the unmount boundary —

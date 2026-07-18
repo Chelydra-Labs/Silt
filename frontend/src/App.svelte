@@ -16,7 +16,8 @@
     UnlinkNotebook,
     CreateStandaloneTask,
     MarkFrontendReady,
-    GetStartupEvents
+    GetStartupEvents,
+    RecordRecentPage
   } from '../bindings/silt/app.js'
   import { Events } from '@wailsio/runtime'
   import type * as config from '../bindings/silt/backend/config/models.js'
@@ -240,6 +241,15 @@
     activeTabId = result.activeId
     syncActiveFromTab()
     schedulePersistTabs()
+    recordRecentActivation(ref)
+  }
+
+  function recordRecentActivation(ref: PageRef): void {
+    void RecordRecentPage(ref.notebook, ref.section, ref.page)
+      .then(() =>
+        window.dispatchEvent(new CustomEvent('navigation-preferences-changed'))
+      )
+      .catch((e) => console.error('RecordRecentPage failed:', e))
   }
 
   // Toggle a tab between Edit and Source view (#195). The mode lives on
@@ -277,6 +287,8 @@
     )
     syncActiveFromTab()
     schedulePersistTabs()
+    const activated = openTabs.find((tab) => tab.id === id)
+    if (activated) recordRecentActivation(activated)
   }
 
   function handleCloseTab(id: string): void {
@@ -1255,7 +1267,10 @@
   // Navigates to the freshly-created page (the reactive cascade loads it in
   // the editor) and refreshes the sidebar tree so the new page appears.
   function handleTemplatePageCreated(page: string): void {
-    activePage = page
+    openPage(
+      { notebook: activeNotebook, section: activeSection, page },
+      'preview'
+    )
     activeView = 'notes'
     window.dispatchEvent(new CustomEvent('refresh-navigation'))
   }

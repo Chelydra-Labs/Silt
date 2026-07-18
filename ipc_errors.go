@@ -43,7 +43,10 @@ const (
 	// CodePageExists: CreatePageFromTemplate refused to write because the
 	// target page path already exists (no clobber; #652). Frontend offers
 	// rename or open-existing.
-	CodePageExists IPCErrorCode = "page_exists"
+	CodePageExists            IPCErrorCode = "page_exists"
+	CodeInvalidNavigationPath IPCErrorCode = "invalid_navigation_path"
+	CodeNavigationNotFound    IPCErrorCode = "navigation_not_found"
+	CodeNavigationConflict    IPCErrorCode = "navigation_conflict"
 )
 
 // IPCError carries a machine-readable Code across the Wails boundary so the

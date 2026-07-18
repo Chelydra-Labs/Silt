@@ -1,0 +1,598 @@
+package main
+
+import (
+	"fmt"
+	"reflect"
+	"strings"
+	"time"
+
+	"silt/backend/config"
+	"silt/backend/parser"
+)
+
+// mutateConfig is the only navigation/config write primitive. It holds the
+// lifecycle read lock and config write lock through the atomic save, so every
+// caller merges against the latest in-memory config rather than persisting a
+// stale frontend snapshot.
+func (a *App) mutateConfig(mut func(*config.SystemConfig) error) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	return a.mutateConfigLocked(mut)
+}
+
+// mutateConfigLocked is the lifecycle-locked form used by content mutations
+// that already hold vaultMu.RLock. Re-entering an RWMutex read lock is unsafe
+// when a lifecycle writer is queued, so those callers use this variant.
+func (a *App) mutateConfigLocked(mut func(*config.SystemConfig) error) error {
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	next := a.cfg
+	next.UI.NavOrder = cloneNavOrder(a.cfg.UI.NavOrder)
+	next.UI.OpenTabs = append([]config.TabRef(nil), a.cfg.UI.OpenTabs...)
+	if a.cfg.UI.ActiveTab != nil {
+		active := *a.cfg.UI.ActiveTab
+		next.UI.ActiveTab = &active
+	}
+	next.UI.ExpandedSections = append([]config.NavigationSectionRef(nil), a.cfg.UI.ExpandedSections...)
+	next.UI.RecentPages = append([]config.RecentPage(nil), a.cfg.UI.RecentPages...)
+	next.UI.Favorites = append([]config.NavigationPageRef(nil), a.cfg.UI.Favorites...)
+	if err := mut(&next); err != nil {
+		return err
+	}
+	next = config.Normalize(next)
+	if reflect.DeepEqual(next, a.cfg) {
+		return nil
+	}
+	if err := a.saveConfigTracked(next); err != nil {
+		return err
+	}
+	a.cfg = next
+	return nil
+}
+
+// NavigationPreferences is the narrow IPC view of sidebar preferences. It
+// deliberately excludes unrelated system settings and accepts no snapshot
+// write from the frontend.
+type NavigationPreferences struct {
+	ExpandedSections []config.NavigationSectionRef `json:"expanded_sections"`
+	RecentPages      []config.RecentPage           `json:"recent_pages"`
+	Favorites        []config.NavigationPageRef    `json:"favorites"`
+}
+
+func (a *App) GetNavigationPreferences() (NavigationPreferences, error) {
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	return NavigationPreferences{
+		ExpandedSections: append([]config.NavigationSectionRef(nil), a.cfg.UI.ExpandedSections...),
+		RecentPages:      append([]config.RecentPage(nil), a.cfg.UI.RecentPages...),
+		Favorites:        append([]config.NavigationPageRef(nil), a.cfg.UI.Favorites...),
+	}, nil
+}
+
+// SetNavigationSectionExpanded changes one canonical notebook/path entry.
+func (a *App) SetNavigationSectionExpanded(notebook, sectionPath string, expanded bool) error {
+	notebook = strings.TrimSpace(notebook)
+	sectionPath = strings.TrimSpace(strings.ReplaceAll(sectionPath, `\`, "/"))
+	if _, err := validateSectionPath(notebook, false); err != nil {
+		return invalidNavigationPath(err)
+	}
+	if _, err := validateSectionPath(sectionPath, false); err != nil {
+		return invalidNavigationPath(err)
+	}
+	if notebook == "" || sectionPath == "" {
+		return fmt.Errorf("notebook and section path are required")
+	}
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		items := append([]config.NavigationSectionRef(nil), cfg.UI.ExpandedSections...)
+		found := -1
+		for i, item := range items {
+			if item.Notebook == notebook && item.Path == sectionPath {
+				found = i
+				break
+			}
+		}
+		if expanded && found < 0 {
+			items = append(items, config.NavigationSectionRef{Notebook: notebook, Path: sectionPath})
+		} else if !expanded && found >= 0 {
+			items = append(items[:found], items[found+1:]...)
+		}
+		cfg.UI.ExpandedSections = items
+		return nil
+	})
+}
+
+// RecordRecentPage records a successful activation/save. The timestamp is
+// backend-owned so callers cannot inject an unbounded or future history.
+func (a *App) RecordRecentPage(notebook, section, page string) error {
+	if err := validateNavigationPageInput(notebook, section, page); err != nil {
+		return err
+	}
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		ref := config.NavigationPageRef{Notebook: notebook, Section: section, Page: page}
+		if len(cfg.UI.RecentPages) > 0 && pageRefMatches(cfg.UI.RecentPages[0].NavigationPageRef, notebook, section, page) {
+			return nil
+		}
+		items := make([]config.RecentPage, 0, len(cfg.UI.RecentPages)+1)
+		now := time.Now().Unix()
+		items = append(items, config.RecentPage{NavigationPageRef: ref, OpenedAt: now})
+		for _, item := range cfg.UI.RecentPages {
+			if item.Notebook == notebook && item.Section == section && item.Page == page {
+				continue
+			}
+			items = append(items, item)
+		}
+		cfg.UI.RecentPages = items
+		return nil
+	})
+}
+
+// SetFavoritePage toggles one canonical page locator.
+func (a *App) SetFavoritePage(notebook, section, page string, favorite bool) error {
+	if err := validateNavigationPageInput(notebook, section, page); err != nil {
+		return err
+	}
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		ref := config.NavigationPageRef{Notebook: notebook, Section: section, Page: page}
+		items := make([]config.NavigationPageRef, 0, len(cfg.UI.Favorites)+1)
+		for _, item := range cfg.UI.Favorites {
+			if item.Notebook == notebook && item.Section == section && item.Page == page {
+				continue
+			}
+			items = append(items, item)
+		}
+		if favorite {
+			items = append(items, ref)
+		}
+		cfg.UI.Favorites = items
+		return nil
+	})
+}
+
+func validateNavigationPageInput(notebook, section, page string) error {
+	if _, err := validateSectionPath(notebook, false); err != nil {
+		return invalidNavigationPath(err)
+	}
+	if _, err := validateSectionPath(section, true); err != nil {
+		return invalidNavigationPath(err)
+	}
+	if _, err := validateSectionPath(page, false); err != nil {
+		return invalidNavigationPath(err)
+	}
+	if strings.Contains(page, "/") {
+		return invalidNavigationPath(fmt.Errorf("page name must be one path segment"))
+	}
+	return nil
+}
+
+func pageRefMatches(ref config.NavigationPageRef, notebook, section, page string) bool {
+	return ref.Notebook == notebook && ref.Section == section && ref.Page == page
+}
+
+func sectionPathHasPrefix(path, prefix string) bool {
+	return path == prefix || strings.HasPrefix(path, prefix+"/")
+}
+
+// reconcileNavigationSection updates or removes every persisted locator below
+// a renamed/deleted section. It is called after the filesystem mutation and is
+// saved as one config transaction.
+func (a *App) reconcileNavigationSection(notebook, oldPath, newPath string, remove bool) error {
+	return a.mutateConfigLocked(func(cfg *config.SystemConfig) error {
+		if cfg.UI.NavOrder.Sections == nil {
+			cfg.UI.NavOrder.Sections = map[string][]string{}
+		}
+		if cfg.UI.NavOrder.Pages == nil {
+			cfg.UI.NavOrder.Pages = map[string][]string{}
+		}
+		oldParent, oldLeaf := sectionParentLeaf(oldPath)
+		newParent, newLeaf := sectionParentLeaf(newPath)
+		oldParentKey := notebook
+		if oldParent != "" {
+			oldParentKey += "/" + oldParent
+		}
+		newParentKey := notebook
+		if newParent != "" {
+			newParentKey += "/" + newParent
+		}
+		if remove {
+			cfg.UI.NavOrder.Sections[oldParentKey] = removeNavOrderValue(cfg.UI.NavOrder.Sections[oldParentKey], oldLeaf)
+			for key := range cfg.UI.NavOrder.Sections {
+				if key == notebook+"/"+oldPath || strings.HasPrefix(key, notebook+"/"+oldPath+"/") {
+					delete(cfg.UI.NavOrder.Sections, key)
+				}
+			}
+			for key := range cfg.UI.NavOrder.Pages {
+				prefix := notebook + "/" + oldPath
+				if key == prefix || strings.HasPrefix(key, prefix+"/") {
+					delete(cfg.UI.NavOrder.Pages, key)
+				}
+			}
+		} else if oldPath != newPath {
+			cfg.UI.NavOrder.Sections[oldParentKey] = replaceNavOrderValue(cfg.UI.NavOrder.Sections[oldParentKey], oldLeaf, newLeaf)
+			if oldParentKey != newParentKey {
+				cfg.UI.NavOrder.Sections[oldParentKey] = removeNavOrderValue(cfg.UI.NavOrder.Sections[oldParentKey], newLeaf)
+				cfg.UI.NavOrder.Sections[newParentKey] = appendUniqueNavOrderValue(cfg.UI.NavOrder.Sections[newParentKey], newLeaf)
+			}
+			for key, values := range cfg.UI.NavOrder.Sections {
+				prefix := notebook + "/" + oldPath
+				if key == prefix || strings.HasPrefix(key, prefix+"/") {
+					newKey := notebook + "/" + newPath + strings.TrimPrefix(key, prefix)
+					delete(cfg.UI.NavOrder.Sections, key)
+					cfg.UI.NavOrder.Sections[newKey] = values
+				}
+			}
+			for key, pages := range cfg.UI.NavOrder.Pages {
+				prefix := notebook + "/" + oldPath
+				if key == prefix || strings.HasPrefix(key, prefix+"/") {
+					newKey := notebook + "/" + newPath + strings.TrimPrefix(key, prefix)
+					delete(cfg.UI.NavOrder.Pages, key)
+					cfg.UI.NavOrder.Pages[newKey] = pages
+				}
+			}
+		}
+
+		expanded := make([]config.NavigationSectionRef, 0, len(cfg.UI.ExpandedSections))
+		for _, ref := range cfg.UI.ExpandedSections {
+			if ref.Notebook != notebook || !sectionPathHasPrefix(ref.Path, oldPath) {
+				expanded = append(expanded, ref)
+				continue
+			}
+			if !remove {
+				ref.Path = newPath + strings.TrimPrefix(ref.Path, oldPath)
+				expanded = append(expanded, ref)
+			}
+		}
+		cfg.UI.ExpandedSections = expanded
+
+		if remove {
+			filterPages := func(in []config.NavigationPageRef) []config.NavigationPageRef {
+				out := make([]config.NavigationPageRef, 0, len(in))
+				for _, ref := range in {
+					if ref.Notebook == notebook && sectionPathHasPrefix(ref.Section, oldPath) {
+						continue
+					}
+					out = append(out, ref)
+				}
+				return out
+			}
+			cfg.UI.Favorites = filterPages(cfg.UI.Favorites)
+			recent := make([]config.RecentPage, 0, len(cfg.UI.RecentPages))
+			for _, item := range cfg.UI.RecentPages {
+				if item.Notebook == notebook && sectionPathHasPrefix(item.Section, oldPath) {
+					continue
+				}
+				recent = append(recent, item)
+			}
+			cfg.UI.RecentPages = recent
+		}
+		if !remove && oldPath != newPath {
+			for i := range cfg.UI.Favorites {
+				if cfg.UI.Favorites[i].Notebook == notebook && sectionPathHasPrefix(cfg.UI.Favorites[i].Section, oldPath) {
+					cfg.UI.Favorites[i].Section = newPath + strings.TrimPrefix(cfg.UI.Favorites[i].Section, oldPath)
+				}
+			}
+			for i := range cfg.UI.RecentPages {
+				if cfg.UI.RecentPages[i].Notebook == notebook && sectionPathHasPrefix(cfg.UI.RecentPages[i].Section, oldPath) {
+					cfg.UI.RecentPages[i].Section = newPath + strings.TrimPrefix(cfg.UI.RecentPages[i].Section, oldPath)
+				}
+			}
+			if cfg.UI.ActiveTab != nil && cfg.UI.ActiveTab.Notebook == notebook && sectionPathHasPrefix(cfg.UI.ActiveTab.Section, oldPath) {
+				cfg.UI.ActiveTab.Section = newPath + strings.TrimPrefix(cfg.UI.ActiveTab.Section, oldPath)
+			}
+			for i := range cfg.UI.OpenTabs {
+				if cfg.UI.OpenTabs[i].Notebook == notebook && sectionPathHasPrefix(cfg.UI.OpenTabs[i].Section, oldPath) {
+					cfg.UI.OpenTabs[i].Section = newPath + strings.TrimPrefix(cfg.UI.OpenTabs[i].Section, oldPath)
+				}
+			}
+		} else if remove {
+			if cfg.UI.ActiveTab != nil && cfg.UI.ActiveTab.Notebook == notebook && sectionPathHasPrefix(cfg.UI.ActiveTab.Section, oldPath) {
+				cfg.UI.ActiveTab = nil
+			}
+			kept := cfg.UI.OpenTabs[:0]
+			for _, tab := range cfg.UI.OpenTabs {
+				if tab.Notebook == notebook && sectionPathHasPrefix(tab.Section, oldPath) {
+					continue
+				}
+				kept = append(kept, tab)
+			}
+			cfg.UI.OpenTabs = kept
+		}
+		return nil
+	})
+}
+
+func sectionParentLeaf(path string) (string, string) {
+	idx := strings.LastIndex(path, "/")
+	if idx < 0 {
+		return "", path
+	}
+	return path[:idx], path[idx+1:]
+}
+
+func removeNavOrderValue(values []string, target string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != target {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func replaceNavOrderValue(values []string, oldValue, newValue string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == oldValue {
+			value = newValue
+		}
+		if !containsString(out, value) {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func appendUniqueNavOrderValue(values []string, value string) []string {
+	if containsString(values, value) {
+		return values
+	}
+	return append(values, value)
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) reconcileNavigationPage(notebook, section, oldPage, newPage string, remove bool) error {
+	return a.mutateConfigLocked(func(cfg *config.SystemConfig) error {
+		if cfg.UI.NavOrder.Pages != nil {
+			key := notebook + "/" + section
+			if pages, ok := cfg.UI.NavOrder.Pages[key]; ok {
+				out := make([]string, 0, len(pages))
+				for _, candidate := range pages {
+					if candidate == oldPage {
+						if !remove {
+							out = append(out, newPage)
+						}
+						continue
+					}
+					out = append(out, candidate)
+				}
+				cfg.UI.NavOrder.Pages[key] = out
+			}
+		}
+		for i := range cfg.UI.Favorites {
+			if pageRefMatches(cfg.UI.Favorites[i], notebook, section, oldPage) {
+				if remove {
+					cfg.UI.Favorites = append(cfg.UI.Favorites[:i], cfg.UI.Favorites[i+1:]...)
+				} else {
+					cfg.UI.Favorites[i].Page = newPage
+				}
+				break
+			}
+		}
+		recent := make([]config.RecentPage, 0, len(cfg.UI.RecentPages))
+		for _, item := range cfg.UI.RecentPages {
+			if pageRefMatches(item.NavigationPageRef, notebook, section, oldPage) {
+				if remove {
+					continue
+				}
+				item.Page = newPage
+			}
+			recent = append(recent, item)
+		}
+		cfg.UI.RecentPages = recent
+		if cfg.UI.ActiveTab != nil && pageRefMatches(config.NavigationPageRef{Notebook: cfg.UI.ActiveTab.Notebook, Section: cfg.UI.ActiveTab.Section, Page: cfg.UI.ActiveTab.Page}, notebook, section, oldPage) {
+			if remove {
+				cfg.UI.ActiveTab = nil
+			} else {
+				cfg.UI.ActiveTab.Page = newPage
+			}
+		}
+		kept := cfg.UI.OpenTabs[:0]
+		for _, tab := range cfg.UI.OpenTabs {
+			if pageRefMatches(config.NavigationPageRef{Notebook: tab.Notebook, Section: tab.Section, Page: tab.Page}, notebook, section, oldPage) {
+				if remove {
+					continue
+				}
+				tab.Page = newPage
+			}
+			kept = append(kept, tab)
+		}
+		cfg.UI.OpenTabs = kept
+		return nil
+	})
+}
+
+func (a *App) reconcileNavigationMove(notebook, fromSection, toSection, page string) error {
+	return a.mutateConfigLocked(func(cfg *config.SystemConfig) error {
+		if cfg.UI.NavOrder.Pages == nil {
+			cfg.UI.NavOrder.Pages = map[string][]string{}
+		}
+		fromKey, toKey := notebook+"/"+fromSection, notebook+"/"+toSection
+		if pages := cfg.UI.NavOrder.Pages[fromKey]; pages != nil {
+			out := make([]string, 0, len(pages))
+			for _, candidate := range pages {
+				if candidate != page {
+					out = append(out, candidate)
+				}
+			}
+			cfg.UI.NavOrder.Pages[fromKey] = out
+		}
+		found := false
+		for _, candidate := range cfg.UI.NavOrder.Pages[toKey] {
+			if candidate == page {
+				found = true
+				break
+			}
+		}
+		if !found {
+			cfg.UI.NavOrder.Pages[toKey] = append(cfg.UI.NavOrder.Pages[toKey], page)
+		}
+		for i := range cfg.UI.Favorites {
+			if pageRefMatches(cfg.UI.Favorites[i], notebook, fromSection, page) {
+				cfg.UI.Favorites[i].Section = toSection
+			}
+		}
+		for i := range cfg.UI.RecentPages {
+			if pageRefMatches(cfg.UI.RecentPages[i].NavigationPageRef, notebook, fromSection, page) {
+				cfg.UI.RecentPages[i].Section = toSection
+			}
+		}
+		if cfg.UI.ActiveTab != nil && pageRefMatches(config.NavigationPageRef{Notebook: cfg.UI.ActiveTab.Notebook, Section: cfg.UI.ActiveTab.Section, Page: cfg.UI.ActiveTab.Page}, notebook, fromSection, page) {
+			cfg.UI.ActiveTab.Section = toSection
+		}
+		for i := range cfg.UI.OpenTabs {
+			if pageRefMatches(config.NavigationPageRef{Notebook: cfg.UI.OpenTabs[i].Notebook, Section: cfg.UI.OpenTabs[i].Section, Page: cfg.UI.OpenTabs[i].Page}, notebook, fromSection, page) {
+				cfg.UI.OpenTabs[i].Section = toSection
+			}
+		}
+		return nil
+	})
+}
+
+func (a *App) reconcileNavigationNotebook(oldName, newName string, remove bool) error {
+	return a.mutateConfigLocked(func(cfg *config.SystemConfig) error {
+		if cfg.UI.NavOrder.Sections == nil {
+			cfg.UI.NavOrder.Sections = map[string][]string{}
+		}
+		if cfg.UI.NavOrder.Pages == nil {
+			cfg.UI.NavOrder.Pages = map[string][]string{}
+		}
+		if remove {
+			for key := range cfg.UI.NavOrder.Pages {
+				if key == oldName || strings.HasPrefix(key, oldName+"/") {
+					delete(cfg.UI.NavOrder.Pages, key)
+				}
+			}
+			for key := range cfg.UI.NavOrder.Sections {
+				if key == oldName || strings.HasPrefix(key, oldName+"/") {
+					delete(cfg.UI.NavOrder.Sections, key)
+				}
+			}
+		} else if oldName != newName {
+			for key, values := range cfg.UI.NavOrder.Pages {
+				if key == oldName || strings.HasPrefix(key, oldName+"/") {
+					delete(cfg.UI.NavOrder.Pages, key)
+					cfg.UI.NavOrder.Pages[newName+strings.TrimPrefix(key, oldName)] = values
+				}
+			}
+			for key, values := range cfg.UI.NavOrder.Sections {
+				if key == oldName || strings.HasPrefix(key, oldName+"/") {
+					delete(cfg.UI.NavOrder.Sections, key)
+					cfg.UI.NavOrder.Sections[newName+strings.TrimPrefix(key, oldName)] = values
+				}
+			}
+		}
+		pages := func(ref config.NavigationPageRef) (config.NavigationPageRef, bool) {
+			if ref.Notebook != oldName {
+				return ref, true
+			}
+			if remove {
+				return ref, false
+			}
+			ref.Notebook = newName
+			return ref, true
+		}
+		favorites := make([]config.NavigationPageRef, 0, len(cfg.UI.Favorites))
+		for _, ref := range cfg.UI.Favorites {
+			if ref, ok := pages(ref); ok {
+				favorites = append(favorites, ref)
+			}
+		}
+		cfg.UI.Favorites = favorites
+		recent := make([]config.RecentPage, 0, len(cfg.UI.RecentPages))
+		for _, item := range cfg.UI.RecentPages {
+			if ref, ok := pages(item.NavigationPageRef); ok {
+				item.NavigationPageRef = ref
+				recent = append(recent, item)
+			}
+		}
+		cfg.UI.RecentPages = recent
+		expanded := make([]config.NavigationSectionRef, 0, len(cfg.UI.ExpandedSections))
+		for _, ref := range cfg.UI.ExpandedSections {
+			if ref.Notebook == oldName {
+				if remove {
+					continue
+				}
+				ref.Notebook = newName
+			}
+			expanded = append(expanded, ref)
+		}
+		cfg.UI.ExpandedSections = expanded
+		if cfg.UI.ActiveTab != nil && cfg.UI.ActiveTab.Notebook == oldName {
+			if remove {
+				cfg.UI.ActiveTab = nil
+			} else {
+				cfg.UI.ActiveTab.Notebook = newName
+			}
+		}
+		kept := cfg.UI.OpenTabs[:0]
+		for _, tab := range cfg.UI.OpenTabs {
+			if tab.Notebook == oldName {
+				if remove {
+					continue
+				}
+				tab.Notebook = newName
+			}
+			kept = append(kept, tab)
+		}
+		cfg.UI.OpenTabs = kept
+		return nil
+	})
+}
+
+func (a *App) reconcileNavigationAgainstTree(tree parser.NavigationTree) error {
+	validPages := navPageSet(tree)
+	validSections := make(map[string]struct{})
+	disconnectedNotebooks := make(map[string]struct{})
+	var collect func(string, []parser.NavigationSection)
+	collect = func(notebook string, sections []parser.NavigationSection) {
+		for _, section := range sections {
+			if section.Path != "" {
+				validSections[notebook+"\x00"+section.Path] = struct{}{}
+			}
+			collect(notebook, section.Children)
+		}
+	}
+	for _, notebook := range tree.Notebooks {
+		if notebook.Disconnected {
+			disconnectedNotebooks[notebook.Name] = struct{}{}
+		}
+		collect(notebook.Name, notebook.Sections)
+	}
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		expanded := make([]config.NavigationSectionRef, 0, len(cfg.UI.ExpandedSections))
+		for _, ref := range cfg.UI.ExpandedSections {
+			if _, disconnected := disconnectedNotebooks[ref.Notebook]; disconnected {
+				expanded = append(expanded, ref)
+			} else if _, ok := validSections[ref.Notebook+"\x00"+ref.Path]; ok {
+				expanded = append(expanded, ref)
+			}
+		}
+		cfg.UI.ExpandedSections = expanded
+		favorites := make([]config.NavigationPageRef, 0, len(cfg.UI.Favorites))
+		for _, ref := range cfg.UI.Favorites {
+			if _, disconnected := disconnectedNotebooks[ref.Notebook]; disconnected || validPages[ref.Notebook+"\x00"+ref.Section+"\x00"+ref.Page] {
+				favorites = append(favorites, ref)
+			}
+		}
+		cfg.UI.Favorites = favorites
+		recent := make([]config.RecentPage, 0, len(cfg.UI.RecentPages))
+		for _, item := range cfg.UI.RecentPages {
+			if _, disconnected := disconnectedNotebooks[item.Notebook]; disconnected || validPages[item.Notebook+"\x00"+item.Section+"\x00"+item.Page] {
+				recent = append(recent, item)
+			}
+		}
+		cfg.UI.RecentPages = recent
+		return nil
+	})
+}

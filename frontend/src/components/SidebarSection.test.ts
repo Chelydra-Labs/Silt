@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 import SidebarSection from './SidebarSection.svelte'
+import type { NavSection } from '../lib/sidebar/types'
 
 type NavSectionShape = {
   name: string
@@ -11,6 +12,16 @@ type NavSectionShape = {
 
 type DropTargetShape = { level: string; name: string; before: boolean }
 type DragItemShape = { level: string; name: string; section?: string }
+
+function completeSection(section: NavSectionShape, parent = ''): NavSection {
+  const path =
+    section.path ?? (parent ? `${parent}/${section.name}` : section.name)
+  return {
+    ...section,
+    path,
+    children: section.children?.map((child) => completeSection(child, path))
+  }
+}
 
 function makeProps(
   overrides: {
@@ -23,11 +34,13 @@ function makeProps(
   } = {}
 ) {
   return {
-    section: overrides.section ?? {
-      name: 'Journal',
-      path: 'Journal',
-      pages: [{ name: 'Daily', count: 5 }]
-    },
+    section: completeSection(
+      overrides.section ?? {
+        name: 'Journal',
+        path: 'Journal',
+        pages: [{ name: 'Daily', count: 5 }]
+      }
+    ),
     depth: overrides.depth ?? 0,
     activeNotebook: 'Work',
     activeSection: overrides.activeSection ?? '',
@@ -36,6 +49,8 @@ function makeProps(
     navOrder: { pages: {} as Record<string, string[]> },
     dropTarget: (overrides.dropTarget ?? null) as DropTargetShape | null,
     dragItem: (overrides.dragItem ?? null) as DragItemShape | null,
+    focusedTreeItemId: 'section:Work:Journal',
+    onTreeItemFocus: vi.fn(),
     onToggleSection: vi.fn(),
     onSelectPage: vi.fn(),
     onPinPage: vi.fn(),
@@ -122,6 +137,39 @@ describe('SidebarSection (#88 deep-nesting)', () => {
     expect(screen.getByText('DeepPage')).toBeInTheDocument()
   })
 
+  it('applies refreshed configured order to nested siblings', async () => {
+    const props = makeProps({
+      section: {
+        name: 'Projects',
+        path: 'Projects',
+        pages: [],
+        children: [
+          { name: 'Alpha', path: 'Projects/Alpha', pages: [] },
+          { name: 'Zeta', path: 'Projects/Zeta', pages: [] }
+        ]
+      },
+      expandedSections: new Set(['Projects'])
+    })
+    const { rerender } = render(SidebarSection, { props })
+
+    const nestedLabels = () =>
+      Array.from(
+        document.querySelectorAll<HTMLElement>('span[title^="Projects/"]')
+      ).map((label) => label.textContent)
+
+    expect(nestedLabels()).toEqual(['Alpha', 'Zeta'])
+
+    await rerender({
+      ...props,
+      navOrder: {
+        pages: {},
+        sections: { 'Work/Projects': ['Zeta', 'Alpha'] }
+      }
+    })
+
+    expect(nestedLabels()).toEqual(['Zeta', 'Alpha'])
+  })
+
   it('toggles expansion on click', async () => {
     const onToggle = vi.fn()
     const props = makeProps({
@@ -138,19 +186,16 @@ describe('SidebarSection (#88 deep-nesting)', () => {
     expect(onToggle).toHaveBeenCalledWith('Journal')
   })
 
-  it('toggles expansion on Enter/Space key', async () => {
-    const onToggle = vi.fn()
+  it('synchronizes the roving focus controller on focus', async () => {
+    const onFocus = vi.fn()
     const props = makeProps({
       section: { name: 'Journal', path: 'Journal', pages: [] }
     })
-    props.onToggleSection = onToggle
+    props.onTreeItemFocus = onFocus
     render(SidebarSection, { props })
     const header = screen.getByRole('treeitem', { name: /Journal/ })
     header.focus()
-    await fireEvent.keyDown(header, { key: 'Enter' })
-    expect(onToggle).toHaveBeenCalledWith('Journal')
-    await fireEvent.keyDown(header, { key: ' ' })
-    expect(onToggle).toHaveBeenCalledTimes(2)
+    expect(onFocus).toHaveBeenCalledWith('section:Work:Journal')
   })
 
   it('reports aria-level for nested sections', () => {
@@ -189,15 +234,19 @@ describe('SidebarSection (#88 deep-nesting)', () => {
     expect(onSelectPage).toHaveBeenCalledWith('Journal', 'Daily')
   })
 
-  it('empty-state + Add Page selects section then creates (matches header +)', async () => {
+  it('keeps empty-section guidance out of the tree tab sequence', () => {
     const props = makeProps({
       section: { name: 'Empty', path: 'Empty', pages: [], children: [] },
       expandedSections: new Set(['Empty'])
     })
+    props.focusedTreeItemId = 'section:Work:Empty'
     render(SidebarSection, { props })
-    await fireEvent.click(screen.getByRole('button', { name: /\+ Add Page/i }))
-    expect(props.onSelectSection).toHaveBeenCalledWith('Empty')
-    expect(props.onCreatePageInline).toHaveBeenCalledWith('Empty')
+    const header = screen.getByRole('treeitem', { name: /Empty/ })
+    expect(
+      screen.getByText('Use the section menu to add one')
+    ).toBeInTheDocument()
+    expect(header.querySelector('button')).toBeNull()
+    expect(document.querySelectorAll('[tabindex="0"]')).toHaveLength(1)
   })
 
   it('emits pinPage on double-click (#142)', async () => {
@@ -244,7 +293,7 @@ describe('SidebarSection (#88 deep-nesting)', () => {
         ]
       },
       expandedSections: new Set(['Journal']),
-      dropTarget: { level: 'page', name: 'Weekly', before: true }
+      dropTarget: { level: 'page', name: 'Journal\u0000Weekly', before: true }
     })
     render(SidebarSection, { props })
     const weekly = screen.getByText('Weekly').closest('button')!
@@ -260,7 +309,7 @@ describe('SidebarSection (#88 deep-nesting)', () => {
         pages: [{ name: 'Daily', count: 5 }]
       },
       expandedSections: new Set(['Journal']),
-      dropTarget: { level: 'page', name: 'Daily', before: false }
+      dropTarget: { level: 'page', name: 'Journal\u0000Daily', before: false }
     })
     render(SidebarSection, { props })
     const daily = screen.getByText('Daily').closest('button')!
@@ -299,5 +348,25 @@ describe('SidebarSection (#88 deep-nesting)', () => {
     const header = screen.getByRole('treeitem', { name: /Journal/ })
     expect(header.classList.contains('drag-over-top')).toBe(true)
     expect(header.classList.contains('drag-over-into')).toBe(false)
+  })
+
+  it('passes the canonical nested path as the section drop target', async () => {
+    const props = makeProps({
+      section: {
+        name: 'Current',
+        path: 'Projects/Current',
+        pages: []
+      },
+      depth: 1
+    })
+    render(SidebarSection, { props })
+    await fireEvent.drop(screen.getByRole('treeitem', { name: /Current/ }))
+    expect(props.onDrop).toHaveBeenCalledWith(
+      expect.anything(),
+      'section',
+      'Projects/Current',
+      'Work',
+      'Projects/Current'
+    )
   })
 })

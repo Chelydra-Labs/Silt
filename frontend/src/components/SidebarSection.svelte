@@ -1,9 +1,8 @@
 <script lang="ts">
   // Recursive section renderer for the sidebar tree (#88). Renders one
   // NavigationSection plus its nested Children. Each level tracks its own
-  // expanded state via the parent Sidebar's `expandedSections` set (keyed
-  // by the section's single-segment display name — the immediate folder
-  // name, not the full path).
+  // expanded state via the parent Sidebar's `expandedSections` set, keyed by
+  // the canonical notebook-relative path.
   //
   // Drag-to-reorder (#68), right-click context menu (#62), and HTML5 DnD
   // handlers are threaded in from the parent Sidebar so every section and
@@ -11,6 +10,7 @@
   import SidebarSection from './SidebarSection.svelte'
   import type { NavSection } from '../lib/sidebar/types'
   import { sortByName } from '../lib/sidebar/navOrder'
+  import { pageNodeId, sectionNodeId } from '../lib/sidebar/navTree'
 
   interface DropTarget {
     level: string
@@ -26,11 +26,14 @@
     activePage: string
     expandedSections: Set<string>
     navOrder: {
+      sections?: Record<string, string[]>
       pages: Record<string, string[]>
     }
     dropTarget?: DropTarget | null
     dragItem?: { level: string; name: string; section?: string } | null
-    onToggleSection: (name: string) => void
+    focusedTreeItemId?: string
+    onTreeItemFocus?: (id: string) => void
+    onToggleSection: (path: string) => void
     onSelectPage: (section: string, page: string) => void
     onPinPage: (section: string, page: string) => void
     onSelectSection: (section: string) => void
@@ -41,7 +44,12 @@
       name: string,
       section?: string
     ) => void
-    onDragOver: (e: DragEvent, level: string, name: string) => void
+    onDragOver: (
+      e: DragEvent,
+      level: string,
+      name: string,
+      identity?: string
+    ) => void
     onDragLeave: () => void
     onDrop: (
       e: DragEvent,
@@ -70,6 +78,8 @@
     navOrder,
     dropTarget = null,
     dragItem = null,
+    focusedTreeItemId = '',
+    onTreeItemFocus = () => {},
     onToggleSection,
     onSelectPage,
     onPinPage,
@@ -83,13 +93,21 @@
     onContextMenu
   }: Props = $props()
 
-  let sectionKey = $derived(section.path || section.name)
+  let sectionKey = $derived(section.path)
+  let treeItemId = $derived(sectionNodeId(activeNotebook, sectionKey))
   let isExpanded = $derived(expandedSections.has(sectionKey))
 
   let sortedPages = $derived(
     sortByName(
       section.pages,
       navOrder.pages[`${activeNotebook}/${sectionKey}`] ?? []
+    )
+  )
+
+  let sortedChildren = $derived(
+    sortByName(
+      section.children ?? [],
+      navOrder.sections?.[`${activeNotebook}/${sectionKey}`] ?? []
     )
   )
 
@@ -106,39 +124,34 @@
   let totalCount = $derived(recursivePageCount(section))
 </script>
 
-<div class="mb-0.5">
+<div class="mb-0.5" role="none">
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
     class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-hover transition-colors"
     class:drag-over-top={dropTarget?.level === 'section' &&
       dragItem?.level !== 'page' &&
-      dropTarget.name === section.name &&
+      dropTarget.name === sectionKey &&
       dropTarget.before}
     class:drag-over-bottom={dropTarget?.level === 'section' &&
       dragItem?.level !== 'page' &&
-      dropTarget.name === section.name &&
+      dropTarget.name === sectionKey &&
       !dropTarget.before}
     class:drag-over-into={dropTarget?.level === 'section' &&
       dragItem?.level === 'page' &&
-      dropTarget.name === section.name}
+      dropTarget.name === sectionKey}
     draggable="true"
-    ondragstart={(e) => onDragStart(e, 'section', section.name)}
-    ondragover={(e) => onDragOver(e, 'section', section.name)}
+    ondragstart={(e) => onDragStart(e, 'section', sectionKey)}
+    ondragover={(e) => onDragOver(e, 'section', sectionKey)}
     ondragleave={onDragLeave}
-    ondrop={(e) =>
-      onDrop(e, 'section', section.name, activeNotebook, sectionKey)}
+    ondrop={(e) => onDrop(e, 'section', sectionKey, activeNotebook, sectionKey)}
     ondragend={onDragEnd}
     onclick={() => onToggleSection(sectionKey)}
-    onkeydown={(e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault()
-        onToggleSection(sectionKey)
-      }
-    }}
+    onfocus={() => onTreeItemFocus(treeItemId)}
     oncontextmenu={(e) =>
       onContextMenu(e, 'section', activeNotebook, sectionKey)}
     role="treeitem"
-    tabindex="0"
+    tabindex={focusedTreeItemId === treeItemId ? 0 : -1}
+    data-tree-id={treeItemId}
     aria-level={depth + 1}
     aria-expanded={isExpanded}
     aria-selected={activeSection === sectionKey}
@@ -154,7 +167,7 @@
     <span
       class="font-semibold text-type-md text-surface-sidebar-text truncate flex-1"
     >
-      {section.name ? section.name : 'Pages (no section)'}
+      <span title={sectionKey}>{section.name}</span>
     </span>
     {#if totalCount > 0}
       <span
@@ -163,17 +176,11 @@
         {totalCount}
       </span>
     {/if}
-    <button
-      onclick={(e) => {
-        e.stopPropagation()
-        onSelectSection(sectionKey)
-        onCreatePageInline(sectionKey)
-      }}
-      title="New page in this section"
-      class="opacity-30 group-hover:opacity-100 text-surface-sidebar-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0.5 rounded transition-all"
+    <span
+      title="New page is available in the section menu"
+      class="material-symbols-outlined text-icon-md opacity-30 group-hover:opacity-70 text-surface-sidebar-text-muted"
+      aria-hidden="true">more_horiz</span
     >
-      <span class="material-symbols-outlined text-icon-md">add</span>
-    </button>
   </div>
 
   {#if isExpanded}
@@ -182,25 +189,16 @@
       sectionKey
         ? 'border-accent-primary-start/30'
         : 'border-surface-sidebar-border'}"
+      role="group"
     >
       {#if section.pages.length === 0 && (!section.children || section.children.length === 0)}
         <div
           class="text-surface-sidebar-text-muted text-type-2xs font-body-md py-1.5 px-2.5 flex items-center justify-between select-none"
         >
           <span class="italic">No pages</span>
-          <button
-            type="button"
-            onclick={() => {
-              // Match header +: select section first so create lands in the
-              // active-section path (title focus / nav highlight).
-              onSelectSection(sectionKey)
-              onCreatePageInline(sectionKey)
-            }}
-            class="text-type-2xs text-accent-primary-start hover:underline border-none bg-transparent cursor-pointer p-0 font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary-start rounded-sm"
-            title="Create a new page in this section"
-          >
-            + Add Page
-          </button>
+          <span class="text-type-3xs text-surface-sidebar-text-muted">
+            Use the section menu to add one
+          </span>
         </div>
       {:else}
         {#each sortedPages as pg (pg.name)}
@@ -218,9 +216,18 @@
             }}
             oncontextmenu={(e) =>
               onContextMenu(e, 'page', activeNotebook, sectionKey, pg.name)}
+            onfocus={() =>
+              onTreeItemFocus(
+                pageNodeId({
+                  notebook: activeNotebook,
+                  section: sectionKey,
+                  page: pg.name
+                })
+              )}
             draggable="true"
             ondragstart={(e) => onDragStart(e, 'page', pg.name, sectionKey)}
-            ondragover={(e) => onDragOver(e, 'page', pg.name)}
+            ondragover={(e) =>
+              onDragOver(e, 'page', pg.name, `${sectionKey}\u0000${pg.name}`)}
             ondragleave={onDragLeave}
             ondrop={(e) =>
               onDrop(e, 'page', pg.name, activeNotebook, sectionKey)}
@@ -232,12 +239,25 @@
             class:text-surface-sidebar-text-muted={!isActive}
             class:hover:text-surface-sidebar-text={!isActive}
             class:drag-over-top={dropTarget?.level === 'page' &&
-              dropTarget.name === pg.name &&
+              dropTarget.name === `${sectionKey}\u0000${pg.name}` &&
               dropTarget.before}
             class:drag-over-bottom={dropTarget?.level === 'page' &&
-              dropTarget.name === pg.name &&
+              dropTarget.name === `${sectionKey}\u0000${pg.name}` &&
               !dropTarget.before}
             role="treeitem"
+            data-tree-id={pageNodeId({
+              notebook: activeNotebook,
+              section: sectionKey,
+              page: pg.name
+            })}
+            tabindex={focusedTreeItemId ===
+            pageNodeId({
+              notebook: activeNotebook,
+              section: sectionKey,
+              page: pg.name
+            })
+              ? 0
+              : -1}
             aria-level={depth + 2}
             aria-selected={isActive}
           >
@@ -250,33 +270,34 @@
           </button>
         {/each}
       {/if}
+      {#if section.children && section.children.length > 0}
+        {#each sortedChildren as child (child.path)}
+          <SidebarSection
+            section={child}
+            depth={depth + 1}
+            {activeNotebook}
+            {activeSection}
+            {activePage}
+            {expandedSections}
+            {navOrder}
+            {dropTarget}
+            {dragItem}
+            {focusedTreeItemId}
+            {onTreeItemFocus}
+            {onToggleSection}
+            {onSelectPage}
+            {onPinPage}
+            {onSelectSection}
+            {onCreatePageInline}
+            {onDragStart}
+            {onDragOver}
+            {onDragLeave}
+            {onDrop}
+            {onDragEnd}
+            {onContextMenu}
+          />
+        {/each}
+      {/if}
     </div>
-
-    {#if section.children && section.children.length > 0}
-      {#each section.children as child (child.name)}
-        <SidebarSection
-          section={child}
-          depth={depth + 1}
-          {activeNotebook}
-          {activeSection}
-          {activePage}
-          {expandedSections}
-          {navOrder}
-          {dropTarget}
-          {dragItem}
-          {onToggleSection}
-          {onSelectPage}
-          {onPinPage}
-          {onSelectSection}
-          {onCreatePageInline}
-          {onDragStart}
-          {onDragOver}
-          {onDragLeave}
-          {onDrop}
-          {onDragEnd}
-          {onContextMenu}
-        />
-      {/each}
-    {/if}
   {/if}
 </div>

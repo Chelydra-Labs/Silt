@@ -437,11 +437,6 @@ func (a *App) saveConfigTracked(cfg config.SystemConfig) error {
 // The self-write is registered first so the hot-reload watcher ignores the
 // fsnotify event from our own atomic write.
 func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return fmt.Errorf("vault not loaded")
-	}
 	if cfg.Editor.TabIndentSpaces <= 0 {
 		return fmt.Errorf("invalid config: editor.tab_indent_spaces must be positive")
 	}
@@ -457,29 +452,26 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 	if err := config.ValidateHotkeys(cfg.Hotkeys); err != nil {
 		return err
 	}
-	// Preserve AI provider API keys. AIProviderConfig.APIKey is json:"-", so a
-	// full-config round-trip from the frontend (e.g. saving an editor/hotkey
-	// change) never carries the keys — without this they would be blanked.
-	// Only the dedicated SetAIAPIKey binding mutates keys. The lock is held
-	// through config.Save so a concurrent SetAIAPIKey cannot land+persist a
-	// new key in the gap between this snapshot and this Save (which would
-	// revert it). Mirrors SetAIAPIKey's hold-through-save discipline.
-	// (vaultMu is already held; order is vaultMu → configMu per the invariant.)
-	a.configMu.Lock()
-	cfg.AI.Chat.APIKey = a.cfg.AI.Chat.APIKey
-	cfg.AI.Embedding.APIKey = a.cfg.AI.Embedding.APIKey
-	err := a.saveConfigTracked(cfg)
-	a.configMu.Unlock()
-	if err != nil {
-		return err
-	}
-	// Apply live Go-side knobs without emitting config:changed. The frontend
-	// store already updates optimistically in saveConfig(); emitting here would
-	// race the store's dirty flag and could spuriously flip pendingExternal.
-	// External edits still flow through the watcher → applyConfig (with emit).
-	// applyConfigLocked takes configMu itself, so it runs after the release above.
-	a.applyConfigLocked(cfg)
-	return nil
+	return a.mutateConfig(func(current *config.SystemConfig) error {
+		// SaveSystemConfig remains for unrelated settings, but navigation state
+		// is backend-owned and must never be replaced by a stale whole snapshot.
+		cfg.UI.NavOrder = cloneNavOrder(current.UI.NavOrder)
+		cfg.UI.OpenTabs = append([]config.TabRef(nil), current.UI.OpenTabs...)
+		if current.UI.ActiveTab == nil {
+			cfg.UI.ActiveTab = nil
+		} else {
+			active := *current.UI.ActiveTab
+			cfg.UI.ActiveTab = &active
+		}
+		cfg.UI.ExpandedSections = append([]config.NavigationSectionRef(nil), current.UI.ExpandedSections...)
+		cfg.UI.RecentPages = append([]config.RecentPage(nil), current.UI.RecentPages...)
+		cfg.UI.Favorites = append([]config.NavigationPageRef(nil), current.UI.Favorites...)
+		cfg.AI.Chat.APIKey = current.AI.Chat.APIKey
+		cfg.AI.Embedding.APIKey = current.AI.Embedding.APIKey
+		*current = cfg
+		a.spacesPerTab = cfg.Editor.TabIndentSpaces
+		return nil
+	})
 }
 
 // applyConfig stores the parsed config under configMu, applies the live

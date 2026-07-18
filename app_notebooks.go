@@ -697,21 +697,28 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 	return indexedCount, nil
 }
 
-// CreateSection creates a section folder inside a notebook. A section groups
-// pages; it has no content of its own.
-func (a *App) CreateSection(notebook, section string) error {
+// CreateSection creates a section folder under an explicit parent section.
+// parentPath is empty for a notebook-root child; name is one new segment.
+func (a *App) CreateSection(notebook, parentPath, name string) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
-	if safeNotebook == "" || safeSection == "" {
-		return fmt.Errorf("notebook and section names are required")
+	safeParent, err := validateSectionPath(parentPath, true)
+	if err != nil {
+		return invalidNavigationPath(err)
+	}
+	if safeNotebook == "" {
+		return fmt.Errorf("invalid notebook or parent section path")
+	}
+	safeName := sanitizePathSegment(name)
+	if safeName == "" || strings.ContainsAny(name, "/\\") {
+		return fmt.Errorf("section name must be one path segment")
 	}
 	notebookDir, err := a.resolveNotebookDir(safeNotebook, a.resolveSourceByName(safeNotebook))
 	if err != nil {
 		return err
 	}
-	secPath := filepath.Join(notebookDir, safeSection)
+	secPath := filepath.Join(notebookDir, safeParent, safeName)
 	if !isPathWithinRoot(secPath, notebookDir) {
 		return fmt.Errorf("path escapes notebook root")
 	}
@@ -729,8 +736,11 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizeSectionPath(section)
+	safeSection, sectionErr := validateSectionPath(section, true)
 	safePage := sanitizePathSegment(page)
+	if sectionErr != nil {
+		return "", invalidNavigationPath(sectionErr)
+	}
 	if safeNotebook == "" || safePage == "" {
 		return "", fmt.Errorf("notebook and page names are required (section is optional)")
 	}

@@ -118,9 +118,12 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 		return fmt.Errorf("vault database not loaded")
 	}
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	safeSection, sectionErr := validateSectionPath(section, true)
 	safeOldPage := sanitizePathSegment(oldName)
 	safeNewPage := sanitizePathSegment(newName)
+	if sectionErr != nil {
+		return invalidNavigationPath(sectionErr)
+	}
 	if safeNotebook == "" || safeOldPage == "" || safeNewPage == "" {
 		return fmt.Errorf("notebook and page names are required")
 	}
@@ -190,7 +193,10 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 		a.reindexFile(newFile, safeNotebook, safeSection, safeNewPage)
 	})
 
-	return runErr
+	if runErr != nil {
+		return runErr
+	}
+	return a.reconcileNavigationPage(safeNotebook, safeSection, safeOldPage, safeNewPage, false)
 }
 
 // MovePage moves a page from one section to another (or to the notebook root
@@ -207,9 +213,15 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 		return fmt.Errorf("vault database not loaded")
 	}
 	safeNotebook := sanitizePathSegment(notebook)
-	safeFrom := sanitizeSectionPath(fromSection)
-	safeTo := sanitizeSectionPath(toSection)
+	safeFrom, fromErr := validateSectionPath(fromSection, true)
+	safeTo, toErr := validateSectionPath(toSection, true)
 	safePage := sanitizePathSegment(page)
+	if fromErr != nil {
+		return invalidNavigationPath(fromErr)
+	}
+	if toErr != nil {
+		return invalidNavigationPath(toErr)
+	}
 	if safeNotebook == "" || safePage == "" {
 		return fmt.Errorf("notebook and page names are required")
 	}
@@ -302,60 +314,16 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 	// and append it to the new section's ordering. RenamePage omits this
 	// step — MovePage must keep nav_order consistent with the new on-disk
 	// layout so the sidebar doesn't fall back to alphabetical for a moved
-	// page (#177). Note: this runs outside the LockFileWrite lambda, so
-	// there is a microsecond window where a concurrent SetNavOrder could
-	// interleave — the consequence is stale ordering (not data loss).
+	// page (#177). This runs outside the LockFileWrite lambda, but the
+	// reconciliation uses the serialized narrow config mutation path so
+	// concurrent order writes merge instead of replacing unrelated keys.
 	// If the config save fails, the file move has already succeeded, so
 	// we log but don't return an error — the in-memory cfg is correct and
 	// the next config save (any UI action) will flush it.
-	if err := a.updateNavOrderForMove(safeNotebook, safeFrom, safeTo, safePage); err != nil {
+	if err := a.reconcileNavigationMove(safeNotebook, safeFrom, safeTo, safePage); err != nil {
 		log.Printf("MovePage: nav_order persist failed (file move succeeded): %v", err)
 	}
 	return nil
-}
-
-// updateNavOrderForMove adjusts NavOrder.Pages after a page moves between
-// sections. The page is removed from the old sectionKey's ordering and
-// appended to the new sectionKey's ordering (idempotent — skips if already
-// present). The sectionKey format mirrors the frontend: `${notebook}/${section}`
-// (empty section for root pages). Persisted atomically with self-write
-// suppression so the config watcher doesn't double-fire.
-func (a *App) updateNavOrderForMove(notebook, fromSection, toSection, page string) error {
-	oldKey := notebook + "/" + fromSection
-	newKey := notebook + "/" + toSection
-
-	a.configMu.Lock()
-	pages := a.cfg.UI.NavOrder.Pages
-	if pages == nil {
-		pages = map[string][]string{}
-	}
-	// Remove from old section.
-	if oldList, ok := pages[oldKey]; ok {
-		filtered := make([]string, 0, len(oldList))
-		for _, p := range oldList {
-			if p != page {
-				filtered = append(filtered, p)
-			}
-		}
-		pages[oldKey] = filtered
-	}
-	// Append to new section (idempotent).
-	newList := pages[newKey]
-	already := false
-	for _, p := range newList {
-		if p == page {
-			already = true
-			break
-		}
-	}
-	if !already {
-		pages[newKey] = append(newList, page)
-	}
-	a.cfg.UI.NavOrder.Pages = pages
-	cfg := a.cfg
-	a.configMu.Unlock()
-
-	return a.saveConfigTracked(cfg)
 }
 
 // RenameSection renames a section folder and updates the section: frontmatter
@@ -367,9 +335,15 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 		return fmt.Errorf("vault database not loaded")
 	}
 	safeNotebook := sanitizePathSegment(notebook)
-	safeOldSection := sanitizePathSegment(oldName)
-	safeNewSection := sanitizePathSegment(newName)
-	if safeNotebook == "" || safeOldSection == "" || safeNewSection == "" {
+	safeOldSection, oldErr := validateSectionPath(oldName, false)
+	safeNewSection, newErr := validateSectionPath(newName, false)
+	if oldErr != nil {
+		return invalidNavigationPath(oldErr)
+	}
+	if newErr != nil {
+		return invalidNavigationPath(newErr)
+	}
+	if safeNotebook == "" {
 		return fmt.Errorf("notebook and section names are required")
 	}
 	if safeOldSection == safeNewSection {
@@ -393,85 +367,88 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	type sectionFile struct {
+		oldPath, relPath string
+		content          []byte
+		oldSection       string
+		page             string
+	}
+	var files []sectionFile
 	var runErr error
-	nbRoot := notebookDir
-	a.coordinator.LockFileWrite(nbRoot, func() {
-		// 1. Read all .md files from the old section BEFORE renaming.
-		entries, err := os.ReadDir(oldDir)
-		if err != nil {
-			runErr = err
+	a.coordinator.LockFileWrite(notebookDir, func() {
+		_ = filepath.WalkDir(oldDir, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				runErr = walkErr
+				return walkErr
+			}
+			if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+				return nil
+			}
+			content, readErr := os.ReadFile(path)
+			if readErr != nil {
+				runErr = readErr
+				return readErr
+			}
+			rel, relErr := filepath.Rel(oldDir, path)
+			if relErr != nil {
+				runErr = relErr
+				return relErr
+			}
+			relSlash := filepath.ToSlash(rel)
+			parts := strings.Split(relSlash, "/")
+			page := strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
+			oldSection := safeOldSection
+			if len(parts) > 1 {
+				oldSection += "/" + strings.Join(parts[:len(parts)-1], "/")
+			}
+			files = append(files, sectionFile{oldPath: path, relPath: rel, content: content, oldSection: oldSection, page: page})
+			return nil
+		})
+		if runErr != nil {
 			return
 		}
-		type fileContent struct {
-			name    string
-			content []byte
-		}
-		var files []fileContent
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			oldPath := filepath.Join(oldDir, entry.Name())
-			b, err := os.ReadFile(oldPath)
-			if err != nil {
-				runErr = fmt.Errorf("RenameSection: read %s: %w", entry.Name(), err)
-				return
-			}
-			files = append(files, fileContent{name: entry.Name(), content: b})
-		}
-
-		// 2. Rename the section folder FIRST. If this fails, nothing was
-		// modified (clean state — avoids stale frontmatter at old paths).
 		a.tracker.RegisterWrite(oldDir)
 		a.tracker.RegisterWrite(newDir)
 		if err := os.Rename(oldDir, newDir); err != nil {
 			runErr = err
 			return
 		}
-
-		// 3. Update section: frontmatter in each file at the new path.
-		// If any write fails, the folder is at the correct new path;
-		// the scanner will derive section from the path (which matches
-		// the sidebar), and stale frontmatter self-heals on next rename.
-		var writeErrs []string
-		for _, fc := range files {
-			newPath := filepath.Join(newDir, fc.name)
-			updated := updateFrontmatterField(string(fc.content), "section", safeNewSection)
+		for _, file := range files {
+			newPath := filepath.Join(newDir, file.relPath)
+			newSection := safeNewSection
+			if idx := strings.LastIndex(filepath.ToSlash(file.relPath), "/"); idx >= 0 {
+				newSection += "/" + filepath.ToSlash(file.relPath)[:idx]
+			}
+			updated := updateFrontmatterField(string(file.content), "section", newSection)
 			a.tracker.RegisterWrite(newPath)
 			if err := parser.WriteFileAtomic(newPath, []byte(updated)); err != nil {
-				writeErrs = append(writeErrs, fmt.Sprintf("write %s: %v", fc.name, err))
+				runErr = fmt.Errorf("RenameSection: write %s: %w", file.relPath, err)
+				return
 			}
 		}
-		if len(writeErrs) > 0 {
-			runErr = fmt.Errorf("RenameSection: %d file(s) failed frontmatter update at new path: %s", len(writeErrs), strings.Join(writeErrs, "; "))
-			return
+		for _, file := range files {
+			newSection := safeNewSection
+			if idx := strings.LastIndex(filepath.ToSlash(file.relPath), "/"); idx >= 0 {
+				newSection += "/" + filepath.ToSlash(file.relPath)[:idx]
+			}
+			a.rewriteInboundPageLinks(safeNotebook, file.oldSection, file.page, safeNotebook, newSection, file.page)
 		}
-
-		// 5. Collect page file names, then rewrite inbound [[…]] BEFORE
-		// clearing the old index, so the resolution-based rewrite sees the
-		// pre-rename page inventory (#545).
-		var pageFiles []string
-		for _, fc := range files {
-			pageFiles = append(pageFiles, fc.name)
-		}
-		a.rewriteInboundPageLinksForSection(safeNotebook, safeOldSection, safeNewSection, pageFiles)
-
-		// 6. Clear old index entries + re-index all pages at new paths.
-		a.coordinator.WithDBWrite(func() {
-			_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeOldSection, "")
-		})
-		for _, pageFile := range pageFiles {
-			oldPath := filepath.Join(oldDir, pageFile)
-			newPath := filepath.Join(newDir, pageFile)
-			pageName := strings.TrimSuffix(pageFile, ".md")
+		for _, file := range files {
 			a.coordinator.WithDBWrite(func() {
-				_ = a.db.ForgetFile(oldPath)
+				_ = a.db.ClearFileBlocks(nil, source, safeNotebook, file.oldSection, file.page)
+				_ = a.db.ForgetFile(file.oldPath)
 			})
-			a.reindexFile(newPath, safeNotebook, safeNewSection, pageName)
+			newSection := safeNewSection
+			if idx := strings.LastIndex(filepath.ToSlash(file.relPath), "/"); idx >= 0 {
+				newSection += "/" + filepath.ToSlash(file.relPath)[:idx]
+			}
+			a.reindexFile(filepath.Join(newDir, file.relPath), safeNotebook, newSection, file.page)
 		}
 	})
-
-	return runErr
+	if runErr != nil {
+		return runErr
+	}
+	return a.reconcileNavigationSection(safeNotebook, safeOldSection, safeNewSection, false)
 }
 
 // RenameNotebook renames a notebook folder and updates the notebook: frontmatter
@@ -579,7 +556,7 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 			if len(relParts) == 1 {
 				page = strings.TrimSuffix(relParts[0], ".md")
 			} else {
-				section = relParts[0]
+				section = strings.Join(relParts[:len(relParts)-1], "/")
 				page = strings.TrimSuffix(relParts[len(relParts)-1], ".md")
 			}
 			// Clear old index entries via the typed API (not raw SQL) so
@@ -593,7 +570,10 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 		}
 	})
 
-	return runErr
+	if runErr != nil {
+		return runErr
+	}
+	return a.reconcileNavigationNotebook(safeOldNotebook, safeNewNotebook, false)
 }
 
 // DeletePage moves a single page file to .system/trash/ and clears its index
@@ -605,8 +585,11 @@ func (a *App) DeletePage(notebook, section, page string) error {
 		return fmt.Errorf("vault database not loaded")
 	}
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	safeSection, sectionErr := validateSectionPath(section, true)
 	safePage := sanitizePathSegment(page)
+	if sectionErr != nil {
+		return invalidNavigationPath(sectionErr)
+	}
 	if safeNotebook == "" || safePage == "" {
 		return fmt.Errorf("notebook and page names are required")
 	}
@@ -654,7 +637,10 @@ func (a *App) DeletePage(notebook, section, page string) error {
 		a.coordinator.ReleaseBlockMutexes(blockIDs)
 	})
 
-	return runErr
+	if runErr != nil {
+		return runErr
+	}
+	return a.reconcileNavigationPage(safeNotebook, safeSection, safePage, safePage, true)
 }
 
 // DeleteSection moves a section folder (all pages) to .system/trash/ and clears
@@ -666,8 +652,11 @@ func (a *App) DeleteSection(notebook, section string) error {
 		return fmt.Errorf("vault database not loaded")
 	}
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
-	if safeNotebook == "" || safeSection == "" {
+	safeSection, sectionErr := validateSectionPath(section, false)
+	if sectionErr != nil {
+		return invalidNavigationPath(sectionErr)
+	}
+	if safeNotebook == "" {
 		return fmt.Errorf("notebook and section names are required")
 	}
 
@@ -689,14 +678,28 @@ func (a *App) DeleteSection(notebook, section string) error {
 
 	linked := strings.HasPrefix(source, "linked:")
 	var runErr error
+	type deletedPage struct{ path, section, page string }
+	var pages []deletedPage
 	a.coordinator.LockFileWrite(secPath, func() {
-		// Collect page files before deletion for index cleanup.
-		entries, _ := os.ReadDir(secPath)
-		var pageNames []string
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
-				pageNames = append(pageNames, strings.TrimSuffix(entry.Name(), ".md"))
+		_ = filepath.WalkDir(secPath, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				runErr = walkErr
+				return walkErr
 			}
+			if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+				return nil
+			}
+			rel, relErr := filepath.Rel(notebookDir, path)
+			if relErr != nil {
+				runErr = relErr
+				return relErr
+			}
+			parts := strings.Split(filepath.ToSlash(rel), "/")
+			pages = append(pages, deletedPage{path: path, section: strings.Join(parts[:len(parts)-1], "/"), page: strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))})
+			return nil
+		})
+		if runErr != nil {
+			return
 		}
 
 		a.tracker.RegisterWrite(secPath)
@@ -714,13 +717,17 @@ func (a *App) DeleteSection(notebook, section string) error {
 		}
 
 		a.coordinator.WithDBWrite(func() {
-			for _, pg := range pageNames {
-				_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeSection, pg)
+			for _, pg := range pages {
+				_ = a.db.ClearFileBlocks(nil, source, safeNotebook, pg.section, pg.page)
+				_ = a.db.ForgetFile(pg.path)
 			}
 		})
 	})
 
-	return runErr
+	if runErr != nil {
+		return runErr
+	}
+	return a.reconcileNavigationSection(safeNotebook, safeSection, "", true)
 }
 
 // DeleteNotebook moves a notebook folder (all sections + pages) to
@@ -768,7 +775,7 @@ func (a *App) DeleteNotebook(notebook string) error {
 				if len(relParts) == 1 {
 					page = strings.TrimSuffix(relParts[0], ".md")
 				} else {
-					section = relParts[0]
+					section = strings.Join(relParts[:len(relParts)-1], "/")
 					page = strings.TrimSuffix(relParts[len(relParts)-1], ".md")
 				}
 				pages = append(pages, pageInfo{path: path, section: section, page: page})
@@ -790,5 +797,8 @@ func (a *App) DeleteNotebook(notebook string) error {
 		}
 	})
 
-	return runErr
+	if runErr != nil {
+		return runErr
+	}
+	return a.reconcileNavigationNotebook(safeNotebook, "", true)
 }

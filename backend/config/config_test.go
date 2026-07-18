@@ -762,6 +762,43 @@ func TestDefaults_TabsConfig(t *testing.T) {
 	}
 }
 
+func TestNavigationPreferences_NormalizeAndRoundTrip(t *testing.T) {
+	cfg := Defaults()
+	cfg.UI.ExpandedSections = []NavigationSectionRef{
+		{Notebook: "Work", Path: "Projects/Active"},
+		{Notebook: "Work", Path: "Projects/Active"},
+		{Notebook: "Work", Path: "../escape"},
+	}
+	cfg.UI.Favorites = []NavigationPageRef{
+		{Notebook: "Work", Section: "Projects/Active", Page: "Site"},
+		{Notebook: "Work", Section: "Projects/Active", Page: "Site"},
+		{Notebook: "", Page: "broken"},
+	}
+	cfg.UI.RecentPages = []RecentPage{
+		{NavigationPageRef: NavigationPageRef{Notebook: "Work", Section: "Projects/Active", Page: "Site"}, OpenedAt: 10},
+		{NavigationPageRef: NavigationPageRef{Notebook: "Work", Section: "Projects/Active", Page: "Site"}, OpenedAt: 20},
+		{NavigationPageRef: NavigationPageRef{Notebook: "Work", Section: "../escape", Page: "Bad"}, OpenedAt: 30},
+	}
+	normalized := Normalize(cfg)
+	if len(normalized.UI.ExpandedSections) != 1 || normalized.UI.ExpandedSections[0].Path != "Projects/Active" {
+		t.Fatalf("expanded sections were not normalized: %+v", normalized.UI.ExpandedSections)
+	}
+	if len(normalized.UI.Favorites) != 1 || len(normalized.UI.RecentPages) != 1 || normalized.UI.RecentPages[0].OpenedAt != 20 {
+		t.Fatalf("page preferences were not normalized: favorites=%+v recent=%+v", normalized.UI.Favorites, normalized.UI.RecentPages)
+	}
+	tmp := t.TempDir()
+	if err := Save(tmp, normalized); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded.UI.ExpandedSections, normalized.UI.ExpandedSections) || !reflect.DeepEqual(loaded.UI.Favorites, normalized.UI.Favorites) || !reflect.DeepEqual(loaded.UI.RecentPages, normalized.UI.RecentPages) {
+		t.Fatalf("navigation preferences did not round-trip: loaded=%+v", loaded.UI)
+	}
+}
+
 // TestOpenTabs_RoundTrip confirms OpenTabs + ActiveTab survive Save → Load
 // with byte-for-byte fidelity, including the section-less case (Section == "").
 func TestOpenTabs_RoundTrip(t *testing.T) {

@@ -15,9 +15,26 @@ export interface NavPage {
 
 export interface NavSection {
   name: string
-  path?: string
+  /** Canonical notebook-relative path. Empty is reserved for root pages. */
+  path: string
   pages: NavPage[]
   children?: NavSection[]
+}
+
+export interface NavigationPageRef {
+  notebook: string
+  section: string
+  page: string
+}
+
+export interface RecentPageRef extends NavigationPageRef {
+  opened_at: number
+}
+
+export interface NavigationPreferences {
+  expanded_sections: { notebook: string; path: string }[]
+  recent_pages: RecentPageRef[]
+  favorites: NavigationPageRef[]
 }
 
 export interface NavNotebook {

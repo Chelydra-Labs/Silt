@@ -8,6 +8,12 @@ import (
 	"silt/backend/spellcheck"
 )
 
+const (
+	MaxRecentPages      = 20
+	MaxExpandedSections = 512
+	MaxFavoritePages    = 512
+)
+
 // hotkeyModifiers are the modifier tokens allowed in a hotkey binding
 // (case-insensitive). Everything else in a binding is treated as the key.
 var hotkeyModifiers = map[string]bool{
@@ -100,6 +106,9 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.UI.OpenTabs == nil {
 		cfg.UI.OpenTabs = []TabRef{}
 	}
+	cfg.UI.ExpandedSections = normalizeExpandedSections(cfg.UI.ExpandedSections)
+	cfg.UI.RecentPages = normalizeRecentPages(cfg.UI.RecentPages)
+	cfg.UI.Favorites = normalizeFavoritePages(cfg.UI.Favorites)
 	// Per-tab ViewMode (#195): only "source" is a meaningful override; every
 	// other value (including a hand-edited garbage string) collapses to "" so
 	// the frontend reads the Edit default. Applied to both OpenTabs and the
@@ -264,6 +273,122 @@ func normalize(cfg SystemConfig) SystemConfig {
 	// validated here (they may legitimately be empty for a local endpoint).
 	cfg.AI = NormalizeAIConfig(cfg.AI)
 	return cfg
+}
+
+// Normalize applies the same safe defaults and input cleanup used by Load and
+// Save. It is exported for the App's serialized narrow mutation path.
+func Normalize(cfg SystemConfig) SystemConfig { return normalize(cfg) }
+
+func validNotebookPart(s string) bool {
+	s = strings.TrimSpace(s)
+	return s != "" && s != "." && s != ".." && !strings.ContainsAny(s, `/\\`) &&
+		!strings.ContainsRune(s, 0) && strings.IndexFunc(s, func(r rune) bool { return r < 32 }) < 0
+}
+
+func validRelativeSectionPath(s string, allowEmpty bool) bool {
+	if s == "" {
+		return allowEmpty
+	}
+	parts := strings.Split(s, "/")
+	for _, part := range parts {
+		if !validNotebookPart(part) {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizePageRef(ref NavigationPageRef) (NavigationPageRef, bool) {
+	ref.Notebook = strings.TrimSpace(ref.Notebook)
+	ref.Section = strings.TrimSpace(strings.ReplaceAll(ref.Section, `\`, "/"))
+	ref.Page = strings.TrimSpace(ref.Page)
+	if !validNotebookPart(ref.Notebook) || !validNotebookPart(ref.Page) || !validRelativeSectionPath(ref.Section, true) {
+		return NavigationPageRef{}, false
+	}
+	return ref, true
+}
+
+func normalizeExpandedSections(in []NavigationSectionRef) []NavigationSectionRef {
+	out := make([]NavigationSectionRef, 0, minInt(len(in), MaxExpandedSections))
+	seen := make(map[string]struct{}, len(in))
+	for _, ref := range in {
+		ref.Notebook = strings.TrimSpace(ref.Notebook)
+		ref.Path = strings.TrimSpace(strings.ReplaceAll(ref.Path, `\`, "/"))
+		if !validNotebookPart(ref.Notebook) || !validRelativeSectionPath(ref.Path, false) {
+			continue
+		}
+		key := ref.Notebook + "\x00" + ref.Path
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, ref)
+		if len(out) == MaxExpandedSections {
+			break
+		}
+	}
+	return out
+}
+
+func normalizeFavoritePages(in []NavigationPageRef) []NavigationPageRef {
+	out := make([]NavigationPageRef, 0, minInt(len(in), MaxFavoritePages))
+	seen := make(map[string]struct{}, len(in))
+	for _, ref := range in {
+		ref, ok := normalizePageRef(ref)
+		if !ok {
+			continue
+		}
+		key := pageRefKey(ref)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, ref)
+		if len(out) == MaxFavoritePages {
+			break
+		}
+	}
+	return out
+}
+
+func normalizeRecentPages(in []RecentPage) []RecentPage {
+	latest := make(map[string]RecentPage, len(in))
+	for _, recent := range in {
+		ref, ok := normalizePageRef(recent.NavigationPageRef)
+		if !ok || recent.OpenedAt <= 0 {
+			continue
+		}
+		recent.NavigationPageRef = ref
+		key := pageRefKey(ref)
+		if prior, exists := latest[key]; !exists || recent.OpenedAt > prior.OpenedAt {
+			latest[key] = recent
+		}
+	}
+	out := make([]RecentPage, 0, len(latest))
+	for _, recent := range latest {
+		out = append(out, recent)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].OpenedAt != out[j].OpenedAt {
+			return out[i].OpenedAt > out[j].OpenedAt
+		}
+		return pageRefKey(out[i].NavigationPageRef) < pageRefKey(out[j].NavigationPageRef)
+	})
+	if len(out) > MaxRecentPages {
+		out = out[:MaxRecentPages]
+	}
+	return out
+}
+
+func pageRefKey(ref NavigationPageRef) string {
+	return ref.Notebook + "\x00" + ref.Section + "\x00" + ref.Page
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // aiFeaturesMigratedKey is a one-shot marker under plugin_settings so the
