@@ -109,6 +109,7 @@ export function rankNavigation(
   recents: readonly RecentPageRef[] = [],
   limit = 40
 ): NavigationCatalogItem[] {
+  const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
   const recentOrder = new Map(
     recents.map((recent, index) => [locatorKey(recent), index])
   )
@@ -128,7 +129,16 @@ export function rankNavigation(
       (a, b) =>
         a.recent - b.recent ||
         (a.score ?? 0) - (b.score ?? 0) ||
-        a.item.order - b.item.order
+        compareText(
+          normalizeSearch(a.item.label),
+          normalizeSearch(b.item.label)
+        ) ||
+        compareText(
+          normalizeSearch(a.item.pathLabel),
+          normalizeSearch(b.item.pathLabel)
+        ) ||
+        compareText(a.item.pathLabel, b.item.pathLabel) ||
+        compareText(a.item.key, b.item.key)
     )
     .slice(0, limit)
     .map((entry) => entry.item)

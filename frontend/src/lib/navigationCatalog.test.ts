@@ -66,7 +66,7 @@ describe('navigation catalog', () => {
     expect(fuzzyScore('zzz', 'planning')).toBeNull()
   })
 
-  it('ranks recents first while preserving stable catalog order for ties', () => {
+  it('ranks recents first and alphabetizes equal-score non-recents', () => {
     const catalog = flattenNavigation(tree)
     const ranked = rankNavigation(catalog, '', [
       {
@@ -81,5 +81,47 @@ describe('navigation catalog', () => {
       'Inbox',
       'Roadmap'
     ])
+  })
+
+  it('uses normalized alphabetical order for an empty query', () => {
+    const ranked = rankNavigation(flattenNavigation(tree), '')
+    expect(ranked.map((item) => item.page)).toEqual([
+      'Café Launch',
+      'Inbox',
+      'Roadmap'
+    ])
+  })
+
+  it('uses the normalized path as a deterministic fallback for equal labels', () => {
+    const duplicateTree: NavigationTree = {
+      notebooks: [
+        {
+          name: 'Zulu',
+          sections: [
+            {
+              name: 'Notes',
+              path: 'Notes',
+              pages: [{ name: 'Same', count: 1 }]
+            }
+          ]
+        },
+        {
+          name: 'Álpha',
+          sections: [
+            {
+              name: 'Notes',
+              path: 'Notes',
+              pages: [{ name: 'Same', count: 1 }]
+            }
+          ]
+        }
+      ]
+    }
+
+    expect(
+      rankNavigation(flattenNavigation(duplicateTree), '').map(
+        (item) => item.notebook
+      )
+    ).toEqual(['Álpha', 'Zulu'])
   })
 })

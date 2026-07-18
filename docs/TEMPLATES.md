@@ -268,7 +268,7 @@ You **cannot** overwrite or delete a built-in template (they are embedded in the
 
 | Method | Returns | Description |
 | :--- | :--- | :--- |
-| `ListTemplates()` | `ListTemplatesResult` | All templates (on-disk + embedded, deduped; on-disk wins). Works pre-vault. |
+| `ListTemplates()` | `ListTemplatesResult` | All templates (on-disk + embedded + registered plugin, deduped). Works pre-vault. |
 | `GetTemplate(id)` | `Template` | Full template (incl. body). Not-found → error. |
 | `RenderTemplate(id, vars)` | `string` | Rendered Markdown (defaults + vars substituted). |
 | `RenderTemplateBlocks(id, vars)` | `[]ParsedBlock` | Rendered + parsed into blocks (for insert-at-cursor). |
@@ -277,9 +277,9 @@ You **cannot** overwrite or delete a built-in template (they are embedded in the
 | `ReloadTemplates()` | `void` | Cache flush + `templates:changed`. |
 | `CreatePageFromTemplate(...)` | `string` | Render + write new page (frontmatter + body) + index. Returns the date. If the target path already exists, returns IPC error `page_exists` and does not clobber. |
 
-### The `builtin://` namespace
+### Template source namespaces
 
-Built-in templates are embedded via `//go:embed builtin/*.md` and are read-only. The `Source` field on each template distinguishes `builtin` (embedded) from `disk` (user-authored). A `plugin` source is reserved for future plugin-provided templates — the loader and picker are shaped so adding it is an additive change.
+Built-in templates are embedded via `//go:embed builtin/*.md` and are read-only. The `Source` field on each template distinguishes `builtin` (embedded), `disk` (user-authored), and `plugin` (registered at runtime). Plugin templates resolve through their canonical `plugin://<plugin-id>/<template-id>` URI, remain in memory, and are read-only in Settings; users can duplicate them into a user-owned disk template. Save and delete operations apply only to `disk` templates.
 
 ### Events
 

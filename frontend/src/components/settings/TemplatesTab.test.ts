@@ -51,7 +51,7 @@ const summaries = [
     id: 'meeting',
     title: 'Meeting',
     category: 'Work',
-    source: 'user',
+    source: 'disk',
     icon: 'groups'
   },
   {
@@ -103,7 +103,7 @@ beforeEach(() => {
         ? template(id, 'builtin', 'Daily note')
         : id === 'plugin-plan'
           ? template(id, 'plugin', 'Plugin plan')
-          : template(id, 'user', 'Meeting')
+          : template(id, 'disk', 'Meeting')
     )
   )
 })
@@ -134,7 +134,7 @@ describe('TemplatesTab', () => {
           id: 'daily-copy',
           title: 'Daily note Copy',
           category: 'General',
-          source: 'user'
+          source: 'disk'
         }
       ]
     })
@@ -143,7 +143,7 @@ describe('TemplatesTab', () => {
     expect(mocks.saveUserTemplate.mock.calls[0][0]).toMatchObject({
       id: 'daily-copy',
       title: 'Daily note Copy',
-      source: 'user'
+      source: 'disk'
     })
     await waitFor(() =>
       expect(
@@ -163,7 +163,7 @@ describe('TemplatesTab', () => {
     expect(mocks.saveUserTemplate.mock.calls[0][0]).toMatchObject({
       id: 'plugin-plan-copy',
       title: 'Plugin plan Copy',
-      source: 'user',
+      source: 'disk',
       plugin_id: undefined
     })
   })
@@ -220,7 +220,7 @@ describe('TemplatesTab', () => {
           description: 'Team sync',
           icon: 'groups',
           body: '# Updated meeting',
-          source: 'user',
+          source: 'disk',
           plugin_id: undefined
         })
       )
@@ -231,6 +231,13 @@ describe('TemplatesTab', () => {
     expect(screen.getByLabelText('Icon')).toHaveValue('groups')
     expect(screen.getByText('Saved')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+
+    await fireEvent.click(screen.getByRole('button', { name: /Daily note/ }))
+    await screen.findByText('Read-only source — duplicate to edit.')
+    await fireEvent.click(screen.getByRole('button', { name: /Meeting/ }))
+    await screen.findByDisplayValue('# Meeting')
+    expect(screen.getByLabelText('Markdown body')).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled()
   })
 
   it('seeds creation from the current page', async () => {
@@ -296,7 +303,7 @@ describe('TemplatesTab', () => {
           id: 'external',
           title: 'Added externally',
           category: 'Imported',
-          source: 'user'
+          source: 'disk'
         }
       ]
     })
@@ -375,7 +382,7 @@ describe('TemplatesTab', () => {
           id: 'shared-template',
           title: 'Shared template',
           category: 'General',
-          source: 'user'
+          source: 'disk'
         }
       ]
     })

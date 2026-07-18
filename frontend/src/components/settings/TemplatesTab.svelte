@@ -31,9 +31,10 @@
     icon: string
     placeholders: tpl.Placeholder[]
     body: string
-    source: string
+    source: TemplateSource
     plugin_id: string
   }
+  type TemplateSource = 'builtin' | 'disk' | 'plugin'
 
   let selectedId = $state('')
   let draft = $state<Draft | null>(null)
@@ -59,7 +60,7 @@
   let selectedSummary = $derived(
     templatesState.items.find((item) => item.id === selectedId)
   )
-  let readOnly = $derived(!!draft && draft.source !== 'user')
+  let readOnly = $derived(!!draft && draft.source !== 'disk')
   let dirty = $derived(!!draft && JSON.stringify(draft) !== baseline)
   let validation = $derived.by(() => {
     if (!draft) return ''
@@ -77,6 +78,11 @@
     }
   })
 
+  function normalizeSource(source?: string): TemplateSource {
+    if (source === 'disk' || source === 'plugin') return source
+    return 'builtin'
+  }
+
   function toDraft(template: tpl.Template): Draft {
     return {
       schema_version: template.schema_version || '1',
@@ -87,7 +93,7 @@
       icon: template.icon ?? '',
       placeholders: template.placeholders ?? [],
       body: template.body,
-      source: template.source ?? 'user',
+      source: normalizeSource(template.source),
       plugin_id: template.plugin_id ?? ''
     }
   }
@@ -126,7 +132,7 @@
         icon: 'description',
         placeholders: [],
         body: '',
-        source: 'user',
+        source: 'disk',
         plugin_id: ''
       }
       baseline = JSON.stringify(draft)
@@ -166,7 +172,7 @@
         icon: 'description',
         placeholders: [],
         body,
-        source: 'user',
+        source: 'disk',
         plugin_id: ''
       }
       selectedId = ''
@@ -189,7 +195,7 @@
       description: draft.description.trim(),
       category: draft.category.trim(),
       icon: draft.icon.trim(),
-      source: 'user',
+      source: 'disk',
       plugin_id: ''
     }
     try {
@@ -202,7 +208,7 @@
         icon: canonical.icon || undefined,
         placeholders: canonical.placeholders,
         body: canonical.body,
-        source: 'user',
+        source: 'disk',
         plugin_id: undefined
       })
       draft = canonical
@@ -237,7 +243,7 @@
       ...draft,
       id,
       title: `${draft.title} Copy`,
-      source: 'user',
+      source: 'disk',
       plugin_id: ''
     }
     selectedId = ''
@@ -246,7 +252,7 @@
   }
 
   function requestDelete() {
-    if (!draft || draft.source !== 'user') return
+    if (!draft || draft.source !== 'disk') return
     confirmMode = 'delete'
   }
 
@@ -327,6 +333,7 @@
         <p class="empty">No templates match.</p>
       {:else}
         {#each filtered as item (item.id)}
+          {@const source = normalizeSource(item.source)}
           <button
             type="button"
             class="template-row"
@@ -346,10 +353,10 @@
                 >{item.category}</span
               >
             </span>
-            <span class="source {item.source ?? 'user'}"
-              >{item.source === 'builtin'
+            <span class="source {source}"
+              >{source === 'builtin'
                 ? 'Built-in'
-                : item.source === 'plugin'
+                : source === 'plugin'
                   ? item.plugin_id || 'Plugin'
                   : 'User'}</span
             >
@@ -605,7 +612,7 @@
   .source.plugin {
     color: var(--color-accent-primary-start);
   }
-  .source.user {
+  .source.disk {
     color: var(--color-status-success);
   }
   .empty {
