@@ -553,6 +553,42 @@ describe('Sidebar', () => {
     expect(mocks.createPage).not.toHaveBeenCalled()
   })
 
+  it('routes global section and notebook creation requests to existing dialogs', async () => {
+    const props = {
+      activeNotebook: 'Work',
+      activeSection: '',
+      activePage: '',
+      activeView: 'notes',
+      collapsed: false,
+      onSelectNotebook: () => {},
+      onSelectSection: () => {},
+      onSelectPage: () => {},
+      onPinPage: () => {},
+      onSelectView: () => {}
+    }
+    const view = render(Sidebar, { props })
+    await flush()
+    window.dispatchEvent(
+      new CustomEvent('open-navigation-create', { detail: { kind: 'section' } })
+    )
+    await flush()
+    expect(
+      screen.getByRole('dialog', { name: 'New Section' })
+    ).toBeInTheDocument()
+    await fireEvent.click(screen.getByTestId('sidebar-name-prompt-cancel'))
+
+    window.dispatchEvent(
+      new CustomEvent('open-navigation-create', {
+        detail: { kind: 'notebook' }
+      })
+    )
+    await flush()
+    expect(
+      screen.getByRole('dialog', { name: 'New Notebook' })
+    ).toBeInTheDocument()
+    view.unmount()
+  })
+
   // #489: the context menu clamps into the viewport (clampToViewport) and
   // dismisses on scroll / resize / Escape. The clampToViewport math is covered
   // by lib/editor/popoverPositioning.test.ts; the dismissal $effect mirrors the

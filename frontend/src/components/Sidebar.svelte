@@ -64,6 +64,8 @@
   import { coerceIPCError } from '../lib/ipcError'
   import { copyPagePath, copyPageReference, copyText } from '../lib/pageActions'
   import SettingsNav from './settings/SettingsNav.svelte'
+  import { settings } from '../settings/store.svelte'
+  import { shortcutBinding } from '../settings/shortcutActions'
 
   import type { PluginContext, PluginManifest } from '../plugins/sdk'
   import {
@@ -379,13 +381,15 @@
   // hover-only on the buttons. A native title on a disabled button never shows,
   // so the wrapper span carries it.
   let sectionHint = $derived(
-    activeNotebook ? 'New Section' : 'Create or open a Notebook first'
+    activeNotebook
+      ? `New Section${shortcutBinding('new_section', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_section', settings.config?.hotkeys ?? {})})` : ''}`
+      : 'Create or open a Notebook first'
   )
   let pageHint = $derived(
     activeNotebook
       ? activeSection
-        ? 'New Page in ' + activeSection
-        : 'New Page (no section)'
+        ? `New Page in ${activeSection}${shortcutBinding('new_page', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_page', settings.config?.hotkeys ?? {})})` : ''}`
+        : `New Page (no section)${shortcutBinding('new_page', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_page', settings.config?.hotkeys ?? {})})` : ''}`
       : 'Create or open a Notebook first'
   )
   let nextStep = $derived(
@@ -1110,12 +1114,18 @@
       void handleCreatePageInline(sectionName)
     }
     const handlePreferenceRefresh = () => void loadNavigationPreferences()
+    const handleNavigationCreate = (event: Event) => {
+      const kind = (event as CustomEvent).detail?.kind
+      if (kind === 'notebook') openCreate('notebook')
+      else if (kind === 'section' && activeNotebook) openCreate('section')
+    }
     window.addEventListener('refresh-navigation', handleRefresh)
     window.addEventListener(
       'navigation-preferences-changed',
       handlePreferenceRefresh
     )
     window.addEventListener('create-page-inline', handleCreatePageInlineEvent)
+    window.addEventListener('open-navigation-create', handleNavigationCreate)
     const offConfigChanged = Events.On(
       'config:changed',
       () => void loadNavigationPreferences()
@@ -1130,6 +1140,10 @@
       window.removeEventListener(
         'create-page-inline',
         handleCreatePageInlineEvent
+      )
+      window.removeEventListener(
+        'open-navigation-create',
+        handleNavigationCreate
       )
       if (dndErrorTimer) clearTimeout(dndErrorTimer)
       if (typeaheadTimer) clearTimeout(typeaheadTimer)
@@ -1271,6 +1285,7 @@
                   showNotebookDropdown = false
                   openCreate('notebook')
                 }}
+                title={`New Notebook${shortcutBinding('new_notebook', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_notebook', settings.config?.hotkeys ?? {})})` : ''}`}
                 class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-accent-primary-start"
               >
                 <span class="material-symbols-outlined text-icon-lg"

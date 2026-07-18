@@ -8,6 +8,10 @@
   import type { SystemConfig } from '../../settings/store.svelte'
   import { parseHotkey } from '../../settings/hotkeys'
   import HotkeyCaptureInput from './HotkeyCaptureInput.svelte'
+  import {
+    SHORTCUT_ACTIONS,
+    shortcutBinding
+  } from '../../settings/shortcutActions'
 
   interface Props {
     ringAnchor?: string | null
@@ -49,12 +53,25 @@
 
   let hotkeyEntries = $derived(
     draft
-      ? Object.entries(draft.hotkeys).sort((a, b) => a[0].localeCompare(b[0]))
+      ? Array.from(
+          new Set([
+            ...Object.keys(draft.hotkeys),
+            ...SHORTCUT_ACTIONS.map((action) => action.id)
+          ])
+        )
+          .map(
+            (key) =>
+              [key, shortcutBinding(key, draft!.hotkeys)] as [string, string]
+          )
+          .sort((a, b) => a[0].localeCompare(b[0]))
       : []
   )
 
   function prettyLabel(key: string): string {
-    return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+    return (
+      SHORTCUT_ACTIONS.find((action) => action.id === key)?.label ??
+      key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+    )
   }
 
   async function handleSave() {

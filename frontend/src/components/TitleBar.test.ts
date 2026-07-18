@@ -110,4 +110,19 @@ describe('TitleBar', () => {
     await screen.getByRole('button', { name: 'Switch page' }).click()
     expect(onSwitcherClick).toHaveBeenCalledOnce()
   })
+
+  it('offers a discoverable shortcut reference trigger', async () => {
+    const onShortcutHelpClick = vi.fn()
+    render(TitleBar, {
+      props: {
+        sidebarCollapsed: false,
+        onSearchClick: () => {},
+        onShortcutHelpClick
+      }
+    })
+    const trigger = screen.getByRole('button', { name: 'Keyboard shortcuts' })
+    expect(trigger).toHaveAttribute('title', expect.stringContaining('Shift+?'))
+    trigger.click()
+    expect(onShortcutHelpClick).toHaveBeenCalledOnce()
+  })
 })

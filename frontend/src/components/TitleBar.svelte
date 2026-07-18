@@ -3,6 +3,7 @@
   import logo from '../assets/logo.svg'
   import { settings } from '../settings/store.svelte'
   import { resolveHotkeyDisplay } from '../settings/hotkeys'
+  import { shortcutBinding } from '../settings/shortcutActions'
   import { Window } from '@wailsio/runtime'
   import { RequestClose } from '../../bindings/silt/app.js'
 
@@ -11,6 +12,7 @@
     sidebarWidth?: number
     onSearchClick: () => void
     onSwitcherClick?: () => void
+    onShortcutHelpClick?: () => void
     /** When set, show the unified AI toggle (an AI provider is available). */
     onAIClick?: () => void
     aiOpen?: boolean
@@ -22,6 +24,7 @@
     sidebarWidth = 256,
     onSearchClick,
     onSwitcherClick,
+    onShortcutHelpClick,
     onAIClick,
     aiOpen = false,
     children
@@ -122,11 +125,24 @@
         type="button"
         onclick={onSwitcherClick}
         aria-label="Switch page"
-        title="Switch page"
+        title={`Switch page${shortcutBinding('open_quick_switcher', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('open_quick_switcher', settings.config?.hotkeys ?? {})})` : ''}`}
         class="flex items-center justify-center h-9 w-9 rounded-lg text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors cursor-pointer border-none bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
       >
         <span class="material-symbols-outlined text-type-2xl" aria-hidden="true"
           >quick_reference_all</span
+        >
+      </button>
+    {/if}
+    {#if onShortcutHelpClick}
+      <button
+        type="button"
+        onclick={onShortcutHelpClick}
+        aria-label="Keyboard shortcuts"
+        title={`Keyboard shortcuts${shortcutBinding('open_shortcuts_help', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('open_shortcuts_help', settings.config?.hotkeys ?? {})})` : ''}`}
+        class="flex items-center justify-center h-9 w-9 rounded-lg text-surface-titlebar-text-muted hover:text-surface-titlebar-text hover:bg-hover transition-colors cursor-pointer border-none bg-transparent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+      >
+        <span class="material-symbols-outlined text-type-2xl" aria-hidden="true"
+          >keyboard</span
         >
       </button>
     {/if}

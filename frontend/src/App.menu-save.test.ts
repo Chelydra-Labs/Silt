@@ -7,7 +7,7 @@
 // exercised end-to-end.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, cleanup } from '@testing-library/svelte'
+import { render, cleanup, fireEvent, screen } from '@testing-library/svelte'
 import { tick } from 'svelte'
 import { waitFor } from '@testing-library/dom'
 import EmptyStub from './components/EmptyStub.stub.svelte'
@@ -269,5 +269,46 @@ describe('native menu Save (#503)', () => {
         )
       ).toBe(true)
     )
+  })
+
+  it('shows a clear unavailable-context error for the new-page hotkey', async () => {
+    setOpenTabs(false)
+    await mountApp()
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'n',
+        ctrlKey: true,
+        bubbles: true
+      })
+    )
+    await tick()
+    expect(notificationsState.items).toEqual([
+      expect.objectContaining({
+        kind: 'error',
+        message: 'Open a notebook before creating a page.'
+      })
+    ])
+  })
+
+  it('opens and closes the shortcut reference from its live default hotkey', async () => {
+    await mountApp()
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: '?',
+        shiftKey: true,
+        bubbles: true
+      })
+    )
+    expect(
+      await screen.findByRole('dialog', { name: 'Keyboard shortcuts' })
+    ).toBeInTheDocument()
+    await fireEvent.keyDown(
+      screen.getByRole('dialog', { name: 'Keyboard shortcuts' }),
+      { key: 'Escape' }
+    )
+    await tick()
+    expect(
+      screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })
+    ).toBeNull()
   })
 })

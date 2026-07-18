@@ -30,6 +30,7 @@
   import SearchModal from './components/SearchModal.svelte'
   import QuickSwitcher from './components/QuickSwitcher.svelte'
   import PageBreadcrumb from './components/PageBreadcrumb.svelte'
+  import ShortcutHelp from './components/ShortcutHelp.svelte'
   import GlobalReplaceModal from './components/editor/GlobalReplaceModal.svelte'
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
@@ -56,6 +57,7 @@
   import { initTemplates } from './templates/store.svelte'
   import TemplatePicker from './templates/TemplatePicker.svelte'
   import { resolveGlobalHotkey } from './shell/globalHotkeys'
+  import { effectiveHotkeys } from './settings/shortcutActions'
   import { findBarState } from './lib/editor/search/findBarState.svelte'
   import {
     clearAllEditors,
@@ -322,6 +324,41 @@
     activeView = 'notes'
   }
 
+  async function requestNavigationCreation(
+    kind: 'page' | 'section' | 'notebook'
+  ): Promise<void> {
+    if (kind !== 'notebook' && !activeNotebook) {
+      pushNotification({
+        kind: 'error',
+        message: `Open a notebook before creating a ${kind}.`
+      })
+      return
+    }
+    if (kind !== 'notebook' && activeNotebookMetadata?.disconnected) {
+      pushNotification({
+        kind: 'error',
+        message:
+          'This linked notebook is offline. Reconnect it before creating anything.'
+      })
+      return
+    }
+    activeView = 'notes'
+    sidebarCollapsed = false
+    manuallyCollapsed = false
+    await tick()
+    if (kind === 'page') {
+      window.dispatchEvent(
+        new CustomEvent('create-page-inline', {
+          detail: { sectionName: activeSection ?? '' }
+        })
+      )
+    } else {
+      window.dispatchEvent(
+        new CustomEvent('open-navigation-create', { detail: { kind } })
+      )
+    }
+  }
+
   function handleSelectTab(id: string): void {
     activeTabId = id
     // Bump MRU ordering.
@@ -513,6 +550,7 @@
   }
   let showSearch = $state(false)
   let showQuickSwitcher = $state(false)
+  let showShortcutHelp = $state(false)
   let navigationCatalog = $state<NavigationCatalogItem[]>([])
   let navigationNotebookMetadata = $state<
     Record<string, NotebookNavigationMetadata>
@@ -755,10 +793,10 @@
       // Config-driven global shortcuts. Resolution (editor-focus guard +
       // first-match-wins ordering) lives in the pure resolveGlobalHotkey so
       // it is unit-tested; this handler only switch-dispatches the result.
-      const hotkeys = settings.config?.hotkeys ?? {}
-      const editorFocused = !!(e.target as HTMLElement | null)?.closest(
-        '.ProseMirror'
-      )
+      const hotkeys = effectiveHotkeys(settings.config?.hotkeys ?? {})
+      const eventTarget = e.target
+      const editorFocused =
+        eventTarget instanceof Element && !!eventTarget.closest('.ProseMirror')
       const action = resolveGlobalHotkey(
         e,
         hotkeys,
@@ -770,6 +808,21 @@
       switch (action) {
         case 'open_search':
           showSearch = !showSearch
+          break
+        case 'new_page':
+          void requestNavigationCreation('page')
+          break
+        case 'new_section':
+          void requestNavigationCreation('section')
+          break
+        case 'new_notebook':
+          void requestNavigationCreation('notebook')
+          break
+        case 'open_quick_switcher':
+          showQuickSwitcher = !showQuickSwitcher
+          break
+        case 'open_shortcuts_help':
+          showShortcutHelp = !showShortcutHelp
           break
         case 'find_in_page':
           findBarState.openFind()
@@ -1481,6 +1534,7 @@
       {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
       onSwitcherClick={() => (showQuickSwitcher = true)}
+      onShortcutHelpClick={() => (showShortcutHelp = true)}
       onAIClick={getAIAvailability().drawerAvailable
         ? () => toggleAIChatDrawer()
         : undefined}
@@ -1873,6 +1927,10 @@
       onOpen={openFromQuickSwitcher}
       onClose={() => (showQuickSwitcher = false)}
     />
+  {/if}
+
+  {#if showShortcutHelp}
+    <ShortcutHelp onClose={() => (showShortcutHelp = false)} />
   {/if}
 
   {#if showGlobalReplace}

@@ -56,6 +56,44 @@ func TestDefaults_Populated(t *testing.T) {
 	}
 }
 
+func TestDefaults_Phase5NavigationHotkeys(t *testing.T) {
+	want := map[string]string{
+		"new_page":            "Ctrl+N",
+		"new_section":         "Ctrl+Alt+N",
+		"new_notebook":        "Ctrl+Alt+Shift+N",
+		"open_quick_switcher": "Ctrl+P",
+		"open_shortcuts_help": "Shift+?",
+	}
+	defaults := Defaults()
+	for key, binding := range want {
+		if got := defaults.Hotkeys[key]; got != binding {
+			t.Errorf("default hotkey %q = %q, want %q", key, got, binding)
+		}
+	}
+}
+
+func TestLoad_Phase5HotkeyOverridesNormalizeWithoutReset(t *testing.T) {
+	vault := t.TempDir()
+	writeFile(t, ConfigPath(vault), "hotkeys:\n  new_page: Alt+N\n  open_quick_switcher: ''\n")
+	cfg, err := Load(vault)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Hotkeys["new_page"] != "Alt+N" {
+		t.Errorf("new_page override = %q, want Alt+N", cfg.Hotkeys["new_page"])
+	}
+	if cfg.Hotkeys["open_quick_switcher"] != "" {
+		t.Errorf("explicitly disabled quick switcher = %q, want empty", cfg.Hotkeys["open_quick_switcher"])
+	}
+	if cfg.Hotkeys["new_section"] != "Ctrl+Alt+N" || cfg.Hotkeys["new_notebook"] != "Ctrl+Alt+Shift+N" || cfg.Hotkeys["open_shortcuts_help"] != "Shift+?" {
+		t.Errorf("absent Phase 5 defaults were not retained: %+v", cfg.Hotkeys)
+	}
+	normalized := Normalize(cfg)
+	if normalized.Hotkeys["new_page"] != "Alt+N" || normalized.Hotkeys["open_quick_switcher"] != "" {
+		t.Errorf("Normalize changed Phase 5 overrides: %+v", normalized.Hotkeys)
+	}
+}
+
 // TestSave_RestrictiveFilePermissions pins the F7 hardening: config.yaml is
 // written 0o600 and its .system/ parent 0o700 so a co-tenant on a multi-user
 // host cannot read the plugin grant table / linked-notebook paths / settings.

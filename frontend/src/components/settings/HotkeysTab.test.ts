@@ -1,0 +1,32 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, render, screen } from '@testing-library/svelte'
+
+const mockSettings = vi.hoisted(() => ({
+  config: { hotkeys: { open_search: 'Ctrl+Shift+F' } },
+  dirty: false,
+  pendingExternal: false,
+  error: '',
+  saving: false
+}))
+vi.mock('../../settings/store.svelte', () => ({
+  settings: mockSettings,
+  saveConfig: vi.fn().mockResolvedValue(true),
+  reloadFromBackend: vi.fn().mockResolvedValue(undefined)
+}))
+
+import HotkeysTab from './HotkeysTab.svelte'
+
+afterEach(cleanup)
+
+describe('HotkeysTab new global actions', () => {
+  it('shows generic remap controls even before backend defaults are present', () => {
+    render(HotkeysTab)
+    expect(screen.getByLabelText('New page')).toHaveValue('Ctrl+N')
+    expect(screen.getByLabelText('New section')).toHaveValue('Ctrl+Alt+N')
+    expect(screen.getByLabelText('New notebook')).toHaveValue(
+      'Ctrl+Alt+Shift+N'
+    )
+    expect(screen.getByLabelText('Switch page')).toHaveValue('Ctrl+P')
+    expect(screen.getByLabelText('Keyboard shortcuts')).toHaveValue('Shift+?')
+  })
+})

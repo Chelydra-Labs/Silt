@@ -51,6 +51,11 @@ func Defaults() SystemConfig {
 			// and most editors). #511 opens settings as a workspace tab. Note this
 			// freed Ctrl+, from format_subscript, which moved to Ctrl+Shift+, below.
 			"open_settings":        "Ctrl+,",
+			"new_page":             "Ctrl+N",
+			"new_section":          "Ctrl+Alt+N",
+			"new_notebook":         "Ctrl+Alt+Shift+N",
+			"open_quick_switcher":  "Ctrl+P",
+			"open_shortcuts_help":  "Shift+?",
 			"indent_block":         "Tab",
 			"unindent_block":       "Shift+Tab",
 			"open_template_picker": "Ctrl+Shift+T",
