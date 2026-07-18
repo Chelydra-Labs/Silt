@@ -174,7 +174,11 @@
     const bin = 'silt' // path to Silt binary / `silt mcp`
     return [
       {
-        title: 'OpenCode',
+        title: 'Any MCP client',
+        body: `Generic MCP — same for every client.\n\n1. Enable Local MCP (vault open).\n2. Stdio (preferred):\n   command: ${bin}\n   args: ["mcp"]\n3. HTTP clients: ${ep}\n   Authorization: Bearer <token from Show/Copy token>\n4. Optional skill: integrations/silt-agent/SKILL.md\n\nSee docs/LOCAL_MCP.md.`
+      },
+      {
+        title: 'OpenCode sample',
         body:
           mcpHint ||
           JSON.stringify(
@@ -190,14 +194,6 @@
             null,
             2
           )
-      },
-      {
-        title: 'Claude Desktop',
-        body: `1. Enable Local MCP here and copy the auth token.\n2. Install the MCPB from integrations/claude-desktop (or add a stdio server):\n   command: ${bin}\n   args: ["mcp"]\n3. Copy integrations/silt-agent/SKILL.md into your Claude skills folder.\n4. Endpoint (HTTP clients): ${ep}\nSee docs/LOCAL_MCP.md.`
-      },
-      {
-        title: 'ChatGPT Desktop / Codex',
-        body: `Configure a local MCP server with command "${bin} mcp" (stdio). Paste the bearer token only if the client uses HTTP to ${ep}. Install the Silt skill from integrations/silt-agent/SKILL.md. See docs/LOCAL_MCP.md.`
       }
     ]
   }
@@ -696,8 +692,8 @@
                 Local MCP
               </h3>
               <p class="text-text-muted text-type-xs font-label-sm m-0 mt-0.5">
-                Let desktop agents (Claude Desktop, OpenCode, Codex) read and —
-                with grant — edit this vault over loopback. Off by default.
+                Generic MCP server for any desktop agent. Read (and with grant,
+                edit) this vault over loopback. Off by default.
               </p>
             </div>
 

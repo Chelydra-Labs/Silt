@@ -557,21 +557,25 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   tool calls are **transparent**, and **destructive ops are staged** behind a
    single-use confirmation token. See `docs/plugins/silt-ai-agent.md`.
 
-- **Local MCP host** (#687) — Go package `backend/mcp` runs an in-process MCP
-  server (official `github.com/modelcontextprotocol/go-sdk` ≥ v1.4.1) when
-  `ai.local_mcp.enabled` is true and a vault is open. **Bridge model:** tools
-  call App content APIs (`SearchBlocksPaged`, `FetchPageBlocks`,
-  `SaveFileBlocks`, `CreatePage`, `ListNavigation`, …) so Silt remains the
-  single vault writer/indexer. **Transports:** loopback Streamable HTTP on
-  `127.0.0.1` only (default port 17887) with bearer auth from the OS keyring
-  (`Silt` / `mcp-local-auth-token`); stdio via `silt mcp` which dials the
-  running instance (logs to stderr only). **Tools (v1):** read —
-  `search_blocks`/`search_notes`, `read_page`/`read_blocks`, `list_notebooks`;
-  write (grant) — `create_page`, `update_blocks`. No delete/move/bulk.
-  **Lifecycle:** start on vault open when enabled; stop on vault close/switch
-  and `ServiceShutdown`; close-to-tray keeps MCP. **Audit:**
-  `<vault>/.system/logs/mcp-audit.jsonl` with redacted args. Settings UI:
-  Settings → AI → Local MCP. User docs: `docs/LOCAL_MCP.md`. Skill:
+- **Local MCP host** (#687) — Go package `backend/mcp` runs an in-process
+  **generic MCP server** (official `github.com/modelcontextprotocol/go-sdk`
+  ≥ v1.4.1) when `ai.local_mcp.enabled` is true and a vault is open. The
+  contract is **client-agnostic**: any MCP-capable desktop agent connects the
+  same way (stdio `silt mcp` and/or loopback Streamable HTTP). There is no
+  vendor-specific host, packaging format, or per-client protocol fork.
+  **Bridge model:** tools call App content APIs (`SearchBlocksPaged`,
+  `FetchPageBlocks`, `SaveFileBlocks`, `CreatePage`, `ListNavigation`, …) so
+  Silt remains the single vault writer/indexer. **Transports:** loopback
+  Streamable HTTP on `127.0.0.1` only (default port 17887) with bearer auth
+  from the OS keyring (`Silt` / `mcp-local-auth-token`); stdio via `silt mcp`
+  which dials the running instance (logs to stderr only). **Tools (v1):**
+  read — `search_blocks`/`search_notes`, `read_page`/`read_blocks`,
+  `list_notebooks`; write (grant) — `create_page`, `update_blocks`. No
+  delete/move/bulk. **Lifecycle:** start on vault open when enabled; stop on
+  vault close/switch and `ServiceShutdown`; close-to-tray keeps MCP.
+  **Audit:** `<vault>/.system/logs/mcp-audit.jsonl` with redacted args.
+  Settings UI: Settings → AI → Local MCP. User docs: `docs/LOCAL_MCP.md`.
+  Optional portable Skill (workflow guidance only, not a second protocol):
   `integrations/silt-agent/SKILL.md`.
 
 

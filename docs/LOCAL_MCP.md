@@ -5,13 +5,26 @@ Silt can expose the **active vault** to desktop AI agents through the
 **inside the Silt process** (Go). Agents never talk to SQLite or the filesystem
 directly — tools call the same content paths as the app UI.
 
+**This is a generic MCP server.** Any MCP-capable client (OpenCode, Claude
+Desktop, Codex, Cursor, etc.) uses the same transports and tools. There is no
+vendor-specific packaging path (no MCPB / Desktop Extension requirement) and no
+per-client protocol fork — point the client at `silt mcp` (stdio) or the
+loopback HTTP endpoint shown in Settings.
+
 **Default: off.** Enable under **Settings → AI → Local MCP**.
 
-## Packaging notes
+## Client setup
 
-- **OpenCode:** sample config in `docs/opencode-mcp.sample.json`; Settings can copy a snippet.
-- **Claude Desktop:** `integrations/claude-desktop/manifest.json` is a **manifest skeleton** for MCPB packaging — pack/sign is a follow-up (not a one-click ship in this release). Skill: `integrations/silt-agent/SKILL.md`.
-- **ChatGPT Desktop / Codex:** configure stdio `silt mcp` + skill path; see client notes in Settings → AI → Local MCP.
+1. Enable Local MCP in Silt (vault open). Optionally enable write tools.
+2. Configure the client’s MCP entry as a **local stdio** server:
+   - command: `silt`
+   - args: `["mcp"]`
+   - Sample OpenCode config: `docs/opencode-mcp.sample.json` (Settings can copy a snippet).
+3. For HTTP clients: use the endpoint from Settings plus the bearer token
+   (Settings → Show / Copy token). Loopback only.
+4. Optional: install the portable Skill at `integrations/silt-agent/SKILL.md`
+   into the client’s skills folder for search-first / confirm-before-edit
+   guidance. The Skill is workflow text only — it does not replace MCP auth.
 
 ## Security model
 
@@ -73,17 +86,25 @@ ai:
     write_enabled: false
 ```
 
-## Client install
+## Client install (any MCP client)
 
-### OpenCode
+Same steps for every client:
 
-Copy the skill:
+1. Install Silt on `PATH` as `silt` (or use the full path to the binary).
+2. Enable Local MCP in Settings; open a vault. Optional: allow write tools.
+3. Register an MCP server:
+   - **Stdio (preferred):** command `silt`, args `["mcp"]`
+   - **HTTP:** endpoint from Settings + `Authorization: Bearer <token>`
+4. Optional Skill: copy `integrations/silt-agent/SKILL.md` into the client’s
+   skills folder if it supports portable skills.
+5. Smoke: list tools → `search_blocks` with a known phrase → confirm write tools
+   are denied until the write grant is on.
+
+### OpenCode sample
 
 ```text
 integrations/silt-agent/SKILL.md  →  ~/.config/opencode/skills/silt/SKILL.md
 ```
-
-Sample `opencode.json` snippet:
 
 ```json
 {
@@ -98,22 +119,6 @@ Sample `opencode.json` snippet:
 ```
 
 See also `docs/opencode-mcp.sample.json`.
-
-### Claude Desktop (MCPB)
-
-Minimal binary manifest: `integrations/claude-desktop/manifest.json`.
-
-1. Install Silt on `PATH` as `silt`.
-2. Enable Local MCP in Settings; open a vault.
-3. Register the MCP server command: `silt mcp`.
-4. Install the skill from `integrations/silt-agent/SKILL.md` into your user Skills folder.
-
-### ChatGPT Desktop / Codex
-
-1. Enable Local MCP + (optional) write grant in Silt.
-2. Add an MCP server entry with command `silt mcp` (stdio), or HTTP URL + bearer token.
-3. Install `integrations/silt-agent/SKILL.md` beside other agent skills if the client supports portable skills.
-4. Smoke: list tools → `search_blocks` with a known phrase → confirm write tools denied until grant is on.
 
 ## Skill
 
