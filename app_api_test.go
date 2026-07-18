@@ -456,6 +456,62 @@ func TestSavePageMarkdown_PreservesFrontmatterAndRoundTrips(t *testing.T) {
 	}
 }
 
+// TestSavePageMarkdown_SerializesAgainstMutateBlock locks the race window
+// where Source unmount flush and embed MutateBlock target the same page.
+// Both must complete without panic; final file must contain the source body
+// (last full-file writer) or the mutated line if MutateBlock won after —
+// either way the coordinator must not deadlock under concurrent load.
+func TestSavePageMarkdown_SerializesAgainstMutateBlock(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "Work", "Journal", "RacePage"
+	filePath := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	blockID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	content := "---\nnotebook: Work\nsection: Journal\npage: RacePage\ndate: 2026-07-17\ntags: []\n---\n" +
+		"- [ ] original task <!-- id: " + blockID + " -->\n"
+	writeFile(t, filePath, content)
+	blocks, _, _, _, err := parser.ParseFileContent(content, notebook, section, page, "2026-07-17", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.SaveFileBlocks(notebook, section, page, blocks); err != nil {
+		t.Fatalf("SaveFileBlocks seed: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for i := 0; i < 10; i++ {
+		wg.Add(2)
+		go func(n int) {
+			defer wg.Done()
+			body := fmt.Sprintf("# source rewrite %d\n\n- [ ] from source\n", n)
+			if _, e := app.SavePageMarkdown(notebook, section, page, body); e != nil {
+				errs <- e
+			}
+		}(i)
+		go func(n int) {
+			defer wg.Done()
+			if e := app.MutateBlock(blockID, fmt.Sprintf("mutated %d", n)); e != nil {
+				// block_being_edited or not-found after rewrite is acceptable;
+				// deadlock/panic is not.
+				if !strings.Contains(e.Error(), "being edited") &&
+					!strings.Contains(e.Error(), "not found") &&
+					!strings.Contains(e.Error(), "block_being_edited") {
+					errs <- e
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Errorf("unexpected concurrent error: %v", e)
+	}
+	// File must still be readable and parseable.
+	if _, err := app.FetchPageMarkdown(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageMarkdown after race: %v", err)
+	}
+}
+
 func TestSearchBlocks_FuzzySearch(t *testing.T) {
 	app := newTestApp(t)
 

@@ -1,13 +1,12 @@
 /**
  * Editable Source mode IPC (#660).
- * Uses Call.ByName until `wails3 generate bindings` is run after merge;
- * method names match package main App methods.
+ * Thin typed wrappers over generated Wails bindings.
  */
-import { Call } from '@wailsio/runtime'
+import {
+  SavePageMarkdown,
+  FetchPageMarkdown
+} from '../../../bindings/silt/app.js'
 import type { ParsedBlock } from './types'
-
-const SAVE = 'main.App.SavePageMarkdown'
-const FETCH = 'main.App.FetchPageMarkdown'
 
 export async function savePageMarkdown(
   notebook: string,
@@ -15,7 +14,7 @@ export async function savePageMarkdown(
   page: string,
   markdown: string
 ): Promise<ParsedBlock[]> {
-  const result = await Call.ByName(SAVE, notebook, section, page, markdown)
+  const result = await SavePageMarkdown(notebook, section, page, markdown)
   return (result ?? []) as ParsedBlock[]
 }
 
@@ -25,6 +24,6 @@ export async function fetchPageMarkdown(
   section: string,
   page: string
 ): Promise<string> {
-  const result = await Call.ByName(FETCH, notebook, section, page)
+  const result = await FetchPageMarkdown(notebook, section, page)
   return typeof result === 'string' ? result : ''
 }

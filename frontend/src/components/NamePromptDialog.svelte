@@ -66,7 +66,9 @@
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
-      onCancel()
+      // Busy create/rename: Esc is a no-op (parent also guards), matching
+      // disabled Cancel so the affordance is not silently dead.
+      if (!busy) onCancel()
       return
     }
     // Enter or Ctrl/Cmd+Enter submits (#662).
@@ -170,9 +172,12 @@
     <div class="flex items-center justify-end gap-2 px-5 py-3">
       <button
         type="button"
-        onclick={onCancel}
+        onclick={() => {
+          if (!busy) onCancel()
+        }}
+        disabled={busy}
         data-testid={dataTestId ? `${dataTestId}-cancel` : undefined}
-        class="px-4 py-2 rounded-lg text-text-muted hover:text-text-primary font-label-sm-bold transition-colors border-none bg-transparent cursor-pointer"
+        class="px-4 py-2 rounded-lg text-text-muted hover:text-text-primary font-label-sm-bold transition-colors border-none bg-transparent cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {cancelLabel}
       </button>

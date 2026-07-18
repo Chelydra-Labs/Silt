@@ -962,6 +962,11 @@ func (a *App) FetchPageMarkdown(notebook, section, page string) (string, error) 
 // #660). Preserves YAML frontmatter, uses the atomic write chain (same as
 // SaveFileBlocks), re-indexes, and returns the re-parsed block list so the
 // frontend can refresh without a second round-trip.
+//
+// Per-block write-intent locking mirrors SaveFileBlocks: we lock every block
+// currently on the page so a concurrent MutateBlock (e.g. embed edit) cannot
+// interleave with the full-file rewrite and get clobbered by a stale Source
+// buffer flush after focus-lease release.
 func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]parser.ParsedBlock, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -989,65 +994,91 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	// Before-set: serialize against MutateBlock on any existing page block.
+	var beforeIDs []string
+	a.coordinator.WithDBRead(func() {
+		beforeIDs, _ = a.db.BlockIDsForPage(source, safeNotebook, safeSection, safePage)
+	})
+
 	var result []parser.ParsedBlock
 	var writeErr error
-	a.coordinator.LockFileWrite(filePath, func() {
-		contentBytes, err := os.ReadFile(filePath)
-		if err != nil && !os.IsNotExist(err) {
-			writeErr = fmt.Errorf("failed to read existing file: %w", err)
-			return
-		}
-		frontmatter, _ := parser.SplitFrontmatter(string(contentBytes))
-		if frontmatter == "" {
-			today := time.Now().Format("2006-01-02")
-			frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
-				strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
-		}
-
-		// Body is the user-edited source. Normalize to end with a single newline.
-		body := markdown
-		if body != "" && !strings.HasSuffix(body, "\n") {
-			body += "\n"
-		}
-		newContent := frontmatter
-		if !strings.HasSuffix(newContent, "\n") {
-			newContent += "\n"
-		}
-		newContent += body
-
-		a.tracker.RegisterWrite(filePath)
-		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-			writeErr = err
-			return
-		}
-
-		parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(
-			newContent, safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab,
-		)
-		if parseErr != nil {
-			writeErr = fmt.Errorf("parse after source save: %w", parseErr)
-			return
-		}
-		var idxErr error
-		a.coordinator.WithDBWrite(func() {
-			idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
-		})
-		if idxErr != nil {
-			// Fail loud: disk write already landed, but search/graph would lag.
-			// Surface so the UI does not claim a fully successful save.
-			writeErr = fmt.Errorf("re-index after source save failed: %w", idxErr)
-			return
-		}
-		result = parsedBlocks
-		for _, b := range parsedBlocks {
-			if b.ID != "" {
-				a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, b.FileDate)
+	a.coordinator.LockBlocksWrite(beforeIDs, func() {
+		a.coordinator.LockFileWrite(filePath, func() {
+			contentBytes, err := os.ReadFile(filePath)
+			if err != nil && !os.IsNotExist(err) {
+				writeErr = fmt.Errorf("failed to read existing file: %w", err)
+				return
 			}
-		}
-	})
+			frontmatter, _ := parser.SplitFrontmatter(string(contentBytes))
+			if frontmatter == "" {
+				today := time.Now().Format("2006-01-02")
+				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
+					strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(today))
+			}
+
+			// Body is the user-edited source. Normalize to end with a single newline.
+			body := markdown
+			if body != "" && !strings.HasSuffix(body, "\n") {
+				body += "\n"
+			}
+			newContent := frontmatter
+			if !strings.HasSuffix(newContent, "\n") {
+				newContent += "\n"
+			}
+			newContent += body
+
+			a.tracker.RegisterWrite(filePath)
+			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+				writeErr = err
+				return
+			}
+
+			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(
+				newContent, safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab,
+			)
+			if parseErr != nil {
+				writeErr = fmt.Errorf("parse after source save: %w", parseErr)
+				return
+			}
+			var idxErr error
+			a.coordinator.WithDBWrite(func() {
+				idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
+			})
+			if idxErr != nil {
+				// Fail loud: disk write already landed, but search/graph would lag.
+				// Surface so the UI does not claim a fully successful save.
+				writeErr = fmt.Errorf("re-index after source save failed: %w", idxErr)
+				return
+			}
+			result = parsedBlocks
+		})
+	}) // LockBlocksWrite
 
 	if writeErr != nil {
 		return nil, writeErr
+	}
+
+	// Release mutexes for blocks dropped by the source rewrite (#122).
+	newIDSet := make(map[string]bool, len(result))
+	for _, b := range result {
+		if b.ID != "" {
+			newIDSet[b.ID] = true
+		}
+	}
+	var removed []string
+	for _, id := range beforeIDs {
+		if id != "" && !newIDSet[id] {
+			removed = append(removed, id)
+		}
+	}
+	a.coordinator.ReleaseBlockMutexes(removed)
+
+	// Emit after locks release so subscribers (embeds) re-fetch without re-entry
+	// into the file write lock (matches SaveFileBlocks).
+	for _, b := range result {
+		if b.ID != "" {
+			a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, b.FileDate)
+		}
 	}
 	return result, nil
 }
