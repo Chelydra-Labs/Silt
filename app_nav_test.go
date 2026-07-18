@@ -15,6 +15,72 @@ import (
 	"silt/backend/parser"
 )
 
+func TestNavigationPreferences_RejectMultiSegmentNotebook(t *testing.T) {
+	app := newTestApp(t)
+	const evil = "Work/Evil"
+
+	if err := app.SetNavigationSectionExpanded(evil, "Projects", true); err == nil {
+		t.Fatalf("SetNavigationSectionExpanded accepted multi-segment notebook %q", evil)
+	}
+	if err := app.RecordRecentPage(evil, "Projects", "Site"); err == nil {
+		t.Fatalf("RecordRecentPage accepted multi-segment notebook %q", evil)
+	}
+	if err := app.SetFavoritePage(evil, "Projects", "Site", true); err == nil {
+		t.Fatalf("SetFavoritePage accepted multi-segment notebook %q", evil)
+	}
+}
+
+func TestRecordRecentPage_RefreshesOpenedAtWhenAlreadyMostRecent(t *testing.T) {
+	app := newTestApp(t)
+
+	if err := app.RecordRecentPage("Work", "Projects", "Site"); err != nil {
+		t.Fatalf("RecordRecentPage first: %v", err)
+	}
+	prefs, err := app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences: %v", err)
+	}
+	if len(prefs.RecentPages) != 1 {
+		t.Fatalf("expected 1 recent page, got %+v", prefs.RecentPages)
+	}
+	firstOpenedAt := prefs.RecentPages[0].OpenedAt
+	if firstOpenedAt <= 0 {
+		t.Fatalf("expected positive OpenedAt, got %d", firstOpenedAt)
+	}
+
+	// Force a stale head timestamp so a same-second re-record still mutates.
+	if err := app.mutateConfig(func(cfg *config.SystemConfig) error {
+		items := append([]config.RecentPage(nil), cfg.UI.RecentPages...)
+		items[0].OpenedAt = firstOpenedAt - 10
+		cfg.UI.RecentPages = items
+		return nil
+	}); err != nil {
+		t.Fatalf("seed stale OpenedAt: %v", err)
+	}
+	stale, err := app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences after seed: %v", err)
+	}
+	staleOpenedAt := stale.RecentPages[0].OpenedAt
+
+	if err := app.RecordRecentPage("Work", "Projects", "Site"); err != nil {
+		t.Fatalf("RecordRecentPage second: %v", err)
+	}
+	prefs, err = app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences after re-record: %v", err)
+	}
+	if len(prefs.RecentPages) != 1 {
+		t.Fatalf("expected still 1 recent page, got %+v", prefs.RecentPages)
+	}
+	if prefs.RecentPages[0].OpenedAt <= staleOpenedAt {
+		t.Fatalf("expected OpenedAt to refresh past %d, got %d", staleOpenedAt, prefs.RecentPages[0].OpenedAt)
+	}
+	if prefs.RecentPages[0].Notebook != "Work" || prefs.RecentPages[0].Section != "Projects" || prefs.RecentPages[0].Page != "Site" {
+		t.Fatalf("unexpected recent page after re-record: %+v", prefs.RecentPages[0])
+	}
+}
+
 func assertRenamePageIndexed(t *testing.T, app *App, notebook, section, page string) {
 	t.Helper()
 	blocks, err := app.db.FetchPageBlocks("vault", notebook, section, page)

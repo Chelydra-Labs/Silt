@@ -253,17 +253,6 @@ func (a *App) SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) er
 	})
 }
 
-func cloneNavOrder(order config.NavOrder) config.NavOrder {
-	clone := config.NavOrder{Notebooks: append([]string(nil), order.Notebooks...), Sections: map[string][]string{}, Pages: map[string][]string{}}
-	for key, values := range order.Sections {
-		clone.Sections[key] = append([]string(nil), values...)
-	}
-	for key, values := range order.Pages {
-		clone.Pages[key] = append([]string(nil), values...)
-	}
-	return clone
-}
-
 // navPageSet flattens the NavigationTree into a set of
 // "notebook\x00section\x00page" strings for O(1) existence checks. The
 // section key mirrors the frontend's sectionKey derivation: section.path if

@@ -82,11 +82,12 @@ func (a *App) SetQuickAccessCollapsed(collapsed bool) error {
 
 // SetNavigationSectionExpanded changes one canonical notebook/path entry.
 func (a *App) SetNavigationSectionExpanded(notebook, sectionPath string, expanded bool) error {
-	notebook = strings.TrimSpace(notebook)
-	sectionPath = strings.TrimSpace(strings.ReplaceAll(sectionPath, `\`, "/"))
-	if _, err := validateSectionPath(notebook, false); err != nil {
-		return invalidNavigationPath(err)
+	safeNotebook, err := validatePageActionSegment(notebook, "notebook name")
+	if err != nil {
+		return err
 	}
+	notebook = safeNotebook
+	sectionPath = strings.TrimSpace(strings.ReplaceAll(sectionPath, `\`, "/"))
 	if _, err := validateSectionPath(sectionPath, false); err != nil {
 		return invalidNavigationPath(err)
 	}
@@ -112,16 +113,22 @@ func (a *App) SetNavigationSectionExpanded(notebook, sectionPath string, expande
 // RecordRecentPage records a successful activation/save. The timestamp is
 // backend-owned so callers cannot inject an unbounded or future history.
 func (a *App) RecordRecentPage(notebook, section, page string) error {
-	if err := validateNavigationPageInput(notebook, section, page); err != nil {
+	notebook, section, page, err := validateNavigationPageInput(notebook, section, page)
+	if err != nil {
 		return err
 	}
 	return a.mutateConfig(func(cfg *config.SystemConfig) error {
 		ref := config.NavigationPageRef{Notebook: notebook, Section: section, Page: page}
+		now := time.Now().Unix()
+		// Already most-recent: bump OpenedAt on a fresh slice so DeepEqual
+		// detects the mutation without reordering the list.
 		if len(cfg.UI.RecentPages) > 0 && pageRefMatches(cfg.UI.RecentPages[0].NavigationPageRef, notebook, section, page) {
+			items := append([]config.RecentPage(nil), cfg.UI.RecentPages...)
+			items[0].OpenedAt = now
+			cfg.UI.RecentPages = items
 			return nil
 		}
 		items := make([]config.RecentPage, 0, len(cfg.UI.RecentPages)+1)
-		now := time.Now().Unix()
 		items = append(items, config.RecentPage{NavigationPageRef: ref, OpenedAt: now})
 		for _, item := range cfg.UI.RecentPages {
 			if item.Notebook == notebook && item.Section == section && item.Page == page {
@@ -136,7 +143,8 @@ func (a *App) RecordRecentPage(notebook, section, page string) error {
 
 // SetFavoritePage toggles one canonical page locator.
 func (a *App) SetFavoritePage(notebook, section, page string, favorite bool) error {
-	if err := validateNavigationPageInput(notebook, section, page); err != nil {
+	notebook, section, page, err := validateNavigationPageInput(notebook, section, page)
+	if err != nil {
 		return err
 	}
 	return a.mutateConfig(func(cfg *config.SystemConfig) error {
@@ -156,20 +164,20 @@ func (a *App) SetFavoritePage(notebook, section, page string, favorite bool) err
 	})
 }
 
-func validateNavigationPageInput(notebook, section, page string) error {
-	if _, err := validateSectionPath(notebook, false); err != nil {
-		return invalidNavigationPath(err)
+func validateNavigationPageInput(notebook, section, page string) (string, string, string, error) {
+	safeNotebook, err := validatePageActionSegment(notebook, "notebook name")
+	if err != nil {
+		return "", "", "", err
 	}
-	if _, err := validateSectionPath(section, true); err != nil {
-		return invalidNavigationPath(err)
+	safeSection, err := validateSectionPath(section, true)
+	if err != nil {
+		return "", "", "", invalidNavigationPath(err)
 	}
-	if _, err := validateSectionPath(page, false); err != nil {
-		return invalidNavigationPath(err)
+	safePage, err := validatePageActionSegment(page, "page name")
+	if err != nil {
+		return "", "", "", err
 	}
-	if strings.Contains(page, "/") {
-		return invalidNavigationPath(fmt.Errorf("page name must be one path segment"))
-	}
-	return nil
+	return safeNotebook, safeSection, safePage, nil
 }
 
 func pageRefMatches(ref config.NavigationPageRef, notebook, section, page string) bool {

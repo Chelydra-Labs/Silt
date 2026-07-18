@@ -461,7 +461,7 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 		// is backend-owned and must never be replaced by a stale whole snapshot.
 		// The linked-notebook registry is likewise backend-owned: a snapshot
 		// taken before a link was added must not remove that link.
-		incoming.UI.NavOrder = cloneNavOrder(current.UI.NavOrder)
+		incoming.UI.NavOrder = config.CloneNavOrder(current.UI.NavOrder)
 		incoming.UI.OpenTabs = append([]config.TabRef(nil), current.UI.OpenTabs...)
 		if current.UI.ActiveTab == nil {
 			incoming.UI.ActiveTab = nil

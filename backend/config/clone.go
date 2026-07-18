@@ -20,7 +20,7 @@ func Clone(cfg SystemConfig) SystemConfig {
 	out.Plugins.Disabled = cloneStrings(cfg.Plugins.Disabled)
 	out.Plugins.PluginSettings = clonePluginSettings(cfg.Plugins.PluginSettings)
 
-	out.UI.NavOrder = cloneNavOrder(cfg.UI.NavOrder)
+	out.UI.NavOrder = CloneNavOrder(cfg.UI.NavOrder)
 	out.UI.OpenTabs = append([]TabRef(nil), cfg.UI.OpenTabs...)
 	out.UI.ActiveTab = clonePtr(cfg.UI.ActiveTab)
 	out.UI.ExpandedSections = append([]NavigationSectionRef(nil), cfg.UI.ExpandedSections...)
@@ -77,7 +77,9 @@ func cloneStringMap(values map[string]string) map[string]string {
 	return out
 }
 
-func cloneNavOrder(order NavOrder) NavOrder {
+// CloneNavOrder returns an independent copy of order, preserving nil
+// Sections/Pages maps (empty maps stay empty).
+func CloneNavOrder(order NavOrder) NavOrder {
 	out := NavOrder{
 		Notebooks: cloneStrings(order.Notebooks),
 		Sections:  make(map[string][]string, len(order.Sections)),
