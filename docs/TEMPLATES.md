@@ -209,15 +209,25 @@ placeholders:                               # optional; drives the picker form
 
 > Inserted blocks get **fresh UUIDs** automatically (the editor's `UniqueBlockIds` extension), so inserting the same template twice never creates duplicate block IDs.
 
-### Plugin-provided templates (preview)
+### Plugin-provided templates
 
-> **Status:** template-side data path is shipped (#96). The rendered plugin UI surface (a plugin's own template-listing widget) is tracked in #60 and ships separately.
+Third-party plugins can ship their own page templates. At runtime, a plugin registers its templates via the `RegisterPluginTemplates(pluginID, templates)` IPC; the picker shows them under a `Plugins / <plugin-id>` group header, sorted with the rest of the library. Plugin templates remain read-only to the user; duplicate one to create a user-owned fork.
 
-Third-party plugins can ship their own page templates. At runtime, a plugin registers its templates via the `RegisterPluginTemplates(pluginID, templates)` IPC; the picker then shows them under a `Plugins / <plugin-id>` group header, sorted with the rest of the library. `GetTemplate` resolves the canonical `plugin://<plugin-id>/<template-id>` URI; the templates are an in-memory tier — they never write to `<vault>/.system/templates/`, and a user-authored .md file claiming `plugin_id:` in its frontmatter is rejected by the validator as a corruption indicator.
+`GetTemplate` resolves the canonical `plugin://<plugin-id>/<template-id>` URI; the templates are an in-memory tier — they never write to `<vault>/.system/templates/`, and a user-authored .md file claiming `plugin_id:` in its frontmatter is rejected by the validator as a corruption indicator.
 
 ---
 
 ## 6. Managing custom templates
+
+### Settings template management
+
+Settings provides the management surface for the shared template catalog. Users
+can create a blank template or seed one from the current page, edit metadata
+and Markdown, duplicate any readable template as a new user-owned fork, and
+delete user templates. Built-in and plugin templates are visibly read-only and
+cannot be overwritten or deleted. Save and delete continue to use the atomic
+template bindings; validation or persistence failures keep the draft and list
+state intact. External edits still refresh the catalog without a restart.
 
 ### Adding a custom template
 

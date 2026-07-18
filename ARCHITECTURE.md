@@ -46,7 +46,7 @@ correctness regression, not a style choice.
 | Tier | Format | Location | Holds | Example |
 |---|---|---|---|---|
 | **Content** | Markdown (`.md`) | Vault root + per-page files | Block bodies, task markers, per-task metadata, block identity (`<!-- id: uuid @ YYYY-MM-DD -->`) | `[/] DOING TASK [Alice] (2026-06-15) #2 !pin [p:50] Implement search <!-- id: 7c2a… @ 2026-06-15 -->` |
-| **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Tasks hub saved views + display mode/grouping/sort, hotkey bindings, editor font sizes, theme typography overrides | `plugins.plugin_settings.silt-tasks.saved_views: [{name: "Today's Board", displayMode: board, groupBy: status, columns: [TODO, DOING, DONE]}]` |
+| **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Tasks hub saved views + display mode/grouping/sort, hotkey bindings, editor font sizes, theme typography overrides, canonical navigation order, expanded section locators, bounded recent pages, favorites, and pinned tabs | `ui.expanded_sections: [{notebook: Work, path: Projects}]` |
 | **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook. Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-tasks.default_group_by: status` |
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
 | **Working memory** | SQLite (WAL) | `<vault>/.system/index.sqlite*` | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
@@ -357,6 +357,14 @@ editor focus-lease) routes through it, so linked notebooks get full page CRUD +
 focus protection with no parallel frontend source-flow. The traversal guard
 generalizes to `isPathWithinRoot(target, root)`.
 
+Navigation authority. `ListNavigation` walks the filesystem recursively for
+vault notebooks and for linked roots whose fingerprint is trusted and whose
+root is accessible. It preserves empty sections and returns full relative
+section paths. A disconnected linked notebook uses its last indexed rows only
+as an offline fallback, including its disconnected status; preference
+reconciliation does not prune locators for that incomplete fallback. The
+filesystem tree remains authoritative whenever the root is available.
+
 Multi-root watcher. `DirectoryWatcher` observes the vault root PLUS any number
 of linked roots on one process-wide fsnotify watcher, sharing the coordinator,
 WriteTracker, and focus-lease maps (all path-keyed, root-agnostic). `AddWatchRoot`
@@ -478,8 +486,11 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `GetLocalAuthor` returns the host OS username (the default seed for the
   per-vault `local_author` pref that attributes Task comment threads).
 - **Navigation CRUD** — `CreateNotebook` / `OpenNotebook` /
-  `PickNotebookFolder`, `CreateSection`, `CreatePage` / `MovePage`
-  (cross-section; `section` may be `""`). Silt starts blank — the user opens
+  `PickNotebookFolder`, `CreateSection(notebook, parentPath, name)`,
+  `CreatePage` / `MovePage` (cross-section; `section` may be `""`),
+  `DuplicatePage`, and `RevealPageInOS`. Section/page locators are canonical
+  relative paths; duplicate stays in the resolved source root and mints fresh
+  block identities; reveal resolves and guards the page server-side. Silt starts blank — the user opens
   or creates the first notebook from the sidebar.
 - **Vault lifecycle** — `CopyVault` / `MoveVault` / `SwitchVault`. The
   SQLite index is never copied: it is reproducible working memory (§0 rule
@@ -489,7 +500,8 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   validate-before-extract, SHA-256 manifest, zip-slip guarded; format in
   SPECS §3.4). Streams `vault:archive:progress`.
 - **Navigation tree** — `ListNavigation` (Notebook › Section › Page tree
-  from on-disk folders, block counts merged from the index).
+  from recursive on-disk folders, block counts merged from the index, linked
+  source/disconnected metadata preserved).
 - **Configuration** — `GetSystemConfig` / `SaveSystemConfig` (§8);
   `GetAppVersion`.
 - **Per-plugin settings** — `UpdatePluginSetting` (atomic read-modify-write
@@ -503,8 +515,19 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   user-global `settings.json`. `InstallUpdate` returns `WillQuit` so the
   frontend quits via the graceful shutdown path (vault + WAL flush).
 - **UI persistence** — `GetOpenTabs` / `SetOpenTabs` (pinned tabs only,
-  pruned against `ListNavigation`); `GetNavOrder` / `SetNavOrder`;
-  `GetSidebarWidth` / `SetSidebarWidth`.
+  pruned against `ListNavigation`); `GetNavOrder` plus narrow serialized
+  mutations `SetNavNotebookOrder`, `SetNavSectionOrder`,
+  `SetNavPageOrder`, and the corresponding clear methods; `GetSidebarWidth` /
+  `SetSidebarWidth`; and narrow navigation-preference bindings for expanded
+  sections, recents, and favorites. Navigation-order and preference writes
+  merge against current config under the vault→config lock order; no whole
+  navigation snapshot setter is a competing source of truth.
+
+- **Navigation discovery** — the canonical tree feeds source-aware recents and
+  favorites, a breadcrumb for the active notebook/section/page, a dedicated
+  page switcher, and tab-overflow discovery. These surfaces continue to open
+  pages through the application page-opening funnel rather than bypassing tab
+  and notebook scoping.
 - **AI providers** (#216, #218, #479, #632) — `GetAIProviderConfig` (key-scrubbed
   read; emits `has_key` flags + `features`, never the raw secret),
   `UpdateAIProviderConfig` (provider type / base URL / model / tuning — never
@@ -683,6 +706,12 @@ Pipeline (single source of truth shared with SPECS.md §6.5 / docs/TEMPLATES.md)
 **backend/templates** validates (id grammar, placeholder grammar, semver schema; categories are additive), renders via a small `{{name}}` substitution — *not* Go `text/template`; the grammar structurally excludes Smart Graph `{{embed:uuid}}` and `((uuid))`, which pass through byte-for-byte — loads on-disk + embedded built-ins (deduped, on-disk wins), saves/deletes user templates atomically, caches (mtime-aware), and watches `.system/templates/` for external edits. See the package for per-file responsibilities.
 
 **IPC.** `ListTemplates`, `GetTemplate`, `RenderTemplate`, `RenderTemplateBlocks`, `SaveUserTemplate`, `DeleteUserTemplate`, `ReloadTemplates`, `RegisterPluginTemplates`/`UnregisterPluginTemplates` (plugin-provided templates, deduped last), `CreatePageFromTemplate`. Emits `templates:changed`. `CreatePageFromTemplate` renders + prepends standard frontmatter + writes atomically + indexes, composing with the `CreatePage` path. If the target page already exists it returns IPC error code `page_exists` and does not clobber.
+
+Template management is also exposed from Settings: user templates may be
+created, edited, duplicated as user-owned copies, and deleted; built-in and
+plugin templates remain read-only. The existing atomic save/delete bindings
+remain the persistence boundary, and external edits continue to invalidate the
+cache through `templates:changed`.
 
 **Frontend** (`frontend/src/templates`): `store.svelte.ts` (`templatesState` listing + `templates:changed` subscription); `TemplatePicker.svelte` (modal: search, category groups, **rendered** live preview via marked + DOMPurify with `{{placeholder}}` chips, placeholder form; new-page or insert-at-cursor with mid-page insert confirmation). Entry points: New Page → From Template (`Ctrl+Shift+T`) and the `/template` slash command.
 
@@ -1166,6 +1195,16 @@ Block mutations broadcast a `block:changed` Wails event (BlockChangedEvent {ID, 
 Global settings — editor defaults, parsing rules, hotkeys, and the plugin registry — live in <vault>/.system/config.yaml, the single source of truth for everything except the vault path (which stays in OS-config settings.json because it must be known before any vault can be opened).
 
 8.1 Parser (backend/config)
+
+Navigation preferences extend the `ui.*` tier with `expanded_sections`
+(notebook plus full relative section path), bounded timestamped `recent_pages`,
+and canonical `favorites`. These values and navigation order are normalized,
+deduplicated, reconciled after filesystem changes, and persisted through the
+serialized narrow config mutation path rather than a competing whole-navigation
+snapshot setter. The canonical navigation defaults are `Ctrl+N` for a new page,
+`Ctrl+Alt+N` for a new section, `Ctrl+Alt+Shift+N` for a new notebook, `Ctrl+P`
+for the page switcher, and `Shift+?` for shortcut help; an explicit empty
+binding disables an action.
 
 config.SystemConfig mirrors the SPECS §10.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui / ai). The `ai.*` block (#216, #218, #632) carries two provider configs (chat + embedding: provider_type, base_url, model, tuning), `use_keyring`, and `features` (`enabled` / `rag_enabled` / `summaries_enabled` — product enablement for first-party AI modules; dependents clamp when master is off). API keys are `json:"-"` (never serialized to the frontend) and, when `use_keyring` is on + the OS keyring is reachable, are stored in the OS credential store (`backend/keyring`) instead of plaintext config — so a synced vault doesn't carry cloud keys. `SaveSystemConfig` preserves live keys server-side so a frontend round-trip doesn't blank them. The `ui.*` block holds per-vault UI preferences: `sidebar_width`, `nav_order` (explicit section/page ordering for drag-to-reorder), `open_tabs` / `active_tab` (pinned-tab persistence — preview tabs are ephemeral), `enable_preview_tabs`, `max_open_tabs`, `show_format_toolbar`, `show_tab_dirty_indicators` (default true), `dismissed_tips`, and `formatting.*` toggles. Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
 
