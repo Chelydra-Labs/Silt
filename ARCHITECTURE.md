@@ -555,7 +555,25 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   global bus. The `ctx.ai.complete` SDK wrapper strips reasoning tags — see
   `frontend/src/plugins/stripReasoning.ts`. The agent is **user-invoked only**,
   tool calls are **transparent**, and **destructive ops are staged** behind a
-  single-use confirmation token. See `docs/plugins/silt-ai-agent.md`.
+   single-use confirmation token. See `docs/plugins/silt-ai-agent.md`.
+
+- **Local MCP host** (#687) — Go package `backend/mcp` runs an in-process MCP
+  server (official `github.com/modelcontextprotocol/go-sdk` ≥ v1.4.1) when
+  `ai.local_mcp.enabled` is true and a vault is open. **Bridge model:** tools
+  call App content APIs (`SearchBlocksPaged`, `FetchPageBlocks`,
+  `SaveFileBlocks`, `CreatePage`, `ListNavigation`, …) so Silt remains the
+  single vault writer/indexer. **Transports:** loopback Streamable HTTP on
+  `127.0.0.1` only (default port 17887) with bearer auth from the OS keyring
+  (`Silt` / `mcp-local-auth-token`); stdio via `silt mcp` which dials the
+  running instance (logs to stderr only). **Tools (v1):** read —
+  `search_blocks`/`search_notes`, `read_page`/`read_blocks`, `list_notebooks`;
+  write (grant) — `create_page`, `update_blocks`. No delete/move/bulk.
+  **Lifecycle:** start on vault open when enabled; stop on vault close/switch
+  and `ServiceShutdown`; close-to-tray keeps MCP. **Audit:**
+  `<vault>/.system/logs/mcp-audit.jsonl` with redacted args. Settings UI:
+  Settings → AI → Local MCP. User docs: `docs/LOCAL_MCP.md`. Skill:
+  `integrations/silt-agent/SKILL.md`.
+
 
 **Unified AI surface + enablement (#632).** AI chat has one right-side drawer,
 opened by the titlebar **Silt AI** control when `ai.features.enabled` is on.
@@ -734,7 +752,8 @@ the process alive — `wailsApp.Run()` does not exit until `Quit()` is explicitl
 called. The OS-close interception routes every close gesture (titlebar
 button, Alt+F4, taskbar close) through `RequestClose`, so close-to-tray and a
 full quit share one decision path; the routing logic is unit-tested
-(`tray_test.go`).
+(`tray_test.go`). When Local MCP is enabled (#687), close-to-tray keeps the
+MCP host answering; Quit stops MCP via `ServiceShutdown` / `stopMCPHost`.
 
 **Native menus (#503).** `setupMenus` (menus.go) creates a platform-aware
 application menu: File (New Page, Open Vault, Save, Quit), Edit (Undo, Redo,

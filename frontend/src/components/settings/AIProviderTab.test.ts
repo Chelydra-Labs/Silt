@@ -100,7 +100,25 @@ const mocks = vi.hoisted(() => {
     GetAIAudit: vi.fn(),
     ClearAIAudit: vi.fn(),
     // Used by stale-index detection via settings/store.updatePluginSetting.
-    UpdatePluginSetting: vi.fn()
+    UpdatePluginSetting: vi.fn(),
+    // Local MCP (#687)
+    GetCloseToTray: vi.fn().mockResolvedValue(false),
+    SetCloseToTray: vi.fn().mockResolvedValue(undefined),
+    GetLocalMCPConfig: vi.fn().mockResolvedValue({
+      enabled: false,
+      http_enabled: true,
+      http_port: 17887,
+      write_enabled: false
+    }),
+    GetLocalMCPStatus: vi.fn().mockResolvedValue({
+      state: 'disabled',
+      message: '',
+      endpoint: '',
+      write_enabled: false
+    }),
+    GetLocalMCPInstallHint: vi.fn().mockResolvedValue('# sample'),
+    GetLocalMCPToken: vi.fn().mockResolvedValue(''),
+    SetLocalMCPConfig: vi.fn().mockResolvedValue(undefined)
   }
 })
 
@@ -116,7 +134,14 @@ vi.mock('../../../bindings/silt/app.js', () => ({
   ListModels: mocks.ListModels,
   GetAIAudit: mocks.GetAIAudit,
   ClearAIAudit: mocks.ClearAIAudit,
-  UpdatePluginSetting: mocks.UpdatePluginSetting
+  UpdatePluginSetting: mocks.UpdatePluginSetting,
+  GetCloseToTray: mocks.GetCloseToTray,
+  SetCloseToTray: mocks.SetCloseToTray,
+  GetLocalMCPConfig: mocks.GetLocalMCPConfig,
+  GetLocalMCPStatus: mocks.GetLocalMCPStatus,
+  GetLocalMCPInstallHint: mocks.GetLocalMCPInstallHint,
+  GetLocalMCPToken: mocks.GetLocalMCPToken,
+  SetLocalMCPConfig: mocks.SetLocalMCPConfig
 }))
 
 vi.mock('../../settings/store.svelte', async (importOriginal) => {

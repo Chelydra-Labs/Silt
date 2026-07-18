@@ -1,6 +1,10 @@
 package config
 
-import "strings"
+import (
+	"strings"
+
+	"silt/backend/mcp"
+)
 
 // AIConfig holds the shared chat-LLM and embedding-model provider configuration
 // (Sprint 20) plus product-level feature enablement (#632). Chat and embedding
@@ -13,6 +17,10 @@ type AIConfig struct {
 	// plus dependent RAG / summaries toggles. First-party AI plugins load from
 	// these flags, not from independent Plugins-tab toggles.
 	Features AIFeaturesConfig `yaml:"features" json:"features"`
+	// LocalMCP is the vault-scoped local Model Context Protocol host (#687).
+	// Default off. When enabled with a vault open, Silt serves tools on
+	// loopback HTTP and via `silt mcp` stdio proxy.
+	LocalMCP mcp.Config `yaml:"local_mcp,omitempty" json:"local_mcp"`
 	// UseKeyring, when true (default), stores provider API keys in the OS
 	// credential store instead of plaintext config.yaml (#218). Tri-state so
 	// "unset" stays distinguishable from "explicitly false" through the Load →
@@ -148,6 +156,7 @@ func NormalizeAIConfig(ai AIConfig) AIConfig {
 		ai.Features.RAGEnabled = false
 		ai.Features.SummariesEnabled = false
 	}
+	ai.LocalMCP = mcp.NormalizeConfig(ai.LocalMCP)
 	return ai
 }
 

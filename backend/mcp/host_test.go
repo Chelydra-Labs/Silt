@@ -1,0 +1,422 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"silt/backend/db"
+	"silt/backend/keyring"
+	"silt/backend/parser"
+
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// fakeBridge is an in-memory Bridge for host/tool tests.
+type fakeBridge struct {
+	path    string
+	nav     parser.NavigationTree
+	pages   map[string][]parser.ParsedBlock
+	search  parser.SearchResult
+	writes  int
+	createN int
+}
+
+func (f *fakeBridge) VaultPath() string { return f.path }
+
+func (f *fakeBridge) SearchBlocksPaged(ctx context.Context, query string, offset, limit int, filters db.SearchFilters) (parser.SearchResult, error) {
+	_, _, _, _ = ctx, query, offset, limit
+	_ = filters
+	return f.search, nil
+}
+
+func (f *fakeBridge) FetchPageBlocks(ctx context.Context, notebook, section, page string) ([]parser.ParsedBlock, error) {
+	_ = ctx
+	key := notebook + "\x00" + section + "\x00" + page
+	return f.pages[key], nil
+}
+
+func (f *fakeBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, error) {
+	blocks, err := f.FetchPageBlocks(ctx, notebook, section, page)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, bl := range blocks {
+		b.WriteString(bl.RawText)
+		b.WriteByte('\n')
+	}
+	return b.String(), nil
+}
+
+func (f *fakeBridge) ListNavigation(ctx context.Context) (parser.NavigationTree, error) {
+	_ = ctx
+	return f.nav, nil
+}
+
+func (f *fakeBridge) CreatePage(ctx context.Context, notebook, section, page, dateStr string) (string, error) {
+	_, _ = ctx, dateStr
+	f.createN++
+	key := notebook + "\x00" + section + "\x00" + page
+	if f.pages == nil {
+		f.pages = map[string][]parser.ParsedBlock{}
+	}
+	f.pages[key] = nil
+	return key, nil
+}
+
+func (f *fakeBridge) UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock) error {
+	_ = ctx
+	f.writes++
+	key := notebook + "\x00" + section + "\x00" + page
+	if f.pages == nil {
+		f.pages = map[string][]parser.ParsedBlock{}
+	}
+	f.pages[key] = blocks
+	return nil
+}
+
+func (f *fakeBridge) MutateBlock(ctx context.Context, blockID, newText string) error {
+	_, _, _ = ctx, blockID, newText
+	return nil
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	return p
+}
+
+func TestHost_LifecycleStartStop(t *testing.T) {
+	kr := keyring.NewFake()
+	aud := &MemoryAuditor{}
+	h := NewHost(Options{Keyring: kr, Auditor: aud, Version: "test"})
+	bridge := &fakeBridge{path: t.TempDir()}
+	port := freePort(t)
+
+	if err := h.Start(bridge, Config{Enabled: true, HTTPEnabled: true, HTTPPort: port}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	st := h.Status()
+	if st.State != "running" {
+		t.Fatalf("state=%q want running (%s)", st.State, st.Message)
+	}
+	if st.Endpoint == "" {
+		t.Fatal("expected endpoint")
+	}
+	u := strings.TrimPrefix(st.Endpoint, "http://")
+	addr, err := net.ResolveTCPAddr("tcp", u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := AssertLoopbackAddr(addr); err != nil {
+		t.Fatalf("loopback: %v", err)
+	}
+
+	resp, err := http.Get(st.Endpoint + "/health")
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "silt-mcp") {
+		t.Fatalf("health status=%d body=%s", resp.StatusCode, body)
+	}
+
+	h.Stop()
+	time.Sleep(50 * time.Millisecond)
+	if _, err := http.Get(st.Endpoint + "/health"); err == nil {
+		t.Fatal("expected connection error after Stop")
+	}
+}
+
+func TestHost_AuthReject(t *testing.T) {
+	kr := keyring.NewFake()
+	h := NewHost(Options{Keyring: kr, Auditor: &MemoryAuditor{}, Version: "test"})
+	bridge := &fakeBridge{path: t.TempDir()}
+	port := freePort(t)
+	if err := h.Start(bridge, Config{Enabled: true, HTTPEnabled: true, HTTPPort: port}); err != nil {
+		t.Fatal(err)
+	}
+	defer h.Stop()
+	ep := h.Endpoint()
+
+	resp, err := http.Post(ep+"/", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("no token: status=%d", resp.StatusCode)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, ep+"/", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer wrong")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("bad token: status=%d", resp.StatusCode)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, ep+"/", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+h.Token())
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://evil.example")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("evil origin: status=%d", resp.StatusCode)
+	}
+}
+
+func TestHost_DisabledAndNoVault(t *testing.T) {
+	h := NewHost(Options{Keyring: keyring.NewFake(), Auditor: &MemoryAuditor{}})
+	if err := h.Start(&fakeBridge{path: t.TempDir()}, Config{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	if h.Status().State != "disabled" {
+		t.Fatalf("want disabled got %s", h.Status().State)
+	}
+	if err := h.Start(nil, Config{Enabled: true, HTTPEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if h.Status().State != "no_vault" {
+		t.Fatalf("want no_vault got %s", h.Status().State)
+	}
+}
+
+func TestHost_VaultSwitchRestarts(t *testing.T) {
+	kr := keyring.NewFake()
+	h := NewHost(Options{Keyring: kr, Auditor: &MemoryAuditor{}})
+	p1 := freePort(t)
+	b1 := &fakeBridge{path: t.TempDir() + "/a"}
+	if err := h.Start(b1, Config{Enabled: true, HTTPEnabled: true, HTTPPort: p1}); err != nil {
+		t.Fatal(err)
+	}
+	ep1 := h.Endpoint()
+	p2 := freePort(t)
+	b2 := &fakeBridge{path: t.TempDir() + "/b"}
+	if err := h.Start(b2, Config{Enabled: true, HTTPEnabled: true, HTTPPort: p2}); err != nil {
+		t.Fatal(err)
+	}
+	ep2 := h.Endpoint()
+	if ep1 == ep2 {
+		t.Fatalf("expected new endpoint after switch: %s", ep2)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if _, err := http.Get(ep1 + "/health"); err == nil {
+		t.Fatal("old endpoint still up")
+	}
+	resp, err := http.Get(ep2 + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	h.Stop()
+}
+
+func TestHost_LoopbackOnlyBind(t *testing.T) {
+	// Binding 0.0.0.0 is never attempted by Host; AssertLoopbackAddr rejects non-loopback.
+	ip := net.ParseIP("8.8.8.8")
+	addr := &net.TCPAddr{IP: ip, Port: 9}
+	if err := AssertLoopbackAddr(addr); err == nil {
+		t.Fatal("expected non-loopback error")
+	}
+	loop := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9}
+	if err := AssertLoopbackAddr(loop); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func connectTools(t *testing.T, bridge Bridge, cfg Config) (*mcpsdk.ClientSession, *MemoryAuditor) {
+	t.Helper()
+	aud := &MemoryAuditor{}
+	env := &toolEnv{
+		bridge: bridge,
+		cfg:    func() Config { return cfg },
+		audit:  aud,
+		client: func(context.Context) string { return "test" },
+	}
+	srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "silt", Version: "test"}, nil)
+	registerTools(srv, env)
+	t1, t2 := mcpsdk.NewInMemoryTransports()
+	if _, err := srv.Connect(context.Background(), t1, nil); err != nil {
+		t.Fatal(err)
+	}
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "c", Version: "t"}, nil)
+	cs, err := client.Connect(context.Background(), t2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+	return cs, aud
+}
+
+func toolText(t *testing.T, res *mcpsdk.CallToolResult) string {
+	t.Helper()
+	if res == nil {
+		return ""
+	}
+	var parts []string
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcpsdk.TextContent); ok {
+			parts = append(parts, tc.Text)
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func TestTools_ReadHappyPath(t *testing.T) {
+	bridge := &fakeBridge{
+		path: t.TempDir(),
+		pages: map[string][]parser.ParsedBlock{
+			"Work\x00\x00Home": {
+				{ID: "b1", Type: parser.BlockNote, RawText: "hello vault", CleanText: "hello vault"},
+			},
+		},
+		search: parser.SearchResult{
+			Results: []parser.TaskResult{{ID: "b1", Notebook: "Work", Page: "Home", Snippet: "hello vault"}},
+			Total:   1,
+			Limit:   20,
+		},
+	}
+	cs, _ := connectTools(t, bridge, Config{Enabled: true})
+	ctx := context.Background()
+
+	res, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name:      "search_blocks",
+		Arguments: map[string]any{"query": "hello"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("search error: %s", toolText(t, res))
+	}
+	if !strings.Contains(toolText(t, res), "hello vault") {
+		t.Fatalf("search: %s", toolText(t, res))
+	}
+
+	res, err = cs.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name:      "read_page",
+		Arguments: map[string]any{"notebook": "Work", "section": "", "page": "Home"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("read: %s", toolText(t, res))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(toolText(t, res)), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["count"] == nil {
+		t.Fatalf("missing count: %v", payload)
+	}
+
+	res, err = cs.CallTool(ctx, &mcpsdk.CallToolParams{Name: "list_notebooks", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("list: %s", toolText(t, res))
+	}
+}
+
+func TestTools_WriteWithoutGrantRejected(t *testing.T) {
+	bridge := &fakeBridge{path: t.TempDir()}
+	cs, aud := connectTools(t, bridge, Config{Enabled: true, WriteEnabled: false})
+	ctx := context.Background()
+
+	res, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name:      "create_page",
+		Arguments: map[string]any{"notebook": "Work", "section": "", "page": "X"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected isError for write without grant")
+	}
+	if bridge.createN != 0 {
+		t.Fatalf("create ran: %d", bridge.createN)
+	}
+	found := false
+	for _, e := range aud.Entries {
+		if e.Tool == "create_page" && e.Outcome == "denied" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected denied audit entry: %+v", aud.Entries)
+	}
+
+	// With grant
+	cs2, _ := connectTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
+	res, err = cs2.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name:      "create_page",
+		Arguments: map[string]any{"notebook": "Work", "section": "", "page": "X"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("create with grant: %s", toolText(t, res))
+	}
+	if bridge.createN != 1 {
+		t.Fatalf("createN=%d", bridge.createN)
+	}
+}
+
+func TestRedactArgs_NoBodies(t *testing.T) {
+	m := RedactArgs(map[string]any{
+		"query":    "secret note body text",
+		"notebook": "Work",
+		"text":     "should not appear",
+		"blocks":   []any{1, 2, 3},
+	})
+	raw, _ := json.Marshal(m)
+	s := string(raw)
+	if strings.Contains(s, "secret note") || strings.Contains(s, "should not") {
+		t.Fatalf("leaked body: %s", s)
+	}
+	if m["notebook"] != "Work" {
+		t.Fatalf("notebook: %v", m["notebook"])
+	}
+	if m["blocks_count"] != 3 {
+		t.Fatalf("blocks_count: %v", m["blocks_count"])
+	}
+}
+
+func TestVaultPathHash_Stable(t *testing.T) {
+	a := VaultPathHash("/tmp/vault")
+	b := VaultPathHash("/tmp/vault")
+	if a == "" || a != b {
+		t.Fatalf("%q vs %q", a, b)
+	}
+	if VaultPathHash("/other") == a {
+		t.Fatal("expected different hash")
+	}
+}
+
+// silence unused in case of build tags
+var _ = fmt.Sprintf

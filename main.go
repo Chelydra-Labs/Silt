@@ -164,6 +164,11 @@ func setupMainWindowEvents(window *application.WebviewWindow, siltApp *App) {
 }
 
 func main() {
+	// CLI subcommands (no GUI). `silt mcp` proxies stdio to the running app.
+	if len(os.Args) >= 2 && os.Args[1] == "mcp" {
+		os.Exit(runMCPCLI(os.Args[2:]))
+	}
+
 	app := NewApp()
 
 	// Single WebView2 cache folder, cleared on version change to prevent

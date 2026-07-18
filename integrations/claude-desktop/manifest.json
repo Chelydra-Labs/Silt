@@ -1,0 +1,33 @@
+{
+  "manifest_version": "0.2",
+  "name": "silt-local-mcp",
+  "display_name": "Silt Local MCP",
+  "version": "0.1.0",
+  "description": "Connect Claude Desktop to a running Silt vault over local MCP (loopback + stdio proxy).",
+  "author": {
+    "name": "Silt"
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "silt",
+    "mcp_config": {
+      "command": "silt",
+      "args": ["mcp"],
+      "env": {}
+    }
+  },
+  "tools": [
+    "search_blocks",
+    "search_notes",
+    "read_page",
+    "read_blocks",
+    "list_notebooks",
+    "create_page",
+    "update_blocks"
+  ],
+  "user_config": {},
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "notes": "Requires Silt running with Local MCP enabled and a vault open. Auth token is read from the OS keyring by `silt mcp`."
+  }
+}

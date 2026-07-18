@@ -18,6 +18,7 @@ import (
 	"silt/backend/core"
 	"silt/backend/db"
 	"silt/backend/keyring"
+	"silt/backend/mcp"
 	"silt/backend/monitor"
 	"silt/backend/parser"
 	"silt/backend/templates"
@@ -88,6 +89,12 @@ type App struct {
 	// D-Bus can drop), so callers fall back to config + a warning on
 	// ErrUnavailable rather than failing the AI subsystem.
 	keyringStore keyring.Store
+
+	// mcpHost is the in-process local MCP server (#687). Started when
+	// ai.local_mcp.enabled and a vault is open; stopped on vault close,
+	// switch, and ServiceShutdown. Close-to-tray keeps the process (and MCP)
+	// alive; Quit drains via ServiceShutdown.
+	mcpHost *mcp.Host
 
 	// aiCtx is the app-lifecycle context for AI HTTP calls. Cancelled in
 	// shutdown() so in-flight completions/embeddings are cancelled on app
@@ -328,6 +335,8 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 // OnShutdown callback). Called after all OnShutdown hooks, in reverse
 // registration order.
 func (a *App) ServiceShutdown() error {
+	// Stop accepting MCP clients before vault teardown (#687).
+	a.stopMCPHost()
 	// Cancel in-flight AI HTTP calls so they don't outlive the process.
 	if a.aiCtxCancel != nil {
 		a.aiCtxCancel()
@@ -361,6 +370,8 @@ func (a *App) ServiceShutdown() error {
 // and CloseVault (workspace switch) so the two paths can't drift. Safe to
 // call when services are already nil (each close is guarded).
 func (a *App) teardownVaultServices() {
+	// Stop MCP before audit/DB teardown so in-flight tools fail cleanly (#687).
+	a.stopMCPHost()
 	// Stop the audit writers FIRST so they drain queued entries for the closing
 	// vault before any service they depend on (just vaultPath at this point)
 	// goes away. After this returns, every enqueued audit write is on disk.
@@ -818,6 +829,11 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	if failed := watcher.FailedPaths(); len(failed) > 0 {
 		a.emitOrQueue("vault:watch-coverage", failed)
 	}
+
+	// Local MCP host (#687): start when enabled in config.yaml. Safe no-op
+	// when disabled. Caller holds vaultMu.Lock — must use Locked variant
+	// (Go RWMutex deadlocks on RLock while the same goroutine holds Lock).
+	a.syncMCPHostLocked()
 
 	return nil
 }
