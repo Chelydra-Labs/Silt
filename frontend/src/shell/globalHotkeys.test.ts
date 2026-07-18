@@ -192,6 +192,61 @@ describe('resolveGlobalHotkey', () => {
     expect(result).toBeNull()
   })
 
+  it.each(['input', 'textarea', 'select'] as const)(
+    'suppresses creation and switcher shortcuts in %s controls',
+    (tag) => {
+      const control = document.createElement(tag)
+      const resolve = (event: KeyboardEvent) =>
+        resolveGlobalHotkey(event, defaults, false, false)
+
+      for (const event of [
+        key('n', { ctrlKey: true }),
+        key('n', { ctrlKey: true, altKey: true }),
+        key('n', { ctrlKey: true, altKey: true, shiftKey: true }),
+        key('p', { ctrlKey: true })
+      ]) {
+        Object.defineProperty(event, 'target', { value: control })
+        expect(resolve(event)).toBeNull()
+      }
+    }
+  )
+
+  it('suppresses navigation shortcuts in a non-editor contenteditable', () => {
+    const control = document.createElement('div')
+    control.setAttribute('contenteditable', 'true')
+    const event = key('p', { ctrlKey: true })
+    Object.defineProperty(event, 'target', { value: control })
+
+    expect(resolveGlobalHotkey(event, defaults, false, false)).toBeNull()
+  })
+
+  it('allows modifier creation and switcher shortcuts in ProseMirror but suppresses typing', () => {
+    const editor = document.createElement('div')
+    editor.className = 'ProseMirror'
+    editor.contentEditable = 'true'
+    const paragraph = document.createElement('p')
+    editor.append(paragraph)
+
+    const resolveFromEditor = (event: KeyboardEvent) => {
+      Object.defineProperty(event, 'target', { value: paragraph })
+      return resolveGlobalHotkey(event, defaults, true, false)
+    }
+
+    expect(resolveFromEditor(key('n', { ctrlKey: true }))).toBe('new_page')
+    expect(resolveFromEditor(key('n', { ctrlKey: true, altKey: true }))).toBe(
+      'new_section'
+    )
+    expect(
+      resolveFromEditor(
+        key('n', { ctrlKey: true, altKey: true, shiftKey: true })
+      )
+    ).toBe('new_notebook')
+    expect(resolveFromEditor(key('p', { ctrlKey: true }))).toBe(
+      'open_quick_switcher'
+    )
+    expect(resolveFromEditor(key('?', { shiftKey: true }))).toBeNull()
+  })
+
   it('honors explicit disabling and remapping for new actions', () => {
     const configured = {
       ...defaults,

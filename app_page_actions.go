@@ -18,6 +18,7 @@ var pageEmbedReferencePattern = regexp.MustCompile(`\{\{embed:([0-9a-fA-F]{8}-[0
 // weakening the production write path. They are intentionally package-local;
 // callers cannot bypass the rollback protocol.
 var duplicatePagePostWriteParse = parser.ParseFileContent
+var duplicatePageBeforeWrite = func() {}
 var duplicatePageIndex = func(a *App, source, notebook, section, page string, blocks []parser.ParsedBlock, tags []string, warnings ...string) error {
 	var err error
 	a.coordinator.WithDBWrite(func() {
@@ -97,14 +98,14 @@ func (a *App) DuplicatePage(notebook, section, page, targetName string) error {
 	}
 	sourcePath := filepath.Join(notebookDir, filepath.FromSlash(safeSection), safePage+".md")
 	targetPath := filepath.Join(notebookDir, filepath.FromSlash(safeSection), safeTarget+".md")
-	if !isPathWithinRoot(sourcePath, notebookDir) || !isPathWithinRoot(targetPath, notebookDir) {
+	if !isPathWithinRoot(sourcePath, notebookDir) || !isCreationPathWithinRoot(targetPath, notebookDir) {
 		return NewIPCError(CodeInvalidNavigationPath, "page path escapes notebook root")
 	}
 
 	a.wg.Add(1)
 	defer a.wg.Done()
 	var runErr error
-	a.coordinator.LockFileWrite(notebookDir, func() {
+	a.coordinator.LockFileWrite(targetPath, func() {
 		if _, statErr := os.Stat(sourcePath); statErr != nil {
 			if os.IsNotExist(statErr) {
 				runErr = pageActionError(CodeNavigationNotFound, "source page not found", statErr)
@@ -169,6 +170,7 @@ func (a *App) DuplicatePage(notebook, section, page, targetName string) error {
 		body = remapPageReferences(body, idMap)
 		duplicate := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
 
+		duplicatePageBeforeWrite()
 		a.tracker.RegisterWrite(targetPath)
 		if writeErr := parser.WriteFileAtomic(targetPath, []byte(duplicate)); writeErr != nil {
 			runErr = pageActionError(CodeNavigationDuplicate, "duplicate page cannot be written", writeErr)

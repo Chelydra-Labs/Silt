@@ -79,6 +79,16 @@ function template(id: string, source: string, title = id) {
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 async function setup() {
   mocks.listTemplates.mockResolvedValue({ templates: summaries })
   await loadTemplates()
@@ -393,6 +403,27 @@ describe('TemplatesTab', () => {
     )
     expect(await screen.findByText('page unavailable')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Meeting/ })).toBeInTheDocument()
+  })
+
+  it('ignores a stale template response after a newer selection completes', async () => {
+    const daily = deferred<ReturnType<typeof template>>()
+    const meeting = deferred<ReturnType<typeof template>>()
+    mocks.getTemplate.mockImplementation((id: string) =>
+      id === 'daily' ? daily.promise : meeting.promise
+    )
+    await setup()
+
+    await fireEvent.click(screen.getByRole('button', { name: /Daily note/ }))
+    await fireEvent.click(screen.getByRole('button', { name: /Meeting/ }))
+    meeting.resolve(template('meeting', 'disk', 'Meeting B'))
+    expect(await screen.findByDisplayValue('Meeting B')).toBeInTheDocument()
+
+    daily.resolve(template('daily', 'builtin', 'Daily A'))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Title')).toHaveValue('Meeting B')
+    )
+    expect(screen.queryByDisplayValue('Daily A')).not.toBeInTheDocument()
+    expect(screen.queryByText('Loading template…')).not.toBeInTheDocument()
   })
 
   it('warns before discarding an unsaved edit', async () => {

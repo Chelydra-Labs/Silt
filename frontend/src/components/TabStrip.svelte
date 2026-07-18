@@ -392,7 +392,7 @@
         aria-haspopup="menu"
         aria-expanded={overflowMenuOpen}
         aria-controls="tab-overflow-menu"
-        title="Show hidden tabs"
+        title={`${hiddenTabs.length} hidden ${hiddenTabs.length === 1 ? 'tab' : 'tabs'}`}
         onclick={() => (overflowMenuOpen = !overflowMenuOpen)}
       >
         <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"

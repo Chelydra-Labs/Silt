@@ -183,6 +183,24 @@ func TestNestedNavigationCRUD_ReconcilesPreferences(t *testing.T) {
 	}
 }
 
+func TestMovePage_RejectsSymlinkedDestination(t *testing.T) {
+	app := newTestApp(t)
+	external := t.TempDir()
+	link := filepath.Join(app.vaultPath, "Work", "External")
+	if err := os.Symlink(external, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	source := filepath.Join(app.vaultPath, "Work", "Source", "Page.md")
+	writeFile(t, source, "---\nnotebook: Work\nsection: Source\npage: Page\n---\n# Page\n")
+	if err := app.MovePage("Work", "Source", "External", "Page"); err == nil {
+		t.Fatal("MovePage accepted a destination through a parent symlink")
+	}
+	if _, err := os.Stat(filepath.Join(external, "Page.md")); !os.IsNotExist(err) {
+		t.Fatalf("MovePage wrote outside the notebook root: %v", err)
+	}
+}
+
 func TestQuickAccessCollapsedPreference_RoundTripsThroughNavigationIPC(t *testing.T) {
 	app := newTestApp(t)
 

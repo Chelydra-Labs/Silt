@@ -105,7 +105,9 @@
       {:else}
         <div class="px-1.5 pb-1.5 grid gap-1">
           {#if !hasPages}
-            <p class="empty">No saved pages yet.</p>
+            <p class="empty">
+              No favorites or recent pages yet. Open or favorite a page.
+            </p>
           {/if}
           {#if favorites.length > 0}<div>
               <h3 class="group-title">Favorites</h3>

@@ -138,6 +138,7 @@ describe('TabStrip (#142)', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
 
     const overflow = screen.getByRole('button', { name: '2 hidden tabs' })
+    expect(overflow).toHaveAttribute('title', '2 hidden tabs')
     await fireEvent.click(overflow)
     expect(screen.queryByRole('menuitem', { name: /Visible/ })).toBeNull()
     await fireEvent.click(

@@ -148,3 +148,55 @@ func isPathWithinRoot(target, root string) bool {
 	}
 	return strings.HasPrefix(absTarget, prefix)
 }
+
+// isCreationPathWithinRoot applies the containment check to a path whose leaf
+// does not exist yet. It resolves the nearest existing parent first, so a
+// symlink in the path's existing parent chain cannot redirect a creation into
+// an external tree. isPathWithinRoot intentionally keeps its permissive
+// non-existent-target behavior for callers that only validate paths.
+func isCreationPathWithinRoot(target, root string) bool {
+	absTarget, err := filepath.Abs(filepath.Clean(target))
+	if err != nil {
+		return false
+	}
+	absRoot, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return false
+	}
+	resolvedRoot, rootMissing, err := resolveExistingParent(absRoot)
+	if err != nil {
+		return false
+	}
+	for i := len(rootMissing) - 1; i >= 0; i-- {
+		resolvedRoot = filepath.Join(resolvedRoot, rootMissing[i])
+	}
+	resolvedParent, missingSuffix, err := resolveExistingParent(filepath.Dir(absTarget))
+	if err != nil {
+		return false
+	}
+	resolvedTarget := resolvedParent
+	for i := len(missingSuffix) - 1; i >= 0; i-- {
+		resolvedTarget = filepath.Join(resolvedTarget, missingSuffix[i])
+	}
+	return isPathWithinRoot(resolvedTarget, resolvedRoot)
+}
+
+func resolveExistingParent(path string) (string, []string, error) {
+	current := filepath.Clean(path)
+	var missingSuffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			return resolved, missingSuffix, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", nil, err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", nil, err
+		}
+		missingSuffix = append(missingSuffix, filepath.Base(current))
+		current = parent
+	}
+}

@@ -23,9 +23,17 @@ describe('SidebarQuickAccess', () => {
     render(SidebarQuickAccess, { props: baseProps })
     const toggle = screen.getByRole('button', { name: 'Quick access' })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByText('No saved pages yet.')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(
+        'No favorites or recent pages yet. Open or favorite a page.'
+      )
+    ).not.toBeInTheDocument()
     await fireEvent.click(toggle)
-    expect(screen.getByText('No saved pages yet.')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'No favorites or recent pages yet. Open or favorite a page.'
+      )
+    ).toBeInTheDocument()
   })
 
   it('expands useful content by default and remains collapsible', async () => {

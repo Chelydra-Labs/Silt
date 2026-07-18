@@ -296,6 +296,22 @@ func TestCreatePage_Scaffolding(t *testing.T) {
 	}
 }
 
+func TestCreateSection_RejectsParentSymlink(t *testing.T) {
+	app := newTestApp(t)
+	external := t.TempDir()
+	link := filepath.Join(app.vaultPath, "Work", "External")
+	if err := os.Symlink(external, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	if err := app.CreateSection("Work", "External", "Child"); err == nil {
+		t.Fatal("CreateSection accepted a parent symlink outside the notebook root")
+	}
+	if _, err := os.Stat(filepath.Join(external, "Child")); !os.IsNotExist(err) {
+		t.Fatalf("CreateSection wrote outside the notebook root: %v", err)
+	}
+}
+
 func TestCreatePage_NestedSection(t *testing.T) {
 	app := newTestApp(t)
 
@@ -319,6 +335,22 @@ func TestCreatePage_NestedSection(t *testing.T) {
 	content := string(contentBytes)
 	if !strings.Contains(content, `section: "Projects/Active"`) || !strings.Contains(content, `page: "Site"`) {
 		t.Errorf("scaffolded metadata does not preserve the nested section, got:\n%s", content)
+	}
+}
+
+func TestCreatePage_RejectsParentSymlink(t *testing.T) {
+	app := newTestApp(t)
+	external := t.TempDir()
+	link := filepath.Join(app.vaultPath, "Work", "External")
+	if err := os.Symlink(external, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	if _, err := app.CreatePage("Work", "External", "Escaped", "2026-06-13"); err == nil {
+		t.Fatal("CreatePage accepted a parent symlink outside the notebook root")
+	}
+	if _, err := os.Stat(filepath.Join(external, "Escaped.md")); !os.IsNotExist(err) {
+		t.Fatalf("CreatePage wrote outside the notebook root: %v", err)
 	}
 }
 

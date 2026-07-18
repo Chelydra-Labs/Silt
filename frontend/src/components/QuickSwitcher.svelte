@@ -29,6 +29,7 @@
 
   let query = $state('')
   let activeIndex = $state(-1)
+  let activeKey = $state('')
   let input = $state<HTMLInputElement | null>(null)
   let dialog = $state<HTMLDivElement | null>(null)
   let previousFocus: HTMLElement | null = null
@@ -43,10 +44,18 @@
   $effect(() => {
     results
     selectableIndices
-    if (!selectableIndices.includes(activeIndex)) {
-      activeIndex = selectableIndices[0] ?? -1
-    }
+    const retainedIndex = results.findIndex(
+      (item) => item.key === activeKey && !item.disconnected
+    )
+    setActiveIndex(
+      retainedIndex >= 0 ? retainedIndex : (selectableIndices[0] ?? -1)
+    )
   })
+
+  function setActiveIndex(index: number) {
+    activeIndex = index
+    activeKey = index >= 0 ? (results[index]?.key ?? '') : ''
+  }
 
   function optionId(index: number) {
     return `quick-switcher-option-${index}`
@@ -62,21 +71,23 @@
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       const current = selectableIndices.indexOf(activeIndex)
-      activeIndex =
+      setActiveIndex(
         selectableIndices[(current + 1) % selectableIndices.length] ?? -1
+      )
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
       const current = selectableIndices.indexOf(activeIndex)
-      activeIndex =
+      setActiveIndex(
         selectableIndices[
           (current - 1 + selectableIndices.length) % selectableIndices.length
         ] ?? -1
+      )
     } else if (event.key === 'Home') {
       event.preventDefault()
-      activeIndex = selectableIndices[0] ?? -1
+      setActiveIndex(selectableIndices[0] ?? -1)
     } else if (event.key === 'End') {
       event.preventDefault()
-      activeIndex = selectableIndices.at(-1) ?? -1
+      setActiveIndex(selectableIndices.at(-1) ?? -1)
     } else if (event.key === 'Enter') {
       event.preventDefault()
       const item = results[activeIndex]
@@ -152,7 +163,6 @@
       <input
         bind:this={input}
         bind:value={query}
-        oninput={() => (activeIndex = -1)}
         onkeydown={handleKeydown}
         role="combobox"
         aria-label="Find a page"
@@ -209,7 +219,7 @@
             aria-selected={index === activeIndex}
             aria-disabled={item.disconnected}
             disabled={item.disconnected}
-            onmouseenter={() => (activeIndex = index)}
+            onmouseenter={() => setActiveIndex(index)}
             onclick={() => activate(item, 'preview')}
             class="w-full rounded-lg px-3 py-2.5 border-none bg-transparent text-left flex items-center gap-3 cursor-pointer disabled:cursor-default disabled:opacity-55"
             class:bg-hover={index === activeIndex}

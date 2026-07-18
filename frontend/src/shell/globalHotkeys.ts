@@ -98,11 +98,11 @@ export function resolveGlobalHotkey(
   for (const action of ordered) {
     if (matchHotkey(e, hotkeys[action])) {
       const target = e.target
-      const editable =
+      const proseMirror =
+        target instanceof Element && !!target.closest('.ProseMirror')
+      const editableControl =
         target instanceof Element &&
-        !!target.closest(
-          'input, textarea, select, [contenteditable="true"], .ProseMirror'
-        )
+        !!target.closest('input, textarea, select, [contenteditable="true"]')
       const navigationAction = [
         'new_page',
         'new_section',
@@ -111,7 +111,18 @@ export function resolveGlobalHotkey(
         'open_shortcuts_help'
       ].includes(action)
       const plainTyping = !e.ctrlKey && !e.metaKey && !e.altKey
-      if (editable && (plainTyping || navigationAction)) return null
+      if (proseMirror) {
+        const editorGlobalAction = [
+          'new_page',
+          'new_section',
+          'new_notebook',
+          'open_quick_switcher'
+        ].includes(action)
+        if (plainTyping || (navigationAction && !editorGlobalAction))
+          return null
+      } else if (editableControl && (plainTyping || navigationAction)) {
+        return null
+      }
       return action
     }
   }

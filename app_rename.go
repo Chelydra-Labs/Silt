@@ -329,7 +329,7 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 	}
 	oldFile := filepath.Join(notebookDir, safeSection, safeOldPage+".md")
 	newFile := filepath.Join(notebookDir, safeSection, safeNewPage+".md")
-	if !isPathWithinRoot(oldFile, notebookDir) || !isPathWithinRoot(newFile, notebookDir) {
+	if !isPathWithinRoot(oldFile, notebookDir) || !isCreationPathWithinRoot(newFile, notebookDir) {
 		return fmt.Errorf("path escapes notebook root")
 	}
 	if _, err := os.Stat(newFile); err == nil {
@@ -427,7 +427,7 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 	}
 	oldFile := filepath.Join(notebookDir, safeFrom, safePage+".md")
 	newFile := filepath.Join(notebookDir, safeTo, safePage+".md")
-	if !isPathWithinRoot(oldFile, notebookDir) || !isPathWithinRoot(newFile, notebookDir) {
+	if !isPathWithinRoot(oldFile, notebookDir) || !isCreationPathWithinRoot(newFile, notebookDir) {
 		return fmt.Errorf("path escapes notebook root")
 	}
 	if _, err := os.Stat(oldFile); os.IsNotExist(err) {
@@ -548,7 +548,7 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 	}
 	oldDir := filepath.Join(notebookDir, safeOldSection)
 	newDir := filepath.Join(notebookDir, safeNewSection)
-	if !isPathWithinRoot(oldDir, notebookDir) || !isPathWithinRoot(newDir, notebookDir) {
+	if !isPathWithinRoot(oldDir, notebookDir) || !isCreationPathWithinRoot(newDir, notebookDir) {
 		return fmt.Errorf("path escapes notebook root")
 	}
 	if _, err := os.Stat(newDir); err == nil {
@@ -686,7 +686,7 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 
 	oldDir := filepath.Join(a.vaultPath, safeOldNotebook)
 	newDir := filepath.Join(a.vaultPath, safeNewNotebook)
-	if !isPathWithinRoot(oldDir, a.vaultPath) || !isPathWithinRoot(newDir, a.vaultPath) {
+	if !isPathWithinRoot(oldDir, a.vaultPath) || !isCreationPathWithinRoot(newDir, a.vaultPath) {
 		return fmt.Errorf("path escapes vault")
 	}
 	if _, err := os.Stat(newDir); err == nil {

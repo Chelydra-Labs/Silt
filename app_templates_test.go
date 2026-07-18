@@ -410,6 +410,22 @@ func TestCreatePageFromTemplate_IPC_DoesNotClobber(t *testing.T) {
 	}
 }
 
+func TestCreatePageFromTemplate_RejectsParentSymlink(t *testing.T) {
+	app := newTestApp(t)
+	external := t.TempDir()
+	link := filepath.Join(app.vaultPath, "Work", "External")
+	if err := os.Symlink(external, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	if _, err := app.CreatePageFromTemplate("Work", "External", "Escaped", "", "notes", nil); err == nil {
+		t.Fatal("CreatePageFromTemplate accepted a parent symlink outside the notebook root")
+	}
+	if _, err := os.Stat(filepath.Join(external, "Escaped.md")); !os.IsNotExist(err) {
+		t.Fatalf("CreatePageFromTemplate wrote outside the notebook root: %v", err)
+	}
+}
+
 func TestCreatePageFromTemplate_IPC_BeforeVault(t *testing.T) {
 	app := &App{}
 	_, err := app.CreatePageFromTemplate("nb", "", "pg", "", "daily-note", nil)

@@ -53,6 +53,7 @@
   let filter = $state('')
   let confirmMode = $state<'discard' | 'delete' | ''>('')
   let pendingAction: (() => void | Promise<void>) | null = null
+  let selectionRequestGeneration = 0
 
   let filtered = $derived(
     templatesState.items.filter((item) => {
@@ -89,6 +90,8 @@
 
   $effect(() => {
     if (vaultId === sessionVaultId) return
+    selectionRequestGeneration += 1
+    loadingBody = false
     const retainedSession = getRetainedTemplateDraft(vaultId)
     sessionVaultId = vaultId
     draft = (retainedSession?.draft as Draft) ?? null
@@ -113,6 +116,8 @@
     }
     window.addEventListener('beforeunload', warnBeforeUnload)
     const offVaultClosing = Events.On('vault:closing', () => {
+      selectionRequestGeneration += 1
+      loadingBody = false
       draft = null
       selectedId = ''
       baseline = ''
@@ -150,6 +155,7 @@
       confirmMode = 'discard'
       return
     }
+    const requestGeneration = ++selectionRequestGeneration
     selectedId = id
     draft = null
     baseline = ''
@@ -157,17 +163,21 @@
     error = ''
     try {
       const template = await GetTemplate(id)
+      if (requestGeneration !== selectionRequestGeneration) return
       draft = toDraft(template)
       baseline = JSON.stringify(draft)
     } catch (caught) {
+      if (requestGeneration !== selectionRequestGeneration) return
       error = caught instanceof Error ? caught.message : String(caught)
     } finally {
-      loadingBody = false
+      if (requestGeneration === selectionRequestGeneration) loadingBody = false
     }
   }
 
   function beginBlank() {
     const start = () => {
+      selectionRequestGeneration += 1
+      loadingBody = false
       selectedId = ''
       draft = {
         schema_version: '1',
@@ -197,6 +207,7 @@
       confirmMode = 'discard'
       return
     }
+    const requestGeneration = ++selectionRequestGeneration
     loadingBody = true
     error = ''
     try {
@@ -205,6 +216,7 @@
         activeSection,
         activePage
       )
+      if (requestGeneration !== selectionRequestGeneration) return
       const id = activePage
         .toLocaleLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
@@ -224,9 +236,10 @@
       selectedId = ''
       baseline = ''
     } catch (caught) {
+      if (requestGeneration !== selectionRequestGeneration) return
       error = caught instanceof Error ? caught.message : String(caught)
     } finally {
-      loadingBody = false
+      if (requestGeneration === selectionRequestGeneration) loadingBody = false
     }
   }
 

@@ -66,6 +66,34 @@ describe('QuickSwitcher', () => {
     expect(screen.getByText(/No pages match/)).toBeInTheDocument()
   })
 
+  it('keeps a selectable result active throughout filtering', async () => {
+    render(QuickSwitcher, {
+      props: {
+        catalog,
+        onRetry: vi.fn(),
+        onOpen: vi.fn(),
+        onClose: vi.fn()
+      }
+    })
+    const input = screen.getByRole('combobox')
+    await fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(screen.getByRole('option', { name: /Roadmap/ })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+
+    await fireEvent.input(input, { target: { value: 'road' } })
+
+    const selected = screen.getByRole('option', { name: /Roadmap/ })
+    expect(selected).toHaveAttribute('aria-selected', 'true')
+    expect(input.getAttribute('aria-activedescendant')).toBe(selected.id)
+
+    await fireEvent.input(input, { target: { value: 'inbox' } })
+    const fallback = screen.getByRole('option', { name: /Inbox/ })
+    expect(fallback).toHaveAttribute('aria-selected', 'true')
+    expect(input.getAttribute('aria-activedescendant')).toBe(fallback.id)
+  })
+
   it('shows load errors with retry and restores focus on Escape', async () => {
     const trigger = document.createElement('button')
     document.body.append(trigger)

@@ -719,7 +719,7 @@ func (a *App) CreateSection(notebook, parentPath, name string) error {
 		return err
 	}
 	secPath := filepath.Join(notebookDir, safeParent, safeName)
-	if !isPathWithinRoot(secPath, notebookDir) {
+	if !isCreationPathWithinRoot(secPath, notebookDir) {
 		return fmt.Errorf("path escapes notebook root")
 	}
 	if err := os.MkdirAll(secPath, 0755); err != nil {
@@ -758,7 +758,7 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 		return "", err
 	}
 	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
-	if !isPathWithinRoot(filePath, notebookDir) {
+	if !isCreationPathWithinRoot(filePath, notebookDir) {
 		return "", fmt.Errorf("path escapes notebook root")
 	}
 
@@ -781,6 +781,12 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 
 	var writeErr error
 	a.coordinator.LockFileWrite(filePath, func() {
+		if _, statErr := os.Stat(filePath); statErr == nil {
+			return
+		} else if !os.IsNotExist(statErr) {
+			writeErr = fmt.Errorf("failed to check page target: %w", statErr)
+			return
+		}
 		a.tracker.RegisterWrite(filePath)
 		if err := parser.WriteFileAtomic(filePath, []byte(scaffoldFrontmatter)); err != nil {
 			writeErr = err

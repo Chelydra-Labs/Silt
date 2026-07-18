@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"silt/backend/config"
 	"silt/backend/parser"
@@ -148,6 +149,60 @@ func TestDuplicatePage_PostWriteFailuresRollbackAndRetry(t *testing.T) {
 	duplicatePageIndex = originalIndex
 	if err := app.DuplicatePage("Work", "", "Original", "RetryIndex"); err != nil {
 		t.Fatalf("retry after index rollback: %v", err)
+	}
+}
+
+func TestDuplicatePage_AndCreatePageSerializeOnExactTarget(t *testing.T) {
+	app := newTestApp(t)
+	seedIndexedPage(t, app, filepath.Join(app.vaultPath, "Work", "Original.md"), "Work", "", "Original", duplicatePageContent)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	originalBeforeWrite := duplicatePageBeforeWrite
+	duplicatePageBeforeWrite = func() {
+		close(entered)
+		<-release
+	}
+	t.Cleanup(func() { duplicatePageBeforeWrite = originalBeforeWrite })
+
+	duplicateDone := make(chan error, 1)
+	go func() { duplicateDone <- app.DuplicatePage("Work", "", "Original", "Copy") }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("duplicate did not reach its target write hook")
+	}
+
+	createDone := make(chan error, 1)
+	var createDate string
+	go func() {
+		date, err := app.CreatePage("Work", "", "Copy", "2026-06-13")
+		createDate = date
+		createDone <- err
+	}()
+	select {
+	case err := <-createDone:
+		t.Fatalf("CreatePage completed before DuplicatePage released the target lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	if err := <-duplicateDone; err != nil {
+		t.Fatalf("DuplicatePage: %v", err)
+	}
+	if err := <-createDone; err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+	if createDate != "2026-06-13" {
+		t.Fatalf("CreatePage returned date %q, want existing-page date", createDate)
+	}
+
+	content, err := os.ReadFile(filepath.Join(app.vaultPath, "Work", "Copy.md"))
+	if err != nil {
+		t.Fatalf("read serialized target: %v", err)
+	}
+	if !strings.Contains(string(content), "First") || strings.Contains(string(content), "date: \"2026-06-13\"") {
+		t.Fatalf("CreatePage clobbered the duplicate target: %s", content)
 	}
 }
 

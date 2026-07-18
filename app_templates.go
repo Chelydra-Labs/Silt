@@ -239,7 +239,7 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 	} else {
 		filePath = filepath.Join(notebookDir, safeSection, safePage+".md")
 	}
-	if !isPathWithinRoot(filePath, notebookDir) {
+	if !isCreationPathWithinRoot(filePath, notebookDir) {
 		return "", fmt.Errorf("path escapes notebook root")
 	}
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
