@@ -214,8 +214,11 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizeSectionPath(section)
+	safeSection, sectionErr := validateSectionPath(section, true)
 	safePage := sanitizePathSegment(page)
+	if sectionErr != nil {
+		return "", invalidNavigationPath(sectionErr)
+	}
 	if safeNotebook == "" || safePage == "" {
 		return "", fmt.Errorf("notebook and page names are required (section is optional)")
 	}
@@ -236,7 +239,7 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 	} else {
 		filePath = filepath.Join(notebookDir, safeSection, safePage+".md")
 	}
-	if !isPathWithinRoot(filePath, notebookDir) {
+	if !isCreationPathWithinRoot(filePath, notebookDir) {
 		return "", fmt.Errorf("path escapes notebook root")
 	}
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {

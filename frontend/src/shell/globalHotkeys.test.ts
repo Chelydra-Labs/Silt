@@ -29,6 +29,11 @@ const defaults: Record<string, string> = {
   next_tab: 'Ctrl+Tab',
   prev_tab: 'Ctrl+Shift+Tab',
   close_tab: 'Ctrl+W',
+  new_page: 'Ctrl+N',
+  new_section: 'Ctrl+Alt+N',
+  new_notebook: 'Ctrl+Alt+Shift+N',
+  open_quick_switcher: 'Ctrl+P',
+  open_shortcuts_help: 'Shift+?',
   // editor-owned (only matter for the focus guard):
   format_bold: 'Ctrl+B',
   set_h1: 'Ctrl+Alt+1',
@@ -150,5 +155,109 @@ describe('resolveGlobalHotkey', () => {
         true
       )
     ).toBe('prev_tab')
+  })
+
+  it('resolves creation, switcher, and help actions', () => {
+    expect(
+      resolveGlobalHotkey(key('n', { ctrlKey: true }), defaults, false, false)
+    ).toBe('new_page')
+    expect(
+      resolveGlobalHotkey(
+        key('n', { ctrlKey: true, altKey: true }),
+        defaults,
+        false,
+        false
+      )
+    ).toBe('new_section')
+    expect(
+      resolveGlobalHotkey(key('p', { ctrlKey: true }), defaults, false, false)
+    ).toBe('open_quick_switcher')
+    expect(
+      resolveGlobalHotkey(key('?', { shiftKey: true }), defaults, false, false)
+    ).toBe('open_shortcuts_help')
+  })
+
+  it('ignores composition and navigation actions in editable controls', () => {
+    const composing = key('n', { ctrlKey: true, isComposing: true })
+    expect(resolveGlobalHotkey(composing, defaults, false, false)).toBeNull()
+
+    const input = document.createElement('input')
+    let result: ReturnType<typeof resolveGlobalHotkey> = 'new_page'
+    input.addEventListener('keydown', (event) => {
+      result = resolveGlobalHotkey(event, defaults, false, false)
+    })
+    input.dispatchEvent(key('n', { ctrlKey: true }))
+    expect(result).toBeNull()
+    input.dispatchEvent(key('?', { shiftKey: true }))
+    expect(result).toBeNull()
+  })
+
+  it.each(['input', 'textarea', 'select'] as const)(
+    'suppresses creation and switcher shortcuts in %s controls',
+    (tag) => {
+      const control = document.createElement(tag)
+      const resolve = (event: KeyboardEvent) =>
+        resolveGlobalHotkey(event, defaults, false, false)
+
+      for (const event of [
+        key('n', { ctrlKey: true }),
+        key('n', { ctrlKey: true, altKey: true }),
+        key('n', { ctrlKey: true, altKey: true, shiftKey: true }),
+        key('p', { ctrlKey: true })
+      ]) {
+        Object.defineProperty(event, 'target', { value: control })
+        expect(resolve(event)).toBeNull()
+      }
+    }
+  )
+
+  it('suppresses navigation shortcuts in a non-editor contenteditable', () => {
+    const control = document.createElement('div')
+    control.setAttribute('contenteditable', 'true')
+    const event = key('p', { ctrlKey: true })
+    Object.defineProperty(event, 'target', { value: control })
+
+    expect(resolveGlobalHotkey(event, defaults, false, false)).toBeNull()
+  })
+
+  it('allows modifier creation and switcher shortcuts in ProseMirror but suppresses typing', () => {
+    const editor = document.createElement('div')
+    editor.className = 'ProseMirror'
+    editor.contentEditable = 'true'
+    const paragraph = document.createElement('p')
+    editor.append(paragraph)
+
+    const resolveFromEditor = (event: KeyboardEvent) => {
+      Object.defineProperty(event, 'target', { value: paragraph })
+      return resolveGlobalHotkey(event, defaults, true, false)
+    }
+
+    expect(resolveFromEditor(key('n', { ctrlKey: true }))).toBe('new_page')
+    expect(resolveFromEditor(key('n', { ctrlKey: true, altKey: true }))).toBe(
+      'new_section'
+    )
+    expect(
+      resolveFromEditor(
+        key('n', { ctrlKey: true, altKey: true, shiftKey: true })
+      )
+    ).toBe('new_notebook')
+    expect(resolveFromEditor(key('p', { ctrlKey: true }))).toBe(
+      'open_quick_switcher'
+    )
+    expect(resolveFromEditor(key('?', { shiftKey: true }))).toBeNull()
+  })
+
+  it('honors explicit disabling and remapping for new actions', () => {
+    const configured = {
+      ...defaults,
+      new_page: '',
+      open_quick_switcher: 'Alt+O'
+    }
+    expect(
+      resolveGlobalHotkey(key('n', { ctrlKey: true }), configured, false, false)
+    ).toBeNull()
+    expect(
+      resolveGlobalHotkey(key('o', { altKey: true }), configured, false, false)
+    ).toBe('open_quick_switcher')
   })
 })

@@ -1,3 +1,74 @@
+<script module lang="ts">
+  interface RecentPageRef {
+    notebook: string
+    section: string
+    page: string
+  }
+
+  export function createRecentPageRecorder(
+    persist: (ref: RecentPageRef) => Promise<unknown>,
+    refresh: () => void,
+    onError: (error: unknown) => void,
+    delay = 250
+  ) {
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null
+    let generation = 0
+    let pending = 0
+    let refreshNeeded = false
+
+    function scheduleRefresh(): void {
+      if (refreshTimer) clearTimeout(refreshTimer)
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null
+        refreshNeeded = false
+        refresh()
+      }, delay)
+    }
+
+    return {
+      record(ref: RecentPageRef): void {
+        const requestGeneration = generation
+        pending += 1
+        if (refreshTimer) clearTimeout(refreshTimer)
+        refreshTimer = null
+        void persist(ref)
+          .then(() => {
+            if (requestGeneration !== generation) return
+            refreshNeeded = true
+          })
+          .catch(onError)
+          .finally(() => {
+            if (requestGeneration !== generation) return
+            pending -= 1
+            if (pending === 0 && refreshNeeded) scheduleRefresh()
+          })
+      },
+      invalidate(): void {
+        generation += 1
+        pending = 0
+        refreshNeeded = false
+        if (refreshTimer) clearTimeout(refreshTimer)
+        refreshTimer = null
+      }
+    }
+  }
+
+  export function resolveBreadcrumbSectionSelection(
+    currentSection: string,
+    currentPage: string,
+    selectedSection: string
+  ): { section: string; page: string } {
+    const pageIsWithinSelection =
+      !!currentPage &&
+      (currentSection === selectedSection ||
+        currentSection.startsWith(`${selectedSection}/`))
+    return {
+      section: selectedSection,
+      page: pageIsWithinSelection ? currentPage : ''
+    }
+  }
+</script>
+
 <script lang="ts">
   import { onMount, tick } from 'svelte'
   import {
@@ -16,7 +87,8 @@
     UnlinkNotebook,
     CreateStandaloneTask,
     MarkFrontendReady,
-    GetStartupEvents
+    GetStartupEvents,
+    RecordRecentPage
   } from '../bindings/silt/app.js'
   import { Events } from '@wailsio/runtime'
   import type * as config from '../bindings/silt/backend/config/models.js'
@@ -27,10 +99,19 @@
   import VirtualScrollContainer from './components/VirtualScrollContainer.svelte'
   import TabStrip from './components/TabStrip.svelte'
   import SearchModal from './components/SearchModal.svelte'
+  import QuickSwitcher from './components/QuickSwitcher.svelte'
+  import PageBreadcrumb from './components/PageBreadcrumb.svelte'
+  import ShortcutHelp from './components/ShortcutHelp.svelte'
   import GlobalReplaceModal from './components/editor/GlobalReplaceModal.svelte'
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
   import SettingsPanel from './components/settings/SettingsPanel.svelte'
+  import {
+    clearRetainedTemplateDraft,
+    hasUnsavedTemplateDraft
+  } from './components/settings/templateDraftSession'
+  import { shortcutBinding } from './settings/shortcutActions'
+  import { createRecentSaveTracker } from './lib/editor/recentSaveTracker'
   import {
     getSettingsSections,
     resolveSettingsSectionId
@@ -53,6 +134,7 @@
   import { initTemplates } from './templates/store.svelte'
   import TemplatePicker from './templates/TemplatePicker.svelte'
   import { resolveGlobalHotkey } from './shell/globalHotkeys'
+  import { effectiveHotkeys } from './settings/shortcutActions'
   import { findBarState } from './lib/editor/search/findBarState.svelte'
   import {
     clearAllEditors,
@@ -97,6 +179,13 @@
     type ViewMode
   } from './lib/tabs'
   import { nextView } from './lib/viewCycle'
+  import {
+    flattenNavigation,
+    notebookNavigationMetadata,
+    type NotebookNavigationMetadata,
+    type NavigationCatalogItem
+  } from './lib/navigationCatalog'
+  import type { NavigationPreferences } from './lib/sidebar/types'
   import {
     isStandaloneTaskRef,
     routeJumpTarget
@@ -240,7 +329,23 @@
     activeTabId = result.activeId
     syncActiveFromTab()
     schedulePersistTabs()
+    recordRecentActivation(ref)
   }
+
+  const recentPageRecorder = createRecentPageRecorder(
+    (ref) => RecordRecentPage(ref.notebook, ref.section, ref.page),
+    () =>
+      window.dispatchEvent(new CustomEvent('navigation-preferences-changed')),
+    (error) => console.error('RecordRecentPage failed:', error)
+  )
+
+  function recordRecentActivation(ref: PageRef): void {
+    recentPageRecorder.record(ref)
+  }
+  const trackRecentSave = createRecentSaveTracker((tabId) => {
+    const tab = openTabs.find((candidate) => candidate.id === tabId)
+    if (tab) recordRecentActivation(tab)
+  })
 
   // Toggle a tab between Edit and Source view (#195). The mode lives on
   // TabEntry (single source of truth) and persists to config.yaml on the next
@@ -268,6 +373,88 @@
     }
   }
 
+  function selectNotebookContext(notebook: string): void {
+    if (!confirmTemplateTransition()) return
+    activeNotebook = notebook
+    const notebookTabs = openTabs
+      .filter((tab) => tab.notebook === notebook)
+      .sort((a, b) => b.lastActivatedAt - a.lastActivatedAt)
+    activeTabId = notebookTabs[0]?.id ?? ''
+    if (activeTabId) syncActiveFromTab()
+    else {
+      activeSection = ''
+      activePage = ''
+    }
+  }
+
+  function confirmTemplateTransition(): boolean {
+    return (
+      !(
+        activeView === 'settings' &&
+        settingsSection === 'templates' &&
+        hasUnsavedTemplateDraft()
+      ) || window.confirm('Leave Templates? Your draft will be kept for later.')
+    )
+  }
+
+  function selectView(view: string): void {
+    if (view !== activeView && !confirmTemplateTransition()) return
+    activeView = view
+  }
+
+  function openSectionContext(section: string): void {
+    const selection = resolveBreadcrumbSectionSelection(
+      activeSection,
+      activePage,
+      section
+    )
+    activeSection = selection.section
+    activePage = selection.page
+  }
+
+  function openFromQuickSwitcher(
+    item: NavigationCatalogItem,
+    mode: OpenPageMode
+  ): void {
+    openPage(item, mode)
+    activeView = 'notes'
+  }
+
+  async function requestNavigationCreation(
+    kind: 'page' | 'section' | 'notebook'
+  ): Promise<void> {
+    if (kind !== 'notebook' && !activeNotebook) {
+      pushNotification({
+        kind: 'error',
+        message: `Open a notebook before creating a ${kind}.`
+      })
+      return
+    }
+    if (kind !== 'notebook' && activeNotebookMetadata?.disconnected) {
+      pushNotification({
+        kind: 'error',
+        message:
+          'This linked notebook is offline. Reconnect it before creating anything.'
+      })
+      return
+    }
+    activeView = 'notes'
+    sidebarCollapsed = false
+    manuallyCollapsed = false
+    await tick()
+    if (kind === 'page') {
+      window.dispatchEvent(
+        new CustomEvent('create-page-inline', {
+          detail: { sectionName: activeSection ?? '' }
+        })
+      )
+    } else {
+      window.dispatchEvent(
+        new CustomEvent('open-navigation-create', { detail: { kind } })
+      )
+    }
+  }
+
   function handleSelectTab(id: string): void {
     activeTabId = id
     // Bump MRU ordering.
@@ -277,6 +464,8 @@
     )
     syncActiveFromTab()
     schedulePersistTabs()
+    const activated = openTabs.find((tab) => tab.id === id)
+    if (activated) recordRecentActivation(activated)
   }
 
   function handleCloseTab(id: string): void {
@@ -456,6 +645,23 @@
     }
   }
   let showSearch = $state(false)
+  let showQuickSwitcher = $state(false)
+  let showShortcutHelp = $state(false)
+  let navigationCatalog = $state<NavigationCatalogItem[]>([])
+  let navigationNotebookMetadata = $state<
+    Record<string, NotebookNavigationMetadata>
+  >({})
+  let navigationPreferences = $state<NavigationPreferences>({
+    expanded_sections: [],
+    recent_pages: [],
+    favorites: [],
+    quick_access_collapsed: true
+  })
+  let navigationCatalogLoading = $state(true)
+  let navigationCatalogError = $state('')
+  let activeNotebookMetadata = $derived(
+    navigationNotebookMetadata[activeNotebook]
+  )
   let showGlobalReplace = $state(false)
   // Global standalone-task quick-add overlay (#368). Opened by the new_task
   // hotkey (default Ctrl+Shift+N). Creates a task in <vault>/.silt/tasks.md
@@ -684,10 +890,10 @@
       // Config-driven global shortcuts. Resolution (editor-focus guard +
       // first-match-wins ordering) lives in the pure resolveGlobalHotkey so
       // it is unit-tested; this handler only switch-dispatches the result.
-      const hotkeys = settings.config?.hotkeys ?? {}
-      const editorFocused = !!(e.target as HTMLElement | null)?.closest(
-        '.ProseMirror'
-      )
+      const hotkeys = effectiveHotkeys(settings.config?.hotkeys ?? {})
+      const eventTarget = e.target
+      const editorFocused =
+        eventTarget instanceof Element && !!eventTarget.closest('.ProseMirror')
       const action = resolveGlobalHotkey(
         e,
         hotkeys,
@@ -699,6 +905,21 @@
       switch (action) {
         case 'open_search':
           showSearch = !showSearch
+          break
+        case 'new_page':
+          void requestNavigationCreation('page')
+          break
+        case 'new_section':
+          void requestNavigationCreation('section')
+          break
+        case 'new_notebook':
+          void requestNavigationCreation('notebook')
+          break
+        case 'open_quick_switcher':
+          showQuickSwitcher = !showQuickSwitcher
+          break
+        case 'open_shortcuts_help':
+          showShortcutHelp = !showShortcutHelp
           break
         case 'find_in_page':
           findBarState.openFind()
@@ -874,6 +1095,10 @@
       'plugins:changed',
       () => void handlePluginsChanged()
     )
+    const offTemplateDraftVaultClosing = Events.On('vault:closing', () => {
+      clearRetainedTemplateDraft()
+      recentPageRecorder.invalidate()
+    })
     // `vault:moved` fires after a successful vault Move/Copy-Switch (#141).
     // The backend has already reinitialized services at the new path; reset
     // navigation, close settings, and reload the (vault-scoped) config store
@@ -1125,6 +1350,8 @@
       window.removeEventListener('page-renamed', handlePageRenamed)
       offPluginsChanged()
       offVaultMoved()
+      offTemplateDraftVaultClosing()
+      recentPageRecorder.invalidate()
       offConfigChangedReload()
       offSettingsMismatch()
       offGrantsMigration()
@@ -1255,7 +1482,10 @@
   // Navigates to the freshly-created page (the reactive cascade loads it in
   // the editor) and refreshes the sidebar tree so the new page appears.
   function handleTemplatePageCreated(page: string): void {
-    activePage = page
+    openPage(
+      { notebook: activeNotebook, section: activeSection, page },
+      'preview'
+    )
     activeView = 'notes'
     window.dispatchEvent(new CustomEvent('refresh-navigation'))
   }
@@ -1315,6 +1545,13 @@
   // their page when they leave Settings. The section persists across opens so
   // re-entering Settings returns the user to the panel they last visited.
   function openSettings(section: string = 'general') {
+    if (
+      activeView === 'settings' &&
+      settingsSection === 'templates' &&
+      section !== 'templates' &&
+      !confirmTemplateTransition()
+    )
+      return
     // Validate against the live section registry so an unknown id (e.g. a
     // typo'd ctx.openSettings('foo') from a plugin) can't render a blank
     // panel or point aria-labelledby at a nonexistent tab. Falls back to
@@ -1406,6 +1643,8 @@
       bind:sidebarCollapsed
       {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
+      onSwitcherClick={() => (showQuickSwitcher = true)}
+      onShortcutHelpClick={() => (showShortcutHelp = true)}
       onAIClick={getAIAvailability().drawerAvailable
         ? () => toggleAIChatDrawer()
         : undefined}
@@ -1448,12 +1687,13 @@
                   sidebarCollapsed = !sidebarCollapsed
                   manuallyCollapsed = sidebarCollapsed
                 } else {
-                  activeView = v.id
+                  selectView(v.id)
+                  if (activeView !== v.id) return
                   sidebarCollapsed = false
                   manuallyCollapsed = false
                 }
               }}
-              class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none"
+              class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start motion-reduce:transform-none motion-reduce:transition-none"
               class:text-accent-primary-start={activeView === v.id}
               class:text-surface-activitybar-text-muted={activeView !== v.id}
               aria-label={v.label}
@@ -1478,7 +1718,7 @@
 
         <button
           onclick={() => openSettings('general')}
-          class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none"
+          class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start motion-reduce:transform-none motion-reduce:transition-none"
           class:text-accent-primary-start={activeView === 'settings'}
           class:text-surface-activitybar-text-muted={activeView !== 'settings'}
           aria-label="Settings"
@@ -1509,7 +1749,7 @@
             }}
             transition:fade={{ duration: 150 }}
             aria-label="Show sidebar"
-            title="Show sidebar (Ctrl+B)"
+            title={`Show sidebar${shortcutBinding('toggle_sidebar', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('toggle_sidebar', settings.config?.hotkeys ?? {})})` : ''}`}
             class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface-sidebar/80 backdrop-blur-md border border-surface-sidebar-border text-surface-sidebar-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
           >
             <span class="material-symbols-outlined text-icon-lg"
@@ -1528,20 +1768,7 @@
           bind:collapsed={sidebarCollapsed}
           {sidebarWidth}
           {sidebarDragging}
-          onSelectNotebook={(nb) => {
-            activeNotebook = nb
-            // Per-notebook tab scoping: activate the MRU tab for the new
-            // notebook (or clear if none exist for it).
-            const notebookTabs = openTabs
-              .filter((t) => t.notebook === nb)
-              .sort((a, b) => b.lastActivatedAt - a.lastActivatedAt)
-            if (notebookTabs.length > 0) {
-              activeTabId = notebookTabs[0].id
-            } else {
-              activeTabId = ''
-            }
-            syncActiveFromTab()
-          }}
+          onSelectNotebook={selectNotebookContext}
           onSelectSection={(sec) => (activeSection = sec)}
           onSelectPage={(nb, sec, pg) => {
             // Single-click opens in preview mode (industry-standard parity, #142).
@@ -1551,7 +1778,17 @@
             // Double-click / middle-click opens a pinned tab (#142).
             openPage({ notebook: nb, section: sec, page: pg }, 'pin')
           }}
-          onSelectView={(v) => (activeView = v)}
+          onSelectView={selectView}
+          onNavigationLoaded={(tree) => {
+            navigationCatalog = flattenNavigation(tree)
+            navigationNotebookMetadata = notebookNavigationMetadata(tree)
+          }}
+          onNavigationPreferencesLoaded={(preferences) =>
+            (navigationPreferences = preferences)}
+          onNavigationStatus={(loading, error) => {
+            navigationCatalogLoading = loading
+            navigationCatalogError = error
+          }}
           onPageMoved={(nb, fromSection, toSection, page) => {
             // A page was dragged across sections in the sidebar (#177). Update
             // the open tab for this specific page+section so its section field
@@ -1595,6 +1832,25 @@
             </div>
           {/if}
           {#if activeView === 'notes'}
+            <PageBreadcrumb
+              notebook={activeNotebook}
+              section={activeSection}
+              page={activePage}
+              {activeView}
+              linked={activeNotebookMetadata?.linked ?? false}
+              disconnected={activeNotebookMetadata?.disconnected ?? false}
+              onSelectNotebook={selectNotebookContext}
+              onSelectSection={openSectionContext}
+              onOpenPage={() =>
+                openPage(
+                  {
+                    notebook: activeNotebook,
+                    section: activeSection,
+                    page: activePage
+                  },
+                  'activate-only'
+                )}
+            />
             {#if notesReady}
               <div
                 id="silt-tabpanel"
@@ -1653,6 +1909,7 @@
                               }
                             : t
                         )
+                        trackRecentSave(tab.id, s)
                       }}
                     />
                   </div>
@@ -1769,6 +2026,23 @@
         showGlobalReplace = true
       }}
     />
+  {/if}
+
+  {#if showQuickSwitcher}
+    <QuickSwitcher
+      catalog={navigationCatalog}
+      recents={navigationPreferences.recent_pages}
+      loading={navigationCatalogLoading}
+      error={navigationCatalogError}
+      onRetry={() =>
+        window.dispatchEvent(new CustomEvent('refresh-navigation'))}
+      onOpen={openFromQuickSwitcher}
+      onClose={() => (showQuickSwitcher = false)}
+    />
+  {/if}
+
+  {#if showShortcutHelp}
+    <ShortcutHelp onClose={() => (showShortcutHelp = false)} />
   {/if}
 
   {#if showGlobalReplace}

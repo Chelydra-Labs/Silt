@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte'
+  import { Events } from '@wailsio/runtime'
   import SidebarSection from './SidebarSection.svelte'
+  import SidebarQuickAccess from './SidebarQuickAccess.svelte'
   import PluginSidebarPanels from './PluginSidebarPanels.svelte'
   import TagSidebarPanel from './TagSidebarPanel.svelte'
   import {
@@ -18,15 +20,38 @@
     DeleteSection,
     DeleteNotebook,
     MovePage,
-    RevealNotebookInOS
+    RevealNotebookInOS,
+    RevealPageInOS,
+    DuplicatePage,
+    GetNavigationPreferences,
+    SetNavigationSectionExpanded,
+    SetQuickAccessCollapsed,
+    SetFavoritePage
   } from '../../bindings/silt/app.js'
   import { NavOrderManager, sortByName } from '../lib/sidebar/navOrder'
   import { DragDropManager } from '../lib/sidebar/useDragDrop'
-  import type { NavNotebook, NavigationTree } from '../lib/sidebar/types'
+  import type {
+    NavNotebook,
+    NavigationPageRef,
+    NavigationPreferences,
+    NavigationTree
+  } from '../lib/sidebar/types'
   import {
     reconcileActive,
+    normalizeNavigationTree,
+    pageNodeId,
+    sectionNodeId,
+    visibleTreeNodes,
     generateUniquePageName as generateUniquePageNameHelper
   } from '../lib/sidebar/navTree'
+  import {
+    EMPTY_NAVIGATION_PREFERENCES,
+    expandActiveAncestors,
+    expandedPathsForNotebook,
+    locatorKey,
+    pagePathLabel,
+    reconcilePageRefs
+  } from '../lib/sidebar/navigationPreferences'
   import {
     linkedNotebookId,
     isLinkedNotebook,
@@ -37,7 +62,11 @@
   } from '../lib/sidebar/navActions'
   import ContextMenu from './ContextMenu.svelte'
   import NamePromptDialog from './NamePromptDialog.svelte'
+  import { coerceIPCError } from '../lib/ipcError'
+  import { copyPagePath, copyPageReference, copyText } from '../lib/pageActions'
   import SettingsNav from './settings/SettingsNav.svelte'
+  import { settings } from '../settings/store.svelte'
+  import { shortcutBinding } from '../settings/shortcutActions'
 
   import type { PluginContext, PluginManifest } from '../plugins/sdk'
   import {
@@ -65,6 +94,9 @@
     onSelectPage: (notebook: string, section: string, page: string) => void
     onPinPage: (notebook: string, section: string, page: string) => void
     onSelectView: (view: string) => void
+    onNavigationLoaded?: (tree: NavigationTree) => void
+    onNavigationPreferencesLoaded?: (preferences: NavigationPreferences) => void
+    onNavigationStatus?: (loading: boolean, error: string) => void
     onPageMoved?: (
       notebook: string,
       fromSection: string,
@@ -88,6 +120,9 @@
     onSelectPage,
     onPinPage,
     onSelectView,
+    onNavigationLoaded,
+    onNavigationPreferencesLoaded,
+    onNavigationStatus,
     onPageMoved
   }: Props = $props()
 
@@ -114,6 +149,11 @@
   )
 
   let tree = $state<NavigationTree>({ notebooks: [] })
+  let navigationLoading = $state(true)
+  let navigationError = $state('')
+  let preferences = $state<NavigationPreferences>(EMPTY_NAVIGATION_PREFERENCES)
+  let preferencesLoading = $state(true)
+  let preferencesError = $state('')
   let showNotebookDropdown = $state(false)
 
   // Creation/rename modal state
@@ -128,6 +168,16 @@
   let newName = $state('')
   let createError = $state('')
   let creating = $state(false)
+  let actionPrompt = $state<{
+    kind: 'duplicate' | 'child-section'
+    notebook: string
+    section: string
+    page?: string
+    initialValue: string
+  } | null>(null)
+  let actionPromptError = $state('')
+  let actionBusy = $state(false)
+  let actionError = $state('')
 
   // Context menu state (#62)
   let contextMenu = $state<{
@@ -251,6 +301,10 @@
   // Expanded section names (within the active notebook). The active section is
   // always expanded so the active path stays visible (spatial memory).
   let expandedSections = $state<Set<string>>(new Set())
+  let focusedTreeItemId = $state('')
+  let lastExpandedActive = ''
+  let typeahead = ''
+  let typeaheadTimer: ReturnType<typeof setTimeout> | null = null
 
   let activeNotebookObj = $derived(
     tree.notebooks.find((nb) => nb.name === activeNotebook)
@@ -261,8 +315,66 @@
     if (!activeNotebookObj) return []
     return sortByName(
       activeNotebookObj.sections,
-      navOrder.sections[activeNotebook] ?? []
+      navOrder.sections[activeNotebook] ?? [],
+      (section) => section.path
     )
+  })
+
+  let visibleNodes = $derived(
+    visibleTreeNodes(
+      activeNotebookObj
+        ? { ...activeNotebookObj, sections: sortedSections }
+        : undefined,
+      expandedSections
+    )
+  )
+  let contextMenuPageRef = $derived.by(() => {
+    if (!contextMenu || contextMenu.level !== 'page') return null
+    return {
+      notebook: contextMenu.notebook,
+      section: contextMenu.section ?? '',
+      page: contextMenu.page ?? ''
+    }
+  })
+  let contextNotebook = $derived(
+    contextMenu ? findNotebook(tree, contextMenu.notebook) : undefined
+  )
+  let contextUnavailable = $derived(!!contextNotebook?.disconnected)
+  let contextMenuTargetId = $derived.by(() => {
+    if (!contextMenu) return ''
+    if (contextMenu.level === 'notebook') {
+      return `notebook:${encodeURIComponent(contextMenu.notebook)}`
+    }
+    if (contextMenu.level === 'section') {
+      return sectionNodeId(contextMenu.notebook, contextMenu.section ?? '')
+    }
+    return pageNodeId({
+      notebook: contextMenu.notebook,
+      section: contextMenu.section ?? '',
+      page: contextMenu.page ?? ''
+    })
+  })
+  let favoriteKeys = $derived(
+    new Set(preferences.favorites.map((ref) => locatorKey(ref)))
+  )
+  let favoriteState = $derived(reconcilePageRefs(tree, preferences.favorites))
+  let recentState = $derived(reconcilePageRefs(tree, preferences.recent_pages))
+
+  $effect(() => {
+    const nodes = visibleNodes
+    const current = focusedTreeItemId
+    if (nodes.some((node) => node.id === current)) return
+    const activeId = activePage
+      ? pageNodeId({
+          notebook: activeNotebook,
+          section: activeSection,
+          page: activePage
+        })
+      : activeSection
+        ? sectionNodeId(activeNotebook, activeSection)
+        : ''
+    focusedTreeItemId =
+      nodes.find((node) => node.id === activeId)?.id ?? nodes[0]?.id ?? ''
   })
 
   // Sections are optional — a page can live directly under a notebook — so the
@@ -270,15 +382,31 @@
   // hover-only on the buttons. A native title on a disabled button never shows,
   // so the wrapper span carries it.
   let sectionHint = $derived(
-    activeNotebook ? 'New Section' : 'Create or open a Notebook first'
+    activeNotebook
+      ? `New Section${shortcutBinding('new_section', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_section', settings.config?.hotkeys ?? {})})` : ''}`
+      : 'Create or open a Notebook first'
   )
   let pageHint = $derived(
     activeNotebook
       ? activeSection
-        ? 'New Page in ' + activeSection
-        : 'New Page (no section)'
+        ? `New Page in ${activeSection}${shortcutBinding('new_page', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_page', settings.config?.hotkeys ?? {})})` : ''}`
+        : `New Page (no section)${shortcutBinding('new_page', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_page', settings.config?.hotkeys ?? {})})` : ''}`
       : 'Create or open a Notebook first'
   )
+  let templateHint = $derived.by(() => {
+    const binding = shortcutBinding(
+      'open_template_picker',
+      settings.config?.hotkeys ?? {}
+    )
+    return `New page from template${binding ? ` (${binding})` : ''}`
+  })
+  let hideSidebarHint = $derived.by(() => {
+    const binding = shortcutBinding(
+      'toggle_sidebar',
+      settings.config?.hotkeys ?? {}
+    )
+    return `Hide sidebar${binding ? ` (${binding})` : ''}`
+  })
   let nextStep = $derived(
     !activeNotebook ? 'Create or open a Notebook to get started.' : ''
   )
@@ -290,10 +418,13 @@
   )
 
   async function loadNavigation() {
+    onNavigationStatus?.(true, '')
     try {
       const data = await ListNavigation()
       if (!data) return
-      tree = data
+      tree = normalizeNavigationTree(data)
+      onNavigationLoaded?.(tree)
+      navigationError = ''
       const next = reconcileActive(tree, {
         notebook: activeNotebook,
         section: activeSection,
@@ -306,31 +437,196 @@
       if (next.section !== activeSection) activeSection = next.section
       if (next.page !== activePage) activePage = next.page
     } catch (e) {
-      console.error('Failed to load navigation:', e)
+      navigationError =
+        e instanceof Error ? e.message : 'Navigation could not be loaded.'
+    } finally {
+      navigationLoading = false
+      onNavigationStatus?.(false, navigationError)
     }
   }
 
-  // Keep the active section expanded. Only `activeSection` drives this effect;
-  // the expandedSections mutation runs under untrack so the write can't
-  // re-trigger the effect (which previously caused an update-depth loop).
+  let preferenceLoadSequence = 0
+  async function loadNavigationPreferences() {
+    const sequence = ++preferenceLoadSequence
+    preferencesLoading = true
+    try {
+      const loaded = await GetNavigationPreferences()
+      if (sequence !== preferenceLoadSequence) return
+      preferences = {
+        expanded_sections: loaded?.expanded_sections ?? [],
+        recent_pages: loaded?.recent_pages ?? [],
+        favorites: loaded?.favorites ?? [],
+        quick_access_collapsed: loaded?.quick_access_collapsed ?? true
+      }
+      onNavigationPreferencesLoaded?.(preferences)
+      expandedSections = expandedPathsForNotebook(preferences, activeNotebook)
+      lastExpandedActive = ''
+      preferencesError = ''
+    } catch (e) {
+      if (sequence !== preferenceLoadSequence) return
+      preferencesError =
+        e instanceof Error ? e.message : 'Quick access could not be loaded.'
+    } finally {
+      if (sequence === preferenceLoadSequence) preferencesLoading = false
+    }
+  }
+
+  async function setQuickAccessCollapsed(collapsed: boolean) {
+    const previous = preferences.quick_access_collapsed
+    preferences = { ...preferences, quick_access_collapsed: collapsed }
+    try {
+      await SetQuickAccessCollapsed(collapsed)
+      preferencesError = ''
+    } catch (error) {
+      preferences = { ...preferences, quick_access_collapsed: previous }
+      preferencesError =
+        error instanceof Error
+          ? error.message
+          : 'Quick access state could not be saved.'
+    }
+  }
+
+  // Expand an active page's full ancestry once when its location changes.
+  // A manual collapse remains respected until the user activates another page.
   $effect(() => {
-    const sec = activeSection
-    if (!sec) return
+    const notebook = activeNotebook
+    const section = activeSection
+    const page = activePage
+    const ready = !preferencesLoading
+    if (!notebook || !section || !ready) return
+    const activeKey = `${notebook}\u0000${section}\u0000${page}`
+    if (activeKey === lastExpandedActive) return
+    lastExpandedActive = activeKey
     untrack(() => {
-      if (!expandedSections.has(sec)) {
-        expandedSections = new Set(expandedSections).add(sec)
+      const next = expandActiveAncestors(expandedSections, section)
+      const added = [...next].filter((path) => !expandedSections.has(path))
+      expandedSections = next
+      for (const path of added) {
+        setLocalExpansion(notebook, path, true)
+        void SetNavigationSectionExpanded(notebook, path, true).catch(() => {
+          preferencesError = 'Expanded sections could not be saved.'
+        })
       }
     })
   })
 
-  function toggleSection(name: string) {
+  function toggleSection(path: string) {
     const next = new Set(expandedSections)
-    if (next.has(name)) {
-      next.delete(name)
+    const expanded = !next.has(path)
+    if (!expanded) {
+      next.delete(path)
     } else {
-      next.add(name)
+      next.add(path)
     }
     expandedSections = next
+    setLocalExpansion(activeNotebook, path, expanded)
+    void SetNavigationSectionExpanded(activeNotebook, path, expanded).catch(
+      () => {
+        preferencesError = 'Expanded sections could not be saved.'
+      }
+    )
+  }
+
+  function setLocalExpansion(
+    notebook: string,
+    path: string,
+    expanded: boolean
+  ) {
+    const without = preferences.expanded_sections.filter(
+      (item) => !(item.notebook === notebook && item.path === path)
+    )
+    preferences = {
+      ...preferences,
+      expanded_sections: expanded ? [...without, { notebook, path }] : without
+    }
+  }
+
+  function setFocusedTreeItem(id: string) {
+    focusedTreeItemId = id
+  }
+
+  async function focusTreeItem(id: string) {
+    focusedTreeItemId = id
+    await tick()
+    const item = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[data-sidebar-tree] [data-tree-id]'
+      )
+    ).find((candidate) => candidate.dataset.treeId === id)
+    item?.focus()
+  }
+
+  function activateTreeNode(id: string) {
+    const node = visibleNodes.find((candidate) => candidate.id === id)
+    if (!node) return
+    if (node.kind === 'section') {
+      onSelectSection(node.section)
+      toggleSection(node.section)
+    } else {
+      handleSelectPage(node.section, node.page)
+    }
+  }
+
+  function handleTreeKeydown(event: KeyboardEvent) {
+    const target = (event.target as HTMLElement).closest<HTMLElement>(
+      '[data-tree-id]'
+    )
+    const id = target?.dataset.treeId
+    if (!id) return
+    const index = visibleNodes.findIndex((node) => node.id === id)
+    if (index < 0) return
+    const node = visibleNodes[index]
+    let destination = ''
+    if (event.key === 'ArrowDown')
+      destination = visibleNodes[index + 1]?.id ?? id
+    else if (event.key === 'ArrowUp')
+      destination = visibleNodes[index - 1]?.id ?? id
+    else if (event.key === 'Home') destination = visibleNodes[0]?.id ?? id
+    else if (event.key === 'End') destination = visibleNodes.at(-1)?.id ?? id
+    else if (event.key === 'ArrowRight' && node.kind === 'section') {
+      if (!expandedSections.has(node.section)) toggleSection(node.section)
+      else destination = visibleNodes[index + 1]?.id ?? id
+    } else if (event.key === 'ArrowLeft') {
+      if (node.kind === 'section' && expandedSections.has(node.section)) {
+        toggleSection(node.section)
+      } else if (node.parentId) destination = node.parentId
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      activateTreeNode(id)
+    } else if (
+      event.key === 'ContextMenu' ||
+      (event.shiftKey && event.key === 'F10')
+    ) {
+      const bounds = target?.getBoundingClientRect()
+      target?.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          clientX: bounds?.left ?? 0,
+          clientY: bounds?.bottom ?? 0
+        })
+      )
+    } else if (
+      event.key.length === 1 &&
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      /^[\p{L}\p{N}]$/u.test(event.key)
+    ) {
+      typeahead += event.key.toLocaleLowerCase()
+      if (typeaheadTimer) clearTimeout(typeaheadTimer)
+      typeaheadTimer = setTimeout(() => (typeahead = ''), 650)
+      const ordered = [
+        ...visibleNodes.slice(index + 1),
+        ...visibleNodes.slice(0, index + 1)
+      ]
+      destination =
+        ordered.find((candidate) =>
+          candidate.label.toLocaleLowerCase().startsWith(typeahead)
+        )?.id ?? ''
+    } else return
+    event.preventDefault()
+    event.stopPropagation()
+    if (destination) void focusTreeItem(destination)
   }
 
   function handleSelectNotebook(nb: string) {
@@ -341,15 +637,44 @@
     onSelectNotebook(nb)
     // Expand the first section if present, for orientation.
     const nbObj = tree.notebooks.find((n) => n.name === nb)
-    if (nbObj && nbObj.sections.length > 0) {
-      expandedSections = new Set([nbObj.sections[0].name])
-    }
+    expandedSections = expandedPathsForNotebook(preferences, nb)
+    focusedTreeItemId = nbObj?.sections.find((section) => section.path)?.path
+      ? sectionNodeId(nb, nbObj.sections.find((section) => section.path)!.path)
+      : ''
   }
 
   function handleSelectPage(section: string, page: string) {
     activeSection = section
     activePage = page
     onSelectPage(activeNotebook, section, page)
+  }
+
+  function handleQuickPage(ref: NavigationPageRef) {
+    activeNotebook = ref.notebook
+    expandedSections = expandActiveAncestors(
+      expandedPathsForNotebook(preferences, ref.notebook),
+      ref.section
+    )
+    handleSelectPage(ref.section, ref.page)
+  }
+
+  async function toggleFavorite(ref: NavigationPageRef) {
+    const wasFavorite = favoriteKeys.has(locatorKey(ref))
+    try {
+      await SetFavoritePage(ref.notebook, ref.section, ref.page, !wasFavorite)
+      preferences = {
+        ...preferences,
+        favorites: wasFavorite
+          ? preferences.favorites.filter(
+              (item) => locatorKey(item) !== locatorKey(ref)
+            )
+          : [...preferences.favorites, ref]
+      }
+      preferencesError = ''
+    } catch (e) {
+      preferencesError =
+        e instanceof Error ? e.message : 'Favorite could not be updated.'
+    }
   }
 
   function handlePinPage(section: string, page: string) {
@@ -484,15 +809,15 @@
             handleSelectNotebook(trimmed)
           }
         } else if (renameCtx.level === 'section') {
-          await RenameSection(
-            renameCtx.notebook,
-            renameCtx.section ?? '',
-            trimmed
-          )
+          const oldPath = renameCtx.section ?? ''
+          const parentPath = oldPath.split('/').slice(0, -1).join('/')
+          const nextPath = parentPath ? `${parentPath}/${trimmed}` : trimmed
+          await RenameSection(renameCtx.notebook, oldPath, nextPath)
           await loadNavigation()
+          await loadNavigationPreferences()
           if (activeSection === renameCtx.section) {
-            activeSection = trimmed
-            onSelectSection(trimmed)
+            activeSection = nextPath
+            onSelectSection(nextPath)
           }
         } else if (renameCtx.level === 'page') {
           await RenamePage(
@@ -521,11 +846,13 @@
         await loadNavigation()
         handleSelectNotebook(trimmed)
       } else if (createMode === 'section') {
-        await CreateSection(activeNotebook, trimmed)
+        await CreateSection(activeNotebook, '', trimmed)
         await loadNavigation()
         activeSection = trimmed
         onSelectSection(trimmed)
         expandedSections = new Set([...expandedSections, trimmed])
+        setLocalExpansion(activeNotebook, trimmed, true)
+        await SetNavigationSectionExpanded(activeNotebook, trimmed, true)
       }
       createMode = ''
       newName = ''
@@ -557,7 +884,7 @@
         window.dispatchEvent(new CustomEvent('focus-page-title'))
       }, 100)
     } catch (e) {
-      console.error('CreatePage inline failed:', e)
+      actionError = navigationActionError(e, 'create')
     } finally {
       creating = false
     }
@@ -618,13 +945,152 @@
   }
 
   async function handleContextReveal() {
-    if (!contextMenu || contextMenu.level !== 'notebook') return
-    const notebook = contextMenu.notebook
+    if (!contextMenu || contextUnavailable) return
+    const target = contextMenu
     contextMenu = null
     try {
-      await RevealNotebookInOS(notebook)
+      if (target.level === 'notebook') {
+        await RevealNotebookInOS(target.notebook)
+      } else if (target.level === 'page') {
+        await RevealPageInOS(
+          target.notebook,
+          target.section ?? '',
+          target.page ?? ''
+        )
+      }
+      actionError = ''
     } catch (e) {
-      console.error('Reveal notebook failed:', e)
+      actionError = navigationActionError(e, 'reveal')
+    }
+  }
+
+  function handleContextFavorite() {
+    const ref = contextMenuPageRef
+    contextMenu = null
+    if (ref) void toggleFavorite(ref)
+  }
+
+  function handleContextNewPage() {
+    if (!contextMenu || contextUnavailable) return
+    const section = contextMenu.section ?? ''
+    contextMenu = null
+    activeSection = section
+    onSelectSection(section)
+    void handleCreatePageInline(section)
+  }
+
+  function navigationActionError(
+    error: unknown,
+    action: 'duplicate' | 'reveal' | 'create'
+  ): string {
+    const parsed = coerceIPCError(error)
+    switch (parsed.code) {
+      case 'page_exists':
+      case 'navigation_conflict':
+        return action === 'duplicate'
+          ? 'A page with that name already exists in this section.'
+          : 'An item with that name already exists here.'
+      case 'invalid_navigation_path':
+        return 'That name cannot be used here.'
+      case 'navigation_not_found':
+        return 'That page is no longer available.'
+      case 'navigation_unavailable':
+        return 'This linked notebook is offline or unavailable.'
+      case 'navigation_reveal_failed':
+        return 'The item could not be revealed in the file manager.'
+      case 'navigation_duplicate':
+        return 'The page could not be duplicated.'
+      default:
+        return (
+          parsed.message ||
+          (action === 'reveal'
+            ? 'The item could not be revealed in the file manager.'
+            : 'The action could not be completed.')
+        )
+    }
+  }
+
+  function handleContextCopyPage(kind: 'path' | 'reference') {
+    const ref = contextMenuPageRef
+    contextMenu = null
+    if (!ref) return
+    void (kind === 'path' ? copyPagePath(ref) : copyPageReference(ref))
+  }
+
+  function handleContextCopyNotebook() {
+    if (!contextMenu || contextMenu.level !== 'notebook') return
+    const notebook = contextNotebook
+    const text = notebook?.root_path || contextMenu.notebook
+    contextMenu = null
+    void copyText(text)
+  }
+
+  function openDuplicatePrompt() {
+    if (!contextMenuPageRef || contextUnavailable) return
+    actionPrompt = {
+      kind: 'duplicate',
+      ...contextMenuPageRef,
+      initialValue: `${contextMenuPageRef.page} copy`
+    }
+    actionPromptError = ''
+    contextMenu = null
+  }
+
+  function openChildSectionPrompt() {
+    if (!contextMenu || contextMenu.level !== 'section' || contextUnavailable)
+      return
+    actionPrompt = {
+      kind: 'child-section',
+      notebook: contextMenu.notebook,
+      section: contextMenu.section ?? '',
+      initialValue: ''
+    }
+    actionPromptError = ''
+    contextMenu = null
+  }
+
+  function closeActionPrompt() {
+    if (actionBusy) return
+    actionPrompt = null
+    actionPromptError = ''
+  }
+
+  async function confirmActionPrompt(name: string) {
+    if (!actionPrompt) return
+    const prompt = actionPrompt
+    actionBusy = true
+    actionPromptError = ''
+    try {
+      if (prompt.kind === 'duplicate') {
+        await DuplicatePage(
+          prompt.notebook,
+          prompt.section,
+          prompt.page ?? '',
+          name
+        )
+        await loadNavigation()
+        onSelectPage(prompt.notebook, prompt.section, name)
+      } else {
+        await CreateSection(prompt.notebook, prompt.section, name)
+        const childPath = prompt.section ? `${prompt.section}/${name}` : name
+        await loadNavigation()
+        activeNotebook = prompt.notebook
+        activeSection = childPath
+        onSelectSection(childPath)
+        if (prompt.section && !expandedSections.has(prompt.section)) {
+          toggleSection(prompt.section)
+        }
+        if (!expandedSections.has(childPath)) toggleSection(childPath)
+      }
+      actionPrompt = null
+      actionError = ''
+    } catch (e) {
+      actionPromptError = navigationActionError(
+        e,
+        prompt.kind === 'duplicate' ? 'duplicate' : 'create'
+      )
+    } finally {
+      actionBusy = false
     }
   }
 
@@ -648,6 +1114,7 @@
         }
       }
       await loadNavigation()
+      await loadNavigationPreferences()
       const next = reconcileActiveAfterDelete(target, {
         notebook: activeNotebook,
         section: activeSection,
@@ -667,9 +1134,11 @@
 
   onMount(() => {
     loadNavigation()
+    loadNavigationPreferences()
     loadNavOrder()
     const handleRefresh = () => {
       loadNavigation()
+      loadNavigationPreferences()
       loadNavOrder()
     }
     const handleCreatePageInlineEvent = (e: Event) => {
@@ -677,15 +1146,40 @@
         (e as CustomEvent).detail?.sectionName ?? activeSection ?? ''
       void handleCreatePageInline(sectionName)
     }
+    const handlePreferenceRefresh = () => void loadNavigationPreferences()
+    const handleNavigationCreate = (event: Event) => {
+      const kind = (event as CustomEvent).detail?.kind
+      if (kind === 'notebook') openCreate('notebook')
+      else if (kind === 'section' && activeNotebook) openCreate('section')
+    }
     window.addEventListener('refresh-navigation', handleRefresh)
+    window.addEventListener(
+      'navigation-preferences-changed',
+      handlePreferenceRefresh
+    )
     window.addEventListener('create-page-inline', handleCreatePageInlineEvent)
+    window.addEventListener('open-navigation-create', handleNavigationCreate)
+    const offConfigChanged = Events.On(
+      'config:changed',
+      () => void loadNavigationPreferences()
+    )
     return () => {
+      offConfigChanged()
       window.removeEventListener('refresh-navigation', handleRefresh)
+      window.removeEventListener(
+        'navigation-preferences-changed',
+        handlePreferenceRefresh
+      )
       window.removeEventListener(
         'create-page-inline',
         handleCreatePageInlineEvent
       )
+      window.removeEventListener(
+        'open-navigation-create',
+        handleNavigationCreate
+      )
       if (dndErrorTimer) clearTimeout(dndErrorTimer)
+      if (typeaheadTimer) clearTimeout(typeaheadTimer)
     }
   })
 </script>
@@ -718,23 +1212,18 @@
     {:else}
       <!-- Notebook selector -->
       <div class="px-1 mb-3 relative">
-        <div
+        <button
+          type="button"
+          aria-label={activeNotebook
+            ? `Active notebook: ${activeNotebook}`
+            : 'Choose a notebook'}
           onclick={() => (showNotebookDropdown = !showNotebookDropdown)}
-          onkeydown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              showNotebookDropdown = !showNotebookDropdown
-            }
-          }}
-          class="flex items-center gap-2 cursor-pointer group px-2 py-1.5 rounded hover:bg-hover transition-all duration-150"
+          class="w-full border-none bg-transparent text-left flex items-center gap-2 cursor-pointer group px-2 py-1.5 rounded hover:bg-hover transition-all duration-150 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
           class:bg-hover={showNotebookDropdown}
-          role="button"
-          tabindex="0"
+          aria-haspopup="menu"
+          aria-expanded={showNotebookDropdown}
+          aria-controls="notebook-switcher-menu"
         >
-          <span
-            class="material-symbols-outlined text-accent-primary-start text-type-2xl"
-            >menu_book</span
-          >
           <div class="flex flex-col min-w-0 flex-1">
             <span
               class="text-surface-sidebar-text font-headline-md text-headline-md truncate"
@@ -750,7 +1239,7 @@
           >
             {showNotebookDropdown ? 'expand_less' : 'expand_more'}
           </span>
-        </div>
+        </button>
 
         {#if showNotebookDropdown}
           <button
@@ -760,6 +1249,9 @@
             class="fixed inset-0 z-[60] cursor-default border-none bg-transparent p-0"
           ></button>
           <div
+            id="notebook-switcher-menu"
+            role="menu"
+            aria-label="Notebooks"
             class="absolute left-1 right-1 top-14 glass-palette border border-accent-primary-start/20 rounded-lg shadow-2xl z-[70] py-2 max-h-[60vh] overflow-y-auto custom-scrollbar"
             style="backdrop-filter: blur(16px); background: color-mix(in srgb, var(--color-surface-sidebar) 92%, transparent);"
           >
@@ -772,12 +1264,21 @@
             {:else}
               {#each tree.notebooks as nb (nb.name)}
                 <button
+                  id={`notebook-menu-${encodeURIComponent(nb.name)}`}
                   onclick={() => handleSelectNotebook(nb.name)}
                   oncontextmenu={(e) => {
-                    showNotebookDropdown = false
                     openContextMenu(e, 'notebook', nb.name)
                   }}
                   class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent"
+                  aria-haspopup="menu"
+                  role="menuitem"
+                  aria-current={nb.name === activeNotebook ? 'true' : undefined}
+                  aria-expanded={contextMenuTargetId ===
+                    `notebook:${encodeURIComponent(nb.name)}`}
+                  aria-controls={contextMenuTargetId ===
+                  `notebook:${encodeURIComponent(nb.name)}`
+                    ? 'sidebar-context-menu'
+                    : undefined}
                 >
                   <span
                     class="material-symbols-outlined text-accent-primary-start text-icon-lg"
@@ -817,6 +1318,7 @@
                   showNotebookDropdown = false
                   openCreate('notebook')
                 }}
+                title={`New Notebook${shortcutBinding('new_notebook', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_notebook', settings.config?.hotkeys ?? {})})` : ''}`}
                 class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-accent-primary-start"
               >
                 <span class="material-symbols-outlined text-icon-lg"
@@ -885,12 +1387,12 @@
           </button>
         </span>
         <div class="w-px bg-surface-sidebar-border my-1.5 flex-shrink-0"></div>
-        <span title="New page from template" class="flex-1 flex">
+        <span title={templateHint} class="flex-1 flex">
           <button
             onclick={() =>
               window.dispatchEvent(new CustomEvent('open-template-picker'))}
             disabled={!activeNotebook}
-            title="New page from template (Ctrl+Shift+T)"
+            title={templateHint}
             aria-label="New Page from Template"
             class="w-full bg-transparent border-none text-surface-sidebar-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
           >
@@ -912,11 +1414,52 @@
         </div>
       {/if}
 
+      <SidebarQuickAccess
+        favorites={preferences.favorites}
+        recents={preferences.recent_pages}
+        staleKeys={new Set([
+          ...favoriteState.stale.map((ref) => locatorKey(ref)),
+          ...recentState.stale.map((ref) => locatorKey(ref))
+        ])}
+        notebooks={tree.notebooks}
+        loading={preferencesLoading}
+        error={preferencesError}
+        collapsed={preferences.quick_access_collapsed}
+        onOpen={handleQuickPage}
+        onToggleFavorite={(ref) => void toggleFavorite(ref)}
+        onCollapsedChange={(collapsed) =>
+          void setQuickAccessCollapsed(collapsed)}
+        onRetry={() => void loadNavigationPreferences()}
+      />
+
       <!-- Navigation tree -->
       <div
         class="flex-1 overflow-y-auto custom-scrollbar px-1"
         data-sidebar-scroll
       >
+        <div class="sr-only" aria-live="polite">
+          {navigationError
+            ? `Navigation could not be refreshed. ${navigationError}`
+            : navigationLoading
+              ? 'Loading navigation.'
+              : 'Navigation loaded.'}
+        </div>
+        {#if navigationError}
+          <div
+            class="mb-2 mx-1 p-2 rounded-lg border border-status-warn/35 bg-status-warn/10 text-type-2xs text-surface-sidebar-text"
+            role="status"
+          >
+            <p class="m-0">
+              The page list could not be refreshed. Your previous list is still
+              available.
+            </p>
+            <button
+              type="button"
+              class="mt-1 border-none bg-transparent p-0 text-accent-primary-start underline cursor-pointer"
+              onclick={() => void loadNavigation()}>Try again</button
+            >
+          </div>
+        {/if}
         {#if !activeNotebookObj}
           <div
             class="text-surface-sidebar-text-muted py-10 text-center font-body-md text-type-md border border-dashed border-surface-sidebar-border rounded-lg mx-1"
@@ -928,119 +1471,169 @@
             {/if}
           </div>
         {:else}
-          {#if hasNoContent}
-            <div
-              class="text-surface-sidebar-text-muted py-6 text-center font-body-md text-type-md border border-dashed border-surface-sidebar-border rounded-lg mx-1"
-            >
-              No sections or pages yet.<br />Create one to get started.
-            </div>
-          {/if}
-          {#each sortedSections.filter((s) => s.name !== '') as sec (sec.name)}
-            <SidebarSection
-              section={sec}
-              depth={0}
-              {activeNotebook}
-              {activeSection}
-              {activePage}
-              {expandedSections}
-              {navOrder}
-              {dropTarget}
-              {dragItem}
-              onToggleSection={toggleSection}
-              onSelectPage={handleSelectPage}
-              onPinPage={handlePinPage}
-              {onSelectSection}
-              onCreatePageInline={handleCreatePageInline}
-              onDragStart={handleDragStart}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onDragEnd={handleDragEnd}
-              onContextMenu={openContextMenu}
-            />
-          {/each}
-
-          <!-- Section-less root pages -->
-          {#each sortedSections.filter((s) => s.name === '') as rootSec}
-            {#if rootSec.pages.length > 0}
-              <div
-                class="h-px bg-surface-sidebar-border my-3 mx-1.5 opacity-50"
-              ></div>
-              {#each sortByName(rootSec.pages, navOrder.pages[`${activeNotebook}/`] ?? []) as pg (pg.name)}
-                {@const isActive =
-                  activeSection === '' && activePage === pg.name}
-                <button
-                  onclick={() => handleSelectPage('', pg.name)}
-                  ondblclick={() => handlePinPage('', pg.name)}
-                  onauxclick={(e) => {
-                    if (e.button === 1) {
-                      e.preventDefault()
-                      handlePinPage('', pg.name)
-                    }
-                  }}
-                  oncontextmenu={(e) =>
-                    openContextMenu(e, 'page', activeNotebook, '', pg.name)}
-                  draggable="true"
-                  ondragstart={(e) => handleDragStart(e, 'page', pg.name, '')}
-                  ondragover={(e) => handleDragOver(e, 'page', pg.name)}
-                  ondragleave={handleDragLeave}
-                  ondrop={(e) =>
-                    handleDrop(e, 'page', pg.name, activeNotebook, '')}
-                  ondragend={handleDragEnd}
-                  class="relative w-full text-left pl-7 pr-2 py-1.5 rounded text-type-md font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
-                  class:bg-hover={isActive}
-                  class:text-accent-primary-start={isActive}
-                  class:text-surface-sidebar-text-muted={!isActive}
-                  class:hover:text-surface-sidebar-text={!isActive}
-                  class:drag-over-top={dropTarget?.level === 'page' &&
-                    dropTarget.name === pg.name &&
-                    dropTarget.before}
-                  class:drag-over-bottom={dropTarget?.level === 'page' &&
-                    dropTarget.name === pg.name &&
-                    !dropTarget.before}
-                  role="treeitem"
-                  aria-level="1"
-                  aria-selected={isActive}
-                >
-                  {#if isActive}
-                    <span
-                      class="absolute left-1 top-1 bottom-1 w-0.5 bg-accent-primary-start rounded-full"
-                    ></span>
-                  {/if}
-                  <span class="truncate flex-1" title={pg.name}>{pg.name}</span>
-                </button>
-              {/each}
-            {/if}
-          {/each}
-          <!-- Notebook-root drop zone (#177): drag a page here to move it
-             out of any section (section-less / root). Invisible until a
-             page is actively dragged over it. -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
-            class="mx-1 mt-1 rounded transition-colors min-h-6"
-            class:drag-over-into={dropTarget?.level === 'section' &&
-              dropTarget.name === '__root__'}
-            ondragover={(e) => {
-              if (!dragItem || dragItem.level !== 'page') return
-              e.preventDefault()
-              if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-              dropTarget = { level: 'section', name: '__root__', before: false }
-            }}
-            ondragleave={handleDragLeave}
-            ondrop={(e) =>
-              handleDrop(e, 'section', '__root__', activeNotebook, '')}
-            role="region"
-            aria-label={dragItem?.level === 'page'
-              ? 'Drop here to move page to notebook root'
-              : undefined}
+            role="tree"
+            tabindex="-1"
+            aria-label={`${activeNotebook} pages`}
+            data-sidebar-tree
+            onkeydown={handleTreeKeydown}
           >
-            {#if dragItem?.level === 'page'}
+            {#if hasNoContent}
               <div
-                class="text-surface-sidebar-text-muted text-type-xs font-body-md py-1.5 px-2 text-center border border-dashed border-surface-sidebar-border rounded"
+                class="text-surface-sidebar-text-muted py-6 text-center font-body-md text-type-md border border-dashed border-surface-sidebar-border rounded-lg mx-1"
               >
-                Drop to move to notebook root
+                No sections or pages yet.<br />Create one to get started.
               </div>
             {/if}
+            {#each sortedSections.filter((s) => s.name !== '') as sec (sec.name)}
+              <SidebarSection
+                section={sec}
+                depth={0}
+                {activeNotebook}
+                {activeSection}
+                {activePage}
+                {expandedSections}
+                {navOrder}
+                {dropTarget}
+                {dragItem}
+                {focusedTreeItemId}
+                {contextMenuTargetId}
+                onTreeItemFocus={setFocusedTreeItem}
+                onToggleSection={toggleSection}
+                onSelectPage={handleSelectPage}
+                onPinPage={handlePinPage}
+                {onSelectSection}
+                onCreatePageInline={handleCreatePageInline}
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onDragEnd={handleDragEnd}
+                onContextMenu={openContextMenu}
+              />
+            {/each}
+
+            <!-- Section-less root pages -->
+            {#each sortedSections.filter((s) => s.name === '') as rootSec}
+              {#if rootSec.pages.length > 0}
+                <div
+                  class="h-px bg-surface-sidebar-border my-3 mx-1.5 opacity-50"
+                ></div>
+                {#each sortByName(rootSec.pages, navOrder.pages[`${activeNotebook}/`] ?? []) as pg (pg.name)}
+                  {@const isActive =
+                    activeSection === '' && activePage === pg.name}
+                  <button
+                    onclick={() => handleSelectPage('', pg.name)}
+                    onfocus={() =>
+                      setFocusedTreeItem(
+                        pageNodeId({
+                          notebook: activeNotebook,
+                          section: '',
+                          page: pg.name
+                        })
+                      )}
+                    ondblclick={() => handlePinPage('', pg.name)}
+                    onauxclick={(e) => {
+                      if (e.button === 1) {
+                        e.preventDefault()
+                        handlePinPage('', pg.name)
+                      }
+                    }}
+                    oncontextmenu={(e) =>
+                      openContextMenu(e, 'page', activeNotebook, '', pg.name)}
+                    draggable="true"
+                    ondragstart={(e) => handleDragStart(e, 'page', pg.name, '')}
+                    ondragover={(e) =>
+                      dnd.handleDragOver(
+                        e,
+                        'page',
+                        pg.name,
+                        `\u0000${pg.name}`
+                      )}
+                    ondragleave={handleDragLeave}
+                    ondrop={(e) =>
+                      handleDrop(e, 'page', pg.name, activeNotebook, '')}
+                    ondragend={handleDragEnd}
+                    class="relative w-full text-left pl-7 pr-2 py-1.5 rounded text-type-md font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
+                    class:bg-hover={isActive}
+                    class:text-accent-primary-start={isActive}
+                    class:text-surface-sidebar-text-muted={!isActive}
+                    class:hover:text-surface-sidebar-text={!isActive}
+                    class:drag-over-top={dropTarget?.level === 'page' &&
+                      dropTarget.name === `\u0000${pg.name}` &&
+                      dropTarget.before}
+                    class:drag-over-bottom={dropTarget?.level === 'page' &&
+                      dropTarget.name === `\u0000${pg.name}` &&
+                      !dropTarget.before}
+                    role="treeitem"
+                    data-tree-id={pageNodeId({
+                      notebook: activeNotebook,
+                      section: '',
+                      page: pg.name
+                    })}
+                    tabindex={focusedTreeItemId ===
+                    pageNodeId({
+                      notebook: activeNotebook,
+                      section: '',
+                      page: pg.name
+                    })
+                      ? 0
+                      : -1}
+                    aria-level="1"
+                    aria-selected={isActive}
+                    aria-haspopup="menu"
+                    aria-controls={contextMenuTargetId ===
+                    pageNodeId({
+                      notebook: activeNotebook,
+                      section: '',
+                      page: pg.name
+                    })
+                      ? 'sidebar-context-menu'
+                      : undefined}
+                  >
+                    {#if isActive}
+                      <span
+                        class="absolute left-1 top-1 bottom-1 w-0.5 bg-accent-primary-start rounded-full"
+                      ></span>
+                    {/if}
+                    <span class="truncate flex-1" title={pg.name}
+                      >{pg.name}</span
+                    >
+                  </button>
+                {/each}
+              {/if}
+            {/each}
+            <!-- Notebook-root drop zone (#177): drag a page here to move it
+             out of any section (section-less / root). Invisible until a
+             page is actively dragged over it. -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="mx-1 mt-1 rounded transition-colors min-h-6"
+              class:drag-over-into={dropTarget?.level === 'section' &&
+                dropTarget.name === '__root__'}
+              ondragover={(e) => {
+                if (!dragItem || dragItem.level !== 'page') return
+                e.preventDefault()
+                if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+                dropTarget = {
+                  level: 'section',
+                  name: '__root__',
+                  before: false
+                }
+              }}
+              ondragleave={handleDragLeave}
+              ondrop={(e) =>
+                handleDrop(e, 'section', '__root__', activeNotebook, '')}
+              role="none"
+            >
+              {#if dragItem?.level === 'page'}
+                <div
+                  class="text-surface-sidebar-text-muted text-type-xs font-body-md py-1.5 px-2 text-center border border-dashed border-surface-sidebar-border rounded"
+                >
+                  Drop to move to notebook root
+                </div>
+              {/if}
+            </div>
           </div>
         {/if}
       </div>
@@ -1064,6 +1657,27 @@
       >
     </div>
   {/if}
+  {#if actionError}
+    <div
+      class="fixed bottom-4 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-2xl border border-status-danger/40 bg-surface-sidebar"
+      role="alert"
+      aria-live="assertive"
+    >
+      <span
+        class="material-symbols-outlined text-status-danger text-icon-lg"
+        aria-hidden="true">error</span
+      >
+      <span class="text-surface-sidebar-text text-type-md font-body-md"
+        >{actionError}</span
+      >
+      <button
+        type="button"
+        class="ml-2 border-none bg-transparent text-surface-sidebar-text-muted cursor-pointer"
+        aria-label="Dismiss error"
+        onclick={() => (actionError = '')}>Dismiss</button
+      >
+    </div>
+  {/if}
 
   <!-- Shared create/rename dialog (#662) — NamePromptDialog for all nav CRUD. -->
   {#if createMode}
@@ -1080,6 +1694,30 @@
       onCancel={closeNamePrompt}
     />
   {/if}
+  {#if actionPrompt}
+    <NamePromptDialog
+      title={actionPrompt.kind === 'duplicate'
+        ? 'Duplicate Page'
+        : 'New Child Section'}
+      label={actionPrompt.kind === 'duplicate' ? 'Page name' : 'Section name'}
+      initialValue={actionPrompt.initialValue}
+      placeholder={actionPrompt.kind === 'duplicate'
+        ? 'Duplicate page name…'
+        : 'Child section name…'}
+      confirmLabel={actionBusy
+        ? actionPrompt.kind === 'duplicate'
+          ? 'Duplicating…'
+          : 'Creating…'
+        : actionPrompt.kind === 'duplicate'
+          ? 'Duplicate'
+          : 'Create'}
+      errorMessage={actionPromptError}
+      busy={actionBusy}
+      dataTestId="sidebar-action-prompt"
+      onConfirm={(value) => void confirmActionPrompt(value)}
+      onCancel={closeActionPrompt}
+    />
+  {/if}
 
   <!-- Sidebar Footer -->
   <div
@@ -1088,7 +1726,7 @@
     <button
       onclick={() => (collapsed = true)}
       aria-label="Hide sidebar"
-      title="Hide sidebar (Ctrl+B)"
+      title={hideSidebarHint}
       class="p-1.5 rounded hover:bg-hover text-surface-sidebar-text-muted hover:text-accent-primary-start transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none flex items-center justify-center hover:scale-105 active:scale-95"
     >
       <span class="material-symbols-outlined text-icon-lg"
@@ -1109,17 +1747,132 @@
   anchorEl={contextMenu?.anchorEl ?? null}
   onClose={closeContextMenu}
   ariaLabel="Actions"
+  menuId="sidebar-context-menu"
 >
   {#if !contextMenuUnlink}
     <!-- Linked notebooks cannot be renamed in place (ARCHITECTURE §3.1);
          RenameNotebook refuses them — omit the dead-end menu item. -->
-    <button type="button" onclick={handleContextRename} role="menuitem">
+    <button
+      type="button"
+      onclick={handleContextRename}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
       <span class="material-symbols-outlined text-icon-md">edit</span>
       Rename
     </button>
   {/if}
+  {#if contextMenuPageRef}
+    <button
+      type="button"
+      onclick={openDuplicatePrompt}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >file_copy</span
+      >
+      Duplicate…
+    </button>
+    <button
+      type="button"
+      onclick={() => handleContextCopyPage('path')}
+      role="menuitem"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >content_copy</span
+      >
+      Copy Page Path
+    </button>
+    <button
+      type="button"
+      onclick={() => handleContextCopyPage('reference')}
+      role="menuitem"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >link</span
+      >
+      Copy Page Reference
+    </button>
+    <button
+      type="button"
+      onclick={handleContextReveal}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >folder_open</span
+      >
+      Reveal in file manager
+    </button>
+    <button type="button" onclick={handleContextFavorite} role="menuitem">
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true">
+        {favoriteKeys.has(locatorKey(contextMenuPageRef))
+          ? 'star'
+          : 'star_outline'}
+      </span>
+      {favoriteKeys.has(locatorKey(contextMenuPageRef))
+        ? 'Remove from favorites'
+        : 'Add to favorites'}
+    </button>
+  {/if}
+  {#if contextMenu?.level === 'section' || contextMenu?.level === 'page'}
+    <button
+      type="button"
+      onclick={handleContextNewPage}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >note_add</span
+      >
+      New Page Here
+    </button>
+  {/if}
+  {#if contextMenu?.level === 'section'}
+    <button
+      type="button"
+      onclick={openChildSectionPrompt}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >create_new_folder</span
+      >
+      New child section…
+    </button>
+  {/if}
   {#if contextMenu?.level === 'notebook'}
-    <button type="button" onclick={handleContextReveal} role="menuitem">
+    <button
+      type="button"
+      onclick={handleContextNewPage}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >note_add</span
+      >
+      New Page Here
+    </button>
+    <button type="button" onclick={handleContextCopyNotebook} role="menuitem">
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >content_copy</span
+      >
+      Copy Notebook Path
+    </button>
+    <button
+      type="button"
+      onclick={handleContextReveal}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
       <span class="material-symbols-outlined text-icon-md">folder_open</span>
       Reveal in file manager
     </button>
@@ -1128,6 +1881,8 @@
     type="button"
     onclick={handleContextDelete}
     role="menuitem"
+    disabled={contextUnavailable && !contextMenuUnlink}
+    aria-disabled={contextUnavailable && !contextMenuUnlink}
     class="text-status-danger"
   >
     <span class="material-symbols-outlined text-icon-md"

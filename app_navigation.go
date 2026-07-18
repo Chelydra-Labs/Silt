@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"silt/backend/config"
@@ -119,113 +120,115 @@ func (a *App) resolveSourceByNameLocked(notebookName string) string {
 // tree is a true tree: each section may carry `Children []NavigationSection`
 // for arbitrarily-deep nesting.
 func (a *App) ListNavigation() (parser.NavigationTree, error) {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return parser.NavigationTree{}, fmt.Errorf("vault not loaded")
-	}
-
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	// 1. Block counts per (source, notebook, section, page) from the index.
-	// Source is part of the key so a linked notebook sharing a display name
-	// with a vault notebook gets its own counts (#100). Lease-aware package
-	// API — no raw SQLDB() across vault teardown.
-	counts := map[nspKey]int{}
-	if a.db != nil {
-		a.coordinator.WithDBRead(func() {
-			rows, err := a.db.CountBlocksGroupedByPage()
-			if err != nil {
-				// Match prior soft behavior: empty counts on query failure
-				// (including ErrDBClosed during vault switch).
-				return
-			}
-			for _, row := range rows {
-				counts[nspKey{row.Source, row.Notebook, row.Section, row.Page}] = row.Count
-			}
-		})
-	}
-
-	tree := parser.NavigationTree{Notebooks: []parser.NavigationNotebook{}}
-	nbEntries, err := os.ReadDir(a.vaultPath)
-	if err != nil {
-		return tree, fmt.Errorf("failed to read vault: %w", err)
-	}
-
-	for _, nbE := range nbEntries {
-		nbName := nbE.Name()
-		if !nbE.IsDir() || strings.HasPrefix(nbName, ".") {
-			continue
+	tree, err := func() (parser.NavigationTree, error) {
+		a.vaultMu.RLock()
+		defer a.vaultMu.RUnlock()
+		if a.vaultPath == "" {
+			return parser.NavigationTree{}, fmt.Errorf("vault not loaded")
 		}
-		nbPath := filepath.Join(a.vaultPath, nbName)
-		rootPages, childSections := a.walkSections(nbPath, nbName, "", counts)
-		var sections []parser.NavigationSection
-		// Direct .md files at the notebook root form the section-less
-		// group (Name = ""), surfaced first in the sidebar.
-		if len(rootPages) > 0 {
-			sections = append(sections, parser.NavigationSection{
-				Name:  "",
-				Pages: rootPages,
+
+		a.wg.Add(1)
+		defer a.wg.Done()
+
+		// 1. Block counts per (source, notebook, section, page) from the index.
+		// Source is part of the key so a linked notebook sharing a display name
+		// with a vault notebook gets its own counts (#100). Lease-aware package
+		// API — no raw SQLDB() across vault teardown.
+		counts := map[nspKey]int{}
+		if a.db != nil {
+			a.coordinator.WithDBRead(func() {
+				rows, err := a.db.CountBlocksGroupedByPage()
+				if err != nil {
+					// Match prior soft behavior: empty counts on query failure
+					// (including ErrDBClosed during vault switch).
+					return
+				}
+				for _, row := range rows {
+					counts[nspKey{row.Source, row.Notebook, row.Section, row.Page}] = row.Count
+				}
 			})
 		}
-		sections = append(sections, childSections...)
-		tree.Notebooks = append(tree.Notebooks, parser.NavigationNotebook{
-			Name:     nbName,
-			Sections: sections,
-			Source:   "vault",
-		})
-	}
 
-	// 2. Linked (external) notebooks (#100). Their sections/pages come from
-	// the index counts (the root may be momentarily offline; the last-synced
-	// rows still show). Each link is one notebook. Section-less pages ("")
-	// surface first, matching the vault ordering above.
-	a.configMu.RLock()
-	links := append([]config.LinkedNotebook(nil), a.cfg.LinkedNotebooks...)
-	a.configMu.RUnlock()
-	for _, ln := range links {
-		src := ln.Source()
-		pagesBySection := map[string][]parser.NavigationPage{}
-		for k, c := range counts {
-			if k.src == src && k.n == ln.DisplayName {
-				pagesBySection[k.s] = append(pagesBySection[k.s], parser.NavigationPage{Name: k.p, Count: c})
+		tree := parser.NavigationTree{Notebooks: []parser.NavigationNotebook{}}
+		nbEntries, err := os.ReadDir(a.vaultPath)
+		if err != nil {
+			return tree, fmt.Errorf("failed to read vault: %w", err)
+		}
+
+		for _, nbE := range nbEntries {
+			nbName := nbE.Name()
+			if !nbE.IsDir() || strings.HasPrefix(nbName, ".") {
+				continue
 			}
-		}
-		_, statErr := os.Stat(ln.RootPath)
-
-		var sections []parser.NavigationSection
-		if pages, ok := pagesBySection[""]; ok {
-			sortNavPages(pages)
-			sections = append(sections, parser.NavigationSection{Name: "", Pages: pages})
-		}
-		named := make([]string, 0, len(pagesBySection))
-		for s := range pagesBySection {
-			if s != "" {
-				named = append(named, s)
+			nbPath := filepath.Join(a.vaultPath, nbName)
+			rootPages, childSections := a.walkSections(nbPath, nbName, "", config.LinkedNotebooksVaultSource, counts)
+			var sections []parser.NavigationSection
+			// Direct .md files at the notebook root form the section-less
+			// group (Name = ""), surfaced first in the sidebar.
+			if len(rootPages) > 0 {
+				sections = append(sections, parser.NavigationSection{
+					Name:  "",
+					Pages: rootPages,
+				})
 			}
-		}
-		sortStrings(named)
-		for _, s := range named {
-			pages := pagesBySection[s]
-			sortNavPages(pages)
-			sections = append(sections, parser.NavigationSection{Name: s, Pages: pages})
+			sections = append(sections, childSections...)
+			tree.Notebooks = append(tree.Notebooks, parser.NavigationNotebook{
+				Name:     nbName,
+				Sections: sections,
+				Source:   "vault",
+			})
 		}
 
-		tree.Notebooks = append(tree.Notebooks, parser.NavigationNotebook{
-			Name:         ln.DisplayName,
-			Source:       src,
-			RootPath:     ln.RootPath,
-			Disconnected: statErr != nil,
-			Sections:     sections,
+		// 2. Linked notebooks prefer their live filesystem tree. The index is only
+		// used while a trusted root is unavailable, preserving the last known tree
+		// during offline sync outages.
+		a.configMu.RLock()
+		links := append([]config.LinkedNotebook(nil), a.cfg.LinkedNotebooks...)
+		a.configMu.RUnlock()
+		for _, ln := range links {
+			src := ln.Source()
+			var sections []parser.NavigationSection
+			disconnected := false
+			if linkedRoot, resolveErr := a.resolveNotebookDir(ln.DisplayName, src); resolveErr == nil {
+				if info, statErr := os.Stat(linkedRoot); statErr == nil && info.IsDir() {
+					rootPages, childSections := a.walkSections(linkedRoot, ln.DisplayName, "", src, counts)
+					if len(rootPages) > 0 {
+						sections = append(sections, parser.NavigationSection{Name: "", Pages: rootPages})
+					}
+					sections = append(sections, childSections...)
+				} else {
+					disconnected = true
+				}
+			} else {
+				disconnected = true
+			}
+			if disconnected {
+				sections = reconstructIndexedSections(counts, src, ln.DisplayName)
+			}
+
+			tree.Notebooks = append(tree.Notebooks, parser.NavigationNotebook{
+				Name:         ln.DisplayName,
+				Source:       src,
+				RootPath:     ln.RootPath,
+				Disconnected: disconnected,
+				Sections:     sections,
+			})
+		}
+
+		// Mix vault + linked notebooks alphabetically by name for a unified tree.
+		sort.Slice(tree.Notebooks, func(i, j int) bool {
+			return tree.Notebooks[i].Name < tree.Notebooks[j].Name
 		})
+		tree = normalizeNavTree(tree)
+		return tree, nil
+	}()
+	if err != nil {
+		return tree, err
 	}
-
-	// Mix vault + linked notebooks alphabetically by name for a unified tree.
-	sort.Slice(tree.Notebooks, func(i, j int) bool {
-		return tree.Notebooks[i].Name < tree.Notebooks[j].Name
-	})
-	return normalizeNavTree(tree), nil
+	if err := a.reconcileNavigationAgainstTree(tree); err != nil {
+		log.Printf("ListNavigation: preference reconciliation failed: %v", err)
+	}
+	return tree, nil
 }
 
 // normalizeNavTree guarantees no nil slices cross the Wails IPC boundary. A Go
@@ -273,7 +276,7 @@ func normalizeNavSection(s parser.NavigationSection) parser.NavigationSection {
 // Sections with no pages and no children are still emitted so freshly-
 // created sections appear in the sidebar immediately.
 func (a *App) walkSections(
-	dirPath, nbName, parentSectionID string,
+	dirPath, nbName, parentSectionID, source string,
 	counts map[nspKey]int,
 ) ([]parser.NavigationPage, []parser.NavigationSection) {
 	entries, err := os.ReadDir(dirPath)
@@ -304,7 +307,7 @@ func (a *App) walkSections(
 		pageName := strings.TrimSuffix(name, filepath.Ext(name))
 		pages = append(pages, parser.NavigationPage{
 			Name:  pageName,
-			Count: counts[nspKey{"vault", nbName, parentSectionID, pageName}],
+			Count: counts[nspKey{source, nbName, parentSectionID, pageName}],
 		})
 	}
 	sortNavPages(pages)
@@ -322,7 +325,7 @@ func (a *App) walkSections(
 		childPath := filepath.Join(dirPath, sd)
 		// Single read: the recursive call returns both the child's own
 		// pages and its nested sections, so we never re-read childPath.
-		childPages, childSections := a.walkSections(childPath, nbName, childID, counts)
+		childPages, childSections := a.walkSections(childPath, nbName, childID, source, counts)
 		// Preserve the child even when empty so a freshly-created
 		// section shows up in the sidebar.
 		sections = append(sections, parser.NavigationSection{
@@ -334,6 +337,62 @@ func (a *App) walkSections(
 	}
 
 	return pages, sections
+}
+
+func reconstructIndexedSections(counts map[nspKey]int, source, notebook string) []parser.NavigationSection {
+	type node struct {
+		section  parser.NavigationSection
+		children map[string]*node
+	}
+	root := &node{children: map[string]*node{}}
+	var rootPages []parser.NavigationPage
+	for key, count := range counts {
+		if key.src != source || key.n != notebook {
+			continue
+		}
+		if key.s == "" {
+			rootPages = append(rootPages, parser.NavigationPage{Name: key.p, Count: count})
+			continue
+		}
+		current := root
+		path := ""
+		for _, part := range strings.Split(key.s, "/") {
+			if path == "" {
+				path = part
+			} else {
+				path += "/" + part
+			}
+			child := current.children[part]
+			if child == nil {
+				child = &node{section: parser.NavigationSection{Name: part, Path: path, Pages: []parser.NavigationPage{}, Children: []parser.NavigationSection{}}, children: map[string]*node{}}
+				current.children[part] = child
+			}
+			current = child
+		}
+		current.section.Pages = append(current.section.Pages, parser.NavigationPage{Name: key.p, Count: count})
+	}
+	var build func(*node) []parser.NavigationSection
+	build = func(parent *node) []parser.NavigationSection {
+		keys := make([]string, 0, len(parent.children))
+		for key := range parent.children {
+			keys = append(keys, key)
+		}
+		sortStrings(keys)
+		out := make([]parser.NavigationSection, 0, len(keys))
+		for _, key := range keys {
+			child := parent.children[key]
+			sortNavPages(child.section.Pages)
+			child.section.Children = build(child)
+			out = append(out, child.section)
+		}
+		return out
+	}
+	sections := make([]parser.NavigationSection, 0)
+	if len(rootPages) > 0 {
+		sortNavPages(rootPages)
+		sections = append(sections, parser.NavigationSection{Name: "", Pages: rootPages})
+	}
+	return append(sections, build(root)...)
 }
 
 func sortStrings(s []string) {

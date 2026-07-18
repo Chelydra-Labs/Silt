@@ -27,6 +27,10 @@ vi.mock('../../plugins/surfaces', () => ({
 }))
 
 import SettingsNav from './SettingsNav.svelte'
+import {
+  resetTemplateDraftForTests,
+  retainTemplateDraft
+} from './templateDraftSession'
 
 describe('SettingsNav — section list (sidebar tablist)', () => {
   beforeEach(() => {
@@ -98,6 +102,24 @@ describe('SettingsNav — section list (sidebar tablist)', () => {
     expect(
       screen.getByRole('tab', { name: 'About' }).getAttribute('aria-selected')
     ).toBe('true')
+  })
+
+  it('confirms before leaving a retained unsaved template draft', async () => {
+    retainTemplateDraft('C:/Vault A', {
+      draft: { title: 'Draft' },
+      baseline: JSON.stringify({ title: '' }),
+      selectedId: ''
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(SettingsNav, { props: { section: 'templates' } })
+    await fireEvent.click(screen.getByRole('tab', { name: 'General' }))
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(screen.getByRole('tab', { name: 'Templates' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    confirm.mockRestore()
+    resetTemplateDraftForTests()
   })
 
   it('hides the Dev section when dev mode is off', () => {

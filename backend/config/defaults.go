@@ -51,6 +51,11 @@ func Defaults() SystemConfig {
 			// and most editors). #511 opens settings as a workspace tab. Note this
 			// freed Ctrl+, from format_subscript, which moved to Ctrl+Shift+, below.
 			"open_settings":        "Ctrl+,",
+			"new_page":             "Ctrl+N",
+			"new_section":          "Ctrl+Alt+N",
+			"new_notebook":         "Ctrl+Alt+Shift+N",
+			"open_quick_switcher":  "Ctrl+P",
+			"open_shortcuts_help":  "Shift+?",
 			"indent_block":         "Tab",
 			"unindent_block":       "Shift+Tab",
 			"open_template_picker": "Ctrl+Shift+T",
@@ -173,7 +178,10 @@ func Defaults() SystemConfig {
 				Sections: map[string][]string{},
 				Pages:    map[string][]string{},
 			},
-			OpenTabs: []TabRef{},
+			OpenTabs:         []TabRef{},
+			ExpandedSections: []NavigationSectionRef{},
+			RecentPages:      []RecentPage{},
+			Favorites:        []NavigationPageRef{},
 			// EnablePreviewTabs defaults to true (industry-standard parity). Stored as
 			// a *bool so "unset" is distinguishable from "explicitly false";
 			// the frontend treats nil as true.
@@ -193,6 +201,7 @@ func Defaults() SystemConfig {
 			// from "explicitly false" through the Load → normalize path.
 			ShowTabDirtyIndicators: boolPtr(true),
 			DismissedTips:          []string{},
+			QuickAccessCollapsed:   boolPtr(true),
 			OpenDevtoolsOnStartup:  boolPtr(false),
 			Formatting: FormattingConfig{
 				TypographyEnabled: boolPtr(true),

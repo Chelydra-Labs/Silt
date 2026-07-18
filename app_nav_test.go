@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +14,97 @@ import (
 	"silt/backend/config"
 	"silt/backend/parser"
 )
+
+func TestNavigationPreferences_RejectMultiSegmentNotebook(t *testing.T) {
+	app := newTestApp(t)
+	const evil = "Work/Evil"
+
+	if err := app.SetNavigationSectionExpanded(evil, "Projects", true); err == nil {
+		t.Fatalf("SetNavigationSectionExpanded accepted multi-segment notebook %q", evil)
+	}
+	if err := app.RecordRecentPage(evil, "Projects", "Site"); err == nil {
+		t.Fatalf("RecordRecentPage accepted multi-segment notebook %q", evil)
+	}
+	if err := app.SetFavoritePage(evil, "Projects", "Site", true); err == nil {
+		t.Fatalf("SetFavoritePage accepted multi-segment notebook %q", evil)
+	}
+}
+
+func TestRecordRecentPage_RefreshesOpenedAtWhenAlreadyMostRecent(t *testing.T) {
+	app := newTestApp(t)
+
+	if err := app.RecordRecentPage("Work", "Projects", "Site"); err != nil {
+		t.Fatalf("RecordRecentPage first: %v", err)
+	}
+	prefs, err := app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences: %v", err)
+	}
+	if len(prefs.RecentPages) != 1 {
+		t.Fatalf("expected 1 recent page, got %+v", prefs.RecentPages)
+	}
+	firstOpenedAt := prefs.RecentPages[0].OpenedAt
+	if firstOpenedAt <= 0 {
+		t.Fatalf("expected positive OpenedAt, got %d", firstOpenedAt)
+	}
+
+	// Force a stale head timestamp so a same-second re-record still mutates.
+	if err := app.mutateConfig(func(cfg *config.SystemConfig) error {
+		items := append([]config.RecentPage(nil), cfg.UI.RecentPages...)
+		items[0].OpenedAt = firstOpenedAt - 10
+		cfg.UI.RecentPages = items
+		return nil
+	}); err != nil {
+		t.Fatalf("seed stale OpenedAt: %v", err)
+	}
+	stale, err := app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences after seed: %v", err)
+	}
+	staleOpenedAt := stale.RecentPages[0].OpenedAt
+
+	if err := app.RecordRecentPage("Work", "Projects", "Site"); err != nil {
+		t.Fatalf("RecordRecentPage second: %v", err)
+	}
+	prefs, err = app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences after re-record: %v", err)
+	}
+	if len(prefs.RecentPages) != 1 {
+		t.Fatalf("expected still 1 recent page, got %+v", prefs.RecentPages)
+	}
+	if prefs.RecentPages[0].OpenedAt <= staleOpenedAt {
+		t.Fatalf("expected OpenedAt to refresh past %d, got %d", staleOpenedAt, prefs.RecentPages[0].OpenedAt)
+	}
+	if prefs.RecentPages[0].Notebook != "Work" || prefs.RecentPages[0].Section != "Projects" || prefs.RecentPages[0].Page != "Site" {
+		t.Fatalf("unexpected recent page after re-record: %+v", prefs.RecentPages[0])
+	}
+}
+
+func assertRenamePageIndexed(t *testing.T, app *App, notebook, section, page string) {
+	t.Helper()
+	blocks, err := app.db.FetchPageBlocks("vault", notebook, section, page)
+	if err != nil {
+		t.Fatalf("FetchPageBlocks(%s/%s/%s): %v", notebook, section, page, err)
+	}
+	if len(blocks) == 0 {
+		t.Fatalf("expected indexed blocks for %s/%s/%s", notebook, section, page)
+	}
+}
+
+func seedRenamePage(t *testing.T, app *App, notebook, section, page string) {
+	t.Helper()
+	path := filepath.Join(app.vaultPath, notebook, filepath.FromSlash(section), page+".md")
+	content := fmt.Sprintf("---\nnotebook: %q\nsection: %q\npage: %q\ndate: 2026-01-01\ntags: []\n---\n# %s <!-- id: 11111111-1111-4111-8111-111111111111 -->\n", notebook, section, page, page)
+	writeFile(t, path, content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, notebook, section, page, "2026-01-01", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+}
 
 // TestListNavigation_DeepNesting verifies that #88's recursive walker
 // surfaces sections at any depth and preserves the section's own pages
@@ -107,6 +201,184 @@ func TestListNavigation_DeepNesting(t *testing.T) {
 	}
 }
 
+func TestNestedNavigationCRUD_ReconcilesPreferences(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.CreateSection("TestNB", "Projects", "Active"); err != nil {
+		t.Fatalf("CreateSection: %v", err)
+	}
+	if _, err := app.CreatePage("TestNB", "Projects/Active", "Site", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+	if err := app.SetNavigationSectionExpanded("TestNB", "Projects", true); err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	if err := app.SetFavoritePage("TestNB", "Projects/Active", "Site", true); err != nil {
+		t.Fatalf("favorite: %v", err)
+	}
+	if err := app.RecordRecentPage("TestNB", "Projects/Active", "Site"); err != nil {
+		t.Fatalf("recent: %v", err)
+	}
+	if err := app.RenameSection("TestNB", "Projects", "Archive"); err != nil {
+		t.Fatalf("RenameSection: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(app.vaultPath, "TestNB", "Archive", "Active", "Site.md")); err != nil {
+		t.Fatalf("nested page after section rename: %v", err)
+	}
+	prefs, err := app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences: %v", err)
+	}
+	if len(prefs.ExpandedSections) != 1 || prefs.ExpandedSections[0].Path != "Archive" {
+		t.Fatalf("expanded refs not reconciled: %+v", prefs.ExpandedSections)
+	}
+	if len(prefs.Favorites) != 1 || prefs.Favorites[0].Section != "Archive/Active" {
+		t.Fatalf("favorites not reconciled: %+v", prefs.Favorites)
+	}
+	if len(prefs.RecentPages) != 1 || prefs.RecentPages[0].Section != "Archive/Active" {
+		t.Fatalf("recents not reconciled: %+v", prefs.RecentPages)
+	}
+	if err := app.DeleteSection("TestNB", "Archive"); err != nil {
+		t.Fatalf("DeleteSection: %v", err)
+	}
+	prefs, err = app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences after delete: %v", err)
+	}
+	if len(prefs.Favorites) != 0 || len(prefs.RecentPages) != 0 || len(prefs.ExpandedSections) != 0 {
+		t.Fatalf("deleted subtree left stale prefs: %+v", prefs)
+	}
+}
+
+func TestMovePage_RejectsSymlinkedDestination(t *testing.T) {
+	app := newTestApp(t)
+	external := t.TempDir()
+	link := filepath.Join(app.vaultPath, "Work", "External")
+	if err := os.Symlink(external, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	source := filepath.Join(app.vaultPath, "Work", "Source", "Page.md")
+	writeFile(t, source, "---\nnotebook: Work\nsection: Source\npage: Page\n---\n# Page\n")
+	if err := app.MovePage("Work", "Source", "External", "Page"); err == nil {
+		t.Fatal("MovePage accepted a destination through a parent symlink")
+	}
+	if _, err := os.Stat(filepath.Join(external, "Page.md")); !os.IsNotExist(err) {
+		t.Fatalf("MovePage wrote outside the notebook root: %v", err)
+	}
+}
+
+func TestQuickAccessCollapsedPreference_RoundTripsThroughNavigationIPC(t *testing.T) {
+	app := newTestApp(t)
+
+	prefs, err := app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences: %v", err)
+	}
+	if !prefs.QuickAccessCollapsed {
+		t.Fatal("quick access should default collapsed")
+	}
+
+	if err := app.SetQuickAccessCollapsed(false); err != nil {
+		t.Fatalf("SetQuickAccessCollapsed(false): %v", err)
+	}
+	prefs, err = app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences after expand: %v", err)
+	}
+	if prefs.QuickAccessCollapsed {
+		t.Fatal("quick access should report expanded after setter")
+	}
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if loaded.UI.QuickAccessCollapsed == nil || *loaded.UI.QuickAccessCollapsed {
+		t.Fatalf("expanded state was not persisted in config.yaml: %v", loaded.UI.QuickAccessCollapsed)
+	}
+
+	if err := app.SetQuickAccessCollapsed(true); err != nil {
+		t.Fatalf("SetQuickAccessCollapsed(true): %v", err)
+	}
+	prefs, err = app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences after collapse: %v", err)
+	}
+	if !prefs.QuickAccessCollapsed {
+		t.Fatal("quick access should report collapsed after setter")
+	}
+}
+
+func TestNavigationPreferenceMutationsAreSerialized(t *testing.T) {
+	app := newTestApp(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			section := "Projects/" + string(rune('A'+i))
+			if err := app.SetNavigationSectionExpanded("TestNB", section, true); err != nil {
+				t.Errorf("expand %d: %v", i, err)
+			}
+			if err := app.SetFavoritePage("TestNB", section, "Page", true); err != nil {
+				t.Errorf("favorite %d: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	prefs, err := app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences: %v", err)
+	}
+	if len(prefs.ExpandedSections) != 12 || len(prefs.Favorites) != 12 {
+		t.Fatalf("concurrent mutations lost state: expanded=%d favorites=%d", len(prefs.ExpandedSections), len(prefs.Favorites))
+	}
+}
+
+func TestDeleteSection_NavOrderUsesPathBoundary(t *testing.T) {
+	app := newTestApp(t)
+	if _, err := app.CreatePage("TestNB", "A", "Removed", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage A: %v", err)
+	}
+	if _, err := app.CreatePage("TestNB", "Archive", "Kept", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage Archive: %v", err)
+	}
+	if err := app.SetNavPageOrder("TestNB", "A", []string{"Removed"}); err != nil {
+		t.Fatalf("SetNavPageOrder A: %v", err)
+	}
+	if err := app.SetNavPageOrder("TestNB", "Archive", []string{"Kept"}); err != nil {
+		t.Fatalf("SetNavPageOrder Archive: %v", err)
+	}
+	if err := app.DeleteSection("TestNB", "A"); err != nil {
+		t.Fatalf("DeleteSection: %v", err)
+	}
+	order, err := app.GetNavOrder()
+	if err != nil {
+		t.Fatalf("GetNavOrder: %v", err)
+	}
+	if got := order.Pages["TestNB/Archive"]; len(got) != 1 || got[0] != "Kept" {
+		t.Fatalf("deleting A removed Archive ordering: %+v", order.Pages)
+	}
+}
+
+func TestMigrateNavOrderKeys_NestedPathsAndCollisionAreDeterministic(t *testing.T) {
+	order := map[string][]string{
+		"TestNB/Projects":        {"Projects"},
+		"TestNB/Projects/Active": {"Active"},
+		// A pre-existing destination is overwritten by the migrated source.
+		"TestNB/Archive": {"old"},
+	}
+	migrateNavOrderKeys(order, "TestNB/Projects", "TestNB/Archive")
+
+	want := map[string][]string{
+		"TestNB/Archive":        {"Projects"},
+		"TestNB/Archive/Active": {"Active"},
+	}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("migrated nav order = %#v, want %#v", order, want)
+	}
+}
+
 // --- Config UI block tests (#63, #68) ---
 
 func TestGetSetSidebarWidth_RoundTrip(t *testing.T) {
@@ -151,15 +423,17 @@ func TestSetSidebarWidth_Clamps(t *testing.T) {
 	}
 }
 
-func TestGetSetNavOrder_RoundTrip(t *testing.T) {
+func TestNarrowNavOrder_RoundTrip(t *testing.T) {
 	app := newTestApp(t)
 
-	order := config.NavOrder{
-		Notebooks: []string{"Personal", "Work"},
-		Sections:  map[string][]string{"Work": {"Projects", "Inbox"}},
+	if err := app.SetNavNotebookOrder([]string{"Personal", "Work"}); err != nil {
+		t.Fatalf("SetNavNotebookOrder: %v", err)
 	}
-	if err := app.SetNavOrder(order); err != nil {
-		t.Fatalf("SetNavOrder: %v", err)
+	if err := app.SetNavSectionOrder("Work", "", []string{"Projects", "Inbox"}); err != nil {
+		t.Fatalf("SetNavSectionOrder: %v", err)
+	}
+	if err := app.SetNavPageOrder("Work", "Projects", []string{"Site"}); err != nil {
+		t.Fatalf("SetNavPageOrder: %v", err)
 	}
 
 	got, err := app.GetNavOrder()
@@ -171,6 +445,48 @@ func TestGetSetNavOrder_RoundTrip(t *testing.T) {
 	}
 	if len(got.Sections["Work"]) != 2 || got.Sections["Work"][0] != "Projects" {
 		t.Fatalf("nav order sections: got %v", got.Sections["Work"])
+	}
+}
+
+func TestNavOrderNarrowMutationsPreserveStaleClientKeys(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.SetNavPageOrder("TestNB", "First", []string{"One"}); err != nil {
+		t.Fatalf("first page order: %v", err)
+	}
+	if err := app.SetNavPageOrder("TestNB", "Second", []string{"Two"}); err != nil {
+		t.Fatalf("second page order: %v", err)
+	}
+	if err := app.SetNavSectionOrder("TestNB", "", []string{"First", "Second"}); err != nil {
+		t.Fatalf("section order: %v", err)
+	}
+	// This models two independent clients whose snapshots were both stale when
+	// they issued their writes: each narrow mutation must retain the other key.
+	if err := app.SetNavPageOrder("TestNB", "First", []string{"One", "Updated"}); err != nil {
+		t.Fatalf("updated first page order: %v", err)
+	}
+	order, err := app.GetNavOrder()
+	if err != nil {
+		t.Fatalf("GetNavOrder: %v", err)
+	}
+	if got := order.Pages["TestNB/Second"]; len(got) != 1 || got[0] != "Two" {
+		t.Fatalf("stale client lost unrelated page key: %+v", order.Pages)
+	}
+	if got := order.Sections["TestNB"]; len(got) != 2 || got[1] != "Second" {
+		t.Fatalf("stale client lost section order: %+v", order.Sections)
+	}
+
+	if _, err := app.CreatePage("TestNB", "Second", "Two", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+	if err := app.RenameSection("TestNB", "Second", "Renamed"); err != nil {
+		t.Fatalf("RenameSection: %v", err)
+	}
+	order, err = app.GetNavOrder()
+	if err != nil {
+		t.Fatalf("GetNavOrder after reconciliation: %v", err)
+	}
+	if got := order.Pages["TestNB/First"]; len(got) != 2 || got[1] != "Updated" {
+		t.Fatalf("reconciliation lost unrelated page key: %+v", order.Pages)
 	}
 }
 
@@ -622,12 +938,12 @@ func TestMovePage_UpdatesNavOrder_BothSectionKeys(t *testing.T) {
 	}
 
 	// Seed nav_order so we can verify the page is removed from the old list.
-	app.SetNavOrder(config.NavOrder{
-		Pages: map[string][]string{
-			"TestNB/SecA": {"Alpha", "Beta"},
-			"TestNB/SecB": {"Gamma"},
-		},
-	})
+	if err := app.SetNavPageOrder("TestNB", "SecA", []string{"Alpha", "Beta"}); err != nil {
+		t.Fatalf("SetNavPageOrder SecA: %v", err)
+	}
+	if err := app.SetNavPageOrder("TestNB", "SecB", []string{"Gamma"}); err != nil {
+		t.Fatalf("SetNavPageOrder SecB: %v", err)
+	}
 
 	if err := app.MovePage("TestNB", "SecA", "SecB", "Alpha"); err != nil {
 		t.Fatalf("MovePage: %v", err)
@@ -825,6 +1141,190 @@ func TestRenameNotebook_UpdatesAllFiles(t *testing.T) {
 		if !strings.Contains(string(content), `"NewNB"`) {
 			t.Fatalf("frontmatter in %s should contain notebook:\"NewNB\": %s", c.relPath, content)
 		}
+	}
+}
+
+func TestRenameSection_RollsBackPostRenameWriteFailureAndRetries(t *testing.T) {
+	app := newTestApp(t)
+	seedRenamePage(t, app, "TestNB", "Old/Child", "Page1")
+	if err := app.SetFavoritePage("TestNB", "Old/Child", "Page1", true); err != nil {
+		t.Fatalf("SetFavoritePage: %v", err)
+	}
+
+	failed := false
+	app.renameHooks = &renameHooks{writeFileAtomic: func(path string, content []byte) error {
+		if !failed && strings.Contains(path, filepath.Join("TestNB", "New")) {
+			failed = true
+			return errors.New("injected post-rename section write failure")
+		}
+		return parser.WriteFileAtomic(path, content)
+	}}
+	err := app.RenameSection("TestNB", "Old", "New")
+	if err == nil || !failed {
+		t.Fatalf("RenameSection should fail after injected post-rename write failure: err=%v failed=%v", err, failed)
+	}
+	oldPath := filepath.Join(app.vaultPath, "TestNB", "Old", "Child", "Page1.md")
+	newPath := filepath.Join(app.vaultPath, "TestNB", "New", "Child", "Page1.md")
+	if _, statErr := os.Stat(oldPath); statErr != nil {
+		t.Fatalf("rollback should restore old section path: %v", statErr)
+	}
+	if _, statErr := os.Stat(newPath); !os.IsNotExist(statErr) {
+		t.Fatalf("rollback should remove new section path, got %v", statErr)
+	}
+	assertRenamePageIndexed(t, app, "TestNB", "Old/Child", "Page1")
+	prefs, prefErr := app.GetNavigationPreferences()
+	if prefErr != nil || len(prefs.Favorites) != 1 || prefs.Favorites[0].Section != "Old/Child" {
+		t.Fatalf("failed rename must preserve navigation config: prefs=%+v err=%v", prefs, prefErr)
+	}
+
+	app.renameHooks = nil
+	if err := app.RenameSection("TestNB", "Old", "New"); err != nil {
+		t.Fatalf("retry RenameSection: %v", err)
+	}
+	assertRenamePageIndexed(t, app, "TestNB", "New/Child", "Page1")
+}
+
+func TestRenameSection_RollsBackPostRenameIndexFailureAndRetries(t *testing.T) {
+	app := newTestApp(t)
+	seedRenamePage(t, app, "TestNB", "Old", "Page1")
+	failed := false
+	app.renameHooks = &renameHooks{indexFile: func(a *App, source, notebook, section, page string, blocks []parser.ParsedBlock, tags []string, warnings ...string) error {
+		if !failed {
+			failed = true
+			return errors.New("injected post-rename section index failure")
+		}
+		return a.indexFile(source, notebook, section, page, blocks, tags, warnings...)
+	}}
+	err := app.RenameSection("TestNB", "Old", "New")
+	if err == nil || !failed {
+		t.Fatalf("RenameSection should fail after injected index failure: err=%v failed=%v", err, failed)
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "TestNB", "Old", "Page1.md")); statErr != nil {
+		t.Fatalf("rollback should restore old section after index failure: %v", statErr)
+	}
+	assertRenamePageIndexed(t, app, "TestNB", "Old", "Page1")
+
+	app.renameHooks = nil
+	if err := app.RenameSection("TestNB", "Old", "New"); err != nil {
+		t.Fatalf("retry RenameSection: %v", err)
+	}
+	assertRenamePageIndexed(t, app, "TestNB", "New", "Page1")
+}
+
+func TestRenameSection_RollsBackPostRenameConfigFailure(t *testing.T) {
+	app := newTestApp(t)
+	seedRenamePage(t, app, "TestNB", "Old", "Page1")
+	if err := app.SetFavoritePage("TestNB", "Old", "Page1", true); err != nil {
+		t.Fatalf("SetFavoritePage: %v", err)
+	}
+	app.renameHooks = &renameHooks{reconcileSection: func(a *App, notebook, oldPath, newPath string, remove bool) error {
+		if err := a.reconcileNavigationSection(notebook, oldPath, newPath, remove); err != nil {
+			return err
+		}
+		return errors.New("injected post-rename section config failure")
+	}}
+	if err := app.RenameSection("TestNB", "Old", "New"); err == nil {
+		t.Fatal("RenameSection should fail after injected config reconciliation failure")
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "TestNB", "Old", "Page1.md")); statErr != nil {
+		t.Fatalf("rollback should restore old section after config failure: %v", statErr)
+	}
+	assertRenamePageIndexed(t, app, "TestNB", "Old", "Page1")
+	prefs, err := app.GetNavigationPreferences()
+	if err != nil || len(prefs.Favorites) != 1 || prefs.Favorites[0].Section != "Old" {
+		t.Fatalf("rollback should restore old section config: prefs=%+v err=%v", prefs, err)
+	}
+}
+
+func TestRenameNotebook_RollsBackPostRenameWriteFailureAndRetries(t *testing.T) {
+	app := newTestApp(t)
+	seedRenamePage(t, app, "OldNB", "Nested/Child", "Page1")
+	if err := app.SetFavoritePage("OldNB", "Nested/Child", "Page1", true); err != nil {
+		t.Fatalf("SetFavoritePage: %v", err)
+	}
+
+	failed := false
+	app.renameHooks = &renameHooks{writeFileAtomic: func(path string, content []byte) error {
+		if !failed && strings.Contains(path, filepath.Join("NewNB", "Nested")) {
+			failed = true
+			return errors.New("injected post-rename notebook write failure")
+		}
+		return parser.WriteFileAtomic(path, content)
+	}}
+	err := app.RenameNotebook("OldNB", "NewNB")
+	if err == nil || !failed {
+		t.Fatalf("RenameNotebook should fail after injected post-rename write failure: err=%v failed=%v", err, failed)
+	}
+	oldPath := filepath.Join(app.vaultPath, "OldNB", "Nested", "Child", "Page1.md")
+	newPath := filepath.Join(app.vaultPath, "NewNB", "Nested", "Child", "Page1.md")
+	if _, statErr := os.Stat(oldPath); statErr != nil {
+		t.Fatalf("rollback should restore old notebook path: %v", statErr)
+	}
+	if _, statErr := os.Stat(newPath); !os.IsNotExist(statErr) {
+		t.Fatalf("rollback should remove new notebook path, got %v", statErr)
+	}
+	assertRenamePageIndexed(t, app, "OldNB", "Nested/Child", "Page1")
+	prefs, prefErr := app.GetNavigationPreferences()
+	if prefErr != nil || len(prefs.Favorites) != 1 || prefs.Favorites[0].Notebook != "OldNB" {
+		t.Fatalf("failed rename must preserve notebook config: prefs=%+v err=%v", prefs, prefErr)
+	}
+
+	app.renameHooks = nil
+	if err := app.RenameNotebook("OldNB", "NewNB"); err != nil {
+		t.Fatalf("retry RenameNotebook: %v", err)
+	}
+	assertRenamePageIndexed(t, app, "NewNB", "Nested/Child", "Page1")
+}
+
+func TestRenameNotebook_RollsBackPostRenameIndexFailureAndRetries(t *testing.T) {
+	app := newTestApp(t)
+	seedRenamePage(t, app, "OldNB", "Nested", "Page1")
+	failed := false
+	app.renameHooks = &renameHooks{indexFile: func(a *App, source, notebook, section, page string, blocks []parser.ParsedBlock, tags []string, warnings ...string) error {
+		if !failed {
+			failed = true
+			return errors.New("injected post-rename notebook index failure")
+		}
+		return a.indexFile(source, notebook, section, page, blocks, tags, warnings...)
+	}}
+	err := app.RenameNotebook("OldNB", "NewNB")
+	if err == nil || !failed {
+		t.Fatalf("RenameNotebook should fail after injected index failure: err=%v failed=%v", err, failed)
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "OldNB", "Nested", "Page1.md")); statErr != nil {
+		t.Fatalf("rollback should restore old notebook after index failure: %v", statErr)
+	}
+	assertRenamePageIndexed(t, app, "OldNB", "Nested", "Page1")
+
+	app.renameHooks = nil
+	if err := app.RenameNotebook("OldNB", "NewNB"); err != nil {
+		t.Fatalf("retry RenameNotebook: %v", err)
+	}
+	assertRenamePageIndexed(t, app, "NewNB", "Nested", "Page1")
+}
+
+func TestRenameNotebook_RollsBackPostRenameConfigFailure(t *testing.T) {
+	app := newTestApp(t)
+	seedRenamePage(t, app, "OldNB", "Nested", "Page1")
+	if err := app.SetFavoritePage("OldNB", "Nested", "Page1", true); err != nil {
+		t.Fatalf("SetFavoritePage: %v", err)
+	}
+	app.renameHooks = &renameHooks{reconcileNotebook: func(a *App, oldName, newName string, remove bool) error {
+		if err := a.reconcileNavigationNotebook(oldName, newName, remove); err != nil {
+			return err
+		}
+		return errors.New("injected post-rename notebook config failure")
+	}}
+	if err := app.RenameNotebook("OldNB", "NewNB"); err == nil {
+		t.Fatal("RenameNotebook should fail after injected config reconciliation failure")
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "OldNB", "Nested", "Page1.md")); statErr != nil {
+		t.Fatalf("rollback should restore old notebook after config failure: %v", statErr)
+	}
+	assertRenamePageIndexed(t, app, "OldNB", "Nested", "Page1")
+	prefs, err := app.GetNavigationPreferences()
+	if err != nil || len(prefs.Favorites) != 1 || prefs.Favorites[0].Notebook != "OldNB" {
+		t.Fatalf("rollback should restore old notebook config: prefs=%+v err=%v", prefs, err)
 	}
 }
 

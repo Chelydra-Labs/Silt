@@ -24,20 +24,16 @@ func (a *App) GetSidebarWidth() int {
 // [200, 480]. Uses RegisterSelfWrite to suppress the config watcher's
 // self-write loop.
 func (a *App) SetSidebarWidth(px int) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
 	if px < 200 {
 		px = 200
 	}
 	if px > 480 {
 		px = 480
 	}
-	a.configMu.Lock()
-	a.cfg.UI.SidebarWidth = px
-	cfg := a.cfg
-	a.configMu.Unlock()
-
-	return a.saveConfigTracked(cfg)
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		cfg.UI.SidebarWidth = px
+		return nil
+	})
 }
 
 // GetNavOrder returns the persisted navigation ordering from config.yaml.
@@ -47,16 +43,113 @@ func (a *App) GetNavOrder() (config.NavOrder, error) {
 	return a.cfg.UI.NavOrder, nil
 }
 
-// SetNavOrder persists a new navigation ordering to config.yaml.
-func (a *App) SetNavOrder(order config.NavOrder) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	a.configMu.Lock()
-	a.cfg.UI.NavOrder = order
-	cfg := a.cfg
-	a.configMu.Unlock()
+// SetNavNotebookOrder replaces only the notebook ordering. The current config
+// is read inside the serialized mutation, so an older client cannot overwrite
+// section or page ordering keys added by another client.
+func (a *App) SetNavNotebookOrder(order []string) error {
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		cfg.UI.NavOrder.Notebooks = append([]string(nil), order...)
+		return nil
+	})
+}
 
-	return a.saveConfigTracked(cfg)
+// SetNavSectionOrder sets one parent-qualified section order key. An empty
+// parentPath addresses the notebook root; otherwise it is a full relative
+// section path.
+func (a *App) SetNavSectionOrder(notebook, parentPath string, order []string) error {
+	key, err := navOrderParentKey(notebook, parentPath)
+	if err != nil {
+		return err
+	}
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		if cfg.UI.NavOrder.Sections == nil {
+			cfg.UI.NavOrder.Sections = map[string][]string{}
+		}
+		cfg.UI.NavOrder.Sections[key] = append([]string(nil), order...)
+		return nil
+	})
+}
+
+// SetNavPageOrder sets one section-qualified page order key. An empty
+// sectionPath addresses pages directly under the notebook root.
+func (a *App) SetNavPageOrder(notebook, sectionPath string, order []string) error {
+	key, err := navOrderSectionKey(notebook, sectionPath)
+	if err != nil {
+		return err
+	}
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		if cfg.UI.NavOrder.Pages == nil {
+			cfg.UI.NavOrder.Pages = map[string][]string{}
+		}
+		cfg.UI.NavOrder.Pages[key] = append([]string(nil), order...)
+		return nil
+	})
+}
+
+// ClearNavNotebookOrder clears only the explicit notebook-order list.
+func (a *App) ClearNavNotebookOrder() error {
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		cfg.UI.NavOrder.Notebooks = []string{}
+		return nil
+	})
+}
+
+// ClearNavSectionOrder removes one parent-qualified section order key.
+func (a *App) ClearNavSectionOrder(notebook, parentPath string) error {
+	key, err := navOrderParentKey(notebook, parentPath)
+	if err != nil {
+		return err
+	}
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		delete(cfg.UI.NavOrder.Sections, key)
+		return nil
+	})
+}
+
+// ClearNavPageOrder removes one section-qualified page order key.
+func (a *App) ClearNavPageOrder(notebook, sectionPath string) error {
+	key, err := navOrderSectionKey(notebook, sectionPath)
+	if err != nil {
+		return err
+	}
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		delete(cfg.UI.NavOrder.Pages, key)
+		return nil
+	})
+}
+
+func navOrderParentKey(notebook, parentPath string) (string, error) {
+	notebook = sanitizePathSegment(notebook)
+	parentPath, pathErr := validateSectionPath(parentPath, true)
+	if notebook == "" {
+		return "", fmt.Errorf("notebook name is required")
+	}
+	if pathErr != nil {
+		return "", invalidNavigationPath(pathErr)
+	}
+	if parentPath == "" {
+		return notebook, nil
+	}
+	return notebook + "/" + parentPath, nil
+}
+
+func navOrderSectionKey(notebook, sectionPath string) (string, error) {
+	sectionPath, pathErr := validateSectionPath(sectionPath, true)
+	if pathErr != nil {
+		return "", invalidNavigationPath(pathErr)
+	}
+	notebook = sanitizePathSegment(notebook)
+	if notebook == "" {
+		return "", fmt.Errorf("notebook name is required")
+	}
+	if sectionPath == "" {
+		return notebook + "/", nil
+	}
+	parentKey, err := navOrderParentKey(notebook, sectionPath)
+	if err != nil {
+		return "", err
+	}
+	return parentKey, nil
 }
 
 // --- Open tabs IPC (#142) ------------------------------------------------
@@ -141,26 +234,23 @@ func (a *App) GetOpenTabs() (OpenTabsResult, error) {
 // frontend filters to pinned tabs before calling (preview tabs are
 // ephemeral). Holds vaultMu.RLock across the entire call to block lifecycle
 // transitions (CloseVault / MoveVault) during the disk write — matching the
-// SetSidebarWidth / SetNavOrder sibling pattern. RLock does not block other
+// SetSidebarWidth / narrow nav-order sibling pattern. RLock does not block other
 // RLock readers, so ListNavigation and GetOpenTabs continue to operate
 // concurrently. The vaultMu → configMu ordering is preserved.
 func (a *App) SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" {
-		return fmt.Errorf("vault not loaded")
-	}
 	if openTabs == nil {
 		openTabs = []config.TabRef{}
 	}
-
-	a.configMu.Lock()
-	a.cfg.UI.OpenTabs = openTabs
-	a.cfg.UI.ActiveTab = activeTab
-	cfg := a.cfg
-	a.configMu.Unlock()
-
-	return a.saveConfigTracked(cfg)
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		cfg.UI.OpenTabs = append([]config.TabRef(nil), openTabs...)
+		if activeTab == nil {
+			cfg.UI.ActiveTab = nil
+		} else {
+			copy := *activeTab
+			cfg.UI.ActiveTab = &copy
+		}
+		return nil
+	})
 }
 
 // navPageSet flattens the NavigationTree into a set of

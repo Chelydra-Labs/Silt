@@ -296,6 +296,22 @@ func TestCreatePage_Scaffolding(t *testing.T) {
 	}
 }
 
+func TestCreateSection_RejectsParentSymlink(t *testing.T) {
+	app := newTestApp(t)
+	external := t.TempDir()
+	link := filepath.Join(app.vaultPath, "Work", "External")
+	if err := os.Symlink(external, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	if err := app.CreateSection("Work", "External", "Child"); err == nil {
+		t.Fatal("CreateSection accepted a parent symlink outside the notebook root")
+	}
+	if _, err := os.Stat(filepath.Join(external, "Child")); !os.IsNotExist(err) {
+		t.Fatalf("CreateSection wrote outside the notebook root: %v", err)
+	}
+}
+
 func TestCreatePage_NestedSection(t *testing.T) {
 	app := newTestApp(t)
 
@@ -319,6 +335,22 @@ func TestCreatePage_NestedSection(t *testing.T) {
 	content := string(contentBytes)
 	if !strings.Contains(content, `section: "Projects/Active"`) || !strings.Contains(content, `page: "Site"`) {
 		t.Errorf("scaffolded metadata does not preserve the nested section, got:\n%s", content)
+	}
+}
+
+func TestCreatePage_RejectsParentSymlink(t *testing.T) {
+	app := newTestApp(t)
+	external := t.TempDir()
+	link := filepath.Join(app.vaultPath, "Work", "External")
+	if err := os.Symlink(external, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	if _, err := app.CreatePage("Work", "External", "Escaped", "2026-06-13"); err == nil {
+		t.Fatal("CreatePage accepted a parent symlink outside the notebook root")
+	}
+	if _, err := os.Stat(filepath.Join(external, "Escaped.md")); !os.IsNotExist(err) {
+		t.Fatalf("CreatePage wrote outside the notebook root: %v", err)
 	}
 }
 
@@ -1156,6 +1188,149 @@ func TestSaveSystemConfig_RoundTripThroughGet(t *testing.T) {
 	}
 	if got.Editor.AutoSaveDelayMs != 1234 {
 		t.Errorf("round-trip autosave: want 1234, got %d", got.Editor.AutoSaveDelayMs)
+	}
+}
+
+func TestSaveSystemConfig_PreservesTrustedLinkedNotebookSecurity(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	trustedFingerprint := ln.RootFingerprint
+
+	// Simulate a stale frontend snapshot attempting to replace the host-trusted
+	// fingerprint while changing an unrelated setting.
+	stale, err := app.GetSystemConfig()
+	if err != nil {
+		t.Fatalf("GetSystemConfig: %v", err)
+	}
+	for i := range stale.LinkedNotebooks {
+		if stale.LinkedNotebooks[i].ID == ln.ID {
+			stale.LinkedNotebooks[i].RootFingerprint = "stale-attacker-value"
+		}
+	}
+	stale.Editor.FontFamily = "SecurityTestFont"
+
+	// Also prove SaveSystemConfig retains the applyConfigLocked lifecycle's
+	// first-party grant seeding when it is the config mutation entry point.
+	app.configMu.Lock()
+	app.grants = nil
+	app.configMu.Unlock()
+	if err := app.SaveSystemConfig(stale); err != nil {
+		t.Fatalf("SaveSystemConfig: %v", err)
+	}
+
+	app.configMu.RLock()
+	var liveFingerprint string
+	for _, entry := range app.cfg.LinkedNotebooks {
+		if entry.ID == ln.ID {
+			liveFingerprint = entry.RootFingerprint
+		}
+	}
+	grant := app.grants["silt-tasks"][string(plugins.CapNetwork)]
+	app.configMu.RUnlock()
+	if liveFingerprint != trustedFingerprint {
+		t.Fatalf("SaveSystemConfig replaced trusted fingerprint: got %q, want %q", liveFingerprint, trustedFingerprint)
+	}
+	if grant != plugins.QualGranted {
+		t.Fatalf("SaveSystemConfig did not seed first-party grant: got %q", grant)
+	}
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	for _, entry := range loaded.LinkedNotebooks {
+		if entry.ID == ln.ID && entry.RootFingerprint != trustedFingerprint {
+			t.Fatalf("persisted fingerprint was not reconciled: got %q, want %q", entry.RootFingerprint, trustedFingerprint)
+		}
+	}
+}
+
+func TestSaveSystemConfig_PreservesLinkedNotebookRegistryFromStaleSnapshot(t *testing.T) {
+	app := newTestApp(t)
+	stale, err := app.GetSystemConfig()
+	if err != nil {
+		t.Fatalf("GetSystemConfig: %v", err)
+	}
+
+	ext := t.TempDir()
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	stale.Editor.FontFamily = "StaleSnapshotTestFont"
+	if err := app.SaveSystemConfig(stale); err != nil {
+		t.Fatalf("SaveSystemConfig: %v", err)
+	}
+
+	app.configMu.RLock()
+	var live *config.LinkedNotebook
+	for i := range app.cfg.LinkedNotebooks {
+		if app.cfg.LinkedNotebooks[i].ID == ln.ID {
+			entry := app.cfg.LinkedNotebooks[i]
+			live = &entry
+			break
+		}
+	}
+	app.configMu.RUnlock()
+	if live == nil {
+		t.Fatalf("stale SaveSystemConfig removed live linked notebook %s", ln.ID)
+	}
+	if live.RootFingerprint != ln.RootFingerprint {
+		t.Fatalf("live linked notebook fingerprint = %q, want %q", live.RootFingerprint, ln.RootFingerprint)
+	}
+
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	var persisted *config.LinkedNotebook
+	for i := range loaded.LinkedNotebooks {
+		if loaded.LinkedNotebooks[i].ID == ln.ID {
+			entry := loaded.LinkedNotebooks[i]
+			persisted = &entry
+			break
+		}
+	}
+	if persisted == nil {
+		t.Fatalf("stale SaveSystemConfig removed persisted linked notebook %s", ln.ID)
+	}
+	if persisted.RootFingerprint != ln.RootFingerprint {
+		t.Fatalf("persisted linked notebook fingerprint = %q, want %q", persisted.RootFingerprint, ln.RootFingerprint)
+	}
+}
+
+func TestMutateConfigLocked_RollsBackMutableConfigAliasOnCallbackFailure(t *testing.T) {
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.PluginSettings = map[string]any{
+		"demo": map[string]any{
+			"enabled": true,
+			"labels":  []string{"before"},
+		},
+	}
+	app.configMu.Unlock()
+
+	err := app.mutateConfigLocked(func(cfg *config.SystemConfig) error {
+		settings := cfg.Plugins.PluginSettings["demo"].(map[string]any)
+		settings["enabled"] = false
+		settings["labels"].([]string)[0] = "after"
+		return fmt.Errorf("intentional callback failure")
+	})
+	if err == nil {
+		t.Fatal("mutateConfigLocked should return callback failure")
+	}
+	app.configMu.RLock()
+	enabled := app.cfg.Plugins.PluginSettings["demo"].(map[string]any)["enabled"]
+	labels := app.cfg.Plugins.PluginSettings["demo"].(map[string]any)["labels"].([]string)
+	app.configMu.RUnlock()
+	if enabled != true {
+		t.Fatalf("callback mutated live non-navigation config through an alias: got %v", enabled)
+	}
+	if labels[0] != "before" {
+		t.Fatalf("callback mutated live []string plugin setting through an alias: got %v", labels)
 	}
 }
 
@@ -2187,6 +2362,15 @@ func TestListNavigation_LinkedDisconnectedWhenRootMissing(t *testing.T) {
 		ID: "ghost", RootPath: filepath.Join(t.TempDir(), "does-not-exist"), DisplayName: "Ghost",
 	}}
 	app.configMu.Unlock()
+	if err := app.SetNavigationSectionExpanded("Ghost", "Empty/Section", true); err != nil {
+		t.Fatalf("SetNavigationSectionExpanded: %v", err)
+	}
+	if err := app.SetFavoritePage("Ghost", "Empty/Section", "Missing", true); err != nil {
+		t.Fatalf("SetFavoritePage: %v", err)
+	}
+	if err := app.RecordRecentPage("Ghost", "Empty/Section", "Missing"); err != nil {
+		t.Fatalf("RecordRecentPage: %v", err)
+	}
 
 	tree, err := app.ListNavigation()
 	if err != nil {
@@ -2204,6 +2388,78 @@ func TestListNavigation_LinkedDisconnectedWhenRootMissing(t *testing.T) {
 	}
 	if !found.Disconnected {
 		t.Error("expected Disconnected=true when the linked root is missing/offline")
+	}
+	prefs, err := app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences: %v", err)
+	}
+	if len(prefs.ExpandedSections) != 1 || prefs.ExpandedSections[0].Path != "Empty/Section" {
+		t.Fatalf("offline fallback pruned expanded linked section: %+v", prefs.ExpandedSections)
+	}
+	if len(prefs.Favorites) != 1 || prefs.Favorites[0].Page != "Missing" {
+		t.Fatalf("offline fallback pruned favorite linked page: %+v", prefs.Favorites)
+	}
+	if len(prefs.RecentPages) != 1 || prefs.RecentPages[0].Page != "Missing" {
+		t.Fatalf("offline fallback pruned recent linked page: %+v", prefs.RecentPages)
+	}
+}
+
+func TestListNavigation_LinkedOnlinePreservesNestedAndEmptySections(t *testing.T) {
+	app := newTestApp(t)
+	ext := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ext, "Projects", "Active"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(ext, "Projects", "Active", "Site.md"), "---\nnotebook: Linked\nsection: Projects/Active\npage: Site\n---\n# Site\n")
+	if _, err := app.LinkNotebook(ext); err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	app.configMu.Lock()
+	name := app.cfg.LinkedNotebooks[0].DisplayName
+	app.configMu.Unlock()
+	tree, err := app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation: %v", err)
+	}
+	var linked *parser.NavigationNotebook
+	for i := range tree.Notebooks {
+		if tree.Notebooks[i].Name == name {
+			linked = &tree.Notebooks[i]
+			break
+		}
+	}
+	if linked == nil || linked.Disconnected {
+		t.Fatalf("linked notebook should be online: %+v", linked)
+	}
+	var projects *parser.NavigationSection
+	for i := range linked.Sections {
+		if linked.Sections[i].Path == "Projects" {
+			projects = &linked.Sections[i]
+			break
+		}
+	}
+	if projects == nil || len(projects.Children) != 1 || projects.Children[0].Path != "Projects/Active" {
+		t.Fatalf("nested linked tree missing: %+v", linked.Sections)
+	}
+	if err := os.MkdirAll(filepath.Join(ext, "Empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tree, err = app.ListNavigation()
+	if err != nil {
+		t.Fatalf("ListNavigation refresh: %v", err)
+	}
+	for _, nb := range tree.Notebooks {
+		if nb.Name == name {
+			found := false
+			for _, sec := range nb.Sections {
+				if sec.Path == "Empty" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("empty linked section missing: %+v", nb.Sections)
+			}
+		}
 	}
 }
 

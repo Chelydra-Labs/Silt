@@ -17,9 +17,21 @@ const mocks = vi.hoisted(() => ({
   deleteSection: vi.fn(),
   deleteNotebook: vi.fn(),
   revealNotebookInOS: vi.fn(),
+  revealPageInOS: vi.fn(),
+  duplicatePage: vi.fn(),
+  resolvePageLink: vi.fn(),
   getNavOrder: vi.fn(),
-  setNavOrder: vi.fn(),
+  setNavNotebookOrder: vi.fn(),
+  setNavSectionOrder: vi.fn(),
+  setNavPageOrder: vi.fn(),
+  clearNavNotebookOrder: vi.fn(),
+  clearNavSectionOrder: vi.fn(),
+  clearNavPageOrder: vi.fn(),
   movePage: vi.fn(),
+  getNavigationPreferences: vi.fn(),
+  setNavigationSectionExpanded: vi.fn(),
+  setQuickAccessCollapsed: vi.fn(),
+  setFavoritePage: vi.fn(),
   queryTagHierarchy: vi.fn().mockResolvedValue([]),
   // The silt-tasks sidebar queries counts/facets on mount via ctx.sqliteQuery.
   // Return empty aggregates so the sidebar renders its empty state cleanly.
@@ -52,9 +64,21 @@ vi.mock('../../bindings/silt/app.js', () => ({
   DeleteSection: mocks.deleteSection,
   DeleteNotebook: mocks.deleteNotebook,
   RevealNotebookInOS: mocks.revealNotebookInOS,
+  RevealPageInOS: mocks.revealPageInOS,
+  DuplicatePage: mocks.duplicatePage,
+  ResolvePageLink: mocks.resolvePageLink,
   GetNavOrder: mocks.getNavOrder,
-  SetNavOrder: mocks.setNavOrder,
+  SetNavNotebookOrder: mocks.setNavNotebookOrder,
+  SetNavSectionOrder: mocks.setNavSectionOrder,
+  SetNavPageOrder: mocks.setNavPageOrder,
+  ClearNavNotebookOrder: mocks.clearNavNotebookOrder,
+  ClearNavSectionOrder: mocks.clearNavSectionOrder,
+  ClearNavPageOrder: mocks.clearNavPageOrder,
   MovePage: mocks.movePage,
+  GetNavigationPreferences: mocks.getNavigationPreferences,
+  SetNavigationSectionExpanded: mocks.setNavigationSectionExpanded,
+  SetQuickAccessCollapsed: mocks.setQuickAccessCollapsed,
+  SetFavoritePage: mocks.setFavoritePage,
   QueryTagHierarchy: mocks.queryTagHierarchy
 }))
 
@@ -107,10 +131,32 @@ describe('Sidebar', () => {
     mocks.createNotebook.mockReset()
     mocks.createSection.mockReset()
     mocks.createPage.mockReset()
+    mocks.duplicatePage.mockReset().mockResolvedValue(undefined)
+    mocks.revealPageInOS.mockReset().mockResolvedValue(undefined)
+    mocks.revealNotebookInOS.mockReset().mockResolvedValue(undefined)
+    mocks.resolvePageLink.mockReset().mockResolvedValue({
+      exists: true,
+      shortest: 'Daily'
+    })
+    mocks.renameSection.mockReset().mockResolvedValue(undefined)
     mocks.pickNotebookFolder.mockReset()
     mocks.getNavOrder.mockReset()
-    mocks.setNavOrder.mockReset()
+    mocks.setNavNotebookOrder.mockReset().mockResolvedValue(undefined)
+    mocks.setNavSectionOrder.mockReset().mockResolvedValue(undefined)
+    mocks.setNavPageOrder.mockReset().mockResolvedValue(undefined)
+    mocks.clearNavNotebookOrder.mockReset().mockResolvedValue(undefined)
+    mocks.clearNavSectionOrder.mockReset().mockResolvedValue(undefined)
+    mocks.clearNavPageOrder.mockReset().mockResolvedValue(undefined)
     mocks.movePage.mockReset()
+    mocks.getNavigationPreferences.mockReset().mockResolvedValue({
+      expanded_sections: [],
+      recent_pages: [],
+      favorites: [],
+      quick_access_collapsed: true
+    })
+    mocks.setNavigationSectionExpanded.mockReset().mockResolvedValue(undefined)
+    mocks.setQuickAccessCollapsed.mockReset().mockResolvedValue(undefined)
+    mocks.setFavoritePage.mockReset().mockResolvedValue(undefined)
     mocks.listNavigation.mockResolvedValue(NAV_TREE)
     mocks.sqliteQuery
       .mockReset()
@@ -120,7 +166,6 @@ describe('Sidebar', () => {
       sections: {},
       pages: {}
     })
-    mocks.setNavOrder.mockResolvedValue(undefined)
     mocks.movePage.mockResolvedValue(undefined)
     // Reset the plugin store to empty between tests so a test cannot leak
     // a registered sidebarComponent into the next (#321 isolation).
@@ -188,6 +233,46 @@ describe('Sidebar', () => {
     const label = screen.getByText('No Notebook')
     expect(label).toHaveClass('text-surface-sidebar-text')
     expect(label).not.toHaveClass('text-accent-primary-start')
+    const trigger = screen.getByRole('button', { name: 'Choose a notebook' })
+    expect(trigger).not.toHaveTextContent('menu_book')
+  })
+
+  it('restores and persists the Quick Access disclosure preference', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [],
+      recent_pages: [
+        {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          opened_at: 10
+        }
+      ],
+      favorites: [],
+      quick_access_collapsed: true
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const toggle = screen.getByRole('button', { name: 'Quick access' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await fireEvent.click(toggle)
+    await flush()
+    expect(mocks.setQuickAccessCollapsed).toHaveBeenCalledWith(false)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
   })
 
   it('MovePage mock is available and callable (#177)', async () => {
@@ -512,6 +597,42 @@ describe('Sidebar', () => {
     expect(mocks.createPage).not.toHaveBeenCalled()
   })
 
+  it('routes global section and notebook creation requests to existing dialogs', async () => {
+    const props = {
+      activeNotebook: 'Work',
+      activeSection: '',
+      activePage: '',
+      activeView: 'notes',
+      collapsed: false,
+      onSelectNotebook: () => {},
+      onSelectSection: () => {},
+      onSelectPage: () => {},
+      onPinPage: () => {},
+      onSelectView: () => {}
+    }
+    const view = render(Sidebar, { props })
+    await flush()
+    window.dispatchEvent(
+      new CustomEvent('open-navigation-create', { detail: { kind: 'section' } })
+    )
+    await flush()
+    expect(
+      screen.getByRole('dialog', { name: 'New Section' })
+    ).toBeInTheDocument()
+    await fireEvent.click(screen.getByTestId('sidebar-name-prompt-cancel'))
+
+    window.dispatchEvent(
+      new CustomEvent('open-navigation-create', {
+        detail: { kind: 'notebook' }
+      })
+    )
+    await flush()
+    expect(
+      screen.getByRole('dialog', { name: 'New Notebook' })
+    ).toBeInTheDocument()
+    view.unmount()
+  })
+
   // #489: the context menu clamps into the viewport (clampToViewport) and
   // dismisses on scroll / resize / Escape. The clampToViewport math is covered
   // by lib/editor/popoverPositioning.test.ts; the dismissal $effect mirrors the
@@ -641,16 +762,18 @@ describe('Sidebar', () => {
     await flush()
 
     // Open notebook dropdown (role=button switcher), then context-menu a row.
-    const switcher = screen
-      .getByText('Active Notebook')
-      .closest('[role="button"]')!
+    const switcher = screen.getByText('Active Notebook').closest('button')!
     await fireEvent.click(switcher)
     await flush()
     const notebookBtn = screen.getAllByText('Personal')[0].closest('button')!
     await fireEvent.contextMenu(notebookBtn)
     await flush()
 
+    expect(notebookBtn).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: 'New Page Here' })
+    ).toBeInTheDocument()
     expect(
       screen.getByRole('menuitem', { name: /Rename/i })
     ).toBeInTheDocument()
@@ -689,9 +812,7 @@ describe('Sidebar', () => {
     })
     await flush()
 
-    const switcher = screen
-      .getByText('Active Notebook')
-      .closest('[role="button"]')!
+    const switcher = screen.getByText('Active Notebook').closest('button')!
     await fireEvent.click(switcher)
     await flush()
     const notebookBtn = screen.getAllByText('Synced')[0].closest('button')!
@@ -726,9 +847,7 @@ describe('Sidebar', () => {
     })
     await flush()
 
-    const switcher = screen
-      .getByText('Active Notebook')
-      .closest('[role="button"]')!
+    const switcher = screen.getByText('Active Notebook').closest('button')!
     await fireEvent.click(switcher)
     await flush()
     const notebookBtn = screen.getAllByText('Personal')[0].closest('button')!
@@ -776,6 +895,97 @@ describe('Sidebar', () => {
       screen.getByRole('heading', { name: /Rename Page/i })
     ).toBeInTheDocument()
     expect(screen.getByPlaceholderText('New page name…')).toBeInTheDocument()
+  })
+
+  it('renames a nested section with its canonical next path', async () => {
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Work',
+          sections: [
+            {
+              name: 'Projects',
+              path: 'Projects',
+              pages: [],
+              children: [
+                {
+                  name: 'Active',
+                  path: 'Projects/Active',
+                  pages: []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    })
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Projects' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    await fireEvent.contextMenu(
+      screen.getByRole('treeitem', { name: /Active/ })
+    )
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Rename/i }))
+    await fireEvent.input(screen.getByTestId('sidebar-name-prompt-input'), {
+      target: { value: 'Current' }
+    })
+    await fireEvent.click(screen.getByTestId('sidebar-name-prompt-confirm'))
+    await flush()
+
+    expect(mocks.renameSection).toHaveBeenCalledWith(
+      'Work',
+      'Projects/Active',
+      'Projects/Current'
+    )
+  })
+
+  it('exposes section page creation through the keyboard-operable menu', async () => {
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(
+      screen.getByRole('treeitem', { name: /Journal/ })
+    )
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: /New Page Here/i })
+    )
+    await flush()
+    expect(mocks.createPage).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Untitled',
+      ''
+    )
   })
 
   it('delete confirm for vault page mentions trash (#646)', async () => {
@@ -852,5 +1062,546 @@ describe('Sidebar', () => {
     expect(
       screen.queryByText(/You can recover it from there manually/)
     ).toBeNull()
+  })
+
+  it('restores expansion and uses one roving tree tab stop', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const tree = screen.getByRole('tree', { name: 'Work pages' })
+    const items = Array.from(
+      tree.querySelectorAll<HTMLElement>('[role="treeitem"]')
+    )
+    expect(items.filter((item) => item.tabIndex === 0)).toHaveLength(1)
+    expect(screen.getByText('Daily')).toBeInTheDocument()
+    expect(mocks.setNavigationSectionExpanded).not.toHaveBeenCalled()
+  })
+
+  it('moves tree focus with arrows and activates a page with Enter', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    const onSelectPage = vi.fn()
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage,
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const journal = screen.getByRole('treeitem', {
+      name: /Journal/
+    }) as HTMLElement
+    journal.focus()
+    await fireEvent.keyDown(journal, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(
+      screen.getByRole('treeitem', { name: 'Daily' })
+    )
+    await fireEvent.keyDown(document.activeElement!, { key: 'Enter' })
+    expect(onSelectPage).toHaveBeenCalledWith('Work', 'Journal', 'Daily')
+  })
+
+  it('persists manual collapse with one narrow call', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.click(screen.getByRole('treeitem', { name: /Journal/ }))
+    expect(mocks.setNavigationSectionExpanded).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      false
+    )
+    expect(mocks.setNavigationSectionExpanded).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the previous tree visible and offers retry after refresh fails', async () => {
+    mocks.listNavigation
+      .mockResolvedValueOnce(NAV_TREE)
+      .mockRejectedValueOnce(new Error('disk busy'))
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    window.dispatchEvent(new CustomEvent('refresh-navigation'))
+    await flush()
+    expect(
+      screen.getByText(/previous list is still available/i)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('treeitem', { name: /Journal/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Try again' })
+    ).toBeInTheDocument()
+  })
+
+  it('shows linked favorites as offline with their full accessible path', async () => {
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Synced',
+          source: 'linked:x',
+          disconnected: true,
+          sections: [
+            {
+              name: 'Deep',
+              path: 'Projects/Deep',
+              pages: [{ name: 'Plan', count: 1 }]
+            }
+          ]
+        }
+      ]
+    })
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [],
+      recent_pages: [],
+      favorites: [
+        { notebook: 'Synced', section: 'Projects/Deep', page: 'Plan' }
+      ],
+      quick_access_collapsed: false
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Synced',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const favorite = screen.getByRole('button', {
+      name: 'Synced / Projects/Deep / Plan — Linked notebook offline'
+    })
+    expect(favorite).toBeDisabled()
+    expect(screen.getByText('Linked notebook offline')).toBeInTheDocument()
+  })
+
+  it('duplicates a nested page and opens it through the supplied callback', async () => {
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Work',
+          sections: [
+            {
+              name: 'Projects',
+              path: 'Projects',
+              pages: [],
+              children: [
+                {
+                  name: 'Active',
+                  path: 'Projects/Active',
+                  pages: [{ name: 'Plan', count: 1 }]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    })
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [
+        { notebook: 'Work', path: 'Projects' },
+        { notebook: 'Work', path: 'Projects/Active' }
+      ],
+      recent_pages: [],
+      favorites: []
+    })
+    const onSelectPage = vi.fn()
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage,
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Plan' }))
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Duplicate/ }))
+    await fireEvent.input(screen.getByTestId('sidebar-action-prompt-input'), {
+      target: { value: 'Plan copy' }
+    })
+    await fireEvent.click(screen.getByTestId('sidebar-action-prompt-confirm'))
+    await flush()
+    expect(mocks.duplicatePage).toHaveBeenCalledWith(
+      'Work',
+      'Projects/Active',
+      'Plan',
+      'Plan copy'
+    )
+    expect(onSelectPage).toHaveBeenCalledWith(
+      'Work',
+      'Projects/Active',
+      'Plan copy'
+    )
+  })
+
+  it('keeps the duplicate prompt open with grounded typed conflict copy', async () => {
+    mocks.duplicatePage.mockRejectedValueOnce(
+      new Error('{"code":"navigation_conflict","message":"collision"}')
+    )
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Daily' }))
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Duplicate/ }))
+    await fireEvent.click(screen.getByTestId('sidebar-action-prompt-confirm'))
+    await flush()
+    expect(
+      screen.getByRole('dialog', { name: 'Duplicate Page' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('A page with that name already exists in this section.')
+    ).toBeInTheDocument()
+  })
+
+  it('copies page path and shortest reference with canonical nested identity', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const page = screen.getByRole('treeitem', { name: 'Daily' })
+    await fireEvent.contextMenu(page)
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Copy Page Path' })
+    )
+    expect(writeText).toHaveBeenLastCalledWith('Work/Journal/Daily')
+    await fireEvent.contextMenu(page)
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Copy Page Reference' })
+    )
+    await flush()
+    expect(mocks.resolvePageLink).toHaveBeenCalledWith('Work/Journal/Daily')
+    expect(writeText).toHaveBeenLastCalledWith('[[Daily]]')
+  })
+
+  it('creates a child section at the canonical parent path', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(
+      screen.getByRole('treeitem', { name: /Journal/ })
+    )
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: /New child section/ })
+    )
+    await fireEvent.input(screen.getByTestId('sidebar-action-prompt-input'), {
+      target: { value: 'Archive' }
+    })
+    await fireEvent.click(screen.getByTestId('sidebar-action-prompt-confirm'))
+    await flush()
+    expect(mocks.createSection).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Archive'
+    )
+  })
+
+  it('announces typed reveal failures and disables unavailable linked actions', async () => {
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Offline',
+          source: 'linked:x',
+          disconnected: true,
+          sections: [
+            {
+              name: 'Notes',
+              path: 'Notes',
+              pages: [{ name: 'Plan', count: 1 }]
+            }
+          ]
+        }
+      ]
+    })
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Offline', path: 'Notes' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Offline',
+        activeSection: 'Notes',
+        activePage: 'Plan',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Plan' }))
+    expect(screen.getByRole('menuitem', { name: /Duplicate/ })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: /Reveal/ })).toBeDisabled()
+    expect(
+      screen.getByRole('menuitem', { name: 'Copy Page Path' })
+    ).toBeEnabled()
+  })
+
+  it('surfaces a typed page reveal failure with grounded copy', async () => {
+    mocks.revealPageInOS.mockRejectedValueOnce(
+      new Error('{"code":"navigation_reveal_failed","message":"shell failed"}')
+    )
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Daily' }))
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Reveal/ }))
+    await flush()
+    expect(mocks.revealPageInOS).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Daily'
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The item could not be revealed in the file manager.'
+    )
+  })
+
+  it('copies and reveals a notebook through source-aware actions', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Synced',
+          source: 'linked:x',
+          root_path: '/mnt/synced',
+          sections: []
+        }
+      ]
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Synced',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.click(
+      screen.getByText('Active Notebook').closest('button')!
+    )
+    const notebook = screen.getAllByText('Synced')[1].closest('button')!
+    await fireEvent.contextMenu(notebook)
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Copy Notebook Path' })
+    )
+    expect(writeText).toHaveBeenCalledWith('/mnt/synced')
+    await fireEvent.contextMenu(notebook)
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Reveal/ }))
+    expect(mocks.revealNotebookInOS).toHaveBeenCalledWith('Synced')
+  })
+
+  it('opens the tree context menu from the keyboard and restores trigger focus', async () => {
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const section = screen.getByRole('treeitem', { name: /Journal/ })
+    section.focus()
+    await fireEvent.keyDown(section, { key: 'F10', shiftKey: true })
+    expect(section).toHaveAttribute('aria-haspopup', 'menu')
+    expect(section).toHaveAttribute('aria-controls', 'sidebar-context-menu')
+    await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+    await flush()
+    expect(document.activeElement).toBe(section)
+  })
+
+  it('leaves shifted printable hotkeys for global handlers while retaining typeahead', async () => {
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: '',
+        activePage: '',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    const meetings = screen.getByRole('treeitem', { name: /Meetings/ })
+    const journal = screen.getByRole('treeitem', { name: /Journal/ })
+    const globalKeydown = vi.fn()
+    window.addEventListener('keydown', globalKeydown)
+    meetings.focus()
+
+    const shiftedQuestion = new KeyboardEvent('keydown', {
+      key: '?',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    meetings.dispatchEvent(shiftedQuestion)
+    expect(shiftedQuestion.defaultPrevented).toBe(false)
+    expect(globalKeydown).toHaveBeenCalledWith(shiftedQuestion)
+    expect(document.activeElement).toBe(meetings)
+
+    await fireEvent.keyDown(meetings, { key: 'j' })
+    await flush()
+    expect(document.activeElement).toBe(journal)
+    window.removeEventListener('keydown', globalKeydown)
   })
 })

@@ -96,6 +96,17 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(screen.getByTestId('editor-utility-bar-stub')).toBeInTheDocument()
   })
 
+  it('keeps the page title but omits the duplicate document-canvas breadcrumb', () => {
+    render(VirtualScrollContainer, {
+      props: { ...baseProps(), section: 'Projects/Active' }
+    })
+    expect(
+      screen.getByRole('heading', { name: 'Page title' })
+    ).toHaveTextContent('PG')
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument()
+    expect(screen.queryByText('Projects/Active')).not.toBeInTheDocument()
+  })
+
   it('hides the EditorUtilityBar in source view mode', () => {
     render(VirtualScrollContainer, {
       props: { ...baseProps(), viewMode: 'source' }

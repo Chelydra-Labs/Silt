@@ -1,4 +1,12 @@
-import { GetNavOrder, SetNavOrder } from '../../../bindings/silt/app.js'
+import {
+  ClearNavNotebookOrder,
+  ClearNavPageOrder,
+  ClearNavSectionOrder,
+  GetNavOrder,
+  SetNavNotebookOrder,
+  SetNavPageOrder,
+  SetNavSectionOrder
+} from '../../../bindings/silt/app.js'
 
 export interface NavOrderState {
   notebooks: string[]
@@ -11,15 +19,16 @@ export interface NavOrderState {
  */
 export function sortByName<T extends { name: string }>(
   items: T[],
-  order: string[] | undefined
+  order: string[] | undefined,
+  identity: (item: T) => string = (item) => item.name
 ): T[] {
   if (!order || order.length === 0) {
     return [...items].sort((a, b) => a.name.localeCompare(b.name))
   }
   const orderMap = new Map(order.map((n, i) => [n, i]))
   return [...items].sort((a, b) => {
-    const ai = orderMap.get(a.name) ?? Infinity
-    const bi = orderMap.get(b.name) ?? Infinity
+    const ai = orderMap.get(identity(a)) ?? Infinity
+    const bi = orderMap.get(identity(b)) ?? Infinity
     if (ai !== bi) return ai - bi
     return a.name.localeCompare(b.name)
   })
@@ -36,7 +45,7 @@ export interface NavOrderDeps {
  * Usage:
  *   const navOrder = new NavOrderManager({ onStateChange: (s) => navOrderState = s })
  *   await navOrder.load()
- *   await navOrder.persistSectionOrder('Work', ['Journal', 'Projects'])
+ *   await navOrder.persistSectionOrder('Work', '', ['Journal', 'Projects'])
  */
 export class NavOrderManager {
   private state: NavOrderState = {
@@ -79,40 +88,96 @@ export class NavOrderManager {
     }
   }
 
-  /** Persist a new section order for a notebook. */
-  async persistSectionOrder(
-    notebook: string,
-    sections: string[]
-  ): Promise<void> {
-    const snapshot = this.state
-    this.state = {
-      ...this.state,
-      sections: { ...this.state.sections, [notebook]: sections }
-    }
+  async persistNotebookOrder(notebooks: string[]): Promise<void> {
+    const previous = this.state.notebooks
+    const attempted = [...notebooks]
+    this.state = { ...this.state, notebooks: attempted }
     this.deps.onStateChange(this.state)
     try {
-      await SetNavOrder(this.state)
+      if (attempted.length === 0) await ClearNavNotebookOrder()
+      else await SetNavNotebookOrder(attempted)
     } catch (e) {
-      console.error('SetNavOrder failed:', e)
-      this.state = snapshot
-      this.deps.onStateChange(this.state)
+      console.error('SetNavNotebookOrder failed:', e)
+      if (this.state.notebooks === attempted) {
+        this.state = { ...this.state, notebooks: previous }
+        this.deps.onStateChange(this.state)
+      }
     }
   }
 
-  /** Persist a new page order for a section. */
-  async persistPageOrder(sectionKey: string, pages: string[]): Promise<void> {
-    const snapshot = this.state
+  /** Persist one sibling section order under its canonical parent. */
+  async persistSectionOrder(
+    notebook: string,
+    parentPath: string,
+    sections: string[]
+  ): Promise<void> {
+    const key = parentPath ? `${notebook}/${parentPath}` : notebook
+    const previous = this.state.sections[key]
+    const attempted = [...sections]
+    const nextSections = { ...this.state.sections }
+    if (attempted.length === 0) delete nextSections[key]
+    else nextSections[key] = attempted
     this.state = {
       ...this.state,
-      pages: { ...this.state.pages, [sectionKey]: pages }
+      sections: nextSections
     }
     this.deps.onStateChange(this.state)
     try {
-      await SetNavOrder(this.state)
+      if (attempted.length === 0) {
+        await ClearNavSectionOrder(notebook, parentPath)
+      } else {
+        await SetNavSectionOrder(notebook, parentPath, attempted)
+      }
     } catch (e) {
-      console.error('SetNavOrder failed:', e)
-      this.state = snapshot
-      this.deps.onStateChange(this.state)
+      console.error('SetNavSectionOrder failed:', e)
+      if (
+        this.state.sections[key] === attempted ||
+        (attempted.length === 0 && this.state.sections[key] === undefined)
+      ) {
+        const restored = { ...this.state.sections }
+        if (previous === undefined) delete restored[key]
+        else restored[key] = previous
+        this.state = { ...this.state, sections: restored }
+        this.deps.onStateChange(this.state)
+      }
+    }
+  }
+
+  /** Persist one page order in a canonical section (empty means root). */
+  async persistPageOrder(
+    notebook: string,
+    sectionPath: string,
+    pages: string[]
+  ): Promise<void> {
+    const key = `${notebook}/${sectionPath}`
+    const previous = this.state.pages[key]
+    const attempted = [...pages]
+    const nextPages = { ...this.state.pages }
+    if (attempted.length === 0) delete nextPages[key]
+    else nextPages[key] = attempted
+    this.state = {
+      ...this.state,
+      pages: nextPages
+    }
+    this.deps.onStateChange(this.state)
+    try {
+      if (attempted.length === 0) {
+        await ClearNavPageOrder(notebook, sectionPath)
+      } else {
+        await SetNavPageOrder(notebook, sectionPath, attempted)
+      }
+    } catch (e) {
+      console.error('SetNavPageOrder failed:', e)
+      if (
+        this.state.pages[key] === attempted ||
+        (attempted.length === 0 && this.state.pages[key] === undefined)
+      ) {
+        const restored = { ...this.state.pages }
+        if (previous === undefined) delete restored[key]
+        else restored[key] = previous
+        this.state = { ...this.state, pages: restored }
+        this.deps.onStateChange(this.state)
+      }
     }
   }
 }

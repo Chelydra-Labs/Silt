@@ -15,6 +15,7 @@ function treeWith(
       name: nb.name,
       sections: (nb.sections ?? []).map((sec) => ({
         name: sec.name,
+        path: sec.name,
         pages: (sec.pages ?? []).map((p) => ({ name: p.name, count: 0 }))
       }))
     }))

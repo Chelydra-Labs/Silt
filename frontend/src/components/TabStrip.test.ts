@@ -55,7 +55,11 @@ function defaultProps(
 
 describe('TabStrip (#142)', () => {
   beforeEach(() => vi.clearAllMocks())
-  afterEach(() => cleanup())
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
 
   it('renders nothing when there are no tabs', () => {
     const props = defaultProps()
@@ -76,6 +80,150 @@ describe('TabStrip (#142)', () => {
     expect(tablist.getAttribute('aria-label')).toBe('Open pages')
     const tabButtons = screen.getAllByRole('tab')
     expect(tabButtons).toHaveLength(2)
+  })
+
+  it('shows only measured hidden tabs in the overflow menu and supports switch/close', async () => {
+    let resize: (() => void) | undefined
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: () => void) {
+          resize = callback
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+    const tabs = [
+      mkTab({ notebook: 'Work', section: '', page: 'Visible' }),
+      mkTab({ notebook: 'Work', section: '', page: 'Hidden A' }),
+      mkTab({ notebook: 'Work', section: '', page: 'Hidden B' })
+    ]
+    const props = defaultProps({ tabs, activeTabId: tabs[0].id })
+    render(TabStrip, { props })
+    const tablist = screen.getByRole('tablist')
+    Object.defineProperty(tablist, 'scrollWidth', {
+      value: 360,
+      configurable: true
+    })
+    Object.defineProperty(tablist, 'clientWidth', {
+      value: 180,
+      configurable: true
+    })
+    vi.spyOn(tablist, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      right: 180,
+      top: 0,
+      bottom: 36,
+      width: 180,
+      height: 36,
+      x: 0,
+      y: 0,
+      toJSON: () => ({})
+    })
+    screen.getAllByRole('tab').forEach((tab, index) => {
+      vi.spyOn(tab, 'getBoundingClientRect').mockReturnValue({
+        left: index * 120,
+        right: index * 120 + 110,
+        top: 0,
+        bottom: 36,
+        width: 110,
+        height: 36,
+        x: index * 120,
+        y: 0,
+        toJSON: () => ({})
+      })
+    })
+    resize?.()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    const overflow = screen.getByRole('button', { name: '2 hidden tabs' })
+    expect(overflow).toHaveAttribute('title', '2 hidden tabs')
+    await fireEvent.click(overflow)
+    expect(screen.queryByRole('menuitem', { name: /Visible/ })).toBeNull()
+    await fireEvent.click(
+      screen.getByRole('menuitem', {
+        name: 'Switch to Work / Hidden A — pinned'
+      })
+    )
+    expect(props.onSelectTab).toHaveBeenCalledWith(tabs[1].id)
+    await fireEvent.click(overflow)
+    await fireEvent.click(
+      screen.getByRole('menuitem', {
+        name: 'Close Work / Hidden B — pinned'
+      })
+    )
+    expect(props.onCloseTab).toHaveBeenCalledWith(tabs[2].id)
+  })
+
+  it('shows the ellipsis only after ResizeObserver measures an obscured tab and disconnects cleanly', async () => {
+    let resize: (() => void) | undefined
+    const disconnect = vi.fn()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: () => void) {
+          resize = callback
+        }
+        observe() {}
+        disconnect() {
+          disconnect()
+        }
+      }
+    )
+    const tabs = [
+      mkTab({ notebook: 'Work', section: '', page: 'One' }),
+      mkTab({ notebook: 'Work', section: '', page: 'Two' })
+    ]
+    const view = render(TabStrip, {
+      props: defaultProps({ tabs, activeTabId: tabs[0].id })
+    })
+    const tablist = screen.getByRole('tablist')
+    let scrollWidth = 180
+    Object.defineProperty(tablist, 'scrollWidth', {
+      configurable: true,
+      get: () => scrollWidth
+    })
+    Object.defineProperty(tablist, 'clientWidth', {
+      configurable: true,
+      value: 180
+    })
+    vi.spyOn(tablist, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      right: 180,
+      top: 0,
+      bottom: 36,
+      width: 180,
+      height: 36,
+      x: 0,
+      y: 0,
+      toJSON: () => ({})
+    })
+    screen.getAllByRole('tab').forEach((tab, index) => {
+      vi.spyOn(tab, 'getBoundingClientRect').mockImplementation(() => ({
+        left: index * 100,
+        right: index === 0 ? 90 : scrollWidth > 180 ? 230 : 175,
+        top: 0,
+        bottom: 36,
+        width: 90,
+        height: 36,
+        x: index * 100,
+        y: 0,
+        toJSON: () => ({})
+      }))
+    })
+
+    resize?.()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(screen.queryByRole('button', { name: /hidden tabs/ })).toBeNull()
+
+    scrollWidth = 300
+    resize?.()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(screen.getByRole('button', { name: '1 hidden tab' })).toBeVisible()
+
+    view.unmount()
+    expect(disconnect).toHaveBeenCalledOnce()
   })
 
   it('marks the active tab with aria-selected=true', () => {
@@ -488,8 +636,12 @@ describe('TabStrip (#142)', () => {
         props: defaultProps({ tabs, activeTabId: 'tab-Site' })
       })
       const tab = screen.getAllByRole('tab')[0]
+      expect(tab).toHaveAttribute('aria-haspopup', 'menu')
+      expect(tab).toHaveAttribute('aria-expanded', 'false')
       await fireEvent.contextMenu(tab)
 
+      expect(tab).toHaveAttribute('aria-expanded', 'true')
+      expect(tab).toHaveAttribute('aria-controls', 'silt-tabpanel')
       expect(menuItem('Close Other Tabs')).toBeTruthy()
       expect(menuItem('Close Tabs to Right')).toBeTruthy()
       expect(menuItem('Copy Page Path')).toBeTruthy()
@@ -502,6 +654,31 @@ describe('TabStrip (#142)', () => {
         )
       expect(closeOnly).toBeTruthy()
       expect(menuItem('Copy Page Reference')).toBeTruthy()
+    })
+
+    it('restores focus and closes the menu on Escape without changing tab controls', async () => {
+      const tabs = [mkTab({ notebook: 'Work', section: '', page: 'Site' })]
+      render(TabStrip, {
+        props: defaultProps({ tabs, activeTabId: 'tab-Site' })
+      })
+      const tab = screen.getAllByRole('tab')[0]
+      await fireEvent.contextMenu(tab)
+      const menu = screen.getByRole('menu', { name: 'Tab actions' })
+      const closeTab = screen
+        .getAllByRole('menuitem')
+        .find(
+          (el) =>
+            el.textContent?.replace(/\s+/g, ' ').trim() === 'close Close Tab'
+        )!
+      expect(document.activeElement).toBe(closeTab)
+
+      await fireEvent.keyDown(menu, { key: 'Escape' })
+
+      expect(document.activeElement).toBe(tab)
+      expect(tab).toHaveAttribute('aria-haspopup', 'menu')
+      expect(tab).toHaveAttribute('aria-expanded', 'false')
+      expect(tab).toHaveAttribute('aria-controls', 'silt-tabpanel')
+      expect(screen.queryByRole('menu', { name: 'Tab actions' })).toBeNull()
     })
 
     it('shows Pin Tab only for preview tabs', async () => {

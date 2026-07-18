@@ -11,9 +11,10 @@
     label: string
     /** Optional id of the visible label element for aria-labelledby. */
     labelId?: string
+    error?: string
     onchange: (next: string) => void
   }
-  let { value, label, labelId, onchange }: Props = $props()
+  let { value, label, labelId, error = '', onchange }: Props = $props()
 
   let capturing = $state(false)
   const helpId = $derived(
@@ -106,7 +107,7 @@
       value={display}
       aria-label={labelId ? undefined : label}
       aria-labelledby={labelId}
-      aria-invalid={!isValid}
+      aria-invalid={!isValid || !!error}
       aria-describedby={helpId}
       placeholder="Click, then press keys"
       onclick={startCapture}
@@ -116,7 +117,7 @@
       class="bg-surface-panel border rounded-lg px-3 py-1.5 text-text-primary text-type-sm font-mono outline-none transition-colors w-full cursor-pointer
         {capturing
         ? 'border-accent-primary-start ring-1 ring-accent-primary-start'
-        : isValid
+        : isValid && !error
           ? 'border-surface-panel-border focus:border-accent-primary-start'
           : 'border-error'}"
     />
@@ -147,4 +148,7 @@
       empty to disable.
     {/if}
   </p>
+  {#if error}
+    <p class="m-0 text-type-3xs text-status-danger" role="alert">{error}</p>
+  {/if}
 </div>

@@ -97,4 +97,32 @@ describe('TitleBar', () => {
       screen.queryByRole('button', { name: 'Writing Assistant' })
     ).toBeNull()
   })
+
+  it('offers a separate discoverable page switcher control', async () => {
+    const onSwitcherClick = vi.fn()
+    render(TitleBar, {
+      props: {
+        sidebarCollapsed: false,
+        onSearchClick: () => {},
+        onSwitcherClick
+      }
+    })
+    await screen.getByRole('button', { name: 'Switch page' }).click()
+    expect(onSwitcherClick).toHaveBeenCalledOnce()
+  })
+
+  it('offers a discoverable shortcut reference trigger', async () => {
+    const onShortcutHelpClick = vi.fn()
+    render(TitleBar, {
+      props: {
+        sidebarCollapsed: false,
+        onSearchClick: () => {},
+        onShortcutHelpClick
+      }
+    })
+    const trigger = screen.getByRole('button', { name: 'Keyboard shortcuts' })
+    expect(trigger).toHaveAttribute('title', expect.stringContaining('Shift+?'))
+    trigger.click()
+    expect(onShortcutHelpClick).toHaveBeenCalledOnce()
+  })
 })

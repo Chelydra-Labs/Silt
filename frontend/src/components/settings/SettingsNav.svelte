@@ -16,6 +16,7 @@
     SETTINGS_GROUP_LABELS,
     type SettingsGroup
   } from './settingsSections.svelte'
+  import { hasUnsavedTemplateDraft } from './templateDraftSession'
 
   interface Props {
     section?: string
@@ -27,6 +28,13 @@
   let navRefs: HTMLButtonElement[] = $state([])
 
   async function selectSection(id: string) {
+    if (
+      section === 'templates' &&
+      id !== 'templates' &&
+      hasUnsavedTemplateDraft() &&
+      !window.confirm('Leave Templates? Your draft will be kept for later.')
+    )
+      return
     section = id
     // Await the DOM update so navRefs reflects the (possibly just-changed)
     // section list before focusing — a plugin tab added dynamically isn't

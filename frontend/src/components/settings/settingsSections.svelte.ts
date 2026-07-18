@@ -161,6 +161,13 @@ export function getSettingsSections(): SettingsSection[] {
       group: 'customize'
     },
     {
+      id: 'templates',
+      label: 'Templates',
+      icon: 'article',
+      description: 'Create, edit, duplicate, and organize page templates.',
+      group: 'customize'
+    },
+    {
       id: 'plugins',
       label: 'Plugins',
       icon: 'extension',

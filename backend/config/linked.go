@@ -101,10 +101,10 @@ func mergeMaps(a, b map[string]any) map[string]any {
 	return out
 }
 
-// cloneValue returns a deep copy of a YAML-derived value. Only the types
-// yaml.v3 can produce are handled: map[string]any, []any, string, bool, int,
-// int64, float64, and nil. Maps and slices are deep-copied so the merge
-// never aliases the caller's input; scalars are returned as-is (immutable).
+// cloneValue returns a deep copy of the supported plugin-setting value forms.
+// YAML values use map[string]any and []any; direct plugin updates may also use
+// typed string maps/slices. Scalars are returned as-is because they are
+// immutable.
 func cloneValue(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
@@ -119,6 +119,14 @@ func cloneValue(v any) any {
 			out[i] = cloneValue(vv)
 		}
 		return out
+	case map[string]string:
+		out := make(map[string]string, len(x))
+		for k, vv := range x {
+			out[k] = vv
+		}
+		return out
+	case []string:
+		return append([]string(nil), x...)
 	default:
 		return v
 	}

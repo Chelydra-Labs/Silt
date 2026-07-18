@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { settings } from '../../settings/store.svelte'
+  import { shortcutBinding } from '../../settings/shortcutActions'
+
   // FormattingFirstRunTip — a one-time discoverability banner (#168).
   // Shows once on the first formatting-eligible action if the user hasn't
   // dismissed it. Dismissal persists in settings.config.ui.dismissed_tips
@@ -10,6 +13,9 @@
   }
 
   let { dismissed, onDismiss }: Props = $props()
+  let boldHotkey = $derived(
+    shortcutBinding('format_bold', settings.config?.hotkeys ?? {})
+  )
 </script>
 
 {#if !dismissed}
@@ -18,8 +24,10 @@
       >tips_and_updates</span
     >
     <span class="tip-text">
-      Tip: select text and press <kbd>Ctrl+B</kbd> to make it bold. Type
-      <kbd>/</kbd> for more options.
+      Tip: select text{boldHotkey
+        ? ' and press '
+        : ' then choose Bold'}{#if boldHotkey}<kbd>{boldHotkey}</kbd>{/if} to make
+      it bold. Type <kbd>/</kbd> for more options.
     </span>
     <button
       type="button"

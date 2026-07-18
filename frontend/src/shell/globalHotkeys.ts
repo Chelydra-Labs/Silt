@@ -29,6 +29,11 @@ export type GlobalHotkeyAction =
   | 'next_tab'
   | 'prev_tab'
   | 'close_tab'
+  | 'new_page'
+  | 'new_section'
+  | 'new_notebook'
+  | 'open_quick_switcher'
+  | 'open_shortcuts_help'
 
 // Actions consumed by the editor's ProseMirror keymap when the contenteditable
 // is focused. When the editor is focused and one of these chords is pressed,
@@ -60,6 +65,7 @@ export function resolveGlobalHotkey(
   editorFocused: boolean,
   hasDisplayedTabs: boolean
 ): GlobalHotkeyAction | null {
+  if (e.isComposing || e.key === 'Process') return null
   if (editorFocused) {
     for (const [action, binding] of Object.entries(hotkeys)) {
       if (isEditorOwned(action) && matchHotkey(e, binding)) {
@@ -71,6 +77,11 @@ export function resolveGlobalHotkey(
 
   const ordered: GlobalHotkeyAction[] = [
     'open_search',
+    'new_page',
+    'new_section',
+    'new_notebook',
+    'open_quick_switcher',
+    'open_shortcuts_help',
     'find_in_page',
     'replace',
     'global_replace',
@@ -85,7 +96,35 @@ export function resolveGlobalHotkey(
     'toggle_typewriter_mode'
   ]
   for (const action of ordered) {
-    if (matchHotkey(e, hotkeys[action])) return action
+    if (matchHotkey(e, hotkeys[action])) {
+      const target = e.target
+      const proseMirror =
+        target instanceof Element && !!target.closest('.ProseMirror')
+      const editableControl =
+        target instanceof Element &&
+        !!target.closest('input, textarea, select, [contenteditable="true"]')
+      const navigationAction = [
+        'new_page',
+        'new_section',
+        'new_notebook',
+        'open_quick_switcher',
+        'open_shortcuts_help'
+      ].includes(action)
+      const plainTyping = !e.ctrlKey && !e.metaKey && !e.altKey
+      if (proseMirror) {
+        const editorGlobalAction = [
+          'new_page',
+          'new_section',
+          'new_notebook',
+          'open_quick_switcher'
+        ].includes(action)
+        if (plainTyping || (navigationAction && !editorGlobalAction))
+          return null
+      } else if (editableControl && (plainTyping || navigationAction)) {
+        return null
+      }
+      return action
+    }
   }
   // open_settings carries an explicit disabled-guard (an empty/undefined
   // binding must not fire) for fidelity with the original inline check;

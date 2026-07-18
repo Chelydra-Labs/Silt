@@ -61,6 +61,14 @@ describe('settingsIndex — sectionId validity (drift guard)', () => {
     const ids = getSettingsIndex().map((e) => e.sectionId)
     expect(ids).toContain('plugin:my-plugin')
   })
+
+  it('finds the template management destination', () => {
+    expect(searchSettings('template')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sectionId: 'templates' })
+      ])
+    )
+  })
 })
 
 describe('resolveSettingsSectionId — invalid-section fallback', () => {

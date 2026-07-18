@@ -8,13 +8,19 @@ import { NavOrderManager } from './navOrder'
 vi.mock('../../../bindings/silt/app.js', () => ({
   MovePage: vi.fn().mockResolvedValue(undefined),
   GetNavOrder: vi.fn().mockResolvedValue({}),
-  SetNavOrder: vi.fn().mockResolvedValue(undefined)
+  SetNavNotebookOrder: vi.fn().mockResolvedValue(undefined),
+  SetNavSectionOrder: vi.fn().mockResolvedValue(undefined),
+  SetNavPageOrder: vi.fn().mockResolvedValue(undefined),
+  ClearNavNotebookOrder: vi.fn().mockResolvedValue(undefined),
+  ClearNavSectionOrder: vi.fn().mockResolvedValue(undefined),
+  ClearNavPageOrder: vi.fn().mockResolvedValue(undefined)
 }))
 
 function makeSections(): NavSection[] {
   return [
     {
       name: 'Journal',
+      path: 'Journal',
       pages: [
         { name: '2026-06-22', count: 0 },
         { name: '2026-06-21', count: 0 }
@@ -22,6 +28,7 @@ function makeSections(): NavSection[] {
     },
     {
       name: 'Projects',
+      path: 'Projects',
       pages: [
         { name: 'Roadmap', count: 0 },
         { name: 'Backlog', count: 0 }
@@ -123,7 +130,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop reorders sections via navOrder', async () => {
-    const { SetNavOrder } = await import('../../../bindings/silt/app.js')
+    const { SetNavSectionOrder } = await import('../../../bindings/silt/app.js')
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
@@ -134,16 +141,102 @@ describe('DragDropManager', () => {
     await dnd.handleDrop(e, 'section', 'Projects', 'Work', '')
 
     // Section reorder persists via navOrder, not onMoved.
-    expect(SetNavOrder).toHaveBeenCalled()
+    expect(SetNavSectionOrder).toHaveBeenCalledWith('Work', '', [
+      'Projects',
+      'Journal'
+    ])
+  })
+
+  it('reorders nested siblings under their canonical parent key', async () => {
+    const { SetNavSectionOrder } = await import('../../../bindings/silt/app.js')
+    const nested: NavSection[] = [
+      {
+        name: 'Projects',
+        path: 'Projects',
+        pages: [],
+        children: [
+          { name: 'Active', path: 'Projects/Active', pages: [] },
+          { name: 'Current', path: 'Projects/Current', pages: [] }
+        ]
+      }
+    ]
+    const deps = makeDeps({ getActiveNotebookSections: () => nested })
+    const dnd = new DragDropManager(deps)
+    const event = makeDragEvent()
+
+    dnd.handleDragStart(event, 'section', 'Projects/Active', 'Projects')
+    dnd.handleDragOver(event, 'section', 'Projects/Current')
+    await dnd.handleDrop(
+      event,
+      'section',
+      'Projects/Current',
+      'Work',
+      'Projects/Current'
+    )
+
+    expect(SetNavSectionOrder).toHaveBeenCalledWith('Work', 'Projects', [
+      'Current',
+      'Active'
+    ])
+  })
+
+  it('persists only leaf names for deeply nested section reorder', async () => {
+    const { SetNavSectionOrder } = await import('../../../bindings/silt/app.js')
+    const nested: NavSection[] = [
+      {
+        name: 'Projects',
+        path: 'Projects',
+        pages: [],
+        children: [
+          {
+            name: 'Active',
+            path: 'Projects/Active',
+            pages: [],
+            children: [
+              { name: 'One', path: 'Projects/Active/One', pages: [] },
+              { name: 'Two', path: 'Projects/Active/Two', pages: [] }
+            ]
+          }
+        ]
+      }
+    ]
+    const deps = makeDeps({ getActiveNotebookSections: () => nested })
+    const dnd = new DragDropManager(deps)
+    const event = makeDragEvent()
+
+    dnd.handleDragStart(
+      event,
+      'section',
+      'Projects/Active/One',
+      'Projects/Active'
+    )
+    dnd.handleDragOver(event, 'section', 'Projects/Active/Two')
+    await dnd.handleDrop(
+      event,
+      'section',
+      'Projects/Active/Two',
+      'Work',
+      'Projects/Active'
+    )
+
+    expect(SetNavSectionOrder).toHaveBeenCalledWith('Work', 'Projects/Active', [
+      'Two',
+      'One'
+    ])
+    const persistedNames = vi.mocked(SetNavSectionOrder).mock.calls.at(-1)?.[2]
+    expect(persistedNames?.every((name: string) => !name.includes('/'))).toBe(
+      true
+    )
   })
 
   it('handleDrop reorders root-level pages via persistPageOrder (#369)', async () => {
-    const { SetNavOrder } = await import('../../../bindings/silt/app.js')
+    const { SetNavPageOrder } = await import('../../../bindings/silt/app.js')
     // Synthetic root section (name === '') supplies the section-less page
     // list the sidebar renders at Sidebar.svelte:866.
     const rootPages: NavSection[] = [
       {
         name: '',
+        path: '',
         pages: [
           { name: 'Inbox', count: 0 },
           { name: 'README', count: 0 }
@@ -167,11 +260,10 @@ describe('DragDropManager', () => {
     // and Go's updateNavOrderForMove (app_rename.go:317-318). Before
     // the fix, the branch was guarded by `&& section`, which short-
     // circuited on the '' sentinel and silently no-op'd.
-    expect(SetNavOrder).toHaveBeenCalledTimes(1)
-    const callArg = vi.mocked(SetNavOrder).mock.calls[0][0] as {
-      pages: Record<string, string[]>
-    }
-    expect(callArg.pages['Work/']).toEqual(['README', 'Inbox'])
+    expect(SetNavPageOrder).toHaveBeenCalledWith('Work', '', [
+      'README',
+      'Inbox'
+    ])
     expect(deps.navOrder.current.pages['Work/']).toEqual(['README', 'Inbox'])
   })
 
@@ -180,6 +272,7 @@ describe('DragDropManager', () => {
       getActiveNotebookSections: () => [
         {
           name: '',
+          path: '',
           pages: [
             { name: 'Inbox', count: 0 },
             { name: 'README', count: 0 }

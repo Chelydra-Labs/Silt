@@ -8,6 +8,10 @@
   import type { SystemConfig } from '../../settings/store.svelte'
   import { parseHotkey } from '../../settings/hotkeys'
   import HotkeyCaptureInput from './HotkeyCaptureInput.svelte'
+  import {
+    SHORTCUT_ACTIONS,
+    shortcutBinding
+  } from '../../settings/shortcutActions'
 
   interface Props {
     ringAnchor?: string | null
@@ -49,16 +53,46 @@
 
   let hotkeyEntries = $derived(
     draft
-      ? Object.entries(draft.hotkeys).sort((a, b) => a[0].localeCompare(b[0]))
+      ? Array.from(
+          new Set([
+            ...Object.keys(draft.hotkeys),
+            ...SHORTCUT_ACTIONS.map((action) => action.id)
+          ])
+        )
+          .map(
+            (key) =>
+              [key, shortcutBinding(key, draft!.hotkeys)] as [string, string]
+          )
+          .sort((a, b) => a[0].localeCompare(b[0]))
       : []
   )
+  let conflicts = $derived.by(() => {
+    const byBinding = new Map<string, string[]>()
+    for (const [key, value] of hotkeyEntries) {
+      const normalized = value.trim().toLocaleLowerCase()
+      if (!normalized) continue
+      byBinding.set(normalized, [...(byBinding.get(normalized) ?? []), key])
+    }
+    return new Map(
+      [...byBinding.values()]
+        .filter((keys) => keys.length > 1)
+        .flatMap((keys) =>
+          keys.map(
+            (key) => [key, keys.filter((other) => other !== key)] as const
+          )
+        )
+    )
+  })
 
   function prettyLabel(key: string): string {
-    return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+    return (
+      SHORTCUT_ACTIONS.find((action) => action.id === key)?.label ??
+      key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+    )
   }
 
   async function handleSave() {
-    if (!draft) return
+    if (!draft || conflicts.size) return
     settings.dirty = false
     const ok = await saveConfig(draft)
     if (ok) {
@@ -134,6 +168,12 @@
                 value={value ?? ''}
                 label={prettyLabel(key)}
                 labelId="hotkey-label-{key}"
+                error={conflicts.has(key)
+                  ? `Conflicts with ${conflicts
+                      .get(key)!
+                      .map(prettyLabel)
+                      .join(', ')}.`
+                  : ''}
                 onchange={(next) => {
                   draft!.hotkeys[key] = next
                   touch()
@@ -168,7 +208,10 @@
       </button>
       <button
         onclick={handleSave}
-        disabled={!changed() || !isValid || settings.saving}
+        disabled={!changed() ||
+          !isValid ||
+          conflicts.size > 0 ||
+          settings.saving}
         class="px-4 py-2 rounded-lg bg-accent-primary-start/20 border border-accent-primary-start/40 text-accent-primary-start font-label-sm-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {settings.saving ? 'Saving…' : 'Save changes'}

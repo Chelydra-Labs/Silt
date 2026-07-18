@@ -17,6 +17,7 @@
   import AIProviderTab from './AIProviderTab.svelte'
   import AboutTab from './AboutTab.svelte'
   import PluginsTab from './PluginsTab.svelte'
+  import TemplatesTab from './TemplatesTab.svelte'
   import DevTab from './DevTab.svelte'
   import PluginSettingsPanel from './PluginSettingsPanel.svelte'
   import SettingsSearch from './SettingsSearch.svelte'
@@ -86,7 +87,13 @@
     await tick()
     const el = document.getElementById(anchorId)
     if (!el) return
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    const reduceMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)'
+    ).matches
+    el.scrollIntoView({
+      block: 'center',
+      behavior: reduceMotion ? 'auto' : 'smooth'
+    })
     if (ringTimer) clearTimeout(ringTimer)
     ringAnchor = anchorId
     ringTimer = setTimeout(() => {
@@ -135,14 +142,17 @@
     aria-labelledby="silt-settings-tab-{section}"
     tabindex="0"
     class="flex-1 min-h-0 focus:outline-none custom-scrollbar"
-    class:flex={['editor', 'hotkeys', 'ai'].includes(section) ||
+    class:flex={['editor', 'hotkeys', 'ai', 'templates'].includes(section) ||
       themeEditorSession.open}
-    class:flex-col={['editor', 'hotkeys', 'ai'].includes(section) ||
-      themeEditorSession.open}
-    class:overflow-hidden={['editor', 'hotkeys', 'ai'].includes(section) ||
-      themeEditorSession.open}
+    class:flex-col={['editor', 'hotkeys', 'ai', 'templates'].includes(
+      section
+    ) || themeEditorSession.open}
+    class:overflow-hidden={['editor', 'hotkeys', 'ai', 'templates'].includes(
+      section
+    ) || themeEditorSession.open}
     class:overflow-y-auto={!(
-      ['editor', 'hotkeys', 'ai'].includes(section) || themeEditorSession.open
+      ['editor', 'hotkeys', 'ai', 'templates'].includes(section) ||
+      themeEditorSession.open
     )}
   >
     {#if settings.loading && !settings.config && section !== 'general'}
@@ -188,6 +198,13 @@
       <AIProviderTab {ringAnchor} />
     {:else if section === 'hotkeys'}
       <HotkeysTab {ringAnchor} />
+    {:else if section === 'templates'}
+      <TemplatesTab
+        {activeNotebook}
+        {activeSection}
+        {activePage}
+        vaultId={settings.config?.notebooks.path ?? ''}
+      />
     {:else if section === 'plugins'}
       <PluginsTab
         {activeNotebook}

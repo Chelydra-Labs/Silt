@@ -56,6 +56,44 @@ func TestDefaults_Populated(t *testing.T) {
 	}
 }
 
+func TestDefaults_Phase5NavigationHotkeys(t *testing.T) {
+	want := map[string]string{
+		"new_page":            "Ctrl+N",
+		"new_section":         "Ctrl+Alt+N",
+		"new_notebook":        "Ctrl+Alt+Shift+N",
+		"open_quick_switcher": "Ctrl+P",
+		"open_shortcuts_help": "Shift+?",
+	}
+	defaults := Defaults()
+	for key, binding := range want {
+		if got := defaults.Hotkeys[key]; got != binding {
+			t.Errorf("default hotkey %q = %q, want %q", key, got, binding)
+		}
+	}
+}
+
+func TestLoad_Phase5HotkeyOverridesNormalizeWithoutReset(t *testing.T) {
+	vault := t.TempDir()
+	writeFile(t, ConfigPath(vault), "hotkeys:\n  new_page: Alt+N\n  open_quick_switcher: ''\n")
+	cfg, err := Load(vault)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Hotkeys["new_page"] != "Alt+N" {
+		t.Errorf("new_page override = %q, want Alt+N", cfg.Hotkeys["new_page"])
+	}
+	if cfg.Hotkeys["open_quick_switcher"] != "" {
+		t.Errorf("explicitly disabled quick switcher = %q, want empty", cfg.Hotkeys["open_quick_switcher"])
+	}
+	if cfg.Hotkeys["new_section"] != "Ctrl+Alt+N" || cfg.Hotkeys["new_notebook"] != "Ctrl+Alt+Shift+N" || cfg.Hotkeys["open_shortcuts_help"] != "Shift+?" {
+		t.Errorf("absent Phase 5 defaults were not retained: %+v", cfg.Hotkeys)
+	}
+	normalized := Normalize(cfg)
+	if normalized.Hotkeys["new_page"] != "Alt+N" || normalized.Hotkeys["open_quick_switcher"] != "" {
+		t.Errorf("Normalize changed Phase 5 overrides: %+v", normalized.Hotkeys)
+	}
+}
+
 // TestSave_RestrictiveFilePermissions pins the F7 hardening: config.yaml is
 // written 0o600 and its .system/ parent 0o700 so a co-tenant on a multi-user
 // host cannot read the plugin grant table / linked-notebook paths / settings.
@@ -759,6 +797,86 @@ func TestDefaults_TabsConfig(t *testing.T) {
 	}
 	if d.Hotkeys["close_tab"] != "Ctrl+W" {
 		t.Errorf("close_tab default: got %q", d.Hotkeys["close_tab"])
+	}
+}
+
+func TestNavigationPreferences_NormalizeAndRoundTrip(t *testing.T) {
+	cfg := Defaults()
+	cfg.UI.ExpandedSections = []NavigationSectionRef{
+		{Notebook: "Work", Path: "Projects/Active"},
+		{Notebook: "Work", Path: "Projects/Active"},
+		{Notebook: "Work", Path: "../escape"},
+	}
+	cfg.UI.Favorites = []NavigationPageRef{
+		{Notebook: "Work", Section: "Projects/Active", Page: "Site"},
+		{Notebook: "Work", Section: "Projects/Active", Page: "Site"},
+		{Notebook: "", Page: "broken"},
+	}
+	cfg.UI.RecentPages = []RecentPage{
+		{NavigationPageRef: NavigationPageRef{Notebook: "Work", Section: "Projects/Active", Page: "Site"}, OpenedAt: 10},
+		{NavigationPageRef: NavigationPageRef{Notebook: "Work", Section: "Projects/Active", Page: "Site"}, OpenedAt: 20},
+		{NavigationPageRef: NavigationPageRef{Notebook: "Work", Section: "../escape", Page: "Bad"}, OpenedAt: 30},
+	}
+	normalized := Normalize(cfg)
+	if len(normalized.UI.ExpandedSections) != 1 || normalized.UI.ExpandedSections[0].Path != "Projects/Active" {
+		t.Fatalf("expanded sections were not normalized: %+v", normalized.UI.ExpandedSections)
+	}
+	if len(normalized.UI.Favorites) != 1 || len(normalized.UI.RecentPages) != 1 || normalized.UI.RecentPages[0].OpenedAt != 20 {
+		t.Fatalf("page preferences were not normalized: favorites=%+v recent=%+v", normalized.UI.Favorites, normalized.UI.RecentPages)
+	}
+	tmp := t.TempDir()
+	if err := Save(tmp, normalized); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded.UI.ExpandedSections, normalized.UI.ExpandedSections) || !reflect.DeepEqual(loaded.UI.Favorites, normalized.UI.Favorites) || !reflect.DeepEqual(loaded.UI.RecentPages, normalized.UI.RecentPages) {
+		t.Fatalf("navigation preferences did not round-trip: loaded=%+v", loaded.UI)
+	}
+}
+
+func TestQuickAccessCollapsed_DefaultNormalizeAndBackwardCompatibility(t *testing.T) {
+	defaults := Defaults()
+	if defaults.UI.QuickAccessCollapsed == nil || !*defaults.UI.QuickAccessCollapsed {
+		t.Fatalf("quick access should default collapsed, got %v", defaults.UI.QuickAccessCollapsed)
+	}
+
+	legacy := defaults
+	legacy.UI.QuickAccessCollapsed = nil
+	normalized := Normalize(legacy)
+	if normalized.UI.QuickAccessCollapsed == nil || !*normalized.UI.QuickAccessCollapsed {
+		t.Fatalf("nil quick access preference should normalize to collapsed, got %v", normalized.UI.QuickAccessCollapsed)
+	}
+
+	open := false
+	legacy.UI.QuickAccessCollapsed = &open
+	normalized = Normalize(legacy)
+	if normalized.UI.QuickAccessCollapsed == nil || *normalized.UI.QuickAccessCollapsed {
+		t.Fatalf("explicit expanded preference should survive normalization, got %v", normalized.UI.QuickAccessCollapsed)
+	}
+
+	vaultPath := t.TempDir()
+	writeFile(t, ConfigPath(vaultPath), "ui:\n  sidebar_width: 256\n")
+	loaded, err := Load(vaultPath)
+	if err != nil {
+		t.Fatalf("Load legacy config: %v", err)
+	}
+	if loaded.UI.QuickAccessCollapsed == nil || !*loaded.UI.QuickAccessCollapsed {
+		t.Fatalf("legacy config should use collapsed default, got %v", loaded.UI.QuickAccessCollapsed)
+	}
+
+	roundTripPath := t.TempDir()
+	if err := Save(roundTripPath, normalized); err != nil {
+		t.Fatalf("Save quick access preference: %v", err)
+	}
+	roundTripped, err := Load(roundTripPath)
+	if err != nil {
+		t.Fatalf("Load round-tripped config: %v", err)
+	}
+	if roundTripped.UI.QuickAccessCollapsed == nil || *roundTripped.UI.QuickAccessCollapsed {
+		t.Fatalf("explicit expanded preference did not round-trip, got %v", roundTripped.UI.QuickAccessCollapsed)
 	}
 }
 

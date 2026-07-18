@@ -55,6 +55,10 @@ type pageLinksRewriteResult struct {
 // Runs inside the caller's notebook-root LockFileWrite; acquires a per-source-
 // file LockFileWrite for each rewrite so it cannot race autosave.
 func (a *App) rewriteInboundPageLinks(oldNB, oldSec, oldPage, newNB, newSec, newPage string) {
+	a.rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage, nil)
+}
+
+func (a *App) rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage string, journal map[string]renameLinkJournalEntry) {
 	if a.db == nil || oldPage == "" || newPage == "" {
 		return
 	}
@@ -165,6 +169,14 @@ func (a *App) rewriteInboundPageLinks(oldNB, oldSec, oldPage, newNB, newSec, new
 				return
 			}
 			a.tracker.RegisterWrite(filePath)
+			if journal != nil {
+				if _, exists := journal[filePath]; !exists {
+					journal[filePath] = renameLinkJournalEntry{
+						content: append([]byte(nil), contentBytes...), source: source,
+						notebook: k.nb, section: k.sec, page: k.page,
+					}
+				}
+			}
 			if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
 				log.Printf("rewriteInboundPageLinks: write %s: %v", filePath, err)
 				return

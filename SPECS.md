@@ -162,11 +162,33 @@ VaultRoot/
         └── Daily.md
 ```
 
-Path resolution: the **notebook** is the top folder under the vault; the **page** is the folder directly containing the `.md` file; the **section** is the path between them (`""` when the page sits directly under the notebook). Frontmatter values override path-derived defaults. Files at shallower depths (e.g. a stray `.md` directly in a Notebook folder) are skipped with a warning at startup (fail-loudly).
+Path resolution: the **notebook** is the top folder under the vault; the **page** is the `.md` file; the **section** is the full relative directory path between them (`""` when the page sits directly under the notebook). The filesystem location is authoritative for navigation and lifecycle operations; frontmatter is rewritten to match that canonical location rather than overriding it. Files at shallower depths (e.g. a stray `.md` directly in a Notebook folder) are still represented as section-less pages when they are directly under a notebook.
 
 Silt starts blank — no default notebook or section is created. The user creates or opens their first notebook from the sidebar's notebook selector.
 
 **Moving pages across sections.** A page can be dragged from one section to another, or from a section into the notebook root (section-less), via sidebar drag-and-drop. The `MovePage` IPC renames the `.md` file on disk, rewrites its `section:` frontmatter, rebuilds the block index at the new path, and updates `nav_order` for both the source and target section keys. **Name collisions are rejected** (not auto-suffixed) — if a page with the same name already exists in the target section, the move fails with a user-visible error. This matches `RenamePage` semantics and prevents silent data loss.
+
+**Navigation identity and discovery.** Section actions use the complete
+slash-separated relative path; the root group is represented by the empty
+section path. `ListNavigation` recursively includes nested and empty sections.
+For an accessible, trusted linked root it walks the live filesystem; when the
+root is disconnected it shows the last indexed tree and preserves expanded,
+favorite, and recent locators that the incomplete fallback cannot verify.
+Available-root refreshes prune locators confirmed absent from the filesystem.
+The sidebar can show bounded timestamped recents and explicit favorites, while
+the active location is available as a Notebook › Section › Page breadcrumb.
+The dedicated page switcher searches the flattened navigation tree, ranks valid
+recents first, and opens through the normal page/tab funnel. Tab overflow is
+represented by an accessible menu of hidden tabs rather than silently hiding
+them. Creation shortcuts and shortcut help are remappable through the hotkey
+map; the read-only help surface reflects current bindings and does not steal
+ordinary typing from editable or composing controls.
+
+Page actions include in-place duplication, OS reveal, new page in the current
+section, and creation of a child section under an explicit parent path.
+Duplication never transfers linked content into the vault, never auto-suffixes
+a collision, and mints fresh block identities while preserving canonical
+Markdown and location metadata.
 
 **Linked / external notebooks.** A notebook root does not have to live
 inside the vault. The user can LINK an external folder (e.g. a synced
@@ -613,6 +635,14 @@ Smart Graph Compatibility: the placeholder grammar (`^[a-z][a-z0-9_]*$`) structu
 **Forward compatibility.** `schema_version` is informational (a forward-versioned template keeps loading); the `Source` field has three tiers — `builtin` (embedded, read-only), `disk` (user-authored, writable), and `plugin` (runtime-registered by a plugin); categories are additive (unknown categories warn, never reject); and new built-ins land as a single `.md` file with no engine change.
 
 **Plugin templates.** Plugins may register templates at runtime. Plugin templates are grouped under a `Plugins / <plugin-id>` header and deduped last (on-disk > embedded > plugin), so a plugin cannot shadow a first-class or user template. A plugin may register up to 100 templates.
+
+**Template management.** Settings provides a template-management surface backed
+by the same template catalog: users can create blank or current-page-seeded
+templates, edit and validate user templates, duplicate any readable template
+as a new user-owned template, and delete user templates. Built-in and plugin
+templates are immutable; saving a fork never changes the source template.
+External edits refresh the catalog without a restart, and failed saves or
+deletes preserve the current list and any in-progress draft.
 
 
 7. Reliability, Protection, & Performance Targets
@@ -1125,6 +1155,12 @@ hotkeys:
   # format_subscript, which moved to Ctrl+Shift, below). #511 made settings a
   # first-class sidebar-owned view.
   open_settings: "Ctrl+,"
+  # Creation, navigation discovery, and shortcut help.
+  new_page: "Ctrl+N"
+  new_section: "Ctrl+Alt+N"
+  new_notebook: "Ctrl+Alt+Shift+N"
+  open_quick_switcher: "Ctrl+P"
+  open_shortcuts_help: "Shift+?"
   # cycle_view_layout → Ctrl+Alt+V (Alt+Tab is the OS window-switcher).
   cycle_view_layout: "Ctrl+Alt+V"
   indent_block: "Tab"

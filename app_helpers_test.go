@@ -86,6 +86,23 @@ func TestIsPathWithinVault(t *testing.T) {
 	}
 }
 
+func TestIsCreationPathWithinRoot_RejectsParentSymlink(t *testing.T) {
+	root := t.TempDir()
+	external := t.TempDir()
+	link := filepath.Join(root, "linked-parent")
+	if err := os.Symlink(external, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	target := filepath.Join(link, "missing", "created.md")
+	if isCreationPathWithinRoot(target, root) {
+		t.Fatalf("creation target through parent symlink was accepted: %s", target)
+	}
+	if _, err := os.Stat(filepath.Join(external, "missing", "created.md")); !os.IsNotExist(err) {
+		t.Fatalf("external target unexpectedly exists: %v", err)
+	}
+}
+
 func TestSanitizeSectionPath(t *testing.T) {
 	cases := []struct {
 		in, want string

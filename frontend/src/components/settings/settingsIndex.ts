@@ -26,6 +26,11 @@ export interface SettingsIndexEntry {
  * flattens it. Keep entries short and user-facing — this is what people type.
  */
 const CORE_INDEX: SettingsIndexEntry[] = [
+  {
+    label: 'Page templates',
+    keywords: ['template', 'markdown', 'duplicate', 'new page', 'manage'],
+    sectionId: 'templates'
+  },
   // Workspace / General
   {
     label: 'Vault path',

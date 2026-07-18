@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -79,6 +80,37 @@ func sanitizeSectionPath(s string) string {
 	return strings.Join(out, "/")
 }
 
+// validateSectionPath accepts only a canonical relative path. Unlike the old
+// sanitizer it never silently drops traversal components, because doing so can
+// make a requested locator identify a different sibling section.
+func validateSectionPath(s string, allowEmpty bool) (string, error) {
+	if s == "" {
+		if allowEmpty {
+			return "", nil
+		}
+		return "", fmt.Errorf("section path is required")
+	}
+	if strings.ContainsRune(s, 0) || strings.ContainsAny(s, "\\") {
+		return "", fmt.Errorf("section path must be a relative slash-separated path")
+	}
+	parts := strings.Split(s, "/")
+	for i, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "\\") || strings.IndexFunc(part, func(r rune) bool { return r < 32 }) >= 0 {
+			return "", fmt.Errorf("invalid section path %q", s)
+		}
+		parts[i] = part
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+func invalidNavigationPath(err error) error {
+	if err == nil {
+		return nil
+	}
+	return NewIPCError(CodeInvalidNavigationPath, err.Error())
+}
+
 // isPathWithinRoot reports whether target is the same as or a descendant of
 // root. Generalized from the vault-only check for #100: callers pass the
 // resolved notebook root (vault root, an in-vault notebook dir, or a linked
@@ -115,4 +147,56 @@ func isPathWithinRoot(target, root string) bool {
 		return strings.HasPrefix(strings.ToLower(absTarget), strings.ToLower(prefix))
 	}
 	return strings.HasPrefix(absTarget, prefix)
+}
+
+// isCreationPathWithinRoot applies the containment check to a path whose leaf
+// does not exist yet. It resolves the nearest existing parent first, so a
+// symlink in the path's existing parent chain cannot redirect a creation into
+// an external tree. isPathWithinRoot intentionally keeps its permissive
+// non-existent-target behavior for callers that only validate paths.
+func isCreationPathWithinRoot(target, root string) bool {
+	absTarget, err := filepath.Abs(filepath.Clean(target))
+	if err != nil {
+		return false
+	}
+	absRoot, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return false
+	}
+	resolvedRoot, rootMissing, err := resolveExistingParent(absRoot)
+	if err != nil {
+		return false
+	}
+	for i := len(rootMissing) - 1; i >= 0; i-- {
+		resolvedRoot = filepath.Join(resolvedRoot, rootMissing[i])
+	}
+	resolvedParent, missingSuffix, err := resolveExistingParent(filepath.Dir(absTarget))
+	if err != nil {
+		return false
+	}
+	resolvedTarget := resolvedParent
+	for i := len(missingSuffix) - 1; i >= 0; i-- {
+		resolvedTarget = filepath.Join(resolvedTarget, missingSuffix[i])
+	}
+	return isPathWithinRoot(resolvedTarget, resolvedRoot)
+}
+
+func resolveExistingParent(path string) (string, []string, error) {
+	current := filepath.Clean(path)
+	var missingSuffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			return resolved, missingSuffix, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", nil, err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", nil, err
+		}
+		missingSuffix = append(missingSuffix, filepath.Base(current))
+		current = parent
+	}
 }

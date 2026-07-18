@@ -1,6 +1,7 @@
 import { MovePage } from '../../../bindings/silt/app.js'
 import { sortByName, type NavOrderManager } from './navOrder'
 import type { NavSection } from './types'
+import { findSection } from './navTree'
 
 // `section` is always passed explicitly by callers (`Sidebar.svelte` and
 // `SidebarSection.svelte`). The empty string `''` is the sentinel for the
@@ -65,7 +66,12 @@ export class DragDropManager {
     }
   }
 
-  handleDragOver(e: DragEvent, level: string, name: string) {
+  handleDragOver(
+    e: DragEvent,
+    level: string,
+    name: string,
+    targetIdentity: string = name
+  ) {
     if (!this.dragItem) return
     // Same-level reorder (section↔section, page↔page) is always allowed.
     // Page→section drop (move into section, #177) is also allowed.
@@ -79,7 +85,7 @@ export class DragDropManager {
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const before = e.clientY < rect.top + rect.height / 2
-    this.dropTarget = { level, name, before }
+    this.dropTarget = { level, name: targetIdentity, before }
     this.deps.onDropTargetChange(this.dropTarget)
   }
 
@@ -172,23 +178,34 @@ export class DragDropManager {
         )
       }
     } else if (level === 'section' && notebook) {
+      const parentPath = targetName.split('/').slice(0, -1).join('/')
+      const siblings = parentPath
+        ? (findSection(this.deps.getActiveNotebookSections(), parentPath)
+            ?.children ?? [])
+        : this.deps
+            .getActiveNotebookSections()
+            .filter((section) => section.path !== '')
+      const orderKey = parentPath ? `${notebook}/${parentPath}` : notebook
       const sorted = sortByName(
-        this.deps.getActiveNotebookSections(),
-        this.deps.navOrder.current.sections[notebook]
+        siblings,
+        this.deps.navOrder.current.sections[orderKey]
       )
       const names = sorted.map((s) => s.name)
-      const fromIdx = names.indexOf(this.dragItem.name)
-      const toIdx = names.indexOf(targetName)
+      const dragLeaf =
+        this.dragItem.name.split('/').at(-1) ?? this.dragItem.name
+      const fromIdx = names.indexOf(dragLeaf)
+      const targetLeaf = targetName.split('/').at(-1) ?? ''
+      const toIdx = names.indexOf(targetLeaf)
       if (fromIdx === -1 || toIdx === -1) {
         this.clear()
         return
       }
       names.splice(fromIdx, 1)
       const insertAt = this.dropTarget?.before
-        ? names.indexOf(targetName)
-        : names.indexOf(targetName) + 1
-      names.splice(insertAt, 0, this.dragItem.name)
-      await this.deps.navOrder.persistSectionOrder(notebook, names)
+        ? names.indexOf(targetLeaf)
+        : names.indexOf(targetLeaf) + 1
+      names.splice(insertAt, 0, dragLeaf)
+      await this.deps.navOrder.persistSectionOrder(notebook, parentPath, names)
     } else if (level === 'page' && section !== undefined) {
       // Reorder among pages within a section. The `section` parameter is
       // `''` for the notebook-root / section-less page group, which is a
@@ -199,10 +216,14 @@ export class DragDropManager {
       // `section !== undefined` check so the falsy `''` is not mistaken
       // for "missing", which used to short-circuit this branch and silently
       // no-op root-page reorders (#369).
-      const sec = this.deps
-        .getActiveNotebookSections()
-        .find((s) => s.name === section)
-      const sectionKey = `${notebook ?? this.deps.getActiveNotebook()}/${section}`
+      const sec =
+        section === ''
+          ? this.deps
+              .getActiveNotebookSections()
+              .find((candidate) => candidate.path === '')
+          : findSection(this.deps.getActiveNotebookSections(), section)
+      const activeNotebook = notebook ?? this.deps.getActiveNotebook()
+      const sectionKey = `${activeNotebook}/${section}`
       const sorted = sortByName(
         sec?.pages ?? [],
         this.deps.navOrder.current.pages[sectionKey]
@@ -219,7 +240,7 @@ export class DragDropManager {
         ? names.indexOf(targetName)
         : names.indexOf(targetName) + 1
       names.splice(insertAt, 0, this.dragItem.name)
-      await this.deps.navOrder.persistPageOrder(sectionKey, names)
+      await this.deps.navOrder.persistPageOrder(activeNotebook, section, names)
     }
 
     this.clear()

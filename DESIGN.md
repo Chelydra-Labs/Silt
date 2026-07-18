@@ -477,6 +477,31 @@ Board Card Drag-Reorder: Uses compile-time svelte/animate (using Svelte's native
 
 **Page Template Picker.** The template picker reuses the same modal chrome, Refined Cyber-Ink token system, and iconography rules as the theme picker. Iconography follows the Material Symbols convention; the `icon` frontmatter field is a Material Symbols name rendered at 18–20px. No emojis are used in first-class template icons — they are abstract, CSS-friendly glyphs. The picker is a centered overlay (`role="dialog"`, `aria-modal="true"`) with a category-grouped `role="listbox"`, roving tabindex (Arrow/Home/End/Enter), a live preview pane, a dynamic placeholder form, and a Tab focus trap. Entry points: the sidebar `content_copy` button + `Ctrl+Shift+T` (new page mode) and the `/template` slash command (insert mode).
 
+**Navigation and discovery surfaces.** The sidebar is a recursive tree with
+path-qualified section identity; empty sections remain visible. Recents and
+favorites are distinct compact groups and use the same page-opening action as
+tree rows. The active Notebook › Section › Page breadcrumb is a compact chrome
+element with linked/offline status and accent emphasis only on the current
+location. The page switcher is a focused dialog with a search field and
+deterministic result list; recent matches are visibly prioritized without
+changing the normal tab/preview/pinned opening semantics. When the tab strip
+cannot show every tab, an overflow affordance and keyboard-operable menu expose
+the hidden tabs and their close actions; hidden content is never silently
+unrecoverable.
+
+Contextual page and section actions use native buttons and the existing menu
+surface. Duplicate, reveal, new-page, child-section, and favorite actions show
+clear disabled/error states for missing or disconnected roots. The shortcut
+help surface is read-only, generated from the live hotkey configuration, and
+uses the same dialog focus and Escape-return behavior as other modal surfaces.
+
+**Template management in Settings.** Template management uses the Settings
+panel rather than a second catalog: user templates can be created, edited,
+duplicated as forks, and deleted; built-in and plugin templates show a
+read-only treatment. Draft validation and save failures remain visible without
+discarding the draft, while external template changes refresh the shared
+listing.
+
 
 8. Accessibility (A11Y) & Keyboard Navigation Compliance
 
@@ -497,6 +522,11 @@ Up / Down Arrow keys to navigate blocks.
 Enter to create a new parallel block.
 
 / to trigger the contextual palette list, with keyboard arrows used to select options and Enter to confirm.
+
+Navigation defaults are `Ctrl+N` (new page), `Ctrl+Alt+N` (new section),
+`Ctrl+Alt+Shift+N` (new notebook), `Ctrl+P` (page switcher), and `Shift+?`
+(shortcut help). These bindings are remappable; help displays the current
+values and editable/composing controls retain ordinary text input.
 
 ARIA Label Mapping: Task check elements feature explicit ARIA attributes updating in real-time based on state values:
 
