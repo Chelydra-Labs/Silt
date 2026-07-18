@@ -61,6 +61,18 @@
         "signature": "ClearEditorStaging() error"
       },
       {
+        "name": "ClearNavNotebookOrder",
+        "signature": "ClearNavNotebookOrder() error"
+      },
+      {
+        "name": "ClearNavPageOrder",
+        "signature": "ClearNavPageOrder(notebook, sectionPath string) error"
+      },
+      {
+        "name": "ClearNavSectionOrder",
+        "signature": "ClearNavSectionOrder(notebook, parentPath string) error"
+      },
+      {
         "name": "ClearNetworkAudit",
         "signature": "ClearNetworkAudit() error"
       },
@@ -102,7 +114,7 @@
       },
       {
         "name": "CreateSection",
-        "signature": "CreateSection(notebook, section string) error"
+        "signature": "CreateSection(notebook, parentPath, name string) error"
       },
       {
         "name": "CreateStandaloneTask",
@@ -235,6 +247,10 @@
       {
         "name": "GetNavOrder",
         "signature": "GetNavOrder() (config.NavOrder, error)"
+      },
+      {
+        "name": "GetNavigationPreferences",
+        "signature": "GetNavigationPreferences() (NavigationPreferences, error)"
       },
       {
         "name": "GetNetworkAudit",
@@ -661,6 +677,10 @@
         "signature": "ReadPluginSource(pluginID string) (string, error)"
       },
       {
+        "name": "RecordRecentPage",
+        "signature": "RecordRecentPage(notebook, section, page string) error"
+      },
+      {
         "name": "RefreshFocusLock",
         "signature": "RefreshFocusLock(notebook, section, page string) error"
       },
@@ -789,12 +809,28 @@
         "signature": "SetCloseToTray(enabled bool) error"
       },
       {
+        "name": "SetFavoritePage",
+        "signature": "SetFavoritePage(notebook, section, page string, favorite bool) error"
+      },
+      {
         "name": "SetFocusMode",
         "signature": "SetFocusMode(value bool) error"
       },
       {
-        "name": "SetNavOrder",
-        "signature": "SetNavOrder(order config.NavOrder) error"
+        "name": "SetNavNotebookOrder",
+        "signature": "SetNavNotebookOrder(order []string) error"
+      },
+      {
+        "name": "SetNavPageOrder",
+        "signature": "SetNavPageOrder(notebook, sectionPath string, order []string) error"
+      },
+      {
+        "name": "SetNavSectionOrder",
+        "signature": "SetNavSectionOrder(notebook, parentPath string, order []string) error"
+      },
+      {
+        "name": "SetNavigationSectionExpanded",
+        "signature": "SetNavigationSectionExpanded(notebook, sectionPath string, expanded bool) error"
       },
       {
         "name": "SetOpenDevtoolsOnStartup",
@@ -1019,6 +1055,7 @@
       "frontend/src/App.svelte",
       "frontend/src/components/EmbedPortal.svelte",
       "frontend/src/components/EmbedPortal.test.ts",
+      "frontend/src/components/Sidebar.svelte",
       "frontend/src/components/TipTapEditor.context-menu.test.ts",
       "frontend/src/components/TipTapEditor.test.ts",
       "frontend/src/components/TitleBar.svelte",
