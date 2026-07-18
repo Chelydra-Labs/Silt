@@ -20,14 +20,9 @@ describe('devModeInspect', () => {
     ;(
       settings as { config: { ui: { open_devtools_on_startup?: boolean } } }
     ).config.ui.open_devtools_on_startup = false
-    try {
-      sessionStorage.removeItem('silt_debug')
-    } catch {
-      /* jsdom may lack sessionStorage in some envs */
-    }
   })
 
-  it('isDevMode follows vault flag', () => {
+  it('isDevMode follows vault flag only', () => {
     expect(isDevMode()).toBe(false)
     ;(
       settings as { config: { ui: { open_devtools_on_startup?: boolean } } }
@@ -35,9 +30,13 @@ describe('devModeInspect', () => {
     expect(isDevMode()).toBe(true)
   })
 
-  it('isDevMode honors session silt_debug flag (SILT_DEBUG parity)', () => {
-    sessionStorage.setItem('silt_debug', '1')
-    expect(isDevMode()).toBe(true)
+  it('isDevMode ignores sessionStorage spoof', () => {
+    try {
+      sessionStorage.setItem('silt_debug', '1')
+    } catch {
+      /* ignore */
+    }
+    expect(isDevMode()).toBe(false)
   })
 
   it('openInspect returns ok on success', async () => {

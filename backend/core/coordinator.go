@@ -61,8 +61,9 @@ func (ec *ExecutionCoordinator) getFileEntry(path string) *fileMutexEntry {
 }
 
 // NormalizeFileLockPath returns a stable lock key for path. Empty input stays
-// empty. Non-empty paths are cleaned; absolute form is preferred so the same
-// file is not locked under two string identities (e.g. rel vs abs).
+// empty. Absolute paths are cleaned only (no CWD resolution). Relative paths
+// are resolved with filepath.Abs once so callers that pass vault-relative
+// strings still serialize; production App paths are absolute.
 //
 // LockFileWrite keys are exact-path identity only: locking a directory does
 // NOT exclude writers on descendant file paths. Structural ops that os.Rename
@@ -72,6 +73,9 @@ func NormalizeFileLockPath(path string) string {
 		return ""
 	}
 	cleaned := filepath.Clean(path)
+	if filepath.IsAbs(cleaned) {
+		return cleaned
+	}
 	if abs, err := filepath.Abs(cleaned); err == nil {
 		return abs
 	}

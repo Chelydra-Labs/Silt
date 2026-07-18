@@ -56,7 +56,7 @@
           {
             id: 'row-above',
             icon: 'keyboard_arrow_up',
-            shortLabel: 'Above',
+            shortLabel: 'Row ↑',
             label: 'Insert row above',
             hotkey: 'table_insert_row_above',
             can: () => !!editor.can().addRowBefore?.(),
@@ -65,7 +65,7 @@
           {
             id: 'row-below',
             icon: 'keyboard_arrow_down',
-            shortLabel: 'Below',
+            shortLabel: 'Row ↓',
             label: 'Insert row below',
             hotkey: 'table_insert_row_below',
             can: () => !!editor.can().addRowAfter?.(),
@@ -74,7 +74,7 @@
           {
             id: 'del-row',
             icon: 'delete',
-            shortLabel: 'Delete',
+            shortLabel: 'Del row',
             label: 'Delete row',
             danger: true,
             can: () => !!editor.can().deleteRow?.(),
@@ -89,7 +89,7 @@
           {
             id: 'col-left',
             icon: 'keyboard_arrow_left',
-            shortLabel: 'Left',
+            shortLabel: 'Col ←',
             label: 'Insert column left',
             hotkey: 'table_insert_col_left',
             can: () => !!editor.can().addColumnBefore?.(),
@@ -98,7 +98,7 @@
           {
             id: 'col-right',
             icon: 'keyboard_arrow_right',
-            shortLabel: 'Right',
+            shortLabel: 'Col →',
             label: 'Insert column right',
             hotkey: 'table_insert_col_right',
             can: () => !!editor.can().addColumnAfter?.(),
@@ -107,7 +107,7 @@
           {
             id: 'del-col',
             icon: 'delete_outline',
-            shortLabel: 'Delete',
+            shortLabel: 'Del col',
             label: 'Delete column',
             danger: true,
             can: () => !!editor.can().deleteColumn?.(),

@@ -201,6 +201,27 @@ func TestHost_AuthReject(t *testing.T) {
 	}
 }
 
+func TestIsLoopbackEndpoint(t *testing.T) {
+	cases := []struct {
+		u    string
+		want bool
+	}{
+		{"http://127.0.0.1:17887", true},
+		{"http://localhost/mcp", true},
+		{"http://[::1]:9", true},
+		{"https://127.0.0.1", true},
+		{"http://evil.example", false},
+		{"http://127.0.0.1.evil.com", false},
+		{"ftp://127.0.0.1", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := IsLoopbackEndpoint(tc.u); got != tc.want {
+			t.Errorf("IsLoopbackEndpoint(%q)=%v want %v", tc.u, got, tc.want)
+		}
+	}
+}
+
 func TestIsAllowedOrigin(t *testing.T) {
 	cases := []struct {
 		o    string

@@ -919,9 +919,14 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	a.coordinator.LockBlocksWrite(blockIDs, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
 			// After waiting for structural locks, refuse to recreate a path
-			// that rename/delete already moved away (#691).
-			if _, err := os.Stat(filePath); os.IsNotExist(err) {
-				writeErr = errPageMovedOrDeleted(filePath)
+			// that rename/delete already moved away (#691). Fail closed on any
+			// Stat error (permission/transient) — do not write blindly.
+			if _, err := os.Stat(filePath); err != nil {
+				if os.IsNotExist(err) {
+					writeErr = errPageMovedOrDeleted(filePath)
+				} else {
+					writeErr = err
+				}
 				return
 			}
 			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks)
@@ -1037,9 +1042,14 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 	a.coordinator.LockBlocksWrite(beforeIDs, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
 			// After waiting for structural locks, refuse to recreate a path
-			// that rename/delete already moved away (#691).
-			if _, err := os.Stat(filePath); os.IsNotExist(err) {
-				writeErr = errPageMovedOrDeleted(filePath)
+			// that rename/delete already moved away (#691). Fail closed on any
+			// Stat error (permission/transient) — do not write blindly.
+			if _, err := os.Stat(filePath); err != nil {
+				if os.IsNotExist(err) {
+					writeErr = errPageMovedOrDeleted(filePath)
+				} else {
+					writeErr = err
+				}
 				return
 			}
 			contentBytes, err := os.ReadFile(filePath)

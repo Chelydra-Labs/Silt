@@ -129,7 +129,15 @@
       return
     }
     if (action.id === 'open') {
-      if (href) Browser.OpenURL(href)
+      // Only http(s) — note content is user-controlled; reject file:/javascript: etc.
+      if (href && /^https?:\/\//i.test(href)) {
+        Browser.OpenURL(href)
+      } else if (href) {
+        copyStatus = 'Invalid URL scheme'
+        window.setTimeout(() => {
+          copyStatus = ''
+        }, 2000)
+      }
       linkMenuOpen = false
       return
     }

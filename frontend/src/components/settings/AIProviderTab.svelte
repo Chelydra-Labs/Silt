@@ -7,7 +7,7 @@
   // probe, model discovery, and the audit log. The IPC bindings live in the
   // controller so this view never touches IPC directly. See the controller
   // for behavior; this file is layout + a11y only.
-  import { onMount, tick } from 'svelte'
+  import { onMount, onDestroy, tick } from 'svelte'
   import {
     GetCloseToTray,
     GetLocalMCPConfig,
@@ -72,6 +72,22 @@
   let mcpTokenVisible = $state(false)
   let mcpToken = $state('')
   let mcpTrayPrompt = $state(false)
+  let mcpTokenClearTimer: ReturnType<typeof setTimeout> | null = null
+
+  function clearMCPTokenFromMemory() {
+    mcpToken = ''
+    mcpTokenVisible = false
+    if (mcpTokenClearTimer) {
+      clearTimeout(mcpTokenClearTimer)
+      mcpTokenClearTimer = null
+    }
+  }
+
+  function scheduleMCPTokenClear() {
+    if (mcpTokenClearTimer) clearTimeout(mcpTokenClearTimer)
+    // Limit how long the bearer sits in JS heap after reveal/copy.
+    mcpTokenClearTimer = setTimeout(() => clearMCPTokenFromMemory(), 30_000)
+  }
 
   async function refreshMCP() {
     try {
@@ -143,6 +159,7 @@
     try {
       mcpToken = (await GetLocalMCPToken()) || ''
       mcpTokenVisible = true
+      scheduleMCPTokenClear()
     } catch (e) {
       console.error(e)
     }
@@ -154,6 +171,7 @@
       if (!mcpToken) return
       await navigator.clipboard.writeText(mcpToken)
       mcpTokenVisible = true
+      scheduleMCPTokenClear()
     } catch (e) {
       console.error(e)
     }
@@ -369,6 +387,10 @@
   onMount(() => {
     void ai.reload()
     void refreshMCP()
+  })
+
+  onDestroy(() => {
+    clearMCPTokenFromMemory()
   })
 
   // Audit lazy-load: the controller is a plain module (no component context),

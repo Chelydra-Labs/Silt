@@ -98,6 +98,11 @@ type bearerRoundTripper struct {
 }
 
 func (b *bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Never attach the keyring bearer to a non-loopback host (endpoint-file
+	// tampering / misconfiguration must not exfiltrate the token).
+	if req.URL == nil || !mcp.IsLoopbackEndpoint(req.URL.String()) {
+		return nil, fmt.Errorf("silt mcp: refusing to send auth to non-loopback host")
+	}
 	r := req.Clone(req.Context())
 	r.Header.Set("Authorization", "Bearer "+b.token)
 	if r.Header.Get("Content-Type") == "" && (r.Method == http.MethodPost || r.Method == http.MethodPut) {
@@ -135,6 +140,9 @@ func discoverMCPEndpoint(token string) string {
 			continue
 		}
 		seen[base] = true
+		if !mcp.IsLoopbackEndpoint(base) {
+			continue
+		}
 		req, err := http.NewRequest(http.MethodGet, strings.TrimRight(base, "/")+"/health", nil)
 		if err != nil {
 			continue

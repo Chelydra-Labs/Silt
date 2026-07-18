@@ -148,7 +148,14 @@ describe('TableContextToolbar', () => {
       (el) => el.textContent
     )
     expect(texts).toEqual(
-      expect.arrayContaining(['Above', 'Below', 'Left', 'Right', 'Delete'])
+      expect.arrayContaining([
+        'Row ↑',
+        'Row ↓',
+        'Col ←',
+        'Col →',
+        'Del row',
+        'Del col'
+      ])
     )
   })
 

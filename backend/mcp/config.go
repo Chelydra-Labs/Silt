@@ -7,9 +7,16 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// errNonLoopbackEndpoint is returned when WriteEndpointFile is given a non-loopback URL.
+var errNonLoopbackEndpoint = errors.New("mcp endpoint must be loopback http(s)")
 
 // DefaultHTTPPort is the preferred loopback port when HTTP is enabled and the
 // user has not chosen another. If bind fails, the host may fall back to :0.
@@ -33,8 +40,31 @@ func EndpointFilePath() (string, error) {
 	return filepath.Join(dir, "silt", EndpointFileName), nil
 }
 
+// IsLoopbackEndpoint reports whether base is an http(s) URL whose host is
+// loopback (127.0.0.1, ::1, localhost). Used so discovery never dials a
+// non-loopback host with the bearer token.
+func IsLoopbackEndpoint(base string) bool {
+	u, err := url.Parse(strings.TrimSpace(base))
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // WriteEndpointFile persists the loopback base URL for stdio discovery.
+// Non-loopback endpoints are rejected (defense in depth).
 func WriteEndpointFile(endpoint string) error {
+	if !IsLoopbackEndpoint(endpoint) {
+		return errNonLoopbackEndpoint
+	}
 	path, err := EndpointFilePath()
 	if err != nil {
 		return err
@@ -49,7 +79,8 @@ func WriteEndpointFile(endpoint string) error {
 	return os.WriteFile(path, b, 0o600)
 }
 
-// ReadEndpointFile returns the last written endpoint, or empty if missing.
+// ReadEndpointFile returns the last written endpoint, or empty if missing or
+// not loopback (tampered / stale file must not leak the bearer off-box).
 func ReadEndpointFile() string {
 	path, err := EndpointFilePath()
 	if err != nil {
@@ -61,6 +92,9 @@ func ReadEndpointFile() string {
 	}
 	var ef EndpointFile
 	if json.Unmarshal(b, &ef) != nil {
+		return ""
+	}
+	if !IsLoopbackEndpoint(ef.Endpoint) {
 		return ""
 	}
 	return ef.Endpoint
