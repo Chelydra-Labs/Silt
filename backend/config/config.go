@@ -169,6 +169,10 @@ type UIConfig struct {
 	// Used by the formatting first-run tip (#168). Same persistence tier as
 	// sidebar_width.
 	DismissedTips []string `yaml:"dismissed_tips,omitempty" json:"dismissed_tips,omitempty"`
+	// QuickAccessCollapsed persists the quiet Quick Access disclosure state.
+	// It is a per-vault navigation preference; nil is normalized to the
+	// collapsed default for older config files.
+	QuickAccessCollapsed *bool `yaml:"quick_access_collapsed,omitempty" json:"quick_access_collapsed,omitempty"`
 	// OpenDevtoolsOnStartup opens the Chromium DevTools inspector on app launch.
 	// Default false. Intended for diagnostics on non-developer machines.
 	OpenDevtoolsOnStartup *bool `yaml:"open_devtools_on_startup,omitempty" json:"open_devtools_on_startup,omitempty"`

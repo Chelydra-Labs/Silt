@@ -31,6 +31,7 @@ vi.mock('@wailsio/runtime', () => ({
 }))
 
 import TemplatesTab from './TemplatesTab.svelte'
+import { resetTemplateDraftForTests } from './templateDraftSession'
 import TemplatePicker from '../../templates/TemplatePicker.svelte'
 import {
   _resetForTests,
@@ -85,13 +86,15 @@ async function setup() {
     props: {
       activeNotebook: 'Work',
       activeSection: 'Notes',
-      activePage: 'Current'
+      activePage: 'Current',
+      vaultId: 'C:/Vault A'
     }
   })
 }
 
 beforeEach(() => {
   _resetForTests()
+  resetTemplateDraftForTests()
   vi.clearAllMocks()
   mocks.eventsOn.mockImplementation(() => () => {})
   mocks.saveUserTemplate.mockResolvedValue(undefined)
@@ -110,6 +113,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   _resetForTests()
+  resetTemplateDraftForTests()
 })
 
 describe('TemplatesTab', () => {
@@ -172,6 +176,10 @@ describe('TemplatesTab', () => {
     await setup()
     await fireEvent.click(screen.getByRole('button', { name: 'New blank' }))
     expect(screen.getByText('Template ID is required.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Template ID')).toHaveAttribute(
+      'aria-describedby',
+      'template-id-error'
+    )
     await fireEvent.input(screen.getByLabelText('Template ID'), {
       target: { value: 'release-plan' }
     })
@@ -188,6 +196,53 @@ describe('TemplatesTab', () => {
       title: 'Release plan',
       body: '# Plan'
     })
+  })
+
+  it('retains an unsaved draft across unmount and remount', async () => {
+    const view = await setup()
+    await fireEvent.click(screen.getByRole('button', { name: 'New blank' }))
+    await fireEvent.input(screen.getByLabelText('Title'), {
+      target: { value: 'Retained draft' }
+    })
+    view.unmount()
+
+    render(TemplatesTab, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Notes',
+        activePage: 'Current',
+        vaultId: 'C:/Vault A'
+      }
+    })
+    expect(screen.getByLabelText('Title')).toHaveValue('Retained draft')
+  })
+
+  it('uses the next available duplicate ID when a local fork already exists', async () => {
+    mocks.listTemplates.mockResolvedValue({
+      templates: [
+        ...summaries,
+        {
+          id: 'daily-copy',
+          title: 'Existing fork',
+          category: 'General',
+          source: 'disk'
+        }
+      ]
+    })
+    await loadTemplates()
+    render(TemplatesTab, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Notes',
+        activePage: 'Current',
+        vaultId: 'C:/Vault A'
+      }
+    })
+    await fireEvent.click(screen.getByRole('button', { name: /Daily note/ }))
+    await screen.findByText('Read-only source — duplicate to edit.')
+    await fireEvent.click(screen.getByRole('button', { name: 'Duplicate' }))
+    await waitFor(() => expect(mocks.saveUserTemplate).toHaveBeenCalled())
+    expect(mocks.saveUserTemplate.mock.calls[0][0].id).toBe('daily-copy-2')
   })
 
   it('edits an existing user template and adopts the canonical saved payload as its baseline', async () => {
@@ -240,6 +295,15 @@ describe('TemplatesTab', () => {
     expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled()
   })
 
+  it('treats an untouched loaded user template as saved', async () => {
+    await setup()
+    await fireEvent.click(screen.getByRole('button', { name: /Meeting/ }))
+    await screen.findByDisplayValue('# Meeting')
+
+    expect(screen.getByText('Saved')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
   it('seeds creation from the current page', async () => {
     await setup()
     await fireEvent.click(
@@ -254,8 +318,8 @@ describe('TemplatesTab', () => {
     )
     expect(screen.getByLabelText('Markdown body')).toHaveValue('# Current body')
     expect(screen.getByLabelText('Template ID')).toHaveValue('current')
-    expect(screen.getByText('Saved')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
     await fireEvent.input(screen.getByLabelText('Markdown body'), {
@@ -263,6 +327,57 @@ describe('TemplatesTab', () => {
     })
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+  })
+
+  it('does not restore a retained draft in another vault', async () => {
+    const view = await setup()
+    await fireEvent.click(screen.getByRole('button', { name: 'New blank' }))
+    await fireEvent.input(screen.getByLabelText('Title'), {
+      target: { value: 'Vault A draft' }
+    })
+    view.unmount()
+
+    render(TemplatesTab, {
+      props: {
+        activeNotebook: 'Personal',
+        activeSection: 'Notes',
+        activePage: 'Home',
+        vaultId: 'C:/Vault B'
+      }
+    })
+
+    expect(screen.queryByDisplayValue('Vault A draft')).not.toBeInTheDocument()
+    expect(
+      screen.getByText('Select a template, or create a new one.')
+    ).toBeInTheDocument()
+  })
+
+  it('discards the retained draft when its vault closes', async () => {
+    const view = await setup()
+    await fireEvent.click(screen.getByRole('button', { name: 'New blank' }))
+    await fireEvent.input(screen.getByLabelText('Title'), {
+      target: { value: 'Closing vault draft' }
+    })
+
+    const vaultClosing = mocks.eventsOn.mock.calls.find(
+      ([event]) => event === 'vault:closing'
+    )?.[1] as (() => void) | undefined
+    expect(vaultClosing).toBeTypeOf('function')
+    vaultClosing?.()
+    view.unmount()
+
+    render(TemplatesTab, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Notes',
+        activePage: 'Current',
+        vaultId: 'C:/Vault A'
+      }
+    })
+
+    expect(
+      screen.queryByDisplayValue('Closing vault draft')
+    ).not.toBeInTheDocument()
   })
 
   it('surfaces lazy-load and current-page read failures without losing the list', async () => {
@@ -433,6 +548,7 @@ describe('TemplatesTab', () => {
 
     cleanup()
     _resetForTests()
+    resetTemplateDraftForTests()
     mocks.deleteUserTemplate.mockRejectedValueOnce(
       new Error('permission denied')
     )

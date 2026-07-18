@@ -25,6 +25,7 @@
     DuplicatePage,
     GetNavigationPreferences,
     SetNavigationSectionExpanded,
+    SetQuickAccessCollapsed,
     SetFavoritePage
   } from '../../bindings/silt/app.js'
   import { NavOrderManager, sortByName } from '../lib/sidebar/navOrder'
@@ -392,6 +393,20 @@
         : `New Page (no section)${shortcutBinding('new_page', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_page', settings.config?.hotkeys ?? {})})` : ''}`
       : 'Create or open a Notebook first'
   )
+  let templateHint = $derived.by(() => {
+    const binding = shortcutBinding(
+      'open_template_picker',
+      settings.config?.hotkeys ?? {}
+    )
+    return `New page from template${binding ? ` (${binding})` : ''}`
+  })
+  let hideSidebarHint = $derived.by(() => {
+    const binding = shortcutBinding(
+      'toggle_sidebar',
+      settings.config?.hotkeys ?? {}
+    )
+    return `Hide sidebar${binding ? ` (${binding})` : ''}`
+  })
   let nextStep = $derived(
     !activeNotebook ? 'Create or open a Notebook to get started.' : ''
   )
@@ -440,7 +455,8 @@
       preferences = {
         expanded_sections: loaded?.expanded_sections ?? [],
         recent_pages: loaded?.recent_pages ?? [],
-        favorites: loaded?.favorites ?? []
+        favorites: loaded?.favorites ?? [],
+        quick_access_collapsed: loaded?.quick_access_collapsed ?? true
       }
       onNavigationPreferencesLoaded?.(preferences)
       expandedSections = expandedPathsForNotebook(preferences, activeNotebook)
@@ -452,6 +468,21 @@
         e instanceof Error ? e.message : 'Quick access could not be loaded.'
     } finally {
       if (sequence === preferenceLoadSequence) preferencesLoading = false
+    }
+  }
+
+  async function setQuickAccessCollapsed(collapsed: boolean) {
+    const previous = preferences.quick_access_collapsed
+    preferences = { ...preferences, quick_access_collapsed: collapsed }
+    try {
+      await SetQuickAccessCollapsed(collapsed)
+      preferencesError = ''
+    } catch (error) {
+      preferences = { ...preferences, quick_access_collapsed: previous }
+      preferencesError =
+        error instanceof Error
+          ? error.message
+          : 'Quick access state could not be saved.'
     }
   }
 
@@ -565,11 +596,12 @@
       event.key === 'ContextMenu' ||
       (event.shiftKey && event.key === 'F10')
     ) {
+      const bounds = target?.getBoundingClientRect()
       target?.dispatchEvent(
         new MouseEvent('contextmenu', {
           bubbles: true,
-          clientX: 16,
-          clientY: 16
+          clientX: bounds?.left ?? 0,
+          clientY: bounds?.bottom ?? 0
         })
       )
     } else if (
@@ -937,8 +969,7 @@
   }
 
   function handleContextNewPage() {
-    if (!contextMenu || contextMenu.level === 'notebook' || contextUnavailable)
-      return
+    if (!contextMenu || contextUnavailable) return
     const section = contextMenu.section ?? ''
     contextMenu = null
     activeSection = section
@@ -1179,23 +1210,18 @@
     {:else}
       <!-- Notebook selector -->
       <div class="px-1 mb-3 relative">
-        <div
+        <button
+          type="button"
+          aria-label={activeNotebook
+            ? `Active notebook: ${activeNotebook}`
+            : 'Choose a notebook'}
           onclick={() => (showNotebookDropdown = !showNotebookDropdown)}
-          onkeydown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              showNotebookDropdown = !showNotebookDropdown
-            }
-          }}
-          class="flex items-center gap-2 cursor-pointer group px-2 py-1.5 rounded hover:bg-hover transition-all duration-150"
+          class="w-full border-none bg-transparent text-left flex items-center gap-2 cursor-pointer group px-2 py-1.5 rounded hover:bg-hover transition-all duration-150 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
           class:bg-hover={showNotebookDropdown}
-          role="button"
-          tabindex="0"
+          aria-haspopup="menu"
+          aria-expanded={showNotebookDropdown}
+          aria-controls="notebook-switcher-menu"
         >
-          <span
-            class="material-symbols-outlined text-accent-primary-start text-type-2xl"
-            >menu_book</span
-          >
           <div class="flex flex-col min-w-0 flex-1">
             <span
               class="text-surface-sidebar-text font-headline-md text-headline-md truncate"
@@ -1211,7 +1237,7 @@
           >
             {showNotebookDropdown ? 'expand_less' : 'expand_more'}
           </span>
-        </div>
+        </button>
 
         {#if showNotebookDropdown}
           <button
@@ -1221,6 +1247,9 @@
             class="fixed inset-0 z-[60] cursor-default border-none bg-transparent p-0"
           ></button>
           <div
+            id="notebook-switcher-menu"
+            role="menu"
+            aria-label="Notebooks"
             class="absolute left-1 right-1 top-14 glass-palette border border-accent-primary-start/20 rounded-lg shadow-2xl z-[70] py-2 max-h-[60vh] overflow-y-auto custom-scrollbar"
             style="backdrop-filter: blur(16px); background: color-mix(in srgb, var(--color-surface-sidebar) 92%, transparent);"
           >
@@ -1240,6 +1269,8 @@
                   }}
                   class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent"
                   aria-haspopup="menu"
+                  role="menuitem"
+                  aria-current={nb.name === activeNotebook ? 'true' : undefined}
                   aria-expanded={contextMenuTargetId ===
                     `notebook:${encodeURIComponent(nb.name)}`}
                   aria-controls={contextMenuTargetId ===
@@ -1354,12 +1385,12 @@
           </button>
         </span>
         <div class="w-px bg-surface-sidebar-border my-1.5 flex-shrink-0"></div>
-        <span title="New page from template" class="flex-1 flex">
+        <span title={templateHint} class="flex-1 flex">
           <button
             onclick={() =>
               window.dispatchEvent(new CustomEvent('open-template-picker'))}
             disabled={!activeNotebook}
-            title="New page from template (Ctrl+Shift+T)"
+            title={templateHint}
             aria-label="New Page from Template"
             class="w-full bg-transparent border-none text-surface-sidebar-text-muted hover:text-accent-primary-start hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed py-1.5 rounded flex items-center justify-center transition-all cursor-pointer focus:outline-none"
           >
@@ -1391,8 +1422,11 @@
         notebooks={tree.notebooks}
         loading={preferencesLoading}
         error={preferencesError}
+        collapsed={preferences.quick_access_collapsed}
         onOpen={handleQuickPage}
         onToggleFavorite={(ref) => void toggleFavorite(ref)}
+        onCollapsedChange={(collapsed) =>
+          void setQuickAccessCollapsed(collapsed)}
         onRetry={() => void loadNavigationPreferences()}
       />
 
@@ -1690,7 +1724,7 @@
     <button
       onclick={() => (collapsed = true)}
       aria-label="Hide sidebar"
-      title="Hide sidebar (Ctrl+B)"
+      title={hideSidebarHint}
       class="p-1.5 rounded hover:bg-hover text-surface-sidebar-text-muted hover:text-accent-primary-start transition-all duration-150 border-none bg-transparent cursor-pointer focus:outline-none flex items-center justify-center hover:scale-105 active:scale-95"
     >
       <span class="material-symbols-outlined text-icon-lg"
@@ -1812,6 +1846,18 @@
     </button>
   {/if}
   {#if contextMenu?.level === 'notebook'}
+    <button
+      type="button"
+      onclick={handleContextNewPage}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >note_add</span
+      >
+      New Page Here
+    </button>
     <button type="button" onclick={handleContextCopyNotebook} role="menuitem">
       <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
         >content_copy</span

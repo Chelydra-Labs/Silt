@@ -40,6 +40,9 @@ describe('PageBreadcrumb', () => {
     expect(base.onSelectSection).toHaveBeenCalledWith('Projects/Active')
     expect(base.onOpenPage).toHaveBeenCalledOnce()
     expect(await screen.findByTitle(/\[\[Active\/Plan\]\]/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Active' })).toHaveClass(
+      'nearest'
+    )
   })
 
   it('labels linked offline context and disables page activation', () => {

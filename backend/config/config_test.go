@@ -837,6 +837,49 @@ func TestNavigationPreferences_NormalizeAndRoundTrip(t *testing.T) {
 	}
 }
 
+func TestQuickAccessCollapsed_DefaultNormalizeAndBackwardCompatibility(t *testing.T) {
+	defaults := Defaults()
+	if defaults.UI.QuickAccessCollapsed == nil || !*defaults.UI.QuickAccessCollapsed {
+		t.Fatalf("quick access should default collapsed, got %v", defaults.UI.QuickAccessCollapsed)
+	}
+
+	legacy := defaults
+	legacy.UI.QuickAccessCollapsed = nil
+	normalized := Normalize(legacy)
+	if normalized.UI.QuickAccessCollapsed == nil || !*normalized.UI.QuickAccessCollapsed {
+		t.Fatalf("nil quick access preference should normalize to collapsed, got %v", normalized.UI.QuickAccessCollapsed)
+	}
+
+	open := false
+	legacy.UI.QuickAccessCollapsed = &open
+	normalized = Normalize(legacy)
+	if normalized.UI.QuickAccessCollapsed == nil || *normalized.UI.QuickAccessCollapsed {
+		t.Fatalf("explicit expanded preference should survive normalization, got %v", normalized.UI.QuickAccessCollapsed)
+	}
+
+	vaultPath := t.TempDir()
+	writeFile(t, ConfigPath(vaultPath), "ui:\n  sidebar_width: 256\n")
+	loaded, err := Load(vaultPath)
+	if err != nil {
+		t.Fatalf("Load legacy config: %v", err)
+	}
+	if loaded.UI.QuickAccessCollapsed == nil || !*loaded.UI.QuickAccessCollapsed {
+		t.Fatalf("legacy config should use collapsed default, got %v", loaded.UI.QuickAccessCollapsed)
+	}
+
+	roundTripPath := t.TempDir()
+	if err := Save(roundTripPath, normalized); err != nil {
+		t.Fatalf("Save quick access preference: %v", err)
+	}
+	roundTripped, err := Load(roundTripPath)
+	if err != nil {
+		t.Fatalf("Load round-tripped config: %v", err)
+	}
+	if roundTripped.UI.QuickAccessCollapsed == nil || *roundTripped.UI.QuickAccessCollapsed {
+		t.Fatalf("explicit expanded preference did not round-trip, got %v", roundTripped.UI.QuickAccessCollapsed)
+	}
+}
+
 // TestOpenTabs_RoundTrip confirms OpenTabs + ActiveTab survive Save → Load
 // with byte-for-byte fidelity, including the section-less case (Section == "").
 func TestOpenTabs_RoundTrip(t *testing.T) {

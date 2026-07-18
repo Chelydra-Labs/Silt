@@ -8,7 +8,8 @@ import { pageExists, sectionAncestors } from './navTree'
 export const EMPTY_NAVIGATION_PREFERENCES: NavigationPreferences = {
   expanded_sections: [],
   recent_pages: [],
-  favorites: []
+  favorites: [],
+  quick_access_collapsed: true
 }
 
 export function locatorKey(ref: NavigationPageRef): string {

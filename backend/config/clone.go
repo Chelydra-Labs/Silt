@@ -30,6 +30,7 @@ func Clone(cfg SystemConfig) SystemConfig {
 	out.UI.ShowFormatToolbar = clonePtr(cfg.UI.ShowFormatToolbar)
 	out.UI.ShowTabDirtyIndicators = clonePtr(cfg.UI.ShowTabDirtyIndicators)
 	out.UI.DismissedTips = cloneStrings(cfg.UI.DismissedTips)
+	out.UI.QuickAccessCollapsed = clonePtr(cfg.UI.QuickAccessCollapsed)
 	out.UI.OpenDevtoolsOnStartup = clonePtr(cfg.UI.OpenDevtoolsOnStartup)
 	out.UI.Formatting = FormattingConfig{
 		TypographyEnabled: clonePtr(cfg.UI.Formatting.TypographyEnabled),

@@ -248,6 +248,9 @@ type App struct {
 	// stream events without a live Wails runtime (#631). Production leaves
 	// this nil and emit() uses wailsApp.Event.Emit.
 	eventEmit func(name string, data ...any)
+	// renameHooks is package-local failure injection for rename transaction
+	// tests. Production leaves it nil and uses the real operations.
+	renameHooks *renameHooks
 }
 
 // aiStreamSession is one in-flight PluginAIComplete(stream=true) call.

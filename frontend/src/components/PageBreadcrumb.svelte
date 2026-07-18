@@ -88,6 +88,7 @@
       <button
         type="button"
         class="crumb section-crumb"
+        class:nearest={segment.path === section}
         onclick={() => onSelectSection(segment.path)}
         title={segment.path}>{segment.label}</button
       >
@@ -123,7 +124,8 @@
   .crumb:focus-visible {
     color: var(--color-text-primary);
     background: var(--color-hover);
-    outline: none;
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
   }
   .page {
     color: var(--color-text-primary);
@@ -137,7 +139,7 @@
     flex: 0 0 auto;
   }
   @media (max-width: 700px) {
-    .section-crumb:not(:last-of-type) {
+    .section-crumb:not(.nearest) {
       display: none;
     }
     .crumb {

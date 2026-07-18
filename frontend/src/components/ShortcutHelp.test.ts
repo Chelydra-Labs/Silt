@@ -29,6 +29,9 @@ describe('ShortcutHelp', () => {
     expect(screen.getByLabelText('New section disabled')).toHaveTextContent(
       'Disabled'
     )
+    expect(
+      screen.getByRole('region', { name: 'Shortcut list' })
+    ).toHaveAttribute('tabindex', '0')
   })
 
   it('focuses close, closes on Escape, and restores trigger focus', async () => {

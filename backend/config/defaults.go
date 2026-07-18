@@ -201,6 +201,7 @@ func Defaults() SystemConfig {
 			// from "explicitly false" through the Load → normalize path.
 			ShowTabDirtyIndicators: boolPtr(true),
 			DismissedTips:          []string{},
+			QuickAccessCollapsed:   boolPtr(true),
 			OpenDevtoolsOnStartup:  boolPtr(false),
 			Formatting: FormattingConfig{
 				TypographyEnabled: boolPtr(true),

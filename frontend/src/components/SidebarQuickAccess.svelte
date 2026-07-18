@@ -16,8 +16,10 @@
     notebooks: NavNotebook[]
     loading: boolean
     error: string
+    collapsed: boolean
     onOpen: (ref: NavigationPageRef) => void
     onToggleFavorite: (ref: NavigationPageRef) => void
+    onCollapsedChange: (collapsed: boolean) => void
     onRetry: () => void
   }
 
@@ -28,12 +30,29 @@
     notebooks,
     loading,
     error,
+    collapsed,
     onOpen,
     onToggleFavorite,
+    onCollapsedChange,
     onRetry
   }: Props = $props()
+  let emptyExpanded = $state(false)
+  let hasPages = $derived(favorites.length > 0 || recents.length > 0)
+  let effectiveCollapsed = $derived(
+    emptyExpanded || error ? false : collapsed || !hasPages
+  )
 
-  function state(ref: NavigationPageRef) {
+  function toggleCollapsed() {
+    if (effectiveCollapsed && !hasPages && !error) {
+      emptyExpanded = true
+      onCollapsedChange(false)
+      return
+    }
+    emptyExpanded = false
+    onCollapsedChange(!effectiveCollapsed)
+  }
+
+  function pageState(ref: NavigationPageRef) {
     const notebook = notebooks.find((item) => item.name === ref.notebook)
     if (staleKeys.has(locatorKey(ref)))
       return { unavailable: true, label: 'Unavailable' }
@@ -43,136 +62,133 @@
   }
 </script>
 
-<section
-  class="mx-1 mb-2 rounded-xl border border-accent-primary-start/20 overflow-hidden quick-access"
-  aria-labelledby="quick-access-title"
->
-  <div class="px-2.5 pt-2 pb-1 flex items-center justify-between">
-    <h2
+<section class="mx-1 mb-1" aria-labelledby="quick-access-title">
+  <button
+    type="button"
+    class="w-full border-none bg-transparent px-2 py-1.5 flex items-center gap-1 cursor-pointer rounded text-left text-surface-sidebar-text-muted hover:text-surface-sidebar-text hover:bg-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start"
+    aria-expanded={!effectiveCollapsed}
+    aria-controls="quick-access-content"
+    onclick={toggleCollapsed}
+  >
+    <span
+      class="material-symbols-outlined text-icon-md transition-transform motion-reduce:transition-none"
+      class:rotate-90={!effectiveCollapsed}
+      aria-hidden="true">chevron_right</span
+    >
+    <span
       id="quick-access-title"
-      class="m-0 text-type-3xs uppercase tracking-[0.16em] font-label-sm-bold text-accent-primary-start"
+      class="flex-1 text-type-2xs font-label-sm-bold"
     >
       Quick access
-    </h2>
-    <span
-      class="material-symbols-outlined text-icon-sm text-accent-primary-start/70"
-      aria-hidden="true">bolt</span
-    >
-  </div>
+    </span>
+    {#if hasPages}<span
+        class="text-type-3xs text-surface-sidebar-text-muted"
+        aria-hidden="true">{favorites.length + recents.length}</span
+      >{/if}
+  </button>
 
-  {#if loading}
-    <p class="px-2.5 pb-2 m-0 text-type-2xs text-surface-sidebar-text-muted">
-      Loading saved pages…
-    </p>
-  {:else if error}
-    <div class="px-2.5 pb-2" role="status">
-      <p class="m-0 text-type-2xs text-status-warn">{error}</p>
-      <button class="retry" type="button" onclick={onRetry}>Try again</button>
-    </div>
-  {:else}
-    <div class="px-1.5 pb-1.5 grid gap-1">
-      <div>
-        <h3 class="group-title">
-          <span
-            class="material-symbols-outlined text-icon-sm"
-            aria-hidden="true">star</span
+  {#if !effectiveCollapsed}
+    <div id="quick-access-content">
+      {#if loading}
+        <p
+          class="px-2.5 pb-2 m-0 text-type-2xs text-surface-sidebar-text-muted"
+        >
+          Loading saved pages…
+        </p>
+      {:else if error}
+        <div class="px-2.5 pb-2" role="status">
+          <p class="m-0 text-type-2xs text-status-warn">{error}</p>
+          <button class="retry" type="button" onclick={onRetry}
+            >Try again</button
           >
-          Favorites
-        </h3>
-        {#if favorites.length === 0}
-          <p class="empty">Favorite a page from its menu.</p>
-        {:else}
-          {#each favorites as ref (locatorKey(ref))}
-            {@const itemState = state(ref)}
-            <div class="quick-row">
-              <button
-                type="button"
-                class="page-link"
-                disabled={itemState.unavailable}
-                title={pagePathLabel(ref)}
-                aria-label={`${pagePathLabel(ref)}${itemState.label ? ` — ${itemState.label}` : ''}`}
-                onclick={() => onOpen(ref)}
-              >
-                <span class="truncate">{ref.page}</span>
-                <span class="path truncate"
-                  >{ref.notebook}{ref.section ? ` / ${ref.section}` : ''}</span
-                >
-                {#if itemState.label}<span class="status"
-                    >{itemState.label}</span
-                  >{/if}
-              </button>
-              <button
-                type="button"
-                class="favorite-toggle"
-                aria-label={`Remove ${ref.page} from favorites`}
-                title="Remove from favorites"
-                onclick={() => onToggleFavorite(ref)}
-              >
-                <span
-                  class="material-symbols-outlined text-icon-sm"
-                  aria-hidden="true">star</span
-                >
-              </button>
-            </div>
-          {/each}
-        {/if}
-      </div>
+        </div>
+      {:else}
+        <div class="px-1.5 pb-1.5 grid gap-1">
+          {#if !hasPages}
+            <p class="empty">No saved pages yet.</p>
+          {/if}
+          {#if favorites.length > 0}<div>
+              <h3 class="group-title">Favorites</h3>
+              {#each favorites as ref (locatorKey(ref))}
+                {@const itemState = pageState(ref)}
+                <div class="quick-row">
+                  <button
+                    type="button"
+                    class="page-link"
+                    disabled={itemState.unavailable}
+                    title={pagePathLabel(ref)}
+                    aria-label={`${pagePathLabel(ref)}${itemState.label ? ` — ${itemState.label}` : ''}`}
+                    onclick={() => onOpen(ref)}
+                  >
+                    <span class="truncate">{ref.page}</span>
+                    <span class="path truncate"
+                      >{ref.notebook}{ref.section
+                        ? ` / ${ref.section}`
+                        : ''}</span
+                    >
+                    {#if itemState.label}<span class="status"
+                        >{itemState.label}</span
+                      >{/if}
+                  </button>
+                  <button
+                    type="button"
+                    class="favorite-toggle"
+                    aria-label={`Remove ${ref.page} from favorites`}
+                    title="Remove from favorites"
+                    onclick={() => onToggleFavorite(ref)}
+                  >
+                    <span
+                      class="material-symbols-outlined text-icon-sm"
+                      aria-hidden="true">star</span
+                    >
+                  </button>
+                </div>
+              {/each}
+            </div>{/if}
 
-      <div class="border-t border-surface-sidebar-border/70 pt-1">
-        <h3 class="group-title">
-          <span
-            class="material-symbols-outlined text-icon-sm"
-            aria-hidden="true">history</span
-          >
-          Recent
-        </h3>
-        {#if recents.length === 0}
-          <p class="empty">Pages you open will appear here.</p>
-        {:else}
-          {#each recents.slice(0, 6) as ref (locatorKey(ref))}
-            {@const itemState = state(ref)}
-            <button
-              type="button"
-              class="page-link recent"
-              disabled={itemState.unavailable}
-              title={pagePathLabel(ref)}
-              aria-label={`${pagePathLabel(ref)}${itemState.label ? ` — ${itemState.label}` : ''}`}
-              onclick={() => onOpen(ref)}
+          {#if recents.length > 0}<div
+              class:border-t={favorites.length > 0}
+              class:pt-1={favorites.length > 0}
+              class="border-surface-sidebar-border/70"
             >
-              <span class="truncate">{ref.page}</span>
-              <span class="path truncate"
-                >{ref.notebook}{ref.section ? ` / ${ref.section}` : ''}</span
-              >
-              {#if itemState.label}<span class="status">{itemState.label}</span
-                >{/if}
-            </button>
-          {/each}
-        {/if}
-      </div>
+              <h3 class="group-title">Recent</h3>
+              {#each recents.slice(0, 6) as ref (locatorKey(ref))}
+                {@const itemState = pageState(ref)}
+                <button
+                  type="button"
+                  class="page-link recent"
+                  disabled={itemState.unavailable}
+                  title={pagePathLabel(ref)}
+                  aria-label={`${pagePathLabel(ref)}${itemState.label ? ` — ${itemState.label}` : ''}`}
+                  onclick={() => onOpen(ref)}
+                >
+                  <span class="truncate">{ref.page}</span>
+                  <span class="path truncate"
+                    >{ref.notebook}{ref.section
+                      ? ` / ${ref.section}`
+                      : ''}</span
+                  >
+                  {#if itemState.label}<span class="status"
+                      >{itemState.label}</span
+                    >{/if}
+                </button>
+              {/each}
+            </div>{/if}
+        </div>
+      {/if}
     </div>
   {/if}
 </section>
 
 <style>
-  .quick-access {
-    background:
-      radial-gradient(
-        circle at 100% 0%,
-        color-mix(in srgb, var(--color-accent-primary-start) 15%, transparent),
-        transparent 52%
-      ),
-      color-mix(in srgb, var(--color-surface-card) 78%, transparent);
-    box-shadow: inset 0 1px 0
-      color-mix(in srgb, var(--color-text-primary) 7%, transparent);
-  }
   .group-title {
     margin: 0;
     padding: 0.25rem 0.35rem;
     display: flex;
     gap: 0.35rem;
     align-items: center;
-    color: var(--color-surface-sidebar-text);
-    font-size: var(--text-type-2xs);
+    color: var(--color-surface-sidebar-text-muted);
+    font-size: var(--text-type-3xs);
     font-weight: 650;
   }
   .empty {

@@ -36,6 +36,12 @@
   import PluginView from './components/PluginView.svelte'
   import SettingsPanel from './components/settings/SettingsPanel.svelte'
   import {
+    clearRetainedTemplateDraft,
+    hasUnsavedTemplateDraft
+  } from './components/settings/templateDraftSession'
+  import { shortcutBinding } from './settings/shortcutActions'
+  import { createRecentSaveTracker } from './lib/editor/recentSaveTracker'
+  import {
     getSettingsSections,
     resolveSettingsSectionId
   } from './components/settings/settingsSections.svelte'
@@ -262,6 +268,10 @@
       )
       .catch((e) => console.error('RecordRecentPage failed:', e))
   }
+  const trackRecentSave = createRecentSaveTracker((tabId) => {
+    const tab = openTabs.find((candidate) => candidate.id === tabId)
+    if (tab) recordRecentActivation(tab)
+  })
 
   // Toggle a tab between Edit and Source view (#195). The mode lives on
   // TabEntry (single source of truth) and persists to config.yaml on the next
@@ -290,6 +300,7 @@
   }
 
   function selectNotebookContext(notebook: string): void {
+    if (!confirmTemplateTransition()) return
     activeNotebook = notebook
     const notebookTabs = openTabs
       .filter((tab) => tab.notebook === notebook)
@@ -300,6 +311,21 @@
       activeSection = ''
       activePage = ''
     }
+  }
+
+  function confirmTemplateTransition(): boolean {
+    return (
+      !(
+        activeView === 'settings' &&
+        settingsSection === 'templates' &&
+        hasUnsavedTemplateDraft()
+      ) || window.confirm('Leave Templates? Your draft will be kept for later.')
+    )
+  }
+
+  function selectView(view: string): void {
+    if (view !== activeView && !confirmTemplateTransition()) return
+    activeView = view
   }
 
   function openSectionContext(section: string): void {
@@ -558,7 +584,8 @@
   let navigationPreferences = $state<NavigationPreferences>({
     expanded_sections: [],
     recent_pages: [],
-    favorites: []
+    favorites: [],
+    quick_access_collapsed: true
   })
   let navigationCatalogLoading = $state(true)
   let navigationCatalogError = $state('')
@@ -998,6 +1025,10 @@
       'plugins:changed',
       () => void handlePluginsChanged()
     )
+    const offTemplateDraftVaultClosing = Events.On(
+      'vault:closing',
+      clearRetainedTemplateDraft
+    )
     // `vault:moved` fires after a successful vault Move/Copy-Switch (#141).
     // The backend has already reinitialized services at the new path; reset
     // navigation, close settings, and reload the (vault-scoped) config store
@@ -1249,6 +1280,7 @@
       window.removeEventListener('page-renamed', handlePageRenamed)
       offPluginsChanged()
       offVaultMoved()
+      offTemplateDraftVaultClosing()
       offConfigChangedReload()
       offSettingsMismatch()
       offGrantsMigration()
@@ -1442,6 +1474,13 @@
   // their page when they leave Settings. The section persists across opens so
   // re-entering Settings returns the user to the panel they last visited.
   function openSettings(section: string = 'general') {
+    if (
+      activeView === 'settings' &&
+      settingsSection === 'templates' &&
+      section !== 'templates' &&
+      !confirmTemplateTransition()
+    )
+      return
     // Validate against the live section registry so an unknown id (e.g. a
     // typo'd ctx.openSettings('foo') from a plugin) can't render a blank
     // panel or point aria-labelledby at a nonexistent tab. Falls back to
@@ -1577,12 +1616,13 @@
                   sidebarCollapsed = !sidebarCollapsed
                   manuallyCollapsed = sidebarCollapsed
                 } else {
-                  activeView = v.id
+                  selectView(v.id)
+                  if (activeView !== v.id) return
                   sidebarCollapsed = false
                   manuallyCollapsed = false
                 }
               }}
-              class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none"
+              class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start motion-reduce:transform-none motion-reduce:transition-none"
               class:text-accent-primary-start={activeView === v.id}
               class:text-surface-activitybar-text-muted={activeView !== v.id}
               aria-label={v.label}
@@ -1607,7 +1647,7 @@
 
         <button
           onclick={() => openSettings('general')}
-          class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none"
+          class="relative w-9 h-9 rounded-lg flex items-center justify-center transition-all cursor-pointer border-none bg-transparent hover:bg-hover hover:scale-105 active:scale-95 group focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start motion-reduce:transform-none motion-reduce:transition-none"
           class:text-accent-primary-start={activeView === 'settings'}
           class:text-surface-activitybar-text-muted={activeView !== 'settings'}
           aria-label="Settings"
@@ -1638,7 +1678,7 @@
             }}
             transition:fade={{ duration: 150 }}
             aria-label="Show sidebar"
-            title="Show sidebar (Ctrl+B)"
+            title={`Show sidebar${shortcutBinding('toggle_sidebar', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('toggle_sidebar', settings.config?.hotkeys ?? {})})` : ''}`}
             class="absolute bottom-4 left-16 z-50 w-8 h-8 rounded-lg bg-surface-sidebar/80 backdrop-blur-md border border-surface-sidebar-border text-surface-sidebar-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 flex items-center justify-center transition-all cursor-pointer shadow-lg hover:scale-105 active:scale-95"
           >
             <span class="material-symbols-outlined text-icon-lg"
@@ -1667,7 +1707,7 @@
             // Double-click / middle-click opens a pinned tab (#142).
             openPage({ notebook: nb, section: sec, page: pg }, 'pin')
           }}
-          onSelectView={(v) => (activeView = v)}
+          onSelectView={selectView}
           onNavigationLoaded={(tree) => {
             navigationCatalog = flattenNavigation(tree)
             navigationNotebookMetadata = notebookNavigationMetadata(tree)
@@ -1798,6 +1838,7 @@
                               }
                             : t
                         )
+                        trackRecentSave(tab.id, s)
                       }}
                     />
                   </div>

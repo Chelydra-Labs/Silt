@@ -13,7 +13,8 @@ const preferences: NavigationPreferences = {
     { notebook: 'Personal', path: 'Home' }
   ],
   recent_pages: [],
-  favorites: []
+  favorites: [],
+  quick_access_collapsed: true
 }
 
 const tree: NavigationTree = {

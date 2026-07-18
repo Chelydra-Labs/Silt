@@ -129,7 +129,7 @@
 <div class="mb-0.5" role="none">
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
-    class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-hover transition-colors"
+    class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-hover transition-colors motion-reduce:transition-none"
     class:drag-over-top={dropTarget?.level === 'section' &&
       dragItem?.level !== 'page' &&
       dropTarget.name === sectionKey &&
@@ -147,7 +147,10 @@
     ondragleave={onDragLeave}
     ondrop={(e) => onDrop(e, 'section', sectionKey, activeNotebook, sectionKey)}
     ondragend={onDragEnd}
-    onclick={() => onToggleSection(sectionKey)}
+    onclick={() => {
+      onSelectSection(sectionKey)
+      onToggleSection(sectionKey)
+    }}
     onfocus={() => onTreeItemFocus(treeItemId)}
     oncontextmenu={(e) =>
       onContextMenu(e, 'section', activeNotebook, sectionKey)}
@@ -155,7 +158,7 @@
     tabindex={focusedTreeItemId === treeItemId ? 0 : -1}
     data-tree-id={treeItemId}
     aria-level={depth + 1}
-    aria-expanded={isExpanded}
+    aria-expanded={isExpanded || contextMenuTargetId === treeItemId}
     aria-selected={activeSection === sectionKey}
     aria-haspopup="menu"
     aria-controls={contextMenuTargetId === treeItemId
@@ -163,7 +166,7 @@
       : undefined}
   >
     <span
-      class="material-symbols-outlined text-icon-md transition-transform"
+      class="material-symbols-outlined text-icon-md transition-transform motion-reduce:transition-none"
       class:rotate-90={isExpanded}
       class:text-accent-primary-start={activeSection === sectionKey}
       class:text-surface-sidebar-text-muted={activeSection !== sectionKey}
@@ -238,7 +241,7 @@
             ondrop={(e) =>
               onDrop(e, 'page', pg.name, activeNotebook, sectionKey)}
             ondragend={onDragEnd}
-            class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-type-md font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
+            class="relative w-full text-left pl-4 pr-2 py-1.5 rounded text-type-md font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start motion-reduce:transition-none"
             class:bg-hover={isActive}
             class:text-surface-sidebar-text={isActive}
             class:font-medium={isActive}
@@ -267,6 +270,12 @@
             aria-level={depth + 2}
             aria-selected={isActive}
             aria-haspopup="menu"
+            aria-expanded={contextMenuTargetId ===
+              pageNodeId({
+                notebook: activeNotebook,
+                section: sectionKey,
+                page: pg.name
+              })}
             aria-controls={contextMenuTargetId ===
             pageNodeId({
               notebook: activeNotebook,

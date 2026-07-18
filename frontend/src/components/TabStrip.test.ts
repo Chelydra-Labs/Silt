@@ -141,12 +141,16 @@ describe('TabStrip (#142)', () => {
     await fireEvent.click(overflow)
     expect(screen.queryByRole('menuitem', { name: /Visible/ })).toBeNull()
     await fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Switch to Hidden A' })
+      screen.getByRole('menuitem', {
+        name: 'Switch to Work / Hidden A — pinned'
+      })
     )
     expect(props.onSelectTab).toHaveBeenCalledWith(tabs[1].id)
     await fireEvent.click(overflow)
     await fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Close Hidden B' })
+      screen.getByRole('menuitem', {
+        name: 'Close Work / Hidden B — pinned'
+      })
     )
     expect(props.onCloseTab).toHaveBeenCalledWith(tabs[2].id)
   })

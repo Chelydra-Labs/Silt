@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   movePage: vi.fn(),
   getNavigationPreferences: vi.fn(),
   setNavigationSectionExpanded: vi.fn(),
+  setQuickAccessCollapsed: vi.fn(),
   setFavoritePage: vi.fn(),
   queryTagHierarchy: vi.fn().mockResolvedValue([]),
   // The silt-tasks sidebar queries counts/facets on mount via ctx.sqliteQuery.
@@ -76,6 +77,7 @@ vi.mock('../../bindings/silt/app.js', () => ({
   MovePage: mocks.movePage,
   GetNavigationPreferences: mocks.getNavigationPreferences,
   SetNavigationSectionExpanded: mocks.setNavigationSectionExpanded,
+  SetQuickAccessCollapsed: mocks.setQuickAccessCollapsed,
   SetFavoritePage: mocks.setFavoritePage,
   QueryTagHierarchy: mocks.queryTagHierarchy
 }))
@@ -149,9 +151,11 @@ describe('Sidebar', () => {
     mocks.getNavigationPreferences.mockReset().mockResolvedValue({
       expanded_sections: [],
       recent_pages: [],
-      favorites: []
+      favorites: [],
+      quick_access_collapsed: true
     })
     mocks.setNavigationSectionExpanded.mockReset().mockResolvedValue(undefined)
+    mocks.setQuickAccessCollapsed.mockReset().mockResolvedValue(undefined)
     mocks.setFavoritePage.mockReset().mockResolvedValue(undefined)
     mocks.listNavigation.mockResolvedValue(NAV_TREE)
     mocks.sqliteQuery
@@ -229,6 +233,46 @@ describe('Sidebar', () => {
     const label = screen.getByText('No Notebook')
     expect(label).toHaveClass('text-surface-sidebar-text')
     expect(label).not.toHaveClass('text-accent-primary-start')
+    const trigger = screen.getByRole('button', { name: 'Choose a notebook' })
+    expect(trigger).not.toHaveTextContent('menu_book')
+  })
+
+  it('restores and persists the Quick Access disclosure preference', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [],
+      recent_pages: [
+        {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          opened_at: 10
+        }
+      ],
+      favorites: [],
+      quick_access_collapsed: true
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const toggle = screen.getByRole('button', { name: 'Quick access' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await fireEvent.click(toggle)
+    await flush()
+    expect(mocks.setQuickAccessCollapsed).toHaveBeenCalledWith(false)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
   })
 
   it('MovePage mock is available and callable (#177)', async () => {
@@ -718,16 +762,18 @@ describe('Sidebar', () => {
     await flush()
 
     // Open notebook dropdown (role=button switcher), then context-menu a row.
-    const switcher = screen
-      .getByText('Active Notebook')
-      .closest('[role="button"]')!
+    const switcher = screen.getByText('Active Notebook').closest('button')!
     await fireEvent.click(switcher)
     await flush()
     const notebookBtn = screen.getAllByText('Personal')[0].closest('button')!
     await fireEvent.contextMenu(notebookBtn)
     await flush()
 
+    expect(notebookBtn).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByRole('menu', { name: 'Actions' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: 'New Page Here' })
+    ).toBeInTheDocument()
     expect(
       screen.getByRole('menuitem', { name: /Rename/i })
     ).toBeInTheDocument()
@@ -766,9 +812,7 @@ describe('Sidebar', () => {
     })
     await flush()
 
-    const switcher = screen
-      .getByText('Active Notebook')
-      .closest('[role="button"]')!
+    const switcher = screen.getByText('Active Notebook').closest('button')!
     await fireEvent.click(switcher)
     await flush()
     const notebookBtn = screen.getAllByText('Synced')[0].closest('button')!
@@ -803,9 +847,7 @@ describe('Sidebar', () => {
     })
     await flush()
 
-    const switcher = screen
-      .getByText('Active Notebook')
-      .closest('[role="button"]')!
+    const switcher = screen.getByText('Active Notebook').closest('button')!
     await fireEvent.click(switcher)
     await flush()
     const notebookBtn = screen.getAllByText('Personal')[0].closest('button')!
@@ -1170,7 +1212,8 @@ describe('Sidebar', () => {
       recent_pages: [],
       favorites: [
         { notebook: 'Synced', section: 'Projects/Deep', page: 'Plan' }
-      ]
+      ],
+      quick_access_collapsed: false
     })
     render(Sidebar, {
       props: {
@@ -1484,7 +1527,7 @@ describe('Sidebar', () => {
     })
     await flush()
     await fireEvent.click(
-      screen.getByText('Active Notebook').closest('[role="button"]')!
+      screen.getByText('Active Notebook').closest('button')!
     )
     const notebook = screen.getAllByText('Synced')[1].closest('button')!
     await fireEvent.contextMenu(notebook)

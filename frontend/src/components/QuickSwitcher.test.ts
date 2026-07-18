@@ -99,5 +99,31 @@ describe('QuickSwitcher', () => {
     })
     expect(screen.getByRole('option', { name: /Inbox/ })).toBeDisabled()
     expect(screen.getByText('Offline')).toBeInTheDocument()
+    expect(screen.getByRole('combobox')).not.toHaveAttribute(
+      'aria-activedescendant'
+    )
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'All matching pages are offline.'
+    )
+  })
+
+  it('skips offline options during keyboard navigation', async () => {
+    const onOpen = vi.fn()
+    render(QuickSwitcher, {
+      props: {
+        catalog: [catalog[0], { ...catalog[1], disconnected: true }],
+        onRetry: vi.fn(),
+        onOpen,
+        onClose: vi.fn()
+      }
+    })
+    const input = screen.getByRole('combobox')
+    await fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(input).toHaveAttribute(
+      'aria-activedescendant',
+      'quick-switcher-option-0'
+    )
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onOpen).toHaveBeenCalledWith(catalog[0], 'preview')
   })
 })

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -10,9 +11,199 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"silt/backend/config"
 )
 
 // --- Rename / Delete lifecycle (#62, #83) ---------------------------------
+
+type renameHooks struct {
+	writeFileAtomic   func(string, []byte) error
+	indexFile         func(*App, string, string, string, string, []parser.ParsedBlock, []string, ...string) error
+	reconcileSection  func(*App, string, string, string, bool) error
+	reconcileNotebook func(*App, string, string, bool) error
+}
+
+type renameFileSnapshot struct {
+	oldPath, relPath string
+	oldContent       []byte
+	updatedContent   []byte
+	oldNotebook      string
+	newNotebook      string
+	oldSection       string
+	newSection       string
+	page             string
+}
+
+type renameLinkJournalEntry struct {
+	content  []byte
+	source   string
+	notebook string
+	section  string
+	page     string
+}
+
+func (a *App) renameWriteFileAtomic(path string, content []byte) error {
+	if a.renameHooks != nil && a.renameHooks.writeFileAtomic != nil {
+		return a.renameHooks.writeFileAtomic(path, content)
+	}
+	return parser.WriteFileAtomic(path, content)
+}
+
+func (a *App) renameIndexFile(source, notebook, section, page string, blocks []parser.ParsedBlock, tags []string, warnings ...string) error {
+	if a.renameHooks != nil && a.renameHooks.indexFile != nil {
+		return a.renameHooks.indexFile(a, source, notebook, section, page, blocks, tags, warnings...)
+	}
+	return a.indexFile(source, notebook, section, page, blocks, tags, warnings...)
+}
+
+func (a *App) indexFile(source, notebook, section, page string, blocks []parser.ParsedBlock, tags []string, warnings ...string) error {
+	var err error
+	a.coordinator.WithDBWrite(func() {
+		err = a.db.IndexFileBlocks(source, notebook, section, page, blocks, tags, warnings...)
+	})
+	return err
+}
+
+func (a *App) reindexFileContent(filePath, source, notebook, section, page string, content []byte, useRenameHook bool) error {
+	blocks, meta, _, _, parseErr := parser.ParseFileContent(
+		string(content), notebook, section, page,
+		fileOrDefaultDate(filePath), a.spacesPerTab,
+	)
+	if parseErr != nil {
+		return fmt.Errorf("parse %s: %w", filePath, parseErr)
+	}
+	index := a.indexFile
+	if useRenameHook {
+		index = a.renameIndexFile
+	}
+	if err := index(source, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...); err != nil {
+		return fmt.Errorf("index %s: %w", filePath, err)
+	}
+	stat, statErr := os.Stat(filePath)
+	if statErr != nil {
+		return fmt.Errorf("stat indexed file %s: %w", filePath, statErr)
+	}
+	var markErr error
+	a.coordinator.WithDBWrite(func() {
+		markErr = a.db.MarkFileIndexed(nil, filePath, stat.ModTime().UnixNano(), stat.Size())
+	})
+	if markErr != nil {
+		return fmt.Errorf("record indexed file %s: %w", filePath, markErr)
+	}
+	if useRenameHook {
+		for _, b := range blocks {
+			if b.ID != "" {
+				a.emitBlockChanged(b.ID, meta.Notebook, meta.Section, meta.Page, b.FileDate)
+			}
+		}
+	}
+	return nil
+}
+
+func (a *App) reindexFileStrict(filePath, source, notebook, section, page string, useRenameHook bool) error {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+	return a.reindexFileContent(filePath, source, notebook, section, page, content, useRenameHook)
+}
+
+func (a *App) snapshotConfig() config.SystemConfig {
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	return config.Clone(a.cfg)
+}
+
+func (a *App) restoreConfig(snapshot config.SystemConfig) error {
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	if err := a.saveConfigTracked(snapshot); err != nil {
+		return err
+	}
+	a.cfg = config.Clone(snapshot)
+	return nil
+}
+
+func (a *App) renameReconcileSection(notebook, oldPath, newPath string, remove bool) error {
+	if a.renameHooks != nil && a.renameHooks.reconcileSection != nil {
+		return a.renameHooks.reconcileSection(a, notebook, oldPath, newPath, remove)
+	}
+	return a.reconcileNavigationSection(notebook, oldPath, newPath, remove)
+}
+
+func (a *App) renameReconcileNotebook(oldName, newName string, remove bool) error {
+	if a.renameHooks != nil && a.renameHooks.reconcileNotebook != nil {
+		return a.renameHooks.reconcileNotebook(a, oldName, newName, remove)
+	}
+	return a.reconcileNavigationNotebook(oldName, newName, remove)
+}
+
+func (a *App) rollbackRename(
+	oldDir, newDir string,
+	files []renameFileSnapshot,
+	source string,
+	linkJournal map[string]renameLinkJournalEntry,
+	configSnapshot config.SystemConfig,
+	restoreConfigSnapshot bool,
+) error {
+	var rollbackErrs []error
+
+	// Restore inbound-link sources while the renamed tree is still at newDir.
+	for path, entry := range linkJournal {
+		a.coordinator.LockFileWrite(path, func() {
+			a.tracker.RegisterWrite(path)
+			if err := parser.WriteFileAtomic(path, entry.content); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("restore inbound links %s: %w", path, err))
+				return
+			}
+			if err := a.reindexFileContent(path, entry.source, entry.notebook, entry.section, entry.page, entry.content, false); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("restore inbound index %s: %w", path, err))
+			}
+		})
+	}
+
+	// Restore every descendant's original bytes before moving the directory
+	// back. The rollback path deliberately bypasses the forward-write hook.
+	for _, file := range files {
+		path := filepath.Join(newDir, file.relPath)
+		a.tracker.RegisterWrite(path)
+		if err := parser.WriteFileAtomic(path, file.oldContent); err != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore %s: %w", file.relPath, err))
+		}
+	}
+	if err := os.Rename(newDir, oldDir); err != nil {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("restore renamed directory: %w", err))
+	}
+
+	// Rebuild the old index from the captured source bytes. This clears both
+	// possible locations first, so a partial forward index cannot survive.
+	for _, file := range files {
+		a.coordinator.WithDBWrite(func() {
+			if err := a.db.ClearFileBlocks(nil, source, file.newNotebook, file.newSection, file.page); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("clear new index %s: %w", file.relPath, err))
+			}
+			if err := a.db.ClearFileBlocks(nil, source, file.oldNotebook, file.oldSection, file.page); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("clear old index %s: %w", file.relPath, err))
+			}
+			if err := a.db.ForgetFile(filepath.Join(newDir, file.relPath)); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("forget new index path %s: %w", file.relPath, err))
+			}
+			if err := a.db.ForgetFile(file.oldPath); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("forget old index path %s: %w", file.relPath, err))
+			}
+		})
+		if err := a.reindexFileContent(file.oldPath, source, file.oldNotebook, file.oldSection, file.page, file.oldContent, false); err != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore index %s: %w", file.relPath, err))
+		}
+	}
+	if restoreConfigSnapshot {
+		if err := a.restoreConfig(configSnapshot); err != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore navigation config: %w", err))
+		}
+	}
+	return errors.Join(rollbackErrs...)
+}
 
 // trashBase returns the .system/trash directory path.
 func (a *App) trashBase() string {
@@ -367,13 +558,10 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	type sectionFile struct {
-		oldPath, relPath string
-		content          []byte
-		oldSection       string
-		page             string
-	}
-	var files []sectionFile
+	var files []renameFileSnapshot
+	configSnapshot := a.snapshotConfig()
+	linkJournal := make(map[string]renameLinkJournalEntry)
+	configAttempted := false
 	var runErr error
 	a.coordinator.LockFileWrite(notebookDir, func() {
 		_ = filepath.WalkDir(oldDir, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -401,7 +589,16 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 			if len(parts) > 1 {
 				oldSection += "/" + strings.Join(parts[:len(parts)-1], "/")
 			}
-			files = append(files, sectionFile{oldPath: path, relPath: rel, content: content, oldSection: oldSection, page: page})
+			newSection := safeNewSection
+			if idx := strings.LastIndex(filepath.ToSlash(rel), "/"); idx >= 0 {
+				newSection += "/" + filepath.ToSlash(rel)[:idx]
+			}
+			updated := updateFrontmatterField(string(content), "section", newSection)
+			files = append(files, renameFileSnapshot{
+				oldPath: path, relPath: rel, oldContent: content, updatedContent: []byte(updated),
+				oldNotebook: safeNotebook, newNotebook: safeNotebook,
+				oldSection: oldSection, newSection: newSection, page: page,
+			})
 			return nil
 		})
 		if runErr != nil {
@@ -415,40 +612,51 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 		}
 		for _, file := range files {
 			newPath := filepath.Join(newDir, file.relPath)
-			newSection := safeNewSection
-			if idx := strings.LastIndex(filepath.ToSlash(file.relPath), "/"); idx >= 0 {
-				newSection += "/" + filepath.ToSlash(file.relPath)[:idx]
-			}
-			updated := updateFrontmatterField(string(file.content), "section", newSection)
 			a.tracker.RegisterWrite(newPath)
-			if err := parser.WriteFileAtomic(newPath, []byte(updated)); err != nil {
+			if err := a.renameWriteFileAtomic(newPath, file.updatedContent); err != nil {
 				runErr = fmt.Errorf("RenameSection: write %s: %w", file.relPath, err)
+				if rollbackErr := a.rollbackRename(oldDir, newDir, files, source, linkJournal, configSnapshot, false); rollbackErr != nil {
+					runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
+				}
 				return
 			}
 		}
 		for _, file := range files {
-			newSection := safeNewSection
-			if idx := strings.LastIndex(filepath.ToSlash(file.relPath), "/"); idx >= 0 {
-				newSection += "/" + filepath.ToSlash(file.relPath)[:idx]
-			}
-			a.rewriteInboundPageLinks(safeNotebook, file.oldSection, file.page, safeNotebook, newSection, file.page)
+			a.rewriteInboundPageLinksWithJournal(safeNotebook, file.oldSection, file.page, safeNotebook, file.newSection, file.page, linkJournal)
 		}
 		for _, file := range files {
 			a.coordinator.WithDBWrite(func() {
-				_ = a.db.ClearFileBlocks(nil, source, safeNotebook, file.oldSection, file.page)
-				_ = a.db.ForgetFile(file.oldPath)
+				if err := a.db.ClearFileBlocks(nil, source, safeNotebook, file.oldSection, file.page); err != nil && runErr == nil {
+					runErr = fmt.Errorf("RenameSection: clear index %s: %w", file.relPath, err)
+				}
+				if err := a.db.ForgetFile(file.oldPath); err != nil && runErr == nil {
+					runErr = fmt.Errorf("RenameSection: forget index %s: %w", file.relPath, err)
+				}
 			})
-			newSection := safeNewSection
-			if idx := strings.LastIndex(filepath.ToSlash(file.relPath), "/"); idx >= 0 {
-				newSection += "/" + filepath.ToSlash(file.relPath)[:idx]
+			if runErr != nil {
+				break
 			}
-			a.reindexFile(filepath.Join(newDir, file.relPath), safeNotebook, newSection, file.page)
+			if err := a.reindexFileStrict(filepath.Join(newDir, file.relPath), source, safeNotebook, file.newSection, file.page, true); err != nil {
+				runErr = fmt.Errorf("RenameSection: reindex %s: %w", file.relPath, err)
+				break
+			}
+		}
+		if runErr == nil {
+			configAttempted = true
+			if err := a.renameReconcileSection(safeNotebook, safeOldSection, safeNewSection, false); err != nil {
+				runErr = err
+			}
+		}
+		if runErr != nil {
+			if rollbackErr := a.rollbackRename(oldDir, newDir, files, source, linkJournal, configSnapshot, configAttempted && a.renameHooks != nil && a.renameHooks.reconcileSection != nil); rollbackErr != nil {
+				runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
+			}
 		}
 	})
 	if runErr != nil {
 		return runErr
 	}
-	return a.reconcileNavigationSection(safeNotebook, safeOldSection, safeNewSection, false)
+	return nil
 }
 
 // RenameNotebook renames a notebook folder and updates the notebook: frontmatter
@@ -492,15 +700,13 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 	defer a.wg.Done()
 
 	var runErr error
+	configSnapshot := a.snapshotConfig()
+	linkJournal := make(map[string]renameLinkJournalEntry)
+	configAttempted := false
 	a.coordinator.LockFileWrite(oldDir, func() {
 		// 1. Walk all .md files under the old notebook recursively and
 		// read their content BEFORE renaming.
-		type fileContent struct {
-			oldPath string
-			relPath string
-			content []byte
-		}
-		var files []fileContent
+		var files []renameFileSnapshot
 		_ = filepath.WalkDir(oldDir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return nil
@@ -512,7 +718,21 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 					return filepath.SkipDir
 				}
 				rel, _ := filepath.Rel(oldDir, path)
-				files = append(files, fileContent{oldPath: path, relPath: rel, content: b})
+				relSlash := filepath.ToSlash(rel)
+				parts := strings.Split(relSlash, "/")
+				var section, page string
+				if len(parts) == 1 {
+					page = strings.TrimSuffix(parts[0], ".md")
+				} else {
+					section = strings.Join(parts[:len(parts)-1], "/")
+					page = strings.TrimSuffix(parts[len(parts)-1], ".md")
+				}
+				updated := updateFrontmatterField(string(b), "notebook", safeNewNotebook)
+				files = append(files, renameFileSnapshot{
+					oldPath: path, relPath: rel, oldContent: b, updatedContent: []byte(updated),
+					oldNotebook: safeOldNotebook, newNotebook: safeNewNotebook,
+					oldSection: section, newSection: section, page: page,
+				})
 			}
 			return nil
 		})
@@ -530,50 +750,54 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 		}
 
 		// 3. Update notebook: frontmatter in each file at the new path.
-		var writeErrs []string
 		for _, fc := range files {
 			newMdPath := filepath.Join(newDir, fc.relPath)
-			updated := updateFrontmatterField(string(fc.content), "notebook", safeNewNotebook)
 			a.tracker.RegisterWrite(newMdPath)
-			if err := parser.WriteFileAtomic(newMdPath, []byte(updated)); err != nil {
-				writeErrs = append(writeErrs, fmt.Sprintf("write %s: %v", fc.relPath, err))
+			if err := a.renameWriteFileAtomic(newMdPath, fc.updatedContent); err != nil {
+				runErr = fmt.Errorf("RenameNotebook: write %s: %w", fc.relPath, err)
+				if rollbackErr := a.rollbackRename(oldDir, newDir, files, "vault", linkJournal, configSnapshot, false); rollbackErr != nil {
+					runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
+				}
+				return
 			}
-		}
-		if len(writeErrs) > 0 {
-			runErr = fmt.Errorf("RenameNotebook: %d file(s) failed frontmatter update at new path: %s", len(writeErrs), strings.Join(writeErrs, "; "))
-			return
 		}
 
-		// 4. Clear old index entries + re-index all files at new paths.
+		// 4. Clear old index entries and re-index all files at new paths.
 		for _, fc := range files {
-			rel, err := filepath.Rel(oldDir, fc.oldPath)
-			if err != nil {
-				continue
-			}
-			// Derive section/page from the relative path for ClearFileBlocks.
-			relParts := strings.Split(filepath.ToSlash(rel), "/")
-			var section, page string
-			if len(relParts) == 1 {
-				page = strings.TrimSuffix(relParts[0], ".md")
-			} else {
-				section = strings.Join(relParts[:len(relParts)-1], "/")
-				page = strings.TrimSuffix(relParts[len(relParts)-1], ".md")
-			}
-			// Clear old index entries via the typed API (not raw SQL) so
-			// the files mtime cache is also cleaned via ForgetFile.
 			a.coordinator.WithDBWrite(func() {
-				_ = a.db.ClearFileBlocks(nil, "vault", safeOldNotebook, section, page)
-				_ = a.db.ForgetFile(fc.oldPath)
+				if err := a.db.ClearFileBlocks(nil, "vault", safeOldNotebook, fc.oldSection, fc.page); err != nil && runErr == nil {
+					runErr = fmt.Errorf("RenameNotebook: clear index %s: %w", fc.relPath, err)
+				}
+				if err := a.db.ForgetFile(fc.oldPath); err != nil && runErr == nil {
+					runErr = fmt.Errorf("RenameNotebook: forget index %s: %w", fc.relPath, err)
+				}
 			})
-			newMdPath := filepath.Join(newDir, rel)
-			a.reindexFile(newMdPath, safeNewNotebook, section, page)
+			if runErr != nil {
+				break
+			}
+			newMdPath := filepath.Join(newDir, fc.relPath)
+			if err := a.reindexFileStrict(newMdPath, "vault", safeNewNotebook, fc.newSection, fc.page, true); err != nil {
+				runErr = fmt.Errorf("RenameNotebook: reindex %s: %w", fc.relPath, err)
+				break
+			}
+		}
+		if runErr == nil {
+			configAttempted = true
+			if err := a.renameReconcileNotebook(safeOldNotebook, safeNewNotebook, false); err != nil {
+				runErr = err
+			}
+		}
+		if runErr != nil {
+			if rollbackErr := a.rollbackRename(oldDir, newDir, files, "vault", linkJournal, configSnapshot, configAttempted && a.renameHooks != nil && a.renameHooks.reconcileNotebook != nil); rollbackErr != nil {
+				runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
+			}
 		}
 	})
 
 	if runErr != nil {
 		return runErr
 	}
-	return a.reconcileNavigationNotebook(safeOldNotebook, safeNewNotebook, false)
+	return nil
 }
 
 // DeletePage moves a single page file to .system/trash/ and clears its index

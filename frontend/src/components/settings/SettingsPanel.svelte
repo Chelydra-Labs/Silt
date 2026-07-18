@@ -87,7 +87,13 @@
     await tick()
     const el = document.getElementById(anchorId)
     if (!el) return
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    const reduceMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)'
+    ).matches
+    el.scrollIntoView({
+      block: 'center',
+      behavior: reduceMotion ? 'auto' : 'smooth'
+    })
     if (ringTimer) clearTimeout(ringTimer)
     ringAnchor = anchorId
     ringTimer = setTimeout(() => {
@@ -193,7 +199,12 @@
     {:else if section === 'hotkeys'}
       <HotkeysTab {ringAnchor} />
     {:else if section === 'templates'}
-      <TemplatesTab {activeNotebook} {activeSection} {activePage} />
+      <TemplatesTab
+        {activeNotebook}
+        {activeSection}
+        {activePage}
+        vaultId={settings.config?.notebooks.path ?? ''}
+      />
     {:else if section === 'plugins'}
       <PluginsTab
         {activeNotebook}

@@ -418,11 +418,19 @@
     menuId="tab-overflow-menu"
   >
     {#each hiddenTabs as tab (tab.id)}
+      {@const tabPath = `${tab.notebook}${tab.section ? ` / ${tab.section}` : ''} / ${tab.page}`}
+      {@const tabStatus = tab.saveError
+        ? 'save failed'
+        : tab.dirty
+          ? 'unsaved'
+          : tab.preview
+            ? 'preview'
+            : 'pinned'}
       <div role="none" class="overflow-tab-row">
         <button
           type="button"
           role="menuitem"
-          aria-label={`Switch to ${tab.page}`}
+          aria-label={`Switch to ${tabPath} — ${tabStatus}`}
           onclick={() => selectOverflowTab(tab.id)}
         >
           <span
@@ -443,7 +451,7 @@
           type="button"
           role="menuitem"
           class="overflow-close"
-          aria-label={`Close ${tab.page}`}
+          aria-label={`Close ${tabPath} — ${tabStatus}`}
           onclick={() => closeOverflowTab(tab.id)}
         >
           <span

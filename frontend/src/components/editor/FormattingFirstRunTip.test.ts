@@ -7,8 +7,7 @@ describe('FormattingFirstRunTip', () => {
     const { getByRole, getByText } = render(FormattingFirstRunTip, {
       props: { dismissed: false, onDismiss: () => {} }
     })
-    expect(getByRole('status')).toBeTruthy()
-    expect(getByText(/Ctrl\+B/)).toBeTruthy()
+    expect(getByRole('status')).toHaveTextContent('make it bold')
   })
 
   it('does not render when dismissed', () => {
@@ -21,7 +20,12 @@ describe('FormattingFirstRunTip', () => {
   it('calls onDismiss when Got it is clicked', async () => {
     let dismissed = false
     const { getByText } = render(FormattingFirstRunTip, {
-      props: { dismissed: false, onDismiss: () => { dismissed = true } }
+      props: {
+        dismissed: false,
+        onDismiss: () => {
+          dismissed = true
+        }
+      }
     })
     await fireEvent.click(getByText('Got it'))
     expect(dismissed).toBe(true)

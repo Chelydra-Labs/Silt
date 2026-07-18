@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
+  import { Events } from '@wailsio/runtime'
   import {
     DeleteUserTemplate,
     FetchPageMarkdown,
@@ -14,13 +15,19 @@
     templatesState
   } from '../../templates/store.svelte'
   import ConfirmDialog from '../ConfirmDialog.svelte'
+  import {
+    getRetainedTemplateDraft,
+    clearRetainedTemplateDraft,
+    retainTemplateDraft
+  } from './templateDraftSession'
 
   interface Props {
     activeNotebook: string
     activeSection: string
     activePage: string
+    vaultId: string
   }
-  let { activeNotebook, activeSection, activePage }: Props = $props()
+  let { activeNotebook, activeSection, activePage, vaultId }: Props = $props()
 
   type Draft = {
     schema_version: string
@@ -36,6 +43,7 @@
   }
   type TemplateSource = 'builtin' | 'disk' | 'plugin'
 
+  let sessionVaultId = $state('')
   let selectedId = $state('')
   let draft = $state<Draft | null>(null)
   let baseline = $state('')
@@ -61,20 +69,58 @@
     templatesState.items.find((item) => item.id === selectedId)
   )
   let readOnly = $derived(!!draft && draft.source !== 'disk')
-  let dirty = $derived(!!draft && JSON.stringify(draft) !== baseline)
+  let dirty = $derived(
+    !!draft && draft.source === 'disk' && JSON.stringify(draft) !== baseline
+  )
   let validation = $derived.by(() => {
-    if (!draft) return ''
-    if (!draft.id.trim()) return 'Template ID is required.'
-    if (!/^[a-z0-9][a-z0-9_-]*$/.test(draft.id.trim()))
-      return 'Use lowercase letters, numbers, hyphens, or underscores for the ID.'
-    if (!draft.title.trim()) return 'Title is required.'
-    if (!draft.category.trim()) return 'Category is required.'
-    return ''
+    const fields = { id: '', title: '', category: '' }
+    if (!draft) return fields
+    if (!draft.id.trim()) fields.id = 'Template ID is required.'
+    else if (!/^[a-z0-9][a-z0-9_-]*$/.test(draft.id.trim()))
+      fields.id =
+        'Use lowercase letters, numbers, hyphens, or underscores for the ID.'
+    if (!draft.title.trim()) fields.title = 'Title is required.'
+    if (!draft.category.trim()) fields.category = 'Category is required.'
+    return fields
+  })
+  let validationMessage = $derived(
+    validation.id || validation.title || validation.category
+  )
+
+  $effect(() => {
+    if (vaultId === sessionVaultId) return
+    const retainedSession = getRetainedTemplateDraft(vaultId)
+    sessionVaultId = vaultId
+    draft = (retainedSession?.draft as Draft) ?? null
+    selectedId = retainedSession?.selectedId ?? ''
+    baseline = retainedSession?.baseline ?? ''
+    error = ''
+  })
+
+  $effect(() => {
+    if (sessionVaultId !== vaultId) return
+    retainTemplateDraft(vaultId, draft ? { draft, baseline, selectedId } : null)
   })
 
   onMount(() => {
     if (!templatesState.loading && !templatesState.items.length) {
       void loadTemplates()
+    }
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirty) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    const offVaultClosing = Events.On('vault:closing', () => {
+      draft = null
+      selectedId = ''
+      baseline = ''
+      clearRetainedTemplateDraft()
+    })
+    return () => {
+      window.removeEventListener('beforeunload', warnBeforeUnload)
+      offVaultClosing()
     }
   })
 
@@ -135,7 +181,7 @@
         source: 'disk',
         plugin_id: ''
       }
-      baseline = JSON.stringify(draft)
+      baseline = ''
       error = ''
     }
     if (dirty) {
@@ -176,7 +222,7 @@
         plugin_id: ''
       }
       selectedId = ''
-      baseline = JSON.stringify(draft)
+      baseline = ''
     } catch (caught) {
       error = caught instanceof Error ? caught.message : String(caught)
     } finally {
@@ -185,7 +231,7 @@
   }
 
   async function saveDraft() {
-    if (!draft || readOnly || validation) return
+    if (!draft || readOnly || validationMessage) return
     saving = true
     error = ''
     const canonical: Draft = {
@@ -238,7 +284,12 @@
       return
     }
     const leaf = draft.id.split('/').at(-1) ?? 'template'
-    const id = `${leaf.replace(/[^a-z0-9_-]/gi, '-').toLocaleLowerCase()}-copy`
+    const root = `${leaf.replace(/[^a-z0-9_-]/gi, '-').toLocaleLowerCase()}-copy`
+    let id = root
+    let suffix = 2
+    while (templatesState.items.some((item) => item.id === id)) {
+      id = `${root}-${suffix++}`
+    }
     draft = {
       ...draft,
       id,
@@ -248,6 +299,7 @@
     }
     selectedId = ''
     baseline = JSON.stringify({ ...draft, id: '', title: '' })
+    await tick()
     await saveDraft()
   }
 
@@ -414,36 +466,58 @@
               type="button"
               class="action primary"
               onclick={() => void saveDraft()}
-              disabled={!dirty || !!validation || saving}
+              disabled={!dirty || !!validationMessage || saving}
               >{saving ? 'Saving…' : 'Save'}</button
             >
           {/if}
         </div>
       </div>
       <div
-        class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-5 space-y-4"
+        class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 space-y-3"
       >
         <div class="grid sm:grid-cols-2 gap-4">
           <label class="label"
             >Template ID<input
               class="field"
+              aria-label="Template ID"
               bind:value={draft.id}
               disabled={readOnly || !!selectedId}
-            /></label
+              aria-invalid={!!validation.id}
+              aria-describedby={validation.id ? 'template-id-error' : undefined}
+            />{#if validation.id && !readOnly}<span
+                id="template-id-error"
+                class="field-error">{validation.id}</span
+              >{/if}</label
           >
           <label class="label"
             >Title<input
               class="field"
+              aria-label="Title"
               bind:value={draft.title}
               disabled={readOnly}
-            /></label
+              aria-invalid={!!validation.title}
+              aria-describedby={validation.title
+                ? 'template-title-error'
+                : undefined}
+            />{#if validation.title && !readOnly}<span
+                id="template-title-error"
+                class="field-error">{validation.title}</span
+              >{/if}</label
           >
           <label class="label"
             >Category<input
               class="field"
+              aria-label="Category"
               bind:value={draft.category}
               disabled={readOnly}
-            /></label
+              aria-invalid={!!validation.category}
+              aria-describedby={validation.category
+                ? 'template-category-error'
+                : undefined}
+            />{#if validation.category && !readOnly}<span
+                id="template-category-error"
+                class="field-error">{validation.category}</span
+              >{/if}</label
           >
           <label class="label"
             >Icon<input
@@ -468,9 +542,6 @@
             disabled={readOnly}
             spellcheck="true"></textarea></label
         >
-        {#if validation && !readOnly}<p class="message error" role="alert">
-            {validation}
-          </p>{/if}
         {#if error}<p class="message error" role="alert">{error}</p>{/if}
         {#if templateStatus.message}<p
             class="message {templateStatus.kind}"
@@ -517,7 +588,8 @@
   .action:hover:not(:disabled),
   .action:focus-visible {
     background: var(--color-hover);
-    outline: none;
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 2px;
   }
   .action.primary {
     color: var(--color-accent-primary-start);
@@ -567,10 +639,16 @@
     font-weight: 650;
   }
   .body {
-    min-height: 20rem;
+    min-height: 14rem;
     resize: vertical;
     font-family: var(--font-mono);
     line-height: 1.6;
+  }
+  .field-error {
+    display: block;
+    margin-top: 0.3rem;
+    color: var(--color-status-danger);
+    font-size: var(--text-type-3xs);
   }
   .template-row {
     width: 100%;

@@ -153,6 +153,11 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.UI.DismissedTips == nil {
 		cfg.UI.DismissedTips = []string{}
 	}
+	// QuickAccessCollapsed: nil → true so older config files retain the
+	// existing collapsed disclosure default.
+	if cfg.UI.QuickAccessCollapsed == nil {
+		cfg.UI.QuickAccessCollapsed = boolPtr(true)
+	}
 	// TypographyEnabled: nil → true (#168 Phase 3).
 	if cfg.UI.Formatting.TypographyEnabled == nil {
 		cfg.UI.Formatting.TypographyEnabled = boolPtr(true)

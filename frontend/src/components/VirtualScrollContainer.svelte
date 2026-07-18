@@ -21,6 +21,7 @@
     toggleFocusMode,
     toggleFormatToolbar
   } from '../settings/store.svelte'
+  import { shortcutBinding } from '../settings/shortcutActions'
 
   interface Props {
     notebook: string
@@ -77,7 +78,13 @@
   // tooltip + aria-keyshortcuts never go stale after a remap (the binding in
   // config.yaml is already in display form, e.g. "Ctrl+Shift+V").
   let viewModeHotkey = $derived(
-    settings.config?.hotkeys?.toggle_view_mode || 'Ctrl+Shift+V'
+    shortcutBinding('toggle_view_mode', settings.config?.hotkeys ?? {})
+  )
+  let focusModeHotkey = $derived(
+    shortcutBinding('toggle_focus_mode', settings.config?.hotkeys ?? {})
+  )
+  let formatToolbarHotkey = $derived(
+    shortcutBinding('toggle_format_toolbar', settings.config?.hotkeys ?? {})
   )
 
   let blocks = $state<ParsedBlock[]>([])
@@ -495,32 +502,6 @@
       class="silt-texture-surface flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-surface-editor min-h-0"
     >
       <div class="relative z-[1] flex flex-col">
-        <nav
-          class="mb-6 flex items-center gap-1.5 text-text-muted/60 text-type-xs font-medium tracking-wider uppercase font-body"
-        >
-          <span class="hover:text-text-primary transition-colors cursor-pointer"
-            >{notebook}</span
-          >
-          {#if section}
-            <span
-              class="material-symbols-outlined text-icon-xs text-text-muted/30"
-              >chevron_right</span
-            >
-            <span
-              class="hover:text-text-primary transition-colors cursor-pointer"
-              >{section}</span
-            >
-          {/if}
-          <span
-            class="material-symbols-outlined text-icon-xs text-text-muted/30"
-            >chevron_right</span
-          >
-          <span
-            class="text-accent-primary-start/90 tracking-normal normal-case font-semibold"
-            >{displayTitle}</span
-          >
-        </nav>
-
         <header class="mb-8">
           <h1
             bind:this={titleEl}
@@ -631,8 +612,8 @@
         true}
       class:text-text-muted={settings.config?.editor?.focus_mode !== true}
       title={settings.config?.editor?.focus_mode === true
-        ? 'Exit Focus Mode (Ctrl+Shift+D)'
-        : 'Enter Focus Mode (Ctrl+Shift+D)'}
+        ? `Exit Focus Mode${focusModeHotkey ? ` (${focusModeHotkey})` : ''}`
+        : `Enter Focus Mode${focusModeHotkey ? ` (${focusModeHotkey})` : ''}`}
       aria-label="Toggle Focus Mode"
     >
       <span class="material-symbols-outlined text-icon-lg"
@@ -647,8 +628,8 @@
       class:text-accent-primary-start={showFormatToolbar}
       class:text-text-muted={!showFormatToolbar}
       title={showFormatToolbar
-        ? 'Hide Formatting Toolbar (Ctrl+Shift+F)'
-        : 'Show Formatting Toolbar (Ctrl+Shift+F)'}
+        ? `Hide Formatting Toolbar${formatToolbarHotkey ? ` (${formatToolbarHotkey})` : ''}`
+        : `Show Formatting Toolbar${formatToolbarHotkey ? ` (${formatToolbarHotkey})` : ''}`}
       aria-label="Toggle Formatting Toolbar"
     >
       <span class="material-symbols-outlined text-icon-lg">text_format</span>

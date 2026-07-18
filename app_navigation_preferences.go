@@ -50,19 +50,34 @@ func (a *App) mutateConfigLocked(mut func(*config.SystemConfig) error) error {
 // deliberately excludes unrelated system settings and accepts no snapshot
 // write from the frontend.
 type NavigationPreferences struct {
-	ExpandedSections []config.NavigationSectionRef `json:"expanded_sections"`
-	RecentPages      []config.RecentPage           `json:"recent_pages"`
-	Favorites        []config.NavigationPageRef    `json:"favorites"`
+	ExpandedSections     []config.NavigationSectionRef `json:"expanded_sections"`
+	RecentPages          []config.RecentPage           `json:"recent_pages"`
+	Favorites            []config.NavigationPageRef    `json:"favorites"`
+	QuickAccessCollapsed bool                          `json:"quick_access_collapsed"`
 }
 
 func (a *App) GetNavigationPreferences() (NavigationPreferences, error) {
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
+	quickAccessCollapsed := true
+	if a.cfg.UI.QuickAccessCollapsed != nil {
+		quickAccessCollapsed = *a.cfg.UI.QuickAccessCollapsed
+	}
 	return NavigationPreferences{
-		ExpandedSections: append([]config.NavigationSectionRef(nil), a.cfg.UI.ExpandedSections...),
-		RecentPages:      append([]config.RecentPage(nil), a.cfg.UI.RecentPages...),
-		Favorites:        append([]config.NavigationPageRef(nil), a.cfg.UI.Favorites...),
+		ExpandedSections:     append([]config.NavigationSectionRef(nil), a.cfg.UI.ExpandedSections...),
+		RecentPages:          append([]config.RecentPage(nil), a.cfg.UI.RecentPages...),
+		Favorites:            append([]config.NavigationPageRef(nil), a.cfg.UI.Favorites...),
+		QuickAccessCollapsed: quickAccessCollapsed,
 	}, nil
+}
+
+// SetQuickAccessCollapsed persists the quiet Quick Access disclosure state
+// through the serialized navigation-preferences mutation path.
+func (a *App) SetQuickAccessCollapsed(collapsed bool) error {
+	return a.mutateConfig(func(cfg *config.SystemConfig) error {
+		cfg.UI.QuickAccessCollapsed = &collapsed
+		return nil
+	})
 }
 
 // SetNavigationSectionExpanded changes one canonical notebook/path entry.

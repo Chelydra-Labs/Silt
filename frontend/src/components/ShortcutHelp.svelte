@@ -90,7 +90,13 @@
         ></button
       >
     </header>
-    <div class="overflow-y-auto custom-scrollbar p-5 grid gap-5 sm:grid-cols-2">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex (The overflow region must receive keyboard focus so arrow and page keys can scroll it.) -->
+    <div
+      tabindex="0"
+      role="region"
+      aria-label="Shortcut list"
+      class="overflow-y-auto custom-scrollbar p-5 grid gap-5 sm:grid-cols-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start"
+    >
       {#each SHORTCUT_GROUPS as group (group)}
         {@const groupActions = actions.filter(
           (action) => action.group === group

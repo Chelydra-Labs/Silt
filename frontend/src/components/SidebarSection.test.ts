@@ -184,6 +184,7 @@ describe('SidebarSection (#88 deep-nesting)', () => {
     const header = screen.getByRole('treeitem', { name: /Journal/ })
     await fireEvent.click(header)
     expect(onToggle).toHaveBeenCalledWith('Journal')
+    expect(props.onSelectSection).toHaveBeenCalledWith('Journal')
   })
 
   it('synchronizes the roving focus controller on focus', async () => {

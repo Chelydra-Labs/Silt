@@ -28,16 +28,24 @@
   }: Props = $props()
 
   let query = $state('')
-  let activeIndex = $state(0)
+  let activeIndex = $state(-1)
   let input = $state<HTMLInputElement | null>(null)
   let dialog = $state<HTMLDivElement | null>(null)
   let previousFocus: HTMLElement | null = null
   let results = $derived(rankNavigation(catalog, query, recents))
+  let selectableIndices = $derived(
+    results.flatMap((item, index) => (item.disconnected ? [] : [index]))
+  )
+  let allOffline = $derived(
+    !loading && !error && results.length > 0 && selectableIndices.length === 0
+  )
 
   $effect(() => {
     results
-    if (activeIndex >= results.length)
-      activeIndex = Math.max(0, results.length - 1)
+    selectableIndices
+    if (!selectableIndices.includes(activeIndex)) {
+      activeIndex = selectableIndices[0] ?? -1
+    }
   })
 
   function optionId(index: number) {
@@ -53,18 +61,22 @@
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      activeIndex = results.length ? (activeIndex + 1) % results.length : 0
+      const current = selectableIndices.indexOf(activeIndex)
+      activeIndex =
+        selectableIndices[(current + 1) % selectableIndices.length] ?? -1
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
-      activeIndex = results.length
-        ? (activeIndex - 1 + results.length) % results.length
-        : 0
+      const current = selectableIndices.indexOf(activeIndex)
+      activeIndex =
+        selectableIndices[
+          (current - 1 + selectableIndices.length) % selectableIndices.length
+        ] ?? -1
     } else if (event.key === 'Home') {
       event.preventDefault()
-      activeIndex = 0
+      activeIndex = selectableIndices[0] ?? -1
     } else if (event.key === 'End') {
       event.preventDefault()
-      activeIndex = Math.max(0, results.length - 1)
+      activeIndex = selectableIndices.at(-1) ?? -1
     } else if (event.key === 'Enter') {
       event.preventDefault()
       const item = results[activeIndex]
@@ -126,7 +138,7 @@
     tabindex="-1"
     aria-modal="true"
     aria-labelledby="quick-switcher-title"
-    class="relative w-full max-w-xl max-h-[70vh] overflow-hidden rounded-2xl border border-surface-modal-border glass-palette glass-palette-strong shadow-2xl flex flex-col"
+    class="relative w-full max-w-xl max-h-[70vh] overflow-hidden rounded-2xl border border-surface-modal-border glass-palette glass-palette-strong shadow-2xl flex flex-col motion-reduce:transition-none"
     onkeydown={handleDialogKeydown}
   >
     <h2 id="quick-switcher-title" class="sr-only">Switch page</h2>
@@ -140,19 +152,19 @@
       <input
         bind:this={input}
         bind:value={query}
-        oninput={() => (activeIndex = 0)}
+        oninput={() => (activeIndex = -1)}
         onkeydown={handleKeydown}
         role="combobox"
         aria-label="Find a page"
         aria-expanded="true"
         aria-controls="quick-switcher-results"
         aria-autocomplete="list"
-        aria-activedescendant={results.length
+        aria-activedescendant={activeIndex >= 0
           ? optionId(activeIndex)
           : undefined}
         autocomplete="off"
         placeholder="Page name or path…"
-        class="w-full bg-transparent border-none outline-none text-text-primary text-type-lg placeholder:text-text-muted"
+        class="w-full bg-transparent border-none outline-none text-text-primary text-type-lg placeholder:text-text-muted rounded focus-visible:ring-2 focus-visible:ring-accent-primary-start"
       />
       <kbd
         class="hidden sm:block text-type-3xs text-text-muted border border-surface-modal-border rounded px-1.5 py-0.5"
@@ -183,6 +195,11 @@
           No pages match “{query}”.
         </p>
       {:else}
+        {#if allOffline}
+          <p class="sr-only" role="status" aria-live="polite">
+            All matching pages are offline.
+          </p>
+        {/if}
         {#each results as item, index (item.key)}
           <button
             type="button"
