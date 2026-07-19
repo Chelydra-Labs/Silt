@@ -648,7 +648,9 @@ func TestHost_RestartKeepsEndpointUntilRewrite(t *testing.T) {
 		t.Skipf("endpoint file: %v", err)
 	}
 	// Mid-restart stop must not clear the file.
-	h.stop(false)
+	h.startMu.Lock()
+	h.stopLocked(false)
+	h.startMu.Unlock()
 	if got := ReadEndpointFile(); got != ep1 {
 		t.Fatalf("after stop(false) endpoint file=%q want %q", got, ep1)
 	}

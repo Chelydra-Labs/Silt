@@ -29,8 +29,11 @@ const DefaultHTTPPort = 17887
 const EndpointFileName = "mcp-endpoint.json"
 
 // EndpointFile holds the last-known loopback MCP base URL (no secrets).
+// Pid identifies the Silt process that published the endpoint so a second
+// instance cannot wipe the first on bind failure.
 type EndpointFile struct {
 	Endpoint string `json:"endpoint"`
+	Pid      int    `json:"pid,omitempty"`
 }
 
 // EndpointFilePath returns <UserConfigDir>/silt/mcp-endpoint.json.
@@ -61,8 +64,9 @@ func IsLoopbackEndpoint(base string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// WriteEndpointFile persists the loopback base URL for stdio discovery.
-// Non-loopback endpoints are rejected (defense in depth).
+// WriteEndpointFile persists the loopback base URL + this process PID for
+// stdio discovery. Non-loopback endpoints are rejected (defense in depth).
+// Refuses to overwrite a file owned by another live process (multi-instance).
 func WriteEndpointFile(endpoint string) error {
 	if !IsLoopbackEndpoint(endpoint) {
 		return errNonLoopbackEndpoint
@@ -74,12 +78,34 @@ func WriteEndpointFile(endpoint string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	b, err := json.Marshal(EndpointFile{Endpoint: endpoint})
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0o600)
+	return withEndpointFileLock(path, func() error {
+		if existing, ok := readEndpointFileRecord(path); ok {
+			if existing.Pid > 0 && existing.Pid != os.Getpid() && aliveCheck(existing.Pid) {
+				// Another live Silt owns discovery — do not steal the slot.
+				return errEndpointOwnedByOther
+			}
+		}
+		b, err := json.Marshal(EndpointFile{
+			Endpoint: strings.TrimRight(endpoint, "/"),
+			Pid:      os.Getpid(),
+		})
+		if err != nil {
+			return err
+		}
+		tmp := path + ".tmp"
+		if err := os.WriteFile(tmp, b, 0o600); err != nil {
+			return err
+		}
+		return os.Rename(tmp, path)
+	})
 }
+
+// errEndpointOwnedByOther is returned when WriteEndpointFile would clobber a
+// live peer's discovery record.
+var errEndpointOwnedByOther = errors.New("mcp endpoint file owned by another live process")
+
+// aliveCheck reports whether a PID is running. Tests may swap this.
+var aliveCheck = processAlive
 
 // ReadEndpointFile returns the last written endpoint, or empty if missing or
 // not loopback (tampered / stale file must not leak the bearer off-box).
@@ -88,22 +114,47 @@ func ReadEndpointFile() string {
 	if err != nil {
 		return ""
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var ef EndpointFile
-	if json.Unmarshal(b, &ef) != nil {
-		return ""
-	}
-	if !IsLoopbackEndpoint(ef.Endpoint) {
+	ef, ok := readEndpointFileRecord(path)
+	if !ok || !IsLoopbackEndpoint(ef.Endpoint) {
 		return ""
 	}
 	return ef.Endpoint
 }
 
-// ClearEndpointFile removes the discovery file (best-effort on Stop).
+// readEndpointFileRecord loads the discovery JSON (supports legacy endpoint-only files).
+func readEndpointFileRecord(path string) (EndpointFile, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return EndpointFile{}, false
+	}
+	var ef EndpointFile
+	if json.Unmarshal(b, &ef) != nil {
+		return EndpointFile{}, false
+	}
+	ef.Endpoint = strings.TrimRight(strings.TrimSpace(ef.Endpoint), "/")
+	return ef, ef.Endpoint != ""
+}
+
+// ClearEndpointFile removes the discovery file when this process owns it, or
+// when the recorded owner PID is dead (stale). Never deletes a live peer's file.
 func ClearEndpointFile() {
+	path, err := EndpointFilePath()
+	if err != nil {
+		return
+	}
+	_ = withEndpointFileLock(path, func() error {
+		if existing, ok := readEndpointFileRecord(path); ok {
+			if existing.Pid > 0 && existing.Pid != os.Getpid() && aliveCheck(existing.Pid) {
+				return nil // leave peer discovery intact
+			}
+		}
+		_ = os.Remove(path)
+		return nil
+	})
+}
+
+// ClearEndpointFileForce removes the discovery file unconditionally (tests).
+func ClearEndpointFileForce() {
 	path, err := EndpointFilePath()
 	if err != nil {
 		return
@@ -148,10 +199,24 @@ func ClearPinnedEndpoint(kr keyring.Store) {
 	_ = kr.Delete(KeyringService, KeyringEndpointUser)
 }
 
-// ClearDiscovery drops both the endpoint file and the keyring pin.
+// ClearDiscovery drops the endpoint file (if owned/stale) and the keyring pin
+// only when the file clear is allowed for this process. If a live peer owns
+// the endpoint file, the pin is left alone so the peer's silt mcp discovery
+// keeps working.
 func ClearDiscovery(kr keyring.Store) {
+	path, err := EndpointFilePath()
+	ownedOrStale := true
+	if err == nil {
+		if existing, ok := readEndpointFileRecord(path); ok {
+			if existing.Pid > 0 && existing.Pid != os.Getpid() && aliveCheck(existing.Pid) {
+				ownedOrStale = false
+			}
+		}
+	}
 	ClearEndpointFile()
-	ClearPinnedEndpoint(kr)
+	if ownedOrStale {
+		ClearPinnedEndpoint(kr)
+	}
 }
 
 // KeyringService is the OS keyring service name for the MCP bearer token.
