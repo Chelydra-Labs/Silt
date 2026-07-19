@@ -1032,7 +1032,13 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 				}
 			}
 
-			// 4. Clear old index entries and re-index all files at new paths.
+			// 4. Rewrite inbound wiki-links before clearing the old index so
+			// resolve-gating still sees the pre-rename page inventory.
+			for _, fc := range files {
+				a.rewriteInboundPageLinksWithJournal(safeOldNotebook, fc.oldSection, fc.page, safeNewNotebook, fc.newSection, fc.page, linkJournal, lockPathSet(lockPaths))
+			}
+
+			// 5. Clear old index entries and re-index all files at new paths.
 			for _, fc := range files {
 				a.coordinator.WithDBWrite(func() {
 					if err := a.db.ClearFileBlocks(nil, "vault", safeOldNotebook, fc.oldSection, fc.page); err != nil && runErr == nil {
@@ -1069,6 +1075,9 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 		}
 		if runErr != nil {
 			return runErr
+		}
+		for _, fc := range files {
+			a.rewriteStaleInboundAfterRename(safeOldNotebook, fc.oldSection, fc.page, safeNewNotebook, fc.newSection, fc.page)
 		}
 		return nil
 	}

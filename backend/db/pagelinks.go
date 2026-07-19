@@ -82,12 +82,20 @@ func (dm *DatabaseManager) ListAllPageLinks() ([]PageLinkRow, error) {
 	return out, rows.Err()
 }
 
+// pageLinkTargetINBatchSize is the max number of lower(target_raw) bind args
+// per SELECT. SQLite default max variable number is 999; stay under with
+// headroom. ListPageLinksByTargetRaws chunks larger candidate sets.
+const pageLinkTargetINBatchSize = 900
+
 // ListPageLinksByTargetRaws returns reverse-index rows whose target_raw matches
 // any candidate (case-insensitive). Used by rename/move inbound collect and
 // rewrite so large vaults avoid loading the full page_links table. Matching is
 // on lower(target_raw) so [[MyPage]] and [[mypage]] both hit; resolution still
 // gates ambiguous basenames in Go. Prefer LinkTargetRawCandidates for the
 // candidate list (path variants + segment suffixes).
+//
+// Large candidate lists are queried in batches of pageLinkTargetINBatchSize so
+// notebook/section renames with hundreds of pages never drop targets.
 //
 // Resolved target_* columns are intentionally unused: indexing stores them
 // NULL; authority is target_raw + page inventory resolution.
@@ -114,46 +122,61 @@ func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLi
 		return nil, ErrDBClosed
 	}
 	defer release()
-	placeholders := make([]string, len(args))
-	for i := range args {
-		placeholders[i] = "?"
-	}
-	// lower(target_raw) uses idx_page_links_raw_lower when present.
-	q := `SELECT source_notebook, source_section, source_page, source_block_id,
-	             target_raw, COALESCE(heading, ''), COALESCE(alias, '')
-	      FROM page_links
-	      WHERE lower(target_raw) IN (` + strings.Join(placeholders, ",") + `)`
-	rows, err := db.Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+
 	var out []PageLinkRow
-	for rows.Next() {
-		var r PageLinkRow
-		if err := rows.Scan(
-			&r.SourceNotebook, &r.SourceSection, &r.SourcePage, &r.SourceBlockID,
-			&r.TargetRaw, &r.Heading, &r.Alias,
-		); err != nil {
+	// Dedupe rows across batches (same link can match multiple candidates).
+	rowSeen := make(map[string]bool)
+	for start := 0; start < len(args); start += pageLinkTargetINBatchSize {
+		end := start + pageLinkTargetINBatchSize
+		if end > len(args) {
+			end = len(args)
+		}
+		batch := args[start:end]
+		placeholders := make([]string, len(batch))
+		for i := range batch {
+			placeholders[i] = "?"
+		}
+		// lower(target_raw) uses idx_page_links_raw_lower when present.
+		q := `SELECT source_notebook, source_section, source_page, source_block_id,
+		             target_raw, COALESCE(heading, ''), COALESCE(alias, '')
+		      FROM page_links
+		      WHERE lower(target_raw) IN (` + strings.Join(placeholders, ",") + `)`
+		rows, err := db.Query(q, batch...)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, r)
+		for rows.Next() {
+			var r PageLinkRow
+			if err := rows.Scan(
+				&r.SourceNotebook, &r.SourceSection, &r.SourcePage, &r.SourceBlockID,
+				&r.TargetRaw, &r.Heading, &r.Alias,
+			); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			key := r.SourceNotebook + "\x00" + r.SourceSection + "\x00" + r.SourcePage + "\x00" +
+				r.SourceBlockID + "\x00" + r.TargetRaw
+			if rowSeen[key] {
+				continue
+			}
+			rowSeen[key] = true
+			out = append(out, r)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
-
-// maxPageLinkTargetCandidates caps the IN-list size for ListPageLinksByTargetRaws.
-// SQLite default max variable number is 999; stay well under with headroom for
-// other bound args in the same statement.
-const maxPageLinkTargetCandidates = 900
 
 // LinkTargetRawCandidates returns every target_raw form that may uniquely
 // resolve to the given page locations: PathVariants plus intermediate
 // path-segment suffixes not already covered by PathVariants (so [[Active/Site]]
 // still matches Work/Projects/Active/Site). Candidates are deduped globally
-// across all targets. If the set would exceed maxPageLinkTargetCandidates the
-// list is truncated (full PathVariants first, then suffixes) so the SQL IN
-// clause stays within SQLite parameter limits.
+// across all targets. Callers pass the full list to ListPageLinksByTargetRaws,
+// which batches the SQL IN clause — do not truncate here.
 func LinkTargetRawCandidates(targets []struct{ Notebook, Section, Page string }) []string {
 	seen := make(map[string]bool)
 	var primary, suffixes []string
@@ -195,11 +218,7 @@ func LinkTargetRawCandidates(targets []struct{ Notebook, Section, Page string })
 			add(&suffixes, suf)
 		}
 	}
-	out := append(primary, suffixes...)
-	if len(out) > maxPageLinkTargetCandidates {
-		out = out[:maxPageLinkTargetCandidates]
-	}
-	return out
+	return append(primary, suffixes...)
 }
 
 // ResolvePageLink resolves a wiki-link target via shortest-unique-path rules

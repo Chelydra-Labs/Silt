@@ -31,6 +31,29 @@ func TestLinkTargetRawCandidates_IncludesSuffixes(t *testing.T) {
 	}
 }
 
+func TestListPageLinksByTargetRaws_BatchesLargeCandidateSets(t *testing.T) {
+	dm := newTestDB(t)
+	// One real hit plus enough unique candidates to force >1 IN batch.
+	if err := dm.IndexFileBlocks("vault", "NB", "Sec", "Src", []parser.ParsedBlock{{
+		ID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb99", Type: parser.BlockNote,
+		RawText: "[[HitPage]]", CleanText: "[[HitPage]]", LineNumber: 1,
+	}}, nil); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	cands := make([]string, 0, pageLinkTargetINBatchSize+50)
+	cands = append(cands, "HitPage")
+	for i := 0; i < pageLinkTargetINBatchSize+40; i++ {
+		cands = append(cands, fmt.Sprintf("NoiseCand%d", i))
+	}
+	rows, err := dm.ListPageLinksByTargetRaws(cands)
+	if err != nil {
+		t.Fatalf("ListPageLinksByTargetRaws batched: %v", err)
+	}
+	if len(rows) != 1 || rows[0].TargetRaw != "HitPage" {
+		t.Fatalf("want single HitPage row across batches, got %+v", rows)
+	}
+}
+
 func TestListPageLinksByTargetRaws_CaseInsensitive(t *testing.T) {
 	dm := newTestDB(t)
 	blocks := []parser.ParsedBlock{

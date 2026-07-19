@@ -3,6 +3,8 @@ package mcp
 import (
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -146,5 +148,21 @@ func TestWriteEndpointFile_LegacyNoPid(t *testing.T) {
 	}
 	if ef.Pid != os.Getpid() {
 		t.Fatalf("pid=%d want %d", ef.Pid, os.Getpid())
+	}
+}
+
+func TestEndpointServesSiltMCP_RefusesRedirect(t *testing.T) {
+	// Loopback server that 302s off-box — probe must not follow.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://example.com/evil", http.StatusFound)
+	}))
+	ep := "http://" + ln.Addr().String()
+	if endpointServesSiltMCP(ep) {
+		t.Fatal("health probe must not treat redirect as silt-mcp")
 	}
 }

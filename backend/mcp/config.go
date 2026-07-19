@@ -129,12 +129,19 @@ func peerOwnsDiscovery(ef EndpointFile) bool {
 
 // endpointServesSiltMCP GETs endpoint/health with a short timeout and requires
 // the silt-mcp service marker. Used to distinguish a live peer from PID reuse.
+// Redirects are refused so a tampered loopback URL cannot SSRF off-box via
+// the default http.Client redirect policy.
 func endpointServesSiltMCP(endpoint string) bool {
 	if !IsLoopbackEndpoint(endpoint) {
 		return false
 	}
 	base := strings.TrimRight(endpoint, "/")
-	client := &http.Client{Timeout: 200 * time.Millisecond}
+	client := &http.Client{
+		Timeout: 200 * time.Millisecond,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Get(base + "/health")
 	if err != nil {
 		return false
