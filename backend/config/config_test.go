@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1539,5 +1540,99 @@ func TestSearchWritingAids_RoundTrip(t *testing.T) {
 	want := []string{"git", "oauth", "typescript"} // sorted by normalize
 	if !reflect.DeepEqual(loaded.Editor.CustomDictionary, want) {
 		t.Errorf("custom_dictionary round-trip:\n got  %v\n want %v", loaded.Editor.CustomDictionary, want)
+	}
+}
+
+// --- recent_tags config ---
+
+// TestDefaults_RecentTags confirms RecentTags defaults to an empty non-nil slice.
+func TestDefaults_RecentTags(t *testing.T) {
+	d := Defaults()
+	if d.UI.RecentTags == nil {
+		t.Errorf("defaults recent_tags should be non-nil empty slice, got nil")
+	}
+	if len(d.UI.RecentTags) != 0 {
+		t.Errorf("defaults recent_tags should be empty, got %v", d.UI.RecentTags)
+	}
+}
+
+// TestNormalize_RecentTags confirms case-insensitive dedup, cap at
+// MaxRecentTags, empty/whitespace dropping, and order preservation.
+func TestNormalize_RecentTags(t *testing.T) {
+	t.Run("nil becomes empty", func(t *testing.T) {
+		cfg := normalize(SystemConfig{})
+		if cfg.UI.RecentTags == nil || len(cfg.UI.RecentTags) != 0 {
+			t.Errorf("nil → empty non-nil slice, got %v", cfg.UI.RecentTags)
+		}
+	})
+	t.Run("case-insensitive dedup keeps first casing", func(t *testing.T) {
+		cfg := normalize(SystemConfig{UI: UIConfig{RecentTags: []string{
+			"Work/Project", "work/project", "work/PROJECT",
+		}}})
+		if len(cfg.UI.RecentTags) != 1 || cfg.UI.RecentTags[0] != "Work/Project" {
+			t.Errorf("case-insensitive dedup: got %v, want [Work/Project]", cfg.UI.RecentTags)
+		}
+	})
+	t.Run("empty and whitespace dropped", func(t *testing.T) {
+		cfg := normalize(SystemConfig{UI: UIConfig{RecentTags: []string{
+			"", "  ", "tag1", "  ", "tag2",
+		}}})
+		if !reflect.DeepEqual(cfg.UI.RecentTags, []string{"tag1", "tag2"}) {
+			t.Errorf("empty/whitespace filter: got %v", cfg.UI.RecentTags)
+		}
+	})
+	t.Run("capped at MaxRecentTags", func(t *testing.T) {
+		tags := make([]string, MaxRecentTags+5)
+		for i := range tags {
+			tags[i] = fmt.Sprintf("tag-%02d", i)
+		}
+		cfg := normalize(SystemConfig{UI: UIConfig{RecentTags: tags}})
+		if len(cfg.UI.RecentTags) != MaxRecentTags {
+			t.Errorf("cap: got %d, want %d", len(cfg.UI.RecentTags), MaxRecentTags)
+		}
+		if cfg.UI.RecentTags[0] != "tag-00" {
+			t.Errorf("first should be tag-00, got %q", cfg.UI.RecentTags[0])
+		}
+	})
+	t.Run("order preserved", func(t *testing.T) {
+		cfg := normalize(SystemConfig{UI: UIConfig{RecentTags: []string{
+			"beta", "alpha", "gamma",
+		}}})
+		if !reflect.DeepEqual(cfg.UI.RecentTags, []string{"beta", "alpha", "gamma"}) {
+			t.Errorf("order: got %v", cfg.UI.RecentTags)
+		}
+	})
+}
+
+// TestRecentTags_RoundTrip confirms recent_tags survive Save → Load.
+func TestRecentTags_RoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	original := Defaults()
+	original.UI.RecentTags = []string{"work/project", "personal/journal", "IDEAS"}
+
+	if err := Save(tmp, original); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded.UI.RecentTags, original.UI.RecentTags) {
+		t.Errorf("recent_tags round-trip:\n got  %v\n want %v", loaded.UI.RecentTags, original.UI.RecentTags)
+	}
+}
+
+// TestLoad_LegacyConfigMissingRecentTags verifies backward compat: a config
+// authored before recent_tags was added (no ui.recent_tags key) loads cleanly with the field
+// defaulting to an empty slice.
+func TestLoad_LegacyConfigMissingRecentTags(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, ConfigPath(tmp), "ui:\n  sidebar_width: 280\n")
+	cfg, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.UI.RecentTags == nil || len(cfg.UI.RecentTags) != 0 {
+		t.Errorf("legacy recent_tags should default to empty non-nil slice, got %v", cfg.UI.RecentTags)
 	}
 }

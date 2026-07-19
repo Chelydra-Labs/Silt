@@ -208,6 +208,7 @@ func Defaults() SystemConfig {
 				ColorEnabled:      boolPtr(true),
 				MathEnabled:       boolPtr(true),
 			},
+			RecentTags: []string{},
 		},
 		// AI providers ship unconfigured (Sprint 20): no chat model, no
 		// embedding model, no endpoint. Features ship OFF (#632) so a fresh

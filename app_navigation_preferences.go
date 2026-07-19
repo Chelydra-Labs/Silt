@@ -16,9 +16,35 @@ import (
 // caller merges against the latest in-memory config rather than persisting a
 // stale frontend snapshot.
 func (a *App) mutateConfig(mut func(*config.SystemConfig) error) error {
+	_, _, err := a.mutateConfigWithResult(mut)
+	return err
+}
+
+// mutateConfigWithResult is the serialized navigation/config mutation path.
+// The returned snapshot is only valid when changed is true and is emitted by
+// callers after the config and lifecycle locks have been released.
+func (a *App) mutateConfigWithResult(mut func(*config.SystemConfig) error) (config.SystemConfig, bool, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
-	return a.mutateConfigLocked(mut)
+	if a.vaultPath == "" {
+		return config.SystemConfig{}, false, fmt.Errorf("vault not loaded")
+	}
+
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	next := config.Clone(a.cfg)
+	if err := mut(&next); err != nil {
+		return config.SystemConfig{}, false, err
+	}
+	next = config.Normalize(next)
+	if reflect.DeepEqual(next, a.cfg) {
+		return config.SystemConfig{}, false, nil
+	}
+	if err := a.saveConfigTracked(next); err != nil {
+		return config.SystemConfig{}, false, err
+	}
+	a.cfg = next
+	return next, true, nil
 }
 
 // mutateConfigLocked is the lifecycle-locked form used by content mutations
@@ -139,6 +165,38 @@ func (a *App) RecordRecentPage(notebook, section, page string) error {
 		cfg.UI.RecentPages = items
 		return nil
 	})
+}
+
+// RecordTagUsage moves tag to the front of the recent_tags list (MRU). The
+// list is capped at MaxRecentTags by normalize(). Follows the same atomic
+// narrow-mutation path as RecordRecentPage.
+func (a *App) RecordTagUsage(tag string) error {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return nil
+	}
+	changedCfg, changed, err := a.mutateConfigWithResult(func(cfg *config.SystemConfig) error {
+		lower := strings.ToLower(tag)
+		// Case-insensitive dedupe: remove any existing entry matching this tag.
+		items := make([]string, 0, len(cfg.UI.RecentTags)+1)
+		for _, existing := range cfg.UI.RecentTags {
+			if strings.ToLower(existing) == lower {
+				continue
+			}
+			items = append(items, existing)
+		}
+		// Prepend: most-recent first.
+		items = append([]string{tag}, items...)
+		cfg.UI.RecentTags = items
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if changed {
+		a.emit("config:changed", changedCfg)
+	}
+	return nil
 }
 
 // SetFavoritePage toggles one canonical page locator.

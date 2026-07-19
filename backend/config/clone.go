@@ -32,6 +32,7 @@ func Clone(cfg SystemConfig) SystemConfig {
 	out.UI.DismissedTips = cloneStrings(cfg.UI.DismissedTips)
 	out.UI.QuickAccessCollapsed = clonePtr(cfg.UI.QuickAccessCollapsed)
 	out.UI.OpenDevtoolsOnStartup = clonePtr(cfg.UI.OpenDevtoolsOnStartup)
+	out.UI.RecentTags = cloneStrings(cfg.UI.RecentTags)
 	out.UI.Formatting = FormattingConfig{
 		TypographyEnabled: clonePtr(cfg.UI.Formatting.TypographyEnabled),
 		ColorEnabled:      clonePtr(cfg.UI.Formatting.ColorEnabled),

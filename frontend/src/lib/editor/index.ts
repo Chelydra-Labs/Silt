@@ -84,6 +84,21 @@ export {
   getBlkRefContextAt
 } from './blockRefSuggest'
 export type { BlockRefContext, BlockRefSuggestOptions } from './blockRefSuggest'
+export {
+  TagSuggest,
+  applyTagSuggestion,
+  filterTags,
+  flattenTagHierarchy,
+  getTagContext,
+  getTagContextAt,
+  rankTags
+} from './tagSuggest'
+export type {
+  TagContext,
+  TagItem,
+  TagSuggestOptions,
+  TagTreeNode
+} from './tagSuggest'
 export type {
   ParsedBlock,
   BlockType,

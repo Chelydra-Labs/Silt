@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   acquireFocusLock: vi.fn(),
   refreshFocusLock: vi.fn(),
   releaseFocusLock: vi.fn(),
+  queryTagHierarchy: vi.fn().mockResolvedValue([]),
+  recordTagUsage: vi.fn().mockResolvedValue(undefined),
   eventsOn: vi.fn(() => () => {})
 }))
 
@@ -38,7 +40,9 @@ vi.mock('../../bindings/silt/app.js', () => ({
   SaveFileBlocks: mocks.saveFileBlocks,
   AcquireFocusLock: mocks.acquireFocusLock,
   RefreshFocusLock: mocks.refreshFocusLock,
-  ReleaseFocusLock: mocks.releaseFocusLock
+  ReleaseFocusLock: mocks.releaseFocusLock,
+  QueryTagHierarchy: mocks.queryTagHierarchy,
+  RecordTagUsage: mocks.recordTagUsage
 }))
 
 vi.mock('@wailsio/runtime', () => ({

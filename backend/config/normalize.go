@@ -12,6 +12,7 @@ const (
 	MaxRecentPages      = 20
 	MaxExpandedSections = 512
 	MaxFavoritePages    = 512
+	MaxRecentTags       = 12
 )
 
 // hotkeyModifiers are the modifier tokens allowed in a hotkey binding
@@ -108,6 +109,7 @@ func normalize(cfg SystemConfig) SystemConfig {
 	}
 	cfg.UI.ExpandedSections = normalizeExpandedSections(cfg.UI.ExpandedSections)
 	cfg.UI.RecentPages = normalizeRecentPages(cfg.UI.RecentPages)
+	cfg.UI.RecentTags = normalizeRecentTags(cfg.UI.RecentTags)
 	cfg.UI.Favorites = normalizeFavoritePages(cfg.UI.Favorites)
 	// Per-tab ViewMode (#195): only "source" is a meaningful override; every
 	// other value (including a hand-edited garbage string) collapses to "" so
@@ -381,6 +383,30 @@ func normalizeRecentPages(in []RecentPage) []RecentPage {
 	})
 	if len(out) > MaxRecentPages {
 		out = out[:MaxRecentPages]
+	}
+	return out
+}
+
+// normalizeRecentTags deduplicates case-insensitively, preserves the first
+// occurrence's capitalization, and caps at MaxRecentTags. Empty/whitespace-only
+// entries are dropped.
+func normalizeRecentTags(in []string) []string {
+	out := make([]string, 0, minInt(len(in), MaxRecentTags))
+	seen := make(map[string]struct{}, len(in))
+	for _, tag := range in {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		key := strings.ToLower(tag)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, tag)
+		if len(out) == MaxRecentTags {
+			break
+		}
 	}
 	return out
 }

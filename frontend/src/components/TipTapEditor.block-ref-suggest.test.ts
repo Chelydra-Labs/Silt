@@ -6,6 +6,8 @@ import { mkBlock } from '../lib/editor/nodeview-test-harness'
 
 const mocks = vi.hoisted(() => ({
   searchBlocks: vi.fn(),
+  queryTagHierarchy: vi.fn().mockResolvedValue([]),
+  recordTagUsage: vi.fn().mockResolvedValue(undefined),
   distinctOwners: vi.fn().mockResolvedValue([]),
   resolveBlockReference: vi.fn().mockResolvedValue({ exists: true }),
   saveFileBlocks: vi.fn().mockResolvedValue(undefined),
@@ -17,6 +19,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../bindings/silt/app.js', () => ({
   SearchBlocks: mocks.searchBlocks,
+  QueryTagHierarchy: mocks.queryTagHierarchy,
+  RecordTagUsage: mocks.recordTagUsage,
   DistinctOwners: mocks.distinctOwners,
   ResolveBlockReference: mocks.resolveBlockReference,
   SaveFileBlocks: mocks.saveFileBlocks,
