@@ -61,6 +61,121 @@ func (a *App) rewriteInboundPageLinks(oldNB, oldSec, oldPage, newNB, newSec, new
 	a.rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage, nil, nil)
 }
 
+// rewriteStaleInboundAfterRename rewrites residual [[old]] links after a
+// structural rename unlocks. The under-lock pass may miss a source that saved
+// a brand-new wiki-link after missingInboundPaths returned empty; by then the
+// old page is gone from the index so resolve-gating would skip those rows.
+// This sweep matches target_raw against the old location directly and only
+// rewrites when the raw is currently unresolved (broken) and not ambiguous.
+func (a *App) rewriteStaleInboundAfterRename(oldNB, oldSec, oldPage, newNB, newSec, newPage string) {
+	if a.db == nil || oldPage == "" || newPage == "" {
+		return
+	}
+	if oldNB == newNB && oldSec == newSec && oldPage == newPage {
+		return
+	}
+	candidates := db.LinkTargetRawCandidates([]struct{ Notebook, Section, Page string }{
+		{oldNB, oldSec, oldPage},
+	})
+	var rows []db.PageLinkRow
+	var pages []db.PageLoc
+	err := a.coordinator.WithDBReadResult(func() error {
+		got, err := a.db.ListPageLinksByTargetRaws(candidates)
+		if err != nil {
+			return err
+		}
+		rows = got
+		pages, err = a.db.ListDistinctPages()
+		return err
+	})
+	if err != nil || len(rows) == 0 {
+		return
+	}
+
+	type srcKey struct{ nb, sec, page string }
+	type rewrite struct{ oldRaw, newRaw string }
+	byFile := map[srcKey][]rewrite{}
+	for _, r := range rows {
+		if !db.PageMatchesTarget(oldNB, oldSec, oldPage, r.TargetRaw) {
+			continue
+		}
+		ref := db.ResolvePageLinkAgainst(r.TargetRaw, pages)
+		if ref.Ambiguous {
+			continue
+		}
+		if ref.Exists {
+			// Already points at a live page (new location or unrelated) — leave.
+			continue
+		}
+		newRaw := db.MapTargetRaw(r.TargetRaw, oldNB, oldSec, oldPage, newNB, newSec, newPage)
+		if newRaw == r.TargetRaw {
+			continue
+		}
+		k := srcKey{r.SourceNotebook, r.SourceSection, r.SourcePage}
+		byFile[k] = append(byFile[k], rewrite{oldRaw: r.TargetRaw, newRaw: newRaw})
+	}
+	if len(byFile) == 0 {
+		return
+	}
+
+	srcKeys := make([]srcKey, 0, len(byFile))
+	for k := range byFile {
+		srcKeys = append(srcKeys, k)
+	}
+	sort.Slice(srcKeys, func(i, j int) bool {
+		a, b := srcKeys[i], srcKeys[j]
+		return a.nb+"\x00"+a.sec+"\x00"+a.page < b.nb+"\x00"+b.sec+"\x00"+b.page
+	})
+
+	rewritten := 0
+	for _, k := range srcKeys {
+		seen := map[string]string{}
+		for _, rw := range byFile[k] {
+			seen[rw.oldRaw] = rw.newRaw
+		}
+		source := a.resolveSourceByName(k.nb)
+		notebookDir, err := a.resolveNotebookDir(k.nb, source)
+		if err != nil {
+			continue
+		}
+		filePath := filepath.Join(notebookDir, k.sec, k.page+".md")
+		if !isPathWithinRoot(filePath, notebookDir) {
+			continue
+		}
+		writeOK := false
+		a.coordinator.LockFileWrite(filePath, func() {
+			contentBytes, err := os.ReadFile(filePath)
+			if err != nil {
+				return
+			}
+			content := string(contentBytes)
+			total := 0
+			for oldRaw, newRaw := range seen {
+				var n int
+				content, n = db.RewritePageLinksInContent(content, oldRaw, newRaw)
+				total += n
+			}
+			if total == 0 {
+				return
+			}
+			a.tracker.RegisterWrite(filePath)
+			if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
+				return
+			}
+			writeOK = true
+		})
+		if writeOK {
+			a.reindexFile(filePath, k.nb, k.sec, k.page)
+			rewritten++
+		}
+	}
+	if rewritten > 0 {
+		log.Printf("rewriteStaleInboundAfterRename: rewritten=%d (%s/%s/%s → %s/%s/%s)",
+			rewritten, oldNB, oldSec, oldPage, newNB, newSec, newPage)
+		a.emit("page-links:rewritten", pageLinksRewriteResult{Rewritten: rewritten})
+	}
+}
+
 // rewriteInboundPageLinksWithJournal rewrites inbound wiki-links. heldPaths is
 // the normalized set of file locks the structural caller already holds; when
 // non-nil, sources in that set skip LockFileWrite (non-reentrant). Sources not

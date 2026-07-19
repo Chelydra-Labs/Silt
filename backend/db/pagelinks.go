@@ -142,28 +142,40 @@ func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLi
 	return out, rows.Err()
 }
 
+// maxPageLinkTargetCandidates caps the IN-list size for ListPageLinksByTargetRaws.
+// SQLite default max variable number is 999; stay well under with headroom for
+// other bound args in the same statement.
+const maxPageLinkTargetCandidates = 900
+
 // LinkTargetRawCandidates returns every target_raw form that may uniquely
-// resolve to the given page locations: PathVariants plus each path-segment
-// suffix (so [[Active/Site]] still matches Work/Projects/Active/Site).
+// resolve to the given page locations: PathVariants plus intermediate
+// path-segment suffixes not already covered by PathVariants (so [[Active/Site]]
+// still matches Work/Projects/Active/Site). Candidates are deduped globally
+// across all targets. If the set would exceed maxPageLinkTargetCandidates the
+// list is truncated (full PathVariants first, then suffixes) so the SQL IN
+// clause stays within SQLite parameter limits.
 func LinkTargetRawCandidates(targets []struct{ Notebook, Section, Page string }) []string {
 	seen := make(map[string]bool)
-	var out []string
-	add := func(s string) {
+	var primary, suffixes []string
+	add := func(dst *[]string, s string) {
 		s = strings.TrimSpace(s)
 		if s == "" || seen[s] {
 			return
 		}
 		seen[s] = true
-		out = append(out, s)
+		*dst = append(*dst, s)
 	}
 	for _, t := range targets {
 		if t.Page == "" {
 			continue
 		}
-		for _, v := range PathVariants(t.Notebook, t.Section, t.Page) {
-			add(v)
+		variants := PathVariants(t.Notebook, t.Section, t.Page)
+		variantSet := make(map[string]bool, len(variants))
+		for _, v := range variants {
+			variantSet[strings.ToLower(v)] = true
+			add(&primary, v)
 		}
-		// Segment suffixes of the full path (PageMatchesTarget HasSuffix rule).
+		// Intermediate suffixes only (skip forms already in PathVariants).
 		var parts []string
 		if t.Notebook != "" {
 			parts = append(parts, t.Notebook)
@@ -172,9 +184,20 @@ func LinkTargetRawCandidates(targets []struct{ Notebook, Section, Page string })
 			parts = append(parts, strings.Split(t.Section, "/")...)
 		}
 		parts = append(parts, t.Page)
-		for i := 0; i < len(parts); i++ {
-			add(strings.Join(parts[i:], "/"))
+		// i=0 is the full path (already a PathVariant when notebook set);
+		// i=len-1 is the bare page (already a PathVariant). Middle values
+		// cover PageMatchesTarget's HasSuffix rule.
+		for i := 1; i < len(parts)-1; i++ {
+			suf := strings.Join(parts[i:], "/")
+			if variantSet[strings.ToLower(suf)] {
+				continue
+			}
+			add(&suffixes, suf)
 		}
+	}
+	out := append(primary, suffixes...)
+	if len(out) > maxPageLinkTargetCandidates {
+		out = out[:maxPageLinkTargetCandidates]
 	}
 	return out
 }

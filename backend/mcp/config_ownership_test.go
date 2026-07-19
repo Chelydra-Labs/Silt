@@ -17,6 +17,9 @@ func TestWriteEndpointFile_RefusesLivePeer(t *testing.T) {
 
 	peerPID := 424242
 	aliveCheck = func(pid int) bool { return pid == peerPID }
+	// Live peer also serves silt-mcp health.
+	healthCheck = func(string) bool { return true }
+	t.Cleanup(func() { healthCheck = endpointServesSiltMCP })
 
 	// os.UserConfigDir on Windows reads APPDATA; on Unix HOME/.config or XDG_CONFIG_HOME.
 	t.Setenv("APPDATA", dir)
@@ -34,7 +37,7 @@ func TestWriteEndpointFile_RefusesLivePeer(t *testing.T) {
 	if err := os.WriteFile(epPath, b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(ClearEndpointFileForce)
+	t.Cleanup(clearEndpointFileForce)
 
 	err = WriteEndpointFile("http://127.0.0.1:18000")
 	if !errors.Is(err, errEndpointOwnedByOther) {
@@ -50,12 +53,24 @@ func TestWriteEndpointFile_RefusesLivePeer(t *testing.T) {
 		t.Fatalf("ClearEndpointFile wiped live peer: %q", got)
 	}
 
-	// Stale peer PID may be replaced.
-	aliveCheck = func(int) bool { return false }
+	// Alive PID but dead health (crash + PID reuse) may be reclaimed.
+	healthCheck = func(string) bool { return false }
 	if err := WriteEndpointFile("http://127.0.0.1:18001"); err != nil {
-		t.Fatalf("stale peer write: %v", err)
+		t.Fatalf("dead-health reclaim write: %v", err)
 	}
 	if got := ReadEndpointFile(); got != "http://127.0.0.1:18001" {
+		t.Fatalf("got %q after health-fail reclaim", got)
+	}
+
+	// Dead peer PID may be replaced.
+	b, _ = json.Marshal(EndpointFile{Endpoint: "http://127.0.0.1:17999", Pid: peerPID})
+	_ = os.WriteFile(epPath, b, 0o600)
+	aliveCheck = func(int) bool { return false }
+	healthCheck = func(string) bool { return true } // ignored when PID dead
+	if err := WriteEndpointFile("http://127.0.0.1:18002"); err != nil {
+		t.Fatalf("stale peer write: %v", err)
+	}
+	if got := ReadEndpointFile(); got != "http://127.0.0.1:18002" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -72,6 +87,8 @@ func TestClearDiscovery_PreservesPeerPin(t *testing.T) {
 	t.Cleanup(func() { aliveCheck = origAlive })
 	peerPID := 424243
 	aliveCheck = func(pid int) bool { return pid == peerPID }
+	healthCheck = func(string) bool { return true }
+	t.Cleanup(func() { healthCheck = endpointServesSiltMCP })
 
 	epPath, err := EndpointFilePath()
 	if err != nil {
@@ -82,7 +99,7 @@ func TestClearDiscovery_PreservesPeerPin(t *testing.T) {
 	if err := os.WriteFile(epPath, b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(ClearEndpointFileForce)
+	t.Cleanup(clearEndpointFileForce)
 
 	kr := keyring.NewFake()
 	if err := StorePinnedEndpoint(kr, "http://127.0.0.1:17998"); err != nil {
@@ -114,7 +131,7 @@ func TestWriteEndpointFile_LegacyNoPid(t *testing.T) {
 	if err := os.WriteFile(epPath, []byte(`{"endpoint":"http://127.0.0.1:17887"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(ClearEndpointFileForce)
+	t.Cleanup(clearEndpointFileForce)
 	if err := WriteEndpointFile("http://127.0.0.1:17888"); err != nil {
 		t.Fatalf("legacy overwrite: %v", err)
 	}

@@ -8,11 +8,14 @@ package mcp
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"silt/backend/keyring"
 )
@@ -80,7 +83,7 @@ func WriteEndpointFile(endpoint string) error {
 	}
 	return withEndpointFileLock(path, func() error {
 		if existing, ok := readEndpointFileRecord(path); ok {
-			if existing.Pid > 0 && existing.Pid != os.Getpid() && aliveCheck(existing.Pid) {
+			if peerOwnsDiscovery(existing) {
 				// Another live Silt owns discovery — do not steal the slot.
 				return errEndpointOwnedByOther
 			}
@@ -106,6 +109,46 @@ var errEndpointOwnedByOther = errors.New("mcp endpoint file owned by another liv
 
 // aliveCheck reports whether a PID is running. Tests may swap this.
 var aliveCheck = processAlive
+
+// healthCheck probes whether endpoint serves Silt MCP /health. Tests may swap.
+var healthCheck = endpointServesSiltMCP
+
+// peerOwnsDiscovery reports whether ef is owned by another live Silt instance.
+// Requires a live foreign PID AND a successful silt-mcp health probe so a
+// crashed instance whose PID was reused by an unrelated process does not
+// permanently block discovery reclaim.
+func peerOwnsDiscovery(ef EndpointFile) bool {
+	if ef.Pid <= 0 || ef.Pid == os.Getpid() {
+		return false
+	}
+	if !aliveCheck(ef.Pid) {
+		return false
+	}
+	return healthCheck(ef.Endpoint)
+}
+
+// endpointServesSiltMCP GETs endpoint/health with a short timeout and requires
+// the silt-mcp service marker. Used to distinguish a live peer from PID reuse.
+func endpointServesSiltMCP(endpoint string) bool {
+	if !IsLoopbackEndpoint(endpoint) {
+		return false
+	}
+	base := strings.TrimRight(endpoint, "/")
+	client := &http.Client{Timeout: 200 * time.Millisecond}
+	resp, err := client.Get(base + "/health")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(body), "silt-mcp")
+}
 
 // ReadEndpointFile returns the last written endpoint, or empty if missing or
 // not loopback (tampered / stale file must not leak the bearer off-box).
@@ -144,7 +187,7 @@ func ClearEndpointFile() {
 	}
 	_ = withEndpointFileLock(path, func() error {
 		if existing, ok := readEndpointFileRecord(path); ok {
-			if existing.Pid > 0 && existing.Pid != os.Getpid() && aliveCheck(existing.Pid) {
+			if peerOwnsDiscovery(existing) {
 				return nil // leave peer discovery intact
 			}
 		}
@@ -153,8 +196,8 @@ func ClearEndpointFile() {
 	})
 }
 
-// ClearEndpointFileForce removes the discovery file unconditionally (tests).
-func ClearEndpointFileForce() {
+// clearEndpointFileForce removes the discovery file unconditionally (tests).
+func clearEndpointFileForce() {
 	path, err := EndpointFilePath()
 	if err != nil {
 		return
@@ -208,7 +251,7 @@ func ClearDiscovery(kr keyring.Store) {
 	ownedOrStale := true
 	if err == nil {
 		if existing, ok := readEndpointFileRecord(path); ok {
-			if existing.Pid > 0 && existing.Pid != os.Getpid() && aliveCheck(existing.Pid) {
+			if peerOwnsDiscovery(existing) {
 				ownedOrStale = false
 			}
 		}

@@ -102,6 +102,9 @@ type renameHooks struct {
 	indexFile         func(*App, string, string, string, string, []parser.ParsedBlock, []string, ...string) error
 	reconcileSection  func(*App, string, string, string, bool) error
 	reconcileNotebook func(*App, string, string, bool) error
+	// afterPreLockInbound runs after the initial inbound collect and before
+	// LockPathsWrite (tests only) so TOCTOU inject can add a late wiki-link.
+	afterPreLockInbound func()
 }
 
 type renameFileSnapshot struct {
@@ -426,6 +429,9 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 		return fmt.Errorf("collect inbound sources: %w", err)
 	}
 	lockPaths := append([]string{oldFile, newFile}, inbound...)
+	if a.renameHooks != nil && a.renameHooks.afterPreLockInbound != nil {
+		a.renameHooks.afterPreLockInbound()
+	}
 
 	// Retry when inbound sources appear after pre-lock collect (TOCTOU).
 	var runErr error
@@ -491,6 +497,9 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 		if runErr != nil {
 			return runErr
 		}
+		// Sweep residual inbound links that landed after the under-lock re-collect
+		// but before rewrite (narrow residual TOCTOU window).
+		a.rewriteStaleInboundAfterRename(safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage)
 		return a.reconcileNavigationPage(safeNotebook, safeSection, safeOldPage, safeNewPage, false)
 	}
 	return fmt.Errorf("RenamePage: inbound lock set did not stabilize after concurrent link creates")
@@ -552,6 +561,9 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 		return fmt.Errorf("collect inbound sources: %w", err)
 	}
 	lockPaths := append([]string{oldFile, newFile}, inbound...)
+	if a.renameHooks != nil && a.renameHooks.afterPreLockInbound != nil {
+		a.renameHooks.afterPreLockInbound()
+	}
 
 	var runErr error
 	for attempt := 0; attempt < 8; attempt++ {
@@ -631,6 +643,9 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 			return runErr
 		}
 
+		// Residual inbound sweep after unlock (same window as RenamePage).
+		a.rewriteStaleInboundAfterRename(safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage)
+
 		// Update nav_order outside the multi-path lock. File move already
 		// succeeded; config persist failure is logged only.
 		if err := a.reconcileNavigationMove(safeNotebook, safeFrom, safeTo, safePage); err != nil {
@@ -707,6 +722,9 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 		return fmt.Errorf("collect inbound sources: %w", err)
 	}
 	lockPaths := append(append([]string{}, seedPaths...), inbound...)
+	if a.renameHooks != nil && a.renameHooks.afterPreLockInbound != nil {
+		a.renameHooks.afterPreLockInbound()
+	}
 
 	var files []renameFileSnapshot
 	configSnapshot := a.snapshotConfig()
@@ -842,6 +860,10 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 		if runErr != nil {
 			return runErr
 		}
+		// Residual inbound sweep for each renamed page (post-unlock TOCTOU).
+		for _, file := range files {
+			a.rewriteStaleInboundAfterRename(safeNotebook, file.oldSection, file.page, safeNotebook, file.newSection, file.page)
+		}
 		return nil
 	}
 	return fmt.Errorf("RenameSection: tree lock did not stabilize after concurrent creates")
@@ -913,6 +935,9 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 		return fmt.Errorf("collect inbound sources: %w", err)
 	}
 	lockPaths = append(lockPaths, inbound...)
+	if a.renameHooks != nil && a.renameHooks.afterPreLockInbound != nil {
+		a.renameHooks.afterPreLockInbound()
+	}
 
 	var runErr error
 	configSnapshot := a.snapshotConfig()

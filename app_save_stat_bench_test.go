@@ -1,11 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"silt/backend/core"
 )
@@ -43,12 +41,12 @@ func BenchmarkSavePath_StatUnderLock(b *testing.B) {
 			ec.LockFileWrite(path, func() {})
 		}
 	})
-	// Warm filesystem noise floor.
 	b.Run("stat_only", func(b *testing.B) {
 		b.ReportAllocs()
+		var sink error
 		for i := 0; i < b.N; i++ {
-			_, _ = os.Stat(path)
+			_, sink = os.Stat(path)
 		}
+		_ = sink
 	})
-	_ = fmt.Sprintf("%v", time.Now())
 }
