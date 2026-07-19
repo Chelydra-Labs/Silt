@@ -1689,7 +1689,7 @@ describe('AIProviderTab', () => {
       )
     })
 
-    it('Copy token writes the bearer to the clipboard', async () => {
+    it('Copy token writes the bearer to the clipboard and shows Copied', async () => {
       mocks.GetLocalMCPToken.mockResolvedValue('clip-token-xyz')
       const writeText = vi.fn().mockResolvedValue(undefined)
       Object.assign(navigator, {
@@ -1700,6 +1700,11 @@ describe('AIProviderTab', () => {
       await fireEvent.click(screen.getByRole('button', { name: /Copy token/i }))
       await waitFor(() =>
         expect(writeText).toHaveBeenCalledWith('clip-token-xyz')
+      )
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', { name: /^Copied$/i })
+        ).toBeInTheDocument()
       )
     })
   })

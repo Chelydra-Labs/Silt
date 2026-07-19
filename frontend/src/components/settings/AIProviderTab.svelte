@@ -701,7 +701,7 @@
                   title="Copies the bearer to the clipboard. We try to clear the clipboard after 30s; clipboard history apps may retain a copy."
                   onclick={() => void mcp.copyToken()}
                 >
-                  Copy token
+                  {mcp.tokenCopied ? 'Copied' : 'Copy token'}
                 </button>
                 <button
                   type="button"

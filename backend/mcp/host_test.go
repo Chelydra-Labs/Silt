@@ -585,6 +585,34 @@ func TestEndpointFile_RoundTrip(t *testing.T) {
 
 // TestHost_RestartKeepsEndpointUntilRewrite ensures vault-switch restart does
 // not wipe the discovery file before the new listener is up (and rewrites it).
+func TestHost_WriteGrantToggleSkipsHTTPRestart(t *testing.T) {
+	kr := keyring.NewFake()
+	h := NewHost(Options{Keyring: kr, Auditor: &MemoryAuditor{}, Version: "test"})
+	bridge := &fakeBridge{path: t.TempDir()}
+	port := freePort(t)
+	cfg := Config{Enabled: true, HTTPEnabled: true, HTTPPort: port, WriteEnabled: false}
+	if err := h.Start(bridge, cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer h.Stop()
+	ep1 := h.Endpoint()
+	ln1 := h.listener
+
+	cfg.WriteEnabled = true
+	if err := h.Start(bridge, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if h.Endpoint() != ep1 {
+		t.Fatalf("endpoint changed on write-grant toggle: %q → %q", ep1, h.Endpoint())
+	}
+	if h.listener != ln1 {
+		t.Fatal("listener recreated on write-grant-only toggle")
+	}
+	if !h.Config().WriteEnabled {
+		t.Fatal("expected WriteEnabled true after skip-restart Start")
+	}
+}
+
 func TestHost_RestartKeepsEndpointUntilRewrite(t *testing.T) {
 	kr := keyring.NewFake()
 	h := NewHost(Options{Keyring: kr, Auditor: &MemoryAuditor{}, Version: "test"})

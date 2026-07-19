@@ -93,8 +93,10 @@ type App struct {
 	// mcpHost is the in-process local MCP server (#687). Started when
 	// ai.local_mcp.enabled and a vault is open; stopped on vault close,
 	// switch, and ServiceShutdown. Close-to-tray keeps the process (and MCP)
-	// alive; Quit drains via ServiceShutdown.
-	mcpHost *mcp.Host
+	// alive; Quit drains via ServiceShutdown. Constructed once (NewApp /
+	// ensureMCPHost under mcpHostMu) so getters never race lazy init.
+	mcpHost   *mcp.Host
+	mcpHostMu sync.Mutex
 
 	// aiCtx is the app-lifecycle context for AI HTTP calls. Cancelled in
 	// shutdown() so in-flight completions/embeddings are cancelled on app
@@ -295,6 +297,11 @@ func NewApp() *App {
 		// call time, not here — a keyring can be present at build/init yet
 		// unavailable at runtime (locked GNOME session, dropped D-Bus).
 		keyringStore: keyring.Default(),
+		// Eager MCP host so GetLocalMCP* never races lazy construction.
+		mcpHost: mcp.NewHost(mcp.Options{
+			Keyring: keyring.Default(),
+			Version: appVersion,
+		}),
 	}
 }
 

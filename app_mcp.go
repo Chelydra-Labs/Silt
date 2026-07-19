@@ -90,8 +90,12 @@ func (b mcpBridge) PageExists(ctx context.Context, notebook, section, page strin
 	return false, err
 }
 
-// ensureMCPHost lazily constructs the host (tests may leave it nil).
+// ensureMCPHost returns the MCP host, constructing it once if missing
+// (tests that build a bare App). Serialized so concurrent GetLocalMCP*
+// getters cannot race the write against syncMCPHostLocked.
 func (a *App) ensureMCPHost() *mcp.Host {
+	a.mcpHostMu.Lock()
+	defer a.mcpHostMu.Unlock()
 	if a.mcpHost != nil {
 		return a.mcpHost
 	}

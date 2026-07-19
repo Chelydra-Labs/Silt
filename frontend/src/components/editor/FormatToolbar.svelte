@@ -252,6 +252,9 @@
   let moreOpen = $state(false)
   let alignOpen = $state(false)
   let insertOpen = $state(false)
+  let headingOpen = $state(false)
+  let colorTextOpen = $state(false)
+  let colorBgOpen = $state(false)
   let moreWrap = $state<HTMLDivElement | null>(null)
   let alignWrap = $state<HTMLDivElement | null>(null)
   let insertWrap = $state<HTMLDivElement | null>(null)
@@ -295,6 +298,7 @@
 
   function handleKeydown(e: KeyboardEvent): void {
     // When a nested menu is open, Esc closes it first (menu → trigger).
+    // Heading/Color capture Escape themselves; still clear our flags.
     if (e.key === 'Escape') {
       if (moreOpen || alignOpen || insertOpen) {
         e.preventDefault()
@@ -305,12 +309,20 @@
         toolbarButtons()[rovingIdx]?.focus()
         return
       }
+      if (headingOpen || colorTextOpen || colorBgOpen) {
+        // Child already handled Esc; do not move toolbar roving.
+        return
+      }
       e.preventDefault()
       editor?.chain().focus().run()
       return
     }
 
     // Arrow roving inside open overflow menus (match SelectionBubble).
+    // Heading/Color own their menus — do not steal arrows while they are open.
+    if (headingOpen || colorTextOpen || colorBgOpen) {
+      return
+    }
     if (moreOpen || alignOpen || insertOpen) {
       const items = openMenuItems()
       if (items.length === 0) return
@@ -393,6 +405,7 @@
     {editor}
     toolbarTabIndex={rovingIdx === HEADING_IDX ? 0 : -1}
     onToolbarFocus={() => onTbFocus(HEADING_IDX)}
+    onMenuOpenChange={(open) => (headingOpen = open)}
   />
 
   <span class="toolbar-divider" aria-hidden="true"></span>
@@ -627,6 +640,7 @@
         {isDark}
         toolbarTabIndex={rovingIdx === COLOR_START ? 0 : -1}
         onToolbarFocus={() => onTbFocus(COLOR_START)}
+        onMenuOpenChange={(open) => (colorTextOpen = open)}
       />
       <ColorPickerMenu
         {editor}
@@ -634,6 +648,7 @@
         {isDark}
         toolbarTabIndex={rovingIdx === COLOR_START + 1 ? 0 : -1}
         onToolbarFocus={() => onTbFocus(COLOR_START + 1)}
+        onMenuOpenChange={(open) => (colorBgOpen = open)}
       />
     </div>
   {/if}

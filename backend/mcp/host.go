@@ -91,6 +91,27 @@ func (h *Host) Config() Config {
 	return h.cfg
 }
 
+// canSkipRestartLocked reports whether Start can apply cfg without tearing
+// down the HTTP listener. Caller must hold h.mu.
+func (h *Host) canSkipRestartLocked(bridge Bridge, cfg Config) bool {
+	if h.state != "running" || h.listener == nil {
+		return false
+	}
+	if !cfg.Enabled || bridge == nil || bridge.VaultPath() == "" {
+		return false
+	}
+	// Transport identity must match; write grant may differ.
+	if h.cfg.Enabled != cfg.Enabled ||
+		h.cfg.HTTPEnabled != cfg.HTTPEnabled ||
+		h.cfg.HTTPPort != cfg.HTTPPort {
+		return false
+	}
+	if h.bridge == nil || h.bridge.VaultPath() != bridge.VaultPath() {
+		return false
+	}
+	return true
+}
+
 // Token returns the bearer token (empty if none). Never log this.
 func (h *Host) Token() string {
 	h.mu.RLock()
@@ -109,8 +130,22 @@ func (h *Host) Endpoint() string {
 // Idempotent restart: stop then start. Endpoint discovery file is kept across
 // mid-restart so `silt mcp` does not lose the port during vault switch; it is
 // rewritten on successful HTTP bind and cleared on final stop / disable / bind failure.
+//
+// Pure write-grant (or bridge pointer) toggles while already running skip the
+// HTTP drain/rebind — toolEnv reads cfg via Config() on each call.
 func (h *Host) Start(bridge Bridge, cfg Config) error {
 	cfg = NormalizeConfig(cfg)
+
+	h.mu.Lock()
+	if h.canSkipRestartLocked(bridge, cfg) {
+		h.cfg = cfg
+		h.bridge = bridge
+		h.errMsg = ""
+		h.mu.Unlock()
+		return nil
+	}
+	h.mu.Unlock()
+
 	// Keep endpoint file during restart; clear only on terminal outcomes below.
 	h.stop(false)
 

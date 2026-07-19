@@ -7,11 +7,22 @@
     /** Roving tabindex from the parent format toolbar (#690). */
     toolbarTabIndex?: number
     onToolbarFocus?: () => void
+    /** Notifies parent when the dropdown opens/closes (toolbar arrow roving). */
+    onMenuOpenChange?: (open: boolean) => void
   }
 
-  let { editor, toolbarTabIndex = 0, onToolbarFocus }: Props = $props()
+  let {
+    editor,
+    toolbarTabIndex = 0,
+    onToolbarFocus,
+    onMenuOpenChange
+  }: Props = $props()
 
   let menuOpen = $state(false)
+
+  $effect(() => {
+    onMenuOpenChange?.(menuOpen)
+  })
   let wrapperEl = $state<HTMLDivElement | null>(null)
   let triggerEl = $state<HTMLButtonElement | null>(null)
 

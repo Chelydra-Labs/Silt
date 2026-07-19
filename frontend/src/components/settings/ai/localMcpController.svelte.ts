@@ -30,15 +30,22 @@ export function createLocalMcpController() {
   let hint = $state('')
   let tokenVisible = $state(false)
   let token = $state('')
+  let tokenCopied = $state(false)
   let trayPrompt = $state(false)
   let tokenClearTimer: ReturnType<typeof setTimeout> | null = null
+  let tokenCopiedTimer: ReturnType<typeof setTimeout> | null = null
 
   function clearTokenFromMemory() {
     token = ''
     tokenVisible = false
+    tokenCopied = false
     if (tokenClearTimer) {
       clearTimeout(tokenClearTimer)
       tokenClearTimer = null
+    }
+    if (tokenCopiedTimer) {
+      clearTimeout(tokenCopiedTimer)
+      tokenCopiedTimer = null
     }
   }
 
@@ -137,6 +144,12 @@ export function createLocalMcpController() {
       if (!token) return
       await navigator.clipboard.writeText(token)
       tokenVisible = true
+      tokenCopied = true
+      if (tokenCopiedTimer) clearTimeout(tokenCopiedTimer)
+      tokenCopiedTimer = setTimeout(() => {
+        tokenCopied = false
+        tokenCopiedTimer = null
+      }, 1500)
       scheduleTokenClear()
     } catch (e) {
       console.error(e)
@@ -218,6 +231,9 @@ export function createLocalMcpController() {
     },
     get token() {
       return token
+    },
+    get tokenCopied() {
+      return tokenCopied
     },
     get trayPrompt() {
       return trayPrompt
