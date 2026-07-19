@@ -83,7 +83,8 @@
 
   let visible = $derived(show && !dismissed && selectionCoords !== null)
 
-  function currentHref(): string {
+  // Cache once per reactive tick — template + handlers must not re-query ProseMirror.
+  let currentHref = $derived.by(() => {
     if (!editor) return ''
     try {
       const attrs = editor.getAttributes('link') as { href?: string }
@@ -91,7 +92,7 @@
     } catch {
       return ''
     }
-  }
+  })
 
   function toggleMark(mark: string): void {
     if (!editor) return
@@ -125,7 +126,7 @@
 
   function handleLinkAction(action: LinkAction): void {
     if (!editor) return
-    const href = currentHref()
+    const href = currentHref
     if (action.id === 'edit') {
       linkMenuOpen = false
       openLinkInput(href)
@@ -501,9 +502,9 @@
           ? `left:${linkMenuPos.left}px;top:${linkMenuPos.top}px`
           : undefined}
       >
-        {#if currentHref()}
-          <div class="bubble-link-href" title={currentHref()}>
-            {currentHref()}
+        {#if currentHref}
+          <div class="bubble-link-href" title={currentHref}>
+            {currentHref}
           </div>
         {/if}
         {#each LINK_ACTIONS as action (action.id)}

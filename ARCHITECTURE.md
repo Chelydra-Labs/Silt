@@ -566,9 +566,11 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   **Bridge model:** tools call App content APIs (`SearchBlocksPaged`,
   `FetchPageBlocks`, `SaveFileBlocks`, `CreatePage`, `ListNavigation`, …) so
   Silt remains the single vault writer/indexer. **Transports:** loopback
-  Streamable HTTP on `127.0.0.1` only (default port 17887) with bearer auth
-  from the OS keyring (`Silt` / `mcp-local-auth-token`); stdio via `silt mcp`
-  which dials the running instance (logs to stderr only). **Tools (v1):**
+   Streamable HTTP on `127.0.0.1` only (default port 17887) with bearer auth
+   from the OS keyring (`Silt` / `mcp-local-auth-token`); stdio via `silt mcp`
+   which dials the running instance (logs to stderr only). Discovery prefers a
+   keyring-pinned endpoint (`mcp-local-endpoint`) over `mcp-endpoint.json` so a
+   rewritten discovery file alone cannot redirect the bearer. **Tools (v1):**
   read — `search_blocks`/`search_notes`, `read_page`/`read_blocks`,
   `list_notebooks`; write (grant) — `create_page`, `update_blocks`. No
   delete/move/bulk. **Lifecycle:** start on vault open when enabled; stop on

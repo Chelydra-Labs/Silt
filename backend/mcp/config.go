@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"silt/backend/keyring"
 )
 
 // errNonLoopbackEndpoint is returned when WriteEndpointFile is given a non-loopback URL.
@@ -109,11 +111,59 @@ func ClearEndpointFile() {
 	_ = os.Remove(path)
 }
 
+// StorePinnedEndpoint writes the loopback base URL to the OS keyring so
+// discovery cannot be hijacked by rewriting mcp-endpoint.json alone.
+func StorePinnedEndpoint(kr keyring.Store, endpoint string) error {
+	if kr == nil {
+		return nil
+	}
+	if !IsLoopbackEndpoint(endpoint) {
+		return errNonLoopbackEndpoint
+	}
+	return kr.Set(KeyringService, KeyringEndpointUser, strings.TrimRight(endpoint, "/"))
+}
+
+// LoadPinnedEndpoint returns the keyring-pinned loopback endpoint, or empty
+// when missing, unavailable, or not loopback.
+func LoadPinnedEndpoint(kr keyring.Store) string {
+	if kr == nil {
+		return ""
+	}
+	ep, err := kr.Get(KeyringService, KeyringEndpointUser)
+	if err != nil || ep == "" {
+		return ""
+	}
+	ep = strings.TrimRight(strings.TrimSpace(ep), "/")
+	if !IsLoopbackEndpoint(ep) {
+		return ""
+	}
+	return ep
+}
+
+// ClearPinnedEndpoint removes the keyring-pinned endpoint (best-effort).
+func ClearPinnedEndpoint(kr keyring.Store) {
+	if kr == nil {
+		return
+	}
+	_ = kr.Delete(KeyringService, KeyringEndpointUser)
+}
+
+// ClearDiscovery drops both the endpoint file and the keyring pin.
+func ClearDiscovery(kr keyring.Store) {
+	ClearEndpointFile()
+	ClearPinnedEndpoint(kr)
+}
+
 // KeyringService is the OS keyring service name for the MCP bearer token.
 const KeyringService = "Silt"
 
 // KeyringUser is the keyring account for the active MCP auth token.
 const KeyringUser = "mcp-local-auth-token"
+
+// KeyringEndpointUser is the keyring account for the pinned loopback MCP base
+// URL. silt mcp prefers this over mcp-endpoint.json so a same-user process
+// that only rewrites the discovery file cannot redirect the bearer.
+const KeyringEndpointUser = "mcp-local-endpoint"
 
 // Config is the vault-scoped local AI / MCP integration block (config.yaml
 // under ai.local_mcp). Defaults are all off / read-only.

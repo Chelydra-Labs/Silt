@@ -583,6 +583,26 @@ func TestEndpointFile_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestHost_PinsEndpointInKeyring ensures Start stores the loopback URL in the
+// keyring so silt mcp discovery cannot be hijacked by rewriting the endpoint file.
+func TestHost_PinsEndpointInKeyring(t *testing.T) {
+	kr := keyring.NewFake()
+	h := NewHost(Options{Keyring: kr, Auditor: &MemoryAuditor{}, Version: "test"})
+	port := freePort(t)
+	if err := h.Start(&fakeBridge{path: t.TempDir()}, Config{Enabled: true, HTTPEnabled: true, HTTPPort: port}); err != nil {
+		t.Fatal(err)
+	}
+	ep := strings.TrimRight(h.Endpoint(), "/")
+	pinned := LoadPinnedEndpoint(kr)
+	if pinned != ep {
+		t.Fatalf("pinned=%q endpoint=%q", pinned, ep)
+	}
+	h.Stop()
+	if LoadPinnedEndpoint(kr) != "" {
+		t.Fatal("expected pin cleared on Stop")
+	}
+}
+
 // TestHost_RestartKeepsEndpointUntilRewrite ensures vault-switch restart does
 // not wipe the discovery file before the new listener is up (and rewrites it).
 func TestHost_WriteGrantToggleSkipsHTTPRestart(t *testing.T) {

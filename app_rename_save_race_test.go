@@ -304,3 +304,141 @@ func TestDeleteSection_SerializesAgainstSaveFileBlocks(t *testing.T) {
 		}
 	}
 }
+
+// TestRenamePage_SerializesAgainstSaveFileBlocks proves concurrent
+// SaveFileBlocks cannot interleave with RenamePage such that a successful
+// save is lost or a ghost file is left at the pre-rename path (#691).
+func TestRenamePage_SerializesAgainstSaveFileBlocks(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, oldPage, newPage := "PageRaceNB", "Sec", "OldPage", "NewPage"
+	blockID := "ffffffff-ffff-4fff-8fff-ffffffffffff"
+	blocks := seedRacePage(t, app, notebook, section, oldPage, blockID, "page original")
+
+	marker := "PAGE_SAVE_" + time.Now().Format("150405.000")
+	blocks[0].RawText = marker + " <!-- id: " + blockID + " -->"
+	blocks[0].CleanText = marker
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var saveErr, renameErr error
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		app.coordinator.LockFileWrite(filepath.Join(app.vaultPath, notebook, section, oldPage+".md"), func() {
+			time.Sleep(20 * time.Millisecond)
+		})
+		saveErr = app.SaveFileBlocks(notebook, section, oldPage, blocks)
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		time.Sleep(5 * time.Millisecond)
+		renameErr = app.RenamePage(notebook, section, oldPage, newPage)
+	}()
+	close(start)
+	wg.Wait()
+
+	if renameErr != nil {
+		t.Fatalf("RenamePage: %v", renameErr)
+	}
+
+	oldPath := filepath.Join(app.vaultPath, notebook, section, oldPage+".md")
+	newPath := filepath.Join(app.vaultPath, notebook, section, newPage+".md")
+
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("ghost file must not remain at pre-rename path %s", oldPath)
+	}
+	content, err := os.ReadFile(newPath)
+	if err != nil {
+		t.Fatalf("expected page at new path: %v", err)
+	}
+
+	hasMarker := strings.Contains(string(content), marker)
+	if saveErr == nil && !hasMarker {
+		t.Fatalf("successful save lost: new file missing marker %q\ncontent:\n%s", marker, content)
+	}
+	if saveErr != nil {
+		t.Logf("save erred after/during rename (acceptable if fail-loud): %v", saveErr)
+	}
+
+	idxBlocks, err := app.FetchPageBlocks(notebook, section, newPage)
+	if err != nil {
+		t.Fatalf("FetchPageBlocks new page: %v", err)
+	}
+	if len(idxBlocks) == 0 {
+		t.Fatal("index empty at new page name")
+	}
+}
+
+// TestMovePage_SerializesAgainstSaveFileBlocks proves concurrent
+// SaveFileBlocks cannot interleave with MovePage such that a successful
+// save is lost or a ghost file is left at the pre-move path (#691).
+func TestMovePage_SerializesAgainstSaveFileBlocks(t *testing.T) {
+	app := newTestApp(t)
+	notebook, fromSec, toSec, page := "MoveRaceNB", "FromSec", "ToSec", "Page1"
+	blockID := "11111111-1111-4111-8111-111111111111"
+	blocks := seedRacePage(t, app, notebook, fromSec, page, blockID, "move original")
+	// Destination section must exist.
+	if err := os.MkdirAll(filepath.Join(app.vaultPath, notebook, toSec), 0o755); err != nil {
+		t.Fatalf("mkdir dest: %v", err)
+	}
+
+	marker := "MOVE_SAVE_" + time.Now().Format("150405.000")
+	blocks[0].RawText = marker + " <!-- id: " + blockID + " -->"
+	blocks[0].CleanText = marker
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var saveErr, moveErr error
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		app.coordinator.LockFileWrite(filepath.Join(app.vaultPath, notebook, fromSec, page+".md"), func() {
+			time.Sleep(20 * time.Millisecond)
+		})
+		saveErr = app.SaveFileBlocks(notebook, fromSec, page, blocks)
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		time.Sleep(5 * time.Millisecond)
+		moveErr = app.MovePage(notebook, fromSec, toSec, page)
+	}()
+	close(start)
+	wg.Wait()
+
+	if moveErr != nil {
+		t.Fatalf("MovePage: %v", moveErr)
+	}
+
+	oldPath := filepath.Join(app.vaultPath, notebook, fromSec, page+".md")
+	newPath := filepath.Join(app.vaultPath, notebook, toSec, page+".md")
+
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("ghost file must not remain at pre-move path %s", oldPath)
+	}
+	content, err := os.ReadFile(newPath)
+	if err != nil {
+		t.Fatalf("expected page at new path: %v", err)
+	}
+
+	hasMarker := strings.Contains(string(content), marker)
+	if saveErr == nil && !hasMarker {
+		t.Fatalf("successful save lost: new file missing marker %q\ncontent:\n%s", marker, content)
+	}
+	if saveErr != nil {
+		t.Logf("save erred after/during move (acceptable if fail-loud): %v", saveErr)
+	}
+
+	idxBlocks, err := app.FetchPageBlocks(notebook, toSec, page)
+	if err != nil {
+		t.Fatalf("FetchPageBlocks new section: %v", err)
+	}
+	if len(idxBlocks) == 0 {
+		t.Fatal("index empty at destination")
+	}
+}

@@ -34,7 +34,7 @@ loopback HTTP endpoint shown in Settings.
 | Auth | Bearer token in OS keyring (`Silt` / `mcp-local-auth-token`). |
 | HTTP | Origin allowlist (localhost / empty); **required** `Content-Type: application/json` on POST (empty rejected). |
 | Stdio | `silt mcp` logs to **stderr only**; stdout is JSON-RPC only. |
-| Discovery | `silt mcp` reads `<UserConfigDir>/silt/mcp-endpoint.json` (written on host start) then falls back to port 17887. |
+| Discovery | `silt mcp` prefers the OS-keyring-pinned endpoint (`Silt` / `mcp-local-endpoint`), then `mcp-endpoint.json` only when it matches the pin (or the pin is unavailable), then port 17887. The file alone cannot redirect the bearer. |
 | Health | `GET /health` is **intentionally unauthenticated** on loopback so `silt mcp` can discover a running host without the bearer token. It returns only a short presence/version string — no vault paths, tools, or secrets. Any local process can probe it; treat multi-tenant shared machines accordingly. |
 | Writes | Opt-in grant (`write_enabled`). No delete/move/bulk tools. |
 | Audit | `<vault>/.system/logs/mcp-audit.jsonl` — client, tool, vault path hash, outcome, redacted args (no note bodies). |
@@ -58,7 +58,8 @@ silt mcp
 
 Proxies stdio JSON-RPC to the running instance’s loopback HTTP endpoint using
 the keyring token. Requires Silt open with Local MCP enabled. Non-default ports
-are discovered via the endpoint file Silt writes on start (or pass `--url`).
+are discovered via the keyring-pinned endpoint (and a matching endpoint file),
+or pass `--url`.
 
 ### Streamable HTTP
 

@@ -124,10 +124,21 @@ func loadMCPToken() (string, error) {
 }
 
 func discoverMCPEndpoint() string {
-	// Prefer last-written endpoint file (covers non-default ports), then default.
+	// Prefer keyring-pinned endpoint (not spoofable via endpoint file alone),
+	// then endpoint file only when it matches the pin (or pin unavailable),
+	// then the default port.
+	kr := keyring.Default()
+	pinned := mcp.LoadPinnedEndpoint(kr)
 	candidates := make([]string, 0, 3)
+	if pinned != "" {
+		candidates = append(candidates, pinned)
+	}
 	if ep := mcp.ReadEndpointFile(); ep != "" {
-		candidates = append(candidates, strings.TrimRight(ep, "/"))
+		ep = strings.TrimRight(ep, "/")
+		// Ignore a file that disagrees with the pin — same-user spoof defense.
+		if pinned == "" || pinned == ep {
+			candidates = append(candidates, ep)
+		}
 	}
 	candidates = append(candidates, fmt.Sprintf("http://127.0.0.1:%d", mcp.DefaultHTTPPort))
 	if settings, err := vault.LoadSettings(); err == nil {

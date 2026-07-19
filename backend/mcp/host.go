@@ -156,14 +156,14 @@ func (h *Host) Start(bridge Bridge, cfg Config) error {
 	if !cfg.Enabled {
 		h.state = "disabled"
 		h.mu.Unlock()
-		ClearEndpointFile()
+		ClearDiscovery(h.keyring)
 		return nil
 	}
 	if bridge == nil || bridge.VaultPath() == "" {
 		h.state = "no_vault"
 		h.errMsg = "open a vault to start local MCP"
 		h.mu.Unlock()
-		ClearEndpointFile()
+		ClearDiscovery(h.keyring)
 		return nil
 	}
 	h.state = "starting"
@@ -172,7 +172,7 @@ func (h *Host) Start(bridge Bridge, cfg Config) error {
 	token, err := h.ensureToken()
 	if err != nil {
 		h.setError(fmt.Sprintf("auth token: %v", err))
-		ClearEndpointFile()
+		ClearDiscovery(h.keyring)
 		return err
 	}
 
@@ -214,12 +214,12 @@ func (h *Host) Start(bridge Bridge, cfg Config) error {
 		if err := h.startHTTP(srv, token, cfg.HTTPPort); err != nil {
 			h.setError(err.Error())
 			// Listener is down; drop stale discovery so clients do not dial a dead port.
-			ClearEndpointFile()
+			ClearDiscovery(h.keyring)
 			return err
 		}
 	} else {
 		// No HTTP listener — stdio proxy cannot dial; clear any prior endpoint.
-		ClearEndpointFile()
+		ClearDiscovery(h.keyring)
 	}
 
 	h.mu.Lock()
@@ -286,7 +286,7 @@ func (h *Host) stop(clearEndpoint bool) {
 		_ = ln.Close()
 	}
 	if clearEndpoint {
-		ClearEndpointFile()
+		ClearDiscovery(h.keyring)
 	}
 	if aud != nil {
 		// Don't close MemoryAuditor shared across tests (Options.Auditor).
@@ -383,7 +383,14 @@ func (h *Host) startHTTP(srv *mcpsdk.Server, token string, port int) error {
 		}
 	}()
 	// Publish endpoint for `silt mcp` discovery (non-default ports).
-	if err := WriteEndpointFile(fmt.Sprintf("http://%s", ln.Addr().String())); err != nil {
+	// Pin in keyring first so a rewritten endpoint file alone cannot steal the bearer.
+	ep := fmt.Sprintf("http://%s", ln.Addr().String())
+	if err := StorePinnedEndpoint(h.keyring, ep); err != nil {
+		if !errors.Is(err, keyring.ErrUnavailable) {
+			log.Printf("mcp: pin endpoint: %v", err)
+		}
+	}
+	if err := WriteEndpointFile(ep); err != nil {
 		log.Printf("mcp: endpoint file: %v", err)
 	}
 	return nil
