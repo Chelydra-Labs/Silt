@@ -256,6 +256,7 @@
   let activeView = $state('notes')
   const views = [
     { id: 'notes', label: 'Notes', icon: 'description' },
+    { id: 'backlinks', label: 'Backlinks', icon: 'hub' },
     { id: 'tags', label: 'Tags', icon: 'label' },
     { id: 'tasks', label: 'Tasks', icon: 'checklist' }
   ]
@@ -418,6 +419,12 @@
   function selectView(view: string): void {
     if (view !== activeView && !confirmTemplateTransition()) return
     activeView = view
+  }
+
+  function showBacklinks(): void {
+    activeView = 'backlinks'
+    sidebarCollapsed = false
+    manuallyCollapsed = false
   }
 
   function openSectionContext(section: string): void {
@@ -1546,11 +1553,12 @@
     handleSearchJump(res.notebook, res.section, res.page, res.file_date, res.id)
   }
 
-  // Whether the notes view has a complete (notebook/section/page) target.
+  // Whether an editor-bearing view has a complete page target. Backlinks owns
+  // the sidebar only, so the active note remains mounted beside it.
   // With tabs (#142), also requires an active tab so closing the last tab
   // returns to the blank view. displayedTabs ensures per-notebook scoping.
   let notesReady = $derived(
-    activeView === 'notes' &&
+    (activeView === 'notes' || activeView === 'backlinks') &&
       !!activeNotebook &&
       !!activePage &&
       !!activeTabId &&
@@ -1668,7 +1676,7 @@
         : undefined}
       aiOpen={aiChatDrawer.open}
     >
-      {#if activeView === 'notes'}
+      {#if activeView === 'notes' || activeView === 'backlinks'}
         <TabStrip
           tabs={displayedTabs}
           {activeTabId}
@@ -1849,7 +1857,7 @@
                 '-'} tab={activeTabId || '-'} dt={displayedTabs.length} nr={notesReady}
             </div>
           {/if}
-          {#if activeView === 'notes'}
+          {#if activeView === 'notes' || activeView === 'backlinks'}
             <PageBreadcrumb
               notebook={activeNotebook}
               section={activeSection}
@@ -1868,6 +1876,7 @@
                   },
                   'activate-only'
                 )}
+              onOpenBacklinks={showBacklinks}
             />
             {#if notesReady}
               <div

@@ -53,6 +53,23 @@ describe('PageBreadcrumb', () => {
     expect(screen.getByRole('button', { name: /Plan/ })).toBeDisabled()
   })
 
+  it('exposes the editor-header backlinks entry and reflects its active state', async () => {
+    const onOpenBacklinks = vi.fn()
+    const { rerender } = render(PageBreadcrumb, {
+      props: { ...base, onOpenBacklinks }
+    })
+    const trigger = screen.getByRole('button', { name: 'Show backlinks' })
+    expect(trigger).toHaveAttribute('aria-pressed', 'false')
+    await fireEvent.click(trigger)
+    expect(onOpenBacklinks).toHaveBeenCalledOnce()
+
+    await rerender({ ...base, activeView: 'backlinks', onOpenBacklinks })
+    expect(
+      screen.getByRole('button', { name: 'Show backlinks' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('navigation')).toBeInTheDocument()
+  })
+
   it('preserves linked offline state when an empty active page vanishes from fallback rows', async () => {
     const online: NavigationTree = {
       notebooks: [

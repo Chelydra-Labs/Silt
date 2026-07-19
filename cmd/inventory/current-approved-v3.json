@@ -221,6 +221,10 @@
         "signature": "GetAuditLog() ([]AuditEntry, error)"
       },
       {
+        "name": "GetBacklinks",
+        "signature": "GetBacklinks(notebook, section, page string) ([]db.Backlink, error)"
+      },
+      {
         "name": "GetCloseToTray",
         "signature": "GetCloseToTray() bool"
       },
@@ -1006,6 +1010,8 @@
     "frontend_binding_imports": [
       "frontend/src/App.menu-save.test.ts",
       "frontend/src/App.svelte",
+      "frontend/src/components/BacklinksSidebarPanel.svelte",
+      "frontend/src/components/BacklinksSidebarPanel.test.ts",
       "frontend/src/components/BlockPickerModal.svelte",
       "frontend/src/components/BlockPickerModal.test.ts",
       "frontend/src/components/BlockReferenceChip.svelte",
@@ -1104,6 +1110,8 @@
     "frontend_runtime_imports": [
       "frontend/src/App.menu-save.test.ts",
       "frontend/src/App.svelte",
+      "frontend/src/components/BacklinksSidebarPanel.svelte",
+      "frontend/src/components/BacklinksSidebarPanel.test.ts",
       "frontend/src/components/EmbedPortal.svelte",
       "frontend/src/components/EmbedPortal.test.ts",
       "frontend/src/components/Sidebar.svelte",

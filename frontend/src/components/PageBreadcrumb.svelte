@@ -11,6 +11,7 @@
     onSelectNotebook: (notebook: string) => void
     onSelectSection: (section: string) => void
     onOpenPage: () => void
+    onOpenBacklinks?: () => void
   }
 
   let {
@@ -22,7 +23,8 @@
     disconnected = false,
     onSelectNotebook,
     onSelectSection,
-    onOpenPage
+    onOpenPage,
+    onOpenBacklinks
   }: Props = $props()
 
   let reference = $state('')
@@ -41,7 +43,11 @@
 
   $effect(() => {
     const ref = { notebook, section, page }
-    if (!notebook || !page || activeView !== 'notes') {
+    if (
+      !notebook ||
+      !page ||
+      (activeView !== 'notes' && activeView !== 'backlinks')
+    ) {
       reference = ''
       return
     }
@@ -55,7 +61,7 @@
   })
 </script>
 
-{#if activeView === 'notes' && notebook && page}
+{#if (activeView === 'notes' || activeView === 'backlinks') && notebook && page}
   <nav
     aria-label={`Page location: ${fullLabel}`}
     title={`${fullLabel}${reference ? ` · ${reference}` : ''}`}
@@ -101,6 +107,22 @@
       aria-label={`${fullLabel}${reference ? `, ${reference}` : ''}`}
       onclick={onOpenPage}>{page}</button
     >
+    {#if onOpenBacklinks}
+      <button
+        type="button"
+        class="crumb backlinks"
+        class:active={activeView === 'backlinks'}
+        aria-label="Show backlinks"
+        aria-pressed={activeView === 'backlinks'}
+        title="Show backlinks"
+        onclick={onOpenBacklinks}
+      >
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+          >hub</span
+        >
+        <span>Backlinks</span>
+      </button>
+    {/if}
   </nav>
 {/if}
 
@@ -137,6 +159,14 @@
     color: var(--color-text-muted);
     opacity: 0.55;
     flex: 0 0 auto;
+  }
+  .backlinks {
+    margin-left: auto;
+    flex: 0 0 auto;
+  }
+  .backlinks.active {
+    color: var(--color-accent-primary-start);
+    background: var(--color-hover);
   }
   @media (max-width: 700px) {
     .section-crumb:not(.nearest) {

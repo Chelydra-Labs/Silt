@@ -5,6 +5,7 @@
   import SidebarQuickAccess from './SidebarQuickAccess.svelte'
   import PluginSidebarPanels from './PluginSidebarPanels.svelte'
   import TagSidebarPanel from './TagSidebarPanel.svelte'
+  import BacklinksSidebarPanel from './BacklinksSidebarPanel.svelte'
   import {
     ListNavigation,
     CreateNotebook,
@@ -1200,6 +1201,12 @@
   >
     {#if activeView === 'tags'}
       <TagSidebarPanel bind:selectedTag />
+    {:else if activeView === 'backlinks'}
+      <BacklinksSidebarPanel
+        notebook={activeNotebook}
+        section={activeSection}
+        page={activePage}
+      />
     {:else if activeView === 'settings'}
       <!-- Settings view: the sidebar IS the section nav (#511 rework). The
            matching panel lives in the content area (SettingsPanel). -->
