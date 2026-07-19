@@ -58,6 +58,8 @@
     MentionSuggest,
     applyMentionSuggestion,
     filterOwners,
+    BlockRefSuggest,
+    applyBlockRefSuggestion,
     blocksToDoc
   } from '../lib/editor'
   import { runPluginCommand } from '../lib/editor/runPluginCommand'
@@ -65,9 +67,10 @@
     ParsedBlock,
     MetaKey,
     SuggestContext,
-    MentionContext
+    MentionContext,
+    BlockRefContext
   } from '../lib/editor'
-  import { DistinctOwners } from '../../bindings/silt/app.js'
+  import { DistinctOwners, SearchBlocks } from '../../bindings/silt/app.js'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import ChoiceDialog from './ChoiceDialog.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
@@ -650,6 +653,125 @@
     applyMentionSuggestion(editorInstance, name)
   }
 
+  // --- Block-reference typeahead ------------------------------------------
+  interface BlockSearchItem {
+    id: string
+    notebook: string
+    section: string
+    page: string
+    clean_content: string
+  }
+
+  let blkRefPopup = $state<{
+    ctx: BlockRefContext
+    items: BlockSearchItem[]
+    selected: number
+    searching: boolean
+    error: boolean
+  } | null>(null)
+  let blkRefQueryTimer: ReturnType<typeof setTimeout> | null = null
+  let blkRefQueryReqId = 0
+  let blkRefRequest:
+    | (Promise<BlockSearchItem[]> & { cancel?: () => Promise<void> | void })
+    | null = null
+  const BLOCK_REF_QUERY_DEBOUNCE_MS = 180
+
+  function cancelBlockRefSearch(): void {
+    if (blkRefQueryTimer) {
+      clearTimeout(blkRefQueryTimer)
+      blkRefQueryTimer = null
+    }
+    const request = blkRefRequest
+    blkRefRequest = null
+    if (request?.cancel) void request.cancel()
+  }
+
+  function onBlockRefChange(ctx: BlockRefContext | null): void {
+    cancelBlockRefSearch()
+    const myId = ++blkRefQueryReqId
+    if (!ctx) {
+      blkRefPopup = null
+      suggestStatus = ''
+      return
+    }
+
+    blkRefPopup = {
+      ctx,
+      items: [],
+      selected: 0,
+      searching: ctx.query.trim().length > 0,
+      error: false
+    }
+    if (!ctx.query.trim()) {
+      suggestStatus = 'Type to search for a block'
+      return
+    }
+
+    suggestStatus = 'Searching blocks'
+    blkRefQueryTimer = setTimeout(async () => {
+      blkRefQueryTimer = null
+      const request = SearchBlocks(ctx.query) as Promise<BlockSearchItem[]> & {
+        cancel?: () => Promise<void> | void
+      }
+      blkRefRequest = request
+      try {
+        const items = (await request) ?? []
+        if (myId !== blkRefQueryReqId) return
+        const current = blkRefPopup
+        if (
+          !current ||
+          current.ctx.from !== ctx.from ||
+          current.ctx.query !== ctx.query
+        )
+          return
+        blkRefRequest = null
+        blkRefPopup = { ...current, items, selected: 0, searching: false }
+        suggestStatus = items.length
+          ? `${items.length} block${items.length === 1 ? '' : 's'} available`
+          : 'No matching blocks'
+      } catch (error) {
+        if (myId !== blkRefQueryReqId) return
+        blkRefRequest = null
+        const current = blkRefPopup
+        if (
+          !current ||
+          current.ctx.from !== ctx.from ||
+          current.ctx.query !== ctx.query
+        )
+          return
+        console.error('SearchBlocks failed:', error)
+        blkRefPopup = {
+          ...current,
+          items: [],
+          selected: 0,
+          searching: false,
+          error: true
+        }
+        suggestStatus = 'Block search unavailable'
+      }
+    }, BLOCK_REF_QUERY_DEBOUNCE_MS)
+  }
+
+  function onBlockRefNavigate(dir: 1 | -1): void {
+    if (!blkRefPopup?.items.length) return
+    const n = blkRefPopup.items.length
+    blkRefPopup.selected = (blkRefPopup.selected + dir + n) % n
+  }
+
+  function onBlockRefSelectActive(): void {
+    const item = blkRefPopup?.items[blkRefPopup.selected]
+    if (item) onBlockRefPick(item.id)
+  }
+
+  function onBlockRefPick(blockId: string): void {
+    cancelBlockRefSearch()
+    ++blkRefQueryReqId
+    blkRefPopup = null
+    suggestStatus = ''
+    if (!editorInstance || editorInstance.isDestroyed) return
+    applyBlockRefSuggestion(editorInstance, blockId)
+  }
+
   // Capture the initial blocks under untrack to signal that the one-shot
   // capture is intentional — the $effect below handles live reactivity (#64).
   const initialDoc = untrack(() => blocksToDoc(blocks))
@@ -708,6 +830,12 @@
       onChange: onMentionChange,
       onNavigate: onMentionNavigate,
       onSelectActive: onMentionSelectActive
+    }),
+    BlockRefSuggest.configure({
+      items: () => blkRefPopup?.items ?? [],
+      onChange: onBlockRefChange,
+      onNavigate: onBlockRefNavigate,
+      onSelectActive: onBlockRefSelectActive
     }),
     // Notion-style indent-on-drop + drop-zone indicator (#330, #181
     // follow-up). Watches ProseMirror's handleDrop: when a top-level block
@@ -1053,6 +1181,8 @@
       clearTimeout(focusLoadTimer)
       focusLoadTimer = null
     }
+    cancelBlockRefSearch()
+    ++blkRefQueryReqId
     void flushPendingSave().then(() => releaseFocus())
     window.removeEventListener('silt:open-link-input', onOpenLinkInput)
     window.removeEventListener('silt:change-block-type', onChangeBlockType)
@@ -1941,6 +2071,38 @@
         }}
         onHover={(i) => {
           if (mentionPopup) mentionPopup.selected = i
+        }}
+      />
+    {/if}
+  {/if}
+  {#if blkRefPopup}
+    {@const c = suggestPopupCoords(blkRefPopup.ctx.from, 360)}
+    {#if c}
+      <SuggestPopup
+        items={blkRefPopup.items.map((item) => ({
+          id: item.id,
+          label: item.clean_content || 'Untitled block',
+          hint: [item.notebook, item.section, item.page]
+            .filter(Boolean)
+            .join(' / ')
+        }))}
+        selected={blkRefPopup.selected}
+        coords={c}
+        emptyLabel={blkRefPopup.error
+          ? 'Block search unavailable'
+          : blkRefPopup.searching
+            ? 'Searching blocks…'
+            : blkRefPopup.ctx.query.trim()
+              ? 'No blocks found'
+              : 'Type to search for a block…'}
+        ariaLabel="Reference a block"
+        className="block-ref-suggest"
+        onPick={(i) => {
+          const item = blkRefPopup?.items[i]
+          if (item) onBlockRefPick(item.id)
+        }}
+        onHover={(i) => {
+          if (blkRefPopup) blkRefPopup.selected = i
         }}
       />
     {/if}

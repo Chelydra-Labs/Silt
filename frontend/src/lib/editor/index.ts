@@ -77,6 +77,13 @@ export type {
   MentionSuggestOptions,
   OwnerWriteback
 } from './mentionSuggest'
+export {
+  BlockRefSuggest,
+  applyBlockRefSuggestion,
+  getBlkRefContext,
+  getBlkRefContextAt
+} from './blockRefSuggest'
+export type { BlockRefContext, BlockRefSuggestOptions } from './blockRefSuggest'
 export type {
   ParsedBlock,
   BlockType,
