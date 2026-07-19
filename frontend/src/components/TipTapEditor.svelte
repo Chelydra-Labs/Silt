@@ -81,6 +81,8 @@
   import TableContextToolbar from './editor/TableContextToolbar.svelte'
   import TableSizePicker from './editor/TableSizePicker.svelte'
   import MathLatexPopover from './editor/MathLatexPopover.svelte'
+  import SuggestPopup from './editor/SuggestPopup.svelte'
+  import { popupCoordsAt } from '../lib/editor/suggestPopupCoords'
   import {
     deriveColorPalette,
     readActiveThemeColorTokens,
@@ -502,11 +504,14 @@
     applyMetaSuggestion(editorInstance, key)
   }
 
-  function metaPopupCoords(): { left: number; top: number } | null {
-    if (!metaPopup || !editorInstance || editorInstance.isDestroyed) return null
-    const c = editorInstance.view.coordsAtPos(metaPopup.ctx.from)
+  function suggestPopupCoords(
+    from: number,
+    width: number
+  ): { left: number; top: number } | null {
+    if (!editorInstance || editorInstance.isDestroyed) return null
+    const anchor = popupCoordsAt(editorInstance, from)
     return clampToViewport(
-      { x: c.left, y: c.bottom, width: 260, height: 260 },
+      { x: anchor.left, y: anchor.top, width, height: 260 },
       { width: window.innerWidth, height: window.innerHeight }
     )
   }
@@ -643,16 +648,6 @@
     }
     mentionPopup = null
     applyMentionSuggestion(editorInstance, name)
-  }
-
-  function mentionPopupCoords(): { left: number; top: number } | null {
-    if (!mentionPopup || !editorInstance || editorInstance.isDestroyed)
-      return null
-    const c = editorInstance.view.coordsAtPos(mentionPopup.ctx.from)
-    return clampToViewport(
-      { x: c.left, y: c.bottom, width: 220, height: 260 },
-      { width: window.innerWidth, height: window.innerHeight }
-    )
   }
 
   // Capture the initial blocks under untrack to signal that the one-shot
@@ -1904,58 +1899,50 @@
     {suggestStatus}
   </div>
   {#if metaPopup}
-    {@const c = metaPopupCoords()}
+    {@const c = suggestPopupCoords(metaPopup.ctx.from, 260)}
     {#if c}
-      <div
-        class="meta-suggest"
-        style="left:{c.left}px; top:{c.top}px"
-        role="listbox"
-        tabindex="-1"
-        aria-label="Task metadata"
-        aria-activedescendant="silt-meta-opt-{metaPopup.selected}"
-      >
-        {#each metaPopup.items as item, i}
-          <button
-            type="button"
-            id="silt-meta-opt-{i}"
-            class="meta-suggest-item"
-            class:selected={i === metaPopup.selected}
-            role="option"
-            aria-selected={i === metaPopup.selected}
-            onclick={() => onMetaPick(item.key)}
-          >
-            <span class="meta-suggest-key">{item.key}</span>
-            <span class="meta-suggest-desc">{item.description}</span>
-          </button>
-        {/each}
-      </div>
+      <SuggestPopup
+        items={metaPopup.items.map((item) => ({
+          id: item.key,
+          label: item.key,
+          hint: item.description
+        }))}
+        selected={metaPopup.selected}
+        coords={c}
+        emptyLabel="No matching metadata keys"
+        ariaLabel="Task metadata"
+        className="meta-suggest"
+        onPick={(i) => {
+          const item = metaPopup?.items[i]
+          if (item) onMetaPick(item.key)
+        }}
+        onHover={(i) => {
+          if (metaPopup) metaPopup.selected = i
+        }}
+      />
     {/if}
   {/if}
   {#if mentionPopup}
-    {@const c = mentionPopupCoords()}
+    {@const c = suggestPopupCoords(mentionPopup.ctx.from, 220)}
     {#if c}
-      <div
-        class="mention-suggest"
-        style="left:{c.left}px; top:{c.top}px"
-        role="listbox"
-        tabindex="-1"
-        aria-label="Mention an owner"
-        aria-activedescendant="silt-mention-opt-{mentionPopup.selected}"
-      >
-        {#each mentionPopup.items as item, i}
-          <button
-            type="button"
-            id="silt-mention-opt-{i}"
-            class="mention-suggest-item"
-            class:selected={i === mentionPopup.selected}
-            role="option"
-            aria-selected={i === mentionPopup.selected}
-            onclick={() => onMentionPick(item)}
-          >
-            <span class="mention-suggest-at" aria-hidden="true">@</span>{item}
-          </button>
-        {/each}
-      </div>
+      <SuggestPopup
+        items={mentionPopup.items.map((item) => ({
+          id: item,
+          label: `@${item}`
+        }))}
+        selected={mentionPopup.selected}
+        coords={c}
+        emptyLabel="No matching owners"
+        ariaLabel="Mention an owner"
+        className="mention-suggest"
+        onPick={(i) => {
+          const item = mentionPopup?.items[i]
+          if (item) onMentionPick(item)
+        }}
+        onHover={(i) => {
+          if (mentionPopup) mentionPopup.selected = i
+        }}
+      />
     {/if}
   {/if}
   {#if showLinkInput && linkInputCoords}
@@ -2182,88 +2169,6 @@
     .cp-swatch {
       transition: none;
     }
-  }
-
-  .meta-suggest {
-    position: fixed;
-    z-index: 50;
-    min-width: 240px;
-    margin-top: 4px;
-    padding: 4px;
-    border-radius: 8px;
-    background: var(--color-surface-popover);
-    border: 1px solid var(--color-surface-popover-border);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-    display: flex;
-    flex-direction: column;
-  }
-
-  .meta-suggest-item {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    padding: 6px 8px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--color-text-primary);
-    text-align: left;
-    cursor: pointer;
-    font-family: inherit;
-  }
-
-  .meta-suggest-item.selected {
-    background: var(--color-accent-primary-start);
-    color: var(--color-text-on-accent);
-  }
-
-  .meta-suggest-key {
-    font-family: var(--font-mono, monospace);
-    font-weight: 600;
-    font-size: 0.85rem;
-    min-width: 64px;
-  }
-
-  .meta-suggest-desc {
-    font-size: 0.8rem;
-    opacity: 0.8;
-  }
-
-  .mention-suggest {
-    position: fixed;
-    z-index: 50;
-    min-width: 200px;
-    margin-top: 4px;
-    padding: 4px;
-    border-radius: 8px;
-    background: var(--color-surface-popover);
-    border: 1px solid var(--color-surface-popover-border);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-    display: flex;
-    flex-direction: column;
-  }
-
-  .mention-suggest-item {
-    display: flex;
-    align-items: baseline;
-    gap: 4px;
-    padding: 6px 8px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--color-text-primary);
-    text-align: left;
-    cursor: pointer;
-    font-family: inherit;
-  }
-
-  .mention-suggest-item.selected {
-    background: var(--color-accent-primary-start);
-    color: var(--color-text-on-accent);
-  }
-
-  .mention-suggest-at {
-    opacity: 0.7;
   }
 
   .context-menu-card {
