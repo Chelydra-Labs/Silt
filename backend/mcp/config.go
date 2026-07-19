@@ -136,8 +136,10 @@ func endpointServesSiltMCP(endpoint string) bool {
 		return false
 	}
 	base := strings.TrimRight(endpoint, "/")
+	// Loopback /health is sub-ms when alive; keep the timeout short so a dead
+	// peer does not hold the discovery file lock for long during multi-instance start.
 	client := &http.Client{
-		Timeout: 200 * time.Millisecond,
+		Timeout: 100 * time.Millisecond,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -186,21 +188,9 @@ func readEndpointFileRecord(path string) (EndpointFile, bool) {
 }
 
 // ClearEndpointFile removes the discovery file when this process owns it, or
-// when the recorded owner PID is dead (stale). Never deletes a live peer's file.
+// when the recorded owner is stale. Never deletes a live peer's file.
 func ClearEndpointFile() {
-	path, err := EndpointFilePath()
-	if err != nil {
-		return
-	}
-	_ = withEndpointFileLock(path, func() error {
-		if existing, ok := readEndpointFileRecord(path); ok {
-			if peerOwnsDiscovery(existing) {
-				return nil // leave peer discovery intact
-			}
-		}
-		_ = os.Remove(path)
-		return nil
-	})
+	clearDiscoveryLocked(nil, false)
 }
 
 // clearEndpointFileForce removes the discovery file unconditionally (tests).
@@ -249,24 +239,36 @@ func ClearPinnedEndpoint(kr keyring.Store) {
 	_ = kr.Delete(KeyringService, KeyringEndpointUser)
 }
 
-// ClearDiscovery drops the endpoint file (if owned/stale) and the keyring pin
-// only when the file clear is allowed for this process. If a live peer owns
-// the endpoint file, the pin is left alone so the peer's silt mcp discovery
-// keeps working.
+// ClearDiscovery drops the endpoint file and keyring pin together when this
+// process may clear discovery. Ownership is decided once under the cross-process
+// lock so a concurrent peer start/stop cannot leave file-cleared/pin-kept (or
+// the reverse) inconsistent states.
 func ClearDiscovery(kr keyring.Store) {
+	clearDiscoveryLocked(kr, true)
+}
+
+// clearDiscoveryLocked acquires the endpoint file lock, checks peer ownership
+// once, then optionally removes the file and/or keyring pin. When clearPin is
+// false only the file is considered (ClearEndpointFile). When true, pin and
+// file stay or go together.
+func clearDiscoveryLocked(kr keyring.Store, clearPin bool) {
 	path, err := EndpointFilePath()
-	ownedOrStale := true
-	if err == nil {
+	if err != nil {
+		return
+	}
+	_ = withEndpointFileLock(path, func() error {
 		if existing, ok := readEndpointFileRecord(path); ok {
 			if peerOwnsDiscovery(existing) {
-				ownedOrStale = false
+				// Live peer: leave file and pin untouched.
+				return nil
 			}
 		}
-	}
-	ClearEndpointFile()
-	if ownedOrStale {
-		ClearPinnedEndpoint(kr)
-	}
+		_ = os.Remove(path)
+		if clearPin {
+			ClearPinnedEndpoint(kr)
+		}
+		return nil
+	})
 }
 
 // KeyringService is the OS keyring service name for the MCP bearer token.

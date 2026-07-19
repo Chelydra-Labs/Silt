@@ -166,3 +166,81 @@ func TestEndpointServesSiltMCP_RefusesRedirect(t *testing.T) {
 		t.Fatal("health probe must not treat redirect as silt-mcp")
 	}
 }
+
+func TestPeerOwnsDiscovery_RequiresSiltMCPBody(t *testing.T) {
+	// Alive foreign PID + 200 without silt-mcp marker must not block reclaim.
+	origAlive, origHealth := aliveCheck, healthCheck
+	t.Cleanup(func() {
+		aliveCheck = origAlive
+		healthCheck = origHealth
+	})
+	aliveCheck = func(int) bool { return true }
+	healthCheck = func(string) bool { return false } // body marker missing
+	ef := EndpointFile{Endpoint: "http://127.0.0.1:17990", Pid: 999001}
+	if peerOwnsDiscovery(ef) {
+		t.Fatal("peerOwnsDiscovery must be false when health lacks silt-mcp")
+	}
+	healthCheck = func(string) bool { return true }
+	if !peerOwnsDiscovery(ef) {
+		t.Fatal("peerOwnsDiscovery must be true when PID alive and health ok")
+	}
+	// Own PID never counts as peer.
+	ef.Pid = os.Getpid()
+	if peerOwnsDiscovery(ef) {
+		t.Fatal("own PID must not own as peer")
+	}
+}
+
+func TestClearDiscovery_AtomicWithPeer(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	_ = os.MkdirAll(filepath.Join(dir, "silt"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, ".config", "silt"), 0o755)
+
+	origAlive, origHealth := aliveCheck, healthCheck
+	t.Cleanup(func() {
+		aliveCheck = origAlive
+		healthCheck = origHealth
+	})
+
+	epPath, err := EndpointFilePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.MkdirAll(filepath.Dir(epPath), 0o755)
+	t.Cleanup(clearEndpointFileForce)
+
+	kr := keyring.NewFake()
+	peerPID := 424244
+	aliveCheck = func(pid int) bool { return pid == peerPID }
+	healthCheck = func(string) bool { return true }
+
+	b, _ := json.Marshal(EndpointFile{Endpoint: "http://127.0.0.1:17997", Pid: peerPID})
+	if err := os.WriteFile(epPath, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := StorePinnedEndpoint(kr, "http://127.0.0.1:17997"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Peer alive: neither file nor pin cleared (single locked decision).
+	ClearDiscovery(kr)
+	if got := ReadEndpointFile(); got != "http://127.0.0.1:17997" {
+		t.Fatalf("file cleared while peer alive: %q", got)
+	}
+	if got := LoadPinnedEndpoint(kr); got != "http://127.0.0.1:17997" {
+		t.Fatalf("pin cleared while peer alive: %q", got)
+	}
+
+	// Peer becomes reclaimable: both file and pin clear together.
+	healthCheck = func(string) bool { return false }
+	ClearDiscovery(kr)
+	if got := ReadEndpointFile(); got != "" {
+		t.Fatalf("file should clear when peer not owning: %q", got)
+	}
+	if got := LoadPinnedEndpoint(kr); got != "" {
+		t.Fatalf("pin should clear with file: %q", got)
+	}
+}
