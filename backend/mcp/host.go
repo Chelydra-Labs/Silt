@@ -21,7 +21,12 @@ import (
 )
 
 // Host is the in-process MCP server lifecycle manager.
+//
+// Lock order: startMu outside mu. startMu serializes the full Start/stop
+// side-effect sequence (token, auditor, bind, Shutdown). mu protects short
+// status/config snapshots. Never acquire startMu while holding mu.
 type Host struct {
+	startMu  sync.Mutex // Start/Stop lifecycle (outside mu)
 	mu       sync.RWMutex
 	cfg      Config
 	bridge   Bridge
@@ -133,8 +138,14 @@ func (h *Host) Endpoint() string {
 //
 // Pure write-grant (or bridge pointer) toggles while already running skip the
 // HTTP drain/rebind — toolEnv reads cfg via Config() on each call.
+//
+// Concurrent Start/Stop are serialized on startMu so bind/Shutdown cannot
+// interleave mid-sequence.
 func (h *Host) Start(bridge Bridge, cfg Config) error {
 	cfg = NormalizeConfig(cfg)
+
+	h.startMu.Lock()
+	defer h.startMu.Unlock()
 
 	h.mu.Lock()
 	if h.canSkipRestartLocked(bridge, cfg) {
@@ -147,7 +158,7 @@ func (h *Host) Start(bridge Bridge, cfg Config) error {
 	h.mu.Unlock()
 
 	// Keep endpoint file during restart; clear only on terminal outcomes below.
-	h.stop(false)
+	h.stopLocked(false)
 
 	h.mu.Lock()
 	h.cfg = cfg
@@ -232,16 +243,19 @@ func (h *Host) Start(bridge Bridge, cfg Config) error {
 }
 
 // Stop drains and closes the HTTP listener and clears the discovery endpoint
-// file. Safe when not running. Prefer Start's internal stop(false) for restarts.
+// file. Safe when not running. Prefer Start's internal stopLocked(false) for restarts.
 func (h *Host) Stop() {
-	h.stop(true)
+	h.startMu.Lock()
+	defer h.startMu.Unlock()
+	h.stopLocked(true)
 }
 
-// stop shuts down HTTP resources. When clearEndpoint is true, removes the
-// discovery file (final stop / disable). When false, leaves the file so a
-// concurrent silt mcp discovery still sees the last-known port until the new
-// Start rewrites it or clears on failure.
-func (h *Host) stop(clearEndpoint bool) {
+// stopLocked shuts down HTTP resources. Caller must hold startMu.
+// When clearEndpoint is true, removes the discovery file (final stop / disable)
+// only if this process owns it (or the owner is stale). When false, leaves the
+// file so a concurrent silt mcp discovery still sees the last-known port until
+// the new Start rewrites it or clears on failure.
+func (h *Host) stopLocked(clearEndpoint bool) {
 	h.mu.Lock()
 	httpSrv := h.httpSrv
 	ln := h.listener
@@ -377,7 +391,13 @@ func (h *Host) startHTTP(srv *mcpsdk.Server, token string, port int) error {
 		}
 	}
 	if err := WriteEndpointFile(ep); err != nil {
-		log.Printf("mcp: endpoint file: %v", err)
+		// Peer ownership is expected when a second instance is running; HTTP
+		// still serves this process — only shared discovery is skipped.
+		if errors.Is(err, errEndpointOwnedByOther) {
+			log.Printf("mcp: endpoint file owned by another live Silt instance — leaving peer discovery intact")
+		} else {
+			log.Printf("mcp: endpoint file: %v", err)
+		}
 	}
 	return nil
 }

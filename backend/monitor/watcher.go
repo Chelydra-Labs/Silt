@@ -618,13 +618,13 @@ func (dw *DirectoryWatcher) listenLoop() {
 			} else if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
 				clearedIDs := dw.clearIndexForFile(path)
 				// Evict the per-file IO mutex so ioMu doesn't grow linearly with
-				// the cumulative set of distinct paths ever touched (#30). Safe
-				// against an in-flight LockFileWrite via the generation check.
+				// the cumulative set of distinct paths ever touched. Safe against
+				// an in-flight LockFileWrite via map-identity re-check after lock.
 				dw.coordinator.ReleaseFileMutex(path)
 				// Evict the per-block mutex entries for the blocks that lived in
 				// this file so blockMu doesn't grow with the cumulative history of
-				// every block UUID ever locked (#122). Safe via the generation
-				// check; an in-flight MutateBlock keeps its holder until unlock.
+				// every block UUID ever locked. Safe via the same map-identity
+				// re-check; an in-flight MutateBlock keeps its holder until unlock.
 				dw.coordinator.ReleaseBlockMutexes(clearedIDs)
 			}
 

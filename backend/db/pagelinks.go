@@ -82,10 +82,39 @@ func (dm *DatabaseManager) ListAllPageLinks() ([]PageLinkRow, error) {
 	return out, rows.Err()
 }
 
-// ListPageLinksByTargetRaws returns reverse-index rows whose target_raw is in
-// the given candidate list (used by rename/move rewrite).
+// pageLinkTargetINBatchSize is the max number of lower(target_raw) bind args
+// per SELECT. SQLite default max variable number is 999; stay under with
+// headroom. ListPageLinksByTargetRaws chunks larger candidate sets.
+const pageLinkTargetINBatchSize = 900
+
+// ListPageLinksByTargetRaws returns reverse-index rows whose target_raw matches
+// any candidate (case-insensitive). Used by rename/move inbound collect and
+// rewrite so large vaults avoid loading the full page_links table. Matching is
+// on lower(target_raw) so [[MyPage]] and [[mypage]] both hit; resolution still
+// gates ambiguous basenames in Go. Prefer LinkTargetRawCandidates for the
+// candidate list (path variants + segment suffixes).
+//
+// Large candidate lists are queried in batches of pageLinkTargetINBatchSize so
+// notebook/section renames with hundreds of pages never drop targets.
+//
+// Resolved target_* columns are intentionally unused: indexing stores them
+// NULL; authority is target_raw + page inventory resolution.
 func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLinkRow, error) {
 	if len(targets) == 0 {
+		return nil, nil
+	}
+	// Dedupe lowercased candidates for the IN list.
+	seen := make(map[string]bool, len(targets))
+	args := make([]any, 0, len(targets))
+	for _, t := range targets {
+		n := strings.ToLower(strings.TrimSpace(t))
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		args = append(args, n)
+	}
+	if len(args) == 0 {
 		return nil, nil
 	}
 	db, release, err := dm.handle()
@@ -93,33 +122,103 @@ func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLi
 		return nil, ErrDBClosed
 	}
 	defer release()
-	placeholders := make([]string, len(targets))
-	args := make([]any, len(targets))
-	for i, t := range targets {
-		placeholders[i] = "?"
-		args[i] = t
-	}
-	q := `SELECT source_notebook, source_section, source_page, source_block_id,
-	             target_raw, COALESCE(heading, ''), COALESCE(alias, '')
-	      FROM page_links
-	      WHERE target_raw IN (` + strings.Join(placeholders, ",") + `)`
-	rows, err := db.Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+
 	var out []PageLinkRow
-	for rows.Next() {
-		var r PageLinkRow
-		if err := rows.Scan(
-			&r.SourceNotebook, &r.SourceSection, &r.SourcePage, &r.SourceBlockID,
-			&r.TargetRaw, &r.Heading, &r.Alias,
-		); err != nil {
+	// Dedupe rows across batches (same link can match multiple candidates).
+	rowSeen := make(map[string]bool)
+	for start := 0; start < len(args); start += pageLinkTargetINBatchSize {
+		end := start + pageLinkTargetINBatchSize
+		if end > len(args) {
+			end = len(args)
+		}
+		batch := args[start:end]
+		placeholders := make([]string, len(batch))
+		for i := range batch {
+			placeholders[i] = "?"
+		}
+		// lower(target_raw) uses idx_page_links_raw_lower when present.
+		q := `SELECT source_notebook, source_section, source_page, source_block_id,
+		             target_raw, COALESCE(heading, ''), COALESCE(alias, '')
+		      FROM page_links
+		      WHERE lower(target_raw) IN (` + strings.Join(placeholders, ",") + `)`
+		rows, err := db.Query(q, batch...)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, r)
+		for rows.Next() {
+			var r PageLinkRow
+			if err := rows.Scan(
+				&r.SourceNotebook, &r.SourceSection, &r.SourcePage, &r.SourceBlockID,
+				&r.TargetRaw, &r.Heading, &r.Alias,
+			); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			key := r.SourceNotebook + "\x00" + r.SourceSection + "\x00" + r.SourcePage + "\x00" +
+				r.SourceBlockID + "\x00" + r.TargetRaw
+			if rowSeen[key] {
+				continue
+			}
+			rowSeen[key] = true
+			out = append(out, r)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
 	}
-	return out, rows.Err()
+	return out, nil
+}
+
+// LinkTargetRawCandidates returns every target_raw form that may uniquely
+// resolve to the given page locations: PathVariants plus intermediate
+// path-segment suffixes not already covered by PathVariants (so [[Active/Site]]
+// still matches Work/Projects/Active/Site). Candidates are deduped globally
+// across all targets. Callers pass the full list to ListPageLinksByTargetRaws,
+// which batches the SQL IN clause — do not truncate here.
+func LinkTargetRawCandidates(targets []struct{ Notebook, Section, Page string }) []string {
+	seen := make(map[string]bool)
+	var primary, suffixes []string
+	add := func(dst *[]string, s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		*dst = append(*dst, s)
+	}
+	for _, t := range targets {
+		if t.Page == "" {
+			continue
+		}
+		variants := PathVariants(t.Notebook, t.Section, t.Page)
+		variantSet := make(map[string]bool, len(variants))
+		for _, v := range variants {
+			variantSet[strings.ToLower(v)] = true
+			add(&primary, v)
+		}
+		// Intermediate suffixes only (skip forms already in PathVariants).
+		var parts []string
+		if t.Notebook != "" {
+			parts = append(parts, t.Notebook)
+		}
+		if t.Section != "" {
+			parts = append(parts, strings.Split(t.Section, "/")...)
+		}
+		parts = append(parts, t.Page)
+		// i=0 is the full path (already a PathVariant when notebook set);
+		// i=len-1 is the bare page (already a PathVariant). Middle values
+		// cover PageMatchesTarget's HasSuffix rule.
+		for i := 1; i < len(parts)-1; i++ {
+			suf := strings.Join(parts[i:], "/")
+			if variantSet[strings.ToLower(suf)] {
+				continue
+			}
+			add(&suffixes, suf)
+		}
+	}
+	return append(primary, suffixes...)
 }
 
 // ResolvePageLink resolves a wiki-link target via shortest-unique-path rules
