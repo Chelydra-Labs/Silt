@@ -4,6 +4,7 @@
   import { fade, fly } from 'svelte/transition'
   import ContextMenu from './ContextMenu.svelte'
   import { copyPagePath, copyPageReference } from '../lib/pageActions'
+  import { isDevMode, openInspect } from '../lib/devModeInspect'
   import { hiddenTabIds } from '../lib/tabOverflow'
 
   interface Props {
@@ -555,6 +556,23 @@
         <span class="material-symbols-outlined text-icon-md">link</span>
         Copy Page Reference
       </button>
+      {#if isDevMode()}
+        <div class="context-menu-separator" aria-hidden="true"></div>
+        <button
+          type="button"
+          role="menuitem"
+          onclick={() => {
+            closeContextMenu()
+            void openInspect()
+          }}
+        >
+          <span
+            class="material-symbols-outlined text-icon-md"
+            aria-hidden="true">bug_report</span
+          >
+          Inspect
+        </button>
+      {/if}
     {/if}
   </ContextMenu>
 {/if}

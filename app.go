@@ -18,6 +18,7 @@ import (
 	"silt/backend/core"
 	"silt/backend/db"
 	"silt/backend/keyring"
+	"silt/backend/mcp"
 	"silt/backend/monitor"
 	"silt/backend/parser"
 	"silt/backend/templates"
@@ -49,6 +50,9 @@ type App struct {
 	// mainWindow is the primary webview window, stored so RequestClose can
 	// hide it to the tray without going through v3's unexported windows map.
 	mainWindow application.Window
+	// openDevToolsMenuItem is View → Open Developer Tools. Enabled when Dev
+	// Mode or SILT_DEBUG is on (#684); nil until setupMenus runs.
+	openDevToolsMenuItem *application.MenuItem
 	// startupEvents captures events emitted before the frontend mounted.
 	// emitOrQueue appends here (in addition to emitting) until
 	// MarkFrontendReady flips frontendReady; GetStartupEvents drains the slice
@@ -85,6 +89,14 @@ type App struct {
 	// D-Bus can drop), so callers fall back to config + a warning on
 	// ErrUnavailable rather than failing the AI subsystem.
 	keyringStore keyring.Store
+
+	// mcpHost is the in-process local MCP server (#687). Started when
+	// ai.local_mcp.enabled and a vault is open; stopped on vault close,
+	// switch, and ServiceShutdown. Close-to-tray keeps the process (and MCP)
+	// alive; Quit drains via ServiceShutdown. Constructed once (NewApp /
+	// ensureMCPHost under mcpHostMu) so getters never race lazy init.
+	mcpHost   *mcp.Host
+	mcpHostMu sync.Mutex
 
 	// aiCtx is the app-lifecycle context for AI HTTP calls. Cancelled in
 	// shutdown() so in-flight completions/embeddings are cancelled on app
@@ -285,6 +297,11 @@ func NewApp() *App {
 		// call time, not here — a keyring can be present at build/init yet
 		// unavailable at runtime (locked GNOME session, dropped D-Bus).
 		keyringStore: keyring.Default(),
+		// Eager MCP host so GetLocalMCP* never races lazy construction.
+		mcpHost: mcp.NewHost(mcp.Options{
+			Keyring: keyring.Default(),
+			Version: appVersion,
+		}),
 	}
 }
 
@@ -333,15 +350,16 @@ func (a *App) ServiceShutdown() error {
 	// onVaultClose/onShutdown hook (#106) before IPC tears down.
 	a.emit("vault:closing", struct{}{})
 	// Wait for any in-flight Wails-bound calls (UpdateBlockState,
-	// QueryTasks) to complete before tearing
+	// QueryTasks, SetLocalMCPConfig) to complete before tearing
 	// down the DB, tracker, and watcher. Without this a fast window
-	// close could race an in-progress file write.
+	// close could race an in-progress file write or MCP Start.
 	a.wg.Wait()
 	// Take the write lock for the terminal teardown so any reader that
 	// slipped in between wg.Wait() returning and this point can't
-	// dereference a service mid-close. (No new handlers arrive after the
-	// Wails context is cancelled, but the lock makes the guarantee
-	// structural rather than relying on dispatch ordering.)
+	// dereference a service mid-close — including a concurrent
+	// syncMCPHost that would otherwise race Host.Start against stop.
+	// MCP is stopped inside teardownVaultServices under this lock only
+	// (not before), so Quit cannot leave a brief post-stop Start window.
 	a.vaultMu.Lock()
 	// Share the exact teardown path with CloseVault so both nil every
 	// service field. Nilling here matters: if a "change vault" IPC lands
@@ -358,6 +376,8 @@ func (a *App) ServiceShutdown() error {
 // and CloseVault (workspace switch) so the two paths can't drift. Safe to
 // call when services are already nil (each close is guarded).
 func (a *App) teardownVaultServices() {
+	// Stop MCP before audit/DB teardown so in-flight tools fail cleanly (#687).
+	a.stopMCPHost()
 	// Stop the audit writers FIRST so they drain queued entries for the closing
 	// vault before any service they depend on (just vaultPath at this point)
 	// goes away. After this returns, every enqueued audit write is on disk.
@@ -412,6 +432,8 @@ func (a *App) teardownVaultServices() {
 	}
 	a.coordinator = nil
 	a.vaultPath = ""
+	// Drop Dev Mode menu enablement unless SILT_DEBUG keeps it on (#684).
+	a.syncOpenDevToolsMenuItemEnabled(strings.EqualFold(os.Getenv("SILT_DEBUG"), "1"))
 	// Session security aggregates are vault-scoped in practice; clear on
 	// vault close so the next vault doesn't inherit denial badges (#518).
 	if a.securityStats != nil {
@@ -596,6 +618,14 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// (teardown cleared a.vaultPath; the final assignment below is after the
 	// watcher starts). Set it here so migrate does not hash an empty path.
 	a.vaultPath = vaultPath
+	// vaultMu held exclusively — pass enablement without re-locking (#684).
+	devToolsMenuOn := strings.EqualFold(os.Getenv("SILT_DEBUG"), "1")
+	if !devToolsMenuOn {
+		a.configMu.RLock()
+		devToolsMenuOn = a.cfg.UI.OpenDevtoolsOnStartup != nil && *a.cfg.UI.OpenDevtoolsOnStartup
+		a.configMu.RUnlock()
+	}
+	a.syncOpenDevToolsMenuItemEnabled(devToolsMenuOn)
 	a.migrateAIKeysToKeyringLocked()
 
 	// F3: verify linked-notebook fingerprints before the vault scan. Legacy
@@ -805,6 +835,11 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	if failed := watcher.FailedPaths(); len(failed) > 0 {
 		a.emitOrQueue("vault:watch-coverage", failed)
 	}
+
+	// Local MCP host (#687): start when enabled in config.yaml. Safe no-op
+	// when disabled. Caller holds vaultMu.Lock — must use Locked variant
+	// (Go RWMutex deadlocks on RLock while the same goroutine holds Lock).
+	a.syncMCPHostLocked()
 
 	return nil
 }

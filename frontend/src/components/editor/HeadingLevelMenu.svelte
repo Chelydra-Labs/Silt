@@ -4,12 +4,27 @@
 
   interface Props {
     editor: Editor | null
+    /** Roving tabindex from the parent format toolbar (#690). */
+    toolbarTabIndex?: number
+    onToolbarFocus?: () => void
+    /** Notifies parent when the dropdown opens/closes (toolbar arrow roving). */
+    onMenuOpenChange?: (open: boolean) => void
   }
 
-  let { editor }: Props = $props()
+  let {
+    editor,
+    toolbarTabIndex = 0,
+    onToolbarFocus,
+    onMenuOpenChange
+  }: Props = $props()
 
   let menuOpen = $state(false)
+
+  $effect(() => {
+    onMenuOpenChange?.(menuOpen)
+  })
   let wrapperEl = $state<HTMLDivElement | null>(null)
+  let triggerEl = $state<HTMLButtonElement | null>(null)
 
   $effect(() => {
     if (!menuOpen) return
@@ -18,8 +33,20 @@
         menuOpen = false
       }
     }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        menuOpen = false
+        triggerEl?.focus()
+      }
+    }
     document.addEventListener('click', onClick)
-    return () => document.removeEventListener('click', onClick)
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('click', onClick)
+      document.removeEventListener('keydown', onKey, true)
+    }
   })
 
   type Option = {
@@ -116,10 +143,14 @@
   <button
     type="button"
     class="heading-trigger"
+    bind:this={triggerEl}
     aria-expanded={menuOpen}
     aria-haspopup="menu"
     aria-label="Block type"
+    data-tb
+    tabindex={toolbarTabIndex}
     onclick={() => (menuOpen = !menuOpen)}
+    onfocus={() => onToolbarFocus?.()}
   >
     {label}
     <span class="material-symbols-outlined chevron" aria-hidden="true"

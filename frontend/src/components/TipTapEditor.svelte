@@ -71,7 +71,7 @@
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import ChoiceDialog from './ChoiceDialog.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
-  import { OpenDevTools } from '../../bindings/silt/app.js'
+  import { isDevMode, openInspect } from '../lib/devModeInspect'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
   import BlockPickerModal from './BlockPickerModal.svelte'
@@ -309,23 +309,31 @@
     }
   }
 
-  // --- Inline link URL input (#168) ----------------------------------------
-  function openLinkInput(): void {
+  // --- Inline link URL input (#168 / #689) ---------------------------------
+  // Opens for insert or edit. Existing links are never removed here — the
+  // selection bubble exposes Edit/Open/Copy/Remove explicitly (#689).
+  function openLinkInput(prefill?: string): void {
     if (!editorInstance || editorInstance.isDestroyed) return
     const { selection } = editorInstance.state
-    if (selection.empty) return
-    // If already linked, remove instead of prompting.
-    if (editorInstance.isActive('link')) {
-      editorInstance.chain().focus().unsetLink().run()
-      return
-    }
+    const inLink = editorInstance.isActive('link')
+    // New links need a non-empty selection; edit can open with the caret in a link.
+    if (selection.empty && !inLink && prefill == null) return
     try {
       const coords = editorInstance.view.coordsAtPos(selection.from)
       linkInputCoords = { left: coords.left, top: coords.bottom }
     } catch {
       linkInputCoords = null
     }
-    linkInputValue = ''
+    let initial = prefill ?? ''
+    if (!initial && inLink) {
+      try {
+        const attrs = editorInstance.getAttributes('link') as { href?: string }
+        initial = attrs?.href ?? ''
+      } catch {
+        initial = ''
+      }
+    }
+    linkInputValue = initial
     showLinkInput = true
   }
 
@@ -333,7 +341,9 @@
     if (!editorInstance || editorInstance.isDestroyed) return
     const url = linkInputValue.trim()
     if (url) {
-      editorInstance.chain().focus().toggleLink({ href: url }).run()
+      // setLink updates an existing mark or applies a new one without toggle
+      // flip-flop when the selection is already linked (#689 edit path).
+      editorInstance.chain().focus().setLink({ href: url }).run()
     } else {
       editorInstance.chain().focus().run()
     }
@@ -958,8 +968,9 @@
   })
 
   // Global event listeners for cross-component hotkeys.
-  function onOpenLinkInput(): void {
-    openLinkInput()
+  function onOpenLinkInput(e: Event): void {
+    const detail = (e as CustomEvent<{ href?: string }>).detail
+    openLinkInput(detail?.href)
   }
   function onChangeBlockType(e: Event): void {
     const detail = (e as CustomEvent).detail
@@ -1648,19 +1659,13 @@
     closeContextMenu()
   }
 
-  /** Dev Mode Inspect (#679) — opens webview DevTools when the flag is on. */
+  /** Dev Mode Inspect (#679/#683) — opens webview DevTools when the flag is on. */
   async function handleInspect(): Promise<void> {
     closeContextMenu()
-    try {
-      await OpenDevTools()
-    } catch (e) {
-      console.error('OpenDevTools failed:', e)
-    }
+    await openInspect()
   }
 
-  let devModeEnabled = $derived(
-    settings.config?.ui?.open_devtools_on_startup === true
-  )
+  let devModeEnabled = $derived(isDevMode())
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->

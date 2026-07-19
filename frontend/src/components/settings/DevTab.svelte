@@ -49,7 +49,10 @@
               >Ctrl+Shift+F12</kbd
             > (View → Open Developer Tools)
           </li>
-          <li>Right-click in the editor and choose <strong>Inspect</strong></li>
+          <li>
+            Right-click the editor, sidebar, tabs, empty content, or Tasks
+            manage menu and choose <strong>Inspect</strong>
+          </li>
         </ul>
         <button
           type="button"
@@ -59,10 +62,11 @@
           Open DevTools
         </button>
         <p class="text-text-muted text-type-2xs font-body-md leading-relaxed">
-          If Dev Mode was off when the app launched, restart after enabling it
-          so the webview is created with DevTools support. Runtime Inspect and
-          the shortcut work once the flag is on
-          <em>and</em> the window was created with DevTools enabled (or
+          View → Open Developer Tools tracks Dev Mode live (enabled when on,
+          disabled when off; <code>SILT_DEBUG=1</code> keeps it enabled). If Dev
+          Mode was off when the app launched, restart after enabling it so the
+          webview is created with DevTools support — runtime Inspect and the
+          shortcut still need a window created with DevTools enabled (or
           <code>SILT_DEBUG=1</code>). Production builds may need a
           DevTools-enabled build for the inspector to appear.
         </p>

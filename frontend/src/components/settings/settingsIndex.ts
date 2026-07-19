@@ -236,6 +236,21 @@ const CORE_INDEX: SettingsIndexEntry[] = [
     sectionId: 'ai'
   },
   {
+    label: 'Local MCP',
+    keywords: [
+      'mcp',
+      'agent',
+      'claude',
+      'opencode',
+      'codex',
+      'loopback',
+      'stdio',
+      'local ai integration'
+    ],
+    sectionId: 'ai',
+    anchorId: 'ai-local-mcp'
+  },
+  {
     label: 'Answer Style',
     keywords: [
       'ai',

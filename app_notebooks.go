@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -15,6 +16,14 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// ErrPageMovedOrDeleted is returned when a save acquires the file lock but the
+// path no longer exists (rename/delete won the race). Prefix is stable for FE.
+var ErrPageMovedOrDeleted = errors.New("page_moved")
+
+func errPageMovedOrDeleted(filePath string) error {
+	return fmt.Errorf("%w: page file no longer exists (moved or deleted): %s", ErrPageMovedOrDeleted, filePath)
+}
 
 // CreateNotebook creates a top-level notebook folder under the vault root.
 func (a *App) CreateNotebook(name string) error {
@@ -909,6 +918,17 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	var writeErr error
 	a.coordinator.LockBlocksWrite(blockIDs, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
+			// After waiting for structural locks, refuse to recreate a path
+			// that rename/delete already moved away (#691). Fail closed on any
+			// Stat error (permission/transient) — do not write blindly.
+			if _, err := os.Stat(filePath); err != nil {
+				if os.IsNotExist(err) {
+					writeErr = errPageMovedOrDeleted(filePath)
+				} else {
+					writeErr = err
+				}
+				return
+			}
 			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks)
 		})
 	}) // LockBlocksWrite
@@ -1021,6 +1041,17 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 	var writeErr error
 	a.coordinator.LockBlocksWrite(beforeIDs, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
+			// After waiting for structural locks, refuse to recreate a path
+			// that rename/delete already moved away (#691). Fail closed on any
+			// Stat error (permission/transient) — do not write blindly.
+			if _, err := os.Stat(filePath); err != nil {
+				if os.IsNotExist(err) {
+					writeErr = errPageMovedOrDeleted(filePath)
+				} else {
+					writeErr = err
+				}
+				return
+			}
 			contentBytes, err := os.ReadFile(filePath)
 			if err != nil && !os.IsNotExist(err) {
 				writeErr = fmt.Errorf("failed to read existing file: %w", err)

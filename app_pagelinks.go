@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"silt/backend/core"
 	"silt/backend/db"
 	"silt/backend/parser"
 	"sort"
@@ -52,13 +53,20 @@ type pageLinksRewriteResult struct {
 // basename in two pages) are left untouched — rewriting them would corrupt
 // the other page's inbound links (#545 review fix).
 //
-// Runs inside the caller's notebook-root LockFileWrite; acquires a per-source-
-// file LockFileWrite for each rewrite so it cannot race autosave.
+// Acquires a per-source-file LockFileWrite for each rewrite so it cannot race
+// autosave. Structural callers pass heldPaths (normalized lock set) so sources
+// already locked skip re-entry; any source not in the set still takes
+// LockFileWrite (#691).
 func (a *App) rewriteInboundPageLinks(oldNB, oldSec, oldPage, newNB, newSec, newPage string) {
-	a.rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage, nil)
+	a.rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage, nil, nil)
 }
 
-func (a *App) rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage string, journal map[string]renameLinkJournalEntry) {
+// rewriteInboundPageLinksWithJournal rewrites inbound wiki-links. heldPaths is
+// the normalized set of file locks the structural caller already holds; when
+// non-nil, sources in that set skip LockFileWrite (non-reentrant). Sources not
+// in the set still take LockFileWrite so a late-arriving inbound file cannot
+// race autosave (#691).
+func (a *App) rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage string, journal map[string]renameLinkJournalEntry, heldPaths map[string]bool) {
 	if a.db == nil || oldPage == "" || newPage == "" {
 		return
 	}
@@ -150,9 +158,10 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, 
 		}
 
 		// Acquire the per-file write lock so the rewrite cannot race a
-		// concurrent SaveFileBlocks (autosave) on the same source file.
+		// concurrent SaveFileBlocks (autosave) on the same source file —
+		// unless the structural caller already holds this exact path (#691).
 		writeOK := false
-		a.coordinator.LockFileWrite(filePath, func() {
+		doRewrite := func() {
 			contentBytes, err := os.ReadFile(filePath)
 			if err != nil {
 				log.Printf("rewriteInboundPageLinks: read %s: %v", filePath, err)
@@ -182,7 +191,13 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, 
 				return
 			}
 			writeOK = true
-		})
+		}
+		held := heldPaths != nil && heldPaths[core.NormalizeFileLockPath(filePath)]
+		if held {
+			doRewrite()
+		} else {
+			a.coordinator.LockFileWrite(filePath, doRewrite)
+		}
 		if !writeOK {
 			if len(seen) > 0 {
 				failed++
@@ -212,4 +227,64 @@ func (a *App) rewriteInboundPageLinksForSection(notebook, oldSec, newSec string,
 		}
 		a.rewriteInboundPageLinks(notebook, oldSec, page, notebook, newSec, page)
 	}
+}
+
+// collectInboundSourcePaths returns on-disk paths of pages that have wiki-links
+// uniquely resolving to any of the given (notebook, section, page) targets.
+// Structural rename/delete locks these together with descendant paths so
+// inbound rewrites do not nest LockFileWrite under LockPathsWrite (#691).
+func (a *App) collectInboundSourcePaths(targets []struct{ nb, sec, page string }) []string {
+	if a.db == nil || len(targets) == 0 {
+		return nil
+	}
+	want := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		if t.page == "" {
+			continue
+		}
+		want[t.nb+"\x00"+t.sec+"\x00"+t.page] = true
+	}
+	if len(want) == 0 {
+		return nil
+	}
+
+	var rows []db.PageLinkRow
+	var pages []db.PageLoc
+	err := a.coordinator.WithDBReadResult(func() error {
+		got, err := a.db.ListAllPageLinks()
+		if err != nil {
+			return err
+		}
+		rows = got
+		pages, err = a.db.ListDistinctPages()
+		return err
+	})
+	if err != nil {
+		log.Printf("collectInboundSourcePaths: %v", err)
+		return nil
+	}
+
+	seenPath := map[string]bool{}
+	var out []string
+	for _, r := range rows {
+		ref := db.ResolvePageLinkAgainst(r.TargetRaw, pages)
+		if !ref.Exists {
+			continue
+		}
+		if !want[ref.Notebook+"\x00"+ref.Section+"\x00"+ref.Page] {
+			continue
+		}
+		source := a.resolveSourceByName(r.SourceNotebook)
+		notebookDir, err := a.resolveNotebookDir(r.SourceNotebook, source)
+		if err != nil {
+			continue
+		}
+		filePath := filepath.Join(notebookDir, r.SourceSection, r.SourcePage+".md")
+		if !isPathWithinRoot(filePath, notebookDir) || seenPath[filePath] {
+			continue
+		}
+		seenPath[filePath] = true
+		out = append(out, filePath)
+	}
+	return out
 }

@@ -1,0 +1,9 @@
+{
+  "mcp": {
+    "silt": {
+      "type": "local",
+      "command": ["silt", "mcp"],
+      "enabled": true
+    }
+  }
+}

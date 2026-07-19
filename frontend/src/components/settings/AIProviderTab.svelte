@@ -1,13 +1,11 @@
 <script lang="ts">
   // Settings → AI Provider tab.
   //
-  // Thin view over the reactive controller in
-  // ./ai/aiProviderController.svelte.ts, which owns config state, the
-  // chat/embedding sync fan-out, API-key management, the live connection
-  // probe, model discovery, and the audit log. The IPC bindings live in the
-  // controller so this view never touches IPC directly. See the controller
-  // for behavior; this file is layout + a11y only.
-  import { onMount, tick } from 'svelte'
+  // Thin view over reactive controllers:
+  // ./ai/aiProviderController.svelte.ts (provider/chat/embedding/audit)
+  // ./ai/localMcpController.svelte.ts (Local MCP host)
+  // IPC lives in controllers — this file is layout + a11y only.
+  import { onMount, onDestroy, tick } from 'svelte'
   import {
     createAIProviderController,
     LOCAL_DEFAULT,
@@ -17,6 +15,7 @@
     type ProviderType,
     type Which
   } from './ai/aiProviderController.svelte'
+  import { createLocalMcpController } from './ai/localMcpController.svelte'
   import PresetControl from './PresetControl.svelte'
   import InfoTooltip from './InfoTooltip.svelte'
   import { getEmbeddingCapabilities } from '../../settings/modelCapabilities'
@@ -45,6 +44,9 @@
       summaries_enabled?: boolean
     }) => Promise<void>
   }
+
+  // Local MCP (#687) — controller owns IPC; view binds to reactive getters.
+  const mcp = createLocalMcpController()
 
   // Degraded semantic index / hybrid search signals (#630).
   const qaStaleReason = $derived.by(() => {
@@ -128,7 +130,8 @@
     if (
       anchor === 'ai-setup' ||
       anchor === 'ai-features' ||
-      anchor === 'ai-embedding-section'
+      anchor === 'ai-embedding-section' ||
+      anchor === 'ai-local-mcp'
     ) {
       return 'ai-setup'
     }
@@ -207,8 +210,19 @@
     if (seg) selectSegment(seg)
   })
 
+  function ringClass(id: string): string {
+    return ringAnchor === id
+      ? 'ring-2 ring-accent-primary-start/50 ring-offset-2 ring-offset-surface-app'
+      : ''
+  }
+
   onMount(() => {
     void ai.reload()
+    void mcp.refresh()
+  })
+
+  onDestroy(() => {
+    mcp.destroy()
   })
 
   // Audit lazy-load: the controller is a plain module (no component context),
@@ -514,6 +528,227 @@
             {#if ai.featuresError}
               <p class="text-error text-type-xs m-0" role="alert">
                 {ai.featuresError}
+              </p>
+            {/if}
+          </section>
+
+          <!-- Local MCP (#687) -->
+          <section
+            id="ai-local-mcp"
+            aria-label="Local MCP"
+            class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4 space-y-4 {ringClass(
+              'ai-local-mcp'
+            )}"
+            aria-busy={mcp.saving}
+          >
+            <div>
+              <h3 class="text-text-primary text-type-md font-semibold m-0">
+                Local MCP
+              </h3>
+              <p class="text-text-muted text-type-xs font-label-sm m-0 mt-0.5">
+                Generic MCP server for any desktop agent. Read (and with grant,
+                edit) this vault over loopback. Off by default.
+              </p>
+            </div>
+
+            <div
+              class="flex flex-col sm:flex-row sm:items-start justify-between gap-4"
+            >
+              <div class="space-y-0.5 min-w-0">
+                <span
+                  id="mcp-enable-label"
+                  class="text-text-primary text-type-sm font-semibold block"
+                >
+                  Enable local AI integration
+                </span>
+                <span class="text-text-muted text-type-xs font-label-sm block">
+                  Starts when a vault is open. Close-to-tray keeps MCP running;
+                  Quit stops it.
+                </span>
+              </div>
+              <label
+                class="flex items-center cursor-pointer select-none"
+                for="mcp-enable"
+              >
+                <input
+                  id="mcp-enable"
+                  type="checkbox"
+                  class="keyring-switch peer sr-only"
+                  aria-labelledby="mcp-enable-label"
+                  checked={mcp.enabled}
+                  disabled={mcp.saving}
+                  onchange={(e) =>
+                    void mcp.save({ enabled: e.currentTarget.checked })}
+                />
+                <span
+                  aria-hidden="true"
+                  class="keyring-switch-track"
+                  class:on={mcp.enabled}
+                ></span>
+              </label>
+            </div>
+
+            {#if mcp.trayPrompt}
+              <div
+                class="rounded-lg border border-accent-primary-start/30 bg-accent-primary-glow/15 p-3 space-y-2"
+                role="status"
+              >
+                <p class="text-text-primary text-type-xs m-0">
+                  Enable <strong>Close to tray</strong> so agents can keep using MCP
+                  after you close the window? You can decline and quit will still
+                  stop MCP.
+                </p>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    class="px-3 py-1 rounded-md bg-accent-primary-start text-surface-app text-type-xs border-none cursor-pointer"
+                    onclick={() => void mcp.acceptTray()}
+                  >
+                    Enable close to tray
+                  </button>
+                  <button
+                    type="button"
+                    class="px-3 py-1 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
+                    onclick={() => mcp.dismissTrayPrompt()}
+                  >
+                    Not now
+                  </button>
+                </div>
+              </div>
+            {/if}
+
+            <div
+              class="ml-3 pl-3 border-l border-surface-panel-border space-y-3"
+              class:opacity-50={!mcp.enabled}
+            >
+              <div
+                class="flex flex-col sm:flex-row sm:items-start justify-between gap-4"
+              >
+                <div class="space-y-0.5 min-w-0">
+                  <span
+                    id="mcp-write-label"
+                    class="text-text-primary text-type-sm font-semibold block"
+                  >
+                    Allow write tools
+                  </span>
+                  <span
+                    class="text-text-muted text-type-xs font-label-sm block"
+                  >
+                    create_page and update_blocks. Read tools stay available
+                    without this.
+                  </span>
+                </div>
+                <label
+                  class="flex items-center select-none"
+                  class:cursor-pointer={mcp.enabled}
+                  class:cursor-not-allowed={!mcp.enabled}
+                  for="mcp-write"
+                >
+                  <input
+                    id="mcp-write"
+                    type="checkbox"
+                    class="keyring-switch peer sr-only"
+                    aria-labelledby="mcp-write-label"
+                    checked={mcp.write}
+                    disabled={mcp.saving || !mcp.enabled}
+                    onchange={(e) =>
+                      void mcp.save({ write: e.currentTarget.checked })}
+                  />
+                  <span
+                    aria-hidden="true"
+                    class="keyring-switch-track"
+                    class:on={mcp.write}
+                    class:disabled={!mcp.enabled}
+                  ></span>
+                </label>
+              </div>
+
+              <p class="text-text-muted text-type-xs m-0" id="mcp-availability">
+                MCP availability:
+                <strong class="text-text-primary">
+                  {mcp.status?.state ?? 'unknown'}
+                </strong>
+                {#if mcp.status?.message}
+                  — {mcp.status.message}
+                {/if}
+                {#if mcp.status?.endpoint}
+                  <br />
+                  Endpoint:
+                  <code class="text-text-primary">{mcp.status.endpoint}</code>
+                {/if}
+              </p>
+
+              <div class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer disabled:opacity-50"
+                  disabled={mcp.saving}
+                  onclick={() => void mcp.refresh()}
+                >
+                  Refresh status
+                </button>
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
+                  title="Shows the bearer in the UI for 30s, then clears it from memory"
+                  onclick={() => void mcp.revealToken()}
+                >
+                  {mcp.tokenVisible ? 'Token shown' : 'Show auth token'}
+                </button>
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
+                  title="Copies the bearer to the clipboard. We try to clear the clipboard after 30s; clipboard history apps may retain a copy."
+                  onclick={() => void mcp.copyToken()}
+                >
+                  {mcp.tokenCopied ? 'Copied' : 'Copy token'}
+                </button>
+                <button
+                  type="button"
+                  class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
+                  onclick={() => void mcp.copyHint()}
+                >
+                  Copy OpenCode snippet
+                </button>
+              </div>
+              {#if mcp.tokenVisible && mcp.token}
+                <p class="text-text-muted text-type-xs m-0 break-all">
+                  Bearer token (OS keyring):
+                  <code class="text-text-primary select-all">{mcp.token}</code>
+                </p>
+              {/if}
+
+              <div class="space-y-2" aria-label="Client install notes">
+                <p class="text-text-primary text-type-xs font-semibold m-0">
+                  Client setup
+                </p>
+                {#each mcp.installNotes() as note (note.title)}
+                  <details
+                    class="rounded-md border border-surface-panel-border bg-surface-panel/30 p-2"
+                  >
+                    <summary
+                      class="text-text-primary text-type-xs font-semibold cursor-pointer"
+                    >
+                      {note.title}
+                    </summary>
+                    <pre
+                      class="text-text-muted text-type-2xs m-0 mt-2 whitespace-pre-wrap break-words font-mono">{note.body}</pre>
+                    <button
+                      type="button"
+                      class="mt-2 px-2 py-1 rounded-md bg-surface-panel text-text-primary text-type-2xs border border-surface-panel-border cursor-pointer"
+                      onclick={() =>
+                        void navigator.clipboard.writeText(note.body)}
+                    >
+                      Copy {note.title} notes
+                    </button>
+                  </details>
+                {/each}
+              </div>
+            </div>
+
+            {#if mcp.error}
+              <p class="text-error text-type-xs m-0" role="alert">
+                {mcp.error}
               </p>
             {/if}
           </section>

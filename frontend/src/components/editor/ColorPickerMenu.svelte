@@ -12,12 +12,29 @@
     editor: Editor | null
     markType: 'textColor' | 'backgroundColor'
     isDark: boolean
+    /** Roving tabindex from the parent format toolbar (#690). */
+    toolbarTabIndex?: number
+    onToolbarFocus?: () => void
+    /** Notifies parent when the dropdown opens/closes (toolbar arrow roving). */
+    onMenuOpenChange?: (open: boolean) => void
   }
 
-  let { editor, markType, isDark }: Props = $props()
+  let {
+    editor,
+    markType,
+    isDark,
+    toolbarTabIndex = 0,
+    onToolbarFocus,
+    onMenuOpenChange
+  }: Props = $props()
 
   let menuOpen = $state(false)
+
+  $effect(() => {
+    onMenuOpenChange?.(menuOpen)
+  })
   let wrapperEl = $state<HTMLDivElement | null>(null)
+  let triggerEl = $state<HTMLButtonElement | null>(null)
 
   $effect(() => {
     if (!menuOpen) return
@@ -26,8 +43,20 @@
         menuOpen = false
       }
     }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        menuOpen = false
+        triggerEl?.focus()
+      }
+    }
     document.addEventListener('click', onClick)
-    return () => document.removeEventListener('click', onClick)
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('click', onClick)
+      document.removeEventListener('keydown', onKey, true)
+    }
   })
 
   function applyColor(entry: ColorEntry): void {
@@ -74,10 +103,14 @@
   <button
     type="button"
     class="color-trigger"
+    bind:this={triggerEl}
     aria-expanded={menuOpen}
     aria-haspopup="menu"
     aria-label={triggerLabel}
+    data-tb
+    tabindex={toolbarTabIndex}
     onclick={() => (menuOpen = !menuOpen)}
+    onfocus={() => onToolbarFocus?.()}
   >
     <span class="material-symbols-outlined" aria-hidden="true"
       >{triggerIcon}</span

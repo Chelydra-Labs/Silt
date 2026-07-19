@@ -761,14 +761,38 @@ func (a *App) SetFocusMode(value bool) error {
 // SetShowFormatToolbar.
 func (a *App) SetOpenDevtoolsOnStartup(value bool) error {
 	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
 	if a.vaultPath == "" {
+		a.vaultMu.RUnlock()
 		return fmt.Errorf("vault not loaded")
 	}
 	a.configMu.Lock()
-	defer a.configMu.Unlock()
 	a.cfg.UI.OpenDevtoolsOnStartup = &value
-	return a.saveConfigTracked(a.cfg)
+	err := a.saveConfigTracked(a.cfg)
+	a.configMu.Unlock()
+	a.vaultMu.RUnlock()
+	if err != nil {
+		return err
+	}
+	// After locks released — sync takes vaultMu/configMu via devToolsRuntimeEnabled.
+	a.syncOpenDevToolsMenuItem()
+	return nil
+}
+
+// syncOpenDevToolsMenuItem enables View → Open Developer Tools when runtime
+// DevTools are allowed (vault Dev Mode or SILT_DEBUG=1). Prefer disabled over
+// hidden so the item stays visible in the menu structure (#684).
+// Must not be called while holding vaultMu exclusively (RLock would deadlock).
+func (a *App) syncOpenDevToolsMenuItem() {
+	a.syncOpenDevToolsMenuItemEnabled(a.devToolsRuntimeEnabled())
+}
+
+// syncOpenDevToolsMenuItemEnabled applies a precomputed enable flag — use when
+// the caller already holds vaultMu (e.g. initializeVaultServices).
+func (a *App) syncOpenDevToolsMenuItemEnabled(enabled bool) {
+	if a.openDevToolsMenuItem == nil {
+		return
+	}
+	a.openDevToolsMenuItem.SetEnabled(enabled)
 }
 
 // OpenDevTools opens the webview developer tools when Dev Mode is enabled

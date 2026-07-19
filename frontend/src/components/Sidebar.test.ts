@@ -33,9 +33,14 @@ const mocks = vi.hoisted(() => ({
   setQuickAccessCollapsed: vi.fn(),
   setFavoritePage: vi.fn(),
   queryTagHierarchy: vi.fn().mockResolvedValue([]),
+  openDevTools: vi.fn().mockResolvedValue(undefined),
   // The silt-tasks sidebar queries counts/facets on mount via ctx.sqliteQuery.
   // Return empty aggregates so the sidebar renders its empty state cleanly.
   sqliteQuery: vi.fn().mockResolvedValue({ rows: [], truncated: false })
+}))
+
+const settingsMock = vi.hoisted(() => ({
+  config: null as null | { ui?: { open_devtools_on_startup?: boolean } }
 }))
 
 // Hoisted plugin-store mock so tests can swap in plugin entries that
@@ -79,7 +84,12 @@ vi.mock('../../bindings/silt/app.js', () => ({
   SetNavigationSectionExpanded: mocks.setNavigationSectionExpanded,
   SetQuickAccessCollapsed: mocks.setQuickAccessCollapsed,
   SetFavoritePage: mocks.setFavoritePage,
-  QueryTagHierarchy: mocks.queryTagHierarchy
+  QueryTagHierarchy: mocks.queryTagHierarchy,
+  OpenDevTools: mocks.openDevTools
+}))
+
+vi.mock('../settings/store.svelte', () => ({
+  settings: settingsMock
 }))
 
 vi.mock('../plugins/store.svelte', () => ({
@@ -127,6 +137,8 @@ async function flush() {
 
 describe('Sidebar', () => {
   beforeEach(() => {
+    settingsMock.config = null
+    mocks.openDevTools.mockReset().mockResolvedValue(undefined)
     mocks.listNavigation.mockReset()
     mocks.createNotebook.mockReset()
     mocks.createSection.mockReset()
@@ -1564,6 +1576,63 @@ describe('Sidebar', () => {
     await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
     await flush()
     expect(document.activeElement).toBe(section)
+  })
+
+  it('shows Inspect on tree context menu when Dev Mode is on (#683)', async () => {
+    settingsMock.config = { ui: { open_devtools_on_startup: true } }
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: [],
+      quick_access_collapsed: true
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Daily' }))
+    const inspect = screen.getByRole('menuitem', { name: /Inspect/i })
+    expect(inspect).toBeTruthy()
+    await fireEvent.click(inspect)
+    expect(mocks.openDevTools).toHaveBeenCalled()
+  })
+
+  it('hides Inspect on tree context menu when Dev Mode is off (#683)', async () => {
+    settingsMock.config = { ui: { open_devtools_on_startup: false } }
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: [],
+      quick_access_collapsed: true
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Daily' }))
+    expect(screen.queryByRole('menuitem', { name: /Inspect/i })).toBeNull()
   })
 
   it('leaves shifted printable hotkeys for global handlers while retaining typeahead', async () => {

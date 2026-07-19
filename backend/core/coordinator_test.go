@@ -196,19 +196,20 @@ func (e errSentinel) Error() string { return string(e) }
 // ioMu map no longer holds an entry for the path (the eviction actually ran).
 func TestReleaseFileMutex_EntryDeleted(t *testing.T) {
 	ec := newTestCoordinator(t)
-	path := "/vault/file-a.md"
+	path := filepath.Join(t.TempDir(), "file-a.md")
+	key := NormalizeFileLockPath(path)
 
 	done := make(chan struct{})
 	ec.LockFileWrite(path, func() { close(done) })
 	<-done
 
-	if _, ok := ec.ioMu.Load(path); !ok {
+	if _, ok := ec.ioMu.Load(key); !ok {
 		t.Fatal("expected ioMu entry to exist after a LockFileWrite")
 	}
 
 	ec.ReleaseFileMutex(path)
 
-	if _, ok := ec.ioMu.Load(path); ok {
+	if _, ok := ec.ioMu.Load(key); ok {
 		t.Fatal("expected ioMu entry to be deleted after ReleaseFileMutex")
 	}
 }
@@ -217,14 +218,15 @@ func TestReleaseFileMutex_EntryDeleted(t *testing.T) {
 // lands on a brand-new entry (a fresh mutex generation), not the stale one.
 func TestReleaseFileMutex_NextAcquireGetsFreshEntry(t *testing.T) {
 	ec := newTestCoordinator(t)
-	path := "/vault/file-b.md"
+	path := filepath.Join(t.TempDir(), "file-b.md")
+	key := NormalizeFileLockPath(path)
 
 	ec.LockFileWrite(path, func() {})
-	first, _ := ec.ioMu.Load(path)
+	first, _ := ec.ioMu.Load(key)
 	ec.ReleaseFileMutex(path)
 
 	ec.LockFileWrite(path, func() {})
-	second, _ := ec.ioMu.Load(path)
+	second, _ := ec.ioMu.Load(key)
 
 	if first.(*fileMutexEntry).mu == second.(*fileMutexEntry).mu {
 		t.Error("post-release LockFileWrite reused the evicted mutex instead of creating a fresh one")
@@ -238,7 +240,7 @@ func TestReleaseFileMutex_NextAcquireGetsFreshEntry(t *testing.T) {
 // under -race to catch any data race in the generation handoff.
 func TestReleaseFileMutex_NoDeadlockWithInFlightHolder(t *testing.T) {
 	ec := newTestCoordinator(t)
-	path := "/vault/file-c.md"
+	path := filepath.Join(t.TempDir(), "file-c.md")
 
 	holderReleased := make(chan struct{})
 	holderDone := make(chan struct{})
@@ -281,7 +283,7 @@ func TestReleaseFileMutex_NoDeadlockWithInFlightHolder(t *testing.T) {
 // confirming none are lost (every task runs) and the race detector stays clean.
 func TestReleaseFileMutex_ConcurrentCallersSerialize(t *testing.T) {
 	ec := newTestCoordinator(t)
-	path := "/vault/file-d.md"
+	path := filepath.Join(t.TempDir(), "file-d.md")
 
 	var ran int64
 	var wg sync.WaitGroup
@@ -328,17 +330,18 @@ func TestReleaseFileMutex_ConcurrentCallersSerialize(t *testing.T) {
 // MUST be able to distinguish a released entry from the live one.
 func TestReleaseFileMutex_ReleasedEntryNotLive(t *testing.T) {
 	ec := newTestCoordinator(t)
-	path := "/vault/file-stale.md"
+	path := filepath.Join(t.TempDir(), "file-stale.md")
+	key := NormalizeFileLockPath(path)
 
 	ec.LockFileWrite(path, func() {})
-	stale := ec.getFileEntry(path)
+	stale := ec.getFileEntry(key)
 
 	// Evict the live entry (concurrent ReleaseFileMutex), then prime a fresh
 	// one so the map value differs from `stale`.
 	ec.ReleaseFileMutex(path)
 	ec.LockFileWrite(path, func() {})
 
-	current, ok := ec.ioMu.Load(path)
+	current, ok := ec.ioMu.Load(key)
 	if !ok {
 		t.Fatal("expected a live ioMu entry after re-locking")
 	}
@@ -348,7 +351,7 @@ func TestReleaseFileMutex_ReleasedEntryNotLive(t *testing.T) {
 	// A caller that locked the stale mutex must detect non-liveness via the
 	// post-lock map lookup and retry, never proceed on the orphaned entry.
 	stale.mu.Lock()
-	live, liveOK := ec.ioMu.Load(path)
+	live, liveOK := ec.ioMu.Load(key)
 	stale.mu.Unlock()
 	if liveOK && live == stale {
 		t.Fatal("map-lookup staleness check failed to reject a released entry")
@@ -382,7 +385,7 @@ func TestReleaseBlockMutex_EntryDeleted(t *testing.T) {
 // block is a safe no-op (no panic).
 func TestReleaseBlockMutex_IdempotentOnUnknown(t *testing.T) {
 	ec := newTestCoordinator(t)
-	ec.ReleaseBlockMutex("never-locked") // must not panic
+	ec.ReleaseBlockMutex("never-locked")           // must not panic
 	ec.ReleaseBlockMutexes([]string{"a", "b", ""}) // must not panic
 }
 
@@ -507,6 +510,178 @@ func TestReleaseBlockMutexes_BatchEvictsAll(t *testing.T) {
 		if _, ok := ec.blockMu.Load(id); ok {
 			t.Errorf("expected blockMu entry for %q to be evicted", id)
 		}
+	}
+}
+
+// TestLockPathsWrite_SerializesOverlappingSets verifies multi-path locks
+// serialize when sets share a path, and allow concurrency when disjoint (#691).
+func TestLockPathsWrite_SerializesOverlappingSets(t *testing.T) {
+	ec := newTestCoordinator(t)
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.md")
+	b := filepath.Join(dir, "b.md")
+	c := filepath.Join(dir, "c.md")
+
+	var overlap int32
+	var maxOverlap int32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	hold := func() {
+		<-start
+		cur := atomic.AddInt32(&overlap, 1)
+		for {
+			m := atomic.LoadInt32(&maxOverlap)
+			if cur <= m || atomic.CompareAndSwapInt32(&maxOverlap, m, cur) {
+				break
+			}
+		}
+		time.Sleep(30 * time.Millisecond)
+		atomic.AddInt32(&overlap, -1)
+	}
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		ec.LockPathsWrite([]string{a, b}, hold)
+	}()
+	go func() {
+		defer wg.Done()
+		ec.LockPathsWrite([]string{b, c}, hold)
+	}()
+	close(start)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&maxOverlap); got != 1 {
+		t.Errorf("expected overlapping LockPathsWrite sets to serialize, max overlap = %d", got)
+	}
+}
+
+func TestLockPathsWrite_DisjointAllowsConcurrency(t *testing.T) {
+	ec := newTestCoordinator(t)
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.md")
+	b := filepath.Join(dir, "b.md")
+	c := filepath.Join(dir, "c.md")
+	d := filepath.Join(dir, "d.md")
+
+	var overlap int32
+	var maxOverlap int32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	hold := func() {
+		<-start
+		cur := atomic.AddInt32(&overlap, 1)
+		for {
+			m := atomic.LoadInt32(&maxOverlap)
+			if cur <= m || atomic.CompareAndSwapInt32(&maxOverlap, m, cur) {
+				break
+			}
+		}
+		time.Sleep(30 * time.Millisecond)
+		atomic.AddInt32(&overlap, -1)
+	}
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		ec.LockPathsWrite([]string{a, b}, hold)
+	}()
+	go func() {
+		defer wg.Done()
+		ec.LockPathsWrite([]string{c, d}, hold)
+	}()
+	close(start)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&maxOverlap); got < 2 {
+		t.Errorf("expected disjoint LockPathsWrite sets to run concurrently, max overlap = %d", got)
+	}
+}
+
+func TestLockPathsWrite_SerializesAgainstSingleFile(t *testing.T) {
+	ec := newTestCoordinator(t)
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.md")
+	b := filepath.Join(dir, "b.md")
+
+	var overlap int32
+	var maxOverlap int32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	hold := func() {
+		<-start
+		cur := atomic.AddInt32(&overlap, 1)
+		for {
+			m := atomic.LoadInt32(&maxOverlap)
+			if cur <= m || atomic.CompareAndSwapInt32(&maxOverlap, m, cur) {
+				break
+			}
+		}
+		time.Sleep(30 * time.Millisecond)
+		atomic.AddInt32(&overlap, -1)
+	}
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		ec.LockPathsWrite([]string{a, b}, hold)
+	}()
+	go func() {
+		defer wg.Done()
+		ec.LockFileWrite(a, hold)
+	}()
+	close(start)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&maxOverlap); got != 1 {
+		t.Errorf("expected LockPathsWrite to serialize with LockFileWrite on shared path, max overlap = %d", got)
+	}
+}
+
+func TestLockPathsWrite_ReverseOrderNoDeadlock(t *testing.T) {
+	ec := newTestCoordinator(t)
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.md")
+	b := filepath.Join(dir, "b.md")
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	done := make(chan struct{}, 2)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		ec.LockPathsWrite([]string{a, b}, func() {
+			time.Sleep(5 * time.Millisecond)
+			done <- struct{}{}
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		ec.LockPathsWrite([]string{b, a}, func() {
+			time.Sleep(5 * time.Millisecond)
+			done <- struct{}{}
+		})
+	}()
+	close(start)
+
+	finished := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("LockPathsWrite deadlocked on reverse acquisition order")
+	}
+	if len(done) != 2 {
+		t.Errorf("expected both tasks to run, got %d", len(done))
 	}
 }
 

@@ -1104,40 +1104,87 @@ body {
   cursor: col-resize;
 }
 
-/* Contextual table toolbar (#172). */
+/* Floating contextual table toolbar (#688 / #172). */
 .table-context-toolbar {
+  position: fixed;
+  z-index: 110;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-surface-app-border);
+  background: color-mix(in srgb, var(--color-surface-panel) 94%, transparent);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  max-width: calc(100vw - 16px);
+  flex-wrap: wrap;
+}
+.tct-group {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 4px;
-  margin: 0 0 6px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-surface-app-border);
-  background: color-mix(in srgb, var(--color-surface-panel) 92%, transparent);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+.tct-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  padding: 0 4px 0 2px;
+  user-select: none;
+  white-space: nowrap;
+}
+.tct-divider {
+  width: 1px;
+  align-self: stretch;
+  min-height: 24px;
+  background: var(--color-surface-app-border);
+  margin: 0 2px;
+  flex-shrink: 0;
 }
 .tct-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
+  gap: 2px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 6px;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--color-text-primary);
   cursor: pointer;
+  white-space: nowrap;
+}
+.tct-btn-text {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
 }
 .tct-btn:hover:not(:disabled) {
   background: var(--color-hover);
+}
+.tct-btn:focus-visible {
+  outline: 2px solid var(--color-accent-primary-start);
+  outline-offset: 1px;
 }
 .tct-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
 .tct-btn .material-symbols-outlined {
-  font-size: 18px;
+  font-size: 16px;
+}
+.tct-btn-danger {
+  color: var(--color-status-danger);
+}
+.tct-btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-status-danger) 16%, transparent);
+  color: var(--color-status-danger);
+}
+.tct-btn-danger .material-symbols-outlined {
+  color: var(--color-status-danger);
 }
 
 /* Selection highlight uses the themeable editor-selection token (#390). */

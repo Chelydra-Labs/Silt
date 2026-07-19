@@ -100,7 +100,25 @@ const mocks = vi.hoisted(() => {
     GetAIAudit: vi.fn(),
     ClearAIAudit: vi.fn(),
     // Used by stale-index detection via settings/store.updatePluginSetting.
-    UpdatePluginSetting: vi.fn()
+    UpdatePluginSetting: vi.fn(),
+    // Local MCP (#687)
+    GetCloseToTray: vi.fn().mockResolvedValue(false),
+    SetCloseToTray: vi.fn().mockResolvedValue(undefined),
+    GetLocalMCPConfig: vi.fn().mockResolvedValue({
+      enabled: false,
+      http_enabled: true,
+      http_port: 17887,
+      write_enabled: false
+    }),
+    GetLocalMCPStatus: vi.fn().mockResolvedValue({
+      state: 'disabled',
+      message: '',
+      endpoint: '',
+      write_enabled: false
+    }),
+    GetLocalMCPInstallHint: vi.fn().mockResolvedValue('# sample'),
+    GetLocalMCPToken: vi.fn().mockResolvedValue(''),
+    SetLocalMCPConfig: vi.fn().mockResolvedValue(undefined)
   }
 })
 
@@ -116,7 +134,14 @@ vi.mock('../../../bindings/silt/app.js', () => ({
   ListModels: mocks.ListModels,
   GetAIAudit: mocks.GetAIAudit,
   ClearAIAudit: mocks.ClearAIAudit,
-  UpdatePluginSetting: mocks.UpdatePluginSetting
+  UpdatePluginSetting: mocks.UpdatePluginSetting,
+  GetCloseToTray: mocks.GetCloseToTray,
+  SetCloseToTray: mocks.SetCloseToTray,
+  GetLocalMCPConfig: mocks.GetLocalMCPConfig,
+  GetLocalMCPStatus: mocks.GetLocalMCPStatus,
+  GetLocalMCPInstallHint: mocks.GetLocalMCPInstallHint,
+  GetLocalMCPToken: mocks.GetLocalMCPToken,
+  SetLocalMCPConfig: mocks.SetLocalMCPConfig
 }))
 
 vi.mock('../../settings/store.svelte', async (importOriginal) => {
@@ -1553,6 +1578,164 @@ describe('AIProviderTab', () => {
       )
       await fireEvent.click(screen.getByRole('button', { name: /Retry/i }))
       await ready()
+    })
+  })
+
+  describe('Local MCP settings', () => {
+    it('loads MCP status on mount and enables via SetLocalMCPConfig', async () => {
+      render(AIProviderTab)
+      await ready()
+      await waitFor(() => expect(mocks.GetLocalMCPConfig).toHaveBeenCalled())
+      const enable = screen.getByLabelText(/Enable local AI integration/i)
+      await fireEvent.click(enable)
+      await waitFor(() =>
+        expect(mocks.SetLocalMCPConfig).toHaveBeenCalledWith(
+          true,
+          true,
+          false,
+          17887
+        )
+      )
+    })
+
+    it('prompts for close-to-tray when enabling and tray is off', async () => {
+      mocks.GetCloseToTray.mockResolvedValue(false)
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(
+        screen.getByLabelText(/Enable local AI integration/i)
+      )
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', { name: /Enable close to tray/i })
+        ).toBeInTheDocument()
+      )
+      await fireEvent.click(
+        screen.getByRole('button', { name: /Enable close to tray/i })
+      )
+      await waitFor(() =>
+        expect(mocks.SetCloseToTray).toHaveBeenCalledWith(true)
+      )
+    })
+
+    it('reveals token and auto-clears after 30s', async () => {
+      vi.useFakeTimers()
+      mocks.GetLocalMCPToken.mockResolvedValue('secret-token')
+      mocks.GetLocalMCPConfig.mockResolvedValue({
+        enabled: true,
+        http_enabled: true,
+        http_port: 17887,
+        write_enabled: false
+      })
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(
+        screen.getByRole('button', { name: /Show auth token/i })
+      )
+      await waitFor(() =>
+        expect(screen.getByText(/secret-token/)).toBeInTheDocument()
+      )
+      await vi.advanceTimersByTimeAsync(30_000)
+      await waitFor(() => expect(screen.queryByText(/secret-token/)).toBeNull())
+      vi.useRealTimers()
+    })
+
+    it('surfaces save errors in an alert', async () => {
+      mocks.SetLocalMCPConfig.mockRejectedValueOnce(new Error('nope'))
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(
+        screen.getByLabelText(/Enable local AI integration/i)
+      )
+      await waitFor(() =>
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          /Could not save local MCP settings/i
+        )
+      )
+    })
+
+    it('renders running status endpoint and message', async () => {
+      mocks.GetLocalMCPConfig.mockResolvedValue({
+        enabled: true,
+        http_enabled: true,
+        http_port: 17887,
+        write_enabled: true
+      })
+      mocks.GetLocalMCPStatus.mockResolvedValue({
+        state: 'running',
+        message: 'MCP listening on http://127.0.0.1:17887',
+        endpoint: 'http://127.0.0.1:17887',
+        write_enabled: true
+      })
+      render(AIProviderTab)
+      await ready()
+      const status = await screen.findByText(/MCP availability/i)
+      expect(status.textContent).toMatch(/running/i)
+      expect(status.textContent).toMatch(/127\.0\.0\.1:17887/)
+      expect(status.textContent).toMatch(/MCP listening/i)
+    })
+
+    it('Refresh status re-fetches GetLocalMCPStatus', async () => {
+      render(AIProviderTab)
+      await ready()
+      const before = mocks.GetLocalMCPStatus.mock.calls.length
+      await fireEvent.click(
+        screen.getByRole('button', { name: /Refresh status/i })
+      )
+      await waitFor(() =>
+        expect(mocks.GetLocalMCPStatus.mock.calls.length).toBeGreaterThan(
+          before
+        )
+      )
+    })
+
+    it('Copy token writes the bearer to the clipboard and shows Copied', async () => {
+      mocks.GetLocalMCPToken.mockResolvedValue('clip-token-xyz')
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        clipboard: { writeText }
+      })
+      try {
+        render(AIProviderTab)
+        await ready()
+        await fireEvent.click(
+          screen.getByRole('button', { name: /Copy token/i })
+        )
+        await waitFor(() =>
+          expect(writeText).toHaveBeenCalledWith('clip-token-xyz')
+        )
+        await waitFor(() =>
+          expect(
+            screen.getByRole('button', { name: /^Copied$/i })
+          ).toBeInTheDocument()
+        )
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('unmount after Copy token clears the clipboard', async () => {
+      mocks.GetLocalMCPToken.mockResolvedValue('clip-token-unmount')
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        clipboard: { writeText }
+      })
+      try {
+        const { unmount } = render(AIProviderTab)
+        await ready()
+        await fireEvent.click(
+          screen.getByRole('button', { name: /Copy token/i })
+        )
+        await waitFor(() =>
+          expect(writeText).toHaveBeenCalledWith('clip-token-unmount')
+        )
+        unmount()
+        await waitFor(() => expect(writeText).toHaveBeenCalledWith(''))
+      } finally {
+        vi.unstubAllGlobals()
+      }
     })
   })
 })
