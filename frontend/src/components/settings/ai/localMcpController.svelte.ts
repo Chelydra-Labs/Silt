@@ -34,6 +34,8 @@ export function createLocalMcpController() {
   let trayPrompt = $state(false)
   let tokenClearTimer: ReturnType<typeof setTimeout> | null = null
   let tokenCopiedTimer: ReturnType<typeof setTimeout> | null = null
+  // True after a successful Copy token until we best-effort clear the clipboard.
+  let clipboardHoldsToken = false
 
   function clearTokenFromMemory() {
     token = ''
@@ -49,13 +51,18 @@ export function createLocalMcpController() {
     }
   }
 
+  function clearClipboardIfNeeded() {
+    if (!clipboardHoldsToken) return
+    clipboardHoldsToken = false
+    // Best-effort: clipboard managers / history may still retain a copy.
+    void navigator.clipboard?.writeText?.('').catch(() => {})
+  }
+
   function scheduleTokenClear() {
     if (tokenClearTimer) clearTimeout(tokenClearTimer)
     tokenClearTimer = setTimeout(() => {
       clearTokenFromMemory()
-      // Best-effort: clear OS clipboard if it still holds our token copy.
-      // Clipboard managers / history may retain a copy — tooltip documents this.
-      void navigator.clipboard?.writeText?.('').catch(() => {})
+      clearClipboardIfNeeded()
     }, 30_000)
   }
 
@@ -143,6 +150,7 @@ export function createLocalMcpController() {
       if (!token) token = (await GetLocalMCPToken()) || ''
       if (!token) return
       await navigator.clipboard.writeText(token)
+      clipboardHoldsToken = true
       tokenVisible = true
       tokenCopied = true
       if (tokenCopiedTimer) clearTimeout(tokenCopiedTimer)
@@ -198,7 +206,9 @@ export function createLocalMcpController() {
   }
 
   function destroy() {
+    // Closing Settings must not leave the bearer on the clipboard after Copy.
     clearTokenFromMemory()
+    clearClipboardIfNeeded()
   }
 
   return {

@@ -1692,20 +1692,50 @@ describe('AIProviderTab', () => {
     it('Copy token writes the bearer to the clipboard and shows Copied', async () => {
       mocks.GetLocalMCPToken.mockResolvedValue('clip-token-xyz')
       const writeText = vi.fn().mockResolvedValue(undefined)
-      Object.assign(navigator, {
+      vi.stubGlobal('navigator', {
+        ...navigator,
         clipboard: { writeText }
       })
-      render(AIProviderTab)
-      await ready()
-      await fireEvent.click(screen.getByRole('button', { name: /Copy token/i }))
-      await waitFor(() =>
-        expect(writeText).toHaveBeenCalledWith('clip-token-xyz')
-      )
-      await waitFor(() =>
-        expect(
-          screen.getByRole('button', { name: /^Copied$/i })
-        ).toBeInTheDocument()
-      )
+      try {
+        render(AIProviderTab)
+        await ready()
+        await fireEvent.click(
+          screen.getByRole('button', { name: /Copy token/i })
+        )
+        await waitFor(() =>
+          expect(writeText).toHaveBeenCalledWith('clip-token-xyz')
+        )
+        await waitFor(() =>
+          expect(
+            screen.getByRole('button', { name: /^Copied$/i })
+          ).toBeInTheDocument()
+        )
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('unmount after Copy token clears the clipboard', async () => {
+      mocks.GetLocalMCPToken.mockResolvedValue('clip-token-unmount')
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      vi.stubGlobal('navigator', {
+        ...navigator,
+        clipboard: { writeText }
+      })
+      try {
+        const { unmount } = render(AIProviderTab)
+        await ready()
+        await fireEvent.click(
+          screen.getByRole('button', { name: /Copy token/i })
+        )
+        await waitFor(() =>
+          expect(writeText).toHaveBeenCalledWith('clip-token-unmount')
+        )
+        unmount()
+        await waitFor(() => expect(writeText).toHaveBeenCalledWith(''))
+      } finally {
+        vi.unstubAllGlobals()
+      }
     })
   })
 })

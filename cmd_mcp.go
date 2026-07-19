@@ -14,7 +14,6 @@ import (
 
 	"silt/backend/keyring"
 	"silt/backend/mcp"
-	"silt/backend/vault"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -141,9 +140,6 @@ func discoverMCPEndpoint() string {
 		}
 	}
 	candidates = append(candidates, fmt.Sprintf("http://127.0.0.1:%d", mcp.DefaultHTTPPort))
-	if settings, err := vault.LoadSettings(); err == nil {
-		_ = settings // reserved: future vault-scoped endpoint hints
-	}
 	client := &http.Client{Timeout: 800 * time.Millisecond}
 	seen := map[string]bool{}
 	for _, base := range candidates {

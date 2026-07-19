@@ -208,8 +208,8 @@ func (h *Host) Start(bridge Bridge, cfg Config) error {
 	h.mu.Unlock()
 
 	// Always prefer HTTP when enabled so stdio proxy can dial.
-	// When HTTP disabled, host still "runs" for status (stdio-only mode
-	// requires in-process Run which we expose via RunStdio).
+	// When HTTP is disabled the host still reports running for status, but
+	// `silt mcp` cannot connect (it proxies over loopback HTTP only).
 	if cfg.HTTPEnabled {
 		if err := h.startHTTP(srv, token, cfg.HTTPPort); err != nil {
 			h.setError(err.Error())
@@ -229,20 +229,6 @@ func (h *Host) Start(bridge Bridge, cfg Config) error {
 	}
 	h.mu.Unlock()
 	return nil
-}
-
-// RunStdio serves MCP over stdin/stdout. Logs must go to stderr only.
-// Used by the `silt mcp` subcommand when running in-process tools against a
-// bridge; the preferred production path is HTTP proxy (see cmd_mcp).
-func (h *Host) RunStdio(ctx context.Context) error {
-	h.mu.RLock()
-	srv := h.server
-	h.mu.RUnlock()
-	if srv == nil {
-		return errors.New("mcp host not started")
-	}
-	// StdioTransport: SDK writes JSON-RPC to stdout only.
-	return srv.Run(ctx, &mcpsdk.StdioTransport{})
 }
 
 // Stop drains and closes the HTTP listener and clears the discovery endpoint
