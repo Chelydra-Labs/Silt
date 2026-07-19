@@ -570,7 +570,11 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
    from the OS keyring (`Silt` / `mcp-local-auth-token`); stdio via `silt mcp`
    which dials the running instance (logs to stderr only). Discovery prefers a
    keyring-pinned endpoint (`mcp-local-endpoint`) over `mcp-endpoint.json` so a
-   rewritten discovery file alone cannot redirect the bearer. **Tools (v1):**
+   rewritten discovery file alone cannot redirect the bearer. The endpoint file
+   records `{endpoint,pid}`; write/clear take a cross-process lock and refuse to
+   clobber a live peer’s record (second instance must not wipe the first).
+   Host `Start`/`Stop` are serialized on an internal `startMu` (outside the
+   status `mu`) so bind/Shutdown cannot interleave. **Tools (v1):**
   read — `search_blocks`/`search_notes`, `read_page`/`read_blocks`,
   `list_notebooks`; write (grant) — `create_page`, `update_blocks`. No
   delete/move/bulk. **Lifecycle:** start on vault open when enabled; stop on
@@ -966,7 +970,7 @@ Running a local-first system that allows concurrent UI actions and external file
 
 6.1 Multi-Thread Access Locking (Go Mutex Pools)
 
-Because SQLite runs in memory, concurrent reads/writes from the Svelte UI and the fsnotify file monitor must be strictly controlled to prevent database-locked exceptions. The engine routes all file writing and database tasks through an app-wide `core.ExecutionCoordinator`: a per-file `sync.Mutex` map (`LockFileWrite(path, fn)` serializes all writes to a given path, so writes to *different* files don't block each other) plus the DB connection. Paths are normalized to absolute form before use as lock keys. **Exact-path identity only:** locking a directory string does *not* exclude writers on descendant file paths. Structural ops that `os.Rename` a directory (section/notebook rename, tree delete) must `LockPathsWrite` every affected `.md` path (and inbound wiki-link source paths they will rewrite) before the rename — sorted multi-acquire avoids deadlock. Page saves keep single-path locks and, after acquiring the lock, fail loudly if the file was moved away rather than recreating a ghost path. Lock order: block locks outside file locks; multi-file sets as one sorted unit; DB inside. DB access is serialized via `SetMaxOpenConns(1)`; WAL still allows unlimited concurrent readers (§3). See `backend/core`.
+Because SQLite runs in memory, concurrent reads/writes from the Svelte UI and the fsnotify file monitor must be strictly controlled to prevent database-locked exceptions. The engine routes all file writing and database tasks through an app-wide `core.ExecutionCoordinator`: a per-file `sync.Mutex` map (`LockFileWrite(path, fn)` serializes all writes to a given path, so writes to *different* files don't block each other) plus the DB connection. Paths are normalized to absolute form before use as lock keys. **Exact-path identity only:** locking a directory string does *not* exclude writers on descendant file paths. Structural ops that `os.Rename` a directory (section/notebook rename, tree delete) must `LockPathsWrite` every affected `.md` path (and inbound wiki-link source paths they will rewrite) before the rename — sorted multi-acquire avoids deadlock. Inbound sources are re-collected under the multi-path lock (retry if the set grows) so a concurrent save that inserts a new `[[target]]` cannot slip past the lock set. Inbound collect/rewrite query `page_links` by `lower(target_raw)` candidates (path variants + suffixes), not a full-table scan. Page saves keep single-path locks and, after acquiring the lock, fail loudly if the file was moved away (`os.Stat` fail-closed) rather than recreating a ghost path — Stat cost is negligible vs write+reindex. Large notebook renames still acquire one mutex per page; acquire cost at thousands of paths is ~1 ms and remains dominated by disk I/O, so hierarchical directory locks are intentionally not used. Lock order: block locks outside file locks; multi-file sets as one sorted unit; DB inside. DB access is serialized via `SetMaxOpenConns(1)`; WAL still allows unlimited concurrent readers (§3). See `backend/core`.
 
 The App-level locking model is layered on top of the coordinator and guards
 distinct concerns with distinct mutexes (see `app.go` for the full contract):
