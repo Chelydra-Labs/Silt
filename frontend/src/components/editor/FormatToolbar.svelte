@@ -14,9 +14,9 @@
   import { resolveHotkeyDisplay } from '../../settings/hotkeys'
 
   // Hierarchical format toolbar (#690 / #168). Priority strip always shows
-  // block style + Bold + Italic + Link + Inline code. Advanced marks, align,
-  // and inserts live in labelled overflow menus so a ≤600px editor never
-  // clips or horizontally scrolls.
+  // block style + Bold + Italic + Underline + Link + Inline code. Advanced
+  // marks, align, and inserts live in labelled overflow menus so a ≤600px
+  // editor never clips or horizontally scrolls.
 
   interface Props {
     editor: Editor | null
@@ -56,6 +56,13 @@
       mark: 'italic'
     },
     {
+      id: 'underline',
+      label: 'Underline',
+      icon: 'format_underlined',
+      hotkey: 'format_underline',
+      mark: 'underline'
+    },
+    {
       id: 'code',
       label: 'Inline code',
       icon: 'code',
@@ -65,13 +72,6 @@
   ]
 
   const MORE_MARKS: FormatButton[] = [
-    {
-      id: 'underline',
-      label: 'Underline',
-      icon: 'format_underlined',
-      hotkey: 'format_underline',
-      mark: 'underline'
-    },
     {
       id: 'strike',
       label: 'Strikethrough',
@@ -381,7 +381,7 @@
   }
 
   // Indices for primary data-tb controls after Heading (0).
-  // 0: heading, 1..3: primary marks, 4: link, 5: more, 6: align, 7: insert,
+  // 0: heading, 1..4: primary marks, 5: link, 6: more, 7: align, 8: insert,
   // then colors (0–2), then clear.
   const HEADING_IDX = 0
   const PRIMARY_START = 1
