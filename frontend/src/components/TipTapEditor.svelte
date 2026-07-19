@@ -60,6 +60,10 @@
     filterOwners,
     BlockRefSuggest,
     applyBlockRefSuggestion,
+    TagSuggest,
+    applyTagSuggestion,
+    filterTags,
+    flattenTagHierarchy,
     blocksToDoc
   } from '../lib/editor'
   import { runPluginCommand } from '../lib/editor/runPluginCommand'
@@ -68,9 +72,17 @@
     MetaKey,
     SuggestContext,
     MentionContext,
-    BlockRefContext
+    BlockRefContext,
+    TagContext,
+    TagItem,
+    TagTreeNode
   } from '../lib/editor'
-  import { DistinctOwners, SearchBlocks } from '../../bindings/silt/app.js'
+  import {
+    DistinctOwners,
+    QueryTagHierarchy,
+    SearchBlocks
+  } from '../../bindings/silt/app.js'
+  import * as AppBindings from '../../bindings/silt/app.js'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import ChoiceDialog from './ChoiceDialog.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
@@ -89,8 +101,7 @@
   import {
     deriveColorPalette,
     readActiveThemeColorTokens,
-    resolveColor,
-    FALLBACK_COLOR_PALETTE
+    resolveColor
   } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { classifySlashCommand } from '../lib/editor/builtinSlashCommands'
@@ -116,6 +127,12 @@
   } from '../plugins/ui-location'
   import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
   import { isSystemDark } from '../lib/systemTheme.svelte'
+
+  // RecordTagUsage is supplied by the Phase 3 backend binding. Keeping the
+  // expected named signature here lets frontend work land before regeneration.
+  const { RecordTagUsage } = AppBindings as typeof AppBindings & {
+    RecordTagUsage: (tag: string) => Promise<void>
+  }
 
   // Validates hex color strings before applying to marks (#170). Prevents
   // injection of arbitrary CSS or characters that break the converter regex.
@@ -229,13 +246,12 @@
 
   // Theme-derived color palette (#408): re-read the active theme's anchors
   // from :root whenever the dark/light mode flips, so the popover's swatch
-  // row tracks the theme. Falls back to the fixed set pre-theme-injection.
+  // row tracks the theme. deriveColorPalette handles fallback internally
+  // (cold start / pre-theme-injection).
   const colorPalette = $derived.by(() => {
     void isDark
     const tokens = readActiveThemeColorTokens()
-    return Object.keys(tokens).length > 0
-      ? deriveColorPalette(tokens)
-      : FALLBACK_COLOR_PALETTE
+    return deriveColorPalette(tokens)
   })
 
   let colorEnabled = $derived(
@@ -772,6 +788,90 @@
     applyBlockRefSuggestion(editorInstance, blockId)
   }
 
+  // --- Tag typeahead -------------------------------------------------------
+  // The hierarchy is stable enough to cache across quick focus changes. A
+  // fresh focus after the TTL catches tags indexed by recent edits.
+  let tags = $state<TagItem[]>([])
+  let tagsLoadedAt = 0
+  let tagsLoading = $state(false)
+  let tagsLoadError = $state(false)
+  const TAGS_TTL_MS = 5000
+  let recentTags = $derived(
+    ((settings.config?.ui as { recent_tags?: string[] } | undefined)
+      ?.recent_tags ?? []) as string[]
+  )
+  let tagPopup = $state<{
+    ctx: TagContext
+    items: TagItem[]
+    selected: number
+  } | null>(null)
+
+  function updateTagPopup(ctx: TagContext): void {
+    const previous = tagPopup?.items[tagPopup.selected]?.path
+    const items = filterTags(tags, ctx.query, recentTags)
+    const previousIndex = previous
+      ? items.findIndex((item) => item.path === previous)
+      : -1
+    tagPopup = { ctx, items, selected: Math.max(0, previousIndex) }
+    suggestStatus = tagsLoadError
+      ? 'Tag suggestions unavailable'
+      : tagsLoading
+        ? 'Loading tags'
+        : items.length
+          ? `${items.length} tag${items.length === 1 ? '' : 's'} available`
+          : 'No matching tags'
+  }
+
+  async function loadTags(): Promise<void> {
+    if (tagsLoading || Date.now() - tagsLoadedAt < TAGS_TTL_MS) return
+    tagsLoading = true
+    tagsLoadError = false
+    if (tagPopup) updateTagPopup(tagPopup.ctx)
+    try {
+      const tree = ((await QueryTagHierarchy()) ?? []) as TagTreeNode[]
+      tags = flattenTagHierarchy(tree)
+      tagsLoadedAt = Date.now()
+    } catch (error) {
+      tagsLoadError = true
+      tagsLoadedAt = Date.now()
+      console.error('QueryTagHierarchy failed:', error)
+    } finally {
+      tagsLoading = false
+      if (tagPopup) updateTagPopup(tagPopup.ctx)
+    }
+  }
+
+  function onTagChange(ctx: TagContext | null): void {
+    if (!ctx) {
+      tagPopup = null
+      suggestStatus = ''
+      return
+    }
+    updateTagPopup(ctx)
+    if (!tags.length) void loadTags()
+  }
+
+  function onTagNavigate(dir: 1 | -1): void {
+    if (!tagPopup?.items.length) return
+    const n = tagPopup.items.length
+    tagPopup.selected = (tagPopup.selected + dir + n) % n
+  }
+
+  function onTagSelectActive(): void {
+    const item = tagPopup?.items[tagPopup.selected]
+    if (item) onTagPick(item.path)
+  }
+
+  function onTagPick(path: string): void {
+    tagPopup = null
+    suggestStatus = ''
+    if (!editorInstance || editorInstance.isDestroyed) return
+    if (!applyTagSuggestion(editorInstance, path)) return
+    void RecordTagUsage(path).catch((error: unknown) => {
+      console.error('RecordTagUsage failed:', error)
+    })
+  }
+
   // Capture the initial blocks under untrack to signal that the one-shot
   // capture is intentional — the $effect below handles live reactivity (#64).
   const initialDoc = untrack(() => blocksToDoc(blocks))
@@ -836,6 +936,12 @@
       onChange: onBlockRefChange,
       onNavigate: onBlockRefNavigate,
       onSelectActive: onBlockRefSelectActive
+    }),
+    TagSuggest.configure({
+      items: () => tagPopup?.items ?? [],
+      onChange: onTagChange,
+      onNavigate: onTagNavigate,
+      onSelectActive: onTagSelectActive
     }),
     // Notion-style indent-on-drop + drop-zone indicator (#330, #181
     // follow-up). Watches ProseMirror's handleDrop: when a top-level block
@@ -955,6 +1061,7 @@
       // immediately; the TTL guard inside loadOwners collapses repeats (#332).
       if (focusLoadTimer) clearTimeout(focusLoadTimer)
       focusLoadTimer = setTimeout(() => void loadOwners(), 150)
+      void loadTags()
     },
     onBlur: () => {
       isFocused = false
@@ -972,7 +1079,16 @@
       onReady?.()
       // Seed the @-mention owner list on mount (#184).
       void loadOwners()
+      void loadTags()
     }
+  })
+
+  $effect(() => {
+    // Config hot reload replaces recent_tags in the shared settings store.
+    // Re-rank an open picker in place so the editor and caret stay mounted.
+    void recentTags
+    const current = untrack(() => tagPopup)
+    if (current) untrack(() => updateTagPopup(current.ctx))
   })
 
   // Spellcheck (#196 / #336 / #337): load language dictionary + custom words +
@@ -2107,6 +2223,34 @@
       />
     {/if}
   {/if}
+  {#if tagPopup}
+    {@const c = suggestPopupCoords(tagPopup.ctx.from, 280)}
+    {#if c}
+      <SuggestPopup
+        items={tagPopup.items.map((item) => ({
+          id: item.path,
+          label: `#${item.path}`,
+          hint: `${item.count}`
+        }))}
+        selected={tagPopup.selected}
+        coords={c}
+        emptyLabel={tagsLoadError
+          ? 'Tag suggestions unavailable'
+          : tagsLoading
+            ? 'Loading tags…'
+            : 'No matching tags'}
+        ariaLabel="Insert a tag"
+        className="tag-suggest"
+        onPick={(i) => {
+          const item = tagPopup?.items[i]
+          if (item) onTagPick(item.path)
+        }}
+        onHover={(i) => {
+          if (tagPopup) tagPopup.selected = i
+        }}
+      />
+    {/if}
+  {/if}
   {#if showLinkInput && linkInputCoords}
     <div
       class="link-input-popover"
@@ -2156,17 +2300,39 @@
           aria-hidden="true">format_color_reset</span
         >
       </button>
-      {#each colorPalette as entry (entry.id)}
-        <button
-          type="button"
-          class="cp-swatch"
-          style="background-color: {resolveColor(entry, isDark)}"
-          aria-label={entry.label}
-          role="menuitem"
-          onclick={() => applyColorFromPopover(resolveColor(entry, isDark))}
-        >
-        </button>
-      {/each}
+      <div class="cp-palette-sections">
+        <div class="cp-grid" role="group" aria-label="Theme colors">
+          {#each colorPalette.theme as entry (entry.id)}
+            <button
+              type="button"
+              class="cp-swatch"
+              style="background-color: {resolveColor(entry, isDark)}"
+              aria-label={entry.label}
+              role="menuitem"
+              onclick={() => applyColorFromPopover(resolveColor(entry, isDark))}
+            >
+            </button>
+          {/each}
+        </div>
+        <div
+          class="cp-divider"
+          role="separator"
+          aria-orientation="horizontal"
+        ></div>
+        <div class="cp-grid" role="group" aria-label="Standard colors">
+          {#each colorPalette.standard as entry (entry.id)}
+            <button
+              type="button"
+              class="cp-swatch"
+              style="background-color: {resolveColor(entry, isDark)}"
+              aria-label={entry.label}
+              role="menuitem"
+              onclick={() => applyColorFromPopover(resolveColor(entry, isDark))}
+            >
+            </button>
+          {/each}
+        </div>
+      </div>
       <label class="cp-custom-row">
         <input
           type="color"
@@ -2282,10 +2448,28 @@
     background: var(--color-surface-popover);
     border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 200px;
+  }
+
+  .cp-palette-sections {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .cp-divider {
+    height: 1px;
+    background: var(--color-surface-popover-border);
+    margin: 4px 0;
+  }
+
+  .cp-grid {
     display: grid;
     grid-template-columns: repeat(6, 1fr);
     gap: 3px;
-    max-width: 200px;
+    padding: 4px 0;
   }
 
   .cp-swatch {
@@ -2308,10 +2492,10 @@
     justify-content: center;
     background: transparent;
     color: var(--color-text-muted);
+    align-self: flex-start;
   }
 
   .cp-custom-row {
-    grid-column: 1 / -1;
     display: flex;
     justify-content: center;
     margin-top: 2px;

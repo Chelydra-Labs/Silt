@@ -4,7 +4,6 @@
     deriveColorPalette,
     readActiveThemeColorTokens,
     resolveColor,
-    FALLBACK_COLOR_PALETTE,
     type ColorEntry
   } from '../../lib/editor/colors'
 
@@ -89,13 +88,12 @@
 
   // Theme-derived palette (#408): re-read the active theme's color anchors
   // from :root each time the menu opens so the swatch row tracks the theme.
-  // Falls back to the fixed set only if the theme tokens are unavailable.
+  // deriveColorPalette handles fallback internally when tokens are absent
+  // (cold start / pre-theme-injection).
   const palette = $derived.by(() => {
     void menuOpen
     const tokens = readActiveThemeColorTokens()
-    return Object.keys(tokens).length > 0
-      ? deriveColorPalette(tokens)
-      : FALLBACK_COLOR_PALETTE
+    return deriveColorPalette(tokens)
   })
 </script>
 
@@ -130,18 +128,38 @@
         >
         <span>No color</span>
       </button>
-      <div class="swatch-grid" role="group" aria-label="Color palette">
-        {#each palette as entry (entry.id)}
-          <button
-            type="button"
-            class="swatch"
-            style="background-color: {resolveColor(entry, isDark)}"
-            aria-label={entry.label}
-            role="menuitem"
-            onclick={() => applyColor(entry)}
-          >
-          </button>
-        {/each}
+      <div class="palette-sections">
+        <div class="swatch-grid" role="group" aria-label="Theme colors">
+          {#each palette.theme as entry (entry.id)}
+            <button
+              type="button"
+              class="swatch"
+              style="background-color: {resolveColor(entry, isDark)}"
+              aria-label={entry.label}
+              role="menuitem"
+              onclick={() => applyColor(entry)}
+            >
+            </button>
+          {/each}
+        </div>
+        <div
+          class="palette-divider"
+          role="separator"
+          aria-orientation="horizontal"
+        ></div>
+        <div class="swatch-grid" role="group" aria-label="Standard colors">
+          {#each palette.standard as entry (entry.id)}
+            <button
+              type="button"
+              class="swatch"
+              style="background-color: {resolveColor(entry, isDark)}"
+              aria-label={entry.label}
+              role="menuitem"
+              onclick={() => applyColor(entry)}
+            >
+            </button>
+          {/each}
+        </div>
       </div>
       <label class="custom-color-row">
         <span class="custom-label">Custom</span>
@@ -232,6 +250,17 @@
   .color-action .material-symbols-outlined {
     font-size: 16px;
     color: var(--color-text-muted);
+  }
+
+  .palette-sections {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .palette-divider {
+    height: 1px;
+    background: var(--color-surface-popover-border);
+    margin: 4px 0;
   }
 
   .swatch-grid {
