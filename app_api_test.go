@@ -3483,16 +3483,22 @@ func TestApplyConfigLocked_PrunesStaleQuarantineEntries(t *testing.T) {
 }
 
 // --- SearchPages tests (Phase 4 backend) ---
+//
+// All SearchPages tests namespace their indexed pages with a "sp_<TestName>_"
+// prefix so that queries never match rows left in the shared in-memory DB by
+// earlier tests. newTestApp uses NewDatabaseManager("") → file::memory:?cache=shared,
+// meaning every test in package main sees the same DB.
 
 func TestSearchPages_FiltersBySubstring(t *testing.T) {
 	app := newTestApp(t)
 
-	indexPage(t, app.db, "vault", "Work", "Journal", "Daily", "b1")
-	indexPage(t, app.db, "vault", "Work", "Projects", "Alpha", "b2")
-	indexPage(t, app.db, "vault", "Personal", "Journal", "Daily", "b3")
-	indexPage(t, app.db, "vault", "Personal", "Notes", "Reading", "b4")
+	const pfx = "sp_FiltersBySubstring_"
+	indexPage(t, app.db, "vault", pfx+"Work", pfx+"Journal", "Daily", "b1")
+	indexPage(t, app.db, "vault", pfx+"Work", pfx+"Projects", "Alpha", "b2")
+	indexPage(t, app.db, "vault", pfx+"Personal", pfx+"Journal", "Daily", "b3")
+	indexPage(t, app.db, "vault", pfx+"Personal", pfx+"Notes", "Reading", "b4")
 
-	results, err := app.SearchPages("Work", 50)
+	results, err := app.SearchPages(pfx+"Work", 50)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
@@ -3501,7 +3507,7 @@ func TestSearchPages_FiltersBySubstring(t *testing.T) {
 	}
 
 	// Substring on section filters correctly.
-	results, err = app.SearchPages("Journal", 50)
+	results, err = app.SearchPages(pfx+"Journal", 50)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
@@ -3510,7 +3516,7 @@ func TestSearchPages_FiltersBySubstring(t *testing.T) {
 	}
 
 	// Full path narrows further.
-	results, err = app.SearchPages("Work/Journal", 50)
+	results, err = app.SearchPages(pfx+"Work/"+pfx+"Journal", 50)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
@@ -3525,10 +3531,11 @@ func TestSearchPages_FiltersBySubstring(t *testing.T) {
 func TestSearchPages_CaseInsensitive(t *testing.T) {
 	app := newTestApp(t)
 
-	indexPage(t, app.db, "vault", "Work", "Journal", "Daily", "b1")
+	const pfx = "sp_CaseInsensitive_"
+	indexPage(t, app.db, "vault", pfx+"Work", "Journal", "Daily", "b1")
 
 	// Uppercase query matches mixed-case path.
-	results, err := app.SearchPages("WORK/JOURNAL", 50)
+	results, err := app.SearchPages(strings.ToUpper(pfx+"Work/Journal"), 50)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
@@ -3537,23 +3544,24 @@ func TestSearchPages_CaseInsensitive(t *testing.T) {
 	}
 
 	// Mixed-case query matches.
-	results, err = app.SearchPages("work", 50)
+	results, err = app.SearchPages(strings.ToLower(pfx+"Work"), 50)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
 	if len(results) != 1 {
-		t.Fatalf("expected 1 result for 'work', got %d", len(results))
+		t.Fatalf("expected 1 result for lowercase query, got %d", len(results))
 	}
 }
 
 func TestSearchPages_RespectsLimit(t *testing.T) {
 	app := newTestApp(t)
 
+	const pfx = "sp_RespectsLimit_"
 	for i := 0; i < 5; i++ {
-		indexPage(t, app.db, "vault", "NB", "Sec", fmt.Sprintf("Page%d", i), fmt.Sprintf("b%d", i))
+		indexPage(t, app.db, "vault", pfx+"NB", "Sec", fmt.Sprintf("Page%d", i), fmt.Sprintf("b%d", i))
 	}
 
-	results, err := app.SearchPages("NB", 3)
+	results, err := app.SearchPages(pfx+"NB", 3)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
@@ -3562,7 +3570,7 @@ func TestSearchPages_RespectsLimit(t *testing.T) {
 	}
 
 	// Zero or negative limit falls back to default 50.
-	results, err = app.SearchPages("NB", 0)
+	results, err = app.SearchPages(pfx+"NB", 0)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
@@ -3571,7 +3579,7 @@ func TestSearchPages_RespectsLimit(t *testing.T) {
 	}
 
 	// Limit above cap is clamped.
-	results, err = app.SearchPages("NB", 200)
+	results, err = app.SearchPages(pfx+"NB", 200)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
@@ -3583,25 +3591,36 @@ func TestSearchPages_RespectsLimit(t *testing.T) {
 func TestSearchPages_EmptyQuery(t *testing.T) {
 	app := newTestApp(t)
 
-	indexPage(t, app.db, "vault", "Work", "Journal", "Daily", "b1")
-	indexPage(t, app.db, "vault", "Personal", "Notes", "Reading", "b2")
+	const pfx = "sp_EmptyQuery_"
+	indexPage(t, app.db, "vault", pfx+"Work", "Journal", "Daily", "b1")
+	indexPage(t, app.db, "vault", pfx+"Personal", "Notes", "Reading", "b2")
 
-	// Empty query matches everything (coarse filter — frontend reranks).
+	// Empty query matches everything in the shared DB; verify our 2 pages
+	// are present with the correct prefix rather than asserting a total
+	// count that depends on what other tests left behind.
 	results, err := app.SearchPages("", 50)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
-	if len(results) != 2 {
-		t.Fatalf("expected 2 pages for empty query, got %d", len(results))
+	var count int
+	for _, r := range results {
+		if strings.HasPrefix(r.Notebook, pfx) {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 namespaced pages for empty query, found %d: %+v", count, results)
 	}
 }
 
 func TestSearchPages_NoMatches(t *testing.T) {
 	app := newTestApp(t)
 
-	indexPage(t, app.db, "vault", "Work", "Journal", "Daily", "b1")
+	const pfx = "sp_NoMatches_"
+	indexPage(t, app.db, "vault", pfx+"Work", "Journal", "Daily", "b1")
 
-	results, err := app.SearchPages("nonexistent", 50)
+	// Query that cannot match any row in the entire shared DB.
+	results, err := app.SearchPages("sp_NoMatches_ZZZZZZZZ_nonexistent", 50)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
@@ -3623,22 +3642,23 @@ func TestSearchPages_NilDBReturnsError(t *testing.T) {
 func TestSearchPages_CrossSource(t *testing.T) {
 	app := newTestApp(t)
 
-	indexPage(t, app.db, "vault", "Work", "Journal", "Daily", "b1")
-	indexPage(t, app.db, "linked:ext1", "External", "Docs", "Guide", "b2")
+	const pfx = "sp_CrossSource_"
+	indexPage(t, app.db, "vault", pfx+"Work", "Journal", "Daily", "b1")
+	indexPage(t, app.db, "linked:sp_ext1", pfx+"External", "Docs", pfx+"Guide", "b2")
 
-	results, err := app.SearchPages("Guide", 50)
+	results, err := app.SearchPages(pfx+"Guide", 50)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
 	if len(results) != 1 {
 		t.Fatalf("expected 1 linked page, got %d", len(results))
 	}
-	if results[0].Source != "linked:ext1" {
-		t.Errorf("expected source 'linked:ext1', got %q", results[0].Source)
+	if results[0].Source != "linked:sp_ext1" {
+		t.Errorf("expected source 'linked:sp_ext1', got %q", results[0].Source)
 	}
 
 	// Vault page still findable.
-	results, err = app.SearchPages("Work", 50)
+	results, err = app.SearchPages(pfx+"Work", 50)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
@@ -3651,11 +3671,12 @@ func TestSearchPages_DeterministicOrder(t *testing.T) {
 	app := newTestApp(t)
 
 	// Insert in reverse-alphabetical order to verify sort stability.
-	indexPage(t, app.db, "vault", "Zeta", "Sec", "Page", "b1")
-	indexPage(t, app.db, "vault", "Alpha", "Sec", "Page", "b2")
-	indexPage(t, app.db, "vault", "Beta", "Sec", "Page", "b3")
+	const pfx = "sp_DetOrd_"
+	indexPage(t, app.db, "vault", pfx+"Zeta", "Sec", "Page", "b1")
+	indexPage(t, app.db, "vault", pfx+"Alpha", "Sec", "Page", "b2")
+	indexPage(t, app.db, "vault", pfx+"Beta", "Sec", "Page", "b3")
 
-	results, err := app.SearchPages("Page", 50)
+	results, err := app.SearchPages(pfx, 50)
 	if err != nil {
 		t.Fatalf("SearchPages failed: %v", err)
 	}
@@ -3663,7 +3684,7 @@ func TestSearchPages_DeterministicOrder(t *testing.T) {
 		t.Fatalf("expected 3 results, got %d", len(results))
 	}
 	// ListDistinctPages orders by notebook, section, page → Alpha, Beta, Zeta.
-	if results[0].Notebook != "Alpha" || results[1].Notebook != "Beta" || results[2].Notebook != "Zeta" {
+	if results[0].Notebook != pfx+"Alpha" || results[1].Notebook != pfx+"Beta" || results[2].Notebook != pfx+"Zeta" {
 		t.Errorf("expected deterministic alphabetical order, got %q %q %q",
 			results[0].Notebook, results[1].Notebook, results[2].Notebook)
 	}
