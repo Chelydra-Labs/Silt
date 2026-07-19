@@ -82,10 +82,31 @@ func (dm *DatabaseManager) ListAllPageLinks() ([]PageLinkRow, error) {
 	return out, rows.Err()
 }
 
-// ListPageLinksByTargetRaws returns reverse-index rows whose target_raw is in
-// the given candidate list (used by rename/move rewrite).
+// ListPageLinksByTargetRaws returns reverse-index rows whose target_raw matches
+// any candidate (case-insensitive). Used by rename/move inbound collect and
+// rewrite so large vaults avoid loading the full page_links table. Matching is
+// on lower(target_raw) so [[MyPage]] and [[mypage]] both hit; resolution still
+// gates ambiguous basenames in Go. Prefer LinkTargetRawCandidates for the
+// candidate list (path variants + segment suffixes).
+//
+// Resolved target_* columns are intentionally unused: indexing stores them
+// NULL; authority is target_raw + page inventory resolution.
 func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLinkRow, error) {
 	if len(targets) == 0 {
+		return nil, nil
+	}
+	// Dedupe lowercased candidates for the IN list.
+	seen := make(map[string]bool, len(targets))
+	args := make([]any, 0, len(targets))
+	for _, t := range targets {
+		n := strings.ToLower(strings.TrimSpace(t))
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		args = append(args, n)
+	}
+	if len(args) == 0 {
 		return nil, nil
 	}
 	db, release, err := dm.handle()
@@ -93,16 +114,15 @@ func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLi
 		return nil, ErrDBClosed
 	}
 	defer release()
-	placeholders := make([]string, len(targets))
-	args := make([]any, len(targets))
-	for i, t := range targets {
+	placeholders := make([]string, len(args))
+	for i := range args {
 		placeholders[i] = "?"
-		args[i] = t
 	}
+	// lower(target_raw) uses idx_page_links_raw_lower when present.
 	q := `SELECT source_notebook, source_section, source_page, source_block_id,
 	             target_raw, COALESCE(heading, ''), COALESCE(alias, '')
 	      FROM page_links
-	      WHERE target_raw IN (` + strings.Join(placeholders, ",") + `)`
+	      WHERE lower(target_raw) IN (` + strings.Join(placeholders, ",") + `)`
 	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -120,6 +140,43 @@ func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLi
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// LinkTargetRawCandidates returns every target_raw form that may uniquely
+// resolve to the given page locations: PathVariants plus each path-segment
+// suffix (so [[Active/Site]] still matches Work/Projects/Active/Site).
+func LinkTargetRawCandidates(targets []struct{ Notebook, Section, Page string }) []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	for _, t := range targets {
+		if t.Page == "" {
+			continue
+		}
+		for _, v := range PathVariants(t.Notebook, t.Section, t.Page) {
+			add(v)
+		}
+		// Segment suffixes of the full path (PageMatchesTarget HasSuffix rule).
+		var parts []string
+		if t.Notebook != "" {
+			parts = append(parts, t.Notebook)
+		}
+		if t.Section != "" {
+			parts = append(parts, strings.Split(t.Section, "/")...)
+		}
+		parts = append(parts, t.Page)
+		for i := 0; i < len(parts); i++ {
+			add(strings.Join(parts[i:], "/"))
+		}
+	}
+	return out
 }
 
 // ResolvePageLink resolves a wiki-link target via shortest-unique-path rules

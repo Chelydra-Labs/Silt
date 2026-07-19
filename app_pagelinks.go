@@ -74,11 +74,15 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, 
 		return
 	}
 
-	// Fetch all page_links rows + the full page inventory for resolution.
+	// Filtered page_links rows (by target_raw candidates) + full page inventory
+	// for resolve-gating. Avoids full-table scans on large vaults.
 	var rows []db.PageLinkRow
 	var pages []db.PageLoc
+	candidates := db.LinkTargetRawCandidates([]struct{ Notebook, Section, Page string }{
+		{oldNB, oldSec, oldPage},
+	})
 	err := a.coordinator.WithDBReadResult(func() error {
-		got, err := a.db.ListAllPageLinks()
+		got, err := a.db.ListPageLinksByTargetRaws(candidates)
 		if err != nil {
 			return err
 		}
@@ -229,29 +233,37 @@ func (a *App) rewriteInboundPageLinksForSection(notebook, oldSec, newSec string,
 	}
 }
 
+// renameTarget is a (notebook, section, page) location used by structural
+// rename inbound collect.
+type renameTarget struct{ nb, sec, page string }
+
 // collectInboundSourcePaths returns on-disk paths of pages that have wiki-links
-// uniquely resolving to any of the given (notebook, section, page) targets.
-// Structural rename/delete locks these together with descendant paths so
-// inbound rewrites do not nest LockFileWrite under LockPathsWrite (#691).
-func (a *App) collectInboundSourcePaths(targets []struct{ nb, sec, page string }) []string {
+// uniquely resolving to any of the given targets. Structural rename locks these
+// together with descendant paths so inbound rewrites do not nest LockFileWrite
+// under LockPathsWrite. Returns an error on DB failure so callers fail closed
+// rather than renaming without inbound locks.
+func (a *App) collectInboundSourcePaths(targets []renameTarget) ([]string, error) {
 	if a.db == nil || len(targets) == 0 {
-		return nil
+		return nil, nil
 	}
 	want := make(map[string]bool, len(targets))
+	candIn := make([]struct{ Notebook, Section, Page string }, 0, len(targets))
 	for _, t := range targets {
 		if t.page == "" {
 			continue
 		}
 		want[t.nb+"\x00"+t.sec+"\x00"+t.page] = true
+		candIn = append(candIn, struct{ Notebook, Section, Page string }{t.nb, t.sec, t.page})
 	}
 	if len(want) == 0 {
-		return nil
+		return nil, nil
 	}
 
+	candidates := db.LinkTargetRawCandidates(candIn)
 	var rows []db.PageLinkRow
 	var pages []db.PageLoc
 	err := a.coordinator.WithDBReadResult(func() error {
-		got, err := a.db.ListAllPageLinks()
+		got, err := a.db.ListPageLinksByTargetRaws(candidates)
 		if err != nil {
 			return err
 		}
@@ -260,8 +272,7 @@ func (a *App) collectInboundSourcePaths(targets []struct{ nb, sec, page string }
 		return err
 	})
 	if err != nil {
-		log.Printf("collectInboundSourcePaths: %v", err)
-		return nil
+		return nil, err
 	}
 
 	seenPath := map[string]bool{}
@@ -285,6 +296,39 @@ func (a *App) collectInboundSourcePaths(targets []struct{ nb, sec, page string }
 		}
 		seenPath[filePath] = true
 		out = append(out, filePath)
+	}
+	return out, nil
+}
+
+// missingInboundPaths returns inbound source paths for targets that are not
+// already in locked (normalized). Used inside LockPathsWrite to detect
+// collect-then-lock TOCTOU and retry with an extended lock set.
+func (a *App) missingInboundPaths(targets []renameTarget, locked map[string]bool) ([]string, error) {
+	fresh, err := a.collectInboundSourcePaths(targets)
+	if err != nil {
+		return nil, err
+	}
+	var missing []string
+	for _, p := range fresh {
+		n := core.NormalizeFileLockPath(p)
+		if n != "" && !locked[n] {
+			missing = append(missing, p)
+		}
+	}
+	return missing, nil
+}
+
+// unionLockPaths appends extra paths not already present (by normalized key).
+func unionLockPaths(base []string, extra []string) []string {
+	seen := lockPathSet(base)
+	out := append([]string{}, base...)
+	for _, p := range extra {
+		n := core.NormalizeFileLockPath(p)
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, p)
 	}
 	return out
 }

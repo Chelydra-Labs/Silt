@@ -274,6 +274,10 @@ func (dm *DatabaseManager) initSchema() error {
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_page_links_raw ON page_links(target_raw);`); err != nil {
 		return fmt.Errorf("failed to create page_links raw index: %w", err)
 	}
+	// Case-insensitive inbound lookup for rename collect/rewrite (lower(target_raw) IN …).
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_page_links_raw_lower ON page_links(lower(target_raw));`); err != nil {
+		return fmt.Errorf("failed to create page_links raw lower index: %w", err)
+	}
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_page_links_target ON page_links(target_notebook, target_section, target_page);`); err != nil {
 		return fmt.Errorf("failed to create page_links target index: %w", err)
 	}
