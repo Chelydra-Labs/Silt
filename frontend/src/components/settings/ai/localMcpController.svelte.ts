@@ -44,7 +44,12 @@ export function createLocalMcpController() {
 
   function scheduleTokenClear() {
     if (tokenClearTimer) clearTimeout(tokenClearTimer)
-    tokenClearTimer = setTimeout(() => clearTokenFromMemory(), 30_000)
+    tokenClearTimer = setTimeout(() => {
+      clearTokenFromMemory()
+      // Best-effort: clear OS clipboard if it still holds our token copy.
+      // Clipboard managers / history may retain a copy — tooltip documents this.
+      void navigator.clipboard?.writeText?.('').catch(() => {})
+    }, 30_000)
   }
 
   async function refresh() {

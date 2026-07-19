@@ -1653,5 +1653,54 @@ describe('AIProviderTab', () => {
         )
       )
     })
+
+    it('renders running status endpoint and message', async () => {
+      mocks.GetLocalMCPConfig.mockResolvedValue({
+        enabled: true,
+        http_enabled: true,
+        http_port: 17887,
+        write_enabled: true
+      })
+      mocks.GetLocalMCPStatus.mockResolvedValue({
+        state: 'running',
+        message: 'MCP listening on http://127.0.0.1:17887',
+        endpoint: 'http://127.0.0.1:17887',
+        write_enabled: true
+      })
+      render(AIProviderTab)
+      await ready()
+      const status = await screen.findByText(/MCP availability/i)
+      expect(status.textContent).toMatch(/running/i)
+      expect(status.textContent).toMatch(/127\.0\.0\.1:17887/)
+      expect(status.textContent).toMatch(/MCP listening/i)
+    })
+
+    it('Refresh status re-fetches GetLocalMCPStatus', async () => {
+      render(AIProviderTab)
+      await ready()
+      const before = mocks.GetLocalMCPStatus.mock.calls.length
+      await fireEvent.click(
+        screen.getByRole('button', { name: /Refresh status/i })
+      )
+      await waitFor(() =>
+        expect(mocks.GetLocalMCPStatus.mock.calls.length).toBeGreaterThan(
+          before
+        )
+      )
+    })
+
+    it('Copy token writes the bearer to the clipboard', async () => {
+      mocks.GetLocalMCPToken.mockResolvedValue('clip-token-xyz')
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.assign(navigator, {
+        clipboard: { writeText }
+      })
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(screen.getByRole('button', { name: /Copy token/i }))
+      await waitFor(() =>
+        expect(writeText).toHaveBeenCalledWith('clip-token-xyz')
+      )
+    })
   })
 })

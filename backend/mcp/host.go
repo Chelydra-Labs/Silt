@@ -236,9 +236,16 @@ func (h *Host) stop(clearEndpoint bool) {
 	h.mu.Unlock()
 
 	if httpSrv != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_ = httpSrv.Shutdown(ctx)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := httpSrv.Shutdown(ctx)
 		cancel()
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				log.Printf("mcp http shutdown timed out after 5s (in-flight tool calls cut)")
+			} else {
+				log.Printf("mcp http shutdown: %v", err)
+			}
+		}
 	}
 	if ln != nil {
 		_ = ln.Close()
@@ -325,6 +332,7 @@ func (h *Host) startHTTP(srv *mcpsdk.Server, token string, port int) error {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    64 << 10, // 64 KiB — MCP never needs larger headers
 	}
 
 	h.mu.Lock()

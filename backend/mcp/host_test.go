@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -632,6 +634,46 @@ func TestHost_DisableClearsEndpointFile(t *testing.T) {
 	}
 	if got := ReadEndpointFile(); got != "" {
 		t.Fatalf("expected cleared endpoint after disable, got %q", got)
+	}
+}
+
+func TestFileAuditor_RotatesWhenOverSizeCap(t *testing.T) {
+	dir := t.TempDir()
+	// Force a tiny cap for the test by writing a large file then recording.
+	path := filepath.Join(dir, ".system", "logs", "mcp-audit.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-fill past 1 MB so the next Record triggers rotation.
+	big := make([]byte, maxMCPAuditLogBytes+100)
+	for i := range big {
+		big[i] = 'x'
+	}
+	// Make it look like JSONL lines.
+	line := strings.Repeat("a", 200) + "\n"
+	var b strings.Builder
+	for b.Len() < maxMCPAuditLogBytes+100 {
+		b.WriteString(line)
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fa, err := newFileAuditor(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fa.Close()
+	fa.Record(AuditEntry{Tool: "search_blocks", Outcome: "ok", Vault: "v"})
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() > maxMCPAuditLogBytes {
+		t.Errorf("after rotate size=%d want ≤ %d", info.Size(), maxMCPAuditLogBytes)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "search_blocks") {
+		t.Fatal("expected new audit line after rotate")
 	}
 }
 

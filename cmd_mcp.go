@@ -56,7 +56,7 @@ Options:
 	}
 
 	if url == "" {
-		url = discoverMCPEndpoint(token)
+		url = discoverMCPEndpoint()
 	}
 	if url == "" {
 		fmt.Fprintln(os.Stderr, "silt mcp: could not reach a running Silt MCP host — is Silt open with Local MCP enabled?")
@@ -123,7 +123,7 @@ func loadMCPToken() (string, error) {
 	return keyring.Default().Get(mcp.KeyringService, mcp.KeyringUser)
 }
 
-func discoverMCPEndpoint(token string) string {
+func discoverMCPEndpoint() string {
 	// Prefer last-written endpoint file (covers non-default ports), then default.
 	candidates := make([]string, 0, 3)
 	if ep := mcp.ReadEndpointFile(); ep != "" {
@@ -158,7 +158,6 @@ func discoverMCPEndpoint(token string) string {
 			return base
 		}
 	}
-	_ = token
 	return ""
 }
 

@@ -7,8 +7,15 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+)
+
+// Size-cap mirrors plugin network/AI audit logs (1 MB, keep last N lines).
+const (
+	maxMCPAuditLogBytes = 1 * 1024 * 1024
+	maxMCPAuditLogLines = 500
 )
 
 // AuditEntry is one MCP tool invocation. Args are redacted (keys + shapes only;
@@ -78,6 +85,18 @@ func (a *fileAuditor) Record(e AuditEntry) {
 	if a.f == nil {
 		return
 	}
+	// Tail-rotate when the log exceeds the size cap (same class as plugin audit).
+	if info, err := a.f.Stat(); err == nil && info.Size() > maxMCPAuditLogBytes {
+		_ = a.f.Close()
+		a.f = nil
+		truncateMCPAuditLog(a.path, maxMCPAuditLogLines)
+		f, openErr := os.OpenFile(a.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if openErr != nil {
+			log.Printf("mcp audit: reopen after rotate: %v", openErr)
+			return
+		}
+		a.f = f
+	}
 	if _, err := a.f.Write(append(b, '\n')); err != nil {
 		log.Printf("mcp audit: write: %v", err)
 	}
@@ -90,6 +109,20 @@ func (a *fileAuditor) Close() {
 		_ = a.f.Close()
 		a.f = nil
 	}
+}
+
+// truncateMCPAuditLog keeps the last keepLines of path (best-effort).
+func truncateMCPAuditLog(path string, keepLines int) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) <= keepLines {
+		return
+	}
+	kept := lines[len(lines)-keepLines:]
+	_ = os.WriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), 0o600)
 }
 
 // VaultPathHash returns a short stable hash of the vault path for audit rows

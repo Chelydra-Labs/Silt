@@ -690,6 +690,7 @@
                 <button
                   type="button"
                   class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
+                  title="Shows the bearer in the UI for 30s, then clears it from memory"
                   onclick={() => void mcp.revealToken()}
                 >
                   {mcp.tokenVisible ? 'Token shown' : 'Show auth token'}
@@ -697,6 +698,7 @@
                 <button
                   type="button"
                   class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
+                  title="Copies the bearer to the clipboard. We try to clear the clipboard after 30s; clipboard history apps may retain a copy."
                   onclick={() => void mcp.copyToken()}
                 >
                   Copy token
