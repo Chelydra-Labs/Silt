@@ -313,6 +313,26 @@
       window.removeEventListener('resize', dismiss)
     }
   })
+
+  // Close submenus on outside click (match FormatToolbar / HeadingLevelMenu).
+  $effect(() => {
+    if (!visible || (!moreOpen && !linkMenuOpen)) return
+    const onDocClick = (e: MouseEvent): void => {
+      const t = e.target as Node | null
+      if (menuEl && t && !menuEl.contains(t)) {
+        moreOpen = false
+        linkMenuOpen = false
+      }
+    }
+    // Next tick so the opening click does not immediately close.
+    const id = window.setTimeout(() => {
+      document.addEventListener('click', onDocClick, true)
+    }, 0)
+    return () => {
+      window.clearTimeout(id)
+      document.removeEventListener('click', onDocClick, true)
+    }
+  })
 </script>
 
 {#if visible && selectionCoords}

@@ -279,6 +279,20 @@
     )
   }
 
+  function openMenuItems(): HTMLButtonElement[] {
+    if (!toolbarEl) return []
+    // Prefer the visible overflow panel under More/Align/Insert.
+    const panel =
+      toolbarEl.querySelector<HTMLElement>('.menu-panel:not([hidden])') ||
+      Array.from(toolbarEl.querySelectorAll<HTMLElement>('.menu-panel')).find(
+        (el) => el.offsetParent !== null
+      )
+    if (!panel) return []
+    return Array.from(
+      panel.querySelectorAll<HTMLButtonElement>('button.menu-item, button')
+    ).filter((b) => !b.disabled)
+  }
+
   function handleKeydown(e: KeyboardEvent): void {
     // When a nested menu is open, Esc closes it first (menu → trigger).
     if (e.key === 'Escape') {
@@ -293,6 +307,37 @@
       }
       e.preventDefault()
       editor?.chain().focus().run()
+      return
+    }
+
+    // Arrow roving inside open overflow menus (match SelectionBubble).
+    if (moreOpen || alignOpen || insertOpen) {
+      const items = openMenuItems()
+      if (items.length === 0) return
+      const cur = items.findIndex((b) => b === document.activeElement)
+      let idx = cur < 0 ? 0 : cur
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        e.preventDefault()
+        idx = (idx + 1) % items.length
+        items[idx]?.focus()
+        return
+      }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault()
+        idx = (idx - 1 + items.length) % items.length
+        items[idx]?.focus()
+        return
+      }
+      if (e.key === 'Home') {
+        e.preventDefault()
+        items[0]?.focus()
+        return
+      }
+      if (e.key === 'End') {
+        e.preventDefault()
+        items[items.length - 1]?.focus()
+        return
+      }
       return
     }
 

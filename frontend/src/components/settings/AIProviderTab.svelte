@@ -1,22 +1,11 @@
 <script lang="ts">
   // Settings → AI Provider tab.
   //
-  // Thin view over the reactive controller in
-  // ./ai/aiProviderController.svelte.ts, which owns config state, the
-  // chat/embedding sync fan-out, API-key management, the live connection
-  // probe, model discovery, and the audit log. The IPC bindings live in the
-  // controller so this view never touches IPC directly. See the controller
-  // for behavior; this file is layout + a11y only.
+  // Thin view over reactive controllers:
+  // ./ai/aiProviderController.svelte.ts (provider/chat/embedding/audit)
+  // ./ai/localMcpController.svelte.ts (Local MCP host)
+  // IPC lives in controllers — this file is layout + a11y only.
   import { onMount, onDestroy, tick } from 'svelte'
-  import {
-    GetCloseToTray,
-    GetLocalMCPConfig,
-    GetLocalMCPInstallHint,
-    GetLocalMCPStatus,
-    GetLocalMCPToken,
-    SetCloseToTray,
-    SetLocalMCPConfig
-  } from '../../../bindings/silt/app.js'
   import {
     createAIProviderController,
     LOCAL_DEFAULT,
@@ -26,6 +15,7 @@
     type ProviderType,
     type Which
   } from './ai/aiProviderController.svelte'
+  import { createLocalMcpController } from './ai/localMcpController.svelte'
   import PresetControl from './PresetControl.svelte'
   import InfoTooltip from './InfoTooltip.svelte'
   import { getEmbeddingCapabilities } from '../../settings/modelCapabilities'
@@ -55,166 +45,8 @@
     }) => Promise<void>
   }
 
-  // Local MCP host (#687) — vault-scoped; independent of chat provider setup.
-  let mcpEnabled = $state(false)
-  let mcpWrite = $state(false)
-  let mcpHttp = $state(true)
-  let mcpPort = $state(17887)
-  let mcpStatus = $state<{
-    state?: string
-    message?: string
-    endpoint?: string
-    write_enabled?: boolean
-  } | null>(null)
-  let mcpSaving = $state(false)
-  let mcpError = $state('')
-  let mcpHint = $state('')
-  let mcpTokenVisible = $state(false)
-  let mcpToken = $state('')
-  let mcpTrayPrompt = $state(false)
-  let mcpTokenClearTimer: ReturnType<typeof setTimeout> | null = null
-
-  function clearMCPTokenFromMemory() {
-    mcpToken = ''
-    mcpTokenVisible = false
-    if (mcpTokenClearTimer) {
-      clearTimeout(mcpTokenClearTimer)
-      mcpTokenClearTimer = null
-    }
-  }
-
-  function scheduleMCPTokenClear() {
-    if (mcpTokenClearTimer) clearTimeout(mcpTokenClearTimer)
-    // Limit how long the bearer sits in JS heap after reveal/copy.
-    mcpTokenClearTimer = setTimeout(() => clearMCPTokenFromMemory(), 30_000)
-  }
-
-  async function refreshMCP() {
-    try {
-      const [cfg, st, hint] = await Promise.all([
-        GetLocalMCPConfig(),
-        GetLocalMCPStatus(),
-        GetLocalMCPInstallHint()
-      ])
-      mcpEnabled = !!(cfg as { enabled?: boolean })?.enabled
-      mcpWrite = !!(cfg as { write_enabled?: boolean })?.write_enabled
-      mcpHttp = (cfg as { http_enabled?: boolean })?.http_enabled !== false
-      const p = (cfg as { http_port?: number })?.http_port
-      if (typeof p === 'number' && p > 0) mcpPort = p
-      mcpStatus = st as typeof mcpStatus
-      mcpHint = typeof hint === 'string' ? hint : ''
-    } catch (e) {
-      console.error('Local MCP status failed', e)
-    }
-  }
-
-  async function saveMCP(next: {
-    enabled?: boolean
-    write?: boolean
-    http?: boolean
-    port?: number
-  }) {
-    if (mcpSaving) return
-    mcpSaving = true
-    mcpError = ''
-    const enabled = next.enabled ?? mcpEnabled
-    const write = next.write ?? mcpWrite
-    const http = next.http ?? mcpHttp
-    const port = next.port ?? mcpPort
-    try {
-      if (enabled && !mcpEnabled) {
-        // Prompt close-to-tray so MCP survives window close (user may decline).
-        try {
-          const tray = await GetCloseToTray()
-          if (!tray) mcpTrayPrompt = true
-        } catch {
-          /* ignore */
-        }
-      }
-      await SetLocalMCPConfig(enabled, http, write, port)
-      mcpEnabled = enabled
-      mcpWrite = write
-      mcpHttp = http
-      mcpPort = port
-      await refreshMCP()
-    } catch (e) {
-      mcpError = 'Could not save local MCP settings.'
-      console.error(e)
-      await refreshMCP()
-    } finally {
-      mcpSaving = false
-    }
-  }
-
-  async function acceptTrayForMCP() {
-    try {
-      await SetCloseToTray(true)
-    } catch (e) {
-      console.error(e)
-    }
-    mcpTrayPrompt = false
-  }
-
-  async function revealMCPToken() {
-    try {
-      mcpToken = (await GetLocalMCPToken()) || ''
-      mcpTokenVisible = true
-      scheduleMCPTokenClear()
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
-  async function copyMCPToken() {
-    try {
-      if (!mcpToken) mcpToken = (await GetLocalMCPToken()) || ''
-      if (!mcpToken) return
-      await navigator.clipboard.writeText(mcpToken)
-      mcpTokenVisible = true
-      scheduleMCPTokenClear()
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
-  async function copyMCPHint() {
-    try {
-      await navigator.clipboard.writeText(
-        mcpHint || (await GetLocalMCPInstallHint())
-      )
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
-  function clientInstallNotes(): { title: string; body: string }[] {
-    const ep = mcpStatus?.endpoint || `http://127.0.0.1:${mcpPort}`
-    const bin = 'silt' // path to Silt binary / `silt mcp`
-    return [
-      {
-        title: 'Any MCP client',
-        body: `Generic MCP — same for every client.\n\n1. Enable Local MCP (vault open).\n2. Stdio (preferred):\n   command: ${bin}\n   args: ["mcp"]\n3. HTTP clients: ${ep}\n   Authorization: Bearer <token from Show/Copy token>\n4. Optional skill: integrations/silt-agent/SKILL.md\n\nSee docs/LOCAL_MCP.md.`
-      },
-      {
-        title: 'OpenCode sample',
-        body:
-          mcpHint ||
-          JSON.stringify(
-            {
-              mcp: {
-                silt: {
-                  type: 'local',
-                  command: [bin, 'mcp'],
-                  enabled: true
-                }
-              }
-            },
-            null,
-            2
-          )
-      }
-    ]
-  }
+  // Local MCP (#687) — controller owns IPC; view binds to reactive getters.
+  const mcp = createLocalMcpController()
 
   // Degraded semantic index / hybrid search signals (#630).
   const qaStaleReason = $derived.by(() => {
@@ -386,11 +218,11 @@
 
   onMount(() => {
     void ai.reload()
-    void refreshMCP()
+    void mcp.refresh()
   })
 
   onDestroy(() => {
-    clearMCPTokenFromMemory()
+    mcp.destroy()
   })
 
   // Audit lazy-load: the controller is a plain module (no component context),
@@ -707,7 +539,7 @@
             class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-4 space-y-4 {ringClass(
               'ai-local-mcp'
             )}"
-            aria-busy={mcpSaving}
+            aria-busy={mcp.saving}
           >
             <div>
               <h3 class="text-text-primary text-type-md font-semibold m-0">
@@ -743,20 +575,20 @@
                   type="checkbox"
                   class="keyring-switch peer sr-only"
                   aria-labelledby="mcp-enable-label"
-                  checked={mcpEnabled}
-                  disabled={mcpSaving}
+                  checked={mcp.enabled}
+                  disabled={mcp.saving}
                   onchange={(e) =>
-                    void saveMCP({ enabled: e.currentTarget.checked })}
+                    void mcp.save({ enabled: e.currentTarget.checked })}
                 />
                 <span
                   aria-hidden="true"
                   class="keyring-switch-track"
-                  class:on={mcpEnabled}
+                  class:on={mcp.enabled}
                 ></span>
               </label>
             </div>
 
-            {#if mcpTrayPrompt}
+            {#if mcp.trayPrompt}
               <div
                 class="rounded-lg border border-accent-primary-start/30 bg-accent-primary-glow/15 p-3 space-y-2"
                 role="status"
@@ -770,14 +602,14 @@
                   <button
                     type="button"
                     class="px-3 py-1 rounded-md bg-accent-primary-start text-surface-app text-type-xs border-none cursor-pointer"
-                    onclick={() => void acceptTrayForMCP()}
+                    onclick={() => void mcp.acceptTray()}
                   >
                     Enable close to tray
                   </button>
                   <button
                     type="button"
                     class="px-3 py-1 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
-                    onclick={() => (mcpTrayPrompt = false)}
+                    onclick={() => mcp.dismissTrayPrompt()}
                   >
                     Not now
                   </button>
@@ -787,7 +619,7 @@
 
             <div
               class="ml-3 pl-3 border-l border-surface-panel-border space-y-3"
-              class:opacity-50={!mcpEnabled}
+              class:opacity-50={!mcp.enabled}
             >
               <div
                 class="flex flex-col sm:flex-row sm:items-start justify-between gap-4"
@@ -808,8 +640,8 @@
                 </div>
                 <label
                   class="flex items-center select-none"
-                  class:cursor-pointer={mcpEnabled}
-                  class:cursor-not-allowed={!mcpEnabled}
+                  class:cursor-pointer={mcp.enabled}
+                  class:cursor-not-allowed={!mcp.enabled}
                   for="mcp-write"
                 >
                   <input
@@ -817,16 +649,16 @@
                     type="checkbox"
                     class="keyring-switch peer sr-only"
                     aria-labelledby="mcp-write-label"
-                    checked={mcpWrite}
-                    disabled={mcpSaving || !mcpEnabled}
+                    checked={mcp.write}
+                    disabled={mcp.saving || !mcp.enabled}
                     onchange={(e) =>
-                      void saveMCP({ write: e.currentTarget.checked })}
+                      void mcp.save({ write: e.currentTarget.checked })}
                   />
                   <span
                     aria-hidden="true"
                     class="keyring-switch-track"
-                    class:on={mcpWrite}
-                    class:disabled={!mcpEnabled}
+                    class:on={mcp.write}
+                    class:disabled={!mcp.enabled}
                   ></span>
                 </label>
               </div>
@@ -834,15 +666,15 @@
               <p class="text-text-muted text-type-xs m-0" id="mcp-availability">
                 MCP availability:
                 <strong class="text-text-primary">
-                  {mcpStatus?.state ?? 'unknown'}
+                  {mcp.status?.state ?? 'unknown'}
                 </strong>
-                {#if mcpStatus?.message}
-                  — {mcpStatus.message}
+                {#if mcp.status?.message}
+                  — {mcp.status.message}
                 {/if}
-                {#if mcpStatus?.endpoint}
+                {#if mcp.status?.endpoint}
                   <br />
                   Endpoint:
-                  <code class="text-text-primary">{mcpStatus.endpoint}</code>
+                  <code class="text-text-primary">{mcp.status.endpoint}</code>
                 {/if}
               </p>
 
@@ -850,37 +682,37 @@
                 <button
                   type="button"
                   class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer disabled:opacity-50"
-                  disabled={mcpSaving}
-                  onclick={() => void refreshMCP()}
+                  disabled={mcp.saving}
+                  onclick={() => void mcp.refresh()}
                 >
                   Refresh status
                 </button>
                 <button
                   type="button"
                   class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
-                  onclick={() => void revealMCPToken()}
+                  onclick={() => void mcp.revealToken()}
                 >
-                  {mcpTokenVisible ? 'Token shown' : 'Show auth token'}
+                  {mcp.tokenVisible ? 'Token shown' : 'Show auth token'}
                 </button>
                 <button
                   type="button"
                   class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
-                  onclick={() => void copyMCPToken()}
+                  onclick={() => void mcp.copyToken()}
                 >
                   Copy token
                 </button>
                 <button
                   type="button"
                   class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
-                  onclick={() => void copyMCPHint()}
+                  onclick={() => void mcp.copyHint()}
                 >
                   Copy OpenCode snippet
                 </button>
               </div>
-              {#if mcpTokenVisible && mcpToken}
+              {#if mcp.tokenVisible && mcp.token}
                 <p class="text-text-muted text-type-xs m-0 break-all">
                   Bearer token (OS keyring):
-                  <code class="text-text-primary select-all">{mcpToken}</code>
+                  <code class="text-text-primary select-all">{mcp.token}</code>
                 </p>
               {/if}
 
@@ -888,7 +720,7 @@
                 <p class="text-text-primary text-type-xs font-semibold m-0">
                   Client setup
                 </p>
-                {#each clientInstallNotes() as note (note.title)}
+                {#each mcp.installNotes() as note (note.title)}
                   <details
                     class="rounded-md border border-surface-panel-border bg-surface-panel/30 p-2"
                   >
@@ -912,8 +744,10 @@
               </div>
             </div>
 
-            {#if mcpError}
-              <p class="text-error text-type-xs m-0" role="alert">{mcpError}</p>
+            {#if mcp.error}
+              <p class="text-error text-type-xs m-0" role="alert">
+                {mcp.error}
+              </p>
             {/if}
           </section>
 

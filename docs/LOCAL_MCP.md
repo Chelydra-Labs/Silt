@@ -99,6 +99,9 @@ Same steps for every client:
    skills folder if it supports portable skills.
 5. Smoke: list tools → `search_blocks` with a known phrase → confirm write tools
    are denied until the write grant is on.
+6. After toggling **Allow write tools** (or any host tool surface change),
+   **restart the client’s MCP / stdio session** so it reloads `tools/list`.
+   A long-lived `silt mcp` proxy registers tools at connect time.
 
 ### OpenCode sample
 

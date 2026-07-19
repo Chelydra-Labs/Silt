@@ -1580,4 +1580,78 @@ describe('AIProviderTab', () => {
       await ready()
     })
   })
+
+  describe('Local MCP settings', () => {
+    it('loads MCP status on mount and enables via SetLocalMCPConfig', async () => {
+      render(AIProviderTab)
+      await ready()
+      await waitFor(() => expect(mocks.GetLocalMCPConfig).toHaveBeenCalled())
+      const enable = screen.getByLabelText(/Enable local AI integration/i)
+      await fireEvent.click(enable)
+      await waitFor(() =>
+        expect(mocks.SetLocalMCPConfig).toHaveBeenCalledWith(
+          true,
+          true,
+          false,
+          17887
+        )
+      )
+    })
+
+    it('prompts for close-to-tray when enabling and tray is off', async () => {
+      mocks.GetCloseToTray.mockResolvedValue(false)
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(
+        screen.getByLabelText(/Enable local AI integration/i)
+      )
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', { name: /Enable close to tray/i })
+        ).toBeInTheDocument()
+      )
+      await fireEvent.click(
+        screen.getByRole('button', { name: /Enable close to tray/i })
+      )
+      await waitFor(() =>
+        expect(mocks.SetCloseToTray).toHaveBeenCalledWith(true)
+      )
+    })
+
+    it('reveals token and auto-clears after 30s', async () => {
+      vi.useFakeTimers()
+      mocks.GetLocalMCPToken.mockResolvedValue('secret-token')
+      mocks.GetLocalMCPConfig.mockResolvedValue({
+        enabled: true,
+        http_enabled: true,
+        http_port: 17887,
+        write_enabled: false
+      })
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(
+        screen.getByRole('button', { name: /Show auth token/i })
+      )
+      await waitFor(() =>
+        expect(screen.getByText(/secret-token/)).toBeInTheDocument()
+      )
+      await vi.advanceTimersByTimeAsync(30_000)
+      await waitFor(() => expect(screen.queryByText(/secret-token/)).toBeNull())
+      vi.useRealTimers()
+    })
+
+    it('surfaces save errors in an alert', async () => {
+      mocks.SetLocalMCPConfig.mockRejectedValueOnce(new Error('nope'))
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(
+        screen.getByLabelText(/Enable local AI integration/i)
+      )
+      await waitFor(() =>
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          /Could not save local MCP settings/i
+        )
+      )
+    })
+  })
 })
