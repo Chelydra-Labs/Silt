@@ -521,21 +521,6 @@
             >
             <span>Check spelling</span>
           </button>
-          <button
-            type="button"
-            class="menu-item"
-            role="menuitem"
-            aria-label="Clear formatting"
-            onclick={() => {
-              handleClear()
-              moreOpen = false
-            }}
-          >
-            <span class="material-symbols-outlined" aria-hidden="true"
-              >format_clear</span
-            >
-            <span>Clear formatting</span>
-          </button>
         </div>
       {/if}
     </div>

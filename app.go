@@ -335,8 +335,6 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 // OnShutdown callback). Called after all OnShutdown hooks, in reverse
 // registration order.
 func (a *App) ServiceShutdown() error {
-	// Stop accepting MCP clients before vault teardown (#687).
-	a.stopMCPHost()
 	// Cancel in-flight AI HTTP calls so they don't outlive the process.
 	if a.aiCtxCancel != nil {
 		a.aiCtxCancel()
@@ -345,15 +343,16 @@ func (a *App) ServiceShutdown() error {
 	// onVaultClose/onShutdown hook (#106) before IPC tears down.
 	a.emit("vault:closing", struct{}{})
 	// Wait for any in-flight Wails-bound calls (UpdateBlockState,
-	// QueryTasks) to complete before tearing
+	// QueryTasks, SetLocalMCPConfig) to complete before tearing
 	// down the DB, tracker, and watcher. Without this a fast window
-	// close could race an in-progress file write.
+	// close could race an in-progress file write or MCP Start.
 	a.wg.Wait()
 	// Take the write lock for the terminal teardown so any reader that
 	// slipped in between wg.Wait() returning and this point can't
-	// dereference a service mid-close. (No new handlers arrive after the
-	// Wails context is cancelled, but the lock makes the guarantee
-	// structural rather than relying on dispatch ordering.)
+	// dereference a service mid-close — including a concurrent
+	// syncMCPHost that would otherwise race Host.Start against stop.
+	// MCP is stopped inside teardownVaultServices under this lock only
+	// (not before), so Quit cannot leave a brief post-stop Start window.
 	a.vaultMu.Lock()
 	// Share the exact teardown path with CloseVault so both nil every
 	// service field. Nilling here matters: if a "change vault" IPC lands

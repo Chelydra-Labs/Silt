@@ -164,11 +164,9 @@ func discoverMCPEndpoint() string {
 // runStdioProxy hosts a local stdio MCP server whose tools forward to the
 // remote session (tool list + call). Keeps the client config as `silt mcp`.
 //
-// Tools are re-listed from the remote on each tools/list-driven registration
-// pass at startup. If the host tool surface changes mid-session (e.g. write
-// grant toggled), clients should reconnect — see docs/LOCAL_MCP.md. CallTool
-// always forwards by name to the live remote so newly enabled tools work once
-// the client re-lists after reconnect.
+// Tools are registered from the remote list at connect time. If the host tool
+// surface changes mid-session (e.g. write grant toggled), clients should
+// reconnect — see docs/LOCAL_MCP.md.
 func runStdioProxy(ctx context.Context, remote *mcpsdk.ClientSession) int {
 	local := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "silt", Version: appVersion}, nil)
 
@@ -181,14 +179,10 @@ func runStdioProxy(ctx context.Context, remote *mcpsdk.ClientSession) int {
 	for _, t := range tools.Tools {
 		tool := t // capture
 		local.AddTool(tool, func(ctx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			// Forward by request name so a reconnected client with a fresh
-			// list still hits the live host even if this process was long-lived.
-			name := tool.Name
-			if req != nil && req.Params.Name != "" {
-				name = req.Params.Name
-			}
+			// Always forward the registered tool name — the local list is the
+			// filter. Clients that need a refreshed surface reconnect (docs).
 			params := &mcpsdk.CallToolParams{
-				Name:      name,
+				Name:      tool.Name,
 				Arguments: req.Params.Arguments,
 			}
 			return remote.CallTool(ctx, params)

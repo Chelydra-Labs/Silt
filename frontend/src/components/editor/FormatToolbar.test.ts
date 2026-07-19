@@ -114,16 +114,21 @@ describe('FormatToolbar', () => {
     expect(getByLabelText('Table')).toBeTruthy()
   })
 
-  it('renders link and clear-formatting buttons', () => {
+  it('renders link and a single clear-formatting button', () => {
     const editor = makeMockEditor() as any
-    const { getByLabelText, getAllByLabelText } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
-    })
-    expect(getByLabelText('Insert link')).toBeTruthy()
-    // Clear is both top-level and under More once More is open; top-level always present.
-    expect(getAllByLabelText('Clear formatting').length).toBeGreaterThanOrEqual(
-      1
+    const { getByLabelText, getAllByLabelText, queryByLabelText } = render(
+      FormatToolbar,
+      {
+        props: { editor, ...baseProps }
+      }
     )
+    expect(getByLabelText('Insert link')).toBeTruthy()
+    // Clear stays top-level only (not duplicated under More).
+    expect(getAllByLabelText('Clear formatting')).toHaveLength(1)
+    // Open More — clear must not appear there.
+    void fireEvent.click(getByLabelText('More formatting'))
+    expect(queryByLabelText('Check spelling')).toBeTruthy()
+    expect(getAllByLabelText('Clear formatting')).toHaveLength(1)
   })
 
   it('hides color pickers when colorEnabled is false', () => {

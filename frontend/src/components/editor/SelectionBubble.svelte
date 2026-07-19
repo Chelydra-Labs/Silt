@@ -1,7 +1,10 @@
 <script lang="ts">
   import type { Editor } from 'svelte-tiptap'
   import { Browser } from '@wailsio/runtime'
-  import { flipOrClamp } from '../../lib/editor/popoverPositioning'
+  import {
+    clampToViewport,
+    flipOrClamp
+  } from '../../lib/editor/popoverPositioning'
 
   // Compact floating format toolbar for non-empty text selection (#689 / #168).
   // Primary marks stay direct; lower-frequency marks live under More. Existing
@@ -170,6 +173,72 @@
   }
 
   let submenuFocus = $state(0)
+  let moreMenuEl: HTMLElement | null = $state(null)
+  let linkMenuEl: HTMLElement | null = $state(null)
+  let moreMenuPos = $state<{ left: number; top: number } | null>(null)
+  let linkMenuPos = $state<{ left: number; top: number } | null>(null)
+
+  function positionSubmenu(
+    el: HTMLElement | null
+  ): { left: number; top: number } | null {
+    if (!el || !menuEl) return null
+    const bubble = menuEl.getBoundingClientRect()
+    const width = el.offsetWidth || 160
+    const height = el.offsetHeight || 120
+    // Prefer below the bubble; flip above when near the bottom edge.
+    return flipOrClamp(
+      { top: bubble.top, bottom: bubble.bottom, left: bubble.left },
+      { width, height },
+      { width: window.innerWidth, height: window.innerHeight }
+    )
+  }
+
+  $effect(() => {
+    if (!moreOpen) {
+      moreMenuPos = null
+      return
+    }
+    void moreMenuEl
+    queueMicrotask(() => {
+      moreMenuPos = positionSubmenu(moreMenuEl)
+    })
+  })
+
+  $effect(() => {
+    if (!linkMenuOpen) {
+      linkMenuPos = null
+      return
+    }
+    void linkMenuEl
+    queueMicrotask(() => {
+      // Prefer right-align near the link control (end of primary strip).
+      const el = linkMenuEl
+      const host = menuEl
+      if (!el || !host) {
+        linkMenuPos = null
+        return
+      }
+      const bubble = host.getBoundingClientRect()
+      const width = el.offsetWidth || 180
+      const height = el.offsetHeight || 140
+      const preferredLeft = bubble.right - width
+      const flipped = flipOrClamp(
+        { top: bubble.top, bottom: bubble.bottom, left: preferredLeft },
+        { width, height },
+        { width: window.innerWidth, height: window.innerHeight }
+      )
+      // Horizontal clamp only if flipOrClamp left is off; keep preferred when possible.
+      linkMenuPos = clampToViewport(
+        {
+          x: preferredLeft,
+          y: flipped.top,
+          width,
+          height
+        },
+        { width: window.innerWidth, height: window.innerHeight }
+      )
+    })
+  })
 
   function submenuItems(): HTMLButtonElement[] {
     if (!menuEl) return []
@@ -389,7 +458,16 @@
     </button>
 
     {#if moreOpen}
-      <div class="bubble-submenu" role="menu" aria-label="More formatting">
+      <div
+        class="bubble-submenu"
+        class:bubble-submenu-fixed={!!moreMenuPos}
+        bind:this={moreMenuEl}
+        role="menu"
+        aria-label="More formatting"
+        style={moreMenuPos
+          ? `left:${moreMenuPos.left}px;top:${moreMenuPos.top}px`
+          : undefined}
+      >
         {#each MORE_MARKS as btn (btn.id)}
           <button
             type="button"
@@ -415,8 +493,13 @@
     {#if linkMenuOpen}
       <div
         class="bubble-submenu bubble-link-menu"
+        class:bubble-submenu-fixed={!!linkMenuPos}
+        bind:this={linkMenuEl}
         role="menu"
         aria-label="Link actions"
+        style={linkMenuPos
+          ? `left:${linkMenuPos.left}px;top:${linkMenuPos.top}px`
+          : undefined}
       >
         {#if currentHref()}
           <div class="bubble-link-href" title={currentHref()}>
@@ -526,7 +609,15 @@
     gap: 1px;
   }
 
-  .bubble-link-menu {
+  /* Measured placement uses fixed coords so flip/clamp can keep menus on-screen. */
+  .bubble-submenu-fixed {
+    position: fixed;
+    top: auto;
+    left: auto;
+    right: auto;
+  }
+
+  .bubble-link-menu:not(.bubble-submenu-fixed) {
     left: auto;
     right: 0;
   }
