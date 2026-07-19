@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte'
   export interface SuggestPopupItem {
     id: string
     label: string
@@ -14,6 +15,7 @@
     onHover: (index: number) => void
     ariaLabel?: string
     className?: string
+    footer?: Snippet
   }
 
   let {
@@ -24,7 +26,8 @@
     onPick,
     onHover,
     ariaLabel = 'Suggestions',
-    className = ''
+    className = '',
+    footer
   }: Props = $props()
 
   const popupId = $props.id()
@@ -35,36 +38,46 @@
 </script>
 
 <div
-  id={popupId}
   class="suggest-popup {className}"
   style="left:{coords.left}px; top:{coords.top}px"
-  role="listbox"
-  tabindex="-1"
-  aria-label={ariaLabel}
-  aria-activedescendant={activeOption}
 >
-  {#if items.length === 0}
-    <div class="suggest-popup-empty" aria-live="polite">{emptyLabel}</div>
-  {:else}
-    {#each items as item, index (item.id)}
-      <button
-        type="button"
-        id={optionId(index)}
-        class="suggest-popup-item {className ? `${className}-item` : ''}"
-        class:selected={index === selected}
-        role="option"
-        aria-selected={index === selected}
-        onclick={() => onPick(index)}
-        onmouseenter={() => onHover(index)}
-      >
-        {#if item.hint}
-          <span class="suggest-popup-label">{item.label}</span>
-          <span class="suggest-popup-hint">{item.hint}</span>
-        {:else}
-          {item.label}
-        {/if}
-      </button>
-    {/each}
+  <div
+    id={popupId}
+    class="suggest-popup-options"
+    style="left:{coords.left}px; top:{coords.top}px"
+    role="listbox"
+    tabindex="-1"
+    aria-label={ariaLabel}
+    aria-activedescendant={activeOption}
+  >
+    {#if items.length === 0}
+      <div class="suggest-popup-empty" aria-live="polite">{emptyLabel}</div>
+    {:else}
+      {#each items as item, index (item.id)}
+        <button
+          type="button"
+          id={optionId(index)}
+          class="suggest-popup-item {className ? `${className}-item` : ''}"
+          class:selected={index === selected}
+          role="option"
+          aria-selected={index === selected}
+          onclick={() => onPick(index)}
+          onmouseenter={() => onHover(index)}
+        >
+          {#if item.hint}
+            <span class="suggest-popup-label">{item.label}</span>
+            <span class="suggest-popup-hint">{item.hint}</span>
+          {:else}
+            {item.label}
+          {/if}
+        </button>
+      {/each}
+    {/if}
+  </div>
+  {#if footer}
+    <div class="suggest-popup-footer">
+      {@render footer()}
+    </div>
   {/if}
 </div>
 
@@ -85,6 +98,11 @@
 
   .suggest-popup.meta-suggest {
     min-width: 240px;
+  }
+
+  .suggest-popup-options {
+    display: flex;
+    flex-direction: column;
   }
 
   .suggest-popup-item {
@@ -132,5 +150,13 @@
     color: var(--color-text-muted);
     font-size: 0.8rem;
     text-align: center;
+  }
+
+  .suggest-popup-footer {
+    margin: 4px -4px -4px;
+    padding: 7px 8px;
+    border-top: 1px solid var(--color-surface-popover-border);
+    color: var(--color-text-muted);
+    font-size: 0.78rem;
   }
 </style>

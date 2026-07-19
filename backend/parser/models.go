@@ -437,6 +437,16 @@ type TaskResult struct {
 	Snippet string `json:"snippet,omitempty"`
 }
 
+// PageSummary is the stable result shape returned by SearchPages for the
+// [[ page-link autocomplete picker. Deterministic ordering follows
+// ListDistinctPages (notebook, section, page).
+type PageSummary struct {
+	Source   string `json:"source"`
+	Notebook string `json:"notebook"`
+	Section  string `json:"section"`
+	Page     string `json:"page"`
+}
+
 // SearchResult is the paginated envelope returned by SearchBlocksPaged: the
 // ranked results, the total match count (for "showing N of M"), and a HasMore
 // flag so the frontend can stop fetching once everything is loaded.

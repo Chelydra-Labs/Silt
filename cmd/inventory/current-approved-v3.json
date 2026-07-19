@@ -821,6 +821,10 @@
         "signature": "SearchBlocksPaged(query string, offset, limit int, filters db.SearchFilters) (parser.SearchResult, error)"
       },
       {
+        "name": "SearchPages",
+        "signature": "SearchPages(query string, limit int) ([]parser.PageSummary, error)"
+      },
+      {
         "name": "ServiceShutdown",
         "signature": "ServiceShutdown() error"
       },
@@ -1021,6 +1025,7 @@
       "frontend/src/components/TagsExplorer.svelte",
       "frontend/src/components/TipTapEditor.block-ref-suggest.test.ts",
       "frontend/src/components/TipTapEditor.context-menu.test.ts",
+      "frontend/src/components/TipTapEditor.page-link-suggest.test.ts",
       "frontend/src/components/TipTapEditor.svelte",
       "frontend/src/components/TipTapEditor.tag-suggest.test.ts",
       "frontend/src/components/TipTapEditor.test.ts",
@@ -1104,6 +1109,7 @@
       "frontend/src/components/Sidebar.svelte",
       "frontend/src/components/TipTapEditor.block-ref-suggest.test.ts",
       "frontend/src/components/TipTapEditor.context-menu.test.ts",
+      "frontend/src/components/TipTapEditor.page-link-suggest.test.ts",
       "frontend/src/components/TipTapEditor.tag-suggest.test.ts",
       "frontend/src/components/TipTapEditor.test.ts",
       "frontend/src/components/TitleBar.svelte",

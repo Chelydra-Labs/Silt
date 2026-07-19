@@ -484,6 +484,62 @@ func (a *App) SearchBlocksPaged(query string, offset, limit int, filters db.Sear
 	return res, err
 }
 
+// SearchPages returns pages whose notebook/section/page path contains the
+// query as a case-insensitive substring. Wraps ListDistinctPages() so the
+// [[ page-link autocomplete picker has a server-side coarse filter. Default
+// and maximum limit is 50; results are deterministic (ordered by notebook,
+// section, page).
+func (a *App) SearchPages(query string, limit int) ([]parser.PageSummary, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.db == nil {
+		return nil, fmt.Errorf("vault database not loaded")
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	if limit <= 0 || limit > 50 {
+		limit = 50
+	}
+
+	var pages []db.PageLoc
+	var err error
+	a.coordinator.WithDBRead(func() { pages, err = a.db.ListDistinctPages() })
+	if err != nil {
+		return nil, err
+	}
+
+	q := strings.ToLower(query)
+	var out []parser.PageSummary
+	for _, loc := range pages {
+		// Display path follows ShortestUniquePath convention:
+		// "nb/sec/page" or "nb/page" for empty section.
+		var displayPath string
+		if loc.Section != "" {
+			displayPath = loc.Notebook + "/" + loc.Section + "/" + loc.Page
+		} else {
+			displayPath = loc.Notebook + "/" + loc.Page
+		}
+		if !strings.Contains(strings.ToLower(displayPath), q) {
+			continue
+		}
+		out = append(out, parser.PageSummary{
+			Source:   loc.Source,
+			Notebook: loc.Notebook,
+			Section:  loc.Section,
+			Page:     loc.Page,
+		})
+		if len(out) >= limit {
+			break
+		}
+	}
+	if out == nil {
+		out = []parser.PageSummary{}
+	}
+	return out, nil
+}
+
 // focusFilePath resolves the on-disk page file for a focus-lease operation,
 // routing to the correct root via the notebook's source (#100). Shared by
 // Acquire/Release/RefreshFocusLock so the lease key always matches the file

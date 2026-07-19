@@ -99,6 +99,23 @@ export type {
   TagSuggestOptions,
   TagTreeNode
 } from './tagSuggest'
+export {
+  PageLinkSuggest,
+  applyPageLinkSuggestion,
+  getPageLinkContext,
+  getPageLinkContextAt,
+  insertPageLinkSuggestion,
+  pageLinkPath,
+  rankPageLinks,
+  resolvePageLinkTarget
+} from './pageLinkSuggest'
+export type {
+  PageLinkContext,
+  PageLinkItem,
+  PageLinkResolution,
+  PageLinkResolver,
+  PageLinkSuggestOptions
+} from './pageLinkSuggest'
 export type {
   ParsedBlock,
   BlockType,

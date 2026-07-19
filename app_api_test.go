@@ -3481,3 +3481,208 @@ func TestApplyConfigLocked_PrunesStaleQuarantineEntries(t *testing.T) {
 		t.Fatal("applyConfigLocked must prune quarantine entries for removed links")
 	}
 }
+
+// --- SearchPages tests (Phase 4 backend) ---
+
+func TestSearchPages_FiltersBySubstring(t *testing.T) {
+	app := newTestApp(t)
+
+	indexPage(t, app.db, "vault", "Work", "Journal", "Daily", "b1")
+	indexPage(t, app.db, "vault", "Work", "Projects", "Alpha", "b2")
+	indexPage(t, app.db, "vault", "Personal", "Journal", "Daily", "b3")
+	indexPage(t, app.db, "vault", "Personal", "Notes", "Reading", "b4")
+
+	results, err := app.SearchPages("Work", 50)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 Work pages, got %d: %+v", len(results), results)
+	}
+
+	// Substring on section filters correctly.
+	results, err = app.SearchPages("Journal", 50)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 Journal pages, got %d: %+v", len(results), results)
+	}
+
+	// Full path narrows further.
+	results, err = app.SearchPages("Work/Journal", 50)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 Work/Journal page, got %d: %+v", len(results), results)
+	}
+	if results[0].Page != "Daily" {
+		t.Errorf("expected page Daily, got %q", results[0].Page)
+	}
+}
+
+func TestSearchPages_CaseInsensitive(t *testing.T) {
+	app := newTestApp(t)
+
+	indexPage(t, app.db, "vault", "Work", "Journal", "Daily", "b1")
+
+	// Uppercase query matches mixed-case path.
+	results, err := app.SearchPages("WORK/JOURNAL", 50)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	// Mixed-case query matches.
+	results, err = app.SearchPages("work", 50)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for 'work', got %d", len(results))
+	}
+}
+
+func TestSearchPages_RespectsLimit(t *testing.T) {
+	app := newTestApp(t)
+
+	for i := 0; i < 5; i++ {
+		indexPage(t, app.db, "vault", "NB", "Sec", fmt.Sprintf("Page%d", i), fmt.Sprintf("b%d", i))
+	}
+
+	results, err := app.SearchPages("NB", 3)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected limit of 3, got %d", len(results))
+	}
+
+	// Zero or negative limit falls back to default 50.
+	results, err = app.SearchPages("NB", 0)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 5 {
+		t.Fatalf("expected all 5 pages with limit=0, got %d", len(results))
+	}
+
+	// Limit above cap is clamped.
+	results, err = app.SearchPages("NB", 200)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 5 {
+		t.Fatalf("expected all 5 pages with limit=200, got %d", len(results))
+	}
+}
+
+func TestSearchPages_EmptyQuery(t *testing.T) {
+	app := newTestApp(t)
+
+	indexPage(t, app.db, "vault", "Work", "Journal", "Daily", "b1")
+	indexPage(t, app.db, "vault", "Personal", "Notes", "Reading", "b2")
+
+	// Empty query matches everything (coarse filter — frontend reranks).
+	results, err := app.SearchPages("", 50)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 pages for empty query, got %d", len(results))
+	}
+}
+
+func TestSearchPages_NoMatches(t *testing.T) {
+	app := newTestApp(t)
+
+	indexPage(t, app.db, "vault", "Work", "Journal", "Daily", "b1")
+
+	results, err := app.SearchPages("nonexistent", 50)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestSearchPages_NilDBReturnsError(t *testing.T) {
+	app := newTestApp(t)
+	app.db = nil
+
+	_, err := app.SearchPages("test", 50)
+	if err == nil {
+		t.Fatal("expected error when db is nil")
+	}
+}
+
+func TestSearchPages_CrossSource(t *testing.T) {
+	app := newTestApp(t)
+
+	indexPage(t, app.db, "vault", "Work", "Journal", "Daily", "b1")
+	indexPage(t, app.db, "linked:ext1", "External", "Docs", "Guide", "b2")
+
+	results, err := app.SearchPages("Guide", 50)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 linked page, got %d", len(results))
+	}
+	if results[0].Source != "linked:ext1" {
+		t.Errorf("expected source 'linked:ext1', got %q", results[0].Source)
+	}
+
+	// Vault page still findable.
+	results, err = app.SearchPages("Work", 50)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 1 || results[0].Source != "vault" {
+		t.Fatalf("expected 1 vault page, got %d: %+v", len(results), results)
+	}
+}
+
+func TestSearchPages_DeterministicOrder(t *testing.T) {
+	app := newTestApp(t)
+
+	// Insert in reverse-alphabetical order to verify sort stability.
+	indexPage(t, app.db, "vault", "Zeta", "Sec", "Page", "b1")
+	indexPage(t, app.db, "vault", "Alpha", "Sec", "Page", "b2")
+	indexPage(t, app.db, "vault", "Beta", "Sec", "Page", "b3")
+
+	results, err := app.SearchPages("Page", 50)
+	if err != nil {
+		t.Fatalf("SearchPages failed: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	// ListDistinctPages orders by notebook, section, page → Alpha, Beta, Zeta.
+	if results[0].Notebook != "Alpha" || results[1].Notebook != "Beta" || results[2].Notebook != "Zeta" {
+		t.Errorf("expected deterministic alphabetical order, got %q %q %q",
+			results[0].Notebook, results[1].Notebook, results[2].Notebook)
+	}
+}
+
+// indexPage is a test helper that indexes a minimal page into the blocks table
+// so ListDistinctPages (and therefore SearchPages) can find it.
+func indexPage(t *testing.T, dm *db.DatabaseManager, source, notebook, section, page, blockID string) {
+	t.Helper()
+	blocks := []parser.ParsedBlock{
+		{
+			ID:         blockID,
+			Type:       parser.BlockNote,
+			RawText:    "content <!-- id: " + blockID + " -->",
+			CleanText:  "content",
+			LineNumber: 1,
+		},
+	}
+	if err := dm.IndexFileBlocks(source, notebook, section, page, blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks(%s/%s/%s/%s): %v", source, notebook, section, page, err)
+	}
+}
