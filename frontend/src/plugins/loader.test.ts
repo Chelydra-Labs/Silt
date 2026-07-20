@@ -6,6 +6,7 @@
 // (hash matches → import succeeds) is covered by the Go-side Install tests
 // (#161) and by manual verification.
 import { describe, expect, it, beforeEach, beforeAll, vi } from 'vitest'
+import { loadPlugins, teardownPlugin } from './loader'
 
 const mockListPlugins = vi.hoisted(() => vi.fn())
 const mockReadPluginSource = vi.hoisted(() => vi.fn())
@@ -82,7 +83,6 @@ describe('plugin loader integrity check (#161, P5-12)', () => {
     ])
     mockReadPluginSource.mockResolvedValue('TAMPERED CONTENT')
 
-    const { loadPlugins } = await import('./loader')
     const result = await loadPlugins('Work', '', '')
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0].id).toBe('tampered')
@@ -98,7 +98,6 @@ describe('plugin loader integrity check (#161, P5-12)', () => {
     ])
     mockReadPluginSource.mockResolvedValue(src)
 
-    const { loadPlugins } = await import('./loader')
     const result = await loadPlugins('Work', '', '')
     // The integrity check passed — no "integrity check failed" error.
     // The import may fail in jsdom (Blob URLs don't work), producing a
@@ -116,7 +115,6 @@ describe('plugin loader integrity check (#161, P5-12)', () => {
     ])
     mockReadPluginSource.mockResolvedValue('export default {};')
 
-    const { loadPlugins } = await import('./loader')
     const result = await loadPlugins('Work', '', '')
     const integrityError = result.errors.find((e) =>
       e.message.includes('integrity check failed')
@@ -134,7 +132,6 @@ describe('plugin loader session token plumbing (#151, P7-13)', () => {
   it('teardownPlugin calls UnregisterPluginSession for a registered plugin', async () => {
     // Register a session manually to populate the token map.
     mockRegisterSession.mockResolvedValue('token-abc')
-    const { teardownPlugin } = await import('./loader')
 
     // Simulate a registered plugin by calling the module's internal map
     // indirectly: RegisterPluginSession is the production path, but
@@ -158,7 +155,6 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
   let vaultClosingCb: (() => void) | null = null
 
   beforeAll(async () => {
-    const { loadPlugins } = await import('./loader')
     await loadPlugins('Work', '', '')
     const call = mockEventsOn.mock.calls.find(
       (args: unknown[]) => args[0] === 'vault:closing'
@@ -174,7 +170,6 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
   })
 
   it('loadPlugins flips loadersReady to true after assigning plugins/errors', async () => {
-    const { loadPlugins } = await import('./loader')
     const { loadedPlugins } = await import('./store.svelte')
     loadedPlugins.loadersReady = false // simulating post-vault:closing state
 
@@ -184,7 +179,6 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
   })
 
   it('vault:closing handler flips loadersReady to false BEFORE teardown', async () => {
-    const { loadPlugins } = await import('./loader')
     const { loadedPlugins } = await import('./store.svelte')
 
     await loadPlugins('Work', '', '')
@@ -197,7 +191,6 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
   })
 
   it('loadersReady returns to true after a subsequent loadPlugins', async () => {
-    const { loadPlugins } = await import('./loader')
     const { loadedPlugins } = await import('./store.svelte')
 
     await loadPlugins('Work', '', '')
@@ -212,7 +205,6 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
   it('tears down first-party AI plugins when ai.features disables them (#632)', async () => {
     // Disabling Enable AI must tear down sessions (and slash/surfaces via
     // teardownPlugin), not leave a stale loadedPlugins entry after the map swap.
-    const { loadPlugins } = await import('./loader')
     const { loadedPlugins } = await import('./store.svelte')
     const { settings } = await import('../settings/store.svelte')
     const {

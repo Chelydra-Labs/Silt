@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import { tick } from 'svelte'
 import TabStrip from './TabStrip.svelte'
 import type { TabEntry } from '../lib/tabs'
 
@@ -61,6 +62,11 @@ function defaultProps(
     onReorderTab: vi.fn(),
     showDirtyIndicators: true
   }
+}
+
+async function waitForOverflowMeasure() {
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  await tick()
 }
 
 describe('TabStrip (#142)', () => {
@@ -149,7 +155,7 @@ describe('TabStrip (#142)', () => {
       })
     })
     resize?.()
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await waitForOverflowMeasure()
 
     const overflow = screen.getByRole('button', { name: '2 hidden tabs' })
     expect(overflow).toHaveAttribute('title', '2 hidden tabs')
@@ -228,12 +234,12 @@ describe('TabStrip (#142)', () => {
     })
 
     resize?.()
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await waitForOverflowMeasure()
     expect(screen.queryByRole('button', { name: /hidden tabs/ })).toBeNull()
 
     scrollWidth = 300
     resize?.()
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await waitForOverflowMeasure()
     expect(screen.getByRole('button', { name: '1 hidden tab' })).toBeVisible()
 
     view.unmount()
