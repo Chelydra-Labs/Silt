@@ -1899,3 +1899,92 @@ func TestRecordTagUsage_EmitsConfigChangedOnlyForPersistedChange(t *testing.T) {
 		t.Fatal("second distinct tag should emit config:changed")
 	}
 }
+
+func TestRecordTagUsage_RejectsInvalidCharacters(t *testing.T) {
+	app := newTestApp(t)
+
+	invalid := []string{
+		"has space",
+		"has\ttab",
+		"has\nnewline",
+		"has\rnewline",
+		"123startdigit",
+		"/starts-slash",
+		"-starts-hyphen",
+		"_starts-underscore",
+		"has!bang",
+		"has@at",
+		"has(paren",
+		"has.dot",
+		"has:colon",
+		"a\x00null",
+		"tag\x1Besc",
+	}
+	for _, tag := range invalid {
+		err := app.RecordTagUsage(tag)
+		if err == nil {
+			t.Errorf("RecordTagUsage(%q): expected error, got nil", tag)
+		}
+	}
+	// Config should be untouched — load and verify empty.
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(loaded.UI.RecentTags) != 0 {
+		t.Errorf("recent_tags should be empty after all invalid inputs, got %v", loaded.UI.RecentTags)
+	}
+}
+
+func TestRecordTagUsage_RejectsOversizedTag(t *testing.T) {
+	app := newTestApp(t)
+
+	oversized := strings.Repeat("a", config.MaxTagPathBytes+1)
+	err := app.RecordTagUsage(oversized)
+	if err == nil {
+		t.Errorf("RecordTagUsage(%d-byte tag): expected error, got nil", len(oversized))
+	}
+
+	// Exactly at the limit should succeed.
+	exact := strings.Repeat("a", config.MaxTagPathBytes)
+	if err := app.RecordTagUsage(exact); err != nil {
+		t.Fatalf("RecordTagUsage(%d-byte tag): unexpected error: %v", config.MaxTagPathBytes, err)
+	}
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(loaded.UI.RecentTags) != 1 || loaded.UI.RecentTags[0] != exact {
+		t.Errorf("recent_tags after valid max-length tag: got %v", loaded.UI.RecentTags)
+	}
+}
+
+func TestRecordTagUsage_AcceptsValidBoundaryInputs(t *testing.T) {
+	app := newTestApp(t)
+
+	valid := []string{
+		"a",                               // single letter
+		"Z",                               // single uppercase
+		"work/project",                    // multi-segment with slash
+		"work/project/milestone-one",      // multi-segment with hyphen
+		"a_b_c",                           // underscores
+		"X1",                              // letter then digit
+		"work/project/milestone_one/v2-0", // complex path
+	}
+	for _, tag := range valid {
+		if err := app.RecordTagUsage(tag); err != nil {
+			t.Errorf("RecordTagUsage(%q): unexpected error: %v", tag, err)
+		}
+	}
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(loaded.UI.RecentTags) != len(valid) {
+		t.Errorf("recent_tags length: got %d, want %d", len(loaded.UI.RecentTags), len(valid))
+	}
+	// Most recently inserted should be first.
+	if loaded.UI.RecentTags[0] != valid[len(valid)-1] {
+		t.Errorf("most recent tag = %q, want %q", loaded.UI.RecentTags[0], valid[len(valid)-1])
+	}
+}

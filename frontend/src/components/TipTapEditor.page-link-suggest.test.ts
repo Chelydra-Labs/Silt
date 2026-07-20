@@ -152,7 +152,7 @@ describe('TipTapEditor page-link typeahead', () => {
 
   afterEach(() => vi.useRealTimers())
 
-  it('debounces search, displays fuzzy-ranked pages, and picks the shortest target', async () => {
+  it('debounces search, preserves server order, and picks the shortest target', async () => {
     mocks.searchPages.mockResolvedValue([
       page('Airplane Notes'),
       page('Planning'),
@@ -172,12 +172,12 @@ describe('TipTapEditor page-link typeahead', () => {
       container.querySelectorAll<HTMLButtonElement>('[role="option"]')
     )
     expect(options.map((option) => option.textContent?.trim())).toEqual([
-      'Plan Vault · Work / Plans',
+      'Airplane Notes Vault · Work / Plans',
       'Planning Vault · Work / Plans',
-      'Airplane Notes Vault · Work / Plans'
+      'Plan Vault · Work / Plans'
     ])
 
-    await fireEvent.click(options[0])
+    await fireEvent.click(options[2])
     await tick()
     expect(mocks.resolvePageLink).toHaveBeenCalledWith('Work/Plans/Plan')
     const link = editor
@@ -185,6 +185,22 @@ describe('TipTapEditor page-link typeahead', () => {
       .content?.[0].content?.find((node) => node.type === 'pageLinkNode')
     expect(link?.attrs).toMatchObject({ target: 'Plan', alias: null })
     expect(container.querySelector('.page-link-suggest')).toBeNull()
+    unmount()
+  })
+
+  it('asks for two non-space characters before searching', async () => {
+    const { container, editor, unmount } = await mountEditor()
+    editor.commands.focus('end')
+    editor.commands.insertContent('[[a ')
+    await vi.advanceTimersByTimeAsync(150)
+    await tick()
+
+    expect(container.textContent).toContain('Type at least 2 characters')
+    expect(mocks.searchPages).not.toHaveBeenCalled()
+
+    editor.commands.insertContent('b')
+    await vi.advanceTimersByTimeAsync(150)
+    expect(mocks.searchPages).toHaveBeenCalledWith('a b', 50)
     unmount()
   })
 
@@ -207,10 +223,10 @@ describe('TipTapEditor page-link typeahead', () => {
       container.querySelectorAll<HTMLButtonElement>('[role="option"]')
     )
     expect(options.map((option) => option.textContent?.trim())).toEqual([
-      'Roadmap Linked · team-drive · Work / Plans',
-      'Roadmap Vault · Work / Plans'
+      'Roadmap Vault · Work / Plans',
+      'Roadmap Linked · team-drive · Work / Plans'
     ])
-    await fireEvent.click(options[0])
+    await fireEvent.click(options[1])
     await tick()
 
     expect(mocks.resolvePageLink).toHaveBeenCalledWith(
@@ -261,7 +277,7 @@ describe('TipTapEditor page-link typeahead', () => {
     const { container, getByRole, getByLabelText, editor, unmount } =
       await mountEditor()
     editor.commands.focus('end')
-    editor.commands.insertContent('[[')
+    editor.commands.insertContent('[[ro')
     await vi.advanceTimersByTimeAsync(150)
     await tick()
 
@@ -285,7 +301,7 @@ describe('TipTapEditor page-link typeahead', () => {
     const { container, getByRole, getByLabelText, editor, unmount } =
       await mountEditor()
     editor.commands.focus('end')
-    editor.commands.insertContent('[[')
+    editor.commands.insertContent('[[ro')
     await vi.advanceTimersByTimeAsync(150)
     await tick()
 
@@ -302,7 +318,7 @@ describe('TipTapEditor page-link typeahead', () => {
     await tick()
     expect(container.querySelector('.page-link-suggest')).toBeNull()
     expect(document.activeElement).toBe(container.querySelector('.ProseMirror'))
-    expect(editor.state.doc.textContent).toBe('[[')
+    expect(editor.state.doc.textContent).toBe('[[ro')
     unmount()
   })
 
@@ -311,15 +327,115 @@ describe('TipTapEditor page-link typeahead', () => {
     mocks.searchPages.mockRejectedValueOnce(new Error('offline'))
     const { container, editor, unmount } = await mountEditor()
     editor.commands.focus('end')
-    editor.commands.insertContent('[[')
+    editor.commands.insertContent('[[of')
     await vi.advanceTimersByTimeAsync(150)
     await tick()
     expect(container.textContent).toContain('Page suggestions unavailable')
-    expect(editor.state.doc.textContent).toBe('[[')
+    expect(container.textContent).toContain('Retry search')
+    expect(editor.state.doc.textContent).toBe('[[of')
     expect(errorSpy).toHaveBeenCalledWith(
       'SearchPages failed:',
       expect.any(Error)
     )
+    errorSpy.mockRestore()
+    unmount()
+  })
+
+  it('keeps prior results and alias available when a refreshed search fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.searchPages
+      .mockResolvedValueOnce([page('Roadmap')])
+      .mockRejectedValueOnce(new Error('offline'))
+    const { container, getByRole, getByLabelText, editor, unmount } =
+      await mountEditor()
+    editor.commands.focus('end')
+    editor.commands.insertContent('[[road')
+    await vi.advanceTimersByTimeAsync(150)
+    await tick()
+
+    await fireEvent.click(getByRole('button', { name: 'Use display alias' }))
+    await fireEvent.input(getByLabelText('Page link display alias'), {
+      target: { value: 'Project map' }
+    })
+    editor.commands.focus('end')
+    editor.commands.insertContent('x')
+    await vi.advanceTimersByTimeAsync(150)
+    await tick()
+
+    expect(container.textContent).toContain('Couldn’t refresh suggestions')
+    expect(getByRole('option', { name: /Roadmap/ })).toBeTruthy()
+    expect(
+      (getByLabelText('Page link display alias') as HTMLInputElement).value
+    ).toBe('Project map')
+    expect(editor.state.doc.textContent).toBe('[[roadx')
+    errorSpy.mockRestore()
+    unmount()
+  })
+
+  it('shows resolution progress, blocks duplicate picks, and retries without losing input', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const firstResolution = deferred<{
+      exists: boolean
+      ambiguous: boolean
+      shortest: string
+    }>()
+    mocks.searchPages.mockResolvedValue([page('Roadmap')])
+    mocks.resolvePageLink
+      .mockReturnValueOnce(firstResolution.promise)
+      .mockResolvedValueOnce({
+        exists: true,
+        ambiguous: false,
+        shortest: 'Roadmap'
+      })
+    const { container, getByRole, getByLabelText, editor, unmount } =
+      await mountEditor()
+    editor.commands.focus('end')
+    editor.commands.insertContent('[[road')
+    await vi.advanceTimersByTimeAsync(150)
+    await tick()
+
+    await fireEvent.click(getByRole('button', { name: 'Use display alias' }))
+    const alias = getByLabelText('Page link display alias') as HTMLInputElement
+    await fireEvent.input(alias, { target: { value: 'Project map' } })
+    const option = getByRole('option', { name: /Roadmap/ })
+    await fireEvent.click(option)
+    await tick()
+
+    expect(container.textContent).toContain('Resolving Roadmap')
+    expect(container.querySelectorAll('[role="option"]')).toHaveLength(0)
+    await fireEvent.keyDown(container.querySelector('.ProseMirror')!, {
+      key: 'Enter'
+    })
+    expect(mocks.resolvePageLink).toHaveBeenCalledTimes(1)
+    expect(editor.state.doc.textContent).toBe('[[road')
+
+    firstResolution.resolve({
+      exists: false,
+      ambiguous: false,
+      shortest: ''
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    await tick()
+    expect(container.textContent).toContain('Couldn’t insert this link')
+    expect(container.textContent).toContain('Roadmap')
+    expect(
+      (getByLabelText('Page link display alias') as HTMLInputElement).value
+    ).toBe('Project map')
+    expect(editor.state.doc.textContent).toBe('[[road')
+
+    await fireEvent.click(getByRole('button', { name: 'Retry link' }))
+    await tick()
+    expect(mocks.resolvePageLink).toHaveBeenNthCalledWith(
+      2,
+      'Work/Plans/Roadmap'
+    )
+    const link = editor
+      .getJSON()
+      .content?.[0].content?.find((node) => node.type === 'pageLinkNode')
+    expect(link?.attrs).toMatchObject({
+      target: 'Roadmap',
+      alias: 'Project map'
+    })
     errorSpy.mockRestore()
     unmount()
   })

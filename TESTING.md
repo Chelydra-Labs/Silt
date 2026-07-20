@@ -165,6 +165,10 @@ manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
 - [ ] Panel shows correct empty states: no page open → prompt; no backlinks →
       hint with link/bracket syntax.
 
+- [ ] A page with more than 50 backlinks shows **Load more**; loading another
+      page appends distinct rows, while a content refresh resets to the first
+      page. (Manual only.)
+
 **Autosave status**
 - [ ] Typing shows dirty tab only (no "Saving…" during debounce).
 - [ ] In-flight save shows muted "Saving…"; success shows transient "Saved".

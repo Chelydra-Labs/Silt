@@ -126,8 +126,9 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-const hit = (id: string, text: string) => ({
+const hit = (id: string, text: string, source = 'vault') => ({
   id,
+  source,
   notebook: 'NB',
   section: 'S',
   page: 'P',
@@ -187,6 +188,31 @@ describe('TipTapEditor block-reference typeahead', () => {
     await tick()
     expect(container.querySelector('.block-ref-suggest')).toBeNull()
     expect(editor.state.doc.textContent).toBe('((')
+    unmount()
+  })
+
+  it('distinguishes colliding vault and linked results accessibly', async () => {
+    mocks.searchBlocks.mockResolvedValue([
+      hit('shared-id', 'Shared decision', 'vault'),
+      hit('shared-id', 'Shared decision', 'linked:team-notes')
+    ])
+    const { container, editor, getByRole, unmount } = await mountEditor()
+    editor.commands.focus('end')
+    editor.commands.insertContent('((shared')
+    await vi.advanceTimersByTimeAsync(180)
+    await tick()
+
+    expect(
+      getByRole('option', {
+        name: /Shared decision Vault · NB \/ S \/ P/
+      })
+    ).toBeTruthy()
+    expect(
+      getByRole('option', {
+        name: /Shared decision Linked · NB \/ S \/ P/
+      })
+    ).toBeTruthy()
+    expect(container.querySelectorAll('[role="option"]')).toHaveLength(2)
     unmount()
   })
 

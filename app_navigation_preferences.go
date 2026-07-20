@@ -169,11 +169,17 @@ func (a *App) RecordRecentPage(notebook, section, page string) error {
 
 // RecordTagUsage moves tag to the front of the recent_tags list (MRU). The
 // list is capped at MaxRecentTags by normalize(). Follows the same atomic
-// narrow-mutation path as RecordRecentPage.
+// narrow-mutation path as RecordRecentPage. Invalid tag paths (wrong
+// character contract or exceeding MaxTagPathBytes) are rejected so the config
+// file can never store a tag that the indexer wouldn't recognize.
 func (a *App) RecordTagUsage(tag string) error {
 	tag = strings.TrimSpace(tag)
 	if tag == "" {
 		return nil
+	}
+	if !config.IsValidTagPath(tag) {
+		return fmt.Errorf("invalid tag path %q: must match %s and be at most %d bytes",
+			tag, `^[a-zA-Z][a-zA-Z0-9_/-]*$`, config.MaxTagPathBytes)
 	}
 	changedCfg, changed, err := a.mutateConfigWithResult(func(cfg *config.SystemConfig) error {
 		lower := strings.ToLower(tag)

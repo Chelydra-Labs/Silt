@@ -499,7 +499,7 @@ Obsidian-compatible page links use double brackets:
 
 `target` is a vault-relative path or basename (backslashes normalized to `/`; empty section is `Notebook/Page`, never `//`). Resolution uses **shortest unique path**: exact path → unique basename → unique path-suffix. Ambiguous basenames (same page name in two places) do not auto-resolve; the chip shows an ambiguous state. Linked notebooks are disambiguated by `blocks.source`.
 
-In the editor, `[[…]]` is an inline atomic `pageLinkNode` (`PageLinkChip`). The typeahead activates on `[[` and calls `SearchPages` for a server-side substring filter over all distinct pages (capped at 50; deterministic order by notebook, section, page). On save the exact syntax is reconstructed in `clean_text` (byte-for-byte round-trip). Click navigates via `ResolvePageLink` + `navigate-to-page`. Tab context menu **Copy Page Reference** emits `[[shortest-unique-path]]`; **Copy Page Path** remains the plain path string.
+In the editor, `[[…]]` is an inline atomic `pageLinkNode` (`PageLinkChip`). After two non-space query characters, the typeahead calls `SearchPages` for a server-ranked, case-insensitive top 50 (exact page name, page-prefix, path-prefix, then substring; deterministic ties). On save the exact syntax is reconstructed in `clean_text` (byte-for-byte round-trip). Click navigates via `ResolvePageLink` + `navigate-to-page`. Tab context menu **Copy Page Reference** emits `[[shortest-unique-path]]`; **Copy Page Path** remains the plain path string.
 
 A derived `page_links` reverse index (rebuilt on re-index; FK cascade from `blocks`) powers rename/move rewrite: `RenamePage` / `MovePage` / `RenameSection` rewrite inbound `[[old…]]` → `[[new…]]` while preserving `|alias` and `#heading`. Block UUIDs are never rewritten. `![[embed-page]]` and `#^block` are out of scope for v1 (block identity stays `((uuid))`).
 
@@ -513,13 +513,14 @@ Typing `((` opens a block-reference picker listing indexed blocks (filterable by
 
 5.6 Backlinks Panel
 
-Every page has a backlinks surface showing all inbound references — `[[…]]`
+Every page has a paged backlinks surface showing inbound references — `[[…]]`
 page-links, `((uuid))` block references, and `{{embed:uuid}}` embeds — grouped
 by source page with kind badges and clean-content snippets. The panel refreshes
 automatically on content changes (debounced) and supports click-to-navigate
 to the linking page or the specific block. Resolution is lazy (computed on
 panel open, not pre-indexed) and source-aware so linked notebooks contribute
-backlinks correctly. See ADR
+backlinks correctly. The panel loads additional result pages explicitly, which
+bounds its initial payload and rendered projection. See ADR
 `docs/decisions/0006-backlinks-query-strategy.md`.
 
 6. User Interface Specification

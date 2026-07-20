@@ -69,7 +69,6 @@
     dismissPageLinkSuggestion,
     normalizePageLinkAlias,
     pageLinkSourceLabel,
-    rankPageLinks,
     blocksToDoc
   } from '../lib/editor'
   import { runPluginCommand } from '../lib/editor/runPluginCommand'
@@ -687,6 +686,7 @@
   // --- Block-reference typeahead ------------------------------------------
   interface BlockSearchItem {
     id: string
+    source: string
     notebook: string
     section: string
     page: string
@@ -803,6 +803,10 @@
     applyBlockRefSuggestion(editorInstance, blockId)
   }
 
+  function blockSourceLabel(source?: string): string {
+    return source?.startsWith('linked:') ? 'Linked' : 'Vault'
+  }
+
   // --- Tag typeahead -------------------------------------------------------
   // The hierarchy is stable enough to cache across quick focus changes. A
   // fresh focus after the TTL catches tags indexed by recent edits.
@@ -862,8 +866,9 @@
       suggestStatus = ''
       return
     }
+    const opening = !tagPopup
     updateTagPopup(ctx)
-    if (!tags.length) void loadTags()
+    if (opening) void loadTags()
   }
 
   function onTagNavigate(dir: 1 | -1): void {
@@ -894,7 +899,8 @@
     selected: number
     searching: boolean
     resolving: boolean
-    error: boolean
+    resolvingItem: PageLinkItem | null
+    error: 'search' | 'resolve' | null
     aliasEnabled: boolean
     alias: string
   } | null>(null)
@@ -904,6 +910,13 @@
     (Promise<PageLinkItem[]> & { cancel?: () => Promise<void> | void }) | null =
     null
   const PAGE_LINK_QUERY_DEBOUNCE_MS = 150
+
+  function hasEnoughPageLinkQuery(query: string): boolean {
+    return (
+      Array.from(query).filter((character) => !/\s/u.test(character)).length >=
+      2
+    )
+  }
 
   function cancelPageLinkSearch(): void {
     if (pageLinkQueryTimer) {
@@ -924,16 +937,29 @@
       return
     }
 
+    const previous =
+      pageLinkPopup?.ctx.triggerPos === ctx.triggerPos ? pageLinkPopup : null
     pageLinkPopup = {
       ctx,
-      items: [],
-      selected: 0,
-      searching: true,
+      items: previous?.items ?? [],
+      selected: previous
+        ? Math.min(previous.selected, Math.max(0, previous.items.length - 1))
+        : 0,
+      searching: false,
       resolving: false,
-      error: false,
-      aliasEnabled: false,
-      alias: ''
+      resolvingItem: null,
+      error: null,
+      aliasEnabled: previous?.aliasEnabled ?? false,
+      alias: previous?.alias ?? ''
     }
+    if (!hasEnoughPageLinkQuery(ctx.query)) {
+      pageLinkPopup.items = []
+      pageLinkPopup.selected = 0
+      suggestStatus = 'Type at least 2 characters for page suggestions'
+      return
+    }
+
+    pageLinkPopup.searching = true
     suggestStatus = 'Searching pages'
     pageLinkQueryTimer = setTimeout(async () => {
       pageLinkQueryTimer = null
@@ -945,7 +971,7 @@
           cancel?: () => Promise<void> | void
         }
         pageLinkRequest = request
-        const items = rankPageLinks((await request) ?? [], ctx.query)
+        const items = (await request) ?? []
         if (myId !== pageLinkQueryReqId) return
         const current = pageLinkPopup
         if (
@@ -977,10 +1003,8 @@
         console.error('SearchPages failed:', error)
         pageLinkPopup = {
           ...current,
-          items: [],
-          selected: 0,
           searching: false,
-          error: true
+          error: 'search'
         }
         suggestStatus = 'Page search unavailable'
       }
@@ -998,6 +1022,16 @@
     if (item) void onPageLinkPick(item)
   }
 
+  function retryPageLink(): void {
+    const popup = pageLinkPopup
+    if (!popup || popup.resolving) return
+    if (popup.error === 'resolve' && popup.resolvingItem) {
+      void onPageLinkPick(popup.resolvingItem)
+      return
+    }
+    onPageLinkChange(popup.ctx)
+  }
+
   function dismissPageLinkAlias(): void {
     cancelPageLinkSearch()
     ++pageLinkQueryReqId
@@ -1012,7 +1046,12 @@
     if (!current || current.resolving || !editorInstance?.isEditable) return
     cancelPageLinkSearch()
     const myId = ++pageLinkQueryReqId
-    pageLinkPopup = { ...current, resolving: true, error: false }
+    pageLinkPopup = {
+      ...current,
+      resolving: true,
+      resolvingItem: item,
+      error: null
+    }
     suggestStatus = 'Resolving page link'
     try {
       const alias = current.aliasEnabled
@@ -1034,7 +1073,7 @@
       console.error('ResolvePageLink failed:', error)
       const popup = pageLinkPopup
       if (popup) {
-        pageLinkPopup = { ...popup, resolving: false, error: true }
+        pageLinkPopup = { ...popup, resolving: false, error: 'resolve' }
         suggestStatus = 'Page link could not be inserted'
       }
     }
@@ -1113,6 +1152,7 @@
     }),
     PageLinkSuggest.configure({
       items: () => pageLinkPopup?.items ?? [],
+      resolving: () => pageLinkPopup?.resolving ?? false,
       onChange: onPageLinkChange,
       onNavigate: onPageLinkNavigate,
       onSelectActive: onPageLinkSelectActive
@@ -2372,11 +2412,15 @@
     {#if c}
       <SuggestPopup
         items={blkRefPopup.items.map((item) => ({
-          id: item.id,
+          id: `${item.source || 'vault'}:${item.id}`,
           label: item.clean_content || 'Untitled block',
-          hint: [item.notebook, item.section, item.page]
+          hint: `${blockSourceLabel(item.source)} · ${[
+            item.notebook,
+            item.section,
+            item.page
+          ]
             .filter(Boolean)
-            .join(' / ')
+            .join(' / ')}`
         }))}
         selected={blkRefPopup.selected}
         coords={c}
@@ -2406,7 +2450,7 @@
         items={tagPopup.items.map((item) => ({
           id: item.path,
           label: `#${item.path}`,
-          hint: `${item.count}`
+          hint: `${item.count} ${item.count === 1 ? 'use' : 'uses'}`
         }))}
         selected={tagPopup.selected}
         coords={c}
@@ -2432,10 +2476,35 @@
     {#if c}
       {#snippet pageLinkFooter()}
         <div class="page-link-alias-footer">
+          {#if pageLinkPopup?.resolving}
+            <div class="page-link-progress" role="status">
+              <span class="page-link-spinner" aria-hidden="true"></span>
+              Resolving {pageLinkPopup.resolvingItem?.page ?? 'page'}…
+            </div>
+          {:else if pageLinkPopup?.error}
+            <div class="page-link-retry" role="alert">
+              <span>
+                {pageLinkPopup.error === 'search'
+                  ? 'Couldn’t refresh suggestions.'
+                  : 'Couldn’t insert this link.'}
+              </span>
+              <button type="button" onclick={retryPageLink}>
+                {pageLinkPopup.error === 'search'
+                  ? 'Retry search'
+                  : 'Retry link'}
+              </button>
+            </div>
+          {:else if pageLinkPopup?.searching && pageLinkPopup.items.length}
+            <div class="page-link-progress" role="status">
+              <span class="page-link-spinner" aria-hidden="true"></span>
+              Refreshing suggestions…
+            </div>
+          {/if}
           <button
             type="button"
             class="page-link-alias-toggle"
             aria-pressed={pageLinkPopup?.aliasEnabled ?? false}
+            disabled={pageLinkPopup?.resolving ?? false}
             onclick={() => {
               if (!pageLinkPopup) return
               const selected = pageLinkPopup.items[pageLinkPopup.selected]
@@ -2455,6 +2524,7 @@
               <span>Alias</span>
               <input
                 value={pageLinkPopup.alias}
+                disabled={pageLinkPopup.resolving}
                 oninput={(event) => {
                   if (pageLinkPopup) {
                     pageLinkPopup.alias = normalizePageLinkAlias(
@@ -2477,23 +2547,29 @@
         </div>
       {/snippet}
       <SuggestPopup
-        items={pageLinkPopup.items.map((item) => ({
-          id: `${item.source ?? ''}:${item.notebook}/${item.section}/${item.page}`,
-          label: item.page || 'Untitled page',
-          hint: [
-            pageLinkSourceLabel(item.source),
-            [item.notebook, item.section].filter(Boolean).join(' / ')
-          ]
-            .filter(Boolean)
-            .join(' · ')
-        }))}
+        items={pageLinkPopup.resolving
+          ? []
+          : pageLinkPopup.items.map((item) => ({
+              id: `${item.source ?? ''}:${item.notebook}/${item.section}/${item.page}`,
+              label: item.page || 'Untitled page',
+              hint: [
+                pageLinkSourceLabel(item.source),
+                [item.notebook, item.section].filter(Boolean).join(' / ')
+              ]
+                .filter(Boolean)
+                .join(' · ')
+            }))}
         selected={pageLinkPopup.selected}
         coords={c}
-        emptyLabel={pageLinkPopup.error
-          ? 'Page suggestions unavailable'
-          : pageLinkPopup.searching
-            ? 'Searching pages…'
-            : 'No matching pages'}
+        emptyLabel={pageLinkPopup.resolving
+          ? 'Resolving page link…'
+          : pageLinkPopup.error === 'search'
+            ? 'Page suggestions unavailable'
+            : !hasEnoughPageLinkQuery(pageLinkPopup.ctx.query)
+              ? 'Type at least 2 characters'
+              : pageLinkPopup.searching
+                ? 'Searching pages…'
+                : 'No matching pages'}
         ariaLabel="Link to a page"
         className="page-link-suggest"
         footer={pageLinkFooter}
@@ -2652,6 +2728,45 @@
     gap: 7px;
   }
 
+  .page-link-progress,
+  .page-link-retry {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .page-link-retry {
+    justify-content: space-between;
+    color: var(--color-text-primary);
+  }
+
+  .page-link-retry button {
+    flex: none;
+    padding: 3px 7px;
+    border: 1px solid var(--color-surface-popover-border);
+    border-radius: 5px;
+    background: var(--color-surface-raised, var(--color-surface-popover));
+    color: var(--color-accent-primary-start);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .page-link-spinner {
+    width: 11px;
+    height: 11px;
+    border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: page-link-spin 0.7s linear infinite;
+  }
+
+  @keyframes page-link-spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+
   .page-link-alias-toggle {
     display: inline-flex;
     align-items: center;
@@ -2669,12 +2784,19 @@
     color: var(--color-accent-primary-start);
   }
 
+  .page-link-alias-toggle:disabled,
+  .page-link-alias-field input:disabled {
+    opacity: 0.55;
+    cursor: wait;
+  }
+
   .page-link-alias-toggle .material-symbols-outlined {
     font-size: 15px;
   }
 
   .page-link-alias-toggle:focus-visible,
-  .page-link-alias-field input:focus-visible {
+  .page-link-alias-field input:focus-visible,
+  .page-link-retry button:focus-visible {
     outline: 2px solid var(--color-accent-primary-start);
     outline-offset: 2px;
   }
@@ -2694,6 +2816,12 @@
     background: var(--color-surface-raised, var(--color-surface-popover));
     color: var(--color-text-primary);
     font: inherit;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .page-link-spinner {
+      animation: none;
+    }
   }
 
   .tiptap-editor-host {

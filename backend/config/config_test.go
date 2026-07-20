@@ -1636,3 +1636,59 @@ func TestLoad_LegacyConfigMissingRecentTags(t *testing.T) {
 		t.Errorf("legacy recent_tags should default to empty non-nil slice, got %v", cfg.UI.RecentTags)
 	}
 }
+
+func TestIsValidTagPath(t *testing.T) {
+	valid := []string{
+		"a",
+		"A",
+		"work/project",
+		"work/project/milestone-one",
+		"a_b_c",
+		"X1",
+		"work/project/milestone_one/v2-0",
+		strings.Repeat("a", MaxTagPathBytes),
+	}
+	for _, tag := range valid {
+		if !IsValidTagPath(tag) {
+			t.Errorf("IsValidTagPath(%q): expected true", tag)
+		}
+	}
+
+	invalid := []string{
+		"",
+		"123start",
+		"/starts-slash",
+		"-starts-hyphen",
+		"_starts-under",
+		"has space",
+		"has\ttab",
+		"has\nnewline",
+		"has!bang",
+		"has.dot",
+		"has:colon",
+		"a\x00null",
+		"a\x1Besc",
+		strings.Repeat("a", MaxTagPathBytes+1),
+	}
+	for _, tag := range invalid {
+		if IsValidTagPath(tag) {
+			t.Errorf("IsValidTagPath(%q): expected false", tag)
+		}
+	}
+}
+
+func TestNormalizeRecentTags_FiltersInvalidEntries(t *testing.T) {
+	cfg := normalize(SystemConfig{UI: UIConfig{RecentTags: []string{
+		"work/project",  // valid
+		"has space",     // invalid: space
+		"123bad",        // invalid: starts with digit
+		"good/tag",      // valid
+		"evil\nnewline", // invalid: newline
+		"",              // empty
+		"   ",           // whitespace
+	}}})
+	want := []string{"work/project", "good/tag"}
+	if !reflect.DeepEqual(cfg.UI.RecentTags, want) {
+		t.Errorf("filtered recent_tags:\n got  %v\n want %v", cfg.UI.RecentTags, want)
+	}
+}

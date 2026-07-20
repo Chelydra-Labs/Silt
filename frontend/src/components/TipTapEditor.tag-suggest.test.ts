@@ -108,6 +108,14 @@ async function mountEditor() {
   return { ...rendered, editor: pm.editor }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
 describe('TipTapEditor tag typeahead', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -142,9 +150,9 @@ describe('TipTapEditor tag typeahead', () => {
       container.querySelectorAll<HTMLButtonElement>('[role="option"]')
     )
     expect(options.map((option) => option.textContent?.trim())).toEqual([
-      '#work/project 2',
-      '#archive 20',
-      '#work 5'
+      '#work/project 2 uses',
+      '#archive 20 uses',
+      '#work 5 uses'
     ])
 
     await fireEvent.click(options[0])
@@ -153,6 +161,45 @@ describe('TipTapEditor tag typeahead', () => {
     expect(mocks.recordTagUsage).toHaveBeenCalledWith('work/project')
     expect(container.querySelector('.tag-suggest')).toBeNull()
     unmount()
+  })
+
+  it('refreshes an expired hierarchy when the picker opens and keeps cached tags visible', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(10_000)
+    const refresh = deferred<
+      Array<{
+        name: string
+        path: string
+        count: number
+        children: never[]
+      }>
+    >()
+    const { container, editor, unmount } = await mountEditor()
+    await waitFor(() =>
+      expect(mocks.queryTagHierarchy).toHaveBeenCalledTimes(1)
+    )
+
+    editor.commands.focus('end')
+    editor.commands.insertContent('#')
+    await tick()
+    expect(mocks.queryTagHierarchy).toHaveBeenCalledTimes(1)
+
+    await fireEvent.keyDown(container.querySelector('.ProseMirror')!, {
+      key: 'Escape'
+    })
+    now.mockReturnValue(15_001)
+    mocks.queryTagHierarchy.mockReturnValueOnce(refresh.promise)
+    editor.commands.insertContent(' #')
+    await tick()
+
+    expect(mocks.queryTagHierarchy).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('#work/project')
+    expect(container.textContent).toContain('Loading tags')
+
+    refresh.resolve([{ name: 'fresh', path: 'fresh', count: 1, children: [] }])
+    await waitFor(() => expect(container.textContent).toContain('#fresh'))
+    expect(container.textContent).toContain('1 use')
+    unmount()
+    now.mockRestore()
   })
 
   it('surfaces hierarchy errors without breaking typed text', async () => {

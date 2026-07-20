@@ -59,7 +59,7 @@ DB read lease:
 4. Batch-fetch source-block info (source discriminator, `clean_content` for
    snippet) by `source_block_id IN (...)`.
 
-### Legs 2+3: Block refs and embeds (bounded LIKE scan)
+### Legs 2+3: Block refs and embeds (batched LIKE scan)
 
 1. Collect every block ID for the target page (`SELECT id FROM blocks WHERE
    source=? AND notebook=? AND section=? AND page=?`).
@@ -76,8 +76,10 @@ DB read lease:
 
 All three legs produce `[]Backlink` entries. Results are deduped by
 `(kind, source, source_notebook, source_section, source_page, source_block_id)`
-and stably sorted by `(source_notebook, source_section, source_page, kind,
-source_block_id)` for deterministic panel rendering.
+and stably sorted by `(source, source_notebook, source_section, source_page,
+kind, source_block_id)` for deterministic panel rendering. The IPC returns a
+cursor-paged projection (50 rows by default) so the panel appends results on an
+explicit **Load more** action rather than materializing an unbounded payload.
 
 ## Source-aware behavior
 
@@ -91,18 +93,14 @@ notebooks carry their own `source` discriminator.
 ### Accepted costs
 
 - **Panel-open latency on large vaults.** The block-ref/embed legs scan
-  `blocks.raw_content` with LIKE for every block ID on the target page. A
-  page with 500 blocks against a 100,000-block index is a bounded scan of
-  ~1000 LIKE clauses across the full table (no covering index). In practice
-  this completes in under 50 ms on WAL-mode SQLite for typical vault sizes.
-   For exceptionally large vaults (10k+ pages), the latency grows with both
-   the total indexed block count (each LIKE clause scans across the table) and
-   the target page's block count (which determines the number of LIKE clauses
-   issued). Batching keeps the per-query bind-variable count bounded at 800,
-   but the per-batch scan cost still scales with vault size.
-- **No pagination.** The panel returns every backlink; there is no
-  "load more" for the panel. This is acceptable because the number of
-  inbound references to a single page is typically small (< 100).
+  `blocks.raw_content` with LIKE for every block ID on the target page. Each
+  leading-wildcard clause scans across the table (no covering index), so
+  latency grows with both indexed block count and target-page block count.
+  Batching keeps bind variables bounded at 800 per query, but does not make
+  the scan index-backed. Benchmarks document this query-time trade-off.
+- **Paged projection.** The panel exposes results in cursor pages with an
+  explicit **Load more** action. This bounds initial IPC and DOM work, but not
+  the underlying raw-reference collection required to determine a stable page.
 - **Not real-time.** The panel refreshes on `block:changed` (debounced 200 ms
   in the frontend), not on every keystroke. A user typing a `((uuid))` in
   another page sees the backlink appear after the save lands + re-index +
@@ -114,7 +112,7 @@ notebooks carry their own `source` discriminator.
 on every block save (delete+insert backlink rows) and the cascade-maintenance
 burden outweigh the query-speed benefit for a panel that loads once per page
 navigation. The existing `page_links` reverse index already covers leg 1; legs
-2 and 3 scan only the target page's block IDs (bounded).
+2 and 3 retain their documented query-time raw-content scan.
 
 **B. FTS5 for block-refs.** Using the existing `blocks_fts` virtual table to
 find `((uuid))` references. Rejected because FTS5 tokenizes on word

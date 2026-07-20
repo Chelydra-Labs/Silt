@@ -1,4 +1,5 @@
-import { fireEvent, render } from '@testing-library/svelte'
+import { fireEvent, render, waitFor } from '@testing-library/svelte'
+import { createRawSnippet } from 'svelte'
 import { describe, expect, it, vi } from 'vitest'
 import SuggestPopup from './SuggestPopup.svelte'
 import { popupCoordsAt } from '../../lib/editor/suggestPopupCoords'
@@ -30,8 +31,9 @@ describe('SuggestPopup', () => {
     const listbox = getByRole('listbox', { name: 'Task metadata' })
     const options = getByRole('option', { name: /owner/i })
     const optionIds = getAllByRole('option').map((option) => option.id)
-    expect(listbox.getAttribute('style')).toContain('left: 42px')
-    expect(listbox.getAttribute('style')).toContain('top: 84px')
+    const popup = listbox.parentElement
+    expect(popup?.getAttribute('style')).toContain('--suggest-popup-left: 42px')
+    expect(popup?.getAttribute('style')).toContain('--suggest-popup-top: 84px')
     expect(optionIds.every(Boolean)).toBe(true)
     expect(listbox.getAttribute('aria-activedescendant')).toBe(options.id)
     expect(options.getAttribute('aria-selected')).toBe('true')
@@ -43,6 +45,47 @@ describe('SuggestPopup', () => {
     expect(getAllByRole('option').map((option) => option.id)).toEqual(optionIds)
     expect(listbox.getAttribute('aria-activedescendant')).toBe(optionIds[0])
     expect(status.textContent).toContain('due, Due date, 1 of 2')
+  })
+
+  it('scrolls the newly active option into the visible options area', async () => {
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView
+    })
+    const { getAllByRole, rerender } = render(SuggestPopup, {
+      props: props({ selected: 0 })
+    })
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
+    scrollIntoView.mockClear()
+
+    await rerender(props({ selected: 1 }))
+
+    const activeOption = getAllByRole('option')[1]
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    )
+    expect(scrollIntoView.mock.instances[0]).toBe(activeOption)
+    delete (HTMLElement.prototype as { scrollIntoView?: unknown })
+      .scrollIntoView
+  })
+
+  it('keeps the footer outside the viewport-constrained options region', () => {
+    const footer = createRawSnippet(() => ({
+      render: () => '<span>Keyboard help</span>'
+    }))
+    const { getByRole, getByText } = render(SuggestPopup, {
+      props: props({ footer })
+    })
+    const listbox = getByRole('listbox')
+    const popup = listbox.parentElement as HTMLElement
+    const footerElement = getByText('Keyboard help').parentElement
+
+    expect(popup.classList).toContain('suggest-popup')
+    expect(listbox.classList).toContain('suggest-popup-options')
+    expect(footerElement?.classList).toContain('suggest-popup-footer')
+    expect(footerElement?.parentElement).toBe(popup)
+    expect(listbox.contains(footerElement)).toBe(false)
   })
 
   it('reports pointer hover and picking by item index', async () => {

@@ -12,8 +12,7 @@ import {
   applyPageLinkSuggestion,
   getPageLinkContext,
   normalizePageLinkAlias,
-  pageLinkPath,
-  rankPageLinks
+  pageLinkPath
 } from './pageLinkSuggest'
 import type { DocJSON } from './types'
 
@@ -110,20 +109,7 @@ describe('PageLinkSuggest context detection', () => {
   })
 })
 
-describe('page-link ranking and insertion', () => {
-  it('reranks server results by fuzzy page-name score', () => {
-    const items = [
-      { notebook: 'NB', section: 'S', page: 'Airplane Notes' },
-      { notebook: 'NB', section: 'S', page: 'Planning' },
-      { notebook: 'NB', section: 'S', page: 'Plan' }
-    ]
-    expect(rankPageLinks(items, 'plan').map((item) => item.page)).toEqual([
-      'Plan',
-      'Planning',
-      'Airplane Notes'
-    ])
-  })
-
+describe('page-link insertion', () => {
   it('resolves the full path and inserts one shortest-target atomic node', async () => {
     const editor = makeEditor()
     editor.commands.setContent(noteDoc('See [[plan'))
@@ -209,7 +195,9 @@ describe('page-link ranking and insertion', () => {
         page: 'Roadmap'
       })
     ).toBe('Work/Plans/Roadmap')
-    expect(normalizePageLinkAlias('Launch]|plan\nnext')).toBe('Launchplan next')
+    expect(normalizePageLinkAlias('Launch]|plan\nnext\u0000')).toBe(
+      'Launchplan next'
+    )
   })
 
   it('does not mutate the document when resolution fails', async () => {

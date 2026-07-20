@@ -438,8 +438,9 @@ type TaskResult struct {
 }
 
 // PageSummary is the stable result shape returned by SearchPages for the
-// [[ page-link autocomplete picker. Deterministic ordering follows
-// ListDistinctPages (notebook, section, page).
+// [[ page-link autocomplete picker. Results are ordered by a server-side
+// rank contract (exact page > page prefix > full-path prefix > substring)
+// with alphabetical tiebreak by (notebook, section, page), bounded to 50.
 type PageSummary struct {
 	Source   string `json:"source"`
 	Notebook string `json:"notebook"`

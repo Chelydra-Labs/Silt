@@ -225,6 +225,10 @@
         "signature": "GetBacklinks(notebook, section, page string) ([]db.Backlink, error)"
       },
       {
+        "name": "GetBacklinksPaged",
+        "signature": "GetBacklinksPaged(notebook, section, page, cursor string, limit int) (db.BacklinksResult, error)"
+      },
+      {
         "name": "GetCloseToTray",
         "signature": "GetCloseToTray() bool"
       },

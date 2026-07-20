@@ -529,14 +529,19 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   pages through the application page-opening funnel rather than bypassing tab
   and notebook scoping.
 - **Typeaheads & backlinks** — `SearchPages` powers the `[[` page-link
-  autocomplete picker (case-insensitive substring over all distinct pages;
-  capped at 50, deterministic order). `RecordTagUsage` maintains an MRU
+  autocomplete picker after two non-space query characters. It returns the
+  rank-correct, case-insensitive top 50 over distinct page paths (exact name,
+  page-prefix, path-prefix, then substring; deterministic ties). `RecordTagUsage`
+  validates a bounded tag path before maintaining an MRU
   `recent_tags` list (capped at 12) that seeds the `#` tag-typeahead above
-  full index tags. `GetBacklinks` returns every inbound reference to a page
+  full index tags. `GetBacklinksPaged` returns bounded, cursor-paged inbound
+  references to a page
   across three legs — `[[…]]` page-links (indexed reverse lookup, resolved
   against the canonical page set), `((uuid))` block-refs, and `{{embed:uuid}}`
   embeds (both via parameterized LIKE on target block IDs) — source-aware,
-  deduped, stably sorted. See ADR `docs/decisions/0006-backlinks-query-strategy.md`.
+  deduped, stably sorted. Pagination bounds IPC and DOM work; the raw-reference
+  LIKE scan remains a documented query-time trade-off. See ADR
+  `docs/decisions/0006-backlinks-query-strategy.md`.
 - **AI providers** (#216, #218, #479, #632) — `GetAIProviderConfig` (key-scrubbed
   read; emits `has_key` flags + `features`, never the raw secret),
   `UpdateAIProviderConfig` (provider type / base URL / model / tuning — never
@@ -890,8 +895,9 @@ Cards are rendered as `role="button"` elements with `aria-grabbed`/`aria-label` 
 5.4 Backlinks Panel
 
 The backlinks panel (`BacklinksSidebarPanel.svelte`) is a sidebar surface
-mounted when `activeView === 'backlinks'`, showing every inbound reference to
-the currently open page. It calls `GetBacklinks` (§4.3) on mount and reacts
+mounted when `activeView === 'backlinks'`, showing cursor-paged inbound
+references to the currently open page. It calls `GetBacklinksPaged` (§4.3) on
+mount and reacts
 to `block:changed` events (debounced 200 ms) so edits that add/remove links
 refresh the list without a manual reload. Results are grouped by source page,
 each group listing its references with a kind badge (`[[` page link, `((`
@@ -899,7 +905,9 @@ block reference, `{{` embed), a clean-content snippet (contextual 120-rune
 window centered on the reference token, with ellipsis markers), and
 click-to-navigate. The
 panel is empty-state-aware (no page open → prompt; no backlinks → hint with
-link syntax) and surfaces load/error states with `aria-live` regions.
+link syntax) and surfaces load/error states with `aria-live` regions. An
+explicit Load more control appends later pages without expanding the initial
+IPC payload or DOM projection.
 
 5.5 Search & Writing Aids
 

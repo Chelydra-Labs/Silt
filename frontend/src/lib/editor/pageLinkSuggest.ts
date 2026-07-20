@@ -8,7 +8,6 @@ import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import type { EditorState, Selection } from '@tiptap/pm/state'
-import { fuzzyScore, normalizeSearch } from '../navigationCatalog'
 
 export interface PageLinkContext {
   triggerPos: number
@@ -86,27 +85,10 @@ export function pageLinkSourceLabel(source?: string): string {
 }
 
 export function normalizePageLinkAlias(alias: string): string {
-  return alias.replace(/[\]|]/g, '').replace(/[\r\n]+/g, ' ')
-}
-
-export function rankPageLinks(
-  items: readonly PageLinkItem[],
-  query: string
-): PageLinkItem[] {
-  return items
-    .map((item) => ({ item, score: fuzzyScore(query, item.page) }))
-    .filter(
-      (entry): entry is typeof entry & { score: number } => entry.score !== null
-    )
-    .sort(
-      (a, b) =>
-        a.score - b.score ||
-        normalizeSearch(a.item.page).localeCompare(
-          normalizeSearch(b.item.page)
-        ) ||
-        pageLinkPath(a.item).localeCompare(pageLinkPath(b.item))
-    )
-    .map((entry) => entry.item)
+  return alias
+    .replace(/[\r\n\u2028\u2029]+/g, ' ')
+    .replace(/[\u0000-\u001f\u007f|\]]/g, '')
+    .normalize()
 }
 
 export async function resolvePageLinkTarget(
@@ -175,6 +157,7 @@ export function dismissPageLinkSuggestion(
 
 export interface PageLinkSuggestOptions {
   items: () => readonly PageLinkItem[]
+  resolving: () => boolean
   onChange: (ctx: PageLinkContext | null) => void
   onNavigate: (direction: 1 | -1) => void
   onSelectActive: () => void
@@ -182,10 +165,12 @@ export interface PageLinkSuggestOptions {
 
 export const PageLinkSuggest = Extension.create<PageLinkSuggestOptions>({
   name: 'siltPageLinkSuggest',
+  priority: 1000,
 
   addOptions() {
     return {
       items: () => [],
+      resolving: () => false,
       onChange: () => {},
       onNavigate: () => {},
       onSelectActive: () => {}
@@ -252,6 +237,7 @@ export const PageLinkSuggest = Extension.create<PageLinkSuggestOptions>({
         return true
       },
       Enter: () => {
+        if (active() && opts.resolving()) return true
         if (!actionable()) return false
         opts.onSelectActive()
         return true

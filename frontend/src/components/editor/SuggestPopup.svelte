@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte'
+  import { tick, type Snippet } from 'svelte'
   export interface SuggestPopupItem {
     id: string
     label: string
@@ -42,16 +42,30 @@
           .join(', ') + `, ${selected + 1} of ${items.length}`
       : ''
   )
+  let optionsElement: HTMLDivElement
+
+  $effect(() => {
+    const option = activeOption
+    if (!option) return
+
+    void tick().then(() => {
+      if (activeOption !== option) return
+      const activeElement = document.getElementById(option)
+      if (activeElement && optionsElement?.contains(activeElement)) {
+        activeElement.scrollIntoView?.({ block: 'nearest' })
+      }
+    })
+  })
 </script>
 
 <div
   class="suggest-popup {className}"
-  style="left:{coords.left}px; top:{coords.top}px"
+  style="--suggest-popup-left: {coords.left}px; --suggest-popup-top: {coords.top}px"
 >
   <div
+    bind:this={optionsElement}
     id={popupId}
     class="suggest-popup-options"
-    style="left:{coords.left}px; top:{coords.top}px"
     role="listbox"
     tabindex="-1"
     aria-label={ariaLabel}
@@ -98,17 +112,50 @@
 
 <style>
   .suggest-popup {
+    --suggest-popup-gap: 8px;
+    --suggest-popup-safe-left: clamp(
+      var(--suggest-popup-gap),
+      var(--suggest-popup-left),
+      calc(100vw - var(--suggest-popup-gap))
+    );
+    --suggest-popup-safe-top: clamp(
+      var(--suggest-popup-gap),
+      calc(var(--suggest-popup-top) + 4px),
+      calc(100dvh - var(--suggest-popup-gap))
+    );
     position: fixed;
     z-index: 50;
+    left: var(--suggest-popup-safe-left);
+    top: var(--suggest-popup-safe-top);
     min-width: 200px;
-    margin-top: 4px;
+    max-width: calc(100vw - 2 * var(--suggest-popup-gap));
+    max-height: calc(100dvh - 2 * var(--suggest-popup-gap));
     padding: 4px;
+    box-sizing: border-box;
     border: 1px solid var(--color-surface-popover-border);
     border-radius: 8px;
     background: var(--color-surface-popover);
     box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
     display: flex;
     flex-direction: column;
+    transform: translate(
+      clamp(
+        calc(var(--suggest-popup-gap) - var(--suggest-popup-safe-left)),
+        calc(
+          100vw - var(--suggest-popup-gap) - var(--suggest-popup-safe-left) -
+            100%
+        ),
+        0px
+      ),
+      clamp(
+        calc(var(--suggest-popup-gap) - var(--suggest-popup-safe-top)),
+        calc(
+          100dvh - var(--suggest-popup-gap) - var(--suggest-popup-safe-top) -
+            100%
+        ),
+        0px
+      )
+    );
   }
 
   .suggest-popup.meta-suggest {
@@ -118,6 +165,10 @@
   .suggest-popup-options {
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .suggest-popup-item {
@@ -168,6 +219,7 @@
   }
 
   .suggest-popup-footer {
+    flex: none;
     margin: 4px -4px -4px;
     padding: 7px 8px;
     border-top: 1px solid var(--color-surface-popover-border);

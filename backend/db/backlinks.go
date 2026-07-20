@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"sort"
 	"strings"
@@ -29,6 +30,27 @@ type Backlink struct {
 	Snippet        string       `json:"snippet"`
 }
 
+// BacklinksResult is the cursor-paged envelope returned by GetBacklinksPaged.
+// Cursor is an opaque base64-encoded sort-key position; empty when no more
+// results exist. HasMore is true when additional pages can be fetched.
+type BacklinksResult struct {
+	Results []Backlink `json:"results"`
+	Cursor  string     `json:"cursor"`
+	HasMore bool       `json:"has_more"`
+}
+
+// BacklinksDefaultLimit is the page size when the caller passes limit=0.
+const BacklinksDefaultLimit = 50
+
+// BacklinksMaxLimit is the hard cap on a single page. Requesting more is
+// silently clamped.
+const BacklinksMaxLimit = 500
+
+// cursorSep separates fields inside a backlink cursor. Must be a byte that
+// cannot appear in any of the source/notebook/section/page/kind/block_id
+// fields. NUL is safe because SQLite identifiers never contain NUL.
+const cursorSep = "\x00"
+
 const backlinkSnippetRunes = 120
 
 // snippetEllipsis is the single Unicode ellipsis character used as a truncation
@@ -54,8 +76,13 @@ type backlinkKey struct {
 // ListDistinctPages + ResolvePageLinkAgainst for exact nonambiguous canonical
 // target resolution (matching the rename-rewrite path). Block-refs and embeds
 // use parameterized LIKE candidates safely (UUIDs contain no LIKE-special
-// chars). Results are deduped and stably sorted by (source_notebook,
+// chars). Results are deduped and stably sorted by (source, source_notebook,
 // source_section, source_page, kind, source_block_id).
+//
+// Constraint: the block-ref and embed legs use raw LIKE %token% scans on the
+// blocks table (no FTS index). Cost scales linearly with total block count in
+// the vault/linked sources. A future FTS-backed index would eliminate this
+// full-table scan, but requires a new inverted index on raw_content tokens.
 func (dm *DatabaseManager) GetBacklinks(source, notebook, section, page string) ([]Backlink, error) {
 	if page == "" {
 		return nil, nil
@@ -69,6 +96,96 @@ func (dm *DatabaseManager) GetBacklinks(source, notebook, section, page string) 
 		return nil, ErrDBClosed
 	}
 	defer release()
+
+	all, err := dm.collectBacklinks(db, source, notebook, section, page)
+	if err != nil {
+		return nil, err
+	}
+	sortBacklinks(all)
+	return all, nil
+}
+
+// GetBacklinksPaged returns a cursor-paged slice of inbound references.
+// Cursor is an opaque base64 token from a previous call's Cursor field (empty
+// for the first page). Limit is clamped to [1, BacklinksMaxLimit]; passing 0
+// uses BacklinksDefaultLimit.
+//
+// The cursor is a keyset cursor over the deterministic sort order
+// (source, source_notebook, source_section, source_page, kind, source_block_id).
+// Collecting the full result set is required because the three query legs
+// (indexed page-links + LIKE block-refs + LIKE embeds) must merge and dedupe
+// in Go; the cursor slices into this sorted set rather than re-querying SQL.
+//
+// Remaining constraint: block-ref/embed legs still use parameterized LIKE scans
+// (full-table proportional to total block count). No new storage tier is added;
+// pagination is a post-collection slice.
+func (dm *DatabaseManager) GetBacklinksPaged(source, notebook, section, page string, cursor string, limit int) (BacklinksResult, error) {
+	if page == "" {
+		return BacklinksResult{Results: []Backlink{}}, nil
+	}
+	if source == "" {
+		source = "vault"
+	}
+	if limit <= 0 {
+		limit = BacklinksDefaultLimit
+	}
+	if limit > BacklinksMaxLimit {
+		limit = BacklinksMaxLimit
+	}
+
+	db, release, err := dm.handle()
+	if err != nil {
+		return BacklinksResult{}, ErrDBClosed
+	}
+	defer release()
+
+	all, err := dm.collectBacklinks(db, source, notebook, section, page)
+	if err != nil {
+		return BacklinksResult{}, err
+	}
+	sortBacklinks(all)
+
+	startIdx := 0
+	if cursorKey, ok := decodeBacklinkCursor(cursor); ok {
+		for i, b := range all {
+			if backlinkCursorKey(b) > cursorKey {
+				startIdx = i
+				break
+			}
+			// cursor points at the last item of the previous page; skip it.
+			if i == len(all)-1 {
+				// cursor key >= all items → no more results
+				return BacklinksResult{Results: []Backlink{}}, nil
+			}
+		}
+	}
+
+	endIdx := startIdx + limit
+	hasMore := endIdx < len(all)
+	if endIdx > len(all) {
+		endIdx = len(all)
+	}
+	pageItems := all[startIdx:endIdx]
+	if pageItems == nil {
+		pageItems = []Backlink{}
+	}
+
+	nextCursor := ""
+	if hasMore {
+		nextCursor = encodeBacklinkCursor(pageItems[len(pageItems)-1])
+	}
+	return BacklinksResult{
+		Results: pageItems,
+		Cursor:  nextCursor,
+		HasMore: hasMore,
+	}, nil
+}
+
+// collectBacklinks gathers all inbound references across the three legs
+// (page-links, block-refs, embeds), deduplicates, and returns the unsorted
+// collection. Callers that need ordering or pagination call sortBacklinks
+// and slice themselves.
+func (dm *DatabaseManager) collectBacklinks(db *sql.DB, source, notebook, section, page string) ([]Backlink, error) {
 
 	// 1. Collect the target page's block IDs (needed for block-ref/embed legs).
 	targetBlockIDs, err := dm.blockIDsForPage(db, source, notebook, section, page)
@@ -88,7 +205,7 @@ func (dm *DatabaseManager) GetBacklinks(source, notebook, section, page string) 
 		return nil, err
 	}
 
-	// 4. Merge, dedupe, stable sort.
+	// 4. Merge, dedupe (no sort — caller decides).
 	seen := make(map[backlinkKey]bool)
 	var out []Backlink
 	add := func(b Backlink) {
@@ -108,7 +225,6 @@ func (dm *DatabaseManager) GetBacklinks(source, notebook, section, page string) 
 	for _, b := range embeds {
 		add(b)
 	}
-	sortBacklinks(out)
 	return out, nil
 }
 
@@ -468,11 +584,15 @@ func runeIndex(haystack, needle []rune) int {
 	return -1
 }
 
-// sortBacklinks stably sorts backlinks by (source_notebook, source_section,
-// source_page, kind, source_block_id) for deterministic panel rendering.
+// sortBacklinks stably sorts backlinks by (source, source_notebook, source_section,
+// source_page, kind, source_block_id) for deterministic cursor-paged rendering.
+// Source is included so cursor positions are unique across linked notebooks.
 func sortBacklinks(bl []Backlink) {
 	sort.SliceStable(bl, func(i, j int) bool {
 		a, b := bl[i], bl[j]
+		if a.Source != b.Source {
+			return a.Source < b.Source
+		}
 		if a.SourceNotebook != b.SourceNotebook {
 			return a.SourceNotebook < b.SourceNotebook
 		}
@@ -487,4 +607,36 @@ func sortBacklinks(bl []Backlink) {
 		}
 		return a.SourceBlockID < b.SourceBlockID
 	})
+}
+
+// backlinkCursorKey extracts the sort-key tuple from a Backlink for cursor
+// encoding/positioning.
+func backlinkCursorKey(b Backlink) string {
+	return b.Source + cursorSep +
+		b.SourceNotebook + cursorSep +
+		b.SourceSection + cursorSep +
+		b.SourcePage + cursorSep +
+		string(b.Kind) + cursorSep +
+		b.SourceBlockID
+}
+
+// encodeBacklinkCursor encodes a backlink's sort key as an opaque base64
+// string suitable for returning to the caller and feeding back as the cursor
+// argument on the next page request.
+func encodeBacklinkCursor(b Backlink) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(backlinkCursorKey(b)))
+}
+
+// decodeBacklinkCursor decodes an opaque cursor string into its sort-key
+// tuple. Returns ("", false) for empty/invalid cursors so the caller treats
+// them as "start from the beginning".
+func decodeBacklinkCursor(cursor string) (string, bool) {
+	if cursor == "" {
+		return "", false
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return "", false
+	}
+	return string(decoded), true
 }

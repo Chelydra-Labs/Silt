@@ -1406,3 +1406,605 @@ func TestSnippet_NeverExceeds120Runes_OversizedToken(t *testing.T) {
 		})
 	}
 }
+
+// --- Cursor-paged backlinks tests ---
+
+// TestGetBacklinksPaged_FirstPage verifies that the first page with an empty
+// cursor returns the expected subset and a non-empty cursor when more results
+// exist.
+func TestGetBacklinksPaged_FirstPage(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	// 5 source pages with page-links.
+	for i := 0; i < 5; i++ {
+		idx(t, dm, "vault", "NB", "Sec", fmt.Sprintf("Src%d", i), []parser.ParsedBlock{
+			noteBlock(fmt.Sprintf("aaaa%03d-aaaa-4aaa-8aaa-aaaaaaaaaaaa", i),
+				fmt.Sprintf("[[Target]] from src %d", i)),
+		})
+	}
+
+	res, err := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", "", 3)
+	if err != nil {
+		t.Fatalf("GetBacklinksPaged: %v", err)
+	}
+	if len(res.Results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(res.Results))
+	}
+	if !res.HasMore {
+		t.Error("expected HasMore=true")
+	}
+	if res.Cursor == "" {
+		t.Error("expected non-empty cursor")
+	}
+}
+
+// TestGetBacklinksPaged_CursoredConcatenation verifies that fetching all pages
+// via cursor concatenation yields the same results as the unbounded GetBacklinks.
+func TestGetBacklinksPaged_CursoredConcatenation(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	// 12 backlinks: 6 page-links + 3 block-refs + 3 embeds.
+	for i := 0; i < 6; i++ {
+		bid := fmt.Sprintf("bbbbb%03d-bbbb-4bbb-8bbb-bbbbbbbbbbbb", i)
+		idx(t, dm, "vault", "NB", "Sec", fmt.Sprintf("PL%d", i), []parser.ParsedBlock{
+			noteBlock(bid, fmt.Sprintf("[[Target]] pl %d", i)),
+		})
+	}
+	for i := 0; i < 3; i++ {
+		bid := fmt.Sprintf("ccccc%03d-cccc-4ccc-8ccc-cccccccccccc", i)
+		idx(t, dm, "vault", "NB", "Sec", fmt.Sprintf("BR%d", i), []parser.ParsedBlock{
+			noteBlock(bid, fmt.Sprintf("ref %s", "(("+uuidA+"))")),
+		})
+	}
+	for i := 0; i < 3; i++ {
+		bid := fmt.Sprintf("ddddd%03d-dddd-4ddd-8ddd-dddddddddddd", i)
+		idx(t, dm, "vault", "NB", "Sec", fmt.Sprintf("EM%d", i), []parser.ParsedBlock{
+			noteBlock(bid, fmt.Sprintf("embed %s", "{{embed:"+uuidA+"}}")),
+		})
+	}
+
+	// Get full set via unbounded API.
+	full, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+
+	// Paginate with page size 5.
+	var allPaged []Backlink
+	cursor := ""
+	for {
+		res, err := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", cursor, 5)
+		if err != nil {
+			t.Fatalf("GetBacklinksPaged cursor=%q: %v", cursor, err)
+		}
+		allPaged = append(allPaged, res.Results...)
+		if !res.HasMore {
+			break
+		}
+		cursor = res.Cursor
+	}
+
+	if len(allPaged) != len(full) {
+		t.Fatalf("paged count %d != full count %d", len(allPaged), len(full))
+	}
+	for i := range full {
+		if allPaged[i] != full[i] {
+			t.Errorf("item %d mismatch:\n  paged: %+v\n  full:  %+v", i, allPaged[i], full[i])
+		}
+	}
+}
+
+// TestGetBacklinksPaged_NoDuplicates verifies that cursor-paged results
+// contain no duplicates across all pages.
+func TestGetBacklinksPaged_NoDuplicates(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+		noteBlock(uuidB, "target2"),
+	})
+	// Many sources, some referencing both blocks (two backlinks per source).
+	for i := 0; i < 20; i++ {
+		bid := fmt.Sprintf("eeeee%03d-eeee-4eee-8eee-eeeeeeeeeeee", i)
+		raw := fmt.Sprintf("((%s)) and ((%s))", uuidA, uuidB)
+		idx(t, dm, "vault", "NB", "Sec", fmt.Sprintf("S%d", i), []parser.ParsedBlock{
+			noteBlock(bid, raw),
+		})
+	}
+
+	seen := make(map[backlinkKey]bool)
+	cursor := ""
+	for {
+		res, err := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", cursor, 7)
+		if err != nil {
+			t.Fatalf("GetBacklinksPaged: %v", err)
+		}
+		for _, b := range res.Results {
+			k := backlinkKey{b.Kind, b.Source, b.SourceNotebook, b.SourceSection, b.SourcePage, b.SourceBlockID}
+			if seen[k] {
+				t.Errorf("duplicate backlink across pages: %+v", b)
+			}
+			seen[k] = true
+		}
+		if !res.HasMore {
+			break
+		}
+		cursor = res.Cursor
+	}
+}
+
+// TestGetBacklinksPaged_InvalidCursor verifies that an invalid cursor (garbage
+// base64, wrong format, truncated) is treated as empty (returns from start)
+// or sorts past the end (returns empty results). Both are safe — no panics.
+func TestGetBacklinksPaged_InvalidCursor(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, "[[Target]]"),
+	})
+
+	// These should all succeed without panicking. Results may be empty
+	// (cursor sorts past all items) or start from the beginning.
+	cursors := []string{
+		"!!not-valid-base64!!",
+		"AAAA", // valid base64 but decodes to binary that sorts before results
+		"",     // empty (baseline: returns first page)
+	}
+	for _, c := range cursors {
+		res, err := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", c, 10)
+		if err != nil {
+			t.Fatalf("cursor %q: %v", c, err)
+		}
+		// Must have 0 or 1 results, never panic or error.
+		if len(res.Results) > 1 {
+			t.Errorf("cursor %q: expected at most 1 result, got %d", c, len(res.Results))
+		}
+	}
+}
+
+// TestGetBacklinksPaged_LargeResultFixture verifies pagination through a
+// large result set (150 backlinks) with page size 30.
+func TestGetBacklinksPaged_LargeResultFixture(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	// Create 150 source pages with page-links.
+	for i := 0; i < 150; i++ {
+		bid := fmt.Sprintf("ffff%03d-ffff-4fff-8fff-%028d", i%10, i)
+		idx(t, dm, "vault", "NB", "Sec", fmt.Sprintf("Src%03d", i), []parser.ParsedBlock{
+			noteBlock(bid, fmt.Sprintf("[[Target]] #%d", i)),
+		})
+	}
+
+	// Full set.
+	full, _ := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if len(full) != 150 {
+		t.Fatalf("expected 150 full backlinks, got %d", len(full))
+	}
+
+	// Paginate page size 30.
+	var allPaged []Backlink
+	cursor := ""
+	pages := 0
+	for {
+		res, err := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", cursor, 30)
+		if err != nil {
+			t.Fatalf("page %d: %v", pages, err)
+		}
+		pages++
+		allPaged = append(allPaged, res.Results...)
+		if !res.HasMore {
+			if res.Cursor != "" {
+				t.Error("cursor should be empty when HasMore=false")
+			}
+			break
+		}
+		cursor = res.Cursor
+	}
+
+	if pages != 5 { // 150 / 30 = 5 pages
+		t.Errorf("expected 5 pages, got %d", pages)
+	}
+	if len(allPaged) != 150 {
+		t.Fatalf("expected 150 total, got %d", len(allPaged))
+	}
+	for i := range full {
+		if allPaged[i] != full[i] {
+			t.Errorf("item %d mismatch", i)
+		}
+	}
+}
+
+// TestGetBacklinksPaged_SourceOrdering verifies that the sort key includes
+// Source: results are grouped by source first, then notebook, section, page,
+// kind, block_id.
+func TestGetBacklinksPaged_SourceOrdering(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	// Linked source block-ref.
+	idx(t, dm, "linked:ext", "ExtNB", "Sec", "LinkedSrc", []parser.ParsedBlock{
+		noteBlock(uuidB, "cross-ref "+("(("+uuidA+"))")),
+	})
+	// Vault page-link.
+	idx(t, dm, "vault", "NB", "Sec", "VaultSrc", []parser.ParsedBlock{
+		noteBlock(uuidC, "[[Target]]"),
+	})
+	// Another linked source embed.
+	idx(t, dm, "linked:ext2", "ExtNB2", "Sec", "LinkedSrc2", []parser.ParsedBlock{
+		noteBlock(uuidD, "cross-embed "+"{{embed:"+uuidA+"}}"),
+	})
+
+	res, err := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", "", 10)
+	if err != nil {
+		t.Fatalf("GetBacklinksPaged: %v", err)
+	}
+	if len(res.Results) != 3 {
+		t.Fatalf("expected 3 backlinks, got %d: %+v", len(res.Results), res.Results)
+	}
+	// linked:ext < linked:ext2 < vault (alphabetical by source)
+	if res.Results[0].Source != "linked:ext" {
+		t.Errorf("first should be linked:ext, got %q", res.Results[0].Source)
+	}
+	if res.Results[1].Source != "linked:ext2" {
+		t.Errorf("second should be linked:ext2, got %q", res.Results[1].Source)
+	}
+	if res.Results[2].Source != "vault" {
+		t.Errorf("third should be vault, got %q", res.Results[2].Source)
+	}
+}
+
+// TestGetBacklinksPaged_LimitCapping verifies that limits > BacklinksMaxLimit
+// are clamped, 0 uses BacklinksDefaultLimit, and negative is treated as default.
+func TestGetBacklinksPaged_LimitCapping(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	for i := 0; i < 10; i++ {
+		bid := fmt.Sprintf("ggggg%03d-ggggg-4gggg-8gggg-gggggggggggg", i)
+		idx(t, dm, "vault", "NB", "Sec", fmt.Sprintf("S%d", i), []parser.ParsedBlock{
+			noteBlock(bid, "[[Target]]"),
+		})
+	}
+
+	// limit=0 → default (50).
+	res0, _ := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", "", 0)
+	if len(res0.Results) != 10 { // only 10 exist
+		t.Errorf("limit 0: expected 10, got %d", len(res0.Results))
+	}
+
+	// limit=999 → clamped to BacklinksMaxLimit (500).
+	res999, _ := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", "", 999)
+	if len(res999.Results) != 10 {
+		t.Errorf("limit 999: expected 10, got %d", len(res999.Results))
+	}
+
+	// limit=-1 → default (50).
+	resNeg, _ := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", "", -1)
+	if len(resNeg.Results) != 10 {
+		t.Errorf("limit -1: expected 10, got %d", len(resNeg.Results))
+	}
+}
+
+// TestGetBacklinksPaged_EmptyPage verifies that an empty cursor on a page with
+// no backlinks returns empty results with HasMore=false.
+func TestGetBacklinksPaged_EmptyPage(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "orphan"),
+	})
+
+	res, err := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", "", 10)
+	if err != nil {
+		t.Fatalf("GetBacklinksPaged: %v", err)
+	}
+	if len(res.Results) != 0 {
+		t.Errorf("expected 0 results, got %d", len(res.Results))
+	}
+	if res.HasMore {
+		t.Error("HasMore should be false")
+	}
+	if res.Cursor != "" {
+		t.Error("cursor should be empty")
+	}
+}
+
+// TestGetBacklinksPaged_ExhaustedCursor verifies that once HasMore=false,
+// the cursor is empty. Callers should stop paginating when HasMore=false;
+// re-calling with empty cursor returns the first page (correct restart
+// behavior).
+func TestGetBacklinksPaged_ExhaustedCursor(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, "[[Target]]"),
+	})
+
+	// Page 1 gets the only result; HasMore=false, cursor="".
+	res1, _ := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", "", 10)
+	if len(res1.Results) != 1 || res1.HasMore {
+		t.Fatalf("page 1: expected 1 result, HasMore=false, got %+v", res1)
+	}
+	if res1.Cursor != "" {
+		t.Error("cursor should be empty when HasMore=false")
+	}
+}
+
+// TestGetBacklinksPaged_DbClosed returns ErrDBClosed.
+func TestGetBacklinksPaged_DbClosed(t *testing.T) {
+	dm := newTestDB(t)
+	_ = dm.Close()
+	_, err := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", "", 10)
+	if err != ErrDBClosed {
+		t.Errorf("expected ErrDBClosed, got %v", err)
+	}
+}
+
+// TestGetBacklinksPaged_ExactPageSize verifies behavior when the result count
+// is exactly the page size (no HasMore, empty cursor).
+func TestGetBacklinksPaged_ExactPageSize(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	for i := 0; i < 5; i++ {
+		bid := fmt.Sprintf("hhhhh%03d-hhhhh-4hhhh-8hhhh-hhhhhhhhhhhh", i)
+		idx(t, dm, "vault", "NB", "Sec", fmt.Sprintf("S%d", i), []parser.ParsedBlock{
+			noteBlock(bid, "[[Target]]"),
+		})
+	}
+
+	res, _ := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", "", 5)
+	if len(res.Results) != 5 {
+		t.Fatalf("expected 5, got %d", len(res.Results))
+	}
+	if res.HasMore {
+		t.Error("HasMore should be false when count == page size")
+	}
+	if res.Cursor != "" {
+		t.Error("cursor should be empty when HasMore=false")
+	}
+}
+
+// TestGetBacklinksPaged_CursorPastEnd verifies that a cursor pointing beyond
+// all results returns an empty page.
+func TestGetBacklinksPaged_CursorPastEnd(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, "[[Target]]"),
+	})
+
+	// Create a cursor that sorts after all real results.
+	// The cursor key for the last result ends with the block ID.
+	// Use a synthetic cursor that alphabetically sorts after everything.
+	pastCursor := encodeBacklinkCursor(Backlink{
+		Source:         "zzzzz",
+		SourceNotebook: "ZZZ",
+		SourceSection:  "ZZZ",
+		SourcePage:     "ZZZ",
+		Kind:           "zzz",
+		SourceBlockID:  "zzzz",
+	})
+
+	res, err := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", pastCursor, 10)
+	if err != nil {
+		t.Fatalf("GetBacklinksPaged past cursor: %v", err)
+	}
+	if len(res.Results) != 0 {
+		t.Errorf("past-end cursor should return 0 results, got %d", len(res.Results))
+	}
+}
+
+// TestGetBacklinksPaged_MixedLegsAndSources verifies cursor pagination across
+// a mix of page-links, block-refs, and embeds from multiple sources.
+func TestGetBacklinksPaged_MixedLegsAndSources(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "t1"),
+		noteBlock(uuidB, "t2"),
+	})
+	// Vault page-link at VSrc.
+	idx(t, dm, "vault", "NB", "Sec", "VSrc", []parser.ParsedBlock{
+		noteBlock(uuidC, "[[Target]]"),
+	})
+	// Linked block-ref at LSrc.
+	idx(t, dm, "linked:ext", "Ext", "Sec", "LSrc", []parser.ParsedBlock{
+		noteBlock(uuidD, "ref "+("(("+uuidA+"))")),
+	})
+	// Vault embed at VSrc2.
+	idx(t, dm, "vault", "NB", "Sec", "VSrc2", []parser.ParsedBlock{
+		noteBlock(uuidE, "embed "+"{{embed:"+uuidB+"}}"),
+	})
+
+	// Paginate with tiny page size.
+	var all []Backlink
+	cursor := ""
+	for {
+		res, err := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", cursor, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, res.Results...)
+		if !res.HasMore {
+			break
+		}
+		cursor = res.Cursor
+	}
+
+	if len(all) != 3 {
+		t.Fatalf("expected 3 total, got %d: %+v", len(all), all)
+	}
+	// Sort order: linked:ext < vault (by source), then vault pages ordered
+	// by source_page: VSrc (page-link) < VSrc2 (embed).
+	if all[0].Source != "linked:ext" {
+		t.Errorf("first should be linked:ext, got %q: %+v", all[0].Source, all[0])
+	}
+	if all[1].Source != "vault" || all[1].Kind != BacklinkPageLink {
+		t.Errorf("second should be vault page-link, got %+v", all[1])
+	}
+	if all[2].Source != "vault" || all[2].Kind != BacklinkEmbed {
+		t.Errorf("third should be vault embed, got %+v", all[2])
+	}
+}
+
+// --- Cursor helper tests ---
+
+// TestEncodeDecodeBacklinkCursor verifies that encode/decode round-trips.
+func TestEncodeDecodeBacklinkCursor(t *testing.T) {
+	b := Backlink{
+		Kind:           BacklinkPageLink,
+		Source:         "vault",
+		SourceNotebook: "NB",
+		SourceSection:  "Sec",
+		SourcePage:     "Page",
+		SourceBlockID:  uuidA,
+	}
+	encoded := encodeBacklinkCursor(b)
+	if encoded == "" {
+		t.Fatal("encoded cursor is empty")
+	}
+	decoded, ok := decodeBacklinkCursor(encoded)
+	if !ok {
+		t.Fatal("decode failed")
+	}
+	expected := backlinkCursorKey(b)
+	if decoded != expected {
+		t.Errorf("round-trip mismatch:\n  got: %q\n  want: %q", decoded, expected)
+	}
+}
+
+// TestDecodeBacklinkCursor_Empty verifies that empty/nil cursors decode as false.
+func TestDecodeBacklinkCursor_Empty(t *testing.T) {
+	_, ok := decodeBacklinkCursor("")
+	if ok {
+		t.Error("empty cursor should decode as false")
+	}
+}
+
+// TestDecodeBacklinkCursor_InvalidBase64 verifies that strings with characters
+// outside the base64 alphabet decode as false (not a panic).
+func TestDecodeBacklinkCursor_InvalidBase64(t *testing.T) {
+	for _, c := range []string{"!@#$%", " \t\n", "\xff\xfe"} {
+		_, ok := decodeBacklinkCursor(c)
+		if ok {
+			t.Errorf("garbage %q should decode as false", c)
+		}
+	}
+}
+
+// TestBacklinkCursorKey_NULSafety verifies that the cursor key separator
+// cannot collide with any field value (fields never contain NUL).
+func TestBacklinkCursorKey_NULSafety(t *testing.T) {
+	// Encode a backlink, verify the decoded string has exactly 5 separators.
+	b := Backlink{
+		Kind: BacklinkEmbed, Source: "vault", SourceNotebook: "NB",
+		SourceSection: "S", SourcePage: "P", SourceBlockID: uuidA,
+	}
+	key := backlinkCursorKey(b)
+	parts := strings.Split(key, cursorSep)
+	if len(parts) != 6 {
+		t.Errorf("expected 6 parts, got %d: %v", len(parts), parts)
+	}
+}
+
+// --- Benchmarks ---
+
+// BenchmarkGetBacklinks measures the unbounded backlinks query cost for a
+// target with 100 source pages referencing it (page-link leg only).
+func BenchmarkGetBacklinks(b *testing.B) {
+	dm, err := NewDatabaseManager("")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer dm.Close()
+
+	// Target page.
+	_ = dm.IndexFileBlocks("vault", "NB", "Sec", "Target",
+		[]parser.ParsedBlock{noteBlock(uuidA, "target")}, nil)
+	// 100 source pages.
+	for i := 0; i < 100; i++ {
+		id := fmt.Sprintf("bbbbb%03d-bbbb-4bbb-8bbb-bbbbbbbbbbbb", i)
+		_ = dm.IndexFileBlocks("vault", "NB", "Sec", fmt.Sprintf("Src%03d", i),
+			[]parser.ParsedBlock{noteBlock(id, fmt.Sprintf("[[Target]] #%d", i))}, nil)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkGetBacklinksPaged measures the cursor-paged backlinks query cost
+// for the same fixture. Shows the overhead of cursor encode/slice vs unbounded.
+func BenchmarkGetBacklinksPaged(b *testing.B) {
+	dm, err := NewDatabaseManager("")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer dm.Close()
+
+	_ = dm.IndexFileBlocks("vault", "NB", "Sec", "Target",
+		[]parser.ParsedBlock{noteBlock(uuidA, "target")}, nil)
+	for i := 0; i < 100; i++ {
+		id := fmt.Sprintf("bbbbb%03d-bbbb-4bbb-8bbb-bbbbbbbbbbbb", i)
+		_ = dm.IndexFileBlocks("vault", "NB", "Sec", fmt.Sprintf("Src%03d", i),
+			[]parser.ParsedBlock{noteBlock(id, fmt.Sprintf("[[Target]] #%d", i))}, nil)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := dm.GetBacklinksPaged("vault", "NB", "Sec", "Target", "", 50)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkGetBacklinks_LegBlockRefs measures the block-ref/embed LIKE scan
+// cost: a target with 50 blocks, each referenced by one source block.
+// This documents the O(total_blocks) LIKE constraint.
+func BenchmarkGetBacklinks_LegBlockRefs(b *testing.B) {
+	dm, err := NewDatabaseManager("")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer dm.Close()
+
+	// Target with 50 blocks.
+	targetBlocks := make([]parser.ParsedBlock, 50)
+	for i := range targetBlocks {
+		id := fmt.Sprintf("aaaa%03d-aaaa-4aaa-8aaa-%028d", i%10, i)
+		targetBlocks[i] = noteBlock(id, fmt.Sprintf("block %d", i))
+	}
+	_ = dm.IndexFileBlocks("vault", "NB", "Sec", "Target", targetBlocks, nil)
+
+	// Source referencing the last target block.
+	_ = dm.IndexFileBlocks("vault", "NB", "Sec", "Source",
+		[]parser.ParsedBlock{
+			noteBlock(uuidE, "ref "+("(("+targetBlocks[49].ID+"))")),
+		}, nil)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}

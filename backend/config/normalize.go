@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -13,7 +14,22 @@ const (
 	MaxExpandedSections = 512
 	MaxFavoritePages    = 512
 	MaxRecentTags       = 12
+	MaxTagPathBytes     = 256
 )
+
+// tagPathRegex enforces the canonical tag-path character contract shared by
+// the indexer (backend/db.tagRegex) and the editor tag-suggest extension.
+// A valid tag path starts with an ASCII letter and contains only ASCII
+// letters, digits, underscores, hyphens, and slashes.
+var tagPathRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_/-]*$`)
+
+// IsValidTagPath checks that a tag path matches the canonical character
+// contract (ASCII letter start, [a-zA-Z0-9_/-] thereafter) and fits within
+// the per-tag byte budget. Used by RecordTagUsage IPC validation and
+// normalizeRecentTags defense-in-depth.
+func IsValidTagPath(tag string) bool {
+	return len(tag) > 0 && len(tag) <= MaxTagPathBytes && tagPathRegex.MatchString(tag)
+}
 
 // hotkeyModifiers are the modifier tokens allowed in a hotkey binding
 // (case-insensitive). Everything else in a binding is treated as the key.
@@ -389,13 +405,14 @@ func normalizeRecentPages(in []RecentPage) []RecentPage {
 
 // normalizeRecentTags deduplicates case-insensitively, preserves the first
 // occurrence's capitalization, and caps at MaxRecentTags. Empty/whitespace-only
-// entries are dropped.
+// entries and entries that don't match the canonical tag-path character contract
+// are dropped (defense-in-depth against corrupted or hand-edited config).
 func normalizeRecentTags(in []string) []string {
 	out := make([]string, 0, minInt(len(in), MaxRecentTags))
 	seen := make(map[string]struct{}, len(in))
 	for _, tag := range in {
 		tag = strings.TrimSpace(tag)
-		if tag == "" {
+		if tag == "" || !IsValidTagPath(tag) {
 			continue
 		}
 		key := strings.ToLower(tag)

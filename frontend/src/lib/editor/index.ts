@@ -109,7 +109,6 @@ export {
   normalizePageLinkAlias,
   pageLinkPath,
   pageLinkSourceLabel,
-  rankPageLinks,
   resolvePageLinkTarget
 } from './pageLinkSuggest'
 export type {
