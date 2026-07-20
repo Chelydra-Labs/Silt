@@ -808,22 +808,26 @@ func TestGetBacklinks_HeadingAndAliasIgnored(t *testing.T) {
 	}
 }
 
-// TestGetBacklinks_LargeBatchBlockRefs verifies that block-ref/embed LIKE
-// queries batch correctly when the target page has many blocks (> batch size).
+// TestGetBacklinks_LargeBatchBlockRefs verifies that the indexed block-ref
+// lookup batches correctly when the target page has many blocks (> batch
+// size). Uses valid v4-shaped UUIDs so parser.BlockRefRegex extracts the
+// source-edge tokens at index time.
 func TestGetBacklinks_LargeBatchBlockRefs(t *testing.T) {
 	dm := newTestDB(t)
-	// Target page with enough blocks to force >1 batch.
-	targetBlocks := make([]parser.ParsedBlock, 500)
-	blockIDs := make([]string, 500)
+	// Target page with enough blocks to force >1 batch at batchSize=500.
+	const total = 600
+	targetBlocks := make([]parser.ParsedBlock, total)
+	blockIDs := make([]string, total)
 	for i := range targetBlocks {
-		id := fmt.Sprintf("aaaa%03d-aaaa-4aaa-8aaa-%028d", i%10, i)
+		// 8-4-4-4-12 hex — a valid UUID shape so BlockRefRegex matches.
+		id := fmt.Sprintf("aaaaaaaa-aaaa-4aaa-8aaa-%012d", i)
 		blockIDs[i] = id
 		targetBlocks[i] = noteBlock(id, fmt.Sprintf("block %d", i))
 	}
 	idx(t, dm, "vault", "NB", "Sec", "Target", targetBlocks)
 
-	// Source referencing the last block.
-	srcBlock := noteBlock(uuidE, "ref to last "+("(("+blockIDs[499]+"))"))
+	// Source referencing the last block (forces the second batch).
+	srcBlock := noteBlock(uuidE, "ref to last "+("(("+blockIDs[total-1]+"))"))
 	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{srcBlock})
 
 	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
@@ -2188,9 +2192,10 @@ func TestGetBacklinks_IndexScanResultsParity(t *testing.T) {
 	}
 }
 
-// BenchmarkGetBacklinks_LegBlockRefs measures the block-ref/embed LIKE scan
-// cost: a target with 50 blocks, each referenced by one source block.
-// This documents the O(total_blocks) LIKE constraint.
+// BenchmarkGetBacklinks_LegBlockRefs measures the block-ref/embed lookup
+// cost against the indexed block_references table: a target with 50 blocks,
+// each referenced by one source block. (Phase 5 will replace this with a
+// large-unrelated-block fixture that demonstrates the indexed gain.)
 func BenchmarkGetBacklinks_LegBlockRefs(b *testing.B) {
 	dm, err := NewDatabaseManager("")
 	if err != nil {
@@ -2198,10 +2203,10 @@ func BenchmarkGetBacklinks_LegBlockRefs(b *testing.B) {
 	}
 	defer dm.Close()
 
-	// Target with 50 blocks.
+	// Target with 50 blocks (valid UUIDs so BlockRefRegex matches at index).
 	targetBlocks := make([]parser.ParsedBlock, 50)
 	for i := range targetBlocks {
-		id := fmt.Sprintf("aaaa%03d-aaaa-4aaa-8aaa-%028d", i%10, i)
+		id := fmt.Sprintf("aaaaaaaa-aaaa-4aaa-8aaa-%012d", i)
 		targetBlocks[i] = noteBlock(id, fmt.Sprintf("block %d", i))
 	}
 	_ = dm.IndexFileBlocks("vault", "NB", "Sec", "Target", targetBlocks, nil)

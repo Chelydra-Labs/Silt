@@ -75,14 +75,10 @@ type backlinkKey struct {
 // Page-links use LinkTargetRawCandidates + ListPageLinksByTargetRaws +
 // ListDistinctPages + ResolvePageLinkAgainst for exact nonambiguous canonical
 // target resolution (matching the rename-rewrite path). Block-refs and embeds
-// use parameterized LIKE candidates safely (UUIDs contain no LIKE-special
-// chars). Results are deduped and stably sorted by (source, source_notebook,
+// use the derived block_references reverse index (#704): an indexed SEARCH
+// against idx_block_references_target, parameterized by the target page's
+// block IDs. Results are deduped and stably sorted by (source, source_notebook,
 // source_section, source_page, kind, source_block_id).
-//
-// Constraint: the block-ref and embed legs use raw LIKE %token% scans on the
-// blocks table (no FTS index). Cost scales linearly with total block count in
-// the vault/linked sources. A future FTS-backed index would eliminate this
-// full-table scan, but requires a new inverted index on raw_content tokens.
 func (dm *DatabaseManager) GetBacklinks(source, notebook, section, page string) ([]Backlink, error) {
 	if page == "" {
 		return nil, nil
@@ -113,12 +109,11 @@ func (dm *DatabaseManager) GetBacklinks(source, notebook, section, page string) 
 // The cursor is a keyset cursor over the deterministic sort order
 // (source, source_notebook, source_section, source_page, kind, source_block_id).
 // Collecting the full result set is required because the three query legs
-// (indexed page-links + LIKE block-refs + LIKE embeds) must merge and dedupe
-// in Go; the cursor slices into this sorted set rather than re-querying SQL.
-//
-// Remaining constraint: block-ref/embed legs still use parameterized LIKE scans
-// (full-table proportional to total block count). No new storage tier is added;
-// pagination is a post-collection slice.
+// (indexed page-links + indexed block-refs + indexed embeds) must merge and
+// dedupe in Go; the cursor slices into this sorted set rather than re-querying
+// SQL. Each leg is now an indexed lookup against its derived reverse table
+// (page_links / block_references), so collection cost is proportional to
+// inbound edge count rather than total block count (#704).
 func (dm *DatabaseManager) GetBacklinksPaged(source, notebook, section, page string, cursor string, limit int) (BacklinksResult, error) {
 	if page == "" {
 		return BacklinksResult{Results: []Backlink{}}, nil
@@ -340,24 +335,38 @@ func (dm *DatabaseManager) legPageLinks(db *sql.DB, source, notebook, section, p
 	return out, nil
 }
 
-// legBlockRefsAndEmbeds finds blocks whose raw_content contains ((targetID))
-// or {{embed:targetID}} for any of the target page's block IDs. Returns two
-// separate slices (block-refs vs embeds). Each UUID is 36 hex chars with no
-// LIKE-special characters, so the pattern construction is safe without escaping.
+// legBlockRefsAndEmbeds finds source blocks whose RawText references any of
+// the target page's block IDs via ((uuid)) or {{embed:uuid}}. Returns two
+// separate slices (block-refs vs embeds). The lookup goes through the
+// derived block_references reverse index (#704): an indexed SEARCH against
+// idx_block_references_target replaces the prior leading-wildcard
+// raw_content LIKE scan, so cost is proportional to inbound edges of the
+// target page's blocks, not total block count.
+//
+// Each edge row is created by an exact regex match in the indexer or
+// backfill, so substring false positives are structurally impossible — no
+// per-row token rescanning is needed (the prior LIKE path did, because one
+// OR-clause hit could return a row that incidentally contained unrelated
+// tokens). The snippet token is reconstructed from target_block_id + kind
+// so the existing snippet() helper keeps its current contextual behavior.
+//
+// Batched to stay well under SQLite's bind limit (each UUID is one bind
+// arg). The join against blocks is structural — FK ON for the source side
+// guarantees every edge resolves to a source row.
 func (dm *DatabaseManager) legBlockRefsAndEmbeds(db *sql.DB, targetBlockIDs []string) ([]Backlink, []Backlink, error) {
 	if len(targetBlockIDs) == 0 {
 		return nil, nil, nil
 	}
 
-	// Batch OR-clause LIKE conditions to stay under SQLite's 999 variable limit.
-	// Each UUID contributes 2 bind args (one per leg).
-	const batchSize = 400
+	// Batch the IN (?, ?, ...) clause to stay under SQLite's variable limit.
+	// Each UUID contributes 1 bind arg, so 500 is comfortably under any
+	// modernc.org/sqlite build (default 32766; legacy 999).
+	const batchSize = 500
 
-	type rawHit struct {
-		id, src, nb, sec, pg, cleanContent, rawContent string
+	type edgeRow struct {
+		sourceID, targetID, kind, src, nb, sec, pg, clean string
 	}
-
-	var hits []rawHit
+	var edges []edgeRow
 	for start := 0; start < len(targetBlockIDs); start += batchSize {
 		end := start + batchSize
 		if end > len(targetBlockIDs) {
@@ -365,29 +374,30 @@ func (dm *DatabaseManager) legBlockRefsAndEmbeds(db *sql.DB, targetBlockIDs []st
 		}
 		batch := targetBlockIDs[start:end]
 
-		orParts := make([]string, 0, len(batch)*2)
-		args := make([]any, 0, len(batch)*2)
-		for _, uuid := range batch {
-			orParts = append(orParts, "raw_content LIKE ?")
-			args = append(args, "%(("+uuid+"))%")
-			orParts = append(orParts, "raw_content LIKE ?")
-			args = append(args, "%{{embed:"+uuid+"}}%")
+		placeholders := make([]string, len(batch))
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			placeholders[i] = "?"
+			args[i] = id
 		}
-		q := "SELECT id, COALESCE(source,'vault'), notebook, section, page, " +
-			"COALESCE(clean_content,''), raw_content FROM blocks WHERE " +
-			strings.Join(orParts, " OR ")
+		q := "SELECT br.source_block_id, br.target_block_id, br.kind, " +
+			"COALESCE(b.source,'vault'), b.notebook, b.section, b.page, " +
+			"COALESCE(b.clean_content,'') " +
+			"FROM block_references br " +
+			"JOIN blocks b ON b.id = br.source_block_id " +
+			"WHERE br.target_block_id IN (" + strings.Join(placeholders, ",") + ")"
 
 		rows, err := db.Query(q, args...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("get backlinks: block refs/embeds: %w", err)
 		}
 		for rows.Next() {
-			var h rawHit
-			if err := rows.Scan(&h.id, &h.src, &h.nb, &h.sec, &h.pg, &h.cleanContent, &h.rawContent); err != nil {
+			var e edgeRow
+			if err := rows.Scan(&e.sourceID, &e.targetID, &e.kind, &e.src, &e.nb, &e.sec, &e.pg, &e.clean); err != nil {
 				rows.Close()
 				return nil, nil, fmt.Errorf("get backlinks: scan block ref: %w", err)
 			}
-			hits = append(hits, h)
+			edges = append(edges, e)
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -396,56 +406,28 @@ func (dm *DatabaseManager) legBlockRefsAndEmbeds(db *sql.DB, targetBlockIDs []st
 		rows.Close()
 	}
 
-	// Classify each hit against the exact target tokens. A block that
-	// matched LIKE for one target UUID must be checked against ALL target
-	// tokens to avoid false positives (e.g. a row matched for {{embed:uuidA}}
-	// may also contain ((uuidB)) for an unrelated block-ref).
-	targetRefTokens := make(map[string]bool, len(targetBlockIDs))
-	targetEmbedTokens := make(map[string]bool, len(targetBlockIDs))
-	for _, id := range targetBlockIDs {
-		targetRefTokens["(("+id+"))"] = true
-		targetEmbedTokens["{{embed:"+id+"}}"] = true
-	}
-
 	var blockRefs, embeds []Backlink
-	for _, h := range hits {
-		hasRef := false
-		hasEmbed := false
-		var refToken, embedToken string
-		for token := range targetRefTokens {
-			if strings.Contains(h.rawContent, token) {
-				hasRef = true
-				refToken = token
-				break
-			}
-		}
-		for token := range targetEmbedTokens {
-			if strings.Contains(h.rawContent, token) {
-				hasEmbed = true
-				embedToken = token
-				break
-			}
-		}
-		if hasRef {
+	for _, e := range edges {
+		switch BacklinkKind(e.kind) {
+		case BacklinkBlockRef:
 			blockRefs = append(blockRefs, Backlink{
 				Kind:           BacklinkBlockRef,
-				Source:         h.src,
-				SourceNotebook: h.nb,
-				SourceSection:  h.sec,
-				SourcePage:     h.pg,
-				SourceBlockID:  h.id,
-				Snippet:        snippet(h.cleanContent, refToken),
+				Source:         e.src,
+				SourceNotebook: e.nb,
+				SourceSection:  e.sec,
+				SourcePage:     e.pg,
+				SourceBlockID:  e.sourceID,
+				Snippet:        snippet(e.clean, "(("+e.targetID+"))"),
 			})
-		}
-		if hasEmbed {
+		case BacklinkEmbed:
 			embeds = append(embeds, Backlink{
 				Kind:           BacklinkEmbed,
-				Source:         h.src,
-				SourceNotebook: h.nb,
-				SourceSection:  h.sec,
-				SourcePage:     h.pg,
-				SourceBlockID:  h.id,
-				Snippet:        snippet(h.cleanContent, embedToken),
+				Source:         e.src,
+				SourceNotebook: e.nb,
+				SourceSection:  e.sec,
+				SourcePage:     e.pg,
+				SourceBlockID:  e.sourceID,
+				Snippet:        snippet(e.clean, "{{embed:"+e.targetID+"}}"),
 			})
 		}
 	}
