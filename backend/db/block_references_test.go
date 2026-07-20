@@ -443,3 +443,254 @@ func TestBlockReferences_KindValuesMatchBacklinkConstants(t *testing.T) {
 		}
 	}
 }
+
+// --- Phase 3 indexer wiring (#704) -----------------------------------------
+//
+// These tests assert block_references row state after IndexFileBlocks and
+// IndexScanResults run. They do NOT go through the backlinks query (still
+// LIKE-based until Phase 4) — they pin the storage contract directly so a
+// regression in the extraction helper or cascade surfaces even before the
+// lookup is rewired.
+
+// countEdgesFromSource returns the number of block_references rows for a
+// given source_block_id (across all kinds and targets).
+func countEdgesFromSource(t *testing.T, dm *DatabaseManager, sourceID string) int {
+	t.Helper()
+	var n int
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM block_references WHERE source_block_id = ?", sourceID).Scan(&n); err != nil {
+		t.Fatalf("count edges from %s: %v", sourceID, err)
+	}
+	return n
+}
+
+// TestBlockReferences_IndexerPopulatesBothKinds asserts IndexFileBlocks
+// emits one row per distinct (target, kind) edge extracted from RawText,
+// covering block-ref + embed coexistence.
+func TestBlockReferences_IndexerPopulatesBothKinds(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidA, "ref "+("(("+uuidB+"))")+" plus embed "+"{{embed:"+uuidC+"}}"),
+	})
+
+	assertEdgeExists(t, dm, uuidA, uuidB, "block-ref")
+	assertEdgeExists(t, dm, uuidA, uuidC, "embed")
+	if got := countEdgesFromSource(t, dm, uuidA); got != 2 {
+		t.Errorf("expected 2 edges from %s, got %d", uuidA, got)
+	}
+}
+
+// TestBlockReferences_IndexerCollapsesDuplicateSameKind asserts that two
+// tokens of the same kind to the SAME target in one block produce one edge
+// (PK dedupe via INSERT OR IGNORE).
+func TestBlockReferences_IndexerCollapsesDuplicateSameKind(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidA, "(("+uuidB+")) then (("+uuidB+")) again"),
+	})
+	if got := countEdgesFromSource(t, dm, uuidA); got != 1 {
+		t.Fatalf("expected 1 deduped block-ref edge, got %d", got)
+	}
+	assertEdgeExists(t, dm, uuidA, uuidB, "block-ref")
+}
+
+// TestBlockReferences_IndexerIncludesCodeBlocks asserts that CODE blocks
+// contribute edges — the extractor walks RawText of every block row,
+// diverging from page_links which skips CODE. Direct parity with the
+// existing LIKE scan that reads raw_content regardless of type.
+func TestBlockReferences_IndexerIncludesCodeBlocks(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		{ID: uuidA, Type: parser.BlockCode, RawText: "code ((" + uuidB + ")) {{embed:" + uuidC + "}} end", CleanText: "code", LineNumber: 1},
+	})
+	assertEdgeExists(t, dm, uuidA, uuidB, "block-ref")
+	assertEdgeExists(t, dm, uuidA, uuidC, "embed")
+}
+
+// TestBlockReferences_IndexerRetainsDanglingTarget asserts that indexing a
+// source block referencing a not-yet-indexed target still records the edge.
+// The backlink resolves when the target is later indexed (Phase 4 lookup).
+func TestBlockReferences_IndexerRetainsDanglingTarget(t *testing.T) {
+	dm := newTestDB(t)
+	// uuidB is NOT indexed as a block — pure dangling reference.
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidA, "dangling "+("(("+uuidB+"))")),
+	})
+	assertEdgeExists(t, dm, uuidA, uuidB, "block-ref")
+}
+
+// TestBlockReferences_IndexerSourceReindexClearsStaleEdges asserts that
+// re-indexing a source page after a block-ref was edited away drops the
+// prior edge. The cascade through DELETE FROM blocks by ID must remove the
+// stale rows before the new (smaller) edge set is inserted.
+func TestBlockReferences_IndexerSourceReindexClearsStaleEdges(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidA, "ref "+("(("+uuidB+"))")+" and embed "+"{{embed:"+uuidC+"}}"),
+	})
+	if got := countEdgesFromSource(t, dm, uuidA); got != 2 {
+		t.Fatalf("baseline: expected 2 edges, got %d", got)
+	}
+
+	// Re-index Source with the block-ref removed (same block ID, new raw).
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidA, "ref is gone, only embed "+"{{embed:"+uuidC+"}}"),
+	})
+	// Stale block-ref edge must be cleared by the cascade; embed survives.
+	if got := countEdgesFromSource(t, dm, uuidA); got != 1 {
+		t.Fatalf("expected 1 edge after re-index (embed only), got %d", got)
+	}
+	assertEdgeExists(t, dm, uuidA, uuidC, "embed")
+}
+
+// TestBlockReferences_IndexerClearFileBlocksCascades asserts that
+// ClearFileBlocks (the page-scoped clear path used by SaveFileBlocks and
+// the watcher) cascades through the source FK and removes all of the
+// page's source edges.
+func TestBlockReferences_IndexerClearFileBlocksCascades(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidA, "ref "+("(("+uuidB+"))")),
+		noteBlock(uuidC, "embed "+"{{embed:"+uuidB+"}}"),
+	})
+	if got := countBlockReferences(t, dm); got != 2 {
+		t.Fatalf("baseline: expected 2 edges, got %d", got)
+	}
+
+	if err := dm.ClearFileBlocks(nil, "vault", "NB", "Sec", "Source"); err != nil {
+		t.Fatalf("ClearFileBlocks: %v", err)
+	}
+	if got := countBlockReferences(t, dm); got != 0 {
+		t.Fatalf("ClearFileBlocks should have cascaded all source edges, got %d", got)
+	}
+}
+
+// TestBlockReferences_IndexerDeleteBlockFromPageCascades asserts the
+// single-block delete path also cascades through the source FK.
+func TestBlockReferences_IndexerDeleteBlockFromPageCascades(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidA, "ref "+("(("+uuidB+"))")),
+		noteBlock(uuidC, "embed "+"{{embed:"+uuidB+"}}"),
+	})
+	if err := dm.DeleteBlockFromPage(uuidA, "vault", "NB", "Sec", "Source"); err != nil {
+		t.Fatalf("DeleteBlockFromPage: %v", err)
+	}
+	// Only uuidA's edge should be cleared; uuidC's embed survives.
+	if got := countEdgesFromSource(t, dm, uuidA); got != 0 {
+		t.Errorf("uuidA edges should be cleared, got %d", got)
+	}
+	assertEdgeExists(t, dm, uuidC, uuidB, "embed")
+}
+
+// TestBlockReferences_IndexerClearSourceBlocksCascades asserts the
+// source-scoped clear path (UnlinkNotebook) cascades through the source FK.
+func TestBlockReferences_IndexerClearSourceBlocksCascades(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "linked:ext", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidA, "ref "+("(("+uuidB+"))")),
+	})
+	// A vault source block also referencing uuidB should survive.
+	idx(t, dm, "vault", "NB", "Sec", "VaultSrc", []parser.ParsedBlock{
+		noteBlock(uuidC, "vault ref "+("(("+uuidB+"))")),
+	})
+	if got := countBlockReferences(t, dm); got != 2 {
+		t.Fatalf("baseline: expected 2 edges across sources, got %d", got)
+	}
+
+	if err := dm.ClearSourceBlocks("linked:ext"); err != nil {
+		t.Fatalf("ClearSourceBlocks: %v", err)
+	}
+	// Only the linked:ext edge should be cleared; vault edge survives.
+	assertEdgeExists(t, dm, uuidC, uuidB, "block-ref")
+	if got := countEdgesFromSource(t, dm, uuidA); got != 0 {
+		t.Errorf("linked:ext source edge should be cleared, got %d", got)
+	}
+}
+
+// TestBlockReferences_IndexerTargetDeletionKeepsEdge asserts the
+// source-only-FK asymmetry from the indexer side: deleting the target
+// block from `blocks` does NOT cascade through block_references. The edge
+// survives and re-resolves if the target is re-indexed later.
+func TestBlockReferences_IndexerTargetDeletionKeepsEdge(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidA, "ref "+("(("+uuidB+"))")),
+	})
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidB, "target"),
+	})
+
+	if _, err := dm.SQLDB().Exec("DELETE FROM blocks WHERE id = ?", uuidB); err != nil {
+		t.Fatalf("delete target block: %v", err)
+	}
+	// Edge must survive — target FK is intentionally absent.
+	assertEdgeExists(t, dm, uuidA, uuidB, "block-ref")
+}
+
+// TestBlockReferences_IndexerScanResultsParityDirect asserts that
+// IndexScanResults (the batched cold-start path) populates block_references
+// identically to IndexFileBlocks for the same fixture. Direct table
+// assertion — the backlinks-output parity test in Phase 1 covers the
+// end-to-end contract.
+func TestBlockReferences_IndexerScanResultsParityDirect(t *testing.T) {
+	target := noteBlock(uuidA, "target")
+	srcBlockRef := noteBlock(uuidB, "ref "+("(("+uuidA+"))"))
+	srcEmbed := noteBlock(uuidC, "embed "+"{{embed:"+uuidA+"}}")
+
+	dmFile := newTestDB(t)
+	idx(t, dmFile, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{target})
+	idx(t, dmFile, "vault", "NB", "Sec", "BR", []parser.ParsedBlock{srcBlockRef})
+	idx(t, dmFile, "vault", "NB", "Sec", "EM", []parser.ParsedBlock{srcEmbed})
+
+	dmScan := newTestDB(t)
+	results := []parser.ScanResult{
+		{Path: "/v/NB/Sec/Target.md", Notebook: "NB", Section: "Sec", Page: "Target", Blocks: []parser.ParsedBlock{target}},
+		{Path: "/v/NB/Sec/BR.md", Notebook: "NB", Section: "Sec", Page: "BR", Blocks: []parser.ParsedBlock{srcBlockRef}},
+		{Path: "/v/NB/Sec/EM.md", Notebook: "NB", Section: "Sec", Page: "EM", Blocks: []parser.ParsedBlock{srcEmbed}},
+	}
+	if _, _, err := dmScan.IndexScanResults(results); err != nil {
+		t.Fatalf("IndexScanResults: %v", err)
+	}
+
+	if fileCount, scanCount := countBlockReferences(t, dmFile), countBlockReferences(t, dmScan); fileCount != scanCount {
+		t.Fatalf("edge count mismatch: file=%d scan=%d", fileCount, scanCount)
+	}
+	// Both must have produced exactly the two expected edges (block-ref + embed).
+	assertEdgeExists(t, dmScan, uuidB, uuidA, "block-ref")
+	assertEdgeExists(t, dmScan, uuidC, uuidA, "embed")
+}
+
+// TestBlockReferences_IndexerChangedSourceContentReplacesEdges asserts the
+// full delete-then-insert replacement flow: a block whose raw_content
+// changes from {A,B} edges to {C,D} ends up with exactly {C,D} — no stale
+// leftovers and no missing new edges.
+func TestBlockReferences_IndexerChangedSourceContentReplacesEdges(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidA, "(("+uuidB+")) and (("+uuidC+"))"),
+	})
+	if got := countEdgesFromSource(t, dm, uuidA); got != 2 {
+		t.Fatalf("baseline: expected 2 edges, got %d", got)
+	}
+
+	// Re-index with a completely different edge set.
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidA, "(("+uuidD+")) and {{embed:"+uuidE+"}}"),
+	})
+	if got := countEdgesFromSource(t, dm, uuidA); got != 2 {
+		t.Fatalf("after re-index: expected 2 edges, got %d", got)
+	}
+	assertEdgeExists(t, dm, uuidA, uuidD, "block-ref")
+	assertEdgeExists(t, dm, uuidA, uuidE, "embed")
+	// Stale edges to uuidB and uuidC must be gone.
+	if got := countEdgesFromSource(t, dm, uuidA); got != 2 {
+		t.Errorf("stale edges leaked: %d", got)
+	}
+	var staleCount int
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM block_references WHERE target_block_id IN (?, ?)", uuidB, uuidC).Scan(&staleCount); err != nil {
+		t.Fatalf("count stale: %v", err)
+	}
+	if staleCount != 0 {
+		t.Errorf("stale edges to uuidB/uuidC must be cleared, got %d", staleCount)
+	}
+}
