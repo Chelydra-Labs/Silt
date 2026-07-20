@@ -1712,3 +1712,279 @@ func TestSaveConfigTracked_FailedSaveClearsSuppression(t *testing.T) {
 		t.Fatalf("external edit was suppressed — failed save left the self-write window armed (#487)")
 	}
 }
+
+// --- RecordTagUsage ---
+
+func TestRecordTagUsage_PromotesToFrontAndDedupes(t *testing.T) {
+	app := newTestApp(t)
+
+	// Seed three tags.
+	for _, tag := range []string{"work/project", "personal/journal", "ideas"} {
+		if err := app.RecordTagUsage(tag); err != nil {
+			t.Fatalf("RecordTagUsage(%q): %v", tag, err)
+		}
+	}
+	prefs, err := app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences: %v", err)
+	}
+	if !reflect.DeepEqual(prefs.RecentPages, []config.RecentPage(nil)) {
+		t.Fatalf("recent_pages should be empty (no page mutations), got %+v", prefs.RecentPages)
+	}
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	want := []string{"ideas", "personal/journal", "work/project"}
+	if !reflect.DeepEqual(loaded.UI.RecentTags, want) {
+		t.Fatalf("recent_tags after 3 inserts:\n got  %v\n want %v", loaded.UI.RecentTags, want)
+	}
+
+	// Re-record an existing tag (case-insensitive) → moves to front.
+	if err := app.RecordTagUsage("Work/Project"); err != nil {
+		t.Fatalf("RecordTagUsage(Work/Project): %v", err)
+	}
+	loaded, err = config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	want = []string{"Work/Project", "ideas", "personal/journal"}
+	if !reflect.DeepEqual(loaded.UI.RecentTags, want) {
+		t.Fatalf("recent_tags after re-record:\n got  %v\n want %v", loaded.UI.RecentTags, want)
+	}
+}
+
+func TestRecordTagUsage_CapsAtMaxRecentTags(t *testing.T) {
+	app := newTestApp(t)
+
+	for i := 0; i < config.MaxRecentTags+5; i++ {
+		tag := fmt.Sprintf("tag-%02d", i)
+		if err := app.RecordTagUsage(tag); err != nil {
+			t.Fatalf("RecordTagUsage(%q): %v", tag, err)
+		}
+	}
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(loaded.UI.RecentTags) != config.MaxRecentTags {
+		t.Fatalf("recent_tags length: got %d, want %d", len(loaded.UI.RecentTags), config.MaxRecentTags)
+	}
+	// Most recently inserted should be first (highest tag number).
+	if loaded.UI.RecentTags[0] != fmt.Sprintf("tag-%02d", config.MaxRecentTags+4) {
+		t.Errorf("most recent tag should be first, got %q", loaded.UI.RecentTags[0])
+	}
+}
+
+func TestRecordTagUsage_IgnoresEmptyAndWhitespace(t *testing.T) {
+	app := newTestApp(t)
+
+	if err := app.RecordTagUsage(""); err != nil {
+		t.Fatalf("empty tag should be no-op: %v", err)
+	}
+	if err := app.RecordTagUsage("   "); err != nil {
+		t.Fatalf("whitespace tag should be no-op: %v", err)
+	}
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if !reflect.DeepEqual(loaded.UI.RecentTags, []string{}) {
+		t.Fatalf("recent_tags should stay empty after empty/whitespace inserts, got %v", loaded.UI.RecentTags)
+	}
+}
+
+func TestRecordTagUsage_IdempotentWhenNoChange(t *testing.T) {
+	app := newTestApp(t)
+
+	// Insert the same tag twice without any change to other tags.
+	if err := app.RecordTagUsage("alpha"); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if err := app.RecordTagUsage("alpha"); err != nil {
+		t.Fatalf("second (same): %v", err)
+	}
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	// Re-inserting the same tag at the front produces an identical slice, so
+	// mutateConfig's DeepEqual check skips the save.
+	if !reflect.DeepEqual(loaded.UI.RecentTags, []string{"alpha"}) {
+		t.Fatalf("recent_tags after idempotent insert:\n got  %v\n want [alpha]", loaded.UI.RecentTags)
+	}
+}
+
+func TestRecordTagUsage_EmitsConfigChangedOnlyForPersistedChange(t *testing.T) {
+	app := newTestApp(t)
+	type tagEvent struct {
+		name string
+		tags []string
+	}
+	events := make(chan tagEvent, 4)
+	app.eventEmit = func(name string, data ...any) {
+		if len(data) != 1 {
+			return
+		}
+		cfg, ok := data[0].(config.SystemConfig)
+		if !ok {
+			return
+		}
+		events <- tagEvent{name: name, tags: append([]string(nil), cfg.UI.RecentTags...)}
+	}
+
+	if err := app.RecordTagUsage("alpha"); err != nil {
+		t.Fatalf("RecordTagUsage(alpha): %v", err)
+	}
+	select {
+	case event := <-events:
+		if event.name != "config:changed" {
+			t.Fatalf("event name = %q, want config:changed", event.name)
+		}
+		if !reflect.DeepEqual(event.tags, []string{"alpha"}) {
+			t.Fatalf("event recent_tags = %v, want [alpha]", event.tags)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("successful tag usage did not emit config:changed")
+	}
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load after event: %v", err)
+	}
+	if !reflect.DeepEqual(loaded.UI.RecentTags, []string{"alpha"}) {
+		t.Fatalf("persisted recent_tags = %v, want [alpha]", loaded.UI.RecentTags)
+	}
+
+	if err := app.RecordTagUsage("alpha"); err != nil {
+		t.Fatalf("RecordTagUsage(alpha) no-op: %v", err)
+	}
+	if err := app.RecordTagUsage("   "); err != nil {
+		t.Fatalf("RecordTagUsage(whitespace) no-op: %v", err)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("no-op tag usage emitted %q", event.name)
+	default:
+	}
+
+	// A case-change re-record produces an actual persisted change and must emit.
+	if err := app.RecordTagUsage("ALPHA"); err != nil {
+		t.Fatalf("RecordTagUsage(ALPHA): %v", err)
+	}
+	select {
+	case event := <-events:
+		if event.name != "config:changed" {
+			t.Fatalf("event name = %q, want config:changed", event.name)
+		}
+		if !reflect.DeepEqual(event.tags, []string{"ALPHA"}) {
+			t.Fatalf("event recent_tags = %v, want [ALPHA]", event.tags)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("case-change re-record should emit config:changed")
+	}
+
+	// A second distinct tag should also emit.
+	if err := app.RecordTagUsage("beta"); err != nil {
+		t.Fatalf("RecordTagUsage(beta): %v", err)
+	}
+	select {
+	case event := <-events:
+		if event.name != "config:changed" {
+			t.Fatalf("event name = %q, want config:changed", event.name)
+		}
+		if !reflect.DeepEqual(event.tags, []string{"beta", "ALPHA"}) {
+			t.Fatalf("event recent_tags = %v, want [beta, ALPHA]", event.tags)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second distinct tag should emit config:changed")
+	}
+}
+
+func TestRecordTagUsage_RejectsInvalidCharacters(t *testing.T) {
+	app := newTestApp(t)
+
+	invalid := []string{
+		"has space",
+		"has\ttab",
+		"has\nnewline",
+		"has\rnewline",
+		"123startdigit",
+		"/starts-slash",
+		"-starts-hyphen",
+		"_starts-underscore",
+		"has!bang",
+		"has@at",
+		"has(paren",
+		"has.dot",
+		"has:colon",
+		"a\x00null",
+		"tag\x1Besc",
+	}
+	for _, tag := range invalid {
+		err := app.RecordTagUsage(tag)
+		if err == nil {
+			t.Errorf("RecordTagUsage(%q): expected error, got nil", tag)
+		}
+	}
+	// Config should be untouched — load and verify empty.
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(loaded.UI.RecentTags) != 0 {
+		t.Errorf("recent_tags should be empty after all invalid inputs, got %v", loaded.UI.RecentTags)
+	}
+}
+
+func TestRecordTagUsage_RejectsOversizedTag(t *testing.T) {
+	app := newTestApp(t)
+
+	oversized := strings.Repeat("a", config.MaxTagPathBytes+1)
+	err := app.RecordTagUsage(oversized)
+	if err == nil {
+		t.Errorf("RecordTagUsage(%d-byte tag): expected error, got nil", len(oversized))
+	}
+
+	// Exactly at the limit should succeed.
+	exact := strings.Repeat("a", config.MaxTagPathBytes)
+	if err := app.RecordTagUsage(exact); err != nil {
+		t.Fatalf("RecordTagUsage(%d-byte tag): unexpected error: %v", config.MaxTagPathBytes, err)
+	}
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(loaded.UI.RecentTags) != 1 || loaded.UI.RecentTags[0] != exact {
+		t.Errorf("recent_tags after valid max-length tag: got %v", loaded.UI.RecentTags)
+	}
+}
+
+func TestRecordTagUsage_AcceptsValidBoundaryInputs(t *testing.T) {
+	app := newTestApp(t)
+
+	valid := []string{
+		"a",                               // single letter
+		"Z",                               // single uppercase
+		"work/project",                    // multi-segment with slash
+		"work/project/milestone-one",      // multi-segment with hyphen
+		"a_b_c",                           // underscores
+		"X1",                              // letter then digit
+		"work/project/milestone_one/v2-0", // complex path
+	}
+	for _, tag := range valid {
+		if err := app.RecordTagUsage(tag); err != nil {
+			t.Errorf("RecordTagUsage(%q): unexpected error: %v", tag, err)
+		}
+	}
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(loaded.UI.RecentTags) != len(valid) {
+		t.Errorf("recent_tags length: got %d, want %d", len(loaded.UI.RecentTags), len(valid))
+	}
+	// Most recently inserted should be first.
+	if loaded.UI.RecentTags[0] != valid[len(valid)-1] {
+		t.Errorf("most recent tag = %q, want %q", loaded.UI.RecentTags[0], valid[len(valid)-1])
+	}
+}

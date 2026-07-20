@@ -311,4 +311,20 @@ describe('native menu Save (#503)', () => {
       screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })
     ).toBeNull()
   })
+
+  it('opens and closes the page switcher from its live default hotkey', async () => {
+    await mountApp()
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'p',
+        ctrlKey: true,
+        bubbles: true
+      })
+    )
+    const dialog = await screen.findByRole('dialog', { name: 'Switch page' })
+    expect(dialog).toBeInTheDocument()
+    await fireEvent.keyDown(dialog, { key: 'Escape' })
+    await tick()
+    expect(screen.queryByRole('dialog', { name: 'Switch page' })).toBeNull()
+  })
 })

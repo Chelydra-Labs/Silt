@@ -31,6 +31,12 @@
   const PRIMARY: PrimaryBtn[] = [
     { id: 'bold', icon: 'format_bold', label: 'Bold', mark: 'bold' },
     { id: 'italic', icon: 'format_italic', label: 'Italic', mark: 'italic' },
+    {
+      id: 'underline',
+      icon: 'format_underlined',
+      label: 'Underline',
+      mark: 'underline'
+    },
     { id: 'link', icon: 'link', label: 'Link', mark: 'link' },
     { id: 'code', icon: 'code', label: 'Inline code', mark: 'code' }
   ]
@@ -41,12 +47,6 @@
       icon: 'format_strikethrough',
       label: 'Strikethrough',
       mark: 'strike'
-    },
-    {
-      id: 'underline',
-      icon: 'format_underlined',
-      label: 'Underline',
-      mark: 'underline'
     },
     {
       id: 'highlight',

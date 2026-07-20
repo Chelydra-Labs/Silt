@@ -54,7 +54,7 @@ describe('FormatToolbar', () => {
     vi.restoreAllMocks()
   })
 
-  it('keeps block style, Bold, Italic, Link, and Inline code directly available', () => {
+  it('keeps block style, Bold, Italic, Underline, Link, and Inline code directly available', () => {
     const editor = makeMockEditor() as any
     const { getByLabelText } = render(FormatToolbar, {
       props: { editor, ...baseProps }
@@ -62,6 +62,7 @@ describe('FormatToolbar', () => {
     expect(getByLabelText('Block type')).toBeTruthy()
     expect(getByLabelText('Bold')).toBeTruthy()
     expect(getByLabelText('Italic')).toBeTruthy()
+    expect(getByLabelText('Underline')).toBeTruthy()
     expect(getByLabelText('Insert link')).toBeTruthy()
     expect(getByLabelText('Inline code')).toBeTruthy()
     // Direct primary buttons carry data-primary.
@@ -77,14 +78,12 @@ describe('FormatToolbar', () => {
       props: { editor, ...baseProps }
     })
     // Not top-level.
-    expect(queryByLabelText('Underline')).toBeNull()
     expect(queryByLabelText('Strikethrough')).toBeNull()
     expect(queryByLabelText('Highlight')).toBeNull()
     expect(queryByLabelText('Subscript')).toBeNull()
     expect(queryByLabelText('Superscript')).toBeNull()
 
     await fireEvent.click(getByLabelText('More formatting'))
-    expect(getByLabelText('Underline')).toBeTruthy()
     expect(getByLabelText('Strikethrough')).toBeTruthy()
     expect(getByLabelText('Highlight')).toBeTruthy()
     expect(getByLabelText('Subscript')).toBeTruthy()

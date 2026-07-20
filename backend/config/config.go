@@ -178,6 +178,10 @@ type UIConfig struct {
 	OpenDevtoolsOnStartup *bool `yaml:"open_devtools_on_startup,omitempty" json:"open_devtools_on_startup,omitempty"`
 	// Formatting holds inline-formatting-related UI toggles (#168 Phase 3, #170).
 	Formatting FormattingConfig `yaml:"formatting,omitempty" json:"formatting,omitempty"`
+	// RecentTags is a bounded MRU list of recently-used tag paths for the tag
+	// autocomplete picker. Order-preserving (most-recent-first); nil is
+	// normalized to an empty slice. Cap is MaxRecentTags.
+	RecentTags []string `yaml:"recent_tags,omitempty" json:"recent_tags,omitempty"`
 }
 
 // NavigationSectionRef is the canonical identity of a section in a vault.

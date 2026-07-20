@@ -221,6 +221,14 @@
         "signature": "GetAuditLog() ([]AuditEntry, error)"
       },
       {
+        "name": "GetBacklinks",
+        "signature": "GetBacklinks(notebook, section, page string) ([]db.Backlink, error)"
+      },
+      {
+        "name": "GetBacklinksPaged",
+        "signature": "GetBacklinksPaged(notebook, section, page, cursor string, limit int) (db.BacklinksResult, error)"
+      },
+      {
         "name": "GetCloseToTray",
         "signature": "GetCloseToTray() bool"
       },
@@ -701,6 +709,10 @@
         "signature": "RecordRecentPage(notebook, section, page string) error"
       },
       {
+        "name": "RecordTagUsage",
+        "signature": "RecordTagUsage(tag string) error"
+      },
+      {
         "name": "RefreshFocusLock",
         "signature": "RefreshFocusLock(notebook, section, page string) error"
       },
@@ -815,6 +827,10 @@
       {
         "name": "SearchBlocksPaged",
         "signature": "SearchBlocksPaged(query string, offset, limit int, filters db.SearchFilters) (parser.SearchResult, error)"
+      },
+      {
+        "name": "SearchPages",
+        "signature": "SearchPages(query string, limit int) ([]parser.PageSummary, error)"
       },
       {
         "name": "ServiceShutdown",
@@ -998,6 +1014,8 @@
     "frontend_binding_imports": [
       "frontend/src/App.menu-save.test.ts",
       "frontend/src/App.svelte",
+      "frontend/src/components/BacklinksSidebarPanel.svelte",
+      "frontend/src/components/BacklinksSidebarPanel.test.ts",
       "frontend/src/components/BlockPickerModal.svelte",
       "frontend/src/components/BlockPickerModal.test.ts",
       "frontend/src/components/BlockReferenceChip.svelte",
@@ -1015,8 +1033,11 @@
       "frontend/src/components/TabStrip.test.ts",
       "frontend/src/components/TagSidebarPanel.svelte",
       "frontend/src/components/TagsExplorer.svelte",
+      "frontend/src/components/TipTapEditor.block-ref-suggest.test.ts",
       "frontend/src/components/TipTapEditor.context-menu.test.ts",
+      "frontend/src/components/TipTapEditor.page-link-suggest.test.ts",
       "frontend/src/components/TipTapEditor.svelte",
+      "frontend/src/components/TipTapEditor.tag-suggest.test.ts",
       "frontend/src/components/TipTapEditor.test.ts",
       "frontend/src/components/TitleBar.svelte",
       "frontend/src/components/VirtualScrollContainer.svelte",
@@ -1027,7 +1048,6 @@
       "frontend/src/components/editor/MarkdownSourceViewer.svelte",
       "frontend/src/components/editor/MarkdownSourceViewer.svelte.test.ts",
       "frontend/src/components/editor/PluginNoteBanners.test.ts",
-      "frontend/src/components/settings/AIProviderTab.svelte",
       "frontend/src/components/settings/AIProviderTab.test.ts",
       "frontend/src/components/settings/AboutTab.svelte",
       "frontend/src/components/settings/AboutTab.test.ts",
@@ -1049,6 +1069,8 @@
       "frontend/src/components/settings/VaultArchiveModal.svelte",
       "frontend/src/components/settings/VaultArchiveModal.test.ts",
       "frontend/src/components/settings/ai/aiProviderController.svelte.ts",
+      "frontend/src/components/settings/ai/localMcpController.svelte.ts",
+      "frontend/src/lib/devModeInspect.test.ts",
       "frontend/src/lib/devModeInspect.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
       "frontend/src/lib/editor/nodeview-test-harness.ts",
@@ -1092,10 +1114,15 @@
     "frontend_runtime_imports": [
       "frontend/src/App.menu-save.test.ts",
       "frontend/src/App.svelte",
+      "frontend/src/components/BacklinksSidebarPanel.svelte",
+      "frontend/src/components/BacklinksSidebarPanel.test.ts",
       "frontend/src/components/EmbedPortal.svelte",
       "frontend/src/components/EmbedPortal.test.ts",
       "frontend/src/components/Sidebar.svelte",
+      "frontend/src/components/TipTapEditor.block-ref-suggest.test.ts",
       "frontend/src/components/TipTapEditor.context-menu.test.ts",
+      "frontend/src/components/TipTapEditor.page-link-suggest.test.ts",
+      "frontend/src/components/TipTapEditor.tag-suggest.test.ts",
       "frontend/src/components/TipTapEditor.test.ts",
       "frontend/src/components/TitleBar.svelte",
       "frontend/src/components/TitleBar.test.ts",

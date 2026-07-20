@@ -499,9 +499,29 @@ Obsidian-compatible page links use double brackets:
 
 `target` is a vault-relative path or basename (backslashes normalized to `/`; empty section is `Notebook/Page`, never `//`). Resolution uses **shortest unique path**: exact path → unique basename → unique path-suffix. Ambiguous basenames (same page name in two places) do not auto-resolve; the chip shows an ambiguous state. Linked notebooks are disambiguated by `blocks.source`.
 
-In the editor, `[[…]]` is an inline atomic `pageLinkNode` (`PageLinkChip`). On save the exact syntax is reconstructed in `clean_text` (byte-for-byte round-trip). Click navigates via `ResolvePageLink` + `navigate-to-page`. Tab context menu **Copy Page Reference** emits `[[shortest-unique-path]]`; **Copy Page Path** remains the plain path string.
+In the editor, `[[…]]` is an inline atomic `pageLinkNode` (`PageLinkChip`). After two non-space query characters, the typeahead calls `SearchPages` for a server-ranked, case-insensitive top 50 (exact page name, page-prefix, path-prefix, then substring; deterministic ties). On save the exact syntax is reconstructed in `clean_text` (byte-for-byte round-trip). Click navigates via `ResolvePageLink` + `navigate-to-page`. Tab context menu **Copy Page Reference** emits `[[shortest-unique-path]]`; **Copy Page Path** remains the plain path string.
 
 A derived `page_links` reverse index (rebuilt on re-index; FK cascade from `blocks`) powers rename/move rewrite: `RenamePage` / `MovePage` / `RenameSection` rewrite inbound `[[old…]]` → `[[new…]]` while preserving `|alias` and `#heading`. Block UUIDs are never rewritten. `![[embed-page]]` and `#^block` are out of scope for v1 (block identity stays `((uuid))`).
+
+5.4 Tag Typeahead
+
+Typing `#` at block start opens a typeahead listing tags from the index. The list is seeded with `recent_tags` (an MRU list maintained by `RecordTagUsage`, capped at 12) above the full tag set, so frequently-used tags are always one keystroke away. Selecting a tag inserts it as `#ns/sub/leaf` markdown syntax and records its usage. The typeahead filters case-insensitively by prefix as the user types after `#`.
+
+5.5 Block Reference & Embed Typeahead
+
+Typing `((` opens a block-reference picker listing indexed blocks (filterable by content). Selecting inserts `((uuid))` as an inline atomic `blockReferenceNode`. An embed picker for `{{embed:uuid}}` is not currently implemented; existing embed tokens are still parsed and rendered as block-level atomic `embedNode` values and resolve via `ResolveBlockReference`.
+
+5.6 Backlinks Panel
+
+Every page has a paged backlinks surface showing inbound references — `[[…]]`
+page-links, `((uuid))` block references, and `{{embed:uuid}}` embeds — grouped
+by source page with kind badges and clean-content snippets. The panel refreshes
+automatically on content changes (debounced) and supports click-to-navigate
+to the linking page or the specific block. Resolution is lazy (computed on
+panel open, not pre-indexed) and source-aware so linked notebooks contribute
+backlinks correctly. The panel loads additional result pages explicitly, which
+bounds its initial payload and rendered projection. See ADR
+`docs/decisions/0006-backlinks-query-strategy.md`.
 
 6. User Interface Specification
 

@@ -1,12 +1,14 @@
 // Color palette for text/background color pickers (#170, #408).
 //
-// The default palette is derived from the ACTIVE THEME's color anchors
-// (accents, status, error) rather than a fixed Tailwind table, so a colored
-// highlight reads cohesively against the theme's surface temperature. Each
-// seed produces a dark variant (raised OKLCH lightness, legible on dark
-// surfaces) and a light variant (lowered lightness, legible on light
-// surfaces). The user's stored mark color is always authoritative — only the
-// initial default swatch row is theme-derived.
+// The palette has two sections: a theme row derived from the active theme's
+// color anchors (accents, status, neutral), and a fixed standard row of
+// stable pigments that don't change with theme. Splitting them gives users
+// both theme-tinted accents and reliably-named pigments. Theme-derived
+// entries each produce a dark variant (raised OKLCH lightness, legible on
+// dark surfaces) and a light variant (lowered lightness, legible on light
+// surfaces); standard entries use fixed Tailwind-600/400-tier hex values
+// directly. The user's stored mark color is always authoritative — only
+// the initial default swatch row is theme-derived.
 
 import { toOklch, toHex } from '../../theme/color'
 
@@ -17,12 +19,20 @@ export interface ColorEntry {
   light: string
 }
 
-// Target OKLCH lightness for the derived variants. The dark variant sits
-// bright enough to read against a dark surface (~0.72, matching the prior
-// Tailwind-400 tier); the light variant sits deep enough to read against a
-// light surface (~0.45, matching Tailwind-600). These are per-seed targets —
-// the exact value is clamped to [0,1] and the seed's chroma/hue are preserved
-// so the swatch stays in the theme's color family.
+export interface ResolvedPalette {
+  // Up to 6 entries derived from the active theme's anchor tokens.
+  theme: ColorEntry[]
+  // Always equals FIXED_COLOR_PALETTE.
+  standard: ColorEntry[]
+}
+
+// Target OKLCH lightness for the derived theme-row variants. The dark
+// variant sits bright enough to read against a dark surface (~0.72,
+// matching the prior Tailwind-400 tier); the light variant sits deep
+// enough to read against a light surface (~0.45, matching Tailwind-600).
+// These are per-seed targets — the exact value is clamped to [0,1] and
+// the seed's chroma/hue are preserved so the swatch stays in the theme's
+// color family.
 const DARK_TARGET_L = 0.72
 const LIGHT_TARGET_L = 0.45
 
@@ -34,29 +44,28 @@ interface PaletteSeed {
   token: string // CSS custom property name on :root
 }
 
-// The canonical seed set, ordered warm → cool so the swatch row reads
-// naturally. Every first-class theme defines these anchors (they are required
-// by the v2 schema's status/error blocks + the accent block). Labels are
-// SEMANTIC ROLES, not pigments — the actual hue is theme-derived, so calling
-// a swatch "Blue" when Terra Noir's primary accent is orange (#c2410c) would
-// feed a screen-reader user the wrong name. The role stays accurate
-// regardless of the theme's hue choice.
+// The canonical theme-row seeds, ordered by role prominence so the row
+// reads primary-first. Every first-class theme defines these anchors (they
+// are required by the v2 schema's status blocks + the accent block). Labels
+// are SEMANTIC ROLES, not pigments — the actual hue is theme-derived, so
+// calling a swatch "Blue" when Terra Noir's primary accent is orange
+// (#c2410c) would feed a screen-reader user the wrong name. The role stays
+// accurate regardless of the theme's hue choice.
 const SEEDS: PaletteSeed[] = [
-  { id: 'danger', label: 'Danger', token: '--color-status-danger' },
-  { id: 'error', label: 'Error', token: '--color-error' },
-  { id: 'warn', label: 'Warning', token: '--color-status-warn' },
-  { id: 'success', label: 'Success', token: '--color-status-success' },
+  { id: 'primary', label: 'Primary', token: '--color-accent-primary-start' },
   {
     id: 'secondary',
     label: 'Secondary',
     token: '--color-accent-secondary-start'
   },
-  { id: 'primary', label: 'Primary', token: '--color-accent-primary-start' }
+  { id: 'success', label: 'Success', token: '--color-status-success' },
+  { id: 'warn', label: 'Warning', token: '--color-status-warn' },
+  { id: 'danger', label: 'Danger', token: '--color-status-danger' }
 ]
 
-// The neutral swatches (gray, black/white) are not hue-anchored; they are
-// derived from the theme's text-muted token so a "gray" highlight matches the
-// theme's neutrality (warm gray on Linen, cool gray on Frost).
+// The neutral swatch (gray) is not hue-anchored; it is derived from the
+// theme's text-muted token so a "gray" highlight matches the theme's
+// neutrality (warm gray on Linen, cool gray on Frost).
 const NEUTRAL_SEEDS: PaletteSeed[] = [
   { id: 'gray', label: 'Gray', token: '--color-text-muted' }
 ]
@@ -88,19 +97,52 @@ function deriveEntry(
   return { id, label, dark, light }
 }
 
+// Fixed standard pigment row: stable across themes so users have reliable
+// color names available regardless of theme hue. Values use Tailwind's
+// *-600 tier for light mode and *-400 tier for dark mode.
+export const FIXED_COLOR_PALETTE: ColorEntry[] = [
+  { id: 'red', label: 'Red', light: '#dc2626', dark: '#f87171' },
+  { id: 'orange', label: 'Orange', light: '#ea580c', dark: '#fb923c' },
+  { id: 'amber', label: 'Amber', light: '#d97706', dark: '#fbbf24' },
+  { id: 'yellow', label: 'Yellow', light: '#ca8a04', dark: '#facc15' },
+  { id: 'lime', label: 'Lime', light: '#65a30d', dark: '#a3e635' },
+  { id: 'green', label: 'Green', light: '#16a34a', dark: '#4ade80' },
+  { id: 'teal', label: 'Teal', light: '#0d9488', dark: '#2dd4bf' },
+  { id: 'cyan', label: 'Cyan', light: '#0891b2', dark: '#22d3ee' },
+  { id: 'blue', label: 'Blue', light: '#2563eb', dark: '#60a5fa' },
+  { id: 'indigo', label: 'Indigo', light: '#4f46e5', dark: '#818cf8' },
+  { id: 'violet', label: 'Violet', light: '#7c3aed', dark: '#a78bfa' },
+  { id: 'pink', label: 'Pink', light: '#db2777', dark: '#f472b6' }
+]
+
+// FALLBACK_THEME_PALETTE backs the theme row only — before the theme has
+// injected its tokens (first paint on a cold start) or if every hue seed
+// fails to parse. It is a 6-entry row with reasonable role defaults
+// adapted from the standard palette so the cold-start→theme-load transition
+// doesn't jolt. The standard row never falls back — it is always
+// FIXED_COLOR_PALETTE.
+export const FALLBACK_THEME_PALETTE: ColorEntry[] = [
+  { id: 'primary', label: 'Primary', dark: '#60a5fa', light: '#2563eb' },
+  { id: 'secondary', label: 'Secondary', dark: '#818cf8', light: '#4f46e5' },
+  { id: 'success', label: 'Success', dark: '#4ade80', light: '#16a34a' },
+  { id: 'warn', label: 'Warning', dark: '#facc15', light: '#ca8a04' },
+  { id: 'danger', label: 'Danger', dark: '#f87171', light: '#dc2626' },
+  { id: 'gray', label: 'Gray', dark: '#a1a1aa', light: '#52525b' }
+]
+
 /**
- * Build a theme-derived default palette from a map of CSS custom properties
- * (token → value). Seeds whose token is missing are skipped, so a theme that
- * omits an anchor simply produces a shorter palette rather than a gap. A
- * neutral gray (from text-muted) and a contrast black/white pair round out
- * the row. Returns at least the neutral + B/W entries even if all hue seeds
- * are absent (defensive — the editor always has a usable swatch row).
+ * Build the resolved palette from a map of CSS custom properties
+ * (token → value). Theme-row seeds whose token is missing are skipped, so
+ * a theme that omits an anchor simply produces a shorter row rather than a
+ * gap. Falls back to FALLBACK_THEME_PALETTE if too few theme seeds resolve
+ * (defensive — the editor always has a usable theme row). The standard
+ * row is always FIXED_COLOR_PALETTE regardless of input.
  *
  * Pure function (no DOM access) so it is unit-testable with fixture tokens.
  */
 export function deriveColorPalette(
   tokens: Record<string, string>
-): ColorEntry[] {
+): ResolvedPalette {
   const entries: ColorEntry[] = []
   const seen = new Set<string>()
 
@@ -115,23 +157,11 @@ export function deriveColorPalette(
     entries.push(entry)
   }
 
-  // Contrast pair: black-for-light-mode / white-for-dark-mode. These invert
-  // so "Black" on a light theme is truly dark and on a dark theme is truly
-  // light — the user's intent is "max contrast text", not a specific pigment.
-  entries.push({
-    id: 'black',
-    label: 'Black',
-    dark: '#fafafa',
-    light: '#18181b'
-  })
-
-  // Guarantee a minimum usable palette even if every hue seed failed to parse
-  // (should not happen on a valid theme, but fail-open beats an empty row).
-  // A single hue + black is still usable; only fall back when NO hue resolved.
-  if (entries.length < 2) {
-    return FALLBACK_COLOR_PALETTE
-  }
-  return entries
+  // Guarantee a minimum usable theme row even if every hue seed failed to
+  // parse (should not happen on a valid theme, but fail-open beats an
+  // empty row). Use the fallback row when fewer than 2 seeds resolved.
+  const theme = entries.length < 2 ? FALLBACK_THEME_PALETTE : entries
+  return { theme, standard: FIXED_COLOR_PALETTE }
 }
 
 /**
@@ -160,26 +190,3 @@ export function readActiveThemeColorTokens(): Record<string, string> {
 export function resolveColor(entry: ColorEntry, isDark: boolean): string {
   return isDark ? entry.dark : entry.light
 }
-
-// FALLBACK_COLOR_PALETTE is used only before the theme has injected its tokens
-// (first paint on a cold start) or if every hue seed fails to parse. It is a
-// reduced version of the prior fixed Tailwind set so the editor is never
-// without a swatch row. Once the theme resolves, deriveColorPalette takes over.
-// Brown is intentionally absent: no theme anchor maps to a brown hue, so the
-// derived set also lacks it — keeping both sets consistent avoids a
-// cold-start→theme-load jolt where a swatch appears then vanishes. The old
-// "brown" dark value (#a8a29e) was a warm gray anyway. A user who needs brown
-// can still pick it via the custom color input.
-export const FALLBACK_COLOR_PALETTE: ColorEntry[] = [
-  { id: 'red', label: 'Red', dark: '#f87171', light: '#dc2626' },
-  { id: 'orange', label: 'Orange', dark: '#fb923c', light: '#ea580c' },
-  { id: 'yellow', label: 'Yellow', dark: '#facc15', light: '#ca8a04' },
-  { id: 'green', label: 'Green', dark: '#4ade80', light: '#16a34a' },
-  { id: 'teal', label: 'Teal', dark: '#2dd4bf', light: '#0d9488' },
-  { id: 'blue', label: 'Blue', dark: '#60a5fa', light: '#2563eb' },
-  { id: 'indigo', label: 'Indigo', dark: '#818cf8', light: '#4f46e5' },
-  { id: 'purple', label: 'Purple', dark: '#c084fc', light: '#9333ea' },
-  { id: 'pink', label: 'Pink', dark: '#f472b6', light: '#db2777' },
-  { id: 'gray', label: 'Gray', dark: '#a1a1aa', light: '#52525b' },
-  { id: 'black', label: 'Black', dark: '#fafafa', light: '#18181b' }
-]

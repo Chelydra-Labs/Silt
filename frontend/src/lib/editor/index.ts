@@ -77,6 +77,47 @@ export type {
   MentionSuggestOptions,
   OwnerWriteback
 } from './mentionSuggest'
+export {
+  BlockRefSuggest,
+  applyBlockRefSuggestion,
+  getBlkRefContext,
+  getBlkRefContextAt
+} from './blockRefSuggest'
+export type { BlockRefContext, BlockRefSuggestOptions } from './blockRefSuggest'
+export {
+  TagSuggest,
+  applyTagSuggestion,
+  filterTags,
+  flattenTagHierarchy,
+  getTagContext,
+  getTagContextAt,
+  rankTags
+} from './tagSuggest'
+export type {
+  TagContext,
+  TagItem,
+  TagSuggestOptions,
+  TagTreeNode
+} from './tagSuggest'
+export {
+  PageLinkSuggest,
+  applyPageLinkSuggestion,
+  dismissPageLinkSuggestion,
+  getPageLinkContext,
+  getPageLinkContextAt,
+  insertPageLinkSuggestion,
+  normalizePageLinkAlias,
+  pageLinkPath,
+  pageLinkSourceLabel,
+  resolvePageLinkTarget
+} from './pageLinkSuggest'
+export type {
+  PageLinkContext,
+  PageLinkItem,
+  PageLinkResolution,
+  PageLinkResolver,
+  PageLinkSuggestOptions
+} from './pageLinkSuggest'
 export type {
   ParsedBlock,
   BlockType,

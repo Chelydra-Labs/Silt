@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Editor } from '@tiptap/core'
+  import { tick } from 'svelte'
   import {
     suggest,
     ignoreWordSession
@@ -22,14 +23,18 @@
   } = $props()
 
   const suggestions = $derived(suggest(word))
-  let items = $state<HTMLButtonElement[]>([])
-  let focusedIndex = $state(0)
 
-  // Recompute focus when suggestions change.
-  $effect(() => {
-    void suggestions
-    focusedIndex = 0
-  })
+  function enabledItems(): HTMLButtonElement[] {
+    if (!menuEl) return []
+    return Array.from(
+      menuEl.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')
+    )
+  }
+
+  function closeAndRestoreFocus(): void {
+    onClose()
+    editor.commands.focus()
+  }
 
   function apply(suggestion: string): void {
     // Replace the misspelled word with the chosen suggestion in one tx.
@@ -39,35 +44,42 @@
       .deleteRange(range)
       .insertContentAt(range.from, { type: 'text', text: suggestion })
       .run()
-    onClose()
+    closeAndRestoreFocus()
   }
 
   async function addToDictionary(): Promise<void> {
     await customDictionary.add(word)
     // The config:changed event refreshes the editor's $effect (which calls
     // setCustomWords + recheck), so the word un-flags immediately. No reload.
-    onClose()
+    closeAndRestoreFocus()
   }
 
   function ignore(): void {
     ignoreWordSession(word)
     requestSpellcheckRecheck(editor)
-    onClose()
+    closeAndRestoreFocus()
   }
 
   function handleKeydown(e: KeyboardEvent): void {
-    const total = suggestions.length + 2 // suggestions + Add + Ignore
-    if (e.key === 'ArrowDown') {
+    const actions = enabledItems()
+    if (actions.length === 0) return
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
-      focusedIndex = (focusedIndex + 1) % total
-      items[focusedIndex]?.focus()
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      focusedIndex = (focusedIndex - 1 + total) % total
-      items[focusedIndex]?.focus()
+      const current = actions.indexOf(
+        document.activeElement as HTMLButtonElement
+      )
+      const direction = e.key === 'ArrowDown' ? 1 : -1
+      const next =
+        current === -1
+          ? direction === 1
+            ? 0
+            : actions.length - 1
+          : (current + direction + actions.length) % actions.length
+      actions[next]?.focus()
     } else if (e.key === 'Escape') {
       e.preventDefault()
-      onClose()
+      closeAndRestoreFocus()
     }
   }
 
@@ -76,6 +88,12 @@
   // push it off-screen. The $effect reads `anchor` reactively + measures the
   // element after render to compute the clamped position.
   let clampedAnchor = $state({ x: -9999, y: -9999 })
+
+  $effect(() => {
+    void suggestions
+    if (!menuEl) return
+    void tick().then(() => enabledItems()[0]?.focus())
+  })
 
   $effect(() => {
     if (!menuEl) return
@@ -113,7 +131,6 @@
     {#each suggestions as s, i}
       <button
         type="button"
-        bind:this={items[i]}
         class="menu-item"
         role="menuitem"
         aria-label="Replace with {s}"
@@ -124,17 +141,12 @@
   <div class="menu-separator"></div>
   <button
     type="button"
-    bind:this={items[suggestions.length]}
     class="menu-item"
     role="menuitem"
     onclick={addToDictionary}>Add to dictionary</button
   >
-  <button
-    type="button"
-    bind:this={items[suggestions.length + 1]}
-    class="menu-item"
-    role="menuitem"
-    onclick={ignore}>Ignore</button
+  <button type="button" class="menu-item" role="menuitem" onclick={ignore}
+    >Ignore</button
   >
 </div>
 

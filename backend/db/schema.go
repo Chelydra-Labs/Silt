@@ -248,13 +248,21 @@ func (dm *DatabaseManager) initSchema() error {
 	// Page Links Table — the reverse index of [[target]] wiki links parsed off
 	// block bodies (#545). Re-derivable from markdown (rule 4 — SQLite is
 	// working memory); the markdown is the source of truth. Each row is one
-	// link occurrence in one block. The target_* columns are the best-effort
+	// link occurrence in one block. The `source` column discriminates which
+	// root the linking page belongs to ('vault' | 'linked:<id>'), so same-named
+	// notebooks across roots produce distinct rows and source-qualified links
+	// resolve unambiguously. The target_* columns are the best-effort
 	// resolution at index time (NULL when unresolved); the raw target string
 	// is preserved verbatim so a rename can find inbound links by exact text.
 	// The target-raw index serves the rename-rewrite lookup; the resolved
-	// target index serves a future backlinks panel.
+	// target index serves the backlinks panel.
+	//
+	// Migration: vaults created before the source column lack it. The migration
+	// rebuilds the table with source in the PK, backfilling from blocks via
+	// source_block_id. Idempotent: a no-op on fresh vaults.
 	createPageLinksTable := `
 	CREATE TABLE IF NOT EXISTS page_links (
+		source          TEXT NOT NULL DEFAULT 'vault',
 		source_notebook TEXT NOT NULL,
 		source_section  TEXT NOT NULL,
 		source_page     TEXT NOT NULL,
@@ -265,12 +273,28 @@ func (dm *DatabaseManager) initSchema() error {
 		target_page     TEXT,
 		heading         TEXT,
 		alias           TEXT,
-		PRIMARY KEY (source_notebook, source_section, source_page, source_block_id, target_raw),
+		PRIMARY KEY (source, source_notebook, source_section, source_page, source_block_id, target_raw),
 		FOREIGN KEY(source_block_id) REFERENCES blocks(id) ON DELETE CASCADE
 	);`
 	if _, err := db.Exec(createPageLinksTable); err != nil {
 		return fmt.Errorf("failed to create page_links table: %w", err)
 	}
+
+	// Migration: add the `source` column to pre-existing page_links tables
+	// (a vault created before source-qualified links). SQLite cannot ALTER the
+	// PRIMARY KEY, so we rebuild the table with source in the PK, backfilling
+	// source from the blocks table via source_block_id. This is safe because
+	// page_links is working memory — re-index regenerates it from markdown.
+	//
+	// Restart-safe: the ALTER may succeed (column added) but the process crashes
+	// before the PK rebuild completes. On restart, ALTER errors with "duplicate
+	// column name". The old code gated the rebuild on the else branch (ALTER
+	// success), so the rebuild was skipped after crash. The fix: always run the
+	// rebuild check after ALTER, probing the actual PK shape from sqlite_master.
+	if err := ensurePageLinksSourceMigrated(db); err != nil {
+		return fmt.Errorf("failed to migrate page_links source: %w", err)
+	}
+
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_page_links_raw ON page_links(target_raw);`); err != nil {
 		return fmt.Errorf("failed to create page_links raw index: %w", err)
 	}
@@ -280,6 +304,11 @@ func (dm *DatabaseManager) initSchema() error {
 	}
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_page_links_target ON page_links(target_notebook, target_section, target_page);`); err != nil {
 		return fmt.Errorf("failed to create page_links target index: %w", err)
+	}
+	// Source-aware index for backlinks: look up all links whose source page
+	// (the page containing the link) is in a specific source root.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_page_links_source ON page_links(source, source_notebook, source_section, source_page);`); err != nil {
+		return fmt.Errorf("failed to create page_links source index: %w", err)
 	}
 
 	// Create covered indexes
@@ -384,6 +413,146 @@ func ensureFTSOn(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// ensurePageLinksSourceMigrated ensures the page_links table has source in its
+// PRIMARY KEY. Restart-safe: works correctly whether the table was just created
+// (CREATE TABLE IF NOT EXISTS above already included source), or is being
+// upgraded from a pre-source schema. The ALTER TABLE ADD COLUMN is idempotent
+// (ignores "duplicate column name"). After that, the PK shape is probed from
+// sqlite_master: if source is NOT the first PK column, the table is rebuilt via
+// migratePageLinksSource.
+func ensurePageLinksSourceMigrated(db *sql.DB) error {
+	// 1. Add source column if missing (idempotent).
+	if _, err := db.Exec("ALTER TABLE page_links ADD COLUMN source TEXT NOT NULL DEFAULT 'vault'"); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("alter page_links add source: %w", err)
+		}
+	}
+
+	// 2. Probe the actual PK shape from sqlite_master.
+	var sqlText string
+	if err := db.QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='page_links'",
+	).Scan(&sqlText); err != nil {
+		if err == sql.ErrNoRows {
+			return nil // table doesn't exist (CREATE IF NOT EXISTS handles it)
+		}
+		return fmt.Errorf("query page_links schema: %w", err)
+	}
+	// The new PK starts with "PRIMARY KEY (source,". If the SQL doesn't contain
+	// that pattern, the old 5-column PK is still in effect and needs rebuilding.
+	if strings.Contains(sqlText, "PRIMARY KEY (source,") {
+		return nil // already migrated
+	}
+
+	// 3. Rebuild with source in PK.
+	return migratePageLinksSource(db)
+}
+
+// migratePageLinksSource rebuilds the page_links table to include source in the
+// primary key. The old table (5-column PK without source) is renamed to a temp
+// table, data is copied with source backfilled from blocks.source via
+// source_block_id, and the new table with the 6-column PK replaces it.
+// Idempotent: safe to call even if the table is already migrated.
+func migratePageLinksSource(db *sql.DB) error {
+	// Check if the old PK shape exists (5 cols → the implicit PK index name
+	// is "sqlite_autoindex_page_links_1" for a single-PK table).
+	// If the table is empty, skip the rebuild entirely.
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM page_links").Scan(&count); err != nil {
+		return fmt.Errorf("count page_links: %w", err)
+	}
+	if count == 0 {
+		// Empty table — just recreate with the correct schema.
+		// Drop old indexes first (they reference the old implicit PK).
+		db.Exec("DROP INDEX IF EXISTS idx_page_links_raw")
+		db.Exec("DROP INDEX IF EXISTS idx_page_links_raw_lower")
+		db.Exec("DROP INDEX IF EXISTS idx_page_links_target")
+		db.Exec("DROP INDEX IF EXISTS idx_page_links_source")
+		if _, err := db.Exec("DROP TABLE IF EXISTS page_links"); err != nil {
+			return fmt.Errorf("drop empty page_links: %w", err)
+		}
+		return createPageLinksTableFresh(db)
+	}
+
+	// Non-empty table: rebuild with source backfill.
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin migration tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. Rename old table.
+	if _, err := tx.Exec("ALTER TABLE page_links RENAME TO _page_links_old"); err != nil {
+		// Table may already have source in PK (double-migration). Ignore.
+		if strings.Contains(err.Error(), "no such table") {
+			return nil
+		}
+		return fmt.Errorf("rename page_links: %w", err)
+	}
+
+	// 2. Create new table with source in PK.
+	if _, err := tx.Exec(`
+		CREATE TABLE page_links (
+			source          TEXT NOT NULL DEFAULT 'vault',
+			source_notebook TEXT NOT NULL,
+			source_section  TEXT NOT NULL,
+			source_page     TEXT NOT NULL,
+			source_block_id TEXT NOT NULL,
+			target_raw      TEXT NOT NULL,
+			target_notebook TEXT,
+			target_section  TEXT,
+			target_page     TEXT,
+			heading         TEXT,
+			alias           TEXT,
+			PRIMARY KEY (source, source_notebook, source_section, source_page, source_block_id, target_raw),
+			FOREIGN KEY(source_block_id) REFERENCES blocks(id) ON DELETE CASCADE
+		);`); err != nil {
+		return fmt.Errorf("create new page_links: %w", err)
+	}
+
+	// 3. Copy data, backfilling source from blocks.
+	// blocks.source has 'vault' default, so LEFT JOIN covers rows whose
+	// source_block_id no longer exists in blocks (orphaned page_links rows).
+	if _, err := tx.Exec(`
+		INSERT INTO page_links (source, source_notebook, source_section, source_page, source_block_id, target_raw, target_notebook, target_section, target_page, heading, alias)
+		SELECT COALESCE(b.source, 'vault'), o.source_notebook, o.source_section, o.source_page, o.source_block_id, o.target_raw, o.target_notebook, o.target_section, o.target_page, o.heading, o.alias
+		FROM _page_links_old o
+		LEFT JOIN blocks b ON b.id = o.source_block_id
+		ON CONFLICT DO NOTHING
+	`); err != nil {
+		return fmt.Errorf("copy page_links with backfill: %w", err)
+	}
+
+	// 4. Drop old table.
+	if _, err := tx.Exec("DROP TABLE _page_links_old"); err != nil {
+		return fmt.Errorf("drop old page_links: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// createPageLinksTableFresh creates a fresh page_links table (used when the
+// old table is empty and can be safely dropped and recreated).
+func createPageLinksTableFresh(db *sql.DB) error {
+	_, err := db.Exec(`
+	CREATE TABLE page_links (
+		source          TEXT NOT NULL DEFAULT 'vault',
+		source_notebook TEXT NOT NULL,
+		source_section  TEXT NOT NULL,
+		source_page     TEXT NOT NULL,
+		source_block_id TEXT NOT NULL,
+		target_raw      TEXT NOT NULL,
+		target_notebook TEXT,
+		target_section  TEXT,
+		target_page     TEXT,
+		heading         TEXT,
+		alias           TEXT,
+		PRIMARY KEY (source, source_notebook, source_section, source_page, source_block_id, target_raw),
+		FOREIGN KEY(source_block_id) REFERENCES blocks(id) ON DELETE CASCADE
+	);`)
+	return err
 }
 
 // RebuildFTSIndex forces a full repopulation of blocks_fts from the current

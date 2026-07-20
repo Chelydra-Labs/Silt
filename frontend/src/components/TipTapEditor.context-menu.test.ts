@@ -57,6 +57,8 @@ const mocks = vi.hoisted(() => {
       if (!p) return allOwners.slice()
       return allOwners.filter((o) => o.toLowerCase().startsWith(p))
     }),
+    queryTagHierarchy: vi.fn().mockResolvedValue([]),
+    recordTagUsage: vi.fn().mockResolvedValue(undefined),
     eventsOn: vi.fn(() => () => {})
   }
 })
@@ -68,7 +70,9 @@ vi.mock('../../bindings/silt/app.js', () => ({
   ReleaseFocusLock: mocks.releaseFocusLock,
   OpenDevTools: mocks.openDevTools,
   // TipTapEditor seeds the @-mention owner list on mount/focus (#184).
-  DistinctOwners: mocks.distinctOwners
+  DistinctOwners: mocks.distinctOwners,
+  QueryTagHierarchy: mocks.queryTagHierarchy,
+  RecordTagUsage: mocks.recordTagUsage
 }))
 
 vi.mock('@wailsio/runtime', () => ({

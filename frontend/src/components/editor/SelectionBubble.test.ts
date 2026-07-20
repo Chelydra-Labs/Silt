@@ -90,7 +90,7 @@ describe('SelectionBubble', () => {
     expect(container.querySelector('.selection-bubble')).toBeTruthy()
   })
 
-  it('exposes primary Bold, Italic, Link, Inline code and a More control', () => {
+  it('exposes primary Bold, Italic, Underline, Link, Inline code and a More control', () => {
     const { getByLabelText, queryByLabelText } = render(SelectionBubble, {
       props: {
         editor: null,
@@ -99,13 +99,18 @@ describe('SelectionBubble', () => {
         selectionCoords: coords
       }
     })
-    for (const label of ['Bold', 'Italic', 'Link', 'Inline code']) {
+    for (const label of [
+      'Bold',
+      'Italic',
+      'Underline',
+      'Link',
+      'Inline code'
+    ]) {
       expect(getByLabelText(label)).toBeTruthy()
     }
     expect(getByLabelText('More formatting')).toBeTruthy()
     // Lower-frequency marks are not top-level.
     expect(queryByLabelText('Strikethrough')).toBeNull()
-    expect(queryByLabelText('Underline')).toBeNull()
     expect(queryByLabelText('Highlight')).toBeNull()
   })
 
@@ -120,7 +125,6 @@ describe('SelectionBubble', () => {
     })
     await fireEvent.click(getByLabelText('More formatting'))
     expect(getByLabelText('Strikethrough')).toBeTruthy()
-    expect(getByLabelText('Underline')).toBeTruthy()
     expect(getByLabelText('Highlight')).toBeTruthy()
   })
 

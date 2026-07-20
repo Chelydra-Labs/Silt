@@ -58,7 +58,8 @@ type pageLinksRewriteResult struct {
 // already locked skip re-entry; any source not in the set still takes
 // LockFileWrite (#691).
 func (a *App) rewriteInboundPageLinks(oldNB, oldSec, oldPage, newNB, newSec, newPage string) {
-	a.rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage, nil, nil)
+	oldSource := a.resolveSourceByName(oldNB)
+	a.rewriteInboundPageLinksWithJournal(oldSource, oldNB, oldSec, oldPage, newNB, newSec, newPage, nil, nil)
 }
 
 // rewriteStaleInboundAfterRename rewrites residual [[old]] links after a
@@ -74,8 +75,8 @@ func (a *App) rewriteStaleInboundAfterRename(oldNB, oldSec, oldPage, newNB, newS
 	if oldNB == newNB && oldSec == newSec && oldPage == newPage {
 		return
 	}
-	candidates := db.LinkTargetRawCandidates([]struct{ Notebook, Section, Page string }{
-		{oldNB, oldSec, oldPage},
+	candidates := db.LinkTargetRawCandidates([]db.LinkTargetSpec{
+		{Source: a.resolveSourceByName(oldNB), Notebook: oldNB, Section: oldSec, Page: oldPage},
 	})
 	var rows []db.PageLinkRow
 	var pages []db.PageLoc
@@ -181,7 +182,7 @@ func (a *App) rewriteStaleInboundAfterRename(oldNB, oldSec, oldPage, newNB, newS
 // non-nil, sources in that set skip LockFileWrite (non-reentrant). Sources not
 // in the set still take LockFileWrite so a late-arriving inbound file cannot
 // race autosave (#691).
-func (a *App) rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, newSec, newPage string, journal map[string]renameLinkJournalEntry, heldPaths map[string]bool) {
+func (a *App) rewriteInboundPageLinksWithJournal(oldSource, oldNB, oldSec, oldPage, newNB, newSec, newPage string, journal map[string]renameLinkJournalEntry, heldPaths map[string]bool) {
 	if a.db == nil || oldPage == "" || newPage == "" {
 		return
 	}
@@ -193,8 +194,8 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldNB, oldSec, oldPage, newNB, 
 	// for resolve-gating. Avoids full-table scans on large vaults.
 	var rows []db.PageLinkRow
 	var pages []db.PageLoc
-	candidates := db.LinkTargetRawCandidates([]struct{ Notebook, Section, Page string }{
-		{oldNB, oldSec, oldPage},
+	candidates := db.LinkTargetRawCandidates([]db.LinkTargetSpec{
+		{Source: oldSource, Notebook: oldNB, Section: oldSec, Page: oldPage},
 	})
 	err := a.coordinator.WithDBReadResult(func() error {
 		got, err := a.db.ListPageLinksByTargetRaws(candidates)
@@ -362,13 +363,13 @@ func (a *App) collectInboundSourcePaths(targets []renameTarget) ([]string, error
 		return nil, nil
 	}
 	want := make(map[string]bool, len(targets))
-	candIn := make([]struct{ Notebook, Section, Page string }, 0, len(targets))
+	candIn := make([]db.LinkTargetSpec, 0, len(targets))
 	for _, t := range targets {
 		if t.page == "" {
 			continue
 		}
 		want[t.nb+"\x00"+t.sec+"\x00"+t.page] = true
-		candIn = append(candIn, struct{ Notebook, Section, Page string }{t.nb, t.sec, t.page})
+		candIn = append(candIn, db.LinkTargetSpec{Source: a.resolveSourceByName(t.nb), Notebook: t.nb, Section: t.sec, Page: t.page})
 	}
 	if len(want) == 0 {
 		return nil, nil

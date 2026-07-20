@@ -58,6 +58,17 @@
     MentionSuggest,
     applyMentionSuggestion,
     filterOwners,
+    BlockRefSuggest,
+    applyBlockRefSuggestion,
+    TagSuggest,
+    applyTagSuggestion,
+    filterTags,
+    flattenTagHierarchy,
+    PageLinkSuggest,
+    applyPageLinkSuggestion,
+    dismissPageLinkSuggestion,
+    normalizePageLinkAlias,
+    pageLinkSourceLabel,
     blocksToDoc
   } from '../lib/editor'
   import { runPluginCommand } from '../lib/editor/runPluginCommand'
@@ -65,9 +76,23 @@
     ParsedBlock,
     MetaKey,
     SuggestContext,
-    MentionContext
+    MentionContext,
+    BlockRefContext,
+    TagContext,
+    TagItem,
+    TagTreeNode,
+    PageLinkContext,
+    PageLinkItem,
+    PageLinkResolution
   } from '../lib/editor'
-  import { DistinctOwners } from '../../bindings/silt/app.js'
+  import {
+    DistinctOwners,
+    QueryTagHierarchy,
+    SearchBlocks,
+    RecordTagUsage,
+    SearchPages,
+    ResolvePageLink
+  } from '../../bindings/silt/app.js'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import ChoiceDialog from './ChoiceDialog.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
@@ -81,11 +106,12 @@
   import TableContextToolbar from './editor/TableContextToolbar.svelte'
   import TableSizePicker from './editor/TableSizePicker.svelte'
   import MathLatexPopover from './editor/MathLatexPopover.svelte'
+  import SuggestPopup from './editor/SuggestPopup.svelte'
+  import { popupCoordsAt } from '../lib/editor/suggestPopupCoords'
   import {
     deriveColorPalette,
     readActiveThemeColorTokens,
-    resolveColor,
-    FALLBACK_COLOR_PALETTE
+    resolveColor
   } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { classifySlashCommand } from '../lib/editor/builtinSlashCommands'
@@ -224,13 +250,12 @@
 
   // Theme-derived color palette (#408): re-read the active theme's anchors
   // from :root whenever the dark/light mode flips, so the popover's swatch
-  // row tracks the theme. Falls back to the fixed set pre-theme-injection.
+  // row tracks the theme. deriveColorPalette handles fallback internally
+  // (cold start / pre-theme-injection).
   const colorPalette = $derived.by(() => {
     void isDark
     const tokens = readActiveThemeColorTokens()
-    return Object.keys(tokens).length > 0
-      ? deriveColorPalette(tokens)
-      : FALLBACK_COLOR_PALETTE
+    return deriveColorPalette(tokens)
   })
 
   let colorEnabled = $derived(
@@ -502,11 +527,14 @@
     applyMetaSuggestion(editorInstance, key)
   }
 
-  function metaPopupCoords(): { left: number; top: number } | null {
-    if (!metaPopup || !editorInstance || editorInstance.isDestroyed) return null
-    const c = editorInstance.view.coordsAtPos(metaPopup.ctx.from)
+  function suggestPopupCoords(
+    from: number,
+    width: number
+  ): { left: number; top: number } | null {
+    if (!editorInstance || editorInstance.isDestroyed) return null
+    const anchor = popupCoordsAt(editorInstance, from)
     return clampToViewport(
-      { x: c.left, y: c.bottom, width: 260, height: 260 },
+      { x: anchor.left, y: anchor.top, width, height: 260 },
       { width: window.innerWidth, height: window.innerHeight }
     )
   }
@@ -645,14 +673,417 @@
     applyMentionSuggestion(editorInstance, name)
   }
 
-  function mentionPopupCoords(): { left: number; top: number } | null {
-    if (!mentionPopup || !editorInstance || editorInstance.isDestroyed)
-      return null
-    const c = editorInstance.view.coordsAtPos(mentionPopup.ctx.from)
-    return clampToViewport(
-      { x: c.left, y: c.bottom, width: 220, height: 260 },
-      { width: window.innerWidth, height: window.innerHeight }
+  // --- Block-reference typeahead ------------------------------------------
+  interface BlockSearchItem {
+    id: string
+    source: string
+    notebook: string
+    section: string
+    page: string
+    clean_content: string
+  }
+
+  let blkRefPopup = $state<{
+    ctx: BlockRefContext
+    items: BlockSearchItem[]
+    selected: number
+    searching: boolean
+    error: boolean
+  } | null>(null)
+  let blkRefQueryTimer: ReturnType<typeof setTimeout> | null = null
+  let blkRefQueryReqId = 0
+  let blkRefRequest:
+    | (Promise<BlockSearchItem[]> & { cancel?: () => Promise<void> | void })
+    | null = null
+  const BLOCK_REF_QUERY_DEBOUNCE_MS = 180
+
+  function cancelBlockRefSearch(): void {
+    if (blkRefQueryTimer) {
+      clearTimeout(blkRefQueryTimer)
+      blkRefQueryTimer = null
+    }
+    const request = blkRefRequest
+    blkRefRequest = null
+    if (request?.cancel) void request.cancel()
+  }
+
+  function onBlockRefChange(ctx: BlockRefContext | null): void {
+    cancelBlockRefSearch()
+    const myId = ++blkRefQueryReqId
+    if (!ctx) {
+      blkRefPopup = null
+      suggestStatus = ''
+      return
+    }
+
+    blkRefPopup = {
+      ctx,
+      items: [],
+      selected: 0,
+      searching: ctx.query.trim().length > 0,
+      error: false
+    }
+    if (!ctx.query.trim()) {
+      suggestStatus = 'Type to search for a block'
+      return
+    }
+
+    suggestStatus = 'Searching blocks'
+    blkRefQueryTimer = setTimeout(async () => {
+      blkRefQueryTimer = null
+      const request = SearchBlocks(ctx.query) as Promise<BlockSearchItem[]> & {
+        cancel?: () => Promise<void> | void
+      }
+      blkRefRequest = request
+      try {
+        const items = (await request) ?? []
+        if (myId !== blkRefQueryReqId) return
+        const current = blkRefPopup
+        if (
+          !current ||
+          current.ctx.from !== ctx.from ||
+          current.ctx.query !== ctx.query
+        )
+          return
+        blkRefRequest = null
+        blkRefPopup = { ...current, items, selected: 0, searching: false }
+        suggestStatus = items.length
+          ? `${items.length} block${items.length === 1 ? '' : 's'} available`
+          : 'No matching blocks'
+      } catch (error) {
+        if (myId !== blkRefQueryReqId) return
+        blkRefRequest = null
+        const current = blkRefPopup
+        if (
+          !current ||
+          current.ctx.from !== ctx.from ||
+          current.ctx.query !== ctx.query
+        )
+          return
+        console.error('SearchBlocks failed:', error)
+        blkRefPopup = {
+          ...current,
+          items: [],
+          selected: 0,
+          searching: false,
+          error: true
+        }
+        suggestStatus = 'Block search unavailable'
+      }
+    }, BLOCK_REF_QUERY_DEBOUNCE_MS)
+  }
+
+  function onBlockRefNavigate(dir: 1 | -1): void {
+    if (!blkRefPopup?.items.length) return
+    const n = blkRefPopup.items.length
+    blkRefPopup.selected = (blkRefPopup.selected + dir + n) % n
+  }
+
+  function onBlockRefSelectActive(): void {
+    const item = blkRefPopup?.items[blkRefPopup.selected]
+    if (item) onBlockRefPick(item.id)
+  }
+
+  function onBlockRefPick(blockId: string): void {
+    cancelBlockRefSearch()
+    ++blkRefQueryReqId
+    blkRefPopup = null
+    suggestStatus = ''
+    if (!editorInstance || editorInstance.isDestroyed) return
+    applyBlockRefSuggestion(editorInstance, blockId)
+  }
+
+  function blockSourceLabel(source?: string): string {
+    return source?.startsWith('linked:') ? 'Linked' : 'Vault'
+  }
+
+  // --- Tag typeahead -------------------------------------------------------
+  // The hierarchy is stable enough to cache across quick focus changes. A
+  // fresh focus after the TTL catches tags indexed by recent edits.
+  let tags = $state<TagItem[]>([])
+  let tagsLoadedAt = 0
+  let tagsLoading = $state(false)
+  let tagsLoadError = $state(false)
+  const TAGS_TTL_MS = 5000
+  let recentTags = $derived(
+    ((settings.config?.ui as { recent_tags?: string[] } | undefined)
+      ?.recent_tags ?? []) as string[]
+  )
+  let tagPopup = $state<{
+    ctx: TagContext
+    items: TagItem[]
+    selected: number
+  } | null>(null)
+
+  function updateTagPopup(ctx: TagContext): void {
+    const previous = tagPopup?.items[tagPopup.selected]?.path
+    const items = filterTags(tags, ctx.query, recentTags)
+    const previousIndex = previous
+      ? items.findIndex((item) => item.path === previous)
+      : -1
+    tagPopup = { ctx, items, selected: Math.max(0, previousIndex) }
+    suggestStatus = tagsLoadError
+      ? 'Tag suggestions unavailable'
+      : tagsLoading
+        ? 'Loading tags'
+        : items.length
+          ? `${items.length} tag${items.length === 1 ? '' : 's'} available`
+          : 'No matching tags'
+  }
+
+  async function loadTags(): Promise<void> {
+    if (tagsLoading || Date.now() - tagsLoadedAt < TAGS_TTL_MS) return
+    tagsLoading = true
+    tagsLoadError = false
+    if (tagPopup) updateTagPopup(tagPopup.ctx)
+    try {
+      const tree = ((await QueryTagHierarchy()) ?? []) as TagTreeNode[]
+      tags = flattenTagHierarchy(tree)
+      tagsLoadedAt = Date.now()
+    } catch (error) {
+      tagsLoadError = true
+      tagsLoadedAt = Date.now()
+      console.error('QueryTagHierarchy failed:', error)
+    } finally {
+      tagsLoading = false
+      if (tagPopup) updateTagPopup(tagPopup.ctx)
+    }
+  }
+
+  function onTagChange(ctx: TagContext | null): void {
+    if (!ctx) {
+      tagPopup = null
+      suggestStatus = ''
+      return
+    }
+    const opening = !tagPopup
+    updateTagPopup(ctx)
+    if (opening) void loadTags()
+  }
+
+  function onTagNavigate(dir: 1 | -1): void {
+    if (!tagPopup?.items.length) return
+    const n = tagPopup.items.length
+    tagPopup.selected = (tagPopup.selected + dir + n) % n
+  }
+
+  function onTagSelectActive(): void {
+    const item = tagPopup?.items[tagPopup.selected]
+    if (item) onTagPick(item.path)
+  }
+
+  function onTagPick(path: string): void {
+    tagPopup = null
+    suggestStatus = ''
+    if (!editorInstance || editorInstance.isDestroyed) return
+    if (!applyTagSuggestion(editorInstance, path)) return
+    void RecordTagUsage(path).catch((error: unknown) => {
+      console.error('RecordTagUsage failed:', error)
+    })
+  }
+
+  // --- Page-link typeahead -------------------------------------------------
+  let pageLinkPopup = $state<{
+    ctx: PageLinkContext
+    items: PageLinkItem[]
+    selected: number
+    searching: boolean
+    resolving: boolean
+    resolvingItem: PageLinkItem | null
+    error: 'search' | 'resolve' | null
+    aliasEnabled: boolean
+    alias: string
+  } | null>(null)
+  let pageLinkQueryTimer: ReturnType<typeof setTimeout> | null = null
+  let pageLinkQueryReqId = 0
+  let pageLinkRequest: ReturnType<typeof SearchPages> | null = null
+  const PAGE_LINK_QUERY_DEBOUNCE_MS = 150
+
+  function hasEnoughPageLinkQuery(query: string): boolean {
+    return (
+      Array.from(query).filter((character) => !/\s/u.test(character)).length >=
+      2
     )
+  }
+
+  function cancelPageLinkSearch(): void {
+    if (pageLinkQueryTimer) {
+      clearTimeout(pageLinkQueryTimer)
+      pageLinkQueryTimer = null
+    }
+    const request = pageLinkRequest
+    pageLinkRequest = null
+    if (request?.cancel) void request.cancel()
+  }
+
+  function onPageLinkChange(ctx: PageLinkContext | null): void {
+    cancelPageLinkSearch()
+    const myId = ++pageLinkQueryReqId
+    if (!ctx) {
+      pageLinkPopup = null
+      suggestStatus = ''
+      return
+    }
+
+    const previous =
+      pageLinkPopup?.ctx.triggerPos === ctx.triggerPos ? pageLinkPopup : null
+    pageLinkPopup = {
+      ctx,
+      items: previous?.items ?? [],
+      selected: previous
+        ? Math.min(previous.selected, Math.max(0, previous.items.length - 1))
+        : 0,
+      searching: false,
+      resolving: false,
+      resolvingItem: null,
+      error: null,
+      aliasEnabled: previous?.aliasEnabled ?? false,
+      alias: previous?.alias ?? ''
+    }
+    if (!hasEnoughPageLinkQuery(ctx.query)) {
+      pageLinkPopup.items = []
+      pageLinkPopup.selected = 0
+      suggestStatus = 'Type at least 2 characters for page suggestions'
+      return
+    }
+
+    pageLinkPopup.searching = true
+    suggestStatus = 'Searching pages'
+    pageLinkQueryTimer = setTimeout(async () => {
+      pageLinkQueryTimer = null
+      try {
+        const request = SearchPages(ctx.query.trim(), 50)
+        pageLinkRequest = request
+        const items = (await request) ?? []
+        if (myId !== pageLinkQueryReqId) return
+        const current = pageLinkPopup
+        if (
+          !current ||
+          current.ctx.from !== ctx.from ||
+          current.ctx.query !== ctx.query
+        )
+          return
+        pageLinkRequest = null
+        pageLinkPopup = {
+          ...current,
+          items,
+          selected: 0,
+          searching: false
+        }
+        suggestStatus = items.length
+          ? `${items.length} page${items.length === 1 ? '' : 's'} available`
+          : 'No matching pages'
+      } catch (error) {
+        if (myId !== pageLinkQueryReqId) return
+        pageLinkRequest = null
+        const current = pageLinkPopup
+        if (
+          !current ||
+          current.ctx.from !== ctx.from ||
+          current.ctx.query !== ctx.query
+        )
+          return
+        console.error('SearchPages failed:', error)
+        pageLinkPopup = {
+          ...current,
+          searching: false,
+          error: 'search'
+        }
+        suggestStatus = 'Page search unavailable'
+      }
+    }, PAGE_LINK_QUERY_DEBOUNCE_MS)
+  }
+
+  function onPageLinkNavigate(dir: 1 | -1): void {
+    if (!pageLinkPopup?.items.length || pageLinkPopup.resolving) return
+    const n = pageLinkPopup.items.length
+    pageLinkPopup.selected = (pageLinkPopup.selected + dir + n) % n
+  }
+
+  function onPageLinkSelectActive(): void {
+    const item = pageLinkPopup?.items[pageLinkPopup.selected]
+    if (item) void onPageLinkPick(item)
+  }
+
+  function onPageLinkAliasKeydown(event: KeyboardEvent): void {
+    if (event.isComposing) return
+
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      dismissPageLinkAlias()
+      return
+    }
+
+    const popup = pageLinkPopup
+    if (!popup?.items.length || popup.resolving) return
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      event.stopPropagation()
+      onPageLinkNavigate(event.key === 'ArrowDown' ? 1 : -1)
+    } else if (event.key === 'Enter' && popup.items[popup.selected]) {
+      event.preventDefault()
+      event.stopPropagation()
+      onPageLinkSelectActive()
+    }
+  }
+
+  function retryPageLink(): void {
+    const popup = pageLinkPopup
+    if (!popup || popup.resolving) return
+    if (popup.error === 'resolve' && popup.resolvingItem) {
+      void onPageLinkPick(popup.resolvingItem)
+      return
+    }
+    onPageLinkChange(popup.ctx)
+  }
+
+  function dismissPageLinkAlias(): void {
+    cancelPageLinkSearch()
+    ++pageLinkQueryReqId
+    pageLinkPopup = null
+    suggestStatus = ''
+    if (!editorInstance || editorInstance.isDestroyed) return
+    dismissPageLinkSuggestion(editorInstance, true)
+  }
+
+  async function onPageLinkPick(item: PageLinkItem): Promise<void> {
+    const current = pageLinkPopup
+    if (!current || current.resolving || !editorInstance?.isEditable) return
+    cancelPageLinkSearch()
+    const myId = ++pageLinkQueryReqId
+    pageLinkPopup = {
+      ...current,
+      resolving: true,
+      resolvingItem: item,
+      error: null
+    }
+    suggestStatus = 'Resolving page link'
+    try {
+      const alias = current.aliasEnabled
+        ? current.alias.trim() || item.page
+        : null
+      const inserted = await applyPageLinkSuggestion(
+        editorInstance,
+        item,
+        ResolvePageLink,
+        alias
+      )
+      if (myId !== pageLinkQueryReqId) return
+      if (!inserted)
+        throw new Error('The page-link context is no longer active')
+      pageLinkPopup = null
+      suggestStatus = ''
+    } catch (error) {
+      if (myId !== pageLinkQueryReqId) return
+      console.error('ResolvePageLink failed:', error)
+      const popup = pageLinkPopup
+      if (popup) {
+        pageLinkPopup = { ...popup, resolving: false, error: 'resolve' }
+        suggestStatus = 'Page link could not be inserted'
+      }
+    }
   }
 
   // Capture the initial blocks under untrack to signal that the one-shot
@@ -713,6 +1144,25 @@
       onChange: onMentionChange,
       onNavigate: onMentionNavigate,
       onSelectActive: onMentionSelectActive
+    }),
+    BlockRefSuggest.configure({
+      items: () => blkRefPopup?.items ?? [],
+      onChange: onBlockRefChange,
+      onNavigate: onBlockRefNavigate,
+      onSelectActive: onBlockRefSelectActive
+    }),
+    TagSuggest.configure({
+      items: () => tagPopup?.items ?? [],
+      onChange: onTagChange,
+      onNavigate: onTagNavigate,
+      onSelectActive: onTagSelectActive
+    }),
+    PageLinkSuggest.configure({
+      items: () => pageLinkPopup?.items ?? [],
+      resolving: () => pageLinkPopup?.resolving ?? false,
+      onChange: onPageLinkChange,
+      onNavigate: onPageLinkNavigate,
+      onSelectActive: onPageLinkSelectActive
     }),
     // Notion-style indent-on-drop + drop-zone indicator (#330, #181
     // follow-up). Watches ProseMirror's handleDrop: when a top-level block
@@ -832,6 +1282,7 @@
       // immediately; the TTL guard inside loadOwners collapses repeats (#332).
       if (focusLoadTimer) clearTimeout(focusLoadTimer)
       focusLoadTimer = setTimeout(() => void loadOwners(), 150)
+      void loadTags()
     },
     onBlur: () => {
       isFocused = false
@@ -849,7 +1300,16 @@
       onReady?.()
       // Seed the @-mention owner list on mount (#184).
       void loadOwners()
+      void loadTags()
     }
+  })
+
+  $effect(() => {
+    // Config hot reload replaces recent_tags in the shared settings store.
+    // Re-rank an open picker in place so the editor and caret stay mounted.
+    void recentTags
+    const current = untrack(() => tagPopup)
+    if (current) untrack(() => updateTagPopup(current.ctx))
   })
 
   // Spellcheck (#196 / #336 / #337): load language dictionary + custom words +
@@ -1058,6 +1518,10 @@
       clearTimeout(focusLoadTimer)
       focusLoadTimer = null
     }
+    cancelBlockRefSearch()
+    ++blkRefQueryReqId
+    cancelPageLinkSearch()
+    ++pageLinkQueryReqId
     void flushPendingSave().then(() => releaseFocus())
     window.removeEventListener('silt:open-link-input', onOpenLinkInput)
     window.removeEventListener('silt:change-block-type', onChangeBlockType)
@@ -1904,58 +2368,224 @@
     {suggestStatus}
   </div>
   {#if metaPopup}
-    {@const c = metaPopupCoords()}
+    {@const c = suggestPopupCoords(metaPopup.ctx.from, 260)}
     {#if c}
-      <div
-        class="meta-suggest"
-        style="left:{c.left}px; top:{c.top}px"
-        role="listbox"
-        tabindex="-1"
-        aria-label="Task metadata"
-        aria-activedescendant="silt-meta-opt-{metaPopup.selected}"
-      >
-        {#each metaPopup.items as item, i}
-          <button
-            type="button"
-            id="silt-meta-opt-{i}"
-            class="meta-suggest-item"
-            class:selected={i === metaPopup.selected}
-            role="option"
-            aria-selected={i === metaPopup.selected}
-            onclick={() => onMetaPick(item.key)}
-          >
-            <span class="meta-suggest-key">{item.key}</span>
-            <span class="meta-suggest-desc">{item.description}</span>
-          </button>
-        {/each}
-      </div>
+      <SuggestPopup
+        items={metaPopup.items.map((item) => ({
+          id: item.key,
+          label: item.key,
+          hint: item.description
+        }))}
+        selected={metaPopup.selected}
+        coords={c}
+        emptyLabel="No matching metadata keys"
+        ariaLabel="Task metadata"
+        className="meta-suggest"
+        onPick={(i) => {
+          const item = metaPopup?.items[i]
+          if (item) onMetaPick(item.key)
+        }}
+        onHover={(i) => {
+          if (metaPopup) metaPopup.selected = i
+        }}
+      />
     {/if}
   {/if}
   {#if mentionPopup}
-    {@const c = mentionPopupCoords()}
+    {@const c = suggestPopupCoords(mentionPopup.ctx.from, 220)}
     {#if c}
-      <div
-        class="mention-suggest"
-        style="left:{c.left}px; top:{c.top}px"
-        role="listbox"
-        tabindex="-1"
-        aria-label="Mention an owner"
-        aria-activedescendant="silt-mention-opt-{mentionPopup.selected}"
-      >
-        {#each mentionPopup.items as item, i}
+      <SuggestPopup
+        items={mentionPopup.items.map((item) => ({
+          id: item,
+          label: `@${item}`
+        }))}
+        selected={mentionPopup.selected}
+        coords={c}
+        emptyLabel="No matching owners"
+        ariaLabel="Mention an owner"
+        className="mention-suggest"
+        onPick={(i) => {
+          const item = mentionPopup?.items[i]
+          if (item) onMentionPick(item)
+        }}
+        onHover={(i) => {
+          if (mentionPopup) mentionPopup.selected = i
+        }}
+      />
+    {/if}
+  {/if}
+  {#if blkRefPopup}
+    {@const c = suggestPopupCoords(blkRefPopup.ctx.from, 360)}
+    {#if c}
+      <SuggestPopup
+        items={blkRefPopup.items.map((item) => ({
+          id: `${item.source || 'vault'}:${item.id}`,
+          label: item.clean_content || 'Untitled block',
+          hint: `${blockSourceLabel(item.source)} · ${[
+            item.notebook,
+            item.section,
+            item.page
+          ]
+            .filter(Boolean)
+            .join(' / ')}`
+        }))}
+        selected={blkRefPopup.selected}
+        coords={c}
+        emptyLabel={blkRefPopup.error
+          ? 'Block search unavailable'
+          : blkRefPopup.searching
+            ? 'Searching blocks…'
+            : blkRefPopup.ctx.query.trim()
+              ? 'No blocks found'
+              : 'Type to search for a block…'}
+        ariaLabel="Reference a block"
+        className="block-ref-suggest"
+        onPick={(i) => {
+          const item = blkRefPopup?.items[i]
+          if (item) onBlockRefPick(item.id)
+        }}
+        onHover={(i) => {
+          if (blkRefPopup) blkRefPopup.selected = i
+        }}
+      />
+    {/if}
+  {/if}
+  {#if tagPopup}
+    {@const c = suggestPopupCoords(tagPopup.ctx.from, 280)}
+    {#if c}
+      <SuggestPopup
+        items={tagPopup.items.map((item) => ({
+          id: item.path,
+          label: `#${item.path}`,
+          hint: `${item.count} ${item.count === 1 ? 'use' : 'uses'}`
+        }))}
+        selected={tagPopup.selected}
+        coords={c}
+        emptyLabel={tagsLoadError
+          ? 'Tag suggestions unavailable'
+          : tagsLoading
+            ? 'Loading tags…'
+            : 'No matching tags'}
+        ariaLabel="Insert a tag"
+        className="tag-suggest"
+        onPick={(i) => {
+          const item = tagPopup?.items[i]
+          if (item) onTagPick(item.path)
+        }}
+        onHover={(i) => {
+          if (tagPopup) tagPopup.selected = i
+        }}
+      />
+    {/if}
+  {/if}
+  {#if pageLinkPopup}
+    {@const c = suggestPopupCoords(pageLinkPopup.ctx.from, 340)}
+    {#if c}
+      {#snippet pageLinkFooter()}
+        <div class="page-link-alias-footer">
+          {#if pageLinkPopup?.resolving}
+            <div class="page-link-progress" role="status">
+              <span class="page-link-spinner" aria-hidden="true"></span>
+              Resolving {pageLinkPopup.resolvingItem?.page ?? 'page'}…
+            </div>
+          {:else if pageLinkPopup?.error}
+            <div class="page-link-retry" role="alert">
+              <span>
+                {pageLinkPopup.error === 'search'
+                  ? 'Couldn’t refresh suggestions.'
+                  : 'Couldn’t insert this link.'}
+              </span>
+              <button type="button" onclick={retryPageLink}>
+                {pageLinkPopup.error === 'search'
+                  ? 'Retry search'
+                  : 'Retry link'}
+              </button>
+            </div>
+          {:else if pageLinkPopup?.searching && pageLinkPopup.items.length}
+            <div class="page-link-progress" role="status">
+              <span class="page-link-spinner" aria-hidden="true"></span>
+              Refreshing suggestions…
+            </div>
+          {/if}
           <button
             type="button"
-            id="silt-mention-opt-{i}"
-            class="mention-suggest-item"
-            class:selected={i === mentionPopup.selected}
-            role="option"
-            aria-selected={i === mentionPopup.selected}
-            onclick={() => onMentionPick(item)}
+            class="page-link-alias-toggle"
+            aria-pressed={pageLinkPopup?.aliasEnabled ?? false}
+            disabled={pageLinkPopup?.resolving ?? false}
+            onclick={() => {
+              if (!pageLinkPopup) return
+              const selected = pageLinkPopup.items[pageLinkPopup.selected]
+              pageLinkPopup.aliasEnabled = !pageLinkPopup.aliasEnabled
+              if (pageLinkPopup.aliasEnabled && !pageLinkPopup.alias) {
+                pageLinkPopup.alias = selected?.page ?? ''
+              }
+            }}
           >
-            <span class="mention-suggest-at" aria-hidden="true">@</span>{item}
+            <span class="material-symbols-outlined" aria-hidden="true"
+              >label</span
+            >
+            Use display alias
           </button>
-        {/each}
-      </div>
+          {#if pageLinkPopup?.aliasEnabled}
+            <label class="page-link-alias-field">
+              <span>Alias</span>
+              <input
+                value={pageLinkPopup.alias}
+                disabled={pageLinkPopup.resolving}
+                oninput={(event) => {
+                  if (pageLinkPopup) {
+                    pageLinkPopup.alias = normalizePageLinkAlias(
+                      event.currentTarget.value
+                    )
+                  }
+                }}
+                onkeydown={onPageLinkAliasKeydown}
+                onfocus={(event) => event.currentTarget.select()}
+                placeholder="Link text"
+                aria-label="Page link display alias"
+                aria-haspopup="listbox"
+              />
+            </label>
+          {/if}
+        </div>
+      {/snippet}
+      <SuggestPopup
+        items={pageLinkPopup.resolving
+          ? []
+          : pageLinkPopup.items.map((item) => ({
+              id: `${item.source ?? ''}:${item.notebook}/${item.section}/${item.page}`,
+              label: item.page || 'Untitled page',
+              hint: [
+                pageLinkSourceLabel(item.source),
+                [item.notebook, item.section].filter(Boolean).join(' / ')
+              ]
+                .filter(Boolean)
+                .join(' · ')
+            }))}
+        selected={pageLinkPopup.selected}
+        coords={c}
+        emptyLabel={pageLinkPopup.resolving
+          ? 'Resolving page link…'
+          : pageLinkPopup.error === 'search'
+            ? 'Page suggestions unavailable'
+            : !hasEnoughPageLinkQuery(pageLinkPopup.ctx.query)
+              ? 'Type at least 2 characters'
+              : pageLinkPopup.searching
+                ? 'Searching pages…'
+                : 'No matching pages'}
+        ariaLabel="Link to a page"
+        className="page-link-suggest"
+        footer={pageLinkFooter}
+        onPick={(i) => {
+          const item = pageLinkPopup?.items[i]
+          if (item) void onPageLinkPick(item)
+        }}
+        onHover={(i) => {
+          if (pageLinkPopup && !pageLinkPopup.resolving) {
+            pageLinkPopup.selected = i
+          }
+        }}
+      />
     {/if}
   {/if}
   {#if showLinkInput && linkInputCoords}
@@ -2007,17 +2637,39 @@
           aria-hidden="true">format_color_reset</span
         >
       </button>
-      {#each colorPalette as entry (entry.id)}
-        <button
-          type="button"
-          class="cp-swatch"
-          style="background-color: {resolveColor(entry, isDark)}"
-          aria-label={entry.label}
-          role="menuitem"
-          onclick={() => applyColorFromPopover(resolveColor(entry, isDark))}
-        >
-        </button>
-      {/each}
+      <div class="cp-palette-sections">
+        <div class="cp-grid" role="group" aria-label="Theme colors">
+          {#each colorPalette.theme as entry (entry.id)}
+            <button
+              type="button"
+              class="cp-swatch"
+              style="background-color: {resolveColor(entry, isDark)}"
+              aria-label={entry.label}
+              role="menuitem"
+              onclick={() => applyColorFromPopover(resolveColor(entry, isDark))}
+            >
+            </button>
+          {/each}
+        </div>
+        <div
+          class="cp-divider"
+          role="separator"
+          aria-orientation="horizontal"
+        ></div>
+        <div class="cp-grid" role="group" aria-label="Standard colors">
+          {#each colorPalette.standard as entry (entry.id)}
+            <button
+              type="button"
+              class="cp-swatch"
+              style="background-color: {resolveColor(entry, isDark)}"
+              aria-label={entry.label}
+              role="menuitem"
+              onclick={() => applyColorFromPopover(resolveColor(entry, isDark))}
+            >
+            </button>
+          {/each}
+        </div>
+      </div>
       <label class="cp-custom-row">
         <input
           type="color"
@@ -2074,6 +2726,107 @@
 {/if}
 
 <style>
+  .page-link-alias-footer {
+    display: grid;
+    gap: 7px;
+  }
+
+  .page-link-progress,
+  .page-link-retry {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .page-link-retry {
+    justify-content: space-between;
+    color: var(--color-text-primary);
+  }
+
+  .page-link-retry button {
+    flex: none;
+    padding: 3px 7px;
+    border: 1px solid var(--color-surface-popover-border);
+    border-radius: 5px;
+    background: var(--color-surface-raised, var(--color-surface-popover));
+    color: var(--color-accent-primary-start);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .page-link-spinner {
+    width: 11px;
+    height: 11px;
+    border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: page-link-spin 0.7s linear infinite;
+  }
+
+  @keyframes page-link-spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+
+  .page-link-alias-toggle {
+    display: inline-flex;
+    align-items: center;
+    width: max-content;
+    gap: 5px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .page-link-alias-toggle[aria-pressed='true'] {
+    color: var(--color-accent-primary-start);
+  }
+
+  .page-link-alias-toggle:disabled,
+  .page-link-alias-field input:disabled {
+    opacity: 0.55;
+    cursor: wait;
+  }
+
+  .page-link-alias-toggle .material-symbols-outlined {
+    font-size: 15px;
+  }
+
+  .page-link-alias-toggle:focus-visible,
+  .page-link-alias-field input:focus-visible,
+  .page-link-retry button:focus-visible {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: 2px;
+  }
+
+  .page-link-alias-field {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .page-link-alias-field input {
+    min-width: 0;
+    padding: 5px 7px;
+    border: 1px solid var(--color-surface-popover-border);
+    border-radius: 5px;
+    background: var(--color-surface-raised, var(--color-surface-popover));
+    color: var(--color-text-primary);
+    font: inherit;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .page-link-spinner {
+      animation: none;
+    }
+  }
+
   .tiptap-editor-host {
     width: 100%;
   }
@@ -2133,10 +2886,28 @@
     background: var(--color-surface-popover);
     border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 200px;
+  }
+
+  .cp-palette-sections {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .cp-divider {
+    height: 1px;
+    background: var(--color-surface-popover-border);
+    margin: 4px 0;
+  }
+
+  .cp-grid {
     display: grid;
     grid-template-columns: repeat(6, 1fr);
     gap: 3px;
-    max-width: 200px;
+    padding: 4px 0;
   }
 
   .cp-swatch {
@@ -2159,10 +2930,10 @@
     justify-content: center;
     background: transparent;
     color: var(--color-text-muted);
+    align-self: flex-start;
   }
 
   .cp-custom-row {
-    grid-column: 1 / -1;
     display: flex;
     justify-content: center;
     margin-top: 2px;
@@ -2182,88 +2953,6 @@
     .cp-swatch {
       transition: none;
     }
-  }
-
-  .meta-suggest {
-    position: fixed;
-    z-index: 50;
-    min-width: 240px;
-    margin-top: 4px;
-    padding: 4px;
-    border-radius: 8px;
-    background: var(--color-surface-popover);
-    border: 1px solid var(--color-surface-popover-border);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-    display: flex;
-    flex-direction: column;
-  }
-
-  .meta-suggest-item {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    padding: 6px 8px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--color-text-primary);
-    text-align: left;
-    cursor: pointer;
-    font-family: inherit;
-  }
-
-  .meta-suggest-item.selected {
-    background: var(--color-accent-primary-start);
-    color: var(--color-text-on-accent);
-  }
-
-  .meta-suggest-key {
-    font-family: var(--font-mono, monospace);
-    font-weight: 600;
-    font-size: 0.85rem;
-    min-width: 64px;
-  }
-
-  .meta-suggest-desc {
-    font-size: 0.8rem;
-    opacity: 0.8;
-  }
-
-  .mention-suggest {
-    position: fixed;
-    z-index: 50;
-    min-width: 200px;
-    margin-top: 4px;
-    padding: 4px;
-    border-radius: 8px;
-    background: var(--color-surface-popover);
-    border: 1px solid var(--color-surface-popover-border);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-    display: flex;
-    flex-direction: column;
-  }
-
-  .mention-suggest-item {
-    display: flex;
-    align-items: baseline;
-    gap: 4px;
-    padding: 6px 8px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--color-text-primary);
-    text-align: left;
-    cursor: pointer;
-    font-family: inherit;
-  }
-
-  .mention-suggest-item.selected {
-    background: var(--color-accent-primary-start);
-    color: var(--color-text-on-accent);
-  }
-
-  .mention-suggest-at {
-    opacity: 0.7;
   }
 
   .context-menu-card {

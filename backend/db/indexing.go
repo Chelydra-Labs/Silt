@@ -489,9 +489,10 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	// block body. The per-block blocks-row DELETE above cascades to page_links
 	// via FK ON DELETE CASCADE, so each insert here is additive. target_* are
 	// left NULL — resolution happens on demand (ResolvePageLink) so re-indexing
-	// never needs the full pages list. INSERT OR IGNORE keeps the PK unique
-	// when the same target appears twice in one block.
-	stmtPageLink, err := tx.Prepare("INSERT OR IGNORE INTO page_links (source_notebook, source_section, source_page, source_block_id, target_raw, target_notebook, target_section, target_page, heading, alias) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)")
+	// never needs the full pages list. `source` carries the root discriminator
+	// so same-named notebooks across roots produce distinct rows. INSERT OR
+	// IGNORE keeps the PK unique when the same target appears twice in one block.
+	stmtPageLink, err := tx.Prepare("INSERT OR IGNORE INTO page_links (source, source_notebook, source_section, source_page, source_block_id, target_raw, target_notebook, target_section, target_page, heading, alias) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("failed to prepare page_links insert: %w", err)
 	}
@@ -659,7 +660,7 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 			if pl[3] != "" {
 				alias = pl[3]
 			}
-			if _, err := stmtPageLink.Exec(notebook, section, page, block.ID, target, heading, alias); err != nil {
+			if _, err := stmtPageLink.Exec(source, notebook, section, page, block.ID, target, heading, alias); err != nil {
 				log.Printf("db.IndexFileBlocks: page_link insert error for block %s target %q: %v", block.ID, target, err)
 				continue
 			}
@@ -770,7 +771,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 
 	// page_links reverse index (#545) — mirror IndexFileBlocks (see comment
 	// there). The block-row clear above cascades to page_links via FK.
-	stmtPageLink, err := tx.Prepare("INSERT OR IGNORE INTO page_links (source_notebook, source_section, source_page, source_block_id, target_raw, target_notebook, target_section, target_page, heading, alias) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)")
+	stmtPageLink, err := tx.Prepare("INSERT OR IGNORE INTO page_links (source, source_notebook, source_section, source_page, source_block_id, target_raw, target_notebook, target_section, target_page, heading, alias) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)")
 	if err != nil {
 		return 0, nil, fmt.Errorf("failed to prepare page_links insert: %w", err)
 	}
@@ -966,7 +967,7 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 				if pl[3] != "" {
 					alias = pl[3]
 				}
-				if _, err := stmtPageLink.Exec(res.Notebook, res.Section, res.Page, block.ID, target, heading, alias); err != nil {
+				if _, err := stmtPageLink.Exec(source, res.Notebook, res.Section, res.Page, block.ID, target, heading, alias); err != nil {
 					log.Printf("db.IndexScanResults: page_link insert error for block %s target %q: %v", block.ID, target, err)
 					continue
 				}

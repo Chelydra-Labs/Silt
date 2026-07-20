@@ -45,10 +45,22 @@ describe('Spellcheck extension (#196)', () => {
     mocks.checkWord.mockClear()
   })
 
-  it('underlines the misspelled word', () => {
+  it('disables browser-native spellcheck on the ProseMirror root', () => {
+    const { editor, cleanup } = mount('<p>ordinary text</p>')
+    try {
+      expect(editor.view.dom).toHaveAttribute('spellcheck', 'false')
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('still renders the themed decoration for a misspelled word', () => {
     const { editor, cleanup } = mount('<p>this is mispelled text</p>')
     try {
       expect(errorCount(editor)).toBe(1)
+      expect(
+        editor.view.dom.querySelector('.silt-spell-error')
+      ).toHaveTextContent('mispelled')
     } finally {
       cleanup()
     }

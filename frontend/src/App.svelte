@@ -67,6 +67,27 @@
       page: pageIsWithinSelection ? currentPage : ''
     }
   }
+
+  interface SourceNavigationRef extends RecentPageRef {
+    source?: string
+  }
+
+  export function resolveSourceNavigationTarget<T extends SourceNavigationRef>(
+    catalog: readonly T[],
+    target: SourceNavigationRef
+  ): SourceNavigationRef {
+    if (!target.source) return target
+    const source = target.source || 'vault'
+    return (
+      catalog.find(
+        (item) =>
+          (item.source || 'vault') === source &&
+          item.notebook === target.notebook &&
+          item.section === target.section &&
+          item.page === target.page
+      ) ?? target
+    )
+  }
 </script>
 
 <script lang="ts">
@@ -256,6 +277,7 @@
   let activeView = $state('notes')
   const views = [
     { id: 'notes', label: 'Notes', icon: 'description' },
+    { id: 'backlinks', label: 'Backlinks', icon: 'hub' },
     { id: 'tags', label: 'Tags', icon: 'label' },
     { id: 'tasks', label: 'Tasks', icon: 'checklist' }
   ]
@@ -418,6 +440,12 @@
   function selectView(view: string): void {
     if (view !== activeView && !confirmTemplateTransition()) return
     activeView = view
+  }
+
+  function showBacklinks(): void {
+    activeView = 'backlinks'
+    sidebarCollapsed = false
+    manuallyCollapsed = false
   }
 
   function openSectionContext(section: string): void {
@@ -1003,20 +1031,26 @@
     function handleNavigateToBlock(e: Event) {
       const d = (e as CustomEvent).detail
       if (d) {
+        const ref = resolveSourceNavigationTarget(navigationCatalog, {
+          source: d.source,
+          notebook: d.notebook,
+          section: d.section ?? '',
+          page: d.page
+        })
         // Standalone-task routing guard (#374). A `.silt` notebook ref
         // routes to the Tasks view instead of a raw page tab. The Tasks
         // view's `focusBlockId` prop handles scroll+highlight on mount.
         const target = routeJumpTarget({
-          notebook: d.notebook,
-          section: d.section,
-          page: d.page,
+          notebook: ref.notebook,
+          section: ref.section,
+          page: ref.page,
           blockTarget: d.blockId ? { blockId: d.blockId } : undefined
         })
         if (target.kind === 'tasks-view') {
           openTasksView(target.blockTarget?.blockId)
           return
         }
-        handleSearchJump(d.notebook, d.section, d.page, d.date, d.blockId)
+        handleSearchJump(ref.notebook, ref.section, ref.page, d.date, d.blockId)
       }
     }
     // Wiki-link navigation (#545). Opens the resolved page; optional heading
@@ -1024,10 +1058,16 @@
     function handleNavigateToPage(e: Event) {
       const d = (e as CustomEvent).detail
       if (!d?.notebook || !d?.page) return
+      const ref = resolveSourceNavigationTarget(navigationCatalog, {
+        source: d.source,
+        notebook: d.notebook,
+        section: d.section ?? '',
+        page: d.page
+      })
       handleSearchJump(
-        d.notebook,
-        d.section ?? '',
-        d.page,
+        ref.notebook,
+        ref.section,
+        ref.page,
         d.date ?? '',
         d.blockId ?? ''
       )
@@ -1546,11 +1586,12 @@
     handleSearchJump(res.notebook, res.section, res.page, res.file_date, res.id)
   }
 
-  // Whether the notes view has a complete (notebook/section/page) target.
+  // Whether an editor-bearing view has a complete page target. Backlinks owns
+  // the sidebar only, so the active note remains mounted beside it.
   // With tabs (#142), also requires an active tab so closing the last tab
   // returns to the blank view. displayedTabs ensures per-notebook scoping.
   let notesReady = $derived(
-    activeView === 'notes' &&
+    (activeView === 'notes' || activeView === 'backlinks') &&
       !!activeNotebook &&
       !!activePage &&
       !!activeTabId &&
@@ -1661,14 +1702,12 @@
       bind:sidebarCollapsed
       {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
-      onSwitcherClick={() => (showQuickSwitcher = true)}
-      onShortcutHelpClick={() => (showShortcutHelp = true)}
       onAIClick={getAIAvailability().drawerAvailable
         ? () => toggleAIChatDrawer()
         : undefined}
       aiOpen={aiChatDrawer.open}
     >
-      {#if activeView === 'notes'}
+      {#if activeView === 'notes' || activeView === 'backlinks'}
         <TabStrip
           tabs={displayedTabs}
           {activeTabId}
@@ -1849,7 +1888,7 @@
                 '-'} tab={activeTabId || '-'} dt={displayedTabs.length} nr={notesReady}
             </div>
           {/if}
-          {#if activeView === 'notes'}
+          {#if activeView === 'notes' || activeView === 'backlinks'}
             <PageBreadcrumb
               notebook={activeNotebook}
               section={activeSection}
@@ -1868,6 +1907,7 @@
                   },
                   'activate-only'
                 )}
+              onOpenBacklinks={showBacklinks}
             />
             {#if notesReady}
               <div

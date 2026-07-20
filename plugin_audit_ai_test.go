@@ -11,18 +11,16 @@ import (
 	"silt/backend/ai"
 )
 
-// resetAIAuditState clears the package-level in-memory log + writer so tests
-// don't leak state into each other. Tests that start the writer register their
-// own stop via t.Cleanup; this nils the pointer after, so the next test gets
-// the inline-fallback path until it explicitly starts a writer.
+// resetAIAuditState clears the package-level in-memory log + stops the writer
+// so tests don't leak state into each other. stopAIAuditWriter is idempotent
+// (no-op if the writer isn't running) and drains queued ops before exiting,
+// so no audit data is lost and no goroutine is orphaned.
 func resetAIAuditState(t *testing.T) {
 	t.Helper()
+	stopAIAuditWriter()
 	aiAuditMu.Lock()
 	aiAudit = nil
 	aiAuditMu.Unlock()
-	aiAuditWriterMu.Lock()
-	aiAuditWriter = nil
-	aiAuditWriterMu.Unlock()
 }
 
 // withAIAuditWriter starts the background writer for app.vaultPath and stops
