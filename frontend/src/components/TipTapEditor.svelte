@@ -1022,6 +1022,30 @@
     if (item) void onPageLinkPick(item)
   }
 
+  function onPageLinkAliasKeydown(event: KeyboardEvent): void {
+    if (event.isComposing) return
+
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      dismissPageLinkAlias()
+      return
+    }
+
+    const popup = pageLinkPopup
+    if (!popup?.items.length || popup.resolving) return
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      event.stopPropagation()
+      onPageLinkNavigate(event.key === 'ArrowDown' ? 1 : -1)
+    } else if (event.key === 'Enter' && popup.items[popup.selected]) {
+      event.preventDefault()
+      event.stopPropagation()
+      onPageLinkSelectActive()
+    }
+  }
+
   function retryPageLink(): void {
     const popup = pageLinkPopup
     if (!popup || popup.resolving) return
@@ -2532,15 +2556,11 @@
                     )
                   }
                 }}
-                onkeydown={(event) => {
-                  if (event.key !== 'Escape') return
-                  event.preventDefault()
-                  event.stopPropagation()
-                  dismissPageLinkAlias()
-                }}
+                onkeydown={onPageLinkAliasKeydown}
                 onfocus={(event) => event.currentTarget.select()}
                 placeholder="Link text"
                 aria-label="Page link display alias"
+                aria-haspopup="listbox"
               />
             </label>
           {/if}

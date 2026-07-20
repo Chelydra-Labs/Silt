@@ -296,6 +296,121 @@ describe('TipTapEditor page-link typeahead', () => {
     unmount()
   })
 
+  it('navigates page results with ArrowDown and ArrowUp from the alias input', async () => {
+    mocks.searchPages.mockResolvedValue([
+      page('Roadmap'),
+      page('Roadmap Archive'),
+      page('Roadmap Notes')
+    ])
+    const { container, getByRole, getByLabelText, editor, unmount } =
+      await mountEditor()
+    editor.commands.focus('end')
+    editor.commands.insertContent('[[road')
+    await vi.advanceTimersByTimeAsync(150)
+    await tick()
+
+    await fireEvent.click(getByRole('button', { name: 'Use display alias' }))
+    const alias = getByLabelText('Page link display alias') as HTMLInputElement
+    alias.focus()
+    const options = () =>
+      Array.from(
+        container.querySelectorAll<HTMLButtonElement>('[role="option"]')
+      )
+
+    expect(
+      options().map((option) => option.getAttribute('aria-selected'))
+    ).toEqual(['true', 'false', 'false'])
+    expect(await fireEvent.keyDown(alias, { key: 'ArrowDown' })).toBe(false)
+    expect(
+      options().map((option) => option.getAttribute('aria-selected'))
+    ).toEqual(['false', 'true', 'false'])
+    expect(document.activeElement).toBe(alias)
+
+    expect(await fireEvent.keyDown(alias, { key: 'ArrowUp' })).toBe(false)
+    expect(
+      options().map((option) => option.getAttribute('aria-selected'))
+    ).toEqual(['true', 'false', 'false'])
+    expect(document.activeElement).toBe(alias)
+    unmount()
+  })
+
+  it('selects the active page with Enter from the alias input', async () => {
+    mocks.searchPages.mockResolvedValue([
+      page('Roadmap'),
+      page('Roadmap Archive')
+    ])
+    mocks.resolvePageLink.mockImplementation(async (target: string) => ({
+      exists: true,
+      ambiguous: false,
+      shortest: target.endsWith('Roadmap Archive')
+        ? 'Roadmap Archive'
+        : 'Roadmap'
+    }))
+    const { getByRole, getByLabelText, editor, unmount } = await mountEditor()
+    editor.commands.focus('end')
+    editor.commands.insertContent('[[road')
+    await vi.advanceTimersByTimeAsync(150)
+    await tick()
+
+    await fireEvent.click(getByRole('button', { name: 'Use display alias' }))
+    const alias = getByLabelText('Page link display alias') as HTMLInputElement
+    await fireEvent.input(alias, { target: { value: 'Project history' } })
+    await fireEvent.keyDown(alias, { key: 'ArrowDown' })
+    expect(await fireEvent.keyDown(alias, { key: 'Enter' })).toBe(false)
+    await tick()
+
+    expect(mocks.resolvePageLink).toHaveBeenCalledWith(
+      'Work/Plans/Roadmap Archive'
+    )
+    const link = editor
+      .getJSON()
+      .content?.[0].content?.find((node) => node.type === 'pageLinkNode')
+    expect(link?.attrs).toMatchObject({
+      target: 'Roadmap Archive',
+      alias: 'Project history'
+    })
+    unmount()
+  })
+
+  it('does not consume unrelated or composing keys in the alias input', async () => {
+    mocks.searchPages.mockResolvedValue([
+      page('Roadmap'),
+      page('Roadmap Notes')
+    ])
+    const { container, getByRole, getByLabelText, editor, unmount } =
+      await mountEditor()
+    editor.commands.focus('end')
+    editor.commands.insertContent('[[road')
+    await vi.advanceTimersByTimeAsync(150)
+    await tick()
+
+    await fireEvent.click(getByRole('button', { name: 'Use display alias' }))
+    const alias = getByLabelText('Page link display alias') as HTMLInputElement
+    const typing = new KeyboardEvent('keydown', {
+      key: 'a',
+      bubbles: true,
+      cancelable: true
+    })
+    alias.dispatchEvent(typing)
+    expect(typing.defaultPrevented).toBe(false)
+
+    const composingArrow = new KeyboardEvent('keydown', {
+      key: 'ArrowDown',
+      bubbles: true,
+      cancelable: true,
+      isComposing: true
+    })
+    alias.dispatchEvent(composingArrow)
+    expect(composingArrow.defaultPrevented).toBe(false)
+    expect(
+      container
+        .querySelector<HTMLButtonElement>('[role="option"]')
+        ?.getAttribute('aria-selected')
+    ).toBe('true')
+    expect(mocks.resolvePageLink).not.toHaveBeenCalled()
+    unmount()
+  })
+
   it('sanitizes alias input and Escape closes the picker and restores editor focus', async () => {
     mocks.searchPages.mockResolvedValue([page('Roadmap')])
     const { container, getByRole, getByLabelText, editor, unmount } =

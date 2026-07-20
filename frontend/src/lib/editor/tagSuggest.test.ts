@@ -74,6 +74,13 @@ describe('TagSuggest context detection', () => {
     expect(contextFor('word.#tag')).toBeNull()
     expect(contextFor('#tag name')).toBeNull()
     expect(contextFor('#tag!')).toBeNull()
+    expect(contextFor('#123start')).toBeNull()
+    expect(contextFor('#étiquette')).toBeNull()
+  })
+
+  it('accepts tag paths through the backend byte limit only', () => {
+    expect(contextFor(`#${'a'.repeat(256)}`)?.query).toHaveLength(256)
+    expect(contextFor(`#${'a'.repeat(257)}`)).toBeNull()
   })
 
   it('rejects expanded selections and code', () => {
@@ -185,6 +192,7 @@ describe('applyTagSuggestion', () => {
     editor.commands.setTextSelection(6)
     expect(applyTagSuggestion(editor, 'work')).toBe(false)
     expect(applyTagSuggestion(editor, 'bad path')).toBe(false)
+    expect(applyTagSuggestion(editor, '123start')).toBe(false)
     expect(editor.state.doc.textContent).toBe('plain')
     editor.destroy()
   })

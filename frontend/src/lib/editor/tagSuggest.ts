@@ -10,7 +10,17 @@ import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import type { EditorState, Selection } from '@tiptap/pm/state'
 import { fuzzyScore } from '../navigationCatalog'
 
-const TAG_QUERY_RE = /^[\p{L}\p{N}_/-]*$/u
+const MAX_TAG_PATH_BYTES = 256
+const TAG_PATH_RE = /^[a-zA-Z][a-zA-Z0-9_/-]*$/
+const TAG_QUERY_RE = /^(?:[a-zA-Z][a-zA-Z0-9_/-]*)?$/
+
+function isValidTagPath(path: string): boolean {
+  return (
+    path.length > 0 &&
+    path.length <= MAX_TAG_PATH_BYTES &&
+    TAG_PATH_RE.test(path)
+  )
+}
 
 export interface TagContext {
   triggerPos: number
@@ -49,7 +59,9 @@ export function getTagContextAt(selection: Selection): TagContext | null {
   if (trigger > 0 && !/\s/.test(textBefore[trigger - 1])) return null
 
   const query = textBefore.slice(trigger + 1)
-  if (!TAG_QUERY_RE.test(query)) return null
+  if (query.length > MAX_TAG_PATH_BYTES || !TAG_QUERY_RE.test(query)) {
+    return null
+  }
 
   const blockStart = $from.start()
   return {
@@ -128,7 +140,7 @@ export function filterTags(
 
 export function applyTagSuggestion(editor: Editor, path: string): boolean {
   const ctx = getTagContext(editor.state)
-  if (!ctx || !path || !TAG_QUERY_RE.test(path)) return false
+  if (!ctx || !isValidTagPath(path)) return false
 
   const text = `#${path}`
   const tr = editor.state.tr

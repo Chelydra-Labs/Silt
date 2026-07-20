@@ -17,8 +17,9 @@ const (
 	MaxTagPathBytes     = 256
 )
 
-// tagPathRegex enforces the canonical tag-path character contract shared by
-// the indexer (backend/db.tagRegex) and the editor tag-suggest extension.
+// tagPathRegex mirrors the character grammar used by the indexer
+// (backend/db.tagRegex). IsValidTagPath adds the byte limit for its canonical
+// consumers: RecordTagUsage and recent-tag normalization.
 // A valid tag path starts with an ASCII letter and contains only ASCII
 // letters, digits, underscores, hyphens, and slashes.
 var tagPathRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_/-]*$`)

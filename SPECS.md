@@ -509,7 +509,7 @@ Typing `#` at block start opens a typeahead listing tags from the index. The lis
 
 5.5 Block Reference & Embed Typeahead
 
-Typing `((` opens a block-reference picker listing indexed blocks (filterable by content). Selecting inserts `((uuid))` as an inline atomic `blockReferenceNode`. Typing `{{embed:` opens the embed picker; selecting inserts `{{embed:uuid}}` as a block-level atomic `embedNode`. Both resolve via `ResolveBlockReference` on render.
+Typing `((` opens a block-reference picker listing indexed blocks (filterable by content). Selecting inserts `((uuid))` as an inline atomic `blockReferenceNode`. An embed picker for `{{embed:uuid}}` is not currently implemented; existing embed tokens are still parsed and rendered as block-level atomic `embedNode` values and resolve via `ResolveBlockReference`.
 
 5.6 Backlinks Panel
 
