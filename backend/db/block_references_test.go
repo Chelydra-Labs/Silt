@@ -1,0 +1,395 @@
+package db
+
+import (
+	"database/sql"
+	"fmt"
+	"testing"
+
+	"silt/backend/parser"
+)
+
+// countBlockReferences returns the total row count of block_references.
+func countBlockReferences(t *testing.T, dm *DatabaseManager) int {
+	t.Helper()
+	var n int
+	if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM block_references").Scan(&n); err != nil {
+		t.Fatalf("count block_references: %v", err)
+	}
+	return n
+}
+
+// migrationMarkerApplied reports whether schema_migrations has the named row.
+func migrationMarkerApplied(t *testing.T, dm *DatabaseManager, name string) bool {
+	t.Helper()
+	var appliedAt int64
+	err := dm.SQLDB().QueryRow("SELECT applied_at FROM schema_migrations WHERE name = ?", name).Scan(&appliedAt)
+	if err == sql.ErrNoRows {
+		return false
+	}
+	if err != nil {
+		t.Fatalf("probe marker %s: %v", name, err)
+	}
+	return true
+}
+
+// legacyBlocksSchema is the pre-block_references schema seed: blocks table
+// without block_references / schema_migrations. We can't easily simulate a
+// true legacy vault (the schema init creates block_references eagerly), so
+// the backfill tests instead drop block_references + the marker, seed blocks,
+// then re-run the backfill against the seeded blocks.
+func seedLegacyBlocks(t *testing.T, dm *DatabaseManager, blocks []parser.ParsedBlock) {
+	t.Helper()
+	for _, b := range blocks {
+		var parentID interface{}
+		if b.ParentID != "" {
+			parentID = b.ParentID
+		}
+		_, err := dm.SQLDB().Exec(
+			"INSERT INTO blocks (id, parent_id, source, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, 'vault', 'NB', 'Sec', 'Pg', '2026-07-20', 0, ?, ?, ?, 1)",
+			b.ID, parentID, string(b.Type), b.RawText, b.CleanText,
+		)
+		if err != nil {
+			t.Fatalf("seed block %s: %v", b.ID, err)
+		}
+	}
+}
+
+// resetBlockReferencesForBackfillTest wipes block_references + the marker so
+// the backfill can be exercised against pre-existing blocks rows. Mirrors a
+// vault that was upgraded but whose migration crashed before commit.
+func resetBlockReferencesForBackfillTest(t *testing.T, dm *DatabaseManager) {
+	t.Helper()
+	if _, err := dm.SQLDB().Exec("DELETE FROM block_references"); err != nil {
+		t.Fatalf("clear block_references: %v", err)
+	}
+	if _, err := dm.SQLDB().Exec(fmt.Sprintf("DELETE FROM schema_migrations WHERE name = '%s'", blockReferencesBackfillMarker)); err != nil {
+		t.Fatalf("clear marker: %v", err)
+	}
+}
+
+// TestBlockReferences_FreshSchemaHasEmptyTable verifies a brand-new in-memory
+// DB creates block_references, the reverse index, and the schema_migrations
+// ledger with no rows and the backfill marker already applied (no-op since
+// there were no pre-existing blocks).
+func TestBlockReferences_FreshSchemaHasEmptyTable(t *testing.T) {
+	dm := newTestDB(t)
+	if got := countBlockReferences(t, dm); got != 0 {
+		t.Fatalf("fresh block_references should be empty, got %d rows", got)
+	}
+	if !migrationMarkerApplied(t, dm, blockReferencesBackfillMarker) {
+		t.Fatalf("backfill marker %q should be applied on fresh schema", blockReferencesBackfillMarker)
+	}
+	// Index and ledger must exist.
+	var idxExists, ledgerExists int
+	if err := dm.SQLDB().QueryRow("SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_block_references_target'").Scan(&idxExists); err != nil {
+		t.Fatalf("probe index: %v", err)
+	}
+	if idxExists != 1 {
+		t.Errorf("expected idx_block_references_target to exist, got count=%d", idxExists)
+	}
+	if err := dm.SQLDB().QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='schema_migrations'").Scan(&ledgerExists); err != nil {
+		t.Fatalf("probe ledger: %v", err)
+	}
+	if ledgerExists != 1 {
+		t.Errorf("expected schema_migrations table to exist, got count=%d", ledgerExists)
+	}
+}
+
+// TestBlockReferences_BackfillPopulatesFromLegacyBlocks verifies that
+// pre-existing blocks.raw_content tokens are extracted into block_references
+// by the migration's backfill pass. Mirrors an upgrade from a pre-#704 vault.
+func TestBlockReferences_BackfillPopulatesFromLegacyBlocks(t *testing.T) {
+	dm := newTestDB(t)
+	seedLegacyBlocks(t, dm, []parser.ParsedBlock{
+		noteBlock(uuidA, "ref to target "+("(("+uuidB+"))")+" and embed "+"{{embed:"+uuidC+"}}"),
+		noteBlock(uuidB, "target block"),
+		noteBlock(uuidC, "another target"),
+		noteBlock(uuidD, "no refs here"),
+	})
+	resetBlockReferencesForBackfillTest(t, dm)
+
+	if err := backfillBlockReferences(dm.SQLDB()); err != nil {
+		t.Fatalf("backfillBlockReferences: %v", err)
+	}
+
+	// Expected edges: A->B (block-ref), A->C (embed). Both targets exist,
+	// neither is dangling. D contributes nothing.
+	if got := countBlockReferences(t, dm); got != 2 {
+		t.Fatalf("expected 2 edges after backfill, got %d", got)
+	}
+	assertEdgeExists(t, dm, uuidA, uuidB, "block-ref")
+	assertEdgeExists(t, dm, uuidA, uuidC, "embed")
+	if !migrationMarkerApplied(t, dm, blockReferencesBackfillMarker) {
+		t.Errorf("backfill marker should be applied after successful backfill")
+	}
+}
+
+// TestBlockReferences_BackfillCollapsesDuplicateTokens verifies that the
+// source-block PK collapses same-kind duplicate tokens in one block: a block
+// with two ((uuid)) refs to the SAME target produces exactly one edge.
+func TestBlockReferences_BackfillCollapsesDuplicateTokens(t *testing.T) {
+	dm := newTestDB(t)
+	seedLegacyBlocks(t, dm, []parser.ParsedBlock{
+		// Two block-ref tokens to uuidA in one block + one embed to uuidA.
+		noteBlock(uuidB, "(("+uuidA+")) then (("+uuidA+")) again and {{embed:"+uuidA+"}}"),
+		noteBlock(uuidA, "target"),
+	})
+	resetBlockReferencesForBackfillTest(t, dm)
+
+	if err := backfillBlockReferences(dm.SQLDB()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	// One block-ref edge (deduped) + one embed edge.
+	if got := countBlockReferences(t, dm); got != 2 {
+		t.Fatalf("expected 2 edges after dedupe, got %d", got)
+	}
+	assertEdgeExists(t, dm, uuidB, uuidA, "block-ref")
+	assertEdgeExists(t, dm, uuidB, uuidA, "embed")
+}
+
+// TestBlockReferences_BackfillRetainsDanglingTargetEdges verifies the
+// source-only-FK design: an edge to a target block ID that does NOT exist in
+// `blocks` is still retained. The backlink re-resolves when the target is
+// later indexed without requiring source re-indexing.
+func TestBlockReferences_BackfillRetainsDanglingTargetEdges(t *testing.T) {
+	dm := newTestDB(t)
+	// uuidA references uuidB which is NOT in the blocks table.
+	seedLegacyBlocks(t, dm, []parser.ParsedBlock{
+		noteBlock(uuidA, "dangling ref "+("(("+uuidB+"))")),
+	})
+	resetBlockReferencesForBackfillTest(t, dm)
+
+	if err := backfillBlockReferences(dm.SQLDB()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	// The dangling edge must survive (source-only FK; no target FK).
+	assertEdgeExists(t, dm, uuidA, uuidB, "block-ref")
+	if got := countBlockReferences(t, dm); got != 1 {
+		t.Fatalf("expected 1 dangling edge retained, got %d", got)
+	}
+}
+
+// TestBlockReferences_BackfillIdempotentReopen verifies that calling
+// backfillBlockReferences a second time (warm reopen) is a no-op when the
+// marker is present: no duplicate edges, no spurious work.
+func TestBlockReferences_BackfillIdempotentReopen(t *testing.T) {
+	dm := newTestDB(t)
+	seedLegacyBlocks(t, dm, []parser.ParsedBlock{
+		noteBlock(uuidA, "ref "+("(("+uuidB+"))")),
+		noteBlock(uuidB, "target"),
+	})
+	resetBlockReferencesForBackfillTest(t, dm)
+
+	if err := backfillBlockReferences(dm.SQLDB()); err != nil {
+		t.Fatalf("first backfill: %v", err)
+	}
+	firstCount := countBlockReferences(t, dm)
+
+	// Simulate a warm reopen by calling backfill again — must short-circuit.
+	if err := backfillBlockReferences(dm.SQLDB()); err != nil {
+		t.Fatalf("second backfill (warm reopen): %v", err)
+	}
+	secondCount := countBlockReferences(t, dm)
+	if firstCount != secondCount {
+		t.Fatalf("warm reopen changed row count: %d -> %d", firstCount, secondCount)
+	}
+}
+
+// TestBlockReferences_BackfillRedoneAfterInterruptedMigration verifies
+// restart-safety: if the marker is missing (crash before commit), the next
+// backfill call redoes the work. Combined with the idempotent test above
+// this proves the marker is the sole gate.
+func TestBlockReferences_BackfillRedoneAfterInterruptedMigration(t *testing.T) {
+	dm := newTestDB(t)
+	seedLegacyBlocks(t, dm, []parser.ParsedBlock{
+		noteBlock(uuidA, "ref "+("(("+uuidB+"))")+" and "+"{{embed:"+uuidC+"}}"),
+		noteBlock(uuidB, "target b"),
+		noteBlock(uuidC, "target c"),
+	})
+
+	// Simulate a crash mid-migration: wipe both the rows and the marker, then
+	// run the backfill. It must rebuild the full edge set.
+	resetBlockReferencesForBackfillTest(t, dm)
+	if err := backfillBlockReferences(dm.SQLDB()); err != nil {
+		t.Fatalf("backfill after simulated crash: %v", err)
+	}
+	if got := countBlockReferences(t, dm); got != 2 {
+		t.Fatalf("after crash recovery expected 2 edges, got %d", got)
+	}
+	if !migrationMarkerApplied(t, dm, blockReferencesBackfillMarker) {
+		t.Errorf("marker must be set after crash-recovery backfill")
+	}
+
+	// Now simulate ANOTHER crash (drop marker only, keep edges) and rerun.
+	// The backfill must remain idempotent at the row level — INSERT OR IGNORE
+	// against the existing PK prevents duplicates.
+	if _, err := dm.SQLDB().Exec(fmt.Sprintf("DELETE FROM schema_migrations WHERE name = '%s'", blockReferencesBackfillMarker)); err != nil {
+		t.Fatalf("clear marker for second crash: %v", err)
+	}
+	if err := backfillBlockReferences(dm.SQLDB()); err != nil {
+		t.Fatalf("backfill after second simulated crash: %v", err)
+	}
+	if got := countBlockReferences(t, dm); got != 2 {
+		t.Fatalf("after second crash expected 2 edges (no dupes), got %d", got)
+	}
+}
+
+// TestBlockReferences_WarmReopenPersistsEdges verifies the on-disk lifecycle:
+// index blocks, close, reopen — the block_references table and its rows
+// persist across restarts (the backfill marker prevents re-running).
+func TestBlockReferences_WarmReopenPersistsEdges(t *testing.T) {
+	dm, dbPath := newOnDiskDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, "ref "+("(("+uuidA+"))")+" and embed "+"{{embed:"+uuidA+"}}"),
+	})
+	// Phase 3 will wire the indexer; until then, manually verify the table
+	// structure survives a reopen and the marker persists. After Phase 3
+	// ships, the backfill path is still exercised when the on-disk DB has
+	// pre-existing blocks (legacy upgrade path).
+	before := countBlockReferences(t, dm)
+	markerBefore := migrationMarkerApplied(t, dm, blockReferencesBackfillMarker)
+
+	if err := dm.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	dm2, err := NewDatabaseManager(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer dm2.Close()
+
+	after := countBlockReferences(t, dm2)
+	markerAfter := migrationMarkerApplied(t, dm2, blockReferencesBackfillMarker)
+	if before != after {
+		t.Errorf("row count drifted across reopen: %d -> %d", before, after)
+	}
+	if markerBefore != markerAfter {
+		t.Errorf("marker state drifted across reopen: %v -> %v", markerBefore, markerAfter)
+	}
+	if !markerAfter {
+		t.Errorf("marker must remain applied after warm reopen")
+	}
+}
+
+// TestBlockReferences_FKCascadeOnSourceDelete verifies the source FK cascade:
+// deleting a source block from `blocks` removes its block_references rows.
+// (Target deletion does NOT cascade — source-only FK design.)
+func TestBlockReferences_FKCascadeOnSourceDelete(t *testing.T) {
+	dm := newTestDB(t)
+	seedLegacyBlocks(t, dm, []parser.ParsedBlock{
+		noteBlock(uuidA, "ref "+("(("+uuidB+"))")),
+		noteBlock(uuidB, "target"),
+	})
+	resetBlockReferencesForBackfillTest(t, dm)
+	if err := backfillBlockReferences(dm.SQLDB()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	assertEdgeExists(t, dm, uuidA, uuidB, "block-ref")
+
+	// Delete the source block — cascade must remove the edge.
+	if _, err := dm.SQLDB().Exec("DELETE FROM blocks WHERE id = ?", uuidA); err != nil {
+		t.Fatalf("delete source block: %v", err)
+	}
+	if got := countBlockReferences(t, dm); got != 0 {
+		t.Fatalf("source cascade should have removed the edge, got %d rows", got)
+	}
+}
+
+// TestBlockReferences_TargetDeletionKeepsEdge verifies the asymmetry: a target
+// block deletion does NOT cascade through block_references (no target FK).
+// The edge survives as a derived source projection of markdown intent.
+func TestBlockReferences_TargetDeletionKeepsEdge(t *testing.T) {
+	dm := newTestDB(t)
+	seedLegacyBlocks(t, dm, []parser.ParsedBlock{
+		noteBlock(uuidA, "ref "+("(("+uuidB+"))")),
+		noteBlock(uuidB, "target"),
+	})
+	resetBlockReferencesForBackfillTest(t, dm)
+	if err := backfillBlockReferences(dm.SQLDB()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	// Delete the TARGET block — the edge must remain (dangling by design).
+	if _, err := dm.SQLDB().Exec("DELETE FROM blocks WHERE id = ?", uuidB); err != nil {
+		t.Fatalf("delete target block: %v", err)
+	}
+	assertEdgeExists(t, dm, uuidA, uuidB, "block-ref")
+}
+
+// TestBlockReferences_ExtractionIncludesCodeBlocks verifies that the backfill
+// walks every block row regardless of type, mirroring the current LIKE scan
+// that reads raw_content of CODE blocks too. Page-link CODE exclusion is a
+// different indexer path and does not apply here.
+func TestBlockReferences_ExtractionIncludesCodeBlocks(t *testing.T) {
+	dm := newTestDB(t)
+	seedLegacyBlocks(t, dm, []parser.ParsedBlock{
+		{ID: uuidA, Type: parser.BlockCode, RawText: "code with ((" + uuidB + ")) inline", CleanText: "code", LineNumber: 1},
+		noteBlock(uuidB, "target"),
+	})
+	resetBlockReferencesForBackfillTest(t, dm)
+	if err := backfillBlockReferences(dm.SQLDB()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	assertEdgeExists(t, dm, uuidA, uuidB, "block-ref")
+}
+
+// assertEdgeExists fails the test if the (source, target, kind) edge is not
+// present in block_references.
+func assertEdgeExists(t *testing.T, dm *DatabaseManager, sourceID, targetID, kind string) {
+	t.Helper()
+	var n int
+	err := dm.SQLDB().QueryRow(
+		"SELECT COUNT(*) FROM block_references WHERE source_block_id = ? AND target_block_id = ? AND kind = ?",
+		sourceID, targetID, kind,
+	).Scan(&n)
+	if err != nil {
+		t.Fatalf("probe edge %s->%s (%s): %v", sourceID, targetID, kind, err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 edge %s->%s (%s), got %d", sourceID, targetID, kind, n)
+	}
+}
+
+// TestBlockReferences_KindValuesMatchBacklinkConstants guards against the
+// stored kind values drifting from the BacklinkKind string values — the
+// indexed lookup maps the column directly to the result kind.
+func TestBlockReferences_KindValuesMatchBacklinkConstants(t *testing.T) {
+	dm := newTestDB(t)
+	// One source block carrying both a block-ref and an embed to distinct
+	// targets, so both kind values are exercised in a single DB.
+	seedLegacyBlocks(t, dm, []parser.ParsedBlock{
+		noteBlock(uuidB, "block with "+("(("+uuidA+"))")+" and "+"{{embed:"+uuidC+"}}"),
+		noteBlock(uuidA, "target a"),
+		noteBlock(uuidC, "target c"),
+	})
+	resetBlockReferencesForBackfillTest(t, dm)
+	if err := backfillBlockReferences(dm.SQLDB()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+
+	cases := []struct {
+		target string
+		kind   BacklinkKind
+	}{
+		{uuidA, BacklinkBlockRef},
+		{uuidC, BacklinkEmbed},
+	}
+	for _, c := range cases {
+		var stored string
+		err := dm.SQLDB().QueryRow(
+			"SELECT kind FROM block_references WHERE source_block_id = ? AND target_block_id = ?",
+			uuidB, c.target,
+		).Scan(&stored)
+		if err != nil {
+			t.Fatalf("select kind for target=%s: %v", c.target, err)
+		}
+		if stored != string(c.kind) {
+			t.Errorf("kind mismatch: stored %q, expected %q", stored, c.kind)
+		}
+	}
+}

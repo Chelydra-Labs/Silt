@@ -4,6 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
+
+	"silt/backend/parser"
 )
 
 func (dm *DatabaseManager) initSchema() error {
@@ -311,6 +314,66 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create page_links source index: %w", err)
 	}
 
+	// Block References Table — the reverse index of ((uuid)) block-refs and
+	// {{embed:uuid}} embeds parsed off block bodies (#704). Each row is one
+	// distinct (source_block_id, target_block_id, kind) edge; the PK
+	// collapses same-kind duplicate tokens in one source block. Re-derivable
+	// from markdown (rule 4 — SQLite is working memory); the markdown is the
+	// source of truth. Replaces the leading-wildcard raw_content LIKE scans
+	// in backlinks.go with an indexed reverse lookup.
+	//
+	// Source-only FK by design: the source edge survives a missing target
+	// (deleted target, not-yet-indexed target, hand-edited markdown, a file
+	// indexed later). A target FK would force the row to be dropped whenever
+	// the target is absent and the edge would never re-resolve when the
+	// target subsequently appears without a source re-index. The reverse
+	// index on (target_block_id, kind) serves the backlinks panel's
+	// `target_block_id IN (...)` lookup; target existence is resolved at
+	// query time by joining against the live `blocks` rows for the target
+	// page, so a dangling edge is silently inert until the target reappears.
+	// Mirrors task_dependencies' source-side cascade semantics (#301) minus
+	// the target-side cascade, which is intentionally absent here.
+	createBlockReferencesTable := `
+	CREATE TABLE IF NOT EXISTS block_references (
+		source_block_id TEXT NOT NULL,
+		target_block_id TEXT NOT NULL,
+		kind            TEXT NOT NULL,  -- 'block-ref' | 'embed'
+		PRIMARY KEY (source_block_id, target_block_id, kind),
+		FOREIGN KEY(source_block_id) REFERENCES blocks(id) ON DELETE CASCADE
+	);`
+	if _, err := db.Exec(createBlockReferencesTable); err != nil {
+		return fmt.Errorf("failed to create block_references table: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_block_references_target ON block_references(target_block_id, kind);`); err != nil {
+		return fmt.Errorf("failed to create block_references reverse-lookup index: %w", err)
+	}
+
+	// Schema-migrations ledger — narrow, general-purpose marker table for
+	// restart-safe one-shot migrations whose completion cannot be inferred
+	// from `CREATE TABLE IF NOT EXISTS` alone (e.g. backfills over existing
+	// rows). A row {name, applied_at} is inserted only after the migration
+	// body commits inside the same transaction, so an interrupted migration
+	// rolls back the marker too and re-runs cleanly on the next open.
+	if _, err := db.Exec(`
+	CREATE TABLE IF NOT EXISTS schema_migrations (
+		name       TEXT PRIMARY KEY,
+		applied_at INTEGER NOT NULL
+	);`); err != nil {
+		return fmt.Errorf("failed to create schema_migrations ledger: %w", err)
+	}
+
+	// Warm-upgrade backfill (#704): existing `blocks.raw_content` rows carry
+	// literal ((uuid)) / {{embed:uuid}} tokens that were never projected
+	// into block_references. Warm startup skips unchanged files (rule 4 —
+	// files table mtime+size gate), so without this backfill an upgraded
+	// vault would silently lose every pre-existing block-ref/embed backlink
+	// until each source file is touched and re-indexed. Restart-safe: the
+	// schema_migrations marker is inserted in the same tx as the backfill,
+	// so a crash rolls both back and the next open redoes the work.
+	if err := backfillBlockReferences(db); err != nil {
+		return fmt.Errorf("failed to backfill block_references: %w", err)
+	}
+
 	// Create covered indexes
 	indexes := []string{
 		// #100: replace the pre-source idx_blocks_file (keyed on notebook..)
@@ -350,6 +413,108 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to initialize FTS index: %w", err)
 	}
 
+	return nil
+}
+
+// blockReferencesBackfillMarker is the schema_migrations row that records a
+// completed warm-upgrade backfill of block_references from pre-existing
+// blocks.raw_content (#704). Its presence means the backfill has already
+// run for this DB file; its absence means it must run (or re-run after a
+// crash rolled it back).
+const blockReferencesBackfillMarker = "block_references_backfill"
+
+// backfillBlockReferences populates block_references from existing
+// blocks.raw_content in one restart-safe transaction. Idempotent: if the
+// schema_migrations marker row already exists, this is a no-op. The marker
+// insert and the row extraction share a single tx, so a crash before commit
+// leaves neither behind and the next open redoes the work cleanly. Edges to
+// targets that are absent from `blocks` are retained (source-only FK
+// design — see the block_references table comment).
+func backfillBlockReferences(db *sql.DB) error {
+	var appliedAt int64
+	err := db.QueryRow("SELECT applied_at FROM schema_migrations WHERE name = ?", blockReferencesBackfillMarker).Scan(&appliedAt)
+	if err == nil {
+		// Already backfilled on a previous open. Nothing to do.
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("probe %s marker: %w", blockReferencesBackfillMarker, err)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin backfill tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Stream every existing block row. INSERT OR IGNORE collapses duplicates
+	// (same-kind tokens within one source block) via the PK. Reading id +
+	// raw_content is enough — the extractor walks raw_text exactly as the
+	// indexing path does, including CODE blocks.
+	rows, err := tx.Query("SELECT id, raw_content FROM blocks")
+	if err != nil {
+		return fmt.Errorf("scan blocks for backfill: %w", err)
+	}
+	type srcEdge struct {
+		sourceID, targetID, kind string
+	}
+	var edges []srcEdge
+	for rows.Next() {
+		var id, raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan block during backfill: %w", err)
+		}
+		for _, m := range parser.BlockRefRegex.FindAllStringSubmatch(raw, -1) {
+			if len(m) >= 2 && m[1] != "" {
+				edges = append(edges, srcEdge{id, m[1], string(BacklinkBlockRef)})
+			}
+		}
+		for _, m := range parser.EmbedRegex.FindAllStringSubmatch(raw, -1) {
+			if len(m) >= 2 && m[1] != "" {
+				edges = append(edges, srcEdge{id, m[1], string(BacklinkEmbed)})
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate blocks during backfill: %w", err)
+	}
+	rows.Close()
+
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO block_references (source_block_id, target_block_id, kind) VALUES (?, ?, ?)")
+	if err != nil {
+		return fmt.Errorf("prepare backfill insert: %w", err)
+	}
+	defer stmt.Close()
+	for _, e := range edges {
+		if _, err := stmt.Exec(e.sourceID, e.targetID, e.kind); err != nil {
+			return fmt.Errorf("backfill insert %s -> %s (%s): %w", e.sourceID, e.targetID, e.kind, err)
+		}
+	}
+
+	// foreign_key_check on the source side: every source_block_id MUST
+	// resolve to a blocks row (we just read them from the same table inside
+	// this tx, so this is a belt-and-suspenders assertion rather than a
+	// load-bearing gate). A failure here would indicate catalog corruption
+	// and abort the backfill so the next open redoes it.
+	var fkViolations int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM pragma_foreign_key_check").Scan(&fkViolations); err != nil {
+		return fmt.Errorf("foreign_key_check during backfill: %w", err)
+	}
+	if fkViolations > 0 {
+		return fmt.Errorf("foreign_key_check reported %d violation(s) during block_references backfill — catalog corruption, refusing to commit", fkViolations)
+	}
+
+	// Record completion inside the same tx so a crash before commit leaves
+	// neither the marker nor the rows visible to the next open.
+	if _, err := tx.Exec("INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)", blockReferencesBackfillMarker, time.Now().UnixNano()); err != nil {
+		return fmt.Errorf("record %s marker: %w", blockReferencesBackfillMarker, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit backfill tx: %w", err)
+	}
 	return nil
 }
 
