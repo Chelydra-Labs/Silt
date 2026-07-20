@@ -447,63 +447,72 @@ func backfillBlockReferences(db *sql.DB) error {
 	}
 	defer tx.Rollback()
 
-	// Stream every existing block row. INSERT OR IGNORE collapses duplicates
-	// (same-kind tokens within one source block) via the PK. Reading id +
-	// raw_content is enough — the extractor walks raw_text exactly as the
-	// indexing path does, including CODE blocks.
+	// Stream every existing block row, emitting edges inline rather than
+	// buffering them. INSERT OR IGNORE collapses duplicates (same-kind
+	// tokens within one source block) via the PK. Reading id + raw_content
+	// is enough — the extractor walks raw_text exactly as the indexing path
+	// does, including CODE blocks. The single prepared insert mirrors what
+	// IndexFileBlocks / IndexScanResults will use in Phase 3.
 	rows, err := tx.Query("SELECT id, raw_content FROM blocks")
 	if err != nil {
 		return fmt.Errorf("scan blocks for backfill: %w", err)
 	}
-	type srcEdge struct {
-		sourceID, targetID, kind string
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO block_references (source_block_id, target_block_id, kind) VALUES (?, ?, ?)")
+	if err != nil {
+		rows.Close()
+		return fmt.Errorf("prepare backfill insert: %w", err)
 	}
-	var edges []srcEdge
 	for rows.Next() {
 		var id, raw string
 		if err := rows.Scan(&id, &raw); err != nil {
 			rows.Close()
+			stmt.Close()
 			return fmt.Errorf("scan block during backfill: %w", err)
 		}
 		for _, m := range parser.BlockRefRegex.FindAllStringSubmatch(raw, -1) {
 			if len(m) >= 2 && m[1] != "" {
-				edges = append(edges, srcEdge{id, m[1], string(BacklinkBlockRef)})
+				if _, err := stmt.Exec(id, m[1], string(BacklinkBlockRef)); err != nil {
+					rows.Close()
+					stmt.Close()
+					return fmt.Errorf("backfill insert %s -> %s (block-ref): %w", id, m[1], err)
+				}
 			}
 		}
 		for _, m := range parser.EmbedRegex.FindAllStringSubmatch(raw, -1) {
 			if len(m) >= 2 && m[1] != "" {
-				edges = append(edges, srcEdge{id, m[1], string(BacklinkEmbed)})
+				if _, err := stmt.Exec(id, m[1], string(BacklinkEmbed)); err != nil {
+					rows.Close()
+					stmt.Close()
+					return fmt.Errorf("backfill insert %s -> %s (embed): %w", id, m[1], err)
+				}
 			}
 		}
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
+		stmt.Close()
 		return fmt.Errorf("iterate blocks during backfill: %w", err)
 	}
 	rows.Close()
+	stmt.Close()
 
-	stmt, err := tx.Prepare("INSERT OR IGNORE INTO block_references (source_block_id, target_block_id, kind) VALUES (?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare backfill insert: %w", err)
+	// Scoped integrity assertion: every block_references row we just wrote
+	// must resolve to a blocks row via the source FK. Scoped to
+	// block_references only — pragma_foreign_key_check (no args) returns
+	// violations across ALL tables and would brick vault opens on a
+	// pre-existing orphan in task_dependencies / page_links / block_meta /
+	// tasks / tags that is unrelated to this migration. Under FK=ON at
+	// initSchema, this count is structurally 0 for the rows we just
+	// inserted; the assertion exists to fail loudly on catalog corruption
+	// rather than to gate normal operation.
+	var sourceOrphans int
+	if err := tx.QueryRow(
+		"SELECT COUNT(*) FROM block_references br LEFT JOIN blocks b ON b.id = br.source_block_id WHERE b.id IS NULL",
+	).Scan(&sourceOrphans); err != nil {
+		return fmt.Errorf("scoped FK check during backfill: %w", err)
 	}
-	defer stmt.Close()
-	for _, e := range edges {
-		if _, err := stmt.Exec(e.sourceID, e.targetID, e.kind); err != nil {
-			return fmt.Errorf("backfill insert %s -> %s (%s): %w", e.sourceID, e.targetID, e.kind, err)
-		}
-	}
-
-	// foreign_key_check on the source side: every source_block_id MUST
-	// resolve to a blocks row (we just read them from the same table inside
-	// this tx, so this is a belt-and-suspenders assertion rather than a
-	// load-bearing gate). A failure here would indicate catalog corruption
-	// and abort the backfill so the next open redoes it.
-	var fkViolations int
-	if err := tx.QueryRow("SELECT COUNT(*) FROM pragma_foreign_key_check").Scan(&fkViolations); err != nil {
-		return fmt.Errorf("foreign_key_check during backfill: %w", err)
-	}
-	if fkViolations > 0 {
-		return fmt.Errorf("foreign_key_check reported %d violation(s) during block_references backfill — catalog corruption, refusing to commit", fkViolations)
+	if sourceOrphans > 0 {
+		return fmt.Errorf("block_references backfill produced %d source-orphan row(s) — catalog corruption, refusing to commit", sourceOrphans)
 	}
 
 	// Record completion inside the same tx so a crash before commit leaves

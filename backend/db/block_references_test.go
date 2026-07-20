@@ -148,6 +148,48 @@ func TestBlockReferences_BackfillCollapsesDuplicateTokens(t *testing.T) {
 	assertEdgeExists(t, dm, uuidB, uuidA, "embed")
 }
 
+// TestBlockReferences_BackfillIgnoresUnrelatedFKOrphans verifies that the
+// scoped integrity assertion does NOT brick the backfill when an unrelated
+// FK'd table (e.g. task_dependencies) carries a pre-existing orphan row.
+// Regression for the original unscoped pragma_foreign_key_check that would
+// have made NewDatabaseManager fail on any vault with a stray orphan in any
+// FK'd table.
+func TestBlockReferences_BackfillIgnoresUnrelatedFKOrphans(t *testing.T) {
+	dm := newTestDB(t)
+	seedLegacyBlocks(t, dm, []parser.ParsedBlock{
+		noteBlock(uuidA, "ref "+("(("+uuidB+"))")),
+		noteBlock(uuidB, "target"),
+	})
+	// Inject an orphan row into task_dependencies by temporarily disabling
+	// FK enforcement on the connection (orphan cannot be inserted under
+	// FK=ON). This mirrors a vault that accumulated the orphan under a
+	// pre-FK enforcement era or via an external tool.
+	db := dm.SQLDB()
+	if _, err := db.Exec("PRAGMA foreign_keys = OFF"); err != nil {
+		t.Fatalf("disable FKs: %v", err)
+	}
+	if _, err := db.Exec(
+		"INSERT INTO task_dependencies (block_id, blocked_by_id) VALUES (?, ?)",
+		uuidC, uuidD, // both absent from blocks → orphan
+	); err != nil {
+		t.Fatalf("seed task_dependencies orphan: %v", err)
+	}
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		t.Fatalf("re-enable FKs: %v", err)
+	}
+
+	resetBlockReferencesForBackfillTest(t, dm)
+	// The scoped FK check inspects only block_references.source_block_id, so
+	// the unrelated task_dependencies orphan must NOT abort the backfill.
+	if err := backfillBlockReferences(db); err != nil {
+		t.Fatalf("backfill must succeed despite unrelated FK orphan: %v", err)
+	}
+	assertEdgeExists(t, dm, uuidA, uuidB, "block-ref")
+	if !migrationMarkerApplied(t, dm, blockReferencesBackfillMarker) {
+		t.Errorf("marker should be applied after successful backfill")
+	}
+}
+
 // TestBlockReferences_BackfillRetainsDanglingTargetEdges verifies the
 // source-only-FK design: an edge to a target block ID that does NOT exist in
 // `blocks` is still retained. The backlink re-resolves when the target is
@@ -237,21 +279,26 @@ func TestBlockReferences_BackfillRedoneAfterInterruptedMigration(t *testing.T) {
 }
 
 // TestBlockReferences_WarmReopenPersistsEdges verifies the on-disk lifecycle:
-// index blocks, close, reopen — the block_references table and its rows
-// persist across restarts (the backfill marker prevents re-running).
+// the backfilled block_references rows + the schema_migrations marker
+// persist across a close/reopen (the backfill marker prevents re-running on
+// the warm path).
 func TestBlockReferences_WarmReopenPersistsEdges(t *testing.T) {
 	dm, dbPath := newOnDiskDB(t)
-	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
-		noteBlock(uuidA, "target"),
+	// Seed pre-existing blocks (mirrors a legacy vault pre-#704 upgrade),
+	// drop the marker so the backfill runs against them, then close+reopen.
+	seedLegacyBlocks(t, dm, []parser.ParsedBlock{
+		noteBlock(uuidA, "ref "+("(("+uuidB+"))")+" and embed "+"{{embed:"+uuidC+"}}"),
+		noteBlock(uuidB, "target b"),
+		noteBlock(uuidC, "target c"),
 	})
-	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
-		noteBlock(uuidB, "ref "+("(("+uuidA+"))")+" and embed "+"{{embed:"+uuidA+"}}"),
-	})
-	// Phase 3 will wire the indexer; until then, manually verify the table
-	// structure survives a reopen and the marker persists. After Phase 3
-	// ships, the backfill path is still exercised when the on-disk DB has
-	// pre-existing blocks (legacy upgrade path).
+	resetBlockReferencesForBackfillTest(t, dm)
+	if err := backfillBlockReferences(dm.SQLDB()); err != nil {
+		t.Fatalf("backfill before reopen: %v", err)
+	}
 	before := countBlockReferences(t, dm)
+	if before != 2 {
+		t.Fatalf("setup: expected 2 backfilled edges, got %d", before)
+	}
 	markerBefore := migrationMarkerApplied(t, dm, blockReferencesBackfillMarker)
 
 	if err := dm.Close(); err != nil {
@@ -268,12 +315,15 @@ func TestBlockReferences_WarmReopenPersistsEdges(t *testing.T) {
 	if before != after {
 		t.Errorf("row count drifted across reopen: %d -> %d", before, after)
 	}
-	if markerBefore != markerAfter {
-		t.Errorf("marker state drifted across reopen: %v -> %v", markerBefore, markerAfter)
-	}
 	if !markerAfter {
 		t.Errorf("marker must remain applied after warm reopen")
 	}
+	if markerBefore != markerAfter {
+		t.Errorf("marker state drifted across reopen: %v -> %v", markerBefore, markerAfter)
+	}
+	// Edges themselves must persist.
+	assertEdgeExists(t, dm2, uuidA, uuidB, "block-ref")
+	assertEdgeExists(t, dm2, uuidA, uuidC, "embed")
 }
 
 // TestBlockReferences_FKCascadeOnSourceDelete verifies the source FK cascade:
