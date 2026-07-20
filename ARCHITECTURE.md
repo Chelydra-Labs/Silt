@@ -528,6 +528,15 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   page switcher, and tab-overflow discovery. These surfaces continue to open
   pages through the application page-opening funnel rather than bypassing tab
   and notebook scoping.
+- **Typeaheads & backlinks** — `SearchPages` powers the `[[` page-link
+  autocomplete picker (case-insensitive substring over all distinct pages;
+  capped at 50, deterministic order). `RecordTagUsage` maintains an MRU
+  `recent_tags` list (capped at 12) that seeds the `#` tag-typeahead above
+  full index tags. `GetBacklinks` returns every inbound reference to a page
+  across three legs — `[[…]]` page-links (indexed reverse lookup, resolved
+  against the canonical page set), `((uuid))` block-refs, and `{{embed:uuid}}`
+  embeds (both via parameterized LIKE on target block IDs) — source-aware,
+  deduped, stably sorted. See ADR `docs/decisions/0006-backlinks-query-strategy.md`.
 - **AI providers** (#216, #218, #479, #632) — `GetAIProviderConfig` (key-scrubbed
   read; emits `has_key` flags + `features`, never the raw secret),
   `UpdateAIProviderConfig` (provider type / base URL / model / tuning — never
@@ -878,7 +887,21 @@ Cards are rendered as `role="button"` elements with `aria-grabbed`/`aria-label` 
 
 **Unified hub state.** The Board is not a standalone plugin — it shares one `TaskHubState` reactive store and one `buildQuery` SQL factory with the List and Calendar modes. The hub state (scope + filters + `focusDate` + `activeFilter` + `displayMode` + `groupBy` + `sort` + `columns` + saved views) is the single reactive source of truth the shell (`TasksHub.svelte`), the unified sidebar (`Sidebar.svelte`), and all three renderers read from and write to. The `scopeUserOverride` invariant (a user-narrowed scope survives an automatic scope change) lives in `setScope` / `narrowScopeTo` / `clearScopeOverride`.
 
-5.4 Search & Writing Aids
+5.4 Backlinks Panel
+
+The backlinks panel (`BacklinksSidebarPanel.svelte`) is a sidebar surface
+mounted when `activeView === 'backlinks'`, showing every inbound reference to
+the currently open page. It calls `GetBacklinks` (§4.3) on mount and reacts
+to `block:changed` events (debounced 200 ms) so edits that add/remove links
+refresh the list without a manual reload. Results are grouped by source page,
+each group listing its references with a kind badge (`[[` page link, `((`
+block reference, `{{` embed), a clean-content snippet (contextual 120-rune
+window centered on the reference token, with ellipsis markers), and
+click-to-navigate. The
+panel is empty-state-aware (no page open → prompt; no backlinks → hint with
+link syntax) and surfaces load/error states with `aria-live` regions.
+
+5.5 Search & Writing Aids
 
 Four editor/search features sharing a common substrate (ProseMirror decorations
 + transactions for in-editor work; the existing FTS5 index + atomic
@@ -1228,7 +1251,8 @@ Global settings — editor defaults, parsing rules, hotkeys, and the plugin regi
 
 Navigation preferences extend the `ui.*` tier with `expanded_sections`
 (notebook plus full relative section path), bounded timestamped `recent_pages`,
-and canonical `favorites`. These values and navigation order are normalized,
+bounded MRU `recent_tags` (capped at 12, case-insensitive dedupe, maintained by
+`RecordTagUsage`), and canonical `favorites`. These values and navigation order are normalized,
 deduplicated, reconciled after filesystem changes, and persisted through the
 serialized narrow config mutation path rather than a competing whole-navigation
 snapshot setter. The canonical navigation defaults are `Ctrl+N` for a new page,

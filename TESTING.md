@@ -125,11 +125,18 @@ manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
 
 **Smart Graph**
 - [ ] `#ns/sub/leaf` tags render as pills and aggregate hierarchically.
+- [ ] `#` typeahead opens on typing `#`; recent tags (MRU from `RecordTagUsage`)
+      appear first, then the full index; selecting records usage.
 - [ ] `((uuid))` reference: hover preview, click scrolls to source.
+- [ ] `((` typeahead opens a block-reference picker; selecting inserts
+      `((uuid))` as an inline atomic node.
 - [ ] `{{embed:uuid}}`: live portal; editing the embed updates the source and
       vice-versa.
 - [ ] `[[Page]]` / `[[Section/Page#Heading|alias]]`: chip resolves, click opens
       the page (heading scrolls); unresolved/ambiguous chips are non-links.
+- [ ] `[[` typeahead opens a page-link picker; calls `SearchPages` for a
+      server-side substring filter; selecting inserts the shortest-unique-path
+      as a `pageLinkNode`.
 - [ ] Unresolved chip: hover → "Create page" → page created in active
       notebook/section, chip becomes a link, navigates to the new page.
 - [ ] Ambiguous chip: hover → candidate pick list + "Create page" button;
@@ -142,6 +149,21 @@ manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
       block UUIDs unchanged.
 - [ ] Tab context: **Copy Page Path** (plain path) and **Copy Page Reference**
       (`[[shortest]]`).
+
+**Backlinks panel**
+- [ ] Breadcrumb "Backlinks" crumb opens the panel; it shows all inbound refs
+      (`[[…]]`, `((uuid))`, `{{embed:uuid}}`) for the active page, grouped by
+      source page with kind badges and snippets. (Manual verification: the panel
+      requires a live webview — no jsdom coverage.)
+- [ ] Adding/removing a `[[link]]`, `((ref))`, or `{{embed:}}` to the active
+      page refreshes the backlinks panel within ~200 ms (debounced
+      `block:changed` listener). (Manual only.)
+- [ ] Clicking a backlink item navigates to the source page via
+      `navigate-to-page`. A separate "Jump to exact block" button (shown when
+      `sourceBlockId` is present) scrolls to the specific block via
+      `navigate-to-block`.
+- [ ] Panel shows correct empty states: no page open → prompt; no backlinks →
+      hint with link/bracket syntax.
 
 **Autosave status**
 - [ ] Typing shows dirty tab only (no "Saving…" during debounce).
@@ -248,3 +270,7 @@ manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
   manual-only.
 - Cursor-position restore across the Edit↔Source round-trip is not yet
   implemented.
+- Backlinks panel, `[[`/`((`/`#` typeaheads, and the `SearchPages` IPC are
+  tested at the Go-unit and Vitest-mock level; the end-to-end typeahead
+  interaction (user typing `[[` → server result → picker render → insert)
+  requires a live webview and is manual-only.
