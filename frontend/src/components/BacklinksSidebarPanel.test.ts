@@ -6,6 +6,7 @@ import {
   screen,
   waitFor
 } from '@testing-library/svelte'
+import userEvent from '@testing-library/user-event'
 
 const mocks = vi.hoisted(() => ({
   getBacklinks: vi.fn(),
@@ -31,6 +32,7 @@ const links = [
     sourceNotebook: 'Work',
     sourceSection: 'Projects',
     sourcePage: 'Launch plan',
+    source: 'vault',
     sourceBlockId: '',
     snippet: 'See [[Research]] before launch.'
   },
@@ -39,6 +41,7 @@ const links = [
     sourceNotebook: 'Work',
     sourceSection: 'Projects',
     sourcePage: 'Launch plan',
+    source: 'vault',
     sourceBlockId: 'block-42',
     snippet: 'Evidence from ((block-7)).'
   },
@@ -47,6 +50,7 @@ const links = [
     sourceNotebook: 'Archive',
     sourceSection: '',
     sourcePage: 'Reading notes',
+    source: 'linked:archive',
     sourceBlockId: 'block-99',
     snippet: 'Embedded context for the review.'
   }
@@ -104,26 +108,67 @@ describe('BacklinksSidebarPanel', () => {
     window.addEventListener('navigate-to-block', onBlock)
 
     await fireEvent.click(
-      screen.getByRole('button', { name: 'Open page Launch plan' })
+      screen.getByRole('button', {
+        name: /Open block reference in page Launch plan/
+      })
     )
     expect((onPage.mock.calls[0][0] as CustomEvent).detail).toEqual({
       notebook: 'Work',
       section: 'Projects',
-      page: 'Launch plan'
+      page: 'Launch plan',
+      source: 'vault'
     })
 
     const exact = screen.getByRole('button', {
-      name: /Jump to block reference in Launch plan/
+      name: /Jump to exact block for block reference in Launch plan/
     })
-    exact.focus()
-    await fireEvent.keyDown(exact, { key: 'Enter' })
     await fireEvent.click(exact)
     expect((onBlock.mock.calls[0][0] as CustomEvent).detail).toEqual({
       notebook: 'Work',
       section: 'Projects',
       page: 'Launch plan',
-      blockId: 'block-42'
+      blockId: 'block-42',
+      source: 'vault'
     })
+
+    window.removeEventListener('navigate-to-page', onPage)
+    window.removeEventListener('navigate-to-block', onBlock)
+  })
+
+  it('keeps same-coordinate vault and linked backlinks in separate groups', async () => {
+    mocks.getBacklinks.mockResolvedValue([
+      links[0],
+      { ...links[0], source: 'linked:team-drive', sourceBlockId: 'linked-1' }
+    ])
+    renderPanel()
+
+    await screen.findByText('2 pages link here')
+    expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(2)
+  })
+
+  it('operates both row and exact-block actions from the keyboard', async () => {
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('2 pages link here')
+    const onPage = vi.fn()
+    const onBlock = vi.fn()
+    window.addEventListener('navigate-to-page', onPage)
+    window.addEventListener('navigate-to-block', onBlock)
+
+    const row = screen.getByRole('button', {
+      name: /Open embed in page Reading notes/
+    })
+    row.focus()
+    await user.keyboard('{Enter}')
+    expect(onPage).toHaveBeenCalledOnce()
+    expect(onBlock).not.toHaveBeenCalled()
+
+    const exact = screen.getByRole('button', {
+      name: /Jump to exact block for embed in Reading notes/
+    })
+    exact.focus()
+    await user.keyboard(' ')
+    expect(onBlock).toHaveBeenCalledOnce()
 
     window.removeEventListener('navigate-to-page', onPage)
     window.removeEventListener('navigate-to-block', onBlock)

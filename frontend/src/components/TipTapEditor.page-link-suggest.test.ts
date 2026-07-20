@@ -172,9 +172,9 @@ describe('TipTapEditor page-link typeahead', () => {
       container.querySelectorAll<HTMLButtonElement>('[role="option"]')
     )
     expect(options.map((option) => option.textContent?.trim())).toEqual([
-      'Plan Work / Plans',
-      'Planning Work / Plans',
-      'Airplane Notes Work / Plans'
+      'Plan Vault · Work / Plans',
+      'Planning Vault · Work / Plans',
+      'Airplane Notes Vault · Work / Plans'
     ])
 
     await fireEvent.click(options[0])
@@ -185,6 +185,70 @@ describe('TipTapEditor page-link typeahead', () => {
       .content?.[0].content?.find((node) => node.type === 'pageLinkNode')
     expect(link?.attrs).toMatchObject({ target: 'Plan', alias: null })
     expect(container.querySelector('.page-link-suggest')).toBeNull()
+    unmount()
+  })
+
+  it('distinguishes colliding roots and inserts the linked source qualification', async () => {
+    mocks.searchPages.mockResolvedValue([
+      page('Roadmap'),
+      { ...page('Roadmap'), source: 'linked:team-drive' }
+    ])
+    mocks.resolvePageLink.mockImplementation(async (target: string) => ({
+      exists: true,
+      shortest: target
+    }))
+    const { container, editor, unmount } = await mountEditor()
+    editor.commands.focus('end')
+    editor.commands.insertContent('[[road')
+    await vi.advanceTimersByTimeAsync(150)
+    await tick()
+
+    const options = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="option"]')
+    )
+    expect(options.map((option) => option.textContent?.trim())).toEqual([
+      'Roadmap Linked · team-drive · Work / Plans',
+      'Roadmap Vault · Work / Plans'
+    ])
+    await fireEvent.click(options[0])
+    await tick()
+
+    expect(mocks.resolvePageLink).toHaveBeenCalledWith(
+      'linked:team-drive/Work/Plans/Roadmap'
+    )
+    const link = editor
+      .getJSON()
+      .content?.[0].content?.find((node) => node.type === 'pageLinkNode')
+    expect(link?.attrs?.target).toBe('linked:team-drive/Work/Plans/Roadmap')
+    unmount()
+  })
+
+  it('uses an unqualified vault lookup while persisting the server shortest target', async () => {
+    mocks.searchPages.mockResolvedValue([
+      page('Roadmap'),
+      { ...page('Roadmap'), source: 'linked:team-drive' }
+    ])
+    mocks.resolvePageLink.mockResolvedValue({
+      exists: true,
+      shortest: 'Roadmap'
+    })
+    const { container, editor, unmount } = await mountEditor()
+    editor.commands.focus('end')
+    editor.commands.insertContent('[[road')
+    await vi.advanceTimersByTimeAsync(150)
+    await tick()
+
+    const vaultOption = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="option"]')
+    ).find((option) => option.textContent?.includes('Vault'))!
+    await fireEvent.click(vaultOption)
+    await tick()
+
+    expect(mocks.resolvePageLink).toHaveBeenCalledWith('Work/Plans/Roadmap')
+    const link = editor
+      .getJSON()
+      .content?.[0].content?.find((node) => node.type === 'pageLinkNode')
+    expect(link?.attrs?.target).toBe('Roadmap')
     unmount()
   })
 
@@ -213,6 +277,32 @@ describe('TipTapEditor page-link typeahead', () => {
       .getJSON()
       .content?.[0].content?.find((node) => node.type === 'pageLinkNode')
     expect(link?.attrs?.alias).toBe('Project map')
+    unmount()
+  })
+
+  it('sanitizes alias input and Escape closes the picker and restores editor focus', async () => {
+    mocks.searchPages.mockResolvedValue([page('Roadmap')])
+    const { container, getByRole, getByLabelText, editor, unmount } =
+      await mountEditor()
+    editor.commands.focus('end')
+    editor.commands.insertContent('[[')
+    await vi.advanceTimersByTimeAsync(150)
+    await tick()
+
+    await fireEvent.click(getByRole('button', { name: 'Use display alias' }))
+    const alias = getByLabelText('Page link display alias') as HTMLInputElement
+    await fireEvent.input(alias, {
+      target: { value: 'Road]|map\nshared' }
+    })
+    // A single-line input drops pasted line breaks before input handling; the
+    // remaining wiki-link delimiters are removed by our normalizer.
+    expect(alias.value).toBe('Roadmapshared')
+
+    await fireEvent.keyDown(alias, { key: 'Escape' })
+    await tick()
+    expect(container.querySelector('.page-link-suggest')).toBeNull()
+    expect(document.activeElement).toBe(container.querySelector('.ProseMirror'))
+    expect(editor.state.doc.textContent).toBe('[[')
     unmount()
   })
 

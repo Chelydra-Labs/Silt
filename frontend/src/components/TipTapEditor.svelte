@@ -66,6 +66,9 @@
     flattenTagHierarchy,
     PageLinkSuggest,
     applyPageLinkSuggestion,
+    dismissPageLinkSuggestion,
+    normalizePageLinkAlias,
+    pageLinkSourceLabel,
     rankPageLinks,
     blocksToDoc
   } from '../lib/editor'
@@ -993,6 +996,15 @@
   function onPageLinkSelectActive(): void {
     const item = pageLinkPopup?.items[pageLinkPopup.selected]
     if (item) void onPageLinkPick(item)
+  }
+
+  function dismissPageLinkAlias(): void {
+    cancelPageLinkSearch()
+    ++pageLinkQueryReqId
+    pageLinkPopup = null
+    suggestStatus = ''
+    if (!editorInstance || editorInstance.isDestroyed) return
+    dismissPageLinkSuggestion(editorInstance, true)
   }
 
   async function onPageLinkPick(item: PageLinkItem): Promise<void> {
@@ -2445,8 +2457,16 @@
                 value={pageLinkPopup.alias}
                 oninput={(event) => {
                   if (pageLinkPopup) {
-                    pageLinkPopup.alias = event.currentTarget.value
+                    pageLinkPopup.alias = normalizePageLinkAlias(
+                      event.currentTarget.value
+                    )
                   }
+                }}
+                onkeydown={(event) => {
+                  if (event.key !== 'Escape') return
+                  event.preventDefault()
+                  event.stopPropagation()
+                  dismissPageLinkAlias()
                 }}
                 onfocus={(event) => event.currentTarget.select()}
                 placeholder="Link text"
@@ -2460,7 +2480,12 @@
         items={pageLinkPopup.items.map((item) => ({
           id: `${item.source ?? ''}:${item.notebook}/${item.section}/${item.page}`,
           label: item.page || 'Untitled page',
-          hint: [item.notebook, item.section].filter(Boolean).join(' / ')
+          hint: [
+            pageLinkSourceLabel(item.source),
+            [item.notebook, item.section].filter(Boolean).join(' / ')
+          ]
+            .filter(Boolean)
+            .join(' · ')
         }))}
         selected={pageLinkPopup.selected}
         coords={c}

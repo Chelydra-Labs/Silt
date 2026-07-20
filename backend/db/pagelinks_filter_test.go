@@ -8,8 +8,8 @@ import (
 )
 
 func TestLinkTargetRawCandidates_IncludesSuffixes(t *testing.T) {
-	got := LinkTargetRawCandidates([]struct{ Notebook, Section, Page string }{
-		{"Work", "Projects/Active", "Site"},
+	got := LinkTargetRawCandidates([]LinkTargetSpec{
+		{Notebook: "Work", Section: "Projects/Active", Page: "Site"},
 	})
 	want := []string{
 		"Site",
@@ -129,8 +129,8 @@ func BenchmarkListPageLinksByTargetRaws_10k(b *testing.B) {
 		b.Fatalf("index: %v", err)
 	}
 
-	cands := LinkTargetRawCandidates([]struct{ Notebook, Section, Page string }{
-		{"NB", "Sec", "TargetPage"},
+	cands := LinkTargetRawCandidates([]LinkTargetSpec{
+		{Notebook: "NB", Section: "Sec", Page: "TargetPage"},
 	})
 	b.Run("filtered", func(b *testing.B) {
 		b.ReportAllocs()

@@ -369,31 +369,191 @@ func TestGetBacklinks_SnippetTruncation(t *testing.T) {
 		t.Fatalf("expected 1 backlink, got %d", len(bl))
 	}
 	runes := []rune(bl[0].Snippet)
-	if len(runes) > backlinkSnippetRunes+1 {
-		t.Errorf("snippet exceeds %d runes: got %d", backlinkSnippetRunes+1, len(runes))
+	if len(runes) > backlinkSnippetRunes {
+		t.Errorf("snippet exceeds %d runes: got %d", backlinkSnippetRunes, len(runes))
 	}
 }
 
 func TestSnippet_Length(t *testing.T) {
 	short := "hello world"
-	if got := snippet(short); got != short {
+	if got := snippet(short, "world"); got != short {
 		t.Errorf("short snippet: %q", got)
 	}
 	long := strings.Repeat("a", 200)
-	got := snippet(long)
-	// 120 runes + "…"
-	if len(got) != 121+len("…") {
-		// rune count check
-	}
+	got := snippet(long, "xxx") // token absent, falls back to prefix
 	runes := []rune(got)
-	if len(runes) != backlinkSnippetRunes+1 { // 120 + ellipsis
-		t.Errorf("expected %d runes, got %d", backlinkSnippetRunes+1, len(runes))
+	if len(runes) != backlinkSnippetRunes { // exactly 120 (119 content + 1 ellipsis)
+		t.Errorf("expected %d runes, got %d", backlinkSnippetRunes, len(runes))
 	}
 }
 
 func TestSnippet_Empty(t *testing.T) {
-	if got := snippet(""); got != "" {
+	if got := snippet("", "xxx"); got != "" {
 		t.Errorf("empty snippet: %q", got)
+	}
+}
+
+// TestSnippet_ContextualAroundToken verifies that the snippet is centered
+// on the exact occurrence of the token in the text.
+func TestSnippet_ContextualAroundToken(t *testing.T) {
+	// Token in the middle of a long text.
+	prefix := strings.Repeat("word ", 40) // 200 bytes, ~40 words
+	suffix := strings.Repeat("word ", 40)
+	token := "[[TargetPage]]"
+	text := prefix + token + suffix
+
+	got := snippet(text, token)
+	runes := []rune(got)
+
+	// Should contain the ellipsis and the token.
+	if !strings.Contains(got, snippetEllipsis) {
+		t.Errorf("expected ellipsis in snippet: %q", got)
+	}
+	if !strings.Contains(got, token) {
+		t.Errorf("expected token in snippet: %q", got)
+	}
+	// Should be within budget.
+	if len(runes) > backlinkSnippetRunes+2 { // small slack for two ellipses
+		t.Errorf("snippet over budget: %d runes: %q", len(runes), got)
+	}
+}
+
+// TestSnippet_ContextualBlockRef verifies that a ((uuid)) token is centered
+// in the snippet.
+func TestSnippet_ContextualBlockRef(t *testing.T) {
+	prefix := strings.Repeat("lorem ipsum ", 30)
+	token := "((" + uuidA + "))"
+	suffix := strings.Repeat("dolor sit amet ", 30)
+	text := prefix + token + suffix
+
+	got := snippet(text, token)
+	if !strings.Contains(got, uuidA[:8]) {
+		t.Errorf("expected uuid prefix in snippet: %q", got)
+	}
+	if len([]rune(got)) > backlinkSnippetRunes+2 {
+		t.Errorf("snippet over budget: %d runes", len([]rune(got)))
+	}
+}
+
+// TestSnippet_ContextualAtStart verifies that a token at the start of text
+// gets prefix but no leading ellipsis.
+func TestSnippet_ContextualAtStart(t *testing.T) {
+	token := "[[Target]]"
+	suffix := strings.Repeat("more text here ", 50)
+	text := token + suffix
+
+	got := snippet(text, token)
+	if !strings.Contains(got, token) {
+		t.Errorf("expected token in snippet: %q", got)
+	}
+	if strings.HasPrefix(got, snippetEllipsis) {
+		t.Errorf("should not have leading ellipsis when token is at start: %q", got)
+	}
+}
+
+// TestSnippet_ContextualAtEnd verifies that a token at the end of text
+// gets suffix but no trailing ellipsis.
+func TestSnippet_ContextualAtEnd(t *testing.T) {
+	prefix := strings.Repeat("lots of text before ", 50)
+	token := "[[Target]]"
+	text := prefix + token
+
+	got := snippet(text, token)
+	if !strings.Contains(got, token) {
+		t.Errorf("expected token in snippet: %q", got)
+	}
+	if strings.HasSuffix(got, snippetEllipsis) {
+		t.Errorf("should not have trailing ellipsis when token is at end: %q", got)
+	}
+}
+
+// TestSnippet_TokenAbsentFallsBack verifies that when the token is not found
+// in text, the snippet falls back to a prefix.
+func TestSnippet_TokenAbsentFallsBack(t *testing.T) {
+	text := strings.Repeat("lorem ipsum dolor sit amet ", 50)
+	got := snippet(text, "nonexistent")
+	if !strings.HasPrefix(got, "lorem") {
+		t.Errorf("fallback should be prefix: %q", got)
+	}
+	if !strings.HasSuffix(got, snippetEllipsis) {
+		t.Errorf("fallback should have trailing ellipsis: %q", got)
+	}
+}
+
+// TestSnippet_ShortTextNoTruncation verifies short text passes through
+// even with a token.
+func TestSnippet_ShortTextNoTruncation(t *testing.T) {
+	text := "see [[Target]] for details"
+	got := snippet(text, "[[Target]]")
+	if got != text {
+		t.Errorf("short text should pass through: %q", got)
+	}
+}
+
+// TestSnippet_CaseInsensitiveTokenSearch verifies that the token search
+// in the snippet function is case-insensitive.
+func TestSnippet_CaseInsensitiveTokenSearch(t *testing.T) {
+	text := strings.Repeat("word ", 40) + "[[TARGETPAGE]]" + strings.Repeat("word ", 40)
+	got := snippet(text, "[[targetpage]]")
+	if !strings.Contains(got, "[[TARGETPAGE]]") {
+		t.Errorf("case-insensitive token search should find the token: %q", got)
+	}
+}
+
+// TestGetBacklinks_ContextualSnippet verifies that backlinks now carry
+// contextual snippets centered on the link token.
+func TestGetBacklinks_ContextualSnippet(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	// Source with the link surrounded by padding text.
+	prefix := strings.Repeat("lorem ipsum ", 30)
+	suffix := strings.Repeat("dolor sit amet ", 30)
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, prefix+"[[Target]]"+suffix),
+	})
+
+	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl) != 1 {
+		t.Fatalf("expected 1 backlink, got %d", len(bl))
+	}
+	// Snippet should contain the link token.
+	if !strings.Contains(bl[0].Snippet, "[[Target]]") {
+		t.Errorf("contextual snippet should contain link token: %q", bl[0].Snippet)
+	}
+	// Snippet should have ellipsis (text is much longer than budget).
+	if !strings.Contains(bl[0].Snippet, snippetEllipsis) {
+		t.Errorf("contextual snippet should have ellipsis: %q", bl[0].Snippet)
+	}
+}
+
+// TestGetBacklinks_ContextualBlockRefSnippet verifies block-ref backlinks
+// carry snippets centered on the ((uuid)) token.
+func TestGetBacklinks_ContextualBlockRefSnippet(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target block"),
+	})
+	prefix := strings.Repeat("padding ", 30)
+	suffix := strings.Repeat("more padding ", 30)
+	raw := prefix + "((" + uuidA + "))" + suffix
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, raw),
+	})
+
+	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl) != 1 {
+		t.Fatalf("expected 1 backlink, got %d", len(bl))
+	}
+	if !strings.Contains(bl[0].Snippet, uuidA[:8]) {
+		t.Errorf("block-ref snippet should contain uuid: %q", bl[0].Snippet)
 	}
 }
 
@@ -743,13 +903,13 @@ func TestGetBacklinks_NestedSectionPath(t *testing.T) {
 func TestSnippet_LongerThan120Runes(t *testing.T) {
 	// Each Japanese character is 3 bytes but 1 rune.
 	long := strings.Repeat("日本語", 50) // 50 runes
-	got := snippet(long)
+	got := snippet(long, "xxx")       // token absent → prefix fallback
 	runes := []rune(got)
 	if runes[len(runes)-1] != '…' {
 		t.Errorf("expected trailing ellipsis, got %q", got)
 	}
-	if len(runes) != backlinkSnippetRunes+1 {
-		t.Errorf("expected %d runes, got %d", backlinkSnippetRunes+1, len(runes))
+	if len(runes) != backlinkSnippetRunes { // exactly 120
+		t.Errorf("expected %d runes, got %d", backlinkSnippetRunes, len(runes))
 	}
 }
 
@@ -924,5 +1084,325 @@ func TestBacklink_JSONShape(t *testing.T) {
 	}
 	if !strings.Contains(s, `"source_block_id":`) {
 		t.Errorf("JSON missing source_block_id: %s", s)
+	}
+}
+
+// --- Oracle review fixes ---
+
+// TestSnippet_PageLinkBoundary verifies that the snippet extends to include
+// the closing ]] of a page-link, never slicing mid-syntax.
+func TestSnippet_PageLinkBoundary(t *testing.T) {
+	prefix := strings.Repeat("word ", 50)
+	token := "[[TargetPage#Heading|display text]]"
+	text := prefix + token + strings.Repeat(" word", 50)
+
+	got := snippet(text, "[[TargetPage")
+	runes := []rune(got)
+
+	// Must contain the closing ]] — never sliced mid-link.
+	if !strings.Contains(got, "]]") {
+		t.Errorf("snippet must include closing ]]: %q", got)
+	}
+	// Must not exceed 120 runes.
+	if len(runes) > backlinkSnippetRunes {
+		t.Errorf("snippet exceeds %d runes: got %d", backlinkSnippetRunes, len(runes))
+	}
+}
+
+// TestSnippet_PageLinkBoundary_ShortLink verifies that short links like
+// [[A]] are fully included in the snippet.
+func TestSnippet_PageLinkBoundary_ShortLink(t *testing.T) {
+	prefix := strings.Repeat("x ", 80)
+	text := prefix + "[[A]]" + strings.Repeat(" y", 80)
+
+	got := snippet(text, "[[A")
+	if !strings.Contains(got, "[[A]]") {
+		t.Errorf("short link should be complete in snippet: %q", got)
+	}
+	if len([]rune(got)) > backlinkSnippetRunes {
+		t.Errorf("exceeds %d runes: %d", backlinkSnippetRunes, len([]rune(got)))
+	}
+}
+
+// TestSnippet_120RuneCapWithEllipsis verifies the 120-rune cap is honored
+// including ellipsis markers.
+func TestSnippet_120RuneCapWithEllipsis(t *testing.T) {
+	// Long text, token near the middle.
+	text := strings.Repeat("abcdefghij", 20) // 200 chars
+	token := "[[X]]"
+	mid := strings.Repeat("abcdefghij", 9)                // 90 chars before token
+	text = mid + token + strings.Repeat("klmnopqrst", 10) // 90 chars after
+
+	got := snippet(text, token)
+	runes := []rune(got)
+	if len(runes) > backlinkSnippetRunes {
+		t.Errorf("total runes %d exceeds cap %d: %q", len(runes), backlinkSnippetRunes, got)
+	}
+}
+
+// TestSnippet_UnicodeCap verifies multibyte characters (3-byte Japanese)
+// are counted as single runes and the cap is honored.
+func TestSnippet_UnicodeCap(t *testing.T) {
+	// Build text with Japanese characters around a page-link token.
+	prefix := strings.Repeat("日本語", 40) // 120 runes (40×3 bytes)
+	token := "[[ターゲット]]"                // 9 runes
+	suffix := strings.Repeat("日本語", 40) // 120 runes
+	text := prefix + token + suffix     // 249 runes total
+
+	got := snippet(text, "[[ターゲット")
+	runes := []rune(got)
+	if len(runes) > backlinkSnippetRunes {
+		t.Errorf("Unicode snippet %d runes exceeds cap %d", len(runes), backlinkSnippetRunes)
+	}
+	// Must include the closing ]] for the Japanese link.
+	if !strings.Contains(got, "]]") {
+		t.Errorf("Unicode link boundary must include ]]: %q", got)
+	}
+}
+
+// TestSnippet_NeverExceeds120Runes is a property-based check: generate
+// various token positions and verify the cap.
+func TestSnippet_NeverExceeds120Runes(t *testing.T) {
+	base := strings.Repeat("abcde ", 40) // 240 chars
+	tests := []struct{ token string }{
+		{"[[Target]]"},
+		{"[[LongTargetName#Section|Alias]]"},
+		{"((aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa))"},
+		{"{{embed:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa}}"},
+	}
+	for _, tc := range tests {
+		// Token at various positions.
+		for _, pos := range []int{0, len(base) / 4, len(base) / 2, len(base) * 3 / 4, len(base)} {
+			text := base[:pos] + tc.token + base[pos:]
+			got := snippet(text, tc.token)
+			runes := []rune(got)
+			if len(runes) > backlinkSnippetRunes {
+				t.Errorf("token=%q pos=%d: %d runes exceeds cap", tc.token, pos, len(runes))
+			}
+		}
+	}
+}
+
+// --- Source-qualified rename / stale recovery regression tests ---
+
+// TestGetBacklinks_LinkedRenameIsolation verifies that linked page backlinks
+// never include vault-prefixed page-link rows (since vault/ is no longer a
+// source qualifier, vault-prefixed links simply won't resolve to vault pages).
+func TestGetBacklinks_LinkedRenameIsolation(t *testing.T) {
+	dm := newTestDB(t)
+	// Vault page NB/Sec/Site.
+	idx(t, dm, "vault", "NB", "Sec", "Site", []parser.ParsedBlock{
+		noteBlock(uuidA, "vault site"),
+	})
+	// Linked page NB/Sec/Site (same basename, different source).
+	idx(t, dm, "linked:ext", "NB", "Sec", "Site", []parser.ParsedBlock{
+		noteBlock(uuidF, "linked site"),
+	})
+	// Source page links with vault/ prefix — not source-qualified.
+	idx(t, dm, "vault", "Other", "", "SrcVault", []parser.ParsedBlock{
+		noteBlock(uuidB, "see [[vault/NB/Sec/Site]]"),
+	})
+	// Another source links with linked: qualified form to the linked page.
+	idx(t, dm, "vault", "Other", "", "SrcLinked", []parser.ParsedBlock{
+		noteBlock(uuidC, "see [[linked:ext/NB/Sec/Site]]"),
+	})
+
+	// Backlinks for the linked target: must only have the linked-qualified link.
+	bl, err := dm.GetBacklinks("linked:ext", "NB", "Sec", "Site")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl) != 1 {
+		t.Fatalf("linked target should have 1 backlink (linked-qualified), got %d: %+v", len(bl), bl)
+	}
+	if bl[0].SourceNotebook != "Other" || bl[0].SourcePage != "SrcLinked" {
+		t.Errorf("linked backlink should come from SrcLinked, got %+v", bl[0])
+	}
+
+	// Backlinks for the vault target: vault/... link won't resolve.
+	bl2, err := dm.GetBacklinks("vault", "NB", "Sec", "Site")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl2) != 0 {
+		t.Fatalf("vault target should have 0 backlinks (vault/ not qualified), got %d: %+v", len(bl2), bl2)
+	}
+}
+
+// TestGetBacklinks_LinkedStaleRecovery verifies that a linked: qualified
+// target_raw that resolves to the correct canonical page is found by the
+// backlinks query. Vault/... is no longer source-qualified so only linked:
+// stale forms are recovered.
+func TestGetBacklinks_LinkedStaleRecovery(t *testing.T) {
+	dm := newTestDB(t)
+	// Vault page with a basename that collides with a linked page.
+	idx(t, dm, "vault", "NB", "Sec", "Site", []parser.ParsedBlock{
+		noteBlock(uuidA, "vault site"),
+	})
+	idx(t, dm, "linked:ext", "NB", "Sec", "Site", []parser.ParsedBlock{
+		noteBlock(uuidF, "linked site"),
+	})
+
+	// A source page links with linked: qualified form to the linked page.
+	idx(t, dm, "vault", "Other", "", "Src2", []parser.ParsedBlock{
+		noteBlock(uuidC, "see [[linked:ext/NB/Sec/Site]]"),
+	})
+
+	// Linked qualified form must resolve correctly.
+	bl2, err := dm.GetBacklinks("linked:ext", "NB", "Sec", "Site")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl2) != 1 {
+		t.Fatalf("linked qualified stale recovery: expected 1, got %d: %+v", len(bl2), bl2)
+	}
+}
+
+// TestSnippet_OversizedTokenElided verifies that when a wiki-link token
+// exceeds the 120-rune display budget, it is replaced with a safe elided
+// "[[…]]" representation rather than truncated mid-syntax.
+func TestSnippet_OversizedTokenElided(t *testing.T) {
+	// Build a token that is >120 runes (page-link with very long alias).
+	longAlias := strings.Repeat("x", 150)
+	token := "[[Page#" + longAlias + "|display]]" // well over 120 runes
+	text := "prefix " + token + " suffix"
+
+	got := snippet(text, "[[Page")
+	runes := []rune(got)
+
+	// Must not exceed 120 runes.
+	if len(runes) > backlinkSnippetRunes {
+		t.Errorf("oversized token snippet: %d runes exceeds cap %d", len(runes), backlinkSnippetRunes)
+	}
+	// Must contain the elided form, not the raw oversized token.
+	if !strings.Contains(got, "[[…]]") {
+		t.Errorf("oversized token should be elided to [[…]], got: %q", got)
+	}
+	// Must NOT contain the raw oversized alias.
+	if strings.Contains(got, longAlias[:50]) {
+		t.Errorf("oversized token should not leak raw content: %q", got)
+	}
+}
+
+// TestSnippet_OversizedTokenWithHeading verifies elision for a heading-only
+// oversized link [[Page#VeryLongHeading]].
+func TestSnippet_OversizedTokenWithHeading(t *testing.T) {
+	longHeading := strings.Repeat("h", 130)
+	token := "[[Page#" + longHeading + "]]"
+	text := "some text before " + token + " some text after"
+
+	got := snippet(text, "[[Page")
+	runes := []rune(got)
+	if len(runes) > backlinkSnippetRunes {
+		t.Errorf("oversized heading token: %d runes exceeds cap", len(runes))
+	}
+	if !strings.Contains(got, "[[…]]") {
+		t.Errorf("oversized heading token should be elided: %q", got)
+	}
+}
+
+// TestSnippet_FallbackExactly120 verifies the prefix-fallback path produces
+// exactly 120 runes (119 content + 1 ellipsis).
+func TestSnippet_FallbackExactly120(t *testing.T) {
+	text := strings.Repeat("a", 200)
+	got := snippet(text, "nonexistent")
+	runes := []rune(got)
+	if len(runes) != backlinkSnippetRunes {
+		t.Errorf("fallback snippet: expected %d runes, got %d: %q", backlinkSnippetRunes, len(runes), got)
+	}
+	if runes[len(runes)-1] != '…' {
+		t.Errorf("fallback should end with ellipsis, got %q", got)
+	}
+}
+
+// --- Legacy vault notebook backlink regression ---
+
+// TestGetBacklinks_LegacyVaultNotebook verifies that a notebook literally
+// named "vault" works correctly for backlinks — the "vault/..." prefix is a
+// regular notebook path, not a source qualifier.
+func TestGetBacklinks_LegacyVaultNotebook(t *testing.T) {
+	dm := newTestDB(t)
+	// Target page in a notebook named "vault".
+	idx(t, dm, "vault", "vault", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target content"),
+	})
+	// Source page links to [[vault/Sec/Target]].
+	idx(t, dm, "vault", "Other", "", "Src", []parser.ParsedBlock{
+		noteBlock(uuidB, "see [[vault/Sec/Target]] for details"),
+	})
+
+	bl, err := dm.GetBacklinks("vault", "vault", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(bl) != 1 {
+		t.Fatalf("expected 1 backlink for vault notebook, got %d: %+v", len(bl), bl)
+	}
+	if bl[0].Kind != BacklinkPageLink {
+		t.Errorf("expected page kind, got %q", bl[0].Kind)
+	}
+	if !strings.Contains(bl[0].Snippet, "[[vault/Sec/Target]]") {
+		t.Errorf("snippet should contain full vault notebook link: %q", bl[0].Snippet)
+	}
+}
+
+// --- Oversized wiki-link token syntax/cap regression ---
+
+// TestGetBacklinks_OversizedWikiLinkElided verifies that backlinks with an
+// oversized wiki-link token produce a snippet containing the elided "[[…]]"
+// form rather than truncating mid-syntax.
+func TestGetBacklinks_OversizedWikiLinkElided(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	// Source with an oversized page-link token.
+	longAlias := strings.Repeat("x", 150)
+	linkText := "[[Target#" + longAlias + "|display]]"
+	longPrefix := strings.Repeat("word ", 30)
+	longSuffix := strings.Repeat("word ", 30)
+	idx(t, dm, "vault", "NB", "Sec", "Src", []parser.ParsedBlock{
+		noteBlock(uuidB, longPrefix+linkText+longSuffix),
+	})
+
+	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl) != 1 {
+		t.Fatalf("expected 1 backlink, got %d", len(bl))
+	}
+	runes := []rune(bl[0].Snippet)
+	if len(runes) > backlinkSnippetRunes {
+		t.Errorf("oversized link snippet: %d runes exceeds cap %d", len(runes), backlinkSnippetRunes)
+	}
+	if !strings.Contains(bl[0].Snippet, "[[…]]") {
+		t.Errorf("oversized link should be elided: %q", bl[0].Snippet)
+	}
+	if strings.Contains(bl[0].Snippet, longAlias[:20]) {
+		t.Errorf("oversized link should not leak raw alias: %q", bl[0].Snippet)
+	}
+}
+
+// TestSnippet_NeverExceeds120Runes_OversizedToken is a property check
+// verifying the cap is always honored even with tokens much larger than budget.
+func TestSnippet_NeverExceeds120Runes_OversizedToken(t *testing.T) {
+	tests := []struct {
+		name  string
+		token string
+	}{
+		{"long alias", "[[P#" + strings.Repeat("a", 200) + "|b]]"},
+		{"long heading", "[[P#" + strings.Repeat("h", 200) + "]]"},
+		{"long page name", "[[" + strings.Repeat("X", 200) + "]]"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			text := "prefix " + tc.token + " suffix"
+			got := snippet(text, tc.token)
+			runes := []rune(got)
+			if len(runes) > backlinkSnippetRunes {
+				t.Errorf("%s: %d runes exceeds cap", tc.name, len(runes))
+			}
+		})
 	}
 }

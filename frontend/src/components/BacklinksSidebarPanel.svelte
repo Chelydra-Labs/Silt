@@ -28,7 +28,7 @@
   const groups = $derived.by(() => {
     const grouped = new Map<string, { key: string; links: Backlink[] }>()
     for (const link of backlinks) {
-      const key = `${link.sourceNotebook}\u0000${link.sourceSection}\u0000${link.sourcePage}`
+      const key = `${link.source ?? 'vault'}\u0000${link.sourceNotebook}\u0000${link.sourceSection}\u0000${link.sourcePage}`
       const current = grouped.get(key)
       if (current) current.links.push(link)
       else grouped.set(key, { key, links: [link] })
@@ -97,24 +97,22 @@
         detail: {
           notebook: link.sourceNotebook,
           section: link.sourceSection,
-          page: link.sourcePage
+          page: link.sourcePage,
+          source: link.source ?? 'vault'
         }
       })
     )
   }
 
-  function openReference(link: Backlink): void {
-    if (!link.sourceBlockId) {
-      openPage(link)
-      return
-    }
+  function openExactBlock(link: Backlink): void {
     window.dispatchEvent(
       new CustomEvent('navigate-to-block', {
         detail: {
           notebook: link.sourceNotebook,
           section: link.sourceSection,
           page: link.sourcePage,
-          blockId: link.sourceBlockId
+          blockId: link.sourceBlockId,
+          source: link.source ?? 'vault'
         }
       })
     )
@@ -265,12 +263,12 @@
               class="m-0 p-0 list-none border-t border-surface-sidebar-border/70"
             >
               {#each group.links as link, index (`${link.linkKind}:${link.sourceBlockId}:${index}`)}
-                <li>
+                <li class="flex items-stretch hover:bg-hover transition-colors">
                   <button
                     type="button"
-                    class="group w-full px-2.5 py-2 border-none bg-transparent text-left flex items-start gap-2 hover:bg-hover cursor-pointer transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start"
-                    onclick={() => openReference(link)}
-                    aria-label={`${link.sourceBlockId ? 'Jump to' : 'Open'} ${kindLabel(link.linkKind).toLowerCase()} in ${link.sourcePage}: ${link.snippet}`}
+                    class="group min-w-0 flex-1 px-2.5 py-2 border-none bg-transparent text-left flex items-start gap-2 cursor-pointer focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start"
+                    onclick={() => openPage(link)}
+                    aria-label={`Open ${kindLabel(link.linkKind).toLowerCase()} in page ${link.sourcePage}: ${link.snippet}`}
                   >
                     <span
                       class="mt-0.5 min-w-7 text-center rounded bg-accent-primary-start/10 text-accent-primary-start font-mono text-type-2xs font-bold"
@@ -293,9 +291,23 @@
                       class="material-symbols-outlined text-icon-sm text-surface-sidebar-text-muted group-hover:text-accent-primary-start"
                       aria-hidden="true"
                     >
-                      {link.sourceBlockId ? 'my_location' : 'arrow_forward'}
+                      arrow_forward
                     </span>
                   </button>
+                  {#if link.sourceBlockId}
+                    <button
+                      type="button"
+                      class="self-stretch w-9 flex-shrink-0 border-none border-l border-surface-sidebar-border/70 bg-transparent text-surface-sidebar-text-muted hover:bg-accent-primary-start/10 hover:text-accent-primary-start cursor-pointer transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start"
+                      onclick={() => openExactBlock(link)}
+                      aria-label={`Jump to exact block for ${kindLabel(link.linkKind).toLowerCase()} in ${link.sourcePage}: ${link.snippet}`}
+                      title="Jump to exact block"
+                    >
+                      <span
+                        class="material-symbols-outlined text-icon-sm"
+                        aria-hidden="true">my_location</span
+                      >
+                    </button>
+                  {/if}
                 </li>
               {/each}
             </ul>

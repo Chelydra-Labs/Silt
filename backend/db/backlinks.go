@@ -31,6 +31,10 @@ type Backlink struct {
 
 const backlinkSnippetRunes = 120
 
+// snippetEllipsis is the single Unicode ellipsis character used as a truncation
+// marker in backlink snippets.
+const snippetEllipsis = "…"
+
 // backlinkKey is the dedupe key for a single backlink result.
 type backlinkKey struct {
 	kind    BacklinkKind
@@ -131,14 +135,15 @@ func (dm *DatabaseManager) blockIDsForPage(db *sql.DB, source, notebook, section
 }
 
 // legPageLinks resolves page-link backlinks using the indexed candidates path:
-// LinkTargetRawCandidates → ListPageLinksByTargetRaws → ResolvePageLinkAgainst
+// LinkTargetRawCandidates → listPageLinksByTargetRaws → ResolvePageLinkAgainst
 // to gate on nonambiguous canonical targets. Batch-fetches block info for
-// source discriminator and clean_content snippet.
+// source discriminator and clean_content snippet. Runs under the caller's
+// handle lease so it never re-enters handle().
 func (dm *DatabaseManager) legPageLinks(db *sql.DB, source, notebook, section, page string) ([]Backlink, error) {
-	candidates := LinkTargetRawCandidates([]struct{ Notebook, Section, Page string }{
-		{notebook, section, page},
+	candidates := LinkTargetRawCandidates([]LinkTargetSpec{
+		{Source: source, Notebook: notebook, Section: section, Page: page},
 	})
-	rows, err := dm.ListPageLinksByTargetRaws(candidates)
+	rows, err := listPageLinksByTargetRaws(db, candidates)
 	if err != nil {
 		return nil, fmt.Errorf("get backlinks: page links: %w", err)
 	}
@@ -148,7 +153,7 @@ func (dm *DatabaseManager) legPageLinks(db *sql.DB, source, notebook, section, p
 
 	// Resolve-gate: only include rows whose target_raw nonambiguously resolves
 	// to the requested target page. Same contract as the rename-rewrite path.
-	pages, err := dm.ListDistinctPages()
+	pages, err := listDistinctPages(db)
 	if err != nil {
 		return nil, fmt.Errorf("get backlinks: list pages: %w", err)
 	}
@@ -204,6 +209,8 @@ func (dm *DatabaseManager) legPageLinks(db *sql.DB, source, notebook, section, p
 			continue
 		}
 		info := blocksByID[r.SourceBlockID]
+		// Contextual snippet: center on the [[target]] occurrence in clean_content.
+		linkToken := "[[" + r.TargetRaw
 		out = append(out, Backlink{
 			Kind:           BacklinkPageLink,
 			Source:         info.linkSource,
@@ -211,7 +218,7 @@ func (dm *DatabaseManager) legPageLinks(db *sql.DB, source, notebook, section, p
 			SourceSection:  r.SourceSection,
 			SourcePage:     r.SourcePage,
 			SourceBlockID:  r.SourceBlockID,
-			Snippet:        snippet(info.cleanText),
+			Snippet:        snippet(info.cleanText, linkToken),
 		})
 	}
 	return out, nil
@@ -288,15 +295,18 @@ func (dm *DatabaseManager) legBlockRefsAndEmbeds(db *sql.DB, targetBlockIDs []st
 	for _, h := range hits {
 		hasRef := false
 		hasEmbed := false
+		var refToken, embedToken string
 		for token := range targetRefTokens {
 			if strings.Contains(h.rawContent, token) {
 				hasRef = true
+				refToken = token
 				break
 			}
 		}
 		for token := range targetEmbedTokens {
 			if strings.Contains(h.rawContent, token) {
 				hasEmbed = true
+				embedToken = token
 				break
 			}
 		}
@@ -308,7 +318,7 @@ func (dm *DatabaseManager) legBlockRefsAndEmbeds(db *sql.DB, targetBlockIDs []st
 				SourceSection:  h.sec,
 				SourcePage:     h.pg,
 				SourceBlockID:  h.id,
-				Snippet:        snippet(h.cleanContent),
+				Snippet:        snippet(h.cleanContent, refToken),
 			})
 		}
 		if hasEmbed {
@@ -319,24 +329,143 @@ func (dm *DatabaseManager) legBlockRefsAndEmbeds(db *sql.DB, targetBlockIDs []st
 				SourceSection:  h.sec,
 				SourcePage:     h.pg,
 				SourceBlockID:  h.id,
-				Snippet:        snippet(h.cleanContent),
+				Snippet:        snippet(h.cleanContent, embedToken),
 			})
 		}
 	}
 	return blockRefs, embeds, nil
 }
 
-// snippet returns a 120-rune prefix of text for the backlinks panel preview.
-// Uses clean_content (not raw) so markdown syntax doesn't clutter the snippet.
-func snippet(text string) string {
+// snippet returns a contextual 120-rune excerpt of text centered on the first
+// occurrence of token (the page-link / block-ref / embed syntax). When token
+// is absent from text, falls back to a plain prefix. Uses clean_content for
+// page-links (the wiki-link syntax lives in clean) and raw_content for
+// block-refs/embeds (the ((uuid)) / {{embed:uuid}} syntax may not survive
+// cleaning).
+//
+// For page-link tokens (starting with [[), the snippet boundary is extended to
+// include the closing ]] so the link is never sliced mid-syntax. If the full
+// [[...]] token exceeds the display budget, the token is replaced with a
+// safe elided representation "[[…]]" and context is extracted around that.
+// The total output never exceeds backlinkSnippetRunes (120) runes including
+// ellipsis markers.
+func snippet(text, token string) string {
 	if text == "" {
 		return ""
 	}
-	if utf8.RuneCountInString(text) <= backlinkSnippetRunes {
+	budget := backlinkSnippetRunes
+	if utf8.RuneCountInString(text) <= budget {
 		return text
 	}
 	runes := []rune(text)
-	return string(runes[:backlinkSnippetRunes]) + "…"
+
+	// Try to find the token and extract context around it.
+	if token != "" {
+		tokenRunes := []rune(token)
+		tokenLower := strings.ToLower(token)
+		textLower := strings.ToLower(text)
+		runesLower := []rune(textLower)
+		idx := runeIndex(runesLower, []rune(tokenLower))
+		if idx >= 0 {
+			effectiveLen := len(tokenRunes)
+
+			// For page-link tokens ([[...), extend to include the closing ]]
+			// so the link is never sliced mid-syntax.
+			if strings.HasPrefix(token, "[[") {
+				closeIdx := runeIndex(runes[idx+effectiveLen:], []rune("]]"))
+				if closeIdx >= 0 {
+					effectiveLen += closeIdx + 2 // +2 for ]]
+				}
+			}
+
+			// Determine whether we need ellipsis markers.
+			wantPrefix := idx > 0
+			wantSuffix := idx+effectiveLen < len(runes)
+			markerSlots := 0
+			if wantPrefix {
+				markerSlots++
+			}
+			if wantSuffix {
+				markerSlots++
+			}
+			contentBudget := budget - markerSlots
+			if contentBudget < 0 {
+				contentBudget = 0
+			}
+
+			// Oversized wiki-link token: replace with elided form "[[…]]"
+			// and extract context around the elided placeholder.
+			if strings.HasPrefix(token, "[[") && effectiveLen > contentBudget {
+				elided := "[[" + snippetEllipsis + "]]" // 4 runes
+				elidedRunes := []rune(elided)
+				// Build new text: before + elided + after-token text.
+				replacement := make([]rune, 0, len(runes)-effectiveLen+4)
+				replacement = append(replacement, runes[:idx]...)
+				replacement = append(replacement, elidedRunes...)
+				replacement = append(replacement, runes[idx+effectiveLen:]...)
+				return snippet(string(replacement), elided)
+			}
+
+			// Distribute padding around the token within contentBudget.
+			pad := contentBudget - effectiveLen
+			if pad < 0 {
+				pad = 0
+			}
+			before := pad / 2
+			after := pad - before
+			start := idx - before
+			if start < 0 {
+				start = 0
+				after += before
+			}
+			end := idx + effectiveLen + after
+			if end > len(runes) {
+				end = len(runes)
+			}
+			// Final cap: content must fit within budget minus markers.
+			if end-start > contentBudget {
+				excess := (end - start) - contentBudget
+				end -= excess
+			}
+
+			prefix := ""
+			suffix := ""
+			if start > 0 {
+				prefix = snippetEllipsis
+			}
+			if end < len(runes) {
+				suffix = snippetEllipsis
+			}
+			return prefix + string(runes[start:end]) + suffix
+		}
+	}
+
+	// Fallback: plain prefix, reserving one rune for the ellipsis marker.
+	return string(runes[:budget-1]) + snippetEllipsis
+}
+
+// runeIndex returns the index of the first occurrence of needle in haystack,
+// or -1 if not found.
+func runeIndex(haystack, needle []rune) int {
+	if len(needle) == 0 {
+		return 0
+	}
+	if len(needle) > len(haystack) {
+		return -1
+	}
+	for i := 0; i <= len(haystack)-len(needle); i++ {
+		match := true
+		for j := 0; j < len(needle); j++ {
+			if haystack[i+j] != needle[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
 }
 
 // sortBacklinks stably sorts backlinks by (source_notebook, source_section,

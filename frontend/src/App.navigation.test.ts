@@ -2,23 +2,30 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as AppModule from './App.svelte'
 
 type Ref = { notebook: string; section: string; page: string }
-const { createRecentPageRecorder, resolveBreadcrumbSectionSelection } =
-  AppModule as unknown as {
-    createRecentPageRecorder: (
-      persist: (ref: Ref) => Promise<unknown>,
-      refresh: () => void,
-      onError: (error: unknown) => void,
-      delay?: number
-    ) => {
-      record: (ref: Ref) => void
-      invalidate: () => void
-    }
-    resolveBreadcrumbSectionSelection: (
-      currentSection: string,
-      currentPage: string,
-      selectedSection: string
-    ) => { section: string; page: string }
+const {
+  createRecentPageRecorder,
+  resolveBreadcrumbSectionSelection,
+  resolveSourceNavigationTarget
+} = AppModule as unknown as {
+  createRecentPageRecorder: (
+    persist: (ref: Ref) => Promise<unknown>,
+    refresh: () => void,
+    onError: (error: unknown) => void,
+    delay?: number
+  ) => {
+    record: (ref: Ref) => void
+    invalidate: () => void
   }
+  resolveBreadcrumbSectionSelection: (
+    currentSection: string,
+    currentPage: string,
+    selectedSection: string
+  ) => { section: string; page: string }
+  resolveSourceNavigationTarget: <T extends Ref & { source?: string }>(
+    catalog: readonly T[],
+    target: Ref & { source?: string }
+  ) => Ref & { source?: string }
+}
 
 describe('App navigation coordination', () => {
   afterEach(() => {
@@ -99,5 +106,39 @@ describe('App navigation coordination', () => {
     expect(
       resolveBreadcrumbSectionSelection('Projects/Active', 'Launch', 'Projects')
     ).toEqual({ section: 'Projects', page: 'Launch' })
+  })
+
+  it('selects the requested source when vault and linked coordinates collide', () => {
+    const catalog = [
+      {
+        source: 'vault',
+        notebook: 'Work',
+        section: 'Plans',
+        page: 'Roadmap'
+      },
+      {
+        source: 'linked:team-drive',
+        notebook: 'Work',
+        section: 'Plans',
+        page: 'Roadmap'
+      }
+    ]
+
+    expect(
+      resolveSourceNavigationTarget(catalog, {
+        source: 'linked:team-drive',
+        notebook: 'Work',
+        section: 'Plans',
+        page: 'Roadmap'
+      })
+    ).toBe(catalog[1])
+    expect(
+      resolveSourceNavigationTarget(catalog, {
+        source: 'vault',
+        notebook: 'Work',
+        section: 'Plans',
+        page: 'Roadmap'
+      })
+    ).toBe(catalog[0])
   })
 })

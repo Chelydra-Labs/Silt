@@ -71,7 +71,22 @@ export function getPageLinkContext(state: EditorState): PageLinkContext | null {
 }
 
 export function pageLinkPath(item: PageLinkItem): string {
-  return [item.notebook, item.section, item.page].filter(Boolean).join('/')
+  const path = [item.notebook, item.section, item.page]
+    .filter(Boolean)
+    .join('/')
+  return item.source?.startsWith('linked:') ? `${item.source}/${path}` : path
+}
+
+export function pageLinkSourceLabel(source?: string): string {
+  if (!source || source === 'vault') return 'Vault'
+  const id = source.startsWith('linked:')
+    ? source.slice('linked:'.length)
+    : source
+  return id ? `Linked · ${id}` : 'Linked'
+}
+
+export function normalizePageLinkAlias(alias: string): string {
+  return alias.replace(/[\]|]/g, '').replace(/[\r\n]+/g, ' ')
 }
 
 export function rankPageLinks(
@@ -115,7 +130,12 @@ export function insertPageLinkSuggestion(
   const nodeType = editor.schema.nodes.pageLinkNode
   if (!ctx || !nodeType || !target) return false
 
-  const node = nodeType.create({ target, heading: null, alias: alias || null })
+  const normalizedAlias = alias ? normalizePageLinkAlias(alias).trim() : ''
+  const node = nodeType.create({
+    target,
+    heading: null,
+    alias: normalizedAlias || null
+  })
   const tr = editor.state.tr.delete(ctx.from, ctx.to).insert(ctx.from, node)
   const after = ctx.from + node.nodeSize
   tr.setSelection(TextSelection.create(tr.doc, after, after))
@@ -142,6 +162,16 @@ interface PageLinkSuggestState {
 const pageLinkSuggestKey = new PluginKey<PageLinkSuggestState>(
   'siltPageLinkSuggest'
 )
+
+export function dismissPageLinkSuggestion(
+  editor: Editor,
+  returnFocus = false
+): void {
+  editor.view.dispatch(
+    editor.state.tr.setMeta(pageLinkSuggestKey, { escape: true })
+  )
+  if (returnFocus) editor.commands.focus()
+}
 
 export interface PageLinkSuggestOptions {
   items: () => readonly PageLinkItem[]
@@ -209,10 +239,7 @@ export const PageLinkSuggest = Extension.create<PageLinkSuggestOptions>({
     const opts = this.options
     const active = () => getPageLinkContext(editor.state) !== null
     const actionable = () => active() && opts.items().length > 0
-    const dismiss = () =>
-      editor.view.dispatch(
-        editor.state.tr.setMeta(pageLinkSuggestKey, { escape: true })
-      )
+    const dismiss = () => dismissPageLinkSuggestion(editor)
     return {
       ArrowUp: () => {
         if (!actionable()) return false

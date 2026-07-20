@@ -67,6 +67,27 @@
       page: pageIsWithinSelection ? currentPage : ''
     }
   }
+
+  interface SourceNavigationRef extends RecentPageRef {
+    source?: string
+  }
+
+  export function resolveSourceNavigationTarget<T extends SourceNavigationRef>(
+    catalog: readonly T[],
+    target: SourceNavigationRef
+  ): SourceNavigationRef {
+    if (!target.source) return target
+    const source = target.source || 'vault'
+    return (
+      catalog.find(
+        (item) =>
+          (item.source || 'vault') === source &&
+          item.notebook === target.notebook &&
+          item.section === target.section &&
+          item.page === target.page
+      ) ?? target
+    )
+  }
 </script>
 
 <script lang="ts">
@@ -1010,20 +1031,26 @@
     function handleNavigateToBlock(e: Event) {
       const d = (e as CustomEvent).detail
       if (d) {
+        const ref = resolveSourceNavigationTarget(navigationCatalog, {
+          source: d.source,
+          notebook: d.notebook,
+          section: d.section ?? '',
+          page: d.page
+        })
         // Standalone-task routing guard (#374). A `.silt` notebook ref
         // routes to the Tasks view instead of a raw page tab. The Tasks
         // view's `focusBlockId` prop handles scroll+highlight on mount.
         const target = routeJumpTarget({
-          notebook: d.notebook,
-          section: d.section,
-          page: d.page,
+          notebook: ref.notebook,
+          section: ref.section,
+          page: ref.page,
           blockTarget: d.blockId ? { blockId: d.blockId } : undefined
         })
         if (target.kind === 'tasks-view') {
           openTasksView(target.blockTarget?.blockId)
           return
         }
-        handleSearchJump(d.notebook, d.section, d.page, d.date, d.blockId)
+        handleSearchJump(ref.notebook, ref.section, ref.page, d.date, d.blockId)
       }
     }
     // Wiki-link navigation (#545). Opens the resolved page; optional heading
@@ -1031,10 +1058,16 @@
     function handleNavigateToPage(e: Event) {
       const d = (e as CustomEvent).detail
       if (!d?.notebook || !d?.page) return
+      const ref = resolveSourceNavigationTarget(navigationCatalog, {
+        source: d.source,
+        notebook: d.notebook,
+        section: d.section ?? '',
+        page: d.page
+      })
       handleSearchJump(
-        d.notebook,
-        d.section ?? '',
-        d.page,
+        ref.notebook,
+        ref.section,
+        ref.page,
         d.date ?? '',
         d.blockId ?? ''
       )
@@ -1669,8 +1702,6 @@
       bind:sidebarCollapsed
       {sidebarWidth}
       onSearchClick={() => (showSearch = true)}
-      onSwitcherClick={() => (showQuickSwitcher = true)}
-      onShortcutHelpClick={() => (showShortcutHelp = true)}
       onAIClick={getAIAvailability().drawerAvailable
         ? () => toggleAIChatDrawer()
         : undefined}

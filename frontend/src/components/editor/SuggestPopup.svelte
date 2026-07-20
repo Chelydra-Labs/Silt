@@ -35,6 +35,13 @@
   const activeOption = $derived(
     selected >= 0 && selected < items.length ? optionId(selected) : undefined
   )
+  const selectedAnnouncement = $derived(
+    selected >= 0 && selected < items.length
+      ? [items[selected].label, items[selected].hint]
+          .filter(Boolean)
+          .join(', ') + `, ${selected + 1} of ${items.length}`
+      : ''
+  )
 </script>
 
 <div
@@ -73,6 +80,14 @@
         </button>
       {/each}
     {/if}
+  </div>
+  <div
+    class="suggest-popup-announcement"
+    role="status"
+    aria-live="polite"
+    aria-atomic="true"
+  >
+    {selectedAnnouncement}
   </div>
   {#if footer}
     <div class="suggest-popup-footer">
@@ -158,5 +173,17 @@
     border-top: 1px solid var(--color-surface-popover-border);
     color: var(--color-text-muted);
     font-size: 0.78rem;
+  }
+
+  .suggest-popup-announcement {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

@@ -22,15 +22,27 @@ function props(overrides = {}) {
 }
 
 describe('SuggestPopup', () => {
-  it('renders a positioned listbox with the selected option as active', () => {
-    const { getByRole } = render(SuggestPopup, { props: props() })
+  it('keeps stable option IDs, exposes the active option, and politely announces it', async () => {
+    const { getAllByRole, getByRole, rerender } = render(SuggestPopup, {
+      props: props()
+    })
 
     const listbox = getByRole('listbox', { name: 'Task metadata' })
     const options = getByRole('option', { name: /owner/i })
+    const optionIds = getAllByRole('option').map((option) => option.id)
     expect(listbox.getAttribute('style')).toContain('left: 42px')
     expect(listbox.getAttribute('style')).toContain('top: 84px')
+    expect(optionIds.every(Boolean)).toBe(true)
     expect(listbox.getAttribute('aria-activedescendant')).toBe(options.id)
     expect(options.getAttribute('aria-selected')).toBe('true')
+    const status = getByRole('status')
+    expect(status.getAttribute('aria-live')).toBe('polite')
+    expect(status.textContent).toContain('owner, Owner / assignee, 2 of 2')
+
+    await rerender(props({ selected: 0 }))
+    expect(getAllByRole('option').map((option) => option.id)).toEqual(optionIds)
+    expect(listbox.getAttribute('aria-activedescendant')).toBe(optionIds[0])
+    expect(status.textContent).toContain('due, Due date, 1 of 2')
   })
 
   it('reports pointer hover and picking by item index', async () => {
@@ -50,7 +62,6 @@ describe('SuggestPopup', () => {
     const { getByRole } = render(SuggestPopup, { props: popupProps })
     const listbox = getByRole('listbox')
     const activeBefore = listbox.getAttribute('aria-activedescendant')
-
     await fireEvent.keyDown(listbox, { key: 'ArrowDown' })
 
     expect(listbox.getAttribute('aria-activedescendant')).toBe(activeBefore)

@@ -102,10 +102,13 @@ export type {
 export {
   PageLinkSuggest,
   applyPageLinkSuggestion,
+  dismissPageLinkSuggestion,
   getPageLinkContext,
   getPageLinkContextAt,
   insertPageLinkSuggestion,
+  normalizePageLinkAlias,
   pageLinkPath,
+  pageLinkSourceLabel,
   rankPageLinks,
   resolvePageLinkTarget
 } from './pageLinkSuggest'

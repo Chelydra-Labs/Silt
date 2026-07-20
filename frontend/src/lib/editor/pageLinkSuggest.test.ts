@@ -11,6 +11,8 @@ import {
   PageLinkSuggest,
   applyPageLinkSuggestion,
   getPageLinkContext,
+  normalizePageLinkAlias,
+  pageLinkPath,
   rankPageLinks
 } from './pageLinkSuggest'
 import type { DocJSON } from './types'
@@ -140,7 +142,7 @@ describe('page-link ranking and insertion', () => {
         editor,
         { notebook: 'Work', section: 'Plans', page: 'Roadmap' },
         resolve,
-        'Launch plan'
+        'Launch]| plan\nv2'
       )
     ).resolves.toBe(true)
     expect(resolve).toHaveBeenCalledWith('Work/Plans/Roadmap')
@@ -156,10 +158,58 @@ describe('page-link ranking and insertion', () => {
     expect(link?.attrs).toMatchObject({
       target: 'Roadmap',
       heading: null,
-      alias: 'Launch plan'
+      alias: 'Launch plan v2'
     })
     expect(editor.state.selection.empty).toBe(true)
     editor.destroy()
+  })
+
+  it('qualifies linked-root resolution and preserves that target in one atomic node', async () => {
+    const editor = makeEditor()
+    editor.commands.setContent(noteDoc('See [[road'))
+    editor.commands.setTextSelection(11)
+    const resolve = vi.fn().mockResolvedValue({
+      exists: true,
+      shortest: 'linked:team-drive/Work/Plans/Roadmap'
+    })
+
+    await expect(
+      applyPageLinkSuggestion(
+        editor,
+        {
+          source: 'linked:team-drive',
+          notebook: 'Work',
+          section: 'Plans',
+          page: 'Roadmap'
+        },
+        resolve
+      )
+    ).resolves.toBe(true)
+
+    expect(resolve).toHaveBeenCalledWith('linked:team-drive/Work/Plans/Roadmap')
+    const content = (editor.getJSON().content?.[0].content ?? []) as Array<{
+      type?: string
+      attrs?: Record<string, unknown>
+    }>
+    expect(content.filter((node) => node.type === 'pageLinkNode')).toHaveLength(
+      1
+    )
+    expect(
+      content.find((node) => node.type === 'pageLinkNode')?.attrs?.target
+    ).toBe('linked:team-drive/Work/Plans/Roadmap')
+    editor.destroy()
+  })
+
+  it('keeps vault lookup paths unqualified and strips wiki-link delimiters from aliases', () => {
+    expect(
+      pageLinkPath({
+        source: 'vault',
+        notebook: 'Work',
+        section: 'Plans',
+        page: 'Roadmap'
+      })
+    ).toBe('Work/Plans/Roadmap')
+    expect(normalizePageLinkAlias('Launch]|plan\nnext')).toBe('Launchplan next')
   })
 
   it('does not mutate the document when resolution fails', async () => {

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"strings"
 
 	"silt/backend/parser"
@@ -16,6 +17,7 @@ type PageLoc struct {
 
 // PageLinkRow is one row of the page_links reverse index.
 type PageLinkRow struct {
+	Source         string // 'vault' | 'linked:<id>' — the root the linking page belongs to
 	SourceNotebook string
 	SourceSection  string
 	SourcePage     string
@@ -33,6 +35,12 @@ func (dm *DatabaseManager) ListDistinctPages() ([]PageLoc, error) {
 		return nil, ErrDBClosed
 	}
 	defer release()
+	return listDistinctPages(db)
+}
+
+// listDistinctPages is the no-handle-reentry internal helper. Callers that
+// already hold a handle lease MUST call this instead of ListDistinctPages.
+func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
 	rows, err := db.Query(`
 		SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
 		FROM blocks
@@ -61,7 +69,7 @@ func (dm *DatabaseManager) ListAllPageLinks() ([]PageLinkRow, error) {
 		return nil, ErrDBClosed
 	}
 	defer release()
-	rows, err := db.Query(`SELECT source_notebook, source_section, source_page, source_block_id,
+	rows, err := db.Query(`SELECT COALESCE(source,'vault'), source_notebook, source_section, source_page, source_block_id,
 	             target_raw, COALESCE(heading, ''), COALESCE(alias, '')
 	      FROM page_links`)
 	if err != nil {
@@ -72,7 +80,7 @@ func (dm *DatabaseManager) ListAllPageLinks() ([]PageLinkRow, error) {
 	for rows.Next() {
 		var r PageLinkRow
 		if err := rows.Scan(
-			&r.SourceNotebook, &r.SourceSection, &r.SourcePage, &r.SourceBlockID,
+			&r.Source, &r.SourceNotebook, &r.SourceSection, &r.SourcePage, &r.SourceBlockID,
 			&r.TargetRaw, &r.Heading, &r.Alias,
 		); err != nil {
 			return nil, err
@@ -103,6 +111,18 @@ func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLi
 	if len(targets) == 0 {
 		return nil, nil
 	}
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
+	return listPageLinksByTargetRaws(db, targets)
+}
+
+// listPageLinksByTargetRaws is the no-handle-reentry internal helper. Callers
+// that already hold a handle lease MUST call this instead of
+// ListPageLinksByTargetRaws.
+func listPageLinksByTargetRaws(db *sql.DB, targets []string) ([]PageLinkRow, error) {
 	// Dedupe lowercased candidates for the IN list.
 	seen := make(map[string]bool, len(targets))
 	args := make([]any, 0, len(targets))
@@ -117,11 +137,6 @@ func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLi
 	if len(args) == 0 {
 		return nil, nil
 	}
-	db, release, err := dm.handle()
-	if err != nil {
-		return nil, ErrDBClosed
-	}
-	defer release()
 
 	var out []PageLinkRow
 	// Dedupe rows across batches (same link can match multiple candidates).
@@ -137,7 +152,7 @@ func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLi
 			placeholders[i] = "?"
 		}
 		// lower(target_raw) uses idx_page_links_raw_lower when present.
-		q := `SELECT source_notebook, source_section, source_page, source_block_id,
+		q := `SELECT COALESCE(source,'vault'), source_notebook, source_section, source_page, source_block_id,
 		             target_raw, COALESCE(heading, ''), COALESCE(alias, '')
 		      FROM page_links
 		      WHERE lower(target_raw) IN (` + strings.Join(placeholders, ",") + `)`
@@ -148,13 +163,13 @@ func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLi
 		for rows.Next() {
 			var r PageLinkRow
 			if err := rows.Scan(
-				&r.SourceNotebook, &r.SourceSection, &r.SourcePage, &r.SourceBlockID,
+				&r.Source, &r.SourceNotebook, &r.SourceSection, &r.SourcePage, &r.SourceBlockID,
 				&r.TargetRaw, &r.Heading, &r.Alias,
 			); err != nil {
 				rows.Close()
 				return nil, err
 			}
-			key := r.SourceNotebook + "\x00" + r.SourceSection + "\x00" + r.SourcePage + "\x00" +
+			key := r.Source + "\x00" + r.SourceNotebook + "\x00" + r.SourceSection + "\x00" + r.SourcePage + "\x00" +
 				r.SourceBlockID + "\x00" + r.TargetRaw
 			if rowSeen[key] {
 				continue
@@ -171,13 +186,25 @@ func (dm *DatabaseManager) ListPageLinksByTargetRaws(targets []string) ([]PageLi
 	return out, nil
 }
 
+// LinkTargetSpec describes a page location for candidate generation, including
+// the source root so source-qualified target forms are emitted for linked
+// notebooks.
+type LinkTargetSpec struct {
+	Source   string // 'vault' | 'linked:<id>'
+	Notebook string
+	Section  string
+	Page     string
+}
+
 // LinkTargetRawCandidates returns every target_raw form that may uniquely
 // resolve to the given page locations: PathVariants plus intermediate
 // path-segment suffixes not already covered by PathVariants (so [[Active/Site]]
-// still matches Work/Projects/Active/Site). Candidates are deduped globally
-// across all targets. Callers pass the full list to ListPageLinksByTargetRaws,
-// which batches the SQL IN clause — do not truncate here.
-func LinkTargetRawCandidates(targets []struct{ Notebook, Section, Page string }) []string {
+// still matches Work/Projects/Active/Site). For non-vault sources, also emits
+// the source-qualified form (e.g. "linked:abc/Work/Site") since ShortestUniquePath
+// emits that form for cross-source basename collisions. Candidates are deduped
+// globally across all targets. Callers pass the full list to
+// ListPageLinksByTargetRaws, which batches the SQL IN clause — do not truncate here.
+func LinkTargetRawCandidates(targets []LinkTargetSpec) []string {
 	seen := make(map[string]bool)
 	var primary, suffixes []string
 	add := func(dst *[]string, s string) {
@@ -197,6 +224,26 @@ func LinkTargetRawCandidates(targets []struct{ Notebook, Section, Page string })
 		for _, v := range variants {
 			variantSet[strings.ToLower(v)] = true
 			add(&primary, v)
+		}
+		// Source-qualified candidates for non-vault sources (linked notebooks).
+		// ShortestUniquePath emits "linked:<id>/Notebook/Section/Page" and its
+		// shorter variants when basename collides across sources.
+		if t.Source != "" && t.Source != "vault" {
+			// Emit all qualified suffix forms: source/Page, source/Section/Page,
+			// source/Notebook/Section/Page.
+			qParts := []string{t.Source}
+			if t.Notebook != "" {
+				qParts = append(qParts, t.Notebook)
+			}
+			if t.Section != "" {
+				qParts = append(qParts, strings.Split(t.Section, "/")...)
+			}
+			qParts = append(qParts, t.Page)
+			for i := 1; i < len(qParts); i++ {
+				qSuf := strings.Join(qParts[i:], "/")
+				qFull := t.Source + "/" + qSuf
+				add(&primary, qFull)
+			}
 		}
 		// Intermediate suffixes only (skip forms already in PathVariants).
 		var parts []string
@@ -233,15 +280,81 @@ func (dm *DatabaseManager) ResolvePageLink(target string) (parser.PageReference,
 	return ResolvePageLinkAgainst(target, pages), nil
 }
 
+// ParseQualifiedTarget separates a source-qualified target like
+// "linked:abc/Notebook/Section/Page" into (source, path) and a boolean
+// indicating whether the target is source-qualified. Only "linked:" is a
+// source qualifier; "vault/..." is a valid legacy notebook path prefix and
+// is never treated as source-qualified (under the globally unique
+// notebook-name invariant). Unqualified targets return ("", target, false).
+func ParseQualifiedTarget(target string) (source, path string, qualified bool) {
+	norm := NormalizePageLinkTarget(target)
+	if norm == "" {
+		return "", "", false
+	}
+	if idx := strings.Index(norm, "/"); idx > 0 {
+		prefix := norm[:idx]
+		if strings.HasPrefix(prefix, "linked:") {
+			return prefix, norm[idx+1:], true
+		}
+	}
+	return "", norm, false
+}
+
+// QualifiedPath returns a source-qualified path for a linked page location:
+// "linked:<id>/Notebook/Section/Page". Vault pages return the unqualified
+// path (no "vault/" prefix) since vault notebook names are globally unique
+// and never need source disambiguation.
+func QualifiedPath(loc PageLoc) string {
+	if strings.HasPrefix(loc.Source, "linked:") {
+		if loc.Section != "" {
+			return loc.Source + "/" + loc.Notebook + "/" + loc.Section + "/" + loc.Page
+		}
+		if loc.Notebook != "" {
+			return loc.Source + "/" + loc.Notebook + "/" + loc.Page
+		}
+		return loc.Source + "/" + loc.Page
+	}
+	if loc.Section != "" {
+		return loc.Notebook + "/" + loc.Section + "/" + loc.Page
+	}
+	if loc.Notebook != "" {
+		return loc.Notebook + "/" + loc.Page
+	}
+	return loc.Page
+}
+
 // ResolvePageLinkAgainst is the pure resolution core (unit-testable without DB).
+// Source-qualified targets (e.g. "linked:abc/Work/Site") resolve only against
+// pages in that source. Unqualified targets resolve across all sources.
 func ResolvePageLinkAgainst(target string, pages []PageLoc) parser.PageReference {
 	ref := parser.PageReference{Target: target}
-	norm := NormalizePageLinkTarget(target)
+
+	source, path, qualified := ParseQualifiedTarget(target)
+	if path == "" {
+		return ref
+	}
+	if qualified {
+		// Source-qualified: match only pages in the given source.
+		return resolveScoped(source, path, pages)
+	}
+	return resolveScoped("", path, pages)
+}
+
+// resolveScoped resolves a (possibly empty) source-scoped path against pages.
+// Empty source means match across all sources; non-empty means match only
+// pages in that source.
+func resolveScoped(source, path string, pages []PageLoc) parser.PageReference {
+	ref := parser.PageReference{Target: path}
+	norm := NormalizePageLinkTarget(path)
 	if norm == "" {
 		return ref
 	}
+
 	var matches []PageLoc
 	for _, p := range pages {
+		if source != "" && p.Source != source {
+			continue
+		}
 		if PageMatchesTarget(p.Notebook, p.Section, p.Page, norm) {
 			matches = append(matches, p)
 		}
@@ -321,7 +434,11 @@ func PageMatchesTarget(notebook, section, page, target string) bool {
 }
 
 // ShortestUniquePath returns the shortest path form that uniquely identifies
-// loc among pages. Falls back to the full path.
+// loc among pages. Falls back to the full path. When a linked page's basename
+// collides across sources and all unqualified forms are ambiguous, the
+// source-qualified form "linked:<id>/Notebook/Section/Page" is emitted.
+// Vault pages never receive a "vault/" prefix (under the globally unique
+// notebook-name invariant, vault paths are always unambiguous).
 func ShortestUniquePath(loc PageLoc, pages []PageLoc) string {
 	for _, v := range PathVariants(loc.Notebook, loc.Section, loc.Page) {
 		n := 0
@@ -337,6 +454,24 @@ func ShortestUniquePath(loc PageLoc, pages []PageLoc) string {
 			return v
 		}
 	}
+	// All unqualified forms are ambiguous. Linked pages use their source
+	// prefix for disambiguation; vault pages fall back to the full
+	// unqualified path (which is unique under the invariant).
+	return sourceFullPath(loc)
+}
+
+// sourceFullPath returns "source/Notebook/Section/Page" for linked sources,
+// or the unqualified "Notebook/Section/Page" for vault sources.
+func sourceFullPath(loc PageLoc) string {
+	if strings.HasPrefix(loc.Source, "linked:") {
+		if loc.Section != "" {
+			return loc.Source + "/" + loc.Notebook + "/" + loc.Section + "/" + loc.Page
+		}
+		if loc.Notebook != "" {
+			return loc.Source + "/" + loc.Notebook + "/" + loc.Page
+		}
+		return loc.Source + "/" + loc.Page
+	}
 	if loc.Section != "" {
 		return loc.Notebook + "/" + loc.Section + "/" + loc.Page
 	}
@@ -348,9 +483,27 @@ func ShortestUniquePath(loc PageLoc, pages []PageLoc) string {
 
 // MapTargetRaw rewrites a stored target_raw from an old page location to a new
 // one, preserving the path "depth" the author used (basename vs section/page
-// vs full path). Case-insensitive to match resolution semantics.
+// vs full path). Case-insensitive to match resolution semantics. Source-qualified
+// targets (e.g. "linked:abc/Work/Site") have their qualifier stripped before
+// matching, then the qualifier is re-applied to the new form.
 func MapTargetRaw(oldRaw, oldNB, oldSec, oldPage, newNB, newSec, newPage string) string {
 	oldRawNorm := NormalizePageLinkTarget(oldRaw)
+
+	// Handle source-qualified forms: strip qualifier, map the path portion,
+	// re-apply the qualifier. The qualifier (source prefix) is preserved across
+	// renames since it identifies the source root, not the page location.
+	srcPrefix := ""
+	stripped := oldRawNorm
+	if _, path, q := ParseQualifiedTarget(oldRaw); q {
+		srcPrefix = oldRawNorm[:len(oldRawNorm)-len(path)]
+		stripped = path
+	}
+	if srcPrefix != "" {
+		// Map the unqualified path portion, then re-qualify.
+		newUnqual := MapTargetRaw(stripped, oldNB, oldSec, oldPage, newNB, newSec, newPage)
+		return srcPrefix + newUnqual
+	}
+
 	oldVars := PathVariants(oldNB, oldSec, oldPage)
 	newVars := PathVariants(newNB, newSec, newPage)
 	for i, v := range oldVars {

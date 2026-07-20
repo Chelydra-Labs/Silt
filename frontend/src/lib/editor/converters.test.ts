@@ -1155,6 +1155,20 @@ describe('uniqueIdPlugin', () => {
     expect(back[0].clean_text).toBe(block.clean_text)
   })
 
+  it('round-trips a source-qualified linked-root page target', () => {
+    const block = mkBlock('NOTE', {
+      clean_text:
+        'Link [[linked:team-drive/Work/Projects/Roadmap|Shared roadmap]] end'
+    })
+    const doc = blocksToDoc([block])
+    const link = (doc.content[0] as any).content.find(
+      (child: any) => child.type === 'pageLinkNode'
+    )
+
+    expect(link.attrs.target).toBe('linked:team-drive/Work/Projects/Roadmap')
+    expect(docToBlocks(doc)[0].clean_text).toBe(block.clean_text)
+  })
+
   it('block-level embedNode (top-level) round-trips as a note carrying the token', () => {
     // Direct doc construction: a top-level embedNode is preserved through
     // docToBlocks as a NOTE block whose clean_text is the embed token.
