@@ -98,31 +98,16 @@ describe('TitleBar', () => {
     ).toBeNull()
   })
 
-  it('offers a separate discoverable page switcher control', async () => {
-    const onSwitcherClick = vi.fn()
+  it('does not duplicate globally available switcher and shortcut controls', async () => {
     render(TitleBar, {
       props: {
         sidebarCollapsed: false,
-        onSearchClick: () => {},
-        onSwitcherClick
+        onSearchClick: () => {}
       }
     })
-    await screen.getByRole('button', { name: 'Switch page' }).click()
-    expect(onSwitcherClick).toHaveBeenCalledOnce()
-  })
-
-  it('offers a discoverable shortcut reference trigger', async () => {
-    const onShortcutHelpClick = vi.fn()
-    render(TitleBar, {
-      props: {
-        sidebarCollapsed: false,
-        onSearchClick: () => {},
-        onShortcutHelpClick
-      }
-    })
-    const trigger = screen.getByRole('button', { name: 'Keyboard shortcuts' })
-    expect(trigger).toHaveAttribute('title', expect.stringContaining('Shift+?'))
-    trigger.click()
-    expect(onShortcutHelpClick).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('button', { name: 'Switch page' })).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: 'Keyboard shortcuts' })
+    ).toBeNull()
   })
 })
