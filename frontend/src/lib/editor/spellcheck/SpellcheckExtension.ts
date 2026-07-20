@@ -132,6 +132,9 @@ export const Spellcheck = Extension.create({
           }
         },
         props: {
+          attributes: {
+            spellcheck: 'false'
+          },
           decorations(state: any) {
             return key.getState(state) as DecorationSet
           }
