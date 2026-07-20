@@ -194,7 +194,8 @@ func (dm *DatabaseManager) collectBacklinks(db *sql.DB, source, notebook, sectio
 		return nil, err
 	}
 
-	// 3. Legs 2+3: block-refs and embeds via parameterized LIKE.
+	// 3. Legs 2+3: block-refs and embeds via the indexed block_references
+	// reverse lookup (#704).
 	blockRefs, embeds, err := dm.legBlockRefsAndEmbeds(db, targetBlockIDs)
 	if err != nil {
 		return nil, err
@@ -436,10 +437,11 @@ func (dm *DatabaseManager) legBlockRefsAndEmbeds(db *sql.DB, targetBlockIDs []st
 
 // snippet returns a contextual 120-rune excerpt of text centered on the first
 // occurrence of token (the page-link / block-ref / embed syntax). When token
-// is absent from text, falls back to a plain prefix. Uses clean_content for
-// page-links (the wiki-link syntax lives in clean) and raw_content for
-// block-refs/embeds (the ((uuid)) / {{embed:uuid}} syntax may not survive
-// cleaning).
+// is absent from text, falls back to a plain prefix. The text argument is
+// always the source block's clean_content — the ((uuid)) / {{embed:uuid}}
+// syntax survives cleaning (verified at parser.go:1048 BlockRefRegex against
+// CleanText), and clean_content is what users see in the rendered panel, so
+// the snippet matches the visible context.
 //
 // For page-link tokens (starting with [[), the snippet boundary is extended to
 // include the closing ]] so the link is never sliced mid-syntax. If the full
