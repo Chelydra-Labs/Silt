@@ -82,6 +82,67 @@ func taskEstimateMinutes(raw string) interface{} {
 	return nil
 }
 
+// blockRefEdge is one extracted (target, kind) tuple from a block's RawText.
+// Shared by the live indexer and the warm-upgrade backfill so the extraction
+// contract has one source of truth (#704).
+type blockRefEdge struct {
+	targetID string
+	kind     BacklinkKind
+}
+
+// extractBlockRefEdges extracts ((uuid)) block-ref and {{embed:uuid}} embed
+// tokens from raw and returns one (targetID, kind) tuple per distinct match.
+// Pure function — no DB access, no side effects. Shared by indexBlockReferences
+// (live indexer path) and backfillBlockReferences (one-shot migration) so the
+// regex extraction cannot drift between the two callers.
+//
+// Walks raw regardless of block type; callers pass RawText for every block
+// row (including CODE blocks — the backlinks contract requires all-type
+// extraction; page_links CODE exclusion is unrelated and lives in the
+// indexer loop).
+func extractBlockRefEdges(raw string) []blockRefEdge {
+	var edges []blockRefEdge
+	for _, m := range parser.BlockRefRegex.FindAllStringSubmatch(raw, -1) {
+		if len(m) >= 2 && m[1] != "" {
+			edges = append(edges, blockRefEdge{targetID: m[1], kind: BacklinkBlockRef})
+		}
+	}
+	for _, m := range parser.EmbedRegex.FindAllStringSubmatch(raw, -1) {
+		if len(m) >= 2 && m[1] != "" {
+			edges = append(edges, blockRefEdge{targetID: m[1], kind: BacklinkEmbed})
+		}
+	}
+	return edges
+}
+
+// indexBlockReferences extracts ((uuid)) block-ref and {{embed:uuid}} embed
+// tokens from raw via the shared extractBlockRefEdges helper and inserts each
+// as a distinct edge into block_references via the caller's prepared
+// statement. Shared between IndexFileBlocks and IndexScanResults so the two
+// indexers cannot drift (#704). The cascade through the per-block DELETE FROM
+// blocks at the top of each indexer already removed the prior edge set, so
+// each insert here is additive; INSERT OR IGNORE keeps the (source_block_id,
+// target_block_id, kind) PK unique when the same token appears twice in one
+// block.
+//
+// Includes CODE blocks: the indexed lookup must preserve the contract that
+// block-ref/embed tokens in fenced code ARE backlinks (diverging from
+// page_links, which excludes CODE blocks — literal [[…]] inside fenced code
+// is not a link and must not be rewritten on rename).
+//
+// Source-only FK by design: target IDs that do not (yet) exist in `blocks`
+// are retained as edges — markdown may reference an ID before the target is
+// indexed, after it was deleted, or in a file indexed later. The backlink
+// re-resolves automatically when the target subsequently appears.
+func indexBlockReferences(stmt *sql.Stmt, sourceBlockID, raw string) error {
+	for _, e := range extractBlockRefEdges(raw) {
+		if _, err := stmt.Exec(sourceBlockID, e.targetID, string(e.kind)); err != nil {
+			return fmt.Errorf("insert %s edge %s -> %s: %w", e.kind, sourceBlockID, e.targetID, err)
+		}
+	}
+	return nil
+}
+
 // warnOnDependencyCycle builds the [blocked_by::] edge map for a set of blocks
 // and logs a warning when it contains a cycle (#301). The IPC setter prevents
 // cycles at write time, but a hand-edited or externally-synced file (Obsidian,
@@ -517,6 +578,19 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	}
 	defer stmtBlockMetaClear.Close()
 
+	// block_references reverse index (#704): one row per distinct
+	// (source_block_id, target_block_id, kind) edge extracted from
+	// RawText. The per-block DELETE FROM blocks above cascades to
+	// block_references via FK ON DELETE CASCADE, so each insert here is
+	// additive. INSERT OR IGNORE keeps the PK unique when the same token
+	// appears twice in one block. Includes CODE blocks — see
+	// indexBlockReferences comment.
+	stmtBlockRef, err := tx.Prepare("INSERT OR IGNORE INTO block_references (source_block_id, target_block_id, kind) VALUES (?, ?, ?)")
+	if err != nil {
+		return fmt.Errorf("failed to prepare block_references insert: %w", err)
+	}
+	defer stmtBlockRef.Close()
+
 	// Derived task caches: descendant NOTE comments, direct subtask rollups
 	// (#434), plus modified_at / estimate_minutes projections (#439/#440).
 	commentsByTask, subtaskTotalByTask, subtaskDoneByTask := taskDerivedCounts(blocks)
@@ -639,6 +713,16 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 				log.Printf("db.IndexFileBlocks: tag insert error for block %s tag %q: %v", block.ID, tagPath, err)
 				continue
 			}
+		}
+
+		// block_references reverse index (#704): extract every ((uuid))
+		// and {{embed:uuid}} token from RawText. Includes CODE blocks
+		// (diverges from page_links below, which excludes CODE); the
+		// cascade through the per-block DELETE FROM blocks above cleared
+		// the prior edge set. Dangling target IDs are retained by design
+		// (source-only FK).
+		if err := indexBlockReferences(stmtBlockRef, block.ID, block.RawText); err != nil {
+			return fmt.Errorf("failed to index block_references for block %s: %w", block.ID, err)
 		}
 
 		// page_links reverse index (#545): extract every [[target]] /
@@ -789,6 +873,15 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		return 0, nil, fmt.Errorf("failed to prepare block_meta clear: %w", err)
 	}
 	defer stmtBlockMetaClear.Close()
+
+	// block_references reverse index (#704) — mirror IndexFileBlocks (see
+	// comment there). Includes CODE blocks; cascade via FK ON DELETE
+	// CASCADE on the per-block clear above.
+	stmtBlockRef, err := tx.Prepare("INSERT OR IGNORE INTO block_references (source_block_id, target_block_id, kind) VALUES (?, ?, ?)")
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to prepare block_references insert: %w", err)
+	}
+	defer stmtBlockRef.Close()
 
 	indexedCount := 0
 	var skipped []string
@@ -948,6 +1041,14 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 					log.Printf("db.IndexScanResults: tag insert error for block %s tag %q: %v", block.ID, tagPath, err)
 					continue
 				}
+			}
+
+			// block_references reverse index (#704) — mirror
+			// IndexFileBlocks. Includes CODE blocks (diverges from
+			// page_links below); cascade through the per-block clear
+			// above. Dangling target IDs retained by design.
+			if err := indexBlockReferences(stmtBlockRef, block.ID, block.RawText); err != nil {
+				return 0, skipped, fmt.Errorf("failed to index block_references for block %s: %w", block.ID, err)
 			}
 
 			// page_links reverse index (#545) — mirror IndexFileBlocks.

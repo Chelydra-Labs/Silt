@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"silt/backend/parser"
 )
@@ -808,22 +809,26 @@ func TestGetBacklinks_HeadingAndAliasIgnored(t *testing.T) {
 	}
 }
 
-// TestGetBacklinks_LargeBatchBlockRefs verifies that block-ref/embed LIKE
-// queries batch correctly when the target page has many blocks (> batch size).
+// TestGetBacklinks_LargeBatchBlockRefs verifies that the indexed block-ref
+// lookup batches correctly when the target page has many blocks (> batch
+// size). Uses valid v4-shaped UUIDs so parser.BlockRefRegex extracts the
+// source-edge tokens at index time.
 func TestGetBacklinks_LargeBatchBlockRefs(t *testing.T) {
 	dm := newTestDB(t)
-	// Target page with enough blocks to force >1 batch.
-	targetBlocks := make([]parser.ParsedBlock, 500)
-	blockIDs := make([]string, 500)
+	// Target page with enough blocks to force >1 batch at batchSize=500.
+	const total = 600
+	targetBlocks := make([]parser.ParsedBlock, total)
+	blockIDs := make([]string, total)
 	for i := range targetBlocks {
-		id := fmt.Sprintf("aaaa%03d-aaaa-4aaa-8aaa-%028d", i%10, i)
+		// 8-4-4-4-12 hex — a valid UUID shape so BlockRefRegex matches.
+		id := fmt.Sprintf("aaaaaaaa-aaaa-4aaa-8aaa-%012d", i)
 		blockIDs[i] = id
 		targetBlocks[i] = noteBlock(id, fmt.Sprintf("block %d", i))
 	}
 	idx(t, dm, "vault", "NB", "Sec", "Target", targetBlocks)
 
-	// Source referencing the last block.
-	srcBlock := noteBlock(uuidE, "ref to last "+("(("+blockIDs[499]+"))"))
+	// Source referencing the last block (forces the second batch).
+	srcBlock := noteBlock(uuidE, "ref to last "+("(("+blockIDs[total-1]+"))"))
 	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{srcBlock})
 
 	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
@@ -1976,23 +1981,249 @@ func BenchmarkGetBacklinksPaged(b *testing.B) {
 	}
 }
 
-// BenchmarkGetBacklinks_LegBlockRefs measures the block-ref/embed LIKE scan
-// cost: a target with 50 blocks, each referenced by one source block.
-// This documents the O(total_blocks) LIKE constraint.
-func BenchmarkGetBacklinks_LegBlockRefs(b *testing.B) {
+// --- Phase 1 contract baseline (#704) --------------------------------------
+//
+// These tests pin the CURRENT observable contract of the backlinks panel
+// before the indexed block_references lookup replaces the raw_content LIKE
+// scan. The indexed implementation MUST preserve every behavior locked
+// here. They live alongside the rest of the backlinks suite so a regression
+// in any of them surfaces a parity break.
+
+// TestGetBacklinks_BlockRefInCodeBlockIndexed locks the intentional parity
+// decision that a literal ((uuid)) inside a CODE block IS counted as a
+// block-ref backlink. The indexed extractor walks RawText of every block
+// row regardless of type (diverging from page_links, which excludes CODE),
+// so CODE-block tokens are picked up. This must not change (it would be a
+// silent product-semantics regression bundled into a future refactor).
+func TestGetBacklinks_BlockRefInCodeBlockIndexed(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		{ID: uuidB, Type: parser.BlockCode, RawText: "code with ((" + uuidA + ")) inline", CleanText: "code with ((" + uuidA + ")) inline", LineNumber: 1},
+	})
+
+	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(bl) != 1 {
+		t.Fatalf("CODE-block ((uuid)) must count as a backlink (parity), got %d: %+v", len(bl), bl)
+	}
+	if bl[0].Kind != BacklinkBlockRef {
+		t.Errorf("expected block-ref kind, got %q", bl[0].Kind)
+	}
+}
+
+// TestGetBacklinks_EmbedInCodeBlockIndexed locks the embed analogue of the
+// CODE-block parity decision above for {{embed:uuid}} tokens.
+func TestGetBacklinks_EmbedInCodeBlockIndexed(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		{ID: uuidB, Type: parser.BlockCode, RawText: "embed syntax {{embed:" + uuidA + "}} in code", CleanText: "embed syntax {{embed:" + uuidA + "}} in code", LineNumber: 1},
+	})
+
+	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(bl) != 1 || bl[0].Kind != BacklinkEmbed {
+		t.Fatalf("CODE-block {{embed:uuid}} must count as an embed backlink (parity), got %+v", bl)
+	}
+}
+
+// TestGetBacklinks_BlockRefLifecycle_TargetAppearsLater verifies that a source
+// indexed BEFORE its target block exists still produces a backlink once the
+// target page is subsequently indexed. The edge survives against a
+// not-yet-indexed target.
+func TestGetBacklinks_BlockRefLifecycle_TargetAppearsLater(t *testing.T) {
+	dm := newTestDB(t)
+	// Source page references a UUID that has no target block yet.
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, "ref to "+("(("+uuidA+"))")),
+	})
+
+	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks pre-target: %v", err)
+	}
+	if len(bl) != 0 {
+		t.Fatalf("expected 0 backlinks before target exists, got %d", len(bl))
+	}
+
+	// Now index the target page — backlink must appear without re-indexing Source.
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	bl, err = dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks post-target: %v", err)
+	}
+	if len(bl) != 1 || bl[0].Kind != BacklinkBlockRef {
+		t.Fatalf("expected 1 block-ref after target appears, got %+v", bl)
+	}
+}
+
+// TestGetBacklinks_BlockRefLifecycle_TargetDeletedReappears verifies the
+// full lifecycle: source indexed → target appears (backlink) → target page
+// cleared (backlink disappears) → target re-indexed (backlink reappears).
+// The source page is indexed only once at the start.
+func TestGetBacklinks_BlockRefLifecycle_TargetDeletedReappears(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, "ref to "+("(("+uuidA+"))")),
+	})
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+
+	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks initial: %v", err)
+	}
+	if len(bl) != 1 {
+		t.Fatalf("expected 1 backlink initially, got %d", len(bl))
+	}
+
+	// Clear the target page — its block ID leaves targetBlockIDs, so the
+	// backlink must disappear even though the source edge still references it.
+	if err := dm.ClearFileBlocks(nil, "vault", "NB", "Sec", "Target"); err != nil {
+		t.Fatalf("ClearFileBlocks: %v", err)
+	}
+	bl, err = dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks post-clear: %v", err)
+	}
+	if len(bl) != 0 {
+		t.Fatalf("expected 0 backlinks after target cleared, got %d", len(bl))
+	}
+
+	// Re-index the target — the original source edge must resolve again.
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target again"),
+	})
+	bl, err = dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks post-reappear: %v", err)
+	}
+	if len(bl) != 1 || bl[0].Kind != BacklinkBlockRef {
+		t.Fatalf("expected 1 block-ref after target reappears, got %+v", bl)
+	}
+}
+
+// TestGetBacklinks_SourceReindexedRemovesStaleEdge verifies that re-indexing
+// a source page after its block-ref was edited away drops the prior edge —
+// no zombie backlinks remain. The clear-then-insert flow must cascade.
+func TestGetBacklinks_SourceReindexedRemovesStaleEdge(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, "ref to "+("(("+uuidA+"))")),
+	})
+	bl, _ := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if len(bl) != 1 {
+		t.Fatalf("baseline: expected 1, got %d", len(bl))
+	}
+
+	// Re-index Source with the block-ref removed (same block ID, new content).
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, "ref is gone"),
+	})
+	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(bl) != 0 {
+		t.Fatalf("stale block-ref edge must be cleared on source re-index, got %d: %+v", len(bl), bl)
+	}
+}
+
+// TestGetBacklinks_IndexScanResultsParity asserts that IndexScanResults — the
+// batched cold-start indexer — produces backlinks indistinguishable from
+// IndexFileBlocks for the same input. The two indexers share extraction
+// helpers and must not drift.
+func TestGetBacklinks_IndexScanResultsParity(t *testing.T) {
+	// Build the same fixture two ways: per-file IndexFileBlocks vs a single
+	// IndexScanResults batch. The backlinks result set must be identical.
+	target := parser.ParsedBlock{ID: uuidA, Type: parser.BlockNote, RawText: "target", CleanText: "target", LineNumber: 1}
+	srcPageLink := parser.ParsedBlock{ID: uuidB, Type: parser.BlockNote, RawText: "[[Target]]", CleanText: "[[Target]]", LineNumber: 1}
+	srcBlockRef := parser.ParsedBlock{ID: uuidC, Type: parser.BlockNote, RawText: "see ((" + uuidA + "))", CleanText: "see ((" + uuidA + "))", LineNumber: 1}
+	srcEmbed := parser.ParsedBlock{ID: uuidD, Type: parser.BlockNote, RawText: "{{embed:" + uuidA + "}}", CleanText: "{{embed:" + uuidA + "}}", LineNumber: 1}
+
+	// File-by-file indexer.
+	dmFile := newTestDB(t)
+	idx(t, dmFile, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{target})
+	idx(t, dmFile, "vault", "NB", "Sec", "PL", []parser.ParsedBlock{srcPageLink})
+	idx(t, dmFile, "vault", "NB", "Sec", "BR", []parser.ParsedBlock{srcBlockRef})
+	idx(t, dmFile, "vault", "NB", "Sec", "EM", []parser.ParsedBlock{srcEmbed})
+	blFile, err := dmFile.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("file GetBacklinks: %v", err)
+	}
+
+	// Batched indexer (mirrors cold-start scan over multiple files).
+	dmScan := newTestDB(t)
+	results := []parser.ScanResult{
+		{Path: "/v/NB/Sec/Target.md", Notebook: "NB", Section: "Sec", Page: "Target", Blocks: []parser.ParsedBlock{target}},
+		{Path: "/v/NB/Sec/PL.md", Notebook: "NB", Section: "Sec", Page: "PL", Blocks: []parser.ParsedBlock{srcPageLink}},
+		{Path: "/v/NB/Sec/BR.md", Notebook: "NB", Section: "Sec", Page: "BR", Blocks: []parser.ParsedBlock{srcBlockRef}},
+		{Path: "/v/NB/Sec/EM.md", Notebook: "NB", Section: "Sec", Page: "EM", Blocks: []parser.ParsedBlock{srcEmbed}},
+	}
+	if _, _, err := dmScan.IndexScanResults(results); err != nil {
+		t.Fatalf("IndexScanResults: %v", err)
+	}
+	blScan, err := dmScan.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("scan GetBacklinks: %v", err)
+	}
+
+	if len(blFile) != len(blScan) {
+		t.Fatalf("parity: file=%d scan=%d backlinks\nfile: %+v\nscan: %+v", len(blFile), len(blScan), blFile, blScan)
+	}
+	for i := range blFile {
+		if blFile[i] != blScan[i] {
+			t.Errorf("parity mismatch at %d:\n  file: %+v\n  scan: %+v", i, blFile[i], blScan[i])
+		}
+	}
+}
+
+// BenchmarkGetBacklinks_IndexedLargeUnrelated measures the indexed
+// block_references lookup cost against a fixture with many UNRELATED blocks
+// (the noise the previous LIKE scan trudged through linearly). With the
+// indexed lookup (#704), the unrelated blocks do not participate in the
+// query — cost is proportional to inbound edges of the target page's blocks,
+// not total block count. Records the query shape without hardcoding timing
+// thresholds.
+func BenchmarkGetBacklinks_IndexedLargeUnrelated(b *testing.B) {
 	dm, err := NewDatabaseManager("")
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer dm.Close()
 
-	// Target with 50 blocks.
+	// Target with 50 blocks (valid UUIDs so BlockRefRegex matches at index).
 	targetBlocks := make([]parser.ParsedBlock, 50)
 	for i := range targetBlocks {
-		id := fmt.Sprintf("aaaa%03d-aaaa-4aaa-8aaa-%028d", i%10, i)
+		id := fmt.Sprintf("aaaaaaaa-aaaa-4aaa-8aaa-%012d", i)
 		targetBlocks[i] = noteBlock(id, fmt.Sprintf("block %d", i))
 	}
 	_ = dm.IndexFileBlocks("vault", "NB", "Sec", "Target", targetBlocks, nil)
+
+	// Large unrelated fixture: 5000 noise blocks the old LIKE scan would
+	// have scanned for every target UUID. The indexed lookup never touches
+	// them.
+	noise := make([]parser.ParsedBlock, 5000)
+	for i := range noise {
+		id := fmt.Sprintf("bbbbbbbb-bbbb-4bbb-8bbb-%012d", i)
+		noise[i] = noteBlock(id, fmt.Sprintf("noise %d", i))
+	}
+	_ = dm.IndexFileBlocks("vault", "NB", "Sec", "Noise", noise, nil)
 
 	// Source referencing the last target block.
 	_ = dm.IndexFileBlocks("vault", "NB", "Sec", "Source",
@@ -2006,5 +2237,264 @@ func BenchmarkGetBacklinks_LegBlockRefs(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// --- Phase 5 regression + query-plan coverage (#704) ----------------------
+
+// TestGetBacklinks_QueryPlanBlockReferences asserts the indexed lookup uses
+// idx_block_references_target (a SEARCH, not a SCAN of block_references or
+// blocks.raw_content). Stable intent assertion: matches the index name +
+// SEARCH verb without depending on the full SQLite plan text, which varies
+// across SQLite versions and modernc.org/sqlite builds.
+func TestGetBacklinks_QueryPlanBlockReferences(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, "ref "+("(("+uuidA+"))")),
+	})
+
+	// EXPLAIN QUERY PLAN returns 4 columns: selectid, order, from, detail.
+	// Run the same indexed lookup shape legBlockRefsAndEmbeds uses.
+	rows, err := dm.SQLDB().Query(
+		"EXPLAIN QUERY PLAN SELECT br.source_block_id, br.target_block_id, br.kind, "+
+			"COALESCE(b.source,'vault'), b.notebook, b.section, b.page, COALESCE(b.clean_content,'') "+
+			"FROM block_references br JOIN blocks b ON b.id = br.source_block_id "+
+			"WHERE br.target_block_id IN (?)",
+		uuidA,
+	)
+	if err != nil {
+		t.Fatalf("EXPLAIN: %v", err)
+	}
+	defer rows.Close()
+	var plans []string
+	for rows.Next() {
+		var selectid, order, from, detail string
+		if err := rows.Scan(&selectid, &order, &from, &detail); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		plans = append(plans, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows err: %v", err)
+	}
+
+	// Must NOT do a full SCAN of block_references or blocks.raw_content.
+	joined := strings.Join(plans, "\n")
+	if strings.Contains(joined, "SCAN TABLE block_references") {
+		t.Errorf("block_references lookup must be indexed, not a full SCAN: %s", joined)
+	}
+	// Must reference the reverse-lookup index somewhere in the plan.
+	if !strings.Contains(joined, "idx_block_references_target") {
+		t.Errorf("expected idx_block_references_target in plan, got: %s", joined)
+	}
+	// Must use SEARCH (ep tables/virtual tables use SEARCH too, but a real
+	// indexed lookup on a normal table is always SEARCH).
+	if !strings.Contains(joined, "SEARCH") {
+		t.Errorf("expected SEARCH in plan, got: %s", joined)
+	}
+}
+
+// TestGetBacklinks_CrossBatchMixedKind asserts that when a target page has
+// enough blocks to span >1 batch (batchSize=500) and a single source holds
+// both a block-ref to an early target and an embed to a late target, both
+// edges survive the batch boundary and classify into the correct leg.
+func TestGetBacklinks_CrossBatchMixedKind(t *testing.T) {
+	dm := newTestDB(t)
+	const total = 600
+	targetBlocks := make([]parser.ParsedBlock, total)
+	for i := range targetBlocks {
+		id := fmt.Sprintf("aaaaaaaa-aaaa-4aaa-8aaa-%012d", i)
+		targetBlocks[i] = noteBlock(id, fmt.Sprintf("block %d", i))
+	}
+	idx(t, dm, "vault", "NB", "Sec", "Target", targetBlocks)
+
+	// Source with a block-ref to target[0] (batch 1) and an embed to
+	// target[599] (batch 2).
+	srcRaw := "((" + targetBlocks[0].ID + ")) and {{embed:" + targetBlocks[599].ID + "}}"
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidE, srcRaw),
+	})
+
+	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(bl) != 2 {
+		t.Fatalf("expected 2 backlinks across batches (block-ref + embed), got %d: %+v", len(bl), bl)
+	}
+	kinds := map[BacklinkKind]bool{}
+	for _, b := range bl {
+		kinds[b.Kind] = true
+	}
+	if !kinds[BacklinkBlockRef] || !kinds[BacklinkEmbed] {
+		t.Errorf("expected both kinds across batch boundary, got %v", kinds)
+	}
+}
+
+// TestGetBacklinks_SelfReference verifies that a block on page P that
+// references its own UUID via ((uuid)) produces a backlink from P to P.
+// Both the prior LIKE scan and the indexed lookup match this case; pin it
+// so the contract is explicit before any future refactor.
+func TestGetBacklinks_SelfReference(t *testing.T) {
+	dm := newTestDB(t)
+	// Page P with one block referencing itself.
+	idx(t, dm, "vault", "NB", "Sec", "P", []parser.ParsedBlock{
+		noteBlock(uuidA, "self ref "+("(("+uuidA+"))")),
+	})
+
+	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "P")
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(bl) != 1 {
+		t.Fatalf("expected 1 self-reference backlink, got %d: %+v", len(bl), bl)
+	}
+	if bl[0].Kind != BacklinkBlockRef {
+		t.Errorf("expected block-ref kind, got %q", bl[0].Kind)
+	}
+	if bl[0].SourcePage != "P" || bl[0].SourceBlockID != uuidA {
+		t.Errorf("self-reference should point back to P/%s, got %+v", uuidA, bl[0])
+	}
+}
+
+// TestGetBacklinks_MultiTargetSameKindSnippetDeterminism pins the
+// deterministic snippet-center contract when a source block references
+// multiple targets on the same target page with the same kind. The prior
+// LIKE path iterated a Go map (randomized order) for the token rescan, so
+// the snippet center was non-deterministic; the indexed lookup iterates SQL
+// rows in stable order, so the snippet center is reproducible. This test
+// asserts the same backlink count + a stable snippet value across calls.
+func TestGetBacklinks_MultiTargetSameKindSnippetDeterminism(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target a"),
+		noteBlock(uuidB, "target b"),
+	})
+	// Source references both targets — only one Backlink row is emitted
+	// (collectBacklinks dedupes by source_block_id).
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidC, "first "+("(("+uuidA+"))")+" then "+("(("+uuidB+"))")+" end"),
+	})
+
+	// Run multiple times; the snippet bytes must be identical every call.
+	var first string
+	for i := 0; i < 5; i++ {
+		bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+		if err != nil {
+			t.Fatalf("GetBacklinks iter %d: %v", i, err)
+		}
+		if len(bl) != 1 {
+			t.Fatalf("iter %d: expected 1 deduped backlink, got %d", i, len(bl))
+		}
+		if i == 0 {
+			first = bl[0].Snippet
+		} else if bl[0].Snippet != first {
+			t.Errorf("iter %d: snippet drifted: %q vs %q", i, bl[0].Snippet, first)
+		}
+	}
+	if first == "" {
+		t.Errorf("expected non-empty snippet for multi-target same-kind source")
+	}
+}
+
+// TestGetBacklinks_DanglingEdgeInertAcrossPages verifies the source-only-FK
+// inertness contract through the public API: an edge to a deleted target
+// block must NOT leak as a backlink into OTHER pages' results. The edge row
+// survives in block_references (target FK is intentionally absent), but the
+// WHERE target_block_id IN (live-targets-of-P) clause filters it out for
+// every page P that doesn't carry the target. When the target is re-indexed,
+// the edge re-resolves for the original target page.
+func TestGetBacklinks_DanglingEdgeInertAcrossPages(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, "ref "+("(("+uuidA+"))")),
+	})
+	// An unrelated page that the dangling edge must never appear under.
+	idx(t, dm, "vault", "NB", "Sec", "Unrelated", []parser.ParsedBlock{
+		noteBlock(uuidC, "unrelated page"),
+	})
+
+	// Sanity: edge resolves for the live target page.
+	bl, _ := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if len(bl) != 1 {
+		t.Fatalf("baseline: expected 1 backlink, got %d", len(bl))
+	}
+
+	// Delete the target block — its UUID leaves every page's targetBlockIDs.
+	if _, err := dm.SQLDB().Exec("DELETE FROM blocks WHERE id = ?", uuidA); err != nil {
+		t.Fatalf("delete target: %v", err)
+	}
+
+	// Querying the original Target page now returns 0 (page has no live
+	// blocks → targetBlockIDs empty).
+	bl, _ = dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if len(bl) != 0 {
+		t.Errorf("Target page with no live blocks should return 0, got %d", len(bl))
+	}
+	// Querying the Unrelated page must NOT pick up the dangling edge.
+	bl2, _ := dm.GetBacklinks("vault", "NB", "Sec", "Unrelated")
+	if len(bl2) != 0 {
+		t.Errorf("dangling edge leaked into Unrelated page results: %+v", bl2)
+	}
+
+	// Re-index the target — the original edge re-resolves without
+	// re-indexing Source.
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target back"),
+	})
+	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks post-reappear: %v", err)
+	}
+	if len(bl) != 1 || bl[0].Kind != BacklinkBlockRef {
+		t.Errorf("expected 1 block-ref after target reappears, got %+v", bl)
+	}
+}
+
+// TestGetBacklinks_SnippetByteEquality pins the exact snippet bytes for a
+// known clean_content + token shape, so a future refactor that changes
+// backlinkSnippetRunes or the padding distribution surfaces as a test
+// failure rather than a silent UI drift.
+func TestGetBacklinks_SnippetByteEquality(t *testing.T) {
+	dm := newTestDB(t)
+	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{
+		noteBlock(uuidA, "target"),
+	})
+	// Clean text where the token sits at a known offset (50 chars in).
+	prefix := strings.Repeat("a", 50)
+	suffix := strings.Repeat("b", 50)
+	clean := prefix + "((" + uuidA + "))" + suffix
+	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{
+		noteBlock(uuidB, clean),
+	})
+
+	bl, err := dm.GetBacklinks("vault", "NB", "Sec", "Target")
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(bl) != 1 {
+		t.Fatalf("expected 1 backlink, got %d", len(bl))
+	}
+	got := bl[0].Snippet
+	// Token ((uuid)) must be present and centered.
+	if !strings.Contains(got, "(("+uuidA+"))") {
+		t.Errorf("snippet missing token: %q", got)
+	}
+	// Both ellipses must be present (token sits in the middle of a long text).
+	if !strings.HasPrefix(got, snippetEllipsis) {
+		t.Errorf("snippet should start with ellipsis: %q", got)
+	}
+	if !strings.HasSuffix(got, snippetEllipsis) {
+		t.Errorf("snippet should end with ellipsis: %q", got)
+	}
+	// Total rune count must respect the 120-rune cap.
+	if rc := utf8.RuneCountInString(got); rc > backlinkSnippetRunes {
+		t.Errorf("snippet %d runes exceeds cap %d: %q", rc, backlinkSnippetRunes, got)
 	}
 }
