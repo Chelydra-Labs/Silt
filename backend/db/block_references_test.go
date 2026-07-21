@@ -372,7 +372,7 @@ func TestBlockReferences_TargetDeletionKeepsEdge(t *testing.T) {
 }
 
 // TestBlockReferences_ExtractionIncludesCodeBlocks verifies that the backfill
-// walks every block row regardless of type, mirroring the current LIKE scan
+// walks every block row regardless of type, mirroring the indexed extractor
 // that reads raw_content of CODE blocks too. Page-link CODE exclusion is a
 // different indexer path and does not apply here.
 func TestBlockReferences_ExtractionIncludesCodeBlocks(t *testing.T) {
@@ -447,10 +447,9 @@ func TestBlockReferences_KindValuesMatchBacklinkConstants(t *testing.T) {
 // --- Phase 3 indexer wiring (#704) -----------------------------------------
 //
 // These tests assert block_references row state after IndexFileBlocks and
-// IndexScanResults run. They do NOT go through the backlinks query (still
-// LIKE-based until Phase 4) — they pin the storage contract directly so a
-// regression in the extraction helper or cascade surfaces even before the
-// lookup is rewired.
+// IndexScanResults run. They pin the storage contract directly so a
+// regression in the extraction helper or cascade surfaces independently
+// of the backlinks query path.
 
 // countEdgesFromSource returns the number of block_references rows for a
 // given source_block_id (across all kinds and targets).
@@ -495,8 +494,8 @@ func TestBlockReferences_IndexerCollapsesDuplicateSameKind(t *testing.T) {
 
 // TestBlockReferences_IndexerIncludesCodeBlocks asserts that CODE blocks
 // contribute edges — the extractor walks RawText of every block row,
-// diverging from page_links which skips CODE. Direct parity with the
-// existing LIKE scan that reads raw_content regardless of type.
+// diverging from page_links which skips CODE. Pins the all-type scan
+// contract that the backlinks panel relies on.
 func TestBlockReferences_IndexerIncludesCodeBlocks(t *testing.T) {
 	dm := newTestDB(t)
 	idx(t, dm, "vault", "NB", "Sec", "Source", []parser.ParsedBlock{

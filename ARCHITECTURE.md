@@ -302,6 +302,28 @@ CREATE TABLE block_meta (
     FOREIGN KEY(block_id) REFERENCES blocks(id) ON DELETE CASCADE
 );
 
+-- Block References (#704): the ((uuid)) block-ref and {{embed:uuid}} embed
+-- edge graph parsed off block bodies. Each row is one distinct
+-- (source_block_id, target_block_id, kind) edge; the PK collapses same-kind
+-- duplicate tokens in one source block. Re-derivable from markdown (rule 4);
+-- the markdown is the source of truth. Source-only FK by design: the source
+-- edge survives a missing target (deleted target, not-yet-indexed target,
+-- hand-edited markdown, a file indexed later), and the backlink re-resolves
+-- when the target subsequently appears without a source re-index. Target
+-- existence is resolved at query time by joining against the live blocks
+-- rows for the target page, so a dangling edge is silently inert. The
+-- reverse-lookup index on (target_block_id, kind) serves the backlinks
+-- panel's `target_block_id IN (...)` lookup, replacing the prior
+-- leading-wildcard raw_content LIKE scan (ADR 0006).
+CREATE TABLE block_references (
+    source_block_id TEXT NOT NULL,
+    target_block_id TEXT NOT NULL,
+    kind            TEXT NOT NULL,  -- 'block-ref' | 'embed'
+    PRIMARY KEY (source_block_id, target_block_id, kind),
+    FOREIGN KEY(source_block_id) REFERENCES blocks(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_block_references_target ON block_references(target_block_id, kind);
+
 -- File-stats cache for incremental re-indexing. Keyed by absolute path;
 -- a renamed file is a new path, with the stale old row pruned by the next
 -- startup scan. A warm restart skips re-parsing any file whose mtime+size
@@ -536,11 +558,12 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `recent_tags` list (capped at 12) that seeds the `#` tag-typeahead above
   full index tags. `GetBacklinksPaged` returns bounded, cursor-paged inbound
   references to a page
-  across three legs — `[[…]]` page-links (indexed reverse lookup, resolved
-  against the canonical page set), `((uuid))` block-refs, and `{{embed:uuid}}`
-  embeds (both via parameterized LIKE on target block IDs) — source-aware,
-  deduped, stably sorted. Pagination bounds IPC and DOM work; the raw-reference
-  LIKE scan remains a documented query-time trade-off. See ADR
+  across three legs — `[[…]]` page-links (indexed `page_links` reverse lookup,
+  resolved against the canonical page set), `((uuid))` block-refs, and
+  `{{embed:uuid}}` embeds (both via the indexed `block_references` reverse
+  lookup, parameterized by the target page's block IDs) — source-aware,
+  deduped, stably sorted. Pagination bounds IPC and DOM work; collection cost
+  is proportional to inbound edge count, not total block count. See ADR
   `docs/decisions/0006-backlinks-query-strategy.md`.
 - **AI providers** (#216, #218, #479, #632) — `GetAIProviderConfig` (key-scrubbed
   read; emits `has_key` flags + `features`, never the raw secret),

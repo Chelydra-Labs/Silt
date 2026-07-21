@@ -338,18 +338,16 @@ func (dm *DatabaseManager) legPageLinks(db *sql.DB, source, notebook, section, p
 
 // legBlockRefsAndEmbeds finds source blocks whose RawText references any of
 // the target page's block IDs via ((uuid)) or {{embed:uuid}}. Returns two
-// separate slices (block-refs vs embeds). The lookup goes through the
-// derived block_references reverse index (#704): an indexed SEARCH against
-// idx_block_references_target replaces the prior leading-wildcard
-// raw_content LIKE scan, so cost is proportional to inbound edges of the
-// target page's blocks, not total block count.
+// separate slices (block-refs vs embeds). The lookup is an indexed SEARCH
+// against the block_references reverse index via idx_block_references_target
+// (#704), so cost is proportional to inbound edges of the target page's
+// blocks rather than total block count in the vault/linked sources.
 //
 // Each edge row is created by an exact regex match in the indexer or
 // backfill, so substring false positives are structurally impossible — no
-// per-row token rescanning is needed (the prior LIKE path did, because one
-// OR-clause hit could return a row that incidentally contained unrelated
-// tokens). The snippet token is reconstructed from target_block_id + kind
-// so the existing snippet() helper keeps its current contextual behavior.
+// per-row token rescanning is needed. The snippet token is reconstructed
+// from target_block_id + kind so the existing snippet() helper keeps its
+// contextual behavior.
 //
 // Batched to stay well under SQLite's bind limit (each UUID is one bind
 // arg). The join against blocks is structural — FK ON for the source side

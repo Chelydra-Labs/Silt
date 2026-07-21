@@ -1991,10 +1991,10 @@ func BenchmarkGetBacklinksPaged(b *testing.B) {
 
 // TestGetBacklinks_BlockRefInCodeBlockIndexed locks the intentional parity
 // decision that a literal ((uuid)) inside a CODE block IS counted as a
-// block-ref backlink. The current LIKE scan reads raw_content of every block
-// row regardless of type, so CODE-block tokens are picked up. This must not
-// change with the indexed lookup (it would be a silent product-semantics
-// regression bundled into a performance fix).
+// block-ref backlink. The indexed extractor walks RawText of every block
+// row regardless of type (diverging from page_links, which excludes CODE),
+// so CODE-block tokens are picked up. This must not change (it would be a
+// silent product-semantics regression bundled into a future refactor).
 func TestGetBacklinks_BlockRefInCodeBlockIndexed(t *testing.T) {
 	dm := newTestDB(t)
 	idx(t, dm, "vault", "NB", "Sec", "Target", []parser.ParsedBlock{

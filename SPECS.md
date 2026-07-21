@@ -517,11 +517,14 @@ Every page has a paged backlinks surface showing inbound references — `[[…]]
 page-links, `((uuid))` block references, and `{{embed:uuid}}` embeds — grouped
 by source page with kind badges and clean-content snippets. The panel refreshes
 automatically on content changes (debounced) and supports click-to-navigate
-to the linking page or the specific block. Resolution is lazy (computed on
-panel open, not pre-indexed) and source-aware so linked notebooks contribute
-backlinks correctly. The panel loads additional result pages explicitly, which
-bounds its initial payload and rendered projection. See ADR
-`docs/decisions/0006-backlinks-query-strategy.md`.
+to the linking page or the specific block. The panel itself resolves lazily
+at panel-open time (it queries the index, not the file system), but the
+block-reference and embed edges are eagerly materialized during file indexing
+into the `block_references` reverse lookup so panel-open cost is proportional
+to inbound edge count rather than total block count. Source-aware so linked
+notebooks contribute backlinks correctly. The panel loads additional result
+pages explicitly, which bounds its initial payload and rendered projection.
+See ADR `docs/decisions/0006-backlinks-query-strategy.md`.
 
 6. User Interface Specification
 
