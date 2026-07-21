@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"silt/backend/parser"
 )
 
 func (dm *DatabaseManager) initSchema() error {
@@ -469,22 +467,14 @@ func backfillBlockReferences(db *sql.DB) error {
 			stmt.Close()
 			return fmt.Errorf("scan block during backfill: %w", err)
 		}
-		for _, m := range parser.BlockRefRegex.FindAllStringSubmatch(raw, -1) {
-			if len(m) >= 2 && m[1] != "" {
-				if _, err := stmt.Exec(id, m[1], string(BacklinkBlockRef)); err != nil {
-					rows.Close()
-					stmt.Close()
-					return fmt.Errorf("backfill insert %s -> %s (block-ref): %w", id, m[1], err)
-				}
-			}
-		}
-		for _, m := range parser.EmbedRegex.FindAllStringSubmatch(raw, -1) {
-			if len(m) >= 2 && m[1] != "" {
-				if _, err := stmt.Exec(id, m[1], string(BacklinkEmbed)); err != nil {
-					rows.Close()
-					stmt.Close()
-					return fmt.Errorf("backfill insert %s -> %s (embed): %w", id, m[1], err)
-				}
+		// Shared extraction with the live indexer (indexBlockReferences) —
+		// one source of truth for the regex contract so the two paths cannot
+		// drift (#704 review feedback).
+		for _, e := range extractBlockRefEdges(raw) {
+			if _, err := stmt.Exec(id, e.targetID, string(e.kind)); err != nil {
+				rows.Close()
+				stmt.Close()
+				return fmt.Errorf("backfill insert %s -> %s (%s): %w", id, e.targetID, e.kind, err)
 			}
 		}
 	}

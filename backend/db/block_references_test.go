@@ -401,7 +401,7 @@ func assertEdgeExists(t *testing.T, dm *DatabaseManager, sourceID, targetID, kin
 		t.Fatalf("probe edge %s->%s (%s): %v", sourceID, targetID, kind, err)
 	}
 	if n != 1 {
-		t.Errorf("expected 1 edge %s->%s (%s), got %d", sourceID, targetID, kind, n)
+		t.Fatalf("expected 1 edge %s->%s (%s), got %d", sourceID, targetID, kind, n)
 	}
 }
 
@@ -691,5 +691,90 @@ func TestBlockReferences_IndexerChangedSourceContentReplacesEdges(t *testing.T) 
 	}
 	if staleCount != 0 {
 		t.Errorf("stale edges to uuidB/uuidC must be cleared, got %d", staleCount)
+	}
+}
+
+// --- Shared extraction helper (#704 review) --------------------------------
+
+// TestExtractBlockRefEdges pins the pure extraction contract shared by
+// indexBlockReferences (live indexer) and backfillBlockReferences (one-shot
+// migration). Both callers depend on this returning exactly one (target, kind)
+// tuple per distinct regex match; a drift here would desynchronize the two
+// paths silently.
+func TestExtractBlockRefEdges(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []blockRefEdge
+	}{
+		{
+			name: "empty",
+			raw:  "",
+			want: nil,
+		},
+		{
+			name: "no tokens",
+			raw:  "plain text with no refs",
+			want: nil,
+		},
+		{
+			name: "single block-ref",
+			raw:  "see ((" + uuidA + ")) here",
+			want: []blockRefEdge{{uuidA, BacklinkBlockRef}},
+		},
+		{
+			name: "single embed",
+			raw:  "{{embed:" + uuidA + "}}",
+			want: []blockRefEdge{{uuidA, BacklinkEmbed}},
+		},
+		{
+			name: "block-ref + embed coexist",
+			raw:  "((" + uuidA + ")) and {{embed:" + uuidB + "}}",
+			want: []blockRefEdge{
+				{uuidA, BacklinkBlockRef},
+				{uuidB, BacklinkEmbed},
+			},
+		},
+		{
+			name: "duplicate same-kind tokens preserved (PK dedupe is DB-side)",
+			raw:  "((" + uuidA + ")) then ((" + uuidA + ")) again",
+			want: []blockRefEdge{
+				{uuidA, BacklinkBlockRef},
+				{uuidA, BacklinkBlockRef},
+			},
+		},
+		{
+			name: "bare UUID without delimiters is ignored",
+			raw:  "the id is " + uuidA + " but not wrapped",
+			want: nil,
+		},
+		{
+			name: "non-embed {{other:uuid}} syntax is ignored",
+			raw:  "{{other:" + uuidA + "}}",
+			want: nil,
+		},
+		{
+			name: "multiple block-refs to different targets",
+			raw:  "((" + uuidA + ")) ((" + uuidB + ")) ((" + uuidC + "))",
+			want: []blockRefEdge{
+				{uuidA, BacklinkBlockRef},
+				{uuidB, BacklinkBlockRef},
+				{uuidC, BacklinkBlockRef},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractBlockRefEdges(tc.raw)
+			if len(got) != len(tc.want) {
+				t.Fatalf("edge count: got %d, want %d (%+v)", len(got), len(tc.want), got)
+			}
+			for i, e := range got {
+				if e != tc.want[i] {
+					t.Errorf("edge[%d]: got {%s, %s}, want {%s, %s}",
+						i, e.targetID, e.kind, tc.want[i].targetID, tc.want[i].kind)
+				}
+			}
+		})
 	}
 }

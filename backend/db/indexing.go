@@ -82,37 +82,62 @@ func taskEstimateMinutes(raw string) interface{} {
 	return nil
 }
 
-// indexBlockReferences extracts ((uuid)) block-ref and {{embed:uuid}} embed
-// tokens from raw and inserts each as a distinct edge into block_references
-// via the caller's prepared statement. Shared between IndexFileBlocks and
-// IndexScanResults so the two indexers cannot drift (#704). The cascade
-// through the per-block DELETE FROM blocks at the top of each indexer
-// already removed the prior edge set, so each insert here is additive;
-// INSERT OR IGNORE keeps the (source_block_id, target_block_id, kind) PK
-// unique when the same token appears twice in one block.
+// blockRefEdge is one extracted (target, kind) tuple from a block's RawText.
+// Shared by the live indexer and the warm-upgrade backfill so the extraction
+// contract has one source of truth (#704).
+type blockRefEdge struct {
+	targetID string
+	kind     BacklinkKind
+}
+
+// extractBlockRefEdges extracts ((uuid)) block-ref and {{embed:uuid}} embed
+// tokens from raw and returns one (targetID, kind) tuple per distinct match.
+// Pure function — no DB access, no side effects. Shared by indexBlockReferences
+// (live indexer path) and backfillBlockReferences (one-shot migration) so the
+// regex extraction cannot drift between the two callers.
 //
-// Includes CODE blocks: the prior LIKE scan read raw_content of every block
-// row regardless of type, so the indexed lookup must preserve that contract.
-// This diverges from page_links, which excludes CODE blocks (literal [[…]]
-// inside fenced code is not a link and must not be rewritten on rename).
+// Walks raw regardless of block type; callers pass RawText for every block
+// row (including CODE blocks — the backlinks contract requires all-type
+// extraction; page_links CODE exclusion is unrelated and lives in the
+// indexer loop).
+func extractBlockRefEdges(raw string) []blockRefEdge {
+	var edges []blockRefEdge
+	for _, m := range parser.BlockRefRegex.FindAllStringSubmatch(raw, -1) {
+		if len(m) >= 2 && m[1] != "" {
+			edges = append(edges, blockRefEdge{targetID: m[1], kind: BacklinkBlockRef})
+		}
+	}
+	for _, m := range parser.EmbedRegex.FindAllStringSubmatch(raw, -1) {
+		if len(m) >= 2 && m[1] != "" {
+			edges = append(edges, blockRefEdge{targetID: m[1], kind: BacklinkEmbed})
+		}
+	}
+	return edges
+}
+
+// indexBlockReferences extracts ((uuid)) block-ref and {{embed:uuid}} embed
+// tokens from raw via the shared extractBlockRefEdges helper and inserts each
+// as a distinct edge into block_references via the caller's prepared
+// statement. Shared between IndexFileBlocks and IndexScanResults so the two
+// indexers cannot drift (#704). The cascade through the per-block DELETE FROM
+// blocks at the top of each indexer already removed the prior edge set, so
+// each insert here is additive; INSERT OR IGNORE keeps the (source_block_id,
+// target_block_id, kind) PK unique when the same token appears twice in one
+// block.
+//
+// Includes CODE blocks: the indexed lookup must preserve the contract that
+// block-ref/embed tokens in fenced code ARE backlinks (diverging from
+// page_links, which excludes CODE blocks — literal [[…]] inside fenced code
+// is not a link and must not be rewritten on rename).
 //
 // Source-only FK by design: target IDs that do not (yet) exist in `blocks`
 // are retained as edges — markdown may reference an ID before the target is
 // indexed, after it was deleted, or in a file indexed later. The backlink
 // re-resolves automatically when the target subsequently appears.
 func indexBlockReferences(stmt *sql.Stmt, sourceBlockID, raw string) error {
-	for _, m := range parser.BlockRefRegex.FindAllStringSubmatch(raw, -1) {
-		if len(m) >= 2 && m[1] != "" {
-			if _, err := stmt.Exec(sourceBlockID, m[1], string(BacklinkBlockRef)); err != nil {
-				return fmt.Errorf("insert block-ref edge %s -> %s: %w", sourceBlockID, m[1], err)
-			}
-		}
-	}
-	for _, m := range parser.EmbedRegex.FindAllStringSubmatch(raw, -1) {
-		if len(m) >= 2 && m[1] != "" {
-			if _, err := stmt.Exec(sourceBlockID, m[1], string(BacklinkEmbed)); err != nil {
-				return fmt.Errorf("insert embed edge %s -> %s: %w", sourceBlockID, m[1], err)
-			}
+	for _, e := range extractBlockRefEdges(raw) {
+		if _, err := stmt.Exec(sourceBlockID, e.targetID, string(e.kind)); err != nil {
+			return fmt.Errorf("insert %s edge %s -> %s: %w", e.kind, sourceBlockID, e.targetID, err)
 		}
 	}
 	return nil
