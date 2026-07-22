@@ -31,8 +31,8 @@ placeholders:
 
 ## Action Items
 
-- [ ] TODO TASK #3 
-- [ ] TODO TASK #3 
+- [ ] Confirm action-item owners
+- [ ] Share meeting notes with attendees
 
 ## Follow-ups
 

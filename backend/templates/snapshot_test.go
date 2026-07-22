@@ -21,15 +21,15 @@ var snapshotFrozenTime = time.Date(2026, 6, 15, 9, 30, 0, 0, time.UTC)
 // grammar survival, and date/weekday formatting.
 var expectedSnaps = map[string][]string{
 	"notes":         {"2026-06-15", "09:30", "# "},
-	"meeting-notes": {"2026-06-15", "09:30", "Monday", "TODO TASK"},
+	"meeting-notes": {"2026-06-15", "09:30", "Monday", "- [ ]", "Confirm action-item owners"},
 	"standup-notes": {"2026-06-15", "Monday", "Standup"},
-	"daily-note":    {"2026-06-15", "Monday", "TODO TASK"},
-	"project-brief": {"2026-06-15", "TODO TASK"},
-	"one-on-one":    {"2026-06-15", "Monday", "TODO TASK"},
-	"weekly-review": {"2026-06-15", "TODO TASK"},
+	"daily-note":    {"2026-06-15", "Monday", "- [ ]", "Choose one priority for today"},
+	"project-brief": {"2026-06-15", "- [ ]", "Define the first milestone"},
+	"one-on-one":    {"2026-06-15", "Monday", "- [ ]", "Follow up on an action item"},
+	"weekly-review": {"2026-06-15", "- [ ]", "Set priorities for next week"},
 	"decision-log":  {"2026-06-15", "ADR-0001"},
 	"reading-notes": {"2026-06-15"},
-	"retrospective": {"2026-06-15", "TODO TASK"},
+	"retrospective": {"2026-06-15", "- [ ]", "Choose one change to try next"},
 }
 
 func TestSnapshot_AllBuiltinsRender(t *testing.T) {

@@ -22,8 +22,8 @@ icon: calendar_view_week
 
 ## Priorities for next week
 
-- [ ] TODO TASK #3 
-- [ ] TODO TASK #3 
+- [ ] Set priorities for next week
+- [ ] Schedule time for important work
 
 ## Habits tracked
 

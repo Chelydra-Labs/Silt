@@ -26,8 +26,8 @@ icon: history
 
 ## What we'll change
 
-- [ ] TODO TASK #3 
-- [ ] TODO TASK #3 
+- [ ] Choose one change to try next
+- [ ] Assign an owner for each change
 
 ## Shoutouts
 

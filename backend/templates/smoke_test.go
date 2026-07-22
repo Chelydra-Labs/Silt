@@ -40,10 +40,13 @@ func TestSmoke_LoadAndRender(t *testing.T) {
 	if !strings.Contains(rendered, "Monday") {
 		t.Errorf("rendered body missing the weekday substitution (2026-06-15 is a Monday): %q", rendered)
 	}
-	// Task grammar participation: the rendered TODO TASK line must survive so
-	// ParseFileContent recognises it downstream (spec-compat gate, SPECS §4).
-	if !strings.Contains(rendered, "- [ ] TODO TASK") {
-		t.Errorf("rendered body lost the TODO TASK shorthand: %q", rendered)
+	// Plain GFM checkboxes are canonical tasks and must survive rendering so
+	// ParseFileContent recognises them downstream (SPECS §4).
+	if !strings.Contains(rendered, "- [ ] ") {
+		t.Errorf("rendered body lost the GFM task seed: %q", rendered)
+	}
+	if strings.Contains(rendered, "TODO TASK") {
+		t.Errorf("rendered body contains obsolete TODO TASK shorthand: %q", rendered)
 	}
 }
 
