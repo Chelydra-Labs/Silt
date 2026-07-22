@@ -607,8 +607,10 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
    from the OS keyring (`Silt` / `mcp-local-auth-token`); stdio via `silt mcp`
    which dials the running instance (logs to stderr only). The SDK's
    cross-origin protection (default-ON in v1.4–v1.5, default-OFF since v1.6.0)
-   is intentionally left OFF — the loopback bind + bearer token already
-   prevent the CSRF vector (CVE-2026-33252) that origin verification targets.
+   is intentionally left OFF — CSRF is already prevented by the bearer scheme
+   (tokens are not cookies, so a cross-origin page cannot attach one) plus the
+   origin allowlist in `authMiddleware` (`isAllowedOrigin`). The loopback bind
+   separately blocks remote network access.
    Discovery prefers a
    keyring-pinned endpoint (`mcp-local-endpoint`) over `mcp-endpoint.json` so a
    rewritten discovery file alone cannot redirect the bearer. The endpoint file
