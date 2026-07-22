@@ -19,6 +19,11 @@ import {
   notificationsState,
   _resetForTests as resetNotifications
 } from './notifications/store.svelte'
+import {
+  clearTaskPageRoute,
+  getTaskPageRoute,
+  resetTaskHubState
+} from './plugins/first-party/silt-tasks/state.svelte'
 
 // Events.On callbacks captured by event name so the test can invoke the
 // menu:save handler exactly as App registered it.
@@ -117,6 +122,9 @@ vi.mock('./components/Onboarding.svelte', () => ({ default: EmptyStub }))
 vi.mock('./components/PluginModalHost.svelte', () => ({ default: EmptyStub }))
 vi.mock('./components/PluginStatusBar.svelte', () => ({ default: EmptyStub }))
 vi.mock('./components/ToastContainer.svelte', () => ({ default: EmptyStub }))
+vi.mock('./plugins/shared/ai-chat/AIChatDrawer.svelte', () => ({
+  default: EmptyStub
+}))
 
 import App from './App.svelte'
 
@@ -174,6 +182,8 @@ describe('native menu Save (#503)', () => {
   beforeEach(() => {
     _resetEditorRegistryForTests()
     resetNotifications()
+    clearTaskPageRoute()
+    resetTaskHubState()
     eventHandlers.clear()
     unregister = []
     bindings.IsVaultInitialized.mockResolvedValue(false)
@@ -326,5 +336,53 @@ describe('native menu Save (#503)', () => {
     await fireEvent.keyDown(dialog, { key: 'Escape' })
     await tick()
     expect(screen.queryByRole('dialog', { name: 'Switch page' })).toBeNull()
+  })
+})
+
+describe('page tasks route activation (#714)', () => {
+  beforeEach(() => {
+    eventHandlers.clear()
+    bindings.IsVaultInitialized.mockResolvedValue(false)
+    setOpenTabs(false)
+    clearTaskPageRoute()
+    resetTaskHubState()
+  })
+
+  afterEach(() => cleanup())
+
+  it('uses the existing Tasks Hub route state when page chrome requests activation', async () => {
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountApp()
+
+    window.dispatchEvent(
+      new CustomEvent('silt:open-tasks-for-page', {
+        detail: {
+          source: 'linked:meetings',
+          notebook: 'Team',
+          section: 'Meetings',
+          page: 'Weekly sync',
+          nonce: 'host-route-1'
+        }
+      })
+    )
+    await tick()
+
+    expect(getTaskPageRoute()).toEqual({
+      target: {
+        source: 'linked:meetings',
+        notebook: 'Team',
+        section: 'Meetings',
+        page: 'Weekly sync',
+        nonce: 'host-route-1'
+      },
+      defaults: {
+        displayMode: 'list',
+        activeFilter: 'all',
+        filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+      }
+    })
+    expect(
+      await screen.findByRole('heading', { name: 'silt-tasks' })
+    ).toBeInTheDocument()
   })
 })

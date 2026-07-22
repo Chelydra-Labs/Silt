@@ -79,6 +79,7 @@ describe('viewMatchesState (#432 — lenient match for partial-template views)',
       savedViews: [],
       activeSavedViewId: '',
       savedViewsDirty: false,
+      pageRoute: null,
       ...overrides
     }
   }

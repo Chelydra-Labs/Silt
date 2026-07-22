@@ -107,11 +107,11 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(screen.queryByText('Projects/Active')).not.toBeInTheDocument()
   })
 
-  it('hides the EditorUtilityBar in source view mode', () => {
+  it('keeps page actions available in source view mode', () => {
     render(VirtualScrollContainer, {
       props: { ...baseProps(), viewMode: 'source' }
     })
-    expect(screen.queryByTestId('editor-utility-bar-stub')).toBeNull()
+    expect(screen.getByTestId('editor-utility-bar-stub')).toBeInTheDocument()
     // Source view: the read-only markdown projection renders in place of the
     // editor (#171/#194).
     expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
@@ -140,9 +140,17 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
   })
 
-  it('hides the EditorUtilityBar when show_format_toolbar is false', () => {
+  it('keeps page actions available when the formatting toolbar is disabled', () => {
     mocks.settings.config.ui.show_format_toolbar = false
     render(VirtualScrollContainer, { props: baseProps() })
+    expect(screen.getByTestId('editor-utility-bar-stub')).toBeInTheDocument()
+  })
+
+  it('does not add page chrome for standalone task content', () => {
+    mocks.settings.config.ui.show_format_toolbar = false
+    render(VirtualScrollContainer, {
+      props: { ...baseProps(), notebook: '.silt', page: 'tasks' }
+    })
     expect(screen.queryByTestId('editor-utility-bar-stub')).toBeNull()
   })
 

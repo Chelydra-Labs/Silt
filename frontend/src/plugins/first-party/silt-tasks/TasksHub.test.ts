@@ -10,7 +10,8 @@ const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
   tasksSettings: {} as Record<string, unknown>,
-  blockChangedCallbacks: [] as Array<() => void>
+  blockChangedCallbacks: [] as Array<() => void>,
+  configChangedCallbacks: [] as Array<() => void>
 }))
 
 vi.mock('@wailsio/runtime', () => ({
@@ -45,7 +46,14 @@ import type {
   PluginEventPayload
 } from '../../sdk'
 import { v2CtxStubs } from '../../test-helpers'
-import { getTaskHubState, resetTaskHubState } from './state.svelte'
+import {
+  clearTaskPageRoute,
+  enterTaskPageRoute,
+  getTaskHubState,
+  getTaskHubViewState,
+  getTaskPageRoute,
+  resetTaskHubState
+} from './state.svelte'
 
 // jsdom polyfills: ListView pulls in TaskEditDrawer/TaskSubEditorModal, whose
 // transition:fly + TipTap need Element.animate / elementFromPoint / Range rects.
@@ -116,6 +124,14 @@ function makeCtx(): PluginContext {
           if (i >= 0) mocks.blockChangedCallbacks.splice(i, 1)
         }
       }
+      if (event === 'config:changed') {
+        const cbAny = cb as unknown as () => void
+        mocks.configChangedCallbacks.push(cbAny)
+        return () => {
+          const i = mocks.configChangedCallbacks.indexOf(cbAny)
+          if (i >= 0) mocks.configChangedCallbacks.splice(i, 1)
+        }
+      }
       return () => {}
     }
   }
@@ -141,6 +157,8 @@ describe('Tasks hub shell (#424)', () => {
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
     mocks.tasksSettings = {}
     mocks.blockChangedCallbacks.length = 0
+    mocks.configChangedCallbacks.length = 0
+    clearTaskPageRoute()
     resetTaskHubState()
   })
 
@@ -319,6 +337,368 @@ describe('Tasks hub shell (#424)', () => {
     expect(count.textContent).toContain('1 active')
     expect(count.textContent).toContain('1 done')
   })
+
+  it('presents routed page context in List mode, announces it, focuses the heading, and exits cleanly', async () => {
+    mocks.tasksSettings = { default_display_mode: 'board' }
+    getTaskHubState().displayMode = 'board'
+    getTaskHubState().filters = {
+      owners: ['Alex'],
+      priorities: [2],
+      dueDate: 'week',
+      tags: ['meeting']
+    }
+    enterTaskPageRoute(
+      {
+        source: 'linked:meetings',
+        notebook: 'Team',
+        section: 'Meetings',
+        page: 'Weekly sync',
+        nonce: 'route-ui-1'
+      },
+      {
+        displayMode: 'list',
+        activeFilter: 'all',
+        filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+      }
+    )
+
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(screen.getByTestId('tasks-page-context')).toHaveTextContent(
+      'Team › Meetings › Weekly sync'
+    )
+    expect(screen.getByRole('radio', { name: /List mode/i })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    expect(getTaskHubViewState().filters).toEqual({
+      owners: [],
+      priorities: [],
+      dueDate: '',
+      tags: []
+    })
+    expect(screen.getByTestId('tasks-page-route-live')).toHaveTextContent(
+      'Showing tasks from Weekly sync.'
+    )
+    expect(screen.getByRole('heading', { name: /^Tasks/ })).toHaveFocus()
+    expect(screen.getByTestId('tasks-page-empty')).toHaveTextContent(
+      'No tasks on this page.'
+    )
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Exit page task context' })
+    )
+    await flush()
+
+    expect(getTaskPageRoute()).toBeNull()
+    expect(screen.queryByTestId('tasks-page-context')).toBeNull()
+    expect(screen.getByTestId('tasks-page-route-live')).toHaveTextContent(
+      'Page task context cleared.'
+    )
+    expect(getTaskHubState().displayMode).toBe('board')
+    expect(getTaskHubState().filters.owners).toEqual(['Alex'])
+  })
+
+  it('leaves an active saved base view unchanged while routed settings hydrate', async () => {
+    mocks.tasksSettings = {
+      default_display_mode: 'calendar',
+      default_group_by: 'owner',
+      default_sort: 'title',
+      saved_views: [
+        {
+          id: 'persisted-other',
+          name: 'Persisted other view',
+          display_mode: 'calendar'
+        }
+      ]
+    }
+    const baseView = {
+      id: 'base-view',
+      name: 'My base view',
+      displayMode: 'board' as const,
+      groupBy: 'status' as const,
+      sort: 'priority' as const,
+      scope: 'notebook' as const,
+      filters: {
+        owners: ['Alex'],
+        priorities: [2],
+        dueDate: 'week' as const,
+        tags: ['planning']
+      }
+    }
+    const state = getTaskHubState()
+    state.displayMode = 'board'
+    state.groupBy = 'status'
+    state.sort = 'priority'
+    state.scope = 'notebook'
+    state.scopeUserOverride = true
+    state.filters = {
+      owners: ['Alex'],
+      priorities: [2],
+      dueDate: 'week',
+      tags: ['planning']
+    }
+    state.savedViews = [baseView]
+    state.activeSavedViewId = baseView.id
+    state.savedViewsDirty = false
+
+    enterTaskPageRoute(
+      {
+        source: 'vault',
+        notebook: 'Team',
+        section: 'Meetings',
+        page: 'Planning',
+        nonce: 'route-preserve-base'
+      },
+      {
+        displayMode: 'list',
+        groupBy: 'dueDate',
+        sort: 'dueDate',
+        activeFilter: 'all',
+        filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+      }
+    )
+
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(getTaskHubViewState().displayMode).toBe('list')
+    expect(getTaskHubState()).toMatchObject({
+      displayMode: 'board',
+      groupBy: 'status',
+      sort: 'priority',
+      scope: 'notebook',
+      scopeUserOverride: true,
+      filters: baseView.filters,
+      savedViews: [baseView],
+      activeSavedViewId: 'base-view',
+      savedViewsDirty: false
+    })
+
+    await fireEvent.click(screen.getByRole('radio', { name: /Board mode/i }))
+    await fireEvent.click(screen.getByTestId('tasks-hub-group-by-toggle'))
+    await fireEvent.click(screen.getByTestId('group-option-owner'))
+    await fireEvent.click(screen.getByTestId('tasks-hub-sort-toggle'))
+    await fireEvent.click(screen.getByTestId('sort-option-title'))
+    await flush()
+    expect(getTaskHubViewState()).toMatchObject({
+      displayMode: 'board',
+      groupBy: 'owner',
+      sort: 'title'
+    })
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Exit page task context' })
+    )
+    await flush()
+
+    expect(getTaskHubState()).toMatchObject({
+      displayMode: 'board',
+      groupBy: 'status',
+      sort: 'priority',
+      scope: 'notebook',
+      scopeUserOverride: true,
+      filters: baseView.filters,
+      savedViews: [baseView],
+      activeSavedViewId: 'base-view',
+      savedViewsDirty: false
+    })
+  })
+
+  it('applies deferred persisted settings and saved views after a route-first clear', async () => {
+    mocks.tasksSettings = {
+      default_display_mode: 'calendar',
+      default_group_by: 'status',
+      default_sort: 'priority',
+      saved_views: [
+        {
+          id: 'deferred-view',
+          name: 'Deferred view',
+          displayMode: 'calendar',
+          groupBy: 'status',
+          sort: 'priority',
+          scope: 'vault',
+          filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+        }
+      ]
+    }
+    enterTaskPageRoute(
+      {
+        source: 'vault',
+        notebook: 'Team',
+        section: 'Meetings',
+        page: 'Planning',
+        nonce: 'route-first-hydration'
+      },
+      { displayMode: 'list', groupBy: 'dueDate', sort: 'dueDate' }
+    )
+
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    // Route-local interaction must remain disposable rather than becoming base.
+    await fireEvent.click(screen.getByRole('radio', { name: /Board mode/i }))
+    await fireEvent.click(screen.getByTestId('tasks-hub-group-by-toggle'))
+    await fireEvent.click(screen.getByTestId('group-option-owner'))
+    await fireEvent.click(screen.getByTestId('tasks-hub-sort-toggle'))
+    await fireEvent.click(screen.getByTestId('sort-option-title'))
+    await flush()
+    expect(getTaskHubViewState()).toMatchObject({
+      displayMode: 'board',
+      groupBy: 'owner',
+      sort: 'title'
+    })
+    expect(getTaskHubState()).toMatchObject({
+      displayMode: 'list',
+      groupBy: 'dueDate',
+      sort: 'dueDate'
+    })
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Exit page task context' })
+    )
+    await flush()
+
+    expect(getTaskHubState()).toMatchObject({
+      displayMode: 'calendar',
+      groupBy: 'status',
+      sort: 'priority'
+    })
+    expect(getTaskHubState().savedViews.map((view) => view.id)).toContain(
+      'deferred-view'
+    )
+  })
+
+  it('retains a config rehydrate received during a route and applies the latest snapshot on exit', async () => {
+    mocks.tasksSettings = {
+      default_display_mode: 'board',
+      default_group_by: 'status',
+      default_sort: 'priority'
+    }
+    enterTaskPageRoute(
+      {
+        source: 'vault',
+        notebook: 'Team',
+        section: 'Meetings',
+        page: 'Planning',
+        nonce: 'route-config-refresh'
+      },
+      { displayMode: 'list' }
+    )
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    mocks.tasksSettings = {
+      default_display_mode: 'calendar',
+      default_group_by: 'owner',
+      default_sort: 'title',
+      saved_views: [
+        {
+          id: 'latest-view',
+          name: 'Latest view',
+          displayMode: 'calendar',
+          groupBy: 'owner',
+          sort: 'title',
+          scope: 'vault',
+          filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+        }
+      ]
+    }
+    for (const callback of mocks.configChangedCallbacks) callback()
+    await flush()
+
+    expect(getTaskHubState()).toMatchObject({
+      displayMode: 'list',
+      groupBy: 'dueDate',
+      sort: 'dueDate'
+    })
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Exit page task context' })
+    )
+    await flush()
+
+    expect(getTaskHubState()).toMatchObject({
+      displayMode: 'calendar',
+      groupBy: 'owner',
+      sort: 'title'
+    })
+    expect(getTaskHubState().savedViews.map((view) => view.id)).toContain(
+      'latest-view'
+    )
+  })
+
+  it('keeps routed mode, group, and sort changes out of global plugin settings', async () => {
+    enterTaskPageRoute(
+      {
+        source: 'vault',
+        notebook: 'Team',
+        section: 'Meetings',
+        page: 'Planning',
+        nonce: 'route-local-controls'
+      },
+      { displayMode: 'list' }
+    )
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    mocks.updatePluginSetting.mockClear()
+
+    await fireEvent.click(screen.getByRole('radio', { name: /Board mode/i }))
+    await fireEvent.click(screen.getByTestId('tasks-hub-group-by-toggle'))
+    await fireEvent.click(screen.getByTestId('group-option-owner'))
+    await fireEvent.click(screen.getByTestId('tasks-hub-sort-toggle'))
+    await fireEvent.click(screen.getByTestId('sort-option-title'))
+    await flush()
+
+    expect(getTaskHubViewState()).toMatchObject({
+      displayMode: 'board',
+      groupBy: 'owner',
+      sort: 'title'
+    })
+    expect(mocks.updatePluginSetting).not.toHaveBeenCalledWith(
+      'default_display_mode',
+      expect.anything()
+    )
+    expect(mocks.updatePluginSetting).not.toHaveBeenCalledWith(
+      'default_group_by',
+      expect.anything()
+    )
+    expect(mocks.updatePluginSetting).not.toHaveBeenCalledWith(
+      'default_sort',
+      expect.anything()
+    )
+  })
+
+  it('cycles from the effective routed mode instead of the hidden base mode', async () => {
+    mocks.tasksSettings = { default_display_mode: 'calendar' }
+    getTaskHubState().displayMode = 'calendar'
+    enterTaskPageRoute(
+      {
+        source: 'vault',
+        notebook: 'Team',
+        section: 'Meetings',
+        page: 'Planning',
+        nonce: 'route-keyboard-mode'
+      },
+      { displayMode: 'list' }
+    )
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    mocks.updatePluginSetting.mockClear()
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'V', ctrlKey: true, shiftKey: true })
+    )
+    await flush()
+
+    expect(getTaskHubViewState().displayMode).toBe('board')
+    expect(getTaskHubState().displayMode).toBe('calendar')
+    expect(mocks.updatePluginSetting).not.toHaveBeenCalledWith(
+      'default_display_mode',
+      expect.anything()
+    )
+  })
 })
 
 describe('Tasks hub — group-by + sort selectors (#423)', () => {
@@ -328,6 +708,8 @@ describe('Tasks hub — group-by + sort selectors (#423)', () => {
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
     mocks.tasksSettings = {}
     mocks.blockChangedCallbacks.length = 0
+    mocks.configChangedCallbacks.length = 0
+    clearTaskPageRoute()
     resetTaskHubState()
   })
 
@@ -402,6 +784,8 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
     mocks.tasksSettings = {}
     mocks.blockChangedCallbacks.length = 0
+    mocks.configChangedCallbacks.length = 0
+    clearTaskPageRoute()
     resetTaskHubState()
   })
 

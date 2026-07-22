@@ -9,11 +9,8 @@
 //   - `window`: adds a due-date WHERE window so Calendar-style queries
 //     can ask for "just this month" without re-deriving the SQL inline.
 //
-// PURELY ADDITIVE this phase: no existing consumer imports this yet.
-// silt-kanban/query.ts stays live until milestone #38 migrates the
-// Kanban consumer, then it is deleted. The base SELECT, scope branches,
-// filter branches, and the default ORDER BY are byte-for-byte the
-// proven Kanban builder — only the two optional params are new.
+// The shared Tasks views use this builder. silt-kanban/query.ts stays live
+// until milestone #38 migrates the Kanban consumer, then it is deleted.
 //
 // Pure function: no side effects, no $state, no IPC. All values flow
 // through `?` placeholders; nothing is string-interpolated into the SQL.
@@ -34,6 +31,8 @@ import type {
  * without instantiating a real PluginContext.
  */
 export interface QueryCtxLike {
+  /** Source root discriminator (for example `vault` or `linked:<id>`). */
+  source?: string
   activeNotebook: string
   activeSection: string
   activePage: string
@@ -198,7 +197,7 @@ export function buildQuery(
   ctx: QueryCtxLike,
   options?: BuildQueryOptions
 ): { sql: string; params: unknown[] } {
-  const baseSelect = `SELECT b.id, b.notebook, b.section, b.page, b.file_date, b.line_number,
+  const baseSelect = `SELECT b.id, b.source, b.notebook, b.section, b.page, b.file_date, b.line_number,
            b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
            t.pinned, t.progress, t.recur AS recurrence, t.comments_count, t.links_count,
            t.created_at, t.completed_at, t.manual_order,
@@ -213,6 +212,14 @@ export function buildQuery(
     FROM blocks b JOIN tasks t ON b.id = t.block_id`
   const where: string[] = []
   const params: unknown[] = []
+  // Ambient navigation resolves a unique notebook display name, so it must
+  // remain source-agnostic to preserve linked-notebook task visibility. An
+  // explicit page route carries its source; qualifying it here is defensive
+  // and makes that routed projection exact even if roots later collide.
+  if (ctx.source) {
+    where.push('b.source = ?')
+    params.push(ctx.source)
+  }
   switch (s) {
     case 'vault':
       break

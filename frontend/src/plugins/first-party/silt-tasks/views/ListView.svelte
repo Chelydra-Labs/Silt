@@ -20,7 +20,7 @@
   import { formatEstimateSum, type TaskDetail } from '../types'
   import { dueDateClass, dueDateTextClass } from '../dueDate'
   import ErrorBanner from '../components/ErrorBanner.svelte'
-  import { getTaskHubState } from '../state.svelte'
+  import { getTaskHubQueryContext, getTaskHubViewState } from '../state.svelte'
   import { binByDimension, type GroupSection } from '../grouping'
   import { buildQuery } from '../query'
 
@@ -77,13 +77,13 @@
     if (!hadRows) loading = true
     errorMsg = ''
     try {
-      const hub = getTaskHubState()
-      const ctxLike = {
+      const hub = getTaskHubViewState()
+      const ctxLike = getTaskHubQueryContext({
         activeNotebook: ctx.activeNotebook,
         activeSection: ctx.activeSection,
         activePage: ctx.activePage,
         today: ctx.today
-      }
+      })
 
       // Open path: buildQuery with status:'open' + LIMIT 500. Skip entirely
       // when the smart-list is Completed (open set is empty by definition).
@@ -190,7 +190,7 @@
 
   // Reload whenever any reactive input the query depends on changes.
   $effect(() => {
-    const hub = getTaskHubState()
+    const hub = getTaskHubViewState()
     void hub.scope
     void hub.groupBy
     void hub.sort
@@ -213,7 +213,7 @@
   // Smart-list filter for the Completed section (#432): 'completed' shows
   // only done rows; the other smart-list values empty the Completed section
   // (date-based smart lists are open-task scopes by definition).
-  let activeFilter = $derived(getTaskHubState().activeFilter)
+  let activeFilter = $derived(getTaskHubViewState().activeFilter)
   let filteredDone = $derived(
     activeFilter === 'all' || activeFilter === 'completed' ? doneItems : []
   )
@@ -222,7 +222,7 @@
   // Used so a zero-result filtered query does not claim "All caught up" /
   // "No tasks yet" when tasks may still exist outside the current filters.
   let hasActiveListFilters = $derived.by(() => {
-    const hub = getTaskHubState()
+    const hub = getTaskHubViewState()
     if (hub.scope !== 'vault') return true
     if (hub.activeFilter !== 'all') return true
     if (hub.filters.owners.length > 0) return true
@@ -266,8 +266,8 @@
 
   // The hub's current grouping + sort dimensions, read reactively so a
   // selector change re-bins the rows without a re-query.
-  let hubGroupBy = $derived(getTaskHubState().groupBy)
-  let hubSort = $derived(getTaskHubState().sort)
+  let hubGroupBy = $derived(getTaskHubViewState().groupBy)
+  let hubSort = $derived(getTaskHubViewState().sort)
 
   // Within-section sort comparator for the active SortMode (#423). Mirrors
   // the SQL ORDER BY in query.ts so a sort change without a re-query still

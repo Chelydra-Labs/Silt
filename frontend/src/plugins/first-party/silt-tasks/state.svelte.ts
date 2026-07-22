@@ -14,7 +14,6 @@
 // (Kanban lineage), so its state has to carry scope+filters AND
 // focusDate+activeFilter together. This module is that carrier.
 //
-// PURELY ADDITIVE this phase: no existing consumer imports this yet.
 // The two old modules stay live until milestone #38 migrates their
 // consumers, then they are deleted. The scopeUserOverride invariant
 // (#124) is ported verbatim — see setScope / narrowScopeTo /
@@ -109,6 +108,38 @@ export type SortMode =
   | 'modified'
   | 'estimate'
 
+/** A transient page projection requested by page-level consumers. */
+export interface TaskPageRouteTarget {
+  source: string
+  notebook: string
+  section: string
+  page: string
+  nonce: string
+}
+
+/** Defaults for a page projection. They never enter a SavedView or config. */
+export interface TaskPageRouteDefaults {
+  displayMode?: DisplayMode
+  groupBy?: GroupBy
+  sort?: SortMode
+  activeFilter?: CalendarFilter
+  filters?: TaskFilters
+  calendarSubMode?: CalendarSubMode
+}
+
+export interface TaskPageRoute {
+  target: TaskPageRouteTarget
+  defaults: TaskPageRouteDefaults
+}
+
+export interface TaskHubQueryContext {
+  source?: string
+  activeNotebook: string
+  activeSection: string
+  activePage: string
+  today: string
+}
+
 /**
  * A named saved view for the hub (#427, generalized from the #323 saved
  * board). Snapshots ALL hub dimensions a user can tweak — display mode,
@@ -185,6 +216,8 @@ export interface TaskHubState {
    * highlight dim. Reset to false by applySavedView / clearActiveSavedView.
    */
   savedViewsDirty: boolean
+  /** Session-only page projection; never part of a SavedView. */
+  pageRoute: TaskPageRoute | null
 }
 
 const DEFAULT_FILTERS: TaskFilters = {
@@ -208,7 +241,8 @@ function freshDefaults(): TaskHubState {
     columns: normalizeColumns(null),
     savedViews: [],
     activeSavedViewId: '',
-    savedViewsDirty: false
+    savedViewsDirty: false,
+    pageRoute: null
   }
 }
 
@@ -217,6 +251,84 @@ const _state: TaskHubState = $state(freshDefaults())
 /** Read the current hub state (used by the hub component + sidebar). */
 export function getTaskHubState(): TaskHubState {
   return _state
+}
+
+/**
+ * Read the effective renderer state. A page route overlays only the defaults
+ * requested by its consumer; the underlying hub state remains untouched so a
+ * route cannot mutate or dirty a saved view.
+ */
+export function getTaskHubViewState(): TaskHubState {
+  const route = _state.pageRoute
+  if (!route) return _state
+  const defaults = route.defaults
+  return {
+    ..._state,
+    displayMode: defaults.displayMode ?? _state.displayMode,
+    groupBy: defaults.groupBy ?? _state.groupBy,
+    sort: defaults.sort ?? _state.sort,
+    activeFilter: defaults.activeFilter ?? _state.activeFilter,
+    filters: defaults.filters ?? _state.filters,
+    calendarSubMode: defaults.calendarSubMode ?? _state.calendarSubMode,
+    // A route target is always a page projection, regardless of ambient scope.
+    scope: 'page'
+  }
+}
+
+/** Return the current transient route target, if one is active. */
+export function getTaskPageRoute(): TaskPageRoute | null {
+  return _state.pageRoute
+}
+
+/** Return only the target for consumers that do not need route defaults. */
+export function getTaskRouteTarget(): TaskPageRouteTarget | null {
+  return _state.pageRoute?.target ?? null
+}
+
+/** Enter or replace the session-only page projection. */
+export function enterTaskPageRoute(
+  target: TaskPageRouteTarget,
+  defaults: TaskPageRouteDefaults = {}
+): void {
+  _state.pageRoute = {
+    target: { ...target },
+    defaults: {
+      ...defaults,
+      filters: defaults.filters
+        ? {
+            owners: [...defaults.filters.owners],
+            priorities: [...defaults.filters.priorities],
+            dueDate: defaults.filters.dueDate,
+            tags: [...defaults.filters.tags],
+            stale: defaults.filters.stale
+          }
+        : undefined
+    }
+  }
+}
+
+/** Clear the session-only route without changing ambient hub state. */
+export function clearTaskPageRoute(): void {
+  _state.pageRoute = null
+}
+
+/** Build the source-qualified location used by every shared task query. */
+export function getTaskHubQueryContext(ambient: {
+  activeNotebook: string
+  activeSection: string
+  activePage: string
+  today: string
+}): TaskHubQueryContext {
+  const target = _state.pageRoute?.target
+  return {
+    // Ambient navigation is already unique by display name. Only an explicit
+    // page route carries a source discriminator that must qualify its query.
+    source: target?.source,
+    activeNotebook: target?.notebook ?? ambient.activeNotebook,
+    activeSection: target?.section ?? ambient.activeSection,
+    activePage: target?.page ?? ambient.activePage,
+    today: ambient.today
+  }
 }
 
 /**
@@ -231,26 +343,38 @@ function markDirtyIfViewActive(): void {
 
 /** Switch the hub between list and board rendering. */
 export function setDisplayMode(mode: DisplayMode): void {
-  _state.displayMode = mode
-  markDirtyIfViewActive()
+  if (_state.pageRoute) _state.pageRoute.defaults.displayMode = mode
+  else {
+    _state.displayMode = mode
+    markDirtyIfViewActive()
+  }
 }
 
 /** Set the Calendar display mode's sub-layout (month/week). */
 export function setCalendarSubMode(mode: CalendarSubMode): void {
-  _state.calendarSubMode = mode
-  markDirtyIfViewActive()
+  if (_state.pageRoute) _state.pageRoute.defaults.calendarSubMode = mode
+  else {
+    _state.calendarSubMode = mode
+    markDirtyIfViewActive()
+  }
 }
 
 /** Change the grouping dimension. The query builder reads this on re-query. */
 export function setGroupBy(g: GroupBy): void {
-  _state.groupBy = g
-  markDirtyIfViewActive()
+  if (_state.pageRoute) _state.pageRoute.defaults.groupBy = g
+  else {
+    _state.groupBy = g
+    markDirtyIfViewActive()
+  }
 }
 
 /** Change the within-group sort. The query builder / ListView reads this. */
 export function setSort(mode: SortMode): void {
-  _state.sort = mode
-  markDirtyIfViewActive()
+  if (_state.pageRoute) _state.pageRoute.defaults.sort = mode
+  else {
+    _state.sort = mode
+    markDirtyIfViewActive()
+  }
 }
 
 /**
@@ -259,6 +383,7 @@ export function setSort(mode: SortMode): void {
  * (#124 invariant, ported verbatim from kanbanSharedState).
  */
 export function setScope(s: Scope): void {
+  clearTaskPageRoute()
   _state.scope = s
   _state.scopeUserOverride = true
   markDirtyIfViewActive()
@@ -287,6 +412,7 @@ export function clearScopeOverride(): void {
 
 /** Full filters replacement (the FilterBar / sidebar quick-toggle writes). */
 export function setFilters(f: TaskFilters): void {
+  clearTaskPageRoute()
   _state.filters = f
   markDirtyIfViewActive()
 }
@@ -305,6 +431,7 @@ export function setColumns(cols: BoardColumn[]): void {
 
 /** Clear all active filters. */
 export function clearFilters(): void {
+  clearTaskPageRoute()
   _state.filters = { ...DEFAULT_FILTERS }
   markDirtyIfViewActive()
 }
@@ -332,11 +459,13 @@ export function clearFocusDate(): void {
 
 /** Set the active smart-list filter. */
 export function setActiveFilter(f: CalendarFilter): void {
+  clearTaskPageRoute()
   _state.activeFilter = f
 }
 
 /** Reset the filter to 'all' (the X / "All Tasks" affordance). */
 export function clearActiveFilter(): void {
+  clearTaskPageRoute()
   _state.activeFilter = 'all'
   // Clear dueDate so "All Tasks" shows every task even after a saved view
   // set a date filter. The other filters (owners/priorities/tags) are
@@ -395,6 +524,7 @@ export function saveView(view: SavedView): void {
  * active and clears the dirty flag (the state now matches the view).
  */
 export function applySavedView(view: SavedView): void {
+  clearTaskPageRoute()
   if (view.displayMode !== undefined) _state.displayMode = view.displayMode
   if (view.groupBy !== undefined) _state.groupBy = view.groupBy
   if (view.sort !== undefined) _state.sort = view.sort
@@ -425,6 +555,7 @@ export function applySavedView(view: SavedView): void {
   }
   _state.activeSavedViewId = view.id
   _state.savedViewsDirty = false
+  _state.pageRoute = null
 }
 
 /**

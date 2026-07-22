@@ -21,6 +21,8 @@ import type {
 import { v2CtxStubs } from '../../../test-helpers'
 import {
   resetTaskHubState,
+  enterTaskPageRoute,
+  clearTaskPageRoute,
   setActiveFilter,
   setFilters,
   setGroupBy,
@@ -145,6 +147,7 @@ function isDoneSql(sql: string): boolean {
 
 interface TaskRow {
   id: string
+  source: string
   notebook: string
   section: string
   page: string
@@ -168,6 +171,7 @@ function task(
   const today = todayStr()
   return {
     id,
+    source: 'vault',
     notebook: '.silt',
     section: '',
     page: 'tasks',
@@ -200,6 +204,32 @@ describe('Tasks view', () => {
 
   afterEach(() => {
     cleanup()
+    clearTaskPageRoute()
+  })
+
+  it('queries the explicit page route instead of ambient navigation', async () => {
+    mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+    enterTaskPageRoute({
+      source: 'linked:meetings',
+      notebook: 'Work',
+      section: 'Meetings',
+      page: 'Sprint Review',
+      nonce: 'list-route'
+    })
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(mocks.sqliteQuery.mock.calls.length).toBeGreaterThan(0)
+    for (const [sql, params] of mocks.sqliteQuery.mock.calls) {
+      expect(sql).toContain('b.source = ?')
+      expect(params.slice(0, 4)).toEqual([
+        'linked:meetings',
+        'Work',
+        'Meetings',
+        'Sprint Review'
+      ])
+    }
   })
 
   it('renders undated tasks under a No Date group (#370 AC1)', async () => {

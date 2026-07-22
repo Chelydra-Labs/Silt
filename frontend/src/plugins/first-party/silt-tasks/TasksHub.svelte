@@ -21,6 +21,9 @@
   import { matchHotkey } from '../../../settings/hotkeys'
   import {
     getTaskHubState,
+    getTaskHubViewState,
+    getTaskPageRoute,
+    clearTaskPageRoute,
     setDisplayMode,
     setFilters,
     setScope,
@@ -70,7 +73,17 @@
     { value: 'calendar', label: 'Calendar', icon: 'calendar_month' }
   ]
 
-  let hubState = $derived(getTaskHubState())
+  let hubState = $derived(getTaskHubViewState())
+  let pageRoute = $derived(getTaskPageRoute())
+  let hubHeading = $state<HTMLHeadingElement | null>(null)
+  let routeAnnouncement = $state('')
+  let handledRouteNonce = $state('')
+  let countsReady = $state(false)
+  let routeWasActive = $state(false)
+  let deferredSettingsHydration = $state<'initial' | 'refresh' | null>(null)
+  let blockDeferredHydration = false
+  let awaitingRouteFirstHydration = false
+  let settingsSnapshotLoaded = false
 
   // Counts reported upward by the active renderer (List today).
   let openCount = $state(0)
@@ -78,57 +91,138 @@
   function handleCountChange(open: number, done: number) {
     openCount = open
     doneCount = done
+    countsReady = true
   }
+
+  $effect(() => {
+    const target = pageRoute?.target
+    if (target) {
+      routeWasActive = true
+      if (target.nonce === handledRouteNonce) return
+      handledRouteNonce = target.nonce
+      countsReady = false
+      routeAnnouncement = `Showing tasks from ${target.page}.`
+      void tick().then(() => hubHeading?.focus())
+      return
+    }
+    if (!routeWasActive) return
+    routeWasActive = false
+    untrack(flushDeferredSettingsHydration)
+  })
+
+  function exitPageRoute(): void {
+    clearTaskPageRoute()
+    routeAnnouncement = 'Page task context cleared.'
+    void tick().then(() => hubHeading?.focus())
+  }
+
+  let pageRoutePath = $derived.by(() => {
+    const target = pageRoute?.target
+    if (!target) return ''
+    return [target.notebook, target.section, target.page]
+      .filter(Boolean)
+      .join(' › ')
+  })
 
   // --- Display mode ------------------------------------------------------
   // Hydrate from the persisted default once on mount; afterwards every user
   // switch is persisted. untrack so the initial set doesn't loop through the
   // $derived that reads hubState.displayMode.
+  function hydrateInitialSettings(): void {
+    // A page route is an isolated projection over the user's base/saved view.
+    // Settings can be cached while it is open, but must not rewrite that base.
+    if (getTaskPageRoute()) return
+
+    const persisted = loadDefaultDisplayMode()
+    if (persisted !== getTaskHubState().displayMode) {
+      setDisplayMode(persisted)
+    }
+    const persistedGroup = loadDefaultGroupBy()
+    if (persistedGroup !== getTaskHubState().groupBy) {
+      setGroupBy(persistedGroup)
+    }
+    const persistedSort = loadDefaultSort()
+    if (persistedSort !== getTaskHubState().sort) {
+      setSort(persistedSort)
+    }
+    const persistedCols = loadColumns()
+    const currentCols = getTaskHubState().columns
+    if (persistedCols.length && !columnsEqual(persistedCols, currentCols)) {
+      setColumns(persistedCols)
+    }
+    const views = loadSavedViews()
+    if (views.length) getTaskHubState().savedViews = views
+    getTaskHubState().savedViewsDirty = false
+    getTaskHubState().activeSavedViewId = ''
+  }
+
+  function rehydrateFromSettings(): void {
+    if (getTaskHubState().savedViewsDirty) return
+    const views = loadSavedViews()
+    if (views.length) getTaskHubState().savedViews = views
+    const mode = loadDefaultDisplayMode()
+    if (mode !== getTaskHubState().displayMode) setDisplayMode(mode)
+    const group = loadDefaultGroupBy()
+    if (group !== getTaskHubState().groupBy) setGroupBy(group)
+    const sortVal = loadDefaultSort()
+    if (sortVal !== getTaskHubState().sort) setSort(sortVal)
+    const cols = loadColumns()
+    const curCols = getTaskHubState().columns
+    if (cols.length && !columnsEqual(cols, curCols)) setColumns(cols)
+  }
+
+  function applyOrDeferSettingsHydration(kind: 'initial' | 'refresh'): void {
+    if (getTaskPageRoute()) {
+      // Keep only the newest loaded snapshot. load* reads the module cache, so
+      // a later refresh supersedes an initial route-first hydration.
+      deferredSettingsHydration = kind
+      return
+    }
+    if (awaitingRouteFirstHydration) {
+      awaitingRouteFirstHydration = false
+      const state = getTaskHubState()
+      const baseWasDeliberatelyChanged =
+        blockDeferredHydration ||
+        state.savedViewsDirty ||
+        state.activeSavedViewId !== ''
+      blockDeferredHydration = false
+      if (baseWasDeliberatelyChanged) return
+    }
+    untrack(kind === 'initial' ? hydrateInitialSettings : rehydrateFromSettings)
+  }
+
+  function flushDeferredSettingsHydration(): void {
+    const kind = deferredSettingsHydration
+    deferredSettingsHydration = null
+    if (!kind) {
+      if (!settingsSnapshotLoaded) {
+        // Settings may still be in flight. The eventual snapshot must make the
+        // same base-preservation decision this route exit would have made.
+        awaitingRouteFirstHydration = true
+      } else {
+        blockDeferredHydration = false
+      }
+      return
+    }
+    const state = getTaskHubState()
+    const baseWasDeliberatelyChanged =
+      blockDeferredHydration ||
+      state.savedViewsDirty ||
+      state.activeSavedViewId !== ''
+    blockDeferredHydration = false
+    if (baseWasDeliberatelyChanged) return
+    if (kind === 'initial') hydrateInitialSettings()
+    else rehydrateFromSettings()
+  }
+
   onMount(() => {
     // Pull the settings slice through the SDK (per-active-notebook override
     // layer #133) before any load* read. initTasksSettings is async because
     // getPluginSettings hits the Go binding, so hydration + facet reload run
     // in its .then().
     void initTasksSettings(ctx).then(() => {
-      untrack(() => {
-        const persisted = loadDefaultDisplayMode()
-        if (persisted !== getTaskHubState().displayMode) {
-          setDisplayMode(persisted)
-        }
-        // Group-by + sort hydrate the same way (#423). Independent of display
-        // mode so the user's preferred grouping survives a List → Board hop.
-        const persistedGroup = loadDefaultGroupBy()
-        if (persistedGroup !== getTaskHubState().groupBy) {
-          setGroupBy(persistedGroup)
-        }
-        const persistedSort = loadDefaultSort()
-        if (persistedSort !== getTaskHubState().sort) {
-          setSort(persistedSort)
-        }
-        // Status columns (#421) hydrate into the unified state so saved
-        // views can snapshot them. BoardView keeps its own local mirror
-        // today; Phase 7 reconciles the two.
-        // Length check is load-bearing: Array.some walks only persistedCols
-        // indices, so a TRIMMED config ([TODO,DOING] vs default [TODO,DOING,
-        // DONE]) would otherwise compare equal and silently revert the trim.
-        const persistedCols = loadColumns()
-        const currentCols = getTaskHubState().columns
-        // columnsEqual covers name + wipLimit so a WIP-only change still hydrates.
-        if (persistedCols.length && !columnsEqual(persistedCols, currentCols)) {
-          setColumns(persistedCols)
-        }
-        // Saved views (#427): system defaults (code-defined) + user views
-        // (YAML). Seeded once on mount; the in-memory list is the single
-        // source afterwards.
-        const views = loadSavedViews()
-        if (views.length) {
-          getTaskHubState().savedViews = views
-        }
-        // Mount-time hydration is not a user edit; clear any dirty flag a
-        // stray setter might have flipped during the seed above.
-        getTaskHubState().savedViewsDirty = false
-        getTaskHubState().activeSavedViewId = ''
-      })
+      settingsSnapshotLoaded = true
+      applyOrDeferSettingsHydration('initial')
       void reloadFacets()
     })
 
@@ -141,29 +235,17 @@
     // SDK's getPluginSettings resolves per-active-notebook overrides (#133):
     // a linked notebook with its own co-located config.yaml can carry
     // different columns / default modes / saved views.
-    function rehydrateFromSettings() {
-      if (getTaskHubState().savedViewsDirty) return
-      untrack(() => {
-        const views = loadSavedViews()
-        if (views.length) getTaskHubState().savedViews = views
-        const mode = loadDefaultDisplayMode()
-        if (mode !== getTaskHubState().displayMode) setDisplayMode(mode)
-        const group = loadDefaultGroupBy()
-        if (group !== getTaskHubState().groupBy) setGroupBy(group)
-        const sortVal = loadDefaultSort()
-        if (sortVal !== getTaskHubState().sort) setSort(sortVal)
-        const cols = loadColumns()
-        const curCols = getTaskHubState().columns
-        if (cols.length && !columnsEqual(cols, curCols)) {
-          setColumns(cols)
-        }
-      })
-    }
     const unsubConfig = ctx.on('config:changed', () => {
-      void reloadTasksSettings(ctx).then(rehydrateFromSettings)
+      void reloadTasksSettings(ctx).then(() => {
+        settingsSnapshotLoaded = true
+        applyOrDeferSettingsHydration('refresh')
+      })
     })
     const unsubNav = ctx.on('active-notebook:changed', () => {
-      void reloadTasksSettings(ctx).then(rehydrateFromSettings)
+      void reloadTasksSettings(ctx).then(() => {
+        settingsSnapshotLoaded = true
+        applyOrDeferSettingsHydration('refresh')
+      })
     })
     return () => {
       unsubConfig()
@@ -173,17 +255,17 @@
 
   function chooseMode(mode: DisplayMode) {
     setDisplayMode(mode)
-    void persistDefaultDisplayMode(mode)
+    if (!getTaskPageRoute()) void persistDefaultDisplayMode(mode)
   }
 
   function chooseGroupBy(g: GroupBy) {
     setGroupBy(g)
-    void persistDefaultGroupBy(g)
+    if (!getTaskPageRoute()) void persistDefaultGroupBy(g)
   }
 
   function chooseSort(s: SortMode) {
     setSort(s)
-    void persistDefaultSort(s)
+    if (!getTaskPageRoute()) void persistDefaultSort(s)
   }
 
   // Hub-scoped command palette (#436). Opened by tasks_command_palette
@@ -212,7 +294,7 @@
     if (isEditableTarget(e.target)) return
     e.preventDefault()
     const order: DisplayMode[] = ['list', 'board', 'calendar']
-    const idx = order.indexOf(getTaskHubState().displayMode)
+    const idx = order.indexOf(getTaskHubViewState().displayMode)
     chooseMode(order[(idx + 1) % order.length])
   }
 
@@ -245,6 +327,7 @@
   }
 
   function handlePaletteApplyView(view: SavedView) {
+    if (getTaskPageRoute()) blockDeferredHydration = true
     applySavedView(view)
   }
   $effect(() => {
@@ -289,6 +372,7 @@
   }
 
   function resetScopeToContext() {
+    if (getTaskPageRoute()) blockDeferredHydration = true
     clearScopeOverride()
     untrack(() => setScope(defaultScope()))
   }
@@ -298,6 +382,7 @@
     void ctx.activeNotebook
     void ctx.activeSection
     void ctx.activePage
+    if (getTaskPageRoute()) return
     narrowScopeTo(defaultScope())
   })
   let scopeCrumb = $derived.by(() => {
@@ -353,7 +438,13 @@
   })
 
   function handleFiltersChange(f: TaskFilters) {
+    if (getTaskPageRoute()) blockDeferredHydration = true
     setFilters(f)
+  }
+
+  function handleScopeChange(s: Scope): void {
+    if (getTaskPageRoute()) blockDeferredHydration = true
+    setScope(s)
   }
 
   // --- Saved views (#427) --------------------------------------------------
@@ -555,6 +646,8 @@
       >checklist</span
     >
     <h1
+      bind:this={hubHeading}
+      tabindex="-1"
       class="font-headline-lg text-headline-lg text-text-primary flex items-baseline gap-2"
     >
       {manifest?.name ?? 'Tasks'}
@@ -567,7 +660,7 @@
           ? ` · ${doneCount} done`
           : ''}
       </span>
-      {#if activeSavedView}
+      {#if activeSavedView && !pageRoute}
         <!-- Active saved view name next to the title. The "(modified)" dirty
              signal is carried by the accent dot on the bookmark button (below)
              rather than dimming this label, so the dirty state is prominent
@@ -592,6 +685,8 @@
          dialog with Escape + click-away close (mirrors FilterBar). -->
     <div
       class="relative flex items-center"
+      class:hidden={!!pageRoute}
+      aria-hidden={pageRoute ? 'true' : undefined}
       data-testid="tasks-hub-saved-view-control"
     >
       <button
@@ -842,6 +937,34 @@
     </div>
   </header>
 
+  {#if pageRoute}
+    <div
+      class="px-6 py-2.5 border-b border-surface-panel-border bg-accent-primary-start/5 flex items-center gap-3"
+      data-testid="tasks-page-context"
+    >
+      <span
+        class="material-symbols-outlined text-icon-md text-accent-primary-start"
+        aria-hidden="true">description</span
+      >
+      <div class="min-w-0">
+        <div class="text-type-xs font-label-sm text-text-muted">
+          Tasks on this page
+        </div>
+        <div class="text-type-sm font-body-md text-text-primary truncate">
+          {pageRoutePath}
+        </div>
+      </div>
+      <button
+        type="button"
+        class="ml-auto px-2.5 py-1 rounded-md border border-surface-panel-border bg-surface-panel text-type-xs font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors cursor-pointer"
+        onclick={exitPageRoute}
+        aria-label="Exit page task context"
+      >
+        Clear
+      </button>
+    </div>
+  {/if}
+
   <FilterBar
     filters={hubState.filters}
     owners={allOwners}
@@ -852,13 +975,22 @@
     sort={hubState.sort}
     onSortChange={chooseSort}
     scope={hubState.scope}
-    onScopeChange={(s) => setScope(s)}
+    onScopeChange={handleScopeChange}
     {isScopeDisabled}
     {scopeCrumb}
     scopeUserOverride={hubState.scopeUserOverride}
     onResetScope={resetScopeToContext}
     {totalCount}
   />
+
+  {#if pageRoute && countsReady && totalCount === 0}
+    <div
+      class="px-6 pt-4 text-type-sm font-body-md text-text-muted"
+      data-testid="tasks-page-empty"
+    >
+      No tasks on this page.
+    </div>
+  {/if}
 
   <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
     {#if hubState.displayMode === 'list'}
@@ -897,6 +1029,9 @@
     data-testid="tasks-hub-saved-view-live"
   >
     {savedViewLiveMsg}
+  </div>
+  <div class="sr-only" aria-live="polite" data-testid="tasks-page-route-live">
+    {routeAnnouncement}
   </div>
 
   <!-- Delete confirmation modal (#470). Replaces window.confirm(). -->

@@ -236,6 +236,11 @@
     isStandaloneTaskRef,
     routeJumpTarget
   } from './lib/standaloneTasksNav'
+  import {
+    OPEN_TASKS_FOR_PAGE_EVENT,
+    type OpenTasksForPageDetail
+  } from './components/editor/EditorUtilityBar.svelte'
+  import { enterTaskPageRoute } from './plugins/first-party/silt-tasks/state.svelte'
 
   let isInitialized = $state(false)
   let loading = $state(true)
@@ -919,6 +924,26 @@
       showQuickAdd = true
     }
 
+    function handleOpenTasksForPage(
+      e: CustomEvent<OpenTasksForPageDetail>
+    ): void {
+      const target = e.detail
+      if (
+        !target?.source ||
+        !target.notebook ||
+        !target.page ||
+        !target.nonce ||
+        isStandaloneTaskRef(target.notebook)
+      )
+        return
+      enterTaskPageRoute(target, {
+        displayMode: 'list',
+        activeFilter: 'all',
+        filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+      })
+      openTasksView(undefined)
+    }
+
     // Summary-strip chips in GeneralTab dispatch this to jump between
     // settings sections while already in the settings view (no view change).
     function handleSettingsJump(e: Event) {
@@ -1161,6 +1186,7 @@
     window.addEventListener('open-template-picker', handleOpenTemplatePicker)
     window.addEventListener('open-search', handleOpenSearch)
     window.addEventListener('open-quick-add', handleOpenQuickAdd)
+    window.addEventListener(OPEN_TASKS_FOR_PAGE_EVENT, handleOpenTasksForPage)
     window.addEventListener('silt:change-vault', handleSwitchVault)
     window.addEventListener('silt:settings-jump', handleSettingsJump)
     window.addEventListener('page-renamed', handlePageRenamed)
@@ -1420,6 +1446,10 @@
       )
       window.removeEventListener('open-search', handleOpenSearch)
       window.removeEventListener('open-quick-add', handleOpenQuickAdd)
+      window.removeEventListener(
+        OPEN_TASKS_FOR_PAGE_EVENT,
+        handleOpenTasksForPage
+      )
       window.removeEventListener('silt:change-vault', handleSwitchVault)
       window.removeEventListener('silt:settings-jump', handleSettingsJump)
       window.removeEventListener('page-renamed', handlePageRenamed)
@@ -1941,6 +1971,8 @@
                     style:display={tab.id === activeTabId ? 'flex' : 'none'}
                   >
                     <VirtualScrollContainer
+                      source={navigationNotebookMetadata[tab.notebook]
+                        ?.source ?? 'vault'}
                       notebook={tab.notebook}
                       section={tab.section}
                       page={tab.page}

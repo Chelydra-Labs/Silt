@@ -864,6 +864,18 @@ orchestration when AI is enabled.
 - **Board** — drag-and-drop status columns; a status change writes the new checkbox state to the source markdown and re-indexes the block, and cards support manual reordering.
 - **Calendar** — tasks by start/due date with interactive timeline components and a month/week sub-layout.
 
+**Page-scoped Tasks Hub intent.** Page chrome may open the existing hub for a
+specific source-qualified page using a locator containing the source,
+notebook, section, page, and a per-entry nonce. This is an ephemeral session
+intent: it overlays page scope and consumer-provided display defaults while
+leaving the ambient hub state and saved views unchanged. Intentional scope or
+filter changes exit the page context.
+
+All three modes remain projections of canonical Markdown task blocks through
+the existing read-only index and shared task query path. Page routing does not
+create a meeting entity, a separate board, another task store, or persisted
+route state. Source is retained when opening a task's exact source page.
+
 8.4 Plugin Packaging & Distribution (.silt-plugin)
 
 Third-party plugins are distributed as `.silt-plugin` archives — a **ZIP with a custom extension** containing `plugin.json` + the entry module (`index.js`) + optional assets, all at the archive root:

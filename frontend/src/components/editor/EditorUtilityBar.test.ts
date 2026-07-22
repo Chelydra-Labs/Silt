@@ -2,7 +2,7 @@
 // for FormatToolbar since control actions have relocated to TabStrip.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, cleanup } from '@testing-library/svelte'
+import { render, cleanup, fireEvent, screen } from '@testing-library/svelte'
 import type { Editor } from 'svelte-tiptap'
 
 // Hoisted mock state — vi.mock factories are hoisted above imports, so any
@@ -65,5 +65,47 @@ describe('EditorUtilityBar (#202 — simplified)', () => {
     })
     const ft = document.querySelector('[data-testid="format-toolbar-stub"]')
     expect(ft?.getAttribute('data-color-enabled')).toBe('false')
+  })
+
+  it('dispatches a source-qualified nonce-bearing page tasks event', async () => {
+    const listener = vi.fn()
+    window.addEventListener('silt:open-tasks-for-page', listener)
+    render(EditorUtilityBar, {
+      props: {
+        editor: null,
+        activeMarks: new Set<string>(),
+        pageLocator: {
+          source: 'linked:meetings',
+          notebook: 'Team',
+          section: 'Meetings',
+          page: 'Weekly sync'
+        }
+      }
+    })
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Open tasks on this page' })
+    )
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    const event = listener.mock.calls[0][0] as CustomEvent
+    expect(event.detail).toEqual({
+      source: 'linked:meetings',
+      notebook: 'Team',
+      section: 'Meetings',
+      page: 'Weekly sync',
+      nonce: expect.any(String)
+    })
+    expect(event.detail.nonce).not.toBe('')
+    window.removeEventListener('silt:open-tasks-for-page', listener)
+  })
+
+  it('omits the page action without a real locator', () => {
+    render(EditorUtilityBar, {
+      props: { editor: null, activeMarks: new Set<string>() }
+    })
+    expect(
+      screen.queryByRole('button', { name: 'Open tasks on this page' })
+    ).toBeNull()
   })
 })
