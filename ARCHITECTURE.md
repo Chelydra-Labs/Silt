@@ -964,9 +964,15 @@ recency=file_date DESC) + a 20-token snippet window. Tag matches the exact tag
 OR a hierarchical descendant. `SearchFilters.VaultOnly` scopes to in-vault
 blocks. The SearchModal adds a scope segmented control (Vault | +Linked),
 category filter chips (single-select by block type), a sort toggle, and a live
-count — chips over tabbed categories (the Teams anti-pattern: tabs force a
-type-guess + hide cross-type results). Markdown dialect is GFM (§"Markdown
-Dialect" in SPECS.md); sub/super are `<sub>`/`<sup>` HTML.
+count. Each result keeps the backend `source` discriminator, shows a Vault or
+Linked qualifier beside its breadcrumb and snippet, and sends the complete
+source-qualified locator plus block target through App's existing page-open
+funnel for both pointer and Enter activation. Source-less wiki-link events keep
+their existing coordinate-based behavior, and `.silt` locators still route to
+the Tasks view rather than opening an editor tab. Category chips are preferred
+over tabbed categories because tabs force a type guess and hide cross-type
+results. Markdown dialect is GFM (§"Markdown Dialect" in SPECS.md); sub/super
+are `<sub>`/`<sup>` HTML.
 
 **Global replace (Ctrl+Shift+G)** — `GlobalReplaceModal`
 previews FTS5 matches grouped by page (before→after), with per-match + per-page

@@ -137,6 +137,7 @@ describe('SearchModal keyboard a11y', () => {
       results: [
         {
           id: '1',
+          source: 'vault',
           notebook: 'Work',
           section: '',
           page: 'A',
@@ -203,5 +204,60 @@ describe('SearchModal keyboard a11y', () => {
       ][3]
     expect(filters.notebook).toBe('')
     expect(filters.tag).toBe('')
+  })
+
+  it('shows the typed source qualifier and sends identical click/Enter navigation payloads', async () => {
+    const result = {
+      id: 'block-712',
+      source: 'linked:team-drive',
+      notebook: 'Work',
+      section: 'Meetings',
+      page: 'Weekly sync',
+      file_date: '2026-07-22',
+      clean_content: 'Discuss the launch sequence',
+      snippet: 'Discuss the <mark>launch</mark> sequence'
+    }
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [result],
+      total: 1,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+
+    const clickJump = vi.fn()
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: clickJump }
+    })
+    const clickInput = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(clickInput, { target: { value: 'launch' } })
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText('Linked source')).toBeInTheDocument()
+    })
+    expect(screen.getAllByText('Work')).toHaveLength(2)
+    expect(screen.getByText('Meetings')).toBeInTheDocument()
+    expect(screen.getByText('Weekly sync')).toBeInTheDocument()
+    expect(screen.getByText('launch')).toBeInTheDocument()
+    await fireEvent.click(screen.getByRole('button', { name: /launch/i }))
+
+    cleanup()
+    const enterJump = vi.fn()
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: enterJump }
+    })
+    const enterInput = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(enterInput, { target: { value: 'launch' } })
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText('Linked source')).toBeInTheDocument()
+    })
+    await fireEvent.keyDown(window, { key: 'Enter' })
+
+    expect(clickJump).toHaveBeenCalledWith(result)
+    expect(enterJump).toHaveBeenCalledWith(result)
+    expect(enterJump.mock.calls[0][0]).toEqual(clickJump.mock.calls[0][0])
   })
 })

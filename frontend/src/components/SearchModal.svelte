@@ -1,3 +1,17 @@
+<script module lang="ts">
+  export interface SearchModalResult {
+    id: string
+    source: string
+    notebook: string
+    section: string
+    page: string
+    file_date: string
+    clean_content: string
+    status?: string
+    snippet?: string
+  }
+</script>
+
 <script lang="ts">
   import { onMount } from 'svelte'
   import {
@@ -7,18 +21,8 @@
   } from '../../bindings/silt/app.js'
   import { STANDALONE_TASKS_NOTEBOOK } from '../lib/standaloneTasksNav'
 
-  interface TaskResult {
-    id: string
-    notebook: string
-    section: string
-    page: string
-    file_date: string
-    clean_content: string
-    status?: string
-    snippet?: string
-  }
   interface SearchResult {
-    results: TaskResult[]
+    results: SearchModalResult[]
     total: number
     offset: number
     limit: number
@@ -27,14 +31,14 @@
 
   interface Props {
     onClose: () => void
-    onJump: (res: TaskResult) => void
+    onJump: (res: SearchModalResult) => void
     onReplaceInVault?: (query: string) => void
   }
 
   let { onClose, onJump, onReplaceInVault }: Props = $props()
 
   let query = $state('')
-  let results = $state<TaskResult[]>([])
+  let results = $state<SearchModalResult[]>([])
   let selectedIdx = $state(0)
   let inputEl = $state<HTMLInputElement | null>(null)
   let listEl = $state<HTMLDivElement | null>(null)
@@ -278,9 +282,13 @@
     })
   }
 
-  function selectResult(res: TaskResult) {
+  function selectResult(res: SearchModalResult) {
     onJump(res)
     onClose()
+  }
+
+  function sourceLabel(source: string): 'Linked' | 'Vault' {
+    return source.startsWith('linked:') ? 'Linked' : 'Vault'
   }
 
   // sanitizeSnippet HTML-escapes the FTS5 snippet, then restores ONLY the
@@ -575,6 +583,11 @@
             <div
               class="flex items-center gap-1.5 text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold"
             >
+              <span
+                aria-label={`${sourceLabel(res.source)} source`}
+                class="rounded-full border border-surface-modal-border bg-surface-modal px-1.5 py-0.5 text-type-3xs tracking-wider text-text-muted"
+                >{sourceLabel(res.source)}</span
+              >
               {#if res.notebook === STANDALONE_TASKS_NOTEBOOK}
                 <span>Standalone task</span>
                 <span class="material-symbols-outlined text-type-2xs"

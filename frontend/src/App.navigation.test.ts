@@ -3,10 +3,24 @@ import * as AppModule from './App.svelte'
 
 type Ref = { notebook: string; section: string; page: string }
 const {
+  adaptSearchNavigation,
   createRecentPageRecorder,
   resolveBreadcrumbSectionSelection,
   resolveSourceNavigationTarget
 } = AppModule as unknown as {
+  adaptSearchNavigation: (result: {
+    id: string
+    source: string
+    notebook: string
+    section: string
+    page: string
+    file_date: string
+    clean_content: string
+  }) => {
+    locator: Ref & { source?: string }
+    date: string
+    blockId: string
+  }
   createRecentPageRecorder: (
     persist: (ref: Ref) => Promise<unknown>,
     refresh: () => void,
@@ -140,5 +154,33 @@ describe('App navigation coordination', () => {
         page: 'Roadmap'
       })
     ).toBe(catalog[0])
+  })
+
+  it('adapts a search result without dropping its source-qualified locator', () => {
+    expect(
+      adaptSearchNavigation({
+        id: 'block-712',
+        source: 'linked:team-drive',
+        notebook: 'Work',
+        section: 'Plans',
+        page: 'Roadmap',
+        file_date: '2026-07-22',
+        clean_content: 'Launch plan'
+      })
+    ).toEqual({
+      locator: {
+        source: 'linked:team-drive',
+        notebook: 'Work',
+        section: 'Plans',
+        page: 'Roadmap'
+      },
+      date: '2026-07-22',
+      blockId: 'block-712'
+    })
+  })
+
+  it('leaves a source-less page-link locator unchanged', () => {
+    const link = { notebook: 'Work', section: '', page: 'Inbox' }
+    expect(resolveSourceNavigationTarget([], link)).toBe(link)
   })
 })
