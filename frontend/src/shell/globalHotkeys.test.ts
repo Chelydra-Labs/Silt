@@ -85,6 +85,19 @@ describe('resolveGlobalHotkey', () => {
     ).toBe(null) // align_left
   })
 
+  it('suppresses remapped indent_block inside the editor', () => {
+    // If indent is remapped onto a chord that is also a global action, the
+    // editor-owned prefix must win while ProseMirror is focused.
+    const hotkeys = {
+      ...defaults,
+      indent_block: 'Ctrl+B',
+      format_bold: 'Ctrl+Shift+B'
+    }
+    expect(
+      resolveGlobalHotkey(key('b', { ctrlKey: true }), hotkeys, true, false)
+    ).toBe(null)
+  })
+
   it('still fires global actions while the editor is focused', () => {
     // toggle_view_mode is intentionally NOT editor-owned (#171/#195).
     expect(

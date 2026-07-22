@@ -9,8 +9,15 @@ import {
   SiltBlockKeymaps
 } from './index'
 import { EmbedNode, BlockReferenceNode, CalloutBlock } from './schema'
-import { setBlockAlign, moveActiveBlock, findActiveBlock } from './keymaps'
+import {
+  setBlockAlign,
+  moveActiveBlock,
+  findActiveBlock,
+  indentActiveBlock,
+  unindentActiveBlock
+} from './keymaps'
 import type { DocJSON } from './types'
+import { settings } from '../../settings/store.svelte'
 
 // Mirror the makeEditor() pattern from converters.test.ts — a real TipTap
 // editor wired with the Silt schema. No Placeholder (avoids the jsdom
@@ -306,6 +313,43 @@ describe('Tab / Shift-Tab depth indent (outliner)', () => {
     expect(editor.state.doc.child(0).attrs.depth).toBe(0)
     editor.destroy()
   })
+
+  it('honors a remapped indent_block / unindent_block binding', () => {
+    // Config is read when SiltBlockKeymaps.addKeyboardShortcuts runs (editor
+    // create). Remap must be in place before makeEditorWithKeymaps().
+    withHotkeys({ indent_block: 'Ctrl+]', unindent_block: 'Ctrl+[' }, () => {
+      const editor = makeEditorWithKeymaps()
+      editor.commands.setContent(twoDepthBlocks('bullet'))
+      focusSecondBlock(editor)
+
+      // Default Tab must NOT indent when remapped away.
+      expect(pressKey(editor, 'Tab')).toBe(false)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+
+      expect(pressKey(editor, ']', { ctrlKey: true })).toBe(true)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+
+      expect(pressKey(editor, '[', { ctrlKey: true })).toBe(true)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+      editor.destroy()
+    })
+  })
+
+  it('omits indent when indent_block is explicitly disabled (empty binding)', () => {
+    withHotkeys({ indent_block: '', unindent_block: '' }, () => {
+      const editor = makeEditorWithKeymaps()
+      editor.commands.setContent(twoDepthBlocks('plain'))
+      focusSecondBlock(editor)
+      expect(pressKey(editor, 'Tab')).toBe(false)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+      // Helpers still work when called directly (keymap is what was disabled).
+      expect(indentActiveBlock(editor)).toBe(true)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+      expect(unindentActiveBlock(editor)).toBe(true)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+      editor.destroy()
+    })
+  })
 })
 
 describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
@@ -375,12 +419,14 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
 function pressKey(
   editor: Editor,
   key: string,
-  opts: { shiftKey?: boolean } = {}
+  opts: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean } = {}
 ): boolean {
   const event = new KeyboardEvent('keydown', {
     key,
     bubbles: true,
-    shiftKey: opts.shiftKey ?? false
+    shiftKey: opts.shiftKey ?? false,
+    ctrlKey: opts.ctrlKey ?? false,
+    metaKey: opts.metaKey ?? false
   })
   let handled = false
   editor.view.someProp('handleKeyDown', (handler) => {
@@ -392,6 +438,23 @@ function pressKey(
     return ret
   })
   return handled
+}
+
+/** Temporarily set config.hotkeys for keymap-construction tests. */
+function withHotkeys<T>(
+  hotkeys: Record<string, string | undefined>,
+  fn: () => T
+): T {
+  const prev = settings.config
+  settings.config = {
+    ...(prev ?? {}),
+    hotkeys: { ...(prev?.hotkeys ?? {}), ...hotkeys }
+  } as typeof settings.config
+  try {
+    return fn()
+  } finally {
+    settings.config = prev
+  }
 }
 
 function twoNoteBlocks(

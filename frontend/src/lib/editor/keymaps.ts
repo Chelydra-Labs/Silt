@@ -15,10 +15,8 @@ import { settings } from '../../settings/store.svelte'
 //     bullet, unindent, then delete+focus-prev.
 //   - Delete at end: merge a same-type sibling below into this block (or drop
 //     this block if it's empty and a same-type sibling follows).
-//   - Tab / Shift-Tab (hardcoded chords today): indent / unindent (bounded by
-//     previous sibling's depth + 1, matching the legacy outliner constraints).
-//     Config keys indent_block / unindent_block exist but are not wired into
-//     this keymap yet — remapping them in settings has no effect.
+//   - indent_block / unindent_block (config-driven, defaults Tab / Shift-Tab):
+//     indent / unindent (bounded by previous sibling's depth + 1).
 //   - ArrowUp / ArrowDown at block boundary: move focus to the previous/next block.
 //
 // Visual indent requires data-depth on the outer NodeView root (see
@@ -161,6 +159,51 @@ function setBlockDepth(
 ): void {
   const tr = editor.state.tr.setNodeAttribute(nodePos, 'depth', newDepth)
   editor.view.dispatch(tr)
+}
+
+/**
+ * Indent the active depth-bearing block by one level, capped at previous
+ * sibling depth + 1. Returns true when the chord was consumed (including
+ * no-op at max depth / first block) so Tab does not move browser focus.
+ * Returns false outside depth blocks so table cell nav etc. can run.
+ */
+export function indentActiveBlock(editor: Editor): boolean {
+  const info = currentBlockInfo(editor)
+  if (!info) return false
+  // Only the depth-bearing prose blocks support indent. Letting the chord fall
+  // through for callout/code/table/details keeps TipTap's default (table cell
+  // nav, etc.) instead of silently no-op'ing.
+  if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
+
+  const { doc } = editor.state
+  let blockIndex = -1
+  let acc = 0
+  for (let i = 0; i < doc.childCount; i++) {
+    if (acc === info.pos) {
+      blockIndex = i
+      break
+    }
+    acc += doc.child(i).nodeSize
+  }
+  let maxDepth = 0
+  if (blockIndex > 0) {
+    maxDepth = (doc.child(blockIndex - 1).attrs.depth || 0) + 1
+  }
+  if (info.depth < maxDepth) {
+    setBlockDepth(editor, info.pos, info.depth + 1)
+  }
+  return true
+}
+
+/** Unindent the active depth-bearing block by one level (floor 0). */
+export function unindentActiveBlock(editor: Editor): boolean {
+  const info = currentBlockInfo(editor)
+  if (!info) return false
+  if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
+  if (info.depth > 0) {
+    setBlockDepth(editor, info.pos, info.depth - 1)
+  }
+  return true
 }
 
 function focusBlockAt(editor: Editor, blockIndex: number): void {
@@ -598,8 +641,8 @@ function omitDisabled(
 // at editor-creation time and converts each binding to the ProseMirror keymap
 // format via resolveShortcut. Absent entries fall back to hardcoded defaults;
 // an explicitly empty entry disables the shortcut. Covers all editor-scoped
-// remappable shortcuts: heading levels, alignment, quote/details toggles,
-// table row/col inserts, and inline format marks.
+// remappable shortcuts: indent/unindent, heading levels, alignment,
+// quote/details toggles, table row/col inserts, and inline format marks.
 function buildConfigDrivenShortcuts(
   editor: Editor
 ): Record<string, () => boolean> {
@@ -607,6 +650,10 @@ function buildConfigDrivenShortcuts(
   const pm = (configKey: string, def: string) =>
     resolveShortcut(configKey, def, hk)
   const map: Record<string, () => boolean> = {}
+
+  // Outliner indent / unindent (defaults Tab / Shift-Tab).
+  map[pm('indent_block', 'Tab')] = () => indentActiveBlock(editor)
+  map[pm('unindent_block', 'Shift-Tab')] = () => unindentActiveBlock(editor)
 
   // Strikethrough — config-driven via format_strike (#311). TipTap's Strike
   // extension registers its own Mod-Shift-s default; this binding overrides
@@ -923,44 +970,8 @@ export const SiltBlockKeymaps = Extension.create({
         return mergeSiblingBlock(this.editor, 'forward')
       },
 
-      Tab: () => {
-        const info = currentBlockInfo(this.editor)
-        if (!info) return false
-        // Only the depth-bearing prose blocks support indent. Letting Tab fall
-        // through for callout/code/table/details keeps TipTap's default (table
-        // cell nav, etc.) instead of silently no-op'ing.
-        if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
-
-        // Indent — max is previous sibling's depth + 1.
-        const { doc } = this.editor.state
-        let blockIndex = -1
-        let acc = 0
-        for (let i = 0; i < doc.childCount; i++) {
-          if (acc === info.pos) {
-            blockIndex = i
-            break
-          }
-          acc += doc.child(i).nodeSize
-        }
-        let maxDepth = 0
-        if (blockIndex > 0) {
-          maxDepth = (doc.child(blockIndex - 1).attrs.depth || 0) + 1
-        }
-        if (info.depth < maxDepth) {
-          setBlockDepth(this.editor, info.pos, info.depth + 1)
-        }
-        return true
-      },
-
-      'Shift-Tab': () => {
-        const info = currentBlockInfo(this.editor)
-        if (!info) return false
-        if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
-        if (info.depth > 0) {
-          setBlockDepth(this.editor, info.pos, info.depth - 1)
-        }
-        return true
-      },
+      // indent_block / unindent_block are registered via
+      // buildConfigDrivenShortcuts (defaults Tab / Shift-Tab).
 
       ArrowUp: () => {
         const info = currentBlockInfo(this.editor)

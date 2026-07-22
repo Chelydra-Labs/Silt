@@ -50,6 +50,8 @@ export {
   toggleDetails,
   findActiveBlock,
   moveActiveBlock,
+  indentActiveBlock,
+  unindentActiveBlock,
   BLOCK_TYPES
 } from './keymaps'
 export {
