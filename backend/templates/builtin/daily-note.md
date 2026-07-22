@@ -10,7 +10,7 @@ icon: today
 
 ## Intentions for today
 
-- [ ] TODO TASK #3 
+- [ ] Choose one priority for today
 
 ## Log
 

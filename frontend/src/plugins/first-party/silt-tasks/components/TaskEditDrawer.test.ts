@@ -90,6 +90,7 @@ import { v2CtxStubs } from '../../../test-helpers'
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
     id: 'task-1',
+    source: 'vault',
     notebook: 'Work',
     section: 'Journal',
     page: 'Daily',
@@ -447,6 +448,31 @@ describe('TaskEditDrawer — source awareness + affordances', () => {
       props: { task: makeTask(), ctx, onClose: () => {} }
     })
     expect(screen.getByText('Open source page')).toBeTruthy()
+  })
+
+  it('retains the linked source in exact source-page navigation', async () => {
+    const ctx = makeCtx()
+    const handler = vi.fn()
+    window.addEventListener('navigate-to-block', handler)
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask({ source: 'linked:meetings' }),
+        ctx,
+        onClose: () => {}
+      }
+    })
+
+    await fireEvent.click(screen.getByText('Open source page'))
+    const detail = (handler.mock.calls[0][0] as CustomEvent).detail
+    expect(detail).toEqual({
+      notebook: 'Work',
+      source: 'linked:meetings',
+      section: 'Journal',
+      page: 'Daily',
+      date: '2026-07-01',
+      blockId: 'task-1'
+    })
+    window.removeEventListener('navigate-to-block', handler)
   })
 
   it('renders "Open sub-editor" only when onOpenSubEditor is provided', () => {

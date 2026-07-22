@@ -30,8 +30,8 @@ A one-paragraph description of what this project is and why it matters.
 
 ## Milestones
 
-- [ ] TODO TASK #3 
-- [ ] TODO TASK #3 
+- [ ] Define the first milestone
+- [ ] Confirm milestone ownership
 
 ## Stakeholders
 

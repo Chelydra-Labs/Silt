@@ -10,6 +10,8 @@ import type { TaskStatus } from '../../sdk'
  */
 export interface TaskDetail {
   id: string
+  /** Root discriminator used to navigate/query linked notebooks safely. */
+  source: string
   notebook: string
   section: string
   page: string

@@ -5,7 +5,12 @@
 // and `window` (due-date WHERE window).
 import { describe, it, expect } from 'vitest'
 import { buildQuery, type QueryCtxLike } from './query'
-import type { TaskFilters, Scope } from './state.svelte'
+import {
+  clearTaskPageRoute,
+  getTaskHubQueryContext,
+  type TaskFilters,
+  type Scope
+} from './state.svelte'
 
 const ctx: QueryCtxLike = {
   activeNotebook: 'Work',
@@ -50,6 +55,37 @@ describe('buildQuery — scope branches (ported from silt-kanban)', () => {
     expect(sql).toContain('b.section = ?')
     expect(sql).toContain('b.page = ?')
     expect(params).toEqual(['Work', 'Journal', 'Today'])
+  })
+})
+
+describe('buildQuery — source qualification', () => {
+  it('adds a parameterised source predicate when a source is supplied', () => {
+    const { sql, params } = buildQuery('page', emptyFilters, {
+      ...ctx,
+      source: 'linked:team-notes'
+    })
+    expect(sql).toContain('b.source = ?')
+    expect(params).toEqual(['linked:team-notes', 'Work', 'Journal', 'Today'])
+  })
+
+  it('keeps the legacy pure-builder context source-free when omitted', () => {
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx)
+    expect(sql).not.toContain('b.source = ?')
+    expect(params).toEqual([])
+  })
+
+  it('preserves ambient linked scope without inventing a vault source', () => {
+    clearTaskPageRoute()
+    const ambient = getTaskHubQueryContext({
+      activeNotebook: 'Shared Notes',
+      activeSection: 'Meetings',
+      activePage: 'Review',
+      today: '2026-06-22'
+    })
+    const { sql, params } = buildQuery('page', emptyFilters, ambient)
+    expect(ambient.source).toBeUndefined()
+    expect(sql).not.toContain('b.source = ?')
+    expect(params).toEqual(['Shared Notes', 'Meetings', 'Review'])
   })
 })
 

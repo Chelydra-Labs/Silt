@@ -147,6 +147,27 @@ func TestParseLine(t *testing.T) {
 	}
 }
 
+func TestParseLine_GFMCheckboxesAreTasksRegardlessOfText(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+	}{
+		{name: "plain GFM text", text: "Review the meeting notes"},
+		{name: "legacy-looking existing text", text: "TODO TASK #3 action item"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			block, _, _ := ParseLine("- [ ] "+tc.text, 1, 4)
+			if block.Type != BlockTask {
+				t.Fatalf("expected BlockTask for %q, got %s", tc.text, block.Type)
+			}
+			if block.CleanText != tc.text {
+				t.Errorf("clean text = %q, want %q", block.CleanText, tc.text)
+			}
+		})
+	}
+}
+
 // TestParseLine_PinAndProgress covers the [pin:: true] and [progress:: N]
 // Dataview inline metadata tokens in the task syntax. Both are file-
 // resident user intent (ARCHITECTURE §0) so the parser is the canonical

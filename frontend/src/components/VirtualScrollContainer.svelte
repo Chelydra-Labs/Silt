@@ -24,6 +24,8 @@
   import { shortcutBinding } from '../settings/shortcutActions'
 
   interface Props {
+    /** Canonical content root (`vault` or `linked:<id>`). */
+    source?: string
     notebook: string
     section: string
     page: string
@@ -50,6 +52,7 @@
   }
 
   let {
+    source = 'vault',
     notebook,
     section,
     page,
@@ -66,6 +69,12 @@
     isActive = true,
     onSaveStateChange
   }: Props = $props()
+
+  let pageLocator = $derived(
+    notebook && page && notebook !== '.silt'
+      ? { source, notebook, section, page }
+      : null
+  )
 
   // Editor bindings
   let editorInstance = $state<Editor | null>(null)
@@ -485,8 +494,13 @@
   {#if viewMode === 'edit' && findBarState.open}
     <FindBar editor={editorInstance!} onClose={() => findBarState.close()} />
   {/if}
-  {#if viewMode === 'edit' && showFormatToolbar}
-    <EditorUtilityBar editor={editorInstance} {activeMarks} />
+  {#if pageLocator || (viewMode === 'edit' && showFormatToolbar)}
+    <EditorUtilityBar
+      editor={editorInstance}
+      {activeMarks}
+      {pageLocator}
+      showFormatting={viewMode === 'edit' && showFormatToolbar}
+    />
   {/if}
 
   <div class="flex flex-1 min-h-0">

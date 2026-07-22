@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -53,9 +54,9 @@ func TestEmbeddedTemplates_Roster(t *testing.T) {
 
 // TestEmbeddedTemplates_RoundTripParseFileContent is the spec-compatibility
 // gate (SPECS §4 / §3.3): every rendered built-in must parse cleanly through
-// the real AST parser, and the templates that carry TODO TASK action items must
-// surface them as recognized TASK blocks (so they flow into Kanban/Agenda/
-// Calendar). Rendered with a frozen time so the assertion is deterministic.
+// the real AST parser, and every GFM checkbox must surface as a recognized TASK
+// block (so it flows into Kanban/Agenda/Calendar). Rendered with a frozen time
+// so the assertion is deterministic.
 func TestEmbeddedTemplates_RoundTripParseFileContent(t *testing.T) {
 	all, err := EmbeddedTemplates()
 	if err != nil {
@@ -84,14 +85,13 @@ func TestEmbeddedTemplates_RoundTripParseFileContent(t *testing.T) {
 	}
 }
 
-// TestEmbeddedTemplates_AllActionItemsAreTasks verifies EVERY built-in that
-// carries TODO TASK lines produces recognized TASK blocks after rendering +
-// parsing. This is the comprehensive regression guard for the Kanban/Agenda/
-// Calendar contract — the original meeting-notes-only test let the
-// weekly-review ordered-list bug slip through.
+// TestEmbeddedTemplates_AllActionItemsAreTasks verifies every built-in's plain
+// GFM task seeds produce recognized TASK blocks after rendering + parsing. This
+// is the comprehensive regression guard for the Kanban/Agenda/Calendar
+// contract.
 func TestEmbeddedTemplates_AllActionItemsAreTasks(t *testing.T) {
 	// expectedTasks maps template id → expected number of TASK blocks after
-	// render + ParseFileContent. Templates without TODO TASK lines expect 0.
+	// render + ParseFileContent. Templates without task seeds expect 0.
 	expectedTasks := map[string]int{
 		"notes":         0,
 		"meeting-notes": 2,
@@ -136,6 +136,9 @@ func TestEmbeddedTemplates_AllActionItemsAreTasks(t *testing.T) {
 			if perr != nil {
 				t.Fatalf("template %q ParseFileContent: %v", tpl.ID, perr)
 			}
+			if strings.Contains(rendered, "TODO TASK") {
+				t.Errorf("template %q still contains obsolete TODO TASK shorthand", tpl.ID)
+			}
 			var tasks int
 			for _, b := range blocks {
 				if b.Type == parser.BlockTask {
@@ -143,6 +146,10 @@ func TestEmbeddedTemplates_AllActionItemsAreTasks(t *testing.T) {
 				}
 			}
 			want := expectedTasks[tpl.ID]
+			checkboxes := strings.Count(rendered, "- [ ] ")
+			if checkboxes != want {
+				t.Errorf("template %q rendered %d plain GFM checkboxes, want %d", tpl.ID, checkboxes, want)
+			}
 			if tasks != want {
 				t.Errorf("template %q rendered %d TASK blocks, want %d\n--- rendered ---\n%s", tpl.ID, tasks, want, rendered)
 			}

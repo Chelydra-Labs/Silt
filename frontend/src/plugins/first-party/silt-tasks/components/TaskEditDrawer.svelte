@@ -288,6 +288,7 @@
       new CustomEvent('navigate-to-block', {
         detail: {
           notebook: task.notebook,
+          source: task.source,
           section: task.section,
           page: task.page,
           date: task.file_date,

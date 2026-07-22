@@ -915,6 +915,22 @@ Cards are rendered as `role="button"` elements with `aria-grabbed`/`aria-label` 
 
 **Unified hub state.** The Board is not a standalone plugin — it shares one `TaskHubState` reactive store and one `buildQuery` SQL factory with the List and Calendar modes. The hub state (scope + filters + `focusDate` + `activeFilter` + `displayMode` + `groupBy` + `sort` + `columns` + saved views) is the single reactive source of truth the shell (`TasksHub.svelte`), the unified sidebar (`Sidebar.svelte`), and all three renderers read from and write to. The `scopeUserOverride` invariant (a user-narrowed scope survives an automatic scope change) lives in `setScope` / `narrowScopeTo` / `clearScopeOverride`.
 
+**Page-scoped Tasks Hub routing.** A page-level action may enter a transient
+session intent identified by a source-qualified locator: source, notebook,
+section, page, and a nonce. The intent overlays the hub's effective page scope
+and may provide display defaults without changing the ambient hub state. List,
+Board, and Calendar continue to use the same task contract and query builder;
+their queries qualify both the source and page coordinates, preventing
+same-named pages in different roots from mixing. Task rows retain the source
+through the shared inspector so source-page navigation resolves the exact
+origin.
+
+This route is session-only. It is not a saved view, is never written to
+configuration or SQLite, and is cleared when the user intentionally changes
+scope or filters. The projection reads canonical Markdown task blocks through
+the existing derived index; it introduces no meeting model, separate board,
+or duplicate task store.
+
 5.4 Backlinks Panel
 
 The backlinks panel (`BacklinksSidebarPanel.svelte`) is a sidebar surface
@@ -964,9 +980,15 @@ recency=file_date DESC) + a 20-token snippet window. Tag matches the exact tag
 OR a hierarchical descendant. `SearchFilters.VaultOnly` scopes to in-vault
 blocks. The SearchModal adds a scope segmented control (Vault | +Linked),
 category filter chips (single-select by block type), a sort toggle, and a live
-count — chips over tabbed categories (the Teams anti-pattern: tabs force a
-type-guess + hide cross-type results). Markdown dialect is GFM (§"Markdown
-Dialect" in SPECS.md); sub/super are `<sub>`/`<sup>` HTML.
+count. Each result keeps the backend `source` discriminator, shows a Vault or
+Linked qualifier beside its breadcrumb and snippet, and sends the complete
+source-qualified locator plus block target through App's existing page-open
+funnel for both pointer and Enter activation. Source-less wiki-link events keep
+their existing coordinate-based behavior, and `.silt` locators still route to
+the Tasks view rather than opening an editor tab. Category chips are preferred
+over tabbed categories because tabs force a type guess and hide cross-type
+results. Markdown dialect is GFM (§"Markdown Dialect" in SPECS.md); sub/super
+are `<sub>`/`<sup>` HTML.
 
 **Global replace (Ctrl+Shift+G)** — `GlobalReplaceModal`
 previews FTS5 matches grouped by page (before→after), with per-match + per-page

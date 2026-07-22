@@ -32,8 +32,8 @@ placeholders:
 
 ## Action items
 
-- [ ] TODO TASK #3 
-- [ ] TODO TASK #3 
+- [ ] Follow up on an action item
+- [ ] Schedule the next conversation
 
 ## Follow-up date
 

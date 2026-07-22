@@ -40,7 +40,8 @@
     type BoardColumn as StatusColumn
   } from '../columns'
   import {
-    getTaskHubState,
+    getTaskHubQueryContext,
+    getTaskHubViewState,
     setColumns,
     setDisplayMode,
     type GroupBy
@@ -113,10 +114,10 @@
   } | null>(null)
 
   // --- Hub state (reactive reads) -----------------------------------------
-  let groupBy = $derived(getTaskHubState().groupBy)
-  let sort = $derived(getTaskHubState().sort)
-  let scope = $derived(getTaskHubState().scope)
-  let filters = $derived(getTaskHubState().filters)
+  let groupBy = $derived(getTaskHubViewState().groupBy)
+  let sort = $derived(getTaskHubViewState().sort)
+  let scope = $derived(getTaskHubViewState().scope)
+  let filters = $derived(getTaskHubViewState().filters)
   let today = $derived(ctx.today)
   let dndEnabled = $derived(DND_DIMENSIONS.has(groupBy))
 
@@ -634,13 +635,13 @@
       const { sql, params } = buildQuery(
         scope,
         filters,
-        {
+        getTaskHubQueryContext({
           activeNotebook: ctx.activeNotebook,
           activeSection: ctx.activeSection,
           activePage: ctx.activePage,
           today
-        },
-        { groupBy, sort, activeFilter: getTaskHubState().activeFilter }
+        }),
+        { groupBy, sort, activeFilter: getTaskHubViewState().activeFilter }
       )
       const { rows: raw } = await ctx.sqliteQuery(sql, params)
       if (my !== loadSeq) return
@@ -680,7 +681,7 @@
     void scope
     void groupBy
     void sort
-    void getTaskHubState().activeFilter
+    void getTaskHubViewState().activeFilter
     void today
     void ctx.activeNotebook
     void ctx.activeSection

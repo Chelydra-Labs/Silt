@@ -8,6 +8,7 @@ import type { TaskDetail } from './types'
 function row(overrides: Partial<TaskDetail> & { id: string }): TaskDetail {
   return {
     id: overrides.id,
+    source: overrides.source ?? 'vault',
     notebook: overrides.notebook ?? 'Work',
     section: overrides.section ?? 'Journal',
     page: overrides.page ?? 'Daily',

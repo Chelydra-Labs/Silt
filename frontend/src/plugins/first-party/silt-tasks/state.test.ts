@@ -26,6 +26,12 @@ import {
   deleteSavedView,
   clearActiveSavedView,
   reorderSavedViews,
+  enterTaskPageRoute,
+  getTaskPageRoute,
+  getTaskRouteTarget,
+  getTaskHubQueryContext,
+  getTaskHubViewState,
+  clearTaskPageRoute,
   MAX_USER_SAVED_VIEWS,
   resetTaskHubState
 } from './state.svelte'
@@ -58,11 +64,70 @@ describe('silt-tasks unified state (#419)', () => {
       // #427 active-view tracking defaults: no view active, no dirty flag.
       expect(s.activeSavedViewId).toBe('')
       expect(s.savedViewsDirty).toBe(false)
+      expect(s.pageRoute).toBeNull()
       expect(s.columns).toEqual([
         { name: 'TODO' },
         { name: 'DOING' },
         { name: 'DONE' }
       ])
+    })
+  })
+
+  describe('ephemeral page route', () => {
+    const target = {
+      source: 'linked:meetings',
+      notebook: 'Work',
+      section: 'Meetings',
+      page: 'Sprint Review',
+      nonce: 'route-1'
+    }
+
+    it('takes query target precedence without changing ambient state', () => {
+      setScope('notebook')
+      enterTaskPageRoute(target, {
+        displayMode: 'list',
+        groupBy: 'none',
+        filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+      })
+      expect(getTaskRouteTarget()).toEqual(target)
+      expect(getTaskPageRoute()?.defaults.groupBy).toBe('none')
+      expect(getTaskHubViewState().scope).toBe('page')
+      expect(
+        getTaskHubQueryContext({
+          activeNotebook: 'Ambient',
+          activeSection: 'Other',
+          activePage: 'Page',
+          today: '2026-07-22'
+        })
+      ).toEqual({
+        source: 'linked:meetings',
+        activeNotebook: 'Work',
+        activeSection: 'Meetings',
+        activePage: 'Sprint Review',
+        today: '2026-07-22'
+      })
+      expect(getTaskHubState().scope).toBe('notebook')
+      expect(getTaskHubState().savedViewsDirty).toBe(false)
+    })
+
+    it('keeps route defaults out of saved-view state and clears cleanly', () => {
+      applySavedView({ id: 'saved', name: 'Saved', displayMode: 'board' })
+      enterTaskPageRoute(target, { displayMode: 'calendar', sort: 'title' })
+      expect(getTaskHubViewState().displayMode).toBe('calendar')
+      expect(getTaskHubState().displayMode).toBe('board')
+      expect(getTaskHubState().activeSavedViewId).toBe('saved')
+      clearTaskPageRoute()
+      expect(getTaskHubViewState().displayMode).toBe('board')
+      expect(getTaskPageRoute()).toBeNull()
+    })
+
+    it('clears a route on intentional scope and filter changes', () => {
+      enterTaskPageRoute(target)
+      setScope('section')
+      expect(getTaskPageRoute()).toBeNull()
+      enterTaskPageRoute(target)
+      setFilters({ owners: ['Alice'], priorities: [], dueDate: '', tags: [] })
+      expect(getTaskPageRoute()).toBeNull()
     })
   })
 

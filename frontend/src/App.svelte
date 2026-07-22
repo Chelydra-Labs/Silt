@@ -1,4 +1,6 @@
 <script module lang="ts">
+  import type { SearchModalResult } from './components/SearchModal.svelte'
+
   interface RecentPageRef {
     notebook: string
     section: string
@@ -70,6 +72,27 @@
 
   interface SourceNavigationRef extends RecentPageRef {
     source?: string
+  }
+
+  export interface SearchNavigationJump {
+    locator: SourceNavigationRef
+    date: string
+    blockId: string
+  }
+
+  export function adaptSearchNavigation(
+    result: SearchModalResult
+  ): SearchNavigationJump {
+    return {
+      locator: {
+        source: result.source,
+        notebook: result.notebook,
+        section: result.section,
+        page: result.page
+      },
+      date: result.file_date,
+      blockId: result.id
+    }
   }
 
   export function resolveSourceNavigationTarget<T extends SourceNavigationRef>(
@@ -213,6 +236,11 @@
     isStandaloneTaskRef,
     routeJumpTarget
   } from './lib/standaloneTasksNav'
+  import {
+    OPEN_TASKS_FOR_PAGE_EVENT,
+    type OpenTasksForPageDetail
+  } from './components/editor/EditorUtilityBar.svelte'
+  import { enterTaskPageRoute } from './plugins/first-party/silt-tasks/state.svelte'
 
   let isInitialized = $state(false)
   let loading = $state(true)
@@ -896,6 +924,26 @@
       showQuickAdd = true
     }
 
+    function handleOpenTasksForPage(
+      e: CustomEvent<OpenTasksForPageDetail>
+    ): void {
+      const target = e.detail
+      if (
+        !target?.source ||
+        !target.notebook ||
+        !target.page ||
+        !target.nonce ||
+        isStandaloneTaskRef(target.notebook)
+      )
+        return
+      enterTaskPageRoute(target, {
+        displayMode: 'list',
+        activeFilter: 'all',
+        filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+      })
+      openTasksView(undefined)
+    }
+
     // Summary-strip chips in GeneralTab dispatch this to jump between
     // settings sections while already in the settings view (no view change).
     function handleSettingsJump(e: Event) {
@@ -1050,7 +1098,7 @@
           openTasksView(target.blockTarget?.blockId)
           return
         }
-        handleSearchJump(ref.notebook, ref.section, ref.page, d.date, d.blockId)
+        handleSearchJump(ref, d.date, d.blockId)
       }
     }
     // Wiki-link navigation (#545). Opens the resolved page; optional heading
@@ -1064,13 +1112,7 @@
         section: d.section ?? '',
         page: d.page
       })
-      handleSearchJump(
-        ref.notebook,
-        ref.section,
-        ref.page,
-        d.date ?? '',
-        d.blockId ?? ''
-      )
+      handleSearchJump(ref, d.date ?? '', d.blockId ?? '')
       if (d.heading) {
         searchTargetHeading = d.heading
         searchTargetKey = `heading:${d.heading}:${Date.now()}`
@@ -1144,6 +1186,7 @@
     window.addEventListener('open-template-picker', handleOpenTemplatePicker)
     window.addEventListener('open-search', handleOpenSearch)
     window.addEventListener('open-quick-add', handleOpenQuickAdd)
+    window.addEventListener(OPEN_TASKS_FOR_PAGE_EVENT, handleOpenTasksForPage)
     window.addEventListener('silt:change-vault', handleSwitchVault)
     window.addEventListener('silt:settings-jump', handleSettingsJump)
     window.addEventListener('page-renamed', handlePageRenamed)
@@ -1403,6 +1446,10 @@
       )
       window.removeEventListener('open-search', handleOpenSearch)
       window.removeEventListener('open-quick-add', handleOpenQuickAdd)
+      window.removeEventListener(
+        OPEN_TASKS_FOR_PAGE_EVENT,
+        handleOpenTasksForPage
+      )
       window.removeEventListener('silt:change-vault', handleSwitchVault)
       window.removeEventListener('silt:settings-jump', handleSettingsJump)
       window.removeEventListener('page-renamed', handlePageRenamed)
@@ -1491,12 +1538,11 @@
   }
 
   function handleSearchJump(
-    notebook: string,
-    section: string,
-    page: string,
+    locator: SourceNavigationRef,
     date: string,
     blockId: string
   ) {
+    const { notebook, section, page } = locator
     // Standalone-task routing guard (#374). A `.silt` notebook ref from
     // the search modal routes to the Tasks view; we deliberately do NOT
     // set `activeView = 'notes'` (which would jump the user out of the
@@ -1524,11 +1570,10 @@
       activeTab.notebook === notebook &&
       activeTab.section === section &&
       activeTab.page === page
-    openPage(
-      { notebook, section, page },
-      isSamePage ? 'activate-only' : 'preview',
-      { fileDate: date, blockId }
-    )
+    openPage(locator, isSamePage ? 'activate-only' : 'preview', {
+      fileDate: date,
+      blockId
+    })
     activeView = 'notes'
     searchTargetDate = date
     searchTargetBlockId = blockId
@@ -1581,9 +1626,13 @@
     sidebarDragging = false
   }
 
-  // SearchModal returns a flat result object; adapt it to the 5-arg jump.
-  function handleSearchResultJump(res: any) {
-    handleSearchJump(res.notebook, res.section, res.page, res.file_date, res.id)
+  function handleSearchResultJump(res: SearchModalResult): void {
+    const jump = adaptSearchNavigation(res)
+    const locator = resolveSourceNavigationTarget(
+      navigationCatalog,
+      jump.locator
+    )
+    handleSearchJump(locator, jump.date, jump.blockId)
   }
 
   // Whether an editor-bearing view has a complete page target. Backlinks owns
@@ -1922,6 +1971,8 @@
                     style:display={tab.id === activeTabId ? 'flex' : 'none'}
                   >
                     <VirtualScrollContainer
+                      source={navigationNotebookMetadata[tab.notebook]
+                        ?.source ?? 'vault'}
                       notebook={tab.notebook}
                       section={tab.section}
                       page={tab.page}

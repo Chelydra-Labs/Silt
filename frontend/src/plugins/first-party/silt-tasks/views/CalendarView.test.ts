@@ -115,6 +115,8 @@ import { v2CtxStubs } from '../../../test-helpers'
 import {
   getTaskHubState,
   resetTaskHubState,
+  enterTaskPageRoute,
+  clearTaskPageRoute,
   setGroupBy,
   setCalendarSubMode
 } from '../state.svelte'
@@ -160,6 +162,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
 function row(p: Partial<Record<string, unknown>>): Record<string, unknown> {
   return {
     id: 'r',
+    source: 'vault',
     notebook: 'Work',
     section: 'Journal',
     page: 'Daily',
@@ -259,6 +262,34 @@ describe('CalendarView — Calendar display mode (#425)', () => {
 
   afterEach(() => {
     cleanup()
+    clearTaskPageRoute()
+  })
+
+  it('queries the explicit page route instead of ambient navigation', async () => {
+    resetTaskHubState()
+    setCalendarSubMode('month')
+    enterTaskPageRoute({
+      source: 'linked:meetings',
+      notebook: 'Work',
+      section: 'Meetings',
+      page: 'Sprint Review',
+      nonce: 'calendar-route'
+    })
+    await mockQueries([])
+
+    render(CalendarView, { ctx: makeCtx(), onCountChange: vi.fn() })
+    await flush()
+
+    expect(mocks.sqliteQuery.mock.calls.length).toBeGreaterThan(0)
+    for (const [sql, params] of mocks.sqliteQuery.mock.calls) {
+      expect(sql).toContain('b.source = ?')
+      expect(params.slice(0, 4)).toEqual([
+        'linked:meetings',
+        'Work',
+        'Meetings',
+        'Sprint Review'
+      ])
+    }
   })
 
   // --- Grid rendering ----------------------------------------------------

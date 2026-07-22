@@ -26,7 +26,7 @@ placeholders:
 
 Created: {{date}}
 
-- [ ] TODO TASK #3 action item
+- [ ] Review the action item
 `
 
 func TestListTemplates_IPC_ReturnsBuiltins(t *testing.T) {
@@ -145,15 +145,20 @@ func TestRenderTemplateBlocks_IPC(t *testing.T) {
 	if len(blocks) == 0 {
 		t.Fatal("expected parsed blocks")
 	}
-	// Verify task blocks are present.
+	// Plain GFM checkboxes in built-ins are canonical TASK blocks.
 	var taskCount int
 	for _, b := range blocks {
 		if b.Type == "TASK" {
 			taskCount++
 		}
 	}
-	if taskCount == 0 {
-		t.Error("expected at least one TASK block from meeting-notes action items")
+	if taskCount != 2 {
+		t.Errorf("expected exactly two TASK blocks from meeting-notes action items, got %d", taskCount)
+	}
+	for _, b := range blocks {
+		if b.Type == "TASK" && strings.Contains(b.CleanText, "TODO TASK") {
+			t.Errorf("built-in task retained obsolete TODO TASK shorthand: %q", b.CleanText)
+		}
 	}
 }
 

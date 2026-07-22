@@ -653,7 +653,7 @@ Smart Graph Compatibility: the placeholder grammar (`^[a-z][a-z0-9_]*$`) structu
 
 **Default library.** The full first-class set is embedded so templates are always available — before a vault exists, when the templates directory is empty, and on existing vaults. Built-ins are read-only; user templates are writable (`<vault>/.system/templates/<id>.md`). On-disk templates win on id collisions with a built-in.
 
-**Resolution & insertion.** Templates are resolved from on-disk + embedded (deduped, sorted by Category then Title) and presented in a picker. External edits to the templates directory hot-reload. Inserting a template produces real Silt blocks — tasks (`- [ ] TODO TASK …`) flow into the Tasks hub, embeds/references resolve, and blocks get fresh UUIDs. Templates are vault-scoped Markdown, read-mostly.
+**Resolution & insertion.** Templates are resolved from on-disk + embedded (deduped, sorted by Category then Title) and presented in a picker. External edits to the templates directory hot-reload. Inserting a template produces real Silt blocks — ordinary GFM checkboxes (`- [ ]` and `- [x]`) become tasks and flow into the Tasks hub; Silt's in-progress `- [/]` marker is a task too. Embeds/references resolve, and blocks get fresh UUIDs. Templates are vault-scoped Markdown, read-mostly.
 
 **Forward compatibility.** `schema_version` is informational (a forward-versioned template keeps loading); the `Source` field has three tiers — `builtin` (embedded, read-only), `disk` (user-authored, writable), and `plugin` (runtime-registered by a plugin); categories are additive (unknown categories warn, never reject); and new built-ins land as a single `.md` file with no engine change.
 
@@ -863,6 +863,18 @@ orchestration when AI is enabled.
 - **List** — a time-horizon roll-up (Overdue / Today / Upcoming / Later / No Date), carrying unfinished tasks into the current day and giving undated tasks a first-class surface.
 - **Board** — drag-and-drop status columns; a status change writes the new checkbox state to the source markdown and re-indexes the block, and cards support manual reordering.
 - **Calendar** — tasks by start/due date with interactive timeline components and a month/week sub-layout.
+
+**Page-scoped Tasks Hub intent.** Page chrome may open the existing hub for a
+specific source-qualified page using a locator containing the source,
+notebook, section, page, and a per-entry nonce. This is an ephemeral session
+intent: it overlays page scope and consumer-provided display defaults while
+leaving the ambient hub state and saved views unchanged. Intentional scope or
+filter changes exit the page context.
+
+All three modes remain projections of canonical Markdown task blocks through
+the existing read-only index and shared task query path. Page routing does not
+create a meeting entity, a separate board, another task store, or persisted
+route state. Source is retained when opening a task's exact source page.
 
 8.4 Plugin Packaging & Distribution (.silt-plugin)
 

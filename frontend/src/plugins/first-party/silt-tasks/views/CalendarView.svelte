@@ -25,7 +25,8 @@
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import type { TaskDetail } from '../types'
   import {
-    getTaskHubState,
+    getTaskHubQueryContext,
+    getTaskHubViewState,
     setCalendarSubMode,
     type CalendarSubMode
   } from '../state.svelte'
@@ -41,10 +42,10 @@
   let { ctx, onCountChange }: Props = $props()
 
   // --- Hub state (reactive reads) ----------------------------------------
-  let subMode = $derived(getTaskHubState().calendarSubMode)
-  let scope = $derived(getTaskHubState().scope)
-  let filters = $derived(getTaskHubState().filters)
-  let groupBy = $derived(getTaskHubState().groupBy)
+  let subMode = $derived(getTaskHubViewState().calendarSubMode)
+  let scope = $derived(getTaskHubViewState().scope)
+  let filters = $derived(getTaskHubViewState().filters)
+  let groupBy = $derived(getTaskHubViewState().groupBy)
   let today = $derived(ctx.today)
 
   // --- Local state --------------------------------------------------------
@@ -215,21 +216,21 @@
     loading = true
     errorMsg = ''
     try {
-      const ctxLike = {
+      const ctxLike = getTaskHubQueryContext({
         activeNotebook: ctx.activeNotebook,
         activeSection: ctx.activeSection,
         activePage: ctx.activePage,
         today
-      }
+      })
       const winQ = buildQuery(scope, filters, ctxLike, {
         window: { start: ymd(windowStart), end: ymd(windowEnd) },
-        activeFilter: getTaskHubState().activeFilter
+        activeFilter: getTaskHubViewState().activeFilter
       })
       const undatedQ = buildQuery(
         scope,
         { ...filters, dueDate: 'none' },
         ctxLike,
-        { activeFilter: getTaskHubState().activeFilter }
+        { activeFilter: getTaskHubViewState().activeFilter }
       )
       // Unbounded overdue: tasks due before today, open, scoped/filtered by
       // the user's other filters. No `window` so past months aren't trimmed.
