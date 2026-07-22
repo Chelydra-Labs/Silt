@@ -1411,6 +1411,7 @@
       const m = findMisspellingAt(editor, pos.pos)
       if (!m) return
       e.preventDefault()
+      e.stopPropagation()
       openSpellMenuAt(editor, pos.pos, { x: e.clientX, y: e.clientY })
     }
     const onOpenBtn = (e: Event) => {

@@ -129,8 +129,8 @@ vi.mock('../lib/perf/frame-budget', () => ({
 
 // The real dictionary module fetches the bundled Hunspell assets via a
 // relative URL; Node's fetch has no base to resolve it (ERR_INVALID_URL).
-// These tests cover context-menu/@-mention mechanics, not spellcheck, so a
-// benign stub keeps the editor mounted without the failed-fetch noise.
+// Keep dictionary loading deterministic; the misspelled fixture below is the
+// only word intentionally rejected by this stub.
 vi.mock('../lib/editor/spellcheck/dictionary', () => ({
   loadDictionary: vi.fn().mockResolvedValue({ loaded: true }),
   isDictionaryLoaded: vi.fn(() => true),
@@ -138,7 +138,7 @@ vi.mock('../lib/editor/spellcheck/dictionary', () => ({
   setCustomWords: vi.fn(),
   setDomainWords: vi.fn(),
   loadDomainPacks: vi.fn().mockResolvedValue(undefined),
-  checkWord: vi.fn(() => true),
+  checkWord: vi.fn((word: string) => word !== 'mispelled'),
   ignoreWordSession: vi.fn(),
   suggest: vi.fn(() => []),
   getDictionaryLoadError: vi.fn(() => null),
@@ -189,6 +189,48 @@ describe('TipTapEditor context menu', () => {
     }
     // Clear Formatting has no registered keymap — do not show a phantom chord.
     expect(text).not.toContain('Ctrl+\\')
+
+    unmount()
+  })
+
+  it('opens the spellcheck menu on a misspelling without opening the generic menu', async () => {
+    const blocks = [mkBlock('NOTE', { clean_text: 'mispelled' })]
+    const { container, unmount } = render(TipTapEditor, {
+      props: {
+        notebook: 'NB',
+        section: 'S',
+        page: 'P',
+        blocks,
+        onUpdate: () => {}
+      }
+    })
+
+    await waitFor(() => {
+      expect(container.querySelector('.ProseMirror')).toBeTruthy()
+      expect(container.querySelector('.silt-spell-error')).toBeTruthy()
+    })
+
+    const pm = container.querySelector('.ProseMirror') as HTMLElement & {
+      editor: { view: { posAtCoords: (coords: unknown) => unknown } }
+    }
+    expect(pm).toBeTruthy()
+    vi.spyOn(pm.editor.view, 'posAtCoords').mockReturnValue({
+      pos: 1,
+      inside: -1
+    })
+
+    const decorated = container.querySelector(
+      '.silt-spell-error'
+    ) as HTMLElement
+    await fireEvent.contextMenu(decorated, {
+      clientX: 24,
+      clientY: 32
+    })
+
+    await waitFor(() => {
+      expect(container.querySelector('.spell-menu')).toBeTruthy()
+    })
+    expect(container.querySelector('.context-menu-card')).toBeNull()
 
     unmount()
   })

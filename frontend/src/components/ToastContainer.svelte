@@ -18,14 +18,18 @@
   // may be absent (jsdom tests) — fall back to the default duration.
   const motionMs =
     typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    (import.meta.env?.MODE === 'test' ||
+      (typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches))
       ? 0
       : 200
+
+  const invokedActionIds = new Set<number>()
 
   onMount(() => {
     return () => {
       list = null
+      invokedActionIds.clear()
     }
   })
 
@@ -35,6 +39,13 @@
     if (kind === 'success')
       return 'border-status-success/40 bg-status-success/10 text-status-success'
     return 'border-surface-panel-border bg-surface-panel text-text-primary'
+  }
+
+  function invokeAction(id: number, run: () => void | Promise<void>): void {
+    if (invokedActionIds.has(id)) return
+    invokedActionIds.add(id)
+    void run()
+    dismissNotification(id)
   }
 </script>
 
@@ -50,6 +61,7 @@
       role={n.kind === 'error' ? 'alert' : 'status'}
       aria-live={n.kind === 'error' ? 'assertive' : 'polite'}
       in:fly={{ duration: motionMs, y: 12 }}
+      out:fly={{ duration: motionMs, y: -8, opacity: 0 }}
     >
       <span
         class="material-symbols-outlined mt-0.5 text-icon-lg"
@@ -67,8 +79,7 @@
           <button
             type="button"
             onclick={() => {
-              void n.action?.run()
-              dismissNotification(n.id)
+              invokeAction(n.id, n.action!.run)
             }}
             class="mt-1 inline-block rounded border border-current/30 px-2 py-0.5 text-xs font-medium hover:bg-current/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start"
           >

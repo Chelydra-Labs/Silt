@@ -114,9 +114,10 @@
 </script>
 
 <div
-  class="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[170] flex items-start justify-center pt-32"
+  class="fixed inset-0 bg-black/45 backdrop-blur-[3px] z-[170] flex items-start justify-center pt-32"
 >
   <button
+    type="button"
     tabindex="-1"
     aria-label="Close block picker"
     onclick={onClose}
@@ -209,6 +210,16 @@
           </button>
         {/each}
       {/if}
+    </div>
+    <div
+      class="px-4 py-2 border-t border-surface-modal-border text-type-2xs text-text-muted font-label-sm flex items-center justify-between bg-surface-modal/30"
+    >
+      <span
+        >{results.length > 0
+          ? `${results.length} match${results.length === 1 ? '' : 'es'}`
+          : 'Embed block'}</span
+      >
+      <span class="opacity-60">↑↓ navigate · ⏎ embed · esc close</span>
     </div>
   </div>
 </div>

@@ -113,10 +113,11 @@
 </script>
 
 <div
-  class="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
+  class="fixed inset-0 z-[200] flex items-center justify-center bg-black/45 backdrop-blur-[3px]"
   data-focus-trap
 >
   <button
+    type="button"
     tabindex="-1"
     aria-label={cancelLabel}
     class="absolute inset-0 cursor-default border-none bg-transparent p-0"
