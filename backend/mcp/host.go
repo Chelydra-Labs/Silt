@@ -350,6 +350,10 @@ func (h *Host) startHTTP(srv *mcpsdk.Server, token string, port int) error {
 		}
 	}
 
+	// CrossOriginProtection is intentionally left nil. The go-sdk v1.6.0
+	// default flipped from ON to OFF; we accept the OFF default because the
+	// loopback-only bind above and the bearer authMiddleware below already
+	// prevent the CSRF vector (CVE-2026-33252) that origin verification targets.
 	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server {
 		return srv
 	}, &mcpsdk.StreamableHTTPOptions{JSONResponse: true})
