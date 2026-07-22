@@ -596,7 +596,7 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
 
 - **Local MCP host** (#687) — Go package `backend/mcp` runs an in-process
   **generic MCP server** (official `github.com/modelcontextprotocol/go-sdk`
-  ≥ v1.4.1) when `ai.local_mcp.enabled` is true and a vault is open. The
+  ≥ v1.6.1) when `ai.local_mcp.enabled` is true and a vault is open. The
   contract is **client-agnostic**: any MCP-capable desktop agent connects the
   same way (stdio `silt mcp` and/or loopback Streamable HTTP). There is no
   vendor-specific host, packaging format, or per-client protocol fork.
@@ -605,7 +605,13 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   Silt remains the single vault writer/indexer. **Transports:** loopback
    Streamable HTTP on `127.0.0.1` only (default port 17887) with bearer auth
    from the OS keyring (`Silt` / `mcp-local-auth-token`); stdio via `silt mcp`
-   which dials the running instance (logs to stderr only). Discovery prefers a
+   which dials the running instance (logs to stderr only). The SDK's
+   cross-origin protection (default-ON in v1.4–v1.5, default-OFF since v1.6.0)
+   is intentionally left OFF — CSRF is already prevented by the bearer scheme
+   (tokens are not cookies, so a cross-origin page cannot attach one) plus the
+   origin allowlist in `authMiddleware` (`isAllowedOrigin`). The loopback bind
+   separately blocks remote network access.
+   Discovery prefers a
    keyring-pinned endpoint (`mcp-local-endpoint`) over `mcp-endpoint.json` so a
    rewritten discovery file alone cannot redirect the bearer. The endpoint file
    records `{endpoint,pid}`; write/clear take a cross-process lock and refuse to
