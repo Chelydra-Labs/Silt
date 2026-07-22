@@ -15,12 +15,14 @@ import { settings } from '../../settings/store.svelte'
 //     bullet, unindent, then delete+focus-prev.
 //   - Delete at end: merge a same-type sibling below into this block (or drop
 //     this block if it's empty and a same-type sibling follows).
-//   - Tab / Shift-Tab (config-driven): indent / unindent (bounded by previous
-//     sibling's depth + 1, matching the legacy outliner constraints).
+//   - Tab / Shift-Tab (hardcoded chords today): indent / unindent (bounded by
+//     previous sibling's depth + 1, matching the legacy outliner constraints).
+//     Config keys indent_block / unindent_block exist but are not wired into
+//     this keymap yet — remapping them in settings has no effect.
 //   - ArrowUp / ArrowDown at block boundary: move focus to the previous/next block.
 //
-// The extension reads the indent/unindent hotkeys live from the settings store
-// so users can remap or disable them from Settings → General.
+// Visual indent requires data-depth on the outer NodeView root (see
+// outerNodeViewAttrs in nodeViews.ts); CSS targets `.ProseMirror > div[data-depth]`.
 
 /**
  * The Silt block node types the keymaps operate on, in canonical order.

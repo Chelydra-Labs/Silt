@@ -18,7 +18,10 @@ export {
   SiltTableExtensions
 } from './schema'
 export type { CalloutVariant } from './schema'
-export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
+export {
+  SiltBlockExtensionsWithNodeViews,
+  outerNodeViewAttrs
+} from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
 export {
   SiltInlineDragHandle,

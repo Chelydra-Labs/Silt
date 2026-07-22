@@ -22,7 +22,7 @@ describe('resolveDropDepth — pure math', () => {
   describe('default Silt constants (INDENT_STEP_PX=24, MAX_DEPTH=6)', () => {
     it('exposes the editor CSS constants verbatim', () => {
       // INDENT_STEP_PX mirrors `--indent-unit` in frontend/src/index.css:103.
-      // MAX_DEPTH mirrors the deepest `[data-depth='N']` rule (index.css:459).
+      // MAX_DEPTH mirrors the deepest `[data-depth='N']` rule in index.css.
       // If either changes, dragIndentDrop.ts MUST be updated to match —
       // pinning them here makes a silent drift a test failure.
       expect(INDENT_STEP_PX).toBe(24)

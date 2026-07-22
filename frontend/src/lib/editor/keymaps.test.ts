@@ -40,7 +40,8 @@ function makeEditor(): Editor {
 }
 
 // Editor variant that also wires the keyboard shortcut extension so Enter /
-// Backspace / Tab outliner semantics are exercised. The base makeEditor()
+// Backspace / Tab outliner semantics are exercised (Tab indent cases live in
+// the "Tab / Shift-Tab depth" describe below). The base makeEditor()
 // omits it to keep the converter/align tests focused on pure state.
 function makeEditorWithKeymaps(): Editor {
   return new Editor({
@@ -214,6 +215,99 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
   })
 })
 
+describe('Tab / Shift-Tab depth indent (outliner)', () => {
+  function twoDepthBlocks(kind: 'plain' | 'bullet' | 'task'): DocJSON {
+    const mk = (
+      id: string,
+      text: string,
+      type: 'noteBlock' | 'taskBlock',
+      extra: Record<string, unknown>
+    ) => ({
+      type,
+      attrs: { id, depth: 0, ...extra },
+      content: [{ type: 'text' as const, text }]
+    })
+    let a: ReturnType<typeof mk>
+    let b: ReturnType<typeof mk>
+    if (kind === 'task') {
+      a = mk('a', 'parent', 'noteBlock', { bullet: '- ' })
+      b = mk('b', 'task', 'taskBlock', { status: 'TODO' })
+    } else if (kind === 'bullet') {
+      a = mk('a', 'parent', 'noteBlock', { bullet: '- ' })
+      b = mk('b', 'child', 'noteBlock', { bullet: '- ' })
+    } else {
+      a = mk('a', 'line1', 'noteBlock', { bullet: '' })
+      b = mk('b', 'line2', 'noteBlock', { bullet: '' })
+    }
+    return { type: 'doc', content: [a, b] }
+  }
+
+  function focusSecondBlock(editor: Editor): void {
+    const secondPos = editor.state.doc.child(0).nodeSize
+    editor.commands.setTextSelection(secondPos + 1)
+  }
+
+  it('indents a plain noteBlock under the previous sibling', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(twoDepthBlocks('plain'))
+    focusSecondBlock(editor)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+
+  it('indents a bulleted noteBlock under the previous sibling', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(twoDepthBlocks('bullet'))
+    focusSecondBlock(editor)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+
+  it('indents a taskBlock under the previous sibling', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(twoDepthBlocks('task'))
+    focusSecondBlock(editor)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+
+  it('Shift-Tab unindents when depth > 0', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'a', depth: 0, bullet: '- ' },
+          content: [{ type: 'text', text: 'parent' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'b', depth: 1, bullet: '- ' },
+          content: [{ type: 'text', text: 'child' }]
+        }
+      ]
+    })
+    focusSecondBlock(editor)
+    expect(pressKey(editor, 'Tab', { shiftKey: true })).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+    editor.destroy()
+  })
+
+  it('Tab on the first block is a no-op for depth but still handled', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(blockDoc('noteBlock', 'only'))
+    editor.commands.setTextSelection(1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(editor.state.doc.child(0).attrs.depth).toBe(0)
+    editor.destroy()
+  })
+})
+
 describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
   function multiBlockDoc(texts: string[]): DocJSON {
     return {
@@ -278,8 +372,16 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
 // with content at [8,13). End of block 0 content = pos 6; start of block 1
 // content = pos 8.
 
-function pressKey(editor: Editor, key: string): boolean {
-  const event = new KeyboardEvent('keydown', { key, bubbles: true })
+function pressKey(
+  editor: Editor,
+  key: string,
+  opts: { shiftKey?: boolean } = {}
+): boolean {
+  const event = new KeyboardEvent('keydown', {
+    key,
+    bubbles: true,
+    shiftKey: opts.shiftKey ?? false
+  })
   let handled = false
   editor.view.someProp('handleKeyDown', (handler) => {
     if (handled) return true
