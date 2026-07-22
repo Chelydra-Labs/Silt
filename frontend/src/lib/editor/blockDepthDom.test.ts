@@ -208,6 +208,12 @@ describe('block depth DOM contract (NodeView outer attrs)', () => {
     expect(roots).toHaveLength(2)
     expect(roots[1].getAttribute('data-depth')).toBe('1')
 
+    // Shift-Tab must refresh the outer root too (same updateElementAttributes path).
+    expect(pressTab(editor, true)).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(topLevelBlockRoots(pm)[1].getAttribute('data-depth')).toBe('0')
+
     editor.destroy()
     removeContainer()
   })

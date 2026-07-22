@@ -350,6 +350,64 @@ describe('Tab / Shift-Tab depth indent (outliner)', () => {
       editor.destroy()
     })
   })
+
+  it('indents a noteBlock nested inside a callout relative to its sibling', () => {
+    // Regression: top-level-only sibling scan left nested blocks at maxDepth 0.
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensions,
+        CalloutBlock,
+        ...SiltInlineMarkExtensions,
+        ...SiltColorMarkExtensions,
+        EmbedNode,
+        BlockReferenceNode,
+        UniqueBlockIds,
+        SiltBlockKeymaps
+      ]
+    })
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'calloutBlock',
+          attrs: { variant: 'info', id: 'c1' },
+          content: [
+            {
+              type: 'noteBlock',
+              attrs: { id: 'n1', depth: 0, bullet: '- ' },
+              content: [{ type: 'text', text: 'parent' }]
+            },
+            {
+              type: 'noteBlock',
+              attrs: { id: 'n2', depth: 0, bullet: '- ' },
+              content: [{ type: 'text', text: 'child' }]
+            }
+          ]
+        }
+      ]
+    })
+    // Caret inside second nested note (callout@0, first note, second note content).
+    const callout = editor.state.doc.child(0)
+    const firstNestedSize = callout.child(0).nodeSize
+    // pos 0 = before callout; content starts at 1; first child at 1; second at 1+firstNestedSize
+    const secondNestedContent = 1 + firstNestedSize + 1
+    editor.commands.setTextSelection(secondNestedContent)
+    expect(indentActiveBlock(editor)).toBe(true)
+    const nested = editor.state.doc.child(0)
+    expect(nested.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
 })
 
 describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {

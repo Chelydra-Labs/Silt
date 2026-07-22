@@ -133,10 +133,9 @@ function currentBlockInfo(editor: Editor) {
     // index is the child index within the block's PARENT at its tree depth —
     // NOT necessarily the top-level doc index. For a block nested inside a
     // callout (tree depth 2), this is the index within the callout. Callers
-    // that need the top-level child index (moveActiveBlock / Tab / ArrowUp /
-    // ArrowDown / Backspace) re-derive it from `info.pos` against `doc`
-    // children; that loop also doubles as a nested-block guard (a nested
-    // block's pos never matches a top-level child start, so it returns -1).
+    // that need the top-level child index (moveActiveBlock / ArrowUp /
+    // ArrowDown) re-derive it from `info.pos` against `doc` children.
+    // Indent uses same-parent nodeBefore instead (works nested + top-level).
     index: pos.index(depth)
   }
 }
@@ -163,9 +162,11 @@ function setBlockDepth(
 
 /**
  * Indent the active depth-bearing block by one level, capped at previous
- * sibling depth + 1. Returns true when the chord was consumed (including
- * no-op at max depth / first block) so Tab does not move browser focus.
- * Returns false outside depth blocks so table cell nav etc. can run.
+ * same-parent sibling depth + 1. Uses nodeBefore (not a top-level doc scan) so
+ * blocks nested in callouts/details indent relative to their container siblings.
+ * Returns true when the chord was consumed (including no-op at max depth /
+ * first child) so Tab does not move browser focus. Returns false outside depth
+ * blocks so table cell nav etc. can run.
  */
 export function indentActiveBlock(editor: Editor): boolean {
   const info = currentBlockInfo(editor)
@@ -175,20 +176,9 @@ export function indentActiveBlock(editor: Editor): boolean {
   // nav, etc.) instead of silently no-op'ing.
   if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
 
-  const { doc } = editor.state
-  let blockIndex = -1
-  let acc = 0
-  for (let i = 0; i < doc.childCount; i++) {
-    if (acc === info.pos) {
-      blockIndex = i
-      break
-    }
-    acc += doc.child(i).nodeSize
-  }
-  let maxDepth = 0
-  if (blockIndex > 0) {
-    maxDepth = (doc.child(blockIndex - 1).attrs.depth || 0) + 1
-  }
+  // Same-parent previous sibling — works at doc root and inside callout/details.
+  const prev = editor.state.doc.resolve(info.pos).nodeBefore
+  const maxDepth = prev ? (prev.attrs.depth || 0) + 1 : 0
   if (info.depth < maxDepth) {
     setBlockDepth(editor, info.pos, info.depth + 1)
   }

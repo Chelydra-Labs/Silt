@@ -116,6 +116,9 @@ manually against `wails3 dev`. Grouped by surface; each item is pass/fail.
 - [ ] Edit ↔ Source toggle is per-tab; the scroll offset is preserved across
       the round-trip.
 - [ ] Block drag-handle reorders/indents; Alt+ArrowUp/Down moves by keyboard.
+- [ ] Tab / Shift-Tab indent (or remapped `indent_block` / `unindent_block`):
+      second bullet/task/plain line nests visually under the previous sibling;
+      outer block root keeps `data-depth` in sync; save/reload preserves nesting.
 - [ ] Find/replace in-page (Ctrl+F / Ctrl+H); global search (Ctrl+Shift+F)
       filters + sort; global replace (Ctrl+Shift+G) with per-match accept + undo.
 - [ ] New page opens as blank prose (no bullet marker); Backspace on the blank

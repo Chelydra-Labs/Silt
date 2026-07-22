@@ -20,7 +20,10 @@ export {
 export type { CalloutVariant } from './schema'
 export {
   SiltBlockExtensionsWithNodeViews,
-  outerNodeViewAttrs
+  outerNodeViewAttrs,
+  syncOuterDomAttrs,
+  NODE_DATA_TYPE,
+  NODE_VIEW_TYPE_NAMES
 } from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
 export {
