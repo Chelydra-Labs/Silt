@@ -315,8 +315,6 @@ describe('Tab / Shift-Tab depth indent (outliner)', () => {
   })
 
   it('honors a remapped indent_block / unindent_block binding', () => {
-    // Config is read when SiltBlockKeymaps.addKeyboardShortcuts runs (editor
-    // create). Remap must be in place before makeEditorWithKeymaps().
     withHotkeys({ indent_block: 'Ctrl+]', unindent_block: 'Ctrl+[' }, () => {
       const editor = makeEditorWithKeymaps()
       editor.commands.setContent(twoDepthBlocks('bullet'))
@@ -333,6 +331,35 @@ describe('Tab / Shift-Tab depth indent (outliner)', () => {
       expect(editor.state.doc.child(1).attrs.depth).toBe(0)
       editor.destroy()
     })
+  })
+
+  it('applies indent_block remap on the live editor without remount', () => {
+    // Config-driven chords rebuild on every keydown from settings.config.hotkeys.
+    // Saving HotkeysTab must affect the already-open editor (no page switch).
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(twoDepthBlocks('bullet'))
+    focusSecondBlock(editor)
+
+    // Defaults: Tab indents.
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    expect(pressKey(editor, 'Tab', { shiftKey: true })).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+
+    // Live remap while the same Editor instance stays mounted.
+    withHotkeys({ indent_block: 'Ctrl+]', unindent_block: 'Ctrl+[' }, () => {
+      expect(pressKey(editor, 'Tab')).toBe(false)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+      expect(pressKey(editor, ']', { ctrlKey: true })).toBe(true)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+      expect(pressKey(editor, '[', { ctrlKey: true })).toBe(true)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+    })
+
+    // Restoring defaults (withHotkeys finally) works on the same instance.
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    editor.destroy()
   })
 
   it('omits indent when indent_block is explicitly disabled (empty binding)', () => {

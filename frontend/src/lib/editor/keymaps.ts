@@ -1,10 +1,13 @@
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import { TextSelection } from '@tiptap/pm/state'
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
+import { keydownHandler } from '@tiptap/pm/keymap'
 import { freshId } from './uniqueIdPlugin'
 import { resolveShortcut } from '../../settings/hotkeys'
 import { settings } from '../../settings/store.svelte'
+
+const siltConfigKeymapsKey = new PluginKey('siltConfigDrivenKeymaps')
 
 // SiltBlockKeymaps — outliner keyboard semantics for the TipTap editor.
 //
@@ -628,10 +631,10 @@ function omitDisabled(
 }
 
 // Build the config-driven editor shortcut map (#311). Reads config.hotkeys
-// at editor-creation time and converts each binding to the ProseMirror keymap
-// format via resolveShortcut. Absent entries fall back to hardcoded defaults;
-// an explicitly empty entry disables the shortcut. Covers all editor-scoped
-// remappable shortcuts: indent/unindent, heading levels, alignment,
+// live from the settings store (called on every keydown via the config keymap
+// plugin) so Settings remaps apply without remounting the editor. Absent
+// entries fall back to hardcoded defaults; an explicitly empty entry disables
+// the shortcut. Covers indent/unindent, heading levels, alignment,
 // quote/details toggles, table row/col inserts, and inline format marks.
 function buildConfigDrivenShortcuts(
   editor: Editor
@@ -717,8 +720,9 @@ function buildConfigDrivenShortcuts(
 }
 
 // Register config-driven bindings for inline format marks (bold, italic, etc.)
-// that are also handled by TipTap StarterKit extensions. These read from config
-// at editor-creation time and coexist with the StarterKit's hardcoded defaults.
+// that are also handled by TipTap StarterKit extensions. Reads config live
+// (same plugin path as buildConfigDrivenShortcuts) and coexists with
+// StarterKit's hardcoded defaults when Silt's binding is disabled/absent.
 function buildFormatMarkShortcuts(
   editor: Editor
 ): Record<string, () => boolean> {
@@ -759,8 +763,38 @@ function buildFormatMarkShortcuts(
   return omitDisabled(map)
 }
 
+/** All config-driven editor chords, rebuilt from the live settings store. */
+function buildLiveConfigBindings(
+  editor: Editor
+): Record<string, () => boolean> {
+  return {
+    ...buildConfigDrivenShortcuts(editor),
+    ...buildFormatMarkShortcuts(editor)
+  }
+}
+
 export const SiltBlockKeymaps = Extension.create({
   name: 'siltBlockKeymaps',
+
+  // Config-driven chords (indent, format marks, headings, …) live in a
+  // dedicated plugin that rebuilds the binding map on every keydown from
+  // settings.config.hotkeys. That way HotkeysTab saves apply immediately
+  // without destroying/recreating the editor (addKeyboardShortcuts is only
+  // evaluated once at extension init).
+  addProseMirrorPlugins() {
+    const editor = this.editor
+    return [
+      new Plugin({
+        key: siltConfigKeymapsKey,
+        props: {
+          handleKeyDown(view, event) {
+            const bindings = buildLiveConfigBindings(editor)
+            return keydownHandler(bindings)(view, event)
+          }
+        }
+      })
+    ]
+  },
 
   addKeyboardShortcuts() {
     return {
@@ -1014,22 +1048,11 @@ export const SiltBlockKeymaps = Extension.create({
       // Alt+ArrowUp/Down reorders the active block (#181) — the keyboard
       // complement to the drag handle. No Mod prefix, to avoid colliding with
       // the Mod-Shift-Arrow table row/column bindings.
+      // Config-driven shortcuts (indent, format marks, headings, alignment,
+      // tables, …) are handled by addProseMirrorPlugins so they read
+      // settings.config.hotkeys on every keydown.
       'Alt-ArrowUp': () => moveActiveBlock(this.editor, -1),
-      'Alt-ArrowDown': () => moveActiveBlock(this.editor, 1),
-
-      // ---- Config-driven shortcuts (#311) --------------------------------
-      // Each editor-scoped shortcut reads its binding from config.hotkeys at
-      // editor-creation time (when addKeyboardShortcuts is evaluated). The
-      // ProseMirror keymap format uses '-' separators and 'Mod' for Cmd/Ctrl
-      // (per prosemirror-keymap source). resolveShortcut converts the config
-      // notation and falls back to the hardcoded default if the config entry
-      // is absent/empty.
-      //
-      // LIVE remapping (config change without page navigation) requires
-      // re-creating the keymap extension — a documented follow-up. The schema
-      // and keymap are immutable at editor-creation time by ProseMirror design.
-      ...buildConfigDrivenShortcuts(this.editor),
-      ...buildFormatMarkShortcuts(this.editor)
+      'Alt-ArrowDown': () => moveActiveBlock(this.editor, 1)
     }
   }
 })
