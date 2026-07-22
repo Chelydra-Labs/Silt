@@ -1,11 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 import ToastContainer from './ToastContainer.svelte'
-import {
-  pushNotification,
-  dismissNotification,
-  _resetForTests
-} from '../notifications/store.svelte'
+import { pushNotification, _resetForTests } from '../notifications/store.svelte'
 
 describe('ToastContainer (#86)', () => {
   beforeEach(() => {
@@ -19,7 +15,9 @@ describe('ToastContainer (#86)', () => {
 
   it('renders nothing when there are no notifications', () => {
     const { container } = render(ToastContainer)
-    expect(container.querySelectorAll('[role="status"], [role="alert"]')).toHaveLength(0)
+    expect(
+      container.querySelectorAll('[role="status"], [role="alert"]')
+    ).toHaveLength(0)
   })
 
   it('renders an info notification as role=status', async () => {
@@ -38,7 +36,11 @@ describe('ToastContainer (#86)', () => {
 
   it('renders an action button when an action is attached', async () => {
     const action = vi.fn()
-    pushNotification({ kind: 'error', message: 'Try again', action: { label: 'Retry', run: action } })
+    pushNotification({
+      kind: 'error',
+      message: 'Try again',
+      action: { label: 'Retry', run: action }
+    })
     render(ToastContainer)
     const btn = await screen.findByRole('button', { name: 'Retry' })
     await fireEvent.click(btn)
@@ -47,10 +49,31 @@ describe('ToastContainer (#86)', () => {
     expect(screen.queryByText('Try again')).not.toBeInTheDocument()
   })
 
+  it('invokes an action only once after its toast leaves the notification state', async () => {
+    const action = vi.fn(() => {
+      pushNotification({ kind: 'success', message: 'Completed' })
+    })
+    pushNotification({
+      kind: 'error',
+      message: 'Try again',
+      action: { label: 'Retry', run: action }
+    })
+    render(ToastContainer)
+    const btn = await screen.findByRole('button', { name: 'Retry' })
+
+    await fireEvent.click(btn)
+    await fireEvent.click(btn)
+
+    expect(action).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Completed')).toBeInTheDocument()
+  })
+
   it('dismiss button removes the notification', async () => {
     pushNotification({ kind: 'info', message: 'Dismissable' })
     render(ToastContainer)
-    const dismissBtn = screen.getByRole('button', { name: 'Dismiss notification' })
+    const dismissBtn = screen.getByRole('button', {
+      name: 'Dismiss notification'
+    })
     await fireEvent.click(dismissBtn)
     expect(screen.queryByText('Dismissable')).not.toBeInTheDocument()
   })

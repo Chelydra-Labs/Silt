@@ -24,9 +24,12 @@
       ? 0
       : 200
 
+  const invokedActionIds = new Set<number>()
+
   onMount(() => {
     return () => {
       list = null
+      invokedActionIds.clear()
     }
   })
 
@@ -36,6 +39,13 @@
     if (kind === 'success')
       return 'border-status-success/40 bg-status-success/10 text-status-success'
     return 'border-surface-panel-border bg-surface-panel text-text-primary'
+  }
+
+  function invokeAction(id: number, run: () => void | Promise<void>): void {
+    if (invokedActionIds.has(id)) return
+    invokedActionIds.add(id)
+    void run()
+    dismissNotification(id)
   }
 </script>
 
@@ -69,8 +79,7 @@
           <button
             type="button"
             onclick={() => {
-              void n.action?.run()
-              dismissNotification(n.id)
+              invokeAction(n.id, n.action!.run)
             }}
             class="mt-1 inline-block rounded border border-current/30 px-2 py-0.5 text-xs font-medium hover:bg-current/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start"
           >

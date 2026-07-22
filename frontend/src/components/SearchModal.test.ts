@@ -39,7 +39,7 @@ describe('SearchModal keyboard a11y', () => {
   })
   afterEach(() => cleanup())
 
-  it('does not preventDefault Tab — focus order reaches filter controls', async () => {
+  it('keeps normal Tab order within the dialog', async () => {
     const onClose = vi.fn()
     render(SearchModal, {
       props: { onClose, onJump: vi.fn() }
@@ -66,6 +66,34 @@ describe('SearchModal keyboard a11y', () => {
     expect(screen.getByRole('button', { name: 'Vault' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'All' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Relevance' })).toBeTruthy()
+  })
+
+  it('traps focus at both dialog edges and restores prior focus on unmount', async () => {
+    const priorButton = document.createElement('button')
+    priorButton.textContent = 'Open search'
+    document.body.appendChild(priorButton)
+    priorButton.focus()
+
+    const view = render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await vi.waitFor(() => expect(document.activeElement).toBe(input))
+
+    const recent = screen.getByRole('button', { name: 'Recent' })
+    recent.focus()
+    await fireEvent.keyDown(window, { key: 'Tab' })
+    expect(document.activeElement).toBe(input)
+
+    input.focus()
+    await fireEvent.keyDown(window, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(recent)
+
+    view.unmount()
+    expect(document.activeElement).toBe(priorButton)
+    priorButton.remove()
   })
 
   it('cycles type chips with ArrowLeft/Right when a chip is focused', async () => {
@@ -204,6 +232,47 @@ describe('SearchModal keyboard a11y', () => {
       ][3]
     expect(filters.notebook).toBe('')
     expect(filters.tag).toBe('')
+  })
+
+  it('shows Clear active filters for scope and sort and resets both defaults', async () => {
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'nothing' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Vault' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Recent' }))
+
+    const clear = await screen.findByRole('button', {
+      name: 'Clear active filters'
+    })
+    await fireEvent.click(clear)
+
+    expect(screen.getByRole('button', { name: '+ Linked' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByRole('button', { name: 'Relevance' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Clear active filters' })
+    ).not.toBeInTheDocument()
+
+    await vi.waitFor(() => {
+      const calls = mocks.SearchBlocksPaged.mock.calls
+      expect(
+        calls.some(
+          (call) =>
+            call[0] === 'nothing' &&
+            call[3]?.vaultOnly === false &&
+            call[3]?.sort === 'relevance'
+        )
+      ).toBe(true)
+    })
   })
 
   it('shows the typed source qualifier and sends identical click/Enter navigation payloads', async () => {

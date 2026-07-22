@@ -42,6 +42,8 @@
   let selectedIdx = $state(0)
   let inputEl = $state<HTMLInputElement | null>(null)
   let listEl = $state<HTMLDivElement | null>(null)
+  let dialogEl = $state<HTMLDivElement | null>(null)
+  let previouslyFocused: HTMLElement | null = null
   let loading = $state(false)
   let total = $state(0)
   let hasMore = $state(false)
@@ -64,6 +66,32 @@
     { id: 'NOTE', label: 'Notes' },
     { id: 'HEADER', label: 'Headings' }
   ]
+
+  const FOCUSABLE =
+    'a[href], button:not([disabled]):not([tabindex="-1"]), input:not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])'
+
+  function focusableEls(): HTMLElement[] {
+    if (!dialogEl) return []
+    return Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE))
+  }
+
+  function hasActiveFilters(): boolean {
+    return (
+      scopeVaultOnly ||
+      typeFilter !== '' ||
+      sortMode !== 'relevance' ||
+      notebookFilter !== '' ||
+      tagFilter !== ''
+    )
+  }
+
+  function clearActiveFilters(): void {
+    scopeVaultOnly = false
+    typeFilter = ''
+    sortMode = 'relevance'
+    notebookFilter = ''
+    tagFilter = ''
+  }
 
   function filterSig(
     q: string,
@@ -233,9 +261,25 @@
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-    // Tab must remain normal focus order so Vault/Linked, sort, clear, results,
-    // and "Replace in vault…" stay keyboard-reachable. Cycle type chips with
-    // ArrowLeft/Right only when focus is already on the chip group.
+    if (e.key === 'Tab' && dialogEl) {
+      const els = focusableEls()
+      if (els.length === 0) return
+      const first = els[0]
+      const last = els[els.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (e.shiftKey) {
+        if (active === first || !dialogEl.contains(active)) {
+          e.preventDefault()
+          last.focus()
+        }
+      } else if (active === last || !dialogEl.contains(active)) {
+        e.preventDefault()
+        first.focus()
+      }
+      return
+    }
+    // Cycle type chips with ArrowLeft/Right only when focus is already on the
+    // chip group.
     if (
       (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
       isTypeChipFocused()
@@ -313,6 +357,7 @@
   }
 
   onMount(() => {
+    previouslyFocused = document.activeElement as HTMLElement | null
     if (inputEl) {
       inputEl.focus()
     }
@@ -321,6 +366,9 @@
     window.addEventListener('keydown', handleKeyDown, true)
     return () => {
       window.removeEventListener('keydown', handleKeyDown, true)
+      if (previouslyFocused?.isConnected) {
+        previouslyFocused.focus()
+      }
     }
   })
 </script>
@@ -338,6 +386,7 @@
   ></button>
   <!-- Modal Frame (Frosted Glass Panel) -->
   <div
+    bind:this={dialogEl}
     role="dialog"
     aria-modal="true"
     aria-label="Search blocks"
@@ -568,15 +617,11 @@
           class="text-text-muted text-center py-10 font-body-md select-none flex flex-col items-center gap-2"
         >
           <span>No matches found for "{query}"</span>
-          {#if notebookFilter || tagFilter || typeFilter}
+          {#if hasActiveFilters()}
             <button
               type="button"
               class="text-type-xs text-accent-primary-start hover:underline border-none bg-transparent cursor-pointer"
-              onclick={() => {
-                notebookFilter = ''
-                tagFilter = ''
-                typeFilter = ''
-              }}
+              onclick={clearActiveFilters}
             >
               Clear active filters
             </button>
