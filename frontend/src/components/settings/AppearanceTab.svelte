@@ -38,7 +38,7 @@
 
   type Props = Record<string, never>
 
-  let {}: Props = $props()
+  let _props: Props = $props()
 
   // Two-stage preview state (#512). The id of the theme currently staged
   // for preview, or null. Hover never touches this — only a click does —
@@ -74,7 +74,7 @@
     // function the picker button's pickAndImportTheme calls after the native
     // open dialog — so success/error feedback routes through the same
     // themeStatus live region either way.
-    const offDrop = Events.On('theme:files-dropped', (ev: any) => {
+    const offDrop = Events.On('theme:files-dropped', (ev) => {
       handleDroppedFiles(ev?.data)
     })
     return () => {
@@ -140,7 +140,7 @@
 
   function onModeKeydown(e: KeyboardEvent, index: number) {
     const len = modes.length
-    let next = -1
+    let next: number
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
       next = (index + 1) % len
     } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {

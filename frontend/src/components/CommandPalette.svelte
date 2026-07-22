@@ -74,7 +74,7 @@
   // index and Enter runs whatever command now occupies it instead of the new
   // top-ranked match.
   $effect(() => {
-    query
+    void query
     selectedIdx = 0
   })
 
@@ -185,7 +185,7 @@
       No matching commands
     </div>
   {:else}
-    {#each filteredCommands as cmd, idx}
+    {#each filteredCommands as cmd, idx (cmd.id)}
       {#if cmd.pluginID && (idx === 0 || !filteredCommands[idx - 1].pluginID)}
         <div
           class="px-3 py-1.5 text-type-2xs text-text-muted font-label-sm-bold uppercase tracking-widest border-t border-surface-popover-border mt-1 pt-2 select-none"

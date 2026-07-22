@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteMap } from 'svelte/reactivity'
   import type { PluginContext, SearchHit } from '../../../sdk'
   import Popover from '../../../../components/Popover.svelte'
 
@@ -34,7 +35,6 @@
   // floating listbox can be portaled out of CardDetailPanel's scroll container.
   let depInput = $state<HTMLInputElement | null>(null)
   let selectedIdx = $state(0)
-  let loading = $state(false)
   let pending = $state(false)
   let errorMsg = $state('')
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -48,7 +48,7 @@
       return
     }
     const placeholders = blockedBy.map(() => '?').join(', ')
-    let labels = new Map<string, string>()
+    let labels = new SvelteMap<string, string>()
     try {
       const { rows } = await ctx.sqliteQuery(
         `SELECT id, clean_content FROM blocks WHERE id IN (${placeholders})`,
@@ -88,7 +88,6 @@
       results = []
       return
     }
-    loading = true
     try {
       // Task-only search: a non-task block can't be a meaningful prerequisite
       // (OpenBlockers JOINs tasks), so filter server-side via searchTasks.
@@ -101,8 +100,6 @@
       selectedIdx = 0
     } catch {
       results = []
-    } finally {
-      loading = false
     }
   }
 

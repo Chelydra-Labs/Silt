@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity'
   import {
     notificationsState,
     dismissNotification
@@ -24,7 +25,7 @@
       ? 0
       : 200
 
-  const invokedActionIds = new Set<number>()
+  const invokedActionIds = new SvelteSet<number>()
 
   onMount(() => {
     return () => {

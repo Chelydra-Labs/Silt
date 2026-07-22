@@ -9,6 +9,7 @@
 // event. First-party plugins are implicitly granted every capability.
 
 import { GetGrantedCapabilities } from '../../bindings/silt/app.js'
+import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 import { firstPartyPlugins } from './registry'
 
 const ALL_CAPS = [
@@ -23,7 +24,7 @@ const ALL_CAPS = [
   'content-mutate'
 ]
 
-const firstPartyIDs = new Set<string>()
+const firstPartyIDs = new SvelteSet<string>()
 
 function refreshFirstPartyIDs() {
   firstPartyIDs.clear()
@@ -35,7 +36,7 @@ function refreshFirstPartyIDs() {
 // Module-scoped grant map: pluginID → Set<capability>. Not reactive (the
 // registries read it synchronously at registration time). Refreshed by
 // refreshGrants().
-let grantsMap = new Map<string, Set<string>>()
+let grantsMap = new SvelteMap<string, SvelteSet<string>>()
 
 /**
  * Re-fetch the grant table from Go and merge first-party implicit grants.
@@ -46,16 +47,16 @@ export async function refreshGrants(): Promise<void> {
   refreshFirstPartyIDs()
   try {
     const result = await GetGrantedCapabilities()
-    const next = new Map<string, Set<string>>()
+    const next = new SvelteMap<string, SvelteSet<string>>()
     if (result) {
       for (const [pid, caps] of Object.entries(result)) {
         if (caps && typeof caps === 'object') {
-          next.set(pid, new Set(Object.keys(caps)))
+          next.set(pid, new SvelteSet(Object.keys(caps)))
         }
       }
     }
     for (const id of firstPartyIDs) {
-      next.set(id, new Set(ALL_CAPS))
+      next.set(id, new SvelteSet(ALL_CAPS))
     }
     grantsMap = next
   } catch {
@@ -94,7 +95,7 @@ export function initGrants(): void {
 
 /** Test-only: reset the cache + wiring state. */
 export function resetGrantsForTests(): void {
-  grantsMap = new Map()
+  grantsMap = new SvelteMap()
   firstPartyIDs.clear()
   wired = false
 }
@@ -102,12 +103,12 @@ export function resetGrantsForTests(): void {
 /** Test-only: directly set the grant cache (bypass Go IPC). */
 export function setGrantsForTests(grants: Record<string, string[]>): void {
   refreshFirstPartyIDs()
-  const next = new Map<string, Set<string>>()
+  const next = new SvelteMap<string, SvelteSet<string>>()
   for (const [pid, caps] of Object.entries(grants)) {
-    next.set(pid, new Set(caps))
+    next.set(pid, new SvelteSet(caps))
   }
   for (const id of firstPartyIDs) {
-    next.set(id, new Set(ALL_CAPS))
+    next.set(id, new SvelteSet(ALL_CAPS))
   }
   grantsMap = next
 }

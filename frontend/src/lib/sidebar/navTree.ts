@@ -35,16 +35,27 @@ export function pageNodeId(ref: NavigationPageRef): string {
 }
 
 /** Fill canonical paths at the IPC edge; older generated models mark Path optional. */
+/** Loose IPC section shape before path normalization. */
+type RawNavSection = {
+  name?: string
+  path?: string
+  pages?: Array<{ name?: string; count?: number }>
+  children?: RawNavSection[]
+}
+
 export function normalizeNavigationTree(input: {
   notebooks?: Array<{
     name?: string
-    sections?: any[]
+    sections?: RawNavSection[]
     source?: string
     root_path?: string
     disconnected?: boolean
   }>
 }): NavigationTree {
-  const normalizeSections = (sections: any[] = [], parent = ''): NavSection[] =>
+  const normalizeSections = (
+    sections: RawNavSection[] = [],
+    parent = ''
+  ): NavSection[] =>
     sections.map((section) => {
       const path = String(
         section.path ??
@@ -53,7 +64,7 @@ export function normalizeNavigationTree(input: {
       return {
         name: String(section.name ?? ''),
         path,
-        pages: (section.pages ?? []).map((page: any) => ({
+        pages: (section.pages ?? []).map((page) => ({
           name: String(page.name ?? ''),
           count: Number(page.count ?? 0)
         })),

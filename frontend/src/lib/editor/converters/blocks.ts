@@ -308,14 +308,13 @@ function blockToNode(block: ParsedBlock): NodeJSON {
         content
       }
     case 'NOTE':
-    default:
-      // Defensive: unknown block types map to NOTE so a malformed doc never
-      // drops content. The Go side also treats unrecognized lines as notes.
-      //
+    default: {
       // Quote detection (#188): a `> ` prefix (stripped of any alignment
       // marker first) is a blockquote marker, parallel to `bullet`. The
       // marker is stored on the node so it round-trips verbatim. Callouts
       // (#180/#308) are now CALLOUT-typed blocks — no longer detected here.
+      // Defensive: unknown block types map to NOTE so a malformed doc never
+      // drops content. The Go side also treats unrecognized lines as notes.
       const { quote, body: quoteStripped } = detectQuote(text)
       const noteContent: NodeJSON[] = quoteStripped
         ? legacyTokenizeInline(quoteStripped)
@@ -332,6 +331,7 @@ function blockToNode(block: ParsedBlock): NodeJSON {
         },
         content: noteContent
       }
+    }
   }
 }
 
@@ -634,7 +634,6 @@ function detailsBodyLinesToNodes(lines: string[]): NodeJSON[] {
 // The child nodes' text representations become body lines (without id comments
 // — the DETAILS block has its own trailing id).
 function serializeDetailsToHTML(node: NodeJSON): string {
-  const attrs = (node.attrs || {}) as Record<string, any>
   const summaryNode = (node.content || []).find(
     (c) => c.type === 'detailsSummary'
   )
@@ -675,7 +674,7 @@ function serializeDetailsToHTML(node: NodeJSON): string {
 // explicit branch here — embeds emit their token, unknown types degrade to
 // their inline text — so no child is ever silently dropped on save.
 function serializeChildNodeToBodyLine(node: NodeJSON): string {
-  const attrs = (node.attrs || {}) as Record<string, any>
+  const attrs = (node.attrs || {}) as Record<string, unknown>
 
   // Nested details → recursively serialize to HTML.
   if (node.type === 'details') {
@@ -709,10 +708,10 @@ function serializeChildNodeToBodyLine(node: NodeJSON): string {
     return embedBlockMarker({
       embedType: (attrs.embedType as string) || '',
       src: (attrs.src as string) || '',
-      caption: attrs.caption || undefined,
-      openable: attrs.openable || undefined,
-      pluginID: attrs.pluginID || undefined,
-      notebook: attrs.notebook || undefined
+      caption: (attrs.caption as string | undefined) || undefined,
+      openable: (attrs.openable as boolean | undefined) || undefined,
+      pluginID: (attrs.pluginID as string | undefined) || undefined,
+      notebook: (attrs.notebook as string | undefined) || undefined
     })
   }
   if (node.type === 'blockMathNode') {
@@ -722,7 +721,7 @@ function serializeChildNodeToBodyLine(node: NodeJSON): string {
   const text = serializeInlineContent(node.content)
 
   if (node.type === 'noteBlock') {
-    const bullet = attrs.bullet !== undefined ? attrs.bullet : ''
+    const bullet = attrs.bullet !== undefined ? String(attrs.bullet) : ''
     const quote = (attrs.quote as string) || ''
     if (quote) return `${quote}${text}`
     return `${bullet}${text}`
@@ -753,7 +752,7 @@ function serializeTableToGFM(node: NodeJSON): string {
   }))
   // Extract per-column alignment from the header row's cell attrs.
   const headerAligns = (rows[0].content || []).map((c) => {
-    const a = ((c.attrs || {}) as Record<string, any>).align
+    const a = ((c.attrs || {}) as Record<string, unknown>).align
     return typeof a === 'string' ? a : ''
   })
   const colCount = Math.max(...grid.map((r) => r.cells.length))
@@ -967,7 +966,7 @@ function calloutBodyLinesToNodes(lines: string[]): NodeJSON[] {
 // region detector re-absorbs them, multi-line children (code, table) get `>` on
 // each line, and nested callouts naturally become `>>`.
 function serializeCalloutToText(node: NodeJSON): string {
-  const attrs = (node.attrs || {}) as Record<string, any>
+  const attrs = (node.attrs || {}) as Record<string, unknown>
   const variant = (attrs.variant as string) || 'note'
   const children = node.content || []
 
@@ -1030,8 +1029,8 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
   for (let i = 0; i < content.length; i++) {
     const node = content[i]
     const lineNumber = i + 1
-    const attrs = (node.attrs || {}) as Record<string, any>
-    const id: string = attrs.id || ''
+    const attrs = (node.attrs || {}) as Record<string, unknown>
+    const id = String(attrs.id ?? '')
 
     // Smart Graph block-level node: the embed token is its own line. We
     // emit a NOTE block carrying just the {{embed:uuid}} text in its body
@@ -1041,7 +1040,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
     if (node.type === 'embedNode') {
       const uuid = (attrs.uuid as string) || ''
       const body = `{{embed:${uuid}}}`
-      const bullet = attrs.bullet !== undefined ? attrs.bullet : ''
+      const bullet = attrs.bullet !== undefined ? String(attrs.bullet) : ''
       blocks.push({
         id,
         parent_id: '',
@@ -1068,7 +1067,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
     if (node.type === 'blockMathNode') {
       const latex = (attrs.latex as string) || ''
       const body = `$$${latex}$$`
-      const bullet = attrs.bullet !== undefined ? attrs.bullet : ''
+      const bullet = attrs.bullet !== undefined ? String(attrs.bullet) : ''
       blocks.push({
         id,
         parent_id: '',
@@ -1096,14 +1095,14 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
     // -->` round-trips its marker.
     if (node.type === 'embedBlock') {
       const marker = embedBlockMarker({
-        embedType: attrs.embedType || '',
-        src: attrs.src || '',
-        caption: attrs.caption || undefined,
-        openable: attrs.openable || undefined,
-        pluginID: attrs.pluginID || undefined,
-        notebook: attrs.notebook || undefined
+        embedType: (attrs.embedType as string) || '',
+        src: (attrs.src as string) || '',
+        caption: (attrs.caption as string | undefined) || undefined,
+        openable: (attrs.openable as boolean | undefined) || undefined,
+        pluginID: (attrs.pluginID as string | undefined) || undefined,
+        notebook: (attrs.notebook as string | undefined) || undefined
       })
-      const bullet = attrs.bullet !== undefined ? attrs.bullet : ''
+      const bullet = attrs.bullet !== undefined ? String(attrs.bullet) : ''
       blocks.push({
         id,
         parent_id: '',
@@ -1268,11 +1267,11 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
     }
 
     if (type === 'TASK') {
-      block.status = attrs.status || 'TODO'
-      block.owner = attrs.owner || ''
-      block.start_date = attrs.start_date || ''
-      block.due_date = attrs.due_date || ''
-      block.recurrence = attrs.recurrence || ''
+      block.status = (attrs.status as string) || 'TODO'
+      block.owner = (attrs.owner as string) || ''
+      block.start_date = (attrs.start_date as string) || ''
+      block.due_date = (attrs.due_date as string) || ''
+      block.recurrence = (attrs.recurrence as string) || ''
       block.priority = Number(attrs.priority ?? 3)
       block.raw_text = `- [${block.status === 'DOING' ? '/' : block.status === 'DONE' ? 'x' : ' '}] ${block.status} TASK ${cleanText}`
     } else if (type === 'NOTE') {
@@ -1283,7 +1282,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         // coexist.
         block.raw_text = `${quoteMarker}${baseCleanText}`
       } else {
-        const bullet: string = attrs.bullet !== undefined ? attrs.bullet : ''
+        const bullet = attrs.bullet !== undefined ? String(attrs.bullet) : ''
         block.raw_text = `${bullet}${cleanText}`
       }
     } else {

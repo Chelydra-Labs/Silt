@@ -8,6 +8,7 @@
 // load/resetAll/discard; resetPath/resetGroup recompute via JSON equality
 // (rare) so partial resets stay correct without per-tick stringify.
 
+import { SvelteSet } from 'svelte/reactivity'
 import { injectTokens } from '../inject'
 import { flattenTheme } from '../flatten'
 import { restoreActiveTheme } from '../store.svelte'
@@ -92,7 +93,7 @@ export function createWorkingCopy() {
    * Editor-session locks for derived tokens (#529). Not persisted in theme JSON.
    * When locked, seed edits do not overwrite the derived path.
    */
-  let lockedDerived = $state.raw<Set<string>>(new Set())
+  let lockedDerived = $state.raw<Set<string>>(new SvelteSet())
 
   let rafId: number | null = null
   let pendingTokens: Record<string, string> | null = null
@@ -125,14 +126,14 @@ export function createWorkingCopy() {
       }
       seed = structuredClone(parsed)
       draft = structuredClone(parsed)
-      lockedDerived = new Set()
+      lockedDerived = new SvelteSet()
       clearDirty()
       schedulePreview()
     } catch (err) {
       loadError = err instanceof Error ? err.message : String(err)
       seed = null
       draft = null
-      lockedDerived = new Set()
+      lockedDerived = new SvelteSet()
       dirtyFlag = false
     }
   }
@@ -142,14 +143,14 @@ export function createWorkingCopy() {
     loadError = message
     seed = null
     draft = null
-    lockedDerived = new Set()
+    lockedDerived = new SvelteSet()
     dirtyFlag = false
   }
 
   function resetAll(): void {
     if (!seed) return
     draft = structuredClone(seed)
-    lockedDerived = new Set()
+    lockedDerived = new SvelteSet()
     clearDirty()
     schedulePreview()
   }
@@ -284,14 +285,14 @@ export function createWorkingCopy() {
 
   function lockDerived(path: string): void {
     if (lockedDerived.has(path)) return
-    const next = new Set(lockedDerived)
+    const next = new SvelteSet(lockedDerived)
     next.add(path)
     lockedDerived = next
   }
 
   function unlockDerived(path: string): void {
     if (!lockedDerived.has(path)) return
-    const next = new Set(lockedDerived)
+    const next = new SvelteSet(lockedDerived)
     next.delete(path)
     lockedDerived = next
   }
@@ -391,7 +392,7 @@ export function createWorkingCopy() {
     if (seed) {
       draft = structuredClone(seed)
     }
-    lockedDerived = new Set()
+    lockedDerived = new SvelteSet()
     clearDirty()
     restoreActiveTheme()
   }

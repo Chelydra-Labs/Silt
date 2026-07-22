@@ -4,7 +4,7 @@ import FormattingFirstRunTip from './FormattingFirstRunTip.svelte'
 
 describe('FormattingFirstRunTip', () => {
   it('renders when not dismissed', () => {
-    const { getByRole, getByText } = render(FormattingFirstRunTip, {
+    const { getByRole } = render(FormattingFirstRunTip, {
       props: { dismissed: false, onDismiss: () => {} }
     })
     expect(getByRole('status')).toHaveTextContent('make it bold')

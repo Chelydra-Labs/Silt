@@ -189,7 +189,7 @@
     const fine = e.shiftKey
     const lStep = fine ? 0.005 : 0.02
     const cStep = fine ? 0.002 : 0.01
-    let next: Oklch | null = null
+    let next: Oklch
     switch (e.key) {
       case 'ArrowUp':
         next = { ...lch, L: clampL(lch.L + lStep) }
@@ -245,7 +245,7 @@
   function onHueKey(e: KeyboardEvent) {
     if (!lch || disabled) return
     const step = e.shiftKey ? 1 : 5
-    let nextH: number | null = null
+    let nextH: number
     switch (e.key) {
       case 'ArrowLeft':
       case 'ArrowDown':

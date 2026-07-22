@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
   import { QueryBlocksByTag } from '../../bindings/silt/app.js'
 
   interface Props {
@@ -9,7 +8,16 @@
   let { selectedTag = '' }: Props = $props()
 
   let activeTag = $state('')
-  let results = $state<any[]>([])
+  type TagHit = {
+    id: string
+    notebook?: string
+    section?: string
+    page?: string
+    file_date?: string
+    clean_content?: string
+    clean_text?: string
+  }
+  let results = $state<TagHit[]>([])
   let loadingResults = $state(false)
 
   async function selectTag(path: string) {
@@ -25,7 +33,7 @@
     }
   }
 
-  function openBlock(res: any) {
+  function openBlock(res: TagHit) {
     window.dispatchEvent(
       new CustomEvent('navigate-to-block', {
         detail: {
@@ -77,7 +85,7 @@
     {:else}
       {#if loadingResults}
         <div class="skeleton-container px-6 py-4">
-          {#each Array(3) as _}
+          {#each Array(3) as _, i (i)}
             <div class="skeleton-row">
               <div class="skeleton-circle"></div>
               <div class="skeleton-text title"></div>

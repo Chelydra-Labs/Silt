@@ -112,7 +112,7 @@
   }
 
   function close(): void {
-    editor && clearSearch(editor)
+    if (editor) clearSearch(editor)
     onClose()
   }
 

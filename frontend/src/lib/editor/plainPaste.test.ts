@@ -32,12 +32,12 @@ function mountEditor() {
 }
 
 /** A minimal ClipboardEvent stand-in with a DataTransfer.getData('text/plain'). */
-function pasteEvent(plainText: string): any {
+function pasteEvent(plainText: string): ClipboardEvent {
   return {
     clipboardData: {
       getData: (type: string) => (type === 'text/plain' ? plainText : '')
     }
-  }
+  } as unknown as ClipboardEvent
 }
 
 /** Invoke PlainPaste's specific handlePaste (via its plugin spec, NOT someProp
@@ -45,18 +45,25 @@ function pasteEvent(plainText: string): any {
  *  someProp would return that one). In the real app ProseMirror walks the
  *  handlePaste chain in order; Link defers (returns false), then PlainPaste
  *  runs and wins when shift is held. */
-function callHandlePaste(editor: Editor, event: any): boolean {
+function callHandlePaste(editor: Editor, event: ClipboardEvent): boolean {
   // The Link extension's handlePasteLink comes earlier in the chain, so
   // someProp would return that one. Find PlainPaste's plugin by key (the
   // Plugin type hides runtime `.key`, hence the cast) and read its spec's
   // handlePaste directly. In the real app ProseMirror walks the handlePaste
   // chain in order; Link defers (returns false), then PlainPaste runs and
   // wins when shift is held.
-  const plugin = (editor.view.state.plugins as any[]).find(
-    (p) => typeof p.key === 'string' && p.key.startsWith('plainPaste')
-  )
+  const plugin = (
+    editor.view.state.plugins as unknown as Array<{
+      key?: string
+      spec?: { props?: { handlePaste?: unknown } }
+    }>
+  ).find((p) => typeof p.key === 'string' && p.key.startsWith('plainPaste'))
   const handler = plugin?.spec?.props?.handlePaste as
-    | ((v: any, e: any, s: any) => boolean | void)
+    | ((
+        v: Editor['view'],
+        e: ClipboardEvent,
+        s: ReturnType<Editor['state']['selection']['content']>
+      ) => boolean | void)
     | undefined
   if (!handler) return false
   return handler(editor.view, event, editor.state.selection.content()) === true

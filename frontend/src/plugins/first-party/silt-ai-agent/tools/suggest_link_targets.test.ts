@@ -35,8 +35,6 @@ function makeCtx(opts: {
   fullTextSearch: ReturnType<typeof vi.fn>
   mutateFns: { name: string; args: unknown[] }[]
 } {
-  const candById = new Map(opts.candidates.map((c) => [c.id, c]))
-
   const embed = vi.fn(async (req: { texts: string[]; taskType?: string }) => {
     if (req.taskType === 'RETRIEVAL_QUERY') {
       return {

@@ -42,8 +42,8 @@
   )
 
   $effect(() => {
-    results
-    selectableIndices
+    void results
+    void selectableIndices
     const retainedIndex = results.findIndex(
       (item) => item.key === activeKey && !item.disconnected
     )

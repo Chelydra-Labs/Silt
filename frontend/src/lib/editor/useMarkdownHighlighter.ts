@@ -170,7 +170,6 @@ function extractInner(html: string): string {
   const m = html.match(/^<pre\b[^>]*><code>([\s\S]*)<\/code><\/pre>\s*$/)
   if (m) return m[1]
   if (html.length > 0) {
-    // eslint-disable-next-line no-console
     console.warn(
       '[silt] Shiki markdown output did not match the expected <pre><code> wrapper; falling back to plain text. Output starts:',
       html.slice(0, 80)

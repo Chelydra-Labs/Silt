@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteDate, SvelteSet } from 'svelte/reactivity'
   // Calendar display mode of the Tasks hub (#425). Lifts the proven
   // silt-calendar month/week grid + drag-reschedule + quick-add patterns,
   // and promotes the standalone Calendar's CalItem to the unified TaskDetail
@@ -50,13 +51,13 @@
 
   // --- Local state --------------------------------------------------------
   // Anchor date for the visible window; the focus-date listener pans this.
-  // Initialized from ctx.today (not wall-clock new Date()) so the visible
+  // Initialized from ctx.today (not wall-clock new SvelteDate()) so the visible
   // month tracks the same "today" the Sidebar's mini-cal does — avoids drift
   // near a month boundary when ctx.today is injected (#118).
   function cursorFromToday(): Date {
     const iso = ctx.today
     const [y, m, d] = iso.split('-').map(Number)
-    return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1)
+    return new SvelteDate(y ?? 1970, (m ?? 1) - 1, d ?? 1)
   }
   let cursor = $state(cursorFromToday())
   let byDate = $state<Record<string, TaskDetail[]>>({})
@@ -110,22 +111,22 @@
     ).padStart(2, '0')}`
   }
   function startOfWeek(d: Date): Date {
-    const x = new Date(d)
+    const x = new SvelteDate(d)
     x.setDate(x.getDate() - x.getDay())
     x.setHours(0, 0, 0, 0)
     return x
   }
   function startOfMonth(d: Date): Date {
-    return new Date(d.getFullYear(), d.getMonth(), 1)
+    return new SvelteDate(d.getFullYear(), d.getMonth(), 1)
   }
   function endOfMonth(d: Date): Date {
-    return new Date(d.getFullYear(), d.getMonth() + 1, 0)
+    return new SvelteDate(d.getFullYear(), d.getMonth() + 1, 0)
   }
   function addMonths(d: Date, n: number): Date {
-    return new Date(d.getFullYear(), d.getMonth() + n, 1)
+    return new SvelteDate(d.getFullYear(), d.getMonth() + n, 1)
   }
   function addDays(d: Date, n: number): Date {
-    const x = new Date(d)
+    const x = new SvelteDate(d)
     x.setDate(x.getDate() + n)
     return x
   }
@@ -192,7 +193,7 @@
   // cell when that date is inside the visible window.
   let overdueSurfaced = $derived.by(() => {
     const out: TaskDetail[] = []
-    const seen = new Set<string>()
+    const seen = new SvelteSet<string>()
     for (const r of overdueAll) {
       if (!seen.has(r.id)) {
         seen.add(r.id)
@@ -337,12 +338,12 @@
       const ce = e as CustomEvent<{ date: string }>
       const iso = ce.detail?.date
       if (!iso) {
-        cursor = new Date()
+        cursor = new SvelteDate()
         return
       }
       const [y, m, d] = iso.split('-').map(Number)
       if (!y || !m || !d) return
-      cursor = new Date(y, m - 1, d)
+      cursor = new SvelteDate(y, m - 1, d)
     }
     window.addEventListener('calendar:focus-date', handler)
     return () => window.removeEventListener('calendar:focus-date', handler)
@@ -355,7 +356,7 @@
   // overdue contribution the header under-reports vs Board.
   $effect(() => {
     const win = Object.values(byDate).flat()
-    const winIds = new Set(win.map((r) => r.id))
+    const winIds = new SvelteSet(win.map((r) => r.id))
     const allOpen = [
       ...win,
       ...undated,
@@ -806,7 +807,7 @@
            parent grid). -->
       <div class="grid grid-cols-7 gap-1 min-w-[43.75rem]" role="grid">
         <div role="row" class="contents">
-          {#each DOW as d}
+          {#each DOW as d, dowI (dowI)}
             <div
               role="columnheader"
               class="text-center text-type-2xs uppercase tracking-widest font-label-sm-bold text-text-muted py-1"
@@ -815,9 +816,9 @@
             </div>
           {/each}
         </div>
-        {#each monthWeeks as week, weekIdx}
+        {#each monthWeeks as week, weekIdx (weekIdx)}
           <div role="row" class="contents">
-            {#each week as day, dayIdx}
+            {#each week as day, dayIdx (dayIdx)}
               {@const flatIdx = weekIdx * 7 + dayIdx}
               {@const inMonth = day.getMonth() === cursor.getMonth()}
               {@const isToday = ymd(day) === todayKey}
@@ -951,7 +952,7 @@
            structure mirrors month view: role="grid" + role="row" wrapper. -->
       <div class="grid grid-cols-7 gap-2 min-w-[43.75rem]" role="grid">
         <div role="row" class="contents">
-          {#each weekDays as day, i}
+          {#each weekDays as day, i (i)}
             {@const isToday = ymd(day) === todayKey}
             {@const items = cellItems(day)}
             {@const overdueHere = isToday

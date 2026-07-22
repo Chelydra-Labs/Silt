@@ -9,7 +9,9 @@ describe('sanitizeFontFamilyCSS', () => {
     )
     // The breakout chars the editor-token injector and themes.isValidFontFamily
     // defend against — none survive into a CSS context.
-    expect(sanitizeFontFamilyCSS('Evil}; body{background:red}')).toBe('Evil bodybackground:red')
+    expect(sanitizeFontFamilyCSS('Evil}; body{background:red}')).toBe(
+      'Evil bodybackground:red'
+    )
     expect(sanitizeFontFamilyCSS('a;b{c}d')).toBe('abcd')
   })
 
@@ -21,7 +23,12 @@ describe('sanitizeFontFamilyCSS', () => {
   it('is lossless for legitimate font-family names', () => {
     // Real family names (bare, quoted, or stacks) never contain ; {} — the
     // strip never alters a valid value.
-    for (const v of ['JetBrains Mono', "'Source Serif 4', serif", 'system-ui', 'monospace']) {
+    for (const v of [
+      'JetBrains Mono',
+      "'Source Serif 4', serif",
+      'system-ui',
+      'monospace'
+    ]) {
       expect(sanitizeFontFamilyCSS(v)).toBe(v)
     }
   })

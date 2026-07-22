@@ -230,7 +230,9 @@ export async function extractSummary(args: {
   try {
     // Pass the summary schema so native providers (Google, Anthropic) enforce
     // structured output. OpenAI-compat ignores it (D1 prompt-only fallback).
-    res = await complete(messages, maxTokens, { responseSchema: SUMMARY_SCHEMA })
+    res = await complete(messages, maxTokens, {
+      responseSchema: SUMMARY_SCHEMA
+    })
   } catch (e) {
     return { ok: false, error: providerError(e) }
   }
@@ -238,7 +240,9 @@ export async function extractSummary(args: {
   if (!parsed) {
     // Tier 2: one retry with the same structured prompt.
     try {
-      res = await complete(messages, maxTokens, { responseSchema: SUMMARY_SCHEMA })
+      res = await complete(messages, maxTokens, {
+        responseSchema: SUMMARY_SCHEMA
+      })
       parsed = parseSummary(res.content)
     } catch (e) {
       return { ok: false, error: providerError(e) }

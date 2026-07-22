@@ -33,7 +33,9 @@ describe('TypewriterMode extension (#187)', () => {
   it('registers the typewriter plugin', () => {
     const { editor, cleanup } = mountEditor()
     try {
-      const keys = (editor.view.state.plugins as any[]).map((p) => p.key)
+      const keys = (
+        editor.view.state.plugins as unknown as Array<{ key?: string }>
+      ).map((p) => p.key)
       expect(
         keys.some((k) => typeof k === 'string' && k.includes('Typewriter'))
       ).toBe(true)

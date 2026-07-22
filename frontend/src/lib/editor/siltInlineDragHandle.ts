@@ -33,6 +33,7 @@ import { Extension } from '@tiptap/core'
 import type { EditorView } from '@tiptap/pm/view'
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import { Slice } from '@tiptap/pm/model'
+import type { Node as PMNode } from '@tiptap/pm/model'
 import type { DraggingLike } from './dragIndentDrop'
 
 const siltInlineDragHandleKey = new PluginKey('siltInlineDragHandle')
@@ -64,7 +65,10 @@ export function resolveDraggedBlockPosition(
     child: (index: number) => { attrs?: Record<string, unknown> } | null
   },
   blockId: string
-): { pos: number; node: any } | null {
+): {
+  pos: number
+  node: { attrs?: Record<string, unknown>; nodeSize?: number }
+} | null {
   for (let i = 0, p = 0; i < doc.childCount; i++) {
     const child = doc.child(i)
     if (!child) continue
@@ -97,7 +101,11 @@ export function resolveDraggedBlockPosition(
  * wrong block's content). The call site (`handleDragStart`) resolves
  * `pos` via `resolveDraggedBlockPosition` and forwards it here.
  */
-export function buildBlockSlice(doc: any, pos: number, node: any): Slice {
+export function buildBlockSlice(
+  doc: { slice: (from: number, to: number) => Slice },
+  pos: number,
+  node: { nodeSize?: number } | null | undefined
+): Slice {
   const nodeSize = typeof node?.nodeSize === 'number' ? node.nodeSize : 0
   return doc.slice(pos, pos + nodeSize)
 }
@@ -106,7 +114,10 @@ export function buildBlockSlice(doc: any, pos: number, node: any): Slice {
  * Build a `NodeSelection` for the block at `pos` in `doc` — exactly the
  * selection the upstream extension builds on line 493.
  */
-export function buildNodeDragSelection(doc: any, pos: number): NodeSelection {
+export function buildNodeDragSelection(
+  doc: PMNode,
+  pos: number
+): NodeSelection {
   return NodeSelection.create(doc, pos)
 }
 

@@ -141,6 +141,7 @@
     {#if previewError}
       <span class="mlp-error" role="alert">{previewError}</span>
     {:else if previewHtml}
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -- KaTeX HTML from local latex input -->
       {@html previewHtml}
     {:else}
       <span class="mlp-preview-empty">Preview</span>

@@ -53,7 +53,7 @@ function makeCtx(opts: {
 
   let blockSeq = 0
   const createPage = vi.fn(async () => 'page-uuid')
-  const createBlock = vi.fn(async (req: { type: string; text: string }) => {
+  const createBlock = vi.fn(async (_req: { type: string; text: string }) => {
     blockSeq += 1
     return `blk-${blockSeq}`
   })

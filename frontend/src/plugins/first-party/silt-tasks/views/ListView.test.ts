@@ -704,7 +704,6 @@ describe('Tasks view', () => {
   })
 
   it('Upcoming group is capped at today+7; beyond-week lands in Later (#370 open question #3 + review)', async () => {
-    const today = todayStr()
     const today8 = dateOffsetStr(8)
     const today3 = dateOffsetStr(3)
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {

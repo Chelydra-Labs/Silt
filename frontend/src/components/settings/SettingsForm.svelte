@@ -9,16 +9,15 @@
   interface Props {
     pluginID: string
     schema: SettingSchema[]
-    values: Record<string, any>
+    values: Record<string, unknown>
     /** Optional notebook scope label (vault vs this-notebook). */
     scopeLabel?: string
   }
   let { pluginID, schema, values, scopeLabel = 'vault' }: Props = $props()
 
   // Local draft so the user can edit multiple fields and save atomically.
-  // svelte-ignore state_referenced_locally — intentional initial snapshot of
   // the upstream prop; the $effect below re-syncs on subsequent changes.
-  let draft = $state<Record<string, any>>({ ...values })
+  let draft = $state<Record<string, unknown>>({ ...values })
   let dirty = $derived(JSON.stringify(draft) !== JSON.stringify(values))
   let saving = $state(false)
   let error = $state('')
@@ -110,7 +109,7 @@
             class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-type-sm font-body-md"
             bind:value={draft[field.key]}
           >
-            {#each field.options ?? [] as opt}
+            {#each field.options ?? [] as opt (opt)}
               <option value={opt}>{opt}</option>
             {/each}
           </select>
@@ -128,7 +127,7 @@
             class="bg-surface-panel border border-surface-panel-border rounded px-2 py-1 text-text-primary text-type-sm font-body-md w-full"
             placeholder={fieldLabel(field.type)}
             value={Array.isArray(draft[field.key])
-              ? draft[field.key].join(', ')
+              ? (draft[field.key] as string[]).join(', ')
               : ''}
             oninput={(e) => {
               draft[field.key] = (e.currentTarget as HTMLInputElement).value

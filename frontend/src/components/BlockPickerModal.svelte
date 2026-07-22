@@ -9,13 +9,21 @@
 
   let { onPick, onClose }: Props = $props()
 
+  type BlockSearchResult = {
+    id: string
+    notebook?: string
+    section?: string
+    page?: string
+    clean_content?: string
+  }
+
   let query = $state('')
-  let results = $state<any[]>([])
+  let results = $state<BlockSearchResult[]>([])
   let selectedIdx = $state(0)
   let loading = $state(false)
   let inputEl = $state<HTMLInputElement | null>(null)
 
-  let debounceTimer: any = null
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
   async function runSearch() {
     if (query.trim() === '') {
@@ -24,7 +32,7 @@
     }
     loading = true
     try {
-      results = await SearchBlocks(query)
+      results = (await SearchBlocks(query)) as BlockSearchResult[]
       selectedIdx = 0
     } catch (e) {
       console.error('BlockPicker search failed:', e)
@@ -50,7 +58,7 @@
     return Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE))
   }
 
-  function pick(res: any) {
+  function pick(res: BlockSearchResult) {
     onPick(res.id)
     onClose()
   }

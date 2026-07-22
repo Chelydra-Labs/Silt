@@ -19,7 +19,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const indexHtml = readFileSync(resolve(here, '../../index.html'), 'utf8')
 
 describe('Host-webview CSP (#237, F2)', () => {
-  it("HOST_CSP covers every required directive", () => {
+  it('HOST_CSP covers every required directive', () => {
     // The CSP MUST cover at minimum the directives enumerated in F2.
     // frame-ancestors is intentionally absent — it is ignored via <meta>
     // (CSP spec requires an HTTP header) and the desktop webview cannot be

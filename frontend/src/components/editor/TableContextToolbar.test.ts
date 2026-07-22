@@ -103,16 +103,20 @@ describe('TableContextToolbar', () => {
   })
 
   it('renders six operation buttons with data-tb', async () => {
-    const editor = makeMockEditor() as any
-    const { container } = render(TableContextToolbar, { props: { editor } })
+    const editor = makeMockEditor()
+    const { container } = render(TableContextToolbar, {
+      props: { editor: editor as never }
+    })
     await tick()
     const buttons = container.querySelectorAll('[data-tb]')
     expect(buttons.length).toBe(6)
   })
 
   it('positions via flipOrClamp near the active cell', async () => {
-    const editor = makeMockEditor() as any
-    const { container } = render(TableContextToolbar, { props: { editor } })
+    const editor = makeMockEditor()
+    const { container } = render(TableContextToolbar, {
+      props: { editor: editor as never }
+    })
     await tick()
     expect(mocks.flipOrClamp).toHaveBeenCalled()
     const anchor = mocks.flipOrClamp.mock.calls[0][0]
@@ -127,9 +131,9 @@ describe('TableContextToolbar', () => {
   })
 
   it('presents labelled Rows and Columns groups', async () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { container, getByText } = render(TableContextToolbar, {
-      props: { editor }
+      props: { editor: editor as never }
     })
     await tick()
     expect(getByText('Rows')).toBeTruthy()
@@ -141,8 +145,10 @@ describe('TableContextToolbar', () => {
   })
 
   it('shows short text labels so insert direction is not arrow-only', async () => {
-    const editor = makeMockEditor() as any
-    const { container } = render(TableContextToolbar, { props: { editor } })
+    const editor = makeMockEditor()
+    const { container } = render(TableContextToolbar, {
+      props: { editor: editor as never }
+    })
     await tick()
     const texts = Array.from(container.querySelectorAll('.tct-btn-text')).map(
       (el) => el.textContent
@@ -160,9 +166,9 @@ describe('TableContextToolbar', () => {
   })
 
   it('marks delete actions with danger styling and clear accessible names', async () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { getByLabelText } = render(TableContextToolbar, {
-      props: { editor }
+      props: { editor: editor as never }
     })
     await tick()
     const delRow = getByLabelText('Delete row') as HTMLButtonElement
@@ -174,8 +180,10 @@ describe('TableContextToolbar', () => {
   })
 
   it('moves focus forward on Arrow Right', async () => {
-    const editor = makeMockEditor() as any
-    const { container } = render(TableContextToolbar, { props: { editor } })
+    const editor = makeMockEditor()
+    const { container } = render(TableContextToolbar, {
+      props: { editor: editor as never }
+    })
     await tick()
     const toolbar = container.querySelector('[role="toolbar"]')!
     const buttons = toolbar.querySelectorAll<HTMLButtonElement>('[data-tb]')
@@ -185,8 +193,10 @@ describe('TableContextToolbar', () => {
   })
 
   it('skips a disabled button on Arrow Right', async () => {
-    const editor = makeMockEditor({ deleteRow: false }) as any
-    const { container } = render(TableContextToolbar, { props: { editor } })
+    const editor = makeMockEditor({ deleteRow: false })
+    const { container } = render(TableContextToolbar, {
+      props: { editor: editor as never }
+    })
     await tick()
     const toolbar = container.querySelector('[role="toolbar"]')!
     const buttons = toolbar.querySelectorAll<HTMLButtonElement>('[data-tb]')
@@ -201,8 +211,10 @@ describe('TableContextToolbar', () => {
   })
 
   it('moves focus to last button on End', async () => {
-    const editor = makeMockEditor() as any
-    const { container } = render(TableContextToolbar, { props: { editor } })
+    const editor = makeMockEditor()
+    const { container } = render(TableContextToolbar, {
+      props: { editor: editor as never }
+    })
     await tick()
     const toolbar = container.querySelector('[role="toolbar"]')!
     const buttons = toolbar.querySelectorAll<HTMLButtonElement>('[data-tb]')
@@ -212,8 +224,10 @@ describe('TableContextToolbar', () => {
   })
 
   it('returns focus to editor on Escape', async () => {
-    const editor = makeMockEditor() as any
-    const { container } = render(TableContextToolbar, { props: { editor } })
+    const editor = makeMockEditor()
+    const { container } = render(TableContextToolbar, {
+      props: { editor: editor as never }
+    })
     await tick()
     const toolbar = container.querySelector('[role="toolbar"]')!
     fireEvent.keyDown(toolbar, { key: 'Escape' })
@@ -221,8 +235,10 @@ describe('TableContextToolbar', () => {
   })
 
   it('re-clamps tabindex off a button that becomes disabled', async () => {
-    const editor = makeMockEditor() as any
-    const { container } = render(TableContextToolbar, { props: { editor } })
+    const editor = makeMockEditor()
+    const { container } = render(TableContextToolbar, {
+      props: { editor: editor as never }
+    })
     await tick()
     const toolbar = container.querySelector('[role="toolbar"]')!
     const buttons = toolbar.querySelectorAll<HTMLButtonElement>('[data-tb]')
@@ -240,9 +256,9 @@ describe('TableContextToolbar', () => {
   })
 
   it('disables delete row when can() returns false', async () => {
-    const editor = makeMockEditor({ deleteRow: false }) as any
+    const editor = makeMockEditor({ deleteRow: false })
     const { getByLabelText } = render(TableContextToolbar, {
-      props: { editor }
+      props: { editor: editor as never }
     })
     await tick()
     expect((getByLabelText('Delete row') as HTMLButtonElement).disabled).toBe(

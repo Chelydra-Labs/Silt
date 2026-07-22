@@ -1,3 +1,4 @@
+import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 import type { PluginAIChatMessage, PluginContext } from '../../sdk'
 import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
 import { settings as appSettings } from '../../../settings/store.svelte'
@@ -23,7 +24,6 @@ import {
 } from './agent-status'
 import { parseCitations } from '../../first-party/silt-ai-qa/rag'
 import type { RetrievedPassage } from '../../shared/retrieval/hybrid'
-import type { ToolEvidence } from '../../first-party/silt-ai-agent/tool-registry'
 import { createWritingCapability } from './capabilities/writing-capability'
 import { formatAIError } from '../formatAIError'
 
@@ -76,7 +76,7 @@ export function createAgentCapability(): AIChatCapability {
   let session: AgentSession | null = null
   let protocolHistory: PluginAIChatMessage[] = []
   let citationPassages: RetrievedPassage[] = []
-  const emittedEvidence = new Set<string>()
+  const emittedEvidence = new SvelteSet<string>()
   // Generation/cancel fence mirroring the writing capability: a stale run
   // (stopped, cleared, detached, or superseded) must not mutate protocolHistory
   // or citations, or Vault A's tool messages would leak into Vault B's history.
@@ -371,11 +371,11 @@ export function createAIChatController(initialContext?: PluginContext) {
   // The "Thinking…" status entry id for the active run, tracked here so stop()
   // can remove it even though send()'s finally is fenced out for a stopped run.
   let activeRunStatusId: string | null = null
-  const capabilities = new Map<string, AIChatCapability>()
-  const entryOwners = new Map<string, string>()
+  const capabilities = new SvelteMap<string, AIChatCapability>()
+  const entryOwners = new SvelteMap<string, string>()
   let defaultCapabilityId = 'agent-tools'
   const providerReady = $derived(
-    !aiProviderNeedsSetup(appSettings.config?.ai?.chat as any)
+    !aiProviderNeedsSetup(appSettings.config?.ai?.chat)
   )
   const pendingProposal = $derived(
     transcript.find(

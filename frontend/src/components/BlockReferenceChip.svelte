@@ -9,16 +9,26 @@
 
   let { uuid }: Props = $props()
 
-  let ref = $state<any>(null)
+  type BlockRef = {
+    exists: boolean
+    id?: string
+    notebook?: string
+    section?: string
+    page?: string
+    file_date?: string
+    clean_text?: string
+  }
+
+  let ref = $state<BlockRef | null>(null)
   let loading = $state(true)
   let showHover = $state(false)
-  let hoverTimer: any = null
+  let hoverTimer: ReturnType<typeof setTimeout> | null = null
 
   async function load() {
     loading = true
     try {
-      ref = await ResolveBlockReference(uuid)
-    } catch (e) {
+      ref = (await ResolveBlockReference(uuid)) as BlockRef
+    } catch {
       ref = { exists: false }
     } finally {
       loading = false
@@ -67,7 +77,6 @@
   </span>
 {:else}
   <div class="inline-block relative">
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <span
       role="link"
       tabindex="0"

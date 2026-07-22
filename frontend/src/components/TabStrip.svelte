@@ -104,7 +104,7 @@
   })
 
   $effect(() => {
-    tabs
+    void tabs
     void tick().then(scheduleOverflowMeasure)
   })
 

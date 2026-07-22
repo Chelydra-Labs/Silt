@@ -60,28 +60,24 @@ import {
   PluginDBExec,
   PluginDBQuery,
   PluginDBMigrate,
-  ClosePluginDB,
   PluginAIComplete,
   PluginAICancelStream,
   PluginAIStreamReady,
   PluginAIEmbed,
-  RegisterPluginSession,
-  UnregisterPluginSession,
   AddAttachment,
   OpenAttachment,
   DeleteAttachment,
   PluginResolveAsset,
   PluginVaultScratchDir,
   PluginReadPluginAsset,
-  PluginListNavigation,
-  GetNetworkAudit,
-  ClearNetworkAudit
+  PluginListNavigation
 } from '../../bindings/silt/app.js'
 import { Events } from '@wailsio/runtime'
 import { getActiveLocation } from './location.svelte'
 import { subscribe } from './events'
 import type {
   PluginAICompleteResult,
+  PluginAIEmbedResult,
   PluginAIStream,
   PluginAIToolCallDelta
 } from './sdk'
@@ -609,7 +605,11 @@ export function makePluginContext(
     // --- Editor decorations (#110) — read-only overlays --------------------
     // Capability gate lives INSIDE the registry (#158).
     provideDecorations: (id, provider) => {
-      return registerDecorationProvider(id, pluginID, provider as any)
+      return registerDecorationProvider(
+        id,
+        pluginID,
+        provider as Parameters<typeof registerDecorationProvider>[2]
+      )
     },
 
     // --- Rendered UI surfaces (#117) — capability-gated (#154 Go-side gate) -
@@ -638,7 +638,6 @@ export function makePluginContext(
           })
         })
         .catch((err) => {
-          // eslint-disable-next-line no-console
           console.warn(
             `[silt] plugin ${pluginID} surface "${surface.id}" registration denied:`,
             err
@@ -665,14 +664,14 @@ export function makePluginContext(
           pluginID,
           sessionToken ?? '',
           sql,
-          (params as any[]) ?? []
+          (params as unknown[]) ?? []
         ),
       query: (sql, params) =>
         PluginDBQuery(
           pluginID,
           sessionToken ?? '',
           sql,
-          (params as any[]) ?? []
+          (params as unknown[]) ?? []
         ),
       migrate: (version, sql) =>
         PluginDBMigrate(pluginID, sessionToken ?? '', version, sql)
@@ -718,8 +717,8 @@ export function makePluginContext(
           // raw JSON bytes. Stringifying would double-encode it (object →
           // string), causing both native encoders to receive a JSON string
           // instead of a JSON object and silently reject the schema.
-          response_schema: req.responseSchema as any,
-          tools: req.tools as any,
+          response_schema: req.responseSchema as never,
+          tools: req.tools as never,
           // Map the ergonomic camelCase field to the Go struct's snake_case.
           tool_choice: req.toolChoice
             ? {
@@ -727,7 +726,7 @@ export function makePluginContext(
                 tool_name: req.toolChoice.toolName ?? ''
               }
             : undefined
-        } as any
+        } as Parameters<typeof PluginAIComplete>[2]
 
         if (req.stream) {
           try {
@@ -735,7 +734,7 @@ export function makePluginContext(
               pluginID,
               sessionToken ?? '',
               input
-            )) as any
+            )) as { stream_id?: string; streamId?: string; model?: string }
             const streamId = start?.stream_id ?? start?.streamId ?? ''
             if (!streamId) {
               throw {
@@ -755,11 +754,16 @@ export function makePluginContext(
         }
 
         try {
-          const res: any = await PluginAIComplete(
+          const res = (await PluginAIComplete(
             pluginID,
             sessionToken ?? '',
             input
-          )
+          )) as {
+            content?: string
+            model?: string
+            usage?: PluginAICompleteResult['usage']
+            tool_calls?: PluginAICompleteResult['tool_calls']
+          }
           // Strip reasoning/thinking tags (<thought>/<think>/…) that leak
           // into `content` from OpenAI-compatible servers without a reasoning
           // parser (Ollama, LM Studio, llama.cpp). Native providers already
@@ -774,24 +778,40 @@ export function makePluginContext(
         } catch (err) {
           throw normalizeAIError(err)
         }
-      }) as any,
-      embed: (req) =>
-        PluginAIEmbed(pluginID, sessionToken ?? '', {
-          texts: req.texts,
-          model: req.model ?? '',
-          dimensions: req.dimensions,
-          // task_type is on the Go PluginAIEmbedInput; bindings regenerate on build.
-          task_type: req.taskType ?? ''
-        } as Parameters<typeof PluginAIEmbed>[2])
-          .then((res: any) => ({
+      }) as PluginContext['ai']['complete'],
+      embed: async (req): Promise<PluginAIEmbedResult> => {
+        try {
+          const res = await PluginAIEmbed(pluginID, sessionToken ?? '', {
+            texts: req.texts,
+            model: req.model ?? '',
+            dimensions: req.dimensions,
+            // task_type is on the Go PluginAIEmbedInput; bindings regenerate on build.
+            task_type: req.taskType ?? ''
+          } as Parameters<typeof PluginAIEmbed>[2])
+          const usage = res?.usage as
+            | {
+                prompt_tokens?: number
+                promptTokens?: number
+                total_tokens?: number
+                totalTokens?: number
+              }
+            | null
+            | undefined
+          return {
             embeddings: res?.embeddings ?? [],
             model: res?.model ?? '',
             dimensions: res?.dimensions ?? 0,
-            usage: res?.usage
-          }))
-          .catch((err) => {
-            throw normalizeAIError(err)
-          }),
+            usage: usage
+              ? {
+                  promptTokens: usage.promptTokens ?? usage.prompt_tokens,
+                  totalTokens: usage.totalTokens ?? usage.total_tokens
+                }
+              : undefined
+          }
+        } catch (err) {
+          throw normalizeAIError(err)
+        }
+      },
       // Structured agent audit (#630). Binding may be absent until regenerate;
       // failures are swallowed so audit never breaks the agent loop.
       auditEvent: async (event) => {
@@ -848,7 +868,12 @@ function createAIStream(
 ): PluginAIStream {
   type QueueItem =
     | { kind: 'delta'; text: string }
-    | { kind: 'done'; content: string; model: string; usage?: any }
+    | {
+        kind: 'done'
+        content: string
+        model: string
+        usage?: PluginAICompleteResult['usage']
+      }
     | { kind: 'error'; err: unknown }
 
   const queue: QueueItem[] = []
@@ -881,7 +906,17 @@ function createAIStream(
     }
   }
 
-  const payloadOf = (ev: any) => (ev?.data !== undefined ? ev.data : ev)
+  const payloadOf = (ev: { data?: unknown } | unknown) => {
+    if (
+      ev &&
+      typeof ev === 'object' &&
+      'data' in ev &&
+      (ev as { data?: unknown }).data !== undefined
+    ) {
+      return (ev as { data: unknown }).data as Record<string, unknown>
+    }
+    return ev as Record<string, unknown>
+  }
 
   // Owner-scoped event names (#635): backend emits ai:complete:*:<pluginID>.
   const deltaEv = `ai:complete:delta:${pluginID}`
@@ -889,50 +924,52 @@ function createAIStream(
   const toolDeltaEv = `ai:complete:tool-delta:${pluginID}`
   const errorEv = `ai:complete:error:${pluginID}`
 
-  const offDelta = Events.On(deltaEv, (ev: any) => {
+  const offDelta = Events.On(deltaEv, (ev) => {
     const p = payloadOf(ev)
     if (!p || p.stream_id !== streamId) return
     push({ kind: 'delta', text: String(p.delta ?? '') })
   })
-  const offDone = Events.On(doneEv, (ev: any) => {
+  const offDone = Events.On(doneEv, (ev) => {
     const p = payloadOf(ev)
     if (!p || p.stream_id !== streamId) return
     const content = stripReasoningContent(String(p.content ?? ''))
-    finalResult = {
+    const done: PluginAICompleteResult = {
       content,
       model: String(p.model ?? startModel ?? ''),
-      usage: p.usage,
-      tool_calls: p.tool_calls
+      usage: p.usage as PluginAICompleteResult['usage'],
+      tool_calls: p.tool_calls as PluginAICompleteResult['tool_calls']
     }
+    finalResult = done
     push({
       kind: 'done',
-      content: finalResult.content,
-      model: finalResult.model,
-      usage: finalResult.usage
+      content: done.content,
+      model: done.model,
+      usage: done.usage
     })
-    resultResolve?.(finalResult)
+    resultResolve?.(done)
     cleanup()
   })
   // Live tool-call fragment stream (#595). Accumulated so a caller that wants
   // progressive tool UX can drain it; the reassembled calls also arrive on the
   // done event above. Filtered to this stream_id like the other listeners.
   const toolDeltas: PluginAIToolCallDelta[] = []
-  const offToolDelta = Events.On(toolDeltaEv, (ev: any) => {
+  const offToolDelta = Events.On(toolDeltaEv, (ev) => {
     const p = payloadOf(ev)
     if (!p || p.stream_id !== streamId) return
     toolDeltas.push({
       index: Number(p.index ?? 0),
-      id: p.id ?? undefined,
-      name: p.name ?? undefined,
-      arguments_fragment: p.arguments_fragment ?? undefined
+      id: p.id != null ? String(p.id) : undefined,
+      name: p.name != null ? String(p.name) : undefined,
+      arguments_fragment:
+        p.arguments_fragment != null ? String(p.arguments_fragment) : undefined
     })
   })
-  const offError = Events.On(errorEv, (ev: any) => {
+  const offError = Events.On(errorEv, (ev) => {
     const p = payloadOf(ev)
     if (!p || p.stream_id !== streamId) return
     const err = normalizeAIError({
-      code: p.kind ?? 'unknown',
-      message: p.message ?? 'stream error'
+      code: p.kind != null ? String(p.kind) : 'unknown',
+      message: p.message != null ? String(p.message) : 'stream error'
     })
     finalError = err
     push({ kind: 'error', err })

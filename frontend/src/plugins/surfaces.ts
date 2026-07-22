@@ -14,6 +14,7 @@
 // registry. This is the client-side mirror of the Go-side
 // PluginRegisterSurface gate (#154) — defense in depth.
 
+import type { Component } from 'svelte'
 import { isGranted } from './grants.svelte'
 
 export type SurfaceKind =
@@ -42,7 +43,9 @@ export interface PluginSurface {
    *  plugins have no compiled component to pass; this field is conventionally
    *  first-party. Either `component` or `html` MUST be supplied for content-
    *  rendering kinds (sidebar-panel/modal/note-banner/settings-panel). */
-  component?: any
+  // Props vary per surface; bare Component defaults to {} and rejects real UIs.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  component?: Component<any>
   /** Extra props forwarded to a first-party `component` (merged with the
    *  host-supplied ctx + onDismiss). Ignored for the iframe path. */
   props?: Record<string, unknown>
@@ -99,7 +102,6 @@ export function registerSurface(surface: PluginSurface): () => void {
     )
   }
   if (!isGranted(surface.pluginID, 'ui-surface')) {
-    // eslint-disable-next-line no-console
     console.warn(
       `[silt] plugin ${surface.pluginID} cannot register surfaces without the ui-surface capability`
     )

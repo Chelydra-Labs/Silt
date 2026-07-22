@@ -356,7 +356,7 @@
     const btns = toolbarButtons()
     if (btns.length === 0) return
     const disabled = btns.map((b) => b.disabled)
-    let next = rovingIdx
+    let next: number
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
       e.preventDefault()
       next = nearestEnabledIndex(disabled, rovingIdx, 1)

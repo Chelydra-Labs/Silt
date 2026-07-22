@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity'
   // List display mode of the Tasks hub (#424/#526). Time-horizon grouping
   // (Overdue/Today/Upcoming/Later/No Date/Completed) is the legacy Tasks
   // behavior; the grouping engine (#423) generalizes sections into arbitrary
@@ -359,25 +360,21 @@
   // when there are more than 10 sections, the ones after the 10th start
   // collapsed so the user isn't buried under a wall of headers. Stored as
   // a Set of keys so the user expanding one survives a re-bin.
-  let collapsedSections = $state<Set<string>>(new Set())
+  let collapsedSections = new SvelteSet<string>()
   $effect(() => {
     // Re-run when the groupBy dimension changes (the section keys change
     // shape with it) and seed the tail-collapse set.
     void hubGroupBy
-    const next = new Set<string>()
+    collapsedSections.clear()
     if (groupedSections.length > 10) {
       for (let i = 10; i < groupedSections.length; i++) {
-        next.add(groupedSections[i].key)
+        collapsedSections.add(groupedSections[i].key)
       }
     }
-    collapsedSections = next
   })
   function toggleSection(key: string) {
-    collapsedSections = new Set(
-      collapsedSections.has(key)
-        ? [...collapsedSections].filter((k) => k !== key)
-        : [...collapsedSections, key]
-    )
+    if (collapsedSections.has(key)) collapsedSections.delete(key)
+    else collapsedSections.add(key)
   }
 
   async function commitMarkDown(item: TaskDetail) {
@@ -774,7 +771,7 @@
         aria-busy="true"
         aria-label="Loading tasks"
       >
-        {#each Array(4) as _}
+        {#each Array(4) as _, skelIdx (skelIdx)}
           <div class="skeleton-row">
             <div class="skeleton-circle"></div>
             <div class="skeleton-text title"></div>

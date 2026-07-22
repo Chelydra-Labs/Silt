@@ -74,7 +74,12 @@ describe('slash-command registry (#110, #158)', () => {
 
   it('rejects a command without id or label', () => {
     expect(() => registerSlashCommand({ id: '', label: 'X' })).toThrow()
-    expect(() => registerSlashCommand({ id: 'x', label: '' } as any)).toThrow()
+    expect(() =>
+      registerSlashCommand({
+        id: 'x',
+        label: ''
+      } as import('./slash-registry').SlashCommand)
+    ).toThrow()
   })
 
   // --- #158: registry-internal capability gate -------------------------------

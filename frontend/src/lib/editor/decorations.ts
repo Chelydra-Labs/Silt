@@ -22,8 +22,8 @@ export interface DecorationSpec {
 }
 
 export type DecorationProvider = (doc: {
-  content?: any[]
-  [k: string]: any
+  content?: unknown[]
+  [k: string]: unknown
 }) => DecorationSpec[]
 
 const providers = new Map<
@@ -44,7 +44,6 @@ export function registerDecorationProvider(
   fn: DecorationProvider
 ): () => void {
   if (!isGranted(pluginID, 'editor-schema')) {
-    // eslint-disable-next-line no-console
     console.warn(
       `[silt] plugin ${pluginID} cannot provide decorations without the editor-schema capability`
     )
@@ -72,8 +71,8 @@ export function getDecorationProviderPluginIDs(): string[] {
 
 /** Compute all decorations for a doc by calling every registered provider. */
 export function computeDecorations(doc: {
-  content?: any[]
-  [k: string]: any
+  content?: unknown[]
+  [k: string]: unknown
 }): DecorationSpec[] {
   const out: DecorationSpec[] = []
   for (const { fn } of providers.values()) {
@@ -82,7 +81,7 @@ export function computeDecorations(doc: {
       if (Array.isArray(specs)) out.push(...specs)
     } catch (err) {
       // A provider throwing must never break the editor.
-      // eslint-disable-next-line no-console
+
       console.error('[silt decorations] provider threw:', err)
     }
   }

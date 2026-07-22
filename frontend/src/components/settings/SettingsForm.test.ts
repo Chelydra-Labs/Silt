@@ -26,7 +26,7 @@ async function flush() {
 const schema = [
   { key: 'tags', label: 'Tags', type: 'list' },
   { key: 'name', label: 'Name', type: 'string' }
-] as any
+] as never
 
 describe('SettingsForm save diff', () => {
   beforeEach(() => mocks.updatePluginSetting.mockReset())

@@ -11,11 +11,14 @@
   } from '../plugins/surfaces'
   import PluginSurfaceFrame from './PluginSurfaceFrame.svelte'
   import { makePluginContext } from '../plugins/context'
+  import type { PluginContext } from '../plugins/sdk'
   import { getSessionToken } from '../plugins/loader'
 
   let surfaces = $state<PluginSurface[]>(getSurfaces('sidebar-panel'))
 
-  const ctxCache = new Map<string, any>()
+  // Plain Map: non-reactive cache; SvelteMap mutates during render.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive cache; SvelteMap mutates during render
+  const ctxCache = new Map<string, PluginContext>()
 
   const off = onSurfacesChanged((all) => {
     surfaces = all.filter((s) => s.kind === 'sidebar-panel')
@@ -27,10 +30,10 @@
 
   onDestroy(() => off())
 
-  function ctxFor(pluginID: string): any {
+  function ctxFor(pluginID: string): PluginContext {
     let ctx = ctxCache.get(pluginID)
     if (!ctx) {
-      ctx = makePluginContext(pluginID, getSessionToken(pluginID)) as any
+      ctx = makePluginContext(pluginID, getSessionToken(pluginID))
       ctxCache.set(pluginID, ctx)
     }
     return ctx

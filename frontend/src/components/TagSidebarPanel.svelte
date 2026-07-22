@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity'
   import { onMount, untrack } from 'svelte'
   import { QueryTagHierarchy } from '../../bindings/silt/app.js'
   import TagTreeNode from './TagTreeNode.svelte'
@@ -17,7 +18,8 @@
   let { selectedTag = $bindable() }: Props = $props()
 
   let tree = $state<TagNode[]>([])
-  let expanded = $state<Set<string>>(new Set())
+  // eslint-disable-next-line svelte/no-unnecessary-state-wrap -- whole-set reassignment
+  let expanded = $state(new SvelteSet<string>())
   let query = $state('')
 
   let filteredTree = $derived.by(() => {
@@ -51,7 +53,7 @@
 
   // Bind key methods for tags
   function toggle(path: string) {
-    const next = new Set(expanded)
+    const next = new SvelteSet(expanded)
     if (next.has(path)) next.delete(path)
     else next.add(path)
     expanded = next
@@ -74,7 +76,7 @@
     if (!tag) return
     const parts = tag.split('/')
     const acc: string[] = []
-    const next = new Set(untrack(() => expanded))
+    const next = new SvelteSet(untrack(() => expanded))
     for (const part of parts) {
       acc.push(part)
       next.add(acc.join('/'))

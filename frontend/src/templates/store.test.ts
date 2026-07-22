@@ -29,7 +29,7 @@ vi.mock('@wailsio/runtime', () => ({
     }
   },
   Create: {
-    Nullable: (fn: any) => fn,
+    Nullable: (fn: unknown) => fn,
     Array: () => [],
     Map: () => ({}),
     Any: {}
@@ -46,9 +46,20 @@ import {
 // Import the mocked modules to configure their behavior.
 import { ListTemplates } from '../../bindings/silt/app.js'
 import { Events } from '@wailsio/runtime'
+import type * as tpl from '../../bindings/silt/backend/templates/models.js'
 
 const mockListTemplates = vi.mocked(ListTemplates)
 const mockEventsOn = vi.mocked(Events.On)
+
+function listResult(
+  templates: Array<Record<string, unknown>>
+): tpl.ListTemplatesResult {
+  return {
+    templates,
+    errors: [],
+    warnings: []
+  } as unknown as tpl.ListTemplatesResult
+}
 
 describe('templates store', () => {
   beforeEach(() => {
@@ -61,8 +72,8 @@ describe('templates store', () => {
   })
 
   it('loadTemplates populates templatesState.items', async () => {
-    mockListTemplates.mockResolvedValue({
-      templates: [
+    mockListTemplates.mockResolvedValue(
+      listResult([
         {
           id: 'daily-note',
           title: 'Daily Note',
@@ -75,10 +86,8 @@ describe('templates store', () => {
           category: 'meetings',
           source: 'builtin'
         }
-      ],
-      errors: [],
-      warnings: []
-    } as any)
+      ])
+    )
 
     await loadTemplates()
 
@@ -120,8 +129,8 @@ describe('templates store', () => {
   })
 
   it('loadTemplates preserves plugin_id on plugin templates (#96)', async () => {
-    mockListTemplates.mockResolvedValue({
-      templates: [
+    mockListTemplates.mockResolvedValue(
+      listResult([
         {
           id: 'plugin-tpl',
           title: 'Plugin Tpl',
@@ -135,10 +144,8 @@ describe('templates store', () => {
           category: 'daily',
           source: 'builtin'
         }
-      ],
-      errors: [],
-      warnings: []
-    } as any)
+      ])
+    )
 
     await loadTemplates()
 

@@ -1,3 +1,4 @@
+import type { Component } from 'svelte'
 // #214: bespoke plugin settings pages — registry either/or validation and the
 // Settings shell dynamic-tab enumeration.
 
@@ -22,7 +23,7 @@ function makePlugin(
       name: 'Test Bespoke',
       version: '1.0.0'
     },
-    component: {}, // dummy
+    component: {} as never, // dummy
     source: 'first-party',
     ...overrides
   }
@@ -36,7 +37,7 @@ describe('bespoke settings pages (#214) — registry either/or', () => {
 
   it('accepts a plugin with settingsPageComponent (no manifest.settings)', () => {
     const plugin = makePlugin({
-      settingsPageComponent: (() => {}) as any
+      settingsPageComponent: (() => {}) as unknown as Component
     })
     plugin.manifest.id = 'bespoke-only'
     expect(() => registerPlugin(plugin)).not.toThrow()
@@ -57,7 +58,7 @@ describe('bespoke settings pages (#214) — registry either/or', () => {
 
   it('rejects a plugin declaring BOTH settingsPageComponent and manifest.settings', () => {
     const plugin = makePlugin({
-      settingsPageComponent: (() => {}) as any,
+      settingsPageComponent: (() => {}) as unknown as Component,
       manifest: {
         id: 'both-declared',
         name: 'Both',

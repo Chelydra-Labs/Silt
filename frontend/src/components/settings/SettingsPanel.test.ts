@@ -7,7 +7,7 @@ import { render, screen, cleanup, waitFor } from '@testing-library/svelte'
 
 const mocks = vi.hoisted(() => ({
   loadedPlugins: {
-    plugins: new Map<string, any>(),
+    plugins: new Map<string, unknown>(),
     errors: [] as { id: string; message: string }[]
   },
   settings: {

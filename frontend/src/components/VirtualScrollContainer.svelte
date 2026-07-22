@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity'
   import { onDestroy, tick, untrack } from 'svelte'
   import { FetchPageBlocks, RenamePage } from '../../bindings/silt/app.js'
   import { Events } from '@wailsio/runtime'
@@ -66,7 +67,7 @@
     activeFocusedBlockAncestors = [],
     onPageRenamed,
     onFirstEdit,
-    isActive = true,
+    isActive: _isActive = true,
     onSaveStateChange
   }: Props = $props()
 
@@ -78,7 +79,8 @@
 
   // Editor bindings
   let editorInstance = $state<Editor | null>(null)
-  let activeMarks = $state<Set<string>>(new Set())
+  // eslint-disable-next-line svelte/no-unnecessary-state-wrap -- bindable-style reassignment from editor
+  let activeMarks = $state(new SvelteSet<string>())
 
   let showFormatToolbar = $derived(
     settings.config?.ui?.show_format_toolbar !== false
@@ -158,7 +160,7 @@
     const nb = notebook,
       sec = section,
       pg = page
-    const off = Events.On('block:changed', (event: any) => {
+    const off = Events.On('block:changed', (event) => {
       const ev: { notebook: string; section: string; page: string } = event.data
       if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
         loadPage(false)
@@ -326,6 +328,7 @@
     } else if (e.key === 'Escape') {
       e.preventDefault()
       displayTitle = page
+      // eslint-disable-next-line svelte/no-dom-manipulating -- imperative title sync avoids full re-render thrash during virtual scroll
       if (titleEl) titleEl.textContent = page
       titleEl?.blur()
     }
@@ -340,6 +343,7 @@
     const newName = titleEl?.textContent?.trim() ?? ''
     if (newName === '' || newName === page) {
       displayTitle = page
+      // eslint-disable-next-line svelte/no-dom-manipulating -- imperative title sync avoids full re-render thrash during virtual scroll
       if (titleEl) titleEl.textContent = page
       return
     }
@@ -356,6 +360,7 @@
     } catch (e) {
       console.error('RenamePage failed:', e)
       displayTitle = page
+      // eslint-disable-next-line svelte/no-dom-manipulating -- imperative title sync avoids full re-render thrash during virtual scroll
       if (titleEl) titleEl.textContent = page
       lastRenamedFrom = ''
     }

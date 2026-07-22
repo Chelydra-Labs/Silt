@@ -54,7 +54,7 @@
 
   function handleKeyDown(e: KeyboardEvent) {
     const step = e.shiftKey ? 32 : 8
-    let newWidth = width
+    let newWidth: number
     switch (e.key) {
       case 'ArrowLeft':
         newWidth = clamp(width - step)

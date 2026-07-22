@@ -8,7 +8,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
 const mocks = vi.hoisted(() => ({
   loadedPlugins: {
-    plugins: new Map<string, any>(),
+    plugins: new Map<string, unknown>(),
     errors: [] as { id: string; message: string }[]
   },
   settings: {
@@ -22,7 +22,7 @@ vi.mock('../../plugins/store.svelte', () => ({
 }))
 vi.mock('../../settings/store.svelte', () => ({ settings: mocks.settings }))
 vi.mock('../../plugins/surfaces', () => ({
-  getSurfaces: vi.fn(() => mocks.surfaces as any),
+  getSurfaces: vi.fn(() => mocks.surfaces as never),
   onSurfacesChanged: vi.fn(() => () => {})
 }))
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteMap } from 'svelte/reactivity'
   // Board display mode of the Tasks hub (#421). Lifts the proven
   // silt-kanban Board (DnD, keyboard parity, DONE guard, per-column
   // quick-add, column management, card richness) and generalizes it to any
@@ -539,7 +540,7 @@
     iso: string
   ): Lane[] {
     if (g === 'status') {
-      const byStatus = new Map<string, TaskDetail[]>()
+      const byStatus = new SvelteMap<string, TaskDetail[]>()
       for (const r of loaded) {
         const s = r.status || 'TODO'
         if (!byStatus.has(s)) byStatus.set(s, [])
@@ -862,7 +863,7 @@
       e.dataTransfer.setData('text/plain', `col:${i}`)
     }
   }
-  function onColDragOver(e: DragEvent, i: number) {
+  function onColDragOver(e: DragEvent, _i: number) {
     if (colDragIndex === null) return
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
@@ -893,7 +894,7 @@
       e.dataTransfer.setData('text/plain', card.id)
     }
   }
-  function onLaneDragOver(e: DragEvent, col: Lane) {
+  function onLaneDragOver(e: DragEvent, _col: Lane) {
     if (!dndEnabled || !dragCard) return
     e.preventDefault()
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
@@ -941,7 +942,7 @@
     src: TaskDetail,
     target: TaskDetail,
     col: Lane,
-    fromKey: string
+    _fromKey: string
   ) {
     moveError = ''
     const my = ++moveSeq
@@ -1108,8 +1109,6 @@
     // effect's teardown. Hook kept for symmetry with Kanban/ListView.
   })
 
-  let totalCards = $derived(columns.reduce((sum, c) => sum + c.items.length, 0))
-
   /** True when any status column is over its soft WIP limit (#437). */
   let anyOverWip = $derived(
     groupBy === 'status' &&
@@ -1202,7 +1201,6 @@
         {#each columns as col, colIdx (col.key)}
           {@const cards = col.items}
           {@const canManage = groupBy === 'status'}
-          {@const isStatusCol = ALL_STATUSES.includes(col.value as TaskStatus)}
           {@const statusName = canManage
             ? col.value.replace(/^status-/, '')
             : ''}
@@ -1220,8 +1218,7 @@
             ondragover={(e) => onLaneDragOver(e, col)}
             ondrop={(e) => onLaneDrop(e, col)}
           >
-            <!-- svelte-ignore a11y_no_static_element_interactions
-                 Column drag-reorder (status dimension) is a pointer-only
+            <!-- Column drag-reorder (status dimension) is a pointer-only
                  affordance; Rename/Remove are exposed via the header menu
                  button for keyboard users. -->
             <div
@@ -1670,7 +1667,6 @@
 
 {#if menuCol}
   <!-- Click-away for the column action menu. -->
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div
     class="fixed inset-0 z-40"
     aria-hidden="true"

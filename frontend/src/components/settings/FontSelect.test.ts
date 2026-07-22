@@ -10,7 +10,9 @@ describe('FontSelect combobox', () => {
   afterEach(() => cleanup())
 
   it('links the trigger to its listbox via aria-controls when open', async () => {
-    render(FontSelect, { props: { value: 'Inter', category: 'body', label: 'Font family' } })
+    render(FontSelect, {
+      props: { value: 'Inter', category: 'body', label: 'Font family' }
+    })
     const combo = screen.getByRole('combobox', { name: 'Font family' })
 
     // Closed: expanded is false and no control target (listbox not mounted).
@@ -31,11 +33,10 @@ describe('FontSelect combobox', () => {
     // A value not in the registry becomes the "unlisted" option whose cssFamily
     // is rendered into style="font-family:…". The breakout chars must be stripped
     // (sandbox-by-validation, mirroring editor-tokens + themes.isValidFontFamily).
-    const malicious = "Hack}; body{background:red}"
-    render(
-      FontSelect,
-      { props: { value: malicious, category: 'body', label: 'Font family' } }
-    )
+    const malicious = 'Hack}; body{background:red}'
+    render(FontSelect, {
+      props: { value: malicious, category: 'body', label: 'Font family' }
+    })
     const combo = screen.getByRole('combobox', { name: 'Font family' })
     // The trigger renders the selected (unlisted) option in-font.
     const triggerStyle = combo.getAttribute('style') ?? ''

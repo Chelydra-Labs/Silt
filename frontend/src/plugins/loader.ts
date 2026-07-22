@@ -92,7 +92,7 @@ export async function loadPlugins(
     disabled: boolean
     has_index: boolean
     contentSha256?: string
-  }[] = []
+  }[]
   try {
     installed = (await ListPlugins()) ?? []
   } catch {
@@ -127,13 +127,13 @@ export async function loadPlugins(
 
       const blob = new Blob([src], { type: 'text/javascript' })
       const url = URL.createObjectURL(blob)
-      let mod: any
+      let mod: { default?: SiltPlugin } & Partial<SiltPlugin>
       try {
         mod = await import(/* @vite-ignore */ url)
       } finally {
         URL.revokeObjectURL(url)
       }
-      const def: SiltPlugin | undefined = mod?.default ?? mod
+      const def = (mod?.default ?? mod) as SiltPlugin | undefined
       const manifest = def?.manifest ?? { id, name: id, version: '0.0.0' }
       // Register a session token for binding-identity verification (#151).
       let token = sessionTokens.get(id)
@@ -146,9 +146,14 @@ export async function loadPlugins(
       const ctx = makePluginContext(id, token)
       def?.init?.(ctx)
       def?.onVaultOpen?.(ctx)
+      const diskMod = mod as {
+        default?: SiltPlugin & { component?: unknown }
+      } & Partial<SiltPlugin & { component?: unknown }>
       const reg: RegisteredPlugin = {
         manifest,
-        component: mod?.default?.component ?? DiskPluginNotice,
+        component: (diskMod.default?.component ??
+          diskMod.component ??
+          DiskPluginNotice) as RegisteredPlugin['component'],
         init: def?.init,
         onVaultOpen: def?.onVaultOpen,
         onVaultClose: def?.onVaultClose,
@@ -260,7 +265,6 @@ function wireLifecycleOnce() {
       try {
         reg.onVaultClose?.()
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error(`[silt] onVaultClose for ${reg.manifest.id} threw:`, err)
       }
     }
@@ -286,7 +290,6 @@ function wireLifecycleOnce() {
         unregisterPluginSurfaces(id)
         unregisterPluginDecorations(id)
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error(`[silt] contribution unregister for ${id} threw:`, err)
       }
     }
@@ -294,7 +297,6 @@ function wireLifecycleOnce() {
       try {
         reg.onShutdown?.()
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error(`[silt] onShutdown for ${reg.manifest.id} threw:`, err)
       }
     }

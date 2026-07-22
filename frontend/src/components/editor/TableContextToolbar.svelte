@@ -47,7 +47,7 @@
   })
 
   const groups = $derived.by<Group[]>(() => {
-    selTick
+    void selTick
     return [
       {
         id: 'rows',
@@ -191,7 +191,7 @@
 
   // Reposition on selection ticks, measured size, scroll, and resize.
   $effect(() => {
-    selTick
+    void selTick
     // Read toolbarEl so a post-bind measure updates placement after first paint.
     void toolbarEl
     updatePosition()
@@ -218,7 +218,7 @@
     const btns = toolbarEl?.querySelectorAll<HTMLButtonElement>('[data-tb]')
     if (!btns || btns.length === 0) return
     const disabled = Array.from(btns, (b) => b.disabled)
-    let next = rovingIdx
+    let next: number
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
       e.preventDefault()
       next = nearestEnabledIndex(disabled, rovingIdx, 1)

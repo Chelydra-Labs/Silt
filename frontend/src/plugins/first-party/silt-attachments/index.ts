@@ -29,7 +29,13 @@ export const manifest = {
 // 3. Inserts an embedBlock node at the cursor with the attachment attrs.
 async function handleAttach(
   ctx: PluginContext,
-  editor: any,
+  editor: {
+    isDestroyed?: boolean
+    commands: {
+      insertContent: (content: unknown) => void
+      focus: () => void
+    }
+  },
   _pos: number
 ): Promise<void> {
   const notebook = ctx.activeNotebook
@@ -74,8 +80,11 @@ export default {
       description: 'Pick a file and embed it in the note',
       icon: 'attach_file',
       onSelect: (editor, pos) => {
-        handleAttach(ctx, editor, pos).catch((e) => {
-          // eslint-disable-next-line no-console
+        handleAttach(
+          ctx,
+          editor as Parameters<typeof handleAttach>[1],
+          pos
+        ).catch((e) => {
           console.error('[silt-attachments] /attach failed:', e)
         })
       }

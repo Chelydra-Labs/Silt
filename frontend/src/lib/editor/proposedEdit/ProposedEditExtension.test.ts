@@ -63,7 +63,7 @@ function makeSiltTableEditor(content: Record<string, unknown>): Editor {
       ...SiltTableExtensions,
       ProposedEdit
     ],
-    content: content as any
+    content: content as string | Record<string, unknown>
   })
 }
 
@@ -79,8 +79,33 @@ afterEach(() => {
 
 /** Extract noteBlock nodes from editor JSON, ignoring trailing paragraphs
  *  that StarterKit's paragraph type may add during normalization. */
-function noteBlocks(ed: Editor): any[] {
-  return (ed.getJSON().content as any[]).filter((b) => b.type === 'noteBlock')
+type NoteBlockJSON = {
+  type?: string
+  attrs?: Record<string, unknown>
+  content?: Array<{ text?: string; marks?: Array<{ type?: string }> }>
+}
+function noteBlocks(ed: Editor): NoteBlockJSON[] {
+  return ((ed.getJSON().content ?? []) as NoteBlockJSON[]).filter(
+    (b) => b.type === 'noteBlock'
+  )
+}
+/** Test helper: assert block/content indices exist (avoids sparse-index noise). */
+function cell(
+  blocks: NoteBlockJSON[],
+  bi: number,
+  ci = 0
+): { text: string; marks?: Array<{ type?: string }> } {
+  const c = blocks[bi]?.content?.[ci]
+  if (!c) throw new Error(`missing noteBlock[${bi}].content[${ci}]`)
+  return { text: c.text ?? '', marks: c.marks }
+}
+function blockAttrs(
+  blocks: NoteBlockJSON[],
+  bi: number
+): Record<string, unknown> {
+  const a = blocks[bi]?.attrs
+  if (!a) throw new Error(`missing noteBlock[${bi}].attrs`)
+  return a
 }
 
 describe('ProposedEdit extension (#543)', () => {
@@ -124,11 +149,19 @@ describe('ProposedEdit extension (#543)', () => {
     ed.commands.acceptProposedEdit()
     const json = ed.getJSON()
     // The first paragraph's first child is a bold-marked text node.
-    const para = (json.content as any[])[0]
+    const para = (
+      json.content as Array<{
+        content: Array<{
+          type: string
+          text?: string
+          marks?: Array<{ type: string }>
+        }>
+      }>
+    )[0]
     const firstChild = para.content[0]
     expect(firstChild.type).toBe('text')
     expect(firstChild.text).toBe('bold')
-    expect(firstChild.marks?.[0].type).toBe('bold')
+    expect(firstChild.marks?.[0]?.type).toBe('bold')
   })
 
   it('accept replaces a multi-block selection in one transaction', () => {
@@ -247,8 +280,8 @@ describe('ProposedEdit multi-block replace (#548)', () => {
     // Two noteBlocks replace the original two — multi-paragraph content
     // preserves structure instead of flattening to one line.
     expect(blocks.length).toBe(2)
-    expect(blocks[0].content[0].text).toBe('Para one')
-    expect(blocks[1].content[0].text).toBe('Para two')
+    expect(cell(blocks, 0, 0).text).toBe('Para one')
+    expect(cell(blocks, 1, 0).text).toBe('Para two')
   })
 
   it('multi-paragraph accept preserves inline marks across paragraphs', () => {
@@ -264,10 +297,10 @@ describe('ProposedEdit multi-block replace (#548)', () => {
     })
     ed.commands.acceptProposedEdit()
     const blocks = noteBlocks(ed)
-    expect(blocks[0].content[0].text).toBe('bold')
-    expect(blocks[0].content[0].marks?.[0].type).toBe('bold')
-    expect(blocks[1].content[0].text).toBe('italic')
-    expect(blocks[1].content[0].marks?.[0].type).toBe('italic')
+    expect(cell(blocks, 0, 0).text).toBe('bold')
+    expect(cell(blocks, 0, 0).marks?.[0]?.type).toBe('bold')
+    expect(cell(blocks, 1, 0).text).toBe('italic')
+    expect(cell(blocks, 1, 0).marks?.[0]?.type).toBe('italic')
   })
 
   it('single-paragraph on block-spanning selection uses inline path', () => {
@@ -298,8 +331,8 @@ describe('ProposedEdit multi-block replace (#548)', () => {
     // Still one noteBlock — multi-paragraph on inline selection is flattened.
     expect(blocks.length).toBe(1)
     // The double-newline was collapsed by the inline path (single \n→space).
-    expect(blocks[0].content[0].text).toContain('Line one')
-    expect(blocks[0].content[0].text).toContain('Line two')
+    expect(cell(blocks, 0, 0).text).toContain('Line one')
+    expect(cell(blocks, 0, 0).text).toContain('Line two')
   })
 
   it('schema-incompatible fallback: setProposedEdit returns false without noteBlock', () => {
@@ -334,12 +367,8 @@ describe('ProposedEdit multi-block replace (#548)', () => {
     ed.commands.undo()
     const undoneBlocks = noteBlocks(ed)
     expect(undoneBlocks.length).toBe(originalBlocks.length)
-    expect(undoneBlocks[0].content[0].text).toBe(
-      originalBlocks[0].content[0].text
-    )
-    expect(undoneBlocks[1].content[0].text).toBe(
-      originalBlocks[1].content[0].text
-    )
+    expect(cell(undoneBlocks, 0, 0).text).toBe(cell(originalBlocks, 0, 0).text)
+    expect(cell(undoneBlocks, 1, 0).text).toBe(cell(originalBlocks, 1, 0).text)
   })
 
   it('reject adds no history entry (multi-block proposal)', () => {
@@ -348,7 +377,7 @@ describe('ProposedEdit multi-block replace (#548)', () => {
         '<div data-type="note">First</div><div data-type="note">Second</div>'
       )
     )
-    const originalTexts = noteBlocks(ed).map((b) => b.content?.[0]?.text ?? '')
+    const originalTexts = noteBlocks(ed).map((b) => cell([b], 0, 0).text)
     ed.commands.setProposedEdit({
       from: 1,
       to: 14,
@@ -359,7 +388,7 @@ describe('ProposedEdit multi-block replace (#548)', () => {
     // Reject is meta-only — no doc history entry. Undo is a no-op (nothing
     // to undo), and the noteBlock content is unchanged.
     ed.commands.undo()
-    const undoneTexts = noteBlocks(ed).map((b) => b.content?.[0]?.text ?? '')
+    const undoneTexts = noteBlocks(ed).map((b) => cell([b], 0, 0).text)
     expect(undoneTexts).toEqual(originalTexts)
   })
 
@@ -381,8 +410,8 @@ describe('ProposedEdit multi-block replace (#548)', () => {
     ed.commands.acceptProposedEdit()
     const blocks = noteBlocks(ed)
     expect(blocks.length).toBe(2)
-    expect(blocks[0].content[0].text).toBe('XX')
-    expect(blocks[1].content[0].text).toBe('YY')
+    expect(cell(blocks, 0, 0).text).toBe('XX')
+    expect(cell(blocks, 1, 0).text).toBe('YY')
   })
 
   it('multi-paragraph with 3 paragraphs creates 3 noteBlocks', () => {
@@ -399,9 +428,9 @@ describe('ProposedEdit multi-block replace (#548)', () => {
     ed.commands.acceptProposedEdit()
     const blocks = noteBlocks(ed)
     expect(blocks.length).toBe(3)
-    expect(blocks[0].content[0].text).toBe('One')
-    expect(blocks[1].content[0].text).toBe('Two')
-    expect(blocks[2].content[0].text).toBe('Three')
+    expect(cell(blocks, 0, 0).text).toBe('One')
+    expect(cell(blocks, 1, 0).text).toBe('Two')
+    expect(cell(blocks, 2, 0).text).toBe('Three')
   })
 
   it('multi-block accept inherits depth and bullet from the first noteBlock', () => {
@@ -414,8 +443,8 @@ describe('ProposedEdit multi-block replace (#548)', () => {
           '<div data-type="note" data-depth="2" data-bullet="* ">Second</div>'
       )
     )
-    expect(noteBlocks(ed)[0].attrs.depth).toBe(2)
-    expect(noteBlocks(ed)[0].attrs.bullet).toBe('* ')
+    expect(blockAttrs(noteBlocks(ed), 0).depth).toBe(2)
+    expect(blockAttrs(noteBlocks(ed), 0).bullet).toBe('* ')
     ed.commands.setProposedEdit({
       from: 1,
       to: 14,
@@ -424,10 +453,10 @@ describe('ProposedEdit multi-block replace (#548)', () => {
     ed.commands.acceptProposedEdit()
     const blocks = noteBlocks(ed)
     expect(blocks.length).toBe(2)
-    expect(blocks[0].attrs.depth).toBe(2)
-    expect(blocks[0].attrs.bullet).toBe('* ')
-    expect(blocks[1].attrs.depth).toBe(2)
-    expect(blocks[1].attrs.bullet).toBe('* ')
+    expect(blockAttrs(blocks, 0).depth).toBe(2)
+    expect(blockAttrs(blocks, 0).bullet).toBe('* ')
+    expect(blockAttrs(blocks, 1).depth).toBe(2)
+    expect(blockAttrs(blocks, 1).bullet).toBe('* ')
   })
 
   it('multi-block accept inherits a quote marker from the first noteBlock', () => {
@@ -446,9 +475,9 @@ describe('ProposedEdit multi-block replace (#548)', () => {
     const blocks = noteBlocks(ed)
     expect(blocks.length).toBe(2)
     // Both replacement blocks stay quotes rather than becoming bullets.
-    expect(blocks[0].attrs.quote).toBe('> ')
-    expect(blocks[0].attrs.bullet).toBe('')
-    expect(blocks[1].attrs.quote).toBe('> ')
+    expect(blockAttrs(blocks, 0).quote).toBe('> ')
+    expect(blockAttrs(blocks, 0).bullet).toBe('')
+    expect(blockAttrs(blocks, 1).quote).toBe('> ')
   })
 
   it('table-cell multi-paragraph proposal falls back to panel path', () => {

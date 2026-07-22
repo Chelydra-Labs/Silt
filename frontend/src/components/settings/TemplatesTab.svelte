@@ -66,7 +66,7 @@
         .includes(query)
     })
   )
-  let selectedSummary = $derived(
+  let _selectedSummary = $derived(
     templatesState.items.find((item) => item.id === selectedId)
   )
   let readOnly = $derived(!!draft && draft.source !== 'disk')

@@ -1,7 +1,13 @@
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
-import { Plugin, PluginKey } from '@tiptap/pm/state'
-import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import {
+  Plugin,
+  PluginKey,
+  type EditorState,
+  type Transaction
+} from '@tiptap/pm/state'
+import type { Node as PMNode } from '@tiptap/pm/model'
+import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import { checkWord } from './dictionary'
 
 /**
@@ -44,16 +50,15 @@ function shouldCheck(word: string): boolean {
 /** True if any mark on the node is inline code or a link. Uses the text node's
  *  own `.marks` (authoritative) rather than resolvedPos.marks(), which at a
  *  text-node boundary associates with the preceding node and misses the mark. */
-function hasCodeOrLinkMark(node: any): boolean {
+function hasCodeOrLinkMark(node: PMNode): boolean {
   return node.marks.some(
-    (m: { type: { name: string } }) =>
-      m.type.name === 'code' || m.type.name === 'link'
+    (m) => m.type.name === 'code' || m.type.name === 'link'
   )
 }
 
 /** True if `pos` sits inside a fenced code block (an ancestor node check —
  *  code-block content carries no inline code mark). */
-function isInsideCodeBlock(doc: any, pos: number): boolean {
+function isInsideCodeBlock(doc: PMNode, pos: number): boolean {
   const $pos = doc.resolve(pos)
   for (let depth = $pos.depth; depth > 0; depth--) {
     if ($pos.node(depth).type.name === 'codeBlock') return true
@@ -62,9 +67,9 @@ function isInsideCodeBlock(doc: any, pos: number): boolean {
 }
 
 /** Build the full set of misspelling decorations for a doc. */
-function buildDecorations(doc: any): Decoration[] {
+function buildDecorations(doc: PMNode): Decoration[] {
   const decos: Decoration[] = []
-  doc.descendants((node: any, pos: number) => {
+  doc.descendants((node: PMNode, pos: number) => {
     // Text nodes must be handled first — ProseMirror marks text nodes
     // isAtom=true too, so the atomic-node skip below would otherwise drop
     // them. Process text; skip atomic non-text nodes (embeds/refs/mentions/
@@ -113,10 +118,15 @@ export const Spellcheck = Extension.create({
       new Plugin({
         key,
         state: {
-          init(_: any, state: any) {
+          init(_config, state: EditorState) {
             return DecorationSet.create(state.doc, buildDecorations(state.doc))
           },
-          apply(tr: any, prev: DecorationSet, _oldState: any, newState: any) {
+          apply(
+            tr: Transaction,
+            prev: DecorationSet,
+            _oldState: EditorState,
+            newState: EditorState
+          ) {
             if (tr.getMeta(RECHECK_META)) {
               return DecorationSet.create(
                 newState.doc,
@@ -135,13 +145,13 @@ export const Spellcheck = Extension.create({
           attributes: {
             spellcheck: 'false'
           },
-          decorations(state: any) {
+          decorations(state: EditorState) {
             return key.getState(state) as DecorationSet
           }
         },
-        view(view: any) {
+        view(_view: EditorView) {
           return {
-            update(v: any, prevState: any) {
+            update(v: EditorView, prevState: EditorState) {
               // Only schedule a recheck when the DOC changed (not selection-only).
               if (v.state.doc.eq(prevState.doc)) return
               if (timer) clearTimeout(timer)

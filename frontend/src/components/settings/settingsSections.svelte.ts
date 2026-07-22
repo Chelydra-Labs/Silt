@@ -1,3 +1,4 @@
+import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 // Shared derivation of the settings section list, consumed by both
 // SettingsNav (the sidebar tablist) and SettingsPanel (the content tabpanel).
 // Splitting SettingsShell into nav + panel (#511 rework) means both render
@@ -103,7 +104,7 @@ export function getSettingsSections(): SettingsSection[] {
     })
   }
   // Third-party: 'settings-panel' iframe surface (one per plugin).
-  const seen = new Set(pluginSections.map((s) => s.id))
+  const seen = new SvelteSet(pluginSections.map((s) => s.id))
   for (const surface of settingsSurfaces) {
     const id = `plugin:${surface.pluginID}`
     if (seen.has(id)) continue
@@ -197,7 +198,9 @@ export function getSettingsSections(): SettingsSection[] {
 
   // Stable group order so each divider appears once; preserve relative order
   // within a group (core tabs before plugin tabs that share the group).
-  const groupRank = new Map(SETTINGS_GROUP_ORDER.map((g, i) => [g, i] as const))
+  const groupRank = new SvelteMap(
+    SETTINGS_GROUP_ORDER.map((g, i) => [g, i] as const)
+  )
   return core
     .map((s, i) => ({ s, i }))
     .sort((a, b) => {

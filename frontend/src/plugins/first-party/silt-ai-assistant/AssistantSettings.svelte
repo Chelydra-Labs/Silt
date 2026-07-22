@@ -31,10 +31,10 @@
   let loaded = $state(false)
 
   const chatUnconfigured = $derived(
-    aiProviderNeedsSetup(settings.config?.ai?.chat as any)
+    aiProviderNeedsSetup(settings.config?.ai?.chat)
   )
   const embedUnconfigured = $derived(
-    embeddingProviderNeedsSetup(settings.config?.ai?.embedding as any)
+    embeddingProviderNeedsSetup(settings.config?.ai?.embedding)
   )
 
   async function refresh() {

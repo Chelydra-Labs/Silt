@@ -58,7 +58,14 @@ describe('TipTap engine smoke', () => {
     editor.commands.focus()
     editor.commands.insertContent('1)')
     editor.view.someProp('handleTextInput', (f) =>
-      (f as any)(editor.view, 3, 3, ' ')
+      (
+        f as (
+          view: typeof editor.view,
+          from: number,
+          to: number,
+          text: string
+        ) => boolean
+      )(editor.view, 3, 3, ' ')
     )
 
     const node = editor.state.doc.child(0)
@@ -98,7 +105,14 @@ describe('TipTap engine smoke', () => {
     editor.commands.focus()
     editor.commands.insertContent('-')
     editor.view.someProp('handleTextInput', (f) =>
-      (f as any)(editor.view, 2, 2, ' ')
+      (
+        f as (
+          view: typeof editor.view,
+          from: number,
+          to: number,
+          text: string
+        ) => boolean
+      )(editor.view, 2, 2, ' ')
     )
 
     const node = editor.state.doc.child(0)
@@ -138,7 +152,14 @@ describe('TipTap engine smoke', () => {
     editor.commands.focus()
     editor.commands.insertContent('[]')
     editor.view.someProp('handleTextInput', (f) =>
-      (f as any)(editor.view, 3, 3, ' ')
+      (
+        f as (
+          view: typeof editor.view,
+          from: number,
+          to: number,
+          text: string
+        ) => boolean
+      )(editor.view, 3, 3, ' ')
     )
 
     const node = editor.state.doc.child(0)
@@ -179,7 +200,14 @@ describe('TipTap engine smoke', () => {
     editor.commands.focus()
     editor.commands.insertContent('[ ]')
     editor.view.someProp('handleTextInput', (f) =>
-      (f as any)(editor.view, 4, 4, ' ')
+      (
+        f as (
+          view: typeof editor.view,
+          from: number,
+          to: number,
+          text: string
+        ) => boolean
+      )(editor.view, 4, 4, ' ')
     )
 
     const node = editor.state.doc.child(0)
@@ -220,7 +248,14 @@ describe('TipTap engine smoke', () => {
     editor.commands.focus()
     editor.commands.insertContent('[x]')
     editor.view.someProp('handleTextInput', (f) =>
-      (f as any)(editor.view, 4, 4, ' ')
+      (
+        f as (
+          view: typeof editor.view,
+          from: number,
+          to: number,
+          text: string
+        ) => boolean
+      )(editor.view, 4, 4, ' ')
     )
 
     const node = editor.state.doc.child(0)
@@ -261,7 +296,14 @@ describe('TipTap engine smoke', () => {
     editor.commands.focus()
     editor.commands.insertContent('[X]')
     editor.view.someProp('handleTextInput', (f) =>
-      (f as any)(editor.view, 4, 4, ' ')
+      (
+        f as (
+          view: typeof editor.view,
+          from: number,
+          to: number,
+          text: string
+        ) => boolean
+      )(editor.view, 4, 4, ' ')
     )
 
     const node = editor.state.doc.child(0)

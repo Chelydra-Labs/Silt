@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteMap } from 'svelte/reactivity'
   import { onMount, tick } from 'svelte'
   import { fly } from 'svelte/transition'
   import type { PluginContext, SubtreeBlock } from '../../../sdk'
@@ -136,7 +137,7 @@
    */
   function buildThread(blocks: SubtreeBlock[], taskId: string): Comment[] {
     const notes = (blocks ?? []).filter(isNoteBlock)
-    const byId = new Map(notes.map((b) => [b.id, b]))
+    const byId = new SvelteMap(notes.map((b) => [b.id, b]))
 
     function isTopLevel(b: SubtreeBlock): boolean {
       return !b.parent_id || b.parent_id === taskId
@@ -156,7 +157,7 @@
     }
 
     const tops: Comment[] = []
-    const repliesByTop = new Map<string, Comment[]>()
+    const repliesByTop = new SvelteMap<string, Comment[]>()
 
     for (const b of notes) {
       const c = toComment(b)
@@ -455,7 +456,7 @@
 
 {#snippet commentBody(c: Comment)}
   <div class="text-type-sm text-text-primary leading-snug">
-    {#each splitBold(c.body) as run}
+    {#each splitBold(c.body) as run, runIdx (runIdx)}
       {#if run.bold}
         <strong>
           <RichText text={run.text} {notebook} {section} {page} {fileDate} />

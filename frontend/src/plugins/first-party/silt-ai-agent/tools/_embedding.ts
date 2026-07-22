@@ -334,7 +334,7 @@ async function readCachedVectors(
   if (candidates.length === 0) return new Map()
   const ids = candidates.map((c) => c.id)
   const placeholders = ids.map(() => '?').join(',')
-  let rows: Record<string, unknown>[] = []
+  let rows: Record<string, unknown>[]
   try {
     const res = await ctx.pluginDb.query(
       `SELECT block_id, content_hash, provider, model, dimensions, task_type, vector FROM block_vectors ` +

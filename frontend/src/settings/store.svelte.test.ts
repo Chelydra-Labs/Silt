@@ -37,14 +37,14 @@ vi.mock('@wailsio/runtime', () => ({
     }
   },
   Create: {
-    Nullable: (fn: any) => fn,
+    Nullable: (fn: unknown) => fn,
     Array: () => [],
     Map: () => ({}),
     Any: {}
   }
 }))
 
-import { settings, toggleDevMode, toggleFormatToolbar } from './store.svelte'
+import { settings, toggleDevMode, type SystemConfig } from './store.svelte'
 
 function resetConfig(): void {
   settings.config = {
@@ -53,7 +53,7 @@ function resetConfig(): void {
       show_format_toolbar: true
     },
     editor: {}
-  } as any
+  } as SystemConfig
   settings.saving = false
   settings.error = ''
   settings.dirty = false

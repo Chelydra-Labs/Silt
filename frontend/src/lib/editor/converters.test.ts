@@ -714,7 +714,7 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     )
     // Header cells should carry align attrs.
     const headerAligns = (rows[0]?.content || []).map(
-      (c) => ((c.attrs || {}) as Record<string, any>).align
+      (c) => ((c.attrs || {}) as Record<string, unknown>).align
     )
     expect(headerAligns).toEqual(['left', 'center', 'right'])
     // Save: separator should include alignment markers.
@@ -728,7 +728,7 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
       (blocksToDoc(back).content[0]?.content || []).filter(
         (c) => c.type === 'tableRow'
       )[0]?.content || []
-    ).map((c) => ((c.attrs || {}) as Record<string, any>).align)
+    ).map((c) => ((c.attrs || {}) as Record<string, unknown>).align)
     expect(reparsedAligns).toEqual(['left', 'center', 'right'])
   })
 
@@ -814,7 +814,7 @@ describe('blocksToDoc / docToBlocks pure conversion', () => {
     expect(doc.content[0].type).toBe('noteBlock')
     expect(doc.content[0].content).toEqual([])
     // New pages open as blank prose — no bullet by default.
-    expect((doc.content[0].attrs as any).bullet).toBe('')
+    expect((doc.content[0].attrs as Record<string, unknown>).bullet).toBe('')
   })
 
   it('blocksToDoc([]) → docToBlocks → empty raw_text (blank page round-trip)', () => {
@@ -1092,14 +1092,16 @@ describe('uniqueIdPlugin', () => {
       clean_text: `See {{embed:${UUID_A}}} for context.`
     })
     const doc = blocksToDoc([block])
-    const noteNode = doc.content[0] as any
-    const embeds = noteNode.content.filter((c: any) => c.type === 'embedNode')
+    const noteNode = doc.content![0]! as import('./types').NodeJSON
+    const embeds = noteNode.content!.filter(
+      (c: import('./types').NodeJSON) => c.type === 'embedNode'
+    )
     expect(embeds).toHaveLength(1)
-    expect(embeds[0].attrs.uuid).toBe(UUID_A)
+    expect(embeds[0]!.attrs!.uuid).toBe(UUID_A)
     // Text before and after the embed.
-    const texts = noteNode.content
-      .filter((c: any) => c.type === 'text')
-      .map((c: any) => c.text)
+    const texts = noteNode
+      .content!.filter((c: import('./types').NodeJSON) => c.type === 'text')
+      .map((c: import('./types').NodeJSON) => c.text)
       .join('')
     expect(texts).toBe('See  for context.')
   })
@@ -1109,13 +1111,13 @@ describe('uniqueIdPlugin', () => {
       clean_text: `Linked: ((${UUID_A})) and ((${UUID_B})).`
     })
     const doc = blocksToDoc([block])
-    const noteNode = doc.content[0] as any
-    const refs = noteNode.content.filter(
-      (c: any) => c.type === 'blockReferenceNode'
+    const noteNode = doc.content![0]! as import('./types').NodeJSON
+    const refs = noteNode.content!.filter(
+      (c: import('./types').NodeJSON) => c.type === 'blockReferenceNode'
     )
     expect(refs).toHaveLength(2)
-    expect(refs[0].attrs.uuid).toBe(UUID_A)
-    expect(refs[1].attrs.uuid).toBe(UUID_B)
+    expect(refs[0]!.attrs!.uuid).toBe(UUID_A)
+    expect(refs[1]!.attrs!.uuid).toBe(UUID_B)
   })
 
   it('round-trips embeds and refs through docToBlocks (#85)', () => {
@@ -1134,14 +1136,16 @@ describe('uniqueIdPlugin', () => {
         'See [[Meetings]] and [[Work/Projects/Site#Goals]] plus [[Inbox|To process]].'
     })
     const doc = blocksToDoc([block])
-    const noteNode = doc.content[0] as any
-    const links = noteNode.content.filter((c: any) => c.type === 'pageLinkNode')
+    const noteNode = doc.content![0]! as import('./types').NodeJSON
+    const links = noteNode.content!.filter(
+      (c: import('./types').NodeJSON) => c.type === 'pageLinkNode'
+    )
     expect(links).toHaveLength(3)
-    expect(links[0].attrs.target).toBe('Meetings')
-    expect(links[1].attrs.target).toBe('Work/Projects/Site')
-    expect(links[1].attrs.heading).toBe('Goals')
-    expect(links[2].attrs.target).toBe('Inbox')
-    expect(links[2].attrs.alias).toBe('To process')
+    expect(links[0]!.attrs!.target).toBe('Meetings')
+    expect(links[1]!.attrs!.target).toBe('Work/Projects/Site')
+    expect(links[1]!.attrs!.heading).toBe('Goals')
+    expect(links[2]!.attrs!.target).toBe('Inbox')
+    expect(links[2]!.attrs!.alias).toBe('To process')
   })
 
   it('round-trips page links through docToBlocks byte-for-byte (#545)', () => {
@@ -1161,11 +1165,11 @@ describe('uniqueIdPlugin', () => {
         'Link [[linked:team-drive/Work/Projects/Roadmap|Shared roadmap]] end'
     })
     const doc = blocksToDoc([block])
-    const link = (doc.content[0] as any).content.find(
-      (child: any) => child.type === 'pageLinkNode'
+    const link = (doc.content[0] as import('./types').NodeJSON).content!.find(
+      (child: import('./types').NodeJSON) => child.type === 'pageLinkNode'
     )
 
-    expect(link.attrs.target).toBe('linked:team-drive/Work/Projects/Roadmap')
+    expect(link!.attrs!.target).toBe('linked:team-drive/Work/Projects/Roadmap')
     expect(docToBlocks(doc)[0].clean_text).toBe(block.clean_text)
   })
 
@@ -1178,7 +1182,7 @@ describe('uniqueIdPlugin', () => {
         {
           type: 'embedNode',
           attrs: { id: UUID_A, uuid: UUID_A }
-        } as any
+        }
       ]
     }
     const back = docToBlocks(doc)
@@ -1230,7 +1234,7 @@ describe('uniqueIdPlugin', () => {
 
   it('round-trips a generic embedBlock node through the silt-embed marker (#110)', () => {
     const editor = new Editor({
-      // @ts-ignore — minimal schema for doc round-trip; the converter functions
+      // @ts-expect-error — minimal schema for doc round-trip; the converter functions
       // operate on JSON, not the live editor, so a bare doc is sufficient.
       extensions: [StarterKit.configure({ paragraph: true })]
     })
@@ -1245,8 +1249,12 @@ describe('uniqueIdPlugin', () => {
     const block = mkBlock('NOTE', { clean_text: marker })
     const doc = blocksToDoc([block])
     expect(doc.content![0].type).toBe('embedBlock')
-    expect((doc.content![0].attrs as any).embedType).toBe('attachment')
-    expect((doc.content![0].attrs as any).src).toBe('attachments/report.pdf')
+    expect((doc.content![0].attrs as Record<string, unknown>).embedType).toBe(
+      'attachment'
+    )
+    expect((doc.content![0].attrs as Record<string, unknown>).src).toBe(
+      'attachments/report.pdf'
+    )
 
     // embedBlock node → docToBlocks → NOTE block with the marker preserved.
     const back = docToBlocks(doc)
@@ -1276,7 +1284,9 @@ describe('uniqueIdPlugin', () => {
     })
     const block = mkBlock('NOTE', { clean_text: marker })
     const doc = blocksToDoc([block])
-    expect((doc.content![0].attrs as any).notebook).toBe('Work')
+    expect((doc.content![0].attrs as Record<string, unknown>).notebook).toBe(
+      'Work'
+    )
 
     const back = docToBlocks(doc)
     expect(back).toHaveLength(1)
@@ -1304,8 +1314,8 @@ describe('sole-content atomic bullet preservation (#327)', () => {
     })
     const doc = blocksToDoc([block])
     expect(doc.content![0].type).toBe('blockMathNode')
-    expect((doc.content![0].attrs as any).bullet).toBe('- ')
-    expect((doc.content![0].attrs as any).latex).toBe('x')
+    expect((doc.content![0].attrs as Record<string, unknown>).bullet).toBe('- ')
+    expect((doc.content![0].attrs as Record<string, unknown>).latex).toBe('x')
     const back = docToBlocks(doc)
     expect(back[0].raw_text).toBe('- $$x$$')
     expect(back[0].clean_text).toBe('$$x$$')
@@ -1318,9 +1328,10 @@ describe('sole-content atomic bullet preservation (#327)', () => {
         clean_text: '$$x$$'
       })
       const doc = blocksToDoc([block])
-      expect((doc.content![0].attrs as any).bullet, `bullet=${bullet}`).toBe(
-        bullet
-      )
+      expect(
+        (doc.content![0].attrs as Record<string, unknown>).bullet,
+        `bullet=${bullet}`
+      ).toBe(bullet)
       const back = docToBlocks(doc)
       expect(back[0].raw_text).toBe(`${bullet}$$x$$`)
       expect(back[0].clean_text).toBe('$$x$$')
@@ -1334,8 +1345,8 @@ describe('sole-content atomic bullet preservation (#327)', () => {
     })
     const doc = blocksToDoc([block])
     expect(doc.content![0].type).toBe('embedNode')
-    expect((doc.content![0].attrs as any).bullet).toBe('- ')
-    expect((doc.content![0].attrs as any).uuid).toBe(UUID)
+    expect((doc.content![0].attrs as Record<string, unknown>).bullet).toBe('- ')
+    expect((doc.content![0].attrs as Record<string, unknown>).uuid).toBe(UUID)
     const back = docToBlocks(doc)
     expect(back[0].raw_text).toBe(`- {{embed:${UUID}}}`)
     expect(back[0].clean_text).toBe(`{{embed:${UUID}}}`)
@@ -1352,7 +1363,7 @@ describe('sole-content atomic bullet preservation (#327)', () => {
     })
     const doc = blocksToDoc([block])
     expect(doc.content![0].type).toBe('embedBlock')
-    expect((doc.content![0].attrs as any).bullet).toBe('- ')
+    expect((doc.content![0].attrs as Record<string, unknown>).bullet).toBe('- ')
     const back = docToBlocks(doc)
     expect(back[0].raw_text).toBe(`- ${marker}`)
     expect(back[0].clean_text).toBe(marker)
@@ -1362,7 +1373,7 @@ describe('sole-content atomic bullet preservation (#327)', () => {
     const block = mkBlock('NOTE', { raw_text: '$$x$$', clean_text: '$$x$$' })
     const doc = blocksToDoc([block])
     expect(doc.content![0].type).toBe('blockMathNode')
-    expect((doc.content![0].attrs as any).bullet).toBe('')
+    expect((doc.content![0].attrs as Record<string, unknown>).bullet).toBe('')
     const back = docToBlocks(doc)
     expect(back[0].raw_text).toBe('$$x$$')
     expect(back[0].clean_text).toBe('$$x$$')
@@ -1375,7 +1386,7 @@ describe('sole-content atomic bullet preservation (#327)', () => {
     })
     const doc = blocksToDoc([block])
     expect(doc.content![0].type).toBe('embedNode')
-    expect((doc.content![0].attrs as any).bullet).toBe('')
+    expect((doc.content![0].attrs as Record<string, unknown>).bullet).toBe('')
     const back = docToBlocks(doc)
     expect(back[0].raw_text).toBe(`{{embed:${UUID}}}`)
     expect(back[0].clean_text).toBe(`{{embed:${UUID}}}`)
@@ -1389,7 +1400,7 @@ describe('sole-content atomic bullet preservation (#327)', () => {
     })
     const doc = blocksToDoc([block])
     expect(doc.content![0].type).toBe('embedBlock')
-    expect((doc.content![0].attrs as any).bullet).toBe('')
+    expect((doc.content![0].attrs as Record<string, unknown>).bullet).toBe('')
     const back = docToBlocks(doc)
     expect(back[0].raw_text).toBe(marker)
     expect(back[0].clean_text).toBe(marker)
@@ -1558,7 +1569,9 @@ describe('block alignment round-trips (#173)', () => {
     const cleanText = 'centered text <!-- silt-align: center -->'
     const block = mkBlock('NOTE', { clean_text: cleanText })
     const doc = blocksToDoc([block])
-    expect((doc.content![0].attrs as any).align).toBe('center')
+    expect((doc.content![0].attrs as Record<string, unknown>).align).toBe(
+      'center'
+    )
     const back = docToBlocks(doc)
     expect(back[0].clean_text).toBe(cleanText)
   })
@@ -1567,7 +1580,9 @@ describe('block alignment round-trips (#173)', () => {
     const cleanText = 'Right Title <!-- silt-align: right -->'
     const block = mkBlock('HEADER', { clean_text: cleanText, depth: 1 })
     const doc = blocksToDoc([block])
-    expect((doc.content![0].attrs as any).align).toBe('right')
+    expect((doc.content![0].attrs as Record<string, unknown>).align).toBe(
+      'right'
+    )
     const back = docToBlocks(doc)
     expect(back[0].clean_text).toBe(cleanText)
   })
@@ -1575,7 +1590,9 @@ describe('block alignment round-trips (#173)', () => {
   it('left alignment is the default (no marker)', () => {
     const block = mkBlock('NOTE', { clean_text: 'plain text' })
     const doc = blocksToDoc([block])
-    expect((doc.content![0].attrs as any).align).toBe('left')
+    expect((doc.content![0].attrs as Record<string, unknown>).align).toBe(
+      'left'
+    )
     const back = docToBlocks(doc)
     expect(back[0].clean_text).toBe('plain text')
   })
@@ -1674,7 +1691,9 @@ describe('color mark round-trips (#170)', () => {
     const doc = blocksToDoc([block])
     // Verify the text node has NO link mark (the scheme was rejected).
     const textNode = doc.content![0].content?.[0]
-    expect(textNode?.marks?.some((m: any) => m.type === 'link')).toBeFalsy()
+    expect(
+      textNode?.marks?.some((m: { type: string }) => m.type === 'link')
+    ).toBeFalsy()
     // The text round-trips byte-for-byte as inert literal text.
     const back = docToBlocks(doc)
     expect(back[0].clean_text).toBe(cleanText)
@@ -1685,7 +1704,9 @@ describe('color mark round-trips (#170)', () => {
     const block = mkBlock('NOTE', { clean_text: cleanText })
     const doc = blocksToDoc([block])
     const textNode = doc.content![0].content?.[0]
-    expect(textNode?.marks?.some((m: any) => m.type === 'link')).toBeFalsy()
+    expect(
+      textNode?.marks?.some((m: { type: string }) => m.type === 'link')
+    ).toBeFalsy()
     const back = docToBlocks(doc)
     expect(back[0].clean_text).toBe(cleanText)
   })
@@ -1901,7 +1922,7 @@ describe('tokenize / validate pipeline (#198)', () => {
     )
     expect(linkMarks).toHaveLength(0)
     const textTokens = tokens.filter((t) => t.kind === 'text')
-    const joined = textTokens.map((t) => (t as any).text).join('')
+    const joined = textTokens.map((t) => (t as { text?: string }).text).join('')
     expect(joined).toContain('click')
   })
 

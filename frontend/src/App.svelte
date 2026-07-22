@@ -315,7 +315,6 @@
   let sidebarCollapsed = $state(false)
   let sidebarWidth = $state(256)
   let manuallyCollapsed = $state(false)
-  let sidebarDragging = $state(false)
 
   // Dev Mode–only Inspect on empty content chrome (#683) — no other menu there.
   let emptyChromeMenu = $state<{
@@ -767,7 +766,6 @@
 
   // Focused block ancestry path highlighting
   let activeFocusedBlockAncestors = $state<string[]>([])
-  let searchTargetDate = $state('')
   let searchTargetBlockId = $state('')
   let searchTargetHeading = $state('')
   let searchTargetKey = $state('')
@@ -860,7 +858,7 @@
     let prevDisabled: string[] = settings.config?.plugins?.disabled ?? []
     // Initialize the tab hot-reload baseline from the settings store.
     prevOpenTabsKey = tabSetKey(settings.config?.ui?.open_tabs)
-    const offConfigChangedReload = Events.On('config:changed', (ev: any) => {
+    const offConfigChangedReload = Events.On('config:changed', (ev) => {
       const cfg: SystemConfig = ev.data
       const next = (cfg?.plugins?.disabled ?? []) as string[]
       if (!arraysEqual(prevDisabled, next)) {
@@ -1206,7 +1204,7 @@
     // so the UI reflects the new workspace. If the optional old-vault removal
     // didn't happen, payload.warning carries the reason → surface a non-
     // blocking toast (the move itself succeeded).
-    const offVaultMoved = Events.On('vault:moved', (ev: any) => {
+    const offVaultMoved = Events.On('vault:moved', (ev) => {
       const e: { from?: string; to?: string; warning?: string } = ev.data
       activeNotebook = ''
       activeSection = ''
@@ -1249,12 +1247,9 @@
       pendingLegacyGrants = grants
       showGrantsMigration = true
     }
-    const offGrantsMigration = Events.On(
-      'grants:migration-required',
-      (ev: any) => {
-        handleGrantsMigration(ev.data)
-      }
-    )
+    const offGrantsMigration = Events.On('grants:migration-required', (ev) => {
+      handleGrantsMigration(ev.data)
+    })
     // F3: linked-notebook quarantined — the root was moved or tampered with.
     // Refresh the quarantine list so the modal shows the latest set.
     async function handleLinkedQuarantined() {
@@ -1281,7 +1276,7 @@
         autoDismissMs: 0
       })
     }
-    const offVaultInitError = Events.On('vault:init-error', (ev: any) => {
+    const offVaultInitError = Events.On('vault:init-error', (ev) => {
       handleVaultInitError(ev.data)
     })
     // Non-fatal init warnings (symlink skips, permission errors during scan).
@@ -1294,7 +1289,7 @@
         autoDismissMs: 0
       })
     }
-    const offVaultInitWarnings = Events.On('vault:init-warnings', (ev: any) => {
+    const offVaultInitWarnings = Events.On('vault:init-warnings', (ev) => {
       handleVaultInitWarnings(ev.data)
     })
     // fsnotify subscription failures (watch limit, permissions). File-change
@@ -1308,19 +1303,16 @@
         autoDismissMs: 0
       })
     }
-    const offVaultWatchCoverage = Events.On(
-      'vault:watch-coverage',
-      (ev: any) => {
-        handleVaultWatchCoverage(ev.data)
-      }
-    )
+    const offVaultWatchCoverage = Events.On('vault:watch-coverage', (ev) => {
+      handleVaultWatchCoverage(ev.data)
+    })
     // Mass id re-mint detection (#443): an external tool/sync stripped the
     // block-identity comments from a previously-indexed file, so the parser
     // re-minted fresh UUIDs — which can break note-to-note links pointing at
     // those blocks. The toast (built by reMintToast) is sticky, leads with
     // the user-visible impact, and offers a "Show file" CTA. The builder is
     // extracted so its payload-shaping contract is unit-testable.
-    const offReMintWarning = Events.On('index:re-mint-warning', (ev: any) => {
+    const offReMintWarning = Events.On('index:re-mint-warning', (ev) => {
       const w: ReMintWarning = ev.data
       if (!w) return
       pushNotification(reMintToast(w, openPage))
@@ -1328,32 +1320,28 @@
     // Wiki-link rename rewrite summary (#545 harden). Partial failures used
     // to be log-only; surface a toast so inbound [[…]] that failed to update
     // are not silent.
-    const offPageLinksRewritten = Events.On(
-      'page-links:rewritten',
-      (ev: any) => {
-        const d = ev?.data as
-          { rewritten?: number; failed?: number } | undefined
-        if (!d) return
-        const rewritten = d.rewritten ?? 0
-        const failed = d.failed ?? 0
-        if (failed > 0) {
-          pushNotification({
-            kind: 'error',
-            message:
-              rewritten > 0
-                ? `Updated ${rewritten} linked page(s); ${failed} could not be rewritten.`
-                : `Could not rewrite wiki-links in ${failed} page(s). Check the log for details.`,
-            autoDismissMs: 0
-          })
-        } else if (rewritten > 0) {
-          pushNotification({
-            kind: 'info',
-            message: `Updated wiki-links in ${rewritten} page(s).`,
-            autoDismissMs: 4000
-          })
-        }
+    const offPageLinksRewritten = Events.On('page-links:rewritten', (ev) => {
+      const d = ev?.data as { rewritten?: number; failed?: number } | undefined
+      if (!d) return
+      const rewritten = d.rewritten ?? 0
+      const failed = d.failed ?? 0
+      if (failed > 0) {
+        pushNotification({
+          kind: 'error',
+          message:
+            rewritten > 0
+              ? `Updated ${rewritten} linked page(s); ${failed} could not be rewritten.`
+              : `Could not rewrite wiki-links in ${failed} page(s). Check the log for details.`,
+          autoDismissMs: 0
+        })
+      } else if (rewritten > 0) {
+        pushNotification({
+          kind: 'info',
+          message: `Updated wiki-links in ${rewritten} page(s).`,
+          autoDismissMs: 4000
+        })
       }
-    )
+    })
 
     // Native menu events (#503) — the Go-side menu items emit these; wire
     // them to the same handlers the keyboard shortcuts use so menu and
@@ -1395,25 +1383,25 @@
     // frontend ready (stop queueing), drain the queue, and replay each event
     // through the same named handler its live Events.On listener uses, so a
     // startup event is indistinguishable from a live one to the handler.
-    function dispatchStartupEvent(name: string, data: any): void {
+    function dispatchStartupEvent(name: string, data: unknown): void {
       switch (name) {
         case 'settings:fingerprint-mismatch':
           handleSettingsMismatch()
           break
         case 'grants:migration-required':
-          handleGrantsMigration(data)
+          handleGrantsMigration(data as Record<string, Record<string, string>>)
           break
         case 'linked-notebook:quarantined':
           void handleLinkedQuarantined()
           break
         case 'vault:init-error':
-          handleVaultInitError(data)
+          handleVaultInitError(data as string)
           break
         case 'vault:init-warnings':
-          handleVaultInitWarnings(data)
+          handleVaultInitWarnings(data as string[])
           break
         case 'vault:watch-coverage':
-          handleVaultWatchCoverage(data)
+          handleVaultWatchCoverage(data as string[])
           break
         default:
           break
@@ -1575,7 +1563,6 @@
       blockId
     })
     activeView = 'notes'
-    searchTargetDate = date
     searchTargetBlockId = blockId
     searchTargetHeading = ''
     searchTargetKey = `${date}:${blockId}:${Date.now()}`
@@ -1602,8 +1589,6 @@
   }
 
   // Sidebar resize handlers (#63).
-  const MIN_MAIN_WIDTH = 480
-
   function handleSidebarWidthChange(px: number) {
     sidebarWidth = px
   }
@@ -1617,13 +1602,6 @@
         console.error('SetSidebarWidth failed:', e)
       )
     }, 250)
-  }
-
-  function handleSidebarDragStart() {
-    sidebarDragging = true
-  }
-  function handleSidebarDragEnd() {
-    sidebarDragging = false
   }
 
   function handleSearchResultJump(res: SearchModalResult): void {
@@ -1839,7 +1817,7 @@
           {/if}
           <span
             class="material-symbols-outlined text-type-2xl"
-            style:color={`var(--color-nav-icon-settings)`}>settings</span
+            style:color="var(--color-nav-icon-settings)">settings</span
           >
         </button>
       </div>
@@ -1873,7 +1851,6 @@
           bind:settingsSection
           bind:collapsed={sidebarCollapsed}
           {sidebarWidth}
-          {sidebarDragging}
           onSelectNotebook={selectNotebookContext}
           onSelectSection={(sec) => (activeSection = sec)}
           onSelectPage={(nb, sec, pg) => {
@@ -2315,8 +2292,8 @@
         <h2 id="grants-migration-title">Move plugin permissions</h2>
         <p id="grants-migration-desc">
           Silt is moving plugin permissions to per-host storage so they no
-          longer travel with synced vaults. {Object.keys(pendingLegacyGrants)
-            .length}{' '}
+          longer travel with synced vaults.
+          {Object.keys(pendingLegacyGrants).length}
           plugin(s) have existing permissions in this vault. Confirm to move them,
           or dismiss to re-grant each plugin on first use.
         </p>

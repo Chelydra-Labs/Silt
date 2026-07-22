@@ -12,7 +12,6 @@
   // tokens) and SearchModal.svelte's overlay structure. No hard-coded colors.
   import { onMount, onDestroy } from 'svelte'
   import {
-    GetTemplate,
     RenderTemplate,
     CreatePageFromTemplate,
     RenderTemplateBlocks
@@ -548,6 +547,8 @@
               data-testid="template-preview"
               aria-label="Template preview"
             >
+              <!-- previewHtml is DOMPurify-sanitized in renderTemplatePreview -->
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown preview -->
               {@html previewHtml}
             </div>
           </div>

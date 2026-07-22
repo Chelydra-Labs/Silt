@@ -128,7 +128,7 @@
       >No suggestions</button
     >
   {:else}
-    {#each suggestions as s, i}
+    {#each suggestions as s, i (s + '-' + i)}
       <button
         type="button"
         class="menu-item"

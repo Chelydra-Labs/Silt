@@ -4,6 +4,22 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
+type MockTemplate = {
+  id: string
+  title: string
+  description: string
+  category: string
+  icon: string
+  source: string
+  plugin_id?: string
+  placeholders: Array<{
+    name: string
+    description: string
+    required: boolean
+    default?: string
+  }>
+}
+
 const mocks = vi.hoisted(() => ({
   templatesState: {
     items: [
@@ -27,7 +43,7 @@ const mocks = vi.hoisted(() => ({
           { name: 'meeting_title', description: 'Title', required: true }
         ]
       }
-    ],
+    ] as MockTemplate[],
     loadError: null as string | null,
     loading: false
   },
@@ -67,7 +83,7 @@ vi.mock('@wailsio/runtime', () => ({
     }
   },
   Create: {
-    Nullable: (fn: any) => fn,
+    Nullable: (fn: unknown) => fn,
     Array: () => [],
     Map: () => ({}),
     Any: {}
@@ -306,9 +322,9 @@ describe('TemplatePicker (#55)', () => {
             description: 'Topic',
             required: true,
             default: 'General'
-          } as any
+          }
         ]
-      } as any
+      }
     ]
     try {
       const { CreatePageFromTemplate } =
@@ -431,7 +447,7 @@ describe('TemplatePicker (#55)', () => {
       source: 'plugin',
       plugin_id: 'silt-tasks',
       placeholders: []
-    } as any)
+    })
     render(TemplatePicker, {
       props: { mode: 'insert', onClose: vi.fn(), onInsertBlocks: vi.fn() }
     })

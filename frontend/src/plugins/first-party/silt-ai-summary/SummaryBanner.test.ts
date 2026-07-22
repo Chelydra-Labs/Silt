@@ -62,8 +62,8 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
 
 const PAGE_ID = 'Work/Journal/Daily'
 
-function setPageState(state: any) {
-  mockController.state[PAGE_ID] = state
+function setPageState(state: unknown) {
+  mockController.state[PAGE_ID] = state as never
 }
 function clearPageState() {
   for (const k of Object.keys(mockController.state)) {

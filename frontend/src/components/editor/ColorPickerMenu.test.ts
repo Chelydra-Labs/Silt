@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { render, fireEvent } from '@testing-library/svelte'
 import ColorPickerMenu from './ColorPickerMenu.svelte'
 
@@ -15,18 +15,18 @@ function makeMockEditor() {
 
 describe('ColorPickerMenu', () => {
   it('opens the color palette on trigger click', async () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { getByRole, getAllByRole } = render(ColorPickerMenu, {
-      props: { editor, markType: 'textColor', isDark: false }
+      props: { editor: editor as never, markType: 'textColor', isDark: false }
     })
     await fireEvent.click(getByRole('button'))
     expect(getAllByRole('menuitem').length).toBeGreaterThan(0)
   })
 
   it('closes the menu on click outside', async () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { getByRole, queryAllByRole } = render(ColorPickerMenu, {
-      props: { editor, markType: 'textColor', isDark: false }
+      props: { editor: editor as never, markType: 'textColor', isDark: false }
     })
     await fireEvent.click(getByRole('button'))
     expect(queryAllByRole('menuitem').length).toBeGreaterThan(0)

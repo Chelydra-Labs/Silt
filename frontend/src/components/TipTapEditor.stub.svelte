@@ -1,15 +1,16 @@
 <script lang="ts">
   let {
-    notebook,
-    section,
+    notebook: _notebook,
+    section: _section,
     page,
-    blocks,
-    activeFocusedBlockAncestors,
-    onBlockFocus,
-    onBlockBlur,
-    onUpdate,
+    blocks: _blocks,
+    activeFocusedBlockAncestors: _activeFocusedBlockAncestors,
+    onBlockFocus: _onBlockFocus,
+    onBlockBlur: _onBlockBlur,
+    onUpdate: _onUpdate,
+    // eslint-disable-next-line no-useless-assignment -- $bindable out-param for parent
     editorInstance = $bindable(null),
-    activeMarks,
+    activeMarks: _activeMarks,
     onSaveStateChange,
     onReady
   } = $props()
@@ -22,7 +23,8 @@
   let selectionFrom = $state(1)
 
   function buildStub() {
-    const seed = (globalThis as any).__tiptapStubSeed as
+    const seed = (globalThis as unknown as Record<string, unknown>)
+      .__tiptapStubSeed as
       | {
           from: number
           $from: {
@@ -54,7 +56,8 @@
         },
         get doc() {
           return (
-            (globalThis as any).__tiptapStubDoc ?? {
+            (globalThis as unknown as Record<string, unknown>)
+              .__tiptapStubDoc ?? {
               descendants() {
                 /* empty */
               }
@@ -65,7 +68,9 @@
       commands: {
         setTextSelection(pos: number) {
           selectionFrom = pos
-          ;(globalThis as any).__tiptapStubSelection = pos
+          ;(
+            globalThis as unknown as Record<string, unknown>
+          ).__tiptapStubSelection = pos
           return true
         },
         focus() {
@@ -78,7 +83,7 @@
   // Mirror the real editor's onCreate readiness signal so the parent's
   // post-mount work (scroll/caret restore across Edit↔Source) runs in tests.
   $effect(() => {
-    editorInstance = buildStub() as any
+    editorInstance = buildStub() as never
     onReady?.()
   })
 </script>

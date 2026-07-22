@@ -96,7 +96,7 @@ describe('PluginView', () => {
     // Register a mock plugin that renders a distinctive marker.
     mocks.loadedPlugins.plugins.set('silt-test', {
       manifest: { id: 'silt-test', name: 'Test Plugin', version: '1.0.0' },
-      component: DummyPlugin,
+      component: DummyPlugin as never,
       source: 'first-party'
     })
     render(PluginView, {
@@ -121,7 +121,7 @@ describe('PluginView', () => {
     // with an empty token.
     mocks.loadedPlugins.plugins.set('silt-test', {
       manifest: { id: 'silt-test', name: 'Test Plugin', version: '1.0.0' },
-      component: DummyPlugin,
+      component: DummyPlugin as never,
       source: 'first-party'
     })
     mocks.loadedPlugins.loadersReady = false
