@@ -4,7 +4,7 @@ name: CI
 # contributor has not installed the hooks locally.
 #
 # Layout (wall-clock optimized, same gates as the former monolithic job):
-#   frontend  — vite build + svelte-check + Vitest (parallel)
+#   frontend  — format:check + lint + vite build + svelte-check + Vitest (parallel)
 #   go-test   — go build/vet/race + inventory + withAIPreflight (parallel)
 #   wails-smoke — full wails3 build (always on main; path-filtered on PRs)
 #   build-and-test — aggregator with the historical required-check name
@@ -59,7 +59,7 @@ jobs:
   # Frontend: bindings + vite + typecheck + unit tests
   # -------------------------------------------------------------------------
   frontend:
-    name: Frontend (build + check + vitest)
+    name: Frontend (format + lint + build + check + vitest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -106,6 +106,14 @@ jobs:
         # omit Linux optional deps (e.g. @esbuild/linux-x64). prepare regenerates
         # frontend/bindings/ from live Go App signatures.
         run: npm install
+
+      - name: Prettier format check
+        working-directory: frontend
+        run: npm run format:check
+
+      - name: ESLint
+        working-directory: frontend
+        run: npm run lint
 
       - name: Build frontend (vite)
         working-directory: frontend
