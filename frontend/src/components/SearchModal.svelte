@@ -327,9 +327,10 @@
 
 <!-- Positioning wrapper: scrim + dialog as siblings (standard modal layout) -->
 <div
-  class="fixed inset-0 bg-black/50 backdrop-blur-[2px] z-[150] flex items-start justify-center pt-28"
+  class="fixed inset-0 bg-black/45 backdrop-blur-[3px] z-[150] flex items-start justify-center pt-28"
 >
   <button
+    type="button"
     tabindex="-1"
     aria-label="Close search"
     onclick={onClose}
@@ -563,8 +564,23 @@
           Type queries to find headers, notes, or checklist items...
         </div>
       {:else if results.length === 0 && !loading}
-        <div class="text-text-muted text-center py-10 font-body-md select-none">
-          No matches found for "{query}"
+        <div
+          class="text-text-muted text-center py-10 font-body-md select-none flex flex-col items-center gap-2"
+        >
+          <span>No matches found for "{query}"</span>
+          {#if notebookFilter || tagFilter || typeFilter}
+            <button
+              type="button"
+              class="text-type-xs text-accent-primary-start hover:underline border-none bg-transparent cursor-pointer"
+              onclick={() => {
+                notebookFilter = ''
+                tagFilter = ''
+                typeFilter = ''
+              }}
+            >
+              Clear active filters
+            </button>
+          {/if}
         </div>
       {:else}
         {#each results as res, idx (res.id + idx)}

@@ -18,8 +18,9 @@
   // may be absent (jsdom tests) — fall back to the default duration.
   const motionMs =
     typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    (import.meta.env?.MODE === 'test' ||
+      (typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches))
       ? 0
       : 200
 
@@ -50,6 +51,7 @@
       role={n.kind === 'error' ? 'alert' : 'status'}
       aria-live={n.kind === 'error' ? 'assertive' : 'polite'}
       in:fly={{ duration: motionMs, y: 12 }}
+      out:fly={{ duration: motionMs, y: -8, opacity: 0 }}
     >
       <span
         class="material-symbols-outlined mt-0.5 text-icon-lg"

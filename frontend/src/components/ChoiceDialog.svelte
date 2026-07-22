@@ -88,6 +88,7 @@
   data-focus-trap
 >
   <button
+    type="button"
     tabindex="-1"
     aria-label={cancelLabel}
     class="absolute inset-0 cursor-default border-none bg-transparent p-0"
