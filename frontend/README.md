@@ -85,9 +85,31 @@ The generated files include:
 
 If `npm run check` reports `Module '...' has no exported member 'X'`, the bindings are stale — re-run `npm run generate` (or `wails3 dev` / `wails3 build`, which also regenerate).
 
-## Testing
+## Quality commands
+
+From `frontend/`:
 
 ```sh
-npm test           # vitest (unit tests for the theme store + injector)
-npm run check      # svelte-check (typecheck)
+npm run format         # Prettier write — formats authored src (ts/svelte/css)
+npm run format:check   # Prettier check — fails if any authored file is unformatted
+npm run lint           # ESLint — authored JS/TS/Svelte under src/ (including tests); zero warnings
+npm run check          # svelte-check — Svelte/TypeScript diagnostics + a11y warnings
+npm test               # Vitest (jsdom unit/component tests)
+npm run build          # production Vite build
 ```
+
+### Tool roles
+
+| Command | Responsibility |
+|--------|----------------|
+| `format` / `format:check` | Formatting only (Prettier + `prettier-plugin-svelte`). CSS is formatting-only — no CSS linter. |
+| `lint` | Authored-source correctness patterns (ESLint recommended JS/TS/Svelte, non-type-aware). Does **not** replace `svelte-check`. |
+| `check` | Svelte compiler diagnostics, TypeScript in components, and a11y warnings. |
+| `test` | Behavior via Vitest/jsdom. No browser e2e. |
+
+### Scope boundaries
+
+- **Included:** `src/**/*.{ts,js,svelte}` for lint; `src/**/*.{ts,svelte,css}` for Prettier.
+- **Excluded:** `bindings/` (Wails-generated, gitignored), `dist/` (build output), `coverage/`, `node_modules/`. Do not hand-edit or format generated bindings — regenerate with `npm run generate` / `npm install`.
+
+Pre-commit (`.githooks/pre-commit`) still auto-formats staged `frontend/src` files with Prettier write mode and re-stages them.
