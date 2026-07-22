@@ -30,7 +30,7 @@ import { dropPoint } from '@tiptap/pm/transform'
 export const INDENT_STEP_PX = 24
 
 // MAX_DEPTH matches the deepest `[data-depth='N']` rule in the editor CSS
-// (frontend/src/index.css:459 — `[data-depth='6']`). The Tab-indent keymap
+// (frontend/src/index.css — `.ProseMirror > div[data-depth='6']`). The Tab-indent keymap
 // bounds indent by previous-sibling-depth + 1 (a relative cap), not an
 // absolute constant, so this is the only absolute cap in the outliner —
 // and it is driven by where the renderer stops drawing indent padding.

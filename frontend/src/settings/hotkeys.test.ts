@@ -193,6 +193,13 @@ describe('configKeyToProseMirrorKey', () => {
     expect(configKeyToProseMirrorKey('Ctrl+/')).toBe('Mod-/')
   })
 
+  it('converts Tab and Shift+Tab to ProseMirror Tab keys', () => {
+    // indent_block / unindent_block defaults; capitalization must match
+    // KeyboardEvent.key ("Tab") or the keymap never fires.
+    expect(configKeyToProseMirrorKey('Tab')).toBe('Tab')
+    expect(configKeyToProseMirrorKey('Shift+Tab')).toBe('Shift-Tab')
+  })
+
   it('returns empty string for empty input', () => {
     expect(configKeyToProseMirrorKey('')).toBe('')
   })
@@ -233,6 +240,22 @@ describe('resolveShortcut', () => {
     const hotkeys = { toggle_quote: 'Ctrl+' }
     expect(resolveShortcut('toggle_quote', 'Mod-Shift-9', hotkeys)).toBe(
       'Mod-Shift-9'
+    )
+  })
+
+  it('resolves indent_block / unindent_block defaults and remaps', () => {
+    expect(resolveShortcut('indent_block', 'Tab', {})).toBe('Tab')
+    expect(resolveShortcut('unindent_block', 'Shift-Tab', {})).toBe('Shift-Tab')
+    expect(
+      resolveShortcut('indent_block', 'Tab', { indent_block: 'Ctrl+]' })
+    ).toBe('Mod-]')
+    expect(
+      resolveShortcut('unindent_block', 'Shift-Tab', {
+        unindent_block: 'Ctrl+['
+      })
+    ).toBe('Mod-[')
+    expect(resolveShortcut('indent_block', 'Tab', { indent_block: '' })).toBe(
+      ''
     )
   })
 })

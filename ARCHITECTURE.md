@@ -1311,8 +1311,11 @@ variables (font-family, font-size, line-height on the contenteditable);
 auto_save_delay_ms drives the triggerAutoSave debounce; focus_highlight_ancestors
 gates the guide-rail active highlight; show_word_count toggles a subtle
 CharacterCount display; focus_mode dims non-active paragraphs; and
-indent_block / unindent_block hotkeys are matched via matchHotkey
-(settings/hotkeys.ts). The cycle_view_layout hotkey is wired in App.svelte's
+indent_block / unindent_block (and other editor-scoped chords) are resolved
+live via resolveShortcut on each keydown in SiltBlockKeymaps, so HotkeysTab
+saves apply without remounting the editor. Visual nesting uses data-depth on
+the outer NodeView root (outerNodeViewAttrs) so `.ProseMirror > div[data-depth]`
+CSS applies. The cycle_view_layout hotkey is wired in App.svelte's
 global keydown handler alongside open_search, toggle_sidebar, and
 toggle_view_mode. Inline formatting marks, block alignment,
 text/background color, and the source/edit view toggle are all

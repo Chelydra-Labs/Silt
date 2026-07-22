@@ -151,9 +151,9 @@ export function computeDragImageOffset(
  * from a non-Silt element (e.g. the editor's chrome, the format toolbar) so
  * the browser's native drag behaviour runs unaltered.
  *
- * The `data-id` attribute is set by the NodeView templates on
- * `NodeViewWrapper` (see `#181`, `#339`); `closest('[data-id]')` resolves
- * it in O(depth) regardless of how deeply nested the inline span is.
+ * The `data-id` attribute is on the outer NodeView root (via
+ * `outerNodeViewAttrs` in nodeViews.ts) and on `NodeViewWrapper`; walking
+ * ancestors finds either. `closest`/`parent` walk is O(depth).
  */
 function findBlockEl(target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof Element)) return null

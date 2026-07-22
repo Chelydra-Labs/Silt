@@ -9,8 +9,15 @@ import {
   SiltBlockKeymaps
 } from './index'
 import { EmbedNode, BlockReferenceNode, CalloutBlock } from './schema'
-import { setBlockAlign, moveActiveBlock, findActiveBlock } from './keymaps'
+import {
+  setBlockAlign,
+  moveActiveBlock,
+  findActiveBlock,
+  indentActiveBlock,
+  unindentActiveBlock
+} from './keymaps'
 import type { DocJSON } from './types'
+import { settings } from '../../settings/store.svelte'
 
 // Mirror the makeEditor() pattern from converters.test.ts — a real TipTap
 // editor wired with the Silt schema. No Placeholder (avoids the jsdom
@@ -40,7 +47,8 @@ function makeEditor(): Editor {
 }
 
 // Editor variant that also wires the keyboard shortcut extension so Enter /
-// Backspace / Tab outliner semantics are exercised. The base makeEditor()
+// Backspace / Tab outliner semantics are exercised (Tab indent cases live in
+// the "Tab / Shift-Tab depth" describe below). The base makeEditor()
 // omits it to keep the converter/align tests focused on pure state.
 function makeEditorWithKeymaps(): Editor {
   return new Editor({
@@ -214,6 +222,221 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
   })
 })
 
+describe('Tab / Shift-Tab depth indent (outliner)', () => {
+  function twoDepthBlocks(kind: 'plain' | 'bullet' | 'task'): DocJSON {
+    const mk = (
+      id: string,
+      text: string,
+      type: 'noteBlock' | 'taskBlock',
+      extra: Record<string, unknown>
+    ) => ({
+      type,
+      attrs: { id, depth: 0, ...extra },
+      content: [{ type: 'text' as const, text }]
+    })
+    let a: ReturnType<typeof mk>
+    let b: ReturnType<typeof mk>
+    if (kind === 'task') {
+      a = mk('a', 'parent', 'noteBlock', { bullet: '- ' })
+      b = mk('b', 'task', 'taskBlock', { status: 'TODO' })
+    } else if (kind === 'bullet') {
+      a = mk('a', 'parent', 'noteBlock', { bullet: '- ' })
+      b = mk('b', 'child', 'noteBlock', { bullet: '- ' })
+    } else {
+      a = mk('a', 'line1', 'noteBlock', { bullet: '' })
+      b = mk('b', 'line2', 'noteBlock', { bullet: '' })
+    }
+    return { type: 'doc', content: [a, b] }
+  }
+
+  function focusSecondBlock(editor: Editor): void {
+    const secondPos = editor.state.doc.child(0).nodeSize
+    editor.commands.setTextSelection(secondPos + 1)
+  }
+
+  it('indents a plain noteBlock under the previous sibling', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(twoDepthBlocks('plain'))
+    focusSecondBlock(editor)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+
+  it('indents a bulleted noteBlock under the previous sibling', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(twoDepthBlocks('bullet'))
+    focusSecondBlock(editor)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+
+  it('indents a taskBlock under the previous sibling', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(twoDepthBlocks('task'))
+    focusSecondBlock(editor)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+
+  it('Shift-Tab unindents when depth > 0', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'a', depth: 0, bullet: '- ' },
+          content: [{ type: 'text', text: 'parent' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'b', depth: 1, bullet: '- ' },
+          content: [{ type: 'text', text: 'child' }]
+        }
+      ]
+    })
+    focusSecondBlock(editor)
+    expect(pressKey(editor, 'Tab', { shiftKey: true })).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+    editor.destroy()
+  })
+
+  it('Tab on the first block is a no-op for depth but still handled', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(blockDoc('noteBlock', 'only'))
+    editor.commands.setTextSelection(1)
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(editor.state.doc.child(0).attrs.depth).toBe(0)
+    editor.destroy()
+  })
+
+  it('honors a remapped indent_block / unindent_block binding', () => {
+    withHotkeys({ indent_block: 'Ctrl+]', unindent_block: 'Ctrl+[' }, () => {
+      const editor = makeEditorWithKeymaps()
+      editor.commands.setContent(twoDepthBlocks('bullet'))
+      focusSecondBlock(editor)
+
+      // Default Tab must NOT indent when remapped away.
+      expect(pressKey(editor, 'Tab')).toBe(false)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+
+      expect(pressKey(editor, ']', { ctrlKey: true })).toBe(true)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+
+      expect(pressKey(editor, '[', { ctrlKey: true })).toBe(true)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+      editor.destroy()
+    })
+  })
+
+  it('applies indent_block remap on the live editor without remount', () => {
+    // Config-driven chords rebuild on every keydown from settings.config.hotkeys.
+    // Saving HotkeysTab must affect the already-open editor (no page switch).
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(twoDepthBlocks('bullet'))
+    focusSecondBlock(editor)
+
+    // Defaults: Tab indents.
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    expect(pressKey(editor, 'Tab', { shiftKey: true })).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+
+    // Live remap while the same Editor instance stays mounted.
+    withHotkeys({ indent_block: 'Ctrl+]', unindent_block: 'Ctrl+[' }, () => {
+      expect(pressKey(editor, 'Tab')).toBe(false)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+      expect(pressKey(editor, ']', { ctrlKey: true })).toBe(true)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+      expect(pressKey(editor, '[', { ctrlKey: true })).toBe(true)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+    })
+
+    // Restoring defaults (withHotkeys finally) works on the same instance.
+    expect(pressKey(editor, 'Tab')).toBe(true)
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+
+  it('omits indent when indent_block is explicitly disabled (empty binding)', () => {
+    withHotkeys({ indent_block: '', unindent_block: '' }, () => {
+      const editor = makeEditorWithKeymaps()
+      editor.commands.setContent(twoDepthBlocks('plain'))
+      focusSecondBlock(editor)
+      expect(pressKey(editor, 'Tab')).toBe(false)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+      // Helpers still work when called directly (keymap is what was disabled).
+      expect(indentActiveBlock(editor)).toBe(true)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+      expect(unindentActiveBlock(editor)).toBe(true)
+      expect(editor.state.doc.child(1).attrs.depth).toBe(0)
+      editor.destroy()
+    })
+  })
+
+  it('indents a noteBlock nested inside a callout relative to its sibling', () => {
+    // Regression: top-level-only sibling scan left nested blocks at maxDepth 0.
+    const editor = new Editor({
+      extensions: [
+        StarterKit.configure({
+          paragraph: false,
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensions,
+        CalloutBlock,
+        ...SiltInlineMarkExtensions,
+        ...SiltColorMarkExtensions,
+        EmbedNode,
+        BlockReferenceNode,
+        UniqueBlockIds,
+        SiltBlockKeymaps
+      ]
+    })
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'calloutBlock',
+          attrs: { variant: 'info', id: 'c1' },
+          content: [
+            {
+              type: 'noteBlock',
+              attrs: { id: 'n1', depth: 0, bullet: '- ' },
+              content: [{ type: 'text', text: 'parent' }]
+            },
+            {
+              type: 'noteBlock',
+              attrs: { id: 'n2', depth: 0, bullet: '- ' },
+              content: [{ type: 'text', text: 'child' }]
+            }
+          ]
+        }
+      ]
+    })
+    // Caret inside second nested note (callout@0, first note, second note content).
+    const callout = editor.state.doc.child(0)
+    const firstNestedSize = callout.child(0).nodeSize
+    // pos 0 = before callout; content starts at 1; first child at 1; second at 1+firstNestedSize
+    const secondNestedContent = 1 + firstNestedSize + 1
+    editor.commands.setTextSelection(secondNestedContent)
+    expect(indentActiveBlock(editor)).toBe(true)
+    const nested = editor.state.doc.child(0)
+    expect(nested.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+})
+
 describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
   function multiBlockDoc(texts: string[]): DocJSON {
     return {
@@ -278,8 +501,18 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
 // with content at [8,13). End of block 0 content = pos 6; start of block 1
 // content = pos 8.
 
-function pressKey(editor: Editor, key: string): boolean {
-  const event = new KeyboardEvent('keydown', { key, bubbles: true })
+function pressKey(
+  editor: Editor,
+  key: string,
+  opts: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean } = {}
+): boolean {
+  const event = new KeyboardEvent('keydown', {
+    key,
+    bubbles: true,
+    shiftKey: opts.shiftKey ?? false,
+    ctrlKey: opts.ctrlKey ?? false,
+    metaKey: opts.metaKey ?? false
+  })
   let handled = false
   editor.view.someProp('handleKeyDown', (handler) => {
     if (handled) return true
@@ -290,6 +523,23 @@ function pressKey(editor: Editor, key: string): boolean {
     return ret
   })
   return handled
+}
+
+/** Temporarily set config.hotkeys for keymap-construction tests. */
+function withHotkeys<T>(
+  hotkeys: Record<string, string | undefined>,
+  fn: () => T
+): T {
+  const prev = settings.config
+  settings.config = {
+    ...(prev ?? {}),
+    hotkeys: { ...(prev?.hotkeys ?? {}), ...hotkeys }
+  } as typeof settings.config
+  try {
+    return fn()
+  } finally {
+    settings.config = prev
+  }
 }
 
 function twoNoteBlocks(

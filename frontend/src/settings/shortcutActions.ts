@@ -53,6 +53,18 @@ export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
   { id: 'format_italic', label: 'Italic', group: 'Editor' },
   { id: 'format_underline', label: 'Underline', group: 'Editor' },
   { id: 'format_link', label: 'Add link', group: 'Editor' },
+  {
+    id: 'indent_block',
+    label: 'Indent block',
+    group: 'Editor',
+    defaultBinding: 'Tab'
+  },
+  {
+    id: 'unindent_block',
+    label: 'Unindent block',
+    group: 'Editor',
+    defaultBinding: 'Shift+Tab'
+  },
   { id: 'toggle_view_mode', label: 'Toggle source view', group: 'Editor' },
   {
     id: 'toggle_format_toolbar',

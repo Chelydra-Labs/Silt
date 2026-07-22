@@ -18,7 +18,13 @@ export {
   SiltTableExtensions
 } from './schema'
 export type { CalloutVariant } from './schema'
-export { SiltBlockExtensionsWithNodeViews } from './nodeViews'
+export {
+  SiltBlockExtensionsWithNodeViews,
+  outerNodeViewAttrs,
+  syncOuterDomAttrs,
+  NODE_DATA_TYPE,
+  NODE_VIEW_TYPE_NAMES
+} from './nodeViews'
 export { blocksToDoc, docToBlocks } from './converters'
 export {
   SiltInlineDragHandle,
@@ -47,6 +53,8 @@ export {
   toggleDetails,
   findActiveBlock,
   moveActiveBlock,
+  indentActiveBlock,
+  unindentActiveBlock,
   BLOCK_TYPES
 } from './keymaps'
 export {

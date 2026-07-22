@@ -216,7 +216,15 @@ const PM_KEY_NORMALIZE: Record<string, string> = {
   space: ' ',
   ' ': ' ',
   esc: 'Escape',
-  del: 'Delete'
+  del: 'Delete',
+  // Named special keys must match KeyboardEvent.key / prosemirror-keymap
+  // (capitalized). parseHotkey lowercases tokens, so without this "Tab" and
+  // "Shift+Tab" would become "tab" / "Shift-tab" and never fire.
+  tab: 'Tab',
+  enter: 'Enter',
+  escape: 'Escape',
+  backspace: 'Backspace',
+  delete: 'Delete'
 }
 
 /**

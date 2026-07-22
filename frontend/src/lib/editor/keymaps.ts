@@ -1,10 +1,13 @@
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import { TextSelection } from '@tiptap/pm/state'
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
+import { keydownHandler } from '@tiptap/pm/keymap'
 import { freshId } from './uniqueIdPlugin'
 import { resolveShortcut } from '../../settings/hotkeys'
 import { settings } from '../../settings/store.svelte'
+
+const siltConfigKeymapsKey = new PluginKey('siltConfigDrivenKeymaps')
 
 // SiltBlockKeymaps — outliner keyboard semantics for the TipTap editor.
 //
@@ -15,12 +18,12 @@ import { settings } from '../../settings/store.svelte'
 //     bullet, unindent, then delete+focus-prev.
 //   - Delete at end: merge a same-type sibling below into this block (or drop
 //     this block if it's empty and a same-type sibling follows).
-//   - Tab / Shift-Tab (config-driven): indent / unindent (bounded by previous
-//     sibling's depth + 1, matching the legacy outliner constraints).
+//   - indent_block / unindent_block (config-driven, defaults Tab / Shift-Tab):
+//     indent / unindent (bounded by previous sibling's depth + 1).
 //   - ArrowUp / ArrowDown at block boundary: move focus to the previous/next block.
 //
-// The extension reads the indent/unindent hotkeys live from the settings store
-// so users can remap or disable them from Settings → General.
+// Visual indent requires data-depth on the outer NodeView root (see
+// outerNodeViewAttrs in nodeViews.ts); CSS targets `.ProseMirror > div[data-depth]`.
 
 /**
  * The Silt block node types the keymaps operate on, in canonical order.
@@ -133,10 +136,9 @@ function currentBlockInfo(editor: Editor) {
     // index is the child index within the block's PARENT at its tree depth —
     // NOT necessarily the top-level doc index. For a block nested inside a
     // callout (tree depth 2), this is the index within the callout. Callers
-    // that need the top-level child index (moveActiveBlock / Tab / ArrowUp /
-    // ArrowDown / Backspace) re-derive it from `info.pos` against `doc`
-    // children; that loop also doubles as a nested-block guard (a nested
-    // block's pos never matches a top-level child start, so it returns -1).
+    // that need the top-level child index (moveActiveBlock / ArrowUp /
+    // ArrowDown) re-derive it from `info.pos` against `doc` children.
+    // Indent uses same-parent nodeBefore instead (works nested + top-level).
     index: pos.index(depth)
   }
 }
@@ -159,6 +161,42 @@ function setBlockDepth(
 ): void {
   const tr = editor.state.tr.setNodeAttribute(nodePos, 'depth', newDepth)
   editor.view.dispatch(tr)
+}
+
+/**
+ * Indent the active depth-bearing block by one level, capped at previous
+ * same-parent sibling depth + 1. Uses nodeBefore (not a top-level doc scan) so
+ * blocks nested in callouts/details indent relative to their container siblings.
+ * Returns true when the chord was consumed (including no-op at max depth /
+ * first child) so Tab does not move browser focus. Returns false outside depth
+ * blocks so table cell nav etc. can run.
+ */
+export function indentActiveBlock(editor: Editor): boolean {
+  const info = currentBlockInfo(editor)
+  if (!info) return false
+  // Only the depth-bearing prose blocks support indent. Letting the chord fall
+  // through for callout/code/table/details keeps TipTap's default (table cell
+  // nav, etc.) instead of silently no-op'ing.
+  if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
+
+  // Same-parent previous sibling — works at doc root and inside callout/details.
+  const prev = editor.state.doc.resolve(info.pos).nodeBefore
+  const maxDepth = prev ? (prev.attrs.depth || 0) + 1 : 0
+  if (info.depth < maxDepth) {
+    setBlockDepth(editor, info.pos, info.depth + 1)
+  }
+  return true
+}
+
+/** Unindent the active depth-bearing block by one level (floor 0). */
+export function unindentActiveBlock(editor: Editor): boolean {
+  const info = currentBlockInfo(editor)
+  if (!info) return false
+  if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
+  if (info.depth > 0) {
+    setBlockDepth(editor, info.pos, info.depth - 1)
+  }
+  return true
 }
 
 function focusBlockAt(editor: Editor, blockIndex: number): void {
@@ -593,11 +631,11 @@ function omitDisabled(
 }
 
 // Build the config-driven editor shortcut map (#311). Reads config.hotkeys
-// at editor-creation time and converts each binding to the ProseMirror keymap
-// format via resolveShortcut. Absent entries fall back to hardcoded defaults;
-// an explicitly empty entry disables the shortcut. Covers all editor-scoped
-// remappable shortcuts: heading levels, alignment, quote/details toggles,
-// table row/col inserts, and inline format marks.
+// live from the settings store (called on every keydown via the config keymap
+// plugin) so Settings remaps apply without remounting the editor. Absent
+// entries fall back to hardcoded defaults; an explicitly empty entry disables
+// the shortcut. Covers indent/unindent, heading levels, alignment,
+// quote/details toggles, table row/col inserts, and inline format marks.
 function buildConfigDrivenShortcuts(
   editor: Editor
 ): Record<string, () => boolean> {
@@ -605,6 +643,10 @@ function buildConfigDrivenShortcuts(
   const pm = (configKey: string, def: string) =>
     resolveShortcut(configKey, def, hk)
   const map: Record<string, () => boolean> = {}
+
+  // Outliner indent / unindent (defaults Tab / Shift-Tab).
+  map[pm('indent_block', 'Tab')] = () => indentActiveBlock(editor)
+  map[pm('unindent_block', 'Shift-Tab')] = () => unindentActiveBlock(editor)
 
   // Strikethrough — config-driven via format_strike (#311). TipTap's Strike
   // extension registers its own Mod-Shift-s default; this binding overrides
@@ -678,8 +720,9 @@ function buildConfigDrivenShortcuts(
 }
 
 // Register config-driven bindings for inline format marks (bold, italic, etc.)
-// that are also handled by TipTap StarterKit extensions. These read from config
-// at editor-creation time and coexist with the StarterKit's hardcoded defaults.
+// that are also handled by TipTap StarterKit extensions. Reads config live
+// (same plugin path as buildConfigDrivenShortcuts) and coexists with
+// StarterKit's hardcoded defaults when Silt's binding is disabled/absent.
 function buildFormatMarkShortcuts(
   editor: Editor
 ): Record<string, () => boolean> {
@@ -720,8 +763,38 @@ function buildFormatMarkShortcuts(
   return omitDisabled(map)
 }
 
+/** All config-driven editor chords, rebuilt from the live settings store. */
+function buildLiveConfigBindings(
+  editor: Editor
+): Record<string, () => boolean> {
+  return {
+    ...buildConfigDrivenShortcuts(editor),
+    ...buildFormatMarkShortcuts(editor)
+  }
+}
+
 export const SiltBlockKeymaps = Extension.create({
   name: 'siltBlockKeymaps',
+
+  // Config-driven chords (indent, format marks, headings, …) live in a
+  // dedicated plugin that rebuilds the binding map on every keydown from
+  // settings.config.hotkeys. That way HotkeysTab saves apply immediately
+  // without destroying/recreating the editor (addKeyboardShortcuts is only
+  // evaluated once at extension init).
+  addProseMirrorPlugins() {
+    const editor = this.editor
+    return [
+      new Plugin({
+        key: siltConfigKeymapsKey,
+        props: {
+          handleKeyDown(view, event) {
+            const bindings = buildLiveConfigBindings(editor)
+            return keydownHandler(bindings)(view, event)
+          }
+        }
+      })
+    ]
+  },
 
   addKeyboardShortcuts() {
     return {
@@ -921,44 +994,8 @@ export const SiltBlockKeymaps = Extension.create({
         return mergeSiblingBlock(this.editor, 'forward')
       },
 
-      Tab: () => {
-        const info = currentBlockInfo(this.editor)
-        if (!info) return false
-        // Only the depth-bearing prose blocks support indent. Letting Tab fall
-        // through for callout/code/table/details keeps TipTap's default (table
-        // cell nav, etc.) instead of silently no-op'ing.
-        if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
-
-        // Indent — max is previous sibling's depth + 1.
-        const { doc } = this.editor.state
-        let blockIndex = -1
-        let acc = 0
-        for (let i = 0; i < doc.childCount; i++) {
-          if (acc === info.pos) {
-            blockIndex = i
-            break
-          }
-          acc += doc.child(i).nodeSize
-        }
-        let maxDepth = 0
-        if (blockIndex > 0) {
-          maxDepth = (doc.child(blockIndex - 1).attrs.depth || 0) + 1
-        }
-        if (info.depth < maxDepth) {
-          setBlockDepth(this.editor, info.pos, info.depth + 1)
-        }
-        return true
-      },
-
-      'Shift-Tab': () => {
-        const info = currentBlockInfo(this.editor)
-        if (!info) return false
-        if (!DEPTH_BLOCK_TYPES.has(info.node.type.name)) return false
-        if (info.depth > 0) {
-          setBlockDepth(this.editor, info.pos, info.depth - 1)
-        }
-        return true
-      },
+      // indent_block / unindent_block are registered via
+      // buildConfigDrivenShortcuts (defaults Tab / Shift-Tab).
 
       ArrowUp: () => {
         const info = currentBlockInfo(this.editor)
@@ -1011,22 +1048,11 @@ export const SiltBlockKeymaps = Extension.create({
       // Alt+ArrowUp/Down reorders the active block (#181) — the keyboard
       // complement to the drag handle. No Mod prefix, to avoid colliding with
       // the Mod-Shift-Arrow table row/column bindings.
+      // Config-driven shortcuts (indent, format marks, headings, alignment,
+      // tables, …) are handled by addProseMirrorPlugins so they read
+      // settings.config.hotkeys on every keydown.
       'Alt-ArrowUp': () => moveActiveBlock(this.editor, -1),
-      'Alt-ArrowDown': () => moveActiveBlock(this.editor, 1),
-
-      // ---- Config-driven shortcuts (#311) --------------------------------
-      // Each editor-scoped shortcut reads its binding from config.hotkeys at
-      // editor-creation time (when addKeyboardShortcuts is evaluated). The
-      // ProseMirror keymap format uses '-' separators and 'Mod' for Cmd/Ctrl
-      // (per prosemirror-keymap source). resolveShortcut converts the config
-      // notation and falls back to the hardcoded default if the config entry
-      // is absent/empty.
-      //
-      // LIVE remapping (config change without page navigation) requires
-      // re-creating the keymap extension — a documented follow-up. The schema
-      // and keymap are immutable at editor-creation time by ProseMirror design.
-      ...buildConfigDrivenShortcuts(this.editor),
-      ...buildFormatMarkShortcuts(this.editor)
+      'Alt-ArrowDown': () => moveActiveBlock(this.editor, 1)
     }
   }
 })

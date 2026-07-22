@@ -41,7 +41,15 @@ export type GlobalHotkeyAction =
 // the two layers don't double-fire (#168/#169/#173). toggle_view_mode is
 // intentionally NOT here: no editor keymap handles it, so it stays global even
 // while typing (#171/#195).
-const EDITOR_OWNED_PREFIXES = ['format_', 'set_', 'align_']
+// indent_/unindent_ are editor keymap chords (defaults Tab / Shift-Tab);
+// when remapped they must still suppress the global handler while focused.
+const EDITOR_OWNED_PREFIXES = [
+  'format_',
+  'set_',
+  'align_',
+  'indent_',
+  'unindent_'
+]
 
 function isEditorOwned(action: string): boolean {
   return EDITOR_OWNED_PREFIXES.some((p) => action.startsWith(p))
