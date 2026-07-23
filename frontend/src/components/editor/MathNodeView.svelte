@@ -84,6 +84,7 @@
       {#if error}
         <span class="silt-math-err" role="alert">{error}</span>
       {:else if html}
+        <!-- eslint-disable-next-line svelte/no-at-html-tags -- KaTeX HTML from node attrs latex -->
         {@html html}
       {:else}
         <span class="silt-math-pending" aria-hidden="true">{latex}</span>

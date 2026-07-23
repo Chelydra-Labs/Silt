@@ -203,7 +203,8 @@ describe('ask flow (mocked)', () => {
     await ctl.ask(ctx, 'second')
     // Second ask is ignored while in flight.
     expect(
-      complete.mock.calls.filter((c) => (c[0] as any)?.stream).length
+      complete.mock.calls.filter((c) => (c[0] as { stream?: boolean })?.stream)
+        .length
     ).toBeLessThanOrEqual(1)
     release()
     await p1

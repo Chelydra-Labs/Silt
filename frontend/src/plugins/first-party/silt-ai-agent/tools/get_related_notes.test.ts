@@ -33,7 +33,6 @@ function makeCtx(opts: {
   pluginDbQuery: ReturnType<typeof vi.fn>
   pluginDbExec: ReturnType<typeof vi.fn>
 } {
-  const candById = new Map(opts.candidates.map((c) => [c.id, c]))
   const recent = opts.recentRows ?? opts.candidates
 
   const embed = vi.fn(async (req: { texts: string[]; taskType?: string }) => {
@@ -243,7 +242,7 @@ describe('get_related_notes', () => {
         dimensions: 2
       }
     })
-    const sqliteQuery = vi.fn(async (sql: string, params?: unknown[]) => {
+    const sqliteQuery = vi.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FROM blocks WHERE id = ?')) {
         return {
           rows: [{ clean_content: 'source note' }],

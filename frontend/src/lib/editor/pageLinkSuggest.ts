@@ -85,10 +85,14 @@ export function pageLinkSourceLabel(source?: string): string {
 }
 
 export function normalizePageLinkAlias(alias: string): string {
-  return alias
-    .replace(/[\r\n\u2028\u2029]+/g, ' ')
-    .replace(/[\u0000-\u001f\u007f|\]]/g, '')
-    .normalize()
+  return (
+    alias
+      .replace(/[\r\n\u2028\u2029]+/g, ' ')
+      // Strip C0 controls, DEL, and wiki-link delimiters that would break [[path|alias]].
+      // eslint-disable-next-line no-control-regex -- intentional C0/DEL strip for alias safety
+      .replace(/[\u0000-\u001f\u007f|\]]/g, '')
+      .normalize()
+  )
 }
 
 export async function resolvePageLinkTarget(

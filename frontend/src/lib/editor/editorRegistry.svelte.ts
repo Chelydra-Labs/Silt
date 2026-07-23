@@ -52,6 +52,8 @@ export interface EditorHandle {
   verifySelectionText: (from: number, to: number, expected: string) => boolean
 }
 
+// Imperative handle registry — not UI-reactive state.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive registry
 const editors = new Map<string, EditorHandle>()
 
 /** Build the registry lookup key for a page triple. This is the canonical

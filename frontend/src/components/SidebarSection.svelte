@@ -127,7 +127,6 @@
 </script>
 
 <div class="mb-0.5" role="none">
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
     class="group flex items-center gap-1 px-2 py-1.5 cursor-pointer rounded hover:bg-hover transition-colors motion-reduce:transition-none"
     class:drag-over-top={dropTarget?.level === 'section' &&

@@ -24,6 +24,8 @@
       ? 0
       : 200
 
+  // Action dedupe only — not read during render.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive dedupe set
   const invokedActionIds = new Set<number>()
 
   onMount(() => {

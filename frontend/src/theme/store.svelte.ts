@@ -257,7 +257,7 @@ export async function initTheme(): Promise<() => void> {
   // resolved {id, mode, name?}. When id+mode already match (common after our
   // own applyTheme), skip the GetActiveTheme round-trip + re-inject — but
   // still apply a payload name so active rename (#533) updates the label.
-  offThemeChanged = Events.On('theme:changed', async (ev: any) => {
+  offThemeChanged = Events.On('theme:changed', async (ev) => {
     const payload: { id?: string; mode?: string; name?: string } | null =
       ev.data
     if (

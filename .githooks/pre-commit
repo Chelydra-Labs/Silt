@@ -44,10 +44,14 @@ done
 # otherwise npx resolves a config-less prettier that can't parse Svelte syntax
 # and fails on every .svelte file. Strip the leading "frontend/" from each
 # path so they resolve from within frontend/.
+#
+# Batch via xargs: a single argv with hundreds of paths exceeds Windows
+# CreateProcess limits ("The command line is too long").
 FE_FILES=$(echo "$STAGED_FILES" | sed 's|^frontend/||')
-if (cd frontend && npx prettier --write $FE_FILES); then
+if echo "$FE_FILES" | (cd frontend && xargs -n 40 npx prettier --write); then
   # Re-stage any files Prettier reformatted so the commit includes the fix.
-  git add $STAGED_FILES
+  # Also batch git add for the same Windows argv limit.
+  echo "$STAGED_FILES" | xargs -n 40 git add
 else
   echo "ERROR: Prettier failed to format staged frontend files; see output above."
   exit 1

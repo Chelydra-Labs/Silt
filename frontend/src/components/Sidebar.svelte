@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity'
   import { onMount, tick, untrack } from 'svelte'
   import { Events } from '@wailsio/runtime'
   import SidebarSection from './SidebarSection.svelte'
@@ -20,7 +21,6 @@
     DeletePage,
     DeleteSection,
     DeleteNotebook,
-    MovePage,
     RevealNotebookInOS,
     RevealPageInOS,
     DuplicatePage,
@@ -32,7 +32,6 @@
   import { NavOrderManager, sortByName } from '../lib/sidebar/navOrder'
   import { DragDropManager } from '../lib/sidebar/useDragDrop'
   import type {
-    NavNotebook,
     NavigationPageRef,
     NavigationPreferences,
     NavigationTree
@@ -50,7 +49,6 @@
     expandActiveAncestors,
     expandedPathsForNotebook,
     locatorKey,
-    pagePathLabel,
     reconcilePageRefs
   } from '../lib/sidebar/navigationPreferences'
   import {
@@ -302,7 +300,9 @@
 
   // Expanded section names (within the active notebook). The active section is
   // always expanded so the active path stays visible (spatial memory).
-  let expandedSections = $state<Set<string>>(new Set())
+  // SvelteSet is deeply reactive; reassignment still used for immutable-style updates.
+  // eslint-disable-next-line svelte/no-unnecessary-state-wrap -- whole-set reassignment pattern
+  let expandedSections = $state(new SvelteSet<string>())
   let focusedTreeItemId = $state('')
   let lastExpandedActive = ''
   let typeahead = ''
@@ -357,7 +357,7 @@
     })
   })
   let favoriteKeys = $derived(
-    new Set(preferences.favorites.map((ref) => locatorKey(ref)))
+    new SvelteSet(preferences.favorites.map((ref) => locatorKey(ref)))
   )
   let favoriteState = $derived(reconcilePageRefs(tree, preferences.favorites))
   let recentState = $derived(reconcilePageRefs(tree, preferences.recent_pages))
@@ -461,7 +461,9 @@
         quick_access_collapsed: loaded?.quick_access_collapsed ?? true
       }
       onNavigationPreferencesLoaded?.(preferences)
-      expandedSections = expandedPathsForNotebook(preferences, activeNotebook)
+      expandedSections = new SvelteSet(
+        expandedPathsForNotebook(preferences, activeNotebook)
+      )
       lastExpandedActive = ''
       preferencesError = ''
     } catch (e) {
@@ -502,7 +504,7 @@
     untrack(() => {
       const next = expandActiveAncestors(expandedSections, section)
       const added = [...next].filter((path) => !expandedSections.has(path))
-      expandedSections = next
+      expandedSections = new SvelteSet(next)
       for (const path of added) {
         setLocalExpansion(notebook, path, true)
         void SetNavigationSectionExpanded(notebook, path, true).catch(() => {
@@ -513,7 +515,7 @@
   })
 
   function toggleSection(path: string) {
-    const next = new Set(expandedSections)
+    const next = new SvelteSet(expandedSections)
     const expanded = !next.has(path)
     if (!expanded) {
       next.delete(path)
@@ -639,7 +641,7 @@
     onSelectNotebook(nb)
     // Expand the first section if present, for orientation.
     const nbObj = tree.notebooks.find((n) => n.name === nb)
-    expandedSections = expandedPathsForNotebook(preferences, nb)
+    expandedSections = new SvelteSet(expandedPathsForNotebook(preferences, nb))
     focusedTreeItemId = nbObj?.sections.find((section) => section.path)?.path
       ? sectionNodeId(nb, nbObj.sections.find((section) => section.path)!.path)
       : ''
@@ -653,9 +655,11 @@
 
   function handleQuickPage(ref: NavigationPageRef) {
     activeNotebook = ref.notebook
-    expandedSections = expandActiveAncestors(
-      expandedPathsForNotebook(preferences, ref.notebook),
-      ref.section
+    expandedSections = new SvelteSet(
+      expandActiveAncestors(
+        expandedPathsForNotebook(preferences, ref.notebook),
+        ref.section
+      )
     )
     handleSelectPage(ref.section, ref.page)
   }
@@ -852,7 +856,7 @@
         await loadNavigation()
         activeSection = trimmed
         onSelectSection(trimmed)
-        expandedSections = new Set([...expandedSections, trimmed])
+        expandedSections = new SvelteSet([...expandedSections, trimmed])
         setLocalExpansion(activeNotebook, trimmed, true)
         await SetNavigationSectionExpanded(activeNotebook, trimmed, true)
       }
@@ -1522,7 +1526,7 @@
             {/each}
 
             <!-- Section-less root pages -->
-            {#each sortedSections.filter((s) => s.name === '') as rootSec}
+            {#each sortedSections.filter((s) => s.name === '') as rootSec (rootSec.path || 'root')}
               {#if rootSec.pages.length > 0}
                 <div
                   class="h-px bg-surface-sidebar-border my-3 mx-1.5 opacity-50"
@@ -1614,7 +1618,6 @@
             <!-- Notebook-root drop zone (#177): drag a page here to move it
              out of any section (section-less / root). Invisible until a
              page is actively dragged over it. -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="mx-1 mt-1 rounded transition-colors min-h-6"
               class:drag-over-into={dropTarget?.level === 'section' &&

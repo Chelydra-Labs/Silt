@@ -13,6 +13,9 @@ import { Events } from '@wailsio/runtime'
 import type * as config from '../../bindings/silt/backend/config/models.js'
 
 export type SystemConfig = config.SystemConfig
+type UIConfig = config.UIConfig
+type EditorConfig = config.EditorConfig
+type PluginsConfig = config.PluginsConfig
 
 // Reactive settings store (Svelte 5 runes in a .svelte.ts module, mirroring
 // plugins/store.svelte.ts: a const object whose properties are mutated).
@@ -113,12 +116,19 @@ export async function updatePluginSetting(
     const cfg = settings.config
     if (cfg) {
       if (!cfg.plugins) {
-        cfg.plugins = { active: [], disabled: [], plugin_settings: {} } as any
+        cfg.plugins = {
+          active: [],
+          disabled: [],
+          plugin_settings: {}
+        } as PluginsConfig
       }
       if (!cfg.plugins.plugin_settings) {
         cfg.plugins.plugin_settings = {}
       }
-      const ps = cfg.plugins.plugin_settings as Record<string, any>
+      const ps = cfg.plugins.plugin_settings as Record<
+        string,
+        Record<string, unknown>
+      >
       if (!ps[pluginID] || typeof ps[pluginID] !== 'object') {
         ps[pluginID] = {}
       }
@@ -148,7 +158,7 @@ export async function appendDismissedTip(tipID: string): Promise<boolean> {
     await AppendDismissedTip(tipID)
     const cfg = settings.config
     if (cfg) {
-      if (!cfg.ui) cfg.ui = {} as any
+      if (!cfg.ui) cfg.ui = {} as UIConfig
       const tips = cfg.ui.dismissed_tips
       if (!Array.isArray(tips) || !tips.includes(tipID)) {
         cfg.ui.dismissed_tips = [...(tips ?? []), tipID]
@@ -173,11 +183,11 @@ function errMsg(e: unknown): string {
 // If the user has unsaved local edits, the draft is preserved (never silently
 // clobbered); pendingExternal signals that a newer config is available.
 let offConfigChanged: (() => void) | null = null
-let offConfigError: (() => void) | null = null
+let _offConfigError: (() => void) | null = null
 
 export function initConfigHotReload(): void {
   if (offConfigChanged) return // idempotent
-  offConfigChanged = Events.On('config:changed', (ev: any) => {
+  offConfigChanged = Events.On('config:changed', (ev) => {
     const cfg: SystemConfig = ev.data
     settings.config = cfg
     settings.error = ''
@@ -185,7 +195,7 @@ export function initConfigHotReload(): void {
       settings.pendingExternal = true
     }
   })
-  offConfigError = Events.On('config:error', (ev: any) => {
+  _offConfigError = Events.On('config:error', (ev) => {
     const msg: string = ev.data
     // A reload failed to parse (e.g. external edit broke the YAML). Keep the
     // last-good config; surface a non-blocking error so the user knows.
@@ -209,7 +219,7 @@ export async function reloadFromBackend(): Promise<void> {
 export async function toggleFormatToolbar(): Promise<boolean | null> {
   const cfg = settings.config
   if (!cfg) return null
-  if (!cfg.ui) cfg.ui = {} as any
+  if (!cfg.ui) cfg.ui = {} as UIConfig
   const next = cfg.ui.show_format_toolbar === false ? true : false
   settings.saving = true
   settings.error = ''
@@ -233,7 +243,7 @@ export async function toggleFormatToolbar(): Promise<boolean | null> {
 export async function toggleFocusMode(): Promise<boolean | null> {
   const cfg = settings.config
   if (!cfg) return null
-  if (!cfg.editor) cfg.editor = {} as any
+  if (!cfg.editor) cfg.editor = {} as EditorConfig
   const next = !cfg.editor.focus_mode
   settings.saving = true
   settings.error = ''
@@ -258,7 +268,7 @@ export async function toggleFocusMode(): Promise<boolean | null> {
 export async function toggleTypewriterMode(): Promise<boolean | null> {
   const cfg = settings.config
   if (!cfg) return null
-  if (!cfg.editor) cfg.editor = {} as any
+  if (!cfg.editor) cfg.editor = {} as EditorConfig
   const next = !cfg.editor.typewriter_mode
   settings.saving = true
   settings.error = ''
@@ -286,7 +296,7 @@ export async function toggleTypewriterMode(): Promise<boolean | null> {
 export async function toggleDevMode(): Promise<boolean | null> {
   const cfg = settings.config
   if (!cfg) return null
-  if (!cfg.ui) cfg.ui = {} as any
+  if (!cfg.ui) cfg.ui = {} as UIConfig
   const next = cfg.ui.open_devtools_on_startup !== true
   settings.saving = true
   settings.error = ''

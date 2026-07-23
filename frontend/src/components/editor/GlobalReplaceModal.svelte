@@ -5,12 +5,10 @@
     FetchPageBlocks,
     SaveFileBlocks
   } from '../../../bindings/silt/app.js'
-  import type * as config from '../../../bindings/silt/backend/config/models.js'
   import type * as parser from '../../../bindings/silt/backend/parser/models.js'
   import {
     buildMatcher,
-    applyReplace,
-    type MatcherOptions
+    applyReplace
   } from '../../lib/editor/search/globalReplaceMatcher'
   import {
     getAllEditors,
@@ -104,6 +102,7 @@
       if (res.total > results.length) {
         truncatedCount = res.total
       }
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
       const byPage = new Map<string, PageGroup>()
       for (const r of results) {
         const key = `${r.notebook}\x00${r.section}\x00${r.page}`
@@ -174,6 +173,7 @@
     const dirtyEditors = getAllEditors().filter(
       (e) => targetKeys.has(e.key) && e.isDirty()
     )
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
     const unflushable = new Set<string>()
     const flushedAny = dirtyEditors.length > 0
     if (flushedAny) {
@@ -355,11 +355,11 @@
   // groups.length is read untracked so that populating or clearing the list
   // itself does not flip the stale flag.
   $effect(() => {
-    findText
-    replaceText
-    caseSensitive
-    wholeWord
-    regexp
+    void findText
+    void replaceText
+    void caseSensitive
+    void wholeWord
+    void regexp
     untrack(() => {
       if (groups.length > 0) previewStale = true
     })

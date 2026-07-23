@@ -48,7 +48,7 @@ const settingsMock = vi.hoisted(() => ({
 // defaults to true so existing tests render the plugin sidebar; the
 // suspend test flips it to false (#326 item 5).
 const mockPlugins = vi.hoisted(() => ({
-  plugins: new Map<string, any>(),
+  plugins: new Map<string, unknown>(),
   errors: [] as { id: string; message: string }[],
   loadersReady: true
 }))
@@ -341,13 +341,6 @@ describe('Sidebar', () => {
   // Svelte component classes are plain functions of props in Svelte 5
   // compiled output, so the stub simply renders its tag and reads props
   // back via an $effect that pushes them onto a test-local handle.
-  function makeStubSidebar() {
-    const handle = { props: null as any, el: null as HTMLElement | null }
-    // The stub is registered as a Svelte component via dynamic import in
-    // the test that needs it; the test asserts on the data it exposes.
-    return handle
-  }
-
   it("activeView='tags' still renders the TagSidebarPanel (no regression)", async () => {
     render(Sidebar, {
       props: {
@@ -506,7 +499,8 @@ describe('Sidebar', () => {
     // returns undefined. Without the gate, Sidebar would build a context
     // with an empty token and the plugin would fail every privileged call.
     // With the gate, pluginSidebarCtx is null and the stub never mounts.
-    delete (globalThis as any).__lastStubSidebarProps
+    delete (globalThis as unknown as Record<string, unknown>)
+      .__lastStubSidebarProps
     const StubSidebar = (await import('./__test_helpers__/StubSidebar.svelte'))
       .default
 
@@ -534,7 +528,9 @@ describe('Sidebar', () => {
     await flush()
     // The plugin sidebar suspended — no stub mounted, no ctx captured.
     expect(document.querySelector('[data-test-stub-sidebar]')).toBeNull()
-    expect((globalThis as any).__lastStubSidebarProps).toBeUndefined()
+    expect(
+      (globalThis as unknown as Record<string, unknown>).__lastStubSidebarProps
+    ).toBeUndefined()
     // Critically, getSessionToken was NOT called (ctx construction skipped).
     expect(mockGetSessionToken).not.toHaveBeenCalled()
   })

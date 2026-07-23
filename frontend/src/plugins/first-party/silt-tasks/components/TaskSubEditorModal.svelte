@@ -332,7 +332,6 @@
 >
   <!-- Backdrop: a sibling button so the click is keyboard/AT-reachable but
        excluded from the tab order. -->
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <button
     tabindex="-1"
     aria-label="Close sub-editor"

@@ -36,7 +36,9 @@ const DEFAULT_AUTO_DISMISS_MS: Record<NotificationKind, number> = {
 }
 
 let nextId = 1
-let dismissTimers = new Map<number, ReturnType<typeof setTimeout>>()
+// Timer handles only — not read during render.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive timer map
+const dismissTimers = new Map<number, ReturnType<typeof setTimeout>>()
 
 export interface PushOptions {
   kind?: NotificationKind

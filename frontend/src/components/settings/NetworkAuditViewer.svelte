@@ -44,7 +44,7 @@
   </p>
 {:else}
   <div class="max-h-32 overflow-y-auto custom-scrollbar space-y-0.5">
-    {#each entries.slice(-50) as entry}
+    {#each entries.slice(-50) as entry (`${entry.at}-${entry.method}-${entry.host}-${entry.status}`)}
       <div class="flex items-center gap-2 text-type-2xs font-body-md">
         <span
           class={entry.status >= 200 && entry.status < 300

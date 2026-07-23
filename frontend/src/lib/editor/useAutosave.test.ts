@@ -29,7 +29,8 @@ vi.mock('../../plugins/events', () => ({
 
 function makeDeps(overrides: Partial<AutosaveDeps> = {}): AutosaveDeps {
   return {
-    getEditor: () => ({ getJSON: () => ({ type: 'doc', content: [] }) }) as any,
+    getEditor: () =>
+      ({ getJSON: () => ({ type: 'doc', content: [] }) }) as never,
     getNotebook: () => 'Work',
     getSection: () => 'Journal',
     getPage: () => '2026-06-22',
@@ -161,7 +162,7 @@ describe('AutosaveManager', () => {
 
       const phases = (
         deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
-      ).mock.calls.map((c: any[]) => c[0].phase)
+      ).mock.calls.map((c: unknown[]) => (c[0] as { phase: string }).phase)
       expect(phases).toEqual(['pending', 'saving', 'saved'])
     })
 
@@ -176,7 +177,7 @@ describe('AutosaveManager', () => {
 
       const phasesBefore = (
         deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
-      ).mock.calls.map((c: any[]) => c[0].phase)
+      ).mock.calls.map((c: unknown[]) => (c[0] as { phase: string }).phase)
       expect(phasesBefore).toContain('saved')
 
       // Advance past SAVED_HOLD_MS (2000). The hold timer fires → idle.
@@ -209,7 +210,7 @@ describe('AutosaveManager', () => {
 
       const calls = (
         deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
-      ).mock.calls.map((c: any[]) => c[0].phase)
+      ).mock.calls.map((c: unknown[]) => (c[0] as { phase: string }).phase)
       expect(calls.at(-1)).toBe('pending')
       const savedIdx = calls.indexOf('saved')
       expect(calls.slice(savedIdx + 1)).not.toContain('idle')
@@ -226,13 +227,13 @@ describe('AutosaveManager', () => {
       expect(deps.onUpdate).toHaveBeenCalled()
       let phases = (
         deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
-      ).mock.calls.map((c: any[]) => c[0].phase)
+      ).mock.calls.map((c: unknown[]) => (c[0] as { phase: string }).phase)
       expect(phases.at(-1)).toBe('saving')
 
       await vi.advanceTimersByTimeAsync(300)
       phases = (
         deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
-      ).mock.calls.map((c: any[]) => c[0].phase)
+      ).mock.calls.map((c: unknown[]) => (c[0] as { phase: string }).phase)
       expect(phases.at(-1)).toBe('saved')
     })
 

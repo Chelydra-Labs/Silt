@@ -325,7 +325,7 @@ async function indexChunks(
 
   let model = ''
   let dims = 0
-  let done = 0
+  let done: number
   const total = chunks.length
   onProgress?.({
     status: 'indexing',

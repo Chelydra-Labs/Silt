@@ -31,7 +31,7 @@ vi.mock('@wailsio/runtime', () => ({
     }
   },
   Create: {
-    Nullable: (fn: any) => fn,
+    Nullable: (fn: unknown) => fn,
     Array: () => [],
     Map: () => ({}),
     Any: {}

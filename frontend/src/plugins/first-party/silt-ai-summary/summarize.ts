@@ -194,7 +194,6 @@ async function safeCache<T>(
   try {
     return await fn()
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.warn(
       `[silt-ai-summary] cache ${op} failed (degrading — cache is disposable):`,
       e

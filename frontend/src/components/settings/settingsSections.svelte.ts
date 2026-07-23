@@ -103,6 +103,7 @@ export function getSettingsSections(): SettingsSection[] {
     })
   }
   // Third-party: 'settings-panel' iframe surface (one per plugin).
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
   const seen = new Set(pluginSections.map((s) => s.id))
   for (const surface of settingsSurfaces) {
     const id = `plugin:${surface.pluginID}`
@@ -197,6 +198,7 @@ export function getSettingsSections(): SettingsSection[] {
 
   // Stable group order so each divider appears once; preserve relative order
   // within a group (core tabs before plugin tabs that share the group).
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
   const groupRank = new Map(SETTINGS_GROUP_ORDER.map((g, i) => [g, i] as const))
   return core
     .map((s, i) => ({ s, i }))

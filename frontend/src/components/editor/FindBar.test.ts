@@ -52,7 +52,7 @@ describe('FindBar', () => {
         replaceNextInPage: vi.fn(),
         replaceAllInPage: replaceAllInPage
       }
-    } as any
+    } as never
 
     const { getByLabelText } = render(FindBar, {
       props: { editor, onClose: vi.fn() }

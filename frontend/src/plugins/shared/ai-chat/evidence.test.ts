@@ -45,7 +45,7 @@ describe('agent evidence bridge', () => {
         _text: string,
         _history: unknown[],
         options: {
-          onToolResult?: (value: any) => void
+          onToolResult?: (value: unknown) => void
           onDone?: (text: string) => void
         }
       ) => {

@@ -1,5 +1,7 @@
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
+import type { EditorState, Transaction } from '@tiptap/pm/state'
+import type { Node as PMNode } from '@tiptap/pm/model'
 import {
   SearchQuery,
   search as pmSearchPlugin,
@@ -35,7 +37,7 @@ export interface SearchParams {
 
 /** Reject matches inside code blocks, inline code, or links. */
 function scopeFilter(
-  state: { doc: any },
+  state: { doc: PMNode },
   result: { from: number; to: number }
 ): boolean {
   const $from = state.doc.resolve(result.from)
@@ -81,7 +83,13 @@ export const Search = Extension.create({
     return {
       setSearchQuery:
         (params: SearchParams) =>
-        ({ state, dispatch }: { state: any; dispatch?: (tr: any) => void }) => {
+        ({
+          state,
+          dispatch
+        }: {
+          state: EditorState
+          dispatch?: (tr: Transaction) => void
+        }) => {
           this.storage.params = params
           const query = new SearchQuery({
             search: params.search,
@@ -90,10 +98,7 @@ export const Search = Extension.create({
             regexp: params.regexp ?? false,
             replace: params.replace ?? '',
             // The filter runs for every candidate match; keep it cheap.
-            filter: scopeFilter as (
-              s: any,
-              r: { from: number; to: number }
-            ) => boolean
+            filter: scopeFilter
           })
           const tr = setSearchState(state.tr, query)
           if (dispatch) dispatch(tr)
@@ -101,11 +106,23 @@ export const Search = Extension.create({
         },
       findNextInPage:
         () =>
-        ({ state, dispatch }: { state: any; dispatch?: (tr: any) => void }) =>
+        ({
+          state,
+          dispatch
+        }: {
+          state: EditorState
+          dispatch?: (tr: Transaction) => void
+        }) =>
           pmFindNext(state, dispatch),
       findPrevInPage:
         () =>
-        ({ state, dispatch }: { state: any; dispatch?: (tr: any) => void }) =>
+        ({
+          state,
+          dispatch
+        }: {
+          state: EditorState
+          dispatch?: (tr: Transaction) => void
+        }) =>
           pmFindPrev(state, dispatch),
       // Replace (Ctrl+H, #185). The replace text comes from the SearchQuery
       // (set via setSearchQuery's `replace` field, updated when the replace
@@ -114,11 +131,23 @@ export const Search = Extension.create({
       // iterating matches in reverse so positions stay valid.
       replaceNextInPage:
         () =>
-        ({ state, dispatch }: { state: any; dispatch?: (tr: any) => void }) =>
+        ({
+          state,
+          dispatch
+        }: {
+          state: EditorState
+          dispatch?: (tr: Transaction) => void
+        }) =>
           pmReplaceNext(state, dispatch),
       replaceAllInPage:
         () =>
-        ({ state, dispatch }: { state: any; dispatch?: (tr: any) => void }) =>
+        ({
+          state,
+          dispatch
+        }: {
+          state: EditorState
+          dispatch?: (tr: Transaction) => void
+        }) =>
           pmReplaceAll(state, dispatch)
     }
   }

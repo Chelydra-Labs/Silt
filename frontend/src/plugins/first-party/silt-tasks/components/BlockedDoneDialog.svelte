@@ -87,7 +87,6 @@
 <div
   class="fixed inset-0 z-[190] flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
 >
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <button
     tabindex="-1"
     aria-label="Cancel complete"
@@ -125,7 +124,7 @@
       </div>
     </div>
     <ul class="px-5 pb-3 space-y-1 max-h-40 overflow-y-auto">
-      {#each blockers as b}
+      {#each blockers as b (b.id)}
         <li
           class="text-sm text-text-primary font-body-md flex items-center gap-1.5"
         >

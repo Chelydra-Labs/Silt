@@ -2,7 +2,7 @@
 // has a binning contract that ListView relies on, so these are the
 // load-bearing assertions for the generalized list rendering.
 import { describe, it, expect } from 'vitest'
-import { binByDimension, type GroupSection } from './grouping'
+import { binByDimension } from './grouping'
 import type { TaskDetail } from './types'
 
 function row(overrides: Partial<TaskDetail> & { id: string }): TaskDetail {

@@ -9,7 +9,7 @@
   import { getActiveLocation } from '../../plugins/location.svelte'
 
   let { node, deleteNode, selected }: NodeViewProps = $props()
-  const attrs = $derived(node.attrs as Record<string, any>)
+  const attrs = $derived(node.attrs as Record<string, unknown>)
   const cardClass = $derived(
     selected
       ? 'border-accent-primary-start/60 bg-accent-primary-glow'
@@ -22,11 +22,14 @@
   const loc = getActiveLocation()
   const resolvedNotebook = $derived((attrs.notebook as string) || loc.notebook)
   const isOpenable = $derived(!!attrs.openable && !!attrs.src)
+  const ariaLabel = $derived(
+    String(attrs.caption || `${String(attrs.embedType)}: ${String(attrs.src)}`)
+  )
 
   async function open() {
     if (!isOpenable) return
     try {
-      await OpenAttachment(resolvedNotebook, attrs.src)
+      await OpenAttachment(resolvedNotebook, String(attrs.src ?? ''))
     } catch (e) {
       console.error('[embed-block] open failed:', e)
     }
@@ -75,7 +78,7 @@
       class="group embed-block-default my-2 p-3 rounded-lg border transition-colors flex items-center gap-3 {cardClass}"
       role="button"
       tabindex="0"
-      aria-label={attrs.caption || `${attrs.embedType}: ${attrs.src}`}
+      aria-label={ariaLabel}
       data-embed-type={attrs.embedType}
       data-openable="true"
       onclick={open}
@@ -132,7 +135,7 @@
     <div
       class="group embed-block-default my-2 p-3 rounded-lg border transition-colors flex items-center gap-3 {cardClass}"
       role="img"
-      aria-label={attrs.caption || `${attrs.embedType}: ${attrs.src}`}
+      aria-label={ariaLabel}
       data-embed-type={attrs.embedType}
       data-openable="false"
     >

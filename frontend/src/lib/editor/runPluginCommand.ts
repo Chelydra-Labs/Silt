@@ -10,6 +10,7 @@
 // Extracted from TipTapEditor.handleSlashSelect so the sync-throw and
 // async-reject paths are unit-testable without mounting the full editor.
 
+import type { Editor } from '@tiptap/core'
 import type { SlashCommand } from './slash-registry'
 
 /**
@@ -25,7 +26,7 @@ export function runPluginCommand(
   try {
     // onSelect is typed `=> void`, but a plugin may return a Promise;
     // duck-type the result so a rejection is caught too.
-    const result = cmd.onSelect?.(editor, pos) as unknown
+    const result = cmd.onSelect?.(editor as Editor, pos) as unknown
     if (result && typeof (result as { catch?: unknown }).catch === 'function') {
       ;(result as Promise<unknown>).catch(report)
     }

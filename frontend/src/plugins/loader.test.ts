@@ -49,7 +49,7 @@ vi.mock('@wailsio/runtime', () => ({
     }
   },
   Create: {
-    Nullable: (fn: any) => fn,
+    Nullable: (fn: unknown) => fn,
     Array: () => [],
     Map: () => ({}),
     Any: {}
@@ -235,7 +235,7 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
         chat: {},
         embedding: {}
       }
-    } as any
+    } as unknown as typeof settings.config
 
     await loadPlugins('Work', '', '')
     expect(loadedPlugins.plugins.has('silt-ai-agent')).toBe(true)
@@ -255,14 +255,14 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
     settings.config = {
       ...settings.config!,
       ai: {
-        ...(settings.config as any).ai,
+        ...settings.config!.ai,
         features: {
           enabled: false,
           rag_enabled: false,
           summaries_enabled: false
         }
       }
-    } as any
+    } as unknown as typeof settings.config
 
     await loadPlugins('Work', '', '')
     expect(loadedPlugins.plugins.has('silt-ai-agent')).toBe(false)

@@ -28,9 +28,9 @@
 
   let {
     pluginId,
-    activeNotebook,
-    activeSection,
-    activePage,
+    activeNotebook: _activeNotebook,
+    activeSection: _activeSection,
+    activePage: _activePage,
     focusBlockId,
     focusKey
   }: Props = $props()
@@ -42,7 +42,6 @@
   // getters backed by location.svelte.ts $state, so plugins that read them in
   // a reactive context re-render automatically on navigation. pluginId is
   // captured so getPluginSettings resolves this plugin's entry (#133).
-  // svelte-ignore state_referenced_locally: pluginId is a stable prop
   // identifying which plugin this view renders; it does not change during
   // the component's lifetime, so capturing the initial value is correct.
   //

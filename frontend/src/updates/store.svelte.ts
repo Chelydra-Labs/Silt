@@ -223,7 +223,7 @@ export async function downloadAndInstall(assetUrl: string): Promise<void> {
 
 function subscribeProgress(): void {
   unsubscribeProgress()
-  progressUnsub = Events.On('update:download:progress', (ev: any) => {
+  progressUnsub = Events.On('update:download:progress', (ev) => {
     const p: { received: number; total: number } = ev.data
     if (!p) return
     if (p.total > 0) {

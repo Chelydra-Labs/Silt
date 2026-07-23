@@ -10,9 +10,12 @@
     manifest?: PluginManifest | null
   }
   let { ctx, manifest }: Props = $props()
-  // svelte-ignore state_referenced_locally: the props are captured for test
-  // inspection only; reactivity is not needed here (mirrors PluginView.svelte).
-  ;(globalThis as any).__lastStubSidebarProps = { ctx, manifest }
+  // inspection only; capture props once on mount (mirrors PluginView.svelte).
+  $effect.pre(() => {
+    ;(
+      globalThis as unknown as { __lastStubSidebarProps?: unknown }
+    ).__lastStubSidebarProps = { ctx, manifest }
+  })
 </script>
 
 <div data-test-stub-sidebar data-plugin-id={manifest?.id ?? ''}>

@@ -55,9 +55,9 @@ describe('FormatToolbar', () => {
   })
 
   it('keeps block style, Bold, Italic, Underline, Link, and Inline code directly available', () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { getByLabelText } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
+      props: { editor: editor as never, ...baseProps }
     })
     expect(getByLabelText('Block type')).toBeTruthy()
     expect(getByLabelText('Bold')).toBeTruthy()
@@ -73,9 +73,9 @@ describe('FormatToolbar', () => {
   })
 
   it('places advanced marks under the More formatting menu', async () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { getByLabelText, queryByLabelText } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
+      props: { editor: editor as never, ...baseProps }
     })
     // Not top-level.
     expect(queryByLabelText('Strikethrough')).toBeNull()
@@ -92,9 +92,9 @@ describe('FormatToolbar', () => {
   })
 
   it('places alignment and insert actions in labelled menus', async () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { getByLabelText, queryByLabelText } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
+      props: { editor: editor as never, ...baseProps }
     })
     expect(queryByLabelText('Align center')).toBeNull()
     expect(queryByLabelText('Callout')).toBeNull()
@@ -114,11 +114,11 @@ describe('FormatToolbar', () => {
   })
 
   it('renders link and a single clear-formatting button', () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { getByLabelText, getAllByLabelText, queryByLabelText } = render(
       FormatToolbar,
       {
-        props: { editor, ...baseProps }
+        props: { editor: editor as never, ...baseProps }
       }
     )
     expect(getByLabelText('Insert link')).toBeTruthy()
@@ -131,19 +131,19 @@ describe('FormatToolbar', () => {
   })
 
   it('hides color pickers when colorEnabled is false', () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { queryByLabelText } = render(FormatToolbar, {
-      props: { editor, ...baseProps, colorEnabled: false }
+      props: { editor: editor as never, ...baseProps, colorEnabled: false }
     })
     expect(queryByLabelText('Text color')).toBeNull()
     expect(queryByLabelText('Background color')).toBeNull()
   })
 
   it('reflects aria-pressed for active marks', () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { getByLabelText } = render(FormatToolbar, {
       props: {
-        editor,
+        editor: editor as never,
         ...baseProps,
         activeMarks: new Set<string>(['bold'])
       }
@@ -153,9 +153,9 @@ describe('FormatToolbar', () => {
   })
 
   it('has role=toolbar with tabindex for keyboard navigation', () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { getByRole } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
+      props: { editor: editor as never, ...baseProps }
     })
     const toolbar = getByRole('toolbar')
     expect(toolbar).toBeTruthy()
@@ -163,9 +163,9 @@ describe('FormatToolbar', () => {
   })
 
   it('includes Heading and Color triggers in the unified data-tb focus set', () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { container, getByLabelText } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
+      props: { editor: editor as never, ...baseProps }
     })
     const tbs = container.querySelectorAll('[data-tb]')
     expect(tbs.length).toBeGreaterThanOrEqual(8)
@@ -177,10 +177,10 @@ describe('FormatToolbar', () => {
   })
 
   it('dispatches silt:set-block-align on alignment click', async () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
     const { getByLabelText } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
+      props: { editor: editor as never, ...baseProps }
     })
     await fireEvent.click(getByLabelText('Alignment'))
     await fireEvent.click(getByLabelText('Align center'))
@@ -193,9 +193,9 @@ describe('FormatToolbar', () => {
   })
 
   it('disables link when selection is empty and not in a link', () => {
-    const editor = makeMockEditor({ empty: true }) as any
+    const editor = makeMockEditor({ empty: true })
     const { getByLabelText } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
+      props: { editor: editor as never, ...baseProps }
     })
     expect((getByLabelText('Insert link') as HTMLButtonElement).disabled).toBe(
       true
@@ -203,31 +203,31 @@ describe('FormatToolbar', () => {
   })
 
   it('disables marks when TipTap can() returns false', () => {
-    const editor = makeMockEditor({ canMark: false }) as any
+    const editor = makeMockEditor({ canMark: false })
     const { getByLabelText } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
+      props: { editor: editor as never, ...baseProps }
     })
     expect((getByLabelText('Bold') as HTMLButtonElement).disabled).toBe(true)
     expect((getByLabelText('Italic') as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('disables marks when TipTap can() throws (fail closed)', () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     editor.can = () => {
       throw new Error('can boom')
     }
     const { getByLabelText } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
+      props: { editor: editor as never, ...baseProps }
     })
     expect((getByLabelText('Bold') as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('Esc closes an open overflow menu before returning to the editor', async () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { getByLabelText, getByRole, queryByLabelText } = render(
       FormatToolbar,
       {
-        props: { editor, ...baseProps }
+        props: { editor: editor as never, ...baseProps }
       }
     )
     await fireEvent.click(getByLabelText('More formatting'))
@@ -239,7 +239,7 @@ describe('FormatToolbar', () => {
   })
 
   it('second Esc after menu close returns focus to the editor', async () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const focusRun = vi.fn()
     editor.chain = vi.fn(() => ({
       focus: () => ({
@@ -253,7 +253,7 @@ describe('FormatToolbar', () => {
       unsetAllMarks: () => ({ run: () => {} })
     }))
     const { getByLabelText, getByRole } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
+      props: { editor: editor as never, ...baseProps }
     })
     await fireEvent.click(getByLabelText('More formatting'))
     const toolbar = getByRole('toolbar')
@@ -266,9 +266,9 @@ describe('FormatToolbar', () => {
   })
 
   it('ArrowRight moves focus across top-level toolbar controls', async () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { container, getByRole } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
+      props: { editor: editor as never, ...baseProps }
     })
     const toolbar = getByRole('toolbar')
     const buttons = container.querySelectorAll<HTMLButtonElement>('[data-tb]')
@@ -279,9 +279,9 @@ describe('FormatToolbar', () => {
   })
 
   it('does not force horizontal overflow classes on the toolbar root', () => {
-    const editor = makeMockEditor() as any
+    const editor = makeMockEditor()
     const { getByRole } = render(FormatToolbar, {
-      props: { editor, ...baseProps }
+      props: { editor: editor as never, ...baseProps }
     })
     const toolbar = getByRole('toolbar') as HTMLElement
     // Contract for ≤600px: wrap + visible overflow, never a forced h-scroll rail.

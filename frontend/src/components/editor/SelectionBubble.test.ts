@@ -208,11 +208,11 @@ describe('SelectionBubble', () => {
   })
 
   it('opens link input for a new link without unsetting', async () => {
-    const editor = makeEditor({ linkActive: false }) as any
+    const editor = makeEditor({ linkActive: false })
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
     const { getByLabelText } = render(SelectionBubble, {
       props: {
-        editor,
+        editor: editor as never,
         activeMarks: new Set<string>(),
         selectionEmpty: false,
         selectionCoords: coords
@@ -231,10 +231,10 @@ describe('SelectionBubble', () => {
     const editor = makeEditor({
       linkActive: true,
       href: 'https://example.com'
-    }) as any
+    })
     const { getByLabelText, queryByLabelText } = render(SelectionBubble, {
       props: {
-        editor,
+        editor: editor as never,
         activeMarks: new Set<string>(['link']),
         selectionEmpty: false,
         selectionCoords: coords
@@ -253,11 +253,11 @@ describe('SelectionBubble', () => {
     const editor = makeEditor({
       linkActive: true,
       href: 'https://example.com/path'
-    }) as any
+    })
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
     const { getByLabelText } = render(SelectionBubble, {
       props: {
-        editor,
+        editor: editor as never,
         activeMarks: new Set<string>(['link']),
         selectionEmpty: false,
         selectionCoords: coords
@@ -276,10 +276,10 @@ describe('SelectionBubble', () => {
     const editor = makeEditor({
       linkActive: true,
       href: 'https://open.me'
-    }) as any
+    })
     const { getByLabelText } = render(SelectionBubble, {
       props: {
-        editor,
+        editor: editor as never,
         activeMarks: new Set<string>(['link']),
         selectionEmpty: false,
         selectionCoords: coords
@@ -294,10 +294,10 @@ describe('SelectionBubble', () => {
     const editor = makeEditor({
       linkActive: true,
       href: 'https://example.com'
-    }) as any
+    })
     const { getByLabelText } = render(SelectionBubble, {
       props: {
-        editor,
+        editor: editor as never,
         activeMarks: new Set<string>(['link']),
         selectionEmpty: false,
         selectionCoords: coords
@@ -310,10 +310,10 @@ describe('SelectionBubble', () => {
   })
 
   it('navigates with ArrowRight and activates with Enter when focused (#643)', async () => {
-    const editor = makeEditor() as any
+    const editor = makeEditor()
     const { getByLabelText, getByRole } = render(SelectionBubble, {
       props: {
-        editor,
+        editor: editor as never,
         activeMarks: new Set<string>(),
         selectionEmpty: false,
         selectionCoords: coords
@@ -328,10 +328,10 @@ describe('SelectionBubble', () => {
   })
 
   it('does not auto-focus a bubble button when selection appears', () => {
-    const editor = makeEditor() as any
+    const editor = makeEditor()
     const { getByLabelText } = render(SelectionBubble, {
       props: {
-        editor,
+        editor: editor as never,
         activeMarks: new Set<string>(),
         selectionEmpty: false,
         selectionCoords: coords
@@ -341,10 +341,10 @@ describe('SelectionBubble', () => {
   })
 
   it('Esc returns focus to the editor when toolbar has focus (#643)', async () => {
-    const editor = makeEditor() as any
+    const editor = makeEditor()
     const { getByLabelText, getByRole } = render(SelectionBubble, {
       props: {
-        editor,
+        editor: editor as never,
         activeMarks: new Set<string>(),
         selectionEmpty: false,
         selectionCoords: coords
@@ -357,12 +357,12 @@ describe('SelectionBubble', () => {
   })
 
   it('Esc closes the More menu before returning to the editor', async () => {
-    const editor = makeEditor() as any
+    const editor = makeEditor()
     const { getByLabelText, getByRole, queryByLabelText } = render(
       SelectionBubble,
       {
         props: {
-          editor,
+          editor: editor as never,
           activeMarks: new Set<string>(),
           selectionEmpty: false,
           selectionCoords: coords

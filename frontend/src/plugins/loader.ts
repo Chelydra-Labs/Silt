@@ -92,7 +92,7 @@ export async function loadPlugins(
     disabled: boolean
     has_index: boolean
     contentSha256?: string
-  }[] = []
+  }[]
   try {
     installed = (await ListPlugins()) ?? []
   } catch {
@@ -127,13 +127,13 @@ export async function loadPlugins(
 
       const blob = new Blob([src], { type: 'text/javascript' })
       const url = URL.createObjectURL(blob)
-      let mod: any
+      let mod: { default?: SiltPlugin } & Partial<SiltPlugin>
       try {
         mod = await import(/* @vite-ignore */ url)
       } finally {
         URL.revokeObjectURL(url)
       }
-      const def: SiltPlugin | undefined = mod?.default ?? mod
+      const def = (mod?.default ?? mod) as SiltPlugin | undefined
       const manifest = def?.manifest ?? { id, name: id, version: '0.0.0' }
       // Register a session token for binding-identity verification (#151).
       let token = sessionTokens.get(id)
@@ -146,9 +146,17 @@ export async function loadPlugins(
       const ctx = makePluginContext(id, token)
       def?.init?.(ctx)
       def?.onVaultOpen?.(ctx)
+      // Disk plugins render DiskPluginNotice unless they export a default
+      // object with `.component`. Do not honor a bare named `component` export:
+      // that would mount untrusted compiled UI in the host webview. The iframe
+      // surface bridge remains the safe path for third-party UI (sdk.ts).
+      // Integrity + grants still apply; this keeps the host-component boundary
+      // aligned with main (default.component only).
+      const defaultExport = mod?.default as
+        (SiltPlugin & { component?: RegisteredPlugin['component'] }) | undefined
       const reg: RegisteredPlugin = {
         manifest,
-        component: mod?.default?.component ?? DiskPluginNotice,
+        component: defaultExport?.component ?? DiskPluginNotice,
         init: def?.init,
         onVaultOpen: def?.onVaultOpen,
         onVaultClose: def?.onVaultClose,
@@ -260,7 +268,6 @@ function wireLifecycleOnce() {
       try {
         reg.onVaultClose?.()
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error(`[silt] onVaultClose for ${reg.manifest.id} threw:`, err)
       }
     }
@@ -286,7 +293,6 @@ function wireLifecycleOnce() {
         unregisterPluginSurfaces(id)
         unregisterPluginDecorations(id)
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error(`[silt] contribution unregister for ${id} threw:`, err)
       }
     }
@@ -294,7 +300,6 @@ function wireLifecycleOnce() {
       try {
         reg.onShutdown?.()
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error(`[silt] onShutdown for ${reg.manifest.id} threw:`, err)
       }
     }

@@ -35,7 +35,7 @@ vi.mock('@wailsio/runtime', () => ({
     }
   },
   Create: {
-    Nullable: (fn: any) => fn,
+    Nullable: (fn: unknown) => fn,
     Array: () => [],
     Map: () => ({}),
     Any: {}
@@ -61,7 +61,6 @@ import { v2CtxStubs } from '../../test-helpers'
 import {
   getTaskHubState,
   resetTaskHubState,
-  setFilters,
   applySavedView,
   type SavedView
 } from './state.svelte'

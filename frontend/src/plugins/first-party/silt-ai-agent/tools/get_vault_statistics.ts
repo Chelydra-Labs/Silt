@@ -40,11 +40,6 @@ export const getVaultStatisticsToolDef = {
 const TOP_N = 20
 const RECENT_N = 5
 
-interface CountRow {
-  key: string
-  count: number
-}
-
 export async function handleGetVaultStatistics(
   ctx: PluginContext,
   args: Record<string, unknown>

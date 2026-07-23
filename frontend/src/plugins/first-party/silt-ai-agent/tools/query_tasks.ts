@@ -137,9 +137,7 @@ export async function handleQueryTasks(
     }
   }
   if (args.is_blocked !== undefined && args.is_blocked !== null) {
-    where.push(
-      Boolean(args.is_blocked) ? BLOCKED_EXISTS : `NOT ${BLOCKED_EXISTS}`
-    )
+    where.push(args.is_blocked ? BLOCKED_EXISTS : `NOT ${BLOCKED_EXISTS}`)
   }
 
   const sql =

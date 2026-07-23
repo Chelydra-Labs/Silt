@@ -14,7 +14,7 @@ function makeCtx(opts: { cachedVector: number[]; cachedModel: string }): {
   ctx: PluginContext
   embed: ReturnType<typeof vi.fn>
 } {
-  let model = 'model-a'
+  const model = 'model-a'
   const embed = vi.fn(async (req: { texts: string[]; taskType?: string }) => ({
     embeddings: req.texts.map(() => [1, 0]),
     model,

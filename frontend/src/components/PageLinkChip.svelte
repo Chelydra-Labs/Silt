@@ -242,7 +242,6 @@
   <span class="text-text-muted italic text-[0.85em] mx-0.5">[[…]]</span>
 {:else if ref?.ambiguous}
   <div class="inline-block relative">
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <span
       role="button"
       tabindex="0"
@@ -327,7 +326,6 @@
   </div>
 {:else if !ref?.exists}
   <div class="inline-block relative">
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <span
       role="button"
       tabindex="0"
@@ -390,7 +388,6 @@
   </div>
 {:else}
   <div class="inline-block relative">
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <span
       role="link"
       tabindex="0"

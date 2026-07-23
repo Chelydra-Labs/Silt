@@ -17,7 +17,7 @@ function makeEditor(opts: {
   contentStarts?: Record<number, number>
   /** Extra ancestors from outer→inner (excluding the leaf block at depth). */
   ancestors?: { type: string; id?: string | null }[]
-}): any {
+}): Parameters<typeof snapshotEditCaret>[0] {
   const depth = opts.depth ?? 1
   const blockType = opts.blockType ?? 'noteBlock'
   const blockId = opts.blockId === undefined ? 'block-a' : opts.blockId
@@ -56,7 +56,7 @@ function makeEditor(opts: {
         }
       }
     }
-  }
+  } as Parameters<typeof snapshotEditCaret>[0]
 }
 
 /** Minimal doc stub for resolveCaretInDoc. */
@@ -64,13 +64,13 @@ function makeDoc(
   blocks: { id: string; pos: number; contentSize: number }[]
 ): ProseMirrorNode {
   return {
-    descendants(f: (node: any, pos: number) => boolean | void) {
+    descendants(f: (node: ProseMirrorNode, pos: number) => boolean | void) {
       for (const b of blocks) {
         const cont = f(
           {
             attrs: { id: b.id },
             content: { size: b.contentSize }
-          },
+          } as never,
           b.pos
         )
         if (cont === false) break
@@ -188,7 +188,7 @@ describe('resolveCaretInDoc', () => {
 describe('applyEditCaret', () => {
   it('returns false without editor or snapshot', () => {
     expect(applyEditCaret(null, { blockId: 'a', offsetInBlock: 0 })).toBe(false)
-    expect(applyEditCaret({} as any, null)).toBe(false)
+    expect(applyEditCaret({} as never, null)).toBe(false)
   })
 
   it('sets selection when resolve succeeds', () => {
@@ -200,7 +200,7 @@ describe('applyEditCaret', () => {
         doc: makeDoc([{ id: 'a', pos: 0, contentSize: 10 }])
       },
       commands: { setTextSelection, focus }
-    } as any
+    } as never
     expect(applyEditCaret(editor, { blockId: 'a', offsetInBlock: 3 })).toBe(
       true
     )
@@ -213,7 +213,7 @@ describe('applyEditCaret', () => {
       isDestroyed: false,
       state: { doc: makeDoc([{ id: 'other', pos: 0, contentSize: 5 }]) },
       commands: { setTextSelection: vi.fn(), focus: vi.fn() }
-    } as any
+    } as never
     expect(applyEditCaret(editor, { blockId: 'gone', offsetInBlock: 0 })).toBe(
       false
     )

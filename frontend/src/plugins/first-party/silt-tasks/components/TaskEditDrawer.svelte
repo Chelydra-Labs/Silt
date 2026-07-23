@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteDate } from 'svelte/reactivity'
   import { fly } from 'svelte/transition'
   import { tick, untrack } from 'svelte'
   import type { PluginContext, TaskStatus } from '../../../sdk'
@@ -107,7 +108,7 @@
   })
   function formatTimestamp(iso: string): string {
     if (!iso) return ''
-    const parsed = new Date(iso)
+    const parsed = new SvelteDate(iso)
     return isNaN(parsed.getTime()) ? iso : timestampFormatter.format(parsed)
   }
 
@@ -710,9 +711,9 @@
   // preview without waiting for the host reload.
   let nextOccurrence = $derived.by(() => {
     if (!recurrenceState || !dueDateState) return ''
-    const due = new Date(dueDateState + 'T00:00:00')
+    const due = new SvelteDate(dueDateState + 'T00:00:00')
     if (isNaN(due.getTime())) return ''
-    const today = new Date()
+    const today = new SvelteDate()
     today.setHours(0, 0, 0, 0)
     // Overdue recurring task: the server's skip-missed resolver decides the
     // landing date at completion; a client guess could be wrong.
@@ -721,20 +722,28 @@
     let step: Date
     if (rule.includes('day') && !rule.includes('weekday')) {
       const n = parseInt(rule.match(/(\d+)\s*day/)?.[1] ?? '1')
-      step = new Date(due.getTime() + n * 86400000)
+      step = new SvelteDate(due.getTime() + n * 86400000)
     } else if (rule.includes('weekday')) {
-      step = new Date(due.getTime() + 86400000)
+      step = new SvelteDate(due.getTime() + 86400000)
       while (step.getDay() === 0 || step.getDay() === 6)
         step.setDate(step.getDate() + 1)
     } else if (rule.includes('week')) {
       const n = parseInt(rule.match(/(\d+)\s*week/)?.[1] ?? '1')
-      step = new Date(due.getTime() + n * 7 * 86400000)
+      step = new SvelteDate(due.getTime() + n * 7 * 86400000)
     } else if (rule.includes('month')) {
       const n = parseInt(rule.match(/(\d+)\s*month/)?.[1] ?? '1')
-      step = new Date(due.getFullYear(), due.getMonth() + n, due.getDate())
+      step = new SvelteDate(
+        due.getFullYear(),
+        due.getMonth() + n,
+        due.getDate()
+      )
     } else if (rule.includes('year')) {
       const n = parseInt(rule.match(/(\d+)\s*year/)?.[1] ?? '1')
-      step = new Date(due.getFullYear() + n, due.getMonth(), due.getDate())
+      step = new SvelteDate(
+        due.getFullYear() + n,
+        due.getMonth(),
+        due.getDate()
+      )
     } else {
       return ''
     }
@@ -851,9 +860,8 @@
         >
           Status
         </h3>
-        <!-- svelte-ignore a11y_no_static_element_interactions
-             role="radiogroup" is a composite widget that handles arrow-key
-             navigation for its radio children per WAI-ARIA APG. -->
+        role="radiogroup" is a composite widget that handles arrow-key navigation
+        for its radio children per WAI-ARIA APG. -->
         <div
           class="flex items-center gap-0.5 bg-surface-panel border border-surface-panel-border rounded-lg p-0.5"
           role="radiogroup"
@@ -861,7 +869,7 @@
           tabindex="-1"
           onkeydown={onStatusKeydown}
         >
-          {#each STATUSES as s}
+          {#each STATUSES as s (s)}
             <button
               data-status={s}
               type="button"
@@ -949,7 +957,7 @@
                   }}
                 />
               </div>
-              {#each [{ label: 'Today', value: ctx.today }, { label: 'Tomorrow', value: plusDaysISO(ctx.today, 1) }, { label: 'Next week', value: plusDaysISO(ctx.today, 7) }] as preset}
+              {#each [{ label: 'Today', value: ctx.today }, { label: 'Tomorrow', value: plusDaysISO(ctx.today, 1) }, { label: 'Next week', value: plusDaysISO(ctx.today, 7) }] as preset (preset.label)}
                 <button
                   type="button"
                   class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm hover:bg-hover transition-colors {dueDateState ===
@@ -1248,10 +1256,9 @@
               Priority
             </dt>
             <dd class="flex-1 max-w-55">
-              <!-- svelte-ignore a11y_no_static_element_interactions
-                   role="radiogroup" is a composite widget that handles
-                   arrow-key navigation for its radio children per WAI-ARIA
-                   APG (same pattern as the Status control above). -->
+              role="radiogroup" is a composite widget that handles arrow-key
+              navigation for its radio children per WAI-ARIA APG (same pattern
+              as the Status control above). -->
               <div
                 class="flex items-center gap-0.5 bg-surface-panel border border-surface-panel-border rounded-lg p-0.5"
                 role="radiogroup"

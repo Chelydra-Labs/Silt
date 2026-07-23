@@ -56,7 +56,7 @@ vi.mock('@wailsio/runtime', () => ({
     }
   },
   Create: {
-    Nullable: (fn: any) => fn,
+    Nullable: (fn: unknown) => fn,
     Array: () => [],
     Map: () => ({}),
     Any: {}
@@ -88,7 +88,7 @@ describe('NodeView test harness (#127)', () => {
 
   it('renders a NoteBlock NodeView with a data-node-view-wrapper', async () => {
     const blocks = [mkBlock('NOTE', { clean_text: 'hello world' })]
-    const { editor, container, cleanup } = await mountNodeViewEditor(blocks)
+    const { container, cleanup } = await mountNodeViewEditor(blocks)
 
     const wrapper = container.querySelector('[data-node-view-wrapper]')
     expect(wrapper).toBeTruthy()

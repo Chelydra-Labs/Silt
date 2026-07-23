@@ -38,7 +38,7 @@
   // Build the real PluginContext for the first-party component so it can call
   // ctx.getPluginSettings() / ctx.updatePluginSetting(). Memoized per plugin —
   // rebuild only when the plugin id changes (not on every reactive re-render).
-  let ctx = $derived(makePluginContext(plugin.manifest.id) as any)
+  let ctx = $derived(makePluginContext(plugin.manifest.id))
 </script>
 
 {#if plugin.settingsPageComponent}

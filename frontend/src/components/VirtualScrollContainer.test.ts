@@ -47,7 +47,7 @@ vi.mock('@wailsio/runtime', () => ({
     }
   },
   Create: {
-    Nullable: (fn: any) => fn,
+    Nullable: <T>(fn: T) => fn,
     Array: () => [],
     Map: () => ({}),
     Any: {}
@@ -329,7 +329,7 @@ describe('Edit↔Source caret restoration (#331)', () => {
   )
 
   function seedCaret(blockId: string, from: number, contentStart: number) {
-    ;(globalThis as any).__tiptapStubSeed = {
+    ;(globalThis as unknown as Record<string, unknown>).__tiptapStubSeed = {
       from,
       $from: {
         depth: 1,
@@ -344,8 +344,13 @@ describe('Edit↔Source caret restoration (#331)', () => {
   }
 
   function seedDoc(blocks: { id: string; pos: number; contentSize: number }[]) {
-    ;(globalThis as any).__tiptapStubDoc = {
-      descendants(f: (node: any, pos: number) => boolean | void) {
+    ;(globalThis as unknown as Record<string, unknown>).__tiptapStubDoc = {
+      descendants(
+        f: (
+          node: { attrs?: { id?: string }; content?: { size: number } },
+          pos: number
+        ) => boolean | void
+      ) {
         for (const b of blocks) {
           if (
             f(
@@ -364,9 +369,10 @@ describe('Edit↔Source caret restoration (#331)', () => {
     mocks.onToggleViewMode.mockClear()
     scrollTopVal = 0
     scrollHeightVal = 1000
-    delete (globalThis as any).__tiptapStubSeed
-    delete (globalThis as any).__tiptapStubDoc
-    delete (globalThis as any).__tiptapStubSelection
+    delete (globalThis as unknown as Record<string, unknown>).__tiptapStubSeed
+    delete (globalThis as unknown as Record<string, unknown>).__tiptapStubDoc
+    delete (globalThis as unknown as Record<string, unknown>)
+      .__tiptapStubSelection
     Object.defineProperty(HTMLElement.prototype, 'scrollTop', {
       configurable: true,
       get() {
@@ -392,9 +398,10 @@ describe('Edit↔Source caret restoration (#331)', () => {
         'scrollHeight',
         origScrollHeight
       )
-    delete (globalThis as any).__tiptapStubSeed
-    delete (globalThis as any).__tiptapStubDoc
-    delete (globalThis as any).__tiptapStubSelection
+    delete (globalThis as unknown as Record<string, unknown>).__tiptapStubSeed
+    delete (globalThis as unknown as Record<string, unknown>).__tiptapStubDoc
+    delete (globalThis as unknown as Record<string, unknown>)
+      .__tiptapStubSelection
     cleanup()
   })
 
@@ -411,11 +418,13 @@ describe('Edit↔Source caret restoration (#331)', () => {
     rerender({ ...baseProps(), viewMode: 'source' })
     scrollTopVal = 0
     // Clear seed so remount doesn't re-bind capture selection; keep doc for resolve.
-    delete (globalThis as any).__tiptapStubSeed
+    delete (globalThis as unknown as Record<string, unknown>).__tiptapStubSeed
     rerender(baseProps())
 
     await waitFor(() => {
-      expect((globalThis as any).__tiptapStubSelection).toBe(7)
+      expect(
+        (globalThis as unknown as Record<string, unknown>).__tiptapStubSelection
+      ).toBe(7)
     })
     await waitFor(() => {
       expect(scrollTopVal).toBe(320)
@@ -432,14 +441,16 @@ describe('Edit↔Source caret restoration (#331)', () => {
     scrollTopVal = 200
     rerender({ ...baseProps(), viewMode: 'source' })
     scrollTopVal = 0
-    delete (globalThis as any).__tiptapStubSeed
+    delete (globalThis as unknown as Record<string, unknown>).__tiptapStubSeed
     rerender(baseProps())
 
     await waitFor(() => {
       expect(scrollTopVal).toBe(200)
     })
     // No matching block → setTextSelection never called (or not with a resolve).
-    expect((globalThis as any).__tiptapStubSelection).toBeUndefined()
+    expect(
+      (globalThis as unknown as Record<string, unknown>).__tiptapStubSelection
+    ).toBeUndefined()
   })
 
   it('clamps caret offset when the block content shrank', async () => {
@@ -453,11 +464,13 @@ describe('Edit↔Source caret restoration (#331)', () => {
     scrollTopVal = 100
     rerender({ ...baseProps(), viewMode: 'source' })
     scrollTopVal = 0
-    delete (globalThis as any).__tiptapStubSeed
+    delete (globalThis as unknown as Record<string, unknown>).__tiptapStubSeed
     rerender(baseProps())
 
     await waitFor(() => {
-      expect((globalThis as any).__tiptapStubSelection).toBe(5)
+      expect(
+        (globalThis as unknown as Record<string, unknown>).__tiptapStubSelection
+      ).toBe(5)
     })
   })
 
@@ -466,7 +479,9 @@ describe('Edit↔Source caret restoration (#331)', () => {
     seedDoc([{ id: 'block-a', pos: 0, contentSize: 20 }])
     render(VirtualScrollContainer, { props: baseProps() })
     await new Promise((r) => setTimeout(r, 0))
-    expect((globalThis as any).__tiptapStubSelection).toBeUndefined()
+    expect(
+      (globalThis as unknown as Record<string, unknown>).__tiptapStubSelection
+    ).toBeUndefined()
   })
 })
 
@@ -496,7 +511,8 @@ describe('VirtualScrollContainer heading/block scroll (#545)', () => {
   // re-import FetchPageBlocks inside the test to override its return value.
   beforeEach(() => {
     scrollIntoViewMock = vi.fn()
-    Element.prototype.scrollIntoView = scrollIntoViewMock as any
+    Element.prototype.scrollIntoView =
+      scrollIntoViewMock as unknown as typeof Element.prototype.scrollIntoView
     // Inject a DOM element matching the header block's data-id so
     // querySelector('[data-id="..."]') finds it (the TipTapEditor stub
     // doesn't render real block DOM).
@@ -512,7 +528,7 @@ describe('VirtualScrollContainer heading/block scroll (#545)', () => {
 
   it('scrolls to a matching HEADER on targetHeading + targetKey', async () => {
     const { FetchPageBlocks } = await import('../../bindings/silt/app.js')
-    vi.mocked(FetchPageBlocks).mockResolvedValue([headerBlock] as any)
+    vi.mocked(FetchPageBlocks).mockResolvedValue([headerBlock] as never)
 
     render(VirtualScrollContainer, {
       props: {
@@ -531,7 +547,7 @@ describe('VirtualScrollContainer heading/block scroll (#545)', () => {
     const { FetchPageBlocks } = await import('../../bindings/silt/app.js')
     vi.mocked(FetchPageBlocks).mockResolvedValue([
       { ...headerBlock, id: 'other', clean_text: 'Other' }
-    ] as any)
+    ] as never)
 
     render(VirtualScrollContainer, {
       props: {
@@ -547,7 +563,7 @@ describe('VirtualScrollContainer heading/block scroll (#545)', () => {
 
   it('scrolls to a block by targetBlockId when the block exists', async () => {
     const { FetchPageBlocks } = await import('../../bindings/silt/app.js')
-    vi.mocked(FetchPageBlocks).mockResolvedValue([headerBlock] as any)
+    vi.mocked(FetchPageBlocks).mockResolvedValue([headerBlock] as never)
 
     render(VirtualScrollContainer, {
       props: {

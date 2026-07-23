@@ -91,7 +91,9 @@ export function createWorkingCopy() {
   /**
    * Editor-session locks for derived tokens (#529). Not persisted in theme JSON.
    * When locked, seed edits do not overwrite the derived path.
+   * Whole-value reassignment drives updates ($state.raw); plain Set is enough.
    */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- $state.raw + reassignment
   let lockedDerived = $state.raw<Set<string>>(new Set())
 
   let rafId: number | null = null
@@ -125,6 +127,7 @@ export function createWorkingCopy() {
       }
       seed = structuredClone(parsed)
       draft = structuredClone(parsed)
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- $state.raw + reassignment
       lockedDerived = new Set()
       clearDirty()
       schedulePreview()
@@ -132,6 +135,7 @@ export function createWorkingCopy() {
       loadError = err instanceof Error ? err.message : String(err)
       seed = null
       draft = null
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- $state.raw + reassignment
       lockedDerived = new Set()
       dirtyFlag = false
     }
@@ -142,6 +146,7 @@ export function createWorkingCopy() {
     loadError = message
     seed = null
     draft = null
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- $state.raw + reassignment
     lockedDerived = new Set()
     dirtyFlag = false
   }
@@ -149,6 +154,7 @@ export function createWorkingCopy() {
   function resetAll(): void {
     if (!seed) return
     draft = structuredClone(seed)
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- $state.raw + reassignment
     lockedDerived = new Set()
     clearDirty()
     schedulePreview()
@@ -284,6 +290,7 @@ export function createWorkingCopy() {
 
   function lockDerived(path: string): void {
     if (lockedDerived.has(path)) return
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- $state.raw + reassignment
     const next = new Set(lockedDerived)
     next.add(path)
     lockedDerived = next
@@ -291,6 +298,7 @@ export function createWorkingCopy() {
 
   function unlockDerived(path: string): void {
     if (!lockedDerived.has(path)) return
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- $state.raw + reassignment
     const next = new Set(lockedDerived)
     next.delete(path)
     lockedDerived = next
@@ -391,6 +399,7 @@ export function createWorkingCopy() {
     if (seed) {
       draft = structuredClone(seed)
     }
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- $state.raw + reassignment
     lockedDerived = new Set()
     clearDirty()
     restoreActiveTheme()

@@ -111,7 +111,7 @@ vi.mock('@wailsio/runtime', () => ({
     }
   },
   Create: {
-    Nullable: (fn: any) => fn,
+    Nullable: (fn: unknown) => fn,
     Array: () => [],
     Map: () => ({}),
     Any: {}
@@ -127,7 +127,6 @@ import {
   enterTaskPageRoute,
   clearTaskPageRoute,
   setGroupBy,
-  setDisplayMode,
   setSort,
   setActiveFilter
 } from '../state.svelte'

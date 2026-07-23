@@ -20,22 +20,18 @@
   import { plusDaysISO, localToday } from '../../sdk'
   import ErrorBanner from './components/ErrorBanner.svelte'
   import ConfirmModal from './components/ConfirmModal.svelte'
-  import { PRIORITY_LABELS } from './types'
+  import { SvelteDate } from 'svelte/reactivity'
   import {
     getTaskHubState,
     setActiveFilter,
     clearActiveFilter,
     setFocusDate,
     clearFocusDate,
-    setFilters,
-    clearFilters,
     applySavedView,
     deleteSavedView,
     saveView,
     reorderSavedViews,
     type SavedView,
-    type TaskFilters,
-    type DueDateFilter,
     type CalendarFilter
   } from './state.svelte'
   import { viewMatchesState } from './savedViews'
@@ -48,7 +44,7 @@
     manifest?: PluginManifest
   }
 
-  let { ctx, manifest }: Props = $props()
+  let { ctx }: Props = $props()
 
   let hubState = $derived(getTaskHubState())
   let liveFilters = $derived(hubState.filters)
@@ -71,7 +67,6 @@
     all: 0
   })
   let byDate = $state<Record<string, number>>({})
-  let loading = $state(true)
   let errorMsg = $state('')
   let calendarExpanded = $state(
     typeof localStorage !== 'undefined'
@@ -153,15 +148,12 @@
   }
 
   async function reload(): Promise<void> {
-    loading = true
     errorMsg = ''
     // Counts + day-dots fail together (sidebar is unuseable without them)
     try {
       await Promise.all([reloadCounts(), reloadDayDots()])
     } catch (e) {
       errorMsg = e instanceof Error ? e.message : String(e)
-    } finally {
-      loading = false
     }
   }
 
@@ -251,13 +243,13 @@
     return new Date(d.getFullYear(), d.getMonth() + 1, 0)
   }
   function startOfWeek(d: Date): Date {
-    const x = new Date(d)
+    const x = new SvelteDate(d)
     x.setDate(x.getDate() - x.getDay())
     x.setHours(0, 0, 0, 0)
     return x
   }
   function addDays(d: Date, n: number): Date {
-    const x = new Date(d)
+    const x = new SvelteDate(d)
     x.setDate(x.getDate() + n)
     return x
   }
@@ -321,7 +313,7 @@
 
   function onListKeydown(e: KeyboardEvent) {
     const max = smartLists.length - 1
-    let nextIdx = listFocusIdx
+    let nextIdx: number
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       nextIdx = Math.min(max, listFocusIdx + 1)
@@ -934,7 +926,7 @@
         </div>
         <div class="grid grid-cols-7 gap-0.5" role="grid">
           <div role="row" class="contents">
-            {#each DOW as d}
+            {#each DOW as d, dowI (dowI)}
               <div
                 role="columnheader"
                 class="text-center text-type-3xs uppercase tracking-widest font-label-sm-bold text-text-muted py-0.5"

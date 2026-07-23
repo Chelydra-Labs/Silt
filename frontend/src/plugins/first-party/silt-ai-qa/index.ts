@@ -26,8 +26,6 @@ export const manifest: PluginManifest = {
   capabilities: { ai: true, 'plugin-db': true }
 }
 
-const PLUGIN_ID = 'silt-ai-qa'
-
 let offSave: (() => void) | null = null
 let offBlock: (() => void) | null = null
 let offConfig: (() => void) | null = null

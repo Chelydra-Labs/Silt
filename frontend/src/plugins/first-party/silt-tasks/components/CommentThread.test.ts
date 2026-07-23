@@ -29,7 +29,7 @@ vi.mock('@wailsio/runtime', () => ({
     }
   },
   Create: {
-    Nullable: (fn: any) => fn,
+    Nullable: (fn: unknown) => fn,
     Array: () => [],
     Map: () => ({}),
     Any: {}
@@ -441,7 +441,7 @@ describe('CommentThread', () => {
   })
 
   it('block:changed event triggers a reload of the thread', async () => {
-    let off = vi.fn()
+    const off = vi.fn()
     let registered: (() => void) | null = null
     const on = vi.fn((evt: string, cb: () => void) => {
       if (evt === 'block:changed') registered = cb

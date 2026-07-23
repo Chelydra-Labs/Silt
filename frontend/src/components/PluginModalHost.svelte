@@ -65,7 +65,7 @@
         <div class="h-[60vh]">
           <PluginSurfaceFrame
             {surface}
-            ctxProxy={makePluginContext(surface.pluginID) as any}
+            ctxProxy={makePluginContext(surface.pluginID)}
           />
         </div>
       </div>

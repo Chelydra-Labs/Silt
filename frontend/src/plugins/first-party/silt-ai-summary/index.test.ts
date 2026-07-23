@@ -88,7 +88,7 @@ describe('readProviderInfo coherence with aiProviderNeedsSetup (#450)', () => {
       mockSettings.config.ai.chat = chat
       const info = readProviderInfo()
       expect(info.isConfigured, `for ${JSON.stringify(chat)}`).toBe(
-        !aiProviderNeedsSetup(chat as any)
+        !aiProviderNeedsSetup(chat as never)
       )
     }
   })

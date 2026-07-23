@@ -58,7 +58,11 @@ describe('notifications/store.svelte (#86)', () => {
 
   it('action callback can be attached', () => {
     const action = vi.fn()
-    pushNotification({ kind: 'error', message: 'try again', action: { label: 'Retry', run: action } })
+    pushNotification({
+      kind: 'error',
+      message: 'try again',
+      action: { label: 'Retry', run: action }
+    })
     const n = notificationsState.items[0]
     expect(n.action?.label).toBe('Retry')
     expect(n.action?.run).toBe(action)

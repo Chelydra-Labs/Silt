@@ -114,12 +114,11 @@ export function filterOwners(
 // - none → insert at the end of the (trimEnd'd) text; the caller prepends a
 //   separating space.
 export type OwnerWriteback =
-  | { kind: 'replace'; from: number; to: number }
-  | { kind: 'insert'; at: number }
+  { kind: 'replace'; from: number; to: number } | { kind: 'insert'; at: number }
 
 export function planOwnerWriteback(
   blockText: string,
-  name: string
+  _name: string
 ): OwnerWriteback {
   const m = OWNER_TOKEN_RE.exec(blockText)
   if (m) {
@@ -275,8 +274,7 @@ export const MentionSuggest = Extension.create<MentionSuggestOptions>({
             const escape =
               (
                 tr.getMeta(mentionSuggestKey) as
-                  | { escape?: boolean }
-                  | undefined
+                  { escape?: boolean } | undefined
               )?.escape === true
             let suppressed = old.suppressed
             if (tr.docChanged) suppressed = false

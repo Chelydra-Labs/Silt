@@ -27,14 +27,19 @@ import {
 
 // Events.On callbacks captured by event name so the test can invoke the
 // menu:save handler exactly as App registered it.
-const eventHandlers = new Map<string, (...args: any[]) => void>()
+const eventHandlers = new Map<string, (...args: unknown[]) => void>()
 
 const bindings = vi.hoisted(() => ({
   IsVaultInitialized: vi.fn(async () => false),
-  GetOpenTabs: vi.fn(async (): Promise<any> => ({
-    open_tabs: [],
-    active_tab: null
-  })),
+  GetOpenTabs: vi.fn(
+    async (): Promise<{
+      open_tabs: unknown[]
+      active_tab: unknown
+    }> => ({
+      open_tabs: [],
+      active_tab: null
+    })
+  ),
   GetStartupEvents: vi.fn(async () => [])
 }))
 
@@ -64,7 +69,7 @@ vi.mock('../bindings/silt/app.js', () => {
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {
-    On: vi.fn((name: string, cb: (...args: any[]) => void) => {
+    On: vi.fn((name: string, cb: (...args: unknown[]) => void) => {
       eventHandlers.set(name, cb)
       return () => {
         eventHandlers.delete(name)
@@ -84,7 +89,7 @@ vi.mock('@wailsio/runtime', () => ({
     }
   },
   Create: {
-    Nullable: (fn: any) => fn,
+    Nullable: (fn: unknown) => fn,
     Array: () => [],
     Map: () => ({}),
     Any: {}

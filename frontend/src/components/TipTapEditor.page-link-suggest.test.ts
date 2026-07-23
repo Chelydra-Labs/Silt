@@ -274,8 +274,7 @@ describe('TipTapEditor page-link typeahead', () => {
       exists: true,
       shortest: 'Roadmap'
     })
-    const { container, getByRole, getByLabelText, editor, unmount } =
-      await mountEditor()
+    const { getByRole, getByLabelText, editor, unmount } = await mountEditor()
     editor.commands.focus('end')
     editor.commands.insertContent('[[ro')
     await vi.advanceTimersByTimeAsync(150)

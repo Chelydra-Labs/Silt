@@ -9,7 +9,8 @@ import {
   copyBlockEmbed,
   duplicateBlock,
   deleteBlock,
-  type ClipboardDeps
+  type ClipboardDeps,
+  type ClipboardMenuState
 } from './clipboard'
 
 // Mock serializeInlineContent so we can assert it's called for the markdown
@@ -32,8 +33,24 @@ const notifySpy = vi.fn()
 
 // --- Editor mock builders ----------------------------------------------------
 
+/** Loose mock editor used only in this file. */
+type MockEditor = {
+  state: unknown
+  commands: {
+    deleteSelection: ReturnType<typeof vi.fn>
+    insertContent: ReturnType<typeof vi.fn>
+    focus: ReturnType<typeof vi.fn>
+  }
+  chain: () => {
+    insertContentAt: ReturnType<typeof vi.fn>
+    deleteRange: ReturnType<typeof vi.fn>
+    focus: ReturnType<typeof vi.fn>
+    run: ReturnType<typeof vi.fn>
+  }
+}
+
 /** Build a minimal Editor stub that supports the operations clipboard.ts uses. */
-function makeEditor(overrides: Record<string, unknown> = {}): any {
+function makeEditor(overrides: Record<string, unknown> = {}): MockEditor {
   // A fake block node returned by $from.node(d). The walker in
   // findActiveBlockDepth checks `node.type.name === 'noteBlock'|'taskBlock'|'headerBlock'`.
   const noteBlockNode = { type: { name: 'noteBlock' } }
@@ -54,7 +71,7 @@ function makeEditor(overrides: Record<string, unknown> = {}): any {
       childCount: 3,
       slice: vi.fn(() => ({
         content: {
-          forEach: (cb: (n: any) => void) =>
+          forEach: (cb: (n: { toJSON: () => unknown }) => void) =>
             cb({ toJSON: () => ({ content: { foo: 1 } }) })
         }
       }))
@@ -75,17 +92,23 @@ function makeEditor(overrides: Record<string, unknown> = {}): any {
       run: vi.fn()
     }),
     ...overrides
-  } as any
+  } as MockEditor
 }
 
 function makeDeps(
-  editor: any,
-  menuState: { activeBlockId?: string; activeBlockNode?: any } | null = null
+  editor: MockEditor,
+  menuState: {
+    activeBlockId?: string
+    activeBlockNode?: {
+      toJSON?: () => unknown
+      attrs?: Record<string, unknown>
+    }
+  } | null = null
 ): ClipboardDeps {
   return {
-    editor,
+    editor: editor as unknown as ClipboardDeps['editor'],
     notify: notifySpy,
-    menu: () => menuState
+    menu: () => menuState as ClipboardMenuState | null
   }
 }
 
@@ -145,7 +168,11 @@ describe('copyAsMarkdown', () => {
   it('serializes the active block when selection is empty', async () => {
     const fakeNode = { toJSON: () => ({ content: { foo: 'bar' } }) }
     const editor = makeEditor()
-    await copyAsMarkdown(makeDeps(editor, { activeBlockNode: fakeNode as any }))
+    await copyAsMarkdown(
+      makeDeps(editor, {
+        activeBlockNode: fakeNode as { toJSON: () => unknown }
+      })
+    )
     // serializeInlineContent mock returns [md:N] where N = JSON length
     expect(writeTextSpy).toHaveBeenCalledWith(expect.stringContaining('[md:'))
   })
@@ -157,7 +184,7 @@ describe('copyAsMarkdown', () => {
         doc: {
           slice: vi.fn(() => ({
             content: {
-              forEach: (cb: (n: any) => void) =>
+              forEach: (cb: (n: { toJSON: () => unknown }) => void) =>
                 cb({ toJSON: () => ({ content: { a: 1 } }) })
             }
           })),
@@ -222,13 +249,17 @@ describe('duplicateBlock', () => {
     }
     const insertAt = vi.fn().mockReturnThis()
     const editor = makeEditor()
-    editor.chain = () => ({
+    ;(editor as { chain: () => unknown }).chain = () => ({
       insertContentAt: insertAt,
       deleteRange: vi.fn().mockReturnThis(),
       focus: vi.fn().mockReturnThis(),
       run: vi.fn()
     })
-    duplicateBlock(makeDeps(editor, { activeBlockNode: fakeNode as any }))
+    duplicateBlock(
+      makeDeps(editor, {
+        activeBlockNode: fakeNode as { toJSON: () => unknown }
+      })
+    )
     expect(insertAt).toHaveBeenCalledWith(
       expect.any(Number),
       expect.objectContaining({
@@ -251,7 +282,7 @@ describe('deleteBlock', () => {
     const deleteRange = vi.fn().mockReturnThis()
     const focus = vi.fn().mockReturnThis()
     const editor = makeEditor()
-    editor.chain = () => ({
+    ;(editor as { chain: () => unknown }).chain = () => ({
       insertContentAt: vi.fn().mockReturnThis(),
       deleteRange,
       focus,
@@ -277,7 +308,7 @@ describe('deleteBlock', () => {
       }
     })
     const deleteRange = vi.fn()
-    editor.chain = () => ({
+    ;(editor as { chain: () => unknown }).chain = () => ({
       insertContentAt: vi.fn().mockReturnThis(),
       deleteRange,
       focus: vi.fn().mockReturnThis(),
@@ -306,7 +337,7 @@ describe('deleteBlock', () => {
       }
     })
     const deleteRange = vi.fn()
-    editor.chain = () => ({
+    ;(editor as { chain: () => unknown }).chain = () => ({
       insertContentAt: vi.fn().mockReturnThis(),
       deleteRange,
       focus: vi.fn().mockReturnThis(),

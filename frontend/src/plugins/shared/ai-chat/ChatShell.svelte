@@ -316,6 +316,7 @@
           {#if entry.role === 'assistant'}
             <!-- Assistant replies are markdown; sanitize before {@html}. -->
             <div class="message-copy message-md">
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- renderChatMarkdown sanitizes HTML -->
               {@html renderChatMarkdown(entry.content)}
             </div>
           {:else}

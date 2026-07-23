@@ -8,6 +8,7 @@
 // window.go.main.App can't tell a plugin's raw import from the SDK bridge's own
 // legitimate use, so it only ever produced a false-positive warning on boot.
 
+import type { Component } from 'svelte'
 import type { UiLocationSnapshot } from './ui-location'
 export type { UiLocationSnapshot, UiLocationTab } from './ui-location'
 
@@ -321,21 +322,21 @@ export interface PluginContext {
    * reflected immediately; the `linked-config:changed` event drives reactive
    * refreshes for active UIs.
    */
-  getPluginSettings: () => Promise<Record<string, any>>
+  getPluginSettings: () => Promise<Record<string, unknown>>
   /**
    * Resolve a SINGLE setting key with schema-default fallback (#103). Reads
    * the merged per-active-notebook settings and falls back to the schema's
    * default when the key is absent. Returns undefined if neither a stored
    * value nor a default exists.
    */
-  getSetting: (key: string) => Promise<any | undefined>
+  getSetting: (key: string) => Promise<unknown>
   /**
    * Persist a SINGLE setting key to the vault-scoped config.yaml via the
    * atomic UpdatePluginSetting binding (#120). The value is stored under
    * `plugins.plugin_settings.<pluginID>.<key>`. No session token required —
    * this is the same atomic path the generic SettingsForm uses.
    */
-  updatePluginSetting: (key: string, value: any) => Promise<boolean>
+  updatePluginSetting: (key: string, value: unknown) => Promise<boolean>
   /**
    * Open the Settings dialog, optionally targeting a specific tab. Plugins use
    * this to deep-link the user from a CTA (e.g. "Configure AI provider") to the
@@ -977,7 +978,9 @@ export interface SiltPlugin {
 export interface RegisteredPlugin {
   manifest: PluginManifest
   /** Optional Svelte component rendered for the plugin's navigable view. */
-  component?: any
+  // Props vary per plugin; bare Component defaults to {} and rejects real UIs.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  component?: Component<any>
   /**
    * Optional primary sidebar component (#321). When the plugin's view is
    * the active sidebar context, `Sidebar.svelte` resolves this component
@@ -996,7 +999,8 @@ export interface RegisteredPlugin {
    * ship JS, not compiled Svelte, and the iframe bridge is the only safe
    * way to render untrusted code in the host webview today.
    */
-  sidebarComponent?: any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sidebarComponent?: Component<any>
   /**
    * Optional bespoke Settings page component (#214). When present, the plugin
    * contributes a dedicated tab to the Settings shell rendered from this
@@ -1011,7 +1015,8 @@ export interface RegisteredPlugin {
    * (registerSurface({ kind: 'settings-panel', ... })); they do not use
    * this field.
    */
-  settingsPageComponent?: any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  settingsPageComponent?: Component<any>
   /** Optional init hook invoked with the live PluginContext. */
   init?: (ctx: PluginContext) => void
   /** v2 lifecycle hooks (#106) — invoked by the host loader. */

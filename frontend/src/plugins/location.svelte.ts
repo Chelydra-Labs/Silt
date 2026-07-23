@@ -15,7 +15,7 @@
  */
 import { dispatch } from './events'
 
-let activeLocation = $state({
+const activeLocation = $state({
   notebook: '',
   section: '',
   page: ''

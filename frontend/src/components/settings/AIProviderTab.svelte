@@ -12,7 +12,6 @@
     PROVIDER_TYPES,
     supportsEmbeddings,
     supportsReasoningEffort,
-    type ProviderType,
     type Which
   } from './ai/aiProviderController.svelte'
   import { createLocalMcpController } from './ai/localMcpController.svelte'
