@@ -7,51 +7,75 @@ if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
   exit 0
 fi
 
-# Get all staged files (exclude deletions: a removed file has no content for
-# Prettier to check, and including it made the hook fail on normal removals).
-ALL_STAGED=$(git diff --cached --name-only --diff-filter=d)
+# NUL-delimited staged paths (exclude deletions: removed files have no content
+# for Prettier, and including them made the hook fail on normal removals).
+# git diff -z + xargs -0 keep paths with spaces intact; -n 40 batches for
+# Windows CreateProcess argv limits ("The command line is too long").
+STAGED_TMP=$(mktemp) || exit 1
+FE_TMP=$(mktemp) || { rm -f "$STAGED_TMP"; exit 1; }
+FE_REL_TMP=$(mktemp) || { rm -f "$STAGED_TMP" "$FE_TMP"; exit 1; }
+trap 'rm -f "$STAGED_TMP" "$FE_TMP" "$FE_REL_TMP"' EXIT
 
-# If no files are staged, exit early
-if [ -z "$ALL_STAGED" ]; then
+git diff --cached -z --name-only --diff-filter=d >"$STAGED_TMP" || exit 1
+
+# Empty staged set (NUL file with no bytes)
+if [ ! -s "$STAGED_TMP" ]; then
   exit 0
 fi
 
-# Filter out documentation and image files to check if any code files are staged
-CODE_STAGED=$(echo "$ALL_STAGED" | grep -v -E '\.(md|txt|png|jpg|jpeg|gif|svg)$')
+# If every staged path is docs/assets only, skip (NUL-safe scan).
+# read -d '' is a bash extension; Git for Windows ships bash as sh.
+CODE_FOUND=0
+while IFS= read -r -d '' path || [ -n "$path" ]; do
+  case "$path" in
+    *.md|*.txt|*.png|*.jpg|*.jpeg|*.gif|*.svg) ;;
+    *) CODE_FOUND=1; break ;;
+  esac
+done <"$STAGED_TMP"
 
-if [ -z "$CODE_STAGED" ]; then
+if [ "$CODE_FOUND" -eq 0 ]; then
   echo "Only documentation, text, or asset changes detected. Exempting pre-commit hooks."
   exit 0
 fi
 
-# Find staged files matching frontend/src/ for Prettier check
-STAGED_FILES=$(echo "$ALL_STAGED" | grep -E '^frontend/src/.*\.(ts|svelte|css)$')
+# Collect frontend/src Prettier targets (repo-relative paths, NUL-delimited).
+: >"$FE_TMP"
+while IFS= read -r -d '' path || [ -n "$path" ]; do
+  case "$path" in
+    frontend/src/*)
+      case "$path" in
+        *.ts|*.svelte|*.css)
+          printf '%s\0' "$path" >>"$FE_TMP"
+          ;;
+      esac
+      ;;
+  esac
+done <"$STAGED_TMP"
 
-if [ -z "$STAGED_FILES" ]; then
+if [ ! -s "$FE_TMP" ]; then
   echo "No staged frontend code files to check. Skipping Prettier check."
   exit 0
 fi
 
 echo "Checking formatting of staged files:"
-for file in $STAGED_FILES; do
-  echo "  - $file"
-done
+while IFS= read -r -d '' path || [ -n "$path" ]; do
+  echo "  - $path"
+done <"$FE_TMP"
 
-# Auto-format (autocorrect) the staged frontend files with Prettier, then
-# re-stage them so the formatting fix rides along with the commit instead of
-# blocking it. Prettier, prettier-plugin-svelte, and .prettierrc all live in
-# frontend/ (the repo root has no package.json), so this MUST run from there —
-# otherwise npx resolves a config-less prettier that can't parse Svelte syntax
-# and fails on every .svelte file. Strip the leading "frontend/" from each
-# path so they resolve from within frontend/.
-#
-# Batch via xargs: a single argv with hundreds of paths exceeds Windows
-# CreateProcess limits ("The command line is too long").
-FE_FILES=$(echo "$STAGED_FILES" | sed 's|^frontend/||')
-if echo "$FE_FILES" | (cd frontend && xargs -n 40 npx prettier --write); then
-  # Re-stage any files Prettier reformatted so the commit includes the fix.
-  # Also batch git add for the same Windows argv limit.
-  echo "$STAGED_FILES" | xargs -n 40 git add
+# Auto-format staged frontend files, then re-stage so the fix rides with the
+# commit. Prettier, prettier-plugin-svelte, and .prettierrc live in frontend/
+# (repo root has no package.json), so this MUST run from there — otherwise npx
+# resolves a config-less prettier that can't parse Svelte. Strip the leading
+# "frontend/" so paths resolve from within frontend/.
+: >"$FE_REL_TMP"
+while IFS= read -r -d '' path || [ -n "$path" ]; do
+  rel=${path#frontend/}
+  printf '%s\0' "$rel" >>"$FE_REL_TMP"
+done <"$FE_TMP"
+
+if (cd frontend && xargs -0 -n 40 npx prettier --write <"$FE_REL_TMP"); then
+  # Re-stage with repo-relative paths (still NUL-safe + batched).
+  xargs -0 -n 40 git add <"$FE_TMP"
 else
   echo "ERROR: Prettier failed to format staged frontend files; see output above."
   exit 1
