@@ -6,8 +6,7 @@
   } from '../lib/sidebar/types'
   import {
     locatorKey,
-    pagePathLabel,
-    RECENT_COLLAPSED_LIMIT
+    pagePathLabel
   } from '../lib/sidebar/navigationPreferences'
 
   interface Props {
@@ -40,16 +39,7 @@
     onRetry
   }: Props = $props()
 
-  /** Session-only; not persisted to vault prefs. */
-  let recentExpanded = $state(false)
-
   let pinnedKeys = $derived(new Set(favorites.map((ref) => locatorKey(ref))))
-  let recentHasMore = $derived(recents.length > RECENT_COLLAPSED_LIMIT)
-  let visibleRecents = $derived(
-    recentExpanded || !recentHasMore
-      ? recents
-      : recents.slice(0, RECENT_COLLAPSED_LIMIT)
-  )
 
   function pageState(ref: NavigationPageRef) {
     const notebook = notebooks.find((item) => item.name === ref.notebook)
@@ -177,7 +167,7 @@
         <p class="empty">No recent pages yet.</p>
       {:else}
         <div class="flex flex-col gap-0.5">
-          {#each visibleRecents as ref (locatorKey(ref))}
+          {#each recents as ref (locatorKey(ref))}
             {@const itemState = pageState(ref)}
             {@const pinned = isPinned(ref)}
             {@const active = isActive(ref)}
@@ -224,18 +214,6 @@
               </button>
             </div>
           {/each}
-          {#if recentHasMore}
-            <button
-              type="button"
-              class="show-more"
-              aria-expanded={recentExpanded}
-              onclick={() => {
-                recentExpanded = !recentExpanded
-              }}
-            >
-              {recentExpanded ? 'Show less' : 'Show more'}
-            </button>
-          {/if}
         </div>
       {/if}
     </div>
@@ -349,29 +327,6 @@
       'wght' 350,
       'GRAD' 0,
       'opsz' 20;
-  }
-  .show-more {
-    margin: 0.1rem 0 0;
-    padding: 0.25rem 0.35rem;
-    border: 0;
-    border-radius: 0.35rem;
-    background: transparent;
-    color: var(--color-surface-sidebar-text-muted);
-    font: inherit;
-    font-size: var(--text-type-3xs);
-    font-weight: 600;
-    text-align: left;
-    cursor: pointer;
-    width: 100%;
-  }
-  .show-more:hover,
-  .show-more:focus-visible {
-    color: var(--color-surface-sidebar-text);
-    background: var(--color-hover);
-    outline: none;
-  }
-  .show-more:focus-visible {
-    outline: 1px solid var(--color-accent-primary-start);
   }
   .retry {
     margin-top: 0.3rem;

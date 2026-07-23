@@ -1432,6 +1432,12 @@
         class="mx-1 mb-2 flex items-center gap-0.5 bg-surface-sidebar border border-surface-sidebar-border p-0.5 rounded-md select-none"
         role="tablist"
         aria-label="Sidebar navigation views"
+        onkeydown={(e) => {
+          if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            e.preventDefault()
+            sidebarTab = sidebarTab === 'tree' ? 'quick' : 'tree'
+          }
+        }}
       >
         <button
           type="button"

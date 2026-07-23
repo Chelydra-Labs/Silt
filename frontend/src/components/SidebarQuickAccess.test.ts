@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte'
 import SidebarQuickAccess from './SidebarQuickAccess.svelte'
-import { RECENT_COLLAPSED_LIMIT } from '../lib/sidebar/navigationPreferences'
 
 const baseProps = {
   favorites: [],
@@ -140,8 +139,8 @@ describe('SidebarQuickAccess', () => {
     expect(onToggleFavorite).toHaveBeenCalledWith(recent)
   })
 
-  it(`shows at most ${RECENT_COLLAPSED_LIMIT} recents by default with Show more`, async () => {
-    const recents = makeRecents(RECENT_COLLAPSED_LIMIT + 2)
+  it('renders all recents in full-height view without truncation', () => {
+    const recents = makeRecents(5)
     render(SidebarQuickAccess, {
       props: { ...baseProps, recents }
     })
@@ -149,41 +148,11 @@ describe('SidebarQuickAccess', () => {
       screen.getByRole('button', { name: 'Work / Page 1' })
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: 'Work / Page 3' })
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByRole('button', { name: 'Work / Page 4' })
-    ).not.toBeInTheDocument()
-    const more = screen.getByRole('button', { name: 'Show more' })
-    expect(more).toHaveAttribute('aria-expanded', 'false')
-    await fireEvent.click(more)
-    expect(
       screen.getByRole('button', { name: 'Work / Page 4' })
     ).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: 'Work / Page 5' })
     ).toBeInTheDocument()
-    const less = screen.getByRole('button', { name: 'Show less' })
-    expect(less).toHaveAttribute('aria-expanded', 'true')
-    await fireEvent.click(less)
-    expect(
-      screen.queryByRole('button', { name: 'Work / Page 4' })
-    ).not.toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: 'Show more' })
-    ).toBeInTheDocument()
-  })
-
-  it('hides Show more when recent count is within the collapsed limit', () => {
-    render(SidebarQuickAccess, {
-      props: {
-        ...baseProps,
-        recents: makeRecents(RECENT_COLLAPSED_LIMIT)
-      }
-    })
-    expect(
-      screen.queryByRole('button', { name: 'Show more' })
-    ).not.toBeInTheDocument()
   })
 
   it('renders both Pinned and Recent pages simultaneously', () => {
