@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 
 const mocks = vi.hoisted(() => ({
   EnsureLanguagePack: vi.fn(),
@@ -14,6 +16,7 @@ import {
   setCustomWords,
   setDomainWords,
   checkWord,
+  suggest,
   hasDomainWord,
   resetDictionary,
   loadDomainPacks,
@@ -52,6 +55,50 @@ describe('checkWord layers', () => {
     expect(hasDomainWord('typescript')).toBe(true)
     expect(hasDomainWord('oauth')).toBe(true)
     expect(hasDomainWord('notindomain')).toBe(false)
+  })
+})
+
+describe('proper-noun casing (bundled en-US)', () => {
+  beforeEach(() => {
+    resetDictionary()
+    setCustomWords([])
+    setDomainWords([])
+  })
+
+  it('accepts title-case place names and rejects wrong casing', async () => {
+    // Load the real bundled pack the same way production does (fetch → public/).
+    // spellcheck/ → editor/ → lib/ → src/ → frontend/public/
+    const dictDir = path.resolve(
+      __dirname,
+      '../../../../public/dictionaries/en-US'
+    )
+    const aff = fs.readFileSync(path.join(dictDir, 'index.aff'), 'utf8')
+    const dic = fs.readFileSync(path.join(dictDir, 'index.dic'), 'utf8')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const body = String(url).endsWith('.aff') ? aff : dic
+        return {
+          ok: true,
+          status: 200,
+          text: async () => body
+        }
+      })
+    )
+    await loadDictionary('en-US')
+
+    // Dictionary stores proper nouns in title case (e.g. Rockford/M, Chicago).
+    // Checking the token as written accepts them; lowercasing used to reject all.
+    expect(checkWord('Rockford')).toBe(true)
+    expect(checkWord('Chicago')).toBe(true)
+    expect(checkWord('ROCKFORD')).toBe(true)
+    // Lowercase is not the dictionary form for those entries.
+    expect(checkWord('rockford')).toBe(false)
+    expect(checkWord('chicago')).toBe(false)
+    // Casing fix is offered among suggestions (order is Hunspell's).
+    expect(suggest('rockford')).toContain('Rockford')
+    // Never offer a no-op self-replace for the correct form.
+    expect(suggest('Rockford')).not.toContain('Rockford')
   })
 })
 

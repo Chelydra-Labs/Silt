@@ -120,4 +120,18 @@ describe('SpellcheckMenu keyboard focus', () => {
       expect(view.editor.commands.focus).toHaveBeenCalledOnce()
     })
   })
+
+  it('closes when the backdrop is clicked', async () => {
+    const { getByLabelText, onClose, editor } = setup()
+    await fireEvent.click(getByLabelText('Close spelling suggestions'))
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(editor.commands.focus).toHaveBeenCalledOnce()
+  })
+
+  it('closes on backdrop right-click without opening a new menu', async () => {
+    const { getByLabelText, onClose, editor } = setup()
+    await fireEvent.contextMenu(getByLabelText('Close spelling suggestions'))
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(editor.commands.focus).toHaveBeenCalledOnce()
+  })
 })

@@ -219,10 +219,13 @@ export function checkWord(word: string): boolean {
   ) {
     return true
   }
-  const cached = cache.get(lower)
+  // Cache by the exact token: Hunspell is case-sensitive for proper nouns
+  // (Rockford ✓, rockford ✗). Lowercasing before check was flagging place
+  // names that are already in the dictionary under their title case.
+  const cached = cache.get(word)
   if (cached !== undefined) return cached
-  const result = dict.check(lower)
-  cache.set(lower, result)
+  const result = dict.check(word)
+  cache.set(word, result)
   return result
 }
 
@@ -231,13 +234,19 @@ export function ignoreWordSession(word: string): void {
   const lower = word.trim().toLowerCase()
   if (lower) {
     sessionIgnores.add(lower)
-    cache.delete(lower)
+    // Exact-case cache entries for this token must drop too.
+    for (const key of cache.keys()) {
+      if (key.toLowerCase() === lower) cache.delete(key)
+    }
   }
 }
 
 /** Top-N Hunspell suggestions for a misspelled word (empty if none). */
 export function suggest(word: string, limit = 5): string[] {
   if (!dict) return []
-  const suggestions = dict.suggest(word.toLowerCase())
+  // Pass the token as written so casing fixes (rockford → Rockford) surface.
+  // Drop only exact self-matches (no-op replace). Keep case variants — those
+  // are real corrections for proper nouns stored in title case.
+  const suggestions = dict.suggest(word).filter((s) => s !== word)
   return suggestions.slice(0, limit)
 }
