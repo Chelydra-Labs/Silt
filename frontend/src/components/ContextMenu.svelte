@@ -1,7 +1,10 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import type { Snippet } from 'svelte'
-  import { clampToViewport } from '../lib/editor/popoverPositioning'
+  import {
+    clampToViewport,
+    findScrollableAncestor
+  } from '../lib/editor/popoverPositioning'
 
   interface Props {
     /** Whether the menu is open. When false, the menu is not rendered. */
@@ -42,28 +45,6 @@
 
   let menuEl = $state<HTMLDivElement | null>(null)
   let menuPos = $state<{ left: number; top: number } | null>(null)
-
-  // --- scroll-scope: find nearest scrollable ancestor (#492) --------------
-
-  function findScrollableAncestor(
-    el: HTMLElement | null
-  ): HTMLElement | Document {
-    if (!el) return document
-    let current: HTMLElement | null = el.parentElement
-    while (current) {
-      const style = window.getComputedStyle(current)
-      if (
-        style.overflowY === 'auto' ||
-        style.overflowY === 'scroll' ||
-        style.overflow === 'auto' ||
-        style.overflow === 'scroll'
-      ) {
-        return current
-      }
-      current = current.parentElement
-    }
-    return document
-  }
 
   // --- positioning + dismissal $effect ------------------------------------
 

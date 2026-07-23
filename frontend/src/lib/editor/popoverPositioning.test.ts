@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   clampToViewport,
+  findScrollableAncestor,
   flipOrClamp,
   POPOVER_MARGIN
 } from './popoverPositioning'
@@ -67,6 +68,38 @@ describe('clampToViewport', () => {
     )
     expect(result.left).toBe(1000 - 200 - POPOVER_MARGIN)
     expect(result.top).toBe(800 - 100 - POPOVER_MARGIN)
+  })
+})
+
+describe('findScrollableAncestor', () => {
+  it('returns document when el is null', () => {
+    expect(findScrollableAncestor(null)).toBe(document)
+  })
+
+  it('returns the nearest overflow scroll/auto ancestor', () => {
+    const outer = document.createElement('div')
+    outer.style.overflow = 'hidden'
+    const scroller = document.createElement('div')
+    scroller.style.overflowY = 'auto'
+    const inner = document.createElement('div')
+    scroller.appendChild(inner)
+    outer.appendChild(scroller)
+    document.body.appendChild(outer)
+    try {
+      expect(findScrollableAncestor(inner)).toBe(scroller)
+    } finally {
+      outer.remove()
+    }
+  })
+
+  it('falls back to document when no scrollable ancestor exists', () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    try {
+      expect(findScrollableAncestor(el)).toBe(document)
+    } finally {
+      el.remove()
+    }
   })
 })
 

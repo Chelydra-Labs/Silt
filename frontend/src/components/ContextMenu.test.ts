@@ -5,14 +5,20 @@ import { render, screen, fireEvent } from '@testing-library/svelte'
 // Mock clampToViewport so we can assert it was called without depending on
 // real viewport dimensions in jsdom. vi.hoisted ensures the mock is available
 // when vi.mock's factory runs (both are hoisted to the top of the file).
+// findScrollableAncestor stays real so scroll-scope tests exercise the shared
+// walker (popoverPositioning.ts).
 const mocks = vi.hoisted(() => ({
   clampToViewport: vi.fn().mockReturnValue({ left: 100, top: 100 })
 }))
 
-vi.mock('../lib/editor/popoverPositioning', () => ({
-  clampToViewport: mocks.clampToViewport,
-  POPOVER_MARGIN: 8
-}))
+vi.mock('../lib/editor/popoverPositioning', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../lib/editor/popoverPositioning')>()
+  return {
+    ...actual,
+    clampToViewport: mocks.clampToViewport
+  }
+})
 
 import ContextMenu from './ContextMenu.svelte'
 

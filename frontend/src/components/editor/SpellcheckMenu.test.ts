@@ -120,4 +120,40 @@ describe('SpellcheckMenu keyboard focus', () => {
       expect(view.editor.commands.focus).toHaveBeenCalledOnce()
     })
   })
+
+  it('closes when the backdrop is clicked', async () => {
+    const { getByLabelText, onClose, editor } = setup()
+    await fireEvent.click(getByLabelText('Close spelling suggestions'))
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(editor.commands.focus).toHaveBeenCalledOnce()
+  })
+
+  it('closes on backdrop right-click and stops propagation to the editor host', async () => {
+    const { getByLabelText, onClose, editor } = setup()
+    const backdrop = getByLabelText('Close spelling suggestions')
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true
+    })
+    const stopSpy = vi.spyOn(event, 'stopPropagation')
+    backdrop.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(stopSpy).toHaveBeenCalledOnce()
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(editor.commands.focus).toHaveBeenCalledOnce()
+  })
+
+  it('closes on window resize', async () => {
+    const { onClose, editor } = setup()
+    window.dispatchEvent(new Event('resize'))
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(editor.commands.focus).toHaveBeenCalledOnce()
+  })
+
+  it('closes on document scroll (capture)', async () => {
+    const { onClose, editor } = setup()
+    document.dispatchEvent(new Event('scroll', { bubbles: true }))
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(editor.commands.focus).toHaveBeenCalledOnce()
+  })
 })

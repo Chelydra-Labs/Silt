@@ -26,6 +26,30 @@ export interface BoundedRect {
 export const POPOVER_MARGIN = 8
 
 /**
+ * Nearest scrollable ancestor of `el`, or `document` when none exists.
+ * Used to scope popover scroll-dismiss so unrelated regions do not close menus.
+ */
+export function findScrollableAncestor(
+  el: HTMLElement | null
+): HTMLElement | Document {
+  if (!el) return document
+  let current: HTMLElement | null = el.parentElement
+  while (current) {
+    const style = window.getComputedStyle(current)
+    if (
+      style.overflowY === 'auto' ||
+      style.overflowY === 'scroll' ||
+      style.overflow === 'auto' ||
+      style.overflow === 'scroll'
+    ) {
+      return current
+    }
+    current = current.parentElement
+  }
+  return document
+}
+
+/**
  * Returns the clamped `{ left, top }` so the popover is fully on-screen.
  * If the popover is larger than the viewport, both axes fall back to the
  * margin so it stays anchored at the top-left rather than going negative.

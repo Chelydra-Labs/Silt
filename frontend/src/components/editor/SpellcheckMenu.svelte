@@ -7,6 +7,7 @@
   } from '../../lib/editor/spellcheck/dictionary'
   import { requestSpellcheckRecheck } from '../../lib/editor/spellcheck/SpellcheckExtension'
   import { customDictionary } from '../../lib/editor/spellcheck/customDictionary.svelte'
+  import { findScrollableAncestor } from '../../lib/editor/popoverPositioning'
 
   let {
     editor,
@@ -109,51 +110,103 @@
     }
     clampedAnchor = { x: Math.max(8, x), y: Math.max(8, y) }
   })
+
+  // Dismiss on scroll/resize so the menu does not float at a stale anchor
+  // (same contract as ContextMenu). Scope scroll to the editor's nearest
+  // scrollable ancestor so unrelated regions do not close it.
+  $effect(() => {
+    const dismiss = () => closeAndRestoreFocus()
+    const scrollRoot = findScrollableAncestor(
+      editor.view?.dom instanceof HTMLElement ? editor.view.dom : null
+    )
+    scrollRoot.addEventListener('scroll', dismiss, {
+      capture: true,
+      passive: true
+    })
+    window.addEventListener('resize', dismiss, { passive: true })
+    return () => {
+      scrollRoot.removeEventListener('scroll', dismiss, { capture: true })
+      window.removeEventListener('resize', dismiss)
+    }
+  })
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div
-  bind:this={menuEl}
-  class="spell-menu"
-  role="menu"
-  aria-label="Spelling suggestions"
-  style="left:{Math.round(clampedAnchor.x)}px; top:{Math.round(
-    clampedAnchor.y
-  )}px;"
-  tabindex="-1"
->
-  {#if suggestions.length === 0}
-    <button type="button" class="menu-item disabled" role="menuitem" disabled
-      >No suggestions</button
-    >
-  {:else}
-    {#each suggestions as s, i (s + '-' + i)}
-      <button
-        type="button"
-        class="menu-item"
-        role="menuitem"
-        aria-label="Replace with {s}"
-        onclick={() => apply(s)}>{s}</button
-      >
-    {/each}
-  {/if}
-  <div class="menu-separator"></div>
+<!-- Full-viewport layer so click/right-click outside the card dismisses
+     (same pattern as ContextMenu). -->
+<div class="spell-menu-layer">
   <button
     type="button"
-    class="menu-item"
-    role="menuitem"
-    onclick={addToDictionary}>Add to dictionary</button
+    tabindex="-1"
+    aria-label="Close spelling suggestions"
+    class="spell-menu-backdrop"
+    onclick={closeAndRestoreFocus}
+    oncontextmenu={(e) => {
+      // stopPropagation: menu mounts under tiptap-editor-host which also
+      // handles contextmenu — without this, dismiss opens the editor menu.
+      e.preventDefault()
+      e.stopPropagation()
+      closeAndRestoreFocus()
+    }}
+  ></button>
+  <div
+    bind:this={menuEl}
+    class="spell-menu"
+    role="menu"
+    aria-label="Spelling suggestions"
+    style="left:{Math.round(clampedAnchor.x)}px; top:{Math.round(
+      clampedAnchor.y
+    )}px;"
+    tabindex="-1"
   >
-  <button type="button" class="menu-item" role="menuitem" onclick={ignore}
-    >Ignore</button
-  >
+    {#if suggestions.length === 0}
+      <button type="button" class="menu-item disabled" role="menuitem" disabled
+        >No suggestions</button
+      >
+    {:else}
+      {#each suggestions as s, i (s + '-' + i)}
+        <button
+          type="button"
+          class="menu-item"
+          role="menuitem"
+          aria-label="Replace with {s}"
+          onclick={() => apply(s)}>{s}</button
+        >
+      {/each}
+    {/if}
+    <div class="menu-separator"></div>
+    <button
+      type="button"
+      class="menu-item"
+      role="menuitem"
+      onclick={addToDictionary}>Add to dictionary</button
+    >
+    <button type="button" class="menu-item" role="menuitem" onclick={ignore}
+      >Ignore</button
+    >
+  </div>
 </div>
 
 <style>
+  .spell-menu-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+  }
+  .spell-menu-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: default;
+  }
   .spell-menu {
     position: fixed;
-    z-index: 100;
+    z-index: 1;
     min-width: 180px;
     padding: 4px;
     background: var(--color-surface-popover);
