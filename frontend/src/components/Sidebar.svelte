@@ -1439,13 +1439,18 @@
           id="sidebar-tab-tree"
           aria-selected={sidebarTab === 'tree'}
           aria-controls="sidebar-tree-panel"
-          class="flex-1 py-1 px-2 border-none rounded text-type-3xs font-label-sm-bold cursor-pointer transition-all flex items-center justify-center gap-1"
+          title="Notebook tree view"
+          aria-label="Notebook tree view"
+          class="flex-1 py-1 px-2 border-none rounded cursor-pointer transition-all flex items-center justify-center gap-1"
           class:bg-hover={sidebarTab === 'tree'}
           class:text-surface-sidebar-text={sidebarTab === 'tree'}
           class:text-surface-sidebar-text-muted={sidebarTab !== 'tree'}
           onclick={() => (sidebarTab = 'tree')}
         >
-          <span>Tree</span>
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true">account_tree</span
+          >
         </button>
         <button
           type="button"
@@ -1453,15 +1458,20 @@
           id="sidebar-tab-quick"
           aria-selected={sidebarTab === 'quick'}
           aria-controls="sidebar-quick-panel"
-          class="flex-1 py-1 px-2 border-none rounded text-type-3xs font-label-sm-bold cursor-pointer transition-all flex items-center justify-center gap-1"
+          title="Quick access bookmarks and recents"
+          aria-label="Quick access bookmarks and recents"
+          class="flex-1 py-1 px-2 border-none rounded cursor-pointer transition-all flex items-center justify-center gap-1"
           class:bg-hover={sidebarTab === 'quick'}
           class:text-surface-sidebar-text={sidebarTab === 'quick'}
           class:text-surface-sidebar-text-muted={sidebarTab !== 'quick'}
           onclick={() => (sidebarTab = 'quick')}
         >
-          <span>Quick Access</span>
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true">push_pin</span
+          >
           {#if preferences.favorites.length + preferences.recent_pages.length > 0}
-            <span class="opacity-75"
+            <span class="text-type-3xs opacity-75 font-label-sm-bold"
               >({preferences.favorites.length +
                 preferences.recent_pages.length})</span
             >
