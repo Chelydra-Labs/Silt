@@ -1447,9 +1447,8 @@
           class:text-surface-sidebar-text-muted={sidebarTab !== 'tree'}
           onclick={() => (sidebarTab = 'tree')}
         >
-          <span
-            class="material-symbols-outlined text-icon-sm"
-            aria-hidden="true">account_tree</span
+          <span class="material-symbols-outlined tab-icon" aria-hidden="true"
+            >account_tree</span
           >
         </button>
         <button
@@ -1466,9 +1465,8 @@
           class:text-surface-sidebar-text-muted={sidebarTab !== 'quick'}
           onclick={() => (sidebarTab = 'quick')}
         >
-          <span
-            class="material-symbols-outlined text-icon-sm"
-            aria-hidden="true">push_pin</span
+          <span class="material-symbols-outlined tab-icon" aria-hidden="true"
+            >push_pin</span
           >
           {#if preferences.favorites.length + preferences.recent_pages.length > 0}
             <span class="text-type-3xs opacity-75 font-label-sm-bold"
@@ -2081,6 +2079,14 @@
     font-variation-settings:
       'FILL' 1,
       'wght' 400,
+      'GRAD' 0,
+      'opsz' 20;
+  }
+  .tab-icon {
+    font-size: 14px;
+    font-variation-settings:
+      'FILL' 0,
+      'wght' 300,
       'GRAD' 0,
       'opsz' 20;
   }
