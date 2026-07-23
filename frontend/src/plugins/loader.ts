@@ -146,14 +146,17 @@ export async function loadPlugins(
       const ctx = makePluginContext(id, token)
       def?.init?.(ctx)
       def?.onVaultOpen?.(ctx)
-      const diskMod = mod as {
-        default?: SiltPlugin & { component?: unknown }
-      } & Partial<SiltPlugin & { component?: unknown }>
+      // Disk plugins render DiskPluginNotice unless they export a default
+      // object with `.component`. Do not honor a bare named `component` export:
+      // that would mount untrusted compiled UI in the host webview. The iframe
+      // surface bridge remains the safe path for third-party UI (sdk.ts).
+      // Integrity + grants still apply; this keeps the host-component boundary
+      // aligned with main (default.component only).
+      const defaultExport = mod?.default as
+        (SiltPlugin & { component?: RegisteredPlugin['component'] }) | undefined
       const reg: RegisteredPlugin = {
         manifest,
-        component: (diskMod.default?.component ??
-          diskMod.component ??
-          DiskPluginNotice) as RegisteredPlugin['component'],
+        component: defaultExport?.component ?? DiskPluginNotice,
         init: def?.init,
         onVaultOpen: def?.onVaultOpen,
         onVaultClose: def?.onVaultClose,

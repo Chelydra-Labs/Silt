@@ -521,7 +521,8 @@ export function makePluginContext(
         sessionToken ?? '',
         notebook,
         relPath,
-        data as unknown as never
+        // Binding types data as string; runtime accepts bytes via Wails encoding.
+        data as unknown as Parameters<typeof PluginWriteFile>[4]
       ).then(() => true),
     deleteFile: (notebook, relPath) =>
       PluginDeleteFile(pluginID, sessionToken ?? '', notebook, relPath).then(
@@ -704,6 +705,11 @@ export function makePluginContext(
         }[]
         toolChoice?: { mode: string; toolName?: string }
       }) => {
+        // Wails bindings type response_schema as json.RawMessage and tools as
+        // generated structs; plain objects are correct on the wire (Wails
+        // JSON-serializes the envelope). Cast the envelope via unknown — not
+        // `as never` (bottom-type assignability hides real mistakes).
+        type AICompleteInput = Parameters<typeof PluginAIComplete>[2]
         const input = {
           messages: req.messages,
           model: req.model ?? '',
@@ -717,8 +723,8 @@ export function makePluginContext(
           // raw JSON bytes. Stringifying would double-encode it (object →
           // string), causing both native encoders to receive a JSON string
           // instead of a JSON object and silently reject the schema.
-          response_schema: req.responseSchema as never,
-          tools: req.tools as never,
+          response_schema: req.responseSchema,
+          tools: req.tools,
           // Map the ergonomic camelCase field to the Go struct's snake_case.
           tool_choice: req.toolChoice
             ? {
@@ -726,7 +732,7 @@ export function makePluginContext(
                 tool_name: req.toolChoice.toolName ?? ''
               }
             : undefined
-        } as Parameters<typeof PluginAIComplete>[2]
+        } as unknown as AICompleteInput
 
         if (req.stream) {
           try {
