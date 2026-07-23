@@ -184,7 +184,7 @@
                   </button>
                   <button
                     type="button"
-                    class="pin-toggle pinned"
+                    class="pin-toggle hover-only pinned"
                     aria-label={'Unpin ' + ref.page + ' from Quick Access'}
                     title="Unpin"
                     onclick={() => onToggleFavorite(ref)}
@@ -234,7 +234,8 @@
                   </button>
                   <button
                     type="button"
-                    class="pin-toggle {pinned ? 'pinned' : 'hover-only'}"
+                    class="pin-toggle hover-only"
+                    class:pinned
                     aria-label={pinned
                       ? 'Unpin ' + ref.page + ' from Quick Access'
                       : 'Pin ' + ref.page + ' to Quick Access'}
@@ -334,7 +335,10 @@
     border-radius: 0.25rem;
     padding: 0.1rem 0.2rem;
     cursor: pointer;
-    transition: all 120ms ease;
+    transition:
+      opacity 120ms ease,
+      color 120ms ease,
+      background 120ms ease;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -345,14 +349,11 @@
   .quick-row:hover .pin-toggle.hover-only,
   .pin-toggle:hover,
   .pin-toggle:focus-visible {
-    opacity: 1;
-  }
-  .pin-toggle.pinned {
-    color: var(--color-accent-primary-start);
-    opacity: 1;
+    opacity: 0.75;
   }
   .pin-toggle:hover,
   .pin-toggle:focus-visible {
+    opacity: 1;
     background: var(--color-hover);
     color: var(--color-accent-primary-start);
   }
