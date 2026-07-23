@@ -123,7 +123,10 @@
     class="spell-menu-backdrop"
     onclick={closeAndRestoreFocus}
     oncontextmenu={(e) => {
+      // stopPropagation: menu mounts under tiptap-editor-host which also
+      // handles contextmenu — without this, dismiss opens the editor menu.
       e.preventDefault()
+      e.stopPropagation()
       closeAndRestoreFocus()
     }}
   ></button>

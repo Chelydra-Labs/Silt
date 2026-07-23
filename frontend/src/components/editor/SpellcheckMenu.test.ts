@@ -128,9 +128,17 @@ describe('SpellcheckMenu keyboard focus', () => {
     expect(editor.commands.focus).toHaveBeenCalledOnce()
   })
 
-  it('closes on backdrop right-click without opening a new menu', async () => {
+  it('closes on backdrop right-click and stops propagation to the editor host', async () => {
     const { getByLabelText, onClose, editor } = setup()
-    await fireEvent.contextMenu(getByLabelText('Close spelling suggestions'))
+    const backdrop = getByLabelText('Close spelling suggestions')
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true
+    })
+    const stopSpy = vi.spyOn(event, 'stopPropagation')
+    backdrop.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(stopSpy).toHaveBeenCalledOnce()
     expect(onClose).toHaveBeenCalledOnce()
     expect(editor.commands.focus).toHaveBeenCalledOnce()
   })
