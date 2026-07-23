@@ -145,35 +145,89 @@ describe('loadDictionary supersede race', () => {
     mocks.GetLanguagePackContent.mockReset()
   })
 
-  it('does not let a slower load clobber a newer language', async () => {
-    let releaseSlow: (() => void) | undefined
-    const slowGate = new Promise<void>((resolve) => {
-      releaseSlow = resolve
-    })
-
+  function mockPacks(opts?: {
+    gateLang?: string
+    gate?: Promise<void>
+    failLang?: string
+  }) {
     mocks.EnsureLanguagePack.mockImplementation(async (lang: string) => {
-      if (lang === 'en-GB') await slowGate
+      if (opts?.gateLang && lang === opts.gateLang && opts.gate) await opts.gate
+      if (opts?.failLang && lang === opts.failLang) {
+        throw new Error(`pack ${lang} failed`)
+      }
     })
     mocks.GetLanguagePackContent.mockImplementation(async (lang: string) => {
-      // Minimal valid-looking aff/dic payloads for Typo constructor.
       return {
         aff: 'SET UTF-8\n',
         dic: `2\n${lang === 'en-GB' ? 'colour' : 'farbe'}\nx\n`
       }
     })
+  }
+
+  it('does not let a slower load clobber a newer language', async () => {
+    let releaseSlow: (() => void) | undefined
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve
+    })
+    mockPacks({ gateLang: 'en-GB', gate: slowGate })
 
     const slow = loadDictionary('en-GB')
-    // Start a second load before the first resolves.
     const fast = loadDictionary('de')
-    // de is not en-US so it also goes through Ensure — resolve immediately.
     await fast
     expect(isDictionaryLoaded()).toBe(true)
+    expect(getActiveLanguage()).toBe('de')
 
     releaseSlow!()
     await slow
 
-    // Active language must remain the later request (de), not the slow en-GB.
+    // Installed language must remain the later request (de), not slow en-GB.
     expect(getActiveLanguage()).toBe('de')
     expect(isDictionaryLoaded()).toBe(true)
+  })
+
+  it('keeps the last-good dictionary when a language switch fails', async () => {
+    mockPacks()
+    await loadDictionary('en-GB')
+    expect(getActiveLanguage()).toBe('en-GB')
+
+    mockPacks({ failLang: 'de' })
+    await expect(loadDictionary('de')).rejects.toThrow(/de failed/)
+
+    // Failed switch must not wipe the working pack.
+    expect(isDictionaryLoaded()).toBe(true)
+    expect(getActiveLanguage()).toBe('en-GB')
+  })
+
+  it('does not report an in-flight language as active before install', async () => {
+    let releaseSlow: (() => void) | undefined
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve
+    })
+    mockPacks({ gateLang: 'de', gate: slowGate })
+
+    const pending = loadDictionary('de')
+    // While loading, nothing is installed yet.
+    expect(getActiveLanguage()).toBe('')
+    expect(isDictionaryLoaded()).toBe(false)
+
+    releaseSlow!()
+    await pending
+    expect(getActiveLanguage()).toBe('de')
+    expect(isDictionaryLoaded()).toBe(true)
+  })
+
+  it('rejoins an in-flight load for the same language', async () => {
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    mockPacks({ gateLang: 'de', gate })
+
+    const a = loadDictionary('de')
+    const b = loadDictionary('de')
+    expect(a).toBe(b)
+    release!()
+    await Promise.all([a, b])
+    expect(getActiveLanguage()).toBe('de')
   })
 })

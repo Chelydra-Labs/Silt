@@ -21,7 +21,12 @@ import { dictionaryStatus, friendlyPackError } from './dictionaryStatus.svelte'
 
 let dict: Typo | null = null
 let loadPromise: Promise<Typo> | null = null
-let currentLang = ''
+/** Language tag of the installed `dict` (empty when none). */
+let loadedLang = ''
+/** Language tag of the in-flight load (empty when idle). */
+let inflightLang = ''
+/** Monotonic generation so superseded loads never touch module state. */
+let loadSeq = 0
 
 /** Custom words (lowercased) from editor.custom_dictionary. */
 const customWords = new Set<string>()
@@ -42,12 +47,26 @@ export function getDictionaryLoadError(): string | null {
 
 /** Load (once per language) and return the Typo instance for `lang`. */
 export function loadDictionary(lang: string): Promise<Typo> {
-  if (dict && currentLang === lang) return Promise.resolve(dict)
-  if (loadPromise && currentLang === lang) return loadPromise
-  // Mark this request as the active language immediately so overlapping loads
-  // can detect they were superseded before writing module state.
+  // Already installed and idle — reuse.
+  if (dict && loadedLang === lang && !inflightLang) {
+    return Promise.resolve(dict)
+  }
+  // Same language already loading — join the in-flight promise.
+  if (loadPromise && inflightLang === lang) {
+    return loadPromise
+  }
+  // Installed language requested again while a *different* pack is loading:
+  // cancel the switch and keep the good dict (caller wants the current one).
+  if (dict && loadedLang === lang && inflightLang && inflightLang !== lang) {
+    loadSeq++
+    inflightLang = ''
+    loadPromise = null
+    return Promise.resolve(dict)
+  }
+
+  const seq = ++loadSeq
   const requestedLang = lang
-  currentLang = lang
+  inflightLang = lang
   dictionaryStatus.setLoadError(null)
   loadPromise = (async () => {
     try {
@@ -78,21 +97,28 @@ export function loadDictionary(lang: string): Promise<Typo> {
         }
       }
       // A newer loadDictionary call won the race — do not clobber its state.
-      if (currentLang !== requestedLang) {
+      if (seq !== loadSeq) {
         return new Typo(requestedLang, aff, dic)
       }
       dict = new Typo(requestedLang, aff, dic)
+      loadedLang = requestedLang
+      inflightLang = ''
+      loadPromise = null
       cache.clear()
       dictionaryStatus.setLoadError(null)
       return dict
     } catch (err) {
-      // Only the active request may clear module state / report errors.
-      if (currentLang !== requestedLang) {
+      // Only the active generation may report errors / clear in-flight markers.
+      if (seq !== loadSeq) {
         throw err instanceof Error ? err : new Error(String(err))
       }
       loadPromise = null
-      currentLang = ''
-      dict = null
+      inflightLang = ''
+      // Keep the last-good dict on a failed language switch so spellcheck does
+      // not go silent; only wipe when there was nothing installed.
+      if (!dict) {
+        loadedLang = ''
+      }
       const msg = friendlyPackError(err)
       dictionaryStatus.setLoadError(msg)
       // eslint-disable-next-line no-console
@@ -106,14 +132,17 @@ export function loadDictionary(lang: string): Promise<Typo> {
   return loadPromise
 }
 
-/** True once the dictionary for the current language has finished loading. */
+/** True once a dictionary has finished loading and is installed. */
 export function isDictionaryLoaded(): boolean {
   return dict !== null && dict.loaded
 }
 
-/** Active language tag for the loaded (or in-flight) dictionary. */
+/**
+ * Language tag of the installed dictionary. Empty while nothing is loaded.
+ * Does not report in-flight targets — those are not yet checking words.
+ */
 export function getActiveLanguage(): string {
-  return currentLang
+  return loadedLang
 }
 
 /**
@@ -121,9 +150,11 @@ export function getActiveLanguage(): string {
  * spellcheck is toggled OFF so checkWord returns true for everything.
  */
 export function resetDictionary(): void {
+  loadSeq++ // invalidate any in-flight load
   dict = null
   loadPromise = null
-  currentLang = ''
+  loadedLang = ''
+  inflightLang = ''
   cache.clear()
   dictionaryStatus.clear()
 }
