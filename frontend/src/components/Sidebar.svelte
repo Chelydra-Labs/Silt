@@ -1820,14 +1820,16 @@
       Reveal in file manager
     </button>
     <button type="button" onclick={handleContextFavorite} role="menuitem">
-      <span class="material-symbols-outlined text-icon-md" aria-hidden="true">
-        {favoriteKeys.has(locatorKey(contextMenuPageRef))
-          ? 'star'
-          : 'star_outline'}
+      <span
+        class="material-symbols-outlined text-icon-md"
+        class:pin-menu-filled={favoriteKeys.has(locatorKey(contextMenuPageRef))}
+        aria-hidden="true"
+      >
+        push_pin
       </span>
       {favoriteKeys.has(locatorKey(contextMenuPageRef))
-        ? 'Remove from favorites'
-        : 'Add to favorites'}
+        ? 'Unpin'
+        : 'Pin to Quick Access'}
     </button>
   {/if}
   {#if contextMenu?.level === 'section' || contextMenu?.level === 'page'}
@@ -2016,5 +2018,12 @@
     );
     box-shadow: inset 0 0 0 1px var(--color-accent-primary-start);
     border-radius: 6px;
+  }
+  .pin-menu-filled {
+    font-variation-settings:
+      'FILL' 1,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 20;
   }
 </style>

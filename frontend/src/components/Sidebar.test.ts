@@ -1198,7 +1198,7 @@ describe('Sidebar', () => {
     ).toBeInTheDocument()
   })
 
-  it('shows linked favorites as offline with their full accessible path', async () => {
+  it('shows linked pinned pages as offline with their full accessible path', async () => {
     mocks.listNavigation.mockResolvedValue({
       notebooks: [
         {

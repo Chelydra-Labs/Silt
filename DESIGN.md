@@ -478,22 +478,27 @@ Board Card Drag-Reorder: Uses compile-time svelte/animate (using Svelte's native
 **Page Template Picker.** The template picker reuses the same modal chrome, Refined Cyber-Ink token system, and iconography rules as the theme picker. Iconography follows the Material Symbols convention; the `icon` frontmatter field is a Material Symbols name rendered at 18–20px. No emojis are used in first-class template icons — they are abstract, CSS-friendly glyphs. The picker is a centered overlay (`role="dialog"`, `aria-modal="true"`) with a category-grouped `role="listbox"`, roving tabindex (Arrow/Home/End/Enter), a live preview pane, a dynamic placeholder form, and a Tab focus trap. Entry points: the sidebar `content_copy` button + `Ctrl+Shift+T` (new page mode) and the `/template` slash command (insert mode).
 
 **Navigation and discovery surfaces.** The sidebar is a recursive tree with
-path-qualified section identity; empty sections remain visible. Recents and
-favorites are distinct compact groups and use the same page-opening action as
-tree rows. The active Notebook › Section › Page breadcrumb is a compact chrome
-element with linked/offline status and accent emphasis only on the current
-location. The page switcher is a focused dialog with a search field and
-deterministic result list; recent matches are visibly prioritized without
-changing the normal tab/preview/pinned opening semantics. When the tab strip
-cannot show every tab, an overflow affordance and keyboard-operable menu expose
-the hidden tabs and their close actions; hidden content is never silently
-unrecoverable.
+path-qualified section identity; empty sections remain visible. Quick Access
+groups **Pinned** and **Recent** as distinct compact lists that use the same
+page-opening action as tree rows. Pinned pages use a pin icon (filled when
+pinned) and **Pin to Quick Access** / **Unpin** copy — not star/favorite
+wording, and not the tab-strip pin concept. Recent defaults to three rows with
+a labeled **Show more** / **Show less** control when more history exists
+(session-only expand; full list is the vault’s bounded recent set). The active
+Notebook › Section › Page breadcrumb is a compact chrome element with
+linked/offline status and accent emphasis only on the current location. The
+page switcher is a focused dialog with a search field and deterministic result
+list; recent matches are visibly prioritized without changing the normal
+tab/preview/pinned opening semantics. When the tab strip cannot show every tab,
+an overflow affordance and keyboard-operable menu expose the hidden tabs and
+their close actions; hidden content is never silently unrecoverable.
 
 Contextual page and section actions use native buttons and the existing menu
-surface. Duplicate, reveal, new-page, child-section, and favorite actions show
-clear disabled/error states for missing or disconnected roots. The shortcut
-help surface is read-only, generated from the live hotkey configuration, and
-uses the same dialog focus and Escape-return behavior as other modal surfaces.
+surface. Duplicate, reveal, new-page, child-section, and pin-to-Quick-Access
+actions show clear disabled/error states for missing or disconnected roots. The
+shortcut help surface is read-only, generated from the live hotkey
+configuration, and uses the same dialog focus and Escape-return behavior as
+other modal surfaces.
 
 **Template management in Settings.** Template management uses the Settings
 panel rather than a second catalog: user templates can be created, edited,

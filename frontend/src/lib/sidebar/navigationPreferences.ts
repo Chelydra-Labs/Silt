@@ -12,6 +12,9 @@ export const EMPTY_NAVIGATION_PREFERENCES: NavigationPreferences = {
   quick_access_collapsed: true
 }
 
+/** Recent rows shown in Quick Access before "Show more". Backend keeps ≤20. */
+export const RECENT_COLLAPSED_LIMIT = 3
+
 export function locatorKey(ref: NavigationPageRef): string {
   return `${ref.notebook}\u0000${ref.section}\u0000${ref.page}`
 }

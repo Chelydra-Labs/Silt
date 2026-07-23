@@ -6,7 +6,8 @@
   } from '../lib/sidebar/types'
   import {
     locatorKey,
-    pagePathLabel
+    pagePathLabel,
+    RECENT_COLLAPSED_LIMIT
   } from '../lib/sidebar/navigationPreferences'
 
   interface Props {
@@ -37,9 +38,18 @@
     onRetry
   }: Props = $props()
   let emptyExpanded = $state(false)
+  /** Session-only; not persisted to vault prefs. */
+  let recentExpanded = $state(false)
   let hasPages = $derived(favorites.length > 0 || recents.length > 0)
   let effectiveCollapsed = $derived(
     emptyExpanded || error ? false : collapsed || !hasPages
+  )
+  let pinnedKeys = $derived(new Set(favorites.map((ref) => locatorKey(ref))))
+  let recentHasMore = $derived(recents.length > RECENT_COLLAPSED_LIMIT)
+  let visibleRecents = $derived(
+    recentExpanded || !recentHasMore
+      ? recents
+      : recents.slice(0, RECENT_COLLAPSED_LIMIT)
   )
 
   function toggleCollapsed() {
@@ -59,6 +69,10 @@
     if (notebook?.disconnected)
       return { unavailable: true, label: 'Linked notebook offline' }
     return { unavailable: false, label: '' }
+  }
+
+  function isPinned(ref: NavigationPageRef): boolean {
+    return pinnedKeys.has(locatorKey(ref))
   }
 </script>
 
@@ -106,11 +120,12 @@
         <div class="px-1.5 pb-1.5 grid gap-1">
           {#if !hasPages}
             <p class="empty">
-              No favorites or recent pages yet. Open or favorite a page.
+              No pinned or recent pages yet. Open a page or pin one to Quick
+              Access.
             </p>
           {/if}
           {#if favorites.length > 0}<div>
-              <h3 class="group-title">Favorites</h3>
+              <h3 class="group-title">Pinned</h3>
               {#each favorites as ref (locatorKey(ref))}
                 {@const itemState = pageState(ref)}
                 <div class="quick-row">
@@ -134,14 +149,14 @@
                   </button>
                   <button
                     type="button"
-                    class="favorite-toggle"
-                    aria-label={`Remove ${ref.page} from favorites`}
-                    title="Remove from favorites"
+                    class="pin-toggle pinned"
+                    aria-label={`Unpin ${ref.page} from Quick Access`}
+                    title="Unpin"
                     onclick={() => onToggleFavorite(ref)}
                   >
                     <span
                       class="material-symbols-outlined text-icon-sm"
-                      aria-hidden="true">star</span
+                      aria-hidden="true">push_pin</span
                     >
                   </button>
                 </div>
@@ -154,27 +169,58 @@
               class="border-surface-sidebar-border/70"
             >
               <h3 class="group-title">Recent</h3>
-              {#each recents.slice(0, 6) as ref (locatorKey(ref))}
+              {#each visibleRecents as ref (locatorKey(ref))}
                 {@const itemState = pageState(ref)}
+                {@const pinned = isPinned(ref)}
+                <div class="quick-row">
+                  <button
+                    type="button"
+                    class="page-link recent"
+                    disabled={itemState.unavailable}
+                    title={pagePathLabel(ref)}
+                    aria-label={`${pagePathLabel(ref)}${itemState.label ? ` — ${itemState.label}` : ''}`}
+                    onclick={() => onOpen(ref)}
+                  >
+                    <span class="truncate">{ref.page}</span>
+                    <span class="path truncate"
+                      >{ref.notebook}{ref.section
+                        ? ` / ${ref.section}`
+                        : ''}</span
+                    >
+                    {#if itemState.label}<span class="status"
+                        >{itemState.label}</span
+                      >{/if}
+                  </button>
+                  <button
+                    type="button"
+                    class="pin-toggle"
+                    class:pinned
+                    aria-label={pinned
+                      ? `Unpin ${ref.page} from Quick Access`
+                      : `Pin ${ref.page} to Quick Access`}
+                    title={pinned ? 'Unpin' : 'Pin to Quick Access'}
+                    onclick={() => onToggleFavorite(ref)}
+                  >
+                    <span
+                      class="material-symbols-outlined text-icon-sm"
+                      class:pin-outline={!pinned}
+                      aria-hidden="true">push_pin</span
+                    >
+                  </button>
+                </div>
+              {/each}
+              {#if recentHasMore}
                 <button
                   type="button"
-                  class="page-link recent"
-                  disabled={itemState.unavailable}
-                  title={pagePathLabel(ref)}
-                  aria-label={`${pagePathLabel(ref)}${itemState.label ? ` — ${itemState.label}` : ''}`}
-                  onclick={() => onOpen(ref)}
+                  class="show-more"
+                  aria-expanded={recentExpanded}
+                  onclick={() => {
+                    recentExpanded = !recentExpanded
+                  }}
                 >
-                  <span class="truncate">{ref.page}</span>
-                  <span class="path truncate"
-                    >{ref.notebook}{ref.section
-                      ? ` / ${ref.section}`
-                      : ''}</span
-                  >
-                  {#if itemState.label}<span class="status"
-                      >{itemState.label}</span
-                    >{/if}
+                  {recentExpanded ? 'Show less' : 'Show more'}
                 </button>
-              {/each}
+              {/if}
             </div>{/if}
         </div>
       {/if}
@@ -239,18 +285,60 @@
     color: var(--color-status-warn);
     font-size: var(--text-type-3xs);
   }
-  .favorite-toggle {
+  .pin-toggle {
     flex: 0 0 auto;
     border: 0;
     background: transparent;
-    color: var(--color-accent-primary-start);
+    color: var(--color-surface-sidebar-text-muted);
     border-radius: 0.35rem;
     padding: 0.25rem;
     cursor: pointer;
   }
-  .favorite-toggle:hover,
-  .favorite-toggle:focus-visible {
+  .pin-toggle.pinned {
+    color: var(--color-accent-primary-start);
+  }
+  .pin-toggle:hover,
+  .pin-toggle:focus-visible {
     background: var(--color-hover);
+    outline: 1px solid var(--color-accent-primary-start);
+    color: var(--color-accent-primary-start);
+  }
+  /* Outline weight for unpinned; filled when pinned (Material Symbols default). */
+  .pin-outline {
+    font-variation-settings:
+      'FILL' 0,
+      'wght' 300,
+      'GRAD' 0,
+      'opsz' 20;
+  }
+  .pin-toggle.pinned .material-symbols-outlined {
+    font-variation-settings:
+      'FILL' 1,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 20;
+  }
+  .show-more {
+    margin: 0.1rem 0 0;
+    padding: 0.3rem 0.35rem;
+    border: 0;
+    border-radius: 0.35rem;
+    background: transparent;
+    color: var(--color-surface-sidebar-text-muted);
+    font: inherit;
+    font-size: var(--text-type-3xs);
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+  }
+  .show-more:hover,
+  .show-more:focus-visible {
+    color: var(--color-surface-sidebar-text);
+    background: var(--color-hover);
+    outline: none;
+  }
+  .show-more:focus-visible {
     outline: 1px solid var(--color-accent-primary-start);
   }
   .retry {
