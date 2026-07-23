@@ -259,17 +259,10 @@
     return deriveColorPalette(tokens)
   })
 
-  let _colorEnabled = $derived(
-    settings.config?.ui?.formatting?.color_enabled !== false
-  )
-
-  // show_word_count config (default false; opt-in, Phase 3).
-  let _showWordCount = $derived(
-    settings.config?.editor?.show_word_count === true
-  )
-
   // focus_mode config (default false; Phase 3). When true, CSS dims non-active
   // paragraphs for distraction-free writing.
+  // color_enabled / show_word_count are consumed by EditorUtilityBar /
+  // VirtualScrollContainer, not this component.
   let focusModeEnabled = $derived(settings.config?.editor?.focus_mode === true)
 
   // Word count is managed as a bindable prop.
@@ -1568,7 +1561,6 @@
   // --- Auto-save (debounced, config-driven, same contract as legacy) --------
 
   let unsavedChanges = $state(false)
-  let _lastSaveError: string | null = $state(null)
 
   const autosave = new AutosaveManager({
     getEditor: () => editorInstance,
@@ -1578,9 +1570,8 @@
     getDelay: () =>
       Math.max(settings.config?.editor?.auto_save_delay_ms ?? 500, 50),
     onUpdate: (blocks) => onUpdate(blocks),
-    onStateChange: (dirty, error) => {
+    onStateChange: (dirty) => {
       unsavedChanges = dirty
-      _lastSaveError = error
     },
     onSaveStateChange: (state) => onSaveStateChange?.(state)
   })

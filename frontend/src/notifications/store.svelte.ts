@@ -4,8 +4,6 @@
 // module). Consumers (TipTapEditor, TemplatePicker, etc.) call
 // pushNotification; ToastContainer.svelte renders the live stack.
 
-import { SvelteMap } from 'svelte/reactivity'
-
 export type NotificationKind = 'info' | 'success' | 'error'
 
 export interface NotificationAction {
@@ -38,7 +36,9 @@ const DEFAULT_AUTO_DISMISS_MS: Record<NotificationKind, number> = {
 }
 
 let nextId = 1
-const dismissTimers = new SvelteMap<number, ReturnType<typeof setTimeout>>()
+// Timer handles only — not read during render.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive timer map
+const dismissTimers = new Map<number, ReturnType<typeof setTimeout>>()
 
 export interface PushOptions {
   kind?: NotificationKind

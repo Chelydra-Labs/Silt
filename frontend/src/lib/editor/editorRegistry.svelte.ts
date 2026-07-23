@@ -17,8 +17,6 @@
 // Editors register on mount and unregister on destroy. Lookups are keyed by
 // the page triple (the same `\x00`-joined key the search/grouping code uses).
 
-import { SvelteMap } from 'svelte/reactivity'
-
 export interface EditorHandle {
   /** `${notebook}\x00${section}\x00${page}` — matches PageGroup.key. */
   key: string
@@ -54,7 +52,9 @@ export interface EditorHandle {
   verifySelectionText: (from: number, to: number, expected: string) => boolean
 }
 
-const editors = new SvelteMap<string, EditorHandle>()
+// Imperative handle registry — not UI-reactive state.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive registry
+const editors = new Map<string, EditorHandle>()
 
 /** Build the registry lookup key for a page triple. This is the canonical
  *  `${notebook}\x00${section}\x00${page}` format the editor registers under;

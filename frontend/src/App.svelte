@@ -314,6 +314,9 @@
   // Shell state
   let sidebarCollapsed = $state(false)
   let sidebarWidth = $state(256)
+  // True while the resize handle is pointer-dragging so Sidebar can disable
+  // its width transition (avoids laggy animated resize).
+  let sidebarDragging = $state(false)
   let manuallyCollapsed = $state(false)
 
   // Dev Mode–only Inspect on empty content chrome (#683) — no other menu there.
@@ -1604,6 +1607,14 @@
     }, 250)
   }
 
+  function handleSidebarDragStart() {
+    sidebarDragging = true
+  }
+
+  function handleSidebarDragEnd() {
+    sidebarDragging = false
+  }
+
   function handleSearchResultJump(res: SearchModalResult): void {
     const jump = adaptSearchNavigation(res)
     const locator = resolveSourceNavigationTarget(
@@ -1851,6 +1862,7 @@
           bind:settingsSection
           bind:collapsed={sidebarCollapsed}
           {sidebarWidth}
+          {sidebarDragging}
           onSelectNotebook={selectNotebookContext}
           onSelectSection={(sec) => (activeSection = sec)}
           onSelectPage={(nb, sec, pg) => {
@@ -1899,6 +1911,8 @@
             width={sidebarWidth}
             onWidthChange={handleSidebarWidthChange}
             onWidthCommit={handleSidebarWidthCommit}
+            onDragStart={handleSidebarDragStart}
+            onDragEnd={handleSidebarDragEnd}
           />
         {/if}
       {/if}

@@ -6,6 +6,10 @@
     defaultWidth?: number
     onWidthChange: (px: number) => void
     onWidthCommit: (px: number) => void
+    /** Fired when a pointer drag starts (so parents can disable width transitions). */
+    onDragStart?: () => void
+    /** Fired when a pointer drag ends (commit or cancel). */
+    onDragEnd?: () => void
   }
 
   let {
@@ -14,7 +18,9 @@
     max = 480,
     defaultWidth = 256,
     onWidthChange,
-    onWidthCommit
+    onWidthCommit,
+    onDragStart,
+    onDragEnd
   }: Props = $props()
 
   let handleEl: HTMLButtonElement
@@ -28,6 +34,7 @@
     e.preventDefault()
     handleEl.setPointerCapture(e.pointerId)
     dragging = true
+    onDragStart?.()
     const startX = e.clientX
     const startWidth = width
 
@@ -42,6 +49,7 @@
       const delta = ev.clientX - startX
       const finalWidth = clamp(startWidth + delta)
       dragging = false
+      onDragEnd?.()
       onWidthCommit(finalWidth)
     }
     window.addEventListener('pointermove', onMove)

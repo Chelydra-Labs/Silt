@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { SvelteSet } from 'svelte/reactivity'
   import {
     notificationsState,
     dismissNotification
@@ -25,7 +24,9 @@
       ? 0
       : 200
 
-  const invokedActionIds = new SvelteSet<number>()
+  // Action dedupe only — not read during render.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive dedupe set
+  const invokedActionIds = new Set<number>()
 
   onMount(() => {
     return () => {
