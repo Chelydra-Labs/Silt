@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { SvelteDate, SvelteSet } from 'svelte/reactivity'
+  import { SvelteDate } from 'svelte/reactivity'
   // Calendar display mode of the Tasks hub (#425). Lifts the proven
   // silt-calendar month/week grid + drag-reschedule + quick-add patterns,
   // and promotes the standalone Calendar's CalItem to the unified TaskDetail
@@ -193,7 +193,8 @@
   // cell when that date is inside the visible window.
   let overdueSurfaced = $derived.by(() => {
     const out: TaskDetail[] = []
-    const seen = new SvelteSet<string>()
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+    const seen = new Set<string>()
     for (const r of overdueAll) {
       if (!seen.has(r.id)) {
         seen.add(r.id)
@@ -356,7 +357,7 @@
   // overdue contribution the header under-reports vs Board.
   $effect(() => {
     const win = Object.values(byDate).flat()
-    const winIds = new SvelteSet(win.map((r) => r.id))
+    const winIds = new Set(win.map((r) => r.id))
     const allOpen = [
       ...win,
       ...undated,

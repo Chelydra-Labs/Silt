@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { SvelteMap } from 'svelte/reactivity'
   // Board display mode of the Tasks hub (#421). Lifts the proven
   // silt-kanban Board (DnD, keyboard parity, DONE guard, per-column
   // quick-add, column management, card richness) and generalizes it to any
@@ -540,7 +539,8 @@
     iso: string
   ): Lane[] {
     if (g === 'status') {
-      const byStatus = new SvelteMap<string, TaskDetail[]>()
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+      const byStatus = new Map<string, TaskDetail[]>()
       for (const r of loaded) {
         const s = r.status || 'TODO'
         if (!byStatus.has(s)) byStatus.set(s, [])

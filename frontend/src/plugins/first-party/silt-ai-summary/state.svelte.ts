@@ -1,4 +1,3 @@
-import { SvelteMap } from 'svelte/reactivity'
 // Per-page reactive state + controller for silt-ai-summary.
 //
 // The pure logic (extract / diff / cache / summarize) is in sibling modules;
@@ -102,10 +101,12 @@ export function createSummaryController(
   // call resolves. (Pending timers + generation counters are internal
   // bookkeeping — not reactive — so plain Maps are still correct for them.)
   const state = $state<Record<string, PageState>>({})
-  const pending = new SvelteMap<string, ReturnType<typeof setTimeout>>()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+  const pending = new Map<string, ReturnType<typeof setTimeout>>()
   // Track the most-recent generation per page so a stale completion (note
   // switched mid-generation) doesn't overwrite the newer state.
-  const generations = new SvelteMap<string, number>()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+  const generations = new Map<string, number>()
 
   function nextGen(pageId: string): number {
     const n = (generations.get(pageId) ?? 0) + 1

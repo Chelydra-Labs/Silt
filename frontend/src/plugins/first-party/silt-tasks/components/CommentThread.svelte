@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { SvelteMap } from 'svelte/reactivity'
   import { onMount, tick } from 'svelte'
   import { fly } from 'svelte/transition'
   import type { PluginContext, SubtreeBlock } from '../../../sdk'
@@ -137,7 +136,7 @@
    */
   function buildThread(blocks: SubtreeBlock[], taskId: string): Comment[] {
     const notes = (blocks ?? []).filter(isNoteBlock)
-    const byId = new SvelteMap(notes.map((b) => [b.id, b]))
+    const byId = new Map(notes.map((b) => [b.id, b]))
 
     function isTopLevel(b: SubtreeBlock): boolean {
       return !b.parent_id || b.parent_id === taskId
@@ -157,7 +156,8 @@
     }
 
     const tops: Comment[] = []
-    const repliesByTop = new SvelteMap<string, Comment[]>()
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+    const repliesByTop = new Map<string, Comment[]>()
 
     for (const b of notes) {
       const c = toComment(b)

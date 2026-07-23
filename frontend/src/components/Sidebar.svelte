@@ -1429,7 +1429,7 @@
       <SidebarQuickAccess
         favorites={preferences.favorites}
         recents={preferences.recent_pages}
-        staleKeys={new SvelteSet([
+        staleKeys={new Set([
           ...favoriteState.stale.map((ref) => locatorKey(ref)),
           ...recentState.stale.map((ref) => locatorKey(ref))
         ])}

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { untrack } from 'svelte'
   import {
     settings,
@@ -55,7 +54,7 @@
   let hotkeyEntries = $derived(
     draft
       ? Array.from(
-          new SvelteSet([
+          new Set([
             ...Object.keys(draft.hotkeys),
             ...SHORTCUT_ACTIONS.map((action) => action.id)
           ])
@@ -68,13 +67,14 @@
       : []
   )
   let conflicts = $derived.by(() => {
-    const byBinding = new SvelteMap<string, string[]>()
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+    const byBinding = new Map<string, string[]>()
     for (const [key, value] of hotkeyEntries) {
       const normalized = value.trim().toLocaleLowerCase()
       if (!normalized) continue
       byBinding.set(normalized, [...(byBinding.get(normalized) ?? []), key])
     }
-    return new SvelteMap(
+    return new Map(
       [...byBinding.values()]
         .filter((keys) => keys.length > 1)
         .flatMap((keys) =>

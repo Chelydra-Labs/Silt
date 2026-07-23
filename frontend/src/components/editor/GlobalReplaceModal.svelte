@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { untrack } from 'svelte'
   import {
     SearchBlocksPaged,
@@ -103,7 +102,8 @@
       if (res.total > results.length) {
         truncatedCount = res.total
       }
-      const byPage = new SvelteMap<string, PageGroup>()
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+      const byPage = new Map<string, PageGroup>()
       for (const r of results) {
         const key = `${r.notebook}\x00${r.section}\x00${r.page}`
         if (!byPage.has(key)) {
@@ -163,7 +163,7 @@
     // instead of stale disk content. Without this, an editor's pending
     // autosave would silently clobber the replace — or the reload would
     // discard the user's unsaved edits (#345).
-    const targetKeys = new SvelteSet(
+    const targetKeys = new Set(
       groups
         .filter(
           (g) => g.source === 'vault' && g.matches.some((m) => m.accepted)
@@ -173,7 +173,8 @@
     const dirtyEditors = getAllEditors().filter(
       (e) => targetKeys.has(e.key) && e.isDirty()
     )
-    const unflushable = new SvelteSet<string>()
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+    const unflushable = new Set<string>()
     const flushedAny = dirtyEditors.length > 0
     if (flushedAny) {
       const results = await Promise.all(
@@ -218,7 +219,7 @@
           grp.section,
           grp.page
         )
-        const matchIds = new SvelteSet(acceptedMatches.map((m) => m.blockId))
+        const matchIds = new Set(acceptedMatches.map((m) => m.blockId))
         // Snapshot ORIGINAL blocks ONCE before any mutation so the revert log
         // captures the true pre-edit state — not a partially-mutated one.
         const originalBlocks = blocks.map((bb) => ({ ...bb }))

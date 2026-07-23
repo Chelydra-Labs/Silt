@@ -1219,11 +1219,12 @@
     },
     onSelectionUpdate: ({ editor }) => {
       // Track active marks for the FormatToolbar's aria-pressed state (#168).
-      const marks = new SvelteSet<string>()
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+      const marks = new Set<string>()
       for (const m of ALL_MARKS) {
         if (editor.isActive(m)) marks.add(m)
       }
-      activeMarks = marks
+      activeMarks = new SvelteSet(marks)
       // Track selection state for the SelectionBubble (#168).
       const { selection } = editor.state
       selectionEmpty = selection.empty

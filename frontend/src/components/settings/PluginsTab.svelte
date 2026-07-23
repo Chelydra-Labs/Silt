@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { SvelteSet } from 'svelte/reactivity'
   import { onMount } from 'svelte'
   import { fade } from 'svelte/transition'
   import {
@@ -151,7 +150,7 @@
     try {
       const disk = (await ListPlugins()) ?? []
       const fps = firstPartyPlugins()
-      const fpIds = new SvelteSet(fps.map((p) => p.manifest.id))
+      const fpIds = new Set(fps.map((p) => p.manifest.id))
       const errs = loadedPlugins.errors
       // v2 capability grants (#113): pluginID → cap → qualifier. First-party
       // plugins are not surfaced here (they are implicitly granted).
@@ -161,7 +160,7 @@
       const merged: Card[] = []
 
       // First-party plugins (disableable via config, never uninstallable).
-      const fpDisabled = new SvelteSet<string>(
+      const fpDisabled = new Set<string>(
         settings.config?.plugins?.disabled ?? []
       )
       for (const fp of fps) {
@@ -358,7 +357,8 @@
         if (!cfg.plugins) {
           cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
         }
-        const disabled = new SvelteSet(cfg.plugins.disabled ?? [])
+        // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+        const disabled = new Set(cfg.plugins.disabled ?? [])
         if (card.disabled) {
           disabled.delete(card.id)
         } else {
@@ -414,7 +414,7 @@
   // A single $derived set of pluginIDs that have a registered settings-panel
   // surface, recomputed only when the surfaces list changes.
   let settingsPanelPluginIDs = $derived(
-    new SvelteSet(getSurfaces('settings-panel').map((s) => s.pluginID))
+    new Set(getSurfaces('settings-panel').map((s) => s.pluginID))
   )
 
   // #214: hasBespokeSettings reports whether a plugin renders its settings via a

@@ -1,4 +1,3 @@
-import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 import type { PluginAIChatMessage, PluginContext } from '../../sdk'
 import { aiProviderNeedsSetup } from '../../../settings/ai-setup'
 import { settings as appSettings } from '../../../settings/store.svelte'
@@ -76,7 +75,8 @@ export function createAgentCapability(): AIChatCapability {
   let session: AgentSession | null = null
   let protocolHistory: PluginAIChatMessage[] = []
   let citationPassages: RetrievedPassage[] = []
-  const emittedEvidence = new SvelteSet<string>()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+  const emittedEvidence = new Set<string>()
   // Generation/cancel fence mirroring the writing capability: a stale run
   // (stopped, cleared, detached, or superseded) must not mutate protocolHistory
   // or citations, or Vault A's tool messages would leak into Vault B's history.
@@ -371,8 +371,10 @@ export function createAIChatController(initialContext?: PluginContext) {
   // The "Thinking…" status entry id for the active run, tracked here so stop()
   // can remove it even though send()'s finally is fenced out for a stopped run.
   let activeRunStatusId: string | null = null
-  const capabilities = new SvelteMap<string, AIChatCapability>()
-  const entryOwners = new SvelteMap<string, string>()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+  const capabilities = new Map<string, AIChatCapability>()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+  const entryOwners = new Map<string, string>()
   let defaultCapabilityId = 'agent-tools'
   const providerReady = $derived(
     !aiProviderNeedsSetup(appSettings.config?.ai?.chat)

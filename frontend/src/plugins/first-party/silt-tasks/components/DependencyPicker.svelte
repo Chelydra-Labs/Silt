@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { SvelteMap } from 'svelte/reactivity'
   import type { PluginContext, SearchHit } from '../../../sdk'
   import Popover from '../../../../components/Popover.svelte'
 
@@ -48,7 +47,8 @@
       return
     }
     const placeholders = blockedBy.map(() => '?').join(', ')
-    let labels = new SvelteMap<string, string>()
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+    let labels = new Map<string, string>()
     try {
       const { rows } = await ctx.sqliteQuery(
         `SELECT id, clean_content FROM blocks WHERE id IN (${placeholders})`,

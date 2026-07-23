@@ -1,4 +1,3 @@
-import { SvelteSet } from 'svelte/reactivity'
 // Reactive controller for Writing Assistant (#230–#232).
 
 import type { PluginContext } from '../../sdk'
@@ -350,7 +349,8 @@ export function createAssistantController() {
 
   function toggleTag(tag: string) {
     if (!proposal?.tags) return
-    const set = new SvelteSet(proposal.selectedTags ?? [])
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+    const set = new Set(proposal.selectedTags ?? [])
     if (set.has(tag)) set.delete(tag)
     else set.add(tag)
     proposal = { ...proposal, selectedTags: [...set] }
@@ -358,7 +358,8 @@ export function createAssistantController() {
 
   function toggleRelated(id: string) {
     if (!proposal?.related) return
-    const set = new SvelteSet(proposal.selectedRelatedIds ?? [])
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
+    const set = new Set(proposal.selectedRelatedIds ?? [])
     if (set.has(id)) set.delete(id)
     else set.add(id)
     proposal = { ...proposal, selectedRelatedIds: [...set] }
