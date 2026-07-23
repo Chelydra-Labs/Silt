@@ -1434,6 +1434,9 @@
           ...recentState.stale.map((ref) => locatorKey(ref))
         ])}
         notebooks={tree.notebooks}
+        {activeNotebook}
+        {activeSection}
+        {activePage}
         loading={preferencesLoading}
         error={preferencesError}
         collapsed={preferences.quick_access_collapsed}

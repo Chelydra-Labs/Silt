@@ -58,9 +58,11 @@ describe('SidebarQuickAccess', () => {
       }
     })
     const toggle = screen.getByRole('button', { name: 'Quick access' })
-    expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByText('Pinned')).toBeInTheDocument()
-    expect(screen.queryByText('Recent')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Quick access' })
+    ).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('tab', { name: /Pinned/ })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Recent/ })).toBeInTheDocument()
     expect(
       screen.getByRole('button', {
         name: 'Unpin Pinned page from Quick Access'
@@ -256,5 +258,65 @@ describe('SidebarQuickAccess', () => {
       onCollapsedChange
     })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('switches between Pinned and Recent segmented tabs', async () => {
+    const favorites = [{ notebook: 'Work', section: 'Notes', page: 'Starred' }]
+    const recents = [
+      { notebook: 'Work', section: 'Inbox', page: 'Recent Note', opened_at: 1 }
+    ]
+
+    render(SidebarQuickAccess, {
+      props: {
+        ...baseProps,
+        collapsed: false,
+        favorites,
+        recents
+      }
+    })
+
+    const pinnedTab = screen.getByRole('tab', { name: /Pinned/ })
+    const recentTab = screen.getByRole('tab', { name: /Recent/ })
+
+    expect(pinnedTab).toHaveAttribute('aria-selected', 'true')
+    expect(recentTab).toHaveAttribute('aria-selected', 'false')
+    expect(
+      screen.getByRole('button', { name: 'Work / Notes / Starred' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Work / Inbox / Recent Note' })
+    ).not.toBeInTheDocument()
+
+    await fireEvent.click(recentTab)
+
+    expect(pinnedTab).toHaveAttribute('aria-selected', 'false')
+    expect(recentTab).toHaveAttribute('aria-selected', 'true')
+    expect(
+      screen.getByRole('button', { name: 'Work / Inbox / Recent Note' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Work / Notes / Starred' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('highlights active item when location matches props', () => {
+    const favorites = [
+      { notebook: 'Work', section: 'Projects', page: 'Sprint' }
+    ]
+    render(SidebarQuickAccess, {
+      props: {
+        ...baseProps,
+        collapsed: false,
+        favorites,
+        activeNotebook: 'Work',
+        activeSection: 'Projects',
+        activePage: 'Sprint'
+      }
+    })
+
+    const pageBtn = screen.getByRole('button', {
+      name: 'Work / Projects / Sprint'
+    })
+    expect(pageBtn).toHaveClass('active')
   })
 })
