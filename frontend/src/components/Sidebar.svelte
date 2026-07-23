@@ -1439,13 +1439,18 @@
         {activePage}
         loading={preferencesLoading}
         error={preferencesError}
-        collapsed={preferences.quick_access_collapsed}
         onOpen={handleQuickPage}
         onToggleFavorite={(ref) => void toggleFavorite(ref)}
-        onCollapsedChange={(collapsed) =>
-          void setQuickAccessCollapsed(collapsed)}
         onRetry={() => void loadNavigationPreferences()}
       />
+
+      {#if activeNotebookObj && !hasNoContent}
+        <div
+          class="px-2 pb-1 text-surface-sidebar-text-muted text-type-3xs uppercase tracking-widest font-label-sm-bold flex items-center gap-1.5 select-none"
+        >
+          <span>Sections</span>
+        </div>
+      {/if}
 
       <!-- Navigation tree -->
       <div

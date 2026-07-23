@@ -20,10 +20,8 @@
     activePage?: string
     loading: boolean
     error: string
-    collapsed: boolean
     onOpen: (ref: NavigationPageRef) => void
     onToggleFavorite: (ref: NavigationPageRef) => void
-    onCollapsedChange: (collapsed: boolean) => void
     onRetry: () => void
   }
 
@@ -32,32 +30,26 @@
     recents,
     staleKeys,
     notebooks,
-    activeNotebook = '',
-    activeSection = '',
-    activePage = '',
+    activeNotebook,
+    activeSection,
+    activePage,
     loading,
     error,
-    collapsed,
     onOpen,
     onToggleFavorite,
-    onCollapsedChange,
     onRetry
   }: Props = $props()
 
-  let explicitTab = $state<'pinned' | 'recent' | null>(null)
+  let explicitTab: string | null = $state(null)
   let activeTab = $derived.by(() => {
     if (explicitTab !== null) return explicitTab
     return favorites.length > 0 ? 'pinned' : 'recent'
   })
 
-  let emptyExpanded = $state(false)
   /** Session-only; not persisted to vault prefs. */
   let recentExpanded = $state(false)
 
   let hasPages = $derived(favorites.length > 0 || recents.length > 0)
-  let effectiveCollapsed = $derived(
-    emptyExpanded || error ? false : collapsed || !hasPages
-  )
   let pinnedKeys = $derived(new Set(favorites.map((ref) => locatorKey(ref))))
   let recentHasMore = $derived(recents.length > RECENT_COLLAPSED_LIMIT)
   let visibleRecents = $derived(
@@ -65,16 +57,6 @@
       ? recents
       : recents.slice(0, RECENT_COLLAPSED_LIMIT)
   )
-
-  function toggleCollapsed() {
-    if (effectiveCollapsed && !hasPages && !error) {
-      emptyExpanded = true
-      onCollapsedChange(false)
-      return
-    }
-    emptyExpanded = false
-    onCollapsedChange(!effectiveCollapsed)
-  }
 
   function pageState(ref: NavigationPageRef) {
     const notebook = notebooks.find((item) => item.name === ref.notebook)
@@ -91,232 +73,201 @@
 
   function isActive(ref: NavigationPageRef): boolean {
     return (
-      ref.notebook === activeNotebook &&
-      (ref.section ?? '') === activeSection &&
-      ref.page === activePage
+      ref.notebook === (activeNotebook ?? '') &&
+      (ref.section ?? '') === (activeSection ?? '') &&
+      ref.page === (activePage ?? '')
     )
   }
 
   function sectionBadge(ref: NavigationPageRef): string {
-    if (ref.notebook === activeNotebook) {
+    const currentNb = activeNotebook ?? ''
+    if (ref.notebook === currentNb) {
       return ref.section || ''
     }
-    return ref.section ? `${ref.notebook} / ${ref.section}` : ref.notebook
+    return ref.section ? ref.notebook + ' / ' + ref.section : ref.notebook
   }
 </script>
 
-<section class="mx-1 mb-1" aria-labelledby="quick-access-title">
-  <button
-    type="button"
-    class="w-full border-none bg-transparent px-2 py-1.5 flex items-center gap-1 cursor-pointer rounded text-left text-surface-sidebar-text-muted hover:text-surface-sidebar-text hover:bg-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start"
-    aria-expanded={!effectiveCollapsed}
-    aria-controls="quick-access-content"
-    onclick={toggleCollapsed}
+{#if hasPages || loading || error}
+  <section
+    class="mx-1 mb-2.5 p-1 bg-surface-sidebar border border-surface-sidebar-border/70 rounded-lg shadow-sm"
+    aria-label="Quick access"
   >
-    <span
-      class="material-symbols-outlined text-icon-md transition-transform motion-reduce:transition-none"
-      class:rotate-90={!effectiveCollapsed}
-      aria-hidden="true">chevron_right</span
-    >
-    <span
-      id="quick-access-title"
-      class="flex-1 text-type-2xs font-label-sm-bold"
-    >
-      Quick access
-    </span>
-    {#if hasPages}<span
-        class="text-type-3xs text-surface-sidebar-text-muted"
-        aria-hidden="true">{favorites.length + recents.length}</span
-      >{/if}
-  </button>
-
-  {#if !effectiveCollapsed}
-    <div id="quick-access-content" class="mt-0.5">
-      {#if loading}
-        <p
-          class="px-2.5 pb-2 m-0 text-type-2xs text-surface-sidebar-text-muted"
+    {#if loading}
+      <p class="px-2 py-1 m-0 text-type-2xs text-surface-sidebar-text-muted">
+        Loading saved pages…
+      </p>
+    {:else if error}
+      <div class="px-2 py-1" role="status">
+        <p class="m-0 text-type-2xs text-status-warn">{error}</p>
+        <button class="retry" type="button" onclick={onRetry}>Try again</button>
+      </div>
+    {:else}
+      <!-- Segmented View Switcher -->
+      <div
+        class="flex items-center gap-0.5 bg-hover/40 p-0.5 rounded-md mb-1 border border-surface-sidebar-border/40"
+        role="tablist"
+        aria-label="Quick Access Categories"
+      >
+        <button
+          type="button"
+          role="tab"
+          id="quick-access-tab-pinned"
+          aria-selected={activeTab === 'pinned'}
+          aria-controls="quick-access-panel"
+          class="flex-1 py-1 px-1.5 border-none rounded text-type-3xs font-label-sm-bold cursor-pointer transition-all flex items-center justify-center gap-1"
+          class:bg-surface-sidebar={activeTab === 'pinned'}
+          class:shadow-sm={activeTab === 'pinned'}
+          class:text-surface-sidebar-text={activeTab === 'pinned'}
+          class:text-surface-sidebar-text-muted={activeTab !== 'pinned'}
+          onclick={() => (explicitTab = 'pinned')}
         >
-          Loading saved pages…
-        </p>
-      {:else if error}
-        <div class="px-2.5 pb-2" role="status">
-          <p class="m-0 text-type-2xs text-status-warn">{error}</p>
-          <button class="retry" type="button" onclick={onRetry}
-            >Try again</button
-          >
-        </div>
-      {:else}
-        <div class="px-1 pb-1 flex flex-col gap-1">
-          {#if !hasPages}
-            <p class="empty">
-              No pinned or recent pages yet. Open a page or pin one to Quick
-              Access.
-            </p>
-          {:else}
-            <!-- Segmented View Switcher -->
-            <div
-              class="flex items-center gap-0.5 bg-surface-sidebar border border-surface-sidebar-border p-0.5 rounded-md mb-0.5"
-              role="tablist"
-              aria-label="Quick Access Categories"
-            >
-              <button
-                type="button"
-                role="tab"
-                id="quick-access-tab-pinned"
-                aria-selected={activeTab === 'pinned'}
-                aria-controls="quick-access-panel"
-                class="flex-1 py-1 px-1.5 border-none rounded text-type-3xs font-label-sm-bold cursor-pointer transition-all flex items-center justify-center gap-1"
-                class:bg-hover={activeTab === 'pinned'}
-                class:text-surface-sidebar-text={activeTab === 'pinned'}
-                class:text-surface-sidebar-text-muted={activeTab !== 'pinned'}
-                onclick={() => (explicitTab = 'pinned')}
-              >
-                <span>Pinned</span>
-                {#if favorites.length > 0}
-                  <span class="opacity-75">({favorites.length})</span>
-                {/if}
-              </button>
-              <button
-                type="button"
-                role="tab"
-                id="quick-access-tab-recent"
-                aria-selected={activeTab === 'recent'}
-                aria-controls="quick-access-panel"
-                class="flex-1 py-1 px-1.5 border-none rounded text-type-3xs font-label-sm-bold cursor-pointer transition-all flex items-center justify-center gap-1"
-                class:bg-hover={activeTab === 'recent'}
-                class:text-surface-sidebar-text={activeTab === 'recent'}
-                class:text-surface-sidebar-text-muted={activeTab !== 'recent'}
-                onclick={() => (explicitTab = 'recent')}
-              >
-                <span>Recent</span>
-                {#if recents.length > 0}
-                  <span class="opacity-75">({recents.length})</span>
-                {/if}
-              </button>
-            </div>
+          <span>Pinned</span>
+          {#if favorites.length > 0}
+            <span class="opacity-75">({favorites.length})</span>
+          {/if}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="quick-access-tab-recent"
+          aria-selected={activeTab === 'recent'}
+          aria-controls="quick-access-panel"
+          class="flex-1 py-1 px-1.5 border-none rounded text-type-3xs font-label-sm-bold cursor-pointer transition-all flex items-center justify-center gap-1"
+          class:bg-surface-sidebar={activeTab === 'recent'}
+          class:shadow-sm={activeTab === 'recent'}
+          class:text-surface-sidebar-text={activeTab === 'recent'}
+          class:text-surface-sidebar-text-muted={activeTab !== 'recent'}
+          onclick={() => (explicitTab = 'recent')}
+        >
+          <span>Recent</span>
+          {#if recents.length > 0}
+            <span class="opacity-75">({recents.length})</span>
+          {/if}
+        </button>
+      </div>
 
-            <!-- Tab Panel Contents -->
-            <div id="quick-access-panel" role="tabpanel">
-              {#if activeTab === 'pinned'}
-                {#if favorites.length === 0}
-                  <p class="empty">No pinned pages yet.</p>
-                {:else}
-                  <div class="flex flex-col gap-0.5">
-                    {#each favorites as ref (locatorKey(ref))}
-                      {@const itemState = pageState(ref)}
-                      {@const active = isActive(ref)}
-                      {@const badge = sectionBadge(ref)}
-                      <div class="quick-row group">
-                        <button
-                          type="button"
-                          class="page-link"
-                          class:active
-                          disabled={itemState.unavailable}
-                          title={pagePathLabel(ref)}
-                          aria-label={`${pagePathLabel(ref)}${itemState.label ? ` — ${itemState.label}` : ''}`}
-                          onclick={() => onOpen(ref)}
-                        >
-                          <span
-                            class="material-symbols-outlined text-icon-xs text-surface-sidebar-text-muted flex-shrink-0"
-                            aria-hidden="true">description</span
-                          >
-                          <span class="truncate flex-1">{ref.page}</span>
-                          {#if badge}
-                            <span class="path-badge truncate">{badge}</span>
-                          {/if}
-                          {#if itemState.label}
-                            <span class="status">{itemState.label}</span>
-                          {/if}
-                        </button>
-                        <button
-                          type="button"
-                          class="pin-toggle pinned"
-                          aria-label={`Unpin ${ref.page} from Quick Access`}
-                          title="Unpin"
-                          onclick={() => onToggleFavorite(ref)}
-                        >
-                          <span
-                            class="material-symbols-outlined text-icon-xs"
-                            aria-hidden="true">push_pin</span
-                          >
-                        </button>
-                      </div>
-                    {/each}
-                  </div>
-                {/if}
-              {:else if activeTab === 'recent'}
-                {#if recents.length === 0}
-                  <p class="empty">No recent pages yet.</p>
-                {:else}
-                  <div class="flex flex-col gap-0.5">
-                    {#each visibleRecents as ref (locatorKey(ref))}
-                      {@const itemState = pageState(ref)}
-                      {@const pinned = isPinned(ref)}
-                      {@const active = isActive(ref)}
-                      {@const badge = sectionBadge(ref)}
-                      <div class="quick-row group">
-                        <button
-                          type="button"
-                          class="page-link recent"
-                          class:active
-                          disabled={itemState.unavailable}
-                          title={pagePathLabel(ref)}
-                          aria-label={`${pagePathLabel(ref)}${itemState.label ? ` — ${itemState.label}` : ''}`}
-                          onclick={() => onOpen(ref)}
-                        >
-                          <span
-                            class="material-symbols-outlined text-icon-xs text-surface-sidebar-text-muted flex-shrink-0"
-                            aria-hidden="true">description</span
-                          >
-                          <span class="truncate flex-1">{ref.page}</span>
-                          {#if badge}
-                            <span class="path-badge truncate">{badge}</span>
-                          {/if}
-                          {#if itemState.label}
-                            <span class="status">{itemState.label}</span>
-                          {/if}
-                        </button>
-                        <button
-                          type="button"
-                          class="pin-toggle"
-                          class:pinned
-                          class:hover-only={!pinned}
-                          aria-label={pinned
-                            ? `Unpin ${ref.page} from Quick Access`
-                            : `Pin ${ref.page} to Quick Access`}
-                          title={pinned ? 'Unpin' : 'Pin to Quick Access'}
-                          onclick={() => onToggleFavorite(ref)}
-                        >
-                          <span
-                            class="material-symbols-outlined text-icon-xs"
-                            class:pin-outline={!pinned}
-                            aria-hidden="true">push_pin</span
-                          >
-                        </button>
-                      </div>
-                    {/each}
-                    {#if recentHasMore}
-                      <button
-                        type="button"
-                        class="show-more"
-                        aria-expanded={recentExpanded}
-                        onclick={() => {
-                          recentExpanded = !recentExpanded
-                        }}
-                      >
-                        {recentExpanded ? 'Show less' : 'Show more'}
-                      </button>
+      <!-- Tab Panel Contents -->
+      <div id="quick-access-panel" role="tabpanel">
+        {#if activeTab === 'pinned'}
+          {#if favorites.length === 0}
+            <p class="empty">No pinned pages yet.</p>
+          {:else}
+            <div class="flex flex-col gap-0.5">
+              {#each favorites as ref (locatorKey(ref))}
+                {@const itemState = pageState(ref)}
+                {@const active = isActive(ref)}
+                {@const badge = sectionBadge(ref)}
+                <div class="quick-row group">
+                  <button
+                    type="button"
+                    class="page-link"
+                    class:active
+                    disabled={itemState.unavailable}
+                    title={pagePathLabel(ref)}
+                    aria-label={itemState.label
+                      ? pagePathLabel(ref) + ' — ' + itemState.label
+                      : pagePathLabel(ref)}
+                    onclick={() => onOpen(ref)}
+                  >
+                    <span
+                      class="material-symbols-outlined text-icon-xs text-surface-sidebar-text-muted flex-shrink-0"
+                      aria-hidden="true">description</span
+                    >
+                    <span class="truncate flex-1">{ref.page}</span>
+                    {#if badge}
+                      <span class="path-badge truncate">{badge}</span>
                     {/if}
-                  </div>
-                {/if}
+                    {#if itemState.label}
+                      <span class="status">{itemState.label}</span>
+                    {/if}
+                  </button>
+                  <button
+                    type="button"
+                    class="pin-toggle pinned"
+                    aria-label={'Unpin ' + ref.page + ' from Quick Access'}
+                    title="Unpin"
+                    onclick={() => onToggleFavorite(ref)}
+                  >
+                    <span
+                      class="material-symbols-outlined pin-icon"
+                      aria-hidden="true">push_pin</span
+                    >
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        {:else if activeTab === 'recent'}
+          {#if recents.length === 0}
+            <p class="empty">No recent pages yet.</p>
+          {:else}
+            <div class="flex flex-col gap-0.5">
+              {#each visibleRecents as ref (locatorKey(ref))}
+                {@const itemState = pageState(ref)}
+                {@const pinned = isPinned(ref)}
+                {@const active = isActive(ref)}
+                {@const badge = sectionBadge(ref)}
+                <div class="quick-row group">
+                  <button
+                    type="button"
+                    class="page-link recent"
+                    class:active
+                    disabled={itemState.unavailable}
+                    title={pagePathLabel(ref)}
+                    aria-label={itemState.label
+                      ? pagePathLabel(ref) + ' — ' + itemState.label
+                      : pagePathLabel(ref)}
+                    onclick={() => onOpen(ref)}
+                  >
+                    <span
+                      class="material-symbols-outlined text-icon-xs text-surface-sidebar-text-muted flex-shrink-0"
+                      aria-hidden="true">description</span
+                    >
+                    <span class="truncate flex-1">{ref.page}</span>
+                    {#if badge}
+                      <span class="path-badge truncate">{badge}</span>
+                    {/if}
+                    {#if itemState.label}
+                      <span class="status">{itemState.label}</span>
+                    {/if}
+                  </button>
+                  <button
+                    type="button"
+                    class="pin-toggle {pinned ? 'pinned' : 'hover-only'}"
+                    aria-label={pinned
+                      ? 'Unpin ' + ref.page + ' from Quick Access'
+                      : 'Pin ' + ref.page + ' to Quick Access'}
+                    title={pinned ? 'Unpin' : 'Pin to Quick Access'}
+                    onclick={() => onToggleFavorite(ref)}
+                  >
+                    <span
+                      class="material-symbols-outlined pin-icon"
+                      class:pin-outline={!pinned}
+                      aria-hidden="true">push_pin</span
+                    >
+                  </button>
+                </div>
+              {/each}
+              {#if recentHasMore}
+                <button
+                  type="button"
+                  class="show-more"
+                  aria-expanded={recentExpanded}
+                  onclick={() => {
+                    recentExpanded = !recentExpanded
+                  }}
+                >
+                  {recentExpanded ? 'Show less' : 'Show more'}
+                </button>
               {/if}
             </div>
           {/if}
-        </div>
-      {/if}
-    </div>
-  {/if}
-</section>
+        {/if}
+      </div>
+    {/if}
+  </section>
+{/if}
 
 <style>
   .empty {
@@ -380,10 +331,13 @@
     border: 0;
     background: transparent;
     color: var(--color-surface-sidebar-text-muted);
-    border-radius: 0.35rem;
-    padding: 0.15rem;
+    border-radius: 0.25rem;
+    padding: 0.1rem 0.2rem;
     cursor: pointer;
-    transition: opacity 150ms ease;
+    transition: all 120ms ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .pin-toggle.hover-only {
     opacity: 0;
@@ -400,21 +354,26 @@
   .pin-toggle:hover,
   .pin-toggle:focus-visible {
     background: var(--color-hover);
-    outline: 1px solid var(--color-accent-primary-start);
     color: var(--color-accent-primary-start);
+  }
+  .pin-icon {
+    font-size: 13px !important;
+    width: 13px;
+    height: 13px;
+    line-height: 13px;
   }
   /* Outline weight for unpinned; filled when pinned (Material Symbols default). */
   .pin-outline {
     font-variation-settings:
       'FILL' 0,
-      'wght' 300,
+      'wght' 250,
       'GRAD' 0,
       'opsz' 20;
   }
-  .pin-toggle.pinned .material-symbols-outlined {
+  .pin-toggle.pinned .pin-icon {
     font-variation-settings:
       'FILL' 1,
-      'wght' 400,
+      'wght' 350,
       'GRAD' 0,
       'opsz' 20;
   }

@@ -10,10 +10,8 @@ const baseProps = {
   notebooks: [{ name: 'Work', sections: [] }],
   loading: false,
   error: '',
-  collapsed: true,
   onOpen: vi.fn(),
   onToggleFavorite: vi.fn(),
-  onCollapsedChange: vi.fn(),
   onRetry: vi.fn()
 }
 
@@ -29,38 +27,22 @@ function makeRecents(count: number) {
 afterEach(cleanup)
 
 describe('SidebarQuickAccess', () => {
-  it('stays collapsed by default when there are no saved pages', async () => {
-    render(SidebarQuickAccess, { props: baseProps })
-    const toggle = screen.getByRole('button', { name: 'Quick access' })
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(
-      screen.queryByText(
-        'No pinned or recent pages yet. Open a page or pin one to Quick Access.'
-      )
-    ).not.toBeInTheDocument()
-    await fireEvent.click(toggle)
-    expect(
-      screen.getByText(
-        'No pinned or recent pages yet. Open a page or pin one to Quick Access.'
-      )
-    ).toBeInTheDocument()
+  it('renders nothing when there are no saved pages and not loading/error', () => {
+    const { container } = render(SidebarQuickAccess, { props: baseProps })
+    expect(container.firstElementChild).toBeNull()
   })
 
-  it('expands useful content by default and remains collapsible', async () => {
+  it('renders card well container when saved pages exist', () => {
     const favorites = [{ notebook: 'Work', section: '', page: 'Pinned page' }]
-    const onCollapsedChange = vi.fn()
-    const { rerender } = render(SidebarQuickAccess, {
+    render(SidebarQuickAccess, {
       props: {
         ...baseProps,
-        collapsed: false,
-        favorites,
-        onCollapsedChange
+        favorites
       }
     })
-    const toggle = screen.getByRole('button', { name: 'Quick access' })
     expect(
-      screen.getByRole('button', { name: 'Quick access' })
-    ).toHaveAttribute('aria-expanded', 'true')
+      screen.getByRole('region', { name: 'Quick access' })
+    ).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Pinned/ })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Recent/ })).toBeInTheDocument()
     expect(
@@ -68,41 +50,13 @@ describe('SidebarQuickAccess', () => {
         name: 'Unpin Pinned page from Quick Access'
       })
     ).toBeInTheDocument()
-    await fireEvent.click(toggle)
-    expect(onCollapsedChange).toHaveBeenCalledWith(true)
-    await rerender({
-      ...baseProps,
-      collapsed: true,
-      favorites,
-      onCollapsedChange
-    })
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByText('Pinned')).not.toBeInTheDocument()
   })
 
-  it('opens automatically when loading produces useful content', async () => {
-    const { rerender } = render(SidebarQuickAccess, {
-      props: { ...baseProps, collapsed: false, loading: true }
+  it('shows loading indicator inside container when loading', () => {
+    render(SidebarQuickAccess, {
+      props: { ...baseProps, loading: true }
     })
-    expect(
-      screen.getByRole('button', { name: 'Quick access' })
-    ).toHaveAttribute('aria-expanded', 'false')
-    await rerender({
-      ...baseProps,
-      collapsed: false,
-      recents: [
-        {
-          notebook: 'Work',
-          section: '',
-          page: 'Inbox',
-          opened_at: 10
-        }
-      ]
-    })
-    expect(
-      screen.getByRole('button', { name: 'Quick access' })
-    ).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByText('Recent')).toBeInTheDocument()
+    expect(screen.getByText('Loading saved pages…')).toBeInTheDocument()
   })
 
   it('announces an error and retries without replacing the panel', async () => {
@@ -110,7 +64,6 @@ describe('SidebarQuickAccess', () => {
     render(SidebarQuickAccess, {
       props: {
         ...baseProps,
-        collapsed: false,
         error: 'Saved pages are unavailable.',
         onRetry
       }
@@ -126,7 +79,6 @@ describe('SidebarQuickAccess', () => {
     render(SidebarQuickAccess, {
       props: {
         ...baseProps,
-        collapsed: false,
         favorites: [
           {
             notebook: 'Work',
@@ -155,7 +107,7 @@ describe('SidebarQuickAccess', () => {
       opened_at: 10
     }
     render(SidebarQuickAccess, {
-      props: { ...baseProps, collapsed: false, recents: [recent], onOpen }
+      props: { ...baseProps, recents: [recent], onOpen }
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Work / Inbox' }))
     expect(onOpen).toHaveBeenCalledWith(recent)
@@ -172,7 +124,6 @@ describe('SidebarQuickAccess', () => {
     render(SidebarQuickAccess, {
       props: {
         ...baseProps,
-        collapsed: false,
         recents: [recent],
         onToggleFavorite
       }
@@ -186,7 +137,7 @@ describe('SidebarQuickAccess', () => {
   it(`shows at most ${RECENT_COLLAPSED_LIMIT} recents by default with Show more`, async () => {
     const recents = makeRecents(RECENT_COLLAPSED_LIMIT + 2)
     render(SidebarQuickAccess, {
-      props: { ...baseProps, collapsed: false, recents }
+      props: { ...baseProps, recents }
     })
     expect(
       screen.getByRole('button', { name: 'Work / Page 1' })
@@ -221,43 +172,12 @@ describe('SidebarQuickAccess', () => {
     render(SidebarQuickAccess, {
       props: {
         ...baseProps,
-        collapsed: false,
         recents: makeRecents(RECENT_COLLAPSED_LIMIT)
       }
     })
     expect(
       screen.queryByRole('button', { name: 'Show more' })
     ).not.toBeInTheDocument()
-  })
-
-  it('persists disclosure toggles and does not override a deliberate collapse', async () => {
-    const onCollapsedChange = vi.fn()
-    const recent = {
-      notebook: 'Work',
-      section: '',
-      page: 'Inbox',
-      opened_at: 10
-    }
-    const { rerender } = render(SidebarQuickAccess, {
-      props: {
-        ...baseProps,
-        collapsed: true,
-        recents: [recent],
-        onCollapsedChange
-      }
-    })
-    const toggle = screen.getByRole('button', { name: 'Quick access' })
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    await fireEvent.click(toggle)
-    expect(onCollapsedChange).toHaveBeenCalledWith(false)
-
-    await rerender({
-      ...baseProps,
-      collapsed: true,
-      recents: [recent, { ...recent, page: 'Roadmap', opened_at: 11 }],
-      onCollapsedChange
-    })
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('switches between Pinned and Recent segmented tabs', async () => {
@@ -269,7 +189,6 @@ describe('SidebarQuickAccess', () => {
     render(SidebarQuickAccess, {
       props: {
         ...baseProps,
-        collapsed: false,
         favorites,
         recents
       }
@@ -306,7 +225,6 @@ describe('SidebarQuickAccess', () => {
     render(SidebarQuickAccess, {
       props: {
         ...baseProps,
-        collapsed: false,
         favorites,
         activeNotebook: 'Work',
         activeSection: 'Projects',
