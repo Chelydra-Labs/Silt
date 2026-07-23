@@ -79,13 +79,13 @@ const mocks = vi.hoisted(() => ({
   // Captured Events.On registrations keyed by event name, plus the disposers
   // returned (so the unmount-disposal and drop-handler contracts can be
   // asserted without hitting the real Wails runtime).
-  eventsHandlers: {} as Record<string, (ev: any) => void>,
+  eventsHandlers: {} as Record<string, (ev: { data?: unknown }) => void>,
   eventsDisposers: {} as Record<string, () => void>
 }))
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {
-    On: vi.fn((name: string, handler: (ev: any) => void) => {
+    On: vi.fn((name: string, handler: (ev: { data?: unknown }) => void) => {
       mocks.eventsHandlers[name] = handler
       const off = vi.fn()
       mocks.eventsDisposers[name] = off
@@ -105,7 +105,7 @@ vi.mock('@wailsio/runtime', () => ({
     }
   },
   Create: {
-    Nullable: (fn: any) => fn,
+    Nullable: <T>(fn: T) => fn,
     Array: () => [],
     Map: () => ({}),
     Any: {}
@@ -667,7 +667,7 @@ describe('AppearanceTab picker a11y (#50, #512)', () => {
       render(AppearanceTab)
       const handler = mocks.eventsHandlers['theme:files-dropped']
       handler({ data: 'not-an-array' })
-      handler(undefined)
+      handler(undefined as never)
       await tick()
       expect(mocks.importThemeFromPath).not.toHaveBeenCalled()
       expect(mocks.setStatus).not.toHaveBeenCalled()

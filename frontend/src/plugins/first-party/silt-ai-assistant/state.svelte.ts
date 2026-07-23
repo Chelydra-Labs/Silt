@@ -66,9 +66,10 @@ export function createAssistantController() {
   } | null = null
 
   function loadSettings() {
-    const raw = (appSettings.config?.plugins?.plugin_settings as any)?.[
-      'silt-ai-assistant'
-    ] as Record<string, unknown> | undefined
+    const raw = (
+      appSettings.config?.plugins?.plugin_settings as
+        Record<string, Record<string, unknown>> | undefined
+    )?.['silt-ai-assistant'] as Record<string, unknown> | undefined
     settings = resolveSettings(raw)
     const enabled = enabledActions(settings)
     if (!enabled.find((a) => a.id === selectedAction) && enabled[0]) {
@@ -81,13 +82,11 @@ export function createAssistantController() {
   }
 
   function chatReady(): boolean {
-    return !aiProviderNeedsSetup(appSettings.config?.ai?.chat as any)
+    return !aiProviderNeedsSetup(appSettings.config?.ai?.chat)
   }
 
   function embedReady(): boolean {
-    return !embeddingProviderNeedsSetup(
-      appSettings.config?.ai?.embedding as any
-    )
+    return !embeddingProviderNeedsSetup(appSettings.config?.ai?.embedding)
   }
 
   function cancelActiveStream() {
@@ -350,6 +349,7 @@ export function createAssistantController() {
 
   function toggleTag(tag: string) {
     if (!proposal?.tags) return
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
     const set = new Set(proposal.selectedTags ?? [])
     if (set.has(tag)) set.delete(tag)
     else set.add(tag)
@@ -358,6 +358,7 @@ export function createAssistantController() {
 
   function toggleRelated(id: string) {
     if (!proposal?.related) return
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
     const set = new Set(proposal.selectedRelatedIds ?? [])
     if (set.has(id)) set.delete(id)
     else set.add(id)

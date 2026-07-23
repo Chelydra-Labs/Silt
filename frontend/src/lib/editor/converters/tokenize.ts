@@ -215,7 +215,7 @@ function parseInlineTokens(
 // node produced by the sole-content-NOTE path in blocks.ts; emitting a block
 // node inside inline content would violate the ProseMirror schema.
 const ATOMIC_INLINE_TOKEN =
-  /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)|@\[([^\[\]\n]+)\]|(?<!\$)\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\$)|\[\[([^\[\]\|#]+)(?:#([^\[\]\|]+))?(?:\|([^\[\]]+))?\]\]/gi
+  /(\{\{embed:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}\})|\(\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)\)|@\[([^\][\n]+)\]|(?<!\$)\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\$)|\[\[([^\][|#]+)(?:#([^\][|]+))?(?:\|([^\][]+))?\]\]/gi
 
 // Inline code span. Matched BEFORE atomic tokens so that `$x$` / `@[a]` /
 // `((uuid))` written inside backticks stays literal code (not a math node,

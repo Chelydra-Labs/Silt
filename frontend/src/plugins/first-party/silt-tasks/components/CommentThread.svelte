@@ -156,6 +156,7 @@
     }
 
     const tops: Comment[] = []
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
     const repliesByTop = new Map<string, Comment[]>()
 
     for (const b of notes) {
@@ -455,7 +456,7 @@
 
 {#snippet commentBody(c: Comment)}
   <div class="text-type-sm text-text-primary leading-snug">
-    {#each splitBold(c.body) as run}
+    {#each splitBold(c.body) as run, runIdx (runIdx)}
       {#if run.bold}
         <strong>
           <RichText text={run.text} {notebook} {section} {page} {fileDate} />

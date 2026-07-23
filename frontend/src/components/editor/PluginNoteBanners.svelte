@@ -13,6 +13,7 @@
   } from '../../plugins/surfaces'
   import PluginSurfaceFrame from '../PluginSurfaceFrame.svelte'
   import { makePluginContext } from '../../plugins/context'
+  import type { PluginContext } from '../../plugins/sdk'
   // getSessionToken supplies the session token the loader registered for the
   // plugin; without it every privileged SDK call (sqliteQuery, mutateBlock, …)
   // from a first-party banner fails server-side with "missing session token"
@@ -25,14 +26,20 @@
   // the context for every banner on every render (avoids needless iframe
   // srcdoc rebuilds in PluginSurfaceFrame). Invalidated for pluginIDs that
   // leave the surfaces list (disable/enable issues a fresh session token).
-  const ctxCache = new Map<string, any>()
+  // Plain Map: non-reactive cache; SvelteMap mutates during render.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive cache; SvelteMap mutates during render
+  const ctxCache = new Map<string, PluginContext>()
 
   // host→iframe post closures per surface.id, handed back by each
   // PluginSurfaceFrame via onBridgeReady (#355). Used to notify a plugin its
   // banner was dismissed so it can persist dismissal state
   // (ctx.updatePluginSetting('dismissed_notes', [...])) BEFORE the surface is
   // torn down. Entries are dropped when a surface leaves the list.
-  const postFns = new Map<string, (msg: any) => void>()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive cache; SvelteMap mutates during render
+  const postFns = new Map<
+    string,
+    (msg: { __siltSurface: 'event'; type: string; payload?: unknown }) => void
+  >()
 
   const off = onSurfacesChanged((all) => {
     surfaces = all.filter((s) => s.kind === 'note-banner')
@@ -58,10 +65,10 @@
   // dismissedThisTick debounce) so one handle is sufficient.
   let dismissTimer: number | null = null
 
-  function ctxFor(pluginID: string): any {
+  function ctxFor(pluginID: string): PluginContext {
     let ctx = ctxCache.get(pluginID)
     if (!ctx) {
-      ctx = makePluginContext(pluginID, getSessionToken(pluginID)) as any
+      ctx = makePluginContext(pluginID, getSessionToken(pluginID))
       ctxCache.set(pluginID, ctx)
     }
     return ctx

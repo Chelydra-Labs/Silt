@@ -9,7 +9,6 @@ import {
 } from './extract'
 import { stripReasoningContent } from '../../stripReasoning'
 import { DEFAULT_SETTINGS } from './settings'
-import type { SummarySettings } from './types'
 
 const settings = { ...DEFAULT_SETTINGS, facets: { ...DEFAULT_SETTINGS.facets } }
 

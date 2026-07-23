@@ -55,7 +55,7 @@ describe('resolveDraggedBlockPosition — pure helper', () => {
     const result = resolveDraggedBlockPosition(doc, 'b')
     expect(result).not.toBeNull()
     expect(result?.pos).toBe(2)
-    expect(result?.node.attrs.id).toBe('b')
+    expect(result!.node.attrs!.id).toBe('b')
   })
 
   it('returns the first block when ids collide (UniqueBlockIds plugin prevents this in production)', () => {
@@ -89,15 +89,23 @@ describe('resolveDraggedBlockPosition — pure helper', () => {
           return {
             type: { name: 'noteBlock' },
             nodeSize: 2
-          } as any
+          } as {
+            type: { name: string }
+            attrs?: Record<string, unknown>
+            nodeSize?: number
+          }
         return {
           type: { name: 'noteBlock' },
           attrs: { id: 'real' },
           nodeSize: 2
-        } as any
+        } as {
+          type: { name: string }
+          attrs?: Record<string, unknown>
+          nodeSize?: number
+        }
       }
     }
-    expect(resolveDraggedBlockPosition(fake as any, 'real')?.pos).toBe(2)
+    expect(resolveDraggedBlockPosition(fake, 'real')?.pos).toBe(2)
   })
 
   // Manual-loop early-exit: the production function uses a `for` loop and
@@ -117,12 +125,16 @@ describe('resolveDraggedBlockPosition — pure helper', () => {
           type: { name: 'noteBlock' },
           attrs: { id },
           nodeSize: 2
-        } as any
+        } as {
+          type: { name: string }
+          attrs?: Record<string, unknown>
+          nodeSize?: number
+        }
         if (i > 2) after.push(i)
         return child
       }
     }
-    const result = resolveDraggedBlockPosition(fake as any, 'target')
+    const result = resolveDraggedBlockPosition(fake, 'target')
     expect(result?.pos).toBe(4)
     expect(visits).toBe(3) // indices 0, 1, 2; stop on first match
     expect(after).toEqual([])
@@ -135,15 +147,23 @@ describe('resolveDraggedBlockPosition — pure helper', () => {
       child(i: number) {
         visits++
         if (i === 0)
-          return { type: { name: 'noteBlock' }, attrs: { id: 'real' } } as any
+          return { type: { name: 'noteBlock' }, attrs: { id: 'real' } } as {
+            type: { name: string }
+            attrs?: Record<string, unknown>
+            nodeSize?: number
+          }
         // second child lacks nodeSize AND attrs — short-circuit guard needed.
         return {
           type: { name: 'noteBlock' },
           nodeSize: 0
-        } as any
+        } as {
+          type: { name: string }
+          attrs?: Record<string, unknown>
+          nodeSize?: number
+        }
       }
     }
-    expect(resolveDraggedBlockPosition(fake as any, 'real')?.pos).toBe(0)
+    expect(resolveDraggedBlockPosition(fake, 'real')?.pos).toBe(0)
     // Without the defensive `nodeSize ?? 0`, we'd loop forever on a
     // zero-size child (it must be the bug-class we test against).
     expect(visits).toBeLessThanOrEqual(2)
@@ -170,7 +190,7 @@ describe('buildBlockSlice — pure helper', () => {
 
   function makeTwoParaDoc(): {
     editor: Editor
-    doc: any
+    doc: Editor['state']['doc']
     firstPos: number
     secondPos: number
     cleanup: () => void
@@ -187,7 +207,7 @@ describe('buildBlockSlice — pure helper', () => {
     })
     const doc = editor.state.doc
     const firstNode = doc.child(0)
-    const secondNode = doc.child(1)
+    const _secondNode = doc.child(1)
     const firstPos = 0
     const secondPos = firstNode ? firstNode.nodeSize : 0
     return {
@@ -245,7 +265,7 @@ describe('buildBlockSlice — pure helper', () => {
   it('handles a node without a known nodeSize (defensive — fallback size 0)', () => {
     const doc = makeSingleParaDoc()
     const fakeNode = { type: { name: 'noteBlock' } }
-    const slice = buildBlockSlice(doc, 0, fakeNode)
+    const slice = buildBlockSlice(doc, 0, fakeNode as never)
     expect(slice).toBeInstanceOf(Slice)
     expect(slice.content.size).toBe(0)
   })

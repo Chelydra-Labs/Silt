@@ -169,7 +169,7 @@
     const mode = effectiveMode
     const seq = ++highlightSeq
     void (async () => {
-      let html: string | null = null
+      let html: string | null
       try {
         html = await highlightMarkdown(md, tokensToShikiTheme(t, mode))
       } catch {
@@ -371,7 +371,7 @@
     aria-label={editable ? undefined : `Source view of ${filePath}`}
   >
     <div class="line-numbers" aria-hidden="true">
-      {#each Array(lineCount) as _, i}
+      {#each Array(lineCount) as _, i (i)}
         <span class="line-num">{i + 1}</span>
       {/each}
     </div>
@@ -426,7 +426,8 @@
         rows={lineCount}></textarea>
     {:else}
       <pre
-        class="source-code">{#if highlightedHtml}{@html highlightedHtml}{:else}{buffer}{/if}</pre>
+        class="source-code"><!-- eslint-disable-next-line svelte/no-at-html-tags -- highlight.js on local buffer -->
+        {#if highlightedHtml}{@html highlightedHtml}{:else}{buffer}{/if}</pre>
     {/if}
   </div>
 </div>

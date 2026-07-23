@@ -687,6 +687,7 @@
               {/if}
               {#if res.snippet}
                 <!-- Sanitized in-script: only <mark> tags from FTS5 survive. -->
+                <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitizeSnippet/DOMPurify -->
                 <span>{@html sanitizeSnippet(res.snippet)}</span>
               {:else}
                 <span>{res.clean_content}</span>

@@ -34,7 +34,8 @@ export function clampToViewport(
   rect: BoundedRect,
   viewport: Viewport
 ): { left: number; top: number } {
-  let { x: left, y: top, width, height } = rect
+  let { x: left, y: top } = rect
+  const { width, height } = rect
   if (left + width > viewport.width) {
     left = viewport.width - width - POPOVER_MARGIN
   }
@@ -69,7 +70,6 @@ export function flipOrClamp(
   popover: { width: number; height: number },
   viewport: Viewport
 ): { left: number; top: number } {
-  const opensBelow = anchor.bottom + popover.height + POPOVER_MARGIN
   const opensAbove = anchor.top - popover.height - POPOVER_MARGIN
   // Flip up when there is no room below but there IS room above; otherwise
   // fall through to a plain clamp so the popover never overlaps the anchor.

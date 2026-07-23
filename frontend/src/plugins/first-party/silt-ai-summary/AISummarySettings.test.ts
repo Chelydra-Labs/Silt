@@ -50,7 +50,7 @@ describe('AISummarySettings', () => {
     const { findByLabelText, getByText } = render(AISummarySettings, {
       props: {
         ctx,
-        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as any
+        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as never
       }
     })
     expect(getByText('AI Summary')).toBeTruthy()
@@ -62,7 +62,7 @@ describe('AISummarySettings', () => {
     const { findByRole, queryByRole } = render(AISummarySettings, {
       props: {
         ctx,
-        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as any
+        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as never
       }
     })
     expect(
@@ -80,7 +80,7 @@ describe('AISummarySettings', () => {
     const { getByText, getByRole } = render(AISummarySettings, {
       props: {
         ctx: makeCtx(),
-        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as any
+        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as never
       }
     })
     expect(getByText(/No AI provider is configured/i)).toBeTruthy()
@@ -92,7 +92,7 @@ describe('AISummarySettings', () => {
     const { findByLabelText } = render(AISummarySettings, {
       props: {
         ctx,
-        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as any
+        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as never
       }
     })
     const select = (await findByLabelText(
@@ -110,7 +110,7 @@ describe('AISummarySettings', () => {
     const { findAllByRole, findByRole } = render(AISummarySettings, {
       props: {
         ctx,
-        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as any
+        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as never
       }
     })
     const group = await findByRole('radiogroup', {
@@ -131,7 +131,7 @@ describe('AISummarySettings', () => {
     const { findAllByRole } = render(AISummarySettings, {
       props: {
         ctx,
-        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as any
+        manifest: { id: 'silt-ai-summary', name: 'AI Summary' } as never
       }
     })
     await findAllByRole('checkbox')

@@ -37,10 +37,10 @@
   let rebuildBusy = $state(false)
 
   const chatUnconfigured = $derived(
-    aiProviderNeedsSetup(settings.config?.ai?.chat as any)
+    aiProviderNeedsSetup(settings.config?.ai?.chat)
   )
   const embedUnconfigured = $derived(
-    embeddingProviderNeedsSetup(settings.config?.ai?.embedding as any)
+    embeddingProviderNeedsSetup(settings.config?.ai?.embedding)
   )
   const ctl = $derived(getQAController())
 
@@ -66,7 +66,7 @@
     local = { ...local, [key]: value }
     try {
       await ctx.updatePluginSetting(key as string, value as never)
-      ctl?.setSettings(resolveSettings({ ...local } as any))
+      ctl?.setSettings(resolveSettings({ ...local } as never))
     } catch {
       /* best-effort */
     }
@@ -78,7 +78,7 @@
       for (const [k, v] of Object.entries(patch)) {
         await ctx.updatePluginSetting(k, v as never)
       }
-      ctl?.setSettings(resolveSettings({ ...local } as any))
+      ctl?.setSettings(resolveSettings({ ...local } as never))
     } catch {
       /* best-effort */
     }
@@ -132,7 +132,7 @@
         <button
           type="button"
           class="text-accent-primary-start underline bg-transparent border-none p-0 cursor-pointer font-inherit"
-          onclick={() => ctx.openSettings?.('ai' as any)}
+          onclick={() => ctx.openSettings?.('ai')}
         >
           Settings → AI → Features
         </button>
@@ -158,7 +158,7 @@
         <button
           type="button"
           class="text-accent-primary-start underline bg-transparent border-none p-0 cursor-pointer font-inherit"
-          onclick={() => ctx.openSettings?.('ai' as any)}
+          onclick={() => ctx.openSettings?.('ai')}
         >
           Settings → AI
         </button>
@@ -221,7 +221,7 @@
       <button
         type="button"
         class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-primary-start text-text-on-accent font-label-sm-bold text-type-xs hover:brightness-110 transition-all cursor-pointer border-none"
-        onclick={() => ctx.openSettings?.('ai' as any)}
+        onclick={() => ctx.openSettings?.('ai')}
       >
         Open AI settings
       </button>

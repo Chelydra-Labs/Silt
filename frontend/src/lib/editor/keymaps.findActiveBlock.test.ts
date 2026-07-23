@@ -6,7 +6,9 @@ import { findActiveBlock, BLOCK_TYPES } from './keymaps'
  * (`state.selection.$from.depth` + `$from.node(d)`). Each test builds the
  * stub to mirror a ProseMirror node tree at a specific depth.
  */
-function makeEditor(nodes: { typeName: string }[]): any {
+function makeEditor(
+  nodes: { typeName: string }[]
+): Parameters<typeof findActiveBlock>[0] {
   // nodes[0] = depth 1, nodes[1] = depth 2, ...
   return {
     state: {
@@ -17,7 +19,7 @@ function makeEditor(nodes: { typeName: string }[]): any {
         }
       }
     }
-  } as any
+  } as Parameters<typeof findActiveBlock>[0]
 }
 
 describe('BLOCK_TYPES', () => {
@@ -88,7 +90,7 @@ describe('findActiveBlock', () => {
           }
         }
       }
-    } as any
+    } as Parameters<typeof findActiveBlock>[0]
     expect(findActiveBlock(editor)).toBeNull()
   })
 })

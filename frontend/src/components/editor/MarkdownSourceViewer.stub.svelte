@@ -1,6 +1,6 @@
 <script lang="ts">
   let {
-    blocks,
+    blocks: _blocks,
     filePath,
     notebook: _notebook,
     section: _section,

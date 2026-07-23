@@ -1,3 +1,4 @@
+import { SvelteDate } from 'svelte/reactivity'
 // Reactive controller for the AI Provider settings tab. Owns the provider
 // config state, the per-role (chat/embedding) UI state maps, the sync fan-out
 // logic, API-key management, the live connection probe, model discovery, and
@@ -137,45 +138,48 @@ export function createAIProviderController() {
   // card is hidden via CSS to keep the DOM queryable for Vitest.
   let activeRole = $state<Which>('chat')
 
-  let apiKeyInputs = $state<Record<Which, string>>({ chat: '', embedding: '' })
-  let showKey = $state<Record<Which, boolean>>({
+  const apiKeyInputs = $state<Record<Which, string>>({
+    chat: '',
+    embedding: ''
+  })
+  const showKey = $state<Record<Which, boolean>>({
     chat: false,
     embedding: false
   })
-  let savingKey = $state<Record<Which, boolean>>({
+  const savingKey = $state<Record<Which, boolean>>({
     chat: false,
     embedding: false
   })
-  let clearingKey = $state<Record<Which, boolean>>({
+  const clearingKey = $state<Record<Which, boolean>>({
     chat: false,
     embedding: false
   })
-  let testing = $state<Record<Which, boolean>>({
+  const testing = $state<Record<Which, boolean>>({
     chat: false,
     embedding: false
   })
-  let testResult = $state<Record<Which, TestOutcome | null>>({
+  const testResult = $state<Record<Which, TestOutcome | null>>({
     chat: null,
     embedding: null
   })
-  let keySavedFlash = $state<Record<Which, boolean>>({
+  const keySavedFlash = $state<Record<Which, boolean>>({
     chat: false,
     embedding: false
   })
 
-  let modelLists = $state<Record<Which, aiTypes.AIModel[]>>({
+  const modelLists = $state<Record<Which, aiTypes.AIModel[]>>({
     chat: [],
     embedding: []
   })
-  let modelLoading = $state<Record<Which, boolean>>({
+  const modelLoading = $state<Record<Which, boolean>>({
     chat: false,
     embedding: false
   })
-  let modelError = $state<Record<Which, string | null>>({
+  const modelError = $state<Record<Which, string | null>>({
     chat: null,
     embedding: null
   })
-  let manualModel = $state<Record<Which, boolean>>({
+  const manualModel = $state<Record<Which, boolean>>({
     chat: false,
     embedding: false
   })
@@ -695,7 +699,7 @@ export function createAIProviderController() {
   // --- Derived + helpers ------------------------------------------------
 
   function formatAuditTime(iso: string): string {
-    const d = new Date(iso)
+    const d = new SvelteDate(iso)
     if (Number.isNaN(d.getTime())) return iso
     return new Intl.DateTimeFormat(undefined, {
       month: 'short',

@@ -159,7 +159,7 @@ export const v2CtxStubs: Pick<
         return Promise.resolve(empty)
       }
       return Promise.resolve({ content: '', model: '', usage: undefined })
-    }) as any,
+    }) as unknown as PluginContext['ai']['complete'],
     embed: () =>
       Promise.resolve({
         embeddings: [],

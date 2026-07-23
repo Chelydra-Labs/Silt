@@ -8,7 +8,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
-  const eventHandlers = new Map<string, Set<(ev: any) => void>>()
+  const eventHandlers = new Map<string, Set<(ev: { data?: unknown }) => void>>()
   return {
     pluginAIComplete: vi.fn(
       (_pluginID: string, _token: string, _input: unknown) =>
@@ -34,7 +34,7 @@ const mocks = vi.hoisted(() => {
       page: ''
     })),
     eventHandlers,
-    eventsOn: vi.fn((name: string, cb: (ev: any) => void) => {
+    eventsOn: vi.fn((name: string, cb: (ev: { data?: unknown }) => void) => {
       if (!eventHandlers.has(name)) eventHandlers.set(name, new Set())
       eventHandlers.get(name)!.add(cb)
       return () => eventHandlers.get(name)?.delete(cb)
@@ -121,7 +121,7 @@ describe('ctx.ai.complete tool-calling (#595)', () => {
       tool_calls: [
         { id: 'call_1', name: 'search_notes', arguments: { q: 'x' } }
       ]
-    } as any)
+    } as never)
     const ctx = makePluginContext('p')
     const res = await ctx.ai.complete({
       messages: [{ role: 'user', content: 'x' }],
@@ -331,7 +331,7 @@ describe('ctx.ai.complete stream (#226)', () => {
     mocks.pluginAIComplete.mockResolvedValueOnce({
       stream_id: 'sid-1',
       model: 'm'
-    } as any)
+    } as never)
     const ctx = makePluginContext('p', 'tok')
     const stream = await ctx.ai.complete({
       messages: [{ role: 'user', content: 'hi' }],
@@ -372,7 +372,7 @@ describe('ctx.ai.complete stream (#226)', () => {
     mocks.pluginAIComplete.mockResolvedValueOnce({
       stream_id: 'sid-2',
       model: 'm'
-    } as any)
+    } as never)
     const ctx = makePluginContext('p', 'tok')
     const stream = await ctx.ai.complete({
       messages: [{ role: 'user', content: 'hi' }],
@@ -388,14 +388,14 @@ describe('ctx.ai.complete stream (#226)', () => {
       messages: [{ role: 'user', content: 'x' }]
     })
     expect(res).toMatchObject({ content: 'pong', model: 'qwen3:30b-a3b' })
-    expect((res as any).streamId).toBeUndefined()
+    expect('streamId' in res).toBe(false)
   })
 
   it('accumulates streamed tool-delta events on stream.toolDeltas (#595)', async () => {
     mocks.pluginAIComplete.mockResolvedValueOnce({
       stream_id: 'sid-tool',
       model: 'm'
-    } as any)
+    } as never)
     const ctx = makePluginContext('p', 'tok')
     const stream = await ctx.ai.complete({
       messages: [{ role: 'user', content: 'hi' }],

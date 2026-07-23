@@ -55,9 +55,10 @@ export function parseWritingCommand(text: string): WritingCommand | null {
 }
 
 function assistantSettings(): AssistantSettings {
-  const raw = (appSettingsValue()?.plugins?.plugin_settings as any)?.[
-    'silt-ai-assistant'
-  ] as Record<string, unknown> | undefined
+  const raw = (
+    appSettingsValue()?.plugins?.plugin_settings as
+      Record<string, Record<string, unknown>> | undefined
+  )?.['silt-ai-assistant'] as Record<string, unknown> | undefined
   return resolveSettings(raw)
 }
 
@@ -179,7 +180,7 @@ export function createWritingCapability(): AIChatCapability {
       const meta = actionById(command.actionId)
       if (
         meta?.needsEmbed &&
-        embeddingProviderNeedsSetup(appSettings.config?.ai?.embedding as any)
+        embeddingProviderNeedsSetup(appSettings.config?.ai?.embedding)
       ) {
         throw new Error('Configure an embedding model in Settings → AI.')
       }

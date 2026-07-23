@@ -45,7 +45,7 @@ export function createQAController() {
   let errorMessage = $state('')
   let answer = $state('')
   let citations: Citation[] = $state([])
-  let conversation: Conversation = createConversation()
+  const conversation: Conversation = createConversation()
   // Svelte 5 reactivity bridge: conversation.ts is a plain .ts module (no
   // $state), so its internal messages array mutations are invisible to
   // fine-grained reactivity. This epoch counter bumps on every mutation;
@@ -85,9 +85,10 @@ export function createQAController() {
   let searchDegradeReason = $state<string | null>(null)
 
   function loadSettings(_ctx?: PluginContext) {
-    const raw = (appSettings.config?.plugins?.plugin_settings as any)?.[
-      'silt-ai-qa'
-    ] as Record<string, unknown> | undefined
+    const raw = (
+      appSettings.config?.plugins?.plugin_settings as
+        Record<string, Record<string, unknown>> | undefined
+    )?.['silt-ai-qa'] as Record<string, unknown> | undefined
     settings = resolveSettings(raw)
   }
 
@@ -148,13 +149,11 @@ export function createQAController() {
   }
 
   function chatReady(): boolean {
-    return !aiProviderNeedsSetup(appSettings.config?.ai?.chat as any)
+    return !aiProviderNeedsSetup(appSettings.config?.ai?.chat)
   }
 
   function embedReady(): boolean {
-    return !embeddingProviderNeedsSetup(
-      appSettings.config?.ai?.embedding as any
-    )
+    return !embeddingProviderNeedsSetup(appSettings.config?.ai?.embedding)
   }
 
   function configuredEmbedModel(): string {
@@ -212,13 +211,13 @@ export function createQAController() {
           staleBannerDismissed = false
           staleSearchToasted = false
         }
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (!disposed) {
           progress = {
             status: 'error',
             done: 0,
             total: 0,
-            lastError: e?.message ?? String(e)
+            lastError: e instanceof Error ? e.message : String(e)
           }
         }
         throw e
@@ -270,13 +269,13 @@ export function createQAController() {
             message: `Indexed ${info.chunkCount} notes`
           }
         }
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (!disposed) {
           progress = {
             status: 'error',
             done: 0,
             total: 0,
-            lastError: e?.message ?? String(e)
+            lastError: e instanceof Error ? e.message : String(e)
           }
         }
       }
@@ -307,13 +306,13 @@ export function createQAController() {
           await indexPage(ctx, notebook, section, page, settings, (p) => {
             if (!disposed) progress = p
           })
-        } catch (e: any) {
+        } catch (e: unknown) {
           if (!disposed) {
             progress = {
               status: 'error',
               done: 0,
               total: 0,
-              lastError: e?.message ?? String(e)
+              lastError: e instanceof Error ? e.message : String(e)
             }
           }
         }
@@ -384,7 +383,7 @@ export function createQAController() {
 
       try {
         const stream = await ctx.ai.complete({
-          messages: messages as any,
+          messages: messages as never,
           stream: true,
           temperature: 0.3
         })
@@ -402,14 +401,18 @@ export function createQAController() {
         citations = parseCitations(answer, passages)
         conversation.updateLastAssistant(answer, citations)
         panelStatus = 'idle'
-      } catch (streamErr: any) {
+      } catch (streamErr: unknown) {
         // Fallback to non-stream if provider rejects streaming.
         if (
-          String(streamErr?.code ?? '').includes('bad-request') ||
-          /stream/i.test(String(streamErr?.message ?? ''))
+          String((streamErr as { code?: unknown } | null)?.code ?? '').includes(
+            'bad-request'
+          ) ||
+          /stream/i.test(
+            String((streamErr as { message?: unknown } | null)?.message ?? '')
+          )
         ) {
           const res = await ctx.ai.complete({
-            messages: messages as any,
+            messages: messages as never,
             temperature: 0.3
           })
           answer = res.content
@@ -427,12 +430,15 @@ export function createQAController() {
       } finally {
         activeStream = null
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       panelStatus = 'error'
       if (e instanceof RetrieveError) {
-        errorMessage = e.message
+        errorMessage = e instanceof Error ? e.message : String(e)
       } else {
-        errorMessage = e?.message ?? String(e)
+        errorMessage =
+          e && typeof e === 'object' && 'message' in e
+            ? String((e as { message: unknown }).message)
+            : String(e)
       }
       const errText = `Error: ${errorMessage}`
       answer = errText
@@ -496,7 +502,7 @@ export function createQAController() {
       return citations
     },
     get messages() {
-      conversationEpoch
+      void conversationEpoch
       return conversation.getMessages()
     },
     get askInFlight() {

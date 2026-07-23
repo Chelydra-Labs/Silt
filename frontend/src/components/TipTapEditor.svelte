@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity'
   import { onDestroy, untrack } from 'svelte'
   import { createEditor, EditorContent } from 'svelte-tiptap'
   import type { Editor } from 'svelte-tiptap'
@@ -82,8 +83,7 @@
     TagItem,
     TagTreeNode,
     PageLinkContext,
-    PageLinkItem,
-    PageLinkResolution
+    PageLinkItem
   } from '../lib/editor'
   import {
     DistinctOwners,
@@ -173,13 +173,14 @@
     section,
     page,
     blocks,
-    activeFocusedBlockAncestors = [],
+    activeFocusedBlockAncestors: _activeFocusedBlockAncestors = [],
     onBlockFocus,
     onBlockBlur,
     onUpdate,
     editorInstance = $bindable(null),
-    activeMarks = $bindable(new Set()),
-    wordCount = $bindable(0),
+    activeMarks = $bindable(new SvelteSet<string>()),
+    // eslint-disable-next-line no-useless-assignment -- $bindable out-param for parent word count
+    wordCount = $bindable<number>(0),
     onSaveStateChange,
     onReady
   }: Props = $props()
@@ -258,17 +259,10 @@
     return deriveColorPalette(tokens)
   })
 
-  let colorEnabled = $derived(
-    settings.config?.ui?.formatting?.color_enabled !== false
-  )
-
-  // show_word_count config (default false; opt-in, Phase 3).
-  let showWordCount = $derived(
-    settings.config?.editor?.show_word_count === true
-  )
-
   // focus_mode config (default false; Phase 3). When true, CSS dims non-active
   // paragraphs for distraction-free writing.
+  // color_enabled / show_word_count are consumed by EditorUtilityBar /
+  // VirtualScrollContainer, not this component.
   let focusModeEnabled = $derived(settings.config?.editor?.focus_mode === true)
 
   // Word count is managed as a bindable prop.
@@ -387,7 +381,7 @@
     showTableSizePicker = false
     tableSizeCoords = null
     if (editorInstance && !editorInstance.isDestroyed) {
-      insertTable(editorInstance as any, rows, cols)
+      insertTable(editorInstance, rows, cols)
     }
   }
   function cancelTableSize(): void {
@@ -1225,11 +1219,12 @@
     },
     onSelectionUpdate: ({ editor }) => {
       // Track active marks for the FormatToolbar's aria-pressed state (#168).
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
       const marks = new Set<string>()
       for (const m of ALL_MARKS) {
         if (editor.isActive(m)) marks.add(m)
       }
-      activeMarks = marks
+      activeMarks = new SvelteSet(marks)
       // Track selection state for the SelectionBubble (#168).
       const { selection } = editor.state
       selectionEmpty = selection.empty
@@ -1335,7 +1330,6 @@
     setCustomWords(custom)
     void loadDomainPacks(domains)
       .catch((err: unknown) => {
-        // eslint-disable-next-line no-console
         console.warn('[silt] domain packs:', err)
         pushNotification({
           kind: 'error',
@@ -1437,16 +1431,16 @@
     const detail = (e as CustomEvent).detail
     if (!editorInstance) return
     if (detail?.type === 'headerBlock') {
-      convertToBlock(editorInstance as any, 'headerBlock', detail.depth || 1)
+      convertToBlock(editorInstance, 'headerBlock', detail.depth || 1)
     } else if (detail?.type === 'noteBlock') {
-      convertToBlock(editorInstance as any, 'noteBlock')
+      convertToBlock(editorInstance, 'noteBlock')
     } else if (detail?.type === 'taskBlock') {
-      convertToBlock(editorInstance as any, 'taskBlock')
+      convertToBlock(editorInstance, 'taskBlock')
     }
   }
   function onSetBlockAlign(e: Event): void {
     const align = (e as CustomEvent).detail as string
-    if (align) setBlockAlign(editorInstance as any, align)
+    if (align && editorInstance) setBlockAlign(editorInstance, align)
   }
   // Dismiss the selection-anchored popovers (link / color / math) when an
   // ancestor scrolls or the window resizes (#594). They capture their anchor
@@ -1568,7 +1562,6 @@
   // --- Auto-save (debounced, config-driven, same contract as legacy) --------
 
   let unsavedChanges = $state(false)
-  let lastSaveError: string | null = $state(null)
 
   const autosave = new AutosaveManager({
     getEditor: () => editorInstance,
@@ -1578,9 +1571,8 @@
     getDelay: () =>
       Math.max(settings.config?.editor?.auto_save_delay_ms ?? 500, 50),
     onUpdate: (blocks) => onUpdate(blocks),
-    onStateChange: (dirty, error) => {
+    onStateChange: (dirty) => {
       unsavedChanges = dirty
-      lastSaveError = error
     },
     onSaveStateChange: (state) => onSaveStateChange?.(state)
   })
@@ -1675,7 +1667,7 @@
         { width: paletteSize.width, height: paletteSize.height },
         { width: window.innerWidth, height: window.innerHeight }
       )
-    } catch (err) {
+    } catch {
       return null
     }
   }
@@ -1706,7 +1698,6 @@
         // a console error carrying the plugin + command id.
         const pluginID = cmd.pluginID ?? 'unknown'
         const report = (err: unknown): void => {
-          // eslint-disable-next-line no-console
           console.error(
             `[silt] plugin ${pluginID} command ${commandId} failed:`,
             err
@@ -1729,20 +1720,20 @@
     switch (intent.kind) {
       case 'convert':
         if (intent.depth !== undefined)
-          convertToBlock(editorInstance as any, intent.blockType, intent.depth)
-        else convertToBlock(editorInstance as any, intent.blockType)
+          convertToBlock(editorInstance, intent.blockType, intent.depth)
+        else convertToBlock(editorInstance, intent.blockType)
         break
       case 'align':
-        setBlockAlign(editorInstance as any, intent.align)
+        setBlockAlign(editorInstance, intent.align)
         break
       case 'quote':
-        toggleBlockQuote(editorInstance as any)
+        toggleBlockQuote(editorInstance)
         break
       case 'callout':
-        insertCallout(editorInstance as any, intent.variant)
+        insertCallout(editorInstance, intent.variant)
         break
       case 'codeBlock':
-        insertCodeBlock(editorInstance as any, intent.language ?? '')
+        insertCodeBlock(editorInstance, intent.language ?? '')
         break
       case 'math':
         // Open the LaTeX popover (block mode); on commit, insert a block
@@ -1756,17 +1747,19 @@
             latex: '',
             displayMode: true,
             coords: { left: c.left, top: c.bottom },
-            onCommit: (l: string) => insertBlockMath(editorInstance as any, l)
+            onCommit: (l: string) => {
+              if (editorInstance) insertBlockMath(editorInstance, l)
+            }
           }
         } catch {
           /* no selection coords → don't open the popover */
         }
         break
       case 'details':
-        insertDetails(editorInstance as any)
+        insertDetails(editorInstance)
         break
       case 'table':
-        insertTable(editorInstance as any, intent.rows, intent.cols)
+        insertTable(editorInstance, intent.rows, intent.cols)
         break
       case 'tableCustom':
         // Open an in-app size popover instead of the native window.prompt.

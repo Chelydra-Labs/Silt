@@ -74,8 +74,8 @@
   // emitting when the call returns. Re-mounting (re-opening) re-subscribes.
   let offProgress: (() => void) | null = null
   $effect(() => {
-    offProgress = Events.On('vault:archive:progress', (ev: any) => {
-      const p: any = ev.data
+    offProgress = Events.On('vault:archive:progress', (ev) => {
+      const p = ev.data as Record<string, unknown>
       if (p && typeof p.current === 'number' && typeof p.total === 'number') {
         progress = {
           phase: String(p.phase ?? ''),

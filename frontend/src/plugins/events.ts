@@ -17,7 +17,7 @@
 
 import { Events } from '@wailsio/runtime'
 import type { PluginEventName, PluginEventPayload } from './sdk'
-type AnyCb = (payload: any) => void
+type AnyCb = (payload: unknown) => void
 
 interface Subscription {
   cb: AnyCb
@@ -68,7 +68,7 @@ export function subscribe<E extends PluginEventName>(
   // untyped at the IPC boundary; ev.data may be null if the backend emits
   // with no payload, but block:changed and config:changed always carry data.
   if (wailsHostEvents.includes(event) && !wailsListenerDisposers.has(event)) {
-    const disposer = Events.On(event, (ev: any) =>
+    const disposer = Events.On(event, (ev) =>
       dispatch(event, ev.data as PluginEventPayload<E>)
     )
     wailsListenerDisposers.set(event, disposer)
@@ -124,7 +124,7 @@ export function dispatch<E extends PluginEventName>(
       // A plugin callback throwing must never break sibling plugins or the
       // host. Log and continue (fail-soft for the bus itself; the plugin's
       // own errors are the plugin's responsibility).
-      // eslint-disable-next-line no-console
+
       console.error(`[silt plugin bus] ${event} handler threw:`, err)
     }
   }

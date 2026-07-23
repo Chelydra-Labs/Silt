@@ -206,13 +206,14 @@
         </div>
       {:else}
         <div class="silt-mermaid-svg" role="img" aria-label="Mermaid diagram">
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- mermaid SVG from trusted renderer -->
           {@html mermaidSvg}
         </div>
       {/if}
     {:else if !isMermaid}
       <!-- Shiki highlight layer (visible, non-interactive). -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="silt-code-display" aria-hidden="true">
+        <!-- eslint-disable-next-line svelte/no-at-html-tags -- highlight.js output from local code text -->
         {@html highlighted}
       </div>
     {/if}

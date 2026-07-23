@@ -23,7 +23,6 @@ import {
 } from './agent-status'
 import { parseCitations } from '../../first-party/silt-ai-qa/rag'
 import type { RetrievedPassage } from '../../shared/retrieval/hybrid'
-import type { ToolEvidence } from '../../first-party/silt-ai-agent/tool-registry'
 import { createWritingCapability } from './capabilities/writing-capability'
 import { formatAIError } from '../formatAIError'
 
@@ -76,6 +75,7 @@ export function createAgentCapability(): AIChatCapability {
   let session: AgentSession | null = null
   let protocolHistory: PluginAIChatMessage[] = []
   let citationPassages: RetrievedPassage[] = []
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
   const emittedEvidence = new Set<string>()
   // Generation/cancel fence mirroring the writing capability: a stale run
   // (stopped, cleared, detached, or superseded) must not mutate protocolHistory
@@ -371,11 +371,13 @@ export function createAIChatController(initialContext?: PluginContext) {
   // The "Thinking…" status entry id for the active run, tracked here so stop()
   // can remove it even though send()'s finally is fenced out for a stopped run.
   let activeRunStatusId: string | null = null
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
   const capabilities = new Map<string, AIChatCapability>()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
   const entryOwners = new Map<string, string>()
   let defaultCapabilityId = 'agent-tools'
   const providerReady = $derived(
-    !aiProviderNeedsSetup(appSettings.config?.ai?.chat as any)
+    !aiProviderNeedsSetup(appSettings.config?.ai?.chat)
   )
   const pendingProposal = $derived(
     transcript.find(

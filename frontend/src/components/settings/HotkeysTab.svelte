@@ -67,6 +67,7 @@
       : []
   )
   let conflicts = $derived.by(() => {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
     const byBinding = new Map<string, string[]>()
     for (const [key, value] of hotkeyEntries) {
       const normalized = value.trim().toLocaleLowerCase()

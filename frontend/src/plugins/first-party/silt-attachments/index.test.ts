@@ -47,10 +47,16 @@ describe('silt-attachments plugin (#101)', () => {
       pickOpenFile: mocks.pickOpenFile,
       addAttachment: mocks.addAttachment,
       registerSlashCommand: mocks.registerSlashCommand
-    } as any
+    } as never
     plugin.onVaultOpen?.(ctx)
     expect(mocks.registerSlashCommand).toHaveBeenCalledTimes(1)
-    const cmd = (mocks.registerSlashCommand.mock.calls as any[])[0]?.[0] as any
+    const cmd = (
+      mocks.registerSlashCommand.mock.calls as unknown[][]
+    )[0]?.[0] as {
+      id?: string
+      label?: string
+      onSelect?: (editor: unknown, pos: number) => void
+    }
     expect(cmd.id).toBe('attach')
     expect(cmd.label).toBe('Attach File')
     expect(typeof cmd.onSelect).toBe('function')
@@ -72,11 +78,15 @@ describe('silt-attachments plugin (#101)', () => {
       pickOpenFile: mocks.pickOpenFile,
       addAttachment: mocks.addAttachment,
       registerSlashCommand: mocks.registerSlashCommand
-    } as any
+    } as never
     plugin.onVaultOpen?.(ctx)
-    const cmd = (mocks.registerSlashCommand.mock.calls as any[])[0]?.[0] as any
+    const cmd = (
+      mocks.registerSlashCommand.mock.calls as unknown[][]
+    )[0]?.[0] as {
+      onSelect?: (editor: unknown, pos?: number) => void | Promise<void>
+    }
     // onSelect fires handleAttach asynchronously; flush the microtask queue.
-    cmd.onSelect(fakeEditor, 0)
+    void cmd.onSelect?.(fakeEditor as never, 0)
     await new Promise((r) => setTimeout(r, 50))
     expect(mocks.pickOpenFile).toHaveBeenCalledWith('*')
     expect(mocks.addAttachment).toHaveBeenCalledWith(
@@ -111,10 +121,14 @@ describe('silt-attachments plugin (#101)', () => {
       pickOpenFile: mocks.pickOpenFile,
       addAttachment: mocks.addAttachment,
       registerSlashCommand: mocks.registerSlashCommand
-    } as any
+    } as never
     plugin.onVaultOpen?.(ctx)
-    const cmd = (mocks.registerSlashCommand.mock.calls as any[])[0]?.[0] as any
-    await cmd.onSelect(fakeEditor, 0)
+    const cmd = (
+      mocks.registerSlashCommand.mock.calls as unknown[][]
+    )[0]?.[0] as {
+      onSelect?: (editor: unknown, pos?: number) => void | Promise<void>
+    }
+    await cmd.onSelect?.(fakeEditor as never, 0)
     expect(mocks.addAttachment).not.toHaveBeenCalled()
     expect(fakeEditor.commands.insertContent).not.toHaveBeenCalled()
   })

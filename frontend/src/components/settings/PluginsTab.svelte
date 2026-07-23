@@ -12,7 +12,6 @@
     RequestCapability,
     RevokeCapability,
     GetGrantedCapabilities,
-    GetNetworkAudit,
     GetPluginSecurityStats,
     CheckPluginUpdate
   } from '../../../bindings/silt/app.js'
@@ -101,7 +100,17 @@
 
   // Install flow state.
   let installing = $state(false)
-  let preview = $state<any>(null)
+  type InstallPreview = {
+    manifest: {
+      id: string
+      name: string
+      version?: string
+      description?: string
+      capabilities?: Record<string, true | string>
+    }
+    warnings?: string[]
+  }
+  let preview = $state<InstallPreview | null>(null)
   let previewError = $state('')
   let pendingPath = $state('')
   let actionError = $state('')
@@ -155,10 +164,9 @@
         settings.config?.plugins?.disabled ?? []
       )
       for (const fp of fps) {
-        const m = fp.manifest as any
+        const m = fp.manifest
         // First-party AI modules are managed under Settings → AI (#632).
-        const managedAI =
-          typeof m.id === 'string' && m.id.startsWith('silt-ai-')
+        const managedAI = m.id.startsWith('silt-ai-')
         merged.push({
           id: m.id,
           name: m.name || m.id,
@@ -178,12 +186,25 @@
               )
             : undefined,
           loadError: errs.find((e) => e.id === m.id)?.message,
-          settingsSchema: m.settings as SettingSchema[] | undefined,
+          settingsSchema: m.settings,
           managedInAI: managedAI
-        } as Card)
+        })
       }
       // On-disk plugins (skip any shadowed by a first-party id).
-      for (const p of disk as any[]) {
+      type DiskPlugin = {
+        id: string
+        name?: string
+        version?: string
+        author?: string
+        description?: string
+        icon?: string
+        disabled?: boolean
+        has_index?: boolean
+        capabilities?: Record<string, true | string>
+        settings?: SettingSchema[]
+        update_url?: string
+      }
+      for (const p of disk as DiskPlugin[]) {
         if (fpIds.has(p.id)) continue
         merged.push({
           id: p.id,
@@ -198,7 +219,7 @@
           requestedCapabilities: p.capabilities,
           grantedCapabilities: grants[p.id],
           loadError: errs.find((e) => e.id === p.id)?.message,
-          settingsSchema: p.settings as SettingSchema[] | undefined,
+          settingsSchema: p.settings,
           updateUrl: p.update_url || undefined
         })
       }
@@ -302,7 +323,7 @@
       preview = {
         manifest: result.manifest,
         warnings: result.warnings ?? []
-      }
+      } as InstallPreview
     } catch (e) {
       previewError = e instanceof Error ? e.message : String(e)
     }
@@ -336,6 +357,7 @@
         if (!cfg.plugins) {
           cfg.plugins = { active: [], disabled: [], plugin_settings: {} }
         }
+        // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
         const disabled = new Set(cfg.plugins.disabled ?? [])
         if (card.disabled) {
           disabled.delete(card.id)
@@ -384,7 +406,7 @@
     }
   }
 
-  function pluginSettings(id: string): Record<string, any> | undefined {
+  function pluginSettings(id: string): Record<string, unknown> | undefined {
     return settings.config?.plugins.plugin_settings?.[id]
   }
 
@@ -468,7 +490,7 @@
         {/if}
         {#if preview.warnings && preview.warnings.length > 0}
           <ul class="mb-2 space-y-0.5">
-            {#each preview.warnings as w}
+            {#each preview.warnings as w, wi (wi)}
               <li
                 class="text-status-warn text-type-xs font-body-md flex items-start gap-1"
               >
@@ -488,7 +510,7 @@
               Requests capabilities
             </div>
             <ul class="space-y-0.5">
-              {#each Object.keys(preview.manifest.capabilities) as cap}
+              {#each Object.keys(preview.manifest.capabilities) as cap (cap)}
                 <li
                   class="text-type-xs text-text-primary font-body-md flex items-center gap-1.5"
                 >
@@ -801,7 +823,7 @@
                     class="text-type-xs font-body-md space-y-1"
                     aria-labelledby="caps-{card.id}"
                   >
-                    {#each Object.keys(card.requestedCapabilities) as cap}
+                    {#each Object.keys(card.requestedCapabilities) as cap (cap)}
                       <li class="flex items-center gap-2">
                         <span
                           class="material-symbols-outlined text-icon-sm text-text-muted"

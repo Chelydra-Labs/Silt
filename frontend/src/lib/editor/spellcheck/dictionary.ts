@@ -95,7 +95,7 @@ export function loadDictionary(lang: string): Promise<Typo> {
       dict = null
       const msg = friendlyPackError(err)
       dictionaryStatus.setLoadError(msg)
-      // eslint-disable-next-line no-console
+
       console.warn(
         `[silt] spellcheck dictionary "${requestedLang}" failed to load:`,
         err

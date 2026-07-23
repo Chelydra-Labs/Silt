@@ -146,7 +146,7 @@ describe('plugin surface manager (#117, #158)', () => {
       pluginID: 'silt-ai-summary',
       kind: 'note-banner',
       label: 'AI summary',
-      component: Cmp
+      component: Cmp as never
     })
     const banners = getSurfaces('note-banner')
     expect(banners).toHaveLength(1)

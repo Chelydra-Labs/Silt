@@ -39,6 +39,8 @@
   const pageSize = 50
 
   const groups = $derived.by(() => {
+    // Ephemeral grouping inside $derived — plain Map is correct.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local derived helper
     const grouped = new Map<string, { key: string; links: Backlink[] }>()
     for (const link of backlinks) {
       const key = `${link.source ?? 'vault'}\u0000${link.sourceNotebook}\u0000${link.sourceSection}\u0000${link.sourcePage}`
@@ -83,6 +85,7 @@
   }
 
   function uniqueLinks(current: Backlink[], incoming: Backlink[]): Backlink[] {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local helper set
     const seen = new Set(current.map(backlinkKey))
     return [
       ...current,

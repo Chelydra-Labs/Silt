@@ -23,3 +23,13 @@ frontend/package-lock.json merge=union
 # a CRLF blob would surface as "/bin/sh\r: bad interpreter" and silently break
 # the pre-commit/pre-push gates for Windows contributors. Matches the *.sh rule.
 .githooks/* text eol=lf
+
+# Pin frontend authored source + ESLint/Prettier config to LF. Prettier's
+# default endOfLine is "lf"; with core.autocrlf=true a CRLF working copy makes
+# `npm run format:check` fail even when git content is already LF-normalized.
+frontend/src/** text eol=lf
+frontend/*.js text eol=lf
+frontend/*.cjs text eol=lf
+frontend/*.mjs text eol=lf
+frontend/*.ts text eol=lf
+frontend/.prettierrc text eol=lf

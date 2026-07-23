@@ -268,7 +268,7 @@
             >Facets to include</span
           >
           <div class="grid grid-cols-3 gap-2.5">
-            {#each [['tasks', 'Tasks', 'done_all'], ['risks', 'Risks', 'warning'], ['decisions', 'Decisions', 'gavel']] as [key, label, icon]}
+            {#each [['tasks', 'Tasks', 'done_all'], ['risks', 'Risks', 'warning'], ['decisions', 'Decisions', 'gavel']] as [key, label, icon] (key)}
               {@const active =
                 draft.facets[key as keyof SummarySettings['facets']]}
               <label

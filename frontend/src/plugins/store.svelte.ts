@@ -1,3 +1,4 @@
+import { SvelteMap } from 'svelte/reactivity'
 import type { LoadedPlugins } from './sdk'
 
 // Reactive store of loaded plugins, shared between the loader and PluginView.
@@ -7,7 +8,7 @@ import type { LoadedPlugins } from './sdk'
 // can suspend context construction against the clear→re-register race
 // (#326 item 5).
 export const loadedPlugins: LoadedPlugins = $state({
-  plugins: new Map(),
+  plugins: new SvelteMap(),
   errors: [],
   loadersReady: false
 })

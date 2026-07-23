@@ -19,23 +19,27 @@ function makeMockEditor(nodeType: string = 'noteBlock', depth: number = 0) {
 
 describe('HeadingLevelMenu', () => {
   it('renders the trigger button showing current block type', () => {
-    const editor = makeMockEditor('noteBlock') as any
-    const { getByRole } = render(HeadingLevelMenu, { props: { editor } })
+    const editor = makeMockEditor('noteBlock')
+    const { getByRole } = render(HeadingLevelMenu, {
+      props: { editor: editor as never }
+    })
     const trigger = getByRole('button')
     expect(trigger.textContent).toContain('Note')
   })
 
   it('shows H1 label for a headerBlock with depth 1', () => {
-    const editor = makeMockEditor('headerBlock', 1) as any
-    const { getByRole } = render(HeadingLevelMenu, { props: { editor } })
+    const editor = makeMockEditor('headerBlock', 1)
+    const { getByRole } = render(HeadingLevelMenu, {
+      props: { editor: editor as never }
+    })
     const trigger = getByRole('button')
     expect(trigger.textContent).toContain('H1')
   })
 
   it('opens menu with H1–H6 plus Text and Task (#645)', async () => {
-    const editor = makeMockEditor('noteBlock') as any
+    const editor = makeMockEditor('noteBlock')
     const { getByRole, getAllByRole, getByText } = render(HeadingLevelMenu, {
-      props: { editor }
+      props: { editor: editor as never }
     })
     const trigger = getByRole('button')
     await fireEvent.click(trigger)
@@ -46,10 +50,10 @@ describe('HeadingLevelMenu', () => {
   })
 
   it('dispatches silt:change-block-type on selection', async () => {
-    const editor = makeMockEditor('noteBlock') as any
+    const editor = makeMockEditor('noteBlock')
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
     const { getByRole, getByText } = render(HeadingLevelMenu, {
-      props: { editor }
+      props: { editor: editor as never }
     })
     await fireEvent.click(getByRole('button'))
     await fireEvent.click(getByText('Heading 2'))
@@ -63,9 +67,9 @@ describe('HeadingLevelMenu', () => {
   })
 
   it('closes the menu on click outside', async () => {
-    const editor = makeMockEditor('noteBlock') as any
+    const editor = makeMockEditor('noteBlock')
     const { getByRole, queryAllByRole } = render(HeadingLevelMenu, {
-      props: { editor }
+      props: { editor: editor as never }
     })
     await fireEvent.click(getByRole('button'))
     expect(queryAllByRole('menuitemradio')).toHaveLength(8)

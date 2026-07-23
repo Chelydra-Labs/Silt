@@ -23,6 +23,7 @@ const ALL_CAPS = [
   'content-mutate'
 ]
 
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive cache; registries read synchronously
 const firstPartyIDs = new Set<string>()
 
 function refreshFirstPartyIDs() {
@@ -35,6 +36,7 @@ function refreshFirstPartyIDs() {
 // Module-scoped grant map: pluginID → Set<capability>. Not reactive (the
 // registries read it synchronously at registration time). Refreshed by
 // refreshGrants().
+
 let grantsMap = new Map<string, Set<string>>()
 
 /**
@@ -46,15 +48,18 @@ export async function refreshGrants(): Promise<void> {
   refreshFirstPartyIDs()
   try {
     const result = await GetGrantedCapabilities()
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive cache rebuild
     const next = new Map<string, Set<string>>()
     if (result) {
       for (const [pid, caps] of Object.entries(result)) {
         if (caps && typeof caps === 'object') {
+          // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive cache rebuild
           next.set(pid, new Set(Object.keys(caps)))
         }
       }
     }
     for (const id of firstPartyIDs) {
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive cache rebuild
       next.set(id, new Set(ALL_CAPS))
     }
     grantsMap = next
@@ -94,6 +99,7 @@ export function initGrants(): void {
 
 /** Test-only: reset the cache + wiring state. */
 export function resetGrantsForTests(): void {
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive cache
   grantsMap = new Map()
   firstPartyIDs.clear()
   wired = false
@@ -102,11 +108,14 @@ export function resetGrantsForTests(): void {
 /** Test-only: directly set the grant cache (bypass Go IPC). */
 export function setGrantsForTests(grants: Record<string, string[]>): void {
   refreshFirstPartyIDs()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive cache
   const next = new Map<string, Set<string>>()
   for (const [pid, caps] of Object.entries(grants)) {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive cache
     next.set(pid, new Set(caps))
   }
   for (const id of firstPartyIDs) {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive cache
     next.set(id, new Set(ALL_CAPS))
   }
   grantsMap = next

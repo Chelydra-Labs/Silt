@@ -66,9 +66,6 @@
         .includes(query)
     })
   )
-  let selectedSummary = $derived(
-    templatesState.items.find((item) => item.id === selectedId)
-  )
   let readOnly = $derived(!!draft && draft.source !== 'disk')
   let dirty = $derived(
     !!draft && draft.source === 'disk' && JSON.stringify(draft) !== baseline

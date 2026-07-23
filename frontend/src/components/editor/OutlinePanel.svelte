@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity'
   import type { Editor } from 'svelte-tiptap'
   import {
     extractHeadingsFromEditor,
@@ -25,7 +26,8 @@
   let headings = $state<OutlineHeading[]>([])
   let activeId = $state<string | null>(null)
   /** Heading ids whose subtree is collapsed. */
-  let collapsedIds = $state<Set<string>>(new Set())
+  // eslint-disable-next-line svelte/no-unnecessary-state-wrap -- whole-set reassignment
+  let collapsedIds = $state(new SvelteSet<string>())
 
   function refresh() {
     headings = extractHeadingsFromEditor(editor)
@@ -82,7 +84,7 @@
   }
 
   function toggleCollapse(id: string) {
-    const next = new Set(collapsedIds)
+    const next = new SvelteSet(collapsedIds)
     if (next.has(id)) next.delete(id)
     else next.add(id)
     collapsedIds = next

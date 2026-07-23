@@ -12,6 +12,7 @@
 // commands (no pluginID) bypass the gate. This closes the advisory-gap: a
 // plugin importing registerSlashCommand directly still hits the gate.
 
+import type { Editor } from '@tiptap/core'
 import { isGranted } from '../../plugins/grants.svelte'
 
 export interface SlashCommand {
@@ -37,7 +38,7 @@ export interface SlashCommand {
    * this may be undefined (the editor dispatches by id instead); for plugin
    * commands it is required.
    */
-  onSelect?: (editor: any, pos: number) => void
+  onSelect?: (editor: Editor, pos: number) => void
 }
 
 const registry = new Map<string, SlashCommand>()
@@ -57,7 +58,6 @@ export function registerSlashCommand(cmd: SlashCommand): void {
     throw new Error('SlashCommand requires id + label')
   }
   if (cmd.pluginID && !isGranted(cmd.pluginID, 'editor-schema')) {
-    // eslint-disable-next-line no-console
     console.warn(
       `[silt] plugin ${cmd.pluginID} cannot register slash commands without the editor-schema capability`
     )

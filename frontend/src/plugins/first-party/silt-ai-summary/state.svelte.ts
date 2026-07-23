@@ -101,9 +101,11 @@ export function createSummaryController(
   // call resolves. (Pending timers + generation counters are internal
   // bookkeeping — not reactive — so plain Maps are still correct for them.)
   const state = $state<Record<string, PageState>>({})
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
   const pending = new Map<string, ReturnType<typeof setTimeout>>()
   // Track the most-recent generation per page so a stale completion (note
   // switched mid-generation) doesn't overwrite the newer state.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
   const generations = new Map<string, number>()
 
   function nextGen(pageId: string): number {

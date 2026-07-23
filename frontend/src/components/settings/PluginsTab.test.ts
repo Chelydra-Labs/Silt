@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => ({
     errors: [] as { id: string; message: string }[]
   },
   // Mutable config (no `plugins` key) to exercise the guard.
-  configNoPlugins: {} as any,
+  configNoPlugins: {} as unknown,
   saveConfig: vi.fn(),
   getGrantedCapabilities: vi.fn().mockResolvedValue({}),
   teardownPlugin: vi.fn(),
@@ -41,8 +41,8 @@ const mocks = vi.hoisted(() => ({
   // Matches the real Events.On signature: (eventName, callback) => cancel.
   // Declaring the arity here keeps mockImplementation callers type-safe.
   eventsOn: vi.fn((_name: string, _cb: () => void) => () => {}),
-  setConfig: (next: any) => {
-    mocks.configNoPlugins = next
+  setConfig: (next: unknown) => {
+    mocks.configNoPlugins = next as typeof mocks.configNoPlugins
   }
 }))
 
@@ -109,7 +109,7 @@ describe('PluginsTab first-party disable guard', () => {
     mocks.saveConfig.mockResolvedValue(true)
     mocks.getGrantedCapabilities.mockResolvedValue({})
     mocks.getPluginSecurityStats.mockResolvedValue([])
-    mocks.configNoPlugins = {} // no `plugins` key
+    mocks.configNoPlugins = {} as never // no `plugins` key
   })
 
   afterEach(() => {
@@ -167,7 +167,7 @@ describe('PluginsTab first-party AI managed enablement', () => {
           enabled: true,
           rag_enabled: false,
           summaries_enabled: false
-        },
+        } as never,
         chat: { model: 'm', provider_type: 'local' }
       },
       plugins: { disabled: [], plugin_settings: {} }
@@ -275,7 +275,7 @@ describe('PluginsTab AI setup nudge', () => {
     mocks.loadPlugins.mockResolvedValue(undefined)
     mocks.saveConfig.mockResolvedValue(true)
     mocks.getGrantedCapabilities.mockResolvedValue({})
-    mocks.configNoPlugins = {}
+    mocks.configNoPlugins = {} as never
   })
 
   afterEach(() => {
@@ -425,7 +425,7 @@ describe('PluginsTab AI setup nudge', () => {
     })
     // settings.config is null before initial load completes — the badge must
     // not flash in spuriously (#447 hardening).
-    mocks.setConfig(null as any)
+    mocks.setConfig(null as never)
 
     render(PluginsTab, {
       activeNotebook: 'Work',
@@ -462,7 +462,7 @@ describe('PluginsTab security stats badge (#518)', () => {
     mocks.getPluginSecurityStats.mockResolvedValue([])
     mocks.configNoPlugins = {
       plugins: { active: [], disabled: [], plugin_settings: {} }
-    }
+    } as never
   })
 
   afterEach(() => {

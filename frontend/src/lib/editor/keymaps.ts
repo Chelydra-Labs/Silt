@@ -350,9 +350,7 @@ export function moveActiveBlock(editor: Editor, direction: 1 | -1): boolean {
   if (direction === -1) {
     // Up: the previous block's start is unaffected by deleting the block after it.
     let posPrev = 0
-    let a = 0
-    for (let i = 0; i < swap; i++) a += doc.child(i).nodeSize
-    posPrev = a
+    for (let i = 0; i < swap; i++) posPrev += doc.child(i).nodeSize
     newTr = newTr.insert(posPrev, node)
   } else {
     // Down: after the deletion the next block sits at posIdx; insert after it.

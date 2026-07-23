@@ -3,7 +3,7 @@
 // shell repaints in the same paint frame; these tests pin that
 // contract.
 
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 import { injectTokens, readToken } from './inject'
 
 const STYLE_ID = 'silt-theme'

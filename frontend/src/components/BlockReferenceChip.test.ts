@@ -12,7 +12,6 @@ import {
   fireEvent,
   waitFor
 } from '@testing-library/svelte'
-import { tick } from 'svelte'
 import BlockReferenceChip from './BlockReferenceChip.svelte'
 
 const mocks = vi.hoisted(() => ({
@@ -24,7 +23,6 @@ vi.mock('../../bindings/silt/app.js', () => ({
 }))
 
 const FIXTURE_UUID = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff'
-const FIXTURE_UUID_SHORT = 'bbbbbbbb'
 
 describe('BlockReferenceChip (#127)', () => {
   beforeEach(() => vi.clearAllMocks())

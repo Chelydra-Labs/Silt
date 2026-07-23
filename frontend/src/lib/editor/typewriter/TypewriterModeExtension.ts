@@ -59,7 +59,10 @@ export const TypewriterMode = Extension.create({
           }
         },
         view: () => ({
-          update: (view: any, prevState: any) => {
+          update: (
+            view: import('@tiptap/pm/view').EditorView,
+            prevState: import('@tiptap/pm/state').EditorState
+          ) => {
             if (settings.config?.editor?.typewriter_mode !== true) return
             // Only act on selection or doc change; ignore pure metadata updates.
             if (

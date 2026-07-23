@@ -15,7 +15,8 @@
   interface Props {
     surface: PluginSurface
     /** A context proxy the bridge calls into (the live PluginContext). */
-    ctxProxy?: Record<string, (...args: any[]) => any>
+    // Indexed at runtime by method name; PluginContext has no string index signature.
+    ctxProxy?: object
     /**
      * Called once on mount with a `postToSurface` closure the parent can use
      * to push host→iframe messages into the sandboxed surface (#355). The
@@ -42,7 +43,8 @@
   // for requests, posts them to the parent, and relays the response. This is
   // the "one SDK, two transports" pattern (#117): the same PluginContext
   // contract, proxied over postMessage instead of direct closure calls.
-  const bridgeScript = `
+  const bridgeScript =
+    `
     <script>
       const pending = new Map();
       let seq = 0;
@@ -84,8 +86,10 @@
       window.__siltCtx = ctx;
       // Notify the plugin the context is ready.
       window.dispatchEvent(new CustomEvent('silt:ready', { detail: ctx }));
-    <\/script>
-  `
+    ` +
+    // Split so the Svelte/HTML parser does not treat this as the end of <script>.
+    '</' +
+    'script>'
 
   // Theme tokens injected as CSS custom properties so the surface matches the
   // active theme. The $derived srcdoc below reads themeState reactively, so a
@@ -116,6 +120,7 @@
   // host→iframe silt:surface:event channel instead of ctx.on.
   // Anything not in this set is rejected so a future non-gated host-internal
   // function can never be invoked by a plugin surface (#117 hardening).
+  // Static allowlists — plain Set; no UI reactivity on membership.
   const allowedMethods = new Set([
     'sqliteQuery',
     'mutateBlock',
@@ -190,10 +195,9 @@
     // unrelated frame. If surfaces ever move to a real src URL with
     // allow-same-origin, targetOrigin MUST be updated to the iframe's actual
     // origin — this comment makes that requirement explicit (#248).
-    if (
-      !allowedMethods.has(msg.method) ||
-      typeof ctxProxy[msg.method] !== 'function'
-    ) {
+    const proxy = ctxProxy as Record<string, unknown>
+    const fn = proxy[msg.method]
+    if (!allowedMethods.has(msg.method) || typeof fn !== 'function') {
       const error = registrationMethods.has(msg.method)
         ? `Blocked method: ${msg.method} cannot cross the iframe bridge (functions do not survive structured clone). Call it from plugin init() in the main webview; use silt:surface:event for host→surface events.`
         : `Blocked or unknown method: ${msg.method}`
@@ -208,7 +212,7 @@
       )
       return
     }
-    const method = ctxProxy[msg.method]
+    const method = fn as (...args: unknown[]) => unknown
     Promise.resolve()
       .then(() => method(...(msg.args ?? [])))
       .then((result) => {

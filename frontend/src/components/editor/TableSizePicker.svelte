@@ -208,8 +208,8 @@
       tabindex="0"
       onkeydown={onGridKeyDown}
     >
-      {#each Array(GRID) as _r, ri}
-        {#each Array(GRID) as _c, ci}
+      {#each Array(GRID) as _r, ri (ri)}
+        {#each Array(GRID) as _c, ci (ci)}
           {@const r = ri + 1}
           {@const c = ci + 1}
           <!-- svelte-ignore a11y_click_events_have_key_events -->

@@ -64,7 +64,7 @@ export function parseJsonObject(raw: string): Record<string, unknown> | null {
 
 export function normalizeTaskTitle(title: string): string {
   return title
-    .replace(/^[-*+]\s*\[[ xX/\-]?\]\s*/, '')
+    .replace(/^[-*+]\s*\[[ xX/-]?\]\s*/, '')
     .replace(/^#+\s*/, '')
     .replace(/\s+/g, ' ')
     .trim()

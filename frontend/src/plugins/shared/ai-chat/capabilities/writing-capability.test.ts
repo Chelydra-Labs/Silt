@@ -53,11 +53,11 @@ function makeContext(selectionText = 'selected text') {
   return { context, entries, pluginContext }
 }
 
-function readyProposal(scope: any) {
+function readyProposal(scope: unknown) {
   return createProposal({
     actionId: 'improve-clarity',
     kind: 'replace-selection',
-    scope,
+    scope: scope as never,
     proposedMarkdown: 'clearer text',
     status: 'ready'
   })

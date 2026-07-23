@@ -138,7 +138,6 @@
   <!-- The whole layer is portaled to document.body so neither the backdrop nor
        the content is clipped by the caller's overflow/stacking context. -->
   <div use:portal>
-    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div
       class="fixed inset-0 z-[100]"
       onclick={onClose}

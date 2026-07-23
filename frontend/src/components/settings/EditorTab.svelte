@@ -90,7 +90,7 @@
 
   function subscribeProgress() {
     unsubscribeProgress()
-    progressUnsub = Events.On('spellcheck:download:progress', (ev: any) => {
+    progressUnsub = Events.On('spellcheck:download:progress', (ev) => {
       const p = ev?.data as
         | {
             received?: number

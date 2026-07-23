@@ -455,7 +455,6 @@ describe('mountForPage surface swap', () => {
     // (shared LOADING id). Releasing A's hash FIRST (while C is current) must
     // NOT clear C's still-wanted loading surface — the per-invocation nonce
     // guards the bail-path unregister.
-    let callCount = 0
     const resolvers: Array<() => void> = []
     const slowCtx = {
       activeNotebook: 'NB',
@@ -467,7 +466,6 @@ describe('mountForPage surface swap', () => {
       }),
       updatePluginSetting: vi.fn(async () => true),
       sqliteQuery: vi.fn(() => {
-        callCount++
         return new Promise((resolve) => {
           resolvers.push(() =>
             resolve({ rows: [{ clean_content: 'x' }], truncated: false })

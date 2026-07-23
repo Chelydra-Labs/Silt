@@ -45,17 +45,26 @@
 
   let {
     uuid,
-    hostNotebook = '',
-    hostSection = '',
-    hostPage = '',
-    hostFileDate = ''
+    hostNotebook: _hostNotebook = '',
+    hostSection: _hostSection = '',
+    hostPage: _hostPage = '',
+    hostFileDate: _hostFileDate = ''
   }: Props = $props()
 
   // Recursion guard: an embed is recursive only when it appears in its
   // own ancestor chain. Sibling embeds of the same block are not.
   let isRecursive = $state(false)
 
-  let ref = $state<any>(null)
+  type EmbedRef = {
+    exists: boolean
+    id?: string
+    notebook?: string
+    section?: string
+    page?: string
+    file_date?: string
+    clean_text?: string
+  }
+  let ref = $state<EmbedRef | null>(null)
   let loading = $state(true)
   let editing = $state(false)
   let editorHost = $state<HTMLDivElement | null>(null)
@@ -67,7 +76,7 @@
   async function load() {
     loading = true
     try {
-      ref = await ResolveBlockReference(uuid)
+      ref = (await ResolveBlockReference(uuid)) as EmbedRef
     } catch {
       ref = { exists: false }
     } finally {
@@ -242,7 +251,7 @@
     } satisfies EmbedChain)
     load()
     // Live sync: refresh when the source block changes anywhere.
-    offEvent = Events.On('block:changed', (event: any) => {
+    offEvent = Events.On('block:changed', (event) => {
       const ev = event.data
       if (ev && ev.id === uuid && !editing && !saveTimer) {
         load()
@@ -294,14 +303,12 @@
     </div>
     {#if editing}
       <!-- Nested TipTap mounts only while focused (#661). -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         bind:this={editorHost}
         class="min-h-5"
         onfocusout={handleEditorFocusOut}
       ></div>
     {:else}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         role="textbox"
         tabindex="0"
@@ -312,10 +319,10 @@
       >
         <RichText
           text={ref.clean_text || ''}
-          notebook={ref.notebook}
-          section={ref.section}
-          page={ref.page}
-          fileDate={ref.file_date}
+          notebook={ref.notebook ?? ''}
+          section={ref.section ?? ''}
+          page={ref.page ?? ''}
+          fileDate={ref.file_date ?? ''}
         />
       </div>
     {/if}

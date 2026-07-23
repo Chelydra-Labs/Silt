@@ -319,7 +319,9 @@ describe('hybridRetrieve', () => {
     // RETRIEVAL_QUERY embed calls should be exactly 1 (pre-computed once
     // and reused by both vectorSearch and rerankPassages — no duplicate).
     const queryEmbeds = embed.mock.calls.filter(
-      (c: any[]) => c[0]?.taskType === 'RETRIEVAL_QUERY'
+      (c: unknown[]) =>
+        (c[0] as { taskType?: string } | undefined)?.taskType ===
+        'RETRIEVAL_QUERY'
     )
     expect(queryEmbeds).toHaveLength(1)
   })
