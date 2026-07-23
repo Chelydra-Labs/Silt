@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import fs from 'node:fs'
-import path from 'node:path'
+// Bundler-resolved fixtures — no fs/__dirname layout coupling.
+import enUsAff from '../../../../public/dictionaries/en-US/index.aff?raw'
+import enUsDic from '../../../../public/dictionaries/en-US/index.dic?raw'
 
 const mocks = vi.hoisted(() => ({
   EnsureLanguagePack: vi.fn(),
@@ -74,17 +75,10 @@ describe('proper-noun casing (bundled en-US)', () => {
 
   it('accepts title-case place names and rejects wrong casing', async () => {
     // Load the real bundled pack the same way production does (fetch → public/).
-    // spellcheck/ → editor/ → lib/ → src/ → frontend/public/
-    const dictDir = path.resolve(
-      __dirname,
-      '../../../../public/dictionaries/en-US'
-    )
-    const aff = fs.readFileSync(path.join(dictDir, 'index.aff'), 'utf8')
-    const dic = fs.readFileSync(path.join(dictDir, 'index.dic'), 'utf8')
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
-        const body = String(url).endsWith('.aff') ? aff : dic
+        const body = String(url).endsWith('.aff') ? enUsAff : enUsDic
         return {
           ok: true,
           status: 200,
@@ -248,6 +242,45 @@ describe('loadDictionary supersede race', () => {
     // Superseded caller must not get a detached en-GB Typo.
     expect(slowResult).toBe(fast)
     expect(getActiveLanguage()).toBe('de')
+  })
+
+  it('returns an orphan Typo when a superseded load finishes before the winner installs', async () => {
+    // Empty state: A (en-GB) starts, B (de) supersedes. A finishes while B is
+    // still gated → dict is still null → A gets an orphan Typo for en-GB.
+    // B then installs; getActiveLanguage reports de only.
+    let releaseA: (() => void) | undefined
+    let releaseB: (() => void) | undefined
+    const gateA = new Promise<void>((resolve) => {
+      releaseA = resolve
+    })
+    const gateB = new Promise<void>((resolve) => {
+      releaseB = resolve
+    })
+    mocks.EnsureLanguagePack.mockImplementation(async (lang: string) => {
+      if (lang === 'en-GB') await gateA
+      if (lang === 'de') await gateB
+    })
+    mocks.GetLanguagePackContent.mockImplementation(async (lang: string) => ({
+      aff: 'SET UTF-8\n',
+      dic: `2\n${lang === 'en-GB' ? 'colour' : 'farbe'}\nx\n`
+    }))
+
+    const a = loadDictionary('en-GB')
+    const b = loadDictionary('de')
+    expect(getActiveLanguage()).toBe('')
+    expect(isDictionaryLoaded()).toBe(false)
+
+    releaseA!()
+    const orphan = await a
+    expect(isDictionaryLoaded()).toBe(false)
+    expect(getActiveLanguage()).toBe('')
+    expect(orphan.loaded).toBe(true)
+
+    releaseB!()
+    const winner = await b
+    expect(winner).not.toBe(orphan)
+    expect(getActiveLanguage()).toBe('de')
+    expect(isDictionaryLoaded()).toBe(true)
   })
 
   it('does not reject a superseded failed load when a dict is installed', async () => {

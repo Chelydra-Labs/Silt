@@ -7,6 +7,7 @@
   } from '../../lib/editor/spellcheck/dictionary'
   import { requestSpellcheckRecheck } from '../../lib/editor/spellcheck/SpellcheckExtension'
   import { customDictionary } from '../../lib/editor/spellcheck/customDictionary.svelte'
+  import { findScrollableAncestor } from '../../lib/editor/popoverPositioning'
 
   let {
     editor,
@@ -128,26 +129,6 @@
       window.removeEventListener('resize', dismiss)
     }
   })
-
-  function findScrollableAncestor(
-    el: HTMLElement | null
-  ): HTMLElement | Document {
-    if (!el) return document
-    let current: HTMLElement | null = el.parentElement
-    while (current) {
-      const style = window.getComputedStyle(current)
-      if (
-        style.overflowY === 'auto' ||
-        style.overflowY === 'scroll' ||
-        style.overflow === 'auto' ||
-        style.overflow === 'scroll'
-      ) {
-        return current
-      }
-      current = current.parentElement
-    }
-    return document
-  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
