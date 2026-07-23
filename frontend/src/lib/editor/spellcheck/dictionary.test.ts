@@ -17,6 +17,7 @@ import {
   setDomainWords,
   checkWord,
   suggest,
+  ignoreWordSession,
   hasDomainWord,
   resetDictionary,
   loadDomainPacks,
@@ -229,5 +230,81 @@ describe('loadDictionary supersede race', () => {
     release!()
     await Promise.all([a, b])
     expect(getActiveLanguage()).toBe('de')
+  })
+
+  it('resolves a superseded slow load to the installed dict', async () => {
+    let releaseSlow: (() => void) | undefined
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve
+    })
+    mockPacks({ gateLang: 'en-GB', gate: slowGate })
+
+    const slow = loadDictionary('en-GB')
+    const fast = await loadDictionary('de')
+    expect(getActiveLanguage()).toBe('de')
+
+    releaseSlow!()
+    const slowResult = await slow
+    // Superseded caller must not get a detached en-GB Typo.
+    expect(slowResult).toBe(fast)
+    expect(getActiveLanguage()).toBe('de')
+  })
+
+  it('does not reject a superseded failed load when a dict is installed', async () => {
+    mockPacks()
+    await loadDictionary('en-GB')
+
+    let releaseFail: (() => void) | undefined
+    const failGate = new Promise<void>((resolve) => {
+      releaseFail = resolve
+    })
+    mocks.EnsureLanguagePack.mockImplementation(async (lang: string) => {
+      if (lang === 'de') {
+        await failGate
+        throw new Error('pack de failed')
+      }
+    })
+    mocks.GetLanguagePackContent.mockImplementation(async () => ({
+      aff: 'SET UTF-8\n',
+      dic: '2\ncolour\nx\n'
+    }))
+
+    const canceled = loadDictionary('de')
+    // Switch back to the installed language — cancels the de attempt.
+    const kept = await loadDictionary('en-GB')
+    expect(getActiveLanguage()).toBe('en-GB')
+
+    releaseFail!()
+    await expect(canceled).resolves.toBe(kept)
+    expect(getActiveLanguage()).toBe('en-GB')
+  })
+})
+
+describe('ignoreWordSession cache', () => {
+  beforeEach(() => {
+    resetDictionary()
+    setCustomWords([])
+    setDomainWords([])
+  })
+
+  it('clears all case variants of the ignored token from the check cache', async () => {
+    mocks.EnsureLanguagePack.mockResolvedValue(undefined)
+    mocks.GetLanguagePackContent.mockResolvedValue({
+      aff: 'SET UTF-8\n',
+      dic: '1\nhello\n'
+    })
+    await loadDictionary('en-TEST')
+
+    // Seed cache with mixed-case misses for the same token.
+    expect(checkWord('FooBar')).toBe(false)
+    expect(checkWord('foobar')).toBe(false)
+    expect(checkWord('FOOBAR')).toBe(false)
+
+    ignoreWordSession('FooBar')
+
+    // Session ignore is case-insensitive; all variants must pass after clear.
+    expect(checkWord('FooBar')).toBe(true)
+    expect(checkWord('foobar')).toBe(true)
+    expect(checkWord('FOOBAR')).toBe(true)
   })
 })

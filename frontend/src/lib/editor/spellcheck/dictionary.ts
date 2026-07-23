@@ -97,8 +97,11 @@ export function loadDictionary(lang: string): Promise<Typo> {
         }
       }
       // A newer loadDictionary call won the race — do not clobber its state.
+      // Resolve to the installed dict when present so superseded callers stay
+      // consistent with getActiveLanguage() / checkWord(); only build an
+      // orphan Typo when nothing is installed yet.
       if (seq !== loadSeq) {
-        return new Typo(requestedLang, aff, dic)
+        return dict ?? new Typo(requestedLang, aff, dic)
       }
       dict = new Typo(requestedLang, aff, dic)
       loadedLang = requestedLang
@@ -108,8 +111,10 @@ export function loadDictionary(lang: string): Promise<Typo> {
       dictionaryStatus.setLoadError(null)
       return dict
     } catch (err) {
-      // Only the active generation may report errors / clear in-flight markers.
+      // Superseded generation: do not surface errors (UI may have already
+      // switched away). Hand back the installed dict when available.
       if (seq !== loadSeq) {
+        if (dict) return dict
         throw err instanceof Error ? err : new Error(String(err))
       }
       loadPromise = null
@@ -265,8 +270,9 @@ export function ignoreWordSession(word: string): void {
   const lower = word.trim().toLowerCase()
   if (lower) {
     sessionIgnores.add(lower)
-    // Exact-case cache entries for this token must drop too.
-    for (const key of cache.keys()) {
+    // Exact-case cache entries for this token must drop too. Snapshot keys
+    // first — mutating a Map while iterating its keys is fragile.
+    for (const key of Array.from(cache.keys())) {
       if (key.toLowerCase() === lower) cache.delete(key)
     }
   }

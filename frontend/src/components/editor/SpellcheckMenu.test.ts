@@ -142,4 +142,18 @@ describe('SpellcheckMenu keyboard focus', () => {
     expect(onClose).toHaveBeenCalledOnce()
     expect(editor.commands.focus).toHaveBeenCalledOnce()
   })
+
+  it('closes on window resize', async () => {
+    const { onClose, editor } = setup()
+    window.dispatchEvent(new Event('resize'))
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(editor.commands.focus).toHaveBeenCalledOnce()
+  })
+
+  it('closes on document scroll (capture)', async () => {
+    const { onClose, editor } = setup()
+    document.dispatchEvent(new Event('scroll', { bubbles: true }))
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(editor.commands.focus).toHaveBeenCalledOnce()
+  })
 })

@@ -109,6 +109,45 @@
     }
     clampedAnchor = { x: Math.max(8, x), y: Math.max(8, y) }
   })
+
+  // Dismiss on scroll/resize so the menu does not float at a stale anchor
+  // (same contract as ContextMenu). Scope scroll to the editor's nearest
+  // scrollable ancestor so unrelated regions do not close it.
+  $effect(() => {
+    const dismiss = () => closeAndRestoreFocus()
+    const scrollRoot = findScrollableAncestor(
+      editor.view?.dom instanceof HTMLElement ? editor.view.dom : null
+    )
+    scrollRoot.addEventListener('scroll', dismiss, {
+      capture: true,
+      passive: true
+    })
+    window.addEventListener('resize', dismiss, { passive: true })
+    return () => {
+      scrollRoot.removeEventListener('scroll', dismiss, { capture: true })
+      window.removeEventListener('resize', dismiss)
+    }
+  })
+
+  function findScrollableAncestor(
+    el: HTMLElement | null
+  ): HTMLElement | Document {
+    if (!el) return document
+    let current: HTMLElement | null = el.parentElement
+    while (current) {
+      const style = window.getComputedStyle(current)
+      if (
+        style.overflowY === 'auto' ||
+        style.overflowY === 'scroll' ||
+        style.overflow === 'auto' ||
+        style.overflow === 'scroll'
+      ) {
+        return current
+      }
+      current = current.parentElement
+    }
+    return document
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -177,6 +216,7 @@
   .spell-menu-backdrop {
     position: absolute;
     inset: 0;
+    z-index: 0;
     margin: 0;
     padding: 0;
     border: none;
