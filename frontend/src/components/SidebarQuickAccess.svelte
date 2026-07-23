@@ -147,8 +147,12 @@
         </button>
       </div>
 
-      <!-- Tab Panel Contents -->
-      <div id="quick-access-panel" role="tabpanel">
+      <!-- Tab Panel Contents (Capped height with smooth scrollbar to prevent layout shift) -->
+      <div
+        id="quick-access-panel"
+        role="tabpanel"
+        class="max-h-[116px] overflow-y-auto custom-scrollbar pr-0.5"
+      >
         {#if activeTab === 'pinned'}
           {#if favorites.length === 0}
             <p class="empty">No pinned pages yet.</p>
