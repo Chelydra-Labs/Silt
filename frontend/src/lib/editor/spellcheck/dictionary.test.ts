@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -63,6 +63,12 @@ describe('proper-noun casing (bundled en-US)', () => {
     resetDictionary()
     setCustomWords([])
     setDomainWords([])
+  })
+
+  afterEach(() => {
+    // loadDictionary('en-US') stubs fetch; restore so later describes see the
+    // real global (Vitest only auto-unstubs between files).
+    vi.unstubAllGlobals()
   })
 
   it('accepts title-case place names and rejects wrong casing', async () => {
