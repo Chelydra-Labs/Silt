@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import { clearTools } from '../tool-registry'
 import {
   parseBlockRefs,
@@ -55,7 +56,7 @@ function makeCtx(opts: {
     const s = sql.toLowerCase()
     // Source lookup: return a row only when there is content.
     if (s.includes('from blocks where id = ?')) {
-      const id = String(params?.[0] ?? '')
+      const id = asString(params?.[0])
       if (id === opts.sourceId && opts.sourceContent.length > 0) {
         return {
           rows: [{ clean_content: opts.sourceContent }],
@@ -70,7 +71,7 @@ function makeCtx(opts: {
       s.includes('page = ?')
     ) {
       // Return rows for any candidate whose page matches the requested page.
-      const requestedPage = String(params?.[0] ?? '')
+      const requestedPage = asString(params?.[0])
       const rows = opts.candidates
         .filter((c) => c.page === requestedPage)
         .map((c) => ({ id: c.id }))

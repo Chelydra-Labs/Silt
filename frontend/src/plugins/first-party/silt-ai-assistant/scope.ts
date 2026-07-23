@@ -1,6 +1,7 @@
 // Build action scope from active page / selection (#230–#231).
 
 import type { PluginContext } from '../../sdk'
+import { asString } from '../../../lib/asString'
 import { stripIdentityComments, truncateForPrompt } from './text'
 import type { AssistantSettings, ScopeContext } from './types'
 
@@ -24,8 +25,8 @@ export async function fetchPageBlocks(
     [notebook, section, page]
   )
   return rows.map((r) => ({
-    id: String(r.id ?? ''),
-    clean_content: String(r.clean_content ?? ''),
+    id: asString(r.id),
+    clean_content: asString(r.clean_content),
     type: typeof r.type === 'string' ? r.type : undefined
   }))
 }

@@ -72,7 +72,7 @@
     previouslyFocused = document.activeElement as HTMLElement | null
     window.addEventListener('keydown', handleKeydown)
     // Focus the container (not a button) — no pre-selected default action.
-    tick().then(() => dialogRef?.focus())
+    void tick().then(() => dialogRef?.focus())
     return () => {
       window.removeEventListener('keydown', handleKeydown)
       previouslyFocused?.focus?.()

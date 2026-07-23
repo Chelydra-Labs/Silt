@@ -2,6 +2,7 @@
 // Does not read silt-ai-qa plugin DB — ranks candidates with ctx.ai.embed.
 
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import { createProposal } from '../proposal/model'
 import { cosineSimilarity, stripIdentityComments } from '../text'
 import type {
@@ -49,13 +50,10 @@ export async function loadRelatedCandidates(
 
   const byId = new Map<string, Candidate>()
   for (const r of [...ftsRows, ...rows]) {
-    const id = String(r.id ?? '')
+    const id = asString(r.id)
     if (!id || byId.has(id)) continue
     if (id === scope.blockId || id === scope.targetBlockId) continue
-    const text = stripIdentityComments(String(r.clean_content ?? '')).slice(
-      0,
-      800
-    )
+    const text = stripIdentityComments(asString(r.clean_content)).slice(0, 800)
     if (text.length < 20) continue
     byId.set(id, {
       id,

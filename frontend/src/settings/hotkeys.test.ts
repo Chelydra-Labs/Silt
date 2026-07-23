@@ -287,9 +287,7 @@ describe('resolveHotkeyDisplay', () => {
   })
 
   it('handles nullish map defensively', () => {
-    expect(
-      resolveHotkeyDisplay('format_bold', {} as Record<string, string>)
-    ).toBe('')
+    expect(resolveHotkeyDisplay('format_bold', {})).toBe('')
   })
 })
 

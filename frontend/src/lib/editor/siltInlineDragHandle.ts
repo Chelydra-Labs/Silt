@@ -72,7 +72,7 @@ export function resolveDraggedBlockPosition(
   for (let i = 0, p = 0; i < doc.childCount; i++) {
     const child = doc.child(i)
     if (!child) continue
-    const attrs = child.attrs as Record<string, unknown> | undefined
+    const attrs = child.attrs
     if (attrs && attrs.id === blockId) {
       return { pos: p, node: child }
     }

@@ -624,9 +624,7 @@ describe('Tasks view', () => {
       await flush()
 
       expect(scrollIntoViewSpy).toHaveBeenCalled()
-      const row = document.querySelector(
-        `[data-block-id="${targetId}"]`
-      ) as HTMLElement | null
+      const row = document.querySelector(`[data-block-id="${targetId}"]`)
       expect(row).toBeTruthy()
       expect(row?.classList.contains('tasks-focused')).toBe(true)
     } finally {
@@ -855,16 +853,14 @@ describe('Tasks view — inline quick-add (#409, replaces #399 toolbar toggle)',
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    const input = screen.getByTestId('quick-add-task-input') as HTMLInputElement
+    const input = screen.getByTestId('quick-add-task-input')
     await fireEvent.input(input, { target: { value: 'first task' } })
     await fireEvent.keyDown(input, { key: 'Enter' })
     await flush()
 
     expect(mocks.createTask).toHaveBeenCalledTimes(1)
     // keepOpenAfterCreate: the input is still in the DOM and cleared.
-    const inputAfter = screen.getByTestId(
-      'quick-add-task-input'
-    ) as HTMLInputElement
+    const inputAfter = screen.getByTestId('quick-add-task-input')
     expect(inputAfter).toBeInTheDocument()
     expect(inputAfter.value).toBe('')
   })
@@ -904,7 +900,7 @@ describe('Tasks view — inline quick-add (#409, replaces #399 toolbar toggle)',
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
 
-    const input = screen.getByTestId('quick-add-task-input') as HTMLInputElement
+    const input = screen.getByTestId('quick-add-task-input')
     await fireEvent.input(input, { target: { value: 'half-typed draft' } })
     await fireEvent.keyDown(input, { key: 'Escape' })
     await flush()
@@ -912,9 +908,7 @@ describe('Tasks view — inline quick-add (#409, replaces #399 toolbar toggle)',
     // No task created.
     expect(mocks.createTask).not.toHaveBeenCalled()
     // The persistent input stays mounted and the draft is cleared.
-    const inputAfter = screen.getByTestId(
-      'quick-add-task-input'
-    ) as HTMLInputElement
+    const inputAfter = screen.getByTestId('quick-add-task-input')
     expect(inputAfter).toBeInTheDocument()
     expect(inputAfter.value).toBe('')
   })
@@ -1200,7 +1194,7 @@ describe('Tasks view — manual ordering (#426)', () => {
     // A moved before C → A's new slot is 2; B shifted 2→1. C unchanged.
     // Persisted in ONE batched setTaskOrders call (one atomic write per file).
     expect(mocks.setTaskOrders).toHaveBeenCalledTimes(1)
-    const batch = mocks.setTaskOrders.mock.calls[0]![0] as {
+    const batch = mocks.setTaskOrders.mock.calls[0][0] as {
       id: string
       order: number
     }[]
@@ -1245,7 +1239,7 @@ describe('Tasks view — manual ordering (#426)', () => {
     expect(rows).toEqual(['Y', 'X'])
     // Persisted in one batched call: Y gets order 1 (was 2), X gets order 2.
     expect(mocks.setTaskOrders).toHaveBeenCalledTimes(1)
-    const batch = mocks.setTaskOrders.mock.calls[0]![0] as {
+    const batch = mocks.setTaskOrders.mock.calls[0][0] as {
       id: string
       order: number
     }[]
@@ -1327,9 +1321,7 @@ describe('Tasks view — manual ordering (#426)', () => {
     await flush()
     await new Promise((r) => setTimeout(r, 0))
 
-    const alert = document.querySelector(
-      '[data-testid="tasks-order-error"]'
-    ) as HTMLElement | null
+    const alert = document.querySelector('[data-testid="tasks-order-error"]')
     expect(alert).toBeTruthy()
     expect(alert?.getAttribute('role')).toBe('alert')
     expect(alert?.textContent).toContain("Couldn't reorder task")

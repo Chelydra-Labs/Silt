@@ -101,7 +101,7 @@
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement | null
     window.addEventListener('keydown', handleKeydown, true)
-    tick().then(() => {
+    void tick().then(() => {
       inputRef?.focus()
       inputRef?.select()
     })

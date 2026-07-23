@@ -253,7 +253,7 @@ function raceAbort<T>(
       },
       (error: unknown) => {
         cleanup()
-        reject(error)
+        reject(error instanceof Error ? error : new Error(String(error)))
       }
     )
   })
@@ -466,7 +466,7 @@ export async function runAgent(
         }
       }
       iterations++
-      const stream = (await raceAbort(
+      const stream = await raceAbort(
         ctx.ai.complete({
           // Providers receive a stable request snapshot; later tool-result
           // appends must not mutate an earlier request retained by a test
@@ -482,7 +482,7 @@ export async function runAgent(
           stream: true
         }),
         opts.signal
-      )) as PluginAIStream
+      )
       opts.onStream?.(stream)
 
       const { text, result } = await consumeStream(

@@ -30,7 +30,10 @@ export async function applyProposal(
       case 'insert-links':
         return await applyLinks(ctx, proposal)
       default:
-        return { ok: false, error: `Unknown proposal kind: ${proposal.kind}` }
+        return {
+          ok: false,
+          error: `Unknown proposal kind: ${String(proposal.kind)}`
+        }
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)

@@ -257,10 +257,10 @@ function coerceSavedView(raw: unknown): SavedView | null {
     const fr = r.filters as Record<string, unknown>
     v.filters = {
       owners: Array.isArray(fr.owners)
-        ? (fr.owners.filter((x) => typeof x === 'string') as string[])
+        ? fr.owners.filter((x) => typeof x === 'string')
         : [],
       priorities: Array.isArray(fr.priorities)
-        ? (fr.priorities.filter((x) => typeof x === 'number') as number[])
+        ? fr.priorities.filter((x) => typeof x === 'number')
         : [],
       dueDate:
         typeof fr.dueDate === 'string' &&
@@ -268,7 +268,7 @@ function coerceSavedView(raw: unknown): SavedView | null {
           ? (fr.dueDate as TaskFilters['dueDate'])
           : '',
       tags: Array.isArray(fr.tags)
-        ? (fr.tags.filter((x) => typeof x === 'string') as string[])
+        ? fr.tags.filter((x) => typeof x === 'string')
         : [],
       ...(typeof fr.stale === 'boolean' ? { stale: fr.stale } : {})
     }

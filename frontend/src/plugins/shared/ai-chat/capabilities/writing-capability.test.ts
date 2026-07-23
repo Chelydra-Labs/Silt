@@ -127,7 +127,7 @@ describe('writing capability', () => {
     const discarded = second.entries.find(
       (entry): entry is ProposalEntry => entry.kind === 'proposal'
     )!
-    capability.discardProposal?.(discarded)
+    void capability.discardProposal?.(discarded)
     expect(mocks.applyProposal).toHaveBeenCalledOnce()
   })
 })

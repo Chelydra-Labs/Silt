@@ -69,7 +69,7 @@ export const Search = Extension.create({
         wholeWord: false,
         regexp: false,
         replace: ''
-      } as SearchParams
+      }
     }
   },
 

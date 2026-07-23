@@ -37,7 +37,7 @@ export function injectPlaceholderChips(source: string): string {
 export function renderTemplatePreview(source: string): string {
   if (!source) return ''
   const withChips = injectPlaceholderChips(source)
-  const raw = previewMarked.parse(withChips, { async: false }) as string
+  const raw = previewMarked.parse(withChips, { async: false })
   return DOMPurify.sanitize(raw, {
     USE_PROFILES: { html: true },
     ADD_ATTR: ['data-placeholder', 'class'],

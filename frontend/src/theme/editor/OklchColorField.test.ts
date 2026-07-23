@@ -26,7 +26,7 @@ function mockRect(
     x: rect.left,
     y: rect.top,
     toJSON: () => ({})
-  } as DOMRect)
+  })
 }
 
 describe('OklchColorField (#528)', () => {
@@ -178,7 +178,7 @@ describe('OklchColorField (#528)', () => {
       }
     })
 
-    const text = screen.getByLabelText('Accent color value') as HTMLInputElement
+    const text = screen.getByLabelText('Accent color value')
     expect(text).toBeTruthy()
     expect(text.value).toMatch(/oklch/)
 
@@ -209,9 +209,7 @@ describe('OklchColorField (#528)', () => {
     details.open = true
     await tick()
 
-    const lSlider = within(details).getByLabelText(
-      'Lightness'
-    ) as HTMLInputElement
+    const lSlider = within(details).getByLabelText('Lightness')
     await fireEvent.input(lSlider, { target: { value: '40' } })
     await tick()
 

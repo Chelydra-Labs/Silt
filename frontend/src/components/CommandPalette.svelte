@@ -81,9 +81,7 @@
   // Scroll active item into view.
   $effect(() => {
     if (containerEl && selectedIdx !== -1) {
-      const activeEl = containerEl.querySelector(
-        '[data-active-cmd="true"]'
-      ) as HTMLElement | null
+      const activeEl = containerEl.querySelector('[data-active-cmd="true"]')
       if (activeEl && typeof activeEl.scrollIntoView === 'function') {
         activeEl.scrollIntoView({ block: 'nearest' })
       }

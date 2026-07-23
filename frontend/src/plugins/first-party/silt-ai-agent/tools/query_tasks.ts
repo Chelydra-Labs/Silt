@@ -7,6 +7,7 @@
 // is not DONE (the same definition the DONE-confirm dialog uses).
 
 import type { PluginContext, TaskStatus } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import type { ToolResult } from '../tool-registry'
 import { breadcrumb, clampInt } from './_util'
 
@@ -93,11 +94,11 @@ export async function handleQueryTasks(
   const params: unknown[] = []
 
   if (args.status !== undefined && args.status !== null) {
-    const status = String(args.status).toUpperCase()
+    const status = asString(args.status).toUpperCase()
     if (!TASK_STATUSES.includes(status as TaskStatus)) {
       return {
         content: '',
-        error: `status must be one of ${TASK_STATUSES.join(', ')} (got "${args.status}")`
+        error: `status must be one of ${TASK_STATUSES.join(', ')} (got "${asString(args.status)}")`
       }
     }
     where.push('t.status = ?')
@@ -105,7 +106,7 @@ export async function handleQueryTasks(
   }
   if (args.owner !== undefined && args.owner !== null) {
     where.push('t.owner = ?')
-    params.push(String(args.owner))
+    params.push(asString(args.owner))
   }
   if (args.priority_min !== undefined && args.priority_min !== null) {
     const p = clampInt(args.priority_min, 1, 1, 3)
@@ -115,18 +116,18 @@ export async function handleQueryTasks(
   }
   if (args.due_before !== undefined && args.due_before !== null) {
     where.push('t.due_date IS NOT NULL AND t.due_date <= ?')
-    params.push(String(args.due_before))
+    params.push(asString(args.due_before))
   }
   if (args.due_after !== undefined && args.due_after !== null) {
     where.push('t.due_date IS NOT NULL AND t.due_date >= ?')
-    params.push(String(args.due_after))
+    params.push(asString(args.due_after))
   }
   if (args.notebook !== undefined && args.notebook !== null) {
     where.push('b.notebook = ?')
-    params.push(String(args.notebook))
+    params.push(asString(args.notebook))
   }
   if (Array.isArray(args.tags) && args.tags.length > 0) {
-    const tags = args.tags.map(String).filter((s) => s.length > 0)
+    const tags = args.tags.map((t) => asString(t)).filter((s) => s.length > 0)
     if (tags.length > 0) {
       where.push(
         `EXISTS (SELECT 1 FROM tags tg WHERE tg.block_id = b.id AND tg.raw_path IN (${tags
@@ -163,14 +164,14 @@ export async function handleQueryTasks(
 
 function rowToTask(r: Record<string, unknown>): TaskRow {
   return {
-    id: String(r.id ?? ''),
-    clean_content: r.clean_content == null ? null : String(r.clean_content),
-    status: String(r.status ?? ''),
-    due_date: r.due_date == null ? null : String(r.due_date),
-    owner: r.owner == null ? null : String(r.owner),
-    notebook: String(r.notebook ?? ''),
-    section: String(r.section ?? ''),
-    page: String(r.page ?? ''),
+    id: asString(r.id),
+    clean_content: r.clean_content == null ? null : asString(r.clean_content),
+    status: asString(r.status),
+    due_date: r.due_date == null ? null : asString(r.due_date),
+    owner: r.owner == null ? null : asString(r.owner),
+    notebook: asString(r.notebook),
+    section: asString(r.section),
+    page: asString(r.page),
     priority: r.priority == null ? null : Number(r.priority),
     is_blocked: Number(r.is_blocked ?? 0)
   }

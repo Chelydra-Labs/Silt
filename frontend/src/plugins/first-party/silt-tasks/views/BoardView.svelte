@@ -775,14 +775,14 @@
   function cancelRename() {
     renamingColKey = null
   }
-  async function addColumn() {
+  function addColumn() {
     const name = window.prompt('New column name')?.trim()
     if (!name || columnNames(statusColumns).includes(name)) return
     const prev = cloneColumns(statusColumns)
     configError = ''
     saveStatusColumns([...statusColumns, { name }], prev)
   }
-  async function removeColumn(statusName: string) {
+  function removeColumn(statusName: string) {
     menuCol = null
     if (
       !window.confirm(

@@ -257,26 +257,28 @@ export async function initTheme(): Promise<() => void> {
   // resolved {id, mode, name?}. When id+mode already match (common after our
   // own applyTheme), skip the GetActiveTheme round-trip + re-inject — but
   // still apply a payload name so active rename (#533) updates the label.
-  offThemeChanged = Events.On('theme:changed', async (ev) => {
-    const payload: { id?: string; mode?: string; name?: string } | null =
-      ev.data
-    if (
-      payload &&
-      payload.id === themeState.id &&
-      payload.mode === themeState.mode
-    ) {
-      if (typeof payload.name === 'string' && payload.name.length > 0) {
-        themeState.name = payload.name
+  offThemeChanged = Events.On('theme:changed', (ev) => {
+    void (async () => {
+      const payload: { id?: string; mode?: string; name?: string } | null =
+        ev.data
+      if (
+        payload &&
+        payload.id === themeState.id &&
+        payload.mode === themeState.mode
+      ) {
+        if (typeof payload.name === 'string' && payload.name.length > 0) {
+          themeState.name = payload.name
+        }
+        return
       }
-      return
-    }
-    try {
-      const res = await GetActiveTheme()
-      applyResult(res)
-    } catch (err) {
-      console.error('theme: failed to apply theme:changed event:', err)
-      themeState.error = err instanceof Error ? err.message : String(err)
-    }
+      try {
+        const res = await GetActiveTheme()
+        applyResult(res)
+      } catch (err) {
+        console.error('theme: failed to apply theme:changed event:', err)
+        themeState.error = err instanceof Error ? err.message : String(err)
+      }
+    })()
   })
 
   try {

@@ -13,6 +13,7 @@
 // "what needs attention?".
 
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import type { ToolResult } from '../tool-registry'
 
 export const getVaultStatisticsToolDef = {
@@ -181,7 +182,7 @@ async function runCounts(
   const { rows } = await ctx.sqliteQuery(sql, params)
   const map = new Map<string, number>()
   for (const r of rows) {
-    const key = String(r[keyCol] ?? r.key ?? '(none)')
+    const key = asString(r[keyCol] ?? r.key, '(none)')
     const count = Number(r.count ?? 0)
     map.set(key, (map.get(key) ?? 0) + count)
   }
@@ -254,9 +255,9 @@ async function runOrphanPageCount(
       )
       .map((r) =>
         pageKey(
-          String(r.target_notebook),
-          String(r.target_section),
-          String(r.target_page)
+          asString(r.target_notebook),
+          asString(r.target_section),
+          asString(r.target_page)
         )
       )
   )
@@ -280,13 +281,11 @@ async function runOrphanPageCount(
   const pageLocations: PageLocation[] = []
   const pageLocationKeys = new Set<string>()
   for (const r of blockRefs.rows) {
-    const id = String(r.id ?? '')
-      .trim()
-      .toLowerCase()
+    const id = asString(r.id).trim().toLowerCase()
     const location = {
-      notebook: String(r.notebook ?? ''),
-      section: String(r.section ?? ''),
-      page: String(r.page ?? '')
+      notebook: asString(r.notebook),
+      section: asString(r.section),
+      page: asString(r.page)
     }
     const locationKey = pageKey(
       location.notebook,
@@ -305,7 +304,7 @@ async function runOrphanPageCount(
   // raw path against the indexed page inventory as an equivalent fallback.
   for (const r of referenced.rows) {
     if (r.target_notebook != null) continue
-    const target = (String(r.target_raw ?? '').split('|')[0] ?? '')
+    const target = (asString(r.target_raw).split('|')[0] ?? '')
       .split('#')[0]
       .trim()
     if (!target) continue
@@ -330,7 +329,7 @@ async function runOrphanPageCount(
     }
   }
   for (const r of blockRefs.rows) {
-    const raw = String(r.raw_content ?? '')
+    const raw = asString(r.raw_content)
     for (const match of raw.matchAll(/\(\(([^()\s]+)\)\)/g)) {
       const targetKey = pageByBlock.get((match[1] ?? '').toLowerCase())
       if (!targetKey) continue
@@ -343,9 +342,9 @@ async function runOrphanPageCount(
   let orphanCount = 0
   for (const r of allPages.rows) {
     const key = pageKey(
-      String(r.notebook ?? ''),
-      String(r.section ?? ''),
-      String(r.page ?? '')
+      asString(r.notebook),
+      asString(r.section),
+      asString(r.page)
     )
     if (!referencedKeys.has(key)) orphanCount++
   }
@@ -379,10 +378,10 @@ async function runRecentEdits(
   )
   return rows.map((r) => ({
     path: [r.notebook, r.section, r.page]
-      .map((value) => String(value ?? '').trim())
+      .map((value) => asString(value).trim())
       .filter((value) => value.length > 0)
       .join('/'),
-    fileDate: String(r.file_date ?? '')
+    fileDate: asString(r.file_date)
   }))
 }
 

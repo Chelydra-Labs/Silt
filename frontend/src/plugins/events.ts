@@ -17,7 +17,7 @@
 
 import { Events } from '@wailsio/runtime'
 import type { PluginEventName, PluginEventPayload } from './sdk'
-type AnyCb = (payload: unknown) => void
+type AnyCb = (payload: unknown) => void | Promise<void>
 
 interface Subscription {
   cb: AnyCb
@@ -45,7 +45,7 @@ const wailsListenerDisposers = new Map<PluginEventName, () => void>()
 export function subscribe<E extends PluginEventName>(
   pluginID: string,
   event: E,
-  cb: (payload: PluginEventPayload<E>) => void
+  cb: (payload: PluginEventPayload<E>) => void | Promise<void>
 ): () => void {
   if (!pluginID) {
     throw new Error('subscribe requires a pluginID')
@@ -119,7 +119,11 @@ export function dispatch<E extends PluginEventName>(
   }
   for (const sub of subs) {
     try {
-      sub.cb(payload)
+      // Async handlers are supported (void | Promise<void>); fire-and-forget
+      // so one slow plugin cannot block sibling dispatch. Rejections are logged.
+      void Promise.resolve(sub.cb(payload)).catch((err: unknown) => {
+        console.error(`[silt plugin bus] ${event} handler rejected:`, err)
+      })
     } catch (err) {
       // A plugin callback throwing must never break sibling plugins or the
       // host. Log and continue (fail-soft for the bus itself; the plugin's

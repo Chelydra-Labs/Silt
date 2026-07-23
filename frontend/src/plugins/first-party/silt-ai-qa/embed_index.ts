@@ -2,6 +2,7 @@
 // Plugin-owned SQLite + sqlite-vec vec0. Markdown remains source of truth.
 
 import type { PluginContext } from '../../sdk'
+import { asString } from '../../../lib/asString'
 import { chunksFromBlocks, type BlockInput } from './chunk'
 import type { IndexProgress, QASettings } from './types'
 import type { RankedHit } from './hybrid'
@@ -449,12 +450,12 @@ export async function vectorSearch(
   )
 
   return rows.map((r) => ({
-    blockId: String(r.block_id ?? r.chunk_id ?? ''),
-    notebook: String(r.notebook ?? ''),
-    section: String(r.section ?? ''),
-    page: String(r.page ?? ''),
+    blockId: asString(r.block_id ?? r.chunk_id),
+    notebook: asString(r.notebook),
+    section: asString(r.section),
+    page: asString(r.page),
     lineNumber: Number(r.line_number ?? 0),
-    text: String(r.text ?? ''),
+    text: asString(r.text),
     score: Number(r.distance ?? 0)
   }))
 }

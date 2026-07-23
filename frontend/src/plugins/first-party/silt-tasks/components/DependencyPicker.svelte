@@ -105,7 +105,9 @@
 
   function onInput() {
     if (debounceTimer) clearTimeout(debounceTimer)
-    debounceTimer = setTimeout(runSearch, 180)
+    debounceTimer = setTimeout(() => {
+      void runSearch()
+    }, 180)
   }
 
   async function addDep(id: string, label: string) {

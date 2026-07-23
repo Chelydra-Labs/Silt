@@ -127,9 +127,7 @@ describe('SearchModal keyboard a11y', () => {
       expect(screen.getByRole('option', { name: 'Work' })).toBeInTheDocument()
     })
 
-    const notebookSelect = screen.getByLabelText(
-      'Filter by notebook'
-    ) as HTMLSelectElement
+    const notebookSelect = screen.getByLabelText('Filter by notebook')
     notebookSelect.value = 'Work'
     await fireEvent.change(notebookSelect)
     const tagInput = screen.getByLabelText('Filter by tag')

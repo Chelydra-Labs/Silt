@@ -132,7 +132,7 @@ describe('applyBlockRefSuggestion', () => {
 
     expect(applyBlockRefSuggestion(editor, 'block-123')).toBe(true)
     expect(dispatch).toHaveBeenCalledTimes(1)
-    const block = editor.getJSON().content![0] as {
+    const block = editor.getJSON().content[0] as {
       content?: Array<{ type: string; attrs?: { uuid?: string } }>
     }
     const ref = block.content?.find(

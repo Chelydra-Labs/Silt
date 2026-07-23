@@ -221,7 +221,7 @@ function affectedRows(result: unknown): number | undefined {
   if (!result || typeof result !== 'object') return undefined
   const r = result as Record<string, unknown>
   for (const key of ['changes', 'rowsAffected', 'affectedRows']) {
-    if (typeof r[key] === 'number') return r[key] as number
+    if (typeof r[key] === 'number') return r[key]
   }
   return undefined
 }

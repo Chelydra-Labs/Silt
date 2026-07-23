@@ -26,7 +26,6 @@
     DuplicatePage,
     GetNavigationPreferences,
     SetNavigationSectionExpanded,
-    SetQuickAccessCollapsed,
     SetFavoritePage
   } from '../../bindings/silt/app.js'
   import { NavOrderManager, sortByName } from '../lib/sidebar/navOrder'
@@ -476,21 +475,6 @@
     }
   }
 
-  async function setQuickAccessCollapsed(collapsed: boolean) {
-    const previous = preferences.quick_access_collapsed
-    preferences = { ...preferences, quick_access_collapsed: collapsed }
-    try {
-      await SetQuickAccessCollapsed(collapsed)
-      preferencesError = ''
-    } catch (error) {
-      preferences = { ...preferences, quick_access_collapsed: previous }
-      preferencesError =
-        error instanceof Error
-          ? error.message
-          : 'Quick access state could not be saved.'
-    }
-  }
-
   // Expand an active page's full ancestry once when its location changes.
   // A manual collapse remains respected until the user activates another page.
   $effect(() => {
@@ -878,7 +862,7 @@
   async function handleCreatePageInline(sectionName: string) {
     creating = true
     try {
-      const pageName = await generateUniquePageName(sectionName)
+      const pageName = generateUniquePageName(sectionName)
       await CreatePage(activeNotebook, sectionName, pageName, '')
       await loadNavigation()
       activeSection = sectionName
@@ -897,7 +881,7 @@
     }
   }
 
-  async function generateUniquePageName(sectionName: string): Promise<string> {
+  function generateUniquePageName(sectionName: string): string {
     return generateUniquePageNameHelper(tree, activeNotebook, sectionName)
   }
 
@@ -1140,13 +1124,13 @@
   }
 
   onMount(() => {
-    loadNavigation()
-    loadNavigationPreferences()
-    loadNavOrder()
+    void loadNavigation()
+    void loadNavigationPreferences()
+    void loadNavOrder()
     const handleRefresh = () => {
-      loadNavigation()
-      loadNavigationPreferences()
-      loadNavOrder()
+      void loadNavigation()
+      void loadNavigationPreferences()
+      void loadNavOrder()
     }
     const handleCreatePageInlineEvent = (e: Event) => {
       const sectionName =

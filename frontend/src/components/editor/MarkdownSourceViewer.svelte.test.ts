@@ -18,7 +18,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   themeState: {
-    mode: 'dark' as 'dark' | 'light' | 'system',
+    mode: 'dark',
     darkTokens: {
       '--color-text-primary': '#eee',
       '--color-surface-panel': '#111'
@@ -80,7 +80,7 @@ function mkBlock(
     line_number: 1
     // ParsedBlock carries many optional fields; only what the viewer reads
     // (raw_text, clean_text, depth) matters here.
-  } as ParsedBlock
+  }
 }
 
 const BLOCKS: ParsedBlock[] = [

@@ -56,7 +56,7 @@ describe('embedding cache identity', () => {
     // The same block is now queried under a different model. The model-a row
     // must not be accepted as a cache hit.
     ;(ctx.ai.embed as ReturnType<typeof vi.fn>).mockImplementation(
-      async (req: { texts: string[]; taskType?: string }) => ({
+      (req: { texts: string[]; taskType?: string }) => ({
         embeddings: req.texts.map(() => [1, 0]),
         model: 'model-b',
         dimensions: 2

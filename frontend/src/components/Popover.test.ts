@@ -63,7 +63,7 @@ describe('Popover (#376)', () => {
     const anchor = makeAnchor()
     // Anchor pinned past the bottom-right of an 800x600 viewport so
     // clampToViewport must pull the layer back on-screen.
-    anchor.getBoundingClientRect = (() => ({
+    anchor.getBoundingClientRect = () => ({
       top: 1000,
       bottom: 1020,
       left: 1000,
@@ -73,7 +73,7 @@ describe('Popover (#376)', () => {
       x: 1000,
       y: 1000,
       toJSON: () => ({})
-    })) as unknown as HTMLElement['getBoundingClientRect']
+    })
     Object.defineProperty(window, 'innerWidth', {
       value: 800,
       configurable: true
@@ -100,7 +100,7 @@ describe('Popover (#376)', () => {
 
   it('sets the layer width to the anchor width when matchWidth is true', () => {
     const anchor = makeAnchor()
-    anchor.getBoundingClientRect = (() => ({
+    anchor.getBoundingClientRect = () => ({
       top: 10,
       bottom: 30,
       left: 10,
@@ -110,7 +110,7 @@ describe('Popover (#376)', () => {
       x: 10,
       y: 10,
       toJSON: () => ({})
-    })) as unknown as HTMLElement['getBoundingClientRect']
+    })
     render(PopoverHarness, {
       props: { anchor, open: true, onClose: () => {}, matchWidth: true }
     })

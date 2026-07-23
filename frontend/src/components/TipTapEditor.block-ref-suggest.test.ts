@@ -243,7 +243,7 @@ describe('TipTapEditor block-reference typeahead', () => {
     const first = deferred<ReturnType<typeof hit>[]>()
     const second = deferred<ReturnType<typeof hit>[]>()
     const cancel = vi.fn().mockResolvedValue(undefined)
-    Object.assign(first.promise, { cancel })
+    void Object.assign(first.promise, { cancel })
     mocks.searchBlocks
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise)

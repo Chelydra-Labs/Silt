@@ -32,7 +32,7 @@
     const l = latex
     const dm = displayMode
     let cancelled = false
-    renderKatex(l, dm).then((res) => {
+    void renderKatex(l, dm).then((res) => {
       if (cancelled) return
       html = res.html
       error = res.error

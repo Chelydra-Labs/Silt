@@ -86,7 +86,7 @@ describe('silt-attachments plugin (#101)', () => {
       onSelect?: (editor: unknown, pos?: number) => void | Promise<void>
     }
     // onSelect fires handleAttach asynchronously; flush the microtask queue.
-    void cmd.onSelect?.(fakeEditor as never, 0)
+    void cmd.onSelect?.(fakeEditor, 0)
     await new Promise((r) => setTimeout(r, 50))
     expect(mocks.pickOpenFile).toHaveBeenCalledWith('*')
     expect(mocks.addAttachment).toHaveBeenCalledWith(
@@ -128,7 +128,7 @@ describe('silt-attachments plugin (#101)', () => {
     )[0]?.[0] as {
       onSelect?: (editor: unknown, pos?: number) => void | Promise<void>
     }
-    await cmd.onSelect?.(fakeEditor as never, 0)
+    await cmd.onSelect?.(fakeEditor, 0)
     expect(mocks.addAttachment).not.toHaveBeenCalled()
     expect(fakeEditor.commands.insertContent).not.toHaveBeenCalled()
   })

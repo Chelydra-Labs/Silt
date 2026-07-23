@@ -130,7 +130,7 @@
               ? (draft[field.key] as string[]).join(', ')
               : ''}
             oninput={(e) => {
-              draft[field.key] = (e.currentTarget as HTMLInputElement).value
+              draft[field.key] = e.currentTarget.value
                 .split(',')
                 .map((s) => s.trim())
                 .filter(Boolean)

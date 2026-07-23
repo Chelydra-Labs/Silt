@@ -167,7 +167,7 @@ describe('updates/store.svelte (#312)', () => {
       const action = notificationsState.items[0].action
       expect(action).toBeDefined()
       expect(action!.label).toBe('View')
-      action!.run()
+      void action!.run()
       expect(mocks.BrowserOpenURL).toHaveBeenCalledWith(
         'https://example/release'
       )
@@ -187,7 +187,7 @@ describe('updates/store.svelte (#312)', () => {
       const action = notificationsState.items[0].action
       expect(action).toBeDefined()
       expect(action!.label).toBe('Install')
-      action!.run()
+      void action!.run()
       // downloadAndInstall is async; wait for the first IPC call to land.
       await vi.waitFor(() =>
         expect(mocks.DownloadUpdate).toHaveBeenCalledWith(

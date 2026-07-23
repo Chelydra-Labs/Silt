@@ -135,7 +135,6 @@
     RecordRecentPage
   } from '../bindings/silt/app.js'
   import { Events } from '@wailsio/runtime'
-  import type * as config from '../bindings/silt/backend/config/models.js'
   import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -646,14 +645,14 @@
           // absence on disk means the Edit default, keeping config.yaml lean.
           view_mode: t.viewMode === 'source' ? 'source' : ''
         })),
-        (activePersist
+        activePersist
           ? {
               notebook: activePersist.notebook,
               section: activePersist.section,
               page: activePersist.page,
               view_mode: activePersist.viewMode === 'source' ? 'source' : ''
             }
-          : null) as unknown as config.TabRef
+          : null
       )
     } catch (e) {
       console.error('SetOpenTabs failed:', e)
@@ -810,7 +809,7 @@
         loading = false
       }
     }
-    checkInit()
+    void checkInit()
     // Best-effort: load the config first so the initial loadPlugins call
     // observes plugins.disabled on a cold start (a config.yaml that ships
     // with a pre-disabled first-party plugin must NOT load it on the first
@@ -863,7 +862,7 @@
     prevOpenTabsKey = tabSetKey(settings.config?.ui?.open_tabs)
     const offConfigChangedReload = Events.On('config:changed', (ev) => {
       const cfg: SystemConfig = ev.data
-      const next = (cfg?.plugins?.disabled ?? []) as string[]
+      const next = cfg?.plugins?.disabled ?? []
       if (!arraysEqual(prevDisabled, next)) {
         prevDisabled = [...next]
         loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
@@ -1188,7 +1187,10 @@
     window.addEventListener('open-search', handleOpenSearch)
     window.addEventListener('open-quick-add', handleOpenQuickAdd)
     window.addEventListener(OPEN_TASKS_FOR_PAGE_EVENT, handleOpenTasksForPage)
-    window.addEventListener('silt:change-vault', handleSwitchVault)
+    const onChangeVault = () => {
+      void handleSwitchVault()
+    }
+    window.addEventListener('silt:change-vault', onChangeVault)
     window.addEventListener('silt:settings-jump', handleSettingsJump)
     window.addEventListener('page-renamed', handlePageRenamed)
     // `plugins:changed` is a Wails event (Go runtime.EventsEmit), so it must
@@ -1264,7 +1266,9 @@
     }
     const offLinkedQuarantined = Events.On(
       'linked-notebook:quarantined',
-      handleLinkedQuarantined
+      () => {
+        void handleLinkedQuarantined()
+      }
     )
     // Vault init failed during startup (settings.json unreadable, DB open
     // failed, network-filesystem vault, watcher start failed, …). Without
@@ -1441,7 +1445,7 @@
         OPEN_TASKS_FOR_PAGE_EVENT,
         handleOpenTasksForPage
       )
-      window.removeEventListener('silt:change-vault', handleSwitchVault)
+      window.removeEventListener('silt:change-vault', onChangeVault)
       window.removeEventListener('silt:settings-jump', handleSettingsJump)
       window.removeEventListener('page-renamed', handlePageRenamed)
       offPluginsChanged()
@@ -1495,7 +1499,7 @@
         window.dispatchEvent(new CustomEvent('refresh-navigation'))
       }
     } catch (e) {
-      alert('Failed to initialize vault: ' + e)
+      alert('Failed to initialize vault: ' + String(e))
     }
   }
 
@@ -2272,7 +2276,7 @@
               } catch (e) {
                 pushNotification({
                   kind: 'error',
-                  message: `Failed to confirm settings change: ${e}`
+                  message: `Failed to confirm settings change: ${String(e)}`
                 })
               }
             }}>Confirm change</button
@@ -2332,7 +2336,7 @@
               } catch (e) {
                 pushNotification({
                   kind: 'error',
-                  message: `Failed to move plugin permissions: ${e}`
+                  message: `Failed to move plugin permissions: ${String(e)}`
                 })
               }
             }}>Move permissions</button
@@ -2376,7 +2380,7 @@
                 } catch (e) {
                   pushNotification({
                     kind: 'error',
-                    message: `Failed to unlink ${q.display_name}: ${e}`
+                    message: `Failed to unlink ${q.display_name}: ${String(e)}`
                   })
                 }
               }}>Unlink {q.display_name}</button
@@ -2393,7 +2397,7 @@
                 } catch (e) {
                   pushNotification({
                     kind: 'error',
-                    message: `Failed to re-link ${q.display_name}: ${e}`
+                    message: `Failed to re-link ${q.display_name}: ${String(e)}`
                   })
                 }
               }}>Re-link {q.display_name}</button

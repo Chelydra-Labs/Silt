@@ -20,7 +20,7 @@ describe('NamePromptDialog', () => {
       }
     })
     expect(screen.getByTestId('name-test')).toBeTruthy()
-    const input = screen.getByTestId('name-test-input') as HTMLInputElement
+    const input = screen.getByTestId('name-test-input')
     expect(input.value).toBe('My Theme')
   })
 
@@ -35,7 +35,7 @@ describe('NamePromptDialog', () => {
         onCancel: vi.fn()
       }
     })
-    const input = screen.getByTestId('save-name-input') as HTMLInputElement
+    const input = screen.getByTestId('save-name-input')
     await fireEvent.input(input, { target: { value: '  Custom Theme  ' } })
     await fireEvent.click(screen.getByTestId('save-name-confirm'))
     expect(onConfirm).toHaveBeenCalledWith('Custom Theme')
@@ -83,7 +83,7 @@ describe('NamePromptDialog', () => {
         onCancel
       }
     })
-    const cancel = screen.getByTestId('busy-name-cancel') as HTMLButtonElement
+    const cancel = screen.getByTestId('busy-name-cancel')
     expect(cancel.disabled).toBe(true)
     await fireEvent.click(cancel)
     await fireEvent.keyDown(window, { key: 'Escape' })
@@ -101,7 +101,7 @@ describe('NamePromptDialog', () => {
         onCancel: vi.fn()
       }
     })
-    const input = screen.getByTestId('save-name-input') as HTMLInputElement
+    const input = screen.getByTestId('save-name-input')
     await fireEvent.input(input, { target: { value: 'Enter Theme' } })
     await fireEvent.keyDown(input, { key: 'Enter' })
     expect(onConfirm).toHaveBeenCalledWith('Enter Theme')

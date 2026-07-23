@@ -262,7 +262,7 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
           summaries_enabled: false
         }
       }
-    } as unknown as typeof settings.config
+    }
 
     await loadPlugins('Work', '', '')
     expect(loadedPlugins.plugins.has('silt-ai-agent')).toBe(false)

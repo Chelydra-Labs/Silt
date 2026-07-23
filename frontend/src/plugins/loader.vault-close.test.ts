@@ -75,7 +75,7 @@ describe('vault:closing purges plugin contributions (#580)', () => {
     const call = mockEventsOn.mock.calls.find(
       (args: unknown[]) => args[0] === 'vault:closing'
     )
-    vaultClosingCb = call ? (call[1] as () => void) : null
+    vaultClosingCb = call ? call[1] : null
   })
 
   it('captures the vault:closing handler', () => {

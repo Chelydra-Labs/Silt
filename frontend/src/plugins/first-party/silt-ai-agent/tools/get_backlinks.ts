@@ -7,6 +7,7 @@
 // all of them. An empty reference set is a clean empty list, NOT an error.
 
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import type { ToolResult } from '../tool-registry'
 import { clampInt } from './_util'
 
@@ -56,7 +57,7 @@ export async function handleGetBacklinks(
   ctx: PluginContext,
   args: Record<string, unknown>
 ): Promise<ToolResult> {
-  const target = String(args.target ?? '').trim()
+  const target = asString(args.target).trim()
   if (!target) {
     return { content: '', error: 'target must not be empty' }
   }
@@ -127,7 +128,7 @@ async function resolveTargetIds(
     `SELECT DISTINCT id FROM blocks WHERE ${clauses.join(' AND ')}`,
     params
   )
-  return rows.map((r) => String(r.id)).filter((s) => s.length > 0)
+  return rows.map((r) => asString(r.id)).filter((s) => s.length > 0)
 }
 
 async function fetchRefsBatch(
@@ -155,9 +156,9 @@ async function fetchRefsBatch(
   const seen = new Set<string>()
   const refs: RefRow[] = []
   for (const r of rows) {
-    const sourceId = String(r.id ?? '')
-    const raw = String(r.raw_content ?? '').toLowerCase()
-    const snippet = String(r.clean_content ?? '').replace(/<\/?mark>/gi, '')
+    const sourceId = asString(r.id)
+    const raw = asString(r.raw_content).toLowerCase()
+    const snippet = asString(r.clean_content).replace(/<\/?mark>/gi, '')
     for (const id of ids) {
       const normalizedId = id.toLowerCase()
       const backlink = raw.includes(`((${normalizedId}))`)
@@ -184,7 +185,7 @@ function addRef(
   seen.add(key)
   refs.push({
     source_id: sourceId,
-    source_page: String(row.page ?? ''),
+    source_page: asString(row.page),
     snippet,
     type
   })

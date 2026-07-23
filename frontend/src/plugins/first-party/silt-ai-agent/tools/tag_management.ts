@@ -8,6 +8,7 @@
 // rename's blast radius explicit.
 
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import type { AgentToolDef, ToolResult } from '../tool-registry'
 import { stageOperation } from '../staging'
 import { breadcrumb, clampInt } from './_util'
@@ -49,7 +50,7 @@ export async function handleListTags(
   )
   const visible = rows.slice(0, MAX_TAGS)
   const lines = visible.map((r, i) => {
-    const tag = String(r.raw_path ?? '')
+    const tag = asString(r.raw_path)
     const count = Number(r.count ?? 0)
     return `[${i + 1}] #${tag} (${count} block${count === 1 ? '' : 's'})`
   })
@@ -114,17 +115,15 @@ export async function handleFindUntagged(
     return { content: 'No untagged tasks found.' }
   }
   const lines = rows.map((r, i) => {
-    const id = String(r.id ?? '')
-    const body = String(r.clean_content ?? '')
-      .trim()
-      .replace(/\n/g, ' ')
+    const id = asString(r.id)
+    const body = asString(r.clean_content).trim().replace(/\n/g, ' ')
     const snippet = body.length > 120 ? `${body.slice(0, 120)}…` : body
     return [
       `[${i + 1}] block ${id}`,
       `    location: ${breadcrumb(
-        String(r.notebook ?? ''),
-        String(r.section ?? ''),
-        String(r.page ?? '')
+        asString(r.notebook),
+        asString(r.section),
+        asString(r.page)
       )}`,
       `    ${snippet}`
     ].join('\n')
@@ -168,8 +167,8 @@ export async function handleRenameTag(
   ctx: PluginContext,
   args: Record<string, unknown>
 ): Promise<ToolResult> {
-  const oldTag = stripLeadingHash(String(args.old_tag ?? '').trim())
-  const newTag = stripLeadingHash(String(args.new_tag ?? '').trim())
+  const oldTag = stripLeadingHash(asString(args.old_tag).trim())
+  const newTag = stripLeadingHash(asString(args.new_tag).trim())
   if (!oldTag) {
     return { content: '', error: 'old_tag must not be empty' }
   }
@@ -223,8 +222,8 @@ export async function commitRenameTag(
   ctx: PluginContext,
   params: Record<string, unknown>
 ): Promise<ToolResult> {
-  const oldTag = stripLeadingHash(String(params.old_tag ?? '').trim())
-  const newTag = stripLeadingHash(String(params.new_tag ?? '').trim())
+  const oldTag = stripLeadingHash(asString(params.old_tag).trim())
+  const newTag = stripLeadingHash(asString(params.new_tag).trim())
   if (
     !oldTag ||
     !newTag ||
@@ -245,8 +244,8 @@ export async function commitRenameTag(
   let renamed = 0
   const failed: string[] = []
   for (const r of rows) {
-    const id = String(r.id ?? '')
-    const body = String(r.clean_content ?? '')
+    const id = asString(r.id)
+    const body = asString(r.clean_content)
     if (!id || !renameRe.test(body)) {
       // The block no longer carries the literal token (e.g. content changed
       // or the block changed after staging). Skip it — the count must reflect

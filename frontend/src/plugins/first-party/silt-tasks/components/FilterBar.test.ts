@@ -153,7 +153,7 @@ describe('FilterBar facet search (#462)', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: /Owner/ }))
     await tick()
-    const search = screen.getByTestId('owner-facet-search') as HTMLInputElement
+    const search = screen.getByTestId('owner-facet-search')
     search.focus()
     expect(document.activeElement).toBe(search)
 

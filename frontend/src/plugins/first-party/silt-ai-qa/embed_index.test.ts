@@ -5,6 +5,7 @@ import {
   getIndexInfo
 } from './embed_index'
 import type { PluginContext } from '../../sdk'
+import { asString } from '../../../lib/asString'
 
 function mockCtx(meta: Record<string, string>, chunkCount = 0): PluginContext {
   return {
@@ -12,7 +13,7 @@ function mockCtx(meta: Record<string, string>, chunkCount = 0): PluginContext {
       migrate: vi.fn(async () => {}),
       query: vi.fn(async (sql: string, params?: unknown[]) => {
         if (sql.includes('index_meta') && sql.includes('SELECT')) {
-          const key = String(params?.[0] ?? '')
+          const key = asString(params?.[0])
           const v = meta[key]
           return { rows: v != null ? [{ value: v }] : [] }
         }

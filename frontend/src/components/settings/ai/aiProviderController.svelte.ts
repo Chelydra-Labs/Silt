@@ -488,7 +488,7 @@ export function createAIProviderController() {
         const ok = await updateOne('chat', type)
         if (ok) {
           const embedType = supportsEmbeddings(type) ? type : 'local'
-          await updateOne('embedding', embedType as ProviderType)
+          await updateOne('embedding', embedType)
         }
       })()
     } else {
@@ -636,7 +636,7 @@ export function createAIProviderController() {
     const chatSupportsEmbed = supportsEmbeddings(config.chat.provider_type)
     config.embedding.provider_type = chatSupportsEmbed
       ? config.chat.provider_type
-      : ('local' as ProviderType)
+      : 'local'
     config.embedding.base_url = chatSupportsEmbed
       ? config.chat.base_url
       : providerDefaultURL('local')

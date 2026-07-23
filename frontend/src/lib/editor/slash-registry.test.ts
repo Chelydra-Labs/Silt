@@ -78,7 +78,7 @@ describe('slash-command registry (#110, #158)', () => {
       registerSlashCommand({
         id: 'x',
         label: ''
-      } as import('./slash-registry').SlashCommand)
+      })
     ).toThrow()
   })
 

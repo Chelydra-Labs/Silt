@@ -131,7 +131,7 @@
       groups = [...byPage.values()]
       previewStale = false
     } catch (e) {
-      statusMessage = `Preview failed: ${e}`
+      statusMessage = `Preview failed: ${String(e)}`
     } finally {
       loading = false
     }
@@ -304,7 +304,7 @@
         })
       }
     } catch (e) {
-      statusMessage = `Apply failed: ${e}`
+      statusMessage = `Apply failed: ${String(e)}`
     } finally {
       // Commit the batch (full or partial) before clearing applying. If
       // SaveFileBlocks threw mid-loop, newLog already holds the pages that
@@ -334,7 +334,7 @@
         lastBatch.length === 1 ? '' : 's'
       }).`
     } catch (e) {
-      statusMessage = `Undo failed: ${e}`
+      statusMessage = `Undo failed: ${String(e)}`
     } finally {
       applying = false
     }

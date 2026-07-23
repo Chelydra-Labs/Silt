@@ -3,7 +3,6 @@
 import type {
   PluginAIChatMessage,
   PluginAICompleteResult,
-  PluginAIStream,
   PluginContext
 } from '../../../sdk'
 
@@ -36,7 +35,7 @@ export async function completeBuffered(
     temperature: 0.3
   })
   if (res && typeof res === 'object' && 'content' in res) {
-    return res as PluginAICompleteResult
+    return res
   }
   throw new Error('Unexpected complete() result shape')
 }
@@ -61,12 +60,12 @@ export async function completeStreaming(
 ): Promise<{ content: string; model: string }> {
   const maxTokens = opts.maxTokens ?? 1600
   try {
-    const stream = (await ctx.ai.complete({
+    const stream = await ctx.ai.complete({
       messages,
       maxTokens,
       temperature: 0.3,
       stream: true
-    })) as PluginAIStream
+    })
 
     opts.onSession?.({
       cancel: () => {

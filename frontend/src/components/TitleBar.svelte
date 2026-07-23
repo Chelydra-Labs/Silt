@@ -42,11 +42,11 @@
   }
 
   onMount(() => {
-    syncMaximised()
+    void syncMaximised()
     isMac = /mac/i.test(navigator.platform || navigator.userAgent)
     // Maximize/restore triggers a viewport resize; re-sync the icon then.
     const onResize = () => {
-      syncMaximised()
+      void syncMaximised()
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)

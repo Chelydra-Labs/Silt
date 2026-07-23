@@ -8,6 +8,7 @@
 // cite: block id, location, snippet, score.
 
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import {
   hybridRetrieve,
   type RetrieveOptions,
@@ -69,13 +70,14 @@ interface SearchFilters {
  * keyword hits. If a future agent maintains its own index, swap this for a real
  * KNN implementation bound to ctx.pluginDb.
  */
-const agentVectorSearch: VectorSearchFn = async (): Promise<RankedHit[]> => []
+const agentVectorSearch: VectorSearchFn = (): Promise<RankedHit[]> =>
+  Promise.resolve([])
 
 export async function handleSearchNotes(
   ctx: PluginContext,
   args: Record<string, unknown>
 ): Promise<ToolResult> {
-  const query = String(args.query ?? '').trim()
+  const query = asString(args.query).trim()
   if (!query) {
     return { content: '', error: 'query must not be empty' }
   }

@@ -3,6 +3,7 @@
 // instances — String(err) yields "[object Object]" and must not be used.
 
 import type { PluginAIError } from '../sdk'
+import { asString } from '../../lib/asString'
 
 export function formatAIError(e: unknown): string {
   if (e instanceof Error) {
@@ -41,7 +42,7 @@ export function formatAIError(e: unknown): string {
     }
   }
   if (e == null) return 'The AI request failed.'
-  return String(e)
+  return asString(e, 'The AI request failed.')
 }
 
 export function isAbortError(e: unknown): boolean {

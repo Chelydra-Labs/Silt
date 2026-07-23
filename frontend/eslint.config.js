@@ -4,6 +4,10 @@ import globals from 'globals'
 import ts from 'typescript-eslint'
 import svelte from 'eslint-plugin-svelte'
 import svelteConfig from './svelte.config.js'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+
+const tsconfigRootDir = path.dirname(fileURLToPath(import.meta.url))
 
 // Authored frontend source only. Bindings, dist, coverage, and dependencies
 // are regenerated or third-party and must not be linted.
@@ -17,13 +21,17 @@ export default defineConfig(
   ]),
 
   js.configs.recommended,
-  ts.configs.recommended,
+  ...ts.configs.recommendedTypeChecked,
   svelte.configs.recommended,
 
   {
     languageOptions: {
       globals: {
         ...globals.browser
+      },
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir
       }
     }
   },
@@ -32,15 +40,18 @@ export default defineConfig(
     files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],
     languageOptions: {
       parserOptions: {
+        projectService: true,
+        tsconfigRootDir,
+        extraFileExtensions: ['.svelte'],
         parser: ts.parser,
         svelteConfig
       }
     }
   },
 
-  // Underscore-prefixed names are intentional discards (callback params, destructure).
   {
     rules: {
+      // Underscore-prefixed names are intentional discards.
       '@typescript-eslint/no-unused-vars': [
         'error',
         {
@@ -49,7 +60,31 @@ export default defineConfig(
           caughtErrorsIgnorePattern: '^_',
           destructuredArrayIgnorePattern: '^_'
         }
-      ]
+      ],
+      // Staged only: Wails-generated bindings and many IPC payloads are typed
+      // as `any`/`unknown` today. Enabling no-unsafe-* floods the gate with
+      // binding-boundary noise rather than authored-logic bugs. Re-enable when
+      // binding d.ts / plugin IPC types are tightened (follow-up to #723).
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off'
+    }
+  },
+
+  // Vitest: async mock factories often return resolved values without await;
+  // expect(fn) passes unbound methods by design.
+  {
+    files: [
+      '**/*.{test,spec}.{ts,js}',
+      '**/test-helpers.ts',
+      '**/*.stub.svelte',
+      '**/__test_helpers__/**'
+    ],
+    rules: {
+      '@typescript-eslint/require-await': 'off',
+      '@typescript-eslint/unbound-method': 'off'
     }
   }
 )

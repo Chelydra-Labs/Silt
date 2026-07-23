@@ -119,9 +119,7 @@ describe('agent-loop', () => {
     expect(chunks.join('')).toBe('The answer is found it.')
 
     // Lean audit payloads: metadata only — never raw args / vault bodies.
-    const payloads = auditEvent.mock.calls.map(
-      (c) => c[0] as Record<string, unknown>
-    )
+    const payloads = auditEvent.mock.calls.map((c) => c[0])
     expect(payloads.length).toBeGreaterThanOrEqual(2)
     for (const p of payloads) {
       expect(p.kind).toBe('tool_call')
@@ -314,7 +312,7 @@ describe('agent-loop', () => {
       activeNotebook: '',
       activeSection: '',
       activePage: ''
-    } as PluginContext
+    }
     const prompt = buildSystemPrompt(ctx, {
       notebook: '',
       section: '',
@@ -654,7 +652,7 @@ describe('agent-loop staging', () => {
   ): PluginContext {
     const db = mockPluginDb()
     const baseCtx = mockCtx(completeImpl)
-    return { ...baseCtx, pluginDb: db.db } as unknown as PluginContext
+    return { ...baseCtx, pluginDb: db.db }
   }
 
   it('on confirm: pauses via onStaging, runs commit, feeds result to model', async () => {

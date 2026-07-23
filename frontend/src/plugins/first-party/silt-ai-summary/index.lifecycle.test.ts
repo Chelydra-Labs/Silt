@@ -23,7 +23,7 @@ const {
     mockRegistered.delete(id)
   }),
   mockController: {
-    state: {} as Record<string, unknown>,
+    state: {},
     getSettings: vi.fn(),
     generateFor: vi.fn(async () => ({ ok: true, result: {} })),
     scheduleGenerate: vi.fn(),
@@ -127,7 +127,7 @@ describe('mountForPage surface swap', () => {
   beforeEach(() => {
     // Reset module-level state (controller, mountedKind, lastPageId) so each
     // test starts clean. onVaultClose nulls everything + unregisters.
-    plugin.onVaultClose!()
+    plugin.onVaultClose()
     mockRegister.mockClear()
     mockUnregister.mockClear()
     mockRegistered.clear()
@@ -224,7 +224,7 @@ describe('mountForPage surface swap', () => {
 
     // Re-open the vault with a ctx whose SQLite serves v1 content, then bump
     // it to v2 mid-test to simulate an edit between note switches.
-    plugin.onVaultClose!()
+    plugin.onVaultClose()
     let current = v1
     const { ctx: ctxLive, handlers: handlersLive } = makeCtx({
       content: ''
@@ -274,7 +274,7 @@ describe('mountForPage surface swap', () => {
     const content = 'stable content'
     const hash = await computeContentHash(content)
 
-    plugin.onVaultClose!()
+    plugin.onVaultClose()
     const { ctx: ctxLive, handlers: handlersLive } = makeCtx({ content })
     ctx = ctxLive
     handlers = handlersLive
@@ -296,7 +296,7 @@ describe('mountForPage surface swap', () => {
     // Pre-#455 dismissals have no content binding — the upgrade must NOT
     // suddenly re-show every previously-dismissed banner. The hash is
     // computed for the new path but the legacy entry still wins.
-    plugin.onVaultClose!()
+    plugin.onVaultClose()
     const { ctx: ctxLive, handlers: handlersLive } = makeCtx({
       content: 'any content'
     })
@@ -324,7 +324,7 @@ describe('mountForPage surface swap', () => {
     const content = 'chip-clear content'
     const hash = await computeContentHash(content)
 
-    plugin.onVaultClose!()
+    plugin.onVaultClose()
     const { ctx: ctxLive, handlers: handlersLive } = makeCtx({ content })
     ctx = ctxLive
     handlers = handlersLive
@@ -414,7 +414,7 @@ describe('mountForPage surface swap', () => {
           })
       )
     } as unknown as PluginContext
-    plugin.onVaultClose!()
+    plugin.onVaultClose()
     plugin.onVaultOpen(slowCtx)
 
     const pending = handlers['active-notebook:changed'](noteEvt())
@@ -473,7 +473,7 @@ describe('mountForPage surface swap', () => {
         })
       })
     } as unknown as PluginContext
-    plugin.onVaultClose!()
+    plugin.onVaultClose()
     plugin.onVaultOpen(slowCtx)
 
     const pendingA = handlers['active-notebook:changed']({
@@ -534,7 +534,7 @@ describe('mountForPage surface swap', () => {
         })
       })
     } as unknown as PluginContext
-    plugin.onVaultClose!()
+    plugin.onVaultClose()
     plugin.onVaultOpen(slowCtx)
 
     // Open A, then switch to B (hash pending), then switch to C before B's hash

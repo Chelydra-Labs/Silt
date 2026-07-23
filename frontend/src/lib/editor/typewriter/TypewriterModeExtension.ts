@@ -81,7 +81,7 @@ export const TypewriterMode = Extension.create({
               return
             }
             const ratio = settings.config?.editor?.typewriter_mode_ratio ?? 0.5
-            const container = findScrollContainer(view.dom as HTMLElement)
+            const container = findScrollContainer(view.dom)
             if (!container) return
             const coords = view.coordsAtPos(view.state.selection.head)
             const rect = container.getBoundingClientRect()

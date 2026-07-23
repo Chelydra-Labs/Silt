@@ -11,6 +11,7 @@
 // separate step (update_block).
 
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import type { ToolResult } from '../tool-registry'
 import { breadcrumb, clampInt } from './_util'
 import { embedOne, gatherCandidates, rankCandidates } from './_embedding'
@@ -48,7 +49,7 @@ export async function handleSuggestLinkTargets(
   ctx: PluginContext,
   args: Record<string, unknown>
 ): Promise<ToolResult> {
-  const sourceId = String(args.block_id ?? '').trim()
+  const sourceId = asString(args.block_id).trim()
   if (!sourceId) {
     return { content: '', error: 'block_id must not be empty' }
   }
@@ -63,7 +64,7 @@ export async function handleSuggestLinkTargets(
   if (!row) {
     return { content: '', error: `block ${sourceId} not found` }
   }
-  const sourceText = String(row.clean_content ?? '').trim()
+  const sourceText = asString(row.clean_content).trim()
   if (!sourceText) {
     return {
       content: '',
@@ -191,7 +192,7 @@ export async function resolveWikiLinkTargets(
       params
     )
     for (const r of res.rows) {
-      const id = String(r.id ?? '')
+      const id = asString(r.id)
       if (id) out.push(id)
     }
   }

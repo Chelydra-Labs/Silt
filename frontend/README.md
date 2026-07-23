@@ -103,7 +103,7 @@ npm run build          # production Vite build
 | Command | Responsibility |
 |--------|----------------|
 | `format` / `format:check` | Formatting only (Prettier + `prettier-plugin-svelte`). CSS is formatting-only — no CSS linter. |
-| `lint` | Authored-source correctness patterns (ESLint recommended JS/TS/Svelte, non-type-aware). Does **not** replace `svelte-check`. |
+| `lint` | Authored-source correctness patterns (ESLint recommended JS/TS/Svelte **type-aware** via `typescript-eslint` `recommendedTypeChecked` + `projectService`, including `.svelte`). Does **not** replace `svelte-check`. Wails binding `any` surfaces: `no-unsafe-*` staged off until binding typings tighten. |
 | `check` | Svelte compiler diagnostics, TypeScript in components, and a11y warnings. |
 | `test` | Behavior via Vitest/jsdom. No browser e2e. |
 
@@ -112,4 +112,4 @@ npm run build          # production Vite build
 - **Included:** `src/**/*.{ts,js,svelte}` for lint; `src/**/*.{ts,svelte,css}` for Prettier.
 - **Excluded:** `bindings/` (Wails-generated, gitignored), `dist/` (build output), `coverage/`, `node_modules/`. Do not hand-edit or format generated bindings — regenerate with `npm run generate` / `npm install`.
 
-Pre-commit (`.githooks/pre-commit`) still auto-formats staged `frontend/src` files with Prettier write mode and re-stages them.
+Pre-commit (`.githooks/pre-commit`) auto-formats staged `frontend/src` files with Prettier write mode and re-stages them. Paths are collected with `git diff -z` and passed via `xargs -0 -n 40` so spaces are safe and Windows argv limits are respected.

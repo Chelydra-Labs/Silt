@@ -63,7 +63,7 @@ export default {
       c.loadSettings(ctx)
       void (async () => {
         try {
-          const raw = (await ctx.getPluginSettings()) as Record<string, unknown>
+          const raw = await ctx.getPluginSettings()
           c.setSettings(resolveSettings(raw))
         } catch {
           /* ignore */

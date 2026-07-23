@@ -221,7 +221,7 @@ describe('SelectionBubble', () => {
     await fireEvent.click(getByLabelText('Link'))
     expect(editor._unsetLink).not.toHaveBeenCalled()
     const evt = dispatchSpy.mock.calls
-      .map((c) => c[0] as Event)
+      .map((c) => c[0])
       .find((e) => e.type === 'silt:open-link-input') as CustomEvent
     expect(evt).toBeTruthy()
     dispatchSpy.mockRestore()

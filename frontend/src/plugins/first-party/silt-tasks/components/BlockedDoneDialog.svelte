@@ -66,7 +66,7 @@
     window.addEventListener('keydown', handleKeydown)
     // Focus the confirm button once rendered so keyboard users land on the
     // affirmative action (the conventional default for a confirm dialog).
-    tick().then(() => {
+    void tick().then(() => {
       const els = focusableEls()
       // Cancel is the first button in DOM order; focus the confirm (second)
       // so Enter confirms, matching native confirm() semantics.

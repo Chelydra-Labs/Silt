@@ -73,7 +73,7 @@ if (
 // slice (seeded via initTasksSettings in beforeEach), and every SDK setter is
 // a spy so the reschedule dispatcher can be asserted.
 const mocks = vi.hoisted(() => ({
-  tasksSettings: {} as Record<string, unknown>,
+  tasksSettings: {},
   sqliteQuery: vi.fn(),
   setTaskDueDate: vi.fn().mockResolvedValue(true),
   createTask: vi.fn().mockResolvedValue('new-task-id'),
@@ -154,7 +154,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
       return () => {}
     },
     ...overrides
-  } as PluginContext
+  }
 }
 
 // A row factory covering every TaskDetail field the unified query projects
@@ -359,7 +359,7 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     ])
     await renderCalendar()
 
-    const chip = screen.getByText('Edit subtree') as HTMLElement
+    const chip = screen.getByText('Edit subtree')
     chip.focus()
     await fireEvent.keyDown(chip, { key: 'Enter', shiftKey: true })
     await flush()
@@ -398,7 +398,7 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     ])
     await renderCalendar()
 
-    const chip = screen.getByText('Keyboard task') as HTMLElement
+    const chip = screen.getByText('Keyboard task')
     chip.focus()
     await fireEvent.keyDown(chip, { key: 'ArrowRight', altKey: true })
     await flush()
@@ -425,7 +425,7 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     await fireEvent.dragStart(chip)
     const cell = document.querySelector(`[data-celldate="${TODAY}"]`)!
     await fireEvent.dragOver(cell)
-    await fireEvent.drop(cell!)
+    await fireEvent.drop(cell)
     await flush()
 
     expect(mocks.setTaskDueDate).not.toHaveBeenCalled()
@@ -486,7 +486,7 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     const targetKey = ymdForCell(20)
     const cell = document.querySelector(`[data-celldate="${targetKey}"]`)!
     await fireEvent.dragOver(cell)
-    await fireEvent.drop(cell!)
+    await fireEvent.drop(cell)
     await flush()
 
     expect(mocks.setTaskDueDate).toHaveBeenCalledWith('u1', targetKey)

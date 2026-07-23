@@ -26,18 +26,17 @@ function makeMockEditor(overrides: Record<string, boolean> = {}) {
   const handlers: Record<string, Array<() => void>> = {}
   const focusReturnSpy = vi.fn()
   const cellEl = document.createElement('td')
-  cellEl.getBoundingClientRect = () =>
-    ({
-      top: 200,
-      bottom: 230,
-      left: 100,
-      right: 180,
-      width: 80,
-      height: 30,
-      x: 100,
-      y: 200,
-      toJSON: () => ({})
-    }) as DOMRect
+  cellEl.getBoundingClientRect = () => ({
+    top: 200,
+    bottom: 230,
+    left: 100,
+    right: 180,
+    width: 80,
+    height: 30,
+    x: 100,
+    y: 200,
+    toJSON: () => ({})
+  })
 
   const $from = {
     depth: 3,
@@ -187,7 +186,7 @@ describe('TableContextToolbar', () => {
     await tick()
     const toolbar = container.querySelector('[role="toolbar"]')!
     const buttons = toolbar.querySelectorAll<HTMLButtonElement>('[data-tb]')
-    fireEvent.keyDown(toolbar, { key: 'ArrowRight' })
+    void fireEvent.keyDown(toolbar, { key: 'ArrowRight' })
     await tick()
     expect(document.activeElement).toBe(buttons[1])
   })
@@ -202,10 +201,10 @@ describe('TableContextToolbar', () => {
     const buttons = toolbar.querySelectorAll<HTMLButtonElement>('[data-tb]')
     // row-above(0), row-below(1), del-row(2 disabled), col-left(3)...
     // From index 1, Arrow Right should skip del-row → col-left.
-    fireEvent.keyDown(toolbar, { key: 'ArrowRight' })
+    void fireEvent.keyDown(toolbar, { key: 'ArrowRight' })
     await tick()
     expect(document.activeElement).toBe(buttons[1])
-    fireEvent.keyDown(toolbar, { key: 'ArrowRight' })
+    void fireEvent.keyDown(toolbar, { key: 'ArrowRight' })
     await tick()
     expect(document.activeElement).toBe(buttons[3])
   })
@@ -218,7 +217,7 @@ describe('TableContextToolbar', () => {
     await tick()
     const toolbar = container.querySelector('[role="toolbar"]')!
     const buttons = toolbar.querySelectorAll<HTMLButtonElement>('[data-tb]')
-    fireEvent.keyDown(toolbar, { key: 'End' })
+    void fireEvent.keyDown(toolbar, { key: 'End' })
     await tick()
     expect(document.activeElement).toBe(buttons[5])
   })
@@ -230,7 +229,7 @@ describe('TableContextToolbar', () => {
     })
     await tick()
     const toolbar = container.querySelector('[role="toolbar"]')!
-    fireEvent.keyDown(toolbar, { key: 'Escape' })
+    void fireEvent.keyDown(toolbar, { key: 'Escape' })
     expect(editor._focusReturnSpy).toHaveBeenCalled()
   })
 
@@ -244,7 +243,7 @@ describe('TableContextToolbar', () => {
     const buttons = toolbar.querySelectorAll<HTMLButtonElement>('[data-tb]')
     // Navigate to index 2 (del-row).
     for (let k = 0; k < 2; k++) {
-      fireEvent.keyDown(toolbar, { key: 'ArrowRight' })
+      void fireEvent.keyDown(toolbar, { key: 'ArrowRight' })
       await tick()
     }
     expect(buttons[2].tabIndex).toBe(0)

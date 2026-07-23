@@ -48,7 +48,7 @@ cd frontend && npm run format:check && npm run lint && npm run check && npm test
 Frontend quality gates (local and CI) are distinct:
 
 - **`format:check`** — Prettier on authored `src` (ts/svelte/css). Write mode remains `npm run format` and the pre-commit hook.
-- **`lint`** — ESLint on authored JS/TS/Svelte (including colocated tests). Does not lint generated `bindings/` or `dist/`.
+- **`lint`** — ESLint type-aware recommended rules on authored JS/TS/Svelte (including colocated tests; `projectService` + `.svelte`). Does not lint generated `bindings/` or `dist/`. Does not replace `svelte-check`.
 - **`check`** — `svelte-check` for Svelte/TypeScript diagnostics and a11y warnings.
 - **`test`** — Vitest/jsdom only; no browser-driven e2e.
 

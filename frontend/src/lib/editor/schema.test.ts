@@ -316,7 +316,7 @@ function firstBlockOfType(
     if (!found && node.type.name === type) {
       found = {
         name: node.type.name,
-        attrs: { ...node.attrs } as Record<string, unknown>
+        attrs: { ...node.attrs }
       }
     }
   })

@@ -67,7 +67,7 @@ function setPageState(state: unknown) {
 }
 function clearPageState() {
   for (const k of Object.keys(mockController.state)) {
-    delete mockController.state[k as keyof typeof mockController.state]
+    delete mockController.state[k]
   }
 }
 
@@ -494,7 +494,7 @@ describe('SummaryBanner', () => {
     })
     const cta = getByRole('button', { name: /Open AI settings/i })
     expect(cta).toBeTruthy()
-    fireEvent.click(cta)
+    void fireEvent.click(cta)
     expect(ctx.openSettings).toHaveBeenCalledWith('ai')
   })
 
@@ -514,7 +514,7 @@ describe('SummaryBanner', () => {
     })
     const cta = getByRole('button', { name: /Open AI settings/i })
     expect(cta).toBeTruthy()
-    fireEvent.click(cta)
+    void fireEvent.click(cta)
     expect(ctx.openSettings).toHaveBeenCalledWith('ai')
   })
 
@@ -616,7 +616,7 @@ describe('SummaryBanner', () => {
       expect(container.querySelector('.updating-line')).toBeTruthy() // baseline: spinner shown
 
       // Controller's run() wins its generation guard and clears stale.
-      const ps = mockController.state[PAGE_ID] as PageState
+      const ps = mockController.state[PAGE_ID]
       ps.stale = false
       await tick()
 

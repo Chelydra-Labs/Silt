@@ -13,6 +13,7 @@
 // reuse an incompatible vector.
 
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 
 /** Candidate pool cap. Bounds per-call embedding cost when the cache is cold. */
 export const CANDIDATE_LIMIT = 200
@@ -119,8 +120,8 @@ function rememberIdentity(
     // Newer hosts may return provider metadata; older hosts intentionally omit
     // credentials and use the empty value, which still keeps model changes
     // isolated.
-    provider: String(r.provider ?? r.provider_type ?? ''),
-    model: String(r.model ?? ''),
+    provider: asString(r.provider ?? r.provider_type),
+    model: asString(r.model),
     dimensions: Number(r.dimensions ?? fallbackDimensions)
   }
   embeddingIdentities.set(ctx, identity)
@@ -204,14 +205,14 @@ export async function gatherCandidates(
   if (keywords.length > 0) {
     const ftsRows = await safeFts(ctx, keywords.join(' OR '))
     for (const r of ftsRows) {
-      const id = String(r.id ?? '')
+      const id = asString(r.id)
       if (!id || excludeIds.has(id) || byId.has(id)) continue
       byId.set(id, {
         id,
-        clean_content: String(r.clean_content ?? ''),
-        notebook: String(r.notebook ?? ''),
-        section: String(r.section ?? ''),
-        page: String(r.page ?? '')
+        clean_content: asString(r.clean_content),
+        notebook: asString(r.notebook),
+        section: asString(r.section),
+        page: asString(r.page)
       })
     }
   }
@@ -295,15 +296,15 @@ async function fetchCandidateRows(
   const { rows } = await ctx.sqliteQuery(sql, params)
   return rows
     .filter((r) => {
-      const text = String(r.clean_content ?? '').trim()
+      const text = asString(r.clean_content).trim()
       return text.length > 0
     })
     .map((r) => ({
-      id: String(r.id ?? ''),
-      clean_content: String(r.clean_content ?? '').trim(),
-      notebook: String(r.notebook ?? ''),
-      section: String(r.section ?? ''),
-      page: String(r.page ?? '')
+      id: asString(r.id),
+      clean_content: asString(r.clean_content).trim(),
+      notebook: asString(r.notebook),
+      section: asString(r.section),
+      page: asString(r.page)
     }))
 }
 
@@ -349,15 +350,15 @@ async function readCachedVectors(
   }
   const map = new Map<string, CachedVector>()
   for (const r of rows) {
-    const id = String(r.block_id ?? '')
+    const id = asString(r.block_id)
     if (!id) continue
     const vec = parseVector(r.vector)
     const dimensions = Number(r.dimensions ?? 0)
     if (!validVector(vec, expectedDimensions)) continue
     if (dimensions > 0 && dimensions !== vec.length) continue
-    const provider = String(r.provider ?? '')
-    const model = String(r.model ?? '')
-    const taskType = String(r.task_type ?? '')
+    const provider = asString(r.provider)
+    const model = asString(r.model)
+    const taskType = asString(r.task_type)
     if (identity) {
       if (provider && identity.provider && provider !== identity.provider)
         continue
@@ -369,7 +370,7 @@ async function readCachedVectors(
     }
     map.set(id, {
       block_id: id,
-      content_hash: String(r.content_hash ?? ''),
+      content_hash: asString(r.content_hash),
       provider,
       model,
       dimensions: dimensions || vec.length,

@@ -13,6 +13,7 @@
 // tool wrapper (param validation, source lookup, output formatting).
 
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import type { ToolResult } from '../tool-registry'
 import { breadcrumb, clampInt } from './_util'
 import { embedOne, gatherCandidates, rankCandidates } from './_embedding'
@@ -50,7 +51,7 @@ export async function handleGetRelatedNotes(
   ctx: PluginContext,
   args: Record<string, unknown>
 ): Promise<ToolResult> {
-  const sourceId = String(args.block_id ?? '').trim()
+  const sourceId = asString(args.block_id).trim()
   if (!sourceId) {
     return { content: '', error: 'block_id must not be empty' }
   }
@@ -134,7 +135,7 @@ async function fetchSourceContent(
   if (!row) {
     return { error: `block ${id} not found` }
   }
-  const text = String(row.clean_content ?? '').trim()
+  const text = asString(row.clean_content).trim()
   if (!text) {
     return { error: `block ${id} has no content to compare` }
   }

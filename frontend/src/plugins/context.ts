@@ -1,13 +1,8 @@
-import type {
-  PluginContext,
-  SearchHit,
-  SqliteQueryResult,
-  SubtreeBlock,
-  TaskStatus
-} from './sdk'
+import type { PluginContext, SqliteQueryResult, TaskStatus } from './sdk'
 import { localToday } from './sdk'
 import { captureUiLocation } from './ui-location'
 import { stripReasoningContent } from './stripReasoning'
+import { asString } from '../lib/asString'
 import {
   PluginRawQuery,
   PluginMutateBlock,
@@ -101,14 +96,12 @@ function getPluginSchemaDefault(pluginID: string, key: string): unknown {
 
 // normalizeAIError coerces whatever shape a Wails IPC rejection arrives in — a
 // structured object (keyed by `code` or legacy `kind`), an Error, or a bare
-// string — into the documented PluginAIError shape. Wails v2 does not guarantee
-// a custom Go error type's fields survive IPC, so this wrapper IS the contract a
-// plugin relies on (`catch(e){ if(e.code==='rate-limited') … }`).
-function normalizeAIError(err: unknown): {
-  code: string
-  status?: number
-  message: string
-} {
+// string — into an Error carrying the documented PluginAIError fields. Wails v2
+// does not guarantee a custom Go error type's fields survive IPC, so this
+// wrapper IS the contract a plugin relies on (`catch(e){ if(e.code==='rate-limited') … }`).
+type NormalizedAIError = Error & { code: string; status?: number }
+
+function normalizeAIError(err: unknown): NormalizedAIError {
   if (err != null && typeof err === 'object') {
     const e = err as Record<string, unknown>
     const code =
@@ -127,14 +120,27 @@ function normalizeAIError(err: unknown): {
           : code !== 'unknown'
             ? code
             : 'AI request failed'
-    const status =
-      typeof e.status === 'number' ? (e.status as number) : undefined
-    return { code, status, message }
+    const status = typeof e.status === 'number' ? e.status : undefined
+    const out = new Error(message) as NormalizedAIError
+    out.name = 'PluginAIError'
+    out.code = code
+    if (status !== undefined) out.status = status
+    return out
   }
-  return {
-    code: 'unknown',
-    message: err == null ? 'unknown error' : String(err)
-  }
+  const message =
+    err == null
+      ? 'unknown error'
+      : typeof err === 'string'
+        ? err
+        : typeof err === 'number' ||
+            typeof err === 'boolean' ||
+            typeof err === 'bigint'
+          ? String(err)
+          : 'unknown error'
+  const out = new Error(message) as NormalizedAIError
+  out.name = 'PluginAIError'
+  out.code = 'unknown'
+  return out
 }
 
 /**
@@ -202,7 +208,7 @@ export function makePluginContext(
       PluginRawQuery(pluginID, sessionToken ?? '', sql, params ?? []).then(
         (res) => {
           const out: SqliteQueryResult = {
-            rows: (res?.rows as Record<string, unknown>[]) ?? [],
+            rows: res?.rows ?? [],
             truncated: !!res?.truncated
           }
           return out
@@ -282,7 +288,7 @@ export function makePluginContext(
     // saveSubtreeBlocks routes through the Plugin wrapper (gated by
     // CapContentMutate); fetchSubtree/getTaskBlockers/searchBlocks are reads
     // and stay direct (the fullTextSearch precedent).
-    fetchSubtree: (blockId) => FetchSubtree(blockId) as Promise<SubtreeBlock[]>,
+    fetchSubtree: (blockId) => FetchSubtree(blockId),
     // Host OS username — default for the local_author pref (#430). Direct
     // read (no capability gate): the value is not secret and every plugin
     // surface that renders comment attribution needs it.
@@ -419,7 +425,7 @@ export function makePluginContext(
         sort: '',
         vaultOnly: false
       })
-      return (res.results ?? []) as unknown as SearchHit[]
+      return res.results ?? []
     },
 
     // --- Block CRUD (#104) — gated by content-mutate (#156) -----------------
@@ -511,7 +517,7 @@ export function makePluginContext(
       PluginReadFile(pluginID, sessionToken ?? '', notebook, relPath).then(
         (res) => {
           // Wails encodes []byte as a base64 string over the IPC boundary.
-          const b64 = (res?.bytes as unknown as string) ?? ''
+          const b64 = res?.bytes ?? ''
           return base64ToUint8(b64)
         }
       ),
@@ -606,11 +612,7 @@ export function makePluginContext(
     // --- Editor decorations (#110) — read-only overlays --------------------
     // Capability gate lives INSIDE the registry (#158).
     provideDecorations: (id, provider) => {
-      return registerDecorationProvider(
-        id,
-        pluginID,
-        provider as Parameters<typeof registerDecorationProvider>[2]
-      )
+      return registerDecorationProvider(id, pluginID, provider)
     },
 
     // --- Rendered UI surfaces (#117) — capability-gated (#154 Go-side gate) -
@@ -743,10 +745,10 @@ export function makePluginContext(
             )) as { stream_id?: string; streamId?: string; model?: string }
             const streamId = start?.stream_id ?? start?.streamId ?? ''
             if (!streamId) {
-              throw {
+              throw normalizeAIError({
                 code: 'bad-request',
                 message: 'stream start returned no stream_id'
-              }
+              })
             }
             return createAIStream(
               streamId,
@@ -793,7 +795,7 @@ export function makePluginContext(
             dimensions: req.dimensions,
             // task_type is on the Go PluginAIEmbedInput; bindings regenerate on build.
             task_type: req.taskType ?? ''
-          } as Parameters<typeof PluginAIEmbed>[2])
+          })
           const usage = res?.usage as
             | {
                 prompt_tokens?: number
@@ -880,13 +882,13 @@ function createAIStream(
         model: string
         usage?: PluginAICompleteResult['usage']
       }
-    | { kind: 'error'; err: unknown }
+    | { kind: 'error'; err: NormalizedAIError }
 
   const queue: QueueItem[] = []
   let wake: (() => void) | null = null
   let closed = false
   let finalResult: PluginAICompleteResult | null = null
-  let finalError: unknown = null
+  let finalError: NormalizedAIError | null = null
   let resultResolve: ((r: PluginAICompleteResult) => void) | null = null
   let resultReject: ((e: unknown) => void) | null = null
   const resultPromise = new Promise<PluginAICompleteResult>(
@@ -912,14 +914,14 @@ function createAIStream(
     }
   }
 
-  const payloadOf = (ev: { data?: unknown } | unknown) => {
+  const payloadOf = (ev: unknown) => {
     if (
       ev &&
       typeof ev === 'object' &&
       'data' in ev &&
       (ev as { data?: unknown }).data !== undefined
     ) {
-      return (ev as { data: unknown }).data as Record<string, unknown>
+      return ev.data as Record<string, unknown>
     }
     return ev as Record<string, unknown>
   }
@@ -933,15 +935,15 @@ function createAIStream(
   const offDelta = Events.On(deltaEv, (ev) => {
     const p = payloadOf(ev)
     if (!p || p.stream_id !== streamId) return
-    push({ kind: 'delta', text: String(p.delta ?? '') })
+    push({ kind: 'delta', text: asString(p.delta) })
   })
   const offDone = Events.On(doneEv, (ev) => {
     const p = payloadOf(ev)
     if (!p || p.stream_id !== streamId) return
-    const content = stripReasoningContent(String(p.content ?? ''))
+    const content = stripReasoningContent(asString(p.content))
     const done: PluginAICompleteResult = {
       content,
-      model: String(p.model ?? startModel ?? ''),
+      model: asString(p.model, startModel ?? ''),
       usage: p.usage as PluginAICompleteResult['usage'],
       tool_calls: p.tool_calls as PluginAICompleteResult['tool_calls']
     }
@@ -964,18 +966,20 @@ function createAIStream(
     if (!p || p.stream_id !== streamId) return
     toolDeltas.push({
       index: Number(p.index ?? 0),
-      id: p.id != null ? String(p.id) : undefined,
-      name: p.name != null ? String(p.name) : undefined,
+      id: p.id != null ? asString(p.id) : undefined,
+      name: p.name != null ? asString(p.name) : undefined,
       arguments_fragment:
-        p.arguments_fragment != null ? String(p.arguments_fragment) : undefined
+        p.arguments_fragment != null
+          ? asString(p.arguments_fragment)
+          : undefined
     })
   })
   const offError = Events.On(errorEv, (ev) => {
     const p = payloadOf(ev)
     if (!p || p.stream_id !== streamId) return
     const err = normalizeAIError({
-      code: p.kind != null ? String(p.kind) : 'unknown',
-      message: p.message != null ? String(p.message) : 'stream error'
+      code: p.kind != null ? asString(p.kind) : 'unknown',
+      message: p.message != null ? asString(p.message) : 'stream error'
     })
     finalError = err
     push({ kind: 'error', err })

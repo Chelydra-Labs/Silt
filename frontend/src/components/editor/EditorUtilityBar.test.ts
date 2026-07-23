@@ -3,15 +3,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, cleanup, fireEvent, screen } from '@testing-library/svelte'
-import type { Editor } from 'svelte-tiptap'
-
 // Hoisted mock state — vi.mock factories are hoisted above imports, so any
 // mutable refs they capture must live inside vi.hoisted.
 const mocks = vi.hoisted(() => ({
   config: {
     ui: {
-      show_format_toolbar: true as boolean,
-      formatting: { color_enabled: true as boolean }
+      show_format_toolbar: true,
+      formatting: { color_enabled: true }
     }
   }
 }))
@@ -43,7 +41,7 @@ describe('EditorUtilityBar (#202 — simplified)', () => {
     const marks = new Set<string>(['bold', 'italic'])
     render(EditorUtilityBar, {
       props: {
-        editor: { isDestroyed: false } as unknown as Editor,
+        editor: { isDestroyed: false },
         activeMarks: marks
       }
     })

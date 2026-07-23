@@ -366,7 +366,7 @@ export interface PluginContext {
    */
   on: <E extends PluginEventName>(
     event: E,
-    cb: (payload: PluginEventPayload<E>) => void
+    cb: (payload: PluginEventPayload<E>) => void | Promise<void>
   ) => () => void
 
   // --- Expanded content API (#104) --------------------------------------

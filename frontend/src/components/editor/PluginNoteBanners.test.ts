@@ -86,7 +86,7 @@ describe('PluginNoteBanners dismiss (#355)', () => {
     try {
       render(PluginNoteBanners)
       const closeBtn = screen.getByRole('button', { name: /dismiss one/i })
-      fireEvent.click(closeBtn)
+      void fireEvent.click(closeBtn)
 
       // Grace window: the surface is still present immediately after click.
       expect(
@@ -119,7 +119,9 @@ describe('PluginNoteBanners dismiss (#355)', () => {
     try {
       render(PluginNoteBanners)
       // First dismissal.
-      fireEvent.click(screen.getByRole('button', { name: /dismiss repeater/i }))
+      void fireEvent.click(
+        screen.getByRole('button', { name: /dismiss repeater/i })
+      )
       vi.advanceTimersByTime(500)
       expect(
         getSurfaces('note-banner').find((s) => s.id === 'p:re')
@@ -134,7 +136,7 @@ describe('PluginNoteBanners dismiss (#355)', () => {
         html: '<div>2</div>'
       })
       const closeBtn = screen.getByRole('button', { name: /dismiss repeater/i })
-      fireEvent.click(closeBtn)
+      void fireEvent.click(closeBtn)
       vi.advanceTimersByTime(500)
       expect(
         getSurfaces('note-banner').find((s) => s.id === 'p:re')
@@ -158,7 +160,7 @@ describe('PluginNoteBanners dismiss (#355)', () => {
     vi.useFakeTimers()
     try {
       const { unmount } = render(PluginNoteBanners)
-      fireEvent.click(
+      void fireEvent.click(
         screen.getByRole('button', { name: /dismiss transient/i })
       )
       // Surface still present (within grace window).

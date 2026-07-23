@@ -53,16 +53,18 @@
     const idx = sections.findIndex((s) => s.id === section)
     if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
       e.preventDefault()
-      selectSection(sections[(idx + 1) % sections.length].id)
+      void selectSection(sections[(idx + 1) % sections.length].id)
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
       e.preventDefault()
-      selectSection(sections[(idx - 1 + sections.length) % sections.length].id)
+      void selectSection(
+        sections[(idx - 1 + sections.length) % sections.length].id
+      )
     } else if (e.key === 'Home') {
       e.preventDefault()
-      selectSection(sections[0].id)
+      void selectSection(sections[0].id)
     } else if (e.key === 'End') {
       e.preventDefault()
-      selectSection(sections[sections.length - 1].id)
+      void selectSection(sections[sections.length - 1].id)
     }
   }
 
@@ -130,7 +132,9 @@
       {@const sec = row.section}
       <button
         bind:this={navRefs[row.idx]}
-        onclick={() => selectSection(sec.id)}
+        onclick={() => {
+          void selectSection(sec.id)
+        }}
         role="tab"
         id="silt-settings-tab-{sec.id}"
         aria-selected={section === sec.id}

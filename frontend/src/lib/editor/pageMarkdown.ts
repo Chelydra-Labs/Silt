@@ -15,7 +15,7 @@ export async function savePageMarkdown(
   markdown: string
 ): Promise<ParsedBlock[]> {
   const result = await SavePageMarkdown(notebook, section, page, markdown)
-  return (result ?? []) as ParsedBlock[]
+  return result ?? []
 }
 
 /** On-disk page body (no YAML frontmatter). */

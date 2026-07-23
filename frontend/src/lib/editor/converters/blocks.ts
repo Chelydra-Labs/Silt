@@ -12,6 +12,7 @@
 // Go's parser.RenderFileContent remains the single on-disk serializer (#40).
 // The frontend never produces markdown.
 
+import { asString } from '../../asString'
 import { serializeInlineContent, legacyTokenizeInline } from './serialize'
 import type { ParsedBlock, DocJSON, NodeJSON, BlockType } from '../types'
 
@@ -674,7 +675,7 @@ function serializeDetailsToHTML(node: NodeJSON): string {
 // explicit branch here — embeds emit their token, unknown types degrade to
 // their inline text — so no child is ever silently dropped on save.
 function serializeChildNodeToBodyLine(node: NodeJSON): string {
-  const attrs = (node.attrs || {}) as Record<string, unknown>
+  const attrs = node.attrs || {}
 
   // Nested details → recursively serialize to HTML.
   if (node.type === 'details') {
@@ -721,7 +722,7 @@ function serializeChildNodeToBodyLine(node: NodeJSON): string {
   const text = serializeInlineContent(node.content)
 
   if (node.type === 'noteBlock') {
-    const bullet = attrs.bullet !== undefined ? String(attrs.bullet) : ''
+    const bullet = attrs.bullet !== undefined ? asString(attrs.bullet) : ''
     const quote = (attrs.quote as string) || ''
     if (quote) return `${quote}${text}`
     return `${bullet}${text}`
@@ -752,7 +753,7 @@ function serializeTableToGFM(node: NodeJSON): string {
   }))
   // Extract per-column alignment from the header row's cell attrs.
   const headerAligns = (rows[0].content || []).map((c) => {
-    const a = ((c.attrs || {}) as Record<string, unknown>).align
+    const a = (c.attrs || {}).align
     return typeof a === 'string' ? a : ''
   })
   const colCount = Math.max(...grid.map((r) => r.cells.length))
@@ -966,7 +967,7 @@ function calloutBodyLinesToNodes(lines: string[]): NodeJSON[] {
 // region detector re-absorbs them, multi-line children (code, table) get `>` on
 // each line, and nested callouts naturally become `>>`.
 function serializeCalloutToText(node: NodeJSON): string {
-  const attrs = (node.attrs || {}) as Record<string, unknown>
+  const attrs = node.attrs || {}
   const variant = (attrs.variant as string) || 'note'
   const children = node.content || []
 
@@ -1029,8 +1030,8 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
   for (let i = 0; i < content.length; i++) {
     const node = content[i]
     const lineNumber = i + 1
-    const attrs = (node.attrs || {}) as Record<string, unknown>
-    const id = String(attrs.id ?? '')
+    const attrs = node.attrs || {}
+    const id = asString(attrs.id)
 
     // Smart Graph block-level node: the embed token is its own line. We
     // emit a NOTE block carrying just the {{embed:uuid}} text in its body
@@ -1040,7 +1041,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
     if (node.type === 'embedNode') {
       const uuid = (attrs.uuid as string) || ''
       const body = `{{embed:${uuid}}}`
-      const bullet = attrs.bullet !== undefined ? String(attrs.bullet) : ''
+      const bullet = attrs.bullet !== undefined ? asString(attrs.bullet) : ''
       blocks.push({
         id,
         parent_id: '',
@@ -1067,7 +1068,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
     if (node.type === 'blockMathNode') {
       const latex = (attrs.latex as string) || ''
       const body = `$$${latex}$$`
-      const bullet = attrs.bullet !== undefined ? String(attrs.bullet) : ''
+      const bullet = attrs.bullet !== undefined ? asString(attrs.bullet) : ''
       blocks.push({
         id,
         parent_id: '',
@@ -1102,7 +1103,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         pluginID: (attrs.pluginID as string | undefined) || undefined,
         notebook: (attrs.notebook as string | undefined) || undefined
       })
-      const bullet = attrs.bullet !== undefined ? String(attrs.bullet) : ''
+      const bullet = attrs.bullet !== undefined ? asString(attrs.bullet) : ''
       blocks.push({
         id,
         parent_id: '',
@@ -1282,7 +1283,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
         // coexist.
         block.raw_text = `${quoteMarker}${baseCleanText}`
       } else {
-        const bullet = attrs.bullet !== undefined ? String(attrs.bullet) : ''
+        const bullet = attrs.bullet !== undefined ? asString(attrs.bullet) : ''
         block.raw_text = `${bullet}${cleanText}`
       }
     } else {

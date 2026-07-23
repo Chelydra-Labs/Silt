@@ -4,6 +4,7 @@
 // Also hosts the thin Token ↔ NodeJSON[] adapters so the rest of the pipeline
 // can speak either representation.
 
+import { asString } from '../../asString'
 import type { Token, MarkRef } from './tokenize'
 import { tokenizeInline } from './tokenize'
 import { isSafeLinkHref } from './validate'
@@ -97,12 +98,12 @@ function markOpen(mark: MarkRef): string {
     case 'superscript':
       return '<sup>'
     case 'textColor': {
-      const color = (mark.attrs as Record<string, unknown> | undefined)?.color
-      return color ? `<span style="color: ${color}">` : ''
+      const color = mark.attrs?.color
+      return color ? `<span style="color: ${asString(color)}">` : ''
     }
     case 'backgroundColor': {
-      const color = (mark.attrs as Record<string, unknown> | undefined)?.color
-      return color ? `<span style="background-color: ${color}">` : ''
+      const color = mark.attrs?.color
+      return color ? `<span style="background-color: ${asString(color)}">` : ''
     }
     case 'link':
       return '['
@@ -133,8 +134,7 @@ function markClose(mark: MarkRef): string {
     case 'backgroundColor':
       return '</span>'
     case 'link': {
-      const href = (mark.attrs as Record<string, unknown> | undefined)
-        ?.href as string
+      const href = mark.attrs?.href as string
       return `](${isSafeLinkHref(href) ? href : ''})`
     }
     default:
@@ -194,8 +194,8 @@ export function serializeInlineContent(content?: NodeJSON[]): string {
     } else if (child.type === 'pageLinkNode') {
       closeAll()
       let link = `[[${(child.attrs?.target as string) || ''}`
-      if (child.attrs?.heading) link += `#${child.attrs.heading}`
-      if (child.attrs?.alias) link += `|${child.attrs.alias}`
+      if (child.attrs?.heading) link += `#${asString(child.attrs.heading)}`
+      if (child.attrs?.alias) link += `|${asString(child.attrs.alias)}`
       link += ']]'
       result += link
     } else if (child.content) {

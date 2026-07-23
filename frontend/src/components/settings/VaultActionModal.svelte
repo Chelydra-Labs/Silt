@@ -7,16 +7,6 @@
     SwitchVault
   } from '../../../bindings/silt/app.js'
 
-  // CopyVault's runtime return shape (matches main.CopyResult in
-  // bindings/silt/models.js.ts). Declared locally so this component does not depend
-  // on the generated `main` namespace import path.
-  interface CopyResultShape {
-    files_copied: number
-    bytes_copied: number
-    skipped_index: boolean
-    skipped_symlinks: number
-  }
-
   interface Props {
     mode: 'move' | 'copy'
     currentPath: string
@@ -124,7 +114,7 @@
         // event is handled after this returns.
         onClose()
       } else {
-        const res = (await CopyVault(destination)) as CopyResultShape
+        const res = await CopyVault(destination)
         done = {
           path: destination,
           files: res.files_copied,

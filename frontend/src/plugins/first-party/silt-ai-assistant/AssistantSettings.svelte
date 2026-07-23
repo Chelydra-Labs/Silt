@@ -21,7 +21,14 @@
     embedded?: boolean
   }
   // Location props are part of the settings-page surface contract; unused here.
-  let { ctx, manifest, embedded = false }: Props = $props()
+  let {
+    ctx,
+    manifest,
+    embedded = false,
+    activeNotebook: _activeNotebook,
+    activeSection: _activeSection,
+    activePage: _activePage
+  }: Props = $props()
 
   let draft = $state<Settings>({
     ...DEFAULT_SETTINGS,
@@ -39,7 +46,7 @@
 
   async function refresh() {
     try {
-      const raw = (await ctx.getPluginSettings()) as Record<string, unknown>
+      const raw = await ctx.getPluginSettings()
       draft = resolveSettings(raw)
     } catch {
       draft = resolveSettings(null)
@@ -53,9 +60,9 @@
   })
 
   async function write<K extends keyof Settings>(key: K, value: Settings[K]) {
-    draft = { ...draft, [key]: value } as Settings
+    draft = { ...draft, [key]: value }
     try {
-      await ctx.updatePluginSetting(key as string, value as never)
+      await ctx.updatePluginSetting(key, value)
     } catch {
       /* best-effort */
     }
@@ -296,10 +303,7 @@
                 aria-labelledby="wa-action-{a.id}-label"
                 checked={enabled}
                 onchange={(e) =>
-                  void toggleAction(
-                    a.id,
-                    (e.currentTarget as HTMLInputElement).checked
-                  )}
+                  void toggleAction(a.id, e.currentTarget.checked)}
               />
               <span
                 aria-hidden="true"
@@ -352,10 +356,7 @@
             aria-labelledby="wa-vocab-only-label"
             checked={draft.existing_vocab_only}
             onchange={(e) =>
-              void write(
-                'existing_vocab_only',
-                (e.currentTarget as HTMLInputElement).checked
-              )}
+              void write('existing_vocab_only', e.currentTarget.checked)}
           />
           <span
             aria-hidden="true"
@@ -381,7 +382,7 @@
           onchange={(e) =>
             void write(
               'max_tag_suggestions',
-              Number((e.currentTarget as HTMLInputElement).value) || 8
+              Number(e.currentTarget.value) || 8
             )}
         />
       </label>
@@ -420,7 +421,7 @@
           onchange={(e) =>
             void write(
               'max_input_chars',
-              Number((e.currentTarget as HTMLInputElement).value) || 12000
+              Number(e.currentTarget.value) || 12000
             )}
         />
         <span class="text-text-muted text-type-2xs font-label-sm">
@@ -481,11 +482,8 @@
               class="w-full rounded-lg border border-surface-panel-border bg-surface-panel/40 px-3 py-2 text-text-primary font-mono text-type-sm outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start resize-y min-h-[4.5rem]"
               placeholder="Built-in default"
               value={draft.prompt_overrides[a.id] ?? ''}
-              onchange={(e) =>
-                void writeOverride(
-                  a.id,
-                  (e.currentTarget as HTMLTextAreaElement).value
-                )}></textarea>
+              onchange={(e) => void writeOverride(a.id, e.currentTarget.value)}
+            ></textarea>
           </label>
         {/each}
       </div>

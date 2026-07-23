@@ -93,11 +93,11 @@
     // controller's validation gate with no per-field guidance.
     if (typeof customMin === 'number') n = Math.max(n, customMin)
     if (typeof customMax === 'number') n = Math.min(n, customMax)
-    onchange(n as T)
+    onchange(n)
   }
 
   function onSelectInput(raw: string) {
-    onchange(raw as T)
+    onchange(raw)
   }
 </script>
 
@@ -174,8 +174,7 @@
             id="{groupId}-custom"
             class="w-full max-w-xs rounded-lg border border-surface-panel-border bg-surface-panel/40 px-2.5 py-1.5 text-type-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
             value={String(value)}
-            onchange={(e) =>
-              onSelectInput((e.currentTarget as HTMLSelectElement).value)}
+            onchange={(e) => onSelectInput(e.currentTarget.value)}
           >
             {#each customSelectOptions as so (so.value)}
               <option value={so.value}>{so.label}</option>
@@ -191,8 +190,7 @@
               max={customMax ?? 1}
               step={customStep ?? 0.05}
               value={typeof value === 'number' ? value : Number(value)}
-              onchange={(e) =>
-                onNumberInput((e.currentTarget as HTMLInputElement).value)}
+              onchange={(e) => onNumberInput(e.currentTarget.value)}
             />
             <span
               class="text-type-xs text-text-muted tabular-nums min-w-[3rem] text-right"
@@ -209,8 +207,7 @@
             max={customMax}
             step={customStep ?? 1}
             value={typeof value === 'number' ? value : Number(value) || ''}
-            onchange={(e) =>
-              onNumberInput((e.currentTarget as HTMLInputElement).value)}
+            onchange={(e) => onNumberInput(e.currentTarget.value)}
           />
         {/if}
       </div>

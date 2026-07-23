@@ -134,7 +134,7 @@ describe('page-link insertion', () => {
     expect(resolve).toHaveBeenCalledWith('Work/Plans/Roadmap')
     expect(dispatch).toHaveBeenCalledTimes(1)
     const link = (
-      editor.getJSON().content![0] as {
+      editor.getJSON().content[0] as {
         content?: Array<{
           type: string
           attrs?: Record<string, string | null>

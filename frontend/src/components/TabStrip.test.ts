@@ -461,7 +461,7 @@ describe('TabStrip (#142)', () => {
       x: 0,
       y: 0,
       toJSON: () => ({})
-    } as DOMRect)
+    })
 
     await fireEvent.dragStart(tabA)
     tabB.dispatchEvent(

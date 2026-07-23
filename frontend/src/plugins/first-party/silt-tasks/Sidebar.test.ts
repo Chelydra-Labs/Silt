@@ -9,7 +9,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
-  tasksSettings: {} as Record<string, unknown>,
+  tasksSettings: {},
   blockChangedCallbacks: [] as Array<() => void>,
   openDevTools: vi.fn().mockResolvedValue(undefined)
 }))
@@ -117,7 +117,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
       return () => {}
     },
     ...overrides
-  } as PluginContext
+  }
 }
 
 const MANIFEST: PluginManifest = {
@@ -583,7 +583,7 @@ describe('silt-tasks Sidebar (#432)', () => {
     await flush()
     await fireEvent.click(screen.getByTestId('manage-rename-view'))
     await flush()
-    const input = screen.getByTestId('rename-input-u1') as HTMLInputElement
+    const input = screen.getByTestId('rename-input-u1')
     expect(input.value).toBe('Old Name')
     await fireEvent.input(input, { target: { value: 'New Name' } })
     await fireEvent.keyDown(input, { key: 'Enter' })
@@ -610,7 +610,7 @@ describe('silt-tasks Sidebar (#432)', () => {
     await flush()
     await fireEvent.click(screen.getByTestId('manage-rename-view'))
     await flush()
-    const input = screen.getByTestId('rename-input-u1') as HTMLInputElement
+    const input = screen.getByTestId('rename-input-u1')
     await fireEvent.input(input, { target: { value: 'Changed' } })
     await fireEvent.keyDown(input, { key: 'Escape' })
     await flush()
@@ -634,7 +634,7 @@ describe('silt-tasks Sidebar (#432)', () => {
     await flush()
     await fireEvent.click(screen.getByTestId('manage-rename-view'))
     await flush()
-    const input = screen.getByTestId('rename-input-u1') as HTMLInputElement
+    const input = screen.getByTestId('rename-input-u1')
     await fireEvent.input(input, { target: { value: '   ' } })
     await fireEvent.keyDown(input, { key: 'Enter' })
     await flush()
@@ -657,7 +657,7 @@ describe('silt-tasks Sidebar (#432)', () => {
     await flush()
     await fireEvent.click(screen.getByTestId('manage-rename-view'))
     await flush()
-    const input = screen.getByTestId('rename-input-u1') as HTMLInputElement
+    const input = screen.getByTestId('rename-input-u1')
     await fireEvent.input(input, { target: { value: 'Blurred Commit' } })
     // Simulate focus loss (clicking elsewhere) — should commit the non-empty value.
     await fireEvent.blur(input)
@@ -802,7 +802,7 @@ describe('silt-tasks Sidebar (#432)', () => {
     await flush()
     await fireEvent.click(screen.getByTestId('manage-view-u1'))
     await flush()
-    const moveUp = screen.getByTestId('manage-move-up') as HTMLButtonElement
+    const moveUp = screen.getByTestId('manage-move-up')
     expect(moveUp.disabled).toBe(true)
   })
 

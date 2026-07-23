@@ -8,8 +8,7 @@ import { buildQuery, type QueryCtxLike } from './query'
 import {
   clearTaskPageRoute,
   getTaskHubQueryContext,
-  type TaskFilters,
-  type Scope
+  type TaskFilters
 } from './state.svelte'
 
 const ctx: QueryCtxLike = {
@@ -153,7 +152,7 @@ describe('buildQuery — filter branches (ported from silt-kanban)', () => {
 
 describe('buildQuery — combined scope + filters (ported from silt-kanban)', () => {
   it('vault-scope + no filters produces WHERE 1=1 with no params', () => {
-    const { sql, params } = buildQuery('vault' as Scope, emptyFilters, ctx)
+    const { sql, params } = buildQuery('vault', emptyFilters, ctx)
     expect(sql).toContain('WHERE 1=1')
     expect(params).toEqual([])
   })

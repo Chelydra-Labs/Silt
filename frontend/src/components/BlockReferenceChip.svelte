@@ -27,7 +27,7 @@
   async function load() {
     loading = true
     try {
-      ref = (await ResolveBlockReference(uuid)) as BlockRef
+      ref = await ResolveBlockReference(uuid)
     } catch {
       ref = { exists: false }
     } finally {
@@ -36,7 +36,7 @@
   }
 
   onMount(() => {
-    load()
+    void load()
   })
 
   function enter() {

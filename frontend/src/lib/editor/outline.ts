@@ -52,9 +52,7 @@ export function activeHeadingId(
   const parentTop = scrollParent.getBoundingClientRect().top + offset
   let active: string | null = headings[0]?.id ?? null
   for (const h of headings) {
-    const el = scrollParent.querySelector(
-      `[data-id="${CSS.escape(h.id)}"]`
-    ) as HTMLElement | null
+    const el = scrollParent.querySelector(`[data-id="${CSS.escape(h.id)}"]`)
     if (!el) continue
     const top = el.getBoundingClientRect().top
     if (top <= parentTop) active = h.id

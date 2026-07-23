@@ -13,7 +13,7 @@ describe('HotkeyCaptureInput (#519)', () => {
     render(HotkeyCaptureInput, {
       props: { value: 'Ctrl+K', label: 'Quick Search', onchange }
     })
-    const input = screen.getByLabelText('Quick Search') as HTMLInputElement
+    const input = screen.getByLabelText('Quick Search')
     expect(input.value).toBe('Ctrl+K')
     // Focus alone must not start capture (tab-through keyboard UX).
     await fireEvent.focus(input)
@@ -87,7 +87,7 @@ describe('HotkeyCaptureInput (#519)', () => {
     render(HotkeyCaptureInput, {
       props: { value: 'Ctrl+B', label: 'Bold', onchange }
     })
-    const input = screen.getByLabelText('Bold') as HTMLInputElement
+    const input = screen.getByLabelText('Bold')
     await fireEvent.click(input)
     await fireEvent.keyDown(input, { key: 'Escape', bubbles: true })
     expect(onchange).not.toHaveBeenCalled()

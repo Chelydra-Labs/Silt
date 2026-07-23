@@ -127,7 +127,7 @@
 
     const timeout = window.setTimeout(() => {
       offset = 0
-      performSearch(trimmed, 0, /*replace=*/ true)
+      void performSearch(trimmed, 0, /*replace=*/ true)
     }, 175)
 
     return () => window.clearTimeout(timeout)
@@ -221,7 +221,7 @@
 
   function loadMore() {
     if (loading || !hasMore) return
-    performSearch(query.trim(), offset + pageSize, false)
+    void performSearch(query.trim(), offset + pageSize, false)
   }
 
   function handleListScroll() {
@@ -319,9 +319,7 @@
     // Defer until after the selectedIdx class flips the DOM.
     queueMicrotask(() => {
       if (!listEl) return
-      const el = listEl.querySelector(
-        `[data-idx="${selectedIdx}"]`
-      ) as HTMLElement | null
+      const el = listEl.querySelector(`[data-idx="${selectedIdx}"]`)
       el?.scrollIntoView({ block: 'nearest' })
     })
   }

@@ -76,7 +76,7 @@
   async function load() {
     loading = true
     try {
-      ref = (await ResolveBlockReference(uuid)) as EmbedRef
+      ref = await ResolveBlockReference(uuid)
     } catch {
       ref = { exists: false }
     } finally {
@@ -249,12 +249,12 @@
       has: (id: string) =>
         id === uuid || (parentChain ? parentChain.has(id) : false)
     } satisfies EmbedChain)
-    load()
+    void load()
     // Live sync: refresh when the source block changes anywhere.
     offEvent = Events.On('block:changed', (event) => {
       const ev = event.data
       if (ev && ev.id === uuid && !editing && !saveTimer) {
-        load()
+        void load()
       }
     })
   })

@@ -35,7 +35,13 @@
     onCountChange?: (open: number, done: number) => void
   }
 
-  let { ctx, focusBlockId = '', focusKey = '', onCountChange }: Props = $props()
+  let {
+    ctx,
+    manifest: _manifest,
+    focusBlockId = '',
+    focusKey = '',
+    onCountChange
+  }: Props = $props()
 
   // Completed rows are display-only; a narrower shape than the open-task
   // TaskDetail (which the edit drawer requires).
@@ -602,7 +608,7 @@
     queueMicrotask(() => {
       const el = document.querySelector(
         `[data-group]:not([data-group="completed"]) [data-block-id="${CSS.escape(target)}"]`
-      ) as HTMLElement | null
+      )
       if (!el) return
       el.scrollIntoView({ block: 'center', behavior: 'smooth' })
       focusedRowId = target
@@ -654,7 +660,7 @@
     <button
       onclick={(e) => {
         e.stopPropagation()
-        markDone(item)
+        void markDone(item)
       }}
       title="Mark done"
       class="w-5 h-5 rounded todo-check flex-shrink-0 cursor-pointer hover:border-accent-primary-start"
@@ -1056,7 +1062,7 @@
     parentTaskText={subEditorTask.clean_content}
     {ctx}
     onClose={() => {
-      reload()
+      void reload()
       subEditorTask = null
     }}
   />

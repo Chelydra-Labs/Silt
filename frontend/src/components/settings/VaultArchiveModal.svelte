@@ -8,17 +8,7 @@
     PickVaultDestination,
     ImportVault
   } from '../../../bindings/silt/app.js'
-
-  // ExportVault's runtime return shape (matches main.ExportResult in
-  // bindings/silt/models.js.ts). Declared locally so this component does not depend
-  // on the generated `main` namespace import path.
-  interface ExportResultShape {
-    files_archived: number
-    bytes_archived: number
-    page_file_count: number
-    skipped_index: boolean
-    skipped_symlinks: number
-  }
+  import { asString } from '../../lib/asString'
 
   interface Props {
     mode: 'export' | 'import'
@@ -78,7 +68,7 @@
       const p = ev.data as Record<string, unknown>
       if (p && typeof p.current === 'number' && typeof p.total === 'number') {
         progress = {
-          phase: String(p.phase ?? ''),
+          phase: asString(p.phase),
           current: p.current,
           total: p.total
         }
@@ -192,7 +182,7 @@
     progress = null
     try {
       if (mode === 'export') {
-        const res = (await ExportVault(exportDest)) as ExportResultShape
+        const res = await ExportVault(exportDest)
         done = {
           kind: 'export',
           path: exportDest,
