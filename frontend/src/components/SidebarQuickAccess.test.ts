@@ -27,12 +27,18 @@ function makeRecents(count: number) {
 afterEach(cleanup)
 
 describe('SidebarQuickAccess', () => {
-  it('renders nothing when there are no saved pages and not loading/error', () => {
-    const { container } = render(SidebarQuickAccess, { props: baseProps })
-    expect(container.firstElementChild).toBeNull()
+  it('renders empty states when there are no saved pages and not loading/error', () => {
+    render(SidebarQuickAccess, { props: baseProps })
+    expect(
+      screen.getByRole('tabpanel', { name: 'Quick Access' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('No pinned pages yet. Pin pages to access them quickly.')
+    ).toBeInTheDocument()
+    expect(screen.getByText('No recent pages yet.')).toBeInTheDocument()
   })
 
-  it('renders card well container when saved pages exist', () => {
+  it('renders Pinned and Recent sections when saved pages exist', () => {
     const favorites = [{ notebook: 'Work', section: '', page: 'Pinned page' }]
     render(SidebarQuickAccess, {
       props: {
@@ -41,10 +47,10 @@ describe('SidebarQuickAccess', () => {
       }
     })
     expect(
-      screen.getByRole('region', { name: 'Quick access' })
+      screen.getByRole('tabpanel', { name: 'Quick Access' })
     ).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: /Pinned/ })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: /Recent/ })).toBeInTheDocument()
+    expect(screen.getByText(/Pinned \(1\)/)).toBeInTheDocument()
+    expect(screen.getByText(/Recent \(0\)/)).toBeInTheDocument()
     expect(
       screen.getByRole('button', {
         name: 'Unpin Pinned page from Quick Access'
@@ -180,7 +186,7 @@ describe('SidebarQuickAccess', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('switches between Pinned and Recent segmented tabs', async () => {
+  it('renders both Pinned and Recent pages simultaneously', () => {
     const favorites = [{ notebook: 'Work', section: 'Notes', page: 'Starred' }]
     const recents = [
       { notebook: 'Work', section: 'Inbox', page: 'Recent Note', opened_at: 1 }
@@ -194,28 +200,12 @@ describe('SidebarQuickAccess', () => {
       }
     })
 
-    const pinnedTab = screen.getByRole('tab', { name: /Pinned/ })
-    const recentTab = screen.getByRole('tab', { name: /Recent/ })
-
-    expect(pinnedTab).toHaveAttribute('aria-selected', 'true')
-    expect(recentTab).toHaveAttribute('aria-selected', 'false')
     expect(
       screen.getByRole('button', { name: 'Work / Notes / Starred' })
     ).toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: 'Work / Inbox / Recent Note' })
-    ).not.toBeInTheDocument()
-
-    await fireEvent.click(recentTab)
-
-    expect(pinnedTab).toHaveAttribute('aria-selected', 'false')
-    expect(recentTab).toHaveAttribute('aria-selected', 'true')
-    expect(
       screen.getByRole('button', { name: 'Work / Inbox / Recent Note' })
     ).toBeInTheDocument()
-    expect(
-      screen.queryByRole('button', { name: 'Work / Notes / Starred' })
-    ).not.toBeInTheDocument()
   })
 
   it('highlights active item when location matches props', () => {

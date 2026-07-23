@@ -40,16 +40,9 @@
     onRetry
   }: Props = $props()
 
-  let explicitTab: string | null = $state(null)
-  let activeTab = $derived.by(() => {
-    if (explicitTab !== null) return explicitTab
-    return favorites.length > 0 ? 'pinned' : 'recent'
-  })
-
   /** Session-only; not persisted to vault prefs. */
   let recentExpanded = $state(false)
 
-  let hasPages = $derived(favorites.length > 0 || recents.length > 0)
   let pinnedKeys = $derived(new Set(favorites.map((ref) => locatorKey(ref))))
   let recentHasMore = $derived(recents.length > RECENT_COLLAPSED_LIMIT)
   let visibleRecents = $derived(
@@ -88,191 +81,166 @@
   }
 </script>
 
-{#if hasPages || loading || error}
-  <section
-    class="mx-1 mb-2.5 p-1 bg-surface-sidebar border border-surface-sidebar-border/70 rounded-lg shadow-sm"
-    aria-label="Quick access"
-  >
-    {#if loading}
-      <p class="px-2 py-1 m-0 text-type-2xs text-surface-sidebar-text-muted">
-        Loading saved pages…
-      </p>
-    {:else if error}
-      <div class="px-2 py-1" role="status">
-        <p class="m-0 text-type-2xs text-status-warn">{error}</p>
-        <button class="retry" type="button" onclick={onRetry}>Try again</button>
-      </div>
-    {:else}
-      <!-- Segmented View Switcher -->
+<div
+  id="sidebar-quick-panel"
+  role="tabpanel"
+  aria-label="Quick Access"
+  class="flex-1 overflow-y-auto custom-scrollbar px-2 py-1 flex flex-col gap-3"
+>
+  {#if loading}
+    <p class="px-2 py-1 m-0 text-type-2xs text-surface-sidebar-text-muted">
+      Loading saved pages…
+    </p>
+  {:else if error}
+    <div class="px-2 py-1" role="status">
+      <p class="m-0 text-type-2xs text-status-warn">{error}</p>
+      <button class="retry" type="button" onclick={onRetry}>Try again</button>
+    </div>
+  {:else}
+    <!-- Pinned Section -->
+    <div class="flex flex-col gap-1">
       <div
-        class="flex items-center gap-0.5 bg-hover/40 p-0.5 rounded-md mb-1 border border-surface-sidebar-border/40"
-        role="tablist"
-        aria-label="Quick Access Categories"
+        class="px-1 text-surface-sidebar-text-muted text-type-3xs uppercase tracking-widest font-label-sm-bold flex items-center gap-1 select-none"
       >
-        <button
-          type="button"
-          role="tab"
-          id="quick-access-tab-pinned"
-          aria-selected={activeTab === 'pinned'}
-          aria-controls="quick-access-panel"
-          class="flex-1 py-1 px-1.5 border-none rounded text-type-3xs font-label-sm-bold cursor-pointer transition-all flex items-center justify-center gap-1"
-          class:bg-surface-sidebar={activeTab === 'pinned'}
-          class:shadow-sm={activeTab === 'pinned'}
-          class:text-surface-sidebar-text={activeTab === 'pinned'}
-          class:text-surface-sidebar-text-muted={activeTab !== 'pinned'}
-          onclick={() => (explicitTab = 'pinned')}
+        <span
+          class="material-symbols-outlined text-icon-xs text-accent-primary-start"
+          aria-hidden="true">push_pin</span
         >
-          <span>Pinned</span>
-          {#if favorites.length > 0}
-            <span class="opacity-75">({favorites.length})</span>
-          {/if}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="quick-access-tab-recent"
-          aria-selected={activeTab === 'recent'}
-          aria-controls="quick-access-panel"
-          class="flex-1 py-1 px-1.5 border-none rounded text-type-3xs font-label-sm-bold cursor-pointer transition-all flex items-center justify-center gap-1"
-          class:bg-surface-sidebar={activeTab === 'recent'}
-          class:shadow-sm={activeTab === 'recent'}
-          class:text-surface-sidebar-text={activeTab === 'recent'}
-          class:text-surface-sidebar-text-muted={activeTab !== 'recent'}
-          onclick={() => (explicitTab = 'recent')}
-        >
-          <span>Recent</span>
-          {#if recents.length > 0}
-            <span class="opacity-75">({recents.length})</span>
-          {/if}
-        </button>
+        <span>Pinned ({favorites.length})</span>
       </div>
-
-      <!-- Tab Panel Contents (Fixed height box guarantees zero layout shift when switching tabs) -->
-      <div
-        id="quick-access-panel"
-        role="tabpanel"
-        class="h-[108px] overflow-y-auto custom-scrollbar pr-0.5"
-      >
-        {#if activeTab === 'pinned'}
-          {#if favorites.length === 0}
-            <p class="empty">No pinned pages yet.</p>
-          {:else}
-            <div class="flex flex-col gap-0.5">
-              {#each favorites as ref (locatorKey(ref))}
-                {@const itemState = pageState(ref)}
-                {@const active = isActive(ref)}
-                {@const badge = sectionBadge(ref)}
-                <div class="quick-row group">
-                  <button
-                    type="button"
-                    class="page-link"
-                    class:active
-                    disabled={itemState.unavailable}
-                    title={pagePathLabel(ref)}
-                    aria-label={itemState.label
-                      ? pagePathLabel(ref) + ' — ' + itemState.label
-                      : pagePathLabel(ref)}
-                    onclick={() => onOpen(ref)}
-                  >
-                    <span
-                      class="material-symbols-outlined text-icon-xs text-surface-sidebar-text-muted flex-shrink-0"
-                      aria-hidden="true">description</span
-                    >
-                    <span class="truncate flex-1">{ref.page}</span>
-                    {#if badge}
-                      <span class="path-badge truncate">{badge}</span>
-                    {/if}
-                    {#if itemState.label}
-                      <span class="status">{itemState.label}</span>
-                    {/if}
-                  </button>
-                  <button
-                    type="button"
-                    class="pin-toggle hover-only pinned"
-                    aria-label={'Unpin ' + ref.page + ' from Quick Access'}
-                    title="Unpin"
-                    onclick={() => onToggleFavorite(ref)}
-                  >
-                    <span
-                      class="material-symbols-outlined pin-icon"
-                      aria-hidden="true">push_pin</span
-                    >
-                  </button>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        {:else if activeTab === 'recent'}
-          {#if recents.length === 0}
-            <p class="empty">No recent pages yet.</p>
-          {:else}
-            <div class="flex flex-col gap-0.5">
-              {#each visibleRecents as ref (locatorKey(ref))}
-                {@const itemState = pageState(ref)}
-                {@const pinned = isPinned(ref)}
-                {@const active = isActive(ref)}
-                {@const badge = sectionBadge(ref)}
-                <div class="quick-row group">
-                  <button
-                    type="button"
-                    class="page-link recent"
-                    class:active
-                    disabled={itemState.unavailable}
-                    title={pagePathLabel(ref)}
-                    aria-label={itemState.label
-                      ? pagePathLabel(ref) + ' — ' + itemState.label
-                      : pagePathLabel(ref)}
-                    onclick={() => onOpen(ref)}
-                  >
-                    <span
-                      class="material-symbols-outlined text-icon-xs text-surface-sidebar-text-muted flex-shrink-0"
-                      aria-hidden="true">description</span
-                    >
-                    <span class="truncate flex-1">{ref.page}</span>
-                    {#if badge}
-                      <span class="path-badge truncate">{badge}</span>
-                    {/if}
-                    {#if itemState.label}
-                      <span class="status">{itemState.label}</span>
-                    {/if}
-                  </button>
-                  <button
-                    type="button"
-                    class="pin-toggle hover-only"
-                    class:pinned
-                    aria-label={pinned
-                      ? 'Unpin ' + ref.page + ' from Quick Access'
-                      : 'Pin ' + ref.page + ' to Quick Access'}
-                    title={pinned ? 'Unpin' : 'Pin to Quick Access'}
-                    onclick={() => onToggleFavorite(ref)}
-                  >
-                    <span
-                      class="material-symbols-outlined pin-icon"
-                      class:pin-outline={!pinned}
-                      aria-hidden="true">push_pin</span
-                    >
-                  </button>
-                </div>
-              {/each}
-              {#if recentHasMore}
-                <button
-                  type="button"
-                  class="show-more"
-                  aria-expanded={recentExpanded}
-                  onclick={() => {
-                    recentExpanded = !recentExpanded
-                  }}
+      {#if favorites.length === 0}
+        <p class="empty">
+          No pinned pages yet. Pin pages to access them quickly.
+        </p>
+      {:else}
+        <div class="flex flex-col gap-0.5">
+          {#each favorites as ref (locatorKey(ref))}
+            {@const itemState = pageState(ref)}
+            {@const active = isActive(ref)}
+            {@const badge = sectionBadge(ref)}
+            <div class="quick-row group">
+              <button
+                type="button"
+                class="page-link"
+                class:active
+                disabled={itemState.unavailable}
+                title={pagePathLabel(ref)}
+                aria-label={itemState.label
+                  ? pagePathLabel(ref) + ' — ' + itemState.label
+                  : pagePathLabel(ref)}
+                onclick={() => onOpen(ref)}
+              >
+                <span
+                  class="material-symbols-outlined text-icon-xs text-surface-sidebar-text-muted flex-shrink-0"
+                  aria-hidden="true">description</span
                 >
-                  {recentExpanded ? 'Show less' : 'Show more'}
-                </button>
-              {/if}
+                <span class="truncate flex-1">{ref.page}</span>
+                {#if badge}
+                  <span class="path-badge truncate">{badge}</span>
+                {/if}
+                {#if itemState.label}
+                  <span class="status">{itemState.label}</span>
+                {/if}
+              </button>
+              <button
+                type="button"
+                class="pin-toggle hover-only pinned"
+                aria-label={'Unpin ' + ref.page + ' from Quick Access'}
+                title="Unpin"
+                onclick={() => onToggleFavorite(ref)}
+              >
+                <span
+                  class="material-symbols-outlined pin-icon"
+                  aria-hidden="true">push_pin</span
+                >
+              </button>
             </div>
-          {/if}
-        {/if}
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <!-- Recent Section -->
+    <div
+      class="flex flex-col gap-1 border-t border-surface-sidebar-border/40 pt-2"
+    >
+      <div
+        class="px-1 text-surface-sidebar-text-muted text-type-3xs uppercase tracking-widest font-label-sm-bold flex items-center gap-1 select-none"
+      >
+        <span
+          class="material-symbols-outlined text-icon-xs text-surface-sidebar-text-muted"
+          aria-hidden="true">schedule</span
+        >
+        <span>Recent ({recents.length})</span>
       </div>
-    {/if}
-  </section>
-{/if}
+      {#if recents.length === 0}
+        <p class="empty">No recent pages yet.</p>
+      {:else}
+        <div class="flex flex-col gap-0.5">
+          {#each visibleRecents as ref (locatorKey(ref))}
+            {@const itemState = pageState(ref)}
+            {@const pinned = isPinned(ref)}
+            {@const active = isActive(ref)}
+            {@const badge = sectionBadge(ref)}
+            <div class="quick-row group">
+              <button
+                type="button"
+                class="page-link recent"
+                class:active
+                disabled={itemState.unavailable}
+                title={pagePathLabel(ref)}
+                aria-label={itemState.label
+                  ? pagePathLabel(ref) + ' — ' + itemState.label
+                  : pagePathLabel(ref)}
+                onclick={() => onOpen(ref)}
+              >
+                <span
+                  class="material-symbols-outlined text-icon-xs text-surface-sidebar-text-muted flex-shrink-0"
+                  aria-hidden="true">description</span
+                >
+                <span class="truncate flex-1">{ref.page}</span>
+                {#if badge}
+                  <span class="path-badge truncate">{badge}</span>
+                {/if}
+                {#if itemState.label}
+                  <span class="status">{itemState.label}</span>
+                {/if}
+              </button>
+              <button
+                type="button"
+                class="pin-toggle hover-only"
+                class:pinned
+                aria-label={pinned
+                  ? 'Unpin ' + ref.page + ' from Quick Access'
+                  : 'Pin ' + ref.page + ' to Quick Access'}
+                title={pinned ? 'Unpin' : 'Pin to Quick Access'}
+                onclick={() => onToggleFavorite(ref)}
+              >
+                <span
+                  class="material-symbols-outlined pin-icon"
+                  class:pin-outline={!pinned}
+                  aria-hidden="true">push_pin</span
+                >
+              </button>
+            </div>
+          {/each}
+          {#if recentHasMore}
+            <button
+              type="button"
+              class="show-more"
+              aria-expanded={recentExpanded}
+              onclick={() => {
+                recentExpanded = !recentExpanded
+              }}
+            >
+              {recentExpanded ? 'Show less' : 'Show more'}
+            </button>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
+</div>
 
 <style>
   .empty {
