@@ -581,6 +581,14 @@ Displays a search modal of indexed blocks to select and embed.
 
 Transforms the active block into a first-level markdown header (# ).
 
+/calendar
+
+Opens the Date Glance month popover to pick a date to insert at the cursor (or copy to the clipboard when no editor target is available). Unlike `/today`, it does not insert immediately.
+
+/shortcuts
+
+Displays the keyboard-shortcut reference overlay, listing the current live bindings (disabled or unbound shortcuts are omitted).
+
 6.4 Theme Customization Engine
 
 To prevent styling stagnation, Silt provides a built-in user theme engine mapping to CSS Custom Properties. The shipping schema is **Theme System v2**; the forward architecture — OKLCH derivation, the 9-zone surface model, the unified background system, the contrast guarantee, and the custom-editor contract — is specified in [`docs/theme-system-v2-rfc.md`](docs/theme-system-v2-rfc.md), and the decision to make v2 the only supported schema with no v1→v2 migration is recorded in [`docs/decisions/0002-theme-schema-v2-no-migration.md`](docs/decisions/0002-theme-schema-v2-no-migration.md). The internal pipeline is documented in ARCHITECTURE.md §4.4; the design-system token vision lives in DESIGN.md §2.1 / §7.
