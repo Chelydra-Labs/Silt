@@ -1,8 +1,12 @@
 <script lang="ts">
-  // Status-bar chip that opens the Date Glance popover (#730). One of three
+  // Status-bar chip that opens the Date Glance popover. One of three
   // openers (chip, global hotkey, /calendar). The chip registers itself as the
-  // persistent placement anchor; chip clicks open against this element. Slash
-  // and editor hotkeys pass a caret rect instead and do not use the chip.
+  // persistent placement anchor only while its tab is active — every open tab
+  // keeps a VirtualScrollContainer mounted (inactive ones are display:none),
+  // and a hidden chip's getBoundingClientRect is 0×0 (popover → top-left).
+  //
+  // Chip clicks always pass this button as `element` so placement tracks the
+  // control the user actually pressed, not whichever chip registered last.
   //
   // Editor capture timing: clicking the chip moves focus to the button, which
   // blurs the editor. pointerdown fires before that blur, so the editor is
@@ -18,6 +22,13 @@
   } from '../lib/editor/activeEditor.svelte'
   import type { Editor } from '@tiptap/core'
 
+  interface Props {
+    /** False when this chip lives in an inactive (display:none) tab panel. */
+    active?: boolean
+  }
+
+  let { active = true }: Props = $props()
+
   let chipEl = $state<HTMLElement | null>(null)
   // Captured on pointerdown (before blur); consumed on click.
   let capturedEditor: Editor | null = null
@@ -30,10 +41,16 @@
   )
 
   $effect(() => {
-    setDateGlanceAnchor(chipEl)
+    // Only the active tab's chip may own the global fallback anchor (hotkey
+    // path when caret coords are unavailable).
+    if (active && chipEl) {
+      setDateGlanceAnchor(chipEl)
+    } else if (dateGlance.anchor === chipEl) {
+      setDateGlanceAnchor(null)
+    }
     return () => {
-      // Clear the anchor on unmount so the popover doesn't position against
-      // a detached node (Fast Refresh, conditional render, etc.).
+      // Clear on unmount / dependency change so we never leave a detached or
+      // hidden node registered.
       if (dateGlance.anchor === chipEl) setDateGlanceAnchor(null)
     }
   })
@@ -46,8 +63,15 @@
     // capturedEditor is set by pointerdown (mouse path). Keyboard activation
     // (Tab + Enter) never fires pointerdown, so fall back to the last editor
     // that had focus for a11y parity with the mouse path.
-    openDateGlance(capturedEditor ?? getLastActiveEditor())
+    const editor = capturedEditor ?? getLastActiveEditor()
     capturedEditor = null
+    if (!chipEl) {
+      console.error('[silt] date-glance chip click without element')
+      return
+    }
+    // Pass this chip explicitly — do not use "last registered" global anchor
+    // (another tab's hidden chip may own that slot).
+    openDateGlance(editor, { element: chipEl })
   }
 </script>
 

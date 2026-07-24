@@ -700,8 +700,10 @@
 
     <div class="w-px h-4 bg-surface-popover-border mx-0.5"></div>
 
-    <!-- Date Glance opener (#730) — contextual to the writing surface -->
-    <DateGlanceChip />
+    <!-- Date Glance opener — contextual to the writing surface.
+         Only the active tab registers the chip anchor (inactive panels are
+         display:none and would report a 0×0 rect). -->
+    <DateGlanceChip active={_isActive} />
   </div>
 
   <!-- Floating Editor Status Bar (honest save phase + word count) -->

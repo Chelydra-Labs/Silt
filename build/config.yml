@@ -42,7 +42,9 @@ dev_mode:
       type: blocking
     - cmd: wails3 task common:dev:frontend
       type: background
-    - cmd: 'timeout /t 3 /nobreak >nul 2>&1 || sleep 3'
+    # Wait until Vite accepts connections (see build/wait-for-vite.sh). A fixed
+    # sleep races with install:frontend:deps + cold Vite startup.
+    - cmd: bash ./build/wait-for-vite.sh http://127.0.0.1:9245/
       type: blocking
     - cmd: wails3 task run
       type: primary
