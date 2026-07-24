@@ -75,6 +75,7 @@
   id="sidebar-quick-panel"
   role="tabpanel"
   aria-label="Quick Access"
+  aria-labelledby="sidebar-tab-quick"
   class="flex-1 overflow-y-auto custom-scrollbar px-2 py-1 flex flex-col gap-3"
 >
   {#if loading}

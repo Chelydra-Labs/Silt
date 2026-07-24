@@ -29,7 +29,7 @@ describe('SidebarQuickAccess', () => {
   it('renders empty states when there are no saved pages and not loading/error', () => {
     render(SidebarQuickAccess, { props: baseProps })
     expect(
-      screen.getByRole('tabpanel', { name: 'Quick Access' })
+      screen.getByRole('tabpanel', { name: /Quick [Aa]ccess/ })
     ).toBeInTheDocument()
     expect(
       screen.getByText('No pinned pages yet. Pin pages to access them quickly.')
@@ -46,7 +46,7 @@ describe('SidebarQuickAccess', () => {
       }
     })
     expect(
-      screen.getByRole('tabpanel', { name: 'Quick Access' })
+      screen.getByRole('tabpanel', { name: /Quick [Aa]ccess/ })
     ).toBeInTheDocument()
     expect(screen.getByText(/Pinned \(1\)/)).toBeInTheDocument()
     expect(screen.getByText(/Recent \(0\)/)).toBeInTheDocument()

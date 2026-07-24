@@ -290,7 +290,7 @@ describe('Sidebar', () => {
     expect(quickTab).toHaveAttribute('aria-selected', 'true')
     expect(mocks.setQuickAccessCollapsed).toHaveBeenCalledWith(false)
     expect(
-      screen.getByRole('tabpanel', { name: 'Quick Access' })
+      screen.getByRole('tabpanel', { name: /Quick [Aa]ccess/ })
     ).toBeInTheDocument()
     // Recent entry from prefs is visible in the Quick Access panel
     expect(
@@ -373,7 +373,7 @@ describe('Sidebar', () => {
       screen.getByRole('tab', { name: /Quick access bookmarks and recents/i })
     ).toHaveAttribute('aria-selected', 'true')
     expect(
-      screen.getByRole('tabpanel', { name: 'Quick Access' })
+      screen.getByRole('tabpanel', { name: /Quick [Aa]ccess/ })
     ).toBeInTheDocument()
   })
 

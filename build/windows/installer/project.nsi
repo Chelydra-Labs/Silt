@@ -88,10 +88,13 @@ Section
 
     ## Windows locks a running executable, so an in-app update — and a
     ## close-to-tray instance that stays resident after the window hides —
-    ## would block the file overwrite below. /F terminates Silt regardless of
-    ## how it was told to exit; the frontend's graceful Application.Quit and
-    ## this kill race, and the kill is the guarantee. Exit 128 (not running)
-    ## is expected and harmless.
+    ## would block the file overwrite below. Prefer a graceful WM_CLOSE so
+    ## Application.Quit can drain WAL/autosave; then /F as the guarantee for
+    ## tray-resident instances that ignore close. Exit 128 (not running) is
+    ## expected and harmless on either attempt.
+    nsExec::Exec 'taskkill /IM "${PRODUCT_EXECUTABLE}"'
+    Pop $0
+    Sleep 2000
     nsExec::Exec 'taskkill /IM "${PRODUCT_EXECUTABLE}" /F'
     Pop $0
     Sleep 500  ; let the kernel release file handles before overwriting
