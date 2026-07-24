@@ -477,7 +477,7 @@
     } catch (e) {
       if (sequence !== preferenceLoadSequence) return
       preferencesError =
-        e instanceof Error ? e.message : 'Quick access could not be loaded.'
+        e instanceof Error ? e.message : 'Sidebar view could not be loaded.'
     } finally {
       if (sequence === preferenceLoadSequence) preferencesLoading = false
     }

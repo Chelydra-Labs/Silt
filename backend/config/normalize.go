@@ -177,7 +177,7 @@ func normalize(cfg SystemConfig) SystemConfig {
 	// tree default rather than rendering an empty sidebar. Load migrates
 	// the legacy quick_access_collapsed bool into this field before
 	// normalize runs, so nil here only means "neither key was present".
-	if cfg.UI.SidebarView == nil || *cfg.UI.SidebarView != "tree" && *cfg.UI.SidebarView != "quick" {
+	if cfg.UI.SidebarView == nil || (*cfg.UI.SidebarView != "tree" && *cfg.UI.SidebarView != "quick") {
 		tree := "tree"
 		cfg.UI.SidebarView = &tree
 	}
