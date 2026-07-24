@@ -195,7 +195,6 @@
     toggleAIChatDrawer
   } from './plugins/shared/ai-chat/drawer.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
-  import DateGlanceChip from './components/DateGlanceChip.svelte'
   import DateGlance from './components/DateGlance.svelte'
   import { toggleDateGlance } from './lib/dateGlanceState.svelte'
   import { getActiveEditor } from './lib/editor/activeEditor.svelte'
@@ -2419,14 +2418,9 @@
     </div>
   {/if}
 
-  <!-- Plugin rendered-UI surfaces (#117). The Date Glance chip rides the same
-       bar as a trailing first-party item so there's no second stacked strip. -->
+  <!-- Plugin rendered-UI surfaces (#117) -->
   <PluginModalHost />
-  <PluginStatusBar>
-    {#snippet trailing()}
-      <DateGlanceChip />
-    {/snippet}
-  </PluginStatusBar>
+  <PluginStatusBar />
   <DateGlance />
 </main>
 

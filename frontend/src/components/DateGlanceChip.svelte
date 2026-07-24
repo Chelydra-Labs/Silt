@@ -56,12 +56,11 @@
   bind:this={chipEl}
   onpointerdown={onPointerDown}
   onclick={onClick}
-  aria-label="Pick a date ({label})"
-  title="Pick a date"
-  class="flex items-center gap-1.5 rounded-md border border-transparent bg-surface-panel/40 px-2 py-0.5 text-type-xs text-text-muted hover:bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-primary-start focus-visible:outline-none cursor-pointer"
+  aria-label="Pick a date"
+  title="Pick a date — {label}"
+  class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover text-text-muted focus-visible:ring-2 focus-visible:ring-accent-primary-start"
 >
-  <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
+  <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
     >calendar_month</span
   >
-  <span>{label}</span>
 </button>
