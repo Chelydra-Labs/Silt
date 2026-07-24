@@ -8,6 +8,7 @@
 // can immediately read_blocks or get_backlinks on it.
 
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import type { ToolResult } from '../tool-registry'
 
 export const createNoteToolDef = {
@@ -41,11 +42,11 @@ export async function handleCreateNote(
   ctx: PluginContext,
   args: Record<string, unknown>
 ): Promise<ToolResult> {
-  const page = String(args.page ?? '').trim()
+  const page = asString(args.page).trim()
   if (!page) {
     return { content: '', error: 'page must not be empty' }
   }
-  const body = String(args.content ?? '')
+  const body = asString(args.content)
   if (!body.trim()) {
     return { content: '', error: 'content must not be empty' }
   }
@@ -89,7 +90,7 @@ export async function handleCreateNote(
 function formatTags(raw: unknown): string {
   if (!Array.isArray(raw)) return ''
   return raw
-    .map((t) => String(t).trim())
+    .map((t) => asString(t).trim())
     .filter((t) => t.length > 0)
     .map((t) => (t.startsWith('#') ? t : `#${t}`))
     .join(' ')

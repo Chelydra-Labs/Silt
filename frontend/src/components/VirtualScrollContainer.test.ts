@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
     config: {
       ui: { show_format_toolbar: true },
       editor: { focus_mode: false },
-      hotkeys: { toggle_view_mode: 'Ctrl+Shift+V' } as Record<string, string>
+      hotkeys: { toggle_view_mode: 'Ctrl+Shift+V' }
     }
   },
   toggleFocusMode: vi.fn(() => Promise.resolve(true)),
@@ -135,7 +135,7 @@ describe('VirtualScrollContainer editor chrome', () => {
     // Source mode: TipTapEditor is NOT mounted (Svelte destroyed it), so a tab
     // held in Source view pays no editor memory cost. Only the read-only
     // markdown projection is present.
-    rerender({ ...baseProps(), viewMode: 'source' })
+    void rerender({ ...baseProps(), viewMode: 'source' })
     expect(screen.queryByTestId('tiptap-stub')).toBeNull()
     expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
   })
@@ -278,12 +278,12 @@ describe('Edit↔Source scroll preservation (#319)', () => {
     // User scrolled down in Edit mode.
     scrollTopVal = 480
     // Leave Edit: $effect.pre captures 480 before the editor unmounts.
-    rerender({ ...baseProps(), viewMode: 'source' })
+    void rerender({ ...baseProps(), viewMode: 'source' })
     expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
     // Simulate the fresh editor remount starting back at the top.
     scrollTopVal = 0
     // Return to Edit: the remounted editor signals readiness → restore.
-    rerender(baseProps())
+    void rerender(baseProps())
     expect(screen.getByTestId('tiptap-stub')).toBeInTheDocument()
     await waitFor(() => {
       expect(scrollTopVal).toBe(480)
@@ -295,11 +295,11 @@ describe('Edit↔Source scroll preservation (#319)', () => {
       props: baseProps()
     })
     scrollTopVal = 900
-    rerender({ ...baseProps(), viewMode: 'source' })
+    void rerender({ ...baseProps(), viewMode: 'source' })
     // Doc shortened while in Source view (autosave/fsnotify external edit).
     scrollHeightVal = 300
     scrollTopVal = 0
-    rerender(baseProps())
+    void rerender(baseProps())
     await waitFor(() => {
       // Clamped to the shorter height — no overscroll, no crash.
       expect(scrollTopVal).toBe(300)
@@ -415,11 +415,11 @@ describe('Edit↔Source caret restoration (#331)', () => {
       props: baseProps()
     })
     scrollTopVal = 320
-    rerender({ ...baseProps(), viewMode: 'source' })
+    void rerender({ ...baseProps(), viewMode: 'source' })
     scrollTopVal = 0
     // Clear seed so remount doesn't re-bind capture selection; keep doc for resolve.
     delete (globalThis as unknown as Record<string, unknown>).__tiptapStubSeed
-    rerender(baseProps())
+    void rerender(baseProps())
 
     await waitFor(() => {
       expect(
@@ -439,10 +439,10 @@ describe('Edit↔Source caret restoration (#331)', () => {
       props: baseProps()
     })
     scrollTopVal = 200
-    rerender({ ...baseProps(), viewMode: 'source' })
+    void rerender({ ...baseProps(), viewMode: 'source' })
     scrollTopVal = 0
     delete (globalThis as unknown as Record<string, unknown>).__tiptapStubSeed
-    rerender(baseProps())
+    void rerender(baseProps())
 
     await waitFor(() => {
       expect(scrollTopVal).toBe(200)
@@ -462,10 +462,10 @@ describe('Edit↔Source caret restoration (#331)', () => {
       props: baseProps()
     })
     scrollTopVal = 100
-    rerender({ ...baseProps(), viewMode: 'source' })
+    void rerender({ ...baseProps(), viewMode: 'source' })
     scrollTopVal = 0
     delete (globalThis as unknown as Record<string, unknown>).__tiptapStubSeed
-    rerender(baseProps())
+    void rerender(baseProps())
 
     await waitFor(() => {
       expect(

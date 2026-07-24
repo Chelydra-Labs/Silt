@@ -619,25 +619,35 @@
     const q = ctx.query.trim()
     if (q) {
       const myId = ++mentionQueryReqId
-      mentionQueryTimer = setTimeout(async () => {
-        try {
-          const serverItems = (await DistinctOwners(q)) ?? []
-          // Superseded by a later keystroke — drop this result.
-          if (myId !== mentionQueryReqId) return
-          // Only apply if the popup is still open for this same context/query.
-          const cur = mentionPopup
-          if (!cur || cur.ctx.from !== ctx.from || cur.ctx.query !== ctx.query)
-            return
-          mentionPopup =
-            serverItems.length === 0
-              ? null
-              : { ctx, items: serverItems, selected: pickSelected(serverItems) }
-          suggestStatus = serverItems.length
-            ? `${serverItems.length} owner${serverItems.length === 1 ? '' : 's'} available`
-            : 'No matching owners'
-        } catch (e) {
-          console.error('DistinctOwners(prefix) failed:', e)
-        }
+      mentionQueryTimer = setTimeout(() => {
+        void (async () => {
+          try {
+            const serverItems = (await DistinctOwners(q)) ?? []
+            // Superseded by a later keystroke — drop this result.
+            if (myId !== mentionQueryReqId) return
+            // Only apply if the popup is still open for this same context/query.
+            const cur = mentionPopup
+            if (
+              !cur ||
+              cur.ctx.from !== ctx.from ||
+              cur.ctx.query !== ctx.query
+            )
+              return
+            mentionPopup =
+              serverItems.length === 0
+                ? null
+                : {
+                    ctx,
+                    items: serverItems,
+                    selected: pickSelected(serverItems)
+                  }
+            suggestStatus = serverItems.length
+              ? `${serverItems.length} owner${serverItems.length === 1 ? '' : 's'} available`
+              : 'No matching owners'
+          } catch (e) {
+            console.error('DistinctOwners(prefix) failed:', e)
+          }
+        })()
       }, MENTION_QUERY_DEBOUNCE_MS)
     }
   }
@@ -723,47 +733,51 @@
     }
 
     suggestStatus = 'Searching blocks'
-    blkRefQueryTimer = setTimeout(async () => {
-      blkRefQueryTimer = null
-      const request = SearchBlocks(ctx.query) as Promise<BlockSearchItem[]> & {
-        cancel?: () => Promise<void> | void
-      }
-      blkRefRequest = request
-      try {
-        const items = (await request) ?? []
-        if (myId !== blkRefQueryReqId) return
-        const current = blkRefPopup
-        if (
-          !current ||
-          current.ctx.from !== ctx.from ||
-          current.ctx.query !== ctx.query
-        )
-          return
-        blkRefRequest = null
-        blkRefPopup = { ...current, items, selected: 0, searching: false }
-        suggestStatus = items.length
-          ? `${items.length} block${items.length === 1 ? '' : 's'} available`
-          : 'No matching blocks'
-      } catch (error) {
-        if (myId !== blkRefQueryReqId) return
-        blkRefRequest = null
-        const current = blkRefPopup
-        if (
-          !current ||
-          current.ctx.from !== ctx.from ||
-          current.ctx.query !== ctx.query
-        )
-          return
-        console.error('SearchBlocks failed:', error)
-        blkRefPopup = {
-          ...current,
-          items: [],
-          selected: 0,
-          searching: false,
-          error: true
+    blkRefQueryTimer = setTimeout(() => {
+      void (async () => {
+        blkRefQueryTimer = null
+        const request = SearchBlocks(ctx.query) as Promise<
+          BlockSearchItem[]
+        > & {
+          cancel?: () => Promise<void> | void
         }
-        suggestStatus = 'Block search unavailable'
-      }
+        blkRefRequest = request
+        try {
+          const items = (await request) ?? []
+          if (myId !== blkRefQueryReqId) return
+          const current = blkRefPopup
+          if (
+            !current ||
+            current.ctx.from !== ctx.from ||
+            current.ctx.query !== ctx.query
+          )
+            return
+          blkRefRequest = null
+          blkRefPopup = { ...current, items, selected: 0, searching: false }
+          suggestStatus = items.length
+            ? `${items.length} block${items.length === 1 ? '' : 's'} available`
+            : 'No matching blocks'
+        } catch (error) {
+          if (myId !== blkRefQueryReqId) return
+          blkRefRequest = null
+          const current = blkRefPopup
+          if (
+            !current ||
+            current.ctx.from !== ctx.from ||
+            current.ctx.query !== ctx.query
+          )
+            return
+          console.error('SearchBlocks failed:', error)
+          blkRefPopup = {
+            ...current,
+            items: [],
+            selected: 0,
+            searching: false,
+            error: true
+          }
+          suggestStatus = 'Block search unavailable'
+        }
+      })()
     }, BLOCK_REF_QUERY_DEBOUNCE_MS)
   }
 
@@ -800,8 +814,8 @@
   let tagsLoadError = $state(false)
   const TAGS_TTL_MS = 5000
   let recentTags = $derived(
-    ((settings.config?.ui as { recent_tags?: string[] } | undefined)
-      ?.recent_tags ?? []) as string[]
+    (settings.config?.ui as { recent_tags?: string[] } | undefined)
+      ?.recent_tags ?? []
   )
   let tagPopup = $state<{
     ctx: TagContext
@@ -943,48 +957,50 @@
 
     pageLinkPopup.searching = true
     suggestStatus = 'Searching pages'
-    pageLinkQueryTimer = setTimeout(async () => {
-      pageLinkQueryTimer = null
-      try {
-        const request = SearchPages(ctx.query.trim(), 50)
-        pageLinkRequest = request
-        const items = (await request) ?? []
-        if (myId !== pageLinkQueryReqId) return
-        const current = pageLinkPopup
-        if (
-          !current ||
-          current.ctx.from !== ctx.from ||
-          current.ctx.query !== ctx.query
-        )
-          return
-        pageLinkRequest = null
-        pageLinkPopup = {
-          ...current,
-          items,
-          selected: 0,
-          searching: false
+    pageLinkQueryTimer = setTimeout(() => {
+      void (async () => {
+        pageLinkQueryTimer = null
+        try {
+          const request = SearchPages(ctx.query.trim(), 50)
+          pageLinkRequest = request
+          const items = (await request) ?? []
+          if (myId !== pageLinkQueryReqId) return
+          const current = pageLinkPopup
+          if (
+            !current ||
+            current.ctx.from !== ctx.from ||
+            current.ctx.query !== ctx.query
+          )
+            return
+          pageLinkRequest = null
+          pageLinkPopup = {
+            ...current,
+            items,
+            selected: 0,
+            searching: false
+          }
+          suggestStatus = items.length
+            ? `${items.length} page${items.length === 1 ? '' : 's'} available`
+            : 'No matching pages'
+        } catch (error) {
+          if (myId !== pageLinkQueryReqId) return
+          pageLinkRequest = null
+          const current = pageLinkPopup
+          if (
+            !current ||
+            current.ctx.from !== ctx.from ||
+            current.ctx.query !== ctx.query
+          )
+            return
+          console.error('SearchPages failed:', error)
+          pageLinkPopup = {
+            ...current,
+            searching: false,
+            error: 'search'
+          }
+          suggestStatus = 'Page search unavailable'
         }
-        suggestStatus = items.length
-          ? `${items.length} page${items.length === 1 ? '' : 's'} available`
-          : 'No matching pages'
-      } catch (error) {
-        if (myId !== pageLinkQueryReqId) return
-        pageLinkRequest = null
-        const current = pageLinkPopup
-        if (
-          !current ||
-          current.ctx.from !== ctx.from ||
-          current.ctx.query !== ctx.query
-        )
-          return
-        console.error('SearchPages failed:', error)
-        pageLinkPopup = {
-          ...current,
-          searching: false,
-          error: 'search'
-        }
-        suggestStatus = 'Page search unavailable'
-      }
+      })()
     }, PAGE_LINK_QUERY_DEBOUNCE_MS)
   }
 
@@ -1397,7 +1413,7 @@
     // would throw "view is not available" — bail before touching the proxy.
     if (!editor || editor.isDestroyed) return
     if (settings.config?.editor?.spellcheck_enabled === false) return
-    const dom = editor.view.dom as HTMLElement
+    const dom = editor.view.dom
     const onContext = (e: MouseEvent) => {
       if (settings.config?.editor?.spellcheck_enabled === false) return
       const pos = editor.view.posAtCoords({ left: e.clientX, top: e.clientY })
@@ -2158,7 +2174,7 @@
     {#if cursorInTable && editorInstance}
       <TableContextToolbar editor={editorInstance} />
     {/if}
-    {#if editorStore}
+    {#if $editorStore}
       <EditorContent editor={$editorStore} />
     {/if}
   {/if}
@@ -2668,8 +2684,7 @@
         <input
           type="color"
           class="cp-custom-input"
-          onchange={(e) =>
-            applyColorFromPopover((e.currentTarget as HTMLInputElement).value)}
+          onchange={(e) => applyColorFromPopover(e.currentTarget.value)}
           aria-label="Custom color"
         />
       </label>

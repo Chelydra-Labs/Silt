@@ -145,7 +145,7 @@ export async function checkNow(): Promise<void> {
 export async function startupCheck(): Promise<void> {
   let r: CheckResult
   try {
-    r = (await CheckForUpdates()) as CheckResult
+    r = await CheckForUpdates()
   } catch {
     // Offline / rate-limited / parse error: stay silent on startup.
     return
@@ -174,7 +174,7 @@ export async function startupCheck(): Promise<void> {
       : {
           label: 'View',
           run: () => {
-            if (releaseUrl) Browser.OpenURL(releaseUrl)
+            if (releaseUrl) void Browser.OpenURL(releaseUrl)
           }
         },
     autoDismissMs: 15_000
@@ -199,7 +199,7 @@ export async function downloadAndInstall(assetUrl: string): Promise<void> {
     const res = (await InstallUpdate(localPath)) as { willQuit?: boolean }
     if (res?.willQuit) {
       // status stays 'installing' ("Silt will restart"); the window is exiting.
-      Application.Quit()
+      void Application.Quit()
     } else {
       updateState.status = 'available'
       pushNotification({

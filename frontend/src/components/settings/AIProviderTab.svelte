@@ -206,7 +206,7 @@
   // Settings search / deep-link: switch segment to match the anchor.
   $effect(() => {
     const seg = segmentForAnchor(ringAnchor)
-    if (seg) selectSegment(seg)
+    if (seg) void selectSegment(seg)
   })
 
   function ringClass(id: string): string {
@@ -1316,7 +1316,7 @@
                   id="{idPrefix}-model"
                   value={b.model}
                   onchange={(e) => {
-                    const val = (e.currentTarget as HTMLSelectElement).value
+                    const val = e.currentTarget.value
                     if (val === '__custom__') {
                       ai.manualModel[w] = true
                     } else {

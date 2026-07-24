@@ -49,7 +49,7 @@ export function parseWritingCommand(text: string): WritingCommand | null {
   const actionId = ACTION_ALIASES[match[1].toLowerCase()] ?? match[1]
   if (!ACTION_CATALOG.some((action) => action.id === actionId)) return null
   return {
-    actionId: actionId as ActionId,
+    actionId: actionId,
     instruction: match[2]?.trim() || undefined
   }
 }
@@ -58,7 +58,7 @@ function assistantSettings(): AssistantSettings {
   const raw = (
     appSettingsValue()?.plugins?.plugin_settings as
       Record<string, Record<string, unknown>> | undefined
-  )?.['silt-ai-assistant'] as Record<string, unknown> | undefined
+  )?.['silt-ai-assistant']
   return resolveSettings(raw)
 }
 

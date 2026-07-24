@@ -73,10 +73,12 @@
     const lang = language
     const theme = shikiTheme
     if (highlightTimer) clearTimeout(highlightTimer)
-    const t = setTimeout(async () => {
-      const html = await highlightCode(c, lang, theme)
-      highlighted = html
-      highlightedFor = c
+    const t = setTimeout(() => {
+      void (async () => {
+        const html = await highlightCode(c, lang, theme)
+        highlighted = html
+        highlightedFor = c
+      })()
     }, 120)
     highlightTimer = t
     // Cancel the pending highlight if the block unmounts during the debounce
@@ -96,10 +98,12 @@
     const c = code
     const theme = mermaidTheme
     if (mermaidTimer) clearTimeout(mermaidTimer)
-    const t = setTimeout(async () => {
-      const res = await renderMermaid(c, theme)
-      mermaidSvg = res.svg
-      mermaidError = res.error
+    const t = setTimeout(() => {
+      void (async () => {
+        const res = await renderMermaid(c, theme)
+        mermaidSvg = res.svg
+        mermaidError = res.error
+      })()
     }, 200)
     mermaidTimer = t
     return () => clearTimeout(t)

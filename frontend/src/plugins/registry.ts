@@ -18,7 +18,7 @@ const registry = new Map<string, RegisteredPlugin>()
 registerPlugin({
   manifest: AttachmentsPlugin.manifest,
   component: AttachmentsPlugin.component,
-  onVaultOpen: AttachmentsPlugin.onVaultOpen,
+  onVaultOpen: (ctx) => AttachmentsPlugin.onVaultOpen(ctx),
   source: 'first-party'
 })
 // silt-tasks (#370 → #424 unification, #429 retirement): the single Tasks
@@ -52,9 +52,9 @@ registerPlugin({
   manifest: AISummaryPlugin.manifest,
   component: AISummaryPlugin.component,
   settingsPageComponent: AISummaryPlugin.settingsPageComponent,
-  onVaultOpen: AISummaryPlugin.onVaultOpen,
-  onVaultClose: AISummaryPlugin.onVaultClose,
-  onShutdown: AISummaryPlugin.onShutdown,
+  onVaultOpen: (ctx) => AISummaryPlugin.onVaultOpen(ctx),
+  onVaultClose: () => AISummaryPlugin.onVaultClose(),
+  onShutdown: () => AISummaryPlugin.onShutdown(),
   source: 'first-party'
 })
 // silt-ai-qa (#224–#228): semantic search + RAG Q&A. Off by default; needs
@@ -62,9 +62,9 @@ registerPlugin({
 registerPlugin({
   manifest: AIQAPlugin.manifest,
   settingsPageComponent: AIQAPlugin.settingsPageComponent,
-  onVaultOpen: AIQAPlugin.onVaultOpen,
-  onVaultClose: AIQAPlugin.onVaultClose,
-  onShutdown: AIQAPlugin.onShutdown,
+  onVaultOpen: (ctx) => AIQAPlugin.onVaultOpen(ctx),
+  onVaultClose: () => AIQAPlugin.onVaultClose(),
+  onShutdown: () => AIQAPlugin.onShutdown(),
   source: 'first-party'
 })
 // silt-ai-assistant (#229–#233): Writing Assistant — curated writing actions
@@ -73,9 +73,9 @@ registerPlugin({
 registerPlugin({
   manifest: AIAssistantPlugin.manifest,
   settingsPageComponent: AIAssistantPlugin.settingsPageComponent,
-  onVaultOpen: AIAssistantPlugin.onVaultOpen,
-  onVaultClose: AIAssistantPlugin.onVaultClose,
-  onShutdown: AIAssistantPlugin.onShutdown,
+  onVaultOpen: (ctx) => AIAssistantPlugin.onVaultOpen(ctx),
+  onVaultClose: () => AIAssistantPlugin.onVaultClose(),
+  onShutdown: () => AIAssistantPlugin.onShutdown(),
   source: 'first-party'
 })
 // silt-ai-agent (#596): AI agent that uses tools to search, read, create, and
@@ -84,9 +84,9 @@ registerPlugin({
 // the unified AI drawer.
 registerPlugin({
   manifest: AIAgentPlugin.manifest,
-  onVaultOpen: AIAgentPlugin.onVaultOpen,
-  onVaultClose: AIAgentPlugin.onVaultClose,
-  onShutdown: AIAgentPlugin.onShutdown,
+  onVaultOpen: (ctx) => AIAgentPlugin.onVaultOpen(ctx),
+  onVaultClose: () => AIAgentPlugin.onVaultClose(),
+  onShutdown: () => AIAgentPlugin.onShutdown(),
   source: 'first-party'
 })
 

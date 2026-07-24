@@ -68,7 +68,7 @@
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement | null
     window.addEventListener('keydown', handleKeydown, true)
-    tick().then(() => dialogRef?.focus())
+    void tick().then(() => dialogRef?.focus())
     return () => {
       window.removeEventListener('keydown', handleKeydown, true)
       previouslyFocused?.focus?.()

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import { clearTools } from '../tool-registry'
 import {
   getRelatedNotesToolDef,
@@ -53,7 +54,7 @@ function makeCtx(opts: {
 
   const sqliteQuery = vi.fn(async (sql: string, params?: unknown[]) => {
     if (sql.includes('FROM blocks WHERE id = ?')) {
-      const id = String(params?.[0] ?? '')
+      const id = asString(params?.[0])
       // Source lookup: return a row only when there is content to compare.
       if (id === opts.sourceId && opts.sourceContent.length > 0) {
         return {
@@ -67,7 +68,7 @@ function makeCtx(opts: {
       // The real SQL excludes the source via `WHERE id != ?` — the mock
       // honors the same filter so a fixture that includes the source for
       // readability does not surface it as a candidate.
-      const excludeId = String(params?.[0] ?? '')
+      const excludeId = asString(params?.[0])
       const filtered = recent.filter((c) => c.id !== excludeId)
       return {
         rows: filtered as unknown as Record<string, unknown>[],

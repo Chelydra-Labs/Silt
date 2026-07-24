@@ -150,9 +150,7 @@ describe('DependencyPicker (#303)', () => {
     })
     await flush()
 
-    const input = screen.getByLabelText(
-      'Search tasks to add as dependencies'
-    ) as HTMLInputElement
+    const input = screen.getByLabelText('Search tasks to add as dependencies')
     await fireEvent.input(input, { target: { value: 'found' } })
     // The search is debounced; flush past the timer.
     await new Promise((r) => setTimeout(r, 220))
@@ -203,9 +201,7 @@ describe('DependencyPicker (#303)', () => {
     })
     await flush()
 
-    const input = screen.getByLabelText(
-      'Search tasks to add as dependencies'
-    ) as HTMLInputElement
+    const input = screen.getByLabelText('Search tasks to add as dependencies')
     await fireEvent.input(input, { target: { value: 'can' } })
     await new Promise((r) => setTimeout(r, 220))
     await flush()
@@ -241,9 +237,7 @@ describe('DependencyPicker (#303)', () => {
     })
     await flush()
 
-    const input = screen.getByLabelText(
-      'Search tasks to add as dependencies'
-    ) as HTMLInputElement
+    const input = screen.getByLabelText('Search tasks to add as dependencies')
     await fireEvent.input(input, { target: { value: 'cyc' } })
     await new Promise((r) => setTimeout(r, 220))
     await flush()
@@ -273,9 +267,7 @@ describe('DependencyPicker (#303)', () => {
     })
     await flush()
 
-    const input = screen.getByLabelText(
-      'Search tasks to add as dependencies'
-    ) as HTMLInputElement
+    const input = screen.getByLabelText('Search tasks to add as dependencies')
     await fireEvent.input(input, { target: { value: 'port' } })
     // The search is debounced (180ms); flush past the timer.
     await new Promise((r) => setTimeout(r, 220))
@@ -308,9 +300,7 @@ describe('DependencyPicker (#303)', () => {
     })
     await flush()
 
-    const input = screen.getByLabelText(
-      'Search tasks to add as dependencies'
-    ) as HTMLInputElement
+    const input = screen.getByLabelText('Search tasks to add as dependencies')
     await fireEvent.input(input, { target: { value: 'foc' } })
     await new Promise((r) => setTimeout(r, 220))
     await flush()

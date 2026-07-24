@@ -30,7 +30,14 @@
     embedded?: boolean
   }
   // Location props are part of the settings-page surface contract; unused here.
-  let { ctx, manifest, embedded = false }: Props = $props()
+  let {
+    ctx,
+    manifest,
+    embedded = false,
+    activeNotebook: _activeNotebook,
+    activeSection: _activeSection,
+    activePage: _activePage
+  }: Props = $props()
 
   let local = $state<QASettings>({ ...DEFAULT_SETTINGS })
   let loaded = $state(false)
@@ -46,7 +53,7 @@
 
   async function refresh() {
     try {
-      const raw = (await ctx.getPluginSettings()) as Record<string, unknown>
+      const raw = await ctx.getPluginSettings()
       local = resolveSettings(raw)
     } catch {
       local = resolveSettings(null)
@@ -65,8 +72,8 @@
   ) {
     local = { ...local, [key]: value }
     try {
-      await ctx.updatePluginSetting(key as string, value as never)
-      ctl?.setSettings(resolveSettings({ ...local } as never))
+      await ctx.updatePluginSetting(key, value)
+      ctl?.setSettings(resolveSettings({ ...local }))
     } catch {
       /* best-effort */
     }
@@ -76,9 +83,9 @@
     local = { ...local, ...patch }
     try {
       for (const [k, v] of Object.entries(patch)) {
-        await ctx.updatePluginSetting(k, v as never)
+        await ctx.updatePluginSetting(k, v)
       }
-      ctl?.setSettings(resolveSettings({ ...local } as never))
+      ctl?.setSettings(resolveSettings({ ...local }))
     } catch {
       /* best-effort */
     }
@@ -269,10 +276,7 @@
           checked={local.auto_reembed}
           disabled={!loaded}
           onchange={(e) =>
-            void saveKey(
-              'auto_reembed',
-              (e.currentTarget as HTMLInputElement).checked
-            )}
+            void saveKey('auto_reembed', e.currentTarget.checked)}
         />
         <span
           aria-hidden="true"
@@ -297,7 +301,7 @@
         value={local.notebook_scope.join(', ')}
         disabled={!loaded}
         onchange={(e) => {
-          const v = (e.currentTarget as HTMLInputElement).value
+          const v = e.currentTarget.value
           const scope = v
             .split(',')
             .map((s) => s.trim())
@@ -502,10 +506,7 @@
                 class="w-full rounded-lg border border-surface-panel-border bg-surface-panel/40 px-3 py-2 text-type-sm text-text-primary outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start"
                 value={local.hybrid_weight}
                 onchange={(e) =>
-                  void saveKey(
-                    'hybrid_weight',
-                    Number((e.currentTarget as HTMLInputElement).value)
-                  )}
+                  void saveKey('hybrid_weight', Number(e.currentTarget.value))}
               />
             </label>
             <label class="flex flex-col gap-1.5 max-w-xs" for="qa-top-k">
@@ -522,10 +523,7 @@
                 class="w-full rounded-lg border border-surface-panel-border bg-surface-panel/40 px-3 py-2 text-type-sm text-text-primary outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start"
                 value={local.top_k}
                 onchange={(e) =>
-                  void saveKey(
-                    'top_k',
-                    Number((e.currentTarget as HTMLInputElement).value)
-                  )}
+                  void saveKey('top_k', Number(e.currentTarget.value))}
               />
             </label>
             <label class="flex flex-col gap-1.5 max-w-xs" for="qa-max-context">
@@ -543,7 +541,7 @@
                 onchange={(e) =>
                   void saveKey(
                     'max_context_chars',
-                    Number((e.currentTarget as HTMLInputElement).value)
+                    Number(e.currentTarget.value)
                   )}
               />
             </label>
@@ -578,10 +576,7 @@
               aria-labelledby="qa-rerank-label"
               checked={local.rerank_enabled}
               onchange={(e) =>
-                void saveKey(
-                  'rerank_enabled',
-                  (e.currentTarget as HTMLInputElement).checked
-                )}
+                void saveKey('rerank_enabled', e.currentTarget.checked)}
             />
             <span
               aria-hidden="true"

@@ -70,7 +70,7 @@
   function openExternal(e: MouseEvent): void {
     e.preventDefault()
     const url = (e.currentTarget as HTMLAnchorElement).href
-    if (url) Browser.OpenURL(url)
+    if (url) void Browser.OpenURL(url)
   }
 </script>
 

@@ -385,7 +385,7 @@
           // Tab inserts indent; Shift+Tab removes a leading tab/spaces.
           if (e.key !== 'Tab') return
           e.preventDefault()
-          const ta = e.currentTarget as HTMLTextAreaElement
+          const ta = e.currentTarget
           const start = ta.selectionStart
           const end = ta.selectionEnd
           const val = ta.value

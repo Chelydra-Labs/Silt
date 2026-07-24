@@ -6,6 +6,7 @@
   import { NodeViewWrapper } from 'svelte-tiptap'
   import type { NodeViewProps } from '@tiptap/core'
   import { OpenAttachment } from '../../../bindings/silt/app.js'
+  import { asString } from '../../lib/asString'
   import { getActiveLocation } from '../../plugins/location.svelte'
 
   let { node, deleteNode, selected }: NodeViewProps = $props()
@@ -23,13 +24,14 @@
   const resolvedNotebook = $derived((attrs.notebook as string) || loc.notebook)
   const isOpenable = $derived(!!attrs.openable && !!attrs.src)
   const ariaLabel = $derived(
-    String(attrs.caption || `${String(attrs.embedType)}: ${String(attrs.src)}`)
+    asString(attrs.caption) ||
+      `${asString(attrs.embedType)}: ${asString(attrs.src)}`
   )
 
   async function open() {
     if (!isOpenable) return
     try {
-      await OpenAttachment(resolvedNotebook, String(attrs.src ?? ''))
+      await OpenAttachment(resolvedNotebook, asString(attrs.src))
     } catch (e) {
       console.error('[embed-block] open failed:', e)
     }
@@ -38,7 +40,7 @@
   function handleKeydown(e: KeyboardEvent) {
     if (isOpenable && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault()
-      open()
+      void open()
     }
   }
 </script>

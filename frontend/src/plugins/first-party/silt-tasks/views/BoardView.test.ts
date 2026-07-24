@@ -79,7 +79,7 @@ if (
 // slice (seeded via initTasksSettings in beforeEach), and every SDK setter is
 // a spy so the dimension-aware DnD dispatcher can be asserted per-dimension.
 const mocks = vi.hoisted(() => ({
-  tasksSettings: {} as Record<string, unknown>,
+  tasksSettings: {},
   sqliteQuery: vi.fn(),
   updateBlockState: vi.fn(),
   setTaskOwner: vi.fn(),
@@ -158,7 +158,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     notify: mocks.notify,
     on: () => () => {},
     ...overrides
-  } as PluginContext
+  }
 }
 
 // A row factory covering every TaskDetail field the query/projects so the
@@ -660,8 +660,8 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     const todoCards = screen
       .getByRole('group', { name: 'To Do' })
       .querySelectorAll<HTMLElement>('[data-card]')
-    const cardA = todoCards[0]!
-    const cardB = todoCards[1]!
+    const cardA = todoCards[0]
+    const cardB = todoCards[1]
     const doneCol = screen.getByRole('group', { name: 'Done' })
 
     // Drop A to DONE — enters the blocked-guard and awaits getTaskBlockers.
@@ -786,7 +786,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     await renderBoard('status', [])
 
     const menus = screen.getAllByRole('button', { name: 'Column actions' })
-    await fireEvent.click(menus[0]!)
+    await fireEvent.click(menus[0])
     await flush()
     await fireEvent.click(screen.getByRole('menuitem', { name: /remove/i }))
     await flush()
@@ -867,8 +867,8 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     const cards = screen
       .getByRole('group', { name: 'To Do' })
       .querySelectorAll<HTMLElement>('[data-card]')
-    const cardA = cards[0]!
-    const cardC = cards[2]!
+    const cardA = cards[0]
+    const cardC = cards[2]
 
     await fireEvent.dragStart(cardA)
     await fireEvent.drop(cardC)
@@ -879,7 +879,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     // a=2 (was 1), c=3 (unchanged). The two changed rows are persisted in
     // ONE batched setTaskOrders call (one atomic write per file).
     expect(mocks.setTaskOrders).toHaveBeenCalledTimes(1)
-    const batch = mocks.setTaskOrders.mock.calls[0]![0] as {
+    const batch = mocks.setTaskOrders.mock.calls[0][0] as {
       id: string
       order: number
     }[]
@@ -922,7 +922,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     const todoCards = screen
       .getByRole('group', { name: 'To Do' })
       .querySelectorAll<HTMLElement>('[data-card]')
-    const cardT1 = todoCards[0]!
+    const cardT1 = todoCards[0]
     const doingCol = screen.getByRole('group', { name: 'In Progress' })
 
     await fireEvent.dragStart(cardT1)
@@ -1010,7 +1010,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     // The second IPC fires now and carries fresh optimistic manual_order
     // values (the round-5 patch): [a,b,c] → [b,a,c] → [c,b,a].
     expect(mocks.setTaskOrders).toHaveBeenCalledTimes(2)
-    const secondBatch = mocks.setTaskOrders.mock.calls[1]![0] as {
+    const secondBatch = mocks.setTaskOrders.mock.calls[1][0] as {
       id: string
       order: number
     }[]
@@ -1048,7 +1048,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     await flush()
 
     expect(mocks.setTaskOrders).toHaveBeenCalledTimes(2)
-    const secondBatch = mocks.setTaskOrders.mock.calls[1]![0] as {
+    const secondBatch = mocks.setTaskOrders.mock.calls[1][0] as {
       id: string
       order: number
     }[]

@@ -558,7 +558,7 @@ describe('TipTapEditor page-link typeahead', () => {
     const first = deferred<ReturnType<typeof page>[]>()
     const second = deferred<ReturnType<typeof page>[]>()
     const cancel = vi.fn().mockResolvedValue(undefined)
-    Object.assign(first.promise, { cancel })
+    void Object.assign(first.promise, { cancel })
     mocks.searchPages
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise)

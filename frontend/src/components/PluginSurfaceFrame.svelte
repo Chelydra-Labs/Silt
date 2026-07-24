@@ -96,7 +96,7 @@
   // theme/mode change re-renders the iframe with fresh tokens.
   function themeCss(): string {
     const mode = themeState.mode === 'light' ? 'lightTokens' : 'darkTokens'
-    const tokens = (themeState[mode] ?? {}) as Record<string, string>
+    const tokens = themeState[mode] ?? {}
     const decls = Object.entries(tokens)
       .map(([k, v]) => `${k}: ${v};`)
       .join(' ')

@@ -38,6 +38,9 @@ ManifestDPIAware true
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
 !define MUI_FINISHPAGE_NOAUTOCLOSE
+## "Launch Silt" checkbox on the finish page, checked by default. An in-app
+## upgrade reopens the new version automatically; the user can uncheck it.
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${PRODUCT_EXECUTABLE}"
 !define MUI_ABORTWARNING
 
 ## Pages: Welcome → Directory → Install → Finish. No scope-choice page: there
@@ -82,6 +85,19 @@ Section
     SetShellVarContext current
 
     !insertmacro wails.webview2runtime
+
+    ## Windows locks a running executable, so an in-app update — and a
+    ## close-to-tray instance that stays resident after the window hides —
+    ## would block the file overwrite below. Prefer a graceful WM_CLOSE so
+    ## Application.Quit can drain WAL/autosave; then /F as the guarantee for
+    ## tray-resident instances that ignore close. Exit 128 (not running) is
+    ## expected and harmless on either attempt.
+    nsExec::Exec 'taskkill /IM "${PRODUCT_EXECUTABLE}"'
+    Pop $0
+    Sleep 2000
+    nsExec::Exec 'taskkill /IM "${PRODUCT_EXECUTABLE}" /F'
+    Pop $0
+    Sleep 500  ; let the kernel release file handles before overwriting
 
     ## If a prior version is installed, silently run its uninstaller first for
     ## a clean upgrade (no leftover stale files). The uninstall string lives in

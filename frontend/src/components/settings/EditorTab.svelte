@@ -79,8 +79,8 @@
 
   async function refreshPacks() {
     try {
-      languagePacks = (await ListLanguagePacks()) as LangPack[]
-      domainPacks = (await ListDomainPacks()) as DomainPack[]
+      languagePacks = await ListLanguagePacks()
+      domainPacks = await ListDomainPacks()
     } catch (e) {
       packError = friendlyPackError(e)
     } finally {
@@ -292,7 +292,7 @@
 
   function cancelDownload() {
     try {
-      CancelSpellcheckDownload()
+      void CancelSpellcheckDownload()
     } catch {
       /* ignore */
     }
@@ -323,16 +323,16 @@
 
   function draftUI(): config.UIConfig {
     if (!draft!.ui) draft!.ui = {} as config.UIConfig
-    return draft!.ui as config.UIConfig
+    return draft!.ui
   }
   function draftUIFormatting(): config.FormattingConfig {
     const ui = draftUI()
     if (!ui.formatting) ui.formatting = {} as config.FormattingConfig
-    return ui.formatting as config.FormattingConfig
+    return ui.formatting
   }
   function draftEditor(): config.EditorConfig {
     if (!draft!.editor) draft!.editor = {} as config.EditorConfig
-    return draft!.editor as config.EditorConfig
+    return draft!.editor
   }
 
   function changed(): boolean {

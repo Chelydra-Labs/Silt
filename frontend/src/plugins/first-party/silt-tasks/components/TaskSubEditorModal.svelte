@@ -191,10 +191,10 @@
     // the IPC resolves on the unmount-without-close path).
     if (saving) {
       saveRequested = true
-      pendingSnapshot = docToBlocks(editorInstance.getJSON()) as ParsedBlock[]
+      pendingSnapshot = docToBlocks(editorInstance.getJSON())
       return
     }
-    const edited = docToBlocks(editorInstance.getJSON()) as ParsedBlock[]
+    const edited = docToBlocks(editorInstance.getJSON())
     saving = true
     // Track the in-flight save so drainSave (close/teardown) can await it.
     inFlight = (async () => {
@@ -264,7 +264,7 @@
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
-      attemptClose()
+      void attemptClose()
       return
     }
     if (e.key === 'Tab' && dialogRef) {

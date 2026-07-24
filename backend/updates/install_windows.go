@@ -20,8 +20,10 @@ import (
 // manifest decision is revisited (CreateProcess cannot satisfy a higher manifest
 // and would fail silently again).
 //
-// Returns willQuit=true: the caller must quit Silt (via the graceful shutdown
-// path) so the installer's file replacement does not collide with open handles.
+// Returns willQuit=true. The NSIS installer first sends a graceful close
+// (taskkill without /F), waits briefly for Application.Quit to drain WAL/IPC,
+// then force-kills (taskkill /F) so close-to-tray residents cannot block the
+// file overwrite.
 // ShellExecute launches the installer via the Application Information Service
 // rather than as a direct child, so it is already decoupled from Silt's
 // lifetime — no CREATE_NEW_PROCESS_GROUP / Process.Release is needed.

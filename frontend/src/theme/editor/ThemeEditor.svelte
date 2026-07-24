@@ -105,7 +105,7 @@
   const themeName = $derived(wc.draft?.name ?? themeId)
 
   const previewTokens = $derived.by(() => {
-    if (!wc.draft) return {} as Record<string, string>
+    if (!wc.draft) return {}
     return flattenTheme(wc.draft, wc.editMode)
   })
 
@@ -797,8 +797,7 @@
                 id="theme-body-font"
                 class="h-10 px-3 rounded-md bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
                 value={wc.draft.typography?.font_family ?? ''}
-                onchange={(e) =>
-                  setBodyFont((e.currentTarget as HTMLSelectElement).value)}
+                onchange={(e) => setBodyFont(e.currentTarget.value)}
               >
                 <option value="">— Theme default stack —</option>
                 {#each bodyFonts as f (f.id)}
@@ -823,8 +822,7 @@
                   type="text"
                   class="h-10 w-28 px-3 rounded-md bg-surface-panel border border-surface-panel-border text-text-primary font-mono text-type-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
                   value={wc.draft.modes[mode()].radius?.md ?? '8px'}
-                  onchange={(e) =>
-                    setRadiusMd((e.currentTarget as HTMLInputElement).value)}
+                  onchange={(e) => setRadiusMd(e.currentTarget.value)}
                 />
                 <span
                   class="inline-block w-10 h-10 border-2 border-accent-primary-start bg-surface-panel"
@@ -1116,7 +1114,7 @@
                   class="h-10 px-3 rounded-md bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
                   value={typographyValue(slot.key)}
                   onchange={(e) => {
-                    const v = (e.currentTarget as HTMLSelectElement).value
+                    const v = e.currentTarget.value
                     wc.setAt(`typography.${slot.key}`, v || undefined)
                   }}
                 >
@@ -1147,11 +1145,7 @@
                       value={scaleValue('size', step)}
                       placeholder="e.g. 0.875rem"
                       onchange={(e) =>
-                        setScaleValue(
-                          'size',
-                          step,
-                          (e.currentTarget as HTMLInputElement).value
-                        )}
+                        setScaleValue('size', step, e.currentTarget.value)}
                     />
                   </div>
                 {/each}
@@ -1176,7 +1170,7 @@
                         setScaleValue(
                           'line_height',
                           step,
-                          (e.currentTarget as HTMLInputElement).value
+                          e.currentTarget.value
                         )}
                     />
                   </div>
@@ -1197,11 +1191,7 @@
                       value={scaleValue('weight', step)}
                       placeholder="e.g. 500"
                       onchange={(e) =>
-                        setScaleValue(
-                          'weight',
-                          step,
-                          (e.currentTarget as HTMLInputElement).value
-                        )}
+                        setScaleValue('weight', step, e.currentTarget.value)}
                     />
                   </div>
                 {/each}
@@ -1245,7 +1235,7 @@
                       lg: m.radius?.lg ?? '12px',
                       xl: m.radius?.xl ?? '16px',
                       full: m.radius?.full ?? '9999px',
-                      [step]: (e.currentTarget as HTMLInputElement).value
+                      [step]: e.currentTarget.value
                     }
                     wc.setAt(wc.modePath('radius'), radius)
                   }}
@@ -1285,7 +1275,7 @@
                         md: m.spacing?.md ?? '8px',
                         lg: m.spacing?.lg ?? '16px',
                         xl: m.spacing?.xl ?? '24px',
-                        [step]: (e.currentTarget as HTMLInputElement).value
+                        [step]: e.currentTarget.value
                       }
                       wc.setAt(wc.modePath('spacing'), spacing)
                     }}
@@ -1325,7 +1315,7 @@
                         lg:
                           m.shadow?.lg ??
                           '0 12px 32px color-mix(in oklch, var(--color-surface-app) 30%, transparent)',
-                        [step]: (e.currentTarget as HTMLInputElement).value
+                        [step]: e.currentTarget.value
                       }
                       wc.setAt(wc.modePath('shadow'), shadow)
                     }}
@@ -1465,7 +1455,7 @@
                 value={bgEdit?.size ?? 'cover'}
                 onchange={(e) =>
                   updateBackground({
-                    size: (e.currentTarget as HTMLSelectElement).value
+                    size: e.currentTarget.value
                   })}
               >
                 <option value="cover">Cover</option>
@@ -1489,8 +1479,7 @@
                 class="max-w-xs"
                 oninput={(e) =>
                   updateBackground({
-                    opacity:
-                      Number((e.currentTarget as HTMLInputElement).value) / 100
+                    opacity: Number(e.currentTarget.value) / 100
                   })}
               />
             </div>
@@ -1504,7 +1493,7 @@
                 value={bgEdit?.blend ?? 'normal'}
                 onchange={(e) =>
                   updateBackground({
-                    blend: (e.currentTarget as HTMLSelectElement).value
+                    blend: e.currentTarget.value
                   })}
               >
                 {#each ['normal', 'multiply', 'screen', 'overlay', 'soft-light', 'hard-light', 'darken', 'lighten'] as b (b)}
@@ -1523,7 +1512,7 @@
                 value={bgEdit?.position ?? 'center'}
                 onchange={(e) =>
                   updateBackground({
-                    position: (e.currentTarget as HTMLInputElement).value
+                    position: e.currentTarget.value
                   })}
               />
             </div>

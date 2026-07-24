@@ -431,7 +431,7 @@ export const ProposedEdit = Extension.create({
                 markdown: opts.markdown,
                 onAccept: opts.onAccept,
                 fileDate: opts.fileDate ?? todayDate()
-              } as ActiveProposal)
+              })
             )
           }
           return true

@@ -57,7 +57,7 @@ describe('TableSizePicker', () => {
     render(TableSizePicker, { props })
     await flush()
     // Escape dispatched on the document (not from inside an input).
-    fireEvent.keyDown(document, { key: 'Escape' })
+    void fireEvent.keyDown(document, { key: 'Escape' })
     expect(props.onCancel).toHaveBeenCalledTimes(1)
   })
 
@@ -66,7 +66,7 @@ describe('TableSizePicker', () => {
     render(TableSizePicker, { props })
     await flush()
     // A click on the body (outside the popover) cancels.
-    fireEvent.click(document.body)
+    void fireEvent.click(document.body)
     expect(props.onCancel).toHaveBeenCalledTimes(1)
   })
 
@@ -91,8 +91,8 @@ describe('TableSizePicker', () => {
     const rowsInput = container.querySelector(
       'input[aria-label="Rows"]'
     ) as HTMLInputElement
-    fireEvent.input(rowsInput, { target: { value: '50' } })
-    fireEvent.blur(rowsInput)
+    void fireEvent.input(rowsInput, { target: { value: '50' } })
+    void fireEvent.blur(rowsInput)
     await flush()
     expect(container.textContent ?? '').toContain('Adjusted rows to 20')
     expect(rowsInput.value).toBe('20')
@@ -106,7 +106,7 @@ describe('TableSizePicker', () => {
     const colsInput = container.querySelector(
       'input[aria-label="Columns"]'
     ) as HTMLInputElement
-    fireEvent.input(colsInput, { target: { value: '12' } })
+    void fireEvent.input(colsInput, { target: { value: '12' } })
     await tick()
     // gridC derives to clampGrid(12) = 8; default rows=3 → 3 × 8 = 24 filled.
     const filled = container.querySelectorAll('.tsp-cell-filled')

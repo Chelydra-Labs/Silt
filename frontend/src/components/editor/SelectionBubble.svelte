@@ -135,7 +135,7 @@
     if (action.id === 'open') {
       // Only http(s) — note content is user-controlled; reject file:/javascript: etc.
       if (href && /^https?:\/\//i.test(href)) {
-        Browser.OpenURL(href)
+        void Browser.OpenURL(href)
       } else if (href) {
         copyStatus = 'Invalid URL scheme'
         window.setTimeout(() => {

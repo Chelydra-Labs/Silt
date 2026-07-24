@@ -154,9 +154,7 @@ describe('EmbedPortal (#127)', () => {
     await fireEvent.click(preview)
     await tick()
 
-    const editable = document.querySelector(
-      '[contenteditable="true"]'
-    ) as HTMLElement | null
+    const editable = document.querySelector('[contenteditable="true"]')
     expect(editable).toBeTruthy()
     if (editable) {
       // TipTap/ProseMirror: set text and dispatch input so onUpdate runs.

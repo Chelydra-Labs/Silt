@@ -51,7 +51,7 @@
   $effect(() => {
     if (!menuOpen) return
     void activeIndex
-    tick().then(() => focusActiveMenuitem())
+    void tick().then(() => focusActiveMenuitem())
   })
 
   function openMenu() {
@@ -60,7 +60,7 @@
       VARIANTS.findIndex(([key]) => key === variant)
     )
     menuOpen = true
-    tick().then(() => focusActiveMenuitem())
+    void tick().then(() => focusActiveMenuitem())
   }
 
   function selectVariant(next: CalloutVariant) {

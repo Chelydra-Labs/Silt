@@ -16,17 +16,24 @@
   let { pluginID, schema, values, scopeLabel = 'vault' }: Props = $props()
 
   // Local draft so the user can edit multiple fields and save atomically.
-  // the upstream prop; the $effect below re-syncs on subsequent changes.
-  let draft = $state<Record<string, unknown>>({ ...values })
+  // Seeded/synced from `values` in $effect.pre so we don't capture only the
+  // initial prop snapshot (state_referenced_locally).
+  let draft = $state<Record<string, unknown>>({})
   let dirty = $derived(JSON.stringify(draft) !== JSON.stringify(values))
   let saving = $state(false)
   let error = $state('')
+
+  $effect.pre(() => {
+    const upstream = values
+    if (Object.keys(draft).length === 0) {
+      draft = { ...upstream }
+    }
+  })
 
   // Re-sync draft when the upstream values change (e.g. external config reload)
   // — but only if there are no unsaved edits, so we never clobber the user's
   // in-flight changes.
   $effect(() => {
-    // Track `values` reactively.
     const upstream = values
     if (!dirty) {
       draft = { ...upstream }
@@ -130,7 +137,7 @@
               ? (draft[field.key] as string[]).join(', ')
               : ''}
             oninput={(e) => {
-              draft[field.key] = (e.currentTarget as HTMLInputElement).value
+              draft[field.key] = e.currentTarget.value
                 .split(',')
                 .map((s) => s.trim())
                 .filter(Boolean)

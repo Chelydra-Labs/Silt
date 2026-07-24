@@ -26,6 +26,20 @@ describe('formatAIError', () => {
     abort.name = 'AbortError'
     expect(formatAIError(abort)).toBe('Cancelled.')
   })
+
+  it('maps Error instances with PluginAIError codes to friendly copy', () => {
+    const rateLimited = Object.assign(new Error('rl'), {
+      name: 'PluginAIError',
+      code: 'rate-limited'
+    })
+    expect(formatAIError(rateLimited)).toMatch(/rate limit/i)
+
+    const unauthorized = Object.assign(new Error('bad key'), {
+      name: 'PluginAIError',
+      code: 'unauthorized'
+    })
+    expect(formatAIError(unauthorized)).toMatch(/API key/i)
+  })
 })
 
 describe('isAbortError', () => {

@@ -180,7 +180,7 @@ describe('ChatShell', () => {
     })
     const link = container.querySelector(
       '.message-md a[href="https://example.com/docs"]'
-    ) as HTMLAnchorElement | null
+    )
     expect(link).toBeTruthy()
     await fireEvent.click(link!)
     expect(browserMocks.OpenURL).toHaveBeenCalledWith(
@@ -199,12 +199,8 @@ describe('ChatShell', () => {
         })
       ])
     })
-    const bad = container.querySelector(
-      'a[href="//evil.example/x"]'
-    ) as HTMLAnchorElement | null
-    const js = container.querySelector(
-      'a[href^="javascript"]'
-    ) as HTMLAnchorElement | null
+    const bad = container.querySelector('a[href="//evil.example/x"]')
+    const js = container.querySelector('a[href^="javascript"]')
     if (bad) {
       await fireEvent.click(bad)
       expect(browserMocks.OpenURL).not.toHaveBeenCalled()
@@ -213,9 +209,7 @@ describe('ChatShell', () => {
       await fireEvent.click(js)
       expect(browserMocks.OpenURL).not.toHaveBeenCalled()
     }
-    const ok = container.querySelector(
-      'a[href="https://safe.example"]'
-    ) as HTMLAnchorElement | null
+    const ok = container.querySelector('a[href="https://safe.example"]')
     expect(ok).toBeTruthy()
     await fireEvent.click(ok!)
     expect(browserMocks.OpenURL).toHaveBeenCalledWith('https://safe.example')

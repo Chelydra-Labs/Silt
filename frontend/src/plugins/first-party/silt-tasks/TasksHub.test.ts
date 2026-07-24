@@ -9,7 +9,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn(),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
-  tasksSettings: {} as Record<string, unknown>,
+  tasksSettings: {},
   blockChangedCallbacks: [] as Array<() => void>,
   configChangedCallbacks: [] as Array<() => void>
 }))
@@ -844,9 +844,7 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     await fireEvent.click(screen.getByTestId('tasks-hub-bookmark'))
     await flush()
 
-    const input = screen.getByTestId(
-      'tasks-hub-save-view-name'
-    ) as HTMLInputElement
+    const input = screen.getByTestId('tasks-hub-save-view-name')
     await fireEvent.input(input, { target: { value: 'Sprint 15' } })
     await flush()
 

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import { clearTools } from '../tool-registry'
 import { getBacklinksToolDef, handleGetBacklinks } from './get_backlinks'
 
@@ -45,7 +46,7 @@ function makeCtx(opts: {
         return { rows, truncated: false }
       }
       // resolveTargetIds: SELECT DISTINCT id FROM blocks WHERE page = ? [AND ...]
-      const page = String(params?.[0] ?? '')
+      const page = asString(params?.[0])
       return {
         rows: (opts.pageBlocks?.[page] ?? []).map((id) => ({ id })),
         truncated: false

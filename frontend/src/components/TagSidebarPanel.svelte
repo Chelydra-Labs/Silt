@@ -64,8 +64,10 @@
   }
 
   onMount(() => {
-    loadTree()
-    const refresh = () => loadTree()
+    void loadTree()
+    const refresh = () => {
+      void loadTree()
+    }
     window.addEventListener('refresh-navigation', refresh)
     return () => window.removeEventListener('refresh-navigation', refresh)
   })

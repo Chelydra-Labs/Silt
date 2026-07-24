@@ -249,7 +249,7 @@ describe('Sidebar', () => {
     expect(trigger).not.toHaveTextContent('menu_book')
   })
 
-  it('restores and persists the Quick Access disclosure preference', async () => {
+  it('switches between Notebook tree and Quick Access tabs and persists the choice', async () => {
     mocks.getNavigationPreferences.mockResolvedValue({
       expanded_sections: [],
       recent_pages: [
@@ -279,12 +279,102 @@ describe('Sidebar', () => {
     })
     await flush()
 
-    const toggle = screen.getByRole('button', { name: 'Quick access' })
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    await fireEvent.click(toggle)
+    const treeTab = screen.getByRole('tab', { name: 'Notebook tree view' })
+    const quickTab = screen.getByRole('tab', {
+      name: /Quick access bookmarks and recents/i
+    })
+    expect(treeTab).toHaveAttribute('aria-selected', 'true')
+    expect(quickTab).toHaveAttribute('aria-selected', 'false')
+    await fireEvent.click(quickTab)
     await flush()
+    expect(quickTab).toHaveAttribute('aria-selected', 'true')
     expect(mocks.setQuickAccessCollapsed).toHaveBeenCalledWith(false)
-    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      screen.getByRole('tabpanel', { name: /Quick [Aa]ccess/ })
+    ).toBeInTheDocument()
+    // Recent entry from prefs is visible in the Quick Access panel
+    expect(
+      screen.getByRole('button', { name: /Work \/ Journal \/ Daily/ })
+    ).toBeInTheDocument()
+  })
+
+  it('moves focus to the activated tab on ArrowRight', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [],
+      recent_pages: [
+        {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          opened_at: 10
+        }
+      ],
+      favorites: [],
+      quick_access_collapsed: true
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const treeTab = screen.getByRole('tab', { name: 'Notebook tree view' })
+    const quickTab = screen.getByRole('tab', {
+      name: /Quick access bookmarks and recents/i
+    })
+    treeTab.focus()
+    expect(treeTab).toHaveFocus()
+    await fireEvent.keyDown(treeTab, { key: 'ArrowRight' })
+    await flush()
+    expect(quickTab).toHaveAttribute('aria-selected', 'true')
+    expect(quickTab).toHaveFocus()
+  })
+
+  it('restores Quick Access tab when quick_access_collapsed is false', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [],
+      recent_pages: [
+        {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          opened_at: 10
+        }
+      ],
+      favorites: [],
+      quick_access_collapsed: false
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    expect(
+      screen.getByRole('tab', { name: /Quick access bookmarks and recents/i })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(
+      screen.getByRole('tabpanel', { name: /Quick [Aa]ccess/ })
+    ).toBeInTheDocument()
   })
 
   it('MovePage mock is available and callable (#177)', async () => {
@@ -667,7 +757,7 @@ describe('Sidebar', () => {
     // findScrollableAncestor resolves correctly (see scroll-scope test below).
     const sidebarScroller = document.querySelector(
       '[data-sidebar-scroll]'
-    )! as HTMLElement
+    ) as HTMLElement
     sidebarScroller.style.overflowY = 'auto'
 
     const pageRow = screen.getByText('Daily')
@@ -723,7 +813,7 @@ describe('Sidebar', () => {
     // fall back to document (defeating the scroll-scope feature).
     const sidebarScroller = document.querySelector(
       '[data-sidebar-scroll]'
-    )! as HTMLElement
+    ) as HTMLElement
     sidebarScroller.style.overflowY = 'auto'
 
     const pageRow = screen.getByText('Daily')
@@ -1126,7 +1216,7 @@ describe('Sidebar', () => {
     await flush()
     const journal = screen.getByRole('treeitem', {
       name: /Journal/
-    }) as HTMLElement
+    })
     journal.focus()
     await fireEvent.keyDown(journal, { key: 'ArrowDown' })
     expect(document.activeElement).toBe(
@@ -1198,7 +1288,7 @@ describe('Sidebar', () => {
     ).toBeInTheDocument()
   })
 
-  it('shows linked favorites as offline with their full accessible path', async () => {
+  it('shows linked pinned pages as offline with their full accessible path', async () => {
     mocks.listNavigation.mockResolvedValue({
       notebooks: [
         {
@@ -1237,6 +1327,10 @@ describe('Sidebar', () => {
         onSelectView: () => {}
       }
     })
+    await flush()
+    await fireEvent.click(
+      screen.getByRole('tab', { name: /Quick access bookmarks and recents/i })
+    )
     await flush()
     const favorite = screen.getByRole('button', {
       name: 'Synced / Projects/Deep / Plan — Linked notebook offline'

@@ -12,7 +12,7 @@ marked.setOptions({
 
 export function renderChatMarkdown(source: string): string {
   if (!source) return ''
-  const raw = marked.parse(source, { async: false }) as string
+  const raw = marked.parse(source, { async: false })
   return DOMPurify.sanitize(raw, {
     USE_PROFILES: { html: true },
     // Keep common markdown output; strip scripts/handlers.

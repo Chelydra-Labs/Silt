@@ -8,6 +8,8 @@
   // Reused by every plugin-component mount surface (bespoke settings page,
   // future sidebar/banner mounts) so the fallback UX is consistent and the
   // svelte:boundary pattern has one home.
+  import { asString } from '../../lib/asString'
+
   interface Props {
     name: string
     error: unknown
@@ -15,7 +17,7 @@
   }
   let { name, error, reset }: Props = $props()
   const message = $derived(
-    error instanceof Error ? error.message : String(error ?? 'Unknown error')
+    error instanceof Error ? error.message : asString(error, 'Unknown error')
   )
 </script>
 

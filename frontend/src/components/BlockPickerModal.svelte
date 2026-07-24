@@ -32,7 +32,7 @@
     }
     loading = true
     try {
-      results = (await SearchBlocks(query)) as BlockSearchResult[]
+      results = await SearchBlocks(query)
       selectedIdx = 0
     } catch (e) {
       console.error('BlockPicker search failed:', e)
@@ -44,7 +44,9 @@
 
   function onInput() {
     if (debounceTimer) clearTimeout(debounceTimer)
-    debounceTimer = setTimeout(runSearch, 180)
+    debounceTimer = setTimeout(() => {
+      void runSearch()
+    }, 180)
   }
 
   let dialogEl = $state<HTMLDivElement | null>(null)

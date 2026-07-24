@@ -323,7 +323,7 @@
       preview = {
         manifest: result.manifest,
         warnings: result.warnings ?? []
-      } as InstallPreview
+      }
     } catch (e) {
       previewError = e instanceof Error ? e.message : String(e)
     }

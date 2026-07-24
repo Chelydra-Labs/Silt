@@ -12,6 +12,7 @@
 // freely. Single-block updates are not staged (reversible prose, one undo).
 
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import type { ToolResult } from '../tool-registry'
 
 export const updateBlockToolDef = {
@@ -49,11 +50,11 @@ export async function handleUpdateBlock(
   ctx: PluginContext,
   args: Record<string, unknown>
 ): Promise<ToolResult> {
-  const blockId = String(args.block_id ?? '').trim()
+  const blockId = asString(args.block_id).trim()
   if (!blockId) {
     return { content: '', error: 'block_id must not be empty' }
   }
-  const newContent = String(args.content ?? '')
+  const newContent = asString(args.content)
   if (!newContent.trim()) {
     return { content: '', error: 'content must not be empty' }
   }
@@ -68,7 +69,7 @@ export async function handleUpdateBlock(
   if (!row) {
     return { content: '', error: `block ${blockId} not found` }
   }
-  const type = String(row.type ?? '').toUpperCase()
+  const type = asString(row.type).toUpperCase()
   const isTask = type === 'TASK'
 
   // 2. Compute the body to write. For TASK blocks, strip any checkbox and
@@ -149,5 +150,5 @@ function applyInlineTags(body: string, tags: unknown[]): string {
 
 /** Coerce a raw tags array to a clean string[] (drop empties, no leading #). */
 function normalizeTags(tags: unknown[]): string[] {
-  return tags.map((t) => String(t).trim()).filter((t) => t.length > 0)
+  return tags.map((t) => asString(t).trim()).filter((t) => t.length > 0)
 }

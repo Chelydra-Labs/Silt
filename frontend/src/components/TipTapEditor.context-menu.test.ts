@@ -176,7 +176,7 @@ describe('TipTapEditor context menu', () => {
 
     await openContextMenu(container)
 
-    const text = container.textContent!
+    const text = container.textContent
     for (const label of [
       'Cut',
       'Copy',
@@ -253,7 +253,7 @@ describe('TipTapEditor context menu', () => {
 
     await openContextMenu(container)
 
-    const text = container.textContent!
+    const text = container.textContent
     expect(text).toContain('Duplicate Block')
     expect(text).toContain('Delete Block')
     expect(text).toContain('Copy Block Reference')

@@ -76,7 +76,7 @@
       drawerOpen = true
       previouslyFocused = document.activeElement as HTMLElement
       // tabindex=-1 lets the panel receive focus without joining the tab order.
-      tick().then(() => panelRef?.focus())
+      void tick().then(() => panelRef?.focus())
     } else if (task && drawerOpen && tid !== lastTaskId) {
       // Switching A→B with the drawer open: capture B's trigger so close
       // returns to the most recently clicked card, not A's (which may be
@@ -941,9 +941,7 @@
                   aria-label="Custom due date"
                   class="w-full px-2 py-1 text-type-sm font-label-sm bg-surface-card border border-surface-card-border rounded text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
                   value={dueDateState}
-                  oninput={(e) =>
-                    (dueDateState = (e.currentTarget as HTMLInputElement)
-                      .value)}
+                  oninput={(e) => (dueDateState = e.currentTarget.value)}
                   onkeydown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault()
@@ -1037,10 +1035,7 @@
           max="100"
           value={progressState}
           oninput={(e) => {
-            if (!progressPending)
-              progressState = Number(
-                (e.currentTarget as HTMLInputElement).value
-              )
+            if (!progressPending) progressState = Number(e.currentTarget.value)
           }}
           onchange={onProgressChange}
           disabled={progressPending}

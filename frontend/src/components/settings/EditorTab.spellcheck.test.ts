@@ -59,7 +59,7 @@ const settingsMocks = vi.hoisted(() => {
   return {
     baseConfig,
     settings: {
-      config: baseConfig as typeof baseConfig | null,
+      config: baseConfig,
       loading: false,
       saving: false,
       error: '',

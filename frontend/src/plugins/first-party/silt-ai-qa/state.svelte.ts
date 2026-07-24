@@ -23,6 +23,7 @@ import {
 } from './embed_index'
 import { pushNotification } from '../../../notifications/store.svelte'
 import { updatePluginSetting } from '../../../settings/store.svelte'
+import { asString } from '../../../lib/asString'
 
 export type PanelStatus =
   | 'idle'
@@ -51,10 +52,10 @@ export function createQAController() {
   // fine-grained reactivity. This epoch counter bumps on every mutation;
   // the `messages` getter reads it to establish the reactive dependency.
   let conversationEpoch = $state(0)
-  const _addUser = conversation.addUser
-  const _addAssistant = conversation.addAssistant
-  const _updateLast = conversation.updateLastAssistant
-  const _clear = conversation.clear
+  const _addUser = conversation.addUser.bind(conversation)
+  const _addAssistant = conversation.addAssistant.bind(conversation)
+  const _updateLast = conversation.updateLastAssistant.bind(conversation)
+  const _clear = conversation.clear.bind(conversation)
   conversation.addUser = (c: string) => {
     _addUser(c)
     conversationEpoch++
@@ -85,10 +86,7 @@ export function createQAController() {
   let searchDegradeReason = $state<string | null>(null)
 
   function loadSettings(_ctx?: PluginContext) {
-    const raw = (
-      appSettings.config?.plugins?.plugin_settings as
-        Record<string, Record<string, unknown>> | undefined
-    )?.['silt-ai-qa'] as Record<string, unknown> | undefined
+    const raw = appSettings.config?.plugins?.plugin_settings?.['silt-ai-qa']
     settings = resolveSettings(raw)
   }
 
@@ -383,11 +381,11 @@ export function createQAController() {
 
       try {
         const stream = await ctx.ai.complete({
-          messages: messages as never,
+          messages: messages,
           stream: true,
           temperature: 0.3
         })
-        activeStream = stream as PluginAIStream
+        activeStream = stream
         conversation.addAssistant('')
         assistantStarted = true
         let acc = ''
@@ -404,15 +402,15 @@ export function createQAController() {
       } catch (streamErr: unknown) {
         // Fallback to non-stream if provider rejects streaming.
         if (
-          String((streamErr as { code?: unknown } | null)?.code ?? '').includes(
+          asString((streamErr as { code?: unknown } | null)?.code).includes(
             'bad-request'
           ) ||
           /stream/i.test(
-            String((streamErr as { message?: unknown } | null)?.message ?? '')
+            asString((streamErr as { message?: unknown } | null)?.message)
           )
         ) {
           const res = await ctx.ai.complete({
-            messages: messages as never,
+            messages: messages,
             temperature: 0.3
           })
           answer = res.content
@@ -437,7 +435,7 @@ export function createQAController() {
       } else {
         errorMessage =
           e && typeof e === 'object' && 'message' in e
-            ? String((e as { message: unknown }).message)
+            ? String(e.message)
             : String(e)
       }
       const errText = `Error: ${errorMessage}`

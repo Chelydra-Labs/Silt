@@ -44,7 +44,7 @@
     manifest?: PluginManifest
   }
 
-  let { ctx }: Props = $props()
+  let { ctx, manifest: _manifest }: Props = $props()
 
   let hubState = $derived(getTaskHubState())
   let liveFilters = $derived(hubState.filters)
@@ -115,7 +115,7 @@
        FROM blocks b JOIN tasks t ON b.id = t.block_id`,
       [today, tomorrow, weekAhead, today]
     )
-    const row = (res.rows?.[0] ?? {}) as Record<string, unknown>
+    const row = res.rows?.[0] ?? {}
     counts = {
       today: Number(row.today ?? 0),
       upcoming: Number(row.upcoming ?? 0),
@@ -696,10 +696,10 @@
               <span class="flex-1 truncate">{item.label}</span>
               <span
                 class="text-type-2xs text-text-muted bg-surface-popover px-1.5 py-0.5 rounded-sm font-label-sm"
-                aria-label="{counts[item.id as keyof Counts]} tasks"
+                aria-label="{counts[item.id]} tasks"
                 data-testid={`count-${item.id}`}
               >
-                {counts[item.id as keyof Counts]}
+                {counts[item.id]}
               </span>
             </button>
           </li>

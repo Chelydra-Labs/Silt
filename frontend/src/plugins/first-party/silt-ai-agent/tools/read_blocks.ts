@@ -8,6 +8,7 @@
 // so the model sees the surrounding prose, not an orphaned fragment.
 
 import type { PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import type { ToolResult } from '../tool-registry'
 import { breadcrumb } from './_util'
 
@@ -63,7 +64,7 @@ export async function handleReadBlocks(
   if (!Array.isArray(raw)) {
     return { content: '', error: 'block_ids must be an array of UUIDs' }
   }
-  const ids = raw.map((x) => String(x)).filter((s) => s.length > 0)
+  const ids = raw.map((x) => asString(x)).filter((s) => s.length > 0)
   if (ids.length === 0) {
     return { content: '', error: 'block_ids must contain at least one UUID' }
   }
@@ -155,7 +156,7 @@ async function fetchByIds(
   )
   const map = new Map<string, BlockRow>()
   for (const r of rows) {
-    map.set(String(r.id), rowToBlock(r))
+    map.set(asString(r.id), rowToBlock(r))
   }
   return map
 }
@@ -190,14 +191,14 @@ async function fetchByParentIds(
 
 function rowToBlock(r: Record<string, unknown>): BlockRow {
   return {
-    id: String(r.id ?? ''),
-    clean_content: r.clean_content == null ? null : String(r.clean_content),
-    notebook: String(r.notebook ?? ''),
-    section: String(r.section ?? ''),
-    page: String(r.page ?? ''),
-    type: String(r.type ?? ''),
+    id: asString(r.id),
+    clean_content: r.clean_content == null ? null : asString(r.clean_content),
+    notebook: asString(r.notebook),
+    section: asString(r.section),
+    page: asString(r.page),
+    type: asString(r.type),
     parent_id:
-      r.parent_id == null || r.parent_id === '' ? null : String(r.parent_id),
+      r.parent_id == null || r.parent_id === '' ? null : asString(r.parent_id),
     depth: Number(r.depth ?? 0),
     line_number: Number(r.line_number ?? 0)
   }

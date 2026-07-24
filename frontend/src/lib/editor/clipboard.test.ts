@@ -92,7 +92,7 @@ function makeEditor(overrides: Record<string, unknown> = {}): MockEditor {
       run: vi.fn()
     }),
     ...overrides
-  } as MockEditor
+  }
 }
 
 function makeDeps(
@@ -170,7 +170,7 @@ describe('copyAsMarkdown', () => {
     const editor = makeEditor()
     await copyAsMarkdown(
       makeDeps(editor, {
-        activeBlockNode: fakeNode as { toJSON: () => unknown }
+        activeBlockNode: fakeNode
       })
     )
     // serializeInlineContent mock returns [md:N] where N = JSON length
@@ -257,7 +257,7 @@ describe('duplicateBlock', () => {
     })
     duplicateBlock(
       makeDeps(editor, {
-        activeBlockNode: fakeNode as { toJSON: () => unknown }
+        activeBlockNode: fakeNode
       })
     )
     expect(insertAt).toHaveBeenCalledWith(

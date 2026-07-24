@@ -66,10 +66,8 @@ export function createAssistantController() {
   } | null = null
 
   function loadSettings() {
-    const raw = (
-      appSettings.config?.plugins?.plugin_settings as
-        Record<string, Record<string, unknown>> | undefined
-    )?.['silt-ai-assistant'] as Record<string, unknown> | undefined
+    const raw =
+      appSettings.config?.plugins?.plugin_settings?.['silt-ai-assistant']
     settings = resolveSettings(raw)
     const enabled = enabledActions(settings)
     if (!enabled.find((a) => a.id === selectedAction) && enabled[0]) {
@@ -277,7 +275,7 @@ export function createAssistantController() {
           result = await runSuggestRelated(ctx, scope, settings)
           break
         default:
-          throw new Error(`Unknown action: ${actionId}`)
+          throw new Error(`Unknown action: ${String(actionId)}`)
       }
 
       if (gen !== runGeneration || disposed || cancelRequested) return

@@ -63,7 +63,7 @@ export const TextColor = Mark.create({
     return {
       color: {
         default: null,
-        parseHTML: (el) => (el as HTMLElement).style.color?.trim() || null,
+        parseHTML: (el) => el.style.color?.trim() || null,
         renderHTML: (attrs) =>
           attrs.color ? { style: `color: ${attrs.color}` } : {}
       }
@@ -74,7 +74,7 @@ export const TextColor = Mark.create({
       {
         tag: 'span[style]',
         getAttrs: (el) => {
-          const color = (el as HTMLElement).style.color
+          const color = el.style.color
           return color ? { color: color.trim() } : false
         }
       }
@@ -96,8 +96,7 @@ export const BackgroundColor = Mark.create({
     return {
       color: {
         default: null,
-        parseHTML: (el) =>
-          (el as HTMLElement).style.backgroundColor?.trim() || null,
+        parseHTML: (el) => el.style.backgroundColor?.trim() || null,
         renderHTML: (attrs) =>
           attrs.color ? { style: `background-color: ${attrs.color}` } : {}
       }
@@ -108,7 +107,7 @@ export const BackgroundColor = Mark.create({
       {
         tag: 'span[style]',
         getAttrs: (el) => {
-          const bg = (el as HTMLElement).style.backgroundColor
+          const bg = el.style.backgroundColor
           return bg ? { color: bg.trim() } : false
         }
       }

@@ -15,7 +15,6 @@ import type * as config from '../../bindings/silt/backend/config/models.js'
 export type SystemConfig = config.SystemConfig
 type UIConfig = config.UIConfig
 type EditorConfig = config.EditorConfig
-type PluginsConfig = config.PluginsConfig
 
 // Reactive settings store (Svelte 5 runes in a .svelte.ts module, mirroring
 // plugins/store.svelte.ts: a const object whose properties are mutated).
@@ -24,7 +23,7 @@ export const settings = $state({
   config: null as SystemConfig | null,
   loading: false,
   saving: false,
-  error: '' as string,
+  error: '',
   // True when the user has unsaved edits in the panel; used to warn before
   // discarding (close, or an external hot-reload overwriting local edits).
   dirty: false,
@@ -120,7 +119,7 @@ export async function updatePluginSetting(
           active: [],
           disabled: [],
           plugin_settings: {}
-        } as PluginsConfig
+        }
       }
       if (!cfg.plugins.plugin_settings) {
         cfg.plugins.plugin_settings = {}

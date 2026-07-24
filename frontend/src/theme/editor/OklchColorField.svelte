@@ -512,8 +512,7 @@
               aria-valuetext={valueText}
               class="oklch-slider w-full"
               style="--track: {lTrack}"
-              oninput={(e) =>
-                setL(Number((e.currentTarget as HTMLInputElement).value))}
+              oninput={(e) => setL(Number(e.currentTarget.value))}
             />
           </div>
 
@@ -532,8 +531,7 @@
               aria-valuetext={valueText}
               class="oklch-slider w-full"
               style="--track: {cTrack}"
-              oninput={(e) =>
-                setC(Number((e.currentTarget as HTMLInputElement).value))}
+              oninput={(e) => setC(Number(e.currentTarget.value))}
             />
           </div>
 
@@ -552,8 +550,7 @@
               aria-valuetext={valueText}
               class="oklch-slider w-full"
               style="--track: {hTrack}"
-              oninput={(e) =>
-                setH(Number((e.currentTarget as HTMLInputElement).value))}
+              oninput={(e) => setH(Number(e.currentTarget.value))}
             />
           </div>
         </div>

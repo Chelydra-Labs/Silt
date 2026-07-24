@@ -78,7 +78,7 @@ export function createLocalMcpController() {
       http = (cfg as { http_enabled?: boolean })?.http_enabled !== false
       const p = (cfg as { http_port?: number })?.http_port
       if (typeof p === 'number' && p > 0) port = p
-      status = st as LocalMCPStatus
+      status = st
       hint = typeof h === 'string' ? h : ''
     } catch (e) {
       console.error('Local MCP status failed', e)

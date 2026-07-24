@@ -192,7 +192,7 @@ describe('BacklinksSidebarPanel', () => {
   it('debounces block changes by 200ms and cleans up its listener and timer', async () => {
     vi.useFakeTimers()
     const view = renderPanel()
-    await vi.runAllTicks()
+    vi.runAllTicks()
     await vi.advanceTimersByTimeAsync(0)
     expect(mocks.getBacklinksPaged).toHaveBeenCalledTimes(1)
 

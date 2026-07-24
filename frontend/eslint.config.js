@@ -4,9 +4,18 @@ import globals from 'globals'
 import ts from 'typescript-eslint'
 import svelte from 'eslint-plugin-svelte'
 import svelteConfig from './svelte.config.js'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 
-// Authored frontend source only. Bindings, dist, coverage, and dependencies
-// are regenerated or third-party and must not be linted.
+const tsconfigRootDir = path.dirname(fileURLToPath(import.meta.url))
+
+// Shared across every projectService block. Mismatched extraFileExtensions
+// between .ts and .svelte files forces a full TypeScript project reload per
+// file (typescript-eslint typed-linting performance docs) and multiplies
+// wall-clock cost.
+const extraFileExtensions = ['.svelte']
+
+// Type-aware config (CI / `npm run lint:typed`). Authored frontend source only.
 export default defineConfig(
   globalIgnores([
     'bindings/**',
@@ -17,13 +26,18 @@ export default defineConfig(
   ]),
 
   js.configs.recommended,
-  ts.configs.recommended,
+  ...ts.configs.recommendedTypeChecked,
   svelte.configs.recommended,
 
   {
     languageOptions: {
       globals: {
         ...globals.browser
+      },
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir,
+        extraFileExtensions
       }
     }
   },
@@ -32,15 +46,20 @@ export default defineConfig(
     files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],
     languageOptions: {
       parserOptions: {
+        projectService: true,
+        tsconfigRootDir,
+        extraFileExtensions,
         parser: ts.parser,
+        // svelteConfig is non-serializable; typed lint cache may be weaker
+        // than the fast config. Prefer lint:typed in CI, lint (fast) locally.
         svelteConfig
       }
     }
   },
 
-  // Underscore-prefixed names are intentional discards (callback params, destructure).
   {
     rules: {
+      // Underscore-prefixed names are intentional discards.
       '@typescript-eslint/no-unused-vars': [
         'error',
         {
@@ -49,7 +68,39 @@ export default defineConfig(
           caughtErrorsIgnorePattern: '^_',
           destructuredArrayIgnorePattern: '^_'
         }
-      ]
+      ],
+      // Staged only: Wails-generated bindings and many IPC payloads are typed
+      // as `any`/`unknown` today. Enabling no-unsafe-* floods the gate with
+      // binding-boundary noise rather than authored-logic bugs. Re-enable when
+      // binding d.ts / plugin IPC types are tightened (follow-up to #723).
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      // Off: ESLint's view of PM/DOM/generic types often marks load-bearing
+      // assertions as "unnecessary" while svelte-check still requires them
+      // (e.g. view.dragging as DraggingLike, onchange(n as T)). Prefer
+      // svelte-check as the assertion authority for those boundaries.
+      '@typescript-eslint/no-unnecessary-type-assertion': 'off'
+    }
+  },
+
+  // Vitest: async mock factories often return resolved values without await;
+  // expect(fn) passes unbound methods by design. DOM query casts are required
+  // by svelte-check even when ESLint thinks they are redundant.
+  {
+    files: [
+      '**/*.{test,spec}.{ts,js}',
+      '**/test-helpers.ts',
+      '**/*.stub.svelte',
+      '**/__test_helpers__/**'
+    ],
+    rules: {
+      '@typescript-eslint/require-await': 'off',
+      '@typescript-eslint/unbound-method': 'off',
+      '@typescript-eslint/no-floating-promises': 'off',
+      '@typescript-eslint/no-misused-promises': 'off'
     }
   }
 )

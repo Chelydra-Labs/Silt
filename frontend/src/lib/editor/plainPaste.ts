@@ -30,7 +30,7 @@ export const PlainPaste = Extension.create({
         props: {
           handleDOMEvents: {
             keydown: (_view, event) => {
-              shiftHeld = (event as KeyboardEvent).shiftKey
+              shiftHeld = event.shiftKey
               return false
             }
           },

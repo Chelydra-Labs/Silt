@@ -283,7 +283,7 @@ describe('FormatToolbar', () => {
     const { getByRole } = render(FormatToolbar, {
       props: { editor: editor as never, ...baseProps }
     })
-    const toolbar = getByRole('toolbar') as HTMLElement
+    const toolbar = getByRole('toolbar')
     // Contract for ≤600px: wrap + visible overflow, never a forced h-scroll rail.
     expect(toolbar.className).toContain('format-toolbar')
     const style = toolbar.getAttribute('style') || ''

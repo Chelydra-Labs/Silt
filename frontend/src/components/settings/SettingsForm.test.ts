@@ -40,11 +40,11 @@ describe('SettingsForm save diff', () => {
     // Re-enter identical list content: oninput splits into a NEW array that is
     // equal to values.tags by value but a distinct reference — exactly the case
     // the old `!==` check wrongly treated as a change.
-    const listInput = screen.getByLabelText('Tags') as HTMLInputElement
+    const listInput = screen.getByLabelText('Tags')
     await fireEvent.input(listInput, { target: { value: 'a, b' } })
 
     // Make the form genuinely dirty via the string field so Save renders.
-    const nameInput = screen.getByLabelText('Name') as HTMLInputElement
+    const nameInput = screen.getByLabelText('Name')
     await fireEvent.input(nameInput, { target: { value: 'y' } })
     await flush()
 

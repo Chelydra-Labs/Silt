@@ -222,7 +222,7 @@ describe('MentionSuggest — insertion', () => {
 
     expect(applyMentionSuggestion(editor, 'Alice')).toBe(true)
 
-    const block = editor.getJSON().content![0]
+    const block = editor.getJSON().content[0]
     const kids = (block.content ?? []) as Array<{
       type: string
       attrs?: { name?: string }
@@ -249,7 +249,7 @@ describe('MentionSuggest — insertion', () => {
     // "assign @al " -> 11 chars, caret at pos 12.
     editor.commands.setTextSelection(12)
     expect(applyMentionSuggestion(editor, 'Alice')).toBe(true)
-    const kids = (editor.getJSON().content![0].content ?? []) as Array<{
+    const kids = (editor.getJSON().content[0].content ?? []) as Array<{
       type: string
       text?: string
     }>
@@ -330,7 +330,7 @@ describe('applyMentionSuggestion — owner write-back (#329)', () => {
 
     expect(applyMentionSuggestion(editor, 'alice')).toBe(true)
 
-    const block = editor.getJSON().content![0]
+    const block = editor.getJSON().content[0]
     const mention = inlineKids(block).find((n) => n.type === 'mentionNode')
     expect(mention).toBeTruthy()
     expect(mention!.attrs!.name).toBe('alice')
@@ -349,7 +349,7 @@ describe('applyMentionSuggestion — owner write-back (#329)', () => {
     expect(applyMentionSuggestion(editor, 'alice')).toBe(true)
 
     expect(ownerTokenCount(editor.state.doc.textContent)).toBe(0)
-    const block = editor.getJSON().content![0]
+    const block = editor.getJSON().content[0]
     expect(inlineKids(block).some((n) => n.type === 'mentionNode')).toBe(true)
     editor.destroy()
   })
@@ -367,7 +367,7 @@ describe('applyMentionSuggestion — owner write-back (#329)', () => {
     expect(text).toContain('[owner:: alice]')
     expect(text).not.toContain('[owner:: bob]')
     // Chip still present.
-    const block = editor.getJSON().content![0]
+    const block = editor.getJSON().content[0]
     expect(inlineKids(block).some((n) => n.type === 'mentionNode')).toBe(true)
     editor.destroy()
   })

@@ -20,6 +20,7 @@
 // mutated — only the new page receives writes.
 
 import type { PluginAIChatMessage, PluginContext } from '../../../sdk'
+import { asString } from '../../../../lib/asString'
 import type { ToolResult } from '../tool-registry'
 import { UNTRUSTED_CONTENT_SECURITY } from '../security'
 
@@ -191,7 +192,7 @@ export async function handleExtractAndSave(
       error: 'source_block_ids must be an array of UUIDs'
     }
   }
-  const ids = rawIds.map((x) => String(x)).filter((s) => s.length > 0)
+  const ids = rawIds.map((x) => asString(x)).filter((s) => s.length > 0)
   if (ids.length === 0) {
     return {
       content: '',
@@ -205,12 +206,12 @@ export async function handleExtractAndSave(
     }
   }
 
-  const mode = String(args.mode ?? '') as ExtractionMode
+  const mode = asString(args.mode) as ExtractionMode
   const cfg = MODE_CONFIGS[mode]
   if (!cfg) {
     return {
       content: '',
-      error: `mode must be one of summary, flashcards, qa_pairs, action_items (got "${String(args.mode ?? '')}")`
+      error: `mode must be one of summary, flashcards, qa_pairs, action_items (got "${asString(args.mode)}")`
     }
   }
 
@@ -258,7 +259,7 @@ export async function handleExtractAndSave(
     })
     rawContent = res.content ?? ''
   } catch (e: unknown) {
-    modelError = e instanceof Error ? e.message : String(e)
+    modelError = e instanceof Error ? e.message : asString(e)
   }
 
   // --- 4. Parse → block bodies ---------------------------------------------
@@ -336,8 +337,8 @@ async function fetchSourceBlocks(
   )
   const byId = new Map<string, SourceBlock>()
   for (const r of rows) {
-    const id = String(r.id ?? '')
-    const text = String(r.clean_content ?? '').trim()
+    const id = asString(r.id)
+    const text = asString(r.clean_content).trim()
     if (id && text.length > 0) byId.set(id, { id, clean_content: text })
   }
   // Preserve the requested order; drop ids that were missing or empty.
@@ -365,11 +366,11 @@ function normalizeTarget(raw: unknown): string | TargetSpec {
     return 'target must be an object with notebook + page'
   }
   const t = raw as Record<string, unknown>
-  const notebook = String(t.notebook ?? '').trim()
+  const notebook = asString(t.notebook).trim()
   if (!notebook) {
     return 'target.notebook must not be empty'
   }
-  const page = String(t.page ?? '').trim()
+  const page = asString(t.page).trim()
   if (!page) {
     return 'target.page must not be empty'
   }
@@ -402,7 +403,7 @@ export function parseExtraction(
     return {
       blocks: [],
       salvaged: true,
-      warning: `JSON parse failed: ${e instanceof Error ? e.message : String(e)}`
+      warning: `JSON parse failed: ${e instanceof Error ? e.message : asString(e)}`
     }
   }
   const obj = data as Record<string, unknown>
@@ -460,21 +461,21 @@ function renderItem(
   if (item === null || typeof item !== 'object') return ''
   const o = item as Record<string, unknown>
   if (mode === 'flashcards') {
-    const front = truncate(String(o.front ?? '').trim(), MAX_FIELD_LENGTH)
-    const back = truncate(String(o.back ?? '').trim(), MAX_FIELD_LENGTH)
+    const front = truncate(asString(o.front).trim(), MAX_FIELD_LENGTH)
+    const back = truncate(asString(o.back).trim(), MAX_FIELD_LENGTH)
     if (!front || !back) return ''
     return `**Q${index + 1}: ${front}**\n${back}`
   }
   if (mode === 'qa_pairs') {
-    const q = truncate(String(o.question ?? '').trim(), MAX_FIELD_LENGTH)
-    const a = truncate(String(o.answer ?? '').trim(), MAX_FIELD_LENGTH)
+    const q = truncate(asString(o.question).trim(), MAX_FIELD_LENGTH)
+    const a = truncate(asString(o.answer).trim(), MAX_FIELD_LENGTH)
     if (!q || !a) return ''
     return `**Q${index + 1}: ${q}**\n${a}`
   }
   if (mode === 'action_items') {
-    const title = truncate(String(o.title ?? '').trim(), MAX_FIELD_LENGTH)
+    const title = truncate(asString(o.title).trim(), MAX_FIELD_LENGTH)
     if (!title) return ''
-    const due = truncate(String(o.due_date ?? '').trim(), 32)
+    const due = truncate(asString(o.due_date).trim(), 32)
     const dueSuffix =
       due && /^\d{4}-\d{2}-\d{2}$/.test(due) ? ` [due:: ${due}]` : ''
     return `- [ ] ${title}${dueSuffix}`

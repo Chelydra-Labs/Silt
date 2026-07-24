@@ -141,7 +141,7 @@
     if (!href) return
     e.preventDefault()
     if (!isOpenableExternalHref(href)) return
-    Browser.OpenURL(href)
+    void Browser.OpenURL(href)
   }
 
   $effect(() => {

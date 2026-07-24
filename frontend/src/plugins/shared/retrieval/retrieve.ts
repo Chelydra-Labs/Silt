@@ -8,6 +8,7 @@
 // otherwise falls open to FTS.
 
 import type { PluginContext } from '../../sdk'
+import { asString } from '../../../lib/asString'
 import {
   fuseHybrid,
   trimToBudget,
@@ -83,13 +84,13 @@ export type { RankedHit, RetrievedPassage }
 export function ftsRowsToHits(rows: Record<string, unknown>[]): RankedHit[] {
   return rows.map((r) => {
     // Strip FTS highlight markers before RAG so the model sees plain text.
-    const raw = String(r.snippet ?? r.clean_content ?? r.raw_content ?? '')
+    const raw = asString(r.snippet ?? r.clean_content ?? r.raw_content)
     const text = raw.replace(/<\/?mark>/gi, '')
     return {
-      blockId: String(r.id ?? r.block_id ?? ''),
-      notebook: String(r.notebook ?? ''),
-      section: String(r.section ?? ''),
-      page: String(r.page ?? ''),
+      blockId: asString(r.id ?? r.block_id),
+      notebook: asString(r.notebook),
+      section: asString(r.section),
+      page: asString(r.page),
       lineNumber: Number(r.line_number ?? r.lineNumber ?? 0),
       text,
       score: Number(r.rank ?? r.score ?? 0)

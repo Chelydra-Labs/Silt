@@ -19,7 +19,14 @@
     embedded?: boolean
   }
   // Location props are part of the settings-page surface contract; unused here.
-  let { ctx, manifest, embedded = false }: Props = $props()
+  let {
+    ctx,
+    manifest,
+    embedded = false,
+    activeNotebook: _activeNotebook,
+    activeSection: _activeSection,
+    activePage: _activePage
+  }: Props = $props()
 
   // Chat-provider readiness nudge (shared with Plugins badge + banner).
   let unconfigured = $derived(aiProviderNeedsSetup(settings.config?.ai?.chat))
@@ -34,7 +41,7 @@
   let loaded = $state(false)
 
   async function refresh() {
-    const raw = (await ctx.getPluginSettings()) as Record<string, unknown>
+    const raw = await ctx.getPluginSettings()
     const resolved = resolveSettings(raw)
     draft = { ...resolved, facets: { ...resolved.facets } }
     loaded = true
@@ -52,7 +59,7 @@
   ) {
     draft[key] = value
     try {
-      await ctx.updatePluginSetting(key, value as never)
+      await ctx.updatePluginSetting(key, value)
     } catch {
       /* best-effort: the config:changed round-trip will resync */
     }

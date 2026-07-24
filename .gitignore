@@ -51,6 +51,10 @@ distributions/
 # Vite build cache timestamps
 frontend/vite.config.ts.timestamp-*.mjs
 
+# ESLint caches (local / CI warm runs)
+frontend/.eslintcache
+frontend/.eslintcache-typed
+
 # NSIS installer generated files
 build/installer/
 

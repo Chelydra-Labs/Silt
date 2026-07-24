@@ -155,6 +155,9 @@
   let preferencesLoading = $state(true)
   let preferencesError = $state('')
   let showNotebookDropdown = $state(false)
+  /** 'quick' when prefs.quick_access_collapsed is false (reuses legacy field). */
+  let sidebarTab = $state<'tree' | 'quick'>('tree')
+  let sidebarTabHydrated = $state(false)
 
   // Creation/rename modal state
   let createMode = $state<'' | 'notebook' | 'section' | 'page'>('')
@@ -460,6 +463,11 @@
         favorites: loaded?.favorites ?? [],
         quick_access_collapsed: loaded?.quick_access_collapsed ?? true
       }
+      // Reuse quick_access_collapsed: false means user last left Quick Access open.
+      if (!sidebarTabHydrated) {
+        sidebarTab = preferences.quick_access_collapsed ? 'tree' : 'quick'
+        sidebarTabHydrated = true
+      }
       onNavigationPreferencesLoaded?.(preferences)
       expandedSections = new SvelteSet(
         expandedPathsForNotebook(preferences, activeNotebook)
@@ -475,19 +483,43 @@
     }
   }
 
-  async function setQuickAccessCollapsed(collapsed: boolean) {
-    const previous = preferences.quick_access_collapsed
+  async function setSidebarTab(next: 'tree' | 'quick') {
+    if (sidebarTab === next) return
+    const previous = sidebarTab
+    const previousCollapsed = preferences.quick_access_collapsed
+    sidebarTab = next
+    // Persist via legacy field: collapsed=true → tree, false → quick.
+    const collapsed = next === 'tree'
     preferences = { ...preferences, quick_access_collapsed: collapsed }
     try {
       await SetQuickAccessCollapsed(collapsed)
       preferencesError = ''
     } catch (error) {
-      preferences = { ...preferences, quick_access_collapsed: previous }
+      sidebarTab = previous
+      preferences = {
+        ...preferences,
+        quick_access_collapsed: previousCollapsed
+      }
       preferencesError =
         error instanceof Error
           ? error.message
-          : 'Quick access state could not be saved.'
+          : 'Sidebar view preference could not be saved.'
     }
+  }
+
+  function onSidebarTabKeydown(e: KeyboardEvent) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    e.preventDefault()
+    const next = sidebarTab === 'tree' ? 'quick' : 'tree'
+    void setSidebarTab(next)
+    // Roving tabindex: move focus with selection (WAI-ARIA Tabs).
+    void tick().then(() => {
+      document
+        .getElementById(
+          next === 'tree' ? 'sidebar-tab-tree' : 'sidebar-tab-quick'
+        )
+        ?.focus()
+    })
   }
 
   // Expand an active page's full ancestry once when its location changes.
@@ -877,7 +909,7 @@
   async function handleCreatePageInline(sectionName: string) {
     creating = true
     try {
-      const pageName = await generateUniquePageName(sectionName)
+      const pageName = generateUniquePageName(sectionName)
       await CreatePage(activeNotebook, sectionName, pageName, '')
       await loadNavigation()
       activeSection = sectionName
@@ -896,7 +928,7 @@
     }
   }
 
-  async function generateUniquePageName(sectionName: string): Promise<string> {
+  function generateUniquePageName(sectionName: string): string {
     return generateUniquePageNameHelper(tree, activeNotebook, sectionName)
   }
 
@@ -1139,13 +1171,13 @@
   }
 
   onMount(() => {
-    loadNavigation()
-    loadNavigationPreferences()
-    loadNavOrder()
+    void loadNavigation()
+    void loadNavigationPreferences()
+    void loadNavOrder()
     const handleRefresh = () => {
-      loadNavigation()
-      loadNavigationPreferences()
-      loadNavOrder()
+      void loadNavigation()
+      void loadNavigationPreferences()
+      void loadNavOrder()
     }
     const handleCreatePageInlineEvent = (e: Event) => {
       const sectionName =
@@ -1426,228 +1458,289 @@
         </div>
       {/if}
 
-      <SidebarQuickAccess
-        favorites={preferences.favorites}
-        recents={preferences.recent_pages}
-        staleKeys={new Set([
-          ...favoriteState.stale.map((ref) => locatorKey(ref)),
-          ...recentState.stale.map((ref) => locatorKey(ref))
-        ])}
-        notebooks={tree.notebooks}
-        loading={preferencesLoading}
-        error={preferencesError}
-        collapsed={preferences.quick_access_collapsed}
-        onOpen={handleQuickPage}
-        onToggleFavorite={(ref) => void toggleFavorite(ref)}
-        onCollapsedChange={(collapsed) =>
-          void setQuickAccessCollapsed(collapsed)}
-        onRetry={() => void loadNavigationPreferences()}
-      />
-
-      <!-- Navigation tree -->
+      <!-- Sidebar View Mode Switcher -->
       <div
-        class="flex-1 overflow-y-auto custom-scrollbar px-1"
-        data-sidebar-scroll
+        class="mx-1 mb-2 flex items-center gap-0.5 bg-surface-sidebar border border-surface-sidebar-border p-0.5 rounded-md select-none"
+        role="tablist"
+        aria-label="Sidebar navigation views"
       >
-        <div class="sr-only" aria-live="polite">
-          {navigationError
-            ? `Navigation could not be refreshed. ${navigationError}`
-            : navigationLoading
-              ? 'Loading navigation.'
-              : 'Navigation loaded.'}
-        </div>
-        {#if navigationError}
-          <div
-            class="mb-2 mx-1 p-2 rounded-lg border border-status-warn/35 bg-status-warn/10 text-type-2xs text-surface-sidebar-text"
-            role="status"
+        <button
+          type="button"
+          role="tab"
+          id="sidebar-tab-tree"
+          aria-selected={sidebarTab === 'tree'}
+          aria-controls="sidebar-tree-panel"
+          tabindex={sidebarTab === 'tree' ? 0 : -1}
+          title="Notebook tree view"
+          aria-label="Notebook tree view"
+          class="flex-1 py-1 px-2 border-none rounded cursor-pointer transition-all flex items-center justify-center gap-1"
+          class:bg-hover={sidebarTab === 'tree'}
+          class:text-surface-sidebar-text={sidebarTab === 'tree'}
+          class:text-surface-sidebar-text-muted={sidebarTab !== 'tree'}
+          onkeydown={onSidebarTabKeydown}
+          onclick={() => void setSidebarTab('tree')}
+        >
+          <span class="material-symbols-outlined tab-icon" aria-hidden="true"
+            >account_tree</span
           >
-            <p class="m-0">
-              The page list could not be refreshed. Your previous list is still
-              available.
-            </p>
-            <button
-              type="button"
-              class="mt-1 border-none bg-transparent p-0 text-accent-primary-start underline cursor-pointer"
-              onclick={() => void loadNavigation()}>Try again</button
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="sidebar-tab-quick"
+          aria-selected={sidebarTab === 'quick'}
+          aria-controls="sidebar-quick-panel"
+          tabindex={sidebarTab === 'quick' ? 0 : -1}
+          title="Quick access bookmarks and recents"
+          aria-label="Quick access bookmarks and recents"
+          class="flex-1 py-1 px-2 border-none rounded cursor-pointer transition-all flex items-center justify-center gap-1"
+          class:bg-hover={sidebarTab === 'quick'}
+          class:text-surface-sidebar-text={sidebarTab === 'quick'}
+          class:text-surface-sidebar-text-muted={sidebarTab !== 'quick'}
+          onkeydown={onSidebarTabKeydown}
+          onclick={() => void setSidebarTab('quick')}
+        >
+          <span class="material-symbols-outlined tab-icon" aria-hidden="true"
+            >push_pin</span
+          >
+          {#if preferences.favorites.length + preferences.recent_pages.length > 0}
+            <span class="text-type-3xs opacity-75 font-label-sm-bold"
+              >({preferences.favorites.length +
+                preferences.recent_pages.length})</span
             >
-          </div>
-        {/if}
-        {#if !activeNotebookObj}
-          <div
-            class="text-surface-sidebar-text-muted py-10 text-center font-body-md text-type-md border border-dashed border-surface-sidebar-border rounded-lg mx-1"
-          >
-            {#if tree.notebooks.length === 0}
-              No notebooks yet.<br />Create or open one to begin.
-            {:else}
-              Select a notebook.
-            {/if}
-          </div>
-        {:else}
-          <div
-            role="tree"
-            tabindex="-1"
-            aria-label={`${activeNotebook} pages`}
-            data-sidebar-tree
-            onkeydown={handleTreeKeydown}
-          >
-            {#if hasNoContent}
-              <div
-                class="text-surface-sidebar-text-muted py-6 text-center font-body-md text-type-md border border-dashed border-surface-sidebar-border rounded-lg mx-1"
-              >
-                No sections or pages yet.<br />Create one to get started.
-              </div>
-            {/if}
-            {#each sortedSections.filter((s) => s.name !== '') as sec (sec.name)}
-              <SidebarSection
-                section={sec}
-                depth={0}
-                {activeNotebook}
-                {activeSection}
-                {activePage}
-                {expandedSections}
-                {navOrder}
-                {dropTarget}
-                {dragItem}
-                {focusedTreeItemId}
-                {contextMenuTargetId}
-                onTreeItemFocus={setFocusedTreeItem}
-                onToggleSection={toggleSection}
-                onSelectPage={handleSelectPage}
-                onPinPage={handlePinPage}
-                {onSelectSection}
-                onCreatePageInline={handleCreatePageInline}
-                onDragStart={handleDragStart}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onDragEnd={handleDragEnd}
-                onContextMenu={openContextMenu}
-              />
-            {/each}
+          {/if}
+        </button>
+      </div>
 
-            <!-- Section-less root pages -->
-            {#each sortedSections.filter((s) => s.name === '') as rootSec (rootSec.path || 'root')}
-              {#if rootSec.pages.length > 0}
-                <div
-                  class="h-px bg-surface-sidebar-border my-3 mx-1.5 opacity-50"
-                ></div>
-                {#each sortByName(rootSec.pages, navOrder.pages[`${activeNotebook}/`] ?? []) as pg (pg.name)}
-                  {@const isActive =
-                    activeSection === '' && activePage === pg.name}
-                  <button
-                    onclick={() => handleSelectPage('', pg.name)}
-                    onfocus={() =>
-                      setFocusedTreeItem(
-                        pageNodeId({
-                          notebook: activeNotebook,
-                          section: '',
-                          page: pg.name
-                        })
-                      )}
-                    ondblclick={() => handlePinPage('', pg.name)}
-                    onauxclick={(e) => {
-                      if (e.button === 1) {
-                        e.preventDefault()
-                        handlePinPage('', pg.name)
-                      }
-                    }}
-                    oncontextmenu={(e) =>
-                      openContextMenu(e, 'page', activeNotebook, '', pg.name)}
-                    draggable="true"
-                    ondragstart={(e) => handleDragStart(e, 'page', pg.name, '')}
-                    ondragover={(e) =>
-                      dnd.handleDragOver(
-                        e,
-                        'page',
-                        pg.name,
-                        `\u0000${pg.name}`
-                      )}
-                    ondragleave={handleDragLeave}
-                    ondrop={(e) =>
-                      handleDrop(e, 'page', pg.name, activeNotebook, '')}
-                    ondragend={handleDragEnd}
-                    class="relative w-full text-left pl-7 pr-2 py-1.5 rounded text-type-md font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
-                    class:bg-hover={isActive}
-                    class:text-accent-primary-start={isActive}
-                    class:text-surface-sidebar-text-muted={!isActive}
-                    class:hover:text-surface-sidebar-text={!isActive}
-                    class:drag-over-top={dropTarget?.level === 'page' &&
-                      dropTarget.name === `\u0000${pg.name}` &&
-                      dropTarget.before}
-                    class:drag-over-bottom={dropTarget?.level === 'page' &&
-                      dropTarget.name === `\u0000${pg.name}` &&
-                      !dropTarget.before}
-                    role="treeitem"
-                    data-tree-id={pageNodeId({
-                      notebook: activeNotebook,
-                      section: '',
-                      page: pg.name
-                    })}
-                    tabindex={focusedTreeItemId ===
-                    pageNodeId({
-                      notebook: activeNotebook,
-                      section: '',
-                      page: pg.name
-                    })
-                      ? 0
-                      : -1}
-                    aria-level="1"
-                    aria-selected={isActive}
-                    aria-haspopup="menu"
-                    aria-controls={contextMenuTargetId ===
-                    pageNodeId({
-                      notebook: activeNotebook,
-                      section: '',
-                      page: pg.name
-                    })
-                      ? 'sidebar-context-menu'
-                      : undefined}
-                  >
-                    {#if isActive}
-                      <span
-                        class="absolute left-1 top-1 bottom-1 w-0.5 bg-accent-primary-start rounded-full"
-                      ></span>
-                    {/if}
-                    <span class="truncate flex-1" title={pg.name}
-                      >{pg.name}</span
-                    >
-                  </button>
-                {/each}
-              {/if}
-            {/each}
-            <!-- Notebook-root drop zone (#177): drag a page here to move it
-             out of any section (section-less / root). Invisible until a
-             page is actively dragged over it. -->
+      {#if sidebarTab === 'quick'}
+        <SidebarQuickAccess
+          favorites={preferences.favorites}
+          recents={preferences.recent_pages}
+          staleKeys={new Set([
+            ...favoriteState.stale.map((ref) => locatorKey(ref)),
+            ...recentState.stale.map((ref) => locatorKey(ref))
+          ])}
+          notebooks={tree.notebooks}
+          {activeNotebook}
+          {activeSection}
+          {activePage}
+          loading={preferencesLoading}
+          error={preferencesError}
+          onOpen={handleQuickPage}
+          onToggleFavorite={(ref) => void toggleFavorite(ref)}
+          onRetry={() => void loadNavigationPreferences()}
+        />
+      {:else}
+        <!-- Navigation tree -->
+        <div
+          id="sidebar-tree-panel"
+          role="tabpanel"
+          aria-label="Notebook tree"
+          aria-labelledby="sidebar-tab-tree"
+          class="flex-1 overflow-y-auto custom-scrollbar px-1"
+          data-sidebar-scroll
+        >
+          <div class="sr-only" aria-live="polite">
+            {navigationError
+              ? `Navigation could not be refreshed. ${navigationError}`
+              : navigationLoading
+                ? 'Loading navigation.'
+                : 'Navigation loaded.'}
+          </div>
+          {#if navigationError}
             <div
-              class="mx-1 mt-1 rounded transition-colors min-h-6"
-              class:drag-over-into={dropTarget?.level === 'section' &&
-                dropTarget.name === '__root__'}
-              ondragover={(e) => {
-                if (!dragItem || dragItem.level !== 'page') return
-                e.preventDefault()
-                if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-                dropTarget = {
-                  level: 'section',
-                  name: '__root__',
-                  before: false
-                }
-              }}
-              ondragleave={handleDragLeave}
-              ondrop={(e) =>
-                handleDrop(e, 'section', '__root__', activeNotebook, '')}
-              role="none"
+              class="mb-2 mx-1 p-2 rounded-lg border border-status-warn/35 bg-status-warn/10 text-type-2xs text-surface-sidebar-text"
+              role="status"
             >
-              {#if dragItem?.level === 'page'}
-                <div
-                  class="text-surface-sidebar-text-muted text-type-xs font-body-md py-1.5 px-2 text-center border border-dashed border-surface-sidebar-border rounded"
-                >
-                  Drop to move to notebook root
-                </div>
+              <p class="m-0">
+                The page list could not be refreshed. Your previous list is
+                still available.
+              </p>
+              <button
+                type="button"
+                class="mt-1 border-none bg-transparent p-0 text-accent-primary-start underline cursor-pointer"
+                onclick={() => void loadNavigation()}>Try again</button
+              >
+            </div>
+          {/if}
+          {#if !activeNotebookObj}
+            <div
+              class="text-surface-sidebar-text-muted py-10 text-center font-body-md text-type-md border border-dashed border-surface-sidebar-border rounded-lg mx-1"
+            >
+              {#if tree.notebooks.length === 0}
+                No notebooks yet.<br />Create or open one to begin.
+              {:else}
+                Select a notebook.
               {/if}
             </div>
-          </div>
-        {/if}
-      </div>
+          {:else}
+            <div
+              role="tree"
+              tabindex="-1"
+              aria-label={`${activeNotebook} pages`}
+              data-sidebar-tree
+              onkeydown={handleTreeKeydown}
+            >
+              {#if hasNoContent}
+                <div
+                  class="text-surface-sidebar-text-muted py-6 text-center font-body-md text-type-md border border-dashed border-surface-sidebar-border rounded-lg mx-1"
+                >
+                  No sections or pages yet.<br />Create one to get started.
+                </div>
+              {/if}
+              {#each sortedSections.filter((s) => s.name !== '') as sec (sec.name)}
+                <SidebarSection
+                  section={sec}
+                  depth={0}
+                  {activeNotebook}
+                  {activeSection}
+                  {activePage}
+                  {expandedSections}
+                  {navOrder}
+                  {dropTarget}
+                  {dragItem}
+                  {focusedTreeItemId}
+                  {contextMenuTargetId}
+                  onTreeItemFocus={setFocusedTreeItem}
+                  onToggleSection={toggleSection}
+                  onSelectPage={handleSelectPage}
+                  onPinPage={handlePinPage}
+                  {onSelectSection}
+                  onCreatePageInline={handleCreatePageInline}
+                  onDragStart={handleDragStart}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onDragEnd={handleDragEnd}
+                  onContextMenu={openContextMenu}
+                />
+              {/each}
+
+              <!-- Section-less root pages -->
+              {#each sortedSections.filter((s) => s.name === '') as rootSec (rootSec.path || 'root')}
+                {#if rootSec.pages.length > 0}
+                  <div
+                    class="h-px bg-surface-sidebar-border my-3 mx-1.5 opacity-50"
+                  ></div>
+                  {#each sortByName(rootSec.pages, navOrder.pages[`${activeNotebook}/`] ?? []) as pg (pg.name)}
+                    {@const isActive =
+                      activeSection === '' && activePage === pg.name}
+                    <button
+                      onclick={() => handleSelectPage('', pg.name)}
+                      onfocus={() =>
+                        setFocusedTreeItem(
+                          pageNodeId({
+                            notebook: activeNotebook,
+                            section: '',
+                            page: pg.name
+                          })
+                        )}
+                      ondblclick={() => handlePinPage('', pg.name)}
+                      onauxclick={(e) => {
+                        if (e.button === 1) {
+                          e.preventDefault()
+                          handlePinPage('', pg.name)
+                        }
+                      }}
+                      oncontextmenu={(e) =>
+                        openContextMenu(e, 'page', activeNotebook, '', pg.name)}
+                      draggable="true"
+                      ondragstart={(e) =>
+                        handleDragStart(e, 'page', pg.name, '')}
+                      ondragover={(e) =>
+                        dnd.handleDragOver(
+                          e,
+                          'page',
+                          pg.name,
+                          `\u0000${pg.name}`
+                        )}
+                      ondragleave={handleDragLeave}
+                      ondrop={(e) =>
+                        handleDrop(e, 'page', pg.name, activeNotebook, '')}
+                      ondragend={handleDragEnd}
+                      class="relative w-full text-left pl-7 pr-2 py-1.5 rounded text-type-md font-body-md transition-colors border-none bg-transparent cursor-pointer flex items-center gap-2"
+                      class:bg-hover={isActive}
+                      class:text-accent-primary-start={isActive}
+                      class:text-surface-sidebar-text-muted={!isActive}
+                      class:hover:text-surface-sidebar-text={!isActive}
+                      class:drag-over-top={dropTarget?.level === 'page' &&
+                        dropTarget.name === `\u0000${pg.name}` &&
+                        dropTarget.before}
+                      class:drag-over-bottom={dropTarget?.level === 'page' &&
+                        dropTarget.name === `\u0000${pg.name}` &&
+                        !dropTarget.before}
+                      role="treeitem"
+                      data-tree-id={pageNodeId({
+                        notebook: activeNotebook,
+                        section: '',
+                        page: pg.name
+                      })}
+                      tabindex={focusedTreeItemId ===
+                      pageNodeId({
+                        notebook: activeNotebook,
+                        section: '',
+                        page: pg.name
+                      })
+                        ? 0
+                        : -1}
+                      aria-level="1"
+                      aria-selected={isActive}
+                      aria-haspopup="menu"
+                      aria-controls={contextMenuTargetId ===
+                      pageNodeId({
+                        notebook: activeNotebook,
+                        section: '',
+                        page: pg.name
+                      })
+                        ? 'sidebar-context-menu'
+                        : undefined}
+                    >
+                      {#if isActive}
+                        <span
+                          class="absolute left-1 top-1 bottom-1 w-0.5 bg-accent-primary-start rounded-full"
+                        ></span>
+                      {/if}
+                      <span class="truncate flex-1" title={pg.name}
+                        >{pg.name}</span
+                      >
+                    </button>
+                  {/each}
+                {/if}
+              {/each}
+              <!-- Notebook-root drop zone (#177): drag a page here to move it
+             out of any section (section-less / root). Invisible until a
+             page is actively dragged over it. -->
+              <div
+                class="mx-1 mt-1 rounded transition-colors min-h-6"
+                class:drag-over-into={dropTarget?.level === 'section' &&
+                  dropTarget.name === '__root__'}
+                ondragover={(e) => {
+                  if (!dragItem || dragItem.level !== 'page') return
+                  e.preventDefault()
+                  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+                  dropTarget = {
+                    level: 'section',
+                    name: '__root__',
+                    before: false
+                  }
+                }}
+                ondragleave={handleDragLeave}
+                ondrop={(e) =>
+                  handleDrop(e, 'section', '__root__', activeNotebook, '')}
+                role="none"
+              >
+                {#if dragItem?.level === 'page'}
+                  <div
+                    class="text-surface-sidebar-text-muted text-type-xs font-body-md py-1.5 px-2 text-center border border-dashed border-surface-sidebar-border rounded"
+                  >
+                    Drop to move to notebook root
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
     {/if}
   </div>
 
@@ -1820,14 +1913,16 @@
       Reveal in file manager
     </button>
     <button type="button" onclick={handleContextFavorite} role="menuitem">
-      <span class="material-symbols-outlined text-icon-md" aria-hidden="true">
-        {favoriteKeys.has(locatorKey(contextMenuPageRef))
-          ? 'star'
-          : 'star_outline'}
+      <span
+        class="material-symbols-outlined text-icon-md"
+        class:pin-menu-filled={favoriteKeys.has(locatorKey(contextMenuPageRef))}
+        aria-hidden="true"
+      >
+        push_pin
       </span>
       {favoriteKeys.has(locatorKey(contextMenuPageRef))
-        ? 'Remove from favorites'
-        : 'Add to favorites'}
+        ? 'Unpin'
+        : 'Pin to Quick Access'}
     </button>
   {/if}
   {#if contextMenu?.level === 'section' || contextMenu?.level === 'page'}
@@ -2016,5 +2111,20 @@
     );
     box-shadow: inset 0 0 0 1px var(--color-accent-primary-start);
     border-radius: 6px;
+  }
+  .pin-menu-filled {
+    font-variation-settings:
+      'FILL' 1,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 20;
+  }
+  .tab-icon {
+    font-size: 14px;
+    font-variation-settings:
+      'FILL' 0,
+      'wght' 300,
+      'GRAD' 0,
+      'opsz' 20;
   }
 </style>

@@ -140,12 +140,8 @@ describe('block depth DOM contract (NodeView outer attrs)', () => {
     ]
     const { container, cleanup } = await mountNodeViewEditor(blocks)
     const pm = container.querySelector('.ProseMirror')!
-    const header = pm.querySelector(
-      ':scope > .node-headerBlock'
-    ) as HTMLElement | null
-    const task = pm.querySelector(
-      ':scope > .node-taskBlock'
-    ) as HTMLElement | null
+    const header = pm.querySelector(':scope > .node-headerBlock')
+    const task = pm.querySelector(':scope > .node-taskBlock')
 
     expect(header?.getAttribute('data-type')).toBe('header')
     expect(header?.getAttribute('data-depth')).toBe('2')

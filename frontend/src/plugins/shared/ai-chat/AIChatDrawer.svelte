@@ -154,15 +154,12 @@
     const first = focusable[0]
     const last = focusable[focusable.length - 1]
     const active = document.activeElement
-    if (
-      event.shiftKey &&
-      (active === first || !drawerEl.contains(active as Node))
-    ) {
+    if (event.shiftKey && (active === first || !drawerEl.contains(active))) {
       event.preventDefault()
       last.focus()
     } else if (
       !event.shiftKey &&
-      (active === last || !drawerEl.contains(active as Node))
+      (active === last || !drawerEl.contains(active))
     ) {
       event.preventDefault()
       first.focus()

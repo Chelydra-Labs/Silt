@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   BrowserOpenURL: vi.fn(),
   // Plain (non-$state) object the component reads from; mutated per test.
   updateState: {
-    status: 'idle' as string,
+    status: 'idle',
     latestVersion: '',
     releaseUrl: '',
     releaseNotes: '',

@@ -46,7 +46,7 @@ correctness regression, not a style choice.
 | Tier | Format | Location | Holds | Example |
 |---|---|---|---|---|
 | **Content** | Markdown (`.md`) | Vault root + per-page files | Block bodies, task markers, per-task metadata, block identity (`<!-- id: uuid @ YYYY-MM-DD -->`) | `[/] DOING TASK [Alice] (2026-06-15) #2 !pin [p:50] Implement search <!-- id: 7c2a… @ 2026-06-15 -->` |
-| **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Tasks hub saved views + display mode/grouping/sort, hotkey bindings, editor font sizes, theme typography overrides, canonical navigation order, expanded section locators, bounded recent pages, favorites, and pinned tabs | `ui.expanded_sections: [{notebook: Work, path: Projects}]` |
+| **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Tasks hub saved views + display mode/grouping/sort, hotkey bindings, editor font sizes, theme typography overrides, canonical navigation order, expanded section locators, bounded recent pages, favorites (Quick Access pins), and pinned tabs | `ui.expanded_sections: [{notebook: Work, path: Projects}]` |
 | **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook. Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-tasks.default_group_by: status` |
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
 | **Working memory** | SQLite (WAL) | `<vault>/.system/index.sqlite*` | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
@@ -1311,7 +1311,9 @@ Global settings — editor defaults, parsing rules, hotkeys, and the plugin regi
 Navigation preferences extend the `ui.*` tier with `expanded_sections`
 (notebook plus full relative section path), bounded timestamped `recent_pages`,
 bounded MRU `recent_tags` (capped at 12, case-insensitive dedupe, maintained by
-`RecordTagUsage`), and canonical `favorites`. These values and navigation order are normalized,
+`RecordTagUsage`), and canonical `favorites` (Quick Access pins; UI copy is Pin
+to Quick Access / Unpin — distinct from pinned tabs and task `[pin::]`). These
+values and navigation order are normalized,
 deduplicated, reconciled after filesystem changes, and persisted through the
 serialized narrow config mutation path rather than a competing whole-navigation
 snapshot setter. The canonical navigation defaults are `Ctrl+N` for a new page,

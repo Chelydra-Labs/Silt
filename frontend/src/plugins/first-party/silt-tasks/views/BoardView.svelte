@@ -775,14 +775,14 @@
   function cancelRename() {
     renamingColKey = null
   }
-  async function addColumn() {
+  function addColumn() {
     const name = window.prompt('New column name')?.trim()
     if (!name || columnNames(statusColumns).includes(name)) return
     const prev = cloneColumns(statusColumns)
     configError = ''
     saveStatusColumns([...statusColumns, { name }], prev)
   }
-  async function removeColumn(statusName: string) {
+  function removeColumn(statusName: string) {
     menuCol = null
     if (
       !window.confirm(
@@ -1223,6 +1223,8 @@
                  button for keyboard users. -->
             <div
               class="flex items-center justify-between px-3 py-2.5 border-b border-surface-panel-border"
+              role="group"
+              aria-label={`${col.label} column header`}
               draggable={canManage ? 'true' : undefined}
               ondragstart={canManage
                 ? (e) => onColDragStart(e, colIdx)

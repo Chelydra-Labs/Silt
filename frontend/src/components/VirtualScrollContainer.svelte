@@ -124,7 +124,9 @@
 
   $effect(() => {
     if (notebook && page) {
-      untrack(() => loadPage(true))
+      untrack(() => {
+        void loadPage(true)
+      })
     }
   })
 
@@ -163,7 +165,7 @@
     const off = Events.On('block:changed', (event) => {
       const ev: { notebook: string; section: string; page: string } = event.data
       if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
-        loadPage(false)
+        void loadPage(false)
       }
     })
     return () => off()
@@ -318,7 +320,9 @@
     if (newName === '' || newName === page) return
     // Debounce the rename (500ms after last keystroke).
     if (renameTimer) clearTimeout(renameTimer)
-    renameTimer = setTimeout(() => doRename(newName), 500)
+    renameTimer = setTimeout(() => {
+      void doRename(newName)
+    }, 500)
   }
 
   function handleTitleKeydown(e: KeyboardEvent) {
@@ -347,7 +351,7 @@
       if (titleEl) titleEl.textContent = page
       return
     }
-    doRename(newName)
+    void doRename(newName)
   }
 
   async function doRename(newName: string) {
