@@ -854,9 +854,9 @@
             type="button"
             onclick={prevMonth}
             aria-label="Previous month"
-            class="p-1 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
+            class="flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-text-muted hover:bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-primary-start cursor-pointer"
           >
-            <span class="material-symbols-outlined text-icon-sm"
+            <span class="material-symbols-outlined text-icon-lg"
               >chevron_left</span
             >
           </button>
@@ -868,9 +868,9 @@
             type="button"
             onclick={nextMonth}
             aria-label="Next month"
-            class="p-1 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
+            class="flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-text-muted hover:bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-primary-start cursor-pointer"
           >
-            <span class="material-symbols-outlined text-icon-sm"
+            <span class="material-symbols-outlined text-icon-lg"
               >chevron_right</span
             >
           </button>
@@ -881,7 +881,7 @@
             onclick={goMiniToday}
             aria-label="Jump mini-calendar to today"
             data-testid="mini-today"
-            class="px-1.5 py-0.5 rounded border border-surface-popover-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm border bg-transparent cursor-pointer transition-colors"
+            class="rounded-md px-3 py-1 text-type-xs text-text-muted hover:bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-primary-start cursor-pointer"
           >
             Today
           </button>
@@ -919,7 +919,7 @@
                   aria-label={`${key}${count ? ', ' + count + ' task' + (count === 1 ? '' : 's') : ''}`}
                   aria-current={key === activeFocusDate ? 'date' : undefined}
                   data-testid={`mini-day-${key}`}
-                  class="aspect-square flex flex-col items-center justify-center rounded text-type-2xs font-label-sm cursor-pointer border-none bg-transparent
+                  class="aspect-square flex flex-col items-center justify-center gap-0.5 rounded text-type-sm font-label-sm cursor-pointer border-none bg-transparent
                     {inMonth
                     ? 'text-text-primary hover:bg-hover'
                     : 'text-text-muted/50'}
