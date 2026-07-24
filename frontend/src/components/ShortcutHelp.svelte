@@ -99,7 +99,8 @@
     >
       {#each SHORTCUT_GROUPS as group (group)}
         {@const groupActions = actions.filter(
-          (action) => action.group === group
+          (action) =>
+            action.group === group && shortcutBinding(action.id, hotkeys)
         )}
         {#if groupActions.length}
           <section aria-labelledby={`shortcut-group-${group}`}>
@@ -121,24 +122,17 @@
                     {action.label}
                   </dt>
                   <dd class="m-0 shrink-0">
-                    {#if binding}
-                      <span class="flex items-center justify-end gap-1.5">
-                        {#if action.defaultBinding && binding !== action.defaultBinding}
-                          <span class="text-type-3xs text-accent-primary-start"
-                            >Remapped</span
-                          >
-                        {/if}
-                        <kbd
-                          class="inline-flex px-2 py-1 rounded-md border border-surface-panel-border bg-surface-panel text-type-2xs text-text-muted font-mono whitespace-nowrap"
-                          >{binding}</kbd
+                    <span class="flex items-center justify-end gap-1.5">
+                      {#if action.defaultBinding && binding !== action.defaultBinding}
+                        <span class="text-type-3xs text-accent-primary-start"
+                          >Remapped</span
                         >
-                      </span>
-                    {:else}
-                      <span
-                        class="text-type-2xs text-text-muted italic"
-                        aria-label={`${action.label} disabled`}>Disabled</span
+                      {/if}
+                      <kbd
+                        class="inline-flex px-2 py-1 rounded-md border border-surface-panel-border bg-surface-panel text-type-2xs text-text-muted font-mono whitespace-nowrap"
+                        >{binding}</kbd
                       >
-                    {/if}
+                    </span>
                   </dd>
                 </div>
               {/each}

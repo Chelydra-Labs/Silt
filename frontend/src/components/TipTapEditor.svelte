@@ -116,6 +116,7 @@
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { classifySlashCommand } from '../lib/editor/builtinSlashCommands'
   import { openDateGlance } from '../lib/dateGlanceState.svelte'
+  import { openShortcutHelp } from '../lib/shortcutHelpState.svelte'
   import { setActiveEditor } from '../lib/editor/activeEditor.svelte'
   import {
     clampToViewport,
@@ -1812,6 +1813,11 @@
         // deleted above; the editor stays as the insert target so a picked
         // date lands at the cursor.
         openDateGlance(editorInstance ?? null)
+        break
+      case 'shortcuts':
+        // Open the keyboard-shortcut reference overlay (#731). Same surface
+        // as the Shift+? hotkey; the slash trigger is already deleted above.
+        openShortcutHelp()
         break
       case 'embed':
         // Open the block picker; the selected block is inserted as a complete

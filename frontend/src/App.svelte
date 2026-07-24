@@ -199,6 +199,11 @@
   import DateGlance from './components/DateGlance.svelte'
   import { openDateGlance } from './lib/dateGlanceState.svelte'
   import { getActiveEditor } from './lib/editor/activeEditor.svelte'
+  import {
+    shortcutHelp,
+    toggleShortcutHelp,
+    closeShortcutHelp
+  } from './lib/shortcutHelpState.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
   import {
     clearSelectionFocus,
@@ -725,7 +730,6 @@
   }
   let showSearch = $state(false)
   let showQuickSwitcher = $state(false)
-  let showShortcutHelp = $state(false)
   let navigationCatalog = $state<NavigationCatalogItem[]>([])
   let navigationNotebookMetadata = $state<
     Record<string, NotebookNavigationMetadata>
@@ -1017,7 +1021,7 @@
           showQuickSwitcher = !showQuickSwitcher
           break
         case 'open_shortcuts_help':
-          showShortcutHelp = !showShortcutHelp
+          toggleShortcutHelp()
           break
         case 'open_date_glance':
           openDateGlance(getActiveEditor())
@@ -2155,8 +2159,8 @@
     />
   {/if}
 
-  {#if showShortcutHelp}
-    <ShortcutHelp onClose={() => (showShortcutHelp = false)} />
+  {#if shortcutHelp.open}
+    <ShortcutHelp onClose={closeShortcutHelp} />
   {/if}
 
   {#if emptyChromeMenu.open && isDevMode()}

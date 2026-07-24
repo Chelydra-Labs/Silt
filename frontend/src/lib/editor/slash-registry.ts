@@ -132,6 +132,12 @@ registerSlashCommand({
   description: 'Insert a page template at cursor',
   icon: 'content_copy'
 })
+registerSlashCommand({
+  id: 'shortcuts',
+  label: 'Keyboard shortcuts',
+  description: 'Show available keyboard shortcuts',
+  icon: 'keyboard'
+})
 
 // --- Inline formatting commands (#168) ------------------------------------
 // Metadata-only built-ins; the editor dispatches them by id via
