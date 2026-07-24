@@ -1005,6 +1005,9 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(cell).toBeTruthy()
     expect(cell!.className).toContain('text-type-sm')
     expect(cell!.className).not.toContain('text-type-2xs')
+    // #733 parity: day cells share DateGlance's keyboard-focus affordance
+    // (the same focus-visible ring the chevrons/Today button standardized).
+    expect(cell!.className).toContain('focus-visible:ring-2')
 
     for (const name of ['Previous month', 'Next month']) {
       const btn = screen.getByRole('button', { name })

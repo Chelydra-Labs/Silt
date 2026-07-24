@@ -919,10 +919,10 @@
                   aria-label={`${key}${count ? ', ' + count + ' task' + (count === 1 ? '' : 's') : ''}`}
                   aria-current={key === activeFocusDate ? 'date' : undefined}
                   data-testid={`mini-day-${key}`}
-                  class="aspect-square flex flex-col items-center justify-center gap-0.5 rounded text-type-sm font-label-sm cursor-pointer border-none bg-transparent
+                  class="aspect-square flex flex-col items-center justify-center gap-0.5 rounded text-type-sm font-label-sm cursor-pointer border-none bg-transparent focus-visible:ring-2 focus-visible:ring-accent-primary-start focus-visible:outline-none
                     {inMonth
                     ? 'text-text-primary hover:bg-hover'
-                    : 'text-text-muted/50'}
+                    : 'text-text-muted/50 hover:bg-hover'}
                     {key === activeFocusDate
                     ? 'ring-1 ring-accent-primary-start bg-accent-primary-glow'
                     : ''}"
