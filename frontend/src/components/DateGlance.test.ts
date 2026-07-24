@@ -359,4 +359,50 @@ describe('DateGlance', () => {
     expect(left).not.toBe(POPOVER_MARGIN)
     expect(top).not.toBe(POPOVER_MARGIN)
   })
+
+  it('positions against the clicked chip even when a hidden chip owns the global anchor', async () => {
+    closeDateGlance()
+    // Last-registered chip is display:none (inactive tab) → 0×0 rect.
+    const hidden = document.createElement('button')
+    hidden.style.display = 'none'
+    document.body.appendChild(hidden)
+    setDateGlanceAnchor(hidden)
+
+    const visible = document.createElement('button')
+    document.body.appendChild(visible)
+    mockAnchorRect(visible, {
+      left: 900,
+      top: 20,
+      bottom: 52,
+      width: 32,
+      height: 32
+    })
+    Object.defineProperty(window, 'innerWidth', {
+      value: 1200,
+      configurable: true
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 800,
+      configurable: true
+    })
+
+    // Chip click path: pass the element that was actually pressed.
+    openDateGlance(null, { element: visible })
+
+    render(DateGlance)
+    await screen.findByRole('dialog', { name: /pick a date/i })
+    await new Promise((r) => setTimeout(r, 0))
+
+    const layer = floatingLayer()
+    const left = Number(layer.style.left.replace('px', ''))
+    const top = Number(layer.style.top.replace('px', ''))
+    expect(left).toBe(900)
+    expect(top).toBe(56)
+    // Must not collapse to the hidden chip's origin rect.
+    expect(left).not.toBe(POPOVER_MARGIN)
+    expect(top).not.toBe(POPOVER_MARGIN)
+
+    hidden.remove()
+    visible.remove()
+  })
 })

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Date Glance popover (#730). A compact, single-purpose month grid for
+  // Date Glance popover. A compact, single-purpose month grid for
   // referencing dates while writing — not a second calendar (no task dots,
   // event sync, or format picker). Three openers (status-bar chip, global
   // hotkey, /calendar slash) funnel through dateGlanceState. Placement comes

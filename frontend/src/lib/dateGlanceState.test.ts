@@ -153,6 +153,26 @@ describe('dateGlanceState', () => {
     chip.remove()
   })
 
+  it('prefers an explicit element over the globally registered chip', () => {
+    // Simulates multi-tab: last-registered chip is a hidden (display:none)
+    // instance whose client rect is 0×0; the click target is a different node.
+    const hiddenChip = document.createElement('button')
+    hiddenChip.style.display = 'none'
+    document.body.appendChild(hiddenChip)
+    setDateGlanceAnchor(hiddenChip)
+
+    const clickedChip = document.createElement('button')
+    document.body.appendChild(clickedChip)
+
+    const ok = openDateGlance(null, { element: clickedChip })
+    expect(ok).toBe(true)
+    expect(dateGlance.activeAnchor).toBe(clickedChip)
+    expect(dateGlance.activeAnchor).not.toBe(hiddenChip)
+
+    hiddenChip.remove()
+    clickedChip.remove()
+  })
+
   it('removes the ephemeral placement marker on close', () => {
     openDateGlance(null, { rect: { top: 10, bottom: 20, left: 10 } })
     expect(

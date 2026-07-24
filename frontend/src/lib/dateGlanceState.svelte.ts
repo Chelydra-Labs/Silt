@@ -1,6 +1,6 @@
 import type { Editor } from '@tiptap/core'
 
-// Shared state for the Date Glance popover (#730). One popover instance,
+// Shared state for the Date Glance popover. One popover instance,
 // rendered once in App.svelte, driven by this state.
 //
 // Placement (dual-mode):
@@ -29,6 +29,13 @@ export interface DateGlanceOpenOptions {
    * fixed-position element is mounted for Popover to measure.
    */
   rect?: DateGlancePlacementRect | null
+  /**
+   * Explicit live element to anchor against (the chip that was clicked).
+   * Required for chip opens when multiple tab instances each mount a chip —
+   * inactive tabs use display:none, and a hidden chip's client rect is 0,0
+   * (popover pins top-left). Never rely on "last registered" alone at click.
+   */
+  element?: HTMLElement | null
 }
 
 export interface DateGlanceState {
@@ -100,13 +107,17 @@ function isLiveAnchor(el: HTMLElement | null): el is HTMLElement {
 
 /**
  * Resolve the element Popover should anchor to for this open.
- * Order: explicit caret rect → live chip → null (refuse open).
+ * Order: explicit caret rect → explicit element (clicked chip) →
+ * registered live chip → null (refuse open).
  */
 function resolveActiveAnchor(
   options?: DateGlanceOpenOptions
 ): HTMLElement | null {
   if (options?.rect) {
     return mountSessionPlacement(options.rect)
+  }
+  if (isLiveAnchor(options?.element ?? null)) {
+    return options!.element as HTMLElement
   }
   if (isLiveAnchor(dateGlance.anchor)) {
     return dateGlance.anchor
