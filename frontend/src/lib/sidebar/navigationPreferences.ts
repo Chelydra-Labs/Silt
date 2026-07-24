@@ -9,7 +9,7 @@ export const EMPTY_NAVIGATION_PREFERENCES: NavigationPreferences = {
   expanded_sections: [],
   recent_pages: [],
   favorites: [],
-  quick_access_collapsed: true
+  sidebar_view: 'tree'
 }
 
 export function locatorKey(ref: NavigationPageRef): string {

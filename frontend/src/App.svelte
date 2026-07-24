@@ -730,7 +730,7 @@
     expanded_sections: [],
     recent_pages: [],
     favorites: [],
-    quick_access_collapsed: true
+    sidebar_view: 'tree'
   })
   let navigationCatalogLoading = $state(true)
   let navigationCatalogError = $state('')

@@ -838,46 +838,96 @@ func TestNavigationPreferences_NormalizeAndRoundTrip(t *testing.T) {
 	}
 }
 
-func TestQuickAccessCollapsed_DefaultNormalizeAndBackwardCompatibility(t *testing.T) {
+func TestSidebarView_DefaultNormalizeMigrationAndRoundTrip(t *testing.T) {
+	// Defaults() intentionally does NOT seed SidebarView (normalize owns it),
+	// so a raw Defaults() value has nil here. Normalize finalizes it to "tree".
 	defaults := Defaults()
-	if defaults.UI.QuickAccessCollapsed == nil || !*defaults.UI.QuickAccessCollapsed {
-		t.Fatalf("quick access should default collapsed, got %v", defaults.UI.QuickAccessCollapsed)
+	if defaults.UI.SidebarView != nil {
+		t.Fatalf("Defaults() must not seed SidebarView (normalize owns it), got %v", defaults.UI.SidebarView)
+	}
+	normalized := Normalize(defaults)
+	if normalized.UI.SidebarView == nil || *normalized.UI.SidebarView != "tree" {
+		t.Fatalf("nil SidebarView should normalize to \"tree\", got %v", normalized.UI.SidebarView)
 	}
 
-	legacy := defaults
-	legacy.UI.QuickAccessCollapsed = nil
-	normalized := Normalize(legacy)
-	if normalized.UI.QuickAccessCollapsed == nil || !*normalized.UI.QuickAccessCollapsed {
-		t.Fatalf("nil quick access preference should normalize to collapsed, got %v", normalized.UI.QuickAccessCollapsed)
-	}
-
-	open := false
-	legacy.UI.QuickAccessCollapsed = &open
+	// Invalid value collapses to the "tree" default.
+	bogus := "bogus"
+	legacy := Defaults()
+	legacy.UI.SidebarView = &bogus
 	normalized = Normalize(legacy)
-	if normalized.UI.QuickAccessCollapsed == nil || *normalized.UI.QuickAccessCollapsed {
-		t.Fatalf("explicit expanded preference should survive normalization, got %v", normalized.UI.QuickAccessCollapsed)
+	if normalized.UI.SidebarView == nil || *normalized.UI.SidebarView != "tree" {
+		t.Fatalf("invalid SidebarView should normalize to \"tree\", got %v", normalized.UI.SidebarView)
 	}
 
+	// Explicit "quick" survives normalization.
+	quick := "quick"
+	legacy = Defaults()
+	legacy.UI.SidebarView = &quick
+	normalized = Normalize(legacy)
+	if normalized.UI.SidebarView == nil || *normalized.UI.SidebarView != "quick" {
+		t.Fatalf("explicit \"quick\" should survive normalization, got %v", normalized.UI.SidebarView)
+	}
+
+	// Legacy quick_access_collapsed: false migrates to sidebar_view: "quick".
 	vaultPath := t.TempDir()
-	writeFile(t, ConfigPath(vaultPath), "ui:\n  sidebar_width: 256\n")
+	writeFile(t, ConfigPath(vaultPath), "ui:\n  sidebar_width: 256\n  quick_access_collapsed: false\n")
 	loaded, err := Load(vaultPath)
 	if err != nil {
-		t.Fatalf("Load legacy config: %v", err)
+		t.Fatalf("Load legacy config with collapsed=false: %v", err)
 	}
-	if loaded.UI.QuickAccessCollapsed == nil || !*loaded.UI.QuickAccessCollapsed {
-		t.Fatalf("legacy config should use collapsed default, got %v", loaded.UI.QuickAccessCollapsed)
+	if loaded.UI.SidebarView == nil || *loaded.UI.SidebarView != "quick" {
+		t.Fatalf("legacy quick_access_collapsed: false should migrate to \"quick\", got %v", loaded.UI.SidebarView)
 	}
 
+	// Legacy quick_access_collapsed: true migrates to sidebar_view: "tree".
+	writeFile(t, ConfigPath(vaultPath), "ui:\n  sidebar_width: 256\n  quick_access_collapsed: true\n")
+	loaded, err = Load(vaultPath)
+	if err != nil {
+		t.Fatalf("Load legacy config with collapsed=true: %v", err)
+	}
+	if loaded.UI.SidebarView == nil || *loaded.UI.SidebarView != "tree" {
+		t.Fatalf("legacy quick_access_collapsed: true should migrate to \"tree\", got %v", loaded.UI.SidebarView)
+	}
+
+	// Legacy config without either key loads as the "tree" default.
+	writeFile(t, ConfigPath(vaultPath), "ui:\n  sidebar_width: 256\n")
+	loaded, err = Load(vaultPath)
+	if err != nil {
+		t.Fatalf("Load legacy config without sidebar key: %v", err)
+	}
+	if loaded.UI.SidebarView == nil || *loaded.UI.SidebarView != "tree" {
+		t.Fatalf("absent sidebar key should default to \"tree\", got %v", loaded.UI.SidebarView)
+	}
+
+	// When both keys are present, the new sidebar_view wins over the legacy bool.
+	writeFile(t, ConfigPath(vaultPath), "ui:\n  sidebar_width: 256\n  quick_access_collapsed: false\n  sidebar_view: tree\n")
+	loaded, err = Load(vaultPath)
+	if err != nil {
+		t.Fatalf("Load config with both keys: %v", err)
+	}
+	if loaded.UI.SidebarView == nil || *loaded.UI.SidebarView != "tree" {
+		t.Fatalf("new sidebar_view should win over legacy quick_access_collapsed, got %v", loaded.UI.SidebarView)
+	}
+
+	// Explicit "quick" round-trips through Save/Load and the legacy key is NOT
+	// re-emitted (the field is gone from SystemConfig, so Save cannot write it).
 	roundTripPath := t.TempDir()
 	if err := Save(roundTripPath, normalized); err != nil {
-		t.Fatalf("Save quick access preference: %v", err)
+		t.Fatalf("Save sidebar_view preference: %v", err)
 	}
 	roundTripped, err := Load(roundTripPath)
 	if err != nil {
 		t.Fatalf("Load round-tripped config: %v", err)
 	}
-	if roundTripped.UI.QuickAccessCollapsed == nil || *roundTripped.UI.QuickAccessCollapsed {
-		t.Fatalf("explicit expanded preference did not round-trip, got %v", roundTripped.UI.QuickAccessCollapsed)
+	if roundTripped.UI.SidebarView == nil || *roundTripped.UI.SidebarView != "quick" {
+		t.Fatalf("explicit \"quick\" did not round-trip, got %v", roundTripped.UI.SidebarView)
+	}
+	savedBytes, err := os.ReadFile(ConfigPath(roundTripPath))
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	if strings.Contains(string(savedBytes), "quick_access_collapsed") {
+		t.Fatalf("Save must not emit the legacy quick_access_collapsed key, got:\n%s", string(savedBytes))
 	}
 }
 

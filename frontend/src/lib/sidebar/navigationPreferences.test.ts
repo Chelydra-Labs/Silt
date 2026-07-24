@@ -14,7 +14,7 @@ const preferences: NavigationPreferences = {
   ],
   recent_pages: [],
   favorites: [],
-  quick_access_collapsed: true
+  sidebar_view: 'tree'
 }
 
 const tree: NavigationTree = {

@@ -35,7 +35,7 @@ export interface NavigationPreferences {
   expanded_sections: { notebook: string; path: string }[]
   recent_pages: RecentPageRef[]
   favorites: NavigationPageRef[]
-  quick_access_collapsed: boolean
+  sidebar_view: 'tree' | 'quick'
 }
 
 export interface NavNotebook {

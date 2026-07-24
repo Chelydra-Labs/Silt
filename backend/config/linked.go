@@ -31,6 +31,11 @@ func LinkedConfigPath(linkedRoot string) string {
 // error — the caller MUST surface this so the user can fix the source rather
 // than silently inheriting defaults. Mirrors Load's decode-over-Defaults
 // semantics so omitted sections keep their default values.
+//
+// Unlike Load, this does NOT run migrateLegacyQuickAccessCollapsed: a linked
+// config is a read-only override layer whose UI fields are never merged into
+// the active sidebar state (only MergePluginSettings is consumed, §3.1), so a
+// legacy quick_access_collapsed key here is inert and migration is moot.
 func LoadLinked(linkedRoot string) (SystemConfig, error) {
 	path := LinkedConfigPath(linkedRoot)
 	data, err := safeio.ReadFileMax(path, maxConfigYAMLBytes)

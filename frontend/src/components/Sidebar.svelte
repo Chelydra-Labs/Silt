@@ -26,7 +26,7 @@
     DuplicatePage,
     GetNavigationPreferences,
     SetNavigationSectionExpanded,
-    SetQuickAccessCollapsed,
+    SetSidebarView,
     SetFavoritePage
   } from '../../bindings/silt/app.js'
   import { NavOrderManager, sortByName } from '../lib/sidebar/navOrder'
@@ -155,7 +155,7 @@
   let preferencesLoading = $state(true)
   let preferencesError = $state('')
   let showNotebookDropdown = $state(false)
-  /** 'quick' when prefs.quick_access_collapsed is false (reuses legacy field). */
+  /** Active sidebar view mode, persisted via SetSidebarView. */
   let sidebarTab = $state<'tree' | 'quick'>('tree')
   let sidebarTabHydrated = $state(false)
 
@@ -457,15 +457,15 @@
     try {
       const loaded = await GetNavigationPreferences()
       if (sequence !== preferenceLoadSequence) return
+      const sidebarView = loaded?.sidebar_view === 'quick' ? 'quick' : 'tree'
       preferences = {
         expanded_sections: loaded?.expanded_sections ?? [],
         recent_pages: loaded?.recent_pages ?? [],
         favorites: loaded?.favorites ?? [],
-        quick_access_collapsed: loaded?.quick_access_collapsed ?? true
+        sidebar_view: sidebarView
       }
-      // Reuse quick_access_collapsed: false means user last left Quick Access open.
       if (!sidebarTabHydrated) {
-        sidebarTab = preferences.quick_access_collapsed ? 'tree' : 'quick'
+        sidebarTab = sidebarView
         sidebarTabHydrated = true
       }
       onNavigationPreferencesLoaded?.(preferences)
@@ -477,7 +477,7 @@
     } catch (e) {
       if (sequence !== preferenceLoadSequence) return
       preferencesError =
-        e instanceof Error ? e.message : 'Quick access could not be loaded.'
+        e instanceof Error ? e.message : 'Sidebar view could not be loaded.'
     } finally {
       if (sequence === preferenceLoadSequence) preferencesLoading = false
     }
@@ -486,19 +486,17 @@
   async function setSidebarTab(next: 'tree' | 'quick') {
     if (sidebarTab === next) return
     const previous = sidebarTab
-    const previousCollapsed = preferences.quick_access_collapsed
+    const previousView = preferences.sidebar_view
     sidebarTab = next
-    // Persist via legacy field: collapsed=true → tree, false → quick.
-    const collapsed = next === 'tree'
-    preferences = { ...preferences, quick_access_collapsed: collapsed }
+    preferences = { ...preferences, sidebar_view: next }
     try {
-      await SetQuickAccessCollapsed(collapsed)
+      await SetSidebarView(next)
       preferencesError = ''
     } catch (error) {
       sidebarTab = previous
       preferences = {
         ...preferences,
-        quick_access_collapsed: previousCollapsed
+        sidebar_view: previousView
       }
       preferencesError =
         error instanceof Error

@@ -201,8 +201,11 @@ func Defaults() SystemConfig {
 			// from "explicitly false" through the Load → normalize path.
 			ShowTabDirtyIndicators: boolPtr(true),
 			DismissedTips:          []string{},
-			QuickAccessCollapsed:   boolPtr(true),
-			OpenDevtoolsOnStartup:  boolPtr(false),
+			// SidebarView is intentionally NOT seeded here: normalize owns its
+			// default ("tree") and the one-shot migration from the legacy
+			// quick_access_collapsed key (see normalize.go + Load). Seeding it
+			// would mask the legacy-key presence detection in Load.
+			OpenDevtoolsOnStartup: boolPtr(false),
 			Formatting: FormattingConfig{
 				TypographyEnabled: boolPtr(true),
 				ColorEnabled:      boolPtr(true),

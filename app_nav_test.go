@@ -267,45 +267,57 @@ func TestMovePage_RejectsSymlinkedDestination(t *testing.T) {
 	}
 }
 
-func TestQuickAccessCollapsedPreference_RoundTripsThroughNavigationIPC(t *testing.T) {
+func TestSidebarViewPreference_RoundTripsThroughNavigationIPC(t *testing.T) {
 	app := newTestApp(t)
 
 	prefs, err := app.GetNavigationPreferences()
 	if err != nil {
 		t.Fatalf("GetNavigationPreferences: %v", err)
 	}
-	if !prefs.QuickAccessCollapsed {
-		t.Fatal("quick access should default collapsed")
+	if prefs.SidebarView != "tree" {
+		t.Fatalf("sidebar view should default to \"tree\", got %q", prefs.SidebarView)
 	}
 
-	if err := app.SetQuickAccessCollapsed(false); err != nil {
-		t.Fatalf("SetQuickAccessCollapsed(false): %v", err)
+	if err := app.SetSidebarView("quick"); err != nil {
+		t.Fatalf("SetSidebarView(\"quick\"): %v", err)
 	}
 	prefs, err = app.GetNavigationPreferences()
 	if err != nil {
-		t.Fatalf("GetNavigationPreferences after expand: %v", err)
+		t.Fatalf("GetNavigationPreferences after set quick: %v", err)
 	}
-	if prefs.QuickAccessCollapsed {
-		t.Fatal("quick access should report expanded after setter")
+	if prefs.SidebarView != "quick" {
+		t.Fatalf("sidebar view should report \"quick\" after setter, got %q", prefs.SidebarView)
 	}
 
 	loaded, err := config.Load(app.vaultPath)
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	if loaded.UI.QuickAccessCollapsed == nil || *loaded.UI.QuickAccessCollapsed {
-		t.Fatalf("expanded state was not persisted in config.yaml: %v", loaded.UI.QuickAccessCollapsed)
+	if loaded.UI.SidebarView == nil || *loaded.UI.SidebarView != "quick" {
+		t.Fatalf("\"quick\" was not persisted in config.yaml: %v", loaded.UI.SidebarView)
 	}
 
-	if err := app.SetQuickAccessCollapsed(true); err != nil {
-		t.Fatalf("SetQuickAccessCollapsed(true): %v", err)
+	if err := app.SetSidebarView("tree"); err != nil {
+		t.Fatalf("SetSidebarView(\"tree\"): %v", err)
 	}
 	prefs, err = app.GetNavigationPreferences()
 	if err != nil {
-		t.Fatalf("GetNavigationPreferences after collapse: %v", err)
+		t.Fatalf("GetNavigationPreferences after set tree: %v", err)
 	}
-	if !prefs.QuickAccessCollapsed {
-		t.Fatal("quick access should report collapsed after setter")
+	if prefs.SidebarView != "tree" {
+		t.Fatalf("sidebar view should report \"tree\" after setter, got %q", prefs.SidebarView)
+	}
+
+	// Invalid views are rejected and do not persist.
+	if err := app.SetSidebarView("bogus"); err == nil {
+		t.Fatalf("SetSidebarView(\"bogus\") should be rejected")
+	}
+	prefs, err = app.GetNavigationPreferences()
+	if err != nil {
+		t.Fatalf("GetNavigationPreferences after bogus: %v", err)
+	}
+	if prefs.SidebarView != "tree" {
+		t.Fatalf("invalid view must not change the persisted value, got %q", prefs.SidebarView)
 	}
 }
 

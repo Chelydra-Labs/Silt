@@ -30,7 +30,7 @@ const mocks = vi.hoisted(() => ({
   movePage: vi.fn(),
   getNavigationPreferences: vi.fn(),
   setNavigationSectionExpanded: vi.fn(),
-  setQuickAccessCollapsed: vi.fn(),
+  setSidebarView: vi.fn(),
   setFavoritePage: vi.fn(),
   queryTagHierarchy: vi.fn().mockResolvedValue([]),
   openDevTools: vi.fn().mockResolvedValue(undefined),
@@ -82,7 +82,7 @@ vi.mock('../../bindings/silt/app.js', () => ({
   MovePage: mocks.movePage,
   GetNavigationPreferences: mocks.getNavigationPreferences,
   SetNavigationSectionExpanded: mocks.setNavigationSectionExpanded,
-  SetQuickAccessCollapsed: mocks.setQuickAccessCollapsed,
+  SetSidebarView: mocks.setSidebarView,
   SetFavoritePage: mocks.setFavoritePage,
   QueryTagHierarchy: mocks.queryTagHierarchy,
   OpenDevTools: mocks.openDevTools
@@ -164,10 +164,10 @@ describe('Sidebar', () => {
       expanded_sections: [],
       recent_pages: [],
       favorites: [],
-      quick_access_collapsed: true
+      sidebar_view: 'tree'
     })
     mocks.setNavigationSectionExpanded.mockReset().mockResolvedValue(undefined)
-    mocks.setQuickAccessCollapsed.mockReset().mockResolvedValue(undefined)
+    mocks.setSidebarView.mockReset().mockResolvedValue(undefined)
     mocks.setFavoritePage.mockReset().mockResolvedValue(undefined)
     mocks.listNavigation.mockResolvedValue(NAV_TREE)
     mocks.sqliteQuery
@@ -261,7 +261,7 @@ describe('Sidebar', () => {
         }
       ],
       favorites: [],
-      quick_access_collapsed: true
+      sidebar_view: 'tree'
     })
     render(Sidebar, {
       props: {
@@ -288,7 +288,7 @@ describe('Sidebar', () => {
     await fireEvent.click(quickTab)
     await flush()
     expect(quickTab).toHaveAttribute('aria-selected', 'true')
-    expect(mocks.setQuickAccessCollapsed).toHaveBeenCalledWith(false)
+    expect(mocks.setSidebarView).toHaveBeenCalledWith('quick')
     expect(
       screen.getByRole('tabpanel', { name: /Quick [Aa]ccess/ })
     ).toBeInTheDocument()
@@ -310,7 +310,7 @@ describe('Sidebar', () => {
         }
       ],
       favorites: [],
-      quick_access_collapsed: true
+      sidebar_view: 'tree'
     })
     render(Sidebar, {
       props: {
@@ -340,7 +340,7 @@ describe('Sidebar', () => {
     expect(quickTab).toHaveFocus()
   })
 
-  it('restores Quick Access tab when quick_access_collapsed is false', async () => {
+  it("restores Quick Access tab when sidebar_view is 'quick'", async () => {
     mocks.getNavigationPreferences.mockResolvedValue({
       expanded_sections: [],
       recent_pages: [
@@ -352,7 +352,7 @@ describe('Sidebar', () => {
         }
       ],
       favorites: [],
-      quick_access_collapsed: false
+      sidebar_view: 'quick'
     })
     render(Sidebar, {
       props: {
@@ -375,6 +375,48 @@ describe('Sidebar', () => {
     expect(
       screen.getByRole('tabpanel', { name: /Quick [Aa]ccess/ })
     ).toBeInTheDocument()
+  })
+
+  it('reverts to the tree tab when SetSidebarView rejects on switch', async () => {
+    mocks.setSidebarView.mockRejectedValue(
+      new Error('Sidebar view preference could not be saved.')
+    )
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const treeTab = screen.getByRole('tab', { name: 'Notebook tree view' })
+    const quickTab = screen.getByRole('tab', {
+      name: /Quick access bookmarks and recents/i
+    })
+    expect(treeTab).toHaveAttribute('aria-selected', 'true')
+
+    // Switching to Quick fails the persist; the optimistic update rolls back.
+    await fireEvent.click(quickTab)
+    await flush()
+
+    expect(mocks.setSidebarView).toHaveBeenCalledWith('quick')
+    expect(treeTab).toHaveAttribute('aria-selected', 'true')
+    expect(quickTab).toHaveAttribute('aria-selected', 'false')
+    // The tree panel remains rendered; the Quick Access panel does not.
+    expect(
+      screen.getByRole('tabpanel', { name: /Notebook tree/i })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('tabpanel', { name: /Quick [Aa]ccess/ })
+    ).not.toBeInTheDocument()
   })
 
   it('MovePage mock is available and callable (#177)', async () => {
@@ -1311,7 +1353,7 @@ describe('Sidebar', () => {
       favorites: [
         { notebook: 'Synced', section: 'Projects/Deep', page: 'Plan' }
       ],
-      quick_access_collapsed: false
+      sidebar_view: 'quick'
     })
     render(Sidebar, {
       props: {
@@ -1674,7 +1716,7 @@ describe('Sidebar', () => {
       expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
       recent_pages: [],
       favorites: [],
-      quick_access_collapsed: true
+      sidebar_view: 'tree'
     })
     render(Sidebar, {
       props: {
@@ -1704,7 +1746,7 @@ describe('Sidebar', () => {
       expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
       recent_pages: [],
       favorites: [],
-      quick_access_collapsed: true
+      sidebar_view: 'tree'
     })
     render(Sidebar, {
       props: {
