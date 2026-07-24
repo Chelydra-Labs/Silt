@@ -150,6 +150,12 @@
       onSelectSection(sectionKey)
       onToggleSection(sectionKey)
     }}
+    onkeydown={(e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return
+      e.preventDefault()
+      onSelectSection(sectionKey)
+      onToggleSection(sectionKey)
+    }}
     onfocus={() => onTreeItemFocus(treeItemId)}
     oncontextmenu={(e) =>
       onContextMenu(e, 'section', activeNotebook, sectionKey)}

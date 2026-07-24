@@ -1223,6 +1223,8 @@
                  button for keyboard users. -->
             <div
               class="flex items-center justify-between px-3 py-2.5 border-b border-surface-panel-border"
+              role="group"
+              aria-label={`${col.label} column header`}
               draggable={canManage ? 'true' : undefined}
               ondragstart={canManage
                 ? (e) => onColDragStart(e, colIdx)
