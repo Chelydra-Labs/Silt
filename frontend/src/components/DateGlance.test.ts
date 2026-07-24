@@ -148,4 +148,39 @@ describe('DateGlance', () => {
     expect(copyTextMock).toHaveBeenCalledOnce()
     expect(dateGlance.open).toBe(false)
   })
+
+  it('advances keyboard focus to the next day with ArrowRight', async () => {
+    render(DateGlance)
+    await screen.findAllByRole('gridcell')
+    // The auto-focus effect defers via tick().then()
+    await new Promise((r) => setTimeout(r, 0))
+
+    const focusedBefore = document.activeElement as HTMLElement
+    expect(focusedBefore?.getAttribute('data-glance-date')).toBeTruthy()
+
+    await fireEvent.keyDown(focusedBefore, { key: 'ArrowRight' })
+
+    expect(document.activeElement).not.toBe(focusedBefore)
+    expect(
+      (document.activeElement as HTMLElement)?.getAttribute('data-glance-date')
+    ).toBeTruthy()
+  })
+
+  it('retains keyboard focus within the grid after PageDown changes the month', async () => {
+    render(DateGlance)
+    await screen.findAllByRole('gridcell')
+    await new Promise((r) => setTimeout(r, 0))
+
+    const focusedBefore = document.activeElement as HTMLElement
+    expect(focusedBefore?.getAttribute('data-glance-date')).toBeTruthy()
+
+    await fireEvent.keyDown(focusedBefore, { key: 'PageDown' })
+    // refocusCell() defers DOM focus via tick().then()
+    await new Promise((r) => setTimeout(r, 10))
+
+    // Focus is still on a gridcell — not stranded on document.body
+    const focusedAfter = document.activeElement as HTMLElement
+    expect(focusedAfter?.getAttribute('role')).toBe('gridcell')
+    expect(focusedAfter?.getAttribute('data-glance-date')).toBeTruthy()
+  })
 })

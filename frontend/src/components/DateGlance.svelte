@@ -203,6 +203,17 @@
       ?.focus()
   }
 
+  // After a month change recreates the grid cells, the previously-focused
+  // button is detached. Wait for the DOM to update, then move focus to the
+  // new cell matching focusISO so keyboard users aren't stranded on body.
+  function refocusCell(): void {
+    void tick().then(() => {
+      document
+        .querySelector<HTMLElement>(`[data-glance-date="${focusISO}"]`)
+        ?.focus()
+    })
+  }
+
   function onGridKeydown(e: KeyboardEvent): void {
     const cells = flat
     const len = cells.length
@@ -237,10 +248,12 @@
       case 'PageUp':
         e.preventDefault()
         prevNav()
+        refocusCell()
         break
       case 'PageDown':
         e.preventDefault()
         nextNav()
+        refocusCell()
         break
       case 'Enter':
       case ' ':
@@ -284,7 +297,7 @@
           >
             <button
               type="button"
-              class="rounded-md border border-surface-panel-border bg-surface-card px-1.5 py-0.5 text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
+              class="rounded-md px-1.5 py-0.5 text-type-sm font-label-sm-bold text-accent-primary-start hover:bg-hover hover:underline underline-offset-2 cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
               title="Jump to month"
               onclick={enterMonths}
             >
@@ -292,7 +305,7 @@
             </button>
             <button
               type="button"
-              class="rounded-md border border-surface-panel-border bg-surface-card px-1.5 py-0.5 text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
+              class="rounded-md px-1.5 py-0.5 text-type-sm font-label-sm-bold text-accent-primary-start hover:bg-hover hover:underline underline-offset-2 cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
               title="Jump to year"
               onclick={enterYears}
             >
@@ -302,7 +315,7 @@
         {:else if calView === 'months'}
           <button
             type="button"
-            class="min-w-0 flex-1 rounded-md border border-surface-panel-border bg-surface-card text-center text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start py-1 cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
+            class="min-w-0 flex-1 rounded-md text-center text-type-sm font-label-sm-bold text-accent-primary-start hover:bg-hover hover:underline underline-offset-2 py-1 cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
             title="Jump to year"
             onclick={enterYears}
           >
