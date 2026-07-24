@@ -117,7 +117,7 @@ registerSlashCommand({
 registerSlashCommand({
   id: 'calendar',
   label: 'Calendar',
-  description: 'Open the date glance to pick a date',
+  description: 'Pick a date to insert or copy',
   icon: 'calendar_month'
 })
 registerSlashCommand({

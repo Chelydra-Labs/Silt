@@ -197,7 +197,7 @@
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import DateGlanceChip from './components/DateGlanceChip.svelte'
   import DateGlance from './components/DateGlance.svelte'
-  import { openDateGlance } from './lib/dateGlanceState.svelte'
+  import { toggleDateGlance } from './lib/dateGlanceState.svelte'
   import { getActiveEditor } from './lib/editor/activeEditor.svelte'
   import {
     shortcutHelp,
@@ -1024,7 +1024,7 @@
           toggleShortcutHelp()
           break
         case 'open_date_glance':
-          openDateGlance(getActiveEditor())
+          toggleDateGlance(getActiveEditor())
           break
         case 'find_in_page':
           findBarState.openFind()
@@ -2419,15 +2419,14 @@
     </div>
   {/if}
 
-  <!-- Plugin rendered-UI surfaces (#117) -->
+  <!-- Plugin rendered-UI surfaces (#117). The Date Glance chip rides the same
+       bar as a trailing first-party item so there's no second stacked strip. -->
   <PluginModalHost />
-  <PluginStatusBar />
-  <!-- Date Glance status chip + popover (#730) -->
-  <div
-    class="flex h-7 shrink-0 items-center justify-end gap-2 border-t border-surface-app-border bg-surface-app px-2"
-  >
-    <DateGlanceChip />
-  </div>
+  <PluginStatusBar>
+    {#snippet trailing()}
+      <DateGlanceChip />
+    {/snippet}
+  </PluginStatusBar>
   <DateGlance />
 </main>
 

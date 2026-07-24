@@ -22,6 +22,7 @@ document.body.append(anchor)
 
 beforeEach(() => {
   copyTextMock.mockClear()
+  copyTextMock.mockResolvedValue(true)
   pushNotificationMock.mockClear()
   setDateGlanceAnchor(anchor)
   dateGlance.open = true
@@ -44,7 +45,7 @@ async function clickFirstDayCell(): Promise<void> {
 
 describe('DateGlance', () => {
   it('inserts the date at the editor cursor when an insert target exists', async () => {
-    const run = vi.fn()
+    const run = vi.fn(() => true)
     const insertContent = vi.fn(() => ({ run }))
     const focus = vi.fn(() => ({ insertContent, run }))
     const chain = vi.fn(() => ({ focus, insertContent, run }))
@@ -89,7 +90,7 @@ describe('DateGlance', () => {
     render(DateGlance)
     expect(
       await screen.findByRole('dialog', {
-        name: /date glance/i
+        name: /pick a date/i
       })
     ).toBeInTheDocument()
     expect(
@@ -100,5 +101,51 @@ describe('DateGlance', () => {
     ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Today' })).toBeInTheDocument()
     expect((await screen.findAllByRole('gridcell')).length).toBeGreaterThan(0)
+  })
+
+  it('does not push a success toast when clipboard copy fails', async () => {
+    dateGlance.insertEditor = null
+    copyTextMock.mockResolvedValue(false)
+
+    render(DateGlance)
+    await clickFirstDayCell()
+
+    expect(copyTextMock).toHaveBeenCalledOnce()
+    // No success toast — copyText returned false (its own error toast path
+    // handles the failure in the real module; here it's mocked out).
+    expect(pushNotificationMock).not.toHaveBeenCalled()
+    expect(dateGlance.open).toBe(false)
+  })
+
+  it('falls back to clipboard when the editor insert is rejected', async () => {
+    const run = vi.fn(() => false)
+    const insertContent = vi.fn(() => ({ run }))
+    const focus = vi.fn(() => ({ insertContent, run }))
+    const chain = vi.fn(() => ({ focus, insertContent, run }))
+    dateGlance.insertEditor = { isDestroyed: false, chain } as never
+
+    render(DateGlance)
+    await clickFirstDayCell()
+
+    // Insert was attempted then fell through to clipboard on rejection.
+    expect(insertContent).toHaveBeenCalledOnce()
+    expect(copyTextMock).toHaveBeenCalledOnce()
+    expect(dateGlance.open).toBe(false)
+  })
+
+  it('falls back to clipboard when the editor insert throws', async () => {
+    const run = vi.fn(() => {
+      throw new Error('dispatch failed')
+    })
+    const insertContent = vi.fn(() => ({ run }))
+    const focus = vi.fn(() => ({ insertContent, run }))
+    const chain = vi.fn(() => ({ focus, insertContent, run }))
+    dateGlance.insertEditor = { isDestroyed: false, chain } as never
+
+    render(DateGlance)
+    await clickFirstDayCell()
+
+    expect(copyTextMock).toHaveBeenCalledOnce()
+    expect(dateGlance.open).toBe(false)
   })
 })

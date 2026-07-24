@@ -27,12 +27,28 @@
   let monthLabel = $derived(
     cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
   )
+  // Whether a day-pick will insert (editor captured) or copy (no editor).
+  let insertMode = $derived(
+    !!(dateGlance.insertEditor && !dateGlance.insertEditor.isDestroyed)
+  )
+  // H1: fall back to document.body so the popover still renders + closes even
+  // if the chip isn't mounted (defensive — normally the chip is always present).
+  let popoverAnchor = $derived(dateGlance.anchor ?? document.body)
 
-  // Reset to today each time the popover opens, and focus today's cell.
-  let wasOpen = false
+  // Open/close transition detection via openGen (robust to re-opens while
+  // already open) + focus save/restore for keyboard users.
+  let prevOpen = false
+  let prevGen = -1
+  let previousFocus: HTMLElement | null = null
+
   $effect(() => {
     const isOpen = dateGlance.open
-    if (isOpen && !wasOpen) {
+    const gen = dateGlance.openGen
+    if (isOpen && (!prevOpen || gen !== prevGen)) {
+      // Fresh open or re-open — reset view to today + focus today's cell.
+      if (!prevOpen) {
+        previousFocus = document.activeElement as HTMLElement | null
+      }
       const now = new Date()
       cursor = now
       todayKey = ymd(now)
@@ -42,15 +58,22 @@
           .querySelector<HTMLElement>(`[data-glance-date="${todayKey}"]`)
           ?.focus()
       })
+    } else if (!isOpen && prevOpen) {
+      // Just closed — restore focus to the opener element.
+      previousFocus?.focus()
+      previousFocus = null
     }
-    wasOpen = isOpen
+    prevOpen = isOpen
+    prevGen = gen
   })
 
   function prevMonth(): void {
     cursor = addMonths(cursor, -1)
+    clampFocusISO()
   }
   function nextMonth(): void {
     cursor = addMonths(cursor, 1)
+    clampFocusISO()
   }
   function goToday(): void {
     const now = new Date()
@@ -58,22 +81,44 @@
     focusISO = todayKey
   }
 
-  async function pickDay(day: Date): Promise<void> {
-    const iso = ymd(day)
-    const editor = dateGlance.insertEditor
-    if (editor && !editor.isDestroyed) {
-      // Re-focus restores the cursor to its last position (ProseMirror keeps
-      // the selection across blur), so the date lands where the user was
-      // typing even though focus moved into the grid.
-      editor.chain().focus().insertContent(iso).run()
-    } else {
-      await copyText(iso)
+  // After cursor changes, ensure focusISO points at a cell in the current
+  // view so the next arrow-key press starts from a sensible position.
+  function clampFocusISO(): void {
+    const cells = flat
+    if (cells.some((d) => ymd(d) === focusISO)) return
+    const inMonth = cells.find((d) => d.getMonth() === cursor.getMonth())
+    focusISO = inMonth ? ymd(inMonth) : ymd(cells[0])
+  }
+
+  async function copyWithToast(iso: string): Promise<void> {
+    const ok = await copyText(iso)
+    if (ok) {
       pushNotification({
         kind: 'success',
         message: `Copied ${iso}`,
         autoDismissMs: 2500
       })
     }
+    // copyText already emits its own error toast on failure — don't double up.
+  }
+
+  async function pickDay(day: Date): Promise<void> {
+    const iso = ymd(day)
+    const editor = dateGlance.insertEditor
+    if (editor && !editor.isDestroyed) {
+      try {
+        const ok = editor.chain().focus().insertContent(iso).run()
+        if (ok) {
+          closeDateGlance()
+          return
+        }
+        // Transaction rejected (schema/dispatcher) — fall through to clipboard.
+      } catch (e) {
+        console.error('[silt] date-glance insert failed:', e)
+        // Fall through to clipboard.
+      }
+    }
+    await copyWithToast(iso)
     closeDateGlance()
   }
 
@@ -127,14 +172,14 @@
 <Popover
   open={dateGlance.open}
   onClose={closeDateGlance}
-  anchor={dateGlance.anchor}
+  anchor={popoverAnchor}
   class="w-72 rounded-xl border border-surface-popover-border bg-surface-popover shadow-2xl"
 >
   {#snippet content()}
     <div
       role="dialog"
       aria-modal="false"
-      aria-label="Date glance — pick a date to insert or copy"
+      aria-label="Pick a date to insert or copy"
       class="p-3"
     >
       <div class="mb-2 flex items-center justify-between gap-1">
@@ -167,7 +212,7 @@
       </div>
 
       <div
-        class="mb-1 grid grid-cols-7 gap-0.5 text-center text-type-3xs text-text-muted"
+        class="mb-1 grid grid-cols-7 gap-0.5 text-center text-type-3xs uppercase tracking-[0.12em] text-text-muted"
         aria-hidden="true"
       >
         {#each DOW as d, i (i)}
@@ -201,7 +246,7 @@
                 })}
                 aria-current={isToday ? 'date' : undefined}
                 class="flex aspect-square items-center justify-center rounded-md text-type-sm transition-colors focus-visible:ring-2 focus-visible:ring-accent-primary-start focus-visible:outline-none cursor-pointer {isToday
-                  ? 'bg-accent-primary-start/15 text-accent-primary-start font-label-sm-bold ring-1 ring-accent-primary-start/40'
+                  ? 'bg-accent-primary-glow text-accent-primary-start font-label-sm-bold'
                   : inMonth
                     ? 'text-text-primary hover:bg-hover'
                     : 'text-text-disabled hover:bg-hover'}"
@@ -214,16 +259,22 @@
         {/each}
       </div>
 
-      <div
-        class="mt-2 flex justify-center border-t border-surface-popover-border pt-2"
-      >
-        <button
-          type="button"
-          class="rounded-md px-3 py-1 text-type-xs text-text-muted hover:bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-primary-start cursor-pointer"
-          onclick={goToday}
+      <div class="mt-2 border-t border-surface-popover-border pt-2">
+        <p
+          class="mb-1.5 text-center text-type-3xs text-text-muted"
+          aria-live="polite"
         >
-          Today
-        </button>
+          {insertMode ? 'Inserts at cursor' : 'Copies to clipboard'}
+        </p>
+        <div class="flex justify-center">
+          <button
+            type="button"
+            class="rounded-md px-3 py-1 text-type-xs text-text-muted hover:bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-primary-start cursor-pointer"
+            onclick={goToday}
+          >
+            Today
+          </button>
+        </div>
       </div>
     </div>
   {/snippet}

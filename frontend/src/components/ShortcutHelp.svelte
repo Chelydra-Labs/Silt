@@ -17,6 +17,9 @@
   let previousFocus: HTMLElement | null = null
   let hotkeys = $derived(settings.config?.hotkeys ?? {})
   let actions = $derived(shortcutActionDefinitions(hotkeys))
+  let hasAnyBindings = $derived(
+    actions.some((a) => shortcutBinding(a.id, hotkeys))
+  )
 
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
@@ -140,6 +143,16 @@
           </section>
         {/if}
       {/each}
+      {#if !hasAnyBindings}
+        <div class="py-12 text-center">
+          <p class="m-0 text-type-sm text-text-muted">
+            No keyboard shortcuts are currently bound.
+          </p>
+          <p class="m-0 mt-1 text-type-xs text-text-muted">
+            Configure them in Settings.
+          </p>
+        </div>
+      {/if}
     </div>
   </div>
 </div>
