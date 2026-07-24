@@ -992,6 +992,40 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(getTaskHubState().focusDate).toBe('')
   })
 
+  // #733 drift guard: the mini-cal must stay visually aligned with the
+  // DateGlance popover. Locks the invariant so the two grids cannot silently
+  // drift apart again — the actual motivation behind the issue.
+  it('mini-cal visual treatment matches DateGlance (#733 drift guard)', async () => {
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const cell = document.querySelector<HTMLElement>(
+      '[data-testid="mini-day-2026-07-06"]'
+    )
+    expect(cell).toBeTruthy()
+    expect(cell!.className).toContain('text-type-sm')
+    expect(cell!.className).not.toContain('text-type-2xs')
+    // #733 parity: day cells share DateGlance's treatment — the focus-visible
+    // affordance and the rounded-md corners the chevrons/Today button set.
+    expect(cell!.className).toContain('focus-visible:ring-2')
+    expect(cell!.className).toContain('rounded-md')
+
+    for (const name of ['Previous month', 'Next month']) {
+      const btn = screen.getByRole('button', { name })
+      expect(btn.className).toContain('h-7')
+      expect(btn.className).toContain('w-7')
+      const icon = btn.querySelector('span')
+      expect(icon?.className).toContain('text-icon-lg')
+      expect(icon?.className).not.toContain('text-icon-sm')
+      // Icon ligature text is hidden from AT; the button aria-label names it.
+      expect(icon?.getAttribute('aria-hidden')).toBe('true')
+    }
+
+    const today = screen.getByTestId('mini-today')
+    expect(today.className).not.toContain('border')
+    expect(today.className).toContain('text-type-xs')
+  })
+
   it('clear-focus button shows when focusDate set, hides when cleared', async () => {
     render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
