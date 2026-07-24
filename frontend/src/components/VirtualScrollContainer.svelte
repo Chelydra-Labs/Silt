@@ -17,6 +17,7 @@
   import type { Editor } from 'svelte-tiptap'
   import type { ViewMode } from '../lib/tabs'
   import EditorUtilityBar from './editor/EditorUtilityBar.svelte'
+  import DateGlanceChip from './DateGlanceChip.svelte'
   import {
     settings,
     toggleFocusMode,
@@ -696,6 +697,11 @@
         {viewMode === 'edit' ? 'code' : 'menu_book'}
       </span>
     </button>
+
+    <div class="w-px h-4 bg-surface-popover-border mx-0.5"></div>
+
+    <!-- Date Glance opener (#730) — contextual to the writing surface -->
+    <DateGlanceChip />
   </div>
 
   <!-- Floating Editor Status Bar (honest save phase + word count) -->

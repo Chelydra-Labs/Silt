@@ -33,6 +33,15 @@
   } from '../state.svelte'
   import { buildQuery } from '../query'
   import { loadCalendarSubMode, persistCalendarSubMode } from '../settings'
+  import {
+    ymd,
+    startOfWeek,
+    startOfMonth,
+    endOfMonth,
+    addMonths,
+    addDays,
+    monthWeeks as computeMonthWeeks
+  } from '../../../../lib/dateGrid'
 
   interface Props {
     ctx: PluginContext
@@ -105,51 +114,12 @@
     'December'
   ]
 
-  function ymd(d: Date): string {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-      d.getDate()
-    ).padStart(2, '0')}`
-  }
-  function startOfWeek(d: Date): Date {
-    const x = new SvelteDate(d)
-    x.setDate(x.getDate() - x.getDay())
-    x.setHours(0, 0, 0, 0)
-    return x
-  }
-  function startOfMonth(d: Date): Date {
-    return new SvelteDate(d.getFullYear(), d.getMonth(), 1)
-  }
-  function endOfMonth(d: Date): Date {
-    return new SvelteDate(d.getFullYear(), d.getMonth() + 1, 0)
-  }
-  function addMonths(d: Date, n: number): Date {
-    return new SvelteDate(d.getFullYear(), d.getMonth() + n, 1)
-  }
-  function addDays(d: Date, n: number): Date {
-    const x = new SvelteDate(d)
-    x.setDate(x.getDate() + n)
-    return x
-  }
-
-  // --- Layout derivations (lifted from silt-calendar) --------------------
-  let monthWeeks = $derived.by(() => {
-    if (subMode !== 'month') return []
-    const first = startOfWeek(startOfMonth(cursor))
-    const weeks: Date[][] = []
-    let cur = first
-    const monthEnd = endOfMonth(cursor)
-    // 6 rows covers any month.
-    for (let w = 0; w < 6; w++) {
-      const row: Date[] = []
-      for (let i = 0; i < 7; i++) {
-        row.push(cur)
-        cur = addDays(cur, 1)
-      }
-      weeks.push(row)
-      if (cur > monthEnd && w >= 3) break
-    }
-    return weeks
-  })
+  // --- Layout derivations ------------------------------------------------
+  // monthWeeks (month view) and weekDays (week view) use the pure dateGrid
+  // helpers shared with the sidebar mini-cal and the Date Glance popover.
+  let monthWeeks = $derived(
+    subMode === 'month' ? computeMonthWeeks(cursor) : []
+  )
 
   let weekDays = $derived.by(() => {
     if (subMode !== 'week') return []

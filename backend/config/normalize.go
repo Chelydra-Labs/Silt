@@ -229,6 +229,30 @@ func normalize(cfg SystemConfig) SystemConfig {
 		}
 		cfg.Editor.SpellcheckLanguage = stringPtr(v)
 	}
+	// DateFormat: nil → "YYYY-MM-DD" (#730). The selected format drives both
+	// /today insertion and the Date Glance date picker. Unknown values
+	// collapse to the default; keep in sync with DATE_FORMAT_IDS in
+	// frontend/src/lib/dateFormat.ts.
+	validDateFormats := map[string]bool{
+		"YYYY-MM-DD":  true,
+		"DD-MMM-YY":   true,
+		"MM/DD/YYYY":  true,
+		"DD/MM/YYYY":  true,
+		"MMM D, YYYY": true,
+		"long":        true,
+		"D MMM YYYY":  true,
+		"MM/DD/YY":    true,
+		"DD/MM/YY":    true,
+	}
+	if cfg.Editor.DateFormat == nil {
+		cfg.Editor.DateFormat = stringPtr("YYYY-MM-DD")
+	} else {
+		v := strings.TrimSpace(*cfg.Editor.DateFormat)
+		if !validDateFormats[v] {
+			v = "YYYY-MM-DD"
+		}
+		cfg.Editor.DateFormat = stringPtr(v)
+	}
 	// TypewriterMode: nil → false (#187). Opt-in distraction-free scroll.
 	if cfg.Editor.TypewriterMode == nil {
 		cfg.Editor.TypewriterMode = boolPtr(false)

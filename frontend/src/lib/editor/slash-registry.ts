@@ -115,6 +115,12 @@ registerSlashCommand({
   icon: 'calendar_today'
 })
 registerSlashCommand({
+  id: 'calendar',
+  label: 'Calendar',
+  description: 'Pick a date to insert or copy',
+  icon: 'calendar_month'
+})
+registerSlashCommand({
   id: 'embed',
   label: 'Embed Block',
   description: 'Insert a block embed',
@@ -125,6 +131,12 @@ registerSlashCommand({
   label: 'Template',
   description: 'Insert a page template at cursor',
   icon: 'content_copy'
+})
+registerSlashCommand({
+  id: 'shortcuts',
+  label: 'Keyboard shortcuts',
+  description: 'Show available keyboard shortcuts',
+  icon: 'keyboard'
 })
 
 // --- Inline formatting commands (#168) ------------------------------------

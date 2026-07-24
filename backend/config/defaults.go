@@ -23,6 +23,7 @@ func Defaults() SystemConfig {
 			DefaultViewMode:         stringPtr("edit"),
 			SpellcheckEnabled:       boolPtr(true),
 			SpellcheckLanguage:      stringPtr("en-US"),
+			DateFormat:              stringPtr("YYYY-MM-DD"),
 			TypewriterMode:          boolPtr(false),
 			TypewriterModeRatio:     float64Ptr(0.5),
 			CustomDictionary:        []string{},
@@ -136,6 +137,10 @@ func Defaults() SystemConfig {
 			"replace":                "Ctrl+H",
 			"global_replace":         "Ctrl+Shift+G",
 			"toggle_typewriter_mode": "Ctrl+Shift+Y",
+			// Date Glance popover (#730). Opens from any view; Ctrl+Alt+D
+			// (D for Date) avoids collisions — Ctrl+Shift+D is focus mode,
+			// and no editor-owned set_/format_ chord uses this combo.
+			"open_date_glance": "Ctrl+Alt+D",
 		},
 		Plugins: PluginsConfig{
 			// silt-tasks is the unified task surface (Phase 9 / #431),

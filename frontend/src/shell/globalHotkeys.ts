@@ -34,6 +34,7 @@ export type GlobalHotkeyAction =
   | 'new_notebook'
   | 'open_quick_switcher'
   | 'open_shortcuts_help'
+  | 'open_date_glance'
 
 // Actions consumed by the editor's ProseMirror keymap when the contenteditable
 // is focused. When the editor is focused and one of these chords is pressed,
@@ -90,6 +91,7 @@ export function resolveGlobalHotkey(
     'new_notebook',
     'open_quick_switcher',
     'open_shortcuts_help',
+    'open_date_glance',
     'find_in_page',
     'replace',
     'global_replace',

@@ -116,6 +116,16 @@
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { classifySlashCommand } from '../lib/editor/builtinSlashCommands'
   import {
+    openDateGlance,
+    clearInsertEditor
+  } from '../lib/dateGlanceState.svelte'
+  import { openShortcutHelp } from '../lib/shortcutHelpState.svelte'
+  import {
+    setActiveEditor,
+    clearActiveEditorState
+  } from '../lib/editor/activeEditor.svelte'
+  import { formatDate, resolveDateFormat } from '../lib/dateFormat'
+  import {
     clampToViewport,
     flipOrClamp
   } from '../lib/editor/popoverPositioning'
@@ -1285,6 +1295,7 @@
     },
     onFocus: () => {
       isFocused = true
+      setActiveEditor(editorInstance)
       acquireFocus()
       startHeartbeat()
       notifyFocus()
@@ -1297,11 +1308,17 @@
     },
     onBlur: () => {
       isFocused = false
+      setActiveEditor(null)
       stopHeartbeat()
       // Flush the pending save BEFORE releasing the focus lock so an embed's
       // MutateBlock retry sees the just-saved content rather than overwriting
-      // it (#64). The save is awaited, then the lock is released.
-      void flushPendingSave().then(() => releaseFocus())
+      // it (#64). The save is awaited, then the lock is released — but only if
+      // the editor hasn't been re-focused in the meantime (Date Glance
+      // re-focuses the editor after a day-pick; releasing then would drop the
+      // lock while the user is actively editing).
+      void flushPendingSave().then(() => {
+        if (!isFocused) releaseFocus()
+      })
       onBlockBlur?.()
     },
     onCreate: ({ editor }) => {
@@ -1519,6 +1536,10 @@
     // Drop caret-block memory for this page so the agent does not keep a
     // stale block id after the editor unmounts (#680 harden).
     clearSelectionFocusIfPage(notebook, section, page)
+    // Drop this editor as the Date Glance insert target so a destroyed editor
+    // doesn't receive a stale insert after page navigation (#730 harden).
+    clearInsertEditor()
+    clearActiveEditorState()
     // Cancel any pending owner-fetch / mention-refine timers so they don't
     // fire after teardown (#332).
     if (mentionQueryTimer) {
@@ -1798,11 +1819,21 @@
         openColorPickerPopover(intent.markType)
         break
       case 'today': {
-        const d = new Date()
-        const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-        editorInstance.commands.insertContent(today)
+        const fmt = resolveDateFormat(settings.config?.editor?.date_format)
+        editorInstance.commands.insertContent(formatDate(new Date(), fmt))
         break
       }
+      case 'calendar':
+        // Open the Date Glance popover. The slash trigger text is already
+        // deleted above; the editor stays as the insert target so a picked
+        // date lands at the cursor.
+        openDateGlance(editorInstance ?? null)
+        break
+      case 'shortcuts':
+        // Open the keyboard-shortcut reference overlay (#731). Same surface
+        // as the Shift+? hotkey; the slash trigger is already deleted above.
+        openShortcutHelp()
+        break
       case 'embed':
         // Open the block picker; the selected block is inserted as a complete
         // {{embed:UUID}} token (#593). The bare '{{embed:' fragment the old

@@ -18,7 +18,7 @@ import ShortcutHelp from './ShortcutHelp.svelte'
 afterEach(cleanup)
 
 describe('ShortcutHelp', () => {
-  it('groups live remapped and disabled bindings', () => {
+  it('shows live and remapped bindings, hides disabled ones', () => {
     render(ShortcutHelp, { props: { onClose: vi.fn() } })
     expect(
       screen.getByRole('heading', { name: 'Navigation' })
@@ -26,9 +26,8 @@ describe('ShortcutHelp', () => {
     expect(screen.getByRole('heading', { name: 'Search' })).toBeInTheDocument()
     expect(screen.getByText('Alt+N')).toBeInTheDocument()
     expect(screen.getByText('Remapped')).toBeInTheDocument()
-    expect(screen.getByLabelText('New section disabled')).toHaveTextContent(
-      'Disabled'
-    )
+    // new_section is bound to '' (disabled) — it must NOT appear (#731).
+    expect(screen.queryByText('New section')).not.toBeInTheDocument()
     expect(
       screen.getByRole('region', { name: 'Shortcut list' })
     ).toHaveAttribute('tabindex', '0')
