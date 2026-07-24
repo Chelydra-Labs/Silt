@@ -377,6 +377,48 @@ describe('Sidebar', () => {
     ).toBeInTheDocument()
   })
 
+  it('reverts to the tree tab when SetSidebarView rejects on switch', async () => {
+    mocks.setSidebarView.mockRejectedValue(
+      new Error('Sidebar view preference could not be saved.')
+    )
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const treeTab = screen.getByRole('tab', { name: 'Notebook tree view' })
+    const quickTab = screen.getByRole('tab', {
+      name: /Quick access bookmarks and recents/i
+    })
+    expect(treeTab).toHaveAttribute('aria-selected', 'true')
+
+    // Switching to Quick fails the persist; the optimistic update rolls back.
+    await fireEvent.click(quickTab)
+    await flush()
+
+    expect(mocks.setSidebarView).toHaveBeenCalledWith('quick')
+    expect(treeTab).toHaveAttribute('aria-selected', 'true')
+    expect(quickTab).toHaveAttribute('aria-selected', 'false')
+    // The tree panel remains rendered; the Quick Access panel does not.
+    expect(
+      screen.getByRole('tabpanel', { name: /Notebook tree/i })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('tabpanel', { name: /Quick [Aa]ccess/ })
+    ).not.toBeInTheDocument()
+  })
+
   it('MovePage mock is available and callable (#177)', async () => {
     // Smoke test: verify MovePage is properly mocked and resolves.
     await mocks.movePage('Work', 'Journal', 'Meetings', 'Daily')
