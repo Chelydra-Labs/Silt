@@ -32,6 +32,7 @@
   ]
 
   let cursor = $state(new Date())
+  let today = $state(new Date())
   let todayKey = $state(ymd(new Date()))
   let focusISO = $state('')
   // Drill-down view: days (default) → months → years
@@ -84,6 +85,7 @@
         previousFocus = document.activeElement as HTMLElement | null
       }
       const now = new Date()
+      today = now
       cursor = now
       todayKey = ymd(now)
       focusISO = todayKey
@@ -276,20 +278,28 @@
         {#if calView === 'days'}
           <button
             type="button"
-            class="min-w-0 flex-1 rounded-md text-center text-type-sm font-label-sm-bold text-text-primary hover:bg-hover py-1 truncate cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start"
+            class="group min-w-0 flex-1 inline-flex items-center justify-center gap-0.5 rounded-md text-center text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start py-1 truncate cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
             title="Jump to month"
             onclick={enterMonths}
           >
-            {monthLabel}
+            <span class="truncate">{monthLabel}</span>
+            <span
+              class="material-symbols-outlined text-icon-xs text-text-muted transition-colors group-hover:text-accent-primary-start"
+              aria-hidden="true">expand_more</span
+            >
           </button>
         {:else if calView === 'months'}
           <button
             type="button"
-            class="min-w-0 flex-1 rounded-md text-center text-type-sm font-label-sm-bold text-text-primary hover:bg-hover py-1 truncate cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start"
+            class="group min-w-0 flex-1 inline-flex items-center justify-center gap-0.5 rounded-md text-center text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start py-1 truncate cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
             title="Jump to year"
             onclick={enterYears}
           >
-            {yearLabel}
+            <span class="truncate">{yearLabel}</span>
+            <span
+              class="material-symbols-outlined text-icon-xs text-text-muted transition-colors group-hover:text-accent-primary-start"
+              aria-hidden="true">expand_more</span
+            >
           </button>
         {:else}
           <span
@@ -366,13 +376,18 @@
       {:else if calView === 'months'}
         <div class="grid grid-cols-3 gap-1">
           {#each MONTHS_SHORT as m, i (i)}
+            {@const isThisMonth =
+              i === today.getMonth() &&
+              cursor.getFullYear() === today.getFullYear()}
+            {@const isCursorMonth = i === cursor.getMonth()}
             <button
               type="button"
-              class="flex items-center justify-center rounded-lg py-2.5 text-type-sm transition-colors hover:bg-hover cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start focus-visible:outline-none {i ===
-              cursor.getMonth()
+              class="flex items-center justify-center rounded-lg py-2.5 text-type-sm transition-colors hover:bg-hover cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start focus-visible:outline-none {isThisMonth
                 ? 'bg-accent-primary-glow text-accent-primary-start font-label-sm-bold'
-                : 'text-text-primary'}"
-              aria-current={i === cursor.getMonth() ? 'true' : undefined}
+                : isCursorMonth
+                  ? 'text-accent-primary-start font-label-sm-bold'
+                  : 'text-text-primary'}"
+              aria-current={isThisMonth ? 'date' : undefined}
               onclick={() => pickMonth(i)}
             >
               {m}
@@ -384,13 +399,16 @@
       {:else}
         <div class="grid grid-cols-3 gap-1">
           {#each yearList as y (y)}
+            {@const isThisYear = y === today.getFullYear()}
+            {@const isCursorYear = y === cursor.getFullYear()}
             <button
               type="button"
-              class="flex items-center justify-center rounded-lg py-2.5 text-type-sm transition-colors hover:bg-hover cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start focus-visible:outline-none {y ===
-              cursor.getFullYear()
+              class="flex items-center justify-center rounded-lg py-2.5 text-type-sm transition-colors hover:bg-hover cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start focus-visible:outline-none {isThisYear
                 ? 'bg-accent-primary-glow text-accent-primary-start font-label-sm-bold'
-                : 'text-text-primary'}"
-              aria-current={y === cursor.getFullYear() ? 'true' : undefined}
+                : isCursorYear
+                  ? 'text-accent-primary-start font-label-sm-bold'
+                  : 'text-text-primary'}"
+              aria-current={isThisYear ? 'date' : undefined}
               onclick={() => pickYear(y)}
             >
               {y}
