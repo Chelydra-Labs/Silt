@@ -92,7 +92,8 @@ From `frontend/`:
 ```sh
 npm run format         # Prettier write — formats authored src (ts/svelte/css)
 npm run format:check   # Prettier check — fails if any authored file is unformatted
-npm run lint           # ESLint — authored JS/TS/Svelte under src/ (including tests); zero warnings
+npm run lint           # ESLint fast (non-type-aware) + cache — local default, target <1 min
+npm run lint:typed     # ESLint type-aware (projectService + .svelte) + cache — CI gate
 npm run check          # svelte-check — Svelte/TypeScript diagnostics + a11y warnings
 npm test               # Vitest (jsdom unit/component tests)
 npm run build          # production Vite build
@@ -103,7 +104,8 @@ npm run build          # production Vite build
 | Command | Responsibility |
 |--------|----------------|
 | `format` / `format:check` | Formatting only (Prettier + `prettier-plugin-svelte`). CSS is formatting-only — no CSS linter. |
-| `lint` | Authored-source correctness patterns (ESLint recommended JS/TS/Svelte **type-aware** via `typescript-eslint` `recommendedTypeChecked` + `projectService`, including `.svelte`). Does **not** replace `svelte-check`. Wails binding `any` surfaces: `no-unsafe-*` staged off until binding typings tighten. |
+| `lint` | Fast authored-source gate (`eslint.fast.config.js`: recommended JS/TS/Svelte, **not** type-aware) with disk cache. Default for local/agent loops. Does **not** replace `svelte-check` or `lint:typed`. |
+| `lint:typed` | Type-aware gate (`eslint.config.js`: `recommendedTypeChecked` + `projectService`, including `.svelte`). CI uses this. Wails binding `any` surfaces: `no-unsafe-*` staged off until binding typings tighten. Shared `extraFileExtensions: ['.svelte']` on every projectService block avoids TS project-reload thrash. |
 | `check` | Svelte compiler diagnostics, TypeScript in components, and a11y warnings. |
 | `test` | Behavior via Vitest/jsdom. No browser e2e. |
 

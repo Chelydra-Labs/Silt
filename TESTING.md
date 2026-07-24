@@ -42,13 +42,15 @@ verification gates for Silt.
 ```sh
 go test -race -count=1 ./...          # Go suite (race detector)
 cd frontend && npm run format:check && npm run lint && npm run check && npm test
+# local default: fast ESLint. CI uses lint:typed instead of lint.
 # frontend: Prettier check + ESLint + svelte-check + Vitest (jsdom; no Playwright)
 ```
 
 Frontend quality gates (local and CI) are distinct:
 
 - **`format:check`** — Prettier on authored `src` (ts/svelte/css). Write mode remains `npm run format` and the pre-commit hook.
-- **`lint`** — ESLint type-aware recommended rules on authored JS/TS/Svelte (including colocated tests; `projectService` + `.svelte`). Does not lint generated `bindings/` or `dist/`. Does not replace `svelte-check`.
+- **`lint`** — Fast ESLint (non-type-aware recommended JS/TS/Svelte + cache). Local/agent default; target under one minute.
+- **`lint:typed`** — Type-aware ESLint (`projectService` + `.svelte`). CI frontend job runs this. Does not replace `svelte-check`. Does not lint generated `bindings/` or `dist/`.
 - **`check`** — `svelte-check` for Svelte/TypeScript diagnostics and a11y warnings.
 - **`test`** — Vitest/jsdom only; no browser-driven e2e.
 

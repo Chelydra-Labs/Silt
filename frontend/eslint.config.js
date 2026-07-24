@@ -9,8 +9,13 @@ import path from 'node:path'
 
 const tsconfigRootDir = path.dirname(fileURLToPath(import.meta.url))
 
-// Authored frontend source only. Bindings, dist, coverage, and dependencies
-// are regenerated or third-party and must not be linted.
+// Shared across every projectService block. Mismatched extraFileExtensions
+// between .ts and .svelte files forces a full TypeScript project reload per
+// file (typescript-eslint typed-linting performance docs) and multiplies
+// wall-clock cost.
+const extraFileExtensions = ['.svelte']
+
+// Type-aware config (CI / `npm run lint:typed`). Authored frontend source only.
 export default defineConfig(
   globalIgnores([
     'bindings/**',
@@ -31,7 +36,8 @@ export default defineConfig(
       },
       parserOptions: {
         projectService: true,
-        tsconfigRootDir
+        tsconfigRootDir,
+        extraFileExtensions
       }
     }
   },
@@ -42,8 +48,10 @@ export default defineConfig(
       parserOptions: {
         projectService: true,
         tsconfigRootDir,
-        extraFileExtensions: ['.svelte'],
+        extraFileExtensions,
         parser: ts.parser,
+        // svelteConfig is non-serializable; typed lint cache may be weaker
+        // than the fast config. Prefer lint:typed in CI, lint (fast) locally.
         svelteConfig
       }
     }
