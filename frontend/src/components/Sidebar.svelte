@@ -510,7 +510,16 @@
   function onSidebarTabKeydown(e: KeyboardEvent) {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
     e.preventDefault()
-    void setSidebarTab(sidebarTab === 'tree' ? 'quick' : 'tree')
+    const next = sidebarTab === 'tree' ? 'quick' : 'tree'
+    void setSidebarTab(next)
+    // Roving tabindex: move focus with selection (WAI-ARIA Tabs).
+    void tick().then(() => {
+      document
+        .getElementById(
+          next === 'tree' ? 'sidebar-tab-tree' : 'sidebar-tab-quick'
+        )
+        ?.focus()
+    })
   }
 
   // Expand an active page's full ancestry once when its location changes.

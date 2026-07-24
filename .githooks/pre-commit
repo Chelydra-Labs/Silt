@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 echo "Running pre-commit hooks (Prettier check)..."
 
 # 1. Exempt if a merge commit is in progress
@@ -24,7 +24,8 @@ if [ ! -s "$STAGED_TMP" ]; then
 fi
 
 # If every staged path is docs/assets only, skip (NUL-safe scan).
-# read -d '' is a bash extension; Git for Windows ships bash as sh.
+# Uses bash `read -d ''` for NUL-delimited paths (shebang is bash on
+# Windows Git Bash and Linux; macOS is out of scope for this hook).
 CODE_FOUND=0
 while IFS= read -r -d '' path || [ -n "$path" ]; do
   case "$path" in

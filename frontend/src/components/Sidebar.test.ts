@@ -298,6 +298,48 @@ describe('Sidebar', () => {
     ).toBeInTheDocument()
   })
 
+  it('moves focus to the activated tab on ArrowRight', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [],
+      recent_pages: [
+        {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          opened_at: 10
+        }
+      ],
+      favorites: [],
+      quick_access_collapsed: true
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const treeTab = screen.getByRole('tab', { name: 'Notebook tree view' })
+    const quickTab = screen.getByRole('tab', {
+      name: /Quick access bookmarks and recents/i
+    })
+    treeTab.focus()
+    expect(treeTab).toHaveFocus()
+    await fireEvent.keyDown(treeTab, { key: 'ArrowRight' })
+    await flush()
+    expect(quickTab).toHaveAttribute('aria-selected', 'true')
+    expect(quickTab).toHaveFocus()
+  })
+
   it('restores Quick Access tab when quick_access_collapsed is false', async () => {
     mocks.getNavigationPreferences.mockResolvedValue({
       expanded_sections: [],
