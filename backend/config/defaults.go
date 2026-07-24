@@ -23,6 +23,7 @@ func Defaults() SystemConfig {
 			DefaultViewMode:         stringPtr("edit"),
 			SpellcheckEnabled:       boolPtr(true),
 			SpellcheckLanguage:      stringPtr("en-US"),
+			DateFormat:              stringPtr("YYYY-MM-DD"),
 			TypewriterMode:          boolPtr(false),
 			TypewriterModeRatio:     float64Ptr(0.5),
 			CustomDictionary:        []string{},

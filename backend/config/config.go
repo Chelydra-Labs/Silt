@@ -71,6 +71,10 @@ type EditorConfig struct {
 	// en-US bundled; the value must name a dictionary present under
 	// frontend/public/dictionaries/<lang>/. Default "en-US".
 	SpellcheckLanguage *string `yaml:"spellcheck_language,omitempty" json:"spellcheck_language,omitempty"`
+	// DateFormat controls the format of dates inserted by the Date Glance
+	// popover and /today slash command (#730). Default "YYYY-MM-DD" (ISO).
+	// normalize() falls back to the default for nil or unrecognized values.
+	DateFormat *string `yaml:"date_format,omitempty" json:"date_format,omitempty"`
 	// TypewriterMode keeps the active line at a fixed vertical ratio of the
 	// editor viewport (#187). Default false (opt-in) — it pairs naturally
 	// with FocusMode but is independently togglable. Pure scroll-presentation;

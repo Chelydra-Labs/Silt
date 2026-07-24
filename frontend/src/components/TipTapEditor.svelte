@@ -124,6 +124,7 @@
     setActiveEditor,
     clearActiveEditorState
   } from '../lib/editor/activeEditor.svelte'
+  import { formatDate, resolveDateFormat } from '../lib/dateFormat'
   import {
     clampToViewport,
     flipOrClamp
@@ -1818,9 +1819,8 @@
         openColorPickerPopover(intent.markType)
         break
       case 'today': {
-        const d = new Date()
-        const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-        editorInstance.commands.insertContent(today)
+        const fmt = resolveDateFormat(settings.config?.editor?.date_format)
+        editorInstance.commands.insertContent(formatDate(new Date(), fmt))
         break
       }
       case 'calendar':

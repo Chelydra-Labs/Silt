@@ -22,6 +22,7 @@
     dictionaryStatus,
     friendlyPackError
   } from '../../lib/editor/spellcheck/dictionaryStatus.svelte'
+  import { DATE_FORMATS } from '../../lib/dateFormat'
 
   interface Props {
     ringAnchor?: string | null
@@ -705,6 +706,43 @@
             </label>
           </div>
         </div>
+      </div>
+
+      <!-- Date format (#730) -->
+      <div
+        class="bg-surface-panel/20 border border-surface-panel-border rounded-xl p-5 space-y-3"
+      >
+        <div class="space-y-1">
+          <h4
+            class="font-label-sm-bold text-text-primary uppercase tracking-wider text-type-2xs"
+          >
+            Date format
+          </h4>
+          <p class="text-text-muted text-type-sm font-body-md max-w-xl">
+            Controls how dates are inserted by the Date Glance popover and the
+            /today command.
+          </p>
+        </div>
+        <label class="flex flex-col gap-1.5 max-w-sm">
+          <span
+            class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
+            >Format</span
+          >
+          <select
+            value={draft.editor?.date_format || 'YYYY-MM-DD'}
+            onchange={(e: Event) => {
+              draftEditor().date_format = (
+                e.currentTarget as HTMLSelectElement
+              ).value
+              touch()
+            }}
+            class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors cursor-pointer"
+          >
+            {#each DATE_FORMATS as fmt (fmt.id)}
+              <option value={fmt.id}>{fmt.example}</option>
+            {/each}
+          </select>
+        </label>
       </div>
 
       <!-- Spellcheck dictionaries card (#336 / #337 / #537) -->
