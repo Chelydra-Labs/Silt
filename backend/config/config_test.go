@@ -1458,6 +1458,9 @@ func TestNormalize_SearchWritingAids(t *testing.T) {
 	if cfg.Editor.SpellcheckLanguage == nil || *cfg.Editor.SpellcheckLanguage != "en-US" {
 		t.Errorf("normalize spellcheck_language nil → *\"en-US\", got %v", cfg.Editor.SpellcheckLanguage)
 	}
+	if cfg.Editor.DateFormat == nil || *cfg.Editor.DateFormat != "YYYY-MM-DD" {
+		t.Errorf("normalize date_format nil → *\"YYYY-MM-DD\", got %v", cfg.Editor.DateFormat)
+	}
 	if cfg.Editor.TypewriterMode == nil || *cfg.Editor.TypewriterMode != false {
 		t.Errorf("normalize typewriter_mode nil → *false, got %v", cfg.Editor.TypewriterMode)
 	}
@@ -1506,6 +1509,36 @@ func TestNormalize_SearchWritingAids(t *testing.T) {
 	cfg = normalize(SystemConfig{Editor: EditorConfig{SpellcheckLanguage: &empty}})
 	if cfg.Editor.SpellcheckLanguage == nil || *cfg.Editor.SpellcheckLanguage != "en-US" {
 		t.Errorf("normalize empty language → \"en-US\", got %v", cfg.Editor.SpellcheckLanguage)
+	}
+}
+
+// TestNormalize_DateFormat confirms date_format normalizes to "YYYY-MM-DD"
+// for nil/empty/unknown and preserves each of the 9 valid format IDs.
+func TestNormalize_DateFormat(t *testing.T) {
+	// Empty / whitespace → default.
+	empty := "   "
+	cfg := normalize(SystemConfig{Editor: EditorConfig{DateFormat: &empty}})
+	if cfg.Editor.DateFormat == nil || *cfg.Editor.DateFormat != "YYYY-MM-DD" {
+		t.Errorf("normalize empty date_format → \"YYYY-MM-DD\", got %v", cfg.Editor.DateFormat)
+	}
+
+	// Unknown value → default.
+	garbage := "DD.MM.YYYY"
+	cfg = normalize(SystemConfig{Editor: EditorConfig{DateFormat: &garbage}})
+	if cfg.Editor.DateFormat == nil || *cfg.Editor.DateFormat != "YYYY-MM-DD" {
+		t.Errorf("normalize unknown date_format → \"YYYY-MM-DD\", got %v", cfg.Editor.DateFormat)
+	}
+
+	// Each valid ID is preserved.
+	for _, id := range []string{
+		"YYYY-MM-DD", "DD-MMM-YY", "MM/DD/YYYY", "DD/MM/YYYY",
+		"MMM D, YYYY", "long", "D MMM YYYY", "MM/DD/YY", "DD/MM/YY",
+	} {
+		v := id
+		cfg = normalize(SystemConfig{Editor: EditorConfig{DateFormat: &v}})
+		if cfg.Editor.DateFormat == nil || *cfg.Editor.DateFormat != id {
+			t.Errorf("normalize should preserve date_format %q, got %v", id, cfg.Editor.DateFormat)
+		}
 	}
 }
 

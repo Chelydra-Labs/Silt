@@ -183,4 +183,49 @@ describe('DateGlance', () => {
     expect(focusedAfter?.getAttribute('role')).toBe('gridcell')
     expect(focusedAfter?.getAttribute('data-glance-date')).toBeTruthy()
   })
+
+  it('shows the month picker when the month label is clicked', async () => {
+    render(DateGlance)
+    const monthName = new Date().toLocaleDateString(undefined, {
+      month: 'long'
+    })
+    await fireEvent.click(screen.getByRole('button', { name: monthName }))
+
+    expect(screen.getByRole('button', { name: 'Jan' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Dec' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Previous year' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Next year' })
+    ).toBeInTheDocument()
+  })
+
+  it('returns to the day grid after picking a month', async () => {
+    render(DateGlance)
+    const monthName = new Date().toLocaleDateString(undefined, {
+      month: 'long'
+    })
+    await fireEvent.click(screen.getByRole('button', { name: monthName }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Jul' }))
+
+    expect((await screen.findAllByRole('gridcell')).length).toBeGreaterThan(0)
+    expect(
+      screen.getByRole('button', { name: 'Previous month' })
+    ).toBeInTheDocument()
+  })
+
+  it('shows the year picker when the year label is clicked', async () => {
+    render(DateGlance)
+    const yearLabel = String(new Date().getFullYear())
+    await fireEvent.click(screen.getByRole('button', { name: yearLabel }))
+
+    expect(screen.getByRole('button', { name: yearLabel })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Previous year range' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Next year range' })
+    ).toBeInTheDocument()
+  })
 })
