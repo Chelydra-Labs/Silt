@@ -169,10 +169,12 @@ type UIConfig struct {
 	// Used by the formatting first-run tip (#168). Same persistence tier as
 	// sidebar_width.
 	DismissedTips []string `yaml:"dismissed_tips,omitempty" json:"dismissed_tips,omitempty"`
-	// QuickAccessCollapsed persists the quiet Quick Access disclosure state.
-	// It is a per-vault navigation preference; nil is normalized to the
-	// collapsed default for older config files.
-	QuickAccessCollapsed *bool `yaml:"quick_access_collapsed,omitempty" json:"quick_access_collapsed,omitempty"`
+	// SidebarView persists which sidebar view mode is active: "tree" (the
+	// notebook/section/page tree) or "quick" (Quick Access bookmarks +
+	// recents). Per-vault navigation preference. nil normalizes to "tree".
+	// Load one-shot-migrates the legacy quick_access_collapsed bool
+	// (true → "tree", false → "quick") into this field.
+	SidebarView *string `yaml:"sidebar_view,omitempty" json:"sidebar_view,omitempty"`
 	// OpenDevtoolsOnStartup opens the Chromium DevTools inspector on app launch.
 	// Default false. Intended for diagnostics on non-developer machines.
 	OpenDevtoolsOnStartup *bool `yaml:"open_devtools_on_startup,omitempty" json:"open_devtools_on_startup,omitempty"`
@@ -284,8 +286,39 @@ func Load(vaultPath string) (SystemConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Defaults(), fmt.Errorf("failed to parse config.yaml: %w", err)
 	}
+	migrateLegacyQuickAccessCollapsed(data, &cfg)
 	cfg = normalize(cfg)
 	return cfg, nil
+}
+
+// migrateLegacyQuickAccessCollapsed one-shot-upgrades the pre-#728
+// `ui.quick_access_collapsed` bool into the new `ui.sidebar_view` enum. The
+// legacy field is gone from SystemConfig, so a plain unmarshal silently drops
+// the key; this shadow-decodes just that key into a local struct so presence
+// is detectable. Runs only when the new key is absent (new key wins). The
+// mapping preserves the post-PR-727 semantics: true (collapsed) → "tree",
+// false (expanded) → "quick". Idempotent and harmless once a vault has been
+// re-saved with sidebar_view, because the legacy key is never re-written.
+func migrateLegacyQuickAccessCollapsed(data []byte, cfg *SystemConfig) {
+	if cfg.UI.SidebarView != nil {
+		return // new key already present; nothing to migrate.
+	}
+	var legacy struct {
+		UI struct {
+			QuickAccessCollapsed *bool `yaml:"quick_access_collapsed"`
+		} `yaml:"ui"`
+	}
+	if err := yaml.Unmarshal(data, &legacy); err != nil {
+		return // malformed legacy block: let normalize apply the "tree" default.
+	}
+	if legacy.UI.QuickAccessCollapsed == nil {
+		return // key absent: normalize will default to "tree".
+	}
+	view := "tree"
+	if !*legacy.UI.QuickAccessCollapsed {
+		view = "quick"
+	}
+	cfg.UI.SidebarView = &view
 }
 
 // Save atomically writes cfg to <vault>/.system/config.yaml. Atomicity

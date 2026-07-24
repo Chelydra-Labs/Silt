@@ -76,32 +76,38 @@ func (a *App) mutateConfigLocked(mut func(*config.SystemConfig) error) error {
 // deliberately excludes unrelated system settings and accepts no snapshot
 // write from the frontend.
 type NavigationPreferences struct {
-	ExpandedSections     []config.NavigationSectionRef `json:"expanded_sections"`
-	RecentPages          []config.RecentPage           `json:"recent_pages"`
-	Favorites            []config.NavigationPageRef    `json:"favorites"`
-	QuickAccessCollapsed bool                          `json:"quick_access_collapsed"`
+	ExpandedSections []config.NavigationSectionRef `json:"expanded_sections"`
+	RecentPages      []config.RecentPage           `json:"recent_pages"`
+	Favorites        []config.NavigationPageRef    `json:"favorites"`
+	SidebarView      string                        `json:"sidebar_view"`
 }
 
 func (a *App) GetNavigationPreferences() (NavigationPreferences, error) {
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
-	quickAccessCollapsed := true
-	if a.cfg.UI.QuickAccessCollapsed != nil {
-		quickAccessCollapsed = *a.cfg.UI.QuickAccessCollapsed
+	// SidebarView is nil only on the raw Defaults() error-path returns that
+	// skip normalize (vault not loaded); treat that as the "tree" default so
+	// the frontend never renders an empty sidebar.
+	sidebarView := "tree"
+	if a.cfg.UI.SidebarView != nil {
+		sidebarView = *a.cfg.UI.SidebarView
 	}
 	return NavigationPreferences{
-		ExpandedSections:     append([]config.NavigationSectionRef(nil), a.cfg.UI.ExpandedSections...),
-		RecentPages:          append([]config.RecentPage(nil), a.cfg.UI.RecentPages...),
-		Favorites:            append([]config.NavigationPageRef(nil), a.cfg.UI.Favorites...),
-		QuickAccessCollapsed: quickAccessCollapsed,
+		ExpandedSections: append([]config.NavigationSectionRef(nil), a.cfg.UI.ExpandedSections...),
+		RecentPages:      append([]config.RecentPage(nil), a.cfg.UI.RecentPages...),
+		Favorites:        append([]config.NavigationPageRef(nil), a.cfg.UI.Favorites...),
+		SidebarView:      sidebarView,
 	}, nil
 }
 
-// SetQuickAccessCollapsed persists the quiet Quick Access disclosure state
+// SetSidebarView persists the active sidebar view mode ("tree" | "quick")
 // through the serialized navigation-preferences mutation path.
-func (a *App) SetQuickAccessCollapsed(collapsed bool) error {
+func (a *App) SetSidebarView(view string) error {
+	if view != "tree" && view != "quick" {
+		return fmt.Errorf("invalid sidebar view %q: must be \"tree\" or \"quick\"", view)
+	}
 	return a.mutateConfig(func(cfg *config.SystemConfig) error {
-		cfg.UI.QuickAccessCollapsed = &collapsed
+		cfg.UI.SidebarView = &view
 		return nil
 	})
 }

@@ -172,10 +172,14 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.UI.DismissedTips == nil {
 		cfg.UI.DismissedTips = []string{}
 	}
-	// QuickAccessCollapsed: nil → true so older config files retain the
-	// existing collapsed disclosure default.
-	if cfg.UI.QuickAccessCollapsed == nil {
-		cfg.UI.QuickAccessCollapsed = boolPtr(true)
+	// SidebarView: nil → "tree" (default). Validate the value against the
+	// known set so a hand-edited or synced garbage string collapses to the
+	// tree default rather than rendering an empty sidebar. Load migrates
+	// the legacy quick_access_collapsed bool into this field before
+	// normalize runs, so nil here only means "neither key was present".
+	if cfg.UI.SidebarView == nil || *cfg.UI.SidebarView != "tree" && *cfg.UI.SidebarView != "quick" {
+		tree := "tree"
+		cfg.UI.SidebarView = &tree
 	}
 	// TypographyEnabled: nil → true (#168 Phase 3).
 	if cfg.UI.Formatting.TypographyEnabled == nil {
