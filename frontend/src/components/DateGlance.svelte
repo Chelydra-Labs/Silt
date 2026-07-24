@@ -163,6 +163,14 @@
         e.preventDefault()
         moveFocus(Math.floor(idx / 7) * 7 + 6)
         break
+      case 'PageUp':
+        e.preventDefault()
+        prevMonth()
+        break
+      case 'PageDown':
+        e.preventDefault()
+        nextMonth()
+        break
       case 'Enter':
       case ' ':
         e.preventDefault()

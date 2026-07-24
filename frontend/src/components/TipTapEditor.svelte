@@ -120,7 +120,10 @@
     clearInsertEditor
   } from '../lib/dateGlanceState.svelte'
   import { openShortcutHelp } from '../lib/shortcutHelpState.svelte'
-  import { setActiveEditor } from '../lib/editor/activeEditor.svelte'
+  import {
+    setActiveEditor,
+    clearActiveEditorState
+  } from '../lib/editor/activeEditor.svelte'
   import {
     clampToViewport,
     flipOrClamp
@@ -1535,6 +1538,7 @@
     // Drop this editor as the Date Glance insert target so a destroyed editor
     // doesn't receive a stale insert after page navigation (#730 harden).
     clearInsertEditor()
+    clearActiveEditorState()
     // Cancel any pending owner-fetch / mention-refine timers so they don't
     // fire after teardown (#332).
     if (mentionQueryTimer) {

@@ -9,9 +9,13 @@
   // captured there; the popover then opens on click using the captured value.
   import {
     openDateGlance,
-    setDateGlanceAnchor
+    setDateGlanceAnchor,
+    dateGlance
   } from '../lib/dateGlanceState.svelte'
-  import { getActiveEditor } from '../lib/editor/activeEditor.svelte'
+  import {
+    getActiveEditor,
+    getLastActiveEditor
+  } from '../lib/editor/activeEditor.svelte'
   import type { Editor } from '@tiptap/core'
 
   let chipEl = $state<HTMLElement | null>(null)
@@ -27,6 +31,11 @@
 
   $effect(() => {
     setDateGlanceAnchor(chipEl)
+    return () => {
+      // Clear the anchor on unmount so the popover doesn't position against
+      // a detached node (Fast Refresh, conditional render, etc.).
+      if (dateGlance.anchor === chipEl) setDateGlanceAnchor(null)
+    }
   })
 
   function onPointerDown(): void {
@@ -34,7 +43,10 @@
   }
 
   function onClick(): void {
-    openDateGlance(capturedEditor)
+    // capturedEditor is set by pointerdown (mouse path). Keyboard activation
+    // (Tab + Enter) never fires pointerdown, so fall back to the last editor
+    // that had focus for a11y parity with the mouse path.
+    openDateGlance(capturedEditor ?? getLastActiveEditor())
     capturedEditor = null
   }
 </script>
