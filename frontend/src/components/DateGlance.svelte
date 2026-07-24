@@ -284,7 +284,7 @@
           >
             <button
               type="button"
-              class="rounded-md px-1.5 py-0.5 text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
+              class="rounded-md border border-surface-panel-border bg-surface-card px-1.5 py-0.5 text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
               title="Jump to month"
               onclick={enterMonths}
             >
@@ -292,7 +292,7 @@
             </button>
             <button
               type="button"
-              class="rounded-md px-1.5 py-0.5 text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
+              class="rounded-md border border-surface-panel-border bg-surface-card px-1.5 py-0.5 text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
               title="Jump to year"
               onclick={enterYears}
             >
@@ -302,7 +302,7 @@
         {:else if calView === 'months'}
           <button
             type="button"
-            class="min-w-0 flex-1 rounded-md text-center text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start py-1 cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
+            class="min-w-0 flex-1 rounded-md border border-surface-panel-border bg-surface-card text-center text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start py-1 cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
             title="Jump to year"
             onclick={enterYears}
           >
