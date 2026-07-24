@@ -197,6 +197,8 @@
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import DateGlanceChip from './components/DateGlanceChip.svelte'
   import DateGlance from './components/DateGlance.svelte'
+  import { openDateGlance } from './lib/dateGlanceState.svelte'
+  import { getActiveEditor } from './lib/editor/activeEditor.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
   import {
     clearSelectionFocus,
@@ -1016,6 +1018,9 @@
           break
         case 'open_shortcuts_help':
           showShortcutHelp = !showShortcutHelp
+          break
+        case 'open_date_glance':
+          openDateGlance(getActiveEditor())
           break
         case 'find_in_page':
           findBarState.openFind()

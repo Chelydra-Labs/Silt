@@ -83,6 +83,12 @@ export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
     label: 'Keyboard shortcuts',
     group: 'App',
     defaultBinding: 'Shift+?'
+  },
+  {
+    id: 'open_date_glance',
+    label: 'Date glance',
+    group: 'App',
+    defaultBinding: 'Ctrl+Alt+D'
   }
 ]
 
