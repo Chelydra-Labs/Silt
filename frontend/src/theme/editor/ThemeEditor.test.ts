@@ -176,7 +176,9 @@ describe('ThemeEditor', () => {
     await tick()
     mocks.injectTokens.mockClear()
 
-    const input = screen.getByLabelText('App text color value')
+    const input = screen.getByLabelText(
+      'App text color value'
+    ) as HTMLInputElement
     await fireEvent.input(input, { target: { value: '#ffffff' } })
     await fireEvent.blur(input)
     await tick()
@@ -303,7 +305,9 @@ describe('ThemeEditor', () => {
     // Name prompt dialog (#531) — confirm with the suggested name.
     const nameDialog = screen.getByTestId('theme-save-name-dialog')
     expect(nameDialog).toBeTruthy()
-    const nameInput = screen.getByTestId('theme-save-name-dialog-input')
+    const nameInput = screen.getByTestId(
+      'theme-save-name-dialog-input'
+    ) as HTMLInputElement
     await fireEvent.input(nameInput, { target: { value: 'Saved Custom' } })
     await fireEvent.click(screen.getByTestId('theme-save-name-dialog-confirm'))
     await tick()
@@ -361,7 +365,9 @@ describe('ThemeEditor', () => {
       }
     })
     await tick()
-    const input = screen.getByLabelText('App text color value')
+    const input = screen.getByLabelText(
+      'App text color value'
+    ) as HTMLInputElement
     await fireEvent.input(input, { target: { value: '#ffffff' } })
     await fireEvent.blur(input)
     await tick()
@@ -388,7 +394,9 @@ describe('ThemeEditor', () => {
       }
     })
     await tick()
-    const input = screen.getByLabelText('App text color value')
+    const input = screen.getByLabelText(
+      'App text color value'
+    ) as HTMLInputElement
     await fireEvent.input(input, { target: { value: '#ffffff' } })
     await fireEvent.blur(input)
     await tick()
@@ -411,7 +419,9 @@ describe('ThemeEditor', () => {
       }
     })
     await tick()
-    const input = screen.getByLabelText('App text color value')
+    const input = screen.getByLabelText(
+      'App text color value'
+    ) as HTMLInputElement
     await fireEvent.input(input, { target: { value: '#ffffff' } })
     await fireEvent.blur(input)
     await tick()
@@ -423,7 +433,9 @@ describe('ThemeEditor', () => {
     await fireEvent.click(screen.getByTestId('theme-discard-dialog-confirm'))
     await tick()
     expect(screen.queryByTestId('theme-discard-dialog')).toBeNull()
-    const restored = screen.getByLabelText('App text color value')
+    const restored = screen.getByLabelText(
+      'App text color value'
+    ) as HTMLInputElement
     expect(restored.value).toBe('#dee3e6')
   })
 

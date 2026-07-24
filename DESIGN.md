@@ -482,16 +482,16 @@ path-qualified section identity; empty sections remain visible. Quick Access
 groups **Pinned** and **Recent** as distinct compact lists that use the same
 page-opening action as tree rows. Pinned pages use a pin icon (filled when
 pinned) and **Pin to Quick Access** / **Unpin** copy — not star/favorite
-wording, and not the tab-strip pin concept. Recent defaults to three rows with
-a labeled **Show more** / **Show less** control when more history exists
-(session-only expand; full list is the vault’s bounded recent set). The active
-Notebook › Section › Page breadcrumb is a compact chrome element with
-linked/offline status and accent emphasis only on the current location. The
-page switcher is a focused dialog with a search field and deterministic result
-list; recent matches are visibly prioritized without changing the normal
-tab/preview/pinned opening semantics. When the tab strip cannot show every tab,
-an overflow affordance and keyboard-operable menu expose the hidden tabs and
-their close actions; hidden content is never silently unrecoverable.
+wording, and not the tab-strip pin concept. Recent shows the full bounded set
+in a scrollable panel (Quick Access owns the full sidebar height when selected
+via the Tree / Quick Access tab switcher; no row clamp). The active Notebook ›
+Section › Page breadcrumb is a compact chrome element with linked/offline
+status and accent emphasis only on the current location. The page switcher is a
+focused dialog with a search field and deterministic result list; recent matches
+are visibly prioritized without changing the normal tab/preview/pinned opening
+semantics. When the tab strip cannot show every tab, an overflow affordance and
+keyboard-operable menu expose the hidden tabs and their close actions; hidden
+content is never silently unrecoverable.
 
 Contextual page and section actions use native buttons and the existing menu
 surface. Duplicate, reveal, new-page, child-section, and pin-to-Quick-Access

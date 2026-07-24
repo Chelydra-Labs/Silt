@@ -177,9 +177,9 @@ pinned (YAML `favorites`), and recent locators that the incomplete fallback
 cannot verify. Available-root refreshes prune locators confirmed absent from
 the filesystem. The sidebar Quick Access surface shows **Pinned** pages (user
 action: Pin to Quick Access / Unpin; persisted as `ui.favorites`) and bounded
-timestamped **Recent** pages (three by default with a labeled Show more/less
-control up to the backend recent cap), while the active location is available
-as a Notebook › Section › Page breadcrumb.
+timestamped **Recent** pages (full vault recent set in a scrollable Quick Access
+panel; no row clamp), while the active location is available as a Notebook ›
+Section › Page breadcrumb.
 The dedicated page switcher searches the flattened navigation tree, ranks valid
 recents first, and opens through the normal page/tab funnel. Tab overflow is
 represented by an accessible menu of hidden tabs rather than silently hiding

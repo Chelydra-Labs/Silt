@@ -6,7 +6,7 @@ const { mockSettings } = vi.hoisted(() => ({
   mockSettings: {
     config: {
       ai: {
-        chat: { model: '', provider_type: 'local' }
+        chat: { model: '', provider_type: 'local' } as Record<string, unknown>
       }
     }
   }

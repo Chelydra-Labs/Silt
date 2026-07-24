@@ -152,7 +152,8 @@ export async function loadPlugins(
       // surface bridge remains the safe path for third-party UI (sdk.ts).
       // Integrity + grants still apply; this keeps the host-component boundary
       // aligned with main (default.component only).
-      const defaultExport = mod?.default
+      const defaultExport = mod?.default as
+        (SiltPlugin & { component?: RegisteredPlugin['component'] }) | undefined
       const reg: RegisteredPlugin = {
         manifest,
         component: defaultExport?.component ?? DiskPluginNotice,

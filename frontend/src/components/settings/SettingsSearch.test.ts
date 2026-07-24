@@ -123,7 +123,7 @@ describe('SettingsSearch — popover + jump', () => {
     render(SettingsSearch, {
       props: { onJump: () => {} }
     })
-    const input = screen.getByRole('combobox')
+    const input = screen.getByRole('combobox') as HTMLInputElement
     await fireEvent.input(input, { target: { value: 'font' } })
     expect(screen.getByRole('listbox')).toBeInTheDocument()
     await fireEvent.keyDown(input, { key: 'Escape' })

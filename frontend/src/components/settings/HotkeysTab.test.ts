@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/svelte'
 
 const mockSettings = vi.hoisted(() => ({
-  config: { hotkeys: { open_search: 'Ctrl+Shift+F' } },
+  config: { hotkeys: { open_search: 'Ctrl+Shift+F' } } as {
+    hotkeys: Record<string, string>
+  },
   dirty: false,
   pendingExternal: false,
   error: '',

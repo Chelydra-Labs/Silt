@@ -113,7 +113,7 @@ export interface DraggingLike {
  * cases, detached DOM) — callers must treat null as "bail to native".
  */
 function resolveContentLeft(view: EditorView): number | null {
-  const dom = view.dom
+  const dom = view.dom as HTMLElement
   const rect = dom.getBoundingClientRect()
   if (!rect || !Number.isFinite(rect.left)) return null
   let padding = 0
@@ -136,7 +136,7 @@ function resolveContentLeft(view: EditorView): number | null {
  * unit) * N)` in index.css.
  */
 function resolveIndentStep(view: EditorView): number {
-  return resolveIndentStepFromEl(view.dom)
+  return resolveIndentStepFromEl(view.dom as HTMLElement)
 }
 
 /**
@@ -286,7 +286,7 @@ export const BlockIndentOnDrop = Extension.create({
           // conservative fallback: native reorder still works, we just
           // don't touch depth.
           handleDrop(view, event) {
-            const dragEvent = event
+            const dragEvent = event as DragEvent
             const clientX = dragEvent.clientX
             const clientY = dragEvent.clientY
             if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
@@ -296,7 +296,7 @@ export const BlockIndentOnDrop = Extension.create({
             // 1. Only handle node drags. Inline-content drags have no
             //    `dragging.node`; bail so PM's native inline-paste-on-drop
             //    runs.
-            const dragging = view.dragging
+            const dragging = view.dragging as DraggingLike | null
             const nodeSel = dragging?.node
             if (!nodeSel) return false
 

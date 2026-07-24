@@ -48,7 +48,7 @@ describe('MathLatexPopover', () => {
       }
     })
 
-    const textarea = screen.getByRole('textbox')
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
     expect(textarea.value).toBe('a^2')
 
     // Autofocus fires from a rAF callback.

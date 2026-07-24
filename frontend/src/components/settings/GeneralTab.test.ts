@@ -30,7 +30,7 @@ const mocks = vi.hoisted(() => {
   return {
     baseConfig,
     settings: {
-      config: baseConfig,
+      config: baseConfig as typeof baseConfig | null,
       loading: false,
       saving: false,
       error: '',
@@ -42,14 +42,14 @@ const mocks = vi.hoisted(() => {
     themeState: {
       id: 'cyber_forest',
       name: 'Cyber Forest',
-      mode: 'dark',
+      mode: 'dark' as 'dark' | 'light' | 'system',
       darkTokens: {
         '--color-surface-app': '#0c0c0e',
         '--font-body': "'Plus Jakarta Sans', sans-serif",
         '--font-mono': "'JetBrains Mono', monospace",
         '--font-headline': "'Hanken Grotesk', sans-serif"
-      },
-      lightTokens: {},
+      } as Record<string, string>,
+      lightTokens: {} as Record<string, string>,
       error: null as string | null
     }
   }

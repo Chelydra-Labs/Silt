@@ -28,9 +28,9 @@ const mocks = vi.hoisted(() => ({
   themeState: {
     id: 'cyber_forest',
     name: 'Cyber Forest',
-    mode: 'dark',
-    darkTokens: { '--color-surface-app': '#0c0c0e' },
-    lightTokens: { '--color-surface-app': '#f8fafc' },
+    mode: 'dark' as 'dark' | 'light' | 'system',
+    darkTokens: { '--color-surface-app': '#0c0c0e' } as Record<string, string>,
+    lightTokens: { '--color-surface-app': '#f8fafc' } as Record<string, string>,
     error: null as string | null
   },
   themesState: {
@@ -52,7 +52,10 @@ const mocks = vi.hoisted(() => ({
         source: 'disk'
       }
     ],
-    flatTokens: {},
+    flatTokens: {} as Record<
+      string,
+      { dark: Record<string, string>; light: Record<string, string> }
+    >,
     loadError: null as string | null,
     loading: false
   },
@@ -62,7 +65,7 @@ const mocks = vi.hoisted(() => ({
     fields: [] as { field: string; message: string }[]
   },
   systemScheme: {
-    mode: 'dark'
+    mode: 'dark' as 'dark' | 'light'
   },
   applyTheme: vi.fn(),
   restoreActiveTheme: vi.fn(),
@@ -76,8 +79,8 @@ const mocks = vi.hoisted(() => ({
   // Captured Events.On registrations keyed by event name, plus the disposers
   // returned (so the unmount-disposal and drop-handler contracts can be
   // asserted without hitting the real Wails runtime).
-  eventsHandlers: {},
-  eventsDisposers: {}
+  eventsHandlers: {} as Record<string, (ev: { data?: unknown }) => void>,
+  eventsDisposers: {} as Record<string, () => void>
 }))
 
 vi.mock('@wailsio/runtime', () => ({
@@ -538,7 +541,9 @@ describe('AppearanceTab picker a11y (#50, #512)', () => {
       expect(cards).toHaveLength(2)
 
       for (const card of cards) {
-        const chip = card.querySelector('.theme-swatch-chip')
+        const chip = card.querySelector(
+          '.theme-swatch-chip'
+        ) as HTMLElement | null
         expect(chip, 'chip must render').toBeTruthy()
         const dots = chip!.querySelectorAll('.theme-swatch-dot')
         expect(dots.length, 'exactly two accent dots').toBe(2)
@@ -662,7 +667,7 @@ describe('AppearanceTab picker a11y (#50, #512)', () => {
       render(AppearanceTab)
       const handler = mocks.eventsHandlers['theme:files-dropped']
       handler({ data: 'not-an-array' })
-      handler(undefined)
+      handler(undefined as never)
       await tick()
       expect(mocks.importThemeFromPath).not.toHaveBeenCalled()
       expect(mocks.setStatus).not.toHaveBeenCalled()

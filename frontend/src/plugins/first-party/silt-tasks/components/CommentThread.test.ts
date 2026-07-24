@@ -8,7 +8,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 // initTasksSettings(ctx) before mount.
 const mocks = vi.hoisted(() => ({
   updatePluginSetting: vi.fn().mockResolvedValue(true),
-  tasksSettings: {},
+  tasksSettings: {} as Record<string, unknown>,
   persistLocalAuthor: vi.fn().mockResolvedValue(true)
 }))
 
@@ -131,7 +131,7 @@ function makeBlock(o: Partial<SubtreeBlock> & { id: string }): SubtreeBlock {
     clean_text: '',
     line_number: 0,
     ...o
-  }
+  } as SubtreeBlock
 }
 
 function mount(props: Partial<CommentThreadProps> = {}) {
@@ -144,7 +144,7 @@ function mount(props: Partial<CommentThreadProps> = {}) {
       fileDate: '2026-07-01',
       ctx: makeCtx(),
       ...props
-    }
+    } as CommentThreadProps
   })
 }
 
@@ -268,14 +268,14 @@ describe('CommentThread', () => {
 
     // Delete the middle comment (B).
     const delBtns = screen.getAllByLabelText('Delete comment')
-    await fireEvent.click(delBtns[1])
+    await fireEvent.click(delBtns[1]!)
     await flush()
 
     // B is restored at its original index (1), not appended at the end (2).
     const articles = document.querySelectorAll('[role="comment"]')
     expect(articles).toHaveLength(3)
-    expect(articles[1].textContent).toContain('B')
-    expect(articles[2].textContent).toContain('C')
+    expect(articles[1]!.textContent).toContain('B')
+    expect(articles[2]!.textContent).toContain('C')
     expect(screen.getByRole('alert')).toBeInTheDocument()
     confirmSpy.mockRestore()
   })
@@ -285,7 +285,7 @@ describe('CommentThread', () => {
     const ctx = makeCtx({ addTaskComment })
     mount({ ctx })
     await flush()
-    const ta = screen.getByLabelText('Comment text')
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
     await fireEvent.input(ta, { target: { value: 'hello world' } })
     await fireEvent.keyDown(ta, { key: 'Enter' })
     await flush()
@@ -304,7 +304,7 @@ describe('CommentThread', () => {
     const ctx = makeCtx({ addTaskComment })
     mount({ ctx })
     await flush()
-    const ta = screen.getByLabelText('Comment text')
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
     await fireEvent.input(ta, { target: { value: 'please retry me' } })
     await fireEvent.keyDown(ta, { key: 'Enter' })
     await flush()
@@ -334,7 +334,7 @@ describe('CommentThread', () => {
     const ctx = makeCtx({ addTaskComment })
     mount({ ctx })
     await flush()
-    const ta = screen.getByLabelText('Comment text')
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
     await fireEvent.input(ta, { target: { value: 'line one' } })
     await fireEvent.keyDown(ta, { key: 'Enter', shiftKey: true })
     await flush()
@@ -344,7 +344,7 @@ describe('CommentThread', () => {
   it('submit button is disabled when the composer textarea is empty', async () => {
     mount()
     await flush()
-    const btn = screen.getByText('Post')
+    const btn = screen.getByText('Post') as HTMLButtonElement
     expect(btn.disabled).toBe(true)
   })
 
@@ -356,7 +356,7 @@ describe('CommentThread', () => {
     const ctx = makeCtx({ addTaskComment })
     mount({ ctx })
     await flush()
-    const ta = screen.getByLabelText('Comment text')
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
     await fireEvent.input(ta, { target: { value: 'optimistic body' } })
     await fireEvent.keyDown(ta, { key: 'Enter' })
     // The optimistic comment appears immediately, before the promise resolves.
@@ -372,7 +372,7 @@ describe('CommentThread', () => {
     const ctx = makeCtx({ addTaskComment })
     mount({ ctx })
     await flush()
-    const ta = screen.getByLabelText('Comment text')
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
     await fireEvent.input(ta, { target: { value: 'real body' } })
     await fireEvent.keyDown(ta, { key: 'Enter' })
     await flush()
@@ -387,7 +387,7 @@ describe('CommentThread', () => {
     const ctx = makeCtx({ addTaskComment })
     mount({ ctx })
     await flush()
-    const ta = screen.getByLabelText('Comment text')
+    const ta = screen.getByLabelText('Comment text') as HTMLTextAreaElement
     await fireEvent.input(ta, { target: { value: 'doomed' } })
     await fireEvent.keyDown(ta, { key: 'Enter' })
     await flush()
@@ -402,7 +402,9 @@ describe('CommentThread', () => {
     mount({ ctx })
     await flush()
     expect(getLocalAuthor).toHaveBeenCalled()
-    const authorInput = screen.getByLabelText('Default comment author')
+    const authorInput = screen.getByLabelText(
+      'Default comment author'
+    ) as HTMLInputElement
     expect(authorInput.value).toBe('osuser')
     expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
       'local_author',
@@ -417,14 +419,18 @@ describe('CommentThread', () => {
     mount({ ctx })
     await flush()
     expect(getLocalAuthor).not.toHaveBeenCalled()
-    const authorInput = screen.getByLabelText('Default comment author')
+    const authorInput = screen.getByLabelText(
+      'Default comment author'
+    ) as HTMLInputElement
     expect(authorInput.value).toBe('saved-name')
   })
 
   it('changing the author input + blur calls persistLocalAuthor (updatePluginSetting)', async () => {
     mount()
     await flush()
-    const authorInput = screen.getByLabelText('Default comment author')
+    const authorInput = screen.getByLabelText(
+      'Default comment author'
+    ) as HTMLInputElement
     mocks.updatePluginSetting.mockClear()
     await fireEvent.input(authorInput, { target: { value: 'renamed' } })
     await fireEvent.blur(authorInput)
@@ -599,7 +605,7 @@ describe('CommentThread', () => {
     await fireEvent.click(replyBtn)
     await flush()
 
-    const replyTa = screen.getByLabelText('Reply text')
+    const replyTa = screen.getByLabelText('Reply text') as HTMLTextAreaElement
     expect(replyTa).toBeInTheDocument()
     await fireEvent.input(replyTa, { target: { value: 'my reply' } })
     await fireEvent.keyDown(replyTa, { key: 'Enter' })

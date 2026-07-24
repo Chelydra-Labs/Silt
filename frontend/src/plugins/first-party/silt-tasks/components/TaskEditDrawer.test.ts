@@ -72,7 +72,7 @@ const drawerMocks = vi.hoisted(() => ({
       plugins: {
         active: [],
         disabled: [],
-        plugin_settings: {}
+        plugin_settings: {} as Record<string, Record<string, unknown>>
       }
     }
   }
@@ -133,7 +133,7 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     on: () => () => {},
     ...v2CtxStubs,
     ...overrides
-  }
+  } as unknown as PluginContext
 }
 
 async function flush() {
@@ -482,7 +482,7 @@ describe('TaskEditDrawer — source awareness + affordances', () => {
       props: { task: makeTask(), ctx, onClose: () => {}, onOpenSubEditor }
     })
     const btn = screen.getByText('Open sub-editor')
-    void fireEvent.click(btn)
+    fireEvent.click(btn)
     expect(onOpenSubEditor).toHaveBeenCalled()
     unmount()
     // Without the callback the button is absent.
@@ -594,7 +594,7 @@ describe('TaskEditDrawer — owner editor (#412)', () => {
     render(TaskEditDrawer, {
       props: { task: makeTask({ owner: 'Alice' }), ctx, onClose: () => {} }
     })
-    const input = screen.getByLabelText('Owner')
+    const input = screen.getByLabelText('Owner') as HTMLInputElement
     await fireEvent.input(input, { target: { value: 'Bob' } })
     await fireEvent.blur(input)
     await new Promise((r) => setTimeout(r, 10))
@@ -829,7 +829,7 @@ describe('TaskEditDrawer — title editor (#412)', () => {
     render(TaskEditDrawer, {
       props: { task: makeTask(), ctx, onClose: () => {} }
     })
-    const input = screen.getByLabelText('Task title')
+    const input = screen.getByLabelText('Task title') as HTMLInputElement
     await fireEvent.input(input, { target: { value: 'New title' } })
     await fireEvent.blur(input)
     await new Promise((r) => setTimeout(r, 10))
@@ -851,7 +851,7 @@ describe('TaskEditDrawer — estimate editor (#439)', () => {
         onClose: () => {}
       }
     })
-    const input = screen.getByTestId('task-estimate-input')
+    const input = screen.getByTestId('task-estimate-input') as HTMLInputElement
     expect(input.value).toBe('')
   })
 
@@ -864,7 +864,7 @@ describe('TaskEditDrawer — estimate editor (#439)', () => {
         onClose: () => {}
       }
     })
-    const input = screen.getByTestId('task-estimate-input')
+    const input = screen.getByTestId('task-estimate-input') as HTMLInputElement
     expect(input.value).toBe('2h')
   })
 
@@ -877,7 +877,7 @@ describe('TaskEditDrawer — estimate editor (#439)', () => {
         onClose: () => {}
       }
     })
-    const input = screen.getByTestId('task-estimate-input')
+    const input = screen.getByTestId('task-estimate-input') as HTMLInputElement
     expect(input.value).toBe('2.5d')
   })
 
@@ -890,7 +890,7 @@ describe('TaskEditDrawer — estimate editor (#439)', () => {
         onClose: () => {}
       }
     })
-    const input = screen.getByTestId('task-estimate-input')
+    const input = screen.getByTestId('task-estimate-input') as HTMLInputElement
     expect(input.value).toBe('9h')
   })
 

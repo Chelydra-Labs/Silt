@@ -177,7 +177,7 @@ describe('TemplatePicker (#55)', () => {
 
     // Click the Meeting Notes option (it has a meeting_title placeholder).
     const meetingOption = screen.getByText('Meeting Notes')
-    void fireEvent.click(meetingOption)
+    fireEvent.click(meetingOption)
 
     expect(screen.getByText('Placeholders')).toBeInTheDocument()
     expect(screen.getByText(/meeting_title/)).toBeInTheDocument()
@@ -207,7 +207,7 @@ describe('TemplatePicker (#55)', () => {
       }
     })
 
-    const input = screen.getByLabelText('Page name')
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
     expect(input.value).toMatch(/^Page \d{4}-\d{2}-\d{2}$/)
   })
 
@@ -231,7 +231,7 @@ describe('TemplatePicker (#55)', () => {
       }
     })
 
-    const input = screen.getByLabelText('Page name')
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
     await fireEvent.input(input, { target: { value: 'Sprint Day' } })
     const createBtn = screen.getByText('Create Page')
     await fireEvent.click(createBtn)
@@ -248,7 +248,7 @@ describe('TemplatePicker (#55)', () => {
     })
     expect(dispatchSpy).toHaveBeenCalled()
     const event = dispatchSpy.mock.calls
-      .map((c) => c[0])
+      .map((c) => c[0] as Event)
       .find((e) => e.type === 'focus-page-title')
     expect(event).toBeDefined()
     expect(onCreatedPage).toHaveBeenCalledWith('Sprint Day')
@@ -271,7 +271,7 @@ describe('TemplatePicker (#55)', () => {
         onCreatedPage
       }
     })
-    const input = screen.getByLabelText('Page name')
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
     await fireEvent.input(input, { target: { value: 'Will Fail' } })
     await fireEvent.click(screen.getByText('Create Page'))
     await vi.waitFor(() => {
@@ -343,7 +343,7 @@ describe('TemplatePicker (#55)', () => {
         }
       })
       await fireEvent.click(screen.getByText('With Default'))
-      const input = screen.getByLabelText('Page name')
+      const input = screen.getByLabelText('Page name') as HTMLInputElement
       await fireEvent.input(input, { target: { value: 'Note' } })
       await fireEvent.click(screen.getByText('Create Page'))
       await vi.waitFor(() => {
@@ -373,7 +373,7 @@ describe('TemplatePicker (#55)', () => {
     })
     await fireEvent.click(screen.getByText('Meeting Notes'))
     expect(screen.getByText('Placeholders')).toBeInTheDocument()
-    const input = screen.getByLabelText('Page name')
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
     await fireEvent.input(input, { target: { value: 'Standup' } })
     await fireEvent.click(screen.getByText('Create Page'))
     await vi.waitFor(() => {
@@ -414,7 +414,7 @@ describe('TemplatePicker (#55)', () => {
         onCreatedPage
       }
     })
-    const input = screen.getByLabelText('Page name')
+    const input = screen.getByLabelText('Page name') as HTMLInputElement
     await fireEvent.input(input, { target: { value: 'Standup' } })
     await fireEvent.click(screen.getByText('Create Page'))
     await vi.waitFor(() => {

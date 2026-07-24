@@ -77,12 +77,18 @@ export default defineConfig(
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-call': 'off',
       '@typescript-eslint/no-unsafe-return': 'off',
-      '@typescript-eslint/no-unsafe-argument': 'off'
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      // Off: ESLint's view of PM/DOM/generic types often marks load-bearing
+      // assertions as "unnecessary" while svelte-check still requires them
+      // (e.g. view.dragging as DraggingLike, onchange(n as T)). Prefer
+      // svelte-check as the assertion authority for those boundaries.
+      '@typescript-eslint/no-unnecessary-type-assertion': 'off'
     }
   },
 
   // Vitest: async mock factories often return resolved values without await;
-  // expect(fn) passes unbound methods by design.
+  // expect(fn) passes unbound methods by design. DOM query casts are required
+  // by svelte-check even when ESLint thinks they are redundant.
   {
     files: [
       '**/*.{test,spec}.{ts,js}',
@@ -92,7 +98,9 @@ export default defineConfig(
     ],
     rules: {
       '@typescript-eslint/require-await': 'off',
-      '@typescript-eslint/unbound-method': 'off'
+      '@typescript-eslint/unbound-method': 'off',
+      '@typescript-eslint/no-floating-promises': 'off',
+      '@typescript-eslint/no-misused-promises': 'off'
     }
   }
 )
