@@ -128,7 +128,7 @@
   open={dateGlance.open}
   onClose={closeDateGlance}
   anchor={dateGlance.anchor}
-  class="w-[268px] rounded-xl border border-surface-popover-border bg-surface-popover shadow-2xl"
+  class="w-72 rounded-xl border border-surface-popover-border bg-surface-popover shadow-2xl"
 >
   {#snippet content()}
     <div
@@ -144,8 +144,9 @@
           class="flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-text-muted hover:bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-primary-start cursor-pointer"
           onclick={prevMonth}
         >
-          <span class="material-symbols-outlined text-[18px]" aria-hidden="true"
-            >chevron_left</span
+          <span
+            class="material-symbols-outlined text-icon-lg"
+            aria-hidden="true">chevron_left</span
           >
         </button>
         <span
@@ -158,8 +159,9 @@
           class="flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-text-muted hover:bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-primary-start cursor-pointer"
           onclick={nextMonth}
         >
-          <span class="material-symbols-outlined text-[18px]" aria-hidden="true"
-            >chevron_right</span
+          <span
+            class="material-symbols-outlined text-icon-lg"
+            aria-hidden="true">chevron_right</span
           >
         </button>
       </div>
@@ -168,7 +170,7 @@
         class="mb-1 grid grid-cols-7 gap-0.5 text-center text-type-3xs text-text-muted"
         aria-hidden="true"
       >
-        {#each DOW as d (d)}
+        {#each DOW as d, i (i)}
           <span class="py-0.5">{d}</span>
         {/each}
       </div>

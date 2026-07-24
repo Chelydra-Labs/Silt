@@ -5,6 +5,7 @@ describe('shortcut action metadata', () => {
   it('supplies frontend defaults for new actions missing from older configs', () => {
     expect(effectiveHotkeys({}).new_page).toBe('Ctrl+N')
     expect(effectiveHotkeys({}).open_shortcuts_help).toBe('Shift+?')
+    expect(effectiveHotkeys({}).open_date_glance).toBe('Ctrl+Alt+D')
   })
 
   it('preserves current remapped and explicitly disabled values', () => {

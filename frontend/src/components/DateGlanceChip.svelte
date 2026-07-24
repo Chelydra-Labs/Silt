@@ -48,7 +48,7 @@
   title="Date glance"
   class="flex items-center gap-1.5 rounded-md border border-transparent px-2 py-0.5 text-type-xs text-text-muted hover:bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-primary-start focus-visible:outline-none cursor-pointer"
 >
-  <span class="material-symbols-outlined text-[15px]" aria-hidden="true"
+  <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
     >calendar_month</span
   >
   <span>{label}</span>
