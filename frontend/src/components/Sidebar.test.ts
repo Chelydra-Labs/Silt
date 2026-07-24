@@ -249,7 +249,7 @@ describe('Sidebar', () => {
     expect(trigger).not.toHaveTextContent('menu_book')
   })
 
-  it('switches between Notebook tree and Quick Access tabs', async () => {
+  it('switches between Notebook tree and Quick Access tabs and persists the choice', async () => {
     mocks.getNavigationPreferences.mockResolvedValue({
       expanded_sections: [],
       recent_pages: [
@@ -280,18 +280,58 @@ describe('Sidebar', () => {
     await flush()
 
     const treeTab = screen.getByRole('tab', { name: 'Notebook tree view' })
-    const quickTab = screen.getByRole('tab', { name: /Quick Access/i })
+    const quickTab = screen.getByRole('tab', {
+      name: /Quick access bookmarks and recents/i
+    })
     expect(treeTab).toHaveAttribute('aria-selected', 'true')
     expect(quickTab).toHaveAttribute('aria-selected', 'false')
     await fireEvent.click(quickTab)
     await flush()
     expect(quickTab).toHaveAttribute('aria-selected', 'true')
+    expect(mocks.setQuickAccessCollapsed).toHaveBeenCalledWith(false)
     expect(
       screen.getByRole('tabpanel', { name: 'Quick Access' })
     ).toBeInTheDocument()
     // Recent entry from prefs is visible in the Quick Access panel
     expect(
       screen.getByRole('button', { name: /Work \/ Journal \/ Daily/ })
+    ).toBeInTheDocument()
+  })
+
+  it('restores Quick Access tab when quick_access_collapsed is false', async () => {
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [],
+      recent_pages: [
+        {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          opened_at: 10
+        }
+      ],
+      favorites: [],
+      quick_access_collapsed: false
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    expect(
+      screen.getByRole('tab', { name: /Quick access bookmarks and recents/i })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(
+      screen.getByRole('tabpanel', { name: 'Quick Access' })
     ).toBeInTheDocument()
   })
 
@@ -1242,7 +1282,9 @@ describe('Sidebar', () => {
       }
     })
     await flush()
-    await fireEvent.click(screen.getByRole('tab', { name: /Quick Access/i }))
+    await fireEvent.click(
+      screen.getByRole('tab', { name: /Quick access bookmarks and recents/i })
+    )
     await flush()
     const favorite = screen.getByRole('button', {
       name: 'Synced / Projects/Deep / Plan — Linked notebook offline'

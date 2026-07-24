@@ -26,6 +26,7 @@
     DuplicatePage,
     GetNavigationPreferences,
     SetNavigationSectionExpanded,
+    SetQuickAccessCollapsed,
     SetFavoritePage
   } from '../../bindings/silt/app.js'
   import { NavOrderManager, sortByName } from '../lib/sidebar/navOrder'
@@ -154,7 +155,9 @@
   let preferencesLoading = $state(true)
   let preferencesError = $state('')
   let showNotebookDropdown = $state(false)
+  /** 'quick' when prefs.quick_access_collapsed is false (reuses legacy field). */
   let sidebarTab = $state<'tree' | 'quick'>('tree')
+  let sidebarTabHydrated = $state(false)
 
   // Creation/rename modal state
   let createMode = $state<'' | 'notebook' | 'section' | 'page'>('')
@@ -460,6 +463,11 @@
         favorites: loaded?.favorites ?? [],
         quick_access_collapsed: loaded?.quick_access_collapsed ?? true
       }
+      // Reuse quick_access_collapsed: false means user last left Quick Access open.
+      if (!sidebarTabHydrated) {
+        sidebarTab = preferences.quick_access_collapsed ? 'tree' : 'quick'
+        sidebarTabHydrated = true
+      }
       onNavigationPreferencesLoaded?.(preferences)
       expandedSections = new SvelteSet(
         expandedPathsForNotebook(preferences, activeNotebook)
@@ -473,6 +481,36 @@
     } finally {
       if (sequence === preferenceLoadSequence) preferencesLoading = false
     }
+  }
+
+  async function setSidebarTab(next: 'tree' | 'quick') {
+    if (sidebarTab === next) return
+    const previous = sidebarTab
+    const previousCollapsed = preferences.quick_access_collapsed
+    sidebarTab = next
+    // Persist via legacy field: collapsed=true → tree, false → quick.
+    const collapsed = next === 'tree'
+    preferences = { ...preferences, quick_access_collapsed: collapsed }
+    try {
+      await SetQuickAccessCollapsed(collapsed)
+      preferencesError = ''
+    } catch (error) {
+      sidebarTab = previous
+      preferences = {
+        ...preferences,
+        quick_access_collapsed: previousCollapsed
+      }
+      preferencesError =
+        error instanceof Error
+          ? error.message
+          : 'Sidebar view preference could not be saved.'
+    }
+  }
+
+  function onSidebarTabKeydown(e: KeyboardEvent) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    e.preventDefault()
+    void setSidebarTab(sidebarTab === 'tree' ? 'quick' : 'tree')
   }
 
   // Expand an active page's full ancestry once when its location changes.
@@ -1416,12 +1454,6 @@
         class="mx-1 mb-2 flex items-center gap-0.5 bg-surface-sidebar border border-surface-sidebar-border p-0.5 rounded-md select-none"
         role="tablist"
         aria-label="Sidebar navigation views"
-        onkeydown={(e) => {
-          if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-            e.preventDefault()
-            sidebarTab = sidebarTab === 'tree' ? 'quick' : 'tree'
-          }
-        }}
       >
         <button
           type="button"
@@ -1429,13 +1461,15 @@
           id="sidebar-tab-tree"
           aria-selected={sidebarTab === 'tree'}
           aria-controls="sidebar-tree-panel"
+          tabindex={sidebarTab === 'tree' ? 0 : -1}
           title="Notebook tree view"
           aria-label="Notebook tree view"
           class="flex-1 py-1 px-2 border-none rounded cursor-pointer transition-all flex items-center justify-center gap-1"
           class:bg-hover={sidebarTab === 'tree'}
           class:text-surface-sidebar-text={sidebarTab === 'tree'}
           class:text-surface-sidebar-text-muted={sidebarTab !== 'tree'}
-          onclick={() => (sidebarTab = 'tree')}
+          onkeydown={onSidebarTabKeydown}
+          onclick={() => void setSidebarTab('tree')}
         >
           <span class="material-symbols-outlined tab-icon" aria-hidden="true"
             >account_tree</span
@@ -1447,13 +1481,15 @@
           id="sidebar-tab-quick"
           aria-selected={sidebarTab === 'quick'}
           aria-controls="sidebar-quick-panel"
+          tabindex={sidebarTab === 'quick' ? 0 : -1}
           title="Quick access bookmarks and recents"
           aria-label="Quick access bookmarks and recents"
           class="flex-1 py-1 px-2 border-none rounded cursor-pointer transition-all flex items-center justify-center gap-1"
           class:bg-hover={sidebarTab === 'quick'}
           class:text-surface-sidebar-text={sidebarTab === 'quick'}
           class:text-surface-sidebar-text-muted={sidebarTab !== 'quick'}
-          onclick={() => (sidebarTab = 'quick')}
+          onkeydown={onSidebarTabKeydown}
+          onclick={() => void setSidebarTab('quick')}
         >
           <span class="material-symbols-outlined tab-icon" aria-hidden="true"
             >push_pin</span
@@ -1490,6 +1526,8 @@
         <div
           id="sidebar-tree-panel"
           role="tabpanel"
+          aria-label="Notebook tree"
+          aria-labelledby="sidebar-tab-tree"
           class="flex-1 overflow-y-auto custom-scrollbar px-1"
           data-sidebar-scroll
         >
