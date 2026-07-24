@@ -42,6 +42,9 @@
 
   let weeks = $derived(monthWeeks(cursor))
   let flat = $derived(weeks.flat())
+  let monthName = $derived(
+    cursor.toLocaleDateString(undefined, { month: 'long' })
+  )
   let monthLabel = $derived(
     cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
   )
@@ -276,30 +279,34 @@
         </button>
 
         {#if calView === 'days'}
-          <button
-            type="button"
-            class="group min-w-0 flex-1 inline-flex items-center justify-center gap-0.5 rounded-md text-center text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start py-1 truncate cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
-            title="Jump to month"
-            onclick={enterMonths}
+          <div
+            class="flex min-w-0 flex-1 items-center justify-center gap-1 py-1"
           >
-            <span class="truncate">{monthLabel}</span>
-            <span
-              class="material-symbols-outlined text-icon-xs text-text-muted transition-colors group-hover:text-accent-primary-start"
-              aria-hidden="true">expand_more</span
+            <button
+              type="button"
+              class="rounded-md px-1.5 py-0.5 text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
+              title="Jump to month"
+              onclick={enterMonths}
             >
-          </button>
+              {monthName}
+            </button>
+            <button
+              type="button"
+              class="rounded-md px-1.5 py-0.5 text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
+              title="Jump to year"
+              onclick={enterYears}
+            >
+              {yearLabel}
+            </button>
+          </div>
         {:else if calView === 'months'}
           <button
             type="button"
-            class="group min-w-0 flex-1 inline-flex items-center justify-center gap-0.5 rounded-md text-center text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start py-1 truncate cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
+            class="min-w-0 flex-1 rounded-md text-center text-type-sm font-label-sm-bold text-text-primary hover:bg-hover hover:text-accent-primary-start py-1 cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors"
             title="Jump to year"
             onclick={enterYears}
           >
-            <span class="truncate">{yearLabel}</span>
-            <span
-              class="material-symbols-outlined text-icon-xs text-text-muted transition-colors group-hover:text-accent-primary-start"
-              aria-hidden="true">expand_more</span
-            >
+            {yearLabel}
           </button>
         {:else}
           <span
