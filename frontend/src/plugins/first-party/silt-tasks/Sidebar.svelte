@@ -20,7 +20,6 @@
   import { plusDaysISO, localToday } from '../../sdk'
   import ErrorBanner from './components/ErrorBanner.svelte'
   import ConfirmModal from './components/ConfirmModal.svelte'
-  import { SvelteDate } from 'svelte/reactivity'
   import {
     getTaskHubState,
     setActiveFilter,
@@ -38,6 +37,13 @@
   import { persistSavedViews } from './settings'
   import ContextMenu from '../../../components/ContextMenu.svelte'
   import { isDevMode, openInspect } from '../../../lib/devModeInspect'
+  import {
+    ymd,
+    startOfMonth,
+    endOfMonth,
+    addMonths,
+    monthWeeks as computeMonthWeeks
+  } from '../../../lib/dateGrid'
 
   interface Props {
     ctx: PluginContext
@@ -126,8 +132,8 @@
   }
 
   async function reloadDayDots(): Promise<void> {
-    const first = ymd(firstOfMonth(miniCursor))
-    const last = ymd(lastOfMonth(miniCursor))
+    const first = ymd(startOfMonth(miniCursor))
+    const last = ymd(endOfMonth(miniCursor))
     const dayRes = await ctx.sqliteQuery(
       `SELECT t.due_date AS d, COUNT(*) AS c
        FROM blocks b JOIN tasks t ON b.id = t.block_id
@@ -231,59 +237,15 @@
   ]
   const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 
-  function ymd(d: Date): string {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-      d.getDate()
-    ).padStart(2, '0')}`
-  }
-  function firstOfMonth(d: Date): Date {
-    return new Date(d.getFullYear(), d.getMonth(), 1)
-  }
-  function lastOfMonth(d: Date): Date {
-    return new Date(d.getFullYear(), d.getMonth() + 1, 0)
-  }
-  function startOfWeek(d: Date): Date {
-    const x = new SvelteDate(d)
-    x.setDate(x.getDate() - x.getDay())
-    x.setHours(0, 0, 0, 0)
-    return x
-  }
-  function addDays(d: Date, n: number): Date {
-    const x = new SvelteDate(d)
-    x.setDate(x.getDate() + n)
-    return x
-  }
-
-  let miniWeeks = $derived.by(() => {
-    const first = startOfWeek(firstOfMonth(miniCursor))
-    const last = lastOfMonth(miniCursor)
-    const weeks: Date[][] = []
-    let cur = first
-    for (let w = 0; w < 6; w++) {
-      const row: Date[] = []
-      for (let i = 0; i < 7; i++) {
-        row.push(cur)
-        cur = addDays(cur, 1)
-      }
-      weeks.push(row)
-      if (cur > last && w >= 3) break
-    }
-    return weeks
-  })
+  // Mini-cal month grid uses the pure dateGrid helpers shared with the Tasks
+  // calendar and the Date Glance popover.
+  let miniWeeks = $derived(computeMonthWeeks(miniCursor))
 
   function prevMonth() {
-    miniCursor = new Date(
-      miniCursor.getFullYear(),
-      miniCursor.getMonth() - 1,
-      1
-    )
+    miniCursor = addMonths(miniCursor, -1)
   }
   function nextMonth() {
-    miniCursor = new Date(
-      miniCursor.getFullYear(),
-      miniCursor.getMonth() + 1,
-      1
-    )
+    miniCursor = addMonths(miniCursor, 1)
   }
   function pickDay(d: Date) {
     setFocusDate(ymd(d))
