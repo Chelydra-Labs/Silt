@@ -856,8 +856,9 @@
             aria-label="Previous month"
             class="flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-text-muted hover:bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-primary-start cursor-pointer"
           >
-            <span class="material-symbols-outlined text-icon-lg"
-              >chevron_left</span
+            <span
+              class="material-symbols-outlined text-icon-lg"
+              aria-hidden="true">chevron_left</span
             >
           </button>
           <span class="text-text-primary text-type-xs font-label-sm-bold">
@@ -870,8 +871,9 @@
             aria-label="Next month"
             class="flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-text-muted hover:bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-primary-start cursor-pointer"
           >
-            <span class="material-symbols-outlined text-icon-lg"
-              >chevron_right</span
+            <span
+              class="material-symbols-outlined text-icon-lg"
+              aria-hidden="true">chevron_right</span
             >
           </button>
         </div>
@@ -919,7 +921,7 @@
                   aria-label={`${key}${count ? ', ' + count + ' task' + (count === 1 ? '' : 's') : ''}`}
                   aria-current={key === activeFocusDate ? 'date' : undefined}
                   data-testid={`mini-day-${key}`}
-                  class="aspect-square flex flex-col items-center justify-center gap-0.5 rounded text-type-sm font-label-sm cursor-pointer border-none bg-transparent focus-visible:ring-2 focus-visible:ring-accent-primary-start focus-visible:outline-none
+                  class="aspect-square flex flex-col items-center justify-center gap-0.5 rounded-md text-type-sm font-label-sm cursor-pointer border-none bg-transparent focus-visible:ring-2 focus-visible:ring-accent-primary-start focus-visible:outline-none
                     {inMonth
                     ? 'text-text-primary hover:bg-hover'
                     : 'text-text-muted/50 hover:bg-hover'}

@@ -1005,9 +1005,10 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(cell).toBeTruthy()
     expect(cell!.className).toContain('text-type-sm')
     expect(cell!.className).not.toContain('text-type-2xs')
-    // #733 parity: day cells share DateGlance's keyboard-focus affordance
-    // (the same focus-visible ring the chevrons/Today button standardized).
+    // #733 parity: day cells share DateGlance's treatment — the focus-visible
+    // affordance and the rounded-md corners the chevrons/Today button set.
     expect(cell!.className).toContain('focus-visible:ring-2')
+    expect(cell!.className).toContain('rounded-md')
 
     for (const name of ['Previous month', 'Next month']) {
       const btn = screen.getByRole('button', { name })
@@ -1016,6 +1017,8 @@ describe('silt-tasks Sidebar (#432)', () => {
       const icon = btn.querySelector('span')
       expect(icon?.className).toContain('text-icon-lg')
       expect(icon?.className).not.toContain('text-icon-sm')
+      // Icon ligature text is hidden from AT; the button aria-label names it.
+      expect(icon?.getAttribute('aria-hidden')).toBe('true')
     }
 
     const today = screen.getByTestId('mini-today')
