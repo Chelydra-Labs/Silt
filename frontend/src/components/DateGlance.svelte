@@ -2,7 +2,8 @@
   // Date Glance popover (#730). A compact, single-purpose month grid for
   // referencing dates while writing — not a second calendar (no task dots,
   // event sync, or format picker). Three openers (status-bar chip, global
-  // hotkey, /calendar slash) funnel through dateGlanceState.
+  // hotkey, /calendar slash) funnel through dateGlanceState. Placement comes
+  // from dateGlance.activeAnchor (chip or caret marker) — never document.body.
   //
   // The month/year label is clickable for a drill-down quick-jump selector
   // (days → months → years). Arrows remain for sequential navigation.
@@ -56,7 +57,9 @@
   let insertMode = $derived(
     !!(dateGlance.insertEditor && !dateGlance.insertEditor.isDestroyed)
   )
-  let popoverAnchor = $derived(dateGlance.anchor ?? document.body)
+  // Only the resolved session/chip anchor — never document.body (body rect is
+  // the viewport origin and pinned the popover at the top-left).
+  let popoverAnchor = $derived(dateGlance.activeAnchor)
   let configuredFormat = $derived(
     resolveDateFormat(settings.config?.editor?.date_format)
   )
@@ -83,6 +86,15 @@
   $effect(() => {
     const isOpen = dateGlance.open
     const gen = dateGlance.openGen
+    // Open without a placeable anchor is a programming error — close loudly
+    // instead of painting at the viewport origin.
+    if (isOpen && !dateGlance.activeAnchor) {
+      console.error('[silt] date-glance open without activeAnchor; closing')
+      closeDateGlance()
+      prevOpen = false
+      prevGen = gen
+      return
+    }
     if (isOpen && (!prevOpen || gen !== prevGen)) {
       if (!prevOpen) {
         previousFocus = document.activeElement as HTMLElement | null

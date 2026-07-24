@@ -14,18 +14,58 @@ import DateGlance from './DateGlance.svelte'
 import {
   dateGlance,
   closeDateGlance,
+  openDateGlance,
   setDateGlanceAnchor
 } from '../lib/dateGlanceState.svelte'
+import { POPOVER_MARGIN } from '../lib/editor/popoverPositioning'
 
 const anchor = document.createElement('div')
 document.body.append(anchor)
+
+function mockAnchorRect(
+  el: HTMLElement,
+  rect: {
+    left: number
+    top: number
+    bottom: number
+    width?: number
+    height?: number
+  }
+): void {
+  const width = rect.width ?? 32
+  const height = rect.height ?? rect.bottom - rect.top
+  el.getBoundingClientRect = () =>
+    ({
+      top: rect.top,
+      bottom: rect.bottom,
+      left: rect.left,
+      right: rect.left + width,
+      width,
+      height,
+      x: rect.left,
+      y: rect.top,
+      toJSON: () => ({})
+    }) as DOMRect
+}
+
+function floatingLayer(): HTMLElement {
+  const dialog = document.querySelector(
+    '[role="dialog"][aria-label="Pick a date to insert or copy"]'
+  ) as HTMLElement | null
+  expect(dialog).not.toBeNull()
+  // Popover structure: portal > backdrop + floating layer > content
+  const layer = dialog!.parentElement as HTMLElement
+  expect(layer).toBeTruthy()
+  return layer
+}
 
 beforeEach(() => {
   copyTextMock.mockClear()
   copyTextMock.mockResolvedValue(true)
   pushNotificationMock.mockClear()
   setDateGlanceAnchor(anchor)
-  dateGlance.open = true
+  // Resolve activeAnchor via the real open path (no body fallback).
+  openDateGlance()
   dateGlance.insertEditor = null
 })
 
@@ -33,6 +73,9 @@ afterEach(() => {
   cleanup()
   closeDateGlance()
   setDateGlanceAnchor(null)
+  document
+    .querySelectorAll('[data-date-glance-placement]')
+    .forEach((n) => n.remove())
 })
 
 async function clickFirstDayCell(): Promise<void> {
@@ -227,5 +270,93 @@ describe('DateGlance', () => {
     expect(
       screen.getByRole('button', { name: 'Next year range' })
     ).toBeInTheDocument()
+  })
+
+  it('does not render the popover when opened without a placeable anchor', async () => {
+    closeDateGlance()
+    setDateGlanceAnchor(null)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // Force the broken state the body-fallback used to paper over.
+    dateGlance.open = true
+    dateGlance.activeAnchor = null
+
+    render(DateGlance)
+    // Guard effect closes + refuses to paint at the viewport origin.
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(screen.queryByRole('dialog', { name: /pick a date/i })).toBeNull()
+    expect(dateGlance.open).toBe(false)
+    err.mockRestore()
+  })
+
+  it('positions the popover below the chip anchor, not at the top-left origin', async () => {
+    closeDateGlance()
+    mockAnchorRect(anchor, {
+      left: 400,
+      top: 40,
+      bottom: 72,
+      width: 32,
+      height: 32
+    })
+    Object.defineProperty(window, 'innerWidth', {
+      value: 1200,
+      configurable: true
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 800,
+      configurable: true
+    })
+    setDateGlanceAnchor(anchor)
+    openDateGlance()
+
+    render(DateGlance)
+    await screen.findByRole('dialog', { name: /pick a date/i })
+    // measure() runs sync + again after tick
+    await new Promise((r) => setTimeout(r, 0))
+
+    const layer = floatingLayer()
+    const left = Number(layer.style.left.replace('px', ''))
+    const top = Number(layer.style.top.replace('px', ''))
+    // Below chip: top ≈ bottom + gap(4). left ≈ chip left. Not origin margin.
+    expect(left).toBe(400)
+    expect(top).toBe(76)
+    expect(left).not.toBe(POPOVER_MARGIN)
+    expect(top).not.toBe(POPOVER_MARGIN)
+    expect(layer.style.left).not.toBe('-9999px')
+  })
+
+  it('positions the popover beside a caret placement rect from slash/hotkey', async () => {
+    closeDateGlance()
+    setDateGlanceAnchor(null)
+    Object.defineProperty(window, 'innerWidth', {
+      value: 1200,
+      configurable: true
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 800,
+      configurable: true
+    })
+    openDateGlance(null, { rect: { top: 300, bottom: 318, left: 240 } })
+    // Ephemeral marker needs a real client rect for Popover.measure().
+    mockAnchorRect(dateGlance.activeAnchor!, {
+      left: 240,
+      top: 300,
+      bottom: 318,
+      width: 0,
+      height: 18
+    })
+
+    render(DateGlance)
+    await screen.findByRole('dialog', { name: /pick a date/i })
+    await new Promise((r) => setTimeout(r, 0))
+
+    const layer = floatingLayer()
+    const left = Number(layer.style.left.replace('px', ''))
+    const top = Number(layer.style.top.replace('px', ''))
+    expect(left).toBe(240)
+    // gap default 4 → 318 + 4
+    expect(top).toBe(322)
+    expect(left).not.toBe(POPOVER_MARGIN)
+    expect(top).not.toBe(POPOVER_MARGIN)
   })
 })
