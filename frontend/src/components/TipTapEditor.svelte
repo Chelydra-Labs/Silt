@@ -116,7 +116,7 @@
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { classifySlashCommand } from '../lib/editor/builtinSlashCommands'
   import {
-    openDateGlance,
+    openDateGlanceNearEditor,
     clearInsertEditor
   } from '../lib/dateGlanceState.svelte'
   import { openShortcutHelp } from '../lib/shortcutHelpState.svelte'
@@ -1824,10 +1824,9 @@
         break
       }
       case 'calendar':
-        // Open the Date Glance popover. The slash trigger text is already
-        // deleted above; the editor stays as the insert target so a picked
-        // date lands at the cursor.
-        openDateGlance(editorInstance ?? null)
+        // Open Date Glance beside the caret (coordsAtPos). Slash text is
+        // already deleted above; the editor stays the insert target.
+        openDateGlanceNearEditor(editorInstance ?? null)
         break
       case 'shortcuts':
         // Open the keyboard-shortcut reference overlay (#731). Same surface

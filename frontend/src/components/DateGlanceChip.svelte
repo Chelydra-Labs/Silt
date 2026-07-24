@@ -1,8 +1,8 @@
 <script lang="ts">
   // Status-bar chip that opens the Date Glance popover (#730). One of three
-  // openers (chip, global hotkey, /calendar). The chip owns the popover's
-  // anchor element — it registers itself on mount so every opener surfaces the
-  // popover in the same place.
+  // openers (chip, global hotkey, /calendar). The chip registers itself as the
+  // persistent placement anchor; chip clicks open against this element. Slash
+  // and editor hotkeys pass a caret rect instead and do not use the chip.
   //
   // Editor capture timing: clicking the chip moves focus to the button, which
   // blurs the editor. pointerdown fires before that blur, so the editor is

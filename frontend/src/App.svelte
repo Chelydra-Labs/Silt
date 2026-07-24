@@ -1023,6 +1023,7 @@
           toggleShortcutHelp()
           break
         case 'open_date_glance':
+          // Caret placement when an editor is focused; chip otherwise.
           toggleDateGlance(getActiveEditor())
           break
         case 'find_in_page':
