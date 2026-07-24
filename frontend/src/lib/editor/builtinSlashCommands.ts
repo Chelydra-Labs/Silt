@@ -40,6 +40,7 @@ export type SlashIntent =
   | { kind: 'tableCustom' }
   | { kind: 'color'; markType: 'textColor' | 'backgroundColor' }
   | { kind: 'today' }
+  | { kind: 'calendar' }
   | { kind: 'embed' }
   | { kind: 'template' }
   | { kind: 'format'; mark: string }
@@ -93,6 +94,8 @@ export function classifySlashCommand(commandId: string): SlashIntent | null {
       return { kind: 'color', markType: 'backgroundColor' }
     case 'today':
       return { kind: 'today' }
+    case 'calendar':
+      return { kind: 'calendar' }
     case 'embed':
       return { kind: 'embed' }
     case 'template':

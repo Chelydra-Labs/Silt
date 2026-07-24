@@ -115,6 +115,8 @@
   } from '../lib/editor/colors'
   import { getSlashCommands } from '../lib/editor/slash-registry'
   import { classifySlashCommand } from '../lib/editor/builtinSlashCommands'
+  import { openDateGlance } from '../lib/dateGlanceState.svelte'
+  import { setActiveEditor } from '../lib/editor/activeEditor.svelte'
   import {
     clampToViewport,
     flipOrClamp
@@ -1285,6 +1287,7 @@
     },
     onFocus: () => {
       isFocused = true
+      setActiveEditor(editorInstance)
       acquireFocus()
       startHeartbeat()
       notifyFocus()
@@ -1297,6 +1300,7 @@
     },
     onBlur: () => {
       isFocused = false
+      setActiveEditor(null)
       stopHeartbeat()
       // Flush the pending save BEFORE releasing the focus lock so an embed's
       // MutateBlock retry sees the just-saved content rather than overwriting
@@ -1803,6 +1807,12 @@
         editorInstance.commands.insertContent(today)
         break
       }
+      case 'calendar':
+        // Open the Date Glance popover. The slash trigger text is already
+        // deleted above; the editor stays as the insert target so a picked
+        // date lands at the cursor.
+        openDateGlance(editorInstance ?? null)
+        break
       case 'embed':
         // Open the block picker; the selected block is inserted as a complete
         // {{embed:UUID}} token (#593). The bare '{{embed:' fragment the old

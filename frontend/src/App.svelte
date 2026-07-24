@@ -195,6 +195,8 @@
     toggleAIChatDrawer
   } from './plugins/shared/ai-chat/drawer.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
+  import DateGlanceChip from './components/DateGlanceChip.svelte'
+  import DateGlance from './components/DateGlance.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
   import {
     clearSelectionFocus,
@@ -2411,6 +2413,13 @@
   <!-- Plugin rendered-UI surfaces (#117) -->
   <PluginModalHost />
   <PluginStatusBar />
+  <!-- Date Glance status chip + popover (#730) -->
+  <div
+    class="flex h-7 shrink-0 items-center justify-end gap-2 border-t border-surface-app-border bg-surface-app px-2"
+  >
+    <DateGlanceChip />
+  </div>
+  <DateGlance />
 </main>
 
 <ToastContainer />

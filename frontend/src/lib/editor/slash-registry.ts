@@ -115,6 +115,12 @@ registerSlashCommand({
   icon: 'calendar_today'
 })
 registerSlashCommand({
+  id: 'calendar',
+  label: 'Calendar',
+  description: 'Open the date glance to pick a date',
+  icon: 'calendar_month'
+})
+registerSlashCommand({
   id: 'embed',
   label: 'Embed Block',
   description: 'Insert a block embed',
