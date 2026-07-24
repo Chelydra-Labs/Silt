@@ -109,6 +109,9 @@
       try {
         const ok = editor.chain().focus().insertContent(iso).run()
         if (ok) {
+          // Don't restore focus to the opener (chip) — the insert just moved
+          // focus into the editor where the user should keep typing.
+          previousFocus = null
           closeDateGlance()
           return
         }
@@ -154,11 +157,11 @@
         break
       case 'Home':
         e.preventDefault()
-        moveFocus(0)
+        moveFocus(Math.floor(idx / 7) * 7)
         break
       case 'End':
         e.preventDefault()
-        moveFocus(len - 1)
+        moveFocus(Math.floor(idx / 7) * 7 + 6)
         break
       case 'Enter':
       case ' ':
