@@ -1026,6 +1026,122 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(today.className).toContain('text-type-xs')
   })
 
+  // --- #737: today marker in the mini-cal (aligned with DateGlance) --------
+
+  it('#737: marks today with the DateGlance glow treatment + aria-current (today not picked)', async () => {
+    // Default fixture: ctx.today = '2026-07-06', so that cell is today and is
+    // not picked. Also pins the semantic alignment with the Date Glance popover
+    // (aria-current="date" = today) — the reconciliation the issue deferred.
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const todayCell = document.querySelector<HTMLElement>(
+      '[data-testid="mini-day-2026-07-06"]'
+    )
+    expect(todayCell).toBeTruthy()
+    expect(todayCell!.className).toContain('bg-accent-primary-glow')
+    expect(todayCell!.className).toContain('text-accent-primary-start')
+    expect(todayCell!.className).toContain('font-label-sm-bold')
+    expect(todayCell!.getAttribute('aria-current')).toBe('date')
+    // Not picked: no ring, no aria-selected.
+    expect(todayCell!.className).not.toContain('ring-1')
+    expect(todayCell!.getAttribute('aria-selected')).toBeNull()
+
+    // A neighbor day gets none of the today treatment.
+    const neighbor = document.querySelector<HTMLElement>(
+      '[data-testid="mini-day-2026-07-07"]'
+    )
+    expect(neighbor).toBeTruthy()
+    expect(neighbor!.className).not.toContain('bg-accent-primary-glow')
+    expect(neighbor!.getAttribute('aria-current')).toBeNull()
+  })
+
+  it('#737: today marker honors injected ctx.today, not wall-clock new Date()', async () => {
+    // The marker must track ctx.today (what the smart-list counts use), not the
+    // real local date — they can disagree near a month boundary when today is
+    // injected. miniCursor follows the same source, so 07-15 is in-month.
+    render(Sidebar, {
+      ctx: makeCtx({ today: '2026-07-15' }),
+      manifest: MANIFEST
+    })
+    await flush()
+    const injectedToday = document.querySelector<HTMLElement>(
+      '[data-testid="mini-day-2026-07-15"]'
+    )
+    expect(injectedToday).toBeTruthy()
+    expect(injectedToday!.className).toContain('bg-accent-primary-glow')
+    expect(injectedToday!.getAttribute('aria-current')).toBe('date')
+    // 07-06 is no longer "today".
+    const july6 = document.querySelector<HTMLElement>(
+      '[data-testid="mini-day-2026-07-06"]'
+    )
+    expect(july6).toBeTruthy()
+    expect(july6!.className).not.toContain('bg-accent-primary-glow')
+    expect(july6!.getAttribute('aria-current')).toBeNull()
+  })
+
+  it('#737: picked day (not today) shows ring + aria-selected, drops the glow and aria-current', async () => {
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const picked = document.querySelector<HTMLElement>(
+      '[data-testid="mini-day-2026-07-10"]'
+    )
+    expect(picked).toBeTruthy()
+    await fireEvent.click(picked!)
+    await flush()
+    expect(getTaskHubState().focusDate).toBe('2026-07-10')
+    // Picked gets the ring + aria-selected.
+    expect(picked!.className).toContain('ring-1')
+    expect(picked!.className).toContain('ring-accent-primary-start')
+    expect(picked!.getAttribute('aria-selected')).toBe('true')
+    // Today owns the fill: picked-not-today loses the glow and aria-current.
+    expect(picked!.className).not.toContain('bg-accent-primary-glow')
+    expect(picked!.getAttribute('aria-current')).toBeNull()
+
+    // Today (07-06, not picked) keeps its glow + aria-current, gains no ring.
+    const todayCell = document.querySelector<HTMLElement>(
+      '[data-testid="mini-day-2026-07-06"]'
+    )
+    expect(todayCell!.className).toContain('bg-accent-primary-glow')
+    expect(todayCell!.className).toContain('font-label-sm-bold')
+    expect(todayCell!.getAttribute('aria-current')).toBe('date')
+    expect(todayCell!.className).not.toContain('ring-1')
+  })
+
+  it('#737: today and picked compose — a shared cell keeps glow + ring and both aria attrs', async () => {
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    const todayCell = document.querySelector<HTMLElement>(
+      '[data-testid="mini-day-2026-07-06"]'
+    )
+    expect(todayCell).toBeTruthy()
+    // Pick today's own cell → today AND picked simultaneously.
+    await fireEvent.click(todayCell!)
+    await flush()
+    expect(getTaskHubState().focusDate).toBe('2026-07-06')
+    // Today fill (today always wins the fill)…
+    expect(todayCell!.className).toContain('bg-accent-primary-glow')
+    expect(todayCell!.className).toContain('text-accent-primary-start')
+    expect(todayCell!.className).toContain('font-label-sm-bold')
+    // …plus the picked ring.
+    expect(todayCell!.className).toContain('ring-1')
+    // Both ARIA states coexist.
+    expect(todayCell!.getAttribute('aria-current')).toBe('date')
+    expect(todayCell!.getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('#737: today marker is absent when today falls outside the visible month', async () => {
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    // Page to August; July 6 (today) is no longer rendered.
+    await fireEvent.click(screen.getByRole('button', { name: 'Next month' }))
+    await flush()
+    expect(
+      document.querySelector('[data-testid="mini-day-2026-07-06"]')
+    ).toBeNull()
+    // No cell carries the today marker while today is off-grid.
+    expect(document.querySelectorAll('[aria-current="date"]')).toHaveLength(0)
+  })
+
   it('clear-focus button shows when focusDate set, hides when cleared', async () => {
     render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()

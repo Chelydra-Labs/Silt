@@ -237,6 +237,21 @@
   ]
   const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 
+  // Today's ISO key for the in-month today marker. Mirrors
+  // miniCursorFromToday's injected-today semantics (ctx.today || localToday(),
+  // not raw new Date() — ctx.today is what the smart-list counts track, so the
+  // marker must agree with them near a month boundary). Re-evaluates on the
+  // 60s nowTick so the marker rolls over at local midnight with the counts.
+  //
+  // aria reconciliation: today's cell uses aria-current="date" (aligns with the
+  // Date Glance popover, and aria-current means "current date"). The picked/
+  // filter-focus day (activeFocusDate) previously reused aria-current="date",
+  // which misuses it — picked is now exposed via aria-selected instead.
+  let todayKey = $derived.by(() => {
+    void nowTick
+    return ctx.today || localToday()
+  })
+
   // Mini-cal month grid uses the pure dateGrid helpers shared with the Tasks
   // calendar and the Date Glance popover.
   let miniWeeks = $derived(computeMonthWeeks(miniCursor))
@@ -906,6 +921,8 @@
                 {@const key = ymd(day)}
                 {@const count = byDate[key] ?? 0}
                 {@const flatIdx = wi * 7 + di}
+                {@const isToday = key === todayKey}
+                {@const isPicked = key === activeFocusDate}
                 <button
                   type="button"
                   role="gridcell"
@@ -919,15 +936,16 @@
                   }}
                   onkeydown={(e) => onDayKeydown(e, flatIdx)}
                   aria-label={`${key}${count ? ', ' + count + ' task' + (count === 1 ? '' : 's') : ''}`}
-                  aria-current={key === activeFocusDate ? 'date' : undefined}
+                  aria-current={isToday ? 'date' : undefined}
+                  aria-selected={isPicked ? 'true' : undefined}
                   data-testid={`mini-day-${key}`}
                   class="aspect-square flex flex-col items-center justify-center gap-0.5 rounded-md text-type-sm font-label-sm cursor-pointer border-none bg-transparent focus-visible:ring-2 focus-visible:ring-accent-primary-start focus-visible:outline-none
-                    {inMonth
-                    ? 'text-text-primary hover:bg-hover'
-                    : 'text-text-muted/50 hover:bg-hover'}
-                    {key === activeFocusDate
-                    ? 'ring-1 ring-accent-primary-start bg-accent-primary-glow'
-                    : ''}"
+                    {isToday
+                    ? 'bg-accent-primary-glow text-accent-primary-start font-label-sm-bold'
+                    : inMonth
+                      ? 'text-text-primary hover:bg-hover'
+                      : 'text-text-muted/50 hover:bg-hover'}
+                    {isPicked ? 'ring-1 ring-accent-primary-start' : ''}"
                 >
                   <span>{day.getDate()}</span>
                   {#if count > 0}
