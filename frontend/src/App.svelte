@@ -121,8 +121,6 @@
     CloseVault,
     GetSidebarWidth,
     SetSidebarWidth,
-    GetOpenTabs,
-    SetOpenTabs,
     ConfirmSettingsChange,
     ConfirmGrantsMigration,
     DeclineGrantsMigration,
@@ -149,6 +147,9 @@
   import TagsExplorer from './components/TagsExplorer.svelte'
   import PluginView from './components/PluginView.svelte'
   import SettingsPanel from './components/settings/SettingsPanel.svelte'
+  import SettingsMismatchDialog from './components/settings/SettingsMismatchDialog.svelte'
+  import GrantsMigrationDialog from './components/settings/GrantsMigrationDialog.svelte'
+  import QuarantinedLinksDialog from './components/settings/QuarantinedLinksDialog.svelte'
   import {
     clearRetainedTemplateDraft,
     hasUnsavedTemplateDraft
@@ -225,12 +226,12 @@
     reorderTab as reorderTabState,
     setTabViewMode as setTabViewModeState,
     mergeReorderedTabs,
-    generateTabId,
     type TabEntry,
     type PageRef,
     type OpenPageMode,
     type ViewMode
   } from './lib/tabs'
+  import { createTabPersistence } from './lib/tabs/persistence.svelte'
   import { nextView } from './lib/viewCycle'
   import {
     flattenNavigation,
@@ -622,111 +623,26 @@
   }
 
   // --- Tab persistence (debounced 250ms, pinned-only) ----------------------
-
-  let persistTabsTimer: ReturnType<typeof setTimeout> | null = null
-  // Snapshot of the persisted open_tabs list for config:changed change
-  // detection. Declared at component scope so loadPersistedTabs can update
-  // it alongside the in-memory hydration (prevents a re-hydrate cycle).
-  let prevOpenTabsKey = ''
-
-  function schedulePersistTabs(): void {
-    if (persistTabsTimer) clearTimeout(persistTabsTimer)
-    persistTabsTimer = setTimeout(() => {
-      persistTabsTimer = null
-      void persistTabs()
-    }, 250)
-  }
-
-  async function persistTabs(): Promise<void> {
-    // Only persist PINNED page tabs + active (preview tabs are ephemeral —
-    // parity). Settings is a view, not a tab, so it's never in openTabs.
-    const pinned = openTabs.filter((t) => !t.preview)
-    const activeTab = openTabs.find((t) => t.id === activeTabId)
-    const activePersist = activeTab && !activeTab.preview ? activeTab : null
-    try {
-      await SetOpenTabs(
-        pinned.map((t) => ({
-          notebook: t.notebook,
-          section: t.section,
-          page: t.page,
-          // Persist the per-tab view mode only when it's Source (#195);
-          // absence on disk means the Edit default, keeping config.yaml lean.
-          view_mode: t.viewMode === 'source' ? 'source' : ''
-        })),
-        activePersist
-          ? {
-              notebook: activePersist.notebook,
-              section: activePersist.section,
-              page: activePersist.page,
-              view_mode: activePersist.viewMode === 'source' ? 'source' : ''
-            }
-          : null
-      )
-    } catch (e) {
-      console.error('SetOpenTabs failed:', e)
+  // Extracted into lib/tabs/persistence.svelte.ts; the reactive $state runes
+  // (openTabs, activeTabId) stay here and are read/written through the deps
+  // interface. schedulePersistTabs / loadPersistedTabs are destructured for
+  // direct use at the many call sites; the rest (baseline seed, config:changed
+  // rehydrate, unmount flush) hangs off the factory object.
+  const tabPersistence = createTabPersistence({
+    getTabs: () => openTabs,
+    getActiveId: () => activeTabId,
+    setTabs: (t) => (openTabs = t),
+    setActiveId: (id) => (activeTabId = id),
+    syncActiveFromTab,
+    setTabViewMode: (id, mode) => {
+      openTabs = setTabViewModeState(
+        { tabs: openTabs, activeId: activeTabId },
+        id,
+        mode
+      ).tabs
     }
-  }
-
-  // Monotonic request sequence for loadPersistedTabs. Only the most-recent
-  // call's result is applied, so overlapping calls (onMount + handleSelectFolder
-  // firing in quick succession) don't race — the later call wins (#142 hardening).
-  let loadTabsSeq = 0
-
-  // Load persisted tabs on vault open / reopen. Hydrates openTabs from the
-  // pinned set + active stored in config.yaml.
-  async function loadPersistedTabs(): Promise<void> {
-    const seq = ++loadTabsSeq
-    try {
-      const result = await GetOpenTabs()
-      // Stale guard: a newer loadPersistedTabs call superseded this one.
-      if (seq !== loadTabsSeq) return
-      if (result?.open_tabs && result.open_tabs.length > 0) {
-        const now = Date.now()
-        openTabs = result.open_tabs.map((t, i) => ({
-          id: generateTabId(),
-          notebook: t.notebook,
-          section: t.section,
-          page: t.page,
-          preview: false, // persisted tabs are always pinned
-          lastActivatedAt: now - i, // stable ordering for MRU
-          // Restore the per-tab view mode (#195). Only "source" is persisted;
-          // absence / any other value means the Edit default.
-          viewMode: t.view_mode === 'source' ? 'source' : 'edit'
-        }))
-        // Restore active tab if it's in the set.
-        if (result.active_tab) {
-          const active = openTabs.find(
-            (t) =>
-              t.notebook === result.active_tab!.notebook &&
-              t.section === result.active_tab!.section &&
-              t.page === result.active_tab!.page
-          )
-          if (active) {
-            activeTabId = active.id
-          }
-        }
-        // Fallback: if no active tab was persisted (or the persisted active
-        // was pruned by the Go-side stale-tab check), activate the first
-        // restored tab so the user sees a tab on launch instead of a blank
-        // state. (#142 review: nil active_tab left displayedTabs empty.)
-        if (!activeTabId && openTabs.length > 0) {
-          activeTabId = openTabs[0].id
-        }
-        syncActiveFromTab()
-        // Update the hot-reload baseline so this load doesn't immediately
-        // trigger a re-hydrate cycle.
-        prevOpenTabsKey = tabSetKey(
-          result.open_tabs.map((t) => ({
-            notebook: t.notebook,
-            section: t.section,
-            page: t.page
-          }))
-        )
-      }
-    } catch (e) {
-      console.error('GetOpenTabs failed:', e)
-    }
-  }
+  })
+  const { schedulePersistTabs, loadPersistedTabs } = tabPersistence
   let showSearch = $state(false)
   let showQuickSwitcher = $state(false)
   let navigationCatalog = $state<NavigationCatalogItem[]>([])
@@ -866,7 +782,7 @@
     // not pay the ESM-import + plugin init cost.
     let prevDisabled: string[] = settings.config?.plugins?.disabled ?? []
     // Initialize the tab hot-reload baseline from the settings store.
-    prevOpenTabsKey = tabSetKey(settings.config?.ui?.open_tabs)
+    tabPersistence.initBaseline(settings.config?.ui?.open_tabs)
     const offConfigChangedReload = Events.On('config:changed', (ev) => {
       const cfg: SystemConfig = ev.data
       const next = cfg?.plugins?.disabled ?? []
@@ -876,42 +792,13 @@
           console.error('Plugin reload after config change failed:', e)
         )
       }
-      // Re-hydrate tabs if the external ui.open_tabs block changed
-      // (user hand-edited config.yaml or another process wrote it).
+      // Re-hydrate / reconcile tabs from an external ui.open_tabs edit.
       // tabSetKey is intentionally locator-only: a view-mode change must
       // NOT trigger a full re-hydrate (that would rebuild tabs and remount
       // editors on every in-app toggle, since the frontend's own
-      // persistTabs write also fires config:changed).
-      const nextTabsKey = tabSetKey(cfg?.ui?.open_tabs)
-      if (nextTabsKey !== prevOpenTabsKey) {
-        prevOpenTabsKey = nextTabsKey
-        void loadPersistedTabs()
-      }
-      // Reconcile per-tab view_mode from an external config.yaml edit
-      // in place — no re-hydrate, no editor remount. The frontend's own
-      // writes match the in-memory state, so they produce no diff here;
-      // only an external hand-edit (or another process) flips a mode.
-      const externalTabs = cfg?.ui?.open_tabs ?? []
-      if (externalTabs.length > 0) {
-        for (const ref of externalTabs) {
-          const tab = openTabs.find(
-            (t) =>
-              t.notebook === ref.notebook &&
-              t.section === (ref.section ?? '') &&
-              t.page === ref.page
-          )
-          if (!tab) continue
-          const mode = ref.view_mode === 'source' ? 'source' : 'edit'
-          if (tab.viewMode !== mode) {
-            openTabs = setTabViewModeState(
-              { tabs: openTabs, activeId: activeTabId },
-              tab.id,
-              mode
-            ).tabs
-            // Do NOT schedulePersistTabs — this change is already on disk.
-          }
-        }
-      }
+      // persistTabs write also fires config:changed). Logic lives in the
+      // persistence module; the plugin-reload half stays here.
+      tabPersistence.handleConfigChangedTabRehydrate(cfg)
     })
 
     function handleOpenSettings(e: Event) {
@@ -1487,11 +1374,7 @@
       disposeUpdateStore()
       // Flush any pending tab-state persistence so the user's last tab
       // change survives a component unmount / app close (#142 hardening).
-      if (persistTabsTimer) {
-        clearTimeout(persistTabsTimer)
-        persistTabsTimer = null
-        void persistTabs()
-      }
+      tabPersistence.flushPendingPersist()
     }
   })
 
@@ -1725,19 +1608,73 @@
     return b.every((x) => setA.has(x))
   }
 
-  // Stable serialization of the persisted open_tabs list for change detection.
-  // The config:changed handler compares the previous and next keys to decide
-  // whether to re-hydrate the tab strip on an external config.yaml edit.
-  function tabSetKey(
-    tabs: { notebook?: string; section?: string; page?: string }[] | undefined
-  ): string {
-    if (!tabs || tabs.length === 0) return ''
-    return tabs
-      .map(
-        (t) => `${t.notebook ?? ''}\x00${t.section ?? ''}\x00${t.page ?? ''}`
-      )
-      .sort()
-      .join('|')
+  // --- Startup / quarantine dialog IPC handlers ----------------------------
+  // The three modal overlays (SettingsMismatchDialog, GrantsMigrationDialog,
+  // QuarantinedLinksDialog) are presentational components; the IPC calls and
+  // error/notification paths stay here and are passed down as props. Each
+  // handler mirrors the exact inline onclick that lived in the markup before
+  // the extraction.
+
+  async function confirmSettingsMismatch(): Promise<void> {
+    try {
+      await ConfirmSettingsChange()
+      showSettingsMismatch = false
+    } catch (e) {
+      pushNotification({
+        kind: 'error',
+        message: `Failed to confirm settings change: ${String(e)}`
+      })
+    }
+  }
+
+  // Decline and Escape share the same path: persist the decline so the
+  // sentinel clears, then close. A failure here is log-only (non-fatal).
+  async function declineGrantsMigration(): Promise<void> {
+    try {
+      await DeclineGrantsMigration()
+    } catch (e) {
+      console.error('DeclineGrantsMigration failed:', e)
+    }
+    showGrantsMigration = false
+  }
+
+  async function confirmGrantsMigration(): Promise<void> {
+    try {
+      await ConfirmGrantsMigration(pendingLegacyGrants)
+      showGrantsMigration = false
+    } catch (e) {
+      pushNotification({
+        kind: 'error',
+        message: `Failed to move plugin permissions: ${String(e)}`
+      })
+    }
+  }
+
+  async function handleUnlinkNotebook(id: string): Promise<void> {
+    const q = quarantinedLinks.find((l) => l.id === id)
+    try {
+      await UnlinkNotebook(id)
+      quarantinedLinks = quarantinedLinks.filter((l) => l.id !== id)
+    } catch (e) {
+      pushNotification({
+        kind: 'error',
+        message: `Failed to unlink ${q?.display_name ?? id}: ${String(e)}`
+      })
+    }
+  }
+
+  async function handleRelinkNotebook(id: string): Promise<void> {
+    const q = quarantinedLinks.find((l) => l.id === id)
+    try {
+      await UnlinkNotebook(id)
+      await PickLinkedNotebook()
+      quarantinedLinks = quarantinedLinks.filter((l) => l.id !== id)
+    } catch (e) {
+      pushNotification({
+        kind: 'error',
+        message: `Failed to re-link ${q?.display_name ?? id}: ${String(e)}`
+      })
+    }
   }
 </script>
 
@@ -2253,171 +2190,26 @@
     />
   {/if}
 
-  {#if showSettingsMismatch}
-    <div
-      class="settings-mismatch-overlay"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="settings-mismatch-title"
-      aria-describedby="settings-mismatch-desc"
-      tabindex="-1"
-      onkeydown={(e) => {
-        if (e.key === 'Escape') showSettingsMismatch = false
-      }}
-      transition:fade={{ duration: 150 }}
-    >
-      <div class="settings-mismatch-modal glass-palette-strong">
-        <h2 id="settings-mismatch-title">Settings changed</h2>
-        <p id="settings-mismatch-desc">
-          Silt's vault path or trusted-publishers list has changed since the
-          last launch. Confirm this change is intentional. If you did not make
-          this change, dismiss and verify your <code>settings.json</code>.
-        </p>
-        <div class="settings-mismatch-actions">
-          <button
-            class="secondary"
-            onclick={() => (showSettingsMismatch = false)}>Dismiss</button
-          >
-          <button
-            class="primary"
-            onclick={async () => {
-              try {
-                await ConfirmSettingsChange()
-                showSettingsMismatch = false
-              } catch (e) {
-                pushNotification({
-                  kind: 'error',
-                  message: `Failed to confirm settings change: ${String(e)}`
-                })
-              }
-            }}>Confirm change</button
-          >
-        </div>
-      </div>
-    </div>
-  {/if}
+  <SettingsMismatchDialog
+    open={showSettingsMismatch}
+    onClose={() => (showSettingsMismatch = false)}
+    onConfirm={confirmSettingsMismatch}
+  />
 
-  {#if showGrantsMigration}
-    <div
-      class="settings-mismatch-overlay"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="grants-migration-title"
-      aria-describedby="grants-migration-desc"
-      tabindex="-1"
-      onkeydown={async (e) => {
-        if (e.key === 'Escape') {
-          try {
-            await DeclineGrantsMigration()
-          } catch (err) {
-            console.error('DeclineGrantsMigration failed:', err)
-          }
-          showGrantsMigration = false
-        }
-      }}
-      transition:fade={{ duration: 150 }}
-    >
-      <div class="settings-mismatch-modal glass-palette-strong">
-        <h2 id="grants-migration-title">Move plugin permissions</h2>
-        <p id="grants-migration-desc">
-          Silt is moving plugin permissions to per-host storage so they no
-          longer travel with synced vaults.
-          {Object.keys(pendingLegacyGrants).length}
-          plugin(s) have existing permissions in this vault. Confirm to move them,
-          or dismiss to re-grant each plugin on first use.
-        </p>
-        <div class="settings-mismatch-actions">
-          <button
-            class="secondary"
-            onclick={async () => {
-              try {
-                await DeclineGrantsMigration()
-              } catch (e) {
-                console.error('DeclineGrantsMigration failed:', e)
-              }
-              showGrantsMigration = false
-            }}>Dismiss</button
-          >
-          <button
-            class="primary"
-            onclick={async () => {
-              try {
-                await ConfirmGrantsMigration(pendingLegacyGrants)
-                showGrantsMigration = false
-              } catch (e) {
-                pushNotification({
-                  kind: 'error',
-                  message: `Failed to move plugin permissions: ${String(e)}`
-                })
-              }
-            }}>Move permissions</button
-          >
-        </div>
-      </div>
-    </div>
-  {/if}
+  <GrantsMigrationDialog
+    open={showGrantsMigration}
+    {pendingLegacyGrants}
+    onDecline={declineGrantsMigration}
+    onConfirm={confirmGrantsMigration}
+  />
 
-  {#if quarantinedLinks.length > 0}
-    <div
-      class="settings-mismatch-overlay"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="quarantine-title"
-      aria-describedby="quarantine-desc"
-      tabindex="-1"
-      onkeydown={(e) => {
-        if (e.key === 'Escape') quarantinedLinks = []
-      }}
-      transition:fade={{ duration: 150 }}
-    >
-      <div class="settings-mismatch-modal glass-palette-strong">
-        <h2 id="quarantine-title">Linked notebook moved or tampered</h2>
-        <p id="quarantine-desc">
-          {#each quarantinedLinks as q (q.id)}
-            <strong>{q.display_name}</strong> has moved or been tampered with. Re-link
-            it or unlink it.
-          {/each}
-        </p>
-        <div class="settings-mismatch-actions">
-          {#each quarantinedLinks as q (q.id)}
-            <button
-              class="secondary"
-              onclick={async () => {
-                try {
-                  await UnlinkNotebook(q.id)
-                  quarantinedLinks = quarantinedLinks.filter(
-                    (l) => l.id !== q.id
-                  )
-                } catch (e) {
-                  pushNotification({
-                    kind: 'error',
-                    message: `Failed to unlink ${q.display_name}: ${String(e)}`
-                  })
-                }
-              }}>Unlink {q.display_name}</button
-            >
-            <button
-              class="primary"
-              onclick={async () => {
-                try {
-                  await UnlinkNotebook(q.id)
-                  await PickLinkedNotebook()
-                  quarantinedLinks = quarantinedLinks.filter(
-                    (l) => l.id !== q.id
-                  )
-                } catch (e) {
-                  pushNotification({
-                    kind: 'error',
-                    message: `Failed to re-link ${q.display_name}: ${String(e)}`
-                  })
-                }
-              }}>Re-link {q.display_name}</button
-            >
-          {/each}
-        </div>
-      </div>
-    </div>
-  {/if}
+  <QuarantinedLinksDialog
+    open={quarantinedLinks.length > 0}
+    {quarantinedLinks}
+    onClose={() => (quarantinedLinks = [])}
+    onUnlink={handleUnlinkNotebook}
+    onRelink={handleRelinkNotebook}
+  />
 
   <!-- Plugin rendered-UI surfaces (#117) -->
   <PluginModalHost />
@@ -2426,88 +2218,3 @@
 </main>
 
 <ToastContainer />
-
-<style>
-  .settings-mismatch-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 10000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(2px);
-  }
-
-  .settings-mismatch-modal {
-    max-width: 460px;
-    padding: 28px 32px;
-    border-radius: 12px;
-    border: 1px solid var(--color-surface-modal-border);
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
-  }
-
-  .settings-mismatch-modal h2 {
-    margin: 0 0 12px;
-    font-size: 1.15rem;
-    color: var(--color-text-primary);
-  }
-
-  .settings-mismatch-modal p {
-    margin: 0 0 20px;
-    font-size: 0.9rem;
-    line-height: 1.5;
-    color: var(--color-text-muted);
-  }
-
-  .settings-mismatch-modal code {
-    padding: 1px 4px;
-    border-radius: 3px;
-    background: rgba(255, 255, 255, 0.08);
-    font-family: var(--font-mono, monospace);
-    font-size: 0.85em;
-  }
-
-  .settings-mismatch-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-  }
-
-  .settings-mismatch-actions button {
-    padding: 8px 18px;
-    border: none;
-    border-radius: 8px;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: all 150ms var(--transition-standard);
-  }
-
-  .settings-mismatch-actions button:focus-visible {
-    outline: 2px solid var(--color-accent-primary-start);
-    outline-offset: 2px;
-  }
-
-  .settings-mismatch-actions .secondary {
-    background: transparent;
-    color: var(--color-text-muted);
-    border: 1px solid var(--color-surface-modal-border);
-  }
-
-  .settings-mismatch-actions .secondary:hover {
-    background: var(--color-hover);
-    color: var(--color-text-primary);
-    border-color: var(--color-border-active);
-  }
-
-  .settings-mismatch-actions .primary {
-    background: var(--color-accent-primary-start);
-    color: var(--color-surface-app);
-    font-weight: 600;
-  }
-
-  .settings-mismatch-actions .primary:hover {
-    filter: brightness(1.1);
-    box-shadow: 0 0 12px var(--color-accent-primary-glow);
-  }
-</style>
