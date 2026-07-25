@@ -15,8 +15,10 @@ A `.silt-vault` archive is a single self-contained file containing:
 
 It deliberately **excludes** two things:
 
-- **The search index** (`.system/index.sqlite*`) — it is a cache that Silt
-  rebuilds automatically from your notes when you import. Nothing is lost.
+- **The search index** (`<DataDir>/Silt/indexes/<vault-key>/index.sqlite*`)
+  — it lives outside the vault in your OS local data dir, so it is never
+  bundled into the archive. It is a cache that Silt rebuilds automatically
+  from your notes when you import. Nothing is lost.
 - **Linked notebooks** — those are external folders (e.g. a synced SharePoint
   or Dropbox mount) that live outside the vault; Silt never moves or copies
   them. If you want them on the destination machine, sync them there

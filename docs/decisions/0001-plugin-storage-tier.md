@@ -7,9 +7,10 @@ Status: Accepted
 
 Cardinal rule #4 (ARCHITECTURE.md §0) states that SQLite is working memory,
 not a system of record: every row in the core index must be reproducible from
-markdown + YAML, and deleting `<vault>/.system/index.sqlite*` is the
-documented recovery path. This keeps the core local-first contract simple and
-the recovery story clean.
+markdown + YAML, and deleting
+`<DataDir>/Silt/indexes/<vault-key>/index.sqlite*` is the documented recovery
+path. This keeps the core local-first contract simple and the recovery story
+clean.
 
 The incoming AI plugins (Sprints 20–23) need queryable private data the core
 contract cannot express: vector indexes for semantic Q&A, content-hash caches
@@ -23,8 +24,9 @@ Add a **plugin-owned storage tier**: each plugin MAY carry its own SQLite
 file at `<vault>/.system/plugins/<id>/data/plugin.db`, opened lazily on a
 **distinct** connection that is never `ATTACH`-able to the core index.
 
-- The **core index** (`<vault>/.system/index.sqlite*`) stays governed by
-  rule #4 unchanged — working memory only, re-derivable, delete-to-recover.
+- The **core index** (`<DataDir>/Silt/indexes/<vault-key>/index.sqlite*`)
+  stays governed by rule #4 unchanged — working memory only, re-derivable,
+  delete-to-recover.
 - The **plugin DB** is a separate, plugin-owned tier. The plugin owns its
   schema and chooses durability semantics (working memory *or* durable). The
   "re-derivable from markdown" requirement does **not** apply to it.
@@ -54,6 +56,7 @@ the core contract.
   plugin tier is documented as a separate row in the storage tiers table and
   a paragraph in the SQLite section.
 - SPECS.md §8.6 and PLUGIN_DEVELOPMENT.md §8.11 mirror the contract.
-- The core recovery path (`delete index.sqlite*`) is unchanged; plugin DBs are
-  deleted separately on uninstall.
+- The core recovery path (delete the file at
+  `<DataDir>/Silt/indexes/<vault-key>/index.sqlite*`) is unchanged; plugin
+  DBs are deleted separately on uninstall.
 - The AI sprints (20–23) build on this substrate.

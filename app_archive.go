@@ -27,8 +27,9 @@ func (a *App) PickVaultExportPath(defaultFilename string) (string, error) {
 
 // ExportVault streams the active vault into a portable .silt-vault archive at
 // destPath. The archive carries every file under the vault root EXCEPT the
-// reproducible SQLite index (.system/index.sqlite* — rebuilt from markdown on
-// import, identical to CopyVaultTree/MoveVault). Per-entry + whole-archive
+// reproducible SQLite index (now stored outside the vault in a per-user local
+// DataDir; a legacy in-vault index.sqlite* is still excluded if present —
+// identical to CopyVaultTree/MoveVault). Per-entry + whole-archive
 // root SHA-256 digests are written into manifest.json (last) so import can
 // detect corruption/tampering before extracting.
 //
