@@ -1,4 +1,4 @@
-import type { TaskStatus } from '../../sdk'
+import type { PluginContext, TaskStatus } from '../../sdk'
 
 /**
  * The cross-surface task contract. Every task-edit surface (Tasks list,
@@ -100,4 +100,43 @@ export function priorityClass(p: number): string {
   if (p === 2)
     return 'text-accent-primary-start border-accent-primary-start/20 bg-accent-primary-glow'
   return 'text-text-muted border-surface-card-border bg-surface-card'
+}
+
+/**
+ * Props every Tasks display surface (Board / List / Calendar) accepts. Each
+ * view may extend this with its own extras (e.g. ListView's focusBlockId);
+ * the shared pair is the plugin context + the upward count report the hub
+ * header subscribes to.
+ */
+export interface TaskViewProps {
+  ctx: PluginContext
+  /** Hub subscribes to keep its header count in sync. */
+  onCountChange?: (open: number, done: number) => void
+}
+
+/**
+ * Null-safe coercion of a raw SQL task row into a TaskDetail. The query
+ * projections guarantee the non-optional fields exist, but SQL NULL lands as
+ * null/undefined for the nullable extras (timestamps, estimate, subtask
+ * rollups); this normalizes them to the TaskDetail contract so every view
+ * renders the same shape without per-view coercion holes. `pinned` arrives
+ * as 0/1 from the SQL projection and is forced to a real boolean here.
+ *
+ * Lifted byte-for-byte from the three views' inline row mappers (Board,
+ * List, Calendar) — they were identical.
+ */
+export function coerceTaskRow(raw: unknown): TaskDetail {
+  const r = raw as Record<string, unknown>
+  return {
+    ...(raw as object),
+    pinned: !!r.pinned,
+    created_at: (r.created_at as string) ?? '',
+    completed_at: (r.completed_at as string) ?? '',
+    manual_order: (r.manual_order as number) ?? 0,
+    modified_at: (r.modified_at as string) ?? '',
+    estimate_minutes:
+      r.estimate_minutes == null ? null : Number(r.estimate_minutes),
+    subtask_total: (r.subtask_total as number) ?? 0,
+    subtask_done: (r.subtask_done as number) ?? 0
+  } as unknown as TaskDetail
 }

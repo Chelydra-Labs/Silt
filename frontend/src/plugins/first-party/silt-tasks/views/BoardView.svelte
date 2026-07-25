@@ -18,21 +18,22 @@
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
   import { onMount, onDestroy } from 'svelte'
-  import type { PluginContext, TaskStatus } from '../../../sdk'
+  import type { TaskStatus } from '../../../sdk'
   import { plusDaysISO } from '../../../sdk'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
   import ConfirmModal from '../components/ConfirmModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
+  import ColumnHeader from '../components/ColumnHeader.svelte'
+  import TaskCard from '../components/TaskCard.svelte'
   import {
-    formatEstimateSum,
+    coerceTaskRow,
     PRIORITY_LABELS,
     laneLabel,
-    priorityClass,
-    type TaskDetail
+    type TaskDetail,
+    type TaskViewProps
   } from '../types'
-  import { dueDateClass, dueDateTextClass } from '../dueDate'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import {
     cloneColumns,
@@ -50,12 +51,9 @@
   import { buildQuery } from '../query'
   import { loadColumns, persistColumns } from '../settings'
   import { nextManualOrder } from './manualOrder'
+  import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
 
-  interface Props {
-    ctx: PluginContext
-    /** Hub subscribes to keep its header count in sync. */
-    onCountChange?: (open: number, done: number) => void
-  }
+  type Props = TaskViewProps
 
   let { ctx, onCountChange }: Props = $props()
 
@@ -95,12 +93,20 @@
 
   let selectedCard = $state<TaskDetail | null>(null)
   let subEditorCard = $state<TaskDetail | null>(null)
-  let pendingBlockedDone = $state<{
+  // DONE-on-blocked guard (#302): the shared hook owns the pending state +
+  // blocker fetch; BoardView attaches the optimistic-move context (card +
+  // source/dest columns) the confirm/cancel handlers need to revert or
+  // persist. BoardView swallows blocker-fetch errors and proceeds (avoids
+  // stranding an optimistic card), so onError is a no-op.
+  // ctx is a stable plugin-context singleton (created once by the hub; identity
+  // never changes for this component's lifetime) — capturing it once matches the
+  // prior inline $effect subscribes-once semantics.
+  // svelte-ignore state_referenced_locally
+  const blockedGuard = useBlockedDoneGuard<{
     card: TaskDetail
     fromColKey: string
     toCol: Lane
-    blockers: { id: string; clean_content?: string }[]
-  } | null>(null)
+  }>(ctx)
   // Soft WIP-limit confirm (#437): shown when a drop/keyboard move would
   // push a status column over its configured cap. Cancel snaps back;
   // Confirm proceeds with the status change.
@@ -338,7 +344,7 @@
     if (
       wouldExceedWip(card, fromColKey, toCol) &&
       !pendingWipConfirm &&
-      !pendingBlockedDone &&
+      !blockedGuard.pending &&
       !skipWipForBlockedDone
     ) {
       applyOptimistic(card, fromColKey, toCol)
@@ -355,31 +361,26 @@
       groupBy === 'status' &&
       toCol.value === 'DONE' &&
       card.is_blocked &&
-      !pendingBlockedDone
+      !blockedGuard.pending
     ) {
-      try {
-        const blockers = await ctx.getTaskBlockers(card.id)
+      // resolveBlockers (not check) so BoardView's moveSeq concurrency guard
+      // can run between the await and the dialog open — a stale confirm
+      // dialog must not land over a newer move.
+      const result = await blockedGuard.resolveBlockers(card.id)
+      if (result.ok) {
         // A second drop during the await bumped moveSeq; abandon this
         // commit so a stale confirm dialog can't land over a newer move.
         // Nothing is stranded — applyOptimistic hasn't run yet.
         if (my !== moveSeq) return
-        if (blockers.length > 0) {
+        if (result.blockers.length > 0) {
           applyOptimistic(card, fromColKey, toCol)
-          pendingBlockedDone = {
-            card,
-            fromColKey,
-            toCol,
-            blockers: blockers.map((b) => ({
-              id: b.id,
-              clean_content: b.clean_content
-            }))
-          }
+          blockedGuard.open(result.blockers, { card, fromColKey, toCol })
           return
         }
-      } catch {
-        // Blocker lookup failed — proceed with the persist below rather than
-        // stranding the card in an un-committed optimistic state.
       }
+      // !result.ok: blocker lookup failed — proceed with the persist below
+      // rather than stranding the card in an un-committed optimistic state
+      // (no moveSeq check on this path — matches the prior empty catch).
     }
     applyOptimistic(card, fromColKey, toCol)
 
@@ -415,20 +416,20 @@
   }
 
   async function confirmBlockedDone() {
-    const pending = pendingBlockedDone
+    const pending = blockedGuard.pending
     if (!pending) return
-    pendingBlockedDone = null
+    blockedGuard.dismiss()
+    const { card, fromColKey, toCol } = pending.context
     try {
-      await ctx.updateBlockState(pending.card.id, 'DONE')
+      await ctx.updateBlockState(card.id, 'DONE')
       // Cross-column manual sort (#426): mirror commitDrop. The DONE jump is
       // a cross-column move under manual sort, so the card needs an order
       // token beyond the destination's tail. prev (snapshot at drag-start) is
       // not in scope here; read the current destination column instead.
       if (sort === 'manual') {
-        const destItems =
-          columns.find((c) => c.key === pending.toCol.key)?.items ?? []
+        const destItems = columns.find((c) => c.key === toCol.key)?.items ?? []
         try {
-          await ctx.setTaskOrder(pending.card.id, nextManualOrder(destItems))
+          await ctx.setTaskOrder(card.id, nextManualOrder(destItems))
         } catch (e) {
           moveError = errMsg(e)
           // The status change already persisted; reload picks up on-disk state
@@ -441,16 +442,17 @@
       liveMessage = 'Task completed despite open prerequisites.'
     } catch (e) {
       moveError = errMsg(e)
-      revertOptimistic(pending.card, pending.fromColKey, pending.toCol)
+      revertOptimistic(card, fromColKey, toCol)
       liveMessage = 'Move failed — reverted.'
     }
   }
 
   function cancelBlockedDone() {
-    const pending = pendingBlockedDone
+    const pending = blockedGuard.pending
     if (!pending) return
-    pendingBlockedDone = null
-    revertOptimistic(pending.card, pending.fromColKey, pending.toCol)
+    blockedGuard.dismiss()
+    const { card, fromColKey, toCol } = pending.context
+    revertOptimistic(card, fromColKey, toCol)
     liveMessage = 'Move cancelled.'
   }
 
@@ -466,24 +468,15 @@
     // Card is already optimistically in the target. Hand off to the
     // blocked-DONE guard when applicable; otherwise persist the drop.
     if (groupBy === 'status' && toCol.value === 'DONE' && card.is_blocked) {
-      try {
-        const blockers = await ctx.getTaskBlockers(card.id)
-        if (blockers.length > 0) {
-          pendingBlockedDone = {
-            card,
-            fromColKey,
-            toCol,
-            blockers: blockers.map((b) => ({
-              id: b.id,
-              clean_content: b.clean_content
-            }))
-          }
-          focusCard(card.id)
-          return
-        }
-      } catch {
-        // Proceed with persist below.
+      // User already confirmed WIP; no concurrent drop concern here, but the
+      // shared resolver still wires the fetch + shape map + error policy.
+      const result = await blockedGuard.resolveBlockers(card.id)
+      if (result.ok && result.blockers.length > 0) {
+        blockedGuard.open(result.blockers, { card, fromColKey, toCol })
+        focusCard(card.id)
+        return
       }
+      // !result.ok: blocker lookup failed — proceed with persist below.
     }
     liveMessage = announceMove(toCol)
     try {
@@ -641,18 +634,7 @@
       )
       const { rows: raw } = await ctx.sqliteQuery(sql, params)
       if (my !== loadSeq) return
-      rows = (raw as unknown as TaskDetail[]).map((r) => ({
-        ...r,
-        pinned: !!r.pinned,
-        created_at: r.created_at ?? '',
-        completed_at: r.completed_at ?? '',
-        manual_order: r.manual_order ?? 0,
-        modified_at: r.modified_at ?? '',
-        estimate_minutes:
-          r.estimate_minutes == null ? null : Number(r.estimate_minutes),
-        subtask_total: r.subtask_total ?? 0,
-        subtask_done: r.subtask_done ?? 0
-      }))
+      rows = (raw as unknown[]).map((r) => coerceTaskRow(r))
       rebin()
       // Keep the open drawer in sync with fresh data; if the task left the
       // result set, keep the last-known snapshot rather than snapping closed.
@@ -701,19 +683,8 @@
   // Repaint on any block mutation (created/mutated/rescheduled from any
   // surface). Debounced so a burst of block:changed events triggers one
   // reload.
-  let blockChangedTimer: ReturnType<typeof setTimeout> | null = null
-  $effect(() => {
-    const off = ctx.on('block:changed', () => {
-      if (blockChangedTimer) clearTimeout(blockChangedTimer)
-      blockChangedTimer = setTimeout(() => {
-        void reload()
-      }, 80)
-    })
-    return () => {
-      if (blockChangedTimer) clearTimeout(blockChangedTimer)
-      off()
-    }
-  })
+  // svelte-ignore state_referenced_locally
+  useBlockChangedReload(ctx, reload)
 
   // High-cardinality guard: >20 columns refuses to render and falls back to
   // List mode (auto-switches the hub). Fires once per overload.
@@ -1216,367 +1187,64 @@
             <!-- Column drag-reorder (status dimension) is a pointer-only
                  affordance; Rename/Remove are exposed via the header menu
                  button for keyboard users. -->
-            <div
-              class="flex items-center justify-between px-3 py-2.5 border-b border-surface-panel-border"
-              role="group"
-              aria-label={`${col.label} column header`}
-              draggable={canManage ? 'true' : undefined}
-              ondragstart={canManage
-                ? (e) => onColDragStart(e, colIdx)
-                : undefined}
-              ondragover={canManage
-                ? (e) => onColDragOver(e, colIdx)
-                : undefined}
-              ondrop={canManage ? (e) => onColDrop(e, colIdx) : undefined}
-              ondragend={canManage ? () => (colDragIndex = null) : undefined}
-              title={!dndEnabled
-                ? `Task location can't be changed by dragging`
-                : undefined}
-            >
-              <div class="flex items-center gap-2 min-w-0">
-                {#if canManage}
-                  <span
-                    class="material-symbols-outlined text-icon-sm text-text-muted cursor-grab active:cursor-grabbing shrink-0"
-                    title="Drag to reorder"
-                    spellcheck="false">drag_indicator</span
-                  >
-                {/if}
-                <span
-                  class="w-2 h-2 rounded-full shrink-0"
-                  class:bg-text-muted={col.value !== 'DOING' &&
-                    col.value !== 'DONE'}
-                  class:bg-accent-secondary-start={col.value === 'DOING'}
-                  class:bg-accent-primary-start={col.value === 'DONE'}
-                ></span>
-                {#if renamingColKey === col.key}
-                  <input
-                    type="text"
-                    bind:value={renameValue}
-                    onkeydown={(e) => {
-                      if (e.key === 'Enter') commitRename(statusName)
-                      else if (e.key === 'Escape') cancelRename()
-                    }}
-                    onblur={() => commitRename(statusName)}
-                    class="bg-surface-panel border border-accent-primary-start/40 rounded px-1.5 py-0.5 text-type-xs font-label-sm-bold uppercase tracking-widest text-text-primary outline-none w-28"
-                    aria-label="Rename column"
-                  />
-                {:else}
-                  <h2
-                    class="font-label-sm-bold uppercase tracking-widest text-type-xs text-text-muted truncate"
-                    title={canManage ? 'Double-click to rename' : col.label}
-                    ondblclick={canManage
-                      ? () => startRename(statusName, col.key)
-                      : undefined}
-                  >
-                    {col.label}
-                  </h2>
-                {/if}
-                {#if wipLimit != null}
-                  <span
-                    class="bg-hover text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm {overWip
-                      ? 'text-status-warn'
-                      : 'text-text-muted'}"
-                    data-testid={`board-wip-badge-${col.key}`}
-                    title={overWip
-                      ? `Over WIP limit (${cards.length} / ${wipLimit})`
-                      : `WIP limit ${cards.length} / ${wipLimit}`}
-                    aria-label={`${cards.length} of ${wipLimit} WIP${overWip ? ', over limit' : ''}`}
-                  >
-                    {cards.length} / {wipLimit}
-                  </span>
-                {:else}
-                  <span
-                    class="bg-hover text-text-muted text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm"
-                    >{cards.length}</span
-                  >
-                {/if}
-                {#if columnEstimateSum(cards) > 0}
-                  <span
-                    class="text-text-muted/60 text-type-2xs font-label-sm truncate"
-                    data-testid={`board-col-estimate-${col.key}`}
-                    title={`${formatEstimateSum(columnEstimateSum(cards))} estimated`}
-                  >
-                    {formatEstimateSum(columnEstimateSum(cards))} estimated
-                  </span>
-                {/if}
-              </div>
-              <div class="relative shrink-0 flex items-center">
-                {#if canManage}
-                  <button
-                    type="button"
-                    onclick={() => toggleColMenu(col.key)}
-                    aria-label="Column actions"
-                    aria-expanded={menuCol === col.key}
-                    aria-haspopup="true"
-                    class="text-text-muted hover:text-text-primary transition-colors p-0.5"
-                  >
-                    <span class="material-symbols-outlined text-icon-md"
-                      >more_horiz</span
-                    >
-                  </button>
-                  {#if menuCol === col.key}
-                    <div
-                      class="absolute right-0 top-full mt-1 z-50 min-w-35 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
-                      role="menu"
-                      tabindex="-1"
-                      onkeydown={(e) => {
-                        if (e.key === 'Escape') menuCol = null
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onclick={() => startRename(statusName, col.key)}
-                        class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary"
-                        role="menuitem"
-                      >
-                        <span class="material-symbols-outlined text-icon-sm"
-                          >edit</span
-                        >
-                        Rename
-                      </button>
-                      {#if wipEditCol === statusName}
-                        <div
-                          class="px-3 py-2 space-y-1.5 border-t border-b border-surface-popover-border"
-                          data-testid={`board-wip-edit-${col.key}`}
-                        >
-                          <label
-                            class="block text-type-2xs font-label-sm text-text-muted"
-                            for={`wip-input-${col.key}`}
-                          >
-                            WIP limit (empty = unlimited)
-                          </label>
-                          <input
-                            id={`wip-input-${col.key}`}
-                            type="number"
-                            min="1"
-                            step="1"
-                            class="w-full rounded border border-surface-card-border bg-surface-card px-2 py-1 text-type-sm text-text-primary"
-                            bind:value={wipDraft}
-                            aria-invalid={wipEditError ? 'true' : undefined}
-                            data-testid={`board-wip-input-${col.key}`}
-                            onkeydown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault()
-                                applyWipLimit(statusName)
-                              } else if (e.key === 'Escape') {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                wipEditCol = null
-                                wipEditError = ''
-                              }
-                            }}
-                          />
-                          {#if wipEditError}
-                            <p class="text-type-2xs text-error" role="alert">
-                              {wipEditError}
-                            </p>
-                          {/if}
-                          <div class="flex gap-1 pt-0.5">
-                            <button
-                              type="button"
-                              class="flex-1 px-2 py-1 rounded bg-accent-primary-start/15 text-accent-primary-start text-type-2xs font-label-sm"
-                              data-testid={`board-wip-apply-${col.key}`}
-                              onclick={() => applyWipLimit(statusName)}
-                            >
-                              Apply
-                            </button>
-                            <button
-                              type="button"
-                              class="flex-1 px-2 py-1 rounded hover:bg-hover text-type-2xs font-label-sm text-text-muted"
-                              data-testid={`board-wip-clear-${col.key}`}
-                              onclick={() => clearWipLimit(statusName)}
-                            >
-                              Clear
-                            </button>
-                          </div>
-                        </div>
-                      {:else}
-                        <button
-                          type="button"
-                          onclick={() => startWipEdit(statusName)}
-                          class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary"
-                          role="menuitem"
-                          data-testid={`board-wip-menu-${col.key}`}
-                        >
-                          <span class="material-symbols-outlined text-icon-sm"
-                            >speed</span
-                          >
-                          WIP limit…
-                        </button>
-                      {/if}
-                      <button
-                        type="button"
-                        onclick={() => removeColumn(statusName)}
-                        class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-error"
-                        role="menuitem"
-                      >
-                        <span class="material-symbols-outlined text-icon-sm"
-                          >delete</span
-                        >
-                        Remove
-                      </button>
-                    </div>
-                  {/if}
-                {/if}
-              </div>
-            </div>
+            <ColumnHeader
+              colKey={col.key}
+              colLabel={col.label}
+              colValue={col.value}
+              cardCount={cards.length}
+              estimateSum={columnEstimateSum(cards)}
+              {canManage}
+              {wipLimit}
+              {overWip}
+              {dndEnabled}
+              renaming={renamingColKey === col.key}
+              menuOpen={menuCol === col.key}
+              wipEditing={wipEditCol === statusName}
+              {wipEditError}
+              bind:renameValue
+              bind:wipDraft
+              onToggleMenu={() => toggleColMenu(col.key)}
+              onStartRename={() => startRename(statusName, col.key)}
+              onCommitRename={() => commitRename(statusName)}
+              onCancelRename={cancelRename}
+              onRemoveColumn={() => removeColumn(statusName)}
+              onStartWipEdit={() => startWipEdit(statusName)}
+              onApplyWipLimit={() => applyWipLimit(statusName)}
+              onClearWipLimit={() => clearWipLimit(statusName)}
+              onMenuEscape={() => (menuCol = null)}
+              onWipEscape={() => {
+                wipEditCol = null
+                wipEditError = ''
+              }}
+              onColDragStart={(e) => onColDragStart(e, colIdx)}
+              onColDragOver={(e) => onColDragOver(e, colIdx)}
+              onColDrop={(e) => onColDrop(e, colIdx)}
+              onColDragEnd={() => (colDragIndex = null)}
+            />
             <div
               class="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2 min-h-25"
             >
               {#each cards as card, i (card.id)}
-                <div
-                  data-card={card.id}
-                  data-index={i}
-                  role="button"
-                  tabindex="0"
-                  aria-grabbed={draggingId === card.id ? 'true' : 'false'}
-                  aria-label={`${card.clean_content}, ${col.label}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}${card.subtask_total > 0 ? `, ${card.subtask_done} of ${card.subtask_total} subtasks done` : ''}.${dndEnabled ? ' Arrow keys change ' + groupBy + '.' : ''}`}
-                  draggable={dndEnabled ? 'true' : 'false'}
-                  animate:flip={{ duration: 200, easing: cubicOut }}
-                  class="group relative bg-surface-card border border-surface-card-border rounded-lg p-3 transition-all duration-200 hover:bg-hover hover:-translate-y-px hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent-primary-start/40 {card.status ===
-                  'DOING'
-                    ? 'border-l-2 border-l-accent-secondary-start'
-                    : ''} {dndEnabled ? 'cursor-grab' : ''} {draggingId ===
-                  card.id
-                    ? 'opacity-40 rotate-2'
-                    : ''} {dragOverCardId === card.id
-                    ? 'ring-2 ring-accent-primary-start/60'
-                    : ''}"
-                  ondragstart={(e) => onDragStart(e, card, col.key)}
-                  ondragend={cleanupDrag}
-                  ondragover={(e) => onCardDragOver(e, card, col)}
-                  ondragleave={() => {
-                    if (dragOverCardId === card.id) dragOverCardId = null
-                  }}
-                  ondrop={(e) => onCardDrop(e, card, col)}
-                  onkeydown={(e) => onCardKeydown(e, card, col)}
-                  onclick={() => (selectedCard = card)}
-                >
-                  {#if card.pinned}
-                    <span
-                      class="material-symbols-outlined absolute top-2 right-2 text-icon-sm text-accent-primary-start"
-                      aria-label="pinned">push_pin</span
-                    >
-                  {/if}
-                  <div class="flex justify-between items-start mb-2 gap-2">
-                    {#if card.priority && card.priority <= 3}
-                      <span
-                        class="px-1.5 py-0.5 border rounded-sm font-label-sm text-type-3xs uppercase tracking-wide {priorityClass(
-                          card.priority
-                        )}"
-                      >
-                        {PRIORITY_LABELS[card.priority] ?? 'Normal'}
-                      </span>
-                    {/if}
-                    {#if card.status === 'DONE'}
-                      <span
-                        class="material-symbols-outlined text-accent-primary-start text-icon-md {card.pinned
-                          ? ''
-                          : 'ml-auto'}">check_circle</span
-                      >
-                    {/if}
-                  </div>
-                  <p
-                    class="text-type-md font-body-md text-text-primary mb-2 {card.status ===
-                    'DONE'
-                      ? 'line-through opacity-60'
-                      : ''}"
-                  >
-                    {card.clean_content}
-                  </p>
-                  {#if card.progress > 0}
-                    <div
-                      class="h-0.5 bg-surface-panel rounded overflow-hidden mb-2"
-                    >
-                      <div
-                        class="h-full bg-accent-secondary-start transition-all"
-                        style="width: {card.progress}%"
-                      ></div>
-                    </div>
-                  {/if}
-                  <div class="flex justify-between items-center gap-2">
-                    <div class="flex items-center gap-1.5">
-                      {#if card.subtask_total > 0}
-                        <span
-                          class="text-type-3xs text-text-muted font-label-sm"
-                          data-testid={`board-subtask-badge-${card.id}`}
-                          title={`${card.subtask_done} of ${card.subtask_total} subtasks done`}
-                          aria-label={`${card.subtask_done} of ${card.subtask_total} subtasks done`}
-                        >
-                          [{card.subtask_done}/{card.subtask_total}]
-                        </span>
-                      {/if}
-                      {#if card.owner}
-                        <span
-                          class="text-type-3xs text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded-sm px-1.5 py-0.5 font-label-sm"
-                        >
-                          [{card.owner}]
-                        </span>
-                      {/if}
-                    </div>
-                    <div class="flex items-center gap-1.5">
-                      {#if card.comments_count > 0}
-                        <span
-                          class="text-type-3xs text-text-muted font-label-sm flex items-center gap-0.5"
-                          title="{card.comments_count} comments"
-                        >
-                          <span class="material-symbols-outlined text-icon-xs"
-                            >chat_bubble</span
-                          >
-                          {card.comments_count}
-                        </span>
-                      {/if}
-                      {#if card.links_count > 0}
-                        <span
-                          class="text-type-3xs text-text-muted font-label-sm flex items-center gap-0.5"
-                          title="{card.links_count} links"
-                        >
-                          <span class="material-symbols-outlined text-icon-xs"
-                            >link</span
-                          >
-                          {card.links_count}
-                        </span>
-                      {/if}
-                      {#if card.due_date}
-                        <span
-                          class="text-type-3xs {card.status === 'DONE'
-                            ? 'text-text-muted'
-                            : dueDateTextClass(
-                                dueDateClass(card.due_date, today)
-                              )} font-label-sm flex items-center gap-0.5"
-                        >
-                          <span class="material-symbols-outlined text-icon-xs"
-                            >schedule</span
-                          >
-                          {card.due_date}
-                        </span>
-                      {/if}
-                      {#if card.recurrence}
-                        <span
-                          class="text-accent-secondary-start flex items-center"
-                          title="Recurring: {card.recurrence}"
-                        >
-                          <span
-                            class="material-symbols-outlined text-icon-xs"
-                            aria-hidden="true">event_repeat</span
-                          >
-                        </span>
-                      {/if}
-                      {#if card.is_blocked}
-                        <span
-                          class="text-status-warn flex items-center"
-                          role="img"
-                          title="Blocked by unfinished prerequisite task(s)"
-                          aria-label="Blocked by unfinished prerequisite task(s)"
-                        >
-                          <span
-                            class="material-symbols-outlined text-icon-xs"
-                            aria-hidden="true">lock</span
-                          >
-                        </span>
-                      {/if}
-                    </div>
-                  </div>
+                <div animate:flip={{ duration: 200, easing: cubicOut }}>
+                  <TaskCard
+                    {card}
+                    index={i}
+                    colLabel={col.label}
+                    {dndEnabled}
+                    {groupBy}
+                    {today}
+                    dragging={draggingId === card.id}
+                    dragOver={dragOverCardId === card.id}
+                    onDragStart={(e) => onDragStart(e, card, col.key)}
+                    onDragEnd={cleanupDrag}
+                    onCardDragOver={(e) => onCardDragOver(e, card, col)}
+                    onCardDragLeave={() => {
+                      if (dragOverCardId === card.id) dragOverCardId = null
+                    }}
+                    onCardDrop={(e) => onCardDrop(e, card, col)}
+                    onKeydown={(e) => onCardKeydown(e, card, col)}
+                    onSelect={() => (selectedCard = card)}
+                  />
                 </div>
               {/each}
               {#if cards.length === 0}
@@ -1671,10 +1339,10 @@
   ></div>
 {/if}
 
-{#if pendingBlockedDone}
+{#if blockedGuard.pending}
   <BlockedDoneDialog
-    cardText={pendingBlockedDone.card.clean_content}
-    blockers={pendingBlockedDone.blockers}
+    cardText={blockedGuard.pending.context.card.clean_content}
+    blockers={blockedGuard.pending.blockers}
     onConfirm={confirmBlockedDone}
     onCancel={cancelBlockedDone}
   />

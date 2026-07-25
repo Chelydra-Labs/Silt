@@ -7,6 +7,7 @@
   import { trailingDebounce } from '../debounce'
   import { friendlyCaughtError } from '../errors'
   import { optimisticField } from '../optimisticField.svelte'
+  import { useBlockedDoneGuard } from '../shared.svelte'
   import ErrorBanner from './ErrorBanner.svelte'
 
   import type { TaskDetail } from '../types'
@@ -215,10 +216,16 @@
 
   // Pending DONE-on-blocked confirmation (#302). Picking DONE on a task with
   // open prerequisites pauses here and renders the shared BlockedDoneDialog
-  // (the same guard surface Kanban/Agenda use) until the user decides.
-  let pendingBlockedDone = $state<{
-    blockers: { id: string; clean_content?: string }[]
-  } | null>(null)
+  // (the same guard surface Board/List use) until the user decides. The
+  // shared hook owns the pending state + blocker fetch; the Drawer carries
+  // no extra context (confirm/cancel read `task` + statusField directly),
+  // and surfaces a fetch failure via metaError (matches the inline behavior
+  // pre-extraction).
+  // ctx is a stable plugin-context singleton — see BoardView for rationale.
+  // svelte-ignore state_referenced_locally
+  const blockedGuard = useBlockedDoneGuard<undefined>(ctx, (e) => {
+    metaError = friendlyCaughtError(e)
+  })
 
   const RECURRENCE_PRESETS: { value: string; hint: string }[] = [
     { value: 'every day', hint: '7 days a week' },
@@ -456,21 +463,10 @@
     // BlockedDoneDialog before committing. statusField.value may already show
     // DONE optimistically (arrow path); cancelBlockedDone reverts it on cancel.
     if (s === 'DONE' && task.is_blocked) {
-      try {
-        const blockers = await ctx.getTaskBlockers(task.id)
-        if (blockers.length > 0) {
-          pendingBlockedDone = {
-            blockers: blockers.map((b) => ({
-              id: b.id,
-              clean_content: b.clean_content
-            }))
-          }
-          return
-        }
-      } catch (e) {
-        metaError = friendlyCaughtError(e)
-        return
-      }
+      // 'dialog' → BlockedDoneDialog opened (bail); 'error' → onError set
+      // metaError (bail); 'clear' → proceed to commit.
+      const result = await blockedGuard.check(task.id, true, undefined)
+      if (result !== 'clear') return
     }
     await commitStatusWrite(s)
   }
@@ -513,12 +509,12 @@
   const statusDebouncer = trailingDebounce(flushStatusCommit, 200)
 
   function confirmBlockedDone() {
-    pendingBlockedDone = null
+    blockedGuard.dismiss()
     void commitStatusWrite('DONE')
   }
 
   async function cancelBlockedDone() {
-    pendingBlockedDone = null
+    blockedGuard.dismiss()
     // Revert the optimistic DONE flip the arrow path made; statusCommitted
     // still holds the pre-DONE value (we never committed DONE).
     statusField.value = statusCommitted
@@ -724,7 +720,7 @@
       task &&
       !recurrenceOpen &&
       !dueDateOpen &&
-      !pendingBlockedDone
+      !blockedGuard.pending
     ) {
       const active = document.activeElement as HTMLElement | null
       if (active?.closest?.('[data-testid="reply-composer"]')) return
@@ -1408,10 +1404,10 @@
     </div>
   </div>
 
-  {#if pendingBlockedDone}
+  {#if blockedGuard.pending}
     <BlockedDoneDialog
       cardText={task.clean_content}
-      blockers={pendingBlockedDone.blockers}
+      blockers={blockedGuard.pending.blockers}
       onConfirm={confirmBlockedDone}
       onCancel={cancelBlockedDone}
     />

@@ -91,7 +91,10 @@ const mocks = vi.hoisted(() => ({
   createTask: vi.fn().mockResolvedValue('new-task-id'),
   getTaskBlockers: vi.fn().mockResolvedValue([]),
   updatePluginSetting: vi.fn().mockResolvedValue(true),
-  notify: vi.fn().mockResolvedValue(true)
+  notify: vi.fn().mockResolvedValue(true),
+  // Captured block:changed subscribers so a test can emit the event the way
+  // the real SDK would (mirrors ListView.test.ts' canonical pattern).
+  blockChangedCallbacks: [] as Array<() => void>
 }))
 
 vi.mock('@wailsio/runtime', () => ({
@@ -119,7 +122,11 @@ vi.mock('@wailsio/runtime', () => ({
 }))
 
 import BoardView from './BoardView.svelte'
-import type { PluginContext } from '../../../sdk'
+import type {
+  PluginContext,
+  PluginEventName,
+  PluginEventPayload
+} from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
 import {
   getTaskHubState,
@@ -156,7 +163,20 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     getPluginSettings: vi.fn(() => Promise.resolve(mocks.tasksSettings)),
     updatePluginSetting: mocks.updatePluginSetting,
     notify: mocks.notify,
-    on: () => () => {},
+    on: (<E extends PluginEventName>(
+      event: E,
+      cb: (payload: PluginEventPayload<E>) => void
+    ) => {
+      if (event === 'block:changed') {
+        const cbAny = cb as unknown as () => void
+        mocks.blockChangedCallbacks.push(cbAny)
+        return () => {
+          const i = mocks.blockChangedCallbacks.indexOf(cbAny)
+          if (i >= 0) mocks.blockChangedCallbacks.splice(i, 1)
+        }
+      }
+      return () => {}
+    }) as PluginContext['on'],
     ...overrides
   }
 }
@@ -260,6 +280,7 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     mocks.getTaskBlockers.mockReset().mockResolvedValue([])
     mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
     mocks.notify.mockReset().mockResolvedValue(true)
+    mocks.blockChangedCallbacks.length = 0
     // Seed the settings module AFTER resets so loadColumns() (read at
     // BoardView construction) and persistColumns() (saveFn) are wired to
     // the freshly-reset mock slice.
@@ -796,6 +817,32 @@ describe('BoardView — dimension-aware Board (#421)', () => {
       screen.queryByRole('group', { name: 'To Do' })
     ).not.toBeInTheDocument()
     confirmSpy.mockRestore()
+  })
+
+  it('rename column rewrites the lane name and persists via updatePluginSetting', async () => {
+    await renderBoard('status', [])
+
+    const menus = screen.getAllByRole('button', { name: 'Column actions' })
+    await fireEvent.click(menus[0])
+    await flush()
+    await fireEvent.click(screen.getByRole('menuitem', { name: /rename/i }))
+    await flush()
+
+    // The inline rename input replaces the header label (a11y-friendly
+    // alternative to window.prompt for the rename affordance).
+    const input = screen.getByLabelText('Rename column')
+    await fireEvent.input(input, { target: { value: 'Backlog' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await flush()
+
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'columns',
+      expect.arrayContaining([{ name: 'Backlog' }])
+    )
+    expect(screen.getByRole('group', { name: 'Backlog' })).toBeInTheDocument()
+    expect(
+      screen.queryByRole('group', { name: 'To Do' })
+    ).not.toBeInTheDocument()
   })
 
   // --- Drawer integration ------------------------------------------------
@@ -1354,5 +1401,95 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(mocks.createTask).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'New over limit', status: 'TODO' })
     )
+  })
+})
+
+// The block:changed debounce was extracted into useBlockChangedReload during
+// the shared-hooks refactor; these tests pin its 80ms coalescing + teardown
+// semantics against the live view (fake timers — the debounce is real-time
+// sensitive and the assertions need to be deterministic).
+describe('BoardView — block:changed debounced reload', () => {
+  beforeEach(async () => {
+    mocks.tasksSettings = {}
+    mocks.updateBlockState.mockReset().mockResolvedValue(true)
+    mocks.setTaskOwner.mockReset().mockResolvedValue(true)
+    mocks.setTaskPriority.mockReset().mockResolvedValue(true)
+    mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
+    mocks.setTaskTags.mockReset().mockResolvedValue(true)
+    mocks.setTaskOrder.mockReset().mockResolvedValue(true)
+    mocks.setTaskOrders.mockReset().mockResolvedValue(true)
+    mocks.createTask.mockReset().mockResolvedValue('new-task-id')
+    mocks.getTaskBlockers.mockReset().mockResolvedValue([])
+    mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
+    mocks.notify.mockReset().mockResolvedValue(true)
+    mocks.blockChangedCallbacks.length = 0
+    await initTasksSettings(makeCtx())
+  })
+
+  afterEach(() => {
+    cleanup()
+    clearTaskPageRoute()
+  })
+
+  // Flush Svelte effects + the mocked sqliteQuery microtask resolution under
+  // fake timers (the suite's shared flush() uses real setTimeout, which fake
+  // timers would freeze).
+  async function flushFake() {
+    await tick()
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  it('coalesces a burst of block:changed events into one debounced reload', async () => {
+    vi.useFakeTimers()
+    try {
+      resetTaskHubState()
+      setGroupBy('status')
+      mocks.sqliteQuery.mockReset()
+      mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+      render(BoardView, { ctx: makeCtx(), onCountChange: vi.fn() })
+      vi.runAllTicks()
+      await flushFake()
+      const initialCalls = mocks.sqliteQuery.mock.calls.length
+      expect(initialCalls).toBeGreaterThan(0)
+
+      // Emit a burst — the trailing 80ms debounce must NOT fire immediately.
+      mocks.blockChangedCallbacks.forEach((cb) => cb())
+      mocks.blockChangedCallbacks.forEach((cb) => cb())
+      await flushFake()
+      expect(mocks.sqliteQuery.mock.calls.length).toBe(initialCalls)
+
+      // Crossing the 80ms window releases exactly one coalesced reload.
+      await vi.advanceTimersByTimeAsync(80)
+      expect(mocks.sqliteQuery.mock.calls.length).toBe(initialCalls + 1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the pending timer + unsubscribes on unmount', async () => {
+    vi.useFakeTimers()
+    try {
+      resetTaskHubState()
+      setGroupBy('status')
+      mocks.sqliteQuery.mockReset()
+      mocks.sqliteQuery.mockResolvedValue({ rows: [], truncated: false })
+      const view = render(BoardView, { ctx: makeCtx(), onCountChange: vi.fn() })
+      vi.runAllTicks()
+      await flushFake()
+      const initialCalls = mocks.sqliteQuery.mock.calls.length
+
+      // Arm the debounce, then unmount before it fires.
+      mocks.blockChangedCallbacks.forEach((cb) => cb())
+      view.unmount()
+      await flushFake()
+      await vi.advanceTimersByTimeAsync(200)
+
+      // Teardown cleared the timer AND spliced the subscriber, so the pending
+      // reload never lands and no stale listener remains.
+      expect(mocks.sqliteQuery.mock.calls.length).toBe(initialCalls)
+      expect(mocks.blockChangedCallbacks).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

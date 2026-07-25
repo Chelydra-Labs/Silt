@@ -18,13 +18,12 @@
   // one-time notice informs the user the first time per session they enter
   // Calendar mode with a non-'none'/non-'dueDate' groupBy active.
   import { onMount, onDestroy } from 'svelte'
-  import type { PluginContext } from '../../../sdk'
   import { plusDaysISO } from '../../../sdk'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
-  import type { TaskDetail } from '../types'
+  import { coerceTaskRow, type TaskDetail, type TaskViewProps } from '../types'
   import {
     getTaskHubQueryContext,
     getTaskHubViewState,
@@ -33,6 +32,7 @@
   } from '../state.svelte'
   import { buildQuery } from '../query'
   import { loadCalendarSubMode, persistCalendarSubMode } from '../settings'
+  import { useBlockChangedReload } from '../shared.svelte'
   import {
     ymd,
     startOfWeek,
@@ -43,11 +43,7 @@
     monthWeeks as computeMonthWeeks
   } from '../../../../lib/dateGrid'
 
-  interface Props {
-    ctx: PluginContext
-    /** Hub subscribes to keep its header count in sync. */
-    onCountChange?: (open: number, done: number) => void
-  }
+  type Props = TaskViewProps
 
   let { ctx, onCountChange }: Props = $props()
 
@@ -217,27 +213,15 @@
         ctx.sqliteQuery(overdueSql, overdueQ.params)
       ])
       if (my !== loadSeq) return
-      const coerce = (r: TaskDetail): TaskDetail => ({
-        ...r,
-        pinned: !!r.pinned,
-        created_at: r.created_at ?? '',
-        completed_at: r.completed_at ?? '',
-        manual_order: r.manual_order ?? 0,
-        modified_at: r.modified_at ?? '',
-        estimate_minutes:
-          r.estimate_minutes == null ? null : Number(r.estimate_minutes),
-        subtask_total: r.subtask_total ?? 0,
-        subtask_done: r.subtask_done ?? 0
-      })
-      const winRows = (winRes.rows as unknown as TaskDetail[]).map(coerce)
+      const winRows = (winRes.rows as unknown[]).map((r) => coerceTaskRow(r))
       const bucket: Record<string, TaskDetail[]> = {}
       for (const r of winRows) {
         if (!r.due_date) continue
         ;(bucket[r.due_date] ||= []).push(r)
       }
       byDate = bucket
-      undated = (undatedRes.rows as unknown as TaskDetail[]).map(coerce)
-      overdueAll = (overdueRes.rows as unknown as TaskDetail[]).map(coerce)
+      undated = (undatedRes.rows as unknown[]).map((r) => coerceTaskRow(r))
+      overdueAll = (overdueRes.rows as unknown[]).map((r) => coerceTaskRow(r))
       // Keep the open drawer in sync with fresh data.
       if (selectedTask) {
         const fresh =
@@ -287,19 +271,8 @@
   // Repaint on any block mutation (created/mutated/rescheduled from any
   // surface). Debounced so a burst of block:changed events triggers one
   // reload.
-  let blockChangedTimer: ReturnType<typeof setTimeout> | null = null
-  $effect(() => {
-    const off = ctx.on('block:changed', () => {
-      if (blockChangedTimer) clearTimeout(blockChangedTimer)
-      blockChangedTimer = setTimeout(() => {
-        void reload()
-      }, 80)
-    })
-    return () => {
-      if (blockChangedTimer) clearTimeout(blockChangedTimer)
-      off()
-    }
-  })
+  // svelte-ignore state_referenced_locally
+  useBlockChangedReload(ctx, reload)
 
   // Sidebar mini-cal drives focus via setFocusDate (state.svelte), which
   // dispatches the calendar:focus-date window event. Pan the visible
