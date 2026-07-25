@@ -46,12 +46,7 @@
     SiltBlockKeymaps,
     convertToBlock,
     setBlockAlign,
-    toggleBlockQuote,
-    insertCallout,
-    insertCodeBlock,
-    insertDetails,
     insertTable,
-    insertBlockMath,
     findActiveBlock,
     TaskMetaSuggest,
     applyMetaSuggestion,
@@ -72,7 +67,6 @@
     pageLinkSourceLabel,
     blocksToDoc
   } from '../lib/editor'
-  import { runPluginCommand } from '../lib/editor/runPluginCommand'
   import type {
     ParsedBlock,
     MetaKey,
@@ -96,10 +90,10 @@
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import ChoiceDialog from './ChoiceDialog.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
-  import { isDevMode, openInspect } from '../lib/devModeInspect'
   import { pushNotification } from '../notifications/store.svelte'
   import CommandPalette from './CommandPalette.svelte'
   import BlockPickerModal from './BlockPickerModal.svelte'
+  import EditorContextMenu from './editor/EditorContextMenu.svelte'
   import FormattingFirstRunTip from './editor/FormattingFirstRunTip.svelte'
   import PluginNoteBanners from './editor/PluginNoteBanners.svelte'
   import SelectionBubble from './editor/SelectionBubble.svelte'
@@ -107,39 +101,25 @@
   import TableSizePicker from './editor/TableSizePicker.svelte'
   import MathLatexPopover from './editor/MathLatexPopover.svelte'
   import SuggestPopup from './editor/SuggestPopup.svelte'
+  import {
+    createRequestRace,
+    createDebouncedRunner,
+    cycleSelected,
+    ctxStillMatches
+  } from '../lib/editor/useSuggestPopup.svelte'
   import { popupCoordsAt } from '../lib/editor/suggestPopupCoords'
   import {
     deriveColorPalette,
     readActiveThemeColorTokens,
     resolveColor
   } from '../lib/editor/colors'
-  import { getSlashCommands } from '../lib/editor/slash-registry'
-  import { classifySlashCommand } from '../lib/editor/builtinSlashCommands'
-  import {
-    openDateGlanceNearEditor,
-    clearInsertEditor
-  } from '../lib/dateGlanceState.svelte'
-  import { openShortcutHelp } from '../lib/shortcutHelpState.svelte'
+  import { createSlashMenu } from '../lib/editor/useSlashMenu.svelte'
+  import { clearInsertEditor } from '../lib/dateGlanceState.svelte'
   import {
     setActiveEditor,
     clearActiveEditorState
   } from '../lib/editor/activeEditor.svelte'
-  import { formatDate, resolveDateFormat } from '../lib/dateFormat'
-  import {
-    clampToViewport,
-    flipOrClamp
-  } from '../lib/editor/popoverPositioning'
-  import {
-    cutSelection,
-    copySelection,
-    pasteFromClipboard,
-    copyAsMarkdown,
-    copyAsPlainText,
-    copyBlockReference,
-    copyBlockEmbed,
-    duplicateBlock,
-    deleteBlock
-  } from '../lib/editor/clipboard'
+  import { clampToViewport } from '../lib/editor/popoverPositioning'
   import { dispatch as dispatchPluginEvent } from '../plugins/events'
   import {
     clearSelectionFocusIfPage,
@@ -197,20 +177,6 @@
   let editorReady = $state(false)
   let isFocused = $state(false)
   let suppressUpdate = false
-  let showSlashMenu = $state(false)
-  let slashQuery = $state('')
-  let slashMenuDismissed = $state(false)
-  // Measured size of the rendered slash palette, used for the flip/clamp
-  // decision so positioning reflects the real element rather than a fixed
-  // 256×300 estimate (#590). Falls back to the estimate until measured.
-  let paletteSize = $state({ width: 256, height: 300 })
-  $effect(() => {
-    if (!showSlashMenu) return
-    const el = document.getElementById('silt-slash-palette')
-    if (el && el.offsetWidth && el.offsetHeight) {
-      paletteSize = { width: el.offsetWidth, height: el.offsetHeight }
-    }
-  })
   let showTemplatePicker = $state(false)
   // Pending template insert when the page is non-empty and the cursor is not
   // at the end (#664). ChoiceDialog offers insert-at-cursor vs append-to-end.
@@ -508,8 +474,8 @@
 
   function onMetaNavigate(dir: 1 | -1): void {
     if (!metaPopup) return
-    const n = metaPopup.items.length
-    metaPopup.selected = (metaPopup.selected + dir + n) % n
+    const next = cycleSelected(metaPopup.selected, dir, metaPopup.items.length)
+    if (next !== null) metaPopup.selected = next
   }
 
   function onMetaSelectActive(): void {
@@ -583,8 +549,8 @@
   // a non-empty query we also fire a prefix-bounded DistinctOwners(query) so a
   // 10k-owner vault never has to filter client-side. The req-id gate discards a
   // late-resolving fetch whose result no longer matches the current popup (#332).
-  let mentionQueryReqId = 0
-  let mentionQueryTimer: ReturnType<typeof setTimeout> | null = null
+  const mentionDebounce = createDebouncedRunner()
+  const mentionRace = createRequestRace()
   const MENTION_QUERY_DEBOUNCE_MS = 120
 
   // Debounces the onFocus owner re-fetch so a focus blip doesn't immediately
@@ -592,10 +558,7 @@
   let focusLoadTimer: ReturnType<typeof setTimeout> | null = null
 
   function onMentionChange(ctx: MentionContext | null): void {
-    if (mentionQueryTimer) {
-      clearTimeout(mentionQueryTimer)
-      mentionQueryTimer = null
-    }
+    mentionDebounce.cancel()
     if (!ctx) {
       mentionPopup = null
       suggestStatus = ''
@@ -628,21 +591,16 @@
     // + race-guarded: a stale result cannot overwrite the current popup.
     const q = ctx.query.trim()
     if (q) {
-      const myId = ++mentionQueryReqId
-      mentionQueryTimer = setTimeout(() => {
+      const myId = mentionRace.begin()
+      mentionDebounce.schedule(MENTION_QUERY_DEBOUNCE_MS, () => {
         void (async () => {
           try {
             const serverItems = (await DistinctOwners(q)) ?? []
             // Superseded by a later keystroke — drop this result.
-            if (myId !== mentionQueryReqId) return
+            if (!mentionRace.isCurrent(myId)) return
             // Only apply if the popup is still open for this same context/query.
             const cur = mentionPopup
-            if (
-              !cur ||
-              cur.ctx.from !== ctx.from ||
-              cur.ctx.query !== ctx.query
-            )
-              return
+            if (!cur || !ctxStillMatches(cur, ctx)) return
             mentionPopup =
               serverItems.length === 0
                 ? null
@@ -658,14 +616,18 @@
             console.error('DistinctOwners(prefix) failed:', e)
           }
         })()
-      }, MENTION_QUERY_DEBOUNCE_MS)
+      })
     }
   }
 
   function onMentionNavigate(dir: 1 | -1): void {
     if (!mentionPopup) return
-    const n = mentionPopup.items.length
-    mentionPopup.selected = (mentionPopup.selected + dir + n) % n
+    const next = cycleSelected(
+      mentionPopup.selected,
+      dir,
+      mentionPopup.items.length
+    )
+    if (next !== null) mentionPopup.selected = next
   }
 
   function onMentionSelectActive(): void {
@@ -704,18 +666,15 @@
     searching: boolean
     error: boolean
   } | null>(null)
-  let blkRefQueryTimer: ReturnType<typeof setTimeout> | null = null
-  let blkRefQueryReqId = 0
+  const blkRefDebounce = createDebouncedRunner()
+  const blkRefRace = createRequestRace()
   let blkRefRequest:
     | (Promise<BlockSearchItem[]> & { cancel?: () => Promise<void> | void })
     | null = null
   const BLOCK_REF_QUERY_DEBOUNCE_MS = 180
 
   function cancelBlockRefSearch(): void {
-    if (blkRefQueryTimer) {
-      clearTimeout(blkRefQueryTimer)
-      blkRefQueryTimer = null
-    }
+    blkRefDebounce.cancel()
     const request = blkRefRequest
     blkRefRequest = null
     if (request?.cancel) void request.cancel()
@@ -723,7 +682,7 @@
 
   function onBlockRefChange(ctx: BlockRefContext | null): void {
     cancelBlockRefSearch()
-    const myId = ++blkRefQueryReqId
+    const myId = blkRefRace.begin()
     if (!ctx) {
       blkRefPopup = null
       suggestStatus = ''
@@ -743,9 +702,8 @@
     }
 
     suggestStatus = 'Searching blocks'
-    blkRefQueryTimer = setTimeout(() => {
+    blkRefDebounce.schedule(BLOCK_REF_QUERY_DEBOUNCE_MS, () => {
       void (async () => {
-        blkRefQueryTimer = null
         const request = SearchBlocks(ctx.query) as Promise<
           BlockSearchItem[]
         > & {
@@ -754,29 +712,19 @@
         blkRefRequest = request
         try {
           const items = (await request) ?? []
-          if (myId !== blkRefQueryReqId) return
+          if (!blkRefRace.isCurrent(myId)) return
           const current = blkRefPopup
-          if (
-            !current ||
-            current.ctx.from !== ctx.from ||
-            current.ctx.query !== ctx.query
-          )
-            return
+          if (!current || !ctxStillMatches(current, ctx)) return
           blkRefRequest = null
           blkRefPopup = { ...current, items, selected: 0, searching: false }
           suggestStatus = items.length
             ? `${items.length} block${items.length === 1 ? '' : 's'} available`
             : 'No matching blocks'
         } catch (error) {
-          if (myId !== blkRefQueryReqId) return
+          if (!blkRefRace.isCurrent(myId)) return
           blkRefRequest = null
           const current = blkRefPopup
-          if (
-            !current ||
-            current.ctx.from !== ctx.from ||
-            current.ctx.query !== ctx.query
-          )
-            return
+          if (!current || !ctxStillMatches(current, ctx)) return
           console.error('SearchBlocks failed:', error)
           blkRefPopup = {
             ...current,
@@ -788,13 +736,17 @@
           suggestStatus = 'Block search unavailable'
         }
       })()
-    }, BLOCK_REF_QUERY_DEBOUNCE_MS)
+    })
   }
 
   function onBlockRefNavigate(dir: 1 | -1): void {
     if (!blkRefPopup?.items.length) return
-    const n = blkRefPopup.items.length
-    blkRefPopup.selected = (blkRefPopup.selected + dir + n) % n
+    const next = cycleSelected(
+      blkRefPopup.selected,
+      dir,
+      blkRefPopup.items.length
+    )
+    if (next !== null) blkRefPopup.selected = next
   }
 
   function onBlockRefSelectActive(): void {
@@ -804,7 +756,7 @@
 
   function onBlockRefPick(blockId: string): void {
     cancelBlockRefSearch()
-    ++blkRefQueryReqId
+    blkRefRace.begin()
     blkRefPopup = null
     suggestStatus = ''
     if (!editorInstance || editorInstance.isDestroyed) return
@@ -881,8 +833,8 @@
 
   function onTagNavigate(dir: 1 | -1): void {
     if (!tagPopup?.items.length) return
-    const n = tagPopup.items.length
-    tagPopup.selected = (tagPopup.selected + dir + n) % n
+    const next = cycleSelected(tagPopup.selected, dir, tagPopup.items.length)
+    if (next !== null) tagPopup.selected = next
   }
 
   function onTagSelectActive(): void {
@@ -912,8 +864,8 @@
     aliasEnabled: boolean
     alias: string
   } | null>(null)
-  let pageLinkQueryTimer: ReturnType<typeof setTimeout> | null = null
-  let pageLinkQueryReqId = 0
+  const pageLinkDebounce = createDebouncedRunner()
+  const pageLinkRace = createRequestRace()
   let pageLinkRequest: ReturnType<typeof SearchPages> | null = null
   const PAGE_LINK_QUERY_DEBOUNCE_MS = 150
 
@@ -925,10 +877,7 @@
   }
 
   function cancelPageLinkSearch(): void {
-    if (pageLinkQueryTimer) {
-      clearTimeout(pageLinkQueryTimer)
-      pageLinkQueryTimer = null
-    }
+    pageLinkDebounce.cancel()
     const request = pageLinkRequest
     pageLinkRequest = null
     if (request?.cancel) void request.cancel()
@@ -936,7 +885,7 @@
 
   function onPageLinkChange(ctx: PageLinkContext | null): void {
     cancelPageLinkSearch()
-    const myId = ++pageLinkQueryReqId
+    const myId = pageLinkRace.begin()
     if (!ctx) {
       pageLinkPopup = null
       suggestStatus = ''
@@ -967,21 +916,15 @@
 
     pageLinkPopup.searching = true
     suggestStatus = 'Searching pages'
-    pageLinkQueryTimer = setTimeout(() => {
+    pageLinkDebounce.schedule(PAGE_LINK_QUERY_DEBOUNCE_MS, () => {
       void (async () => {
-        pageLinkQueryTimer = null
         try {
           const request = SearchPages(ctx.query.trim(), 50)
           pageLinkRequest = request
           const items = (await request) ?? []
-          if (myId !== pageLinkQueryReqId) return
+          if (!pageLinkRace.isCurrent(myId)) return
           const current = pageLinkPopup
-          if (
-            !current ||
-            current.ctx.from !== ctx.from ||
-            current.ctx.query !== ctx.query
-          )
-            return
+          if (!current || !ctxStillMatches(current, ctx)) return
           pageLinkRequest = null
           pageLinkPopup = {
             ...current,
@@ -993,15 +936,10 @@
             ? `${items.length} page${items.length === 1 ? '' : 's'} available`
             : 'No matching pages'
         } catch (error) {
-          if (myId !== pageLinkQueryReqId) return
+          if (!pageLinkRace.isCurrent(myId)) return
           pageLinkRequest = null
           const current = pageLinkPopup
-          if (
-            !current ||
-            current.ctx.from !== ctx.from ||
-            current.ctx.query !== ctx.query
-          )
-            return
+          if (!current || !ctxStillMatches(current, ctx)) return
           console.error('SearchPages failed:', error)
           pageLinkPopup = {
             ...current,
@@ -1011,13 +949,17 @@
           suggestStatus = 'Page search unavailable'
         }
       })()
-    }, PAGE_LINK_QUERY_DEBOUNCE_MS)
+    })
   }
 
   function onPageLinkNavigate(dir: 1 | -1): void {
     if (!pageLinkPopup?.items.length || pageLinkPopup.resolving) return
-    const n = pageLinkPopup.items.length
-    pageLinkPopup.selected = (pageLinkPopup.selected + dir + n) % n
+    const next = cycleSelected(
+      pageLinkPopup.selected,
+      dir,
+      pageLinkPopup.items.length
+    )
+    if (next !== null) pageLinkPopup.selected = next
   }
 
   function onPageLinkSelectActive(): void {
@@ -1061,7 +1003,7 @@
 
   function dismissPageLinkAlias(): void {
     cancelPageLinkSearch()
-    ++pageLinkQueryReqId
+    pageLinkRace.begin()
     pageLinkPopup = null
     suggestStatus = ''
     if (!editorInstance || editorInstance.isDestroyed) return
@@ -1072,7 +1014,7 @@
     const current = pageLinkPopup
     if (!current || current.resolving || !editorInstance?.isEditable) return
     cancelPageLinkSearch()
-    const myId = ++pageLinkQueryReqId
+    const myId = pageLinkRace.begin()
     pageLinkPopup = {
       ...current,
       resolving: true,
@@ -1090,13 +1032,13 @@
         ResolvePageLink,
         alias
       )
-      if (myId !== pageLinkQueryReqId) return
+      if (!pageLinkRace.isCurrent(myId)) return
       if (!inserted)
         throw new Error('The page-link context is no longer active')
       pageLinkPopup = null
       suggestStatus = ''
     } catch (error) {
-      if (myId !== pageLinkQueryReqId) return
+      if (!pageLinkRace.isCurrent(myId)) return
       console.error('ResolvePageLink failed:', error)
       const popup = pageLinkPopup
       if (popup) {
@@ -1232,7 +1174,7 @@
       // is voided — a user edit makes the buffer authoritative again and must
       // never be clobbered by a leaked pendingExternalReload (#345).
       pendingExternalReload = false
-      detectSlashCommand()
+      slash.detectSlashCommand()
       isLastBlock = editorInstance
         ? editorInstance.state.doc.childCount <= 1
         : false
@@ -1489,19 +1431,13 @@
     selectionCoords = null
     // Dismiss the slash palette on scroll (parity with the selection bubble)
     // so it never floats at stale coordinates (#590).
-    if (showSlashMenu) {
-      showSlashMenu = false
-      slashMenuDismissed = true
-    }
+    if (slash.showSlashMenu) slash.dismiss()
     dismissFloatingPopovers()
   }
   function onWindowResize(): void {
     // A resize can push an open palette/popover off-screen; dismiss rather
     // than chase the cursor (#590 / #594).
-    if (showSlashMenu) {
-      showSlashMenu = false
-      slashMenuDismissed = true
-    }
+    if (slash.showSlashMenu) slash.dismiss()
     dismissFloatingPopovers()
   }
   // Dismiss SelectionBubble when clicking outside the editor and bubble (#168).
@@ -1518,8 +1454,7 @@
     )
       return
     selectionCoords = null
-    showSlashMenu = false
-    slashMenuDismissed = true
+    slash.dismiss()
   }
 
   window.addEventListener('silt:open-link-input', onOpenLinkInput)
@@ -1542,18 +1477,15 @@
     clearActiveEditorState()
     // Cancel any pending owner-fetch / mention-refine timers so they don't
     // fire after teardown (#332).
-    if (mentionQueryTimer) {
-      clearTimeout(mentionQueryTimer)
-      mentionQueryTimer = null
-    }
+    mentionDebounce.cancel()
     if (focusLoadTimer) {
       clearTimeout(focusLoadTimer)
       focusLoadTimer = null
     }
     cancelBlockRefSearch()
-    ++blkRefQueryReqId
+    blkRefRace.begin()
     cancelPageLinkSearch()
-    ++pageLinkQueryReqId
+    pageLinkRace.begin()
     void flushPendingSave().then(() => releaseFocus())
     window.removeEventListener('silt:open-link-input', onOpenLinkInput)
     window.removeEventListener('silt:change-block-type', onChangeBlockType)
@@ -1671,189 +1603,23 @@
 
   // --- Slash menu -----------------------------------------------------------
 
-  function detectSlashCommand(): void {
-    if (!editorInstance || editorInstance.isDestroyed) return
-    const sel = editorInstance.state.selection
-    const textBefore = sel.$from.parent.textContent.slice(
-      0,
-      sel.$from.parentOffset
-    )
-    if (textBefore.startsWith('/')) {
-      if (!slashMenuDismissed) {
-        showSlashMenu = true
-        slashQuery = textBefore.slice(1)
-      }
-    } else {
-      showSlashMenu = false
-      slashQuery = ''
-      slashMenuDismissed = false
+  const slash = createSlashMenu({
+    getEditor: () => editorInstance,
+    onOpenMathPopover: (popover) => {
+      mathPopover = popover
+    },
+    onOpenTableSizePicker: (anchor) => {
+      tableSizeCoords = anchor
+      showTableSizePicker = true
+    },
+    onOpenColorPicker: (markType) => openColorPickerPopover(markType),
+    onShowEmbedPicker: () => {
+      showEmbedPicker = true
+    },
+    onShowTemplatePicker: () => {
+      showTemplatePicker = true
     }
-  }
-
-  function slashCoords(): { left: number; top: number } | null {
-    if (!showSlashMenu || !editorInstance || editorInstance.isDestroyed)
-      return null
-    const { selection } = editorInstance.state
-    const pos = selection.$from.start()
-    try {
-      const c = editorInstance.view.coordsAtPos(pos)
-      // Flip above the cursor when there is no room below, using the palette's
-      // measured size rather than a fixed estimate (#590).
-      return flipOrClamp(
-        { top: c.top, bottom: c.bottom, left: c.left },
-        { width: paletteSize.width, height: paletteSize.height },
-        { width: window.innerWidth, height: window.innerHeight }
-      )
-    } catch {
-      return null
-    }
-  }
-
-  function handleSlashSelect(commandId: string): void {
-    showSlashMenu = false
-    slashQuery = ''
-    slashMenuDismissed = false
-    if (!editorInstance || editorInstance.isDestroyed) return
-
-    const sel = editorInstance.state.selection
-    const from = sel.$from.start()
-    const to = from + sel.$from.parentOffset
-    editorInstance.commands.deleteRange({ from, to })
-
-    const intent = classifySlashCommand(commandId)
-    if (!intent) {
-      // v2 SDK plugin-registered slash command (#110): look up the command in
-      // the registry and invoke its onSelect handler with the live editor +
-      // cursor position. Built-ins are handled by classifySlashCommand; any
-      // other id must be a plugin command with a handler.
-      const cmd = getSlashCommands().find((c) => c.id === commandId)
-      if (cmd?.onSelect) {
-        // Isolate plugin-handler failures (#581): a buggy plugin's throw or
-        // rejected Promise must not escape into the editor's dispatch path or
-        // go unhandled. The slash trigger text is already deleted above, so
-        // the editor stays clean either way; surface a non-blocking toast +
-        // a console error carrying the plugin + command id.
-        const pluginID = cmd.pluginID ?? 'unknown'
-        const report = (err: unknown): void => {
-          console.error(
-            `[silt] plugin ${pluginID} command ${commandId} failed:`,
-            err
-          )
-          pushNotification({
-            kind: 'error',
-            message: 'Plugin command failed — see console.',
-            autoDismissMs: 7000
-          })
-        }
-        runPluginCommand(
-          cmd,
-          editorInstance,
-          editorInstance.state.selection.to,
-          report
-        )
-      }
-      return
-    }
-    switch (intent.kind) {
-      case 'convert':
-        if (intent.depth !== undefined)
-          convertToBlock(editorInstance, intent.blockType, intent.depth)
-        else convertToBlock(editorInstance, intent.blockType)
-        break
-      case 'align':
-        setBlockAlign(editorInstance, intent.align)
-        break
-      case 'quote':
-        toggleBlockQuote(editorInstance)
-        break
-      case 'callout':
-        insertCallout(editorInstance, intent.variant)
-        break
-      case 'codeBlock':
-        insertCodeBlock(editorInstance, intent.language ?? '')
-        break
-      case 'math':
-        // Open the LaTeX popover (block mode); on commit, insert a block
-        // equation at the selection via the same insertBlockMath path the old
-        // prompt used. The popover (with live preview) replaces window.prompt.
-        if (!editorInstance || editorInstance.isDestroyed) return
-        try {
-          const { selection } = editorInstance.state
-          const c = editorInstance.view.coordsAtPos(selection.from)
-          mathPopover = {
-            latex: '',
-            displayMode: true,
-            coords: { left: c.left, top: c.bottom },
-            onCommit: (l: string) => {
-              if (editorInstance) insertBlockMath(editorInstance, l)
-            }
-          }
-        } catch {
-          /* no selection coords → don't open the popover */
-        }
-        break
-      case 'details':
-        insertDetails(editorInstance)
-        break
-      case 'table':
-        insertTable(editorInstance, intent.rows, intent.cols)
-        break
-      case 'tableCustom':
-        // Open an in-app size popover instead of the native window.prompt.
-        // The picker receives the cursor anchor rect and flips/clamps itself.
-        if (!editorInstance || editorInstance.isDestroyed) return
-        try {
-          const { selection } = editorInstance.state
-          const coords = editorInstance.view.coordsAtPos(selection.from)
-          tableSizeCoords = {
-            top: coords.top,
-            bottom: coords.bottom,
-            left: coords.left
-          }
-        } catch {
-          tableSizeCoords = { top: 100, bottom: 120, left: 100 }
-        }
-        showTableSizePicker = true
-        break
-      case 'color':
-        openColorPickerPopover(intent.markType)
-        break
-      case 'today': {
-        const fmt = resolveDateFormat(settings.config?.editor?.date_format)
-        editorInstance.commands.insertContent(formatDate(new Date(), fmt))
-        break
-      }
-      case 'calendar':
-        // Open Date Glance beside the caret (coordsAtPos). Slash text is
-        // already deleted above; the editor stays the insert target.
-        openDateGlanceNearEditor(editorInstance ?? null)
-        break
-      case 'shortcuts':
-        // Open the keyboard-shortcut reference overlay (#731). Same surface
-        // as the Shift+? hotkey; the slash trigger is already deleted above.
-        openShortcutHelp()
-        break
-      case 'embed':
-        // Open the block picker; the selected block is inserted as a complete
-        // {{embed:UUID}} token (#593). The bare '{{embed:' fragment the old
-        // path emitted never resolved into a live embed portal.
-        showEmbedPicker = true
-        break
-      case 'template':
-        // The `/` text is already deleted above; open the picker. The editor
-        // preserves its selection state, so when the user confirms the rendered
-        // blocks are inserted at the cursor position (ARCHITECTURE §5.1 — the
-        // UniqueBlockIds extension mints fresh UUIDs for the inserted nodes).
-        showTemplatePicker = true
-        break
-      case 'format':
-        // Inline formatting slash commands (#168). Each toggles its mark;
-        // the value is also a valid stored mark at a collapsed cursor, so the
-        // command does meaningful work without a selection.
-        editorInstance.chain().focus().toggleMark(intent.mark).run()
-        break
-    }
-  }
+  })
 
   // True when the page has no meaningful content (empty trailing note only).
   function isEditorEffectivelyEmpty(editor: Editor): boolean {
@@ -1978,76 +1744,15 @@
     focusLock.notifyFocus()
   }
 
-  // Context Menu state
+  // Context Menu state — the host owns the opener (`handleContextMenu` on the
+  // host wrapper) and the open payload; EditorContextMenu owns rendering,
+  // keyboard nav, and the clipboard action handlers.
   let contextMenu = $state<{
     x: number
     y: number
     activeBlockId?: string
     activeBlockNode?: ProseMirrorNode
   } | null>(null)
-
-  $effect(() => {
-    if (contextMenu) {
-      const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') {
-          e.preventDefault()
-          e.stopPropagation()
-          contextMenu = null
-          editorInstance?.commands.focus()
-        }
-      }
-      window.addEventListener('keydown', handleKeyDown, true)
-      return () => {
-        window.removeEventListener('keydown', handleKeyDown, true)
-      }
-    }
-  })
-
-  // Context menu keyboard navigation (ArrowUp/Down, Home/End)
-  let contextMenuEl = $state<HTMLDivElement | null>(null)
-
-  $effect(() => {
-    if (contextMenu && contextMenuEl) {
-      const id = requestAnimationFrame(() => {
-        const first = contextMenuEl?.querySelector<HTMLButtonElement>(
-          'button:not([disabled])'
-        )
-        first?.focus()
-      })
-      return () => cancelAnimationFrame(id)
-    }
-  })
-
-  function handleMenuKeyDown(e: KeyboardEvent): void {
-    if (!contextMenuEl) return
-    const items = Array.from(
-      contextMenuEl.querySelectorAll<HTMLButtonElement>(
-        'button:not([disabled])'
-      )
-    )
-    if (items.length === 0) return
-    const currentIndex = items.findIndex(
-      (item) => item === document.activeElement
-    )
-    switch (e.key) {
-      case 'ArrowDown':
-        e.preventDefault()
-        items[(currentIndex + 1) % items.length]?.focus()
-        break
-      case 'ArrowUp':
-        e.preventDefault()
-        items[(currentIndex - 1 + items.length) % items.length]?.focus()
-        break
-      case 'Home':
-        e.preventDefault()
-        items[0]?.focus()
-        break
-      case 'End':
-        e.preventDefault()
-        items[items.length - 1]?.focus()
-        break
-    }
-  }
 
   function handleContextMenu(e: MouseEvent): void {
     if (!editorInstance || editorInstance.isDestroyed) return
@@ -2087,89 +1792,6 @@
       activeBlockNode: activeBlockNode ?? undefined
     }
   }
-
-  // Menu action handlers — thin wrappers around the extracted clipboard
-  // module. Each handler operates on `editorInstance` + the live `contextMenu`
-  // state (passed via a getter so the module sees the current snapshot).
-  function closeContextMenu(): void {
-    contextMenu = null
-    editorInstance?.commands.focus()
-  }
-
-  function clipboardDeps() {
-    return {
-      editor: editorInstance!,
-      notify: pushNotification,
-      menu: () => contextMenu
-    }
-  }
-
-  function handleCut(): void {
-    if (!editorInstance) return
-    cutSelection(clipboardDeps())
-    closeContextMenu()
-  }
-
-  function handleCopy(): void {
-    if (!editorInstance) return
-    copySelection(clipboardDeps())
-    closeContextMenu()
-  }
-
-  async function handlePaste(): Promise<void> {
-    if (!editorInstance) return
-    await pasteFromClipboard(clipboardDeps())
-    closeContextMenu()
-  }
-
-  async function handleCopyAsMarkdown(): Promise<void> {
-    if (!editorInstance) return
-    await copyAsMarkdown(clipboardDeps())
-    closeContextMenu()
-  }
-
-  async function handleCopyAsPlainText(): Promise<void> {
-    if (!editorInstance) return
-    await copyAsPlainText(clipboardDeps())
-    closeContextMenu()
-  }
-
-  async function handleCopyBlockReference(): Promise<void> {
-    if (!editorInstance) return
-    await copyBlockReference(clipboardDeps())
-    closeContextMenu()
-  }
-
-  async function handleCopyBlockEmbed(): Promise<void> {
-    if (!editorInstance) return
-    await copyBlockEmbed(clipboardDeps())
-    closeContextMenu()
-  }
-
-  function handleDuplicateBlock(): void {
-    if (!editorInstance) return
-    duplicateBlock(clipboardDeps())
-    closeContextMenu()
-  }
-
-  function handleDeleteBlock(): void {
-    if (!editorInstance) return
-    deleteBlock(clipboardDeps())
-    closeContextMenu()
-  }
-
-  function handleClearFormatting(): void {
-    editorInstance?.chain().focus().unsetAllMarks().run()
-    closeContextMenu()
-  }
-
-  /** Dev Mode Inspect (#679/#683) — opens webview DevTools when the flag is on. */
-  async function handleInspect(): Promise<void> {
-    closeContextMenu()
-    await openInspect()
-  }
-
-  let devModeEnabled = $derived(isDevMode())
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -2209,193 +1831,27 @@
     {/if}
   {/if}
 
-  {#if contextMenu}
-    <div class="fixed inset-0 z-[180]">
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div
-        class="absolute inset-0 cursor-default"
-        onclick={() => (contextMenu = null)}
-        oncontextmenu={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          contextMenu = null
-        }}
-      ></div>
-      <div
-        bind:this={contextMenuEl}
-        class="fixed context-menu-card"
-        style="left: {contextMenu.x}px; top: {contextMenu.y}px"
-        role="menu"
-        tabindex="-1"
-        aria-label="Editor actions"
-        oncontextmenu={(e) => e.preventDefault()}
-        onkeydown={handleMenuKeyDown}
-      >
-        <button
-          type="button"
-          class="context-menu-item justify-between"
-          role="menuitem"
-          onclick={handleCut}
-          disabled={selectionEmpty}
-        >
-          <span class="flex items-center gap-2">
-            <span class="material-symbols-outlined text-icon-md"
-              >content_cut</span
-            >
-            Cut
-          </span>
-          <span class="ml-auto text-type-2xs text-text-muted/70 font-mono pl-4"
-            >Ctrl+X</span
-          >
-        </button>
-        <button
-          type="button"
-          class="context-menu-item justify-between"
-          role="menuitem"
-          onclick={handleCopy}
-          disabled={selectionEmpty}
-        >
-          <span class="flex items-center gap-2">
-            <span class="material-symbols-outlined text-icon-md"
-              >content_copy</span
-            >
-            Copy
-          </span>
-          <span class="ml-auto text-type-2xs text-text-muted/70 font-mono pl-4"
-            >Ctrl+C</span
-          >
-        </button>
-        <button
-          type="button"
-          class="context-menu-item justify-between"
-          role="menuitem"
-          onclick={handlePaste}
-        >
-          <span class="flex items-center gap-2">
-            <span class="material-symbols-outlined text-icon-md"
-              >content_paste</span
-            >
-            Paste
-          </span>
-          <span class="ml-auto text-type-2xs text-text-muted/70 font-mono pl-4"
-            >Ctrl+V</span
-          >
-        </button>
-
-        <div class="context-menu-separator"></div>
-
-        <button
-          type="button"
-          class="context-menu-item"
-          role="menuitem"
-          onclick={handleCopyAsMarkdown}
-        >
-          <span class="material-symbols-outlined text-icon-md">markdown</span>
-          Copy as Markdown
-        </button>
-        <button
-          type="button"
-          class="context-menu-item"
-          role="menuitem"
-          onclick={handleCopyAsPlainText}
-        >
-          <span class="material-symbols-outlined text-icon-md">notes</span>
-          Copy as Plain Text
-        </button>
-
-        {#if contextMenu.activeBlockId}
-          <div class="context-menu-separator"></div>
-          <button
-            type="button"
-            class="context-menu-item"
-            role="menuitem"
-            onclick={handleCopyBlockReference}
-          >
-            <span class="material-symbols-outlined text-icon-md">link</span>
-            Copy Block Reference
-          </button>
-          <button
-            type="button"
-            class="context-menu-item"
-            role="menuitem"
-            onclick={handleCopyBlockEmbed}
-          >
-            <span class="material-symbols-outlined text-icon-md"
-              >integration_instructions</span
-            >
-            Copy Block Embed
-          </button>
-
-          <div class="context-menu-separator"></div>
-          <button
-            type="button"
-            class="context-menu-item"
-            role="menuitem"
-            onclick={handleDuplicateBlock}
-          >
-            <span class="material-symbols-outlined text-icon-md"
-              >difference</span
-            >
-            Duplicate Block
-          </button>
-          <button
-            type="button"
-            class="context-menu-item text-status-danger"
-            role="menuitem"
-            onclick={handleDeleteBlock}
-            disabled={isLastBlock}
-          >
-            <span class="material-symbols-outlined text-icon-md">delete</span>
-            Delete Block
-          </button>
-        {/if}
-
-        <div class="context-menu-separator"></div>
-        <button
-          type="button"
-          class="context-menu-item"
-          role="menuitem"
-          onclick={handleClearFormatting}
-        >
-          <span class="material-symbols-outlined text-icon-md"
-            >format_clear</span
-          >
-          Clear Formatting
-        </button>
-
-        {#if devModeEnabled}
-          <div class="context-menu-separator"></div>
-          <button
-            type="button"
-            class="context-menu-item"
-            role="menuitem"
-            onclick={handleInspect}
-          >
-            <span class="material-symbols-outlined text-icon-md"
-              >bug_report</span
-            >
-            Inspect
-          </button>
-        {/if}
-      </div>
-    </div>
+  {#if contextMenu && editorInstance}
+    <EditorContextMenu
+      menu={contextMenu}
+      editor={editorInstance}
+      {selectionEmpty}
+      {isLastBlock}
+      onClose={() => (contextMenu = null)}
+    />
   {/if}
 
   <!-- Unsaved changes & word count are managed by the parent VirtualScrollContainer floating badge -->
-  {#if showSlashMenu}
-    {@const coords = slashCoords()}
+  {#if slash.showSlashMenu}
+    {@const coords = slash.slashCoords()}
     {#if coords}
       <CommandPalette
         style="position: fixed; left: {coords.left}px; top: {coords.top}px;"
-        query={slashQuery}
+        query={slash.slashQuery}
         textboxEl={editorInstance?.view.dom ?? null}
-        onSelect={handleSlashSelect}
+        onSelect={slash.handleSlashSelect}
         exclude={mathEnabled ? [] : ['math']}
-        onClose={() => {
-          showSlashMenu = false
-          slashMenuDismissed = true
-        }}
+        onClose={slash.dismiss}
       />
     {/if}
   {/if}
@@ -2992,68 +2448,5 @@
     .cp-swatch {
       transition: none;
     }
-  }
-
-  .context-menu-card {
-    background-color: color-mix(
-      in srgb,
-      var(--color-surface-popover) 90%,
-      transparent
-    );
-    backdrop-filter: blur(12px) saturate(140%);
-    border: 1px solid var(--color-surface-popover-border);
-    border-radius: 8px;
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
-    padding: 4px;
-    min-width: 180px;
-    z-index: 181;
-  }
-
-  .context-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 6px 12px;
-    border: none;
-    background: transparent;
-    color: var(--color-text-primary);
-    font-size: 12px;
-    font-family: var(--font-body, inherit);
-    text-align: left;
-    cursor: pointer;
-    border-radius: 6px;
-    transition: background-color 120ms ease-out;
-  }
-
-  .context-menu-item:hover {
-    background-color: var(--color-hover);
-  }
-
-  .context-menu-item:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .context-menu-item.text-status-danger {
-    color: var(--color-status-danger);
-  }
-
-  .context-menu-item.text-status-danger .material-symbols-outlined {
-    color: var(--color-status-danger);
-  }
-
-  .context-menu-item:hover.text-status-danger {
-    background-color: color-mix(
-      in srgb,
-      var(--color-status-danger) 15%,
-      transparent
-    );
-  }
-
-  .context-menu-separator {
-    height: 1px;
-    background: var(--color-surface-popover-border);
-    margin: 4px;
   }
 </style>
