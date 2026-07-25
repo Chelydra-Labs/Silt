@@ -25,16 +25,15 @@
   import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
   import ConfirmModal from '../components/ConfirmModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
+  import ColumnHeader from '../components/ColumnHeader.svelte'
+  import TaskCard from '../components/TaskCard.svelte'
   import {
     coerceTaskRow,
-    formatEstimateSum,
     PRIORITY_LABELS,
     laneLabel,
-    priorityClass,
     type TaskDetail,
     type TaskViewProps
   } from '../types'
-  import { dueDateClass, dueDateTextClass } from '../dueDate'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import {
     cloneColumns,
@@ -1188,367 +1187,65 @@
             <!-- Column drag-reorder (status dimension) is a pointer-only
                  affordance; Rename/Remove are exposed via the header menu
                  button for keyboard users. -->
-            <div
-              class="flex items-center justify-between px-3 py-2.5 border-b border-surface-panel-border"
-              role="group"
-              aria-label={`${col.label} column header`}
-              draggable={canManage ? 'true' : undefined}
-              ondragstart={canManage
-                ? (e) => onColDragStart(e, colIdx)
-                : undefined}
-              ondragover={canManage
-                ? (e) => onColDragOver(e, colIdx)
-                : undefined}
-              ondrop={canManage ? (e) => onColDrop(e, colIdx) : undefined}
-              ondragend={canManage ? () => (colDragIndex = null) : undefined}
-              title={!dndEnabled
-                ? `Task location can't be changed by dragging`
-                : undefined}
-            >
-              <div class="flex items-center gap-2 min-w-0">
-                {#if canManage}
-                  <span
-                    class="material-symbols-outlined text-icon-sm text-text-muted cursor-grab active:cursor-grabbing shrink-0"
-                    title="Drag to reorder"
-                    spellcheck="false">drag_indicator</span
-                  >
-                {/if}
-                <span
-                  class="w-2 h-2 rounded-full shrink-0"
-                  class:bg-text-muted={col.value !== 'DOING' &&
-                    col.value !== 'DONE'}
-                  class:bg-accent-secondary-start={col.value === 'DOING'}
-                  class:bg-accent-primary-start={col.value === 'DONE'}
-                ></span>
-                {#if renamingColKey === col.key}
-                  <input
-                    type="text"
-                    bind:value={renameValue}
-                    onkeydown={(e) => {
-                      if (e.key === 'Enter') commitRename(statusName)
-                      else if (e.key === 'Escape') cancelRename()
-                    }}
-                    onblur={() => commitRename(statusName)}
-                    class="bg-surface-panel border border-accent-primary-start/40 rounded px-1.5 py-0.5 text-type-xs font-label-sm-bold uppercase tracking-widest text-text-primary outline-none w-28"
-                    aria-label="Rename column"
-                  />
-                {:else}
-                  <h2
-                    class="font-label-sm-bold uppercase tracking-widest text-type-xs text-text-muted truncate"
-                    title={canManage ? 'Double-click to rename' : col.label}
-                    ondblclick={canManage
-                      ? () => startRename(statusName, col.key)
-                      : undefined}
-                  >
-                    {col.label}
-                  </h2>
-                {/if}
-                {#if wipLimit != null}
-                  <span
-                    class="bg-hover text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm {overWip
-                      ? 'text-status-warn'
-                      : 'text-text-muted'}"
-                    data-testid={`board-wip-badge-${col.key}`}
-                    title={overWip
-                      ? `Over WIP limit (${cards.length} / ${wipLimit})`
-                      : `WIP limit ${cards.length} / ${wipLimit}`}
-                    aria-label={`${cards.length} of ${wipLimit} WIP${overWip ? ', over limit' : ''}`}
-                  >
-                    {cards.length} / {wipLimit}
-                  </span>
-                {:else}
-                  <span
-                    class="bg-hover text-text-muted text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm"
-                    >{cards.length}</span
-                  >
-                {/if}
-                {#if columnEstimateSum(cards) > 0}
-                  <span
-                    class="text-text-muted/60 text-type-2xs font-label-sm truncate"
-                    data-testid={`board-col-estimate-${col.key}`}
-                    title={`${formatEstimateSum(columnEstimateSum(cards))} estimated`}
-                  >
-                    {formatEstimateSum(columnEstimateSum(cards))} estimated
-                  </span>
-                {/if}
-              </div>
-              <div class="relative shrink-0 flex items-center">
-                {#if canManage}
-                  <button
-                    type="button"
-                    onclick={() => toggleColMenu(col.key)}
-                    aria-label="Column actions"
-                    aria-expanded={menuCol === col.key}
-                    aria-haspopup="true"
-                    class="text-text-muted hover:text-text-primary transition-colors p-0.5"
-                  >
-                    <span class="material-symbols-outlined text-icon-md"
-                      >more_horiz</span
-                    >
-                  </button>
-                  {#if menuCol === col.key}
-                    <div
-                      class="absolute right-0 top-full mt-1 z-50 min-w-35 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
-                      role="menu"
-                      tabindex="-1"
-                      onkeydown={(e) => {
-                        if (e.key === 'Escape') menuCol = null
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onclick={() => startRename(statusName, col.key)}
-                        class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary"
-                        role="menuitem"
-                      >
-                        <span class="material-symbols-outlined text-icon-sm"
-                          >edit</span
-                        >
-                        Rename
-                      </button>
-                      {#if wipEditCol === statusName}
-                        <div
-                          class="px-3 py-2 space-y-1.5 border-t border-b border-surface-popover-border"
-                          data-testid={`board-wip-edit-${col.key}`}
-                        >
-                          <label
-                            class="block text-type-2xs font-label-sm text-text-muted"
-                            for={`wip-input-${col.key}`}
-                          >
-                            WIP limit (empty = unlimited)
-                          </label>
-                          <input
-                            id={`wip-input-${col.key}`}
-                            type="number"
-                            min="1"
-                            step="1"
-                            class="w-full rounded border border-surface-card-border bg-surface-card px-2 py-1 text-type-sm text-text-primary"
-                            bind:value={wipDraft}
-                            aria-invalid={wipEditError ? 'true' : undefined}
-                            data-testid={`board-wip-input-${col.key}`}
-                            onkeydown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault()
-                                applyWipLimit(statusName)
-                              } else if (e.key === 'Escape') {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                wipEditCol = null
-                                wipEditError = ''
-                              }
-                            }}
-                          />
-                          {#if wipEditError}
-                            <p class="text-type-2xs text-error" role="alert">
-                              {wipEditError}
-                            </p>
-                          {/if}
-                          <div class="flex gap-1 pt-0.5">
-                            <button
-                              type="button"
-                              class="flex-1 px-2 py-1 rounded bg-accent-primary-start/15 text-accent-primary-start text-type-2xs font-label-sm"
-                              data-testid={`board-wip-apply-${col.key}`}
-                              onclick={() => applyWipLimit(statusName)}
-                            >
-                              Apply
-                            </button>
-                            <button
-                              type="button"
-                              class="flex-1 px-2 py-1 rounded hover:bg-hover text-type-2xs font-label-sm text-text-muted"
-                              data-testid={`board-wip-clear-${col.key}`}
-                              onclick={() => clearWipLimit(statusName)}
-                            >
-                              Clear
-                            </button>
-                          </div>
-                        </div>
-                      {:else}
-                        <button
-                          type="button"
-                          onclick={() => startWipEdit(statusName)}
-                          class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary"
-                          role="menuitem"
-                          data-testid={`board-wip-menu-${col.key}`}
-                        >
-                          <span class="material-symbols-outlined text-icon-sm"
-                            >speed</span
-                          >
-                          WIP limit…
-                        </button>
-                      {/if}
-                      <button
-                        type="button"
-                        onclick={() => removeColumn(statusName)}
-                        class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-error"
-                        role="menuitem"
-                      >
-                        <span class="material-symbols-outlined text-icon-sm"
-                          >delete</span
-                        >
-                        Remove
-                      </button>
-                    </div>
-                  {/if}
-                {/if}
-              </div>
-            </div>
+            <ColumnHeader
+              colKey={col.key}
+              colLabel={col.label}
+              colValue={col.value}
+              cardCount={cards.length}
+              estimateSum={columnEstimateSum(cards)}
+              {canManage}
+              {statusName}
+              {wipLimit}
+              {overWip}
+              {dndEnabled}
+              renaming={renamingColKey === col.key}
+              menuOpen={menuCol === col.key}
+              wipEditing={wipEditCol === statusName}
+              {wipEditError}
+              bind:renameValue
+              bind:wipDraft
+              onToggleMenu={() => toggleColMenu(col.key)}
+              onStartRename={() => startRename(statusName, col.key)}
+              onCommitRename={() => commitRename(statusName)}
+              onCancelRename={cancelRename}
+              onRemoveColumn={() => removeColumn(statusName)}
+              onStartWipEdit={() => startWipEdit(statusName)}
+              onApplyWipLimit={() => applyWipLimit(statusName)}
+              onClearWipLimit={() => clearWipLimit(statusName)}
+              onMenuEscape={() => (menuCol = null)}
+              onWipEscape={() => {
+                wipEditCol = null
+                wipEditError = ''
+              }}
+              onColDragStart={(e) => onColDragStart(e, colIdx)}
+              onColDragOver={(e) => onColDragOver(e, colIdx)}
+              onColDrop={(e) => onColDrop(e, colIdx)}
+              onColDragEnd={() => (colDragIndex = null)}
+            />
             <div
               class="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2 min-h-25"
             >
               {#each cards as card, i (card.id)}
-                <div
-                  data-card={card.id}
-                  data-index={i}
-                  role="button"
-                  tabindex="0"
-                  aria-grabbed={draggingId === card.id ? 'true' : 'false'}
-                  aria-label={`${card.clean_content}, ${col.label}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}${card.subtask_total > 0 ? `, ${card.subtask_done} of ${card.subtask_total} subtasks done` : ''}.${dndEnabled ? ' Arrow keys change ' + groupBy + '.' : ''}`}
-                  draggable={dndEnabled ? 'true' : 'false'}
-                  animate:flip={{ duration: 200, easing: cubicOut }}
-                  class="group relative bg-surface-card border border-surface-card-border rounded-lg p-3 transition-all duration-200 hover:bg-hover hover:-translate-y-px hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent-primary-start/40 {card.status ===
-                  'DOING'
-                    ? 'border-l-2 border-l-accent-secondary-start'
-                    : ''} {dndEnabled ? 'cursor-grab' : ''} {draggingId ===
-                  card.id
-                    ? 'opacity-40 rotate-2'
-                    : ''} {dragOverCardId === card.id
-                    ? 'ring-2 ring-accent-primary-start/60'
-                    : ''}"
-                  ondragstart={(e) => onDragStart(e, card, col.key)}
-                  ondragend={cleanupDrag}
-                  ondragover={(e) => onCardDragOver(e, card, col)}
-                  ondragleave={() => {
-                    if (dragOverCardId === card.id) dragOverCardId = null
-                  }}
-                  ondrop={(e) => onCardDrop(e, card, col)}
-                  onkeydown={(e) => onCardKeydown(e, card, col)}
-                  onclick={() => (selectedCard = card)}
-                >
-                  {#if card.pinned}
-                    <span
-                      class="material-symbols-outlined absolute top-2 right-2 text-icon-sm text-accent-primary-start"
-                      aria-label="pinned">push_pin</span
-                    >
-                  {/if}
-                  <div class="flex justify-between items-start mb-2 gap-2">
-                    {#if card.priority && card.priority <= 3}
-                      <span
-                        class="px-1.5 py-0.5 border rounded-sm font-label-sm text-type-3xs uppercase tracking-wide {priorityClass(
-                          card.priority
-                        )}"
-                      >
-                        {PRIORITY_LABELS[card.priority] ?? 'Normal'}
-                      </span>
-                    {/if}
-                    {#if card.status === 'DONE'}
-                      <span
-                        class="material-symbols-outlined text-accent-primary-start text-icon-md {card.pinned
-                          ? ''
-                          : 'ml-auto'}">check_circle</span
-                      >
-                    {/if}
-                  </div>
-                  <p
-                    class="text-type-md font-body-md text-text-primary mb-2 {card.status ===
-                    'DONE'
-                      ? 'line-through opacity-60'
-                      : ''}"
-                  >
-                    {card.clean_content}
-                  </p>
-                  {#if card.progress > 0}
-                    <div
-                      class="h-0.5 bg-surface-panel rounded overflow-hidden mb-2"
-                    >
-                      <div
-                        class="h-full bg-accent-secondary-start transition-all"
-                        style="width: {card.progress}%"
-                      ></div>
-                    </div>
-                  {/if}
-                  <div class="flex justify-between items-center gap-2">
-                    <div class="flex items-center gap-1.5">
-                      {#if card.subtask_total > 0}
-                        <span
-                          class="text-type-3xs text-text-muted font-label-sm"
-                          data-testid={`board-subtask-badge-${card.id}`}
-                          title={`${card.subtask_done} of ${card.subtask_total} subtasks done`}
-                          aria-label={`${card.subtask_done} of ${card.subtask_total} subtasks done`}
-                        >
-                          [{card.subtask_done}/{card.subtask_total}]
-                        </span>
-                      {/if}
-                      {#if card.owner}
-                        <span
-                          class="text-type-3xs text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded-sm px-1.5 py-0.5 font-label-sm"
-                        >
-                          [{card.owner}]
-                        </span>
-                      {/if}
-                    </div>
-                    <div class="flex items-center gap-1.5">
-                      {#if card.comments_count > 0}
-                        <span
-                          class="text-type-3xs text-text-muted font-label-sm flex items-center gap-0.5"
-                          title="{card.comments_count} comments"
-                        >
-                          <span class="material-symbols-outlined text-icon-xs"
-                            >chat_bubble</span
-                          >
-                          {card.comments_count}
-                        </span>
-                      {/if}
-                      {#if card.links_count > 0}
-                        <span
-                          class="text-type-3xs text-text-muted font-label-sm flex items-center gap-0.5"
-                          title="{card.links_count} links"
-                        >
-                          <span class="material-symbols-outlined text-icon-xs"
-                            >link</span
-                          >
-                          {card.links_count}
-                        </span>
-                      {/if}
-                      {#if card.due_date}
-                        <span
-                          class="text-type-3xs {card.status === 'DONE'
-                            ? 'text-text-muted'
-                            : dueDateTextClass(
-                                dueDateClass(card.due_date, today)
-                              )} font-label-sm flex items-center gap-0.5"
-                        >
-                          <span class="material-symbols-outlined text-icon-xs"
-                            >schedule</span
-                          >
-                          {card.due_date}
-                        </span>
-                      {/if}
-                      {#if card.recurrence}
-                        <span
-                          class="text-accent-secondary-start flex items-center"
-                          title="Recurring: {card.recurrence}"
-                        >
-                          <span
-                            class="material-symbols-outlined text-icon-xs"
-                            aria-hidden="true">event_repeat</span
-                          >
-                        </span>
-                      {/if}
-                      {#if card.is_blocked}
-                        <span
-                          class="text-status-warn flex items-center"
-                          role="img"
-                          title="Blocked by unfinished prerequisite task(s)"
-                          aria-label="Blocked by unfinished prerequisite task(s)"
-                        >
-                          <span
-                            class="material-symbols-outlined text-icon-xs"
-                            aria-hidden="true">lock</span
-                          >
-                        </span>
-                      {/if}
-                    </div>
-                  </div>
+                <div animate:flip={{ duration: 200, easing: cubicOut }}>
+                  <TaskCard
+                    {card}
+                    index={i}
+                    colLabel={col.label}
+                    {dndEnabled}
+                    {groupBy}
+                    {today}
+                    dragging={draggingId === card.id}
+                    dragOver={dragOverCardId === card.id}
+                    onDragStart={(e) => onDragStart(e, card, col.key)}
+                    onDragEnd={cleanupDrag}
+                    onCardDragOver={(e) => onCardDragOver(e, card, col)}
+                    onCardDragLeave={() => {
+                      if (dragOverCardId === card.id) dragOverCardId = null
+                    }}
+                    onCardDrop={(e) => onCardDrop(e, card, col)}
+                    onKeydown={(e) => onCardKeydown(e, card, col)}
+                    onSelect={() => (selectedCard = card)}
+                  />
                 </div>
               {/each}
               {#if cards.length === 0}
