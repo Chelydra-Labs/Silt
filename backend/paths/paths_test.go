@@ -34,8 +34,8 @@ func TestVaultKey(t *testing.T) {
 	a := t.TempDir()
 	b := t.TempDir()
 	ka, kb := VaultKey(a), VaultKey(b)
-	if len(ka) != 16 {
-		t.Errorf("len(VaultKey) = %d, want 16 hex chars", len(ka))
+	if len(ka) != 64 {
+		t.Errorf("len(VaultKey) = %d, want 64 hex chars (full sha256)", len(ka))
 	}
 	if ka == kb {
 		t.Errorf("distinct vaults collided on key %q", ka)
@@ -46,13 +46,15 @@ func TestVaultKey(t *testing.T) {
 }
 
 func TestVaultKey_CaseInsensitiveOnCIFilesystems(t *testing.T) {
-	// On case-insensitive filesystems (Windows, macOS) equivalent casings
-	// must share a key so one physical vault maps to one index directory. On a
-	// case-sensitive filesystem (Linux) they differ, which is acceptable.
+	// Windows folds case (its filesystems are case-insensitive by default) so
+	// equivalent casings share a key. macOS is intentionally NOT folded: default
+	// macOS is case-insensitive (duplicate-index waste, harmless) but
+	// case-sensitive HFS/APFS is supported and folding would corrupt by
+	// colliding two distinct physical vaults.
 	tmp := t.TempDir()
 	if VaultKey(filepath.Join(tmp, "Vault")) != VaultKey(filepath.Join(tmp, "vault")) {
-		if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
-			t.Errorf("case variants should share a key on %s", runtime.GOOS)
+		if runtime.GOOS == "windows" {
+			t.Errorf("case variants should share a key on Windows")
 		}
 	}
 }

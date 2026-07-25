@@ -34,39 +34,48 @@ func TestMigrateDictionaryCacheDirs_HappyPath(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(new, "manifest.json")); err != nil {
 		t.Errorf("new missing manifest.json: %v", err)
 	}
+	// The commit sentinel is written (the crash-safety commit point).
+	if _, err := os.Stat(filepath.Join(new, dictMigratedSentinel)); err != nil {
+		t.Error("commit sentinel should be written after a successful migration")
+	}
 	// Old is removed after a successful migration.
 	if _, err := os.Stat(old); err == nil {
 		t.Error("legacy cache should be removed after migration")
 	}
 }
 
-func TestMigrateDictionaryCacheDirs_NewPopulatedIsNoOp(t *testing.T) {
+func TestMigrateDictionaryCacheDirs_AlreadyMigratedIsNoOp(t *testing.T) {
 	old := t.TempDir()
 	new := t.TempDir()
 	writeDictFile(t, filepath.Join(old, "domains", "legacy", "words.txt"), "legacy")
 	writeDictFile(t, filepath.Join(new, "domains", "existing", "words.txt"), "existing")
+	// Mark new as already migrated (sentinel present).
+	if err := os.WriteFile(filepath.Join(new, dictMigratedSentinel), []byte("migrated\n"), 0o644); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
 
 	migrateDictionaryCacheDirs(old, new)
 
-	// New is untouched (it already held content).
-	entries, _ := os.ReadDir(new)
-	if got := countFiles(new); got != 1 {
-		t.Errorf("new should be unchanged (1 file), got %d", got)
+	// Sentinel short-circuits: new is untouched and the legacy cache is left.
+	if _, err := os.Stat(filepath.Join(new, "domains", "existing", "words.txt")); err != nil {
+		t.Error("existing new file should remain (migration is a no-op)")
 	}
-	// Old is left in place (migration skipped).
 	if _, err := os.Stat(filepath.Join(old, "domains", "legacy", "words.txt")); err != nil {
-		t.Error("legacy cache should remain when new is already populated")
+		t.Error("legacy cache should remain when new is already migrated")
 	}
-	_ = entries
 }
 
-func TestMigrateDictionaryCacheDirs_FreshInstallEmptyOld(t *testing.T) {
-	old := t.TempDir() // exists but empty (no legacy cache)
+func TestMigrateDictionaryCacheDirs_EmptyLegacyDir(t *testing.T) {
+	// An empty legacy dir has nothing to copy, but the migration still commits
+	// (writes the sentinel) and removes the empty legacy location.
+	old := t.TempDir()
 	new := t.TempDir()
 	migrateDictionaryCacheDirs(old, new)
-	// Nothing to migrate → new stays empty; old stays empty.
-	if got := countFiles(new); got != 0 {
-		t.Errorf("new should be empty on fresh install, got %d files", got)
+	if _, err := os.Stat(filepath.Join(new, dictMigratedSentinel)); err != nil {
+		t.Error("sentinel should be written even for an empty legacy cache")
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Error("empty legacy dir should be removed")
 	}
 }
 

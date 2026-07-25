@@ -8,8 +8,13 @@ import (
 	"sync"
 )
 
+// dictMigratedSentinel is written to the new cache directory only after a full
+// successful copy — the commit point so a crash mid-copy re-runs cleanly.
+const dictMigratedSentinel = ".migrated"
+
 // migrateCacheOnce ensures the one-time dictionary-cache relocation runs at
-// most once per process, lazily on the first real CacheRoot() call.
+// most once per process (kicked off at app startup, or lazily on the first
+// CacheRoot() call as a fallback).
 var migrateCacheOnce sync.Once
 
 // migrateDictionaryCacheOnce performs a one-time relocation of the dictionary
@@ -37,13 +42,25 @@ func migrateDictionaryCacheOnce() {
 	})
 }
 
+// MigrateDictionaryCache triggers the one-time dictionary-cache relocation. It
+// is safe to call repeatedly (sync.Once-guarded). Intended to be kicked off at
+// app startup so the copy does not block the first user-facing spellcheck IPC;
+// CacheRoot also calls it lazily as a fallback.
+func MigrateDictionaryCache() {
+	migrateDictionaryCacheOnce()
+}
+
 // migrateDictionaryCacheDirs copies the legacy dictionary cache at old into new
-// and removes old on success. Idempotent: if new already holds content, it is a
-// no-op (a prior migration completed). If old is absent, nothing is done (fresh
-// install). A copy failure aborts and leaves old intact for safety.
+// and removes old on success. Crash-safe and idempotent: a `.migrated` sentinel
+// in new is the commit point — its presence means a prior copy completed. If
+// the sentinel is absent but old exists, the copy re-runs (copyTree overwrites
+// per-file, so a half-copied new from a prior crash is completed, not reset).
+// If old is absent, nothing is migrated (fresh install). A copy failure aborts
+// and leaves old intact for safety; the cache re-downloads on demand.
 func migrateDictionaryCacheDirs(old, new string) {
-	if entries, err := os.ReadDir(new); err == nil && len(entries) > 0 {
-		return // new cache already populated
+	sentinel := filepath.Join(new, dictMigratedSentinel)
+	if _, err := os.Stat(sentinel); err == nil {
+		return // a prior migration completed
 	}
 	entries, err := os.ReadDir(old)
 	if err != nil {
@@ -58,6 +75,12 @@ func migrateDictionaryCacheDirs(old, new string) {
 			log.Printf("spellcheck: dictionary cache migration aborted at %s: %v (legacy cache left in place)", e.Name(), err)
 			return
 		}
+	}
+	// Commit point: write the sentinel only after the full copy succeeds, so a
+	// crash mid-copy re-runs cleanly on the next launch.
+	if err := os.WriteFile(sentinel, []byte("migrated\n"), 0o644); err != nil {
+		log.Printf("spellcheck: dictionary cache migration: could not write marker: %v", err)
+		return
 	}
 	if err := os.RemoveAll(old); err != nil {
 		log.Printf("spellcheck: dictionary cache migration: could not remove legacy %s: %v", old, err)
@@ -100,6 +123,11 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	// Durably flush before close so a crash does not leave a half-written pack.
+	if err := out.Sync(); err != nil {
 		out.Close()
 		return err
 	}

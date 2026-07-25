@@ -22,6 +22,7 @@ import (
 	"silt/backend/monitor"
 	"silt/backend/parser"
 	"silt/backend/paths"
+	"silt/backend/spellcheck"
 	"silt/backend/templates"
 	"silt/backend/vault"
 
@@ -312,6 +313,10 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 	a.ctx = ctx
 	a.wailsApp = application.Get()
 	a.aiCtx, a.aiCtxCancel = context.WithCancel(context.Background())
+	// Front-load the one-time dictionary-cache relocation so the first
+	// spellcheck action is not blocked by the copy. CacheRoot also calls it
+	// lazily as a fallback; sync.Once dedupes the two paths.
+	go spellcheck.MigrateDictionaryCache()
 	settings, err := vault.LoadSettings()
 	if err != nil && !errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
 		// The settings file exists on disk but is unreadable or

@@ -1645,6 +1645,56 @@ func TestCloseVault_ReopenUsesWarmRestart(t *testing.T) {
 	}
 }
 
+// TestPluginRODB_ReadsRelocatedIndex confirms the plugin read-only handle
+// resolves the relocated (out-of-vault) index path via db.Path() and reads the
+// index from there — the relocation transparency contract (AC6).
+func TestPluginRODB_ReadsRelocatedIndex(t *testing.T) {
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
+	vaultPath := t.TempDir()
+	if err := vault.ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault: %v", err)
+	}
+	writeFile(t, filepath.Join(vaultPath, "Work", "Inbox.md"),
+		"# Inbox\n- [ ] task <!-- id: 33333333-3333-3333-3333-333333333333 -->\n")
+
+	app := &App{spacesPerTab: 4}
+	if err := app.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("initializeVaultServices: %v", err)
+	}
+	defer app.CloseVault()
+
+	// The DB manager's path is the relocated DataDir path (not in the vault) —
+	// which is exactly what the plugin read-only handle resolves via db.Path().
+	dbPath := app.db.Path()
+	if dbPath == "" {
+		t.Fatal("expected an on-disk relocated index path, got in-memory")
+	}
+	expected, err := paths.LocalIndexPath(vaultPath)
+	if err != nil {
+		t.Fatalf("LocalIndexPath: %v", err)
+	}
+	if dbPath != expected {
+		t.Errorf("db.Path() = %q, want relocated %q", dbPath, expected)
+	}
+	vaultSystem := strings.ToLower(filepath.Join(vaultPath, ".system"))
+	if strings.HasPrefix(strings.ToLower(dbPath), vaultSystem) {
+		t.Errorf("db.Path() must not be inside the vault's .system dir: %q", dbPath)
+	}
+
+	// The plugin read-only handle opens against that path and reads the index.
+	ro, err := app.openPluginRODB()
+	if err != nil {
+		t.Fatalf("openPluginRODB: %v", err)
+	}
+	var n int
+	if err := ro.QueryRow("SELECT count(*) FROM blocks").Scan(&n); err != nil {
+		t.Fatalf("plugin RO query against relocated index: %v", err)
+	}
+	if n == 0 {
+		t.Error("plugin RO handle read 0 blocks from the relocated index")
+	}
+}
+
 func TestGetAppVersion_MatchesEmbeddedVersion(t *testing.T) {
 	app := newTestApp(t)
 	got := app.GetAppVersion()
