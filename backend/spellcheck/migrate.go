@@ -111,6 +111,9 @@ func copyTree(src, dst string) error {
 	})
 }
 
+// copyFile copies src to dst preserving the file mode. The caller must ensure
+// dst's parent directory exists (copyTree does, via filepath.Walk visiting
+// parents first); OpenFile fails loudly if it does not.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -119,9 +122,6 @@ func copyFile(src, dst string) error {
 	defer in.Close()
 	info, err := in.Stat()
 	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), info.Mode()); err != nil {
 		return err
 	}
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())

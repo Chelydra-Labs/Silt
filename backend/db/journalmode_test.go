@@ -161,14 +161,16 @@ func TestWithBoundedRetry(t *testing.T) {
 
 	t.Run("context cancelled aborts", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		var calls int32
-		// Cancel during the first sleep (before the 2nd attempt).
-		go func() {
-			time.Sleep(base / 2)
-			cancel()
-		}()
 		err := withBoundedRetry(ctx, 5, base, cap, retryAny, func() error {
-			atomic.AddInt32(&calls, 1)
+			if atomic.AddInt32(&calls, 1) == 1 {
+				// Cancel during the first attempt so the inter-attempt sleep
+				// aborts. Cancelling inside op() (rather than via a racing
+				// goroutine + time.Sleep) makes the test deterministic and
+				// immune to coarse timer granularity flipping the select.
+				cancel()
+			}
 			return sentinel
 		})
 		if !errors.Is(err, context.Canceled) {

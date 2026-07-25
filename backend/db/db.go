@@ -33,10 +33,12 @@ func IsNetworkFS(path string) error {
 	return detectNetworkFilesystem(path)
 }
 
-// ErrWALRejected is returned when the database is on-disk but SQLite did not
-// accept WAL mode (the PRAGMA returned a different journal mode). This is a
-// belt-and-suspenders check: some mounts silently downgrade away from WAL
-// without erroring (#79).
+// ErrWALRejected labels a structural WAL rejection: the database is on-disk
+// but SQLite did not accept WAL mode (the PRAGMA returned a different journal
+// mode, or the mount silently downgraded). It is wrapped into the cause carried
+// by applyJournalMode's degraded-mode warning (not surfaced as a hard error);
+// classifyWALFallback uses it to mark the silent-downgrade case as structural
+// rather than transient.
 var ErrWALRejected = errors.New("WAL mode rejected by the filesystem")
 
 // ErrDBClosed is returned by DatabaseManager methods after Close. Callers

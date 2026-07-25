@@ -166,3 +166,57 @@ func TestMigrateIndex_CorruptSourceFallsBack(t *testing.T) {
 		t.Error("newPath should not exist after a failed migration")
 	}
 }
+
+// TestMigrateIndex_RecoversFromPartialCrash exercises the crash-recovery
+// branch: a prior migration crashed after renaming a partial/garbage main file
+// but before writing the commit sentinel, so the sentinel is absent while a
+// partial newPath and the legacy source both exist. The next run must clear the
+// partial newPath and re-copy cleanly from the legacy source — the sentinel's
+// whole purpose.
+func TestMigrateIndex_RecoversFromPartialCrash(t *testing.T) {
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
+	vault := t.TempDir()
+	writeWALLegacyIndex(t, vault) // valid legacy (legacy + -wal carrying the marker)
+	legacy := LegacyIndexPath(vault)
+
+	newPath, err := LocalIndexPath(vault)
+	if err != nil {
+		t.Fatalf("LocalIndexPath: %v", err)
+	}
+	// Simulate a crashed prior run: a garbage newPath with no commit sentinel,
+	// and the legacy source still present.
+	if err := os.WriteFile(newPath, []byte("partial garbage from a crashed rename"), 0o644); err != nil {
+		t.Fatalf("seed partial newPath: %v", err)
+	}
+
+	_, warnings, err := ResolveAndMigrateIndexPath(vault)
+	if err != nil {
+		t.Fatalf("ResolveAndMigrateIndexPath: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected a clean re-migration, got warnings: %v", warnings)
+	}
+
+	// The partial newPath was cleared and replaced by the valid legacy copy.
+	got, err := sql.Open("sqlite", newPath)
+	if err != nil {
+		t.Fatalf("open migrated index: %v", err)
+	}
+	defer got.Close()
+	got.SetMaxOpenConns(1)
+	var v string
+	if err := got.QueryRow("SELECT v FROM marker").Scan(&v); err != nil {
+		t.Fatalf("marker should survive the re-copy from legacy: %v", err)
+	}
+	if v != "warm-start-payload" {
+		t.Errorf("marker = %q, want warm-start-payload", v)
+	}
+	// The commit sentinel is written (crash recovery completed).
+	if _, err := os.Stat(migratedSentinelPath(newPath)); err != nil {
+		t.Error("sentinel should be written after crash recovery")
+	}
+	// The legacy source is removed after the successful re-migration.
+	if _, err := os.Stat(legacy); err == nil {
+		t.Error("legacy should be removed after crash recovery")
+	}
+}
