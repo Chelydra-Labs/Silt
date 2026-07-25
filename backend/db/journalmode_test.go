@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -202,7 +203,7 @@ func TestJournalModeCache(t *testing.T) {
 
 func TestApplyJournalMode_InMemoryNoWarning(t *testing.T) {
 	dm := newTestDB(t) // in-memory (path == "")
-	mode, warn, err := dm.applyJournalMode(context.Background(), dm.SQLDB())
+	mode, warn, err := dm.applyJournalMode(context.Background(), dm.SQLDB(), defaultWALAttempter(dm.SQLDB()))
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -222,7 +223,7 @@ func TestApplyJournalMode_OnDiskWAL(t *testing.T) {
 	t.Cleanup(resetJournalModeCacheForTest)
 
 	dm, _ := newOnDiskDB(t) // real on-disk WAL DB on local temp dir
-	mode, warn, err := dm.applyJournalMode(context.Background(), dm.SQLDB())
+	mode, warn, err := dm.applyJournalMode(context.Background(), dm.SQLDB(), defaultWALAttempter(dm.SQLDB()))
 	if err != nil {
 		t.Fatalf("err = %v, want nil (local disk supports WAL)", err)
 	}
@@ -237,4 +238,94 @@ func TestApplyJournalMode_OnDiskWAL(t *testing.T) {
 	if m, ok := cachedJournalMode(dir); !ok || m != "wal" {
 		t.Errorf("cache = %q,%t, want wal,true", m, ok)
 	}
+}
+
+// TestClassifyWALFallback exercises the pure fallback decision (the PR's core
+// claim) without a live database. The transient-IOERR/BUSY classification
+// itself is covered by TestIsTransientResultCode; here the read-flake and
+// silent-downgrade paths drive the transient-vs-structural outcomes directly.
+func TestClassifyWALFallback(t *testing.T) {
+	const dir = "/idx/key"
+	readFlake := errors.New("transient PRAGMA read flake")
+	structuralErr := errors.New("structural: not a sqlite error")
+
+	cases := []struct {
+		name       string
+		walErr     error
+		reported   string
+		readErr    error
+		structural bool
+		warnSub    string
+	}{
+		{"non-transient walErr -> structural", structuralErr, "", nil, true, "cannot use WAL"},
+		{"silent downgrade -> structural", nil, "delete", nil, true, "cannot use WAL"},
+		{"read flake -> transient", nil, "", readFlake, false, "Restarting Silt"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			structural, warn := classifyWALFallback(dir, c.walErr, c.reported, c.readErr)
+			if structural != c.structural {
+				t.Errorf("structural = %v, want %v", structural, c.structural)
+			}
+			if !strings.Contains(warn, c.warnSub) {
+				t.Errorf("warning = %q, want substring %q", warn, c.warnSub)
+			}
+			if !strings.Contains(warn, dir) {
+				t.Errorf("warning should name the dir %q: %q", dir, warn)
+			}
+		})
+	}
+}
+
+// TestApplyJournalMode_FallbackDecision drives applyJournalMode's fallback
+// branch end-to-end with injected walAttempter fakes, locking the core
+// contract: a structural rejection caches the directory as truncate-only,
+// while a transient outcome does NOT cache it (a later open re-probes WAL).
+func TestApplyJournalMode_FallbackDecision(t *testing.T) {
+	resetJournalModeCacheForTest()
+	t.Cleanup(resetJournalModeCacheForTest)
+
+	dm, _ := newOnDiskDB(t)
+	db := dm.SQLDB()
+	dir := filepath.Dir(dm.Path())
+
+	t.Run("structural silent downgrade is cached", func(t *testing.T) {
+		resetJournalModeCacheForTest()
+		silentDowngrade := walAttempter(func(context.Context) (error, string, error) {
+			return nil, "delete", nil // set OK but the mount silently downgraded
+		})
+		mode, warn, err := dm.applyJournalMode(context.Background(), db, silentDowngrade)
+		if err != nil {
+			t.Fatalf("err = %v, want nil (TRUNCATE fallback succeeds)", err)
+		}
+		if mode != "truncate" {
+			t.Errorf("mode = %q, want truncate", mode)
+		}
+		if !strings.Contains(warn, "cannot use WAL") {
+			t.Errorf("warning = %q, want the structural message", warn)
+		}
+		if m, ok := cachedJournalMode(dir); !ok || m != "truncate" {
+			t.Errorf("structural rejection should cache truncate, got %q,%t", m, ok)
+		}
+	})
+
+	t.Run("transient read-flake is not cached", func(t *testing.T) {
+		resetJournalModeCacheForTest()
+		readFlake := walAttempter(func(context.Context) (error, string, error) {
+			return nil, "", errors.New("transient PRAGMA read flake")
+		})
+		mode, warn, err := dm.applyJournalMode(context.Background(), db, readFlake)
+		if err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if mode != "truncate" {
+			t.Errorf("mode = %q, want truncate", mode)
+		}
+		if !strings.Contains(warn, "Restarting Silt") {
+			t.Errorf("warning = %q, want the transient message", warn)
+		}
+		if _, ok := cachedJournalMode(dir); ok {
+			t.Error("transient outcome must NOT cache (a later open must re-probe WAL)")
+		}
+	})
 }

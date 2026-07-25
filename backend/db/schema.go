@@ -27,7 +27,7 @@ func (dm *DatabaseManager) initSchema() error {
 	// cloud-synced mount). A fallback records a non-fatal warning surfaced via
 	// DatabaseManager.Warnings(); a hard error only propagates if even
 	// TRUNCATE fails. The per-directory decision is cached for the session.
-	mode, walWarn, err := dm.applyJournalMode(context.Background(), db)
+	mode, walWarn, err := dm.applyJournalMode(context.Background(), db, defaultWALAttempter(db))
 	if err != nil {
 		return fmt.Errorf("failed to set journal mode: %w", err)
 	}

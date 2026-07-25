@@ -140,6 +140,30 @@ func resetJournalModeCacheForTest() {
 	journalModeCache = map[string]string{}
 }
 
+// walAttempter attempts to set WAL mode against the index and reports the
+// outcome: the WAL-set error (nil on success), the journal mode the DB
+// reported when the set succeeded (which may differ from "wal" on a silent
+// downgrade), and any error from the belt-and-suspenders mode read. It is
+// injected into applyJournalMode so the fallback decision is unit-testable
+// without a live database.
+type walAttempter func(ctx context.Context) (setErr error, reportedMode string, readErr error)
+
+// defaultWALAttempter is the production walAttempter: retry the WAL PRAGMA on
+// transient locks, then re-read the mode (a silent downgrade is structural).
+func defaultWALAttempter(db *sql.DB) walAttempter {
+	return func(ctx context.Context) (error, string, error) {
+		setErr := withBoundedRetry(ctx, walRetryMaxAttempts, walRetryBaseDelay, walRetryCapDelay, isTransientWALErr, func() error {
+			_, err := db.Exec("PRAGMA journal_mode = WAL;")
+			return err
+		})
+		if setErr != nil {
+			return setErr, "", nil
+		}
+		reported, readErr := readJournalMode(db)
+		return nil, reported, readErr
+	}
+}
+
 // applyJournalMode selects and applies the SQLite journal mode for the index,
 // resilient to transient locks on cloud-synced/network folders.
 //
@@ -147,11 +171,8 @@ func resetJournalModeCacheForTest() {
 //  1. In-memory DB (dm.path == ""): WAL PRAGMA is a no-op; mode stays "memory".
 //  2. If the parent dir is already known (cached) to structurally reject WAL,
 //     set TRUNCATE directly, skipping the retry budget.
-//  3. Otherwise retry `PRAGMA journal_mode = WAL` with bounded jittered backoff
-//     on transient IOERR/BUSY.
-//  4. After a successful PRAGMA, belt-and-suspenders re-read the mode (#79):
-//     some mounts silently downgrade away from WAL.
-//  5. On failure, fall back to TRUNCATE (a rollback journal needs no shared
+//  3. Otherwise use attempt to set WAL (retry + belt-and-suspenders mode read).
+//  4. On failure, fall back to TRUNCATE (a rollback journal needs no shared
 //     memory, so it survives on a synced/network mount).
 //
 // A *transient* failure that exhausted the retry budget (a fleeting AV/sync
@@ -164,8 +185,8 @@ func resetJournalModeCacheForTest() {
 // degraded (non-WAL) mode, and a hard error only when even TRUNCATE fails (a
 // genuinely unusable index location). Called from initSchema under its
 // handle() lease, so it operates on the passed *sql.DB without re-entering
-// handle().
-func (dm *DatabaseManager) applyJournalMode(ctx context.Context, db *sql.DB) (mode, warning string, err error) {
+// handle(). The attempt func is injected for unit-testability.
+func (dm *DatabaseManager) applyJournalMode(ctx context.Context, db *sql.DB, attempt walAttempter) (mode, warning string, err error) {
 	if dm.path == "" {
 		// In-memory shared-cache DB: WAL is a safe no-op (mode stays "memory").
 		_, _ = db.Exec("PRAGMA journal_mode = WAL;")
@@ -182,32 +203,15 @@ func (dm *DatabaseManager) applyJournalMode(ctx context.Context, db *sql.DB) (mo
 		return "truncate", "", nil
 	}
 
-	// Try WAL with bounded retry on transient sync/AV locks.
-	walErr := withBoundedRetry(ctx, walRetryMaxAttempts, walRetryBaseDelay, walRetryCapDelay, isTransientWALErr, func() error {
-		_, err := db.Exec("PRAGMA journal_mode = WAL;")
-		return err
-	})
-
-	// structural is true unless the failure was a transient retry exhaustion.
-	structural := true
-	if walErr == nil {
-		reported, qerr := readJournalMode(db)
-		if qerr == nil && strings.EqualFold(reported, "wal") {
-			rememberJournalMode(dir, "wal")
-			return "wal", "", nil
-		}
-		if qerr != nil {
-			// A read flake is transient — don't pin the directory for it.
-			walErr = qerr
-			structural = false
-		} else {
-			// Silent downgrade (returned a non-wal mode) is structural.
-			walErr = fmt.Errorf("%w: PRAGMA journal_mode returned %q instead of %q", ErrWALRejected, reported, "wal")
-			structural = true
-		}
-	} else if isTransientWALErr(walErr) {
-		structural = false
+	// Attempt WAL; on a clean success we are done.
+	walErr, reported, readErr := attempt(ctx)
+	if walErr == nil && readErr == nil && strings.EqualFold(reported, "wal") {
+		rememberJournalMode(dir, "wal")
+		return "wal", "", nil
 	}
+
+	// Classify the fallback (structural vs transient) + build the warning.
+	structural, warn := classifyWALFallback(dir, walErr, reported, readErr)
 
 	// Fallback: TRUNCATE. No shared memory required.
 	if _, ferr := db.Exec("PRAGMA journal_mode = TRUNCATE;"); ferr != nil {
@@ -217,14 +221,42 @@ func (dm *DatabaseManager) applyJournalMode(ctx context.Context, db *sql.DB) (mo
 	}
 	if structural {
 		rememberJournalMode(dir, "truncate")
-		return "truncate", fmt.Sprintf(
-			"WAL journal mode is not supported at %s (%v); using TRUNCATE (rollback journal). The vault works, but this index location cannot use WAL — for best performance move the vault to a purely local folder.",
-			dir, walErr), nil
 	}
-	// Transient exhaustion: do NOT cache — a later open re-probes WAL.
-	return "truncate", fmt.Sprintf(
+	return "truncate", warn, nil
+}
+
+// classifyWALFallback decides, given a WAL attempt's outcome, whether the
+// fallback to TRUNCATE is structural (cache the dir as truncate-only) or
+// transient (do NOT cache; a later open re-probes WAL), and returns the
+// user-facing warning text. Pure function so the fallback decision — the PR's
+// core claim — is unit-testable without a live database:
+//
+//	walErr != nil, transient        → transient (retry exhausted)
+//	walErr != nil, non-transient    → structural
+//	walErr == nil, readErr != nil   → transient (a PRAGMA read flake)
+//	walErr == nil, mode != "wal"    → structural (silent downgrade)
+func classifyWALFallback(dir string, walErr error, reportedMode string, readErr error) (structural bool, warning string) {
+	var cause error
+	switch {
+	case walErr != nil:
+		cause = walErr
+		structural = !isTransientWALErr(walErr)
+	case readErr != nil:
+		cause = readErr
+		structural = false
+	default:
+		// Set succeeded but the reported mode was not "wal" — a silent downgrade.
+		cause = fmt.Errorf("%w: PRAGMA journal_mode returned %q instead of %q", ErrWALRejected, reportedMode, "wal")
+		structural = true
+	}
+	if structural {
+		return true, fmt.Sprintf(
+			"WAL journal mode is not supported at %s (%v); using TRUNCATE (rollback journal). The vault works, but this index location cannot use WAL — for best performance move the vault to a purely local folder.",
+			dir, cause)
+	}
+	return false, fmt.Sprintf(
 		"WAL setup failed after retries at %s (%v), likely a transient sync or antivirus lock; using TRUNCATE for this session. Restarting Silt may restore full performance.",
-		dir, walErr), nil
+		dir, cause)
 }
 
 // readJournalMode reads PRAGMA journal_mode, retrying once on a transient
