@@ -43,7 +43,7 @@
     monthWeeks as computeMonthWeeks
   } from '../../../../lib/dateGrid'
 
-  interface Props extends TaskViewProps {}
+  type Props = TaskViewProps
 
   let { ctx, onCountChange }: Props = $props()
 

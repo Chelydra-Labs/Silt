@@ -141,7 +141,7 @@ export function useNavCrud(deps: UseNavCrudDeps) {
   let deleteTarget = $state<LabeledDeleteTarget | null>(null)
   // trash | unlink | permanent — linked page/section hard-delete must not
   // claim vault trash recovery (#100 / #646).
-  let deleteTargetDisposition = $derived(
+  const deleteTargetDisposition = $derived(
     deleteTarget ? deleteDisposition(deps.getTree(), deleteTarget) : 'trash'
   )
 

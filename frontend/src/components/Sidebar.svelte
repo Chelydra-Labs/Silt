@@ -310,8 +310,6 @@
   let recentState = $derived(loader.recentState)
 
   let createMode = $derived(crud.createMode)
-  let editingMode = $derived(crud.editingMode)
-  let renameCtx = $derived(crud.renameCtx)
   let newName = $derived(crud.newName)
   let createError = $derived(crud.createError)
   let creating = $derived(crud.creating)
@@ -325,7 +323,6 @@
   let contextMenu = $derived(menu.contextMenu)
   let contextMenuUnlink = $derived(menu.contextMenuUnlink)
   let contextMenuPageRef = $derived(menu.contextMenuPageRef)
-  let contextNotebook = $derived(menu.contextNotebook)
   let contextUnavailable = $derived(menu.contextUnavailable)
   let contextMenuTargetId = $derived(menu.contextMenuTargetId)
 
@@ -336,7 +333,6 @@
   const setSidebarTab = loader.setSidebarTab
   const toggleFavorite = loader.toggleFavorite
   const openCreate = crud.openCreate
-  const openRename = crud.openRename
   const closeNamePrompt = crud.closeNamePrompt
   const handleCreate = crud.handleCreate
   const handleOpenNotebookFolder = crud.handleOpenNotebookFolder

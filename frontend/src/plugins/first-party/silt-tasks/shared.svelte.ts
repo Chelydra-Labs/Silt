@@ -19,7 +19,7 @@ import type { PluginContext } from '../../sdk'
  */
 export function useBlockChangedReload(
   ctx: PluginContext,
-  reload: () => void,
+  reload: () => void | Promise<void>,
   ms = 80
 ): void {
   let timer: ReturnType<typeof setTimeout> | null = null

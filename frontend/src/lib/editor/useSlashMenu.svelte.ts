@@ -6,6 +6,7 @@
 // onSelect. Branches that open a host-owned popover/picker call back into the
 // host so the slash logic stays decoupled from the editor's many UI surfaces.
 
+import { SvelteDate } from 'svelte/reactivity'
 import type { Editor } from 'svelte-tiptap'
 import {
   convertToBlock,
@@ -228,7 +229,7 @@ export function createSlashMenu(opts: SlashMenuOptions) {
         break
       case 'today': {
         const fmt = resolveDateFormat(settings.config?.editor?.date_format)
-        editor.commands.insertContent(formatDate(new Date(), fmt))
+        editor.commands.insertContent(formatDate(new SvelteDate(), fmt))
         break
       }
       case 'calendar':

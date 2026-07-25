@@ -82,11 +82,13 @@ export function useNavLoader(deps: UseNavLoaderDeps) {
     }
   })
 
-  let favoriteKeys = $derived(
+  const favoriteKeys = $derived(
     new SvelteSet(preferences.favorites.map((ref) => locatorKey(ref)))
   )
-  let favoriteState = $derived(reconcilePageRefs(tree, preferences.favorites))
-  let recentState = $derived(reconcilePageRefs(tree, preferences.recent_pages))
+  const favoriteState = $derived(reconcilePageRefs(tree, preferences.favorites))
+  const recentState = $derived(
+    reconcilePageRefs(tree, preferences.recent_pages)
+  )
 
   async function loadNavigation() {
     deps.onNavigationStatus?.(true, '')

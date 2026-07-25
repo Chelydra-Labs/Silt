@@ -59,7 +59,7 @@ export interface UseSidebarContextMenuDeps {
 export function useSidebarContextMenu(deps: UseSidebarContextMenuDeps) {
   let contextMenu = $state<ContextMenuState | null>(null)
 
-  let contextMenuPageRef = $derived.by(() => {
+  const contextMenuPageRef = $derived.by(() => {
     if (!contextMenu || contextMenu.level !== 'page') return null
     return {
       notebook: contextMenu.notebook,
@@ -67,11 +67,11 @@ export function useSidebarContextMenu(deps: UseSidebarContextMenuDeps) {
       page: contextMenu.page ?? ''
     }
   })
-  let contextNotebook = $derived(
+  const contextNotebook = $derived(
     contextMenu ? findNotebook(deps.getTree(), contextMenu.notebook) : undefined
   )
-  let contextUnavailable = $derived(!!contextNotebook?.disconnected)
-  let contextMenuTargetId = $derived.by(() => {
+  const contextUnavailable = $derived(!!contextNotebook?.disconnected)
+  const contextMenuTargetId = $derived.by(() => {
     if (!contextMenu) return ''
     if (contextMenu.level === 'notebook') {
       return `notebook:${encodeURIComponent(contextMenu.notebook)}`
@@ -85,7 +85,7 @@ export function useSidebarContextMenu(deps: UseSidebarContextMenuDeps) {
       page: contextMenu.page ?? ''
     })
   })
-  let contextMenuUnlink = $derived(
+  const contextMenuUnlink = $derived(
     !!contextMenu &&
       contextMenu.level === 'notebook' &&
       isLinkedNotebook(findNotebook(deps.getTree(), contextMenu.notebook))

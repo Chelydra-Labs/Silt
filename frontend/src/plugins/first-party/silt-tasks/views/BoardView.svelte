@@ -53,7 +53,7 @@
   import { nextManualOrder } from './manualOrder'
   import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
 
-  interface Props extends TaskViewProps {}
+  type Props = TaskViewProps
 
   let { ctx, onCountChange }: Props = $props()
 
@@ -1194,7 +1194,6 @@
               cardCount={cards.length}
               estimateSum={columnEstimateSum(cards)}
               {canManage}
-              {statusName}
               {wipLimit}
               {overWip}
               {dndEnabled}

@@ -16,12 +16,7 @@
 //     config:changed).
 
 import { GetOpenTabs, SetOpenTabs } from '../../../bindings/silt/app.js'
-import {
-  generateTabId,
-  setTabViewMode as setTabViewModeState,
-  type TabEntry,
-  type ViewMode
-} from '../tabs'
+import { generateTabId, type TabEntry, type ViewMode } from '../tabs'
 
 /** A persisted open-tab entry as it appears in config.yaml's ui.open_tabs. */
 export interface PersistedTabRef {

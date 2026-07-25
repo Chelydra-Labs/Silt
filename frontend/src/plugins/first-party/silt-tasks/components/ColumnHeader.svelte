@@ -3,7 +3,6 @@
   // parent; the board still owns all menu/rename/WIP-edit state and passes
   // pre-bound callbacks + bindable inputs (rename value, WIP draft).
   import { formatEstimateSum } from '../types'
-  import type { TaskDetail } from '../types'
 
   interface Props {
     colKey: string
@@ -12,7 +11,6 @@
     cardCount: number
     estimateSum: number
     canManage: boolean
-    statusName: string
     wipLimit: number | null
     overWip: boolean
     dndEnabled: boolean
@@ -45,7 +43,6 @@
     cardCount,
     estimateSum,
     canManage,
-    statusName,
     wipLimit,
     overWip,
     dndEnabled,
