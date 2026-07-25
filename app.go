@@ -21,6 +21,7 @@ import (
 	"silt/backend/mcp"
 	"silt/backend/monitor"
 	"silt/backend/parser"
+	"silt/backend/paths"
 	"silt/backend/templates"
 	"silt/backend/vault"
 
@@ -650,15 +651,23 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			provider))
 	}
 
-	// Persistent on-disk WAL index at <vault>/.system/index.sqlite. Survives
-	// restarts so a warm launch re-indexes only changed files (#29). Markdown
-	// remains the source of truth; deleting the 3 index files forces a clean
-	// full rebuild. The .system dir is created by ScaffoldVault.
+	// The .system dir holds per-vault app data (config.yaml, themes,
+	// templates, plugins, trash, logs); ensure it exists.
 	systemDir := filepath.Join(vaultPath, ".system")
 	if err := os.MkdirAll(systemDir, 0o700); err != nil {
 		return fmt.Errorf("failed to ensure .system dir: %w", err)
 	}
-	indexPath := filepath.Join(systemDir, "index.sqlite")
+
+	// The SQLite index lives in a per-user local DataDir (NOT in the synced
+	// vault), so a cloud-sync engine or antivirus cannot lock or corrupt it.
+	// On first open after upgrade, a legacy in-vault index is migrated to the
+	// new location, preserving warm-start performance. Markdown remains the
+	// source of truth — the index is reproducible working memory.
+	indexPath, migrateWarnings, err := paths.ResolveAndMigrateIndexPath(vaultPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve index location: %w", err)
+	}
+	storageWarnings = append(storageWarnings, migrateWarnings...)
 	dbMgr, err := db.NewDatabaseManager(indexPath)
 	if err != nil {
 		return fmt.Errorf("failed to start database: %w", err)

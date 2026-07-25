@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"silt/backend/paths"
 	"silt/backend/vault"
 )
 
@@ -63,9 +64,14 @@ func TestApp_ImportVault_OpensExtractedVault(t *testing.T) {
 		t.Errorf("post-import: task %s missing from %v", taskID, blocksAfter)
 	}
 
-	// 5. A fresh index was built at dest (never carried in the archive).
-	if _, err := os.Stat(filepath.Join(dest, ".system", "index.sqlite")); err != nil {
-		t.Errorf("dest should have a freshly-built index.sqlite: %v", err)
+	// 5. A fresh index was built at dest's relocated location (never carried in
+	//    the archive — the index is reproducible working memory).
+	destIndex, err := paths.LocalIndexPath(dest)
+	if err != nil {
+		t.Fatalf("LocalIndexPath(dest): %v", err)
+	}
+	if _, err := os.Stat(destIndex); err != nil {
+		t.Errorf("dest should have a freshly-built index at %s: %v", destIndex, err)
 	}
 
 	// 6. The source folder is untouched (import is non-destructive; the source

@@ -9,6 +9,7 @@ import (
 
 	"silt/backend/config"
 	"silt/backend/parser"
+	"silt/backend/paths"
 	"silt/backend/vault"
 )
 
@@ -35,6 +36,9 @@ func newMoveTestApp(t *testing.T) (*App, string) {
 	settingsDir := t.TempDir()
 	t.Setenv("APPDATA", settingsDir)
 	t.Setenv("XDG_CONFIG_HOME", settingsDir)
+	// Isolate the relocated index (per-user local DataDir) so the test never
+	// touches the host's real %LOCALAPPDATA%\Silt.
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
 
 	src := t.TempDir()
 	if err := vault.ScaffoldVault(src); err != nil {
@@ -59,6 +63,13 @@ func newMoveTestApp(t *testing.T) (*App, string) {
 		t.Fatalf("initializeVaultServices: %v", err)
 	}
 	t.Cleanup(func() { _ = app.CloseVault() })
+
+	// The production index is relocated to DataDir; seed a stale in-vault
+	// artifact so the archive/mover exclusion guard is exercised end-to-end
+	// (the guard stays for the migration window of a pre-relocation vault).
+	if err := os.WriteFile(filepath.Join(src, ".system", "index.sqlite"), []byte("SQLite format 3\x00"), 0o644); err != nil {
+		t.Fatalf("seed stale in-vault index: %v", err)
+	}
 	return app, src
 }
 
@@ -125,13 +136,22 @@ func TestMoveVault_HappyPath(t *testing.T) {
 		t.Errorf("post-move: task %s missing from blocks %v", taskID, blocksAfter)
 	}
 
-	// A fresh index was built at dest (not copied from src).
-	if _, err := os.Stat(filepath.Join(dest, ".system", "index.sqlite")); err != nil {
-		t.Errorf("dest should have a freshly-built index.sqlite: %v", err)
+	// A fresh index was built at dest's relocated location (not copied from
+	// src, and not inside the synced vault tree).
+	destIndex, err := paths.LocalIndexPath(dest)
+	if err != nil {
+		t.Fatalf("LocalIndexPath(dest): %v", err)
 	}
-	// The original is untouched because removeOld=false.
-	if _, err := os.Stat(filepath.Join(src, ".system", "index.sqlite")); err != nil {
-		t.Errorf("src index.sqlite should still exist (removeOld=false): %v", err)
+	if _, err := os.Stat(destIndex); err != nil {
+		t.Errorf("dest should have a freshly-built index at %s: %v", destIndex, err)
+	}
+	// The source's relocated index is untouched because removeOld=false.
+	srcIndex, err := paths.LocalIndexPath(src)
+	if err != nil {
+		t.Fatalf("LocalIndexPath(src): %v", err)
+	}
+	if _, err := os.Stat(srcIndex); err != nil {
+		t.Errorf("src index should still exist at %s (removeOld=false): %v", srcIndex, err)
 	}
 
 	// dest config.yaml notebooks.path was rewritten to the new location so the

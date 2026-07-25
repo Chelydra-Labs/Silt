@@ -16,6 +16,7 @@ import (
 	"silt/backend/db"
 	"silt/backend/monitor"
 	"silt/backend/parser"
+	"silt/backend/paths"
 	"silt/backend/plugins"
 	"silt/backend/vault"
 )
@@ -1588,6 +1589,9 @@ func TestCloseVault_ReopenUsesWarmRestart(t *testing.T) {
 	// we build a real app with initializeVaultServices against a scaffolded
 	// vault containing one note.
 	vaultPath := t.TempDir()
+	// Isolate the relocated index DataDir so the warm-restart index lands in a
+	// throwaway dir, not the host's real %LOCALAPPDATA%\Silt.
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
 	if err := vault.ScaffoldVault(vaultPath); err != nil {
 		t.Fatalf("ScaffoldVault: %v", err)
 	}
@@ -1608,7 +1612,10 @@ func TestCloseVault_ReopenUsesWarmRestart(t *testing.T) {
 	if count == 0 {
 		t.Fatal("expected blocks indexed on first init")
 	}
-	filesPath := filepath.Join(vaultPath, ".system", "index.sqlite")
+	filesPath, err := paths.LocalIndexPath(vaultPath)
+	if err != nil {
+		t.Fatalf("LocalIndexPath: %v", err)
+	}
 	if _, err := os.Stat(filesPath); err != nil {
 		t.Fatalf("on-disk index not created: %v", err)
 	}

@@ -66,10 +66,11 @@ type FileStat struct {
 	IndexedAt int64
 }
 
-// NewDatabaseManager opens the Silt index. Pass the on-disk path (typically
-// `<vault>/.system/index.sqlite`) for the production persistent WAL database,
-// or "" for an ephemeral in-memory shared-cache DB (used by tests and before a
-// vault is open).
+// NewDatabaseManager opens the Silt index. Pass the on-disk path (resolved by
+// paths.LocalIndexPath for production — a per-user local DataDir, no longer
+// inside the synced vault) for the production persistent WAL database, or ""
+// for an ephemeral in-memory shared-cache DB (used by tests and before a vault
+// is open).
 //
 // On-disk databases run in WAL mode (journal_mode is persistent in the file
 // header, so it is set once and inherited by every subsequent connection,
