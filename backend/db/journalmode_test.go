@@ -235,10 +235,11 @@ func TestApplyJournalMode_OnDiskWAL(t *testing.T) {
 	if warn != "" {
 		t.Errorf("warn = %q, want empty on clean WAL", warn)
 	}
-	// The decision should be cached for the dir.
+	// A clean WAL success is intentionally NOT cached (re-probing is cheap and
+	// required for a rebuilt index); only structurally-bad mounts are cached.
 	dir := filepath.Dir(dm.Path())
-	if m, ok := cachedJournalMode(dir); !ok || m != "wal" {
-		t.Errorf("cache = %q,%t, want wal,true", m, ok)
+	if _, ok := cachedJournalMode(dir); ok {
+		t.Errorf("clean WAL success should not populate the journal-mode cache")
 	}
 }
 

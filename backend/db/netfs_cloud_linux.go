@@ -22,6 +22,7 @@ func detectCloudSyncedFolder(path string) (provider string, ok bool) {
 func linuxCloudRoots() []cloudRoot {
 	var roots []cloudRoot
 	if home, err := os.UserHomeDir(); err == nil {
+		addRoot(&roots, filepath.Join(home, "OneDrive"), "Microsoft OneDrive")
 		addRoot(&roots, filepath.Join(home, "Dropbox"), "Dropbox")
 		addRoot(&roots, filepath.Join(home, "Google Drive"), "Google Drive")
 		addRoot(&roots, filepath.Join(home, "GoogleDrive"), "Google Drive")

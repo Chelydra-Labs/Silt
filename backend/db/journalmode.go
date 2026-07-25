@@ -206,7 +206,12 @@ func (dm *DatabaseManager) applyJournalMode(ctx context.Context, db *sql.DB, att
 	// Attempt WAL; on a clean success we are done.
 	walErr, reported, readErr := attempt(ctx)
 	if walErr == nil && readErr == nil && strings.EqualFold(reported, "wal") {
-		rememberJournalMode(dir, "wal")
+		// A successful WAL dir is intentionally NOT cached. journal_mode is
+		// persistent in the file header, so re-setting WAL each open is cheap
+		// (one Exec) and required for a freshly rebuilt index — caching "wal"
+		// and skipping the PRAGMA would leave a rebuilt index in the default
+		// journal mode. Only structurally-bad mounts are cached (to skip the
+		// retry budget); see classifyWALFallback.
 		return "wal", "", nil
 	}
 

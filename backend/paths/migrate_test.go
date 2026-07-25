@@ -220,3 +220,38 @@ func TestMigrateIndex_RecoversFromPartialCrash(t *testing.T) {
 		t.Error("legacy should be removed after crash recovery")
 	}
 }
+
+// TestMigrateIndex_SentinelSweepsOrphanedLegacy verifies that a second open,
+// finding the commit sentinel already present, sweeps a legacy trio left
+// behind when a prior migration's sentinel write succeeded but its legacy
+// removal failed (a locked source, or a crash between the two). Without the
+// sweep the legacy trio would linger in the synced vault forever.
+func TestMigrateIndex_SentinelSweepsOrphanedLegacy(t *testing.T) {
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
+	vault := t.TempDir()
+	legacy := LegacyIndexPath(vault)
+	writeWALLegacyIndex(t, vault) // a valid legacy trio (legacy + -wal + -shm)
+	newPath, err := LocalIndexPath(vault)
+	if err != nil {
+		t.Fatalf("LocalIndexPath: %v", err)
+	}
+	// Simulate a completed migration whose legacy removal failed: the sentinel
+	// is present but the legacy trio was never deleted.
+	if err := os.WriteFile(migratedSentinelPath(newPath), []byte("migrated\n"), 0o644); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+
+	_, warnings, err := ResolveAndMigrateIndexPath(vault)
+	if err != nil {
+		t.Fatalf("ResolveAndMigrateIndexPath: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected a clean no-op, got warnings: %v", warnings)
+	}
+	// The orphaned legacy trio is swept on the sentinel-hit path.
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if _, err := os.Stat(legacy + suffix); err == nil {
+			t.Errorf("orphaned legacy %s should be swept when the sentinel is present", legacy+suffix)
+		}
+	}
+}

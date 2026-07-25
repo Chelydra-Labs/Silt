@@ -8,7 +8,7 @@ Status: Accepted
 Cardinal rule #4 (ARCHITECTURE.md §0) states that SQLite is working memory,
 not a system of record: every row in the core index must be reproducible from
 markdown + YAML, and deleting
-`<DataDir>/Silt/indexes/<vault-key>/index.sqlite*` is the documented recovery
+`<DataDir>/silt/indexes/<vault-key>/index.sqlite*` is the documented recovery
 path. This keeps the core local-first contract simple and the recovery story
 clean.
 
@@ -24,7 +24,7 @@ Add a **plugin-owned storage tier**: each plugin MAY carry its own SQLite
 file at `<vault>/.system/plugins/<id>/data/plugin.db`, opened lazily on a
 **distinct** connection that is never `ATTACH`-able to the core index.
 
-- The **core index** (`<DataDir>/Silt/indexes/<vault-key>/index.sqlite*`)
+- The **core index** (`<DataDir>/silt/indexes/<vault-key>/index.sqlite*`)
   stays governed by rule #4 unchanged — working memory only, re-derivable,
   delete-to-recover.
 - The **plugin DB** is a separate, plugin-owned tier. The plugin owns its
@@ -57,6 +57,6 @@ the core contract.
   a paragraph in the SQLite section.
 - SPECS.md §8.6 and PLUGIN_DEVELOPMENT.md §8.11 mirror the contract.
 - The core recovery path (delete the file at
-  `<DataDir>/Silt/indexes/<vault-key>/index.sqlite*`) is unchanged; plugin
+  `<DataDir>/silt/indexes/<vault-key>/index.sqlite*`) is unchanged; plugin
   DBs are deleted separately on uninstall.
 - The AI sprints (20–23) build on this substrate.

@@ -38,6 +38,10 @@ func newTestApp(t *testing.T) *App {
 		t.Setenv("XDG_CONFIG_HOME", hostConfigDir)
 		t.Setenv("SILT_TEST_HOST_CONFIG", hostConfigDir)
 	}
+	// Isolate the relocated index (per-user local DataDir) so any test that
+	// re-initializes via initializeVaultServices writes to a throwaway dir, not
+	// the developer's real <DataDir>/silt.
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
 
 	if err := vault.ScaffoldVault(vaultPath); err != nil {
 		t.Fatalf("ScaffoldVault: %v", err)

@@ -25,8 +25,8 @@ func TestLocalDataDir_DefaultSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if filepath.Base(got) != "Silt" {
-		t.Errorf("LocalDataDir() = %q, want base %q", got, "Silt")
+	if filepath.Base(got) != "silt" {
+		t.Errorf("LocalDataDir() = %q, want base %q", got, "silt")
 	}
 }
 

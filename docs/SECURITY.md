@@ -29,7 +29,7 @@ Silt's persistent storage is layered (see `ARCHITECTURE.md §0`):
 | Linked-notebook config | `<linkedRoot>/.system/config.yaml` | Notebook-scoped; editable by M2 |
 | User-global settings | `<configDir>/silt/settings.json` | Host-scoped; editable by M3 |
 | Host-scoped grants | `<configDir>/silt/grants.json` | Host-scoped; editable by M3 |
-| SQLite index | `<DataDir>/Silt/indexes/<vault-key>/index.sqlite*` | Reproducible working memory (delete + rebuild) |
+| SQLite index | `<DataDir>/silt/indexes/<vault-key>/index.sqlite*` | Reproducible working memory (delete + rebuild) |
 
 The cardinal rule: **trust anchors that the user's safety depends on must be
 host-scoped (verified on this machine), not vault-scoped (editable by a sync

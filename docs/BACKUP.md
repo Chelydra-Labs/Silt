@@ -15,7 +15,7 @@ A `.silt-vault` archive is a single self-contained file containing:
 
 It deliberately **excludes** two things:
 
-- **The search index** (`<DataDir>/Silt/indexes/<vault-key>/index.sqlite*`)
+- **The search index** (`<DataDir>/silt/indexes/<vault-key>/index.sqlite*`)
   — it lives outside the vault in your OS local data dir, so it is never
   bundled into the archive. It is a cache that Silt rebuilds automatically
   from your notes when you import. Nothing is lost.

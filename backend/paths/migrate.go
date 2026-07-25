@@ -66,6 +66,12 @@ func migrateIndex(legacy, newPath string) []string {
 	// Committed gate: the sentinel is written only after the full rename set
 	// succeeds, so its presence means a complete migration.
 	if fileExists(sentinel) {
+		// Best-effort sweep of a legacy trio orphaned by a prior failed removal
+		// (a sentinel that committed but a legacy delete that failed or crashed
+		// between the two). Mirrors the dictionary migration's sentinel-hit
+		// sweep; without it the legacy trio would linger in the vault forever
+		// since the sentinel short-circuits every future run.
+		removeQuiet(legacy, legacy+"-wal", legacy+"-shm")
 		removeQuiet(newPath+migrateTmpSuffix, newPath+migrateTmpSuffix+"-wal", newPath+migrateTmpSuffix+"-shm")
 		return nil
 	}
@@ -105,6 +111,15 @@ func migrateIndex(legacy, newPath string) []string {
 		if fileExists(pair.tmp) {
 			if rErr := os.Rename(pair.tmp, pair.final); rErr != nil {
 				warnings = append(warnings, fmt.Sprintf("index migration: rename to %s: %v", pair.final, rErr))
+				if pair.final == newPath {
+					// The main index file did not land — the index is unusable
+					// without it. Clean up the temps and do NOT commit the
+					// sentinel, so the next launch re-migrates from the
+					// still-present legacy (a transparent retry) instead of
+					// pinning the user to a forced full reindex.
+					removeQuiet(tmpMain, tmpMain+"-wal", tmpMain+"-shm")
+					return warnings
+				}
 			}
 		}
 	}

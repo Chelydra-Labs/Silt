@@ -26,6 +26,11 @@ func contentSHA256(parts ...[]byte) string {
 // (dictionaries are downloadable/regenerable, so the OS cache dir is correct).
 func CacheRoot() (string, error) {
 	if override := strings.TrimSpace(os.Getenv("SILT_DICTIONARY_CACHE")); override != "" {
+		// Reject a relative override (mirrors paths.LocalDataDir): a relative
+		// path would resolve against the process cwd.
+		if !filepath.IsAbs(override) {
+			return "", fmt.Errorf("SILT_DICTIONARY_CACHE must be absolute, got %q", override)
+		}
 		return override, nil
 	}
 	migrateDictionaryCacheOnce()

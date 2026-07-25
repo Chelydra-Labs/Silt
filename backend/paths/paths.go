@@ -28,6 +28,13 @@ import (
 // regeneratable app data. Override with SILT_DATA_DIR (absolute) for tests.
 func LocalDataDir() (string, error) {
 	if override := strings.TrimSpace(os.Getenv("SILT_DATA_DIR")); override != "" {
+		// Reject a relative override: it would resolve against the process cwd
+		// and could place the index back inside a synced tree, reintroducing the
+		// exact corruption vector the relocation removed. Fail loud (mirrors the
+		// relative-XDG_DATA_HOME rejection below).
+		if !filepath.IsAbs(override) {
+			return "", fmt.Errorf("SILT_DATA_DIR must be absolute, got %q", override)
+		}
 		return override, nil
 	}
 	switch runtime.GOOS {
@@ -38,7 +45,7 @@ func LocalDataDir() (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("local data dir: %w", err)
 		}
-		return filepath.Join(base, "Silt"), nil
+		return filepath.Join(base, "silt"), nil
 	case "darwin":
 		// os.UserConfigDir() returns ~/Library/Application Support on macOS.
 		// ~/Library/Caches (os.UserCacheDir) is evicted under storage pressure
@@ -47,7 +54,7 @@ func LocalDataDir() (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("local data dir: %w", err)
 		}
-		return filepath.Join(base, "Silt"), nil
+		return filepath.Join(base, "silt"), nil
 	default:
 		// Linux/BSD: XDG_DATA_HOME or ~/.local/share. Per the XDG spec a
 		// relative XDG_DATA_HOME is invalid and is ignored (falling back to the
@@ -60,7 +67,7 @@ func LocalDataDir() (string, error) {
 			}
 			base = filepath.Join(home, ".local", "share")
 		}
-		return filepath.Join(base, "Silt"), nil
+		return filepath.Join(base, "silt"), nil
 	}
 }
 

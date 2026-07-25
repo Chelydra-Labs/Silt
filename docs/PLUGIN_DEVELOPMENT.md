@@ -636,7 +636,7 @@ A plugin that needs queryable private data — vector indexes, content-hash
 caches, agent memory — gets its **own** SQLite file at
 `<vault>/.system/plugins/<id>/data/plugin.db`. This is a **distinct**
 connection from the core index; it is never `ATTACH`-able to
-`<DataDir>/Silt/indexes/<vault-key>/index.sqlite`. The plugin owns its schema
+`<DataDir>/silt/indexes/<vault-key>/index.sqlite`. The plugin owns its schema
 and chooses durability semantics.
 
 Gated by the `plugin-db` capability. The API is deliberately minimal:
