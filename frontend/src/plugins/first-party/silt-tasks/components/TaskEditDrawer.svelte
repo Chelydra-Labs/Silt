@@ -6,14 +6,9 @@
   import { plusDaysISO } from '../../../sdk'
   import { trailingDebounce } from '../debounce'
   import { friendlyCaughtError } from '../errors'
+  import { optimisticField } from '../optimisticField.svelte'
   import ErrorBanner from './ErrorBanner.svelte'
 
-  // Coerce a caught value to a friendly meta-error string. Maps the backend
-  // focus-lock sentinel (#444) to actionable copy; passes everything else
-  // through so unknown failures stay diagnosable.
-  function errMsg(e: unknown): string {
-    return friendlyCaughtError(e)
-  }
   import type { TaskDetail } from '../types'
   import {
     PRIORITY_LABELS,
@@ -116,25 +111,87 @@
     task?.blocked_by ? task.blocked_by.split('|').filter(Boolean) : []
   )
 
-  // Local optimistic mirrors. The drawer is the only writer for these while
-  // open, so optimistic update + revert-on-error matches the host contract.
-  let pinState = $state(false)
+  // metaError is the shared failure banner for every metadata editor. Each
+  // optimisticField clears it ('') at commit start and sets it on revert, via
+  // the setMetaError / notifyMeta wirings below.
+  let metaError = $state('')
   let progressState = $state(0)
-  let recurrenceState = $state('')
-  let dueDateState = $state('')
-  let statusState = $state<TaskStatus>('TODO')
+  let progressPending = $state(false)
+
+  const notifyMeta = () => onMetaChanged?.()
+  const setMetaError = (m: string) => {
+    metaError = m
+  }
+
+  // Optimistic-commit fields. Each owns its { value, pending } and the
+  // snapshot → optimistic set → write → revert-on-error skeleton that every
+  // editor here used to duplicate (see ../optimisticField.svelte.ts). The
+  // per-field variations (popover close, anchor revert for status/priority,
+  // tag announcements, estimate validation) stay in the commit wrappers.
+  const pinField = optimisticField<boolean>({
+    initial: false,
+    write: (v) => ctx.updateTaskMeta(task!.id, { pinned: v }),
+    onChanged: notifyMeta,
+    onError: setMetaError
+  })
+  const recurrenceField = optimisticField<string>({
+    initial: '',
+    write: (v) => ctx.setTaskRecurrence(task!.id, v),
+    onChanged: notifyMeta,
+    onError: setMetaError
+  })
+  const dueDateField = optimisticField<string>({
+    initial: '',
+    write: (v) => ctx.setTaskDueDate(task!.id, v),
+    onChanged: notifyMeta,
+    onError: setMetaError
+  })
+  const statusField = optimisticField<TaskStatus>({
+    initial: 'TODO',
+    write: (s) => ctx.updateBlockState(task!.id, s),
+    onChanged: notifyMeta,
+    onError: setMetaError
+  })
+  const estimateField = optimisticField<string>({
+    initial: '',
+    write: (v) => ctx.setTaskEstimate(task!.id, v),
+    onChanged: notifyMeta,
+    onError: setMetaError
+  })
+  const ownerField = optimisticField<string>({
+    initial: '',
+    write: (v) => ctx.setTaskOwner(task!.id, v),
+    onChanged: notifyMeta,
+    onError: setMetaError
+  })
+  const priorityField = optimisticField<number>({
+    initial: 2,
+    write: (p) => ctx.setTaskPriority(task!.id, p),
+    onChanged: notifyMeta,
+    onError: setMetaError
+  })
+  const tagsField = optimisticField<string[]>({
+    initial: [],
+    write: (tags) => ctx.setTaskTags(task!.id, tags),
+    onChanged: notifyMeta,
+    onError: setMetaError
+  })
+  const titleField = optimisticField<string>({
+    initial: '',
+    write: (v) => ctx.setTaskTitle(task!.id, v),
+    onChanged: notifyMeta,
+    onError: setMetaError
+  })
+
   // statusCommitted is the anchor for revert: the last status successfully
   // persisted (or the task's authoritative value on load). #442: arrow-key
-  // navigation now flips statusState (local) instantly and debounces the
-  // commit; on commit failure statusState reverts to statusCommitted rather
-  // than the immediately-prior (possibly also-uncommitted) selection.
+  // navigation now flips statusField.value (local) instantly and debounces
+  // the commit; on commit failure statusField.value reverts to statusCommitted
+  // rather than the immediately-prior (possibly also-uncommitted) selection.
   let statusCommitted = $state<TaskStatus>('TODO')
-  let metaError = $state('')
-  let pinPending = $state(false)
-  let progressPending = $state(false)
-  let recurrencePending = $state(false)
-  let dueDatePending = $state(false)
-  let statusPending = $state(false)
+  // priorityCommitted mirrors statusCommitted for the priority radiogroup (#442).
+  let priorityCommitted = $state(2)
+
   let recurrenceOpen = $state(false)
   let dueDateOpen = $state(false)
   let recurrenceTrigger = $state<HTMLButtonElement | null>(null)
@@ -142,27 +199,14 @@
   let recurrenceFocusIdx = $state(-1)
   let customRecurrence = $state('')
 
-  // Local optimistic mirrors for the four #412 metadata editors. Each
-  // follows the same optimistic-update + revert-on-error contract as
-  // pin/progress/recurrence above.
-  let ownerState = $state('')
+  // Editable text inputs alongside the optimistic fields: ownerDraft /
+  // titleDraft hold the in-progress input (the committed value lives in
+  // ownerField / titleField); tagDraft is the chip-add input; tagsAnnouncement
+  // feeds the tag add/remove live region (a11y).
   let ownerDraft = $state('')
-  let ownerPending = $state(false)
-  let priorityState = $state(2)
-  let priorityPending = $state(false)
-  // priorityCommitted mirrors statusCommitted for the priority radiogroup (#442).
-  let priorityCommitted = $state(2)
-  let tagsState = $state<string[]>([])
-  let tagsPending = $state(false)
   let tagDraft = $state('')
-  // Live-region text announcing tag adds/removes (a11y).
   let tagsAnnouncement = $state('')
-  let titleState = $state('')
   let titleDraft = $state('')
-  let titlePending = $state(false)
-  // Estimate draft is the raw [estimate::] string (e.g. "2h"); empty clears.
-  let estimateDraft = $state('')
-  let estimatePending = $state(false)
   // True after a failed estimate save until the next successful edit/clear.
   let estimateInvalid = $state(false)
 
@@ -212,52 +256,42 @@
     // mustn't clobber the optimistic value. Without untrack, the pending
     // flag flipping to false after an error would re-fire this effect and
     // clear metaError before the user sees it.
-    if (untrack(() => !pinPending)) pinState = task?.pinned ? true : false
+    if (untrack(() => !pinField.pending))
+      pinField.reset(task?.pinned ? true : false)
     if (untrack(() => !progressPending)) progressState = task?.progress ?? 0
-    if (untrack(() => !recurrencePending))
-      recurrenceState = task?.recurrence ?? ''
-    if (untrack(() => !dueDatePending)) dueDateState = task?.due_date ?? ''
-    if (untrack(() => !statusPending)) {
-      statusState = task?.status ?? 'TODO'
+    if (untrack(() => !recurrenceField.pending))
+      recurrenceField.reset(task?.recurrence ?? '')
+    if (untrack(() => !dueDateField.pending))
+      dueDateField.reset(task?.due_date ?? '')
+    if (untrack(() => !statusField.pending)) {
+      statusField.reset(task?.status ?? 'TODO')
       statusCommitted = task?.status ?? 'TODO'
     }
-    if (untrack(() => !ownerPending)) {
-      ownerState = task?.owner ?? ''
+    if (untrack(() => !ownerField.pending)) {
+      ownerField.reset(task?.owner ?? '')
       ownerDraft = task?.owner ?? ''
     }
-    if (untrack(() => !priorityPending)) {
-      priorityState = task?.priority ?? 2
+    if (untrack(() => !priorityField.pending)) {
+      priorityField.reset(task?.priority ?? 2)
       priorityCommitted = task?.priority ?? 2
     }
-    if (untrack(() => !tagsPending)) {
-      tagsState = task?.tags ? task.tags.split('|').filter(Boolean) : []
+    if (untrack(() => !tagsField.pending)) {
+      tagsField.reset(task?.tags ? task.tags.split('|').filter(Boolean) : [])
     }
-    if (untrack(() => !titlePending)) {
-      titleState = task?.clean_content ?? ''
+    if (untrack(() => !titleField.pending)) {
+      titleField.reset(task?.clean_content ?? '')
       titleDraft = task?.clean_content ?? ''
     }
-    if (untrack(() => !estimatePending)) {
-      estimateDraft = formatEstimateMinutes(task?.estimate_minutes)
+    if (untrack(() => !estimateField.pending)) {
+      estimateField.reset(formatEstimateMinutes(task?.estimate_minutes))
       estimateInvalid = false
     }
     metaError = ''
   })
 
   async function togglePin() {
-    if (!task || pinPending) return
-    const prev = pinState
-    pinState = !pinState
-    pinPending = true
-    metaError = ''
-    try {
-      await ctx.updateTaskMeta(task.id, { pinned: pinState })
-      onMetaChanged?.()
-    } catch (e) {
-      pinState = prev
-      metaError = errMsg(e)
-    } finally {
-      pinPending = false
-    }
+    if (!task || pinField.pending) return
+    await pinField.commit(!pinField.value)
   }
 
   let progressSeq = 0
@@ -276,7 +310,7 @@
       } catch (err) {
         if (my !== progressSeq) return
         progressState = prev
-        metaError = errMsg(err)
+        metaError = friendlyCaughtError(err)
       } finally {
         progressPending = false
       }
@@ -300,21 +334,9 @@
   }
 
   async function commitRecurrence(value: string) {
-    if (!task || recurrencePending) return
-    const prev = recurrenceState
-    recurrenceState = value
+    if (!task || recurrenceField.pending) return
     closeRecurrence()
-    recurrencePending = true
-    metaError = ''
-    try {
-      await ctx.setTaskRecurrence(task.id, value)
-      onMetaChanged?.()
-    } catch (e) {
-      recurrenceState = prev
-      metaError = errMsg(e)
-    } finally {
-      recurrencePending = false
-    }
+    await recurrenceField.commit(value)
   }
 
   function closeRecurrence() {
@@ -333,7 +355,7 @@
       return
     }
     const optionValues = RECURRENCE_PRESETS.map((p) => p.value)
-    if (recurrenceState) optionValues.push('') // "Stop recurring"
+    if (recurrenceField.value) optionValues.push('') // "Stop recurring"
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       e.stopPropagation()
@@ -359,21 +381,9 @@
 
   // --- Due-date editor (mirrors the recurrence Popover pattern) ---
   async function commitDueDate(value: string) {
-    if (!task || dueDatePending) return
-    const prev = dueDateState
-    dueDateState = value
+    if (!task || dueDateField.pending) return
     closeDueDate()
-    dueDatePending = true
-    metaError = ''
-    try {
-      await ctx.setTaskDueDate(task.id, value)
-      onMetaChanged?.()
-    } catch (e) {
-      dueDateState = prev
-      metaError = errMsg(e)
-    } finally {
-      dueDatePending = false
-    }
+    await dueDateField.commit(value)
   }
 
   function closeDueDate() {
@@ -416,20 +426,20 @@
   function onStatusKeydown(e: KeyboardEvent) {
     // #442: update the local selection INSTANTLY on every arrow/Home/End and
     // reschedule a trailing-debounced commit. The previous code swallowed any
-    // arrow pressed during an in-flight write (if (statusPending) return), so
+    // arrow pressed during an in-flight write (if (statusField.pending) return), so
     // rapid nav (Normal → Low → wrap to Critical) landed only the first press.
     const idx = nextRadiogroupIndex(
       e.key,
-      STATUSES.indexOf(statusState),
+      STATUSES.indexOf(statusField.value),
       STATUSES.length
     )
     if (idx === null) return
     e.preventDefault()
-    statusState = STATUSES[idx]
+    statusField.value = STATUSES[idx]
     statusDebouncer.trigger()
     // Move focus with the arrow immediately. The DONE-on-blocked guard now
     // fires after the debounce settle (inside applyStatus); if the user
-    // cancels it, cancelBlockedDone reverts statusState and re-points focus.
+    // cancels it, cancelBlockedDone reverts statusField.value and re-points focus.
     ;(e.currentTarget as HTMLElement)
       .querySelector<HTMLElement>(`[data-status="${STATUSES[idx]}"]`)
       ?.focus()
@@ -441,10 +451,10 @@
   // commitStatusWrite. confirmBlockedDone calls commitStatusWrite directly
   // (the user already confirmed the guard — don't re-trigger it).
   async function applyStatus(s: TaskStatus) {
-    if (!task || s === statusCommitted || statusPending) return
+    if (!task || s === statusCommitted || statusField.pending) return
     // DONE-on-blocked guard (#302): pause and render the shared
-    // BlockedDoneDialog before committing. statusState may already show DONE
-    // optimistically (arrow path); cancelBlockedDone reverts it on cancel.
+    // BlockedDoneDialog before committing. statusField.value may already show
+    // DONE optimistically (arrow path); cancelBlockedDone reverts it on cancel.
     if (s === 'DONE' && task.is_blocked) {
       try {
         const blockers = await ctx.getTaskBlockers(task.id)
@@ -458,7 +468,7 @@
           return
         }
       } catch (e) {
-        metaError = errMsg(e)
+        metaError = friendlyCaughtError(e)
         return
       }
     }
@@ -467,39 +477,38 @@
 
   // commitStatusWrite performs the optimistic write + revert-on-error, with
   // statusCommitted as the revert anchor. No guard — callers handle that.
+  // The factory owns pending/metaError/write; the wrapper keeps the
+  // anchor-update-on-success and the #442 catch-up that don't fit the generic
+  // snapshot-revert contract.
   async function commitStatusWrite(s: TaskStatus) {
-    if (!task || s === statusCommitted || statusPending) return
-    statusPending = true
-    metaError = ''
-    try {
-      await ctx.updateBlockState(task.id, s)
+    if (!task || s === statusCommitted || statusField.pending) return
+    const ok = await statusField.commit(s)
+    if (ok) {
       statusCommitted = s
-      onMetaChanged?.()
-    } catch (e) {
-      statusState = statusCommitted // revert local selection to last committed
-      metaError = errMsg(e)
-    } finally {
-      statusPending = false
-      // #442 follow-up: if a newer arrow selection landed (statusState diverged
-      // from statusCommitted) while this commit was in-flight on a slow IPC,
-      // applyStatus's `statusPending` early-return dropped it. Re-arm the
-      // debouncer so the latest selection eventually commits. Terminates: a
-      // successful commit sets statusCommitted=s (no divergence); a failed one
-      // reverts statusState=statusCommitted (no divergence) — so this fires at
-      // most one catch-up cycle per dropped selection.
-      if (statusState !== statusCommitted) statusDebouncer.trigger()
+    } else {
+      // Revert local selection to the last committed anchor, not the snapshot
+      // (which may itself be an uncommitted arrow selection — see #442).
+      statusField.value = statusCommitted
     }
+    // #442 follow-up: if a newer arrow selection landed (statusField.value
+    // diverged from statusCommitted) while this commit was in-flight on a slow
+    // IPC, applyStatus's pending early-return dropped it. Re-arm the debouncer
+    // so the latest selection eventually commits. Terminates: a successful
+    // commit sets statusCommitted=s (no divergence); a failed one reverts
+    // statusField.value=statusCommitted (no divergence) — so this fires at
+    // most one catch-up cycle per dropped selection.
+    if (statusField.value !== statusCommitted) statusDebouncer.trigger()
   }
 
   // Click path: commit immediately (clicks are discrete, no rapid-fire).
   async function setStatus(s: TaskStatus) {
-    statusState = s
+    statusField.value = s
     await applyStatus(s)
   }
 
   // Debounced arrow-key commit: applies the latest local selection.
   function flushStatusCommit() {
-    void applyStatus(statusState)
+    void applyStatus(statusField.value)
   }
   const statusDebouncer = trailingDebounce(flushStatusCommit, 200)
 
@@ -512,13 +521,13 @@
     pendingBlockedDone = null
     // Revert the optimistic DONE flip the arrow path made; statusCommitted
     // still holds the pre-DONE value (we never committed DONE).
-    statusState = statusCommitted
+    statusField.value = statusCommitted
     // The DONE radio (the arrow target) holds focus with tabindex=-1 while
     // the checked radio holds tabindex=0. Re-point focus to the still-checked
     // radio so roving tabindex stays consistent.
     await tick()
     panelRef
-      ?.querySelector<HTMLElement>(`[data-status="${statusState}"]`)
+      ?.querySelector<HTMLElement>(`[data-status="${statusField.value}"]`)
       ?.focus()
   }
 
@@ -526,77 +535,50 @@
   // Commit on blur/Enter. Empty string clears the estimate. The backend
   // validates m/h/d grammar; invalid input reverts the draft.
   async function commitEstimate() {
-    if (!task || estimatePending) return
-    const trimmed = estimateDraft.trim()
+    if (!task || estimateField.pending) return
+    const trimmed = estimateField.value.trim()
     const prev = formatEstimateMinutes(task.estimate_minutes)
     if (trimmed === prev) {
       estimateInvalid = false
       return
     }
-    const prevDraft = estimateDraft
-    estimateDraft = trimmed
-    estimatePending = true
-    metaError = ''
-    try {
-      await ctx.setTaskEstimate(task.id, trimmed)
-      estimateInvalid = false
-      onMetaChanged?.()
-    } catch (e) {
-      estimateDraft = prevDraft
-      estimateInvalid = true
-      metaError = errMsg(e)
-    } finally {
-      estimatePending = false
-    }
+    const ok = await estimateField.commit(trimmed)
+    estimateInvalid = !ok
   }
 
   // --- Owner editor (#412) ---
   // Commit on blur/Enter. Empty string clears the owner. Optimistic +
   // revert-on-error (mirrors pin/progress).
   async function commitOwner() {
-    if (!task || ownerPending) return
+    if (!task || ownerField.pending) return
     const trimmed = ownerDraft.trim()
-    if (trimmed === ownerState) return
-    const prev = ownerState
-    ownerState = trimmed
-    ownerPending = true
-    metaError = ''
-    try {
-      await ctx.setTaskOwner(task.id, trimmed)
-      onMetaChanged?.()
-    } catch (e) {
-      ownerState = prev
-      ownerDraft = prev
-      metaError = errMsg(e)
-    } finally {
-      ownerPending = false
+    if (trimmed === ownerField.value) return
+    const ok = await ownerField.commit(trimmed)
+    if (!ok) {
+      // Mirror the draft back to the reverted committed value.
+      ownerDraft = ownerField.value
     }
   }
 
   // --- Priority editor (#412) ---
   // Segmented radiogroup; reuses the shared nextRadiogroupIndex helper.
-  // #442: arrow nav updates priorityState instantly + debounces the commit;
-  // clicks go through commitPriority immediately (discrete events).
-  let priorityCheckedIdx = $derived(PRIORITIES.indexOf(priorityState))
+  // #442: arrow nav updates priorityField.value instantly + debounces the
+  // commit; clicks go through commitPriority immediately (discrete events).
+  let priorityCheckedIdx = $derived(PRIORITIES.indexOf(priorityField.value))
 
   async function commitPriority(p: number) {
-    if (!task || priorityPending || p === priorityCommitted) return
-    priorityState = p
-    priorityPending = true
-    metaError = ''
-    try {
-      await ctx.setTaskPriority(task.id, p)
+    if (!task || priorityField.pending || p === priorityCommitted) return
+    const ok = await priorityField.commit(p)
+    if (ok) {
       priorityCommitted = p
-      onMetaChanged?.()
-    } catch (e) {
-      priorityState = priorityCommitted // revert local selection to last committed
-      metaError = errMsg(e)
-    } finally {
-      priorityPending = false
-      // #442 follow-up: catch up a newer arrow selection that landed while this
-      // commit was in-flight (see commitStatusWrite for the termination proof).
-      if (priorityState !== priorityCommitted) priorityDebouncer.trigger()
+    } else {
+      // Revert local selection to the last committed anchor, not the snapshot
+      // (which may itself be an uncommitted arrow selection — see #442).
+      priorityField.value = priorityCommitted
     }
+    // #442 follow-up: catch up a newer arrow selection that landed while this
+    // commit was in-flight (see commitStatusWrite for the termination proof).
+    if (priorityField.value !== priorityCommitted) priorityDebouncer.trigger()
   }
 
   function onPriorityKeydown(e: KeyboardEvent) {
@@ -605,7 +587,7 @@
     const idx = nextRadiogroupIndex(e.key, curIdx, PRIORITIES.length)
     if (idx === null) return
     e.preventDefault()
-    priorityState = PRIORITIES[idx]
+    priorityField.value = PRIORITIES[idx]
     priorityDebouncer.trigger()
     ;(e.currentTarget as HTMLElement)
       .querySelector<HTMLElement>(`[data-priority="${PRIORITIES[idx]}"]`)
@@ -613,7 +595,7 @@
   }
 
   function flushPriorityCommit() {
-    void commitPriority(priorityState)
+    void commitPriority(priorityField.value)
   }
   const priorityDebouncer = trailingDebounce(flushPriorityCommit, 200)
 
@@ -631,47 +613,37 @@
   // (the backend rewrites the whole [tags:: a|b|c] token). Optimistic +
   // revert. The aria-live region announces adds/removes for SR users.
   async function commitTags(newTags: string[], announcement: string) {
-    if (!task || tagsPending) return
-    const prev = tagsState
-    tagsState = newTags
+    if (!task || tagsField.pending) return
     tagDraft = ''
     tagsAnnouncement = announcement
-    tagsPending = true
-    metaError = ''
-    try {
-      await ctx.setTaskTags(task.id, newTags)
-      onMetaChanged?.()
-    } catch (e) {
-      tagsState = prev
+    const ok = await tagsField.commit(newTags)
+    if (!ok) {
       // Correct the polite region: the optimistic "Added/Removed" was a lie
       // on failure. Flip it to the matching "Couldn't add/remove" so SR users
       // hear the truth (the visible banner already shows the error).
       tagsAnnouncement = announcement
         .replace('Added tag', "Couldn't add")
         .replace('Removed tag', "Couldn't remove")
-      metaError = errMsg(e)
-    } finally {
-      tagsPending = false
     }
   }
 
   function addTag() {
-    if (!task || tagsPending) return
+    if (!task || tagsField.pending) return
     // Chips render without '#', so users naturally type '#work'. Strip a single
-    // leading '#' so the local dedupe check (tagsState holds bare names) works
-    // and we never send '#work' to a backend that re-prefixes '#'.
+    // leading '#' so the local dedupe check (tagsField.value holds bare names)
+    // works and we never send '#work' to a backend that re-prefixes '#'.
     const t = tagDraft.trim().replace(/^#/, '')
-    if (!t || tagsState.includes(t)) {
+    if (!t || tagsField.value.includes(t)) {
       tagDraft = ''
       return
     }
-    void commitTags([...tagsState, t], `Added tag ${t}`)
+    void commitTags([...tagsField.value, t], `Added tag ${t}`)
   }
 
   function removeTag(t: string) {
-    if (!task || tagsPending || !tagsState.includes(t)) return
+    if (!task || tagsField.pending || !tagsField.value.includes(t)) return
     void commitTags(
-      tagsState.filter((x) => x !== t),
+      tagsField.value.filter((x) => x !== t),
       `Removed tag ${t}`
     )
   }
@@ -680,45 +652,38 @@
   // Inline editable heading. Commit on blur/Enter; the backend preserves
   // #tags, ((uuid)) refs, and inline tokens during the prose rewrite.
   async function commitTitle() {
-    if (!task || titlePending) return
+    if (!task || titleField.pending) return
     const trimmed = titleDraft.trim()
     if (!trimmed) {
       // Empty title: the backend rejects it. Snap the visible draft back to
       // the real committed value so the field doesn't lie about state (and
       // the sr-only dialog name stays in sync with what's shown).
-      titleDraft = titleState
+      titleDraft = titleField.value
       return
     }
-    if (trimmed === titleState) return
-    const prev = titleState
-    titleState = trimmed
-    titlePending = true
-    metaError = ''
-    try {
-      await ctx.setTaskTitle(task.id, trimmed)
-      onMetaChanged?.()
-    } catch (e) {
-      titleState = prev
-      titleDraft = prev
-      metaError = errMsg(e)
-    } finally {
-      titlePending = false
+    if (trimmed === titleField.value) return
+    const ok = await titleField.commit(trimmed)
+    if (!ok) {
+      // Mirror the draft back to the reverted committed value.
+      titleDraft = titleField.value
     }
   }
 
   // Computed next-occurrence preview. Reads the LOCAL optimistic mirrors
-  // (dueDateState / recurrenceState) so an in-drawer edit refreshes the
+  // (dueDateField / recurrenceField) so an in-drawer edit refreshes the
   // preview without waiting for the host reload.
   let nextOccurrence = $derived.by(() => {
-    if (!recurrenceState || !dueDateState) return ''
-    const due = new SvelteDate(dueDateState + 'T00:00:00')
+    const recurrence = recurrenceField.value
+    const dueDate = dueDateField.value
+    if (!recurrence || !dueDate) return ''
+    const due = new SvelteDate(dueDate + 'T00:00:00')
     if (isNaN(due.getTime())) return ''
     const today = new SvelteDate()
     today.setHours(0, 0, 0, 0)
     // Overdue recurring task: the server's skip-missed resolver decides the
     // landing date at completion; a client guess could be wrong.
     if (due <= today) return ''
-    const rule = recurrenceState.toLowerCase()
+    const rule = recurrence.toLowerCase()
     let step: Date
     if (rule.includes('day') && !rule.includes('weekday')) {
       const n = parseInt(rule.match(/(\d+)\s*day/)?.[1] ?? '1')
@@ -791,39 +756,39 @@
       class="flex items-start justify-between gap-2 px-5 py-4 border-b border-surface-card-border sticky top-0 bg-surface-card"
     >
       <div class="flex flex-col gap-1.5 min-w-0 flex-1">
-        {#if priorityState >= 1 && priorityState <= 3}
+        {#if priorityField.value >= 1 && priorityField.value <= 3}
           <span
             class="self-start px-1.5 py-0.5 border rounded-sm font-label-sm text-type-3xs uppercase tracking-wide w-fit {priorityClass(
-              priorityState
+              priorityField.value
             )}"
           >
-            {PRIORITY_LABELS[priorityState] ?? 'Normal'}
+            {PRIORITY_LABELS[priorityField.value] ?? 'Normal'}
           </span>
         {/if}
         <h2
           id="task-edit-drawer-title"
           class="font-headline-md text-headline-md text-text-primary break-words flex items-start gap-1"
         >
-          {#if recurrenceState}
+          {#if recurrenceField.value}
             <span
               class="material-symbols-outlined text-icon-md text-accent-secondary-start shrink-0 mt-1"
               aria-hidden="true"
-              title="Recurring: {recurrenceState}">event_repeat</span
+              title="Recurring: {recurrenceField.value}">event_repeat</span
             >
           {/if}
           <!-- Visually-hidden mirror of the title so the dialog's
                aria-labelledby name resolves (an <input>'s value is a property,
                not textContent, so it alone can't name the dialog) and so
                textContent-based assertions still see the committed title. -->
-          <span class="sr-only">{titleState}</span>
+          <span class="sr-only">{titleField.value}</span>
           <input
             type="text"
-            class="flex-1 min-w-0 bg-transparent border-none outline-none focus:ring-1 focus:ring-accent-primary-start/40 hover:bg-hover rounded -mx-1 px-1 placeholder:text-text-muted {titlePending
+            class="flex-1 min-w-0 bg-transparent border-none outline-none focus:ring-1 focus:ring-accent-primary-start/40 hover:bg-hover rounded -mx-1 px-1 placeholder:text-text-muted {titleField.pending
               ? 'opacity-50'
               : ''}"
             bind:value={titleDraft}
-            readonly={titlePending}
-            aria-busy={titlePending}
+            readonly={titleField.pending}
+            aria-busy={titleField.pending}
             aria-label="Task title"
             onblur={commitTitle}
             onkeydown={(e) => {
@@ -875,13 +840,13 @@
               type="button"
               onclick={() => void setStatus(s)}
               role="radio"
-              aria-checked={statusState === s}
-              tabindex={statusState === s ? 0 : -1}
-              disabled={statusPending}
+              aria-checked={statusField.value === s}
+              tabindex={statusField.value === s ? 0 : -1}
+              disabled={statusField.pending}
               class="flex-1 px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              class:bg-hover={statusState === s}
-              class:text-accent-primary-start={statusState === s}
-              class:text-text-muted={statusState !== s}
+              class:bg-hover={statusField.value === s}
+              class:text-accent-primary-start={statusField.value === s}
+              class:text-text-muted={statusField.value !== s}
             >
               {laneLabel(s)}
             </button>
@@ -903,19 +868,19 @@
             dueDateOpen = !dueDateOpen
           }}
           onkeydown={onDueDateKeydown}
-          disabled={dueDatePending}
+          disabled={dueDateField.pending}
           aria-haspopup="dialog"
           aria-expanded={dueDateOpen}
           class="w-full flex items-center justify-between px-3 py-2 rounded border border-surface-card-border bg-surface-card hover:bg-hover transition-colors disabled:opacity-50 text-type-sm font-label-sm text-text-primary"
         >
           <span class="flex items-center gap-2">
             <span
-              class="material-symbols-outlined text-icon-md {dueDateState
+              class="material-symbols-outlined text-icon-md {dueDateField.value
                 ? 'text-accent-secondary-start'
                 : 'text-text-muted'}"
               aria-hidden="true">event</span
             >
-            {dueDateState || 'Set due date…'}
+            {dueDateField.value || 'Set due date…'}
           </span>
           <span
             class="material-symbols-outlined text-icon-sm text-text-muted"
@@ -940,13 +905,14 @@
                   type="date"
                   aria-label="Custom due date"
                   class="w-full px-2 py-1 text-type-sm font-label-sm bg-surface-card border border-surface-card-border rounded text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
-                  value={dueDateState}
-                  oninput={(e) => (dueDateState = e.currentTarget.value)}
+                  value={dueDateField.value}
+                  oninput={(e) => (dueDateField.value = e.currentTarget.value)}
                   onkeydown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault()
                       e.stopPropagation()
-                      if (dueDateState) void commitDueDate(dueDateState)
+                      if (dueDateField.value)
+                        void commitDueDate(dueDateField.value)
                     } else if (e.key === 'Escape') {
                       e.preventDefault()
                       e.stopPropagation()
@@ -958,7 +924,7 @@
               {#each [{ label: 'Today', value: ctx.today }, { label: 'Tomorrow', value: plusDaysISO(ctx.today, 1) }, { label: 'Next week', value: plusDaysISO(ctx.today, 7) }] as preset (preset.label)}
                 <button
                   type="button"
-                  class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm hover:bg-hover transition-colors {dueDateState ===
+                  class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm hover:bg-hover transition-colors {dueDateField.value ===
                   preset.value
                     ? 'text-accent-primary-start font-label-sm-bold'
                     : 'text-text-primary'}"
@@ -970,7 +936,7 @@
                   >
                 </button>
               {/each}
-              {#if dueDateState}
+              {#if dueDateField.value}
                 <div class="border-t border-surface-card-border">
                   <button
                     type="button"
@@ -991,17 +957,17 @@
         <button
           type="button"
           onclick={togglePin}
-          disabled={pinPending}
+          disabled={pinField.pending}
           class="w-full flex items-center justify-between px-3 py-2 rounded border border-surface-card-border bg-surface-card hover:bg-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          aria-pressed={pinState}
+          aria-pressed={pinField.value}
         >
           <span
             class="flex items-center gap-2 text-type-sm font-label-sm text-text-primary"
           >
             <span class="material-symbols-outlined text-icon-md">push_pin</span>
-            {pinState ? 'Pinned' : 'Pin'}
+            {pinField.value ? 'Pinned' : 'Pin'}
           </span>
-          {#if pinState}
+          {#if pinField.value}
             <span
               class="material-symbols-outlined text-icon-md text-accent-primary-start"
               >check</span
@@ -1064,13 +1030,14 @@
             id="task-estimate-input"
             type="text"
             data-testid="task-estimate-input"
-            class="w-28 px-2 py-0.5 border rounded-sm text-text-primary border-surface-card-border bg-surface-card text-right focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimatePending
+            class="w-28 px-2 py-0.5 border rounded-sm text-text-primary border-surface-card-border bg-surface-card text-right focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimateField.pending
               ? 'opacity-50'
               : ''}"
             placeholder="—"
-            bind:value={estimateDraft}
-            readonly={estimatePending}
-            aria-busy={estimatePending}
+            value={estimateField.value}
+            oninput={(e) => (estimateField.value = e.currentTarget.value)}
+            readonly={estimateField.pending}
+            aria-busy={estimateField.pending}
             aria-invalid={estimateInvalid}
             aria-describedby="task-estimate-hint"
             onblur={() => void commitEstimate()}
@@ -1097,7 +1064,7 @@
         >
           Recurrence
         </h3>
-        {#if dueDateState}
+        {#if dueDateField.value}
           <button
             bind:this={recurrenceTrigger}
             type="button"
@@ -1106,7 +1073,7 @@
               recurrenceFocusIdx = 0
             }}
             onkeydown={onRecurrenceKeydown}
-            disabled={recurrencePending}
+            disabled={recurrenceField.pending}
             aria-haspopup="listbox"
             aria-expanded={recurrenceOpen}
             aria-controls="recurrence-listbox"
@@ -1114,12 +1081,12 @@
           >
             <span class="flex items-center gap-2">
               <span
-                class="material-symbols-outlined text-icon-md {recurrenceState
+                class="material-symbols-outlined text-icon-md {recurrenceField.value
                   ? 'text-accent-secondary-start'
                   : 'text-text-muted'}"
                 aria-hidden="true">event_repeat</span
               >
-              {recurrenceState || 'Set recurrence…'}
+              {recurrenceField.value || 'Set recurrence…'}
             </span>
             <span
               class="material-symbols-outlined text-icon-sm text-text-muted"
@@ -1166,9 +1133,9 @@
                   <button
                     type="button"
                     role="option"
-                    aria-selected={recurrenceState === preset.value}
+                    aria-selected={recurrenceField.value === preset.value}
                     tabindex={recurrenceFocusIdx === i ? 0 : -1}
-                    class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm hover:bg-hover transition-colors {recurrenceState ===
+                    class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm hover:bg-hover transition-colors {recurrenceField.value ===
                     preset.value
                       ? 'text-accent-primary-start font-label-sm-bold'
                       : 'text-text-primary'} {recurrenceFocusIdx === i
@@ -1184,7 +1151,7 @@
                     {/if}
                   </button>
                 {/each}
-                {#if recurrenceState}
+                {#if recurrenceField.value}
                   <div class="border-t border-surface-card-border">
                     <button
                       type="button"
@@ -1229,13 +1196,13 @@
               <input
                 id="task-owner-input"
                 type="text"
-                class="w-full px-2 py-0.5 border rounded-sm text-text-primary border-surface-card-border bg-surface-card text-right focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {ownerPending
+                class="w-full px-2 py-0.5 border rounded-sm text-text-primary border-surface-card-border bg-surface-card text-right focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {ownerField.pending
                   ? 'opacity-50'
                   : ''}"
                 placeholder="Unassigned"
                 bind:value={ownerDraft}
-                readonly={ownerPending}
-                aria-busy={ownerPending}
+                readonly={ownerField.pending}
+                aria-busy={ownerField.pending}
                 onblur={commitOwner}
                 onkeydown={(e) => {
                   if (e.key === 'Enter') {
@@ -1267,7 +1234,7 @@
                     type="button"
                     onclick={() => void commitPriority(p)}
                     role="radio"
-                    aria-checked={priorityState === p}
+                    aria-checked={priorityField.value === p}
                     tabindex={priorityCheckedIdx >= 0
                       ? priorityCheckedIdx === i
                         ? 0
@@ -1275,11 +1242,11 @@
                       : i === 0
                         ? 0
                         : -1}
-                    disabled={priorityPending}
+                    disabled={priorityField.pending}
                     class="flex-1 px-2 py-0.5 rounded font-label-sm border-none cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    class:bg-hover={priorityState === p}
-                    class:text-accent-primary-start={priorityState === p}
-                    class:text-text-muted={priorityState !== p}
+                    class:bg-hover={priorityField.value === p}
+                    class:text-accent-primary-start={priorityField.value === p}
+                    class:text-text-muted={priorityField.value !== p}
                   >
                     {PRIORITY_LABELS[p]}
                   </button>
@@ -1309,7 +1276,7 @@
               <dt class="text-text-muted">Next occurrence</dt>
               <dd class="text-accent-secondary-start">{nextOccurrence}</dd>
             </div>
-          {:else if recurrenceState && dueDateState}
+          {:else if recurrenceField.value && dueDateField.value}
             <div class="flex items-center justify-between">
               <dt class="text-text-muted">Next occurrence</dt>
               <dd class="text-text-muted italic text-type-xs">
@@ -1326,7 +1293,7 @@
             <dd class="flex-1 min-w-0">
               <span class="sr-only" aria-live="polite">{tagsAnnouncement}</span>
               <ul class="flex flex-wrap gap-1 justify-end items-center">
-                {#each tagsState as tg (tg)}
+                {#each tagsField.value as tg (tg)}
                   <li
                     class="flex items-center gap-0.5 px-1.5 py-0.5 border rounded-sm text-type-sm text-accent-secondary-start border-accent-secondary-start/30 bg-accent-secondary-glow"
                   >
@@ -1335,7 +1302,7 @@
                       type="button"
                       class="text-text-muted hover:text-error transition-colors disabled:opacity-50"
                       aria-label="Remove tag {tg}"
-                      disabled={tagsPending}
+                      disabled={tagsField.pending}
                       onclick={() => removeTag(tg)}
                     >
                       <span aria-hidden="true">×</span></button
@@ -1350,7 +1317,7 @@
                     class="flex-1 min-w-25 px-1.5 py-0.5 text-type-sm bg-transparent border border-surface-card-border rounded focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-text-primary placeholder:text-text-muted disabled:opacity-50"
                     placeholder="Add…"
                     bind:value={tagDraft}
-                    disabled={tagsPending}
+                    disabled={tagsField.pending}
                     onkeydown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault()
