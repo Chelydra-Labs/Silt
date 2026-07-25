@@ -1,68 +1,34 @@
 <script lang="ts">
   import { SvelteSet } from 'svelte/reactivity'
-  import { onMount, tick, untrack } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { Events } from '@wailsio/runtime'
   import SidebarSection from './SidebarSection.svelte'
   import SidebarQuickAccess from './SidebarQuickAccess.svelte'
   import PluginSidebarPanels from './PluginSidebarPanels.svelte'
   import TagSidebarPanel from './TagSidebarPanel.svelte'
   import BacklinksSidebarPanel from './BacklinksSidebarPanel.svelte'
-  import {
-    ListNavigation,
-    CreateNotebook,
-    CreateSection,
-    CreatePage,
-    PickNotebookFolder,
-    PickLinkedNotebook,
-    UnlinkNotebook,
-    RenamePage,
-    RenameSection,
-    RenameNotebook,
-    DeletePage,
-    DeleteSection,
-    DeleteNotebook,
-    RevealNotebookInOS,
-    RevealPageInOS,
-    DuplicatePage,
-    GetNavigationPreferences,
-    SetNavigationSectionExpanded,
-    SetSidebarView,
-    SetFavoritePage
-  } from '../../bindings/silt/app.js'
-  import { NavOrderManager, sortByName } from '../lib/sidebar/navOrder'
+  import { sortByName } from '../lib/sidebar/navOrder'
   import { DragDropManager } from '../lib/sidebar/useDragDrop'
+  import { useNavLoader } from '../lib/sidebar/useNavLoader.svelte'
+  import { useNavCrud } from '../lib/sidebar/useNavCrud.svelte'
+  import { useSidebarContextMenu } from '../lib/sidebar/useSidebarContextMenu.svelte'
   import type {
     NavigationPageRef,
     NavigationPreferences,
     NavigationTree
   } from '../lib/sidebar/types'
   import {
-    reconcileActive,
-    normalizeNavigationTree,
     pageNodeId,
     sectionNodeId,
-    visibleTreeNodes,
-    generateUniquePageName as generateUniquePageNameHelper
+    visibleTreeNodes
   } from '../lib/sidebar/navTree'
   import {
-    EMPTY_NAVIGATION_PREFERENCES,
     expandActiveAncestors,
     expandedPathsForNotebook,
-    locatorKey,
-    reconcilePageRefs
+    locatorKey
   } from '../lib/sidebar/navigationPreferences'
-  import {
-    linkedNotebookId,
-    isLinkedNotebook,
-    deleteDisposition,
-    deleteTargetLabel,
-    reconcileActiveAfterDelete,
-    findNotebook
-  } from '../lib/sidebar/navActions'
   import ContextMenu from './ContextMenu.svelte'
   import NamePromptDialog from './NamePromptDialog.svelte'
-  import { coerceIPCError } from '../lib/ipcError'
-  import { copyPagePath, copyPageReference, copyText } from '../lib/pageActions'
   import { isDevMode, openInspect } from '../lib/devModeInspect'
   import SettingsNav from './settings/SettingsNav.svelte'
   import { settings } from '../settings/store.svelte'
@@ -126,6 +92,24 @@
     onPageMoved
   }: Props = $props()
 
+  // Active-triple read/write handed to the composables. The bindable props
+  // stay here (the template renders against them), but loading/reconciliation
+  // mutates them through this single channel.
+  const getActive = () => ({
+    notebook: activeNotebook,
+    section: activeSection,
+    page: activePage
+  })
+  const setActive = (patch: {
+    notebook?: string
+    section?: string
+    page?: string
+  }) => {
+    if (patch.notebook !== undefined) activeNotebook = patch.notebook
+    if (patch.section !== undefined) activeSection = patch.section
+    if (patch.page !== undefined) activePage = patch.page
+  }
+
   // Resolve the active view's plugin sidebar (#321). Mirrors the lookup
   // PluginView.svelte does for the main view: read the live plugin entry
   // from the reactive store, build the context with the session token the
@@ -148,82 +132,70 @@
     pluginSidebarEntry?.manifest ?? null
   )
 
-  let tree = $state<NavigationTree>({ notebooks: [] })
-  let navigationLoading = $state(true)
-  let navigationError = $state('')
-  let preferences = $state<NavigationPreferences>(EMPTY_NAVIGATION_PREFERENCES)
-  let preferencesLoading = $state(true)
-  let preferencesError = $state('')
   let showNotebookDropdown = $state(false)
-  /** Active sidebar view mode, persisted via SetSidebarView. */
-  let sidebarTab = $state<'tree' | 'quick'>('tree')
-  let sidebarTabHydrated = $state(false)
 
-  // Creation/rename modal state
-  let createMode = $state<'' | 'notebook' | 'section' | 'page'>('')
-  let editingMode = $state<'create' | 'rename'>('create')
-  let renameCtx = $state<{
-    level: 'notebook' | 'section' | 'page'
-    notebook: string
-    section?: string
-    page?: string
-  } | null>(null)
-  let newName = $state('')
-  let createError = $state('')
-  let creating = $state(false)
-  let actionPrompt = $state<{
-    kind: 'duplicate' | 'child-section'
-    notebook: string
-    section: string
-    page?: string
-    initialValue: string
-  } | null>(null)
-  let actionPromptError = $state('')
-  let actionBusy = $state(false)
-  let actionError = $state('')
-
-  // Context menu state (#62)
-  let contextMenu = $state<{
-    x: number
-    y: number
-    level: 'notebook' | 'section' | 'page'
-    notebook: string
-    section?: string
-    page?: string
-    anchorEl: HTMLElement | null
-  } | null>(null)
-
-  // Delete confirmation dialog state
-  let deleteTarget = $state<{
-    level: 'notebook' | 'section' | 'page'
-    notebook: string
-    section?: string
-    page?: string
-    label: string
-  } | null>(null)
-
-  // trash | unlink | permanent — linked page/section hard-delete must not
-  // claim vault trash recovery (#100 / #646).
-  let deleteTargetDisposition = $derived(
-    deleteTarget ? deleteDisposition(tree, deleteTarget) : 'trash'
-  )
-  let contextMenuUnlink = $derived(
-    !!contextMenu &&
-      contextMenu.level === 'notebook' &&
-      isLinkedNotebook(findNotebook(tree, contextMenu.notebook))
-  )
-
-  // Nav order for drag-to-reorder (#68). Explicit ordering from config.yaml;
-  // items not in the map fall back to alphabetical.
-  let navOrder = $state<{
-    notebooks: string[]
-    sections: Record<string, string[]>
-    pages: Record<string, string[]>
-  }>({
-    notebooks: [],
-    sections: {},
-    pages: {}
+  // --- composables -------------------------------------------------------
+  // Loader owns tree/preferences/expansion/tab; CRUD owns create/rename/delete
+  // + action-prompt state; context-menu owns the right-click cluster. Each
+  // is consumed below via reactive aliases so the template is unchanged.
+  const loader = useNavLoader({
+    getActive,
+    setActive,
+    // Wrap callback props so each call reads the live prop value (props are
+    // reactive; referencing them bare in this object literal would snapshot
+    // the initial value — the `state_referenced_locally` trap).
+    onSelectNotebook: (nb: string) => onSelectNotebook(nb),
+    onNavigationLoaded: (t: NavigationTree) => onNavigationLoaded?.(t),
+    onNavigationPreferencesLoaded: (p: NavigationPreferences) =>
+      onNavigationPreferencesLoaded?.(p),
+    onNavigationStatus: (loading: boolean, error: string) =>
+      onNavigationStatus?.(loading, error)
   })
+
+  const crud = useNavCrud({
+    getActive,
+    setActive,
+    getTree: () => loader.tree,
+    getActiveView: () => activeView,
+    setActiveView: (view: string) => {
+      activeView = view
+    },
+    onSelectView: (view: string) => onSelectView(view),
+    onSelectNotebook: (nb: string) => onSelectNotebook(nb),
+    onSelectSection: (section: string) => onSelectSection(section),
+    onSelectPage: (nb: string, section: string, page: string) =>
+      onSelectPage(nb, section, page),
+    getExpandedSections: () => loader.expandedSections,
+    setExpandedSections: (next: SvelteSet<string>) =>
+      loader.setExpandedSections(next),
+    toggleSection: (path: string) => loader.toggleSection(path),
+    setLocalExpansion: (notebook: string, path: string, expanded: boolean) =>
+      loader.setLocalExpansion(notebook, path, expanded),
+    loadNavigation: () => loader.loadNavigation(),
+    loadNavigationPreferences: () => loader.loadNavigationPreferences(),
+    handleSelectNotebook,
+    setShowNotebookDropdown: (visible: boolean) => {
+      showNotebookDropdown = visible
+    }
+  })
+
+  const menu = useSidebarContextMenu({
+    getTree: () => loader.tree,
+    setActive: (patch: { section?: string }) => {
+      if (patch.section !== undefined) activeSection = patch.section
+    },
+    onSelectSection: (section: string) => onSelectSection(section),
+    openRename: crud.openRename,
+    requestDelete: crud.requestDelete,
+    requestActionPrompt: crud.requestActionPrompt,
+    handleCreatePageInline: crud.handleCreatePageInline,
+    toggleFavorite: loader.toggleFavorite,
+    setActionError: crud.setActionError
+  })
+
+  // Drag-and-drop state stays on the shell (it owns the rendered drop
+  // indicators); the manager delegates persistence to the loader's
+  // nav-order manager and reloads via the loader after a move.
   let dragItem = $state<{
     level: string
     name: string
@@ -246,20 +218,10 @@
     }, 4000)
   }
 
-  const navOrderManager = new NavOrderManager({
-    onStateChange: (s) => {
-      navOrder = s
-    }
-  })
-
-  async function loadNavOrder() {
-    await navOrderManager.load()
-  }
-
   const dnd = new DragDropManager({
     getActiveNotebook: () => activeNotebook,
     getActiveNotebookSections: () => activeNotebookObj?.sections ?? [],
-    navOrder: navOrderManager,
+    navOrder: loader.navOrderManager,
     onDragItemChange: (item) => {
       dragItem = item
     },
@@ -268,8 +230,8 @@
     },
     onError: showDndError,
     onMoved: async () => {
-      await loadNavigation()
-      await navOrderManager.load()
+      await loader.loadNavigation()
+      await loader.navOrderManager.load()
     },
     onPageMoved: (nb, from, to, page) => onPageMoved?.(nb, from, to, page)
   })
@@ -303,16 +265,12 @@
 
   // Expanded section names (within the active notebook). The active section is
   // always expanded so the active path stays visible (spatial memory).
-  // SvelteSet is deeply reactive; reassignment still used for immutable-style updates.
-  // eslint-disable-next-line svelte/no-unnecessary-state-wrap -- whole-set reassignment pattern
-  let expandedSections = $state(new SvelteSet<string>())
   let focusedTreeItemId = $state('')
-  let lastExpandedActive = ''
   let typeahead = ''
   let typeaheadTimer: ReturnType<typeof setTimeout> | null = null
 
   let activeNotebookObj = $derived(
-    tree.notebooks.find((nb) => nb.name === activeNotebook)
+    loader.tree.notebooks.find((nb) => nb.name === activeNotebook)
   )
 
   // Sections sorted by nav_order (falling back to alphabetical) for #68.
@@ -320,7 +278,7 @@
     if (!activeNotebookObj) return []
     return sortByName(
       activeNotebookObj.sections,
-      navOrder.sections[activeNotebook] ?? [],
+      loader.navOrder.sections[activeNotebook] ?? [],
       (section) => section.path
     )
   })
@@ -330,40 +288,79 @@
       activeNotebookObj
         ? { ...activeNotebookObj, sections: sortedSections }
         : undefined,
-      expandedSections
+      loader.expandedSections
     )
   )
-  let contextMenuPageRef = $derived.by(() => {
-    if (!contextMenu || contextMenu.level !== 'page') return null
-    return {
-      notebook: contextMenu.notebook,
-      section: contextMenu.section ?? '',
-      page: contextMenu.page ?? ''
-    }
-  })
-  let contextNotebook = $derived(
-    contextMenu ? findNotebook(tree, contextMenu.notebook) : undefined
-  )
-  let contextUnavailable = $derived(!!contextNotebook?.disconnected)
-  let contextMenuTargetId = $derived.by(() => {
-    if (!contextMenu) return ''
-    if (contextMenu.level === 'notebook') {
-      return `notebook:${encodeURIComponent(contextMenu.notebook)}`
-    }
-    if (contextMenu.level === 'section') {
-      return sectionNodeId(contextMenu.notebook, contextMenu.section ?? '')
-    }
-    return pageNodeId({
-      notebook: contextMenu.notebook,
-      section: contextMenu.section ?? '',
-      page: contextMenu.page ?? ''
-    })
-  })
-  let favoriteKeys = $derived(
-    new SvelteSet(preferences.favorites.map((ref) => locatorKey(ref)))
-  )
-  let favoriteState = $derived(reconcilePageRefs(tree, preferences.favorites))
-  let recentState = $derived(reconcilePageRefs(tree, preferences.recent_pages))
+
+  // --- reactive aliases onto composable state ---------------------------
+  // The template (and the tree keyboard-nav below) read these by their bare
+  // names; each aliases a composable getter so Svelte 5 reactivity is
+  // preserved across the module boundary (destructuring would snapshot).
+  let tree = $derived(loader.tree)
+  let navigationLoading = $derived(loader.navigationLoading)
+  let navigationError = $derived(loader.navigationError)
+  let preferences = $derived(loader.preferences)
+  let preferencesLoading = $derived(loader.preferencesLoading)
+  let preferencesError = $derived(loader.preferencesError)
+  let sidebarTab = $derived(loader.sidebarTab)
+  let expandedSections = $derived(loader.expandedSections)
+  let navOrder = $derived(loader.navOrder)
+  let favoriteKeys = $derived(loader.favoriteKeys)
+  let favoriteState = $derived(loader.favoriteState)
+  let recentState = $derived(loader.recentState)
+
+  let createMode = $derived(crud.createMode)
+  let editingMode = $derived(crud.editingMode)
+  let renameCtx = $derived(crud.renameCtx)
+  let newName = $derived(crud.newName)
+  let createError = $derived(crud.createError)
+  let creating = $derived(crud.creating)
+  let actionPrompt = $derived(crud.actionPrompt)
+  let actionPromptError = $derived(crud.actionPromptError)
+  let actionBusy = $derived(crud.actionBusy)
+  let actionError = $derived(crud.actionError)
+  let deleteTarget = $derived(crud.deleteTarget)
+  let deleteTargetDisposition = $derived(crud.deleteTargetDisposition)
+
+  let contextMenu = $derived(menu.contextMenu)
+  let contextMenuUnlink = $derived(menu.contextMenuUnlink)
+  let contextMenuPageRef = $derived(menu.contextMenuPageRef)
+  let contextNotebook = $derived(menu.contextNotebook)
+  let contextUnavailable = $derived(menu.contextUnavailable)
+  let contextMenuTargetId = $derived(menu.contextMenuTargetId)
+
+  // Handler aliases (stable closures — safe to alias by reference).
+  const loadNavigation = loader.loadNavigation
+  const loadNavigationPreferences = loader.loadNavigationPreferences
+  const toggleSection = loader.toggleSection
+  const setSidebarTab = loader.setSidebarTab
+  const toggleFavorite = loader.toggleFavorite
+  const openCreate = crud.openCreate
+  const openRename = crud.openRename
+  const closeNamePrompt = crud.closeNamePrompt
+  const handleCreate = crud.handleCreate
+  const handleOpenNotebookFolder = crud.handleOpenNotebookFolder
+  const handleLinkExternalNotebook = crud.handleLinkExternalNotebook
+  const handleCreatePageInline = crud.handleCreatePageInline
+  const confirmActionPrompt = crud.confirmActionPrompt
+  const closeActionPrompt = crud.closeActionPrompt
+  const confirmDelete = crud.confirmDelete
+  const cancelDelete = crud.cancelDelete
+  const namePromptTitle = crud.namePromptTitle
+  const namePromptLabel = crud.namePromptLabel
+  const namePromptPlaceholder = crud.namePromptPlaceholder
+  const namePromptConfirmLabel = crud.namePromptConfirmLabel
+  const openContextMenu = menu.openContextMenu
+  const closeContextMenu = menu.closeContextMenu
+  const handleContextRename = menu.handleContextRename
+  const handleContextDelete = menu.handleContextDelete
+  const handleContextReveal = menu.handleContextReveal
+  const handleContextFavorite = menu.handleContextFavorite
+  const handleContextNewPage = menu.handleContextNewPage
+  const handleContextCopyPage = menu.handleContextCopyPage
+  const handleContextCopyNotebook = menu.handleContextCopyNotebook
+  const openDuplicatePrompt = menu.openDuplicatePrompt
+  const openChildSectionPrompt = menu.openChildSectionPrompt
 
   $effect(() => {
     const nodes = visibleNodes
@@ -420,89 +417,6 @@
         0) === 0
   )
 
-  async function loadNavigation() {
-    onNavigationStatus?.(true, '')
-    try {
-      const data = await ListNavigation()
-      if (!data) return
-      tree = normalizeNavigationTree(data)
-      onNavigationLoaded?.(tree)
-      navigationError = ''
-      const next = reconcileActive(tree, {
-        notebook: activeNotebook,
-        section: activeSection,
-        page: activePage
-      })
-      if (next.notebook !== activeNotebook) {
-        activeNotebook = next.notebook
-        onSelectNotebook(activeNotebook)
-      }
-      if (next.section !== activeSection) activeSection = next.section
-      if (next.page !== activePage) activePage = next.page
-    } catch (e) {
-      navigationError =
-        e instanceof Error ? e.message : 'Navigation could not be loaded.'
-    } finally {
-      navigationLoading = false
-      onNavigationStatus?.(false, navigationError)
-    }
-  }
-
-  let preferenceLoadSequence = 0
-  async function loadNavigationPreferences() {
-    const sequence = ++preferenceLoadSequence
-    preferencesLoading = true
-    try {
-      const loaded = await GetNavigationPreferences()
-      if (sequence !== preferenceLoadSequence) return
-      const sidebarView = loaded?.sidebar_view === 'quick' ? 'quick' : 'tree'
-      preferences = {
-        expanded_sections: loaded?.expanded_sections ?? [],
-        recent_pages: loaded?.recent_pages ?? [],
-        favorites: loaded?.favorites ?? [],
-        sidebar_view: sidebarView
-      }
-      if (!sidebarTabHydrated) {
-        sidebarTab = sidebarView
-        sidebarTabHydrated = true
-      }
-      onNavigationPreferencesLoaded?.(preferences)
-      expandedSections = new SvelteSet(
-        expandedPathsForNotebook(preferences, activeNotebook)
-      )
-      lastExpandedActive = ''
-      preferencesError = ''
-    } catch (e) {
-      if (sequence !== preferenceLoadSequence) return
-      preferencesError =
-        e instanceof Error ? e.message : 'Sidebar view could not be loaded.'
-    } finally {
-      if (sequence === preferenceLoadSequence) preferencesLoading = false
-    }
-  }
-
-  async function setSidebarTab(next: 'tree' | 'quick') {
-    if (sidebarTab === next) return
-    const previous = sidebarTab
-    const previousView = preferences.sidebar_view
-    sidebarTab = next
-    preferences = { ...preferences, sidebar_view: next }
-    try {
-      await SetSidebarView(next)
-      preferencesError = ''
-    } catch (error) {
-      sidebarTab = previous
-      preferences = {
-        ...preferences,
-        sidebar_view: previousView
-      }
-      preferencesError =
-        error instanceof Error
-          ? error.message
-          : 'Sidebar view preference could not be saved.'
-    }
-  }
-
   function onSidebarTabKeydown(e: KeyboardEvent) {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
     e.preventDefault()
@@ -516,61 +430,6 @@
         )
         ?.focus()
     })
-  }
-
-  // Expand an active page's full ancestry once when its location changes.
-  // A manual collapse remains respected until the user activates another page.
-  $effect(() => {
-    const notebook = activeNotebook
-    const section = activeSection
-    const page = activePage
-    const ready = !preferencesLoading
-    if (!notebook || !section || !ready) return
-    const activeKey = `${notebook}\u0000${section}\u0000${page}`
-    if (activeKey === lastExpandedActive) return
-    lastExpandedActive = activeKey
-    untrack(() => {
-      const next = expandActiveAncestors(expandedSections, section)
-      const added = [...next].filter((path) => !expandedSections.has(path))
-      expandedSections = new SvelteSet(next)
-      for (const path of added) {
-        setLocalExpansion(notebook, path, true)
-        void SetNavigationSectionExpanded(notebook, path, true).catch(() => {
-          preferencesError = 'Expanded sections could not be saved.'
-        })
-      }
-    })
-  })
-
-  function toggleSection(path: string) {
-    const next = new SvelteSet(expandedSections)
-    const expanded = !next.has(path)
-    if (!expanded) {
-      next.delete(path)
-    } else {
-      next.add(path)
-    }
-    expandedSections = next
-    setLocalExpansion(activeNotebook, path, expanded)
-    void SetNavigationSectionExpanded(activeNotebook, path, expanded).catch(
-      () => {
-        preferencesError = 'Expanded sections could not be saved.'
-      }
-    )
-  }
-
-  function setLocalExpansion(
-    notebook: string,
-    path: string,
-    expanded: boolean
-  ) {
-    const without = preferences.expanded_sections.filter(
-      (item) => !(item.notebook === notebook && item.path === path)
-    )
-    preferences = {
-      ...preferences,
-      expanded_sections: expanded ? [...without, { notebook, path }] : without
-    }
   }
 
   function setFocusedTreeItem(id: string) {
@@ -668,8 +527,10 @@
     showNotebookDropdown = false
     onSelectNotebook(nb)
     // Expand the first section if present, for orientation.
-    const nbObj = tree.notebooks.find((n) => n.name === nb)
-    expandedSections = new SvelteSet(expandedPathsForNotebook(preferences, nb))
+    const nbObj = loader.tree.notebooks.find((n) => n.name === nb)
+    loader.setExpandedSections(
+      new SvelteSet(expandedPathsForNotebook(loader.preferences, nb))
+    )
     focusedTreeItemId = nbObj?.sections.find((section) => section.path)?.path
       ? sectionNodeId(nb, nbObj.sections.find((section) => section.path)!.path)
       : ''
@@ -683,32 +544,15 @@
 
   function handleQuickPage(ref: NavigationPageRef) {
     activeNotebook = ref.notebook
-    expandedSections = new SvelteSet(
-      expandActiveAncestors(
-        expandedPathsForNotebook(preferences, ref.notebook),
-        ref.section
+    loader.setExpandedSections(
+      new SvelteSet(
+        expandActiveAncestors(
+          expandedPathsForNotebook(loader.preferences, ref.notebook),
+          ref.section
+        )
       )
     )
     handleSelectPage(ref.section, ref.page)
-  }
-
-  async function toggleFavorite(ref: NavigationPageRef) {
-    const wasFavorite = favoriteKeys.has(locatorKey(ref))
-    try {
-      await SetFavoritePage(ref.notebook, ref.section, ref.page, !wasFavorite)
-      preferences = {
-        ...preferences,
-        favorites: wasFavorite
-          ? preferences.favorites.filter(
-              (item) => locatorKey(item) !== locatorKey(ref)
-            )
-          : [...preferences.favorites, ref]
-      }
-      preferencesError = ''
-    } catch (e) {
-      preferencesError =
-        e instanceof Error ? e.message : 'Favorite could not be updated.'
-    }
   }
 
   function handlePinPage(section: string, page: string) {
@@ -717,463 +561,14 @@
     onPinPage(activeNotebook, section, page)
   }
 
-  function openCreate(mode: 'notebook' | 'section') {
-    createMode = mode
-    editingMode = 'create'
-    renameCtx = null
-    newName = ''
-    createError = ''
-  }
-
-  function openRename(
-    level: 'notebook' | 'section' | 'page',
-    notebook: string,
-    section: string | undefined,
-    currentName: string,
-    page?: string
-  ) {
-    createMode = level
-    editingMode = 'rename'
-    renameCtx = { level, notebook, section, page }
-    newName = currentName
-    createError = ''
-  }
-
-  function namePromptTitle(): string {
-    const kind =
-      createMode === 'page'
-        ? 'Page'
-        : createMode === 'notebook'
-          ? 'Notebook'
-          : 'Section'
-    return editingMode === 'rename' ? `Rename ${kind}` : `New ${kind}`
-  }
-
-  function namePromptLabel(): string {
-    if (createMode === 'notebook') return 'Notebook name'
-    if (createMode === 'page') return 'Page name'
-    return 'Section name'
-  }
-
-  function namePromptPlaceholder(): string {
-    if (editingMode === 'rename') {
-      if (createMode === 'notebook') return 'New notebook name…'
-      if (createMode === 'page') return 'New page name…'
-      return 'New section name…'
-    }
-    if (createMode === 'notebook') return 'Notebook name…'
-    if (createMode === 'page') return 'Page name…'
-    return 'Section name…'
-  }
-
-  function namePromptConfirmLabel(): string {
-    if (creating) {
-      return editingMode === 'rename' ? 'Renaming…' : 'Creating…'
-    }
-    return editingMode === 'rename' ? 'Rename' : 'Create'
-  }
-
-  function closeNamePrompt() {
-    if (creating) return
-    createMode = ''
-    createError = ''
-    renameCtx = null
-    newName = ''
-  }
-
-  async function handleOpenNotebookFolder() {
-    try {
-      creating = true
-      createError = ''
-      const name = await PickNotebookFolder()
-      if (!name) {
-        // user cancelled
-        showNotebookDropdown = false
-        return
-      }
-      await loadNavigation()
-      handleSelectNotebook(name)
-      showNotebookDropdown = false
-    } catch (e) {
-      createError = e instanceof Error ? e.message : String(e)
-      createMode = 'notebook'
-      editingMode = 'create'
-      renameCtx = null
-      newName = ''
-    } finally {
-      creating = false
-    }
-  }
-
-  // #100: link an external folder (e.g. a synced SharePoint mount) as a
-  // notebook, edited in place. The folder is never copied into the vault.
-  async function handleLinkExternalNotebook() {
-    try {
-      creating = true
-      createError = ''
-      const ln = await PickLinkedNotebook()
-      if (!ln || !ln.id) {
-        showNotebookDropdown = false
-        return // user cancelled
-      }
-      await loadNavigation()
-      handleSelectNotebook(ln.display_name)
-      showNotebookDropdown = false
-    } catch (e) {
-      createError = e instanceof Error ? e.message : String(e)
-      showNotebookDropdown = false
-    } finally {
-      creating = false
-    }
-  }
-
-  async function handleCreate(nameFromDialog?: string) {
-    const trimmed = (nameFromDialog ?? newName).trim()
-    if (trimmed === '') return
-    newName = trimmed
-    creating = true
-    createError = ''
-    try {
-      if (editingMode === 'rename' && renameCtx) {
-        if (renameCtx.level === 'notebook') {
-          await RenameNotebook(renameCtx.notebook, trimmed)
-          await loadNavigation()
-          if (activeNotebook === renameCtx.notebook) {
-            activeNotebook = trimmed
-            handleSelectNotebook(trimmed)
-          }
-        } else if (renameCtx.level === 'section') {
-          const oldPath = renameCtx.section ?? ''
-          const parentPath = oldPath.split('/').slice(0, -1).join('/')
-          const nextPath = parentPath ? `${parentPath}/${trimmed}` : trimmed
-          await RenameSection(renameCtx.notebook, oldPath, nextPath)
-          await loadNavigation()
-          await loadNavigationPreferences()
-          if (activeSection === renameCtx.section) {
-            activeSection = nextPath
-            onSelectSection(nextPath)
-          }
-        } else if (renameCtx.level === 'page') {
-          await RenamePage(
-            renameCtx.notebook,
-            renameCtx.section ?? '',
-            renameCtx.page ?? '',
-            trimmed
-          )
-          await loadNavigation()
-          if (activePage === renameCtx.page) {
-            activePage = trimmed
-          }
-          window.dispatchEvent(
-            new CustomEvent('page-renamed', {
-              detail: {
-                notebook: renameCtx.notebook,
-                section: renameCtx.section,
-                oldName: renameCtx.page,
-                newName: trimmed
-              }
-            })
-          )
-        }
-      } else if (createMode === 'notebook') {
-        await CreateNotebook(trimmed)
-        await loadNavigation()
-        handleSelectNotebook(trimmed)
-      } else if (createMode === 'section') {
-        await CreateSection(activeNotebook, '', trimmed)
-        await loadNavigation()
-        activeSection = trimmed
-        onSelectSection(trimmed)
-        expandedSections = new SvelteSet([...expandedSections, trimmed])
-        setLocalExpansion(activeNotebook, trimmed, true)
-        await SetNavigationSectionExpanded(activeNotebook, trimmed, true)
-      }
-      createMode = ''
-      newName = ''
-      renameCtx = null
-      createError = ''
-    } catch (e) {
-      createError = e instanceof Error ? e.message : String(e)
-    } finally {
-      creating = false
-    }
-  }
-
-  // --- Inline page creation (#83) ---
-  // OneNote model: create "Untitled" immediately and navigate; the editor's
-  // title field auto-focuses so the user can type the real name inline.
-  async function handleCreatePageInline(sectionName: string) {
-    creating = true
-    try {
-      const pageName = generateUniquePageName(sectionName)
-      await CreatePage(activeNotebook, sectionName, pageName, '')
-      await loadNavigation()
-      activeSection = sectionName
-      activePage = pageName
-      onSelectPage(activeNotebook, sectionName, pageName)
-      activeView = 'notes'
-      onSelectView('notes')
-      // Signal the editor to focus the title for inline rename.
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('focus-page-title'))
-      }, 100)
-    } catch (e) {
-      actionError = navigationActionError(e, 'create')
-    } finally {
-      creating = false
-    }
-  }
-
-  function generateUniquePageName(sectionName: string): string {
-    return generateUniquePageNameHelper(tree, activeNotebook, sectionName)
-  }
-
-  // --- Context menu handlers (#62) ---
-  function openContextMenu(
-    e: MouseEvent,
-    level: 'notebook' | 'section' | 'page',
-    notebook: string,
-    section: string = '',
-    page: string = ''
-  ) {
-    e.preventDefault()
-    contextMenu = {
-      x: e.clientX,
-      y: e.clientY,
-      level,
-      notebook,
-      section,
-      page,
-      anchorEl: e.currentTarget as HTMLElement
-    }
-  }
-
-  function closeContextMenu() {
-    contextMenu = null
-  }
-
-  function handleContextRename() {
-    if (!contextMenu) return
-    const { level, notebook, section, page } = contextMenu
-    contextMenu = null
-    if (level === 'page' && section !== undefined && page !== undefined) {
-      openRename('page', notebook, section, page, page)
-    } else if (level === 'section' && section !== undefined) {
-      openRename('section', notebook, section, section)
-    } else if (level === 'notebook') {
-      openRename('notebook', notebook, undefined, notebook)
-    }
-  }
-
-  function handleContextDelete() {
-    if (!contextMenu) return
-    const { level, notebook, section, page } = contextMenu
-    contextMenu = null
-    deleteTarget = {
-      level,
-      notebook,
-      section,
-      page,
-      label: deleteTargetLabel({ level, notebook, section, page })
-    }
-  }
-
-  async function handleContextReveal() {
-    if (!contextMenu || contextUnavailable) return
-    const target = contextMenu
-    contextMenu = null
-    try {
-      if (target.level === 'notebook') {
-        await RevealNotebookInOS(target.notebook)
-      } else if (target.level === 'page') {
-        await RevealPageInOS(
-          target.notebook,
-          target.section ?? '',
-          target.page ?? ''
-        )
-      }
-      actionError = ''
-    } catch (e) {
-      actionError = navigationActionError(e, 'reveal')
-    }
-  }
-
-  function handleContextFavorite() {
-    const ref = contextMenuPageRef
-    contextMenu = null
-    if (ref) void toggleFavorite(ref)
-  }
-
-  function handleContextNewPage() {
-    if (!contextMenu || contextUnavailable) return
-    const section = contextMenu.section ?? ''
-    contextMenu = null
-    activeSection = section
-    onSelectSection(section)
-    void handleCreatePageInline(section)
-  }
-
-  function navigationActionError(
-    error: unknown,
-    action: 'duplicate' | 'reveal' | 'create'
-  ): string {
-    const parsed = coerceIPCError(error)
-    switch (parsed.code) {
-      case 'page_exists':
-      case 'navigation_conflict':
-        return action === 'duplicate'
-          ? 'A page with that name already exists in this section.'
-          : 'An item with that name already exists here.'
-      case 'invalid_navigation_path':
-        return 'That name cannot be used here.'
-      case 'navigation_not_found':
-        return 'That page is no longer available.'
-      case 'navigation_unavailable':
-        return 'This linked notebook is offline or unavailable.'
-      case 'navigation_reveal_failed':
-        return 'The item could not be revealed in the file manager.'
-      case 'navigation_duplicate':
-        return 'The page could not be duplicated.'
-      default:
-        return (
-          parsed.message ||
-          (action === 'reveal'
-            ? 'The item could not be revealed in the file manager.'
-            : 'The action could not be completed.')
-        )
-    }
-  }
-
-  function handleContextCopyPage(kind: 'path' | 'reference') {
-    const ref = contextMenuPageRef
-    contextMenu = null
-    if (!ref) return
-    void (kind === 'path' ? copyPagePath(ref) : copyPageReference(ref))
-  }
-
-  function handleContextCopyNotebook() {
-    if (!contextMenu || contextMenu.level !== 'notebook') return
-    const notebook = contextNotebook
-    const text = notebook?.root_path || contextMenu.notebook
-    contextMenu = null
-    void copyText(text)
-  }
-
-  function openDuplicatePrompt() {
-    if (!contextMenuPageRef || contextUnavailable) return
-    actionPrompt = {
-      kind: 'duplicate',
-      ...contextMenuPageRef,
-      initialValue: `${contextMenuPageRef.page} copy`
-    }
-    actionPromptError = ''
-    contextMenu = null
-  }
-
-  function openChildSectionPrompt() {
-    if (!contextMenu || contextMenu.level !== 'section' || contextUnavailable)
-      return
-    actionPrompt = {
-      kind: 'child-section',
-      notebook: contextMenu.notebook,
-      section: contextMenu.section ?? '',
-      initialValue: ''
-    }
-    actionPromptError = ''
-    contextMenu = null
-  }
-
-  function closeActionPrompt() {
-    if (actionBusy) return
-    actionPrompt = null
-    actionPromptError = ''
-  }
-
-  async function confirmActionPrompt(name: string) {
-    if (!actionPrompt) return
-    const prompt = actionPrompt
-    actionBusy = true
-    actionPromptError = ''
-    try {
-      if (prompt.kind === 'duplicate') {
-        await DuplicatePage(
-          prompt.notebook,
-          prompt.section,
-          prompt.page ?? '',
-          name
-        )
-        await loadNavigation()
-        onSelectPage(prompt.notebook, prompt.section, name)
-      } else {
-        await CreateSection(prompt.notebook, prompt.section, name)
-        const childPath = prompt.section ? `${prompt.section}/${name}` : name
-        await loadNavigation()
-        activeNotebook = prompt.notebook
-        activeSection = childPath
-        onSelectSection(childPath)
-        if (prompt.section && !expandedSections.has(prompt.section)) {
-          toggleSection(prompt.section)
-        }
-        if (!expandedSections.has(childPath)) toggleSection(childPath)
-      }
-      actionPrompt = null
-      actionError = ''
-    } catch (e) {
-      actionPromptError = navigationActionError(
-        e,
-        prompt.kind === 'duplicate' ? 'duplicate' : 'create'
-      )
-    } finally {
-      actionBusy = false
-    }
-  }
-
-  async function confirmDelete() {
-    if (!deleteTarget) return
-    const target = deleteTarget
-    deleteTarget = null
-    try {
-      if (target.level === 'page' && target.page !== undefined) {
-        await DeletePage(target.notebook, target.section ?? '', target.page)
-      } else if (target.level === 'section' && target.section !== undefined) {
-        await DeleteSection(target.notebook, target.section)
-      } else if (target.level === 'notebook') {
-        // #100: a linked notebook is UNLINKED (files untouched), not moved to
-        // trash. Vault notebooks are deleted as before.
-        const id = linkedNotebookId(findNotebook(tree, target.notebook))
-        if (id !== null) {
-          await UnlinkNotebook(id)
-        } else {
-          await DeleteNotebook(target.notebook)
-        }
-      }
-      await loadNavigation()
-      await loadNavigationPreferences()
-      const next = reconcileActiveAfterDelete(target, {
-        notebook: activeNotebook,
-        section: activeSection,
-        page: activePage
-      })
-      activeNotebook = next.notebook
-      activeSection = next.section
-      activePage = next.page
-    } catch (e) {
-      console.error('Delete failed:', e)
-    }
-  }
-
-  function cancelDelete() {
-    deleteTarget = null
-  }
-
   onMount(() => {
     void loadNavigation()
     void loadNavigationPreferences()
-    void loadNavOrder()
+    void loader.loadNavOrder()
     const handleRefresh = () => {
       void loadNavigation()
       void loadNavigationPreferences()
-      void loadNavOrder()
+      void loader.loadNavOrder()
     }
     const handleCreatePageInlineEvent = (e: Event) => {
       const sectionName =
@@ -1774,7 +1169,7 @@
         type="button"
         class="ml-2 border-none bg-transparent text-surface-sidebar-text-muted cursor-pointer"
         aria-label="Dismiss error"
-        onclick={() => (actionError = '')}>Dismiss</button
+        onclick={() => crud.setActionError('')}>Dismiss</button
       >
     </div>
   {/if}
