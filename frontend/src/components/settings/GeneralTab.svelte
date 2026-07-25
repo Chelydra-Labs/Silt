@@ -8,17 +8,12 @@
   import { customDictionary } from '../../lib/editor/spellcheck/customDictionary.svelte'
   import VaultActionModal from './VaultActionModal.svelte'
   import VaultArchiveModal from './VaultArchiveModal.svelte'
+  import { ringClass } from './SettingsSearch'
 
   interface Props {
     ringAnchor?: string | null
   }
   let { ringAnchor = null }: Props = $props()
-
-  function ringClass(id: string): string {
-    return ringAnchor === id
-      ? 'ring-2 ring-accent-primary-start/50 ring-offset-2 ring-offset-surface-app'
-      : ''
-  }
 
   // Close-to-tray is a user-global window behaviour (#501). Its state lives on
   // the tab rather than in the vault-scoped config store — the window exists
@@ -463,7 +458,7 @@
     <section
       id="general-dictionary"
       aria-labelledby="general-dictionary-heading"
-      class={ringClass('general-dictionary')}
+      class={ringClass('general-dictionary', ringAnchor)}
       aria-busy={customDictionary.busy || customDictionary.loading}
     >
       <h3
