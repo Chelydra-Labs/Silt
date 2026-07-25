@@ -49,6 +49,7 @@
   import { binByDimension } from '../grouping'
   import { buildQuery } from '../query'
   import { loadColumns, persistColumns } from '../settings'
+  import { nextManualOrder } from './manualOrder'
 
   interface Props {
     ctx: PluginContext
@@ -141,6 +142,12 @@
   // >10 columns → non-blocking hint; >20 → refuse to render + fall back to
   // List mode so a 200-notebook vault doesn't freeze the board layout.
   let tooManyColumns = $state(false)
+
+  // Coerce a caught value to its message string. Raw extraction (no friendly
+  // mapping) so the rendered error text matches the pre-refactor behavior.
+  function errMsg(e: unknown): string {
+    return e instanceof Error ? e.message : String(e)
+  }
 
   function dueDateAnchor(bucketKey: string, iso: string): string {
     // Deterministic anchor per bucket so a drop produces a stable due date
@@ -387,15 +394,11 @@
       // owned by commitManualReorder via the card-level drop handler.
       if (sort === 'manual') {
         const destItems = prev.find((c) => c.key === toCol.key)?.items ?? []
-        const maxOrder =
-          destItems.length > 0
-            ? Math.max(...destItems.map((c) => c.manual_order ?? 0))
-            : 0
         try {
-          await ctx.setTaskOrder(card.id, maxOrder + 1)
+          await ctx.setTaskOrder(card.id, nextManualOrder(destItems))
         } catch (e) {
           if (my !== moveSeq) return
-          moveError = e instanceof Error ? e.message : String(e)
+          moveError = errMsg(e)
           // The dimension change in dispatchDrop already persisted; reverting
           // the optimistic column placement would desync from disk. Reload to
           // pick up the on-disk state (new column, stale order value).
@@ -405,7 +408,7 @@
       }
     } catch (e) {
       if (my !== moveSeq) return
-      moveError = e instanceof Error ? e.message : String(e)
+      moveError = errMsg(e)
       revertTo(prev)
       liveMessage = 'Move failed — reverted.'
     }
@@ -424,14 +427,10 @@
       if (sort === 'manual') {
         const destItems =
           columns.find((c) => c.key === pending.toCol.key)?.items ?? []
-        const maxOrder =
-          destItems.length > 0
-            ? Math.max(...destItems.map((c) => c.manual_order ?? 0))
-            : 0
         try {
-          await ctx.setTaskOrder(pending.card.id, maxOrder + 1)
+          await ctx.setTaskOrder(pending.card.id, nextManualOrder(destItems))
         } catch (e) {
-          moveError = e instanceof Error ? e.message : String(e)
+          moveError = errMsg(e)
           // The status change already persisted; reload picks up on-disk state
           // (new column, stale order value) rather than desyncing.
           await reload()
@@ -441,7 +440,7 @@
       }
       liveMessage = 'Task completed despite open prerequisites.'
     } catch (e) {
-      moveError = e instanceof Error ? e.message : String(e)
+      moveError = errMsg(e)
       revertOptimistic(pending.card, pending.fromColKey, pending.toCol)
       liveMessage = 'Move failed — reverted.'
     }
@@ -496,14 +495,10 @@
           columns
             .find((c) => c.key === toCol.key)
             ?.items.filter((i) => i.id !== card.id) ?? []
-        const maxOrder =
-          destItems.length > 0
-            ? Math.max(...destItems.map((c) => c.manual_order ?? 0))
-            : 0
         try {
-          await ctx.setTaskOrder(card.id, maxOrder + 1)
+          await ctx.setTaskOrder(card.id, nextManualOrder(destItems))
         } catch (e) {
-          moveError = e instanceof Error ? e.message : String(e)
+          moveError = errMsg(e)
           await reload()
           liveMessage = 'Move partially failed — reloaded.'
           focusCard(card.id)
@@ -511,7 +506,7 @@
         }
       }
     } catch (e) {
-      moveError = e instanceof Error ? e.message : String(e)
+      moveError = errMsg(e)
       revertOptimistic(card, fromColKey, toCol)
       liveMessage = 'Move failed — reverted.'
     }
@@ -667,7 +662,7 @@
       }
     } catch (e) {
       if (my !== loadSeq) return
-      errorMsg = e instanceof Error ? e.message : String(e)
+      errorMsg = errMsg(e)
     } finally {
       if (my === loadSeq) loading = false
     }
@@ -1012,7 +1007,7 @@
       }
     } catch (e) {
       if (my !== moveSeq) return
-      moveError = e instanceof Error ? e.message : String(e)
+      moveError = errMsg(e)
       revertTo(prev)
       liveMessage = 'Reorder failed — reverted.'
     }
