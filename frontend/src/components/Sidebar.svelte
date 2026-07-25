@@ -386,32 +386,30 @@
   // only persistent hint is "create/open a notebook"; section guidance is
   // hover-only on the buttons. A native title on a disabled button never shows,
   // so the wrapper span carries it.
+  function shortcutSuffix(
+    action: Parameters<typeof shortcutBinding>[0]
+  ): string {
+    const binding = shortcutBinding(action, settings.config?.hotkeys ?? {})
+    return binding ? ` (${binding})` : ''
+  }
   let sectionHint = $derived(
     activeNotebook
-      ? `New Section${shortcutBinding('new_section', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_section', settings.config?.hotkeys ?? {})})` : ''}`
+      ? `New Section${shortcutSuffix('new_section')}`
       : 'Create or open a Notebook first'
   )
   let pageHint = $derived(
     activeNotebook
       ? activeSection
-        ? `New Page in ${activeSection}${shortcutBinding('new_page', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_page', settings.config?.hotkeys ?? {})})` : ''}`
-        : `New Page (no section)${shortcutBinding('new_page', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_page', settings.config?.hotkeys ?? {})})` : ''}`
+        ? `New Page in ${activeSection}${shortcutSuffix('new_page')}`
+        : `New Page (no section)${shortcutSuffix('new_page')}`
       : 'Create or open a Notebook first'
   )
-  let templateHint = $derived.by(() => {
-    const binding = shortcutBinding(
-      'open_template_picker',
-      settings.config?.hotkeys ?? {}
-    )
-    return `New page from template${binding ? ` (${binding})` : ''}`
-  })
-  let hideSidebarHint = $derived.by(() => {
-    const binding = shortcutBinding(
-      'toggle_sidebar',
-      settings.config?.hotkeys ?? {}
-    )
-    return `Hide sidebar${binding ? ` (${binding})` : ''}`
-  })
+  let templateHint = $derived(
+    `New page from template${shortcutSuffix('open_template_picker')}`
+  )
+  let hideSidebarHint = $derived(
+    `Hide sidebar${shortcutSuffix('toggle_sidebar')}`
+  )
   let nextStep = $derived(
     !activeNotebook ? 'Create or open a Notebook to get started.' : ''
   )
@@ -1360,7 +1358,7 @@
                   showNotebookDropdown = false
                   openCreate('notebook')
                 }}
-                title={`New Notebook${shortcutBinding('new_notebook', settings.config?.hotkeys ?? {}) ? ` (${shortcutBinding('new_notebook', settings.config?.hotkeys ?? {})})` : ''}`}
+                title={`New Notebook${shortcutSuffix('new_notebook')}`}
                 class="flex items-center gap-3 px-4 py-2 w-full text-left cursor-pointer hover:bg-hover transition-colors font-body-md border-none bg-transparent text-accent-primary-start"
               >
                 <span class="material-symbols-outlined text-icon-lg"
