@@ -60,7 +60,13 @@ func MigrateDictionaryCache() {
 func migrateDictionaryCacheDirs(old, new string) {
 	sentinel := filepath.Join(new, dictMigratedSentinel)
 	if _, err := os.Stat(sentinel); err == nil {
-		return // a prior migration completed
+		// Best-effort sweep of a legacy dir orphaned by a prior failed removal
+		// (RemoveAll is idempotent — a safe no-op once old is already gone).
+		// Without this, a sentinel-write that succeeded but a RemoveAll(old)
+		// that failed (or a crash between them) would leave the legacy cache
+		// orphaned forever, since the sentinel short-circuits future runs.
+		_ = os.RemoveAll(old)
+		return
 	}
 	entries, err := os.ReadDir(old)
 	if err != nil {

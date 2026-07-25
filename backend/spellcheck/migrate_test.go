@@ -44,24 +44,25 @@ func TestMigrateDictionaryCacheDirs_HappyPath(t *testing.T) {
 	}
 }
 
-func TestMigrateDictionaryCacheDirs_AlreadyMigratedIsNoOp(t *testing.T) {
+func TestMigrateDictionaryCacheDirs_AlreadyMigratedSweepsOrphan(t *testing.T) {
 	old := t.TempDir()
 	new := t.TempDir()
 	writeDictFile(t, filepath.Join(old, "domains", "legacy", "words.txt"), "legacy")
 	writeDictFile(t, filepath.Join(new, "domains", "existing", "words.txt"), "existing")
-	// Mark new as already migrated (sentinel present).
 	if err := os.WriteFile(filepath.Join(new, dictMigratedSentinel), []byte("migrated\n"), 0o644); err != nil {
 		t.Fatalf("write sentinel: %v", err)
 	}
 
 	migrateDictionaryCacheDirs(old, new)
 
-	// Sentinel short-circuits: new is untouched and the legacy cache is left.
+	// Sentinel short-circuits the copy (new is untouched)...
 	if _, err := os.Stat(filepath.Join(new, "domains", "existing", "words.txt")); err != nil {
-		t.Error("existing new file should remain (migration is a no-op)")
+		t.Error("existing new file should remain (no re-copy)")
 	}
-	if _, err := os.Stat(filepath.Join(old, "domains", "legacy", "words.txt")); err != nil {
-		t.Error("legacy cache should remain when new is already migrated")
+	// ...and sweeps a legacy dir orphaned by a prior failed removal. RemoveAll
+	// is idempotent, so this is a safe no-op once old is already gone.
+	if _, err := os.Stat(old); err == nil {
+		t.Error("orphaned legacy cache should be swept when already migrated")
 	}
 }
 
