@@ -584,7 +584,7 @@ describe('Tasks view', () => {
     await flush()
 
     // The guard dialog is still pending and no DONE was committed — the
-    // early `if (pendingBlockedDone) return` prevented the fall-through.
+    // early `if (blockedGuard.pending) return` prevented the fall-through.
     expect(screen.getByText('Complete anyway')).toBeInTheDocument()
     expect(mocks.updateBlockState).not.toHaveBeenCalled()
   })

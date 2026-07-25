@@ -18,7 +18,7 @@
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
   import { onMount, onDestroy } from 'svelte'
-  import type { PluginContext, TaskStatus } from '../../../sdk'
+  import type { TaskStatus } from '../../../sdk'
   import { plusDaysISO } from '../../../sdk'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
@@ -26,11 +26,13 @@
   import ConfirmModal from '../components/ConfirmModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import {
+    coerceTaskRow,
     formatEstimateSum,
     PRIORITY_LABELS,
     laneLabel,
     priorityClass,
-    type TaskDetail
+    type TaskDetail,
+    type TaskViewProps
   } from '../types'
   import { dueDateClass, dueDateTextClass } from '../dueDate'
   import ErrorBanner from '../components/ErrorBanner.svelte'
@@ -50,12 +52,9 @@
   import { buildQuery } from '../query'
   import { loadColumns, persistColumns } from '../settings'
   import { nextManualOrder } from './manualOrder'
+  import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
 
-  interface Props {
-    ctx: PluginContext
-    /** Hub subscribes to keep its header count in sync. */
-    onCountChange?: (open: number, done: number) => void
-  }
+  interface Props extends TaskViewProps {}
 
   let { ctx, onCountChange }: Props = $props()
 
@@ -95,12 +94,20 @@
 
   let selectedCard = $state<TaskDetail | null>(null)
   let subEditorCard = $state<TaskDetail | null>(null)
-  let pendingBlockedDone = $state<{
+  // DONE-on-blocked guard (#302): the shared hook owns the pending state +
+  // blocker fetch; BoardView attaches the optimistic-move context (card +
+  // source/dest columns) the confirm/cancel handlers need to revert or
+  // persist. BoardView swallows blocker-fetch errors and proceeds (avoids
+  // stranding an optimistic card), so onError is a no-op.
+  // ctx is a stable plugin-context singleton (created once by the hub; identity
+  // never changes for this component's lifetime) — capturing it once matches the
+  // prior inline $effect subscribes-once semantics.
+  // svelte-ignore state_referenced_locally
+  const blockedGuard = useBlockedDoneGuard<{
     card: TaskDetail
     fromColKey: string
     toCol: Lane
-    blockers: { id: string; clean_content?: string }[]
-  } | null>(null)
+  }>(ctx)
   // Soft WIP-limit confirm (#437): shown when a drop/keyboard move would
   // push a status column over its configured cap. Cancel snaps back;
   // Confirm proceeds with the status change.
@@ -338,7 +345,7 @@
     if (
       wouldExceedWip(card, fromColKey, toCol) &&
       !pendingWipConfirm &&
-      !pendingBlockedDone &&
+      !blockedGuard.pending &&
       !skipWipForBlockedDone
     ) {
       applyOptimistic(card, fromColKey, toCol)
@@ -355,31 +362,26 @@
       groupBy === 'status' &&
       toCol.value === 'DONE' &&
       card.is_blocked &&
-      !pendingBlockedDone
+      !blockedGuard.pending
     ) {
-      try {
-        const blockers = await ctx.getTaskBlockers(card.id)
+      // resolveBlockers (not check) so BoardView's moveSeq concurrency guard
+      // can run between the await and the dialog open — a stale confirm
+      // dialog must not land over a newer move.
+      const result = await blockedGuard.resolveBlockers(card.id)
+      if (result.ok) {
         // A second drop during the await bumped moveSeq; abandon this
         // commit so a stale confirm dialog can't land over a newer move.
         // Nothing is stranded — applyOptimistic hasn't run yet.
         if (my !== moveSeq) return
-        if (blockers.length > 0) {
+        if (result.blockers.length > 0) {
           applyOptimistic(card, fromColKey, toCol)
-          pendingBlockedDone = {
-            card,
-            fromColKey,
-            toCol,
-            blockers: blockers.map((b) => ({
-              id: b.id,
-              clean_content: b.clean_content
-            }))
-          }
+          blockedGuard.open(result.blockers, { card, fromColKey, toCol })
           return
         }
-      } catch {
-        // Blocker lookup failed — proceed with the persist below rather than
-        // stranding the card in an un-committed optimistic state.
       }
+      // !result.ok: blocker lookup failed — proceed with the persist below
+      // rather than stranding the card in an un-committed optimistic state
+      // (no moveSeq check on this path — matches the prior empty catch).
     }
     applyOptimistic(card, fromColKey, toCol)
 
@@ -415,20 +417,20 @@
   }
 
   async function confirmBlockedDone() {
-    const pending = pendingBlockedDone
+    const pending = blockedGuard.pending
     if (!pending) return
-    pendingBlockedDone = null
+    blockedGuard.dismiss()
+    const { card, fromColKey, toCol } = pending.context
     try {
-      await ctx.updateBlockState(pending.card.id, 'DONE')
+      await ctx.updateBlockState(card.id, 'DONE')
       // Cross-column manual sort (#426): mirror commitDrop. The DONE jump is
       // a cross-column move under manual sort, so the card needs an order
       // token beyond the destination's tail. prev (snapshot at drag-start) is
       // not in scope here; read the current destination column instead.
       if (sort === 'manual') {
-        const destItems =
-          columns.find((c) => c.key === pending.toCol.key)?.items ?? []
+        const destItems = columns.find((c) => c.key === toCol.key)?.items ?? []
         try {
-          await ctx.setTaskOrder(pending.card.id, nextManualOrder(destItems))
+          await ctx.setTaskOrder(card.id, nextManualOrder(destItems))
         } catch (e) {
           moveError = errMsg(e)
           // The status change already persisted; reload picks up on-disk state
@@ -441,16 +443,17 @@
       liveMessage = 'Task completed despite open prerequisites.'
     } catch (e) {
       moveError = errMsg(e)
-      revertOptimistic(pending.card, pending.fromColKey, pending.toCol)
+      revertOptimistic(card, fromColKey, toCol)
       liveMessage = 'Move failed — reverted.'
     }
   }
 
   function cancelBlockedDone() {
-    const pending = pendingBlockedDone
+    const pending = blockedGuard.pending
     if (!pending) return
-    pendingBlockedDone = null
-    revertOptimistic(pending.card, pending.fromColKey, pending.toCol)
+    blockedGuard.dismiss()
+    const { card, fromColKey, toCol } = pending.context
+    revertOptimistic(card, fromColKey, toCol)
     liveMessage = 'Move cancelled.'
   }
 
@@ -466,24 +469,15 @@
     // Card is already optimistically in the target. Hand off to the
     // blocked-DONE guard when applicable; otherwise persist the drop.
     if (groupBy === 'status' && toCol.value === 'DONE' && card.is_blocked) {
-      try {
-        const blockers = await ctx.getTaskBlockers(card.id)
-        if (blockers.length > 0) {
-          pendingBlockedDone = {
-            card,
-            fromColKey,
-            toCol,
-            blockers: blockers.map((b) => ({
-              id: b.id,
-              clean_content: b.clean_content
-            }))
-          }
-          focusCard(card.id)
-          return
-        }
-      } catch {
-        // Proceed with persist below.
+      // User already confirmed WIP; no concurrent drop concern here, but the
+      // shared resolver still wires the fetch + shape map + error policy.
+      const result = await blockedGuard.resolveBlockers(card.id)
+      if (result.ok && result.blockers.length > 0) {
+        blockedGuard.open(result.blockers, { card, fromColKey, toCol })
+        focusCard(card.id)
+        return
       }
+      // !result.ok: blocker lookup failed — proceed with persist below.
     }
     liveMessage = announceMove(toCol)
     try {
@@ -641,18 +635,7 @@
       )
       const { rows: raw } = await ctx.sqliteQuery(sql, params)
       if (my !== loadSeq) return
-      rows = (raw as unknown as TaskDetail[]).map((r) => ({
-        ...r,
-        pinned: !!r.pinned,
-        created_at: r.created_at ?? '',
-        completed_at: r.completed_at ?? '',
-        manual_order: r.manual_order ?? 0,
-        modified_at: r.modified_at ?? '',
-        estimate_minutes:
-          r.estimate_minutes == null ? null : Number(r.estimate_minutes),
-        subtask_total: r.subtask_total ?? 0,
-        subtask_done: r.subtask_done ?? 0
-      }))
+      rows = (raw as unknown[]).map((r) => coerceTaskRow(r))
       rebin()
       // Keep the open drawer in sync with fresh data; if the task left the
       // result set, keep the last-known snapshot rather than snapping closed.
@@ -701,19 +684,8 @@
   // Repaint on any block mutation (created/mutated/rescheduled from any
   // surface). Debounced so a burst of block:changed events triggers one
   // reload.
-  let blockChangedTimer: ReturnType<typeof setTimeout> | null = null
-  $effect(() => {
-    const off = ctx.on('block:changed', () => {
-      if (blockChangedTimer) clearTimeout(blockChangedTimer)
-      blockChangedTimer = setTimeout(() => {
-        void reload()
-      }, 80)
-    })
-    return () => {
-      if (blockChangedTimer) clearTimeout(blockChangedTimer)
-      off()
-    }
-  })
+  // svelte-ignore state_referenced_locally
+  useBlockChangedReload(ctx, reload)
 
   // High-cardinality guard: >20 columns refuses to render and falls back to
   // List mode (auto-switches the hub). Fires once per overload.
@@ -1671,10 +1643,10 @@
   ></div>
 {/if}
 
-{#if pendingBlockedDone}
+{#if blockedGuard.pending}
   <BlockedDoneDialog
-    cardText={pendingBlockedDone.card.clean_content}
-    blockers={pendingBlockedDone.blockers}
+    cardText={blockedGuard.pending.context.card.clean_content}
+    blockers={blockedGuard.pending.blockers}
     onConfirm={confirmBlockedDone}
     onCancel={cancelBlockedDone}
   />

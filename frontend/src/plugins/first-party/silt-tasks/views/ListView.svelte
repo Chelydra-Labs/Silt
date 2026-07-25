@@ -11,28 +11,31 @@
   import { onMount, onDestroy, untrack } from 'svelte'
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
-  import type { PluginContext, PluginManifest } from '../../../sdk'
+  import type { PluginManifest } from '../../../sdk'
   import { plusDaysISO } from '../../../sdk'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
-  import { formatEstimateSum, type TaskDetail } from '../types'
+  import {
+    coerceTaskRow,
+    formatEstimateSum,
+    type TaskDetail,
+    type TaskViewProps
+  } from '../types'
   import { dueDateClass, dueDateTextClass } from '../dueDate'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import { getTaskHubQueryContext, getTaskHubViewState } from '../state.svelte'
   import { binByDimension, type GroupSection } from '../grouping'
   import { buildQuery } from '../query'
+  import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
 
-  interface Props {
-    ctx: PluginContext
+  interface Props extends TaskViewProps {
     /** Unused now (title lives in the hub); kept for direct-render compat. */
     manifest?: PluginManifest
     focusBlockId?: string
     focusKey?: string
-    /** Hub subscribes to keep its header count in sync. */
-    onCountChange?: (open: number, done: number) => void
   }
 
   let {
@@ -67,10 +70,19 @@
 
   let selectedTask = $state<TaskDetail | null>(null)
   let subEditorTask = $state<TaskDetail | null>(null)
-  let pendingBlockedDone = $state<{
-    item: TaskDetail
-    blockers: { id: string; clean_content?: string }[]
-  } | null>(null)
+  // DONE-on-blocked guard (#302): shared hook owns pending state + blocker
+  // fetch. ListView attaches the item so confirmBlockedDone can hand it to
+  // commitMarkDown. On a fetch failure ListView surfaces markDownError + an
+  // 8s auto-dismiss timer (matches the inline behavior pre-extraction).
+  // ctx is a stable plugin-context singleton — see BoardView for rationale.
+  // svelte-ignore state_referenced_locally
+  const blockedGuard = useBlockedDoneGuard<TaskDetail>(ctx, (e) => {
+    markDownError = e instanceof Error ? e.message : String(e)
+    markDownTimer = setTimeout(() => {
+      markDownError = ''
+      markDownTimer = null
+    }, 8_000)
+  })
 
   // Monotonic token so concurrent reload() calls can identify their own
   // response vs a later one (rapid scope/filter switches).
@@ -146,19 +158,8 @@
 
       const [openRes, doneRes] = await Promise.all([openPromise, donePromise])
       if (my !== loadSeq) return
-      openItems = ((openRes.rows as unknown as TaskDetail[]) ?? []).map(
-        (r) => ({
-          ...r,
-          pinned: !!r.pinned,
-          created_at: r.created_at ?? '',
-          completed_at: r.completed_at ?? '',
-          manual_order: r.manual_order ?? 0,
-          modified_at: r.modified_at ?? '',
-          estimate_minutes:
-            r.estimate_minutes == null ? null : Number(r.estimate_minutes),
-          subtask_total: r.subtask_total ?? 0,
-          subtask_done: r.subtask_done ?? 0
-        })
+      openItems = ((openRes.rows as unknown[]) ?? []).map((r) =>
+        coerceTaskRow(r)
       )
       doneItems = (doneRes.rows as unknown as CompletedTaskItem[]) ?? []
       if (selectedTask) {
@@ -399,40 +400,24 @@
   }
 
   async function markDone(item: TaskDetail) {
-    if (pendingBlockedDone) return
-    if (item.is_blocked && !pendingBlockedDone) {
-      try {
-        const blockers = await ctx.getTaskBlockers(item.id)
-        if (blockers.length > 0) {
-          pendingBlockedDone = {
-            item,
-            blockers: blockers.map((b) => ({
-              id: b.id,
-              clean_content: b.clean_content
-            }))
-          }
-          return
-        }
-      } catch (e) {
-        markDownError = e instanceof Error ? e.message : String(e)
-        markDownTimer = setTimeout(() => {
-          markDownError = ''
-          markDownTimer = null
-        }, 8_000)
-        return
-      }
+    if (blockedGuard.pending) return
+    if (item.is_blocked) {
+      // 'dialog' → BlockedDoneDialog opened (bail); 'error' → onError already
+      // surfaced markDownError (bail); 'clear' → proceed to commit.
+      const result = await blockedGuard.check(item.id, item.is_blocked, item)
+      if (result !== 'clear') return
     }
     await commitMarkDown(item)
   }
 
   function confirmBlockedDone() {
-    const pending = pendingBlockedDone
-    pendingBlockedDone = null
-    if (pending) void commitMarkDown(pending.item)
+    const pending = blockedGuard.pending
+    blockedGuard.dismiss()
+    if (pending) void commitMarkDown(pending.context)
   }
 
   function cancelBlockedDone() {
-    pendingBlockedDone = null
+    blockedGuard.dismiss()
   }
 
   function openDrawer(item: TaskDetail) {
@@ -443,19 +428,10 @@
     subEditorTask = item
   }
 
-  let blockChangedTimer: ReturnType<typeof setTimeout> | null = null
-  $effect(() => {
-    const off = ctx.on('block:changed', () => {
-      if (blockChangedTimer) clearTimeout(blockChangedTimer)
-      blockChangedTimer = setTimeout(() => {
-        void reload()
-      }, 80)
-    })
-    return () => {
-      if (blockChangedTimer) clearTimeout(blockChangedTimer)
-      off()
-    }
-  })
+  // Repaint on any block mutation (created/mutated/rescheduled from any
+  // surface). Debounced so a burst of block:changed events triggers one reload.
+  // svelte-ignore state_referenced_locally
+  useBlockChangedReload(ctx, reload)
 
   let highlightTimer: ReturnType<typeof setTimeout> | null = null
   let focusedRowId = $state('')
@@ -1067,10 +1043,10 @@
     }}
   />
 {/if}
-{#if pendingBlockedDone}
+{#if blockedGuard.pending}
   <BlockedDoneDialog
-    cardText={pendingBlockedDone.item.clean_content}
-    blockers={pendingBlockedDone.blockers}
+    cardText={blockedGuard.pending.context.clean_content}
+    blockers={blockedGuard.pending.blockers}
     onConfirm={confirmBlockedDone}
     onCancel={cancelBlockedDone}
   />
