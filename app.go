@@ -637,6 +637,19 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.configMu.Unlock()
 	a.verifyLinkedNotebookFingerprints()
 
+	// Best-effort cloud-sync detection: a vault under a cloud-synced
+	// folder (Google Drive / OneDrive / Dropbox / iCloud) is more prone to
+	// transient file locks and WAL fallback. Never blocks opening; the warning
+	// rides vault:init-warnings so the user is nudged toward a local folder.
+	// The index layer also surfaces its own WAL-fallback caveats via
+	// dbMgr.Warnings(), merged into storageWarnings below.
+	var storageWarnings []string
+	if provider, ok := db.DetectCloudSyncedFolder(vaultPath); ok {
+		storageWarnings = append(storageWarnings, fmt.Sprintf(
+			"This vault is inside a %s synced folder. Cloud-sync engines can transiently lock files; Silt tolerates this, but for best reliability consider moving the vault to a purely local folder.",
+			provider))
+	}
+
 	// Persistent on-disk WAL index at <vault>/.system/index.sqlite. Survives
 	// restarts so a warm launch re-indexes only changed files (#29). Markdown
 	// remains the source of truth; deleting the 3 index files forces a clean
@@ -650,6 +663,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to start database: %w", err)
 	}
+	storageWarnings = append(storageWarnings, dbMgr.Warnings()...)
 
 	// SQLDB() only at vault open: handle is live and single-threaded here.
 	// Query/write paths must use DatabaseManager package methods (handle/
@@ -715,6 +729,9 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// indexed (valid metadata, no scan error) get a files row — a file that
 	// failed to parse shouldn't be marked "unchanged" next time.
 	var allWarnings []string
+	// Surface storage-layer caveats (cloud-sync detection + WAL fallback)
+	// alongside the per-file warnings below, all via vault:init-warnings.
+	allWarnings = append(allWarnings, storageWarnings...)
 	for _, res := range changed {
 		if res.Err != nil {
 			allWarnings = append(allWarnings, fmt.Sprintf("%s: %v", res.Path, res.Err))

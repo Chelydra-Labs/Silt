@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -19,27 +20,21 @@ func (dm *DatabaseManager) initSchema() error {
 	}
 
 	// journal_mode is persistent in the DB file header; on an in-memory DB
-	// SQLite silently keeps "memory" (the call still succeeds). Setting WAL
-	// here means the first on-disk open creates a WAL-mode file and every
-	// later connection — including the plugin read-only handle — inherits it
-	// without re-running the pragma.
-	if _, err := db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
+	// SQLite silently keeps "memory". The choice is resilient to transient
+	// sync/AV locks: on an on-disk DB the WAL PRAGMA is retried with
+	// bounded jittered backoff on transient IOERR/BUSY, and falls back to a
+	// TRUNCATE rollback journal if WAL stays unavailable (e.g. a network or
+	// cloud-synced mount). A fallback records a non-fatal warning surfaced via
+	// DatabaseManager.Warnings(); a hard error only propagates if even
+	// TRUNCATE fails. The per-directory decision is cached for the session.
+	mode, walWarn, err := dm.applyJournalMode(context.Background(), db)
+	if err != nil {
 		return fmt.Errorf("failed to set journal mode: %w", err)
 	}
-
-	// Belt-and-suspenders (#79): assert the journal mode actually stuck. Some
-	// mounts silently downgrade away from WAL (returning "memory" or "delete"
-	// instead of erroring). On an in-memory DB the mode is "memory" which is
-	// expected — only assert for on-disk databases.
-	if dm.path != "" {
-		var mode string
-		if err := db.QueryRow("PRAGMA journal_mode;").Scan(&mode); err != nil {
-			return fmt.Errorf("failed to read journal mode: %w", err)
-		}
-		if !strings.EqualFold(mode, "wal") {
-			return fmt.Errorf("%w: PRAGMA journal_mode returned %q instead of \"wal\" — the filesystem may not support shared memory", ErrWALRejected, mode)
-		}
+	if walWarn != "" {
+		dm.warnings = append(dm.warnings, walWarn)
 	}
+	_ = mode // applied for documentation/loggability; not consulted further
 	// Per-connection pragmas. synchronous=NORMAL is safe under WAL (the WAL
 	// itself preserves durability across app crashes; only an OS crash can
 	// lose the last few transactions, an acceptable trade for local-first
