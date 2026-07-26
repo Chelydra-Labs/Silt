@@ -44,7 +44,6 @@
     SiltTableExtensions,
     UniqueBlockIds,
     SiltBlockKeymaps,
-    insertTable,
     findActiveBlock,
     TaskMetaSuggest,
     applyMetaSuggestion,
@@ -113,6 +112,7 @@
   } from '../lib/editor/colors'
   import { createSlashMenu } from '../lib/editor/useSlashMenu.svelte'
   import { createEditorEvents } from './editor/controllers/useEditorEvents.svelte'
+  import { createPopoversController } from './editor/controllers/usePopovers.svelte'
   import { clearInsertEditor } from '../lib/dateGlanceState.svelte'
   import {
     setActiveEditor,
@@ -126,10 +126,6 @@
   } from '../plugins/ui-location'
   import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
   import { isSystemDark } from '../lib/systemTheme.svelte'
-
-  // Validates hex color strings before applying to marks (#170). Prevents
-  // injection of arbitrary CSS or characters that break the converter regex.
-  const HEX_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/
 
   interface Props {
     notebook: string
@@ -181,10 +177,6 @@
   // at the end (#664). ChoiceDialog offers insert-at-cursor vs append-to-end.
   let pendingTemplateBlocks = $state<ParsedBlock[] | null>(null)
   let templateInsertReturnFocus = $state<HTMLElement | null>(null)
-  // Block-embed picker (#593): selecting /embed opens BlockPickerModal; picking
-  // a block inserts a complete {{embed:UUID}} token (rendered as a live
-  // EmbedPortal by the existing tokenizer/NodeView pipeline).
-  let showEmbedPicker = $state(false)
   // Per-vault math opt-out (#191). Live so toggling it in Settings takes effect
   // on the next slash-menu open (hides the /math command).
   let mathEnabled = $derived(
@@ -242,39 +234,14 @@
 
   // Word count is managed as a bindable prop.
 
-  // Inline link URL input (#168). Shows a small <input> near the selection
-  // when the user clicks the link button or presses Ctrl+K. Enter applies,
-  // Esc cancels, blur applies.
-  let showLinkInput = $state(false)
-  let linkInputValue = $state('')
-  let linkInputCoords = $state<{ left: number; top: number } | null>(null)
-
-  // Color picker popover (#170). Shows ColorPickerMenu as a floating element
-  // near the selection, replacing the window.prompt slash-command path.
-  let showColorPicker = $state(false)
-  let colorPickerMarkType = $state<'textColor' | 'backgroundColor'>('textColor')
-  let colorPickerCoords = $state<{ left: number; top: number } | null>(null)
-
-  // Custom-table size picker (#172) — an in-app popover replacing window.prompt.
-  let showTableSizePicker = $state(false)
-  let tableSizeCoords = $state<{
-    top: number
-    bottom: number
-    left: number
-  } | null>(null)
-
-  // LaTeX equation popover (Phase 5 / #328). Replaces window.prompt for both
-  // the /math slash command (block create) and click-to-edit on a math node
-  // (inline or block). The popover is owned here so it renders as a sibling of
-  // the editor surface — same layering model as the link/color/table popovers
-  // — and math NodeViews request editing via the silt:edit-math window event
-  // (passing their own latex/displayMode/coords/update callback in the detail).
-  let mathPopover = $state<{
-    latex: string
-    displayMode: boolean
-    coords: { left: number; top: number }
-    onCommit: (latex: string) => void
-  } | null>(null)
+  // Popover cluster (Cluster A): the six selection-anchored floating popovers
+  // (link input, color picker, table-size picker, LaTeX math popover, block-
+  // embed picker) and their open/apply/cancel handlers + dismiss helper, plus
+  // the link-autofocus $effect. Relocated verbatim to createPopoversController
+  // (editor/controllers/usePopovers.svelte.ts); the controller owns the $state
+  // cells and injects getEditor so handlers always see the live editor. Reads
+  // below use popovers.* (getters keep template reads reactive).
+  const popovers = createPopoversController({ getEditor: () => editorInstance })
 
   // View mode (#171) is managed by the parent container.
 
@@ -302,135 +269,6 @@
       })
     }
   }
-
-  // --- Inline link URL input (#168 / #689) ---------------------------------
-  // Opens for insert or edit. Existing links are never removed here — the
-  // selection bubble exposes Edit/Open/Copy/Remove explicitly (#689).
-  function openLinkInput(prefill?: string): void {
-    if (!editorInstance || editorInstance.isDestroyed) return
-    const { selection } = editorInstance.state
-    const inLink = editorInstance.isActive('link')
-    // New links need a non-empty selection; edit can open with the caret in a link.
-    if (selection.empty && !inLink && prefill == null) return
-    try {
-      const coords = editorInstance.view.coordsAtPos(selection.from)
-      linkInputCoords = { left: coords.left, top: coords.bottom }
-    } catch {
-      linkInputCoords = null
-    }
-    let initial = prefill ?? ''
-    if (!initial && inLink) {
-      try {
-        const attrs = editorInstance.getAttributes('link') as { href?: string }
-        initial = attrs?.href ?? ''
-      } catch {
-        initial = ''
-      }
-    }
-    linkInputValue = initial
-    showLinkInput = true
-  }
-
-  function applyLinkInput(): void {
-    if (!editorInstance || editorInstance.isDestroyed) return
-    const url = linkInputValue.trim()
-    if (url) {
-      // setLink updates an existing mark or applies a new one without toggle
-      // flip-flop when the selection is already linked (#689 edit path).
-      editorInstance.chain().focus().setLink({ href: url }).run()
-    } else {
-      editorInstance.chain().focus().run()
-    }
-    showLinkInput = false
-    linkInputValue = ''
-  }
-
-  function cancelLinkInput(): void {
-    showLinkInput = false
-    linkInputValue = ''
-    editorInstance?.chain().focus().run()
-  }
-
-  // --- Custom table size picker (#172) -------------------------------------
-  function confirmTableSize(rows: number, cols: number): void {
-    showTableSizePicker = false
-    tableSizeCoords = null
-    if (editorInstance && !editorInstance.isDestroyed) {
-      insertTable(editorInstance, rows, cols)
-    }
-  }
-  function cancelTableSize(): void {
-    showTableSizePicker = false
-    tableSizeCoords = null
-    editorInstance?.chain().focus().run()
-  }
-
-  // --- LaTeX equation popover (Phase 5 / #328) -----------------------------
-  // EDIT site: a math NodeView dispatches silt:edit-math with its latex,
-  // displayMode, DOM-derived coords, and an onCommit that calls its own
-  // updateAttributes. CREATE site (/math) opens the popover directly below.
-  // The silt:edit-math listener itself lives in the events controller (see
-  // createEditorEvents below); it writes here via the setMathPopover accessor.
-
-  function commitMathPopover(latex: string): void {
-    const cb = mathPopover?.onCommit
-    mathPopover = null
-    cb?.(latex)
-    if (editorInstance && !editorInstance.isDestroyed) {
-      editorInstance.commands.focus()
-    }
-  }
-
-  function cancelMathPopover(): void {
-    mathPopover = null
-    if (editorInstance && !editorInstance.isDestroyed) {
-      editorInstance.commands.focus()
-    }
-  }
-
-  // --- Color picker popover (#170) -----------------------------------------
-  function openColorPickerPopover(
-    markType: 'textColor' | 'backgroundColor'
-  ): void {
-    if (!editorInstance || editorInstance.isDestroyed) return
-    try {
-      const { selection } = editorInstance.state
-      const coords = editorInstance.view.coordsAtPos(selection.from)
-      colorPickerCoords = { left: coords.left, top: coords.bottom }
-    } catch {
-      colorPickerCoords = null
-    }
-    colorPickerMarkType = markType
-    showColorPicker = true
-  }
-
-  // The silt:open-color-picker listener lives in the events controller; it
-  // calls openColorPickerPopover above.
-
-  function applyColorFromPopover(color: string | null): void {
-    if (!editorInstance || editorInstance.isDestroyed) return
-    if (color && HEX_COLOR_RE.test(color)) {
-      editorInstance
-        .chain()
-        .focus()
-        .setMark(colorPickerMarkType, { color })
-        .run()
-    } else if (!color) {
-      editorInstance.chain().focus().unsetMark(colorPickerMarkType).run()
-    }
-    showColorPicker = false
-    editorInstance.chain().focus().run()
-  }
-
-  // Auto-focus the link input when it appears.
-  $effect(() => {
-    if (showLinkInput) {
-      requestAnimationFrame(() => {
-        const input = document.querySelector<HTMLInputElement>('.link-input')
-        input?.focus()
-      })
-    }
-  })
 
   // --- Task metadata suggest (%-autocomplete) ------------------------------
   // `metaPopup` is null when the popup is closed. While open it carries the
@@ -1265,6 +1103,17 @@
     if (current) untrack(() => updateTagPopup(current.ctx))
   })
 
+  // --- Spellcheck cluster (Cluster B) — intentionally NOT extracted ---------
+  // The popover cluster above moved to createPopoversController; the spellcheck
+  // surface below stays inline. Unlike the popovers (pure open/apply/cancel on
+  // selection coords), spellcheck is intrinsically coupled to ProseMirror
+  // decoration/selection state: it reads editor.view.dom for the contextmenu
+  // handler, mutates decorations via findMisspellingAt /
+  // findMisspellingAtOrAfter / requestSpellcheckRecheck, and fans out into
+  // pushNotification + editor-readiness. The `silt:open-spellcheck` listener is
+  // deliberately co-located with the contextmenu $effect (useEditorEvents left
+  // it behind for the same reason). Splitting it would fracture a cohesive unit
+  // for no decoupling gain.
   // Spellcheck (#196 / #336 / #337): load language dictionary + custom words +
   // domain packs whenever config changes. Disabled → reset → no underlines.
   $effect(() => {
@@ -1381,41 +1230,32 @@
   })
 
   // Custom-event bus (silt:* window events). Handlers live in the events
-  // controller and bridge into the editor's popover/selection state via
-  // accessors so no state is duplicated. attach()/detach() preserve the
-  // original lifecycle: register during init, unregister in onDestroy.
+  // controller and bridge into the popover controller's open methods so no
+  // state is duplicated. attach()/detach() preserve the original lifecycle:
+  // register during init, unregister in onDestroy.
   const events = createEditorEvents({
     getEditor: () => editorInstance,
-    openLinkInput,
-    openColorPickerPopover,
-    setMathPopover: (popover) => {
-      mathPopover = popover
-    }
+    openLinkInput: popovers.openLinkInput,
+    openColorPickerPopover: popovers.openColorPickerPopover,
+    setMathPopover: popovers.setMathPopover
   })
   events.attach()
 
-  // Dismiss the selection-anchored popovers (link / color / math) when an
-  // ancestor scrolls or the window resizes (#594). They capture their anchor
-  // coordinates once and render position:fixed, so without this they would
-  // float at stale screen positions. Dismiss is chosen over reposition for
-  // parity with the selection bubble (repositioning mid-text-entry is jarring).
-  function dismissFloatingPopovers(): void {
-    if (showLinkInput) showLinkInput = false
-    if (showColorPicker) showColorPicker = false
-    if (mathPopover) mathPopover = null
-  }
+  // Dismiss the selection-anchored popovers (link / color / math) on ancestor
+  // scroll / window resize (#594). Lives in the popover controller; the scroll
+  // /resize handlers below delegate to it.
   function onEditorScroll(): void {
     selectionCoords = null
     // Dismiss the slash palette on scroll (parity with the selection bubble)
     // so it never floats at stale coordinates (#590).
     if (slash.showSlashMenu) slash.dismiss()
-    dismissFloatingPopovers()
+    popovers.dismissFloatingPopovers()
   }
   function onWindowResize(): void {
     // A resize can push an open palette/popover off-screen; dismiss rather
     // than chase the cursor (#590 / #594).
     if (slash.showSlashMenu) slash.dismiss()
-    dismissFloatingPopovers()
+    popovers.dismissFloatingPopovers()
   }
   // Dismiss SelectionBubble when clicking outside the editor and bubble (#168).
   // The slash palette is guarded by its dedicated data-slash-palette marker
@@ -1573,17 +1413,10 @@
 
   const slash = createSlashMenu({
     getEditor: () => editorInstance,
-    onOpenMathPopover: (popover) => {
-      mathPopover = popover
-    },
-    onOpenTableSizePicker: (anchor) => {
-      tableSizeCoords = anchor
-      showTableSizePicker = true
-    },
-    onOpenColorPicker: (markType) => openColorPickerPopover(markType),
-    onShowEmbedPicker: () => {
-      showEmbedPicker = true
-    },
+    onOpenMathPopover: popovers.setMathPopover,
+    onOpenTableSizePicker: popovers.openTableSizePicker,
+    onOpenColorPicker: popovers.openColorPickerPopover,
+    onShowEmbedPicker: popovers.openEmbedPicker,
     onShowTemplatePicker: () => {
       showTemplatePicker = true
     }
@@ -1661,29 +1494,6 @@
 
   function cancelTemplateInsert(): void {
     clearTemplateInsertDialog()
-  }
-
-  // --- Block embed picker (#593) -------------------------------------------
-  // Mirrors the TemplatePicker pattern: a picker-backed slash command. Picking
-  // a block inserts a complete embed portal. The token is inserted as a
-  // pre-built embedNode (not raw `{{embed:uuid}}` text) because the editor has
-  // no live input rule that converts the raw token — only the block load
-  // path (blocksToDoc) tokenizes. Inserting the node renders the live
-  // EmbedPortal immediately and round-trips back to `{{embed:uuid}}` on save.
-  // Cancelling inserts nothing (the consumed '/embed' trigger text was already
-  // deleted before the dispatch).
-  function handleEmbedPick(blockId: string): void {
-    showEmbedPicker = false
-    if (!editorInstance || editorInstance.isDestroyed) return
-    editorInstance.commands.insertContent({
-      type: 'embedNode',
-      attrs: { id: crypto.randomUUID(), uuid: blockId, bullet: '' }
-    })
-    editorInstance.commands.focus()
-  }
-  function closeEmbedPicker(): void {
-    showEmbedPicker = false
-    editorInstance?.chain().focus().run()
   }
 
   // --- Focus lock (reuses the #38 TTL-lease bindings) -----------------------
@@ -2052,10 +1862,11 @@
       />
     {/if}
   {/if}
-  {#if showLinkInput && linkInputCoords}
+  {#if popovers.showLinkInput && popovers.linkInputCoords}
     <div
       class="link-input-popover"
-      style="left:{linkInputCoords.left}px; top:{linkInputCoords.top}px"
+      style="left:{popovers.linkInputCoords.left}px; top:{popovers
+        .linkInputCoords.top}px"
       role="dialog"
       aria-label="Insert link URL"
     >
@@ -2063,28 +1874,29 @@
         type="url"
         class="link-input"
         placeholder="https://"
-        bind:value={linkInputValue}
+        bind:value={popovers.linkInputValue}
         onkeydown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault()
-            applyLinkInput()
+            popovers.applyLinkInput()
           } else if (e.key === 'Escape') {
             e.preventDefault()
-            cancelLinkInput()
+            popovers.cancelLinkInput()
           }
         }}
-        onblur={applyLinkInput}
+        onblur={popovers.applyLinkInput}
       />
     </div>
   {/if}
-  {#if showColorPicker && colorPickerCoords}
+  {#if popovers.showColorPicker && popovers.colorPickerCoords}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div
       class="color-picker-popover"
-      style="left:{colorPickerCoords.left}px; top:{colorPickerCoords.top}px"
+      style="left:{popovers.colorPickerCoords.left}px; top:{popovers
+        .colorPickerCoords.top}px"
       role="menu"
       tabindex="-1"
-      aria-label={colorPickerMarkType === 'textColor'
+      aria-label={popovers.colorPickerMarkType === 'textColor'
         ? 'Text color'
         : 'Background color'}
       onclick={(e) => e.stopPropagation()}
@@ -2092,7 +1904,7 @@
       <button
         type="button"
         class="cp-swatch cp-reset"
-        onclick={() => applyColorFromPopover(null)}
+        onclick={() => popovers.applyColorFromPopover(null)}
         aria-label="No color"
       >
         <span
@@ -2110,7 +1922,8 @@
               style="background-color: {resolveColor(entry, isDark)}"
               aria-label={entry.label}
               role="menuitem"
-              onclick={() => applyColorFromPopover(resolveColor(entry, isDark))}
+              onclick={() =>
+                popovers.applyColorFromPopover(resolveColor(entry, isDark))}
             >
             </button>
           {/each}
@@ -2128,7 +1941,8 @@
               style="background-color: {resolveColor(entry, isDark)}"
               aria-label={entry.label}
               role="menuitem"
-              onclick={() => applyColorFromPopover(resolveColor(entry, isDark))}
+              onclick={() =>
+                popovers.applyColorFromPopover(resolveColor(entry, isDark))}
             >
             </button>
           {/each}
@@ -2138,26 +1952,27 @@
         <input
           type="color"
           class="cp-custom-input"
-          onchange={(e) => applyColorFromPopover(e.currentTarget.value)}
+          onchange={(e) =>
+            popovers.applyColorFromPopover(e.currentTarget.value)}
           aria-label="Custom color"
         />
       </label>
     </div>
   {/if}
-  {#if showTableSizePicker && tableSizeCoords}
+  {#if popovers.showTableSizePicker && popovers.tableSizeCoords}
     <TableSizePicker
-      anchor={tableSizeCoords}
-      onConfirm={confirmTableSize}
-      onCancel={cancelTableSize}
+      anchor={popovers.tableSizeCoords}
+      onConfirm={popovers.confirmTableSize}
+      onCancel={popovers.cancelTableSize}
     />
   {/if}
-  {#if mathPopover}
+  {#if popovers.mathPopover}
     <MathLatexPopover
-      latex={mathPopover.latex}
-      displayMode={mathPopover.displayMode}
-      coords={mathPopover.coords}
-      onCommit={commitMathPopover}
-      onCancel={cancelMathPopover}
+      latex={popovers.mathPopover.latex}
+      displayMode={popovers.mathPopover.displayMode}
+      coords={popovers.mathPopover.coords}
+      onCommit={popovers.commitMathPopover}
+      onCancel={popovers.cancelMathPopover}
     />
   {/if}
 </div>
@@ -2184,8 +1999,11 @@
   />
 {/if}
 
-{#if showEmbedPicker}
-  <BlockPickerModal onPick={handleEmbedPick} onClose={closeEmbedPicker} />
+{#if popovers.showEmbedPicker}
+  <BlockPickerModal
+    onPick={popovers.handleEmbedPick}
+    onClose={popovers.closeEmbedPicker}
+  />
 {/if}
 
 <style>
