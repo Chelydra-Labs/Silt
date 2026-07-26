@@ -20,17 +20,25 @@ func contentSHA256(parts ...[]byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// CacheRoot returns <UserConfigDir>/silt/dictionaries. Overridable in tests via
-// SILT_DICTIONARY_CACHE (absolute path).
+// CacheRoot returns <UserCacheDir>/silt/dictionaries. Overridable in tests via
+// SILT_DICTIONARY_CACHE (absolute path). On the first non-overridden call it
+// relocates any legacy cache from <UserConfigDir>/silt/dictionaries once
+// (dictionaries are downloadable/regenerable, so the OS cache dir is correct).
 func CacheRoot() (string, error) {
 	if override := strings.TrimSpace(os.Getenv("SILT_DICTIONARY_CACHE")); override != "" {
+		// Reject a relative override (mirrors paths.LocalDataDir): a relative
+		// path would resolve against the process cwd.
+		if !filepath.IsAbs(override) {
+			return "", fmt.Errorf("SILT_DICTIONARY_CACHE must be absolute, got %q", override)
+		}
 		return override, nil
 	}
-	cfg, err := os.UserConfigDir()
+	migrateDictionaryCacheOnce()
+	cacheDir, err := os.UserCacheDir()
 	if err != nil {
-		return "", fmt.Errorf("user config dir: %w", err)
+		return "", fmt.Errorf("user cache dir: %w", err)
 	}
-	return filepath.Join(cfg, "silt", "dictionaries"), nil
+	return filepath.Join(cacheDir, "silt", "dictionaries"), nil
 }
 
 // LanguageDir is the cache directory for one language pack.

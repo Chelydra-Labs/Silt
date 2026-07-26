@@ -21,6 +21,8 @@ import (
 	"silt/backend/mcp"
 	"silt/backend/monitor"
 	"silt/backend/parser"
+	"silt/backend/paths"
+	"silt/backend/spellcheck"
 	"silt/backend/templates"
 	"silt/backend/vault"
 
@@ -311,6 +313,10 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 	a.ctx = ctx
 	a.wailsApp = application.Get()
 	a.aiCtx, a.aiCtxCancel = context.WithCancel(context.Background())
+	// Front-load the one-time dictionary-cache relocation so the first
+	// spellcheck action is not blocked by the copy. CacheRoot also calls it
+	// lazily as a fallback; sync.Once dedupes the two paths.
+	go spellcheck.MigrateDictionaryCache()
 	settings, err := vault.LoadSettings()
 	if err != nil && !errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
 		// The settings file exists on disk but is unreadable or
@@ -637,19 +643,41 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.configMu.Unlock()
 	a.verifyLinkedNotebookFingerprints()
 
-	// Persistent on-disk WAL index at <vault>/.system/index.sqlite. Survives
-	// restarts so a warm launch re-indexes only changed files (#29). Markdown
-	// remains the source of truth; deleting the 3 index files forces a clean
-	// full rebuild. The .system dir is created by ScaffoldVault.
+	// Best-effort cloud-sync detection: a vault under a cloud-synced
+	// folder (Google Drive / OneDrive / Dropbox / iCloud) is more prone to
+	// transient file locks and WAL fallback. Never blocks opening; the warning
+	// rides vault:init-warnings so the user is nudged toward a local folder.
+	// The index layer also surfaces its own WAL-fallback caveats via
+	// dbMgr.Warnings(), merged into storageWarnings below.
+	var storageWarnings []string
+	if provider, ok := db.DetectCloudSyncedFolder(vaultPath); ok {
+		storageWarnings = append(storageWarnings, fmt.Sprintf(
+			"This vault is inside a %s synced folder. Cloud-sync engines can transiently lock files; Silt tolerates this, but for best reliability consider moving the vault to a purely local folder.",
+			provider))
+	}
+
+	// The .system dir holds per-vault app data (config.yaml, themes,
+	// templates, plugins, trash, logs); ensure it exists.
 	systemDir := filepath.Join(vaultPath, ".system")
 	if err := os.MkdirAll(systemDir, 0o700); err != nil {
 		return fmt.Errorf("failed to ensure .system dir: %w", err)
 	}
-	indexPath := filepath.Join(systemDir, "index.sqlite")
+
+	// The SQLite index lives in a per-user local DataDir (NOT in the synced
+	// vault), so a cloud-sync engine or antivirus cannot lock or corrupt it.
+	// On first open after upgrade, a legacy in-vault index is migrated to the
+	// new location, preserving warm-start performance. Markdown remains the
+	// source of truth — the index is reproducible working memory.
+	indexPath, migrateWarnings, err := paths.ResolveAndMigrateIndexPath(vaultPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve index location: %w", err)
+	}
+	storageWarnings = append(storageWarnings, migrateWarnings...)
 	dbMgr, err := db.NewDatabaseManager(indexPath)
 	if err != nil {
 		return fmt.Errorf("failed to start database: %w", err)
 	}
+	storageWarnings = append(storageWarnings, dbMgr.Warnings()...)
 
 	// SQLDB() only at vault open: handle is live and single-threaded here.
 	// Query/write paths must use DatabaseManager package methods (handle/
@@ -715,6 +743,9 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// indexed (valid metadata, no scan error) get a files row — a file that
 	// failed to parse shouldn't be marked "unchanged" next time.
 	var allWarnings []string
+	// Surface storage-layer caveats (cloud-sync detection + WAL fallback)
+	// alongside the per-file warnings below, all via vault:init-warnings.
+	allWarnings = append(allWarnings, storageWarnings...)
 	for _, res := range changed {
 		if res.Err != nil {
 			allWarnings = append(allWarnings, fmt.Sprintf("%s: %v", res.Path, res.Err))

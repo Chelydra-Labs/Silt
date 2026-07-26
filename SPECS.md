@@ -211,7 +211,9 @@ notebook, which trashes it). See ARCHITECTURE.md §3.1 for the full model
 onboarding is not permanent: Settings → General exposes a "Move vault…" /
 "Copy vault…" action on the workspace row. Both copy the entire tree (notes +
 `.system/` — config, themes, templates, plugins, trash) to a destination
-folder, EXCEPT the reproducible SQLite index (`.system/index.sqlite*`), which
+folder, EXCEPT the reproducible SQLite index (now in the per-user local
+DataDir, not the vault; a legacy `.system/index.sqlite*` is still excluded if
+present), which
 is rebuilt from markdown when the destination is first opened (the documented
 recovery op, §0 rule 4 — this is what makes a move safe across volumes and
 avoids stale absolute paths in the index). **Move** then switches the active
@@ -270,7 +272,8 @@ the archive is trivially inspectable with any unzip tool and per-entry digests
 are computed over a stable byte stream; compression is a documented future
 enhancement.
 
-**Exclusion.** The reproducible SQLite index (`.system/index.sqlite*`) is NEVER
+**Exclusion.** The reproducible SQLite index (now in the per-user local
+DataDir; a legacy `.system/index.sqlite*` is still excluded if present) is NEVER
 archived — identical to Move/Copy and for the same reason (§0 rule 4):
 it is reproducible working memory, rebuilt from markdown when the imported
 vault is first opened. Linked notebooks are external folders and are never
@@ -917,7 +920,8 @@ The `silt-attachments` plugin lets users attach arbitrary files to notes.
 
 Each plugin MAY carry its own SQLite file at
 `<vault>/.system/plugins/<id>/data/plugin.db`, opened lazily on a **distinct**
-connection from the core index (`<vault>/.system/index.sqlite*`). This is the
+connection from the core index (relocated to the per-user DataDir at
+`<DataDir>/silt/indexes/<vault-key>/index.sqlite*`). This is the
 **plugin-owned storage tier**: the plugin owns its schema and chooses
 durability semantics — working memory *or* durable storage at its discretion.
 

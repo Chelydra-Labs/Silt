@@ -33,10 +33,12 @@ func IsNetworkFS(path string) error {
 	return detectNetworkFilesystem(path)
 }
 
-// ErrWALRejected is returned when the database is on-disk but SQLite did not
-// accept WAL mode (the PRAGMA returned a different journal mode). This is a
-// belt-and-suspenders check: some mounts silently downgrade away from WAL
-// without erroring (#79).
+// ErrWALRejected labels a structural WAL rejection: the database is on-disk
+// but SQLite did not accept WAL mode (the PRAGMA returned a different journal
+// mode, or the mount silently downgraded). It is wrapped into the cause carried
+// by applyJournalMode's degraded-mode warning (not surfaced as a hard error);
+// classifyWALFallback uses it to mark the silent-downgrade case as structural
+// rather than transient.
 var ErrWALRejected = errors.New("WAL mode rejected by the filesystem")
 
 // ErrDBClosed is returned by DatabaseManager methods after Close. Callers
@@ -52,8 +54,9 @@ type DatabaseManager struct {
 	dbMu sync.RWMutex
 	// db is the live handle. nil after Close. Use withDB / handle() rather
 	// than reading this field directly from new code.
-	db   atomic.Pointer[sql.DB]
-	path string // "" for the in-memory shared-cache DB; otherwise the on-disk file path
+	db       atomic.Pointer[sql.DB]
+	path     string   // "" for the in-memory shared-cache DB; otherwise the on-disk file path
+	warnings []string // soft caveats from initSchema (e.g. WAL fell back to TRUNCATE)
 }
 
 // FileStat records the last-seen filesystem attributes of an indexed file, used
@@ -65,10 +68,11 @@ type FileStat struct {
 	IndexedAt int64
 }
 
-// NewDatabaseManager opens the Silt index. Pass the on-disk path (typically
-// `<vault>/.system/index.sqlite`) for the production persistent WAL database,
-// or "" for an ephemeral in-memory shared-cache DB (used by tests and before a
-// vault is open).
+// NewDatabaseManager opens the Silt index. Pass the on-disk path (resolved by
+// paths.LocalIndexPath for production — a per-user local DataDir, no longer
+// inside the synced vault) for the production persistent WAL database, or ""
+// for an ephemeral in-memory shared-cache DB (used by tests and before a vault
+// is open).
 //
 // On-disk databases run in WAL mode (journal_mode is persistent in the file
 // header, so it is set once and inherited by every subsequent connection,
@@ -160,6 +164,20 @@ func (dm *DatabaseManager) Path() string {
 // or an ephemeral in-memory one (false).
 func (dm *DatabaseManager) IsOnDisk() bool {
 	return dm.path != ""
+}
+
+// Warnings returns soft caveats produced while opening the index (e.g. WAL was
+// unavailable and the index opened in degraded TRUNCATE mode). Empty when the
+// index opened cleanly. Populated by initSchema; safe to read after
+// NewDatabaseManager returns. Callers surface these as non-blocking warnings
+// (e.g. the vault:init-warnings channel) rather than errors.
+func (dm *DatabaseManager) Warnings() []string {
+	if len(dm.warnings) == 0 {
+		return nil
+	}
+	out := make([]string, len(dm.warnings))
+	copy(out, dm.warnings)
+	return out
 }
 
 func (dm *DatabaseManager) Close() error {

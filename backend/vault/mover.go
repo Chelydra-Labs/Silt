@@ -19,9 +19,13 @@ import (
 // indexArtifactPrefix is the relpath prefix (slash-separated, relative to the
 // vault root) of the SQLite index files. The index is reproducible working
 // memory (ARCHITECTURE.md §0 rule 4), so it is NEVER copied by a vault move
-// or copy — the destination rebuilds it from markdown on first open. Matching
-// on a prefix also catches the WAL (-wal), shared-memory (-shm), and any
-// legacy -journal auxiliary files.
+// or copy — the destination rebuilds it from markdown on first open. The
+// production index now lives in a per-user local DataDir (outside the synced
+// vault), so a freshly-created vault carries no index.sqlite here at all; this
+// prefix is kept as a migration-window guard for a pre-relocation vault that
+// still holds an in-tree index when it is moved/copied/archived. Matching on a
+// prefix also catches the WAL (-wal), shared-memory (-shm), and any legacy
+// -journal auxiliary files.
 const indexArtifactPrefix = ".system/index.sqlite"
 
 // networkFSCheck is the network-filesystem detector used by validateDestination.
@@ -261,7 +265,7 @@ func RemoveOldVault(oldPath string) error {
 // SourceModifiedAfter reports whether any regular, non-index file under root
 // has an mtime at or after cutoff. MoveVault snapshots the source vault the
 // instant its copy+verify completes and calls this before the post-cutover
-// removal of the old folder: ARCHITECTURE.md lets external editors 
+// removal of the old folder: ARCHITECTURE.md lets external editors
 // write vault files concurrently, and an edit landing in the
 // copy→cutover→removeOld window would be silently lost when the source is
 // deleted. A "modified since copy" result means the move MUST keep the old

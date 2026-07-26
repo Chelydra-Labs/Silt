@@ -49,7 +49,7 @@ correctness regression, not a style choice.
 | **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Tasks hub saved views + display mode/grouping/sort, hotkey bindings, editor font sizes, theme typography overrides, canonical navigation order, expanded section locators, bounded recent pages, favorites (Quick Access pins), and pinned tabs | `ui.expanded_sections: [{notebook: Work, path: Projects}]` |
 | **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook. Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-tasks.default_group_by: status` |
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
-| **Working memory** | SQLite (WAL) | `<vault>/.system/index.sqlite*` | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
+| **Working memory** | SQLite (WAL) | `<DataDir>/silt/indexes/<vault-key>/index.sqlite*` (per-user local DataDir; relocated OUT of the synced vault) | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
 | **Plugin-owned storage** | SQLite (WAL) | `<vault>/.system/plugins/<id>/data/plugin.db` | Per-plugin private data the plugin owns the schema for: working memory OR durable storage at the plugin's discretion (embeddings, content-hash caches, agent memory). The plugin decides durability semantics; data that must survive uninstall or be portable MUST round-trip through markdown. | A plugin's `vec0` vector index, a content-hash cache table |
 
 **The cardinal rules:**
@@ -72,10 +72,11 @@ correctness regression, not a style choice.
    JSON.
 
 4. **SQLite is working memory, not a system of record.** Every row in the
-   **core index** (`<vault>/.system/index.sqlite*`) MUST be reproducible from
-   the markdown + YAML above. The recovery path for any core-index corruption
-   is *delete the index file and relaunch* — the documented, supported
-   operation. The core index holds the block↔location projection, FTS5, file
+   **core index** (relocated to a per-user local DataDir at
+   `<DataDir>/silt/indexes/<vault-key>/index.sqlite*`, out of the synced vault)
+   MUST be reproducible from the markdown + YAML above. The recovery path for
+   any core-index corruption is *delete the index file and relaunch* — the
+   documented, supported operation. The core index holds the block↔location projection, FTS5, file
    mtime/size caches, and re-derived per-task caches (comments/links counts,
    pin, progress, lifecycle timestamps/sort position — re-derived from
    markdown `[pin:: true]` / `[progress:: N]` / `[created::]` / `[completed::]`
@@ -198,14 +199,16 @@ core index is reproducible working memory rather than a system of record —
 lives in §0 above. This section covers the core index's on-disk mechanics
 (WAL, incremental re-index) and the concrete schema.
 
-The on-disk SQLite lives in WAL mode at `<vault>/.system/index.sqlite`
-(+ `.sqlite-wal` + `.sqlite-shm`). On restart only files whose
+The on-disk SQLite lives in WAL mode at a per-user local DataDir
+(`<DataDir>/silt/indexes/<vault-key>/index.sqlite`, + `.sqlite-wal` +
+`.sqlite-shm`), relocated out of the synced vault so a cloud-sync engine or
+antivirus cannot lock or corrupt it. On restart only files whose
 `mtime`+`size` differ from the last successful index are re-parsed and
-re-indexed; a cold start (no index file yet, or the 3 index files
-deleted by the user) performs a full scan and rebuild. The recovery
-path is documented and intentional: deleting the 3 `.system/index.sqlite*`
-files is safe because every row in them is re-derivable from the
-markdown + YAML on the next launch. This durable, incremental model is
+re-indexed; a cold start (no index file yet, or the index file deleted by the
+user) performs a full scan and rebuild. The recovery
+path is documented and intentional: deleting the index file is safe
+because every row in it is re-derivable from the markdown + YAML on the
+next launch. This durable, incremental model is
 what lets Silt scale to dozens of notebooks and thousands of pages
 without rebuilding the whole index on every launch.
 
@@ -359,8 +362,9 @@ linked "Work" never collide on `(notebook, section, page)`). Notebook DISPLAY
 NAMES are globally unique — `LinkNotebook` rejects a name that collides with a
 vault notebook or an existing link — so the frontend resolves a notebook's
 source from its name alone via a name→source map kept in sync on each nav load.
-The index stays LOCAL (`<vault>/.system/index.sqlite*`); only the markdown
-content (and any co-located `<root>/.system/`) lives on the remote mount.
+The index stays LOCAL (relocated to a per-user DataDir, outside any synced
+mount); only the markdown content (and any co-located `<root>/.system/`) lives
+on the remote mount.
 
 Link registry. The vault-scoped `config.yaml` carries a `linked_notebooks:`
 list (`{id, root_path, display_name}`), persisted atomically by the existing

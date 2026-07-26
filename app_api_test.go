@@ -16,6 +16,7 @@ import (
 	"silt/backend/db"
 	"silt/backend/monitor"
 	"silt/backend/parser"
+	"silt/backend/paths"
 	"silt/backend/plugins"
 	"silt/backend/vault"
 )
@@ -37,6 +38,10 @@ func newTestApp(t *testing.T) *App {
 		t.Setenv("XDG_CONFIG_HOME", hostConfigDir)
 		t.Setenv("SILT_TEST_HOST_CONFIG", hostConfigDir)
 	}
+	// Isolate the relocated index (per-user local DataDir) so any test that
+	// re-initializes via initializeVaultServices writes to a throwaway dir, not
+	// the developer's real <DataDir>/silt.
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
 
 	if err := vault.ScaffoldVault(vaultPath); err != nil {
 		t.Fatalf("ScaffoldVault: %v", err)
@@ -1588,6 +1593,9 @@ func TestCloseVault_ReopenUsesWarmRestart(t *testing.T) {
 	// we build a real app with initializeVaultServices against a scaffolded
 	// vault containing one note.
 	vaultPath := t.TempDir()
+	// Isolate the relocated index DataDir so the warm-restart index lands in a
+	// throwaway dir, not the host's real %LOCALAPPDATA%\Silt.
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
 	if err := vault.ScaffoldVault(vaultPath); err != nil {
 		t.Fatalf("ScaffoldVault: %v", err)
 	}
@@ -1608,7 +1616,10 @@ func TestCloseVault_ReopenUsesWarmRestart(t *testing.T) {
 	if count == 0 {
 		t.Fatal("expected blocks indexed on first init")
 	}
-	filesPath := filepath.Join(vaultPath, ".system", "index.sqlite")
+	filesPath, err := paths.LocalIndexPath(vaultPath)
+	if err != nil {
+		t.Fatalf("LocalIndexPath: %v", err)
+	}
 	if _, err := os.Stat(filesPath); err != nil {
 		t.Fatalf("on-disk index not created: %v", err)
 	}
@@ -1635,6 +1646,56 @@ func TestCloseVault_ReopenUsesWarmRestart(t *testing.T) {
 	}
 	if len(known) == 0 {
 		t.Error("warm restart did not retain the files table")
+	}
+}
+
+// TestPluginRODB_ReadsRelocatedIndex confirms the plugin read-only handle
+// resolves the relocated (out-of-vault) index path via db.Path() and reads the
+// index from there — the relocation transparency contract (AC6).
+func TestPluginRODB_ReadsRelocatedIndex(t *testing.T) {
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
+	vaultPath := t.TempDir()
+	if err := vault.ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault: %v", err)
+	}
+	writeFile(t, filepath.Join(vaultPath, "Work", "Inbox.md"),
+		"# Inbox\n- [ ] task <!-- id: 33333333-3333-3333-3333-333333333333 -->\n")
+
+	app := &App{spacesPerTab: 4}
+	if err := app.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("initializeVaultServices: %v", err)
+	}
+	defer app.CloseVault()
+
+	// The DB manager's path is the relocated DataDir path (not in the vault) —
+	// which is exactly what the plugin read-only handle resolves via db.Path().
+	dbPath := app.db.Path()
+	if dbPath == "" {
+		t.Fatal("expected an on-disk relocated index path, got in-memory")
+	}
+	expected, err := paths.LocalIndexPath(vaultPath)
+	if err != nil {
+		t.Fatalf("LocalIndexPath: %v", err)
+	}
+	if dbPath != expected {
+		t.Errorf("db.Path() = %q, want relocated %q", dbPath, expected)
+	}
+	vaultSystem := strings.ToLower(filepath.Join(vaultPath, ".system"))
+	if strings.HasPrefix(strings.ToLower(dbPath), vaultSystem) {
+		t.Errorf("db.Path() must not be inside the vault's .system dir: %q", dbPath)
+	}
+
+	// The plugin read-only handle opens against that path and reads the index.
+	ro, err := app.openPluginRODB()
+	if err != nil {
+		t.Fatalf("openPluginRODB: %v", err)
+	}
+	var n int
+	if err := ro.QueryRow("SELECT count(*) FROM blocks").Scan(&n); err != nil {
+		t.Fatalf("plugin RO query against relocated index: %v", err)
+	}
+	if n == 0 {
+		t.Error("plugin RO handle read 0 blocks from the relocated index")
 	}
 }
 
