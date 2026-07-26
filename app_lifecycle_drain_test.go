@@ -34,12 +34,8 @@ import (
 // tests don't leak state. Mirrors resetAIAuditState.
 func resetNetworkAuditState(t *testing.T) {
 	t.Helper()
-	networkAuditMu.Lock()
-	networkAudit = nil
-	networkAuditMu.Unlock()
-	networkAuditWriterMu.Lock()
-	networkAuditWriter = nil
-	networkAuditWriterMu.Unlock()
+	stopNetworkAuditWriter()
+	networkAuditLog.reset()
 }
 
 // --- #451: Clear*Audit must not deadlock when the writer exits mid-call -----
@@ -235,9 +231,9 @@ func TestClearAIAudit_WStopFallbackUsesWriterVaultNotCurrentVaultPath(t *testing
 
 	// Cleanup: nil the global manually (w.stop is already closed; calling
 	// stopAIAuditWriter would double-close it).
-	aiAuditWriterMu.Lock()
-	aiAuditWriter = nil
-	aiAuditWriterMu.Unlock()
+	aiAuditLog.writerMu.Lock()
+	aiAuditLog.writer = nil
+	aiAuditLog.writerMu.Unlock()
 }
 
 // TestClearAIAudit_DurableClearStillRunsThroughWriterWhenAlive is the

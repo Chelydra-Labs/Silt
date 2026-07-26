@@ -18,9 +18,7 @@ import (
 func resetAIAuditState(t *testing.T) {
 	t.Helper()
 	stopAIAuditWriter()
-	aiAuditMu.Lock()
-	aiAudit = nil
-	aiAuditMu.Unlock()
+	aiAuditLog.reset()
 }
 
 // withAIAuditWriter starts the background writer for app.vaultPath and stops
@@ -90,9 +88,9 @@ func TestSeedAIAuditFromDisk_DoesNotClobber(t *testing.T) {
 	resetAIAuditState(t)
 
 	// Pre-populate in-memory with one entry under the mutex.
-	aiAuditMu.Lock()
-	aiAudit = []AIAuditEntry{{Plugin: "pre-existing", Kind: "chat", At: "2026-07-06T09:00:00Z"}}
-	aiAuditMu.Unlock()
+	aiAuditLog.mu.Lock()
+	aiAuditLog.entries = []AIAuditEntry{{Plugin: "pre-existing", Kind: "chat", At: "2026-07-06T09:00:00Z"}}
+	aiAuditLog.mu.Unlock()
 
 	// Write a disk ai.log that would otherwise seed.
 	dir := filepath.Join(app.vaultPath, ".system", "plugins", "fromdisk")
@@ -373,9 +371,7 @@ func TestTeardownVaultServices_ClearsInMemoryAudit(t *testing.T) {
 	app := &App{vaultPath: t.TempDir()}
 	resetAIAuditState(t)
 	// Also reset network audit state for a clean baseline.
-	networkAuditMu.Lock()
-	networkAudit = nil
-	networkAuditMu.Unlock()
+	networkAuditLog.reset()
 
 	startNetworkAuditWriter(app.vaultPath)
 	startAIAuditWriter(app.vaultPath)
@@ -397,12 +393,12 @@ func TestTeardownVaultServices_ClearsInMemoryAudit(t *testing.T) {
 	// the in-memory slices so the next open's seed is not skipped.
 	app.teardownVaultServices()
 
-	networkAuditMu.Lock()
-	aiAuditMu.Lock()
-	netLeaked := networkAudit
-	aiLeaked := aiAudit
-	aiAuditMu.Unlock()
-	networkAuditMu.Unlock()
+	networkAuditLog.mu.Lock()
+	aiAuditLog.mu.Lock()
+	netLeaked := networkAuditLog.entries
+	aiLeaked := aiAuditLog.entries
+	aiAuditLog.mu.Unlock()
+	networkAuditLog.mu.Unlock()
 
 	if netLeaked != nil {
 		t.Errorf("network audit leaked across teardown: %d entries survived", len(netLeaked))

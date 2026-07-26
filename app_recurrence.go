@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"silt/backend/db"
 	"silt/backend/parser"
-	"silt/backend/plugins"
 	"silt/backend/recurrence"
 	"strconv"
 	"time"
@@ -32,16 +31,9 @@ func (a *App) SetTaskRecurrence(blockID, recurrenceRule string) error {
 // gated by the standard capability + session checks (#297, SPECS §8.3 —
 // plugins go through PluginContext, never direct wailsjs bindings).
 func (a *App) PluginSetTaskRecurrence(pluginID, sessionToken, blockID, recurrenceRule string) (bool, error) {
-	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
-		return false, err
-	}
-	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
-		return false, err
-	}
-	if err := a.setTaskRecurrence(blockID, recurrenceRule); err != nil {
-		return false, err
-	}
-	return true, nil
+	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
+		return a.setTaskRecurrence(blockID, recurrenceRule)
+	})
 }
 
 // setTaskRecurrence is the shared core for the app-level and plugin-level

@@ -387,122 +387,77 @@ func updateFrontmatterField(content, key, newVal string) string {
 // moves the file, and re-indexes. Block UUIDs are preserved so references
 // and embeds keep resolving (#62, #83).
 func (a *App) RenamePage(notebook, section, oldName, newName string) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.db == nil {
-		return fmt.Errorf("vault database not loaded")
-	}
-	safeNotebook := sanitizePathSegment(notebook)
-	safeSection, sectionErr := validateSectionPath(section, true)
-	safeOldPage := sanitizePathSegment(oldName)
-	safeNewPage := sanitizePathSegment(newName)
-	if sectionErr != nil {
-		return invalidNavigationPath(sectionErr)
-	}
-	if safeNotebook == "" || safeOldPage == "" || safeNewPage == "" {
-		return fmt.Errorf("notebook and page names are required")
-	}
-	if safeOldPage == safeNewPage {
-		return nil
-	}
-
-	source := a.resolveSourceByName(safeNotebook)
-	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
-	if err != nil {
-		return err
-	}
-	oldFile := filepath.Join(notebookDir, safeSection, safeOldPage+".md")
-	newFile := filepath.Join(notebookDir, safeSection, safeNewPage+".md")
-	if !isPathWithinRoot(oldFile, notebookDir) || !isCreationPathWithinRoot(newFile, notebookDir) {
-		return fmt.Errorf("path escapes notebook root")
-	}
-	if _, err := os.Stat(newFile); err == nil {
-		return fmt.Errorf("a page named %q already exists", safeNewPage)
-	}
-
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	targets := []renameTarget{{safeNotebook, safeSection, safeOldPage}}
-	inbound, err := a.collectInboundSourcePaths(targets)
-	if err != nil {
-		return fmt.Errorf("collect inbound sources: %w", err)
-	}
-	lockPaths := append([]string{oldFile, newFile}, inbound...)
-	if a.renameHooks != nil && a.renameHooks.afterPreLockInbound != nil {
-		a.renameHooks.afterPreLockInbound()
-	}
-
-	// Retry when inbound sources appear after pre-lock collect (TOCTOU).
-	var runErr error
-	for attempt := 0; attempt < 8; attempt++ {
-		var needRetry []string
-		runErr = nil
-		// Lock page + inbound sources so concurrent saves cannot interleave.
-		a.coordinator.LockPathsWrite(lockPaths, func() {
-			missing, mErr := a.missingInboundPaths(targets, lockPathSet(lockPaths))
-			if mErr != nil {
-				runErr = mErr
-				return
-			}
-			if len(missing) > 0 {
-				needRetry = missing
-				return
-			}
-
-			// 1. Read the file content before renaming.
-			contentBytes, err := os.ReadFile(oldFile)
-			if err != nil {
-				runErr = err
-				return
-			}
-
-			// 2. Rename old → new FIRST. If this fails, nothing was modified
-			// (clean state). This avoids the stale-frontmatter-at-old-path
-			// inconsistency that would occur if we wrote frontmatter first.
-			a.tracker.RegisterWrite(oldFile)
-			a.tracker.RegisterWrite(newFile)
-			if err := os.Rename(oldFile, newFile); err != nil {
-				runErr = err
-				return
-			}
-
-			// 3. Update frontmatter at the new path. If this fails, the file
-			// is at the correct new path with stale frontmatter — the scanner
-			// will use the path-derived page name, which matches the sidebar.
-			content := updateFrontmatterField(string(contentBytes), "page", safeNewPage)
-			a.tracker.RegisterWrite(newFile)
-			if err := parser.WriteFileAtomic(newFile, []byte(content)); err != nil {
-				runErr = err
-				return
-			}
-
-			// 4. Rewrite inbound [[…]] wiki-links BEFORE clearing the old index,
-			// so the resolution-based rewrite sees the pre-rename page inventory.
-			a.rewriteInboundPageLinksWithJournal(source, safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage, nil, lockPathSet(lockPaths))
-
-			// 5. Clear old index entries + re-index at new path.
-			a.coordinator.WithDBWrite(func() {
-				_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeSection, safeOldPage)
-			})
-			a.coordinator.WithDBWrite(func() {
-				_ = a.db.ForgetFile(oldFile)
-			})
-			a.reindexFile(newFile, safeNotebook, safeSection, safeNewPage)
-		})
-		if len(needRetry) > 0 {
-			lockPaths = unionLockPaths(lockPaths, needRetry)
-			continue
+	return a.renameSingleFile(func() (renameSingleFileStrategy, error) {
+		safeNotebook := sanitizePathSegment(notebook)
+		safeSection, sectionErr := validateSectionPath(section, true)
+		safeOldPage := sanitizePathSegment(oldName)
+		safeNewPage := sanitizePathSegment(newName)
+		if sectionErr != nil {
+			return renameSingleFileStrategy{}, invalidNavigationPath(sectionErr)
 		}
-		if runErr != nil {
-			return runErr
+		if safeNotebook == "" || safeOldPage == "" || safeNewPage == "" {
+			return renameSingleFileStrategy{}, fmt.Errorf("notebook and page names are required")
 		}
-		// Sweep residual inbound links that landed after the under-lock re-collect
-		// but before rewrite (narrow residual TOCTOU window).
-		a.rewriteStaleInboundAfterRename(safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage)
-		return a.reconcileNavigationPage(safeNotebook, safeSection, safeOldPage, safeNewPage, false)
-	}
-	return fmt.Errorf("RenamePage: inbound lock set did not stabilize after concurrent link creates")
+		if safeOldPage == safeNewPage {
+			return renameSingleFileStrategy{}, errRenameNoOp
+		}
+
+		source := a.resolveSourceByName(safeNotebook)
+		notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+		if err != nil {
+			return renameSingleFileStrategy{}, err
+		}
+		oldFile := filepath.Join(notebookDir, safeSection, safeOldPage+".md")
+		newFile := filepath.Join(notebookDir, safeSection, safeNewPage+".md")
+		if !isPathWithinRoot(oldFile, notebookDir) || !isCreationPathWithinRoot(newFile, notebookDir) {
+			return renameSingleFileStrategy{}, fmt.Errorf("path escapes notebook root")
+		}
+		if _, err := os.Stat(newFile); err == nil {
+			return renameSingleFileStrategy{}, fmt.Errorf("a page named %q already exists", safeNewPage)
+		}
+
+		return renameSingleFileStrategy{
+			oldFile: oldFile,
+			newFile: newFile,
+			targets: []renameTarget{{safeNotebook, safeSection, safeOldPage}},
+			label:   "RenamePage",
+			renameStep: func() error {
+				// Read before renaming so a read failure leaves clean state.
+				contentBytes, err := os.ReadFile(oldFile)
+				if err != nil {
+					return err
+				}
+				// Rename old → new FIRST: if this fails nothing was modified,
+				// avoiding stale-frontmatter-at-old-path inconsistency.
+				a.tracker.RegisterWrite(oldFile)
+				a.tracker.RegisterWrite(newFile)
+				if err := os.Rename(oldFile, newFile); err != nil {
+					return err
+				}
+				content := updateFrontmatterField(string(contentBytes), "page", safeNewPage)
+				a.tracker.RegisterWrite(newFile)
+				return parser.WriteFileAtomic(newFile, []byte(content))
+			},
+			rewriteInbound: func(heldPaths map[string]bool) {
+				a.rewriteInboundPageLinksWithJournal(source, safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage, nil, heldPaths)
+			},
+			clearAndReindex: func() {
+				a.coordinator.WithDBWrite(func() {
+					_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeSection, safeOldPage)
+				})
+				a.coordinator.WithDBWrite(func() {
+					_ = a.db.ForgetFile(oldFile)
+				})
+				a.reindexFile(newFile, safeNotebook, safeSection, safeNewPage)
+			},
+			staleSweep: func() {
+				a.rewriteStaleInboundAfterRename(safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage)
+			},
+			reconcile: func() error {
+				return a.reconcileNavigationPage(safeNotebook, safeSection, safeOldPage, safeNewPage, false)
+			},
+		}, nil
+	})
 }
 
 // MovePage moves a page from one section to another (or to the notebook root
@@ -513,481 +468,275 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 // moves are out of scope — the page stays within `notebook`. Block UUIDs are
 // preserved so references and embeds keep resolving.
 func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.db == nil {
-		return fmt.Errorf("vault database not loaded")
-	}
-	safeNotebook := sanitizePathSegment(notebook)
-	safeFrom, fromErr := validateSectionPath(fromSection, true)
-	safeTo, toErr := validateSectionPath(toSection, true)
-	safePage := sanitizePathSegment(page)
-	if fromErr != nil {
-		return invalidNavigationPath(fromErr)
-	}
-	if toErr != nil {
-		return invalidNavigationPath(toErr)
-	}
-	if safeNotebook == "" || safePage == "" {
-		return fmt.Errorf("notebook and page names are required")
-	}
-	if safeFrom == safeTo {
-		return nil // already in the target section
-	}
-
-	source := a.resolveSourceByName(safeNotebook)
-	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
-	if err != nil {
-		return err
-	}
-	oldFile := filepath.Join(notebookDir, safeFrom, safePage+".md")
-	newFile := filepath.Join(notebookDir, safeTo, safePage+".md")
-	if !isPathWithinRoot(oldFile, notebookDir) || !isCreationPathWithinRoot(newFile, notebookDir) {
-		return fmt.Errorf("path escapes notebook root")
-	}
-	if _, err := os.Stat(oldFile); os.IsNotExist(err) {
-		return fmt.Errorf("page %q not found in section %q", safePage, safeFrom)
-	}
-	if _, err := os.Stat(newFile); err == nil {
-		return fmt.Errorf("a page named %q already exists in that section", safePage)
-	}
-
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	targets := []renameTarget{{safeNotebook, safeFrom, safePage}}
-	inbound, err := a.collectInboundSourcePaths(targets)
-	if err != nil {
-		return fmt.Errorf("collect inbound sources: %w", err)
-	}
-	lockPaths := append([]string{oldFile, newFile}, inbound...)
-	if a.renameHooks != nil && a.renameHooks.afterPreLockInbound != nil {
-		a.renameHooks.afterPreLockInbound()
-	}
-
-	var runErr error
-	for attempt := 0; attempt < 8; attempt++ {
-		var needRetry []string
-		runErr = nil
-		// Lock page + inbound sources so concurrent saves cannot interleave.
-		a.coordinator.LockPathsWrite(lockPaths, func() {
-			missing, mErr := a.missingInboundPaths(targets, lockPathSet(lockPaths))
-			if mErr != nil {
-				runErr = mErr
-				return
-			}
-			if len(missing) > 0 {
-				needRetry = missing
-				return
-			}
-
-			// 1. Ensure the target section directory exists (handles nested
-			// sections like "Projects/Active" and the section-less root, which
-			// is the notebook dir itself).
-			targetDir := filepath.Dir(newFile)
-			if err := os.MkdirAll(targetDir, 0o755); err != nil {
-				runErr = fmt.Errorf("failed to create target section directory: %w", err)
-				return
-			}
-
-			// 2. Read the file content before moving.
-			contentBytes, err := os.ReadFile(oldFile)
-			if err != nil {
-				runErr = err
-				return
-			}
-
-			// 3. Rename old → new. If this fails, nothing was modified.
-			a.tracker.RegisterWrite(oldFile)
-			a.tracker.RegisterWrite(newFile)
-			if err := os.Rename(oldFile, newFile); err != nil {
-				runErr = err
-				return
-			}
-
-			// 4. Rewrite the section: frontmatter at the new path. An empty
-			// safeTo produces `section: ""` (section-less), matching the
-			// parser's section-less convention. If this fails, the file is at
-			// the new path with stale frontmatter — we log the error and
-			// continue through the index cleanup (step 5) so the index doesn't
-			// dangle at the old path. The scanner will reconcile on next pass.
-			content := updateFrontmatterField(string(contentBytes), "section", safeTo)
-			a.tracker.RegisterWrite(newFile)
-			if err := parser.WriteFileAtomic(newFile, []byte(content)); err != nil {
-				log.Printf("MovePage: WriteFileAtomic failed at %s (file already moved): %v", newFile, err)
-			}
-
-			// 5. Rewrite inbound [[…]] BEFORE clearing the old index, so the
-			// resolution-based rewrite sees the pre-move page inventory (#545).
-			a.rewriteInboundPageLinksWithJournal(source, safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage, nil, lockPathSet(lockPaths))
-
-			// 6. Clear old index entries + re-index at the new path. These run
-			// unconditionally — even if the frontmatter write failed, the file
-			// has already moved and the old index entries must be cleaned up.
-			a.coordinator.WithDBWrite(func() {
-				_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeFrom, safePage)
-			})
-			a.coordinator.WithDBWrite(func() {
-				_ = a.db.ForgetFile(oldFile)
-			})
-			a.reindexFile(newFile, safeNotebook, safeTo, safePage)
-			// If frontmatter write failed, the file has already moved — do not
-			// surface the error to the user. The scanner reconciles stale
-			// frontmatter on the next pass.
-		})
-		if len(needRetry) > 0 {
-			lockPaths = unionLockPaths(lockPaths, needRetry)
-			continue
+	return a.renameSingleFile(func() (renameSingleFileStrategy, error) {
+		safeNotebook := sanitizePathSegment(notebook)
+		safeFrom, fromErr := validateSectionPath(fromSection, true)
+		safeTo, toErr := validateSectionPath(toSection, true)
+		safePage := sanitizePathSegment(page)
+		if fromErr != nil {
+			return renameSingleFileStrategy{}, invalidNavigationPath(fromErr)
 		}
-		if runErr != nil {
-			return runErr
+		if toErr != nil {
+			return renameSingleFileStrategy{}, invalidNavigationPath(toErr)
+		}
+		if safeNotebook == "" || safePage == "" {
+			return renameSingleFileStrategy{}, fmt.Errorf("notebook and page names are required")
+		}
+		if safeFrom == safeTo {
+			return renameSingleFileStrategy{}, errRenameNoOp
 		}
 
-		// Residual inbound sweep after unlock (same window as RenamePage).
-		a.rewriteStaleInboundAfterRename(safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage)
-
-		// Update nav_order outside the multi-path lock. File move already
-		// succeeded; config persist failure is logged only.
-		if err := a.reconcileNavigationMove(safeNotebook, safeFrom, safeTo, safePage); err != nil {
-			log.Printf("MovePage: nav_order persist failed (file move succeeded): %v", err)
+		source := a.resolveSourceByName(safeNotebook)
+		notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+		if err != nil {
+			return renameSingleFileStrategy{}, err
 		}
-		return nil
-	}
-	return fmt.Errorf("MovePage: inbound lock set did not stabilize after concurrent link creates")
+		oldFile := filepath.Join(notebookDir, safeFrom, safePage+".md")
+		newFile := filepath.Join(notebookDir, safeTo, safePage+".md")
+		if !isPathWithinRoot(oldFile, notebookDir) || !isCreationPathWithinRoot(newFile, notebookDir) {
+			return renameSingleFileStrategy{}, fmt.Errorf("path escapes notebook root")
+		}
+		if _, err := os.Stat(oldFile); os.IsNotExist(err) {
+			return renameSingleFileStrategy{}, fmt.Errorf("page %q not found in section %q", safePage, safeFrom)
+		}
+		if _, err := os.Stat(newFile); err == nil {
+			return renameSingleFileStrategy{}, fmt.Errorf("a page named %q already exists in that section", safePage)
+		}
+
+		return renameSingleFileStrategy{
+			oldFile: oldFile,
+			newFile: newFile,
+			targets: []renameTarget{{safeNotebook, safeFrom, safePage}},
+			label:   "MovePage",
+			renameStep: func() error {
+				targetDir := filepath.Dir(newFile)
+				if err := os.MkdirAll(targetDir, 0o755); err != nil {
+					return fmt.Errorf("failed to create target section directory: %w", err)
+				}
+				contentBytes, err := os.ReadFile(oldFile)
+				if err != nil {
+					return err
+				}
+				a.tracker.RegisterWrite(oldFile)
+				a.tracker.RegisterWrite(newFile)
+				if err := os.Rename(oldFile, newFile); err != nil {
+					return err
+				}
+				// section: frontmatter rewrite: log on failure (file already
+				// moved) and fall through so the old index entries are cleaned.
+				content := updateFrontmatterField(string(contentBytes), "section", safeTo)
+				a.tracker.RegisterWrite(newFile)
+				if err := parser.WriteFileAtomic(newFile, []byte(content)); err != nil {
+					log.Printf("MovePage: WriteFileAtomic failed at %s (file already moved): %v", newFile, err)
+				}
+				return nil
+			},
+			rewriteInbound: func(heldPaths map[string]bool) {
+				a.rewriteInboundPageLinksWithJournal(source, safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage, nil, heldPaths)
+			},
+			clearAndReindex: func() {
+				a.coordinator.WithDBWrite(func() {
+					_ = a.db.ClearFileBlocks(nil, source, safeNotebook, safeFrom, safePage)
+				})
+				a.coordinator.WithDBWrite(func() {
+					_ = a.db.ForgetFile(oldFile)
+				})
+				a.reindexFile(newFile, safeNotebook, safeTo, safePage)
+			},
+			staleSweep: func() {
+				a.rewriteStaleInboundAfterRename(safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage)
+			},
+			reconcile: func() error {
+				if err := a.reconcileNavigationMove(safeNotebook, safeFrom, safeTo, safePage); err != nil {
+					log.Printf("MovePage: nav_order persist failed (file move succeeded): %v", err)
+				}
+				return nil
+			},
+		}, nil
+	})
 }
 
 // RenameSection renames a section folder and updates the section: frontmatter
 // in every .md file it contains. All affected blocks are re-indexed (#62).
 func (a *App) RenameSection(notebook, oldName, newName string) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.db == nil {
-		return fmt.Errorf("vault database not loaded")
-	}
-	safeNotebook := sanitizePathSegment(notebook)
-	safeOldSection, oldErr := validateSectionPath(oldName, false)
-	safeNewSection, newErr := validateSectionPath(newName, false)
-	if oldErr != nil {
-		return invalidNavigationPath(oldErr)
-	}
-	if newErr != nil {
-		return invalidNavigationPath(newErr)
-	}
-	if safeNotebook == "" {
-		return fmt.Errorf("notebook and section names are required")
-	}
-	if safeOldSection == safeNewSection {
-		return nil
-	}
-
-	source := a.resolveSourceByName(safeNotebook)
-	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
-	if err != nil {
-		return err
-	}
-	oldDir := filepath.Join(notebookDir, safeOldSection)
-	newDir := filepath.Join(notebookDir, safeNewSection)
-	if !isPathWithinRoot(oldDir, notebookDir) || !isCreationPathWithinRoot(newDir, notebookDir) {
-		return fmt.Errorf("path escapes notebook root")
-	}
-	if _, err := os.Stat(newDir); err == nil {
-		return fmt.Errorf("a section named %q already exists", safeNewSection)
-	}
-
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	// Build rename targets for inbound-source lock collection (pre-lock).
-	seedPaths, err := collectMarkdownFilePaths(oldDir)
-	if err != nil {
-		return err
-	}
-	var renameTargets []renameTarget
-	for _, p := range seedPaths {
-		rel, relErr := filepath.Rel(oldDir, p)
-		if relErr != nil {
-			continue
+	return a.renameTree(func() (renameTreeStrategy, error) {
+		safeNotebook := sanitizePathSegment(notebook)
+		safeOldSection, oldErr := validateSectionPath(oldName, false)
+		safeNewSection, newErr := validateSectionPath(newName, false)
+		if oldErr != nil {
+			return renameTreeStrategy{}, invalidNavigationPath(oldErr)
 		}
-		relSlash := filepath.ToSlash(rel)
-		parts := strings.Split(relSlash, "/")
-		page := strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
-		oldSection := safeOldSection
-		if len(parts) > 1 {
-			oldSection += "/" + strings.Join(parts[:len(parts)-1], "/")
+		if newErr != nil {
+			return renameTreeStrategy{}, invalidNavigationPath(newErr)
 		}
-		renameTargets = append(renameTargets, renameTarget{safeNotebook, oldSection, page})
-	}
-	inbound, err := a.collectInboundSourcePaths(renameTargets)
-	if err != nil {
-		return fmt.Errorf("collect inbound sources: %w", err)
-	}
-	lockPaths := append(append([]string{}, seedPaths...), inbound...)
-	if a.renameHooks != nil && a.renameHooks.afterPreLockInbound != nil {
-		a.renameHooks.afterPreLockInbound()
-	}
+		if safeNotebook == "" {
+			return renameTreeStrategy{}, fmt.Errorf("notebook and section names are required")
+		}
+		if safeOldSection == safeNewSection {
+			return renameTreeStrategy{}, errRenameNoOp
+		}
 
-	var files []renameFileSnapshot
-	configSnapshot := a.snapshotConfig()
-	linkJournal := make(map[string]renameLinkJournalEntry)
-	configAttempted := false
-	var runErr error
-	// Retry if a .md appears under oldDir or inbound sources grow after collect (TOCTOU).
-	for attempt := 0; attempt < 8; attempt++ {
-		var needRetry []string
-		files = nil
-		runErr = nil
-		configAttempted = false
-		linkJournal = make(map[string]renameLinkJournalEntry)
-		// Lock every descendant page path + inbound sources so concurrent saves
-		// cannot interleave with the directory rename.
-		a.coordinator.LockPathsWrite(lockPaths, func() {
-			missing, mErr := missingMarkdownUnder(oldDir, lockPathSet(lockPaths))
-			if mErr != nil {
-				runErr = mErr
-				return
-			}
-			if len(missing) > 0 {
-				needRetry = missing
-				return
-			}
-			// Re-check inbound under lock so late wiki-links are locked too.
-			lockedTargets := renameTargetsFromMarkdownUnder(oldDir, safeNotebook, safeOldSection, lockPaths)
-			if len(lockedTargets) == 0 {
-				lockedTargets = renameTargets
-			}
-			inMissing, iErr := a.missingInboundPaths(lockedTargets, lockPathSet(lockPaths))
-			if iErr != nil {
-				runErr = iErr
-				return
-			}
-			if len(inMissing) > 0 {
-				needRetry = inMissing
-				return
-			}
-			_ = filepath.WalkDir(oldDir, func(path string, entry fs.DirEntry, walkErr error) error {
-				if walkErr != nil {
-					runErr = walkErr
-					return walkErr
+		source := a.resolveSourceByName(safeNotebook)
+		notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
+		if err != nil {
+			return renameTreeStrategy{}, err
+		}
+		oldDir := filepath.Join(notebookDir, safeOldSection)
+		newDir := filepath.Join(notebookDir, safeNewSection)
+		if !isPathWithinRoot(oldDir, notebookDir) || !isCreationPathWithinRoot(newDir, notebookDir) {
+			return renameTreeStrategy{}, fmt.Errorf("path escapes notebook root")
+		}
+		if _, err := os.Stat(newDir); err == nil {
+			return renameTreeStrategy{}, fmt.Errorf("a section named %q already exists", safeNewSection)
+		}
+
+		return renameTreeStrategy{
+			oldDir:        oldDir,
+			newDir:        newDir,
+			notebook:      safeNotebook,
+			sectionPrefix: safeOldSection,
+			label:         "RenameSection",
+			buildRenameTargets: func(seedPaths []string) []renameTarget {
+				var targets []renameTarget
+				for _, p := range seedPaths {
+					rel, relErr := filepath.Rel(oldDir, p)
+					if relErr != nil {
+						continue
+					}
+					relSlash := filepath.ToSlash(rel)
+					parts := strings.Split(relSlash, "/")
+					page := strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
+					oldSection := safeOldSection
+					if len(parts) > 1 {
+						oldSection += "/" + strings.Join(parts[:len(parts)-1], "/")
+					}
+					targets = append(targets, renameTarget{safeNotebook, oldSection, page})
 				}
-				if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+				return targets
+			},
+			walkAndSnapshot: func() ([]renameFileSnapshot, error) {
+				var snapped []renameFileSnapshot
+				var walkErr error
+				_ = filepath.WalkDir(oldDir, func(path string, entry fs.DirEntry, err error) error {
+					if err != nil {
+						walkErr = err
+						return err
+					}
+					if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
+						return nil
+					}
+					content, readErr := os.ReadFile(path)
+					if readErr != nil {
+						walkErr = readErr
+						return readErr
+					}
+					rel, relErr := filepath.Rel(oldDir, path)
+					if relErr != nil {
+						walkErr = relErr
+						return relErr
+					}
+					relSlash := filepath.ToSlash(rel)
+					parts := strings.Split(relSlash, "/")
+					page := strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
+					oldSection := safeOldSection
+					if len(parts) > 1 {
+						oldSection += "/" + strings.Join(parts[:len(parts)-1], "/")
+					}
+					newSection := safeNewSection
+					if idx := strings.LastIndex(relSlash, "/"); idx >= 0 {
+						newSection += "/" + relSlash[:idx]
+					}
+					updated := updateFrontmatterField(string(content), "section", newSection)
+					snapped = append(snapped, renameFileSnapshot{
+						oldPath: path, relPath: rel, oldContent: content, updatedContent: []byte(updated),
+						oldNotebook: safeNotebook, newNotebook: safeNotebook,
+						oldSection: oldSection, newSection: newSection, page: page,
+					})
 					return nil
-				}
-				content, readErr := os.ReadFile(path)
-				if readErr != nil {
-					runErr = readErr
-					return readErr
-				}
-				rel, relErr := filepath.Rel(oldDir, path)
-				if relErr != nil {
-					runErr = relErr
-					return relErr
-				}
-				relSlash := filepath.ToSlash(rel)
-				parts := strings.Split(relSlash, "/")
-				page := strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
-				oldSection := safeOldSection
-				if len(parts) > 1 {
-					oldSection += "/" + strings.Join(parts[:len(parts)-1], "/")
-				}
-				newSection := safeNewSection
-				if idx := strings.LastIndex(filepath.ToSlash(rel), "/"); idx >= 0 {
-					newSection += "/" + filepath.ToSlash(rel)[:idx]
-				}
-				updated := updateFrontmatterField(string(content), "section", newSection)
-				files = append(files, renameFileSnapshot{
-					oldPath: path, relPath: rel, oldContent: content, updatedContent: []byte(updated),
-					oldNotebook: safeNotebook, newNotebook: safeNotebook,
-					oldSection: oldSection, newSection: newSection, page: page,
 				})
-				return nil
-			})
-			if runErr != nil {
-				return
-			}
-			a.tracker.RegisterWrite(oldDir)
-			a.tracker.RegisterWrite(newDir)
-			if err := os.Rename(oldDir, newDir); err != nil {
-				runErr = err
-				return
-			}
-			for _, file := range files {
-				newPath := filepath.Join(newDir, file.relPath)
-				a.tracker.RegisterWrite(newPath)
-				if err := a.renameWriteFileAtomic(newPath, file.updatedContent); err != nil {
-					runErr = fmt.Errorf("RenameSection: write %s: %w", file.relPath, err)
-					if rollbackErr := a.rollbackRename(oldDir, newDir, files, source, linkJournal, configSnapshot, false); rollbackErr != nil {
-						runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
-					}
-					return
-				}
-			}
-			for _, file := range files {
-				a.rewriteInboundPageLinksWithJournal(source, safeNotebook, file.oldSection, file.page, safeNotebook, file.newSection, file.page, linkJournal, lockPathSet(lockPaths))
-			}
-			for _, file := range files {
+				return snapped, walkErr
+			},
+			rewriteInboundFile: func(file renameFileSnapshot, heldPaths map[string]bool, linkJournal map[string]renameLinkJournalEntry) {
+				a.rewriteInboundPageLinksWithJournal(source, safeNotebook, file.oldSection, file.page, safeNotebook, file.newSection, file.page, linkJournal, heldPaths)
+			},
+			clearAndReindexFile: func(file renameFileSnapshot) error {
+				var clearErr error
 				a.coordinator.WithDBWrite(func() {
-					if err := a.db.ClearFileBlocks(nil, source, safeNotebook, file.oldSection, file.page); err != nil && runErr == nil {
-						runErr = fmt.Errorf("RenameSection: clear index %s: %w", file.relPath, err)
+					if err := a.db.ClearFileBlocks(nil, source, safeNotebook, file.oldSection, file.page); err != nil && clearErr == nil {
+						clearErr = fmt.Errorf("RenameSection: clear index %s: %w", file.relPath, err)
 					}
-					if err := a.db.ForgetFile(file.oldPath); err != nil && runErr == nil {
-						runErr = fmt.Errorf("RenameSection: forget index %s: %w", file.relPath, err)
+					if err := a.db.ForgetFile(file.oldPath); err != nil && clearErr == nil {
+						clearErr = fmt.Errorf("RenameSection: forget index %s: %w", file.relPath, err)
 					}
 				})
-				if runErr != nil {
-					break
+				if clearErr != nil {
+					return clearErr
 				}
 				if err := a.reindexFileStrict(filepath.Join(newDir, file.relPath), source, safeNotebook, file.newSection, file.page, true); err != nil {
-					runErr = fmt.Errorf("RenameSection: reindex %s: %w", file.relPath, err)
-					break
+					return fmt.Errorf("RenameSection: reindex %s: %w", file.relPath, err)
 				}
-			}
-			if runErr == nil {
-				configAttempted = true
-				if err := a.renameReconcileSection(safeNotebook, safeOldSection, safeNewSection, false); err != nil {
-					runErr = err
-				}
-			}
-			if runErr != nil {
-				if rollbackErr := a.rollbackRename(oldDir, newDir, files, source, linkJournal, configSnapshot, configAttempted && a.renameHooks != nil && a.renameHooks.reconcileSection != nil); rollbackErr != nil {
-					runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
-				}
-			}
-		})
-		if len(needRetry) > 0 {
-			lockPaths = unionLockPaths(lockPaths, needRetry)
-			continue
-		}
-		if runErr != nil {
-			return runErr
-		}
-		// Residual inbound sweep for each renamed page (post-unlock TOCTOU).
-		for _, file := range files {
-			a.rewriteStaleInboundAfterRename(safeNotebook, file.oldSection, file.page, safeNotebook, file.newSection, file.page)
-		}
-		return nil
-	}
-	return fmt.Errorf("RenameSection: tree lock did not stabilize after concurrent creates")
+				return nil
+			},
+			reconcile: func() error {
+				return a.renameReconcileSection(safeNotebook, safeOldSection, safeNewSection, false)
+			},
+			staleSweepFile: func(file renameFileSnapshot) {
+				a.rewriteStaleInboundAfterRename(safeNotebook, file.oldSection, file.page, safeNotebook, file.newSection, file.page)
+			},
+			rollbackSource: source,
+			rollbackReconcileHookEnabled: func(configAttempted bool) bool {
+				return configAttempted && a.renameHooks != nil && a.renameHooks.reconcileSection != nil
+			},
+		}, nil
+	})
 }
 
 // RenameNotebook renames a notebook folder and updates the notebook: frontmatter
 // in every .md file it contains. All affected blocks are re-indexed (#62).
 func (a *App) RenameNotebook(oldName, newName string) error {
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.db == nil {
-		return fmt.Errorf("vault database not loaded")
-	}
-	safeOldNotebook := sanitizePathSegment(oldName)
-	safeNewNotebook := sanitizePathSegment(newName)
-	if safeOldNotebook == "" || safeNewNotebook == "" {
-		return fmt.Errorf("notebook names are required")
-	}
-	if safeOldNotebook == safeNewNotebook {
-		return nil
-	}
-
-	// A linked notebook's name is its external folder basename + registry
-	// identity; renaming it is unlink + re-link, not a folder rename on the
-	// external source of truth. Refuse here so the vault-only folder rename
-	// below never misroutes (#100).
-	if src := a.resolveSourceByName(safeOldNotebook); strings.HasPrefix(src, "linked:") {
-		return fmt.Errorf("linked notebooks cannot be renamed in place — unlink and re-link the folder under the new name")
-	}
-
-	oldDir := filepath.Join(a.vaultPath, safeOldNotebook)
-	newDir := filepath.Join(a.vaultPath, safeNewNotebook)
-	if !isPathWithinRoot(oldDir, a.vaultPath) || !isCreationPathWithinRoot(newDir, a.vaultPath) {
-		return fmt.Errorf("path escapes vault")
-	}
-	if _, err := os.Stat(newDir); err == nil {
-		return fmt.Errorf("a notebook named %q already exists", safeNewNotebook)
-	}
-	if a.nameCollidesWithLink(safeNewNotebook, "") {
-		return fmt.Errorf("a linked notebook named %q already exists; unlink or rename it first", safeNewNotebook)
-	}
-
-	a.wg.Add(1)
-	defer a.wg.Done()
-
-	lockPaths, err := collectMarkdownFilePaths(oldDir)
-	if err != nil {
-		return err
-	}
-	var renameTargets []renameTarget
-	for _, p := range lockPaths {
-		rel, relErr := filepath.Rel(oldDir, p)
-		if relErr != nil {
-			continue
+	return a.renameTree(func() (renameTreeStrategy, error) {
+		safeOldNotebook := sanitizePathSegment(oldName)
+		safeNewNotebook := sanitizePathSegment(newName)
+		if safeOldNotebook == "" || safeNewNotebook == "" {
+			return renameTreeStrategy{}, fmt.Errorf("notebook names are required")
 		}
-		relSlash := filepath.ToSlash(rel)
-		parts := strings.Split(relSlash, "/")
-		var section, page string
-		if len(parts) == 1 {
-			page = strings.TrimSuffix(parts[0], ".md")
-		} else {
-			section = strings.Join(parts[:len(parts)-1], "/")
-			page = strings.TrimSuffix(parts[len(parts)-1], ".md")
+		if safeOldNotebook == safeNewNotebook {
+			return renameTreeStrategy{}, errRenameNoOp
 		}
-		renameTargets = append(renameTargets, renameTarget{safeOldNotebook, section, page})
-	}
-	inbound, err := a.collectInboundSourcePaths(renameTargets)
-	if err != nil {
-		return fmt.Errorf("collect inbound sources: %w", err)
-	}
-	lockPaths = append(lockPaths, inbound...)
-	if a.renameHooks != nil && a.renameHooks.afterPreLockInbound != nil {
-		a.renameHooks.afterPreLockInbound()
-	}
 
-	var runErr error
-	configSnapshot := a.snapshotConfig()
-	linkJournal := make(map[string]renameLinkJournalEntry)
-	configAttempted := false
-	// Retry if a .md appears under oldDir or inbound sources grow after collect (TOCTOU).
-	var files []renameFileSnapshot
-	for attempt := 0; attempt < 8; attempt++ {
-		var needRetry []string
-		runErr = nil
-		configAttempted = false
-		linkJournal = make(map[string]renameLinkJournalEntry)
-		files = nil
-		// Lock every descendant page path + inbound sources before renaming.
-		a.coordinator.LockPathsWrite(lockPaths, func() {
-			missing, mErr := missingMarkdownUnder(oldDir, lockPathSet(lockPaths))
-			if mErr != nil {
-				runErr = mErr
-				return
-			}
-			if len(missing) > 0 {
-				needRetry = missing
-				return
-			}
-			lockedTargets := renameTargetsFromMarkdownUnder(oldDir, safeOldNotebook, "", lockPaths)
-			if len(lockedTargets) == 0 {
-				lockedTargets = renameTargets
-			}
-			inMissing, iErr := a.missingInboundPaths(lockedTargets, lockPathSet(lockPaths))
-			if iErr != nil {
-				runErr = iErr
-				return
-			}
-			if len(inMissing) > 0 {
-				needRetry = inMissing
-				return
-			}
-			// 1. Walk all .md files under the old notebook recursively and
-			// read their content BEFORE renaming.
-			_ = filepath.WalkDir(oldDir, func(path string, d fs.DirEntry, err error) error {
-				if err != nil {
-					return nil
-				}
-				if !d.IsDir() && strings.HasSuffix(path, ".md") {
-					b, readErr := os.ReadFile(path)
-					if readErr != nil {
-						runErr = fmt.Errorf("RenameNotebook: read %s: %w", path, readErr)
-						return filepath.SkipDir
+		// A linked notebook's name is its external folder basename + registry
+		// identity; renaming it is unlink + re-link, not a folder rename on the
+		// external source of truth. Refuse here so the vault-only folder rename
+		// below never misroutes (#100).
+		if src := a.resolveSourceByName(safeOldNotebook); strings.HasPrefix(src, "linked:") {
+			return renameTreeStrategy{}, fmt.Errorf("linked notebooks cannot be renamed in place — unlink and re-link the folder under the new name")
+		}
+
+		oldDir := filepath.Join(a.vaultPath, safeOldNotebook)
+		newDir := filepath.Join(a.vaultPath, safeNewNotebook)
+		if !isPathWithinRoot(oldDir, a.vaultPath) || !isCreationPathWithinRoot(newDir, a.vaultPath) {
+			return renameTreeStrategy{}, fmt.Errorf("path escapes vault")
+		}
+		if _, err := os.Stat(newDir); err == nil {
+			return renameTreeStrategy{}, fmt.Errorf("a notebook named %q already exists", safeNewNotebook)
+		}
+		if a.nameCollidesWithLink(safeNewNotebook, "") {
+			return renameTreeStrategy{}, fmt.Errorf("a linked notebook named %q already exists; unlink or rename it first", safeNewNotebook)
+		}
+
+		return renameTreeStrategy{
+			oldDir:        oldDir,
+			newDir:        newDir,
+			notebook:      safeOldNotebook,
+			sectionPrefix: "",
+			label:         "RenameNotebook",
+			buildRenameTargets: func(seedPaths []string) []renameTarget {
+				var targets []renameTarget
+				for _, p := range seedPaths {
+					rel, relErr := filepath.Rel(oldDir, p)
+					if relErr != nil {
+						continue
 					}
-					rel, _ := filepath.Rel(oldDir, path)
 					relSlash := filepath.ToSlash(rel)
 					parts := strings.Split(relSlash, "/")
 					var section, page string
@@ -997,91 +746,78 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 						section = strings.Join(parts[:len(parts)-1], "/")
 						page = strings.TrimSuffix(parts[len(parts)-1], ".md")
 					}
-					updated := updateFrontmatterField(string(b), "notebook", safeNewNotebook)
-					files = append(files, renameFileSnapshot{
-						oldPath: path, relPath: rel, oldContent: b, updatedContent: []byte(updated),
-						oldNotebook: safeOldNotebook, newNotebook: safeNewNotebook,
-						oldSection: section, newSection: section, page: page,
-					})
+					targets = append(targets, renameTarget{safeOldNotebook, section, page})
 				}
-				return nil
-			})
-			if runErr != nil {
-				return
-			}
-
-			// 2. Rename the notebook folder FIRST. If this fails, nothing
-			// was modified (clean state).
-			a.tracker.RegisterWrite(oldDir)
-			a.tracker.RegisterWrite(newDir)
-			if err := os.Rename(oldDir, newDir); err != nil {
-				runErr = err
-				return
-			}
-
-			// 3. Update notebook: frontmatter in each file at the new path.
-			for _, fc := range files {
-				newMdPath := filepath.Join(newDir, fc.relPath)
-				a.tracker.RegisterWrite(newMdPath)
-				if err := a.renameWriteFileAtomic(newMdPath, fc.updatedContent); err != nil {
-					runErr = fmt.Errorf("RenameNotebook: write %s: %w", fc.relPath, err)
-					if rollbackErr := a.rollbackRename(oldDir, newDir, files, "vault", linkJournal, configSnapshot, false); rollbackErr != nil {
-						runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
+				return targets
+			},
+			walkAndSnapshot: func() ([]renameFileSnapshot, error) {
+				var snapped []renameFileSnapshot
+				var walkErr error
+				_ = filepath.WalkDir(oldDir, func(path string, d fs.DirEntry, err error) error {
+					if err != nil {
+						return nil
 					}
-					return
-				}
-			}
-
-			// 4. Rewrite inbound wiki-links before clearing the old index so
-			// resolve-gating still sees the pre-rename page inventory.
-			for _, fc := range files {
-				a.rewriteInboundPageLinksWithJournal("vault", safeOldNotebook, fc.oldSection, fc.page, safeNewNotebook, fc.newSection, fc.page, linkJournal, lockPathSet(lockPaths))
-			}
-
-			// 5. Clear old index entries and re-index all files at new paths.
-			for _, fc := range files {
+					if !d.IsDir() && strings.HasSuffix(path, ".md") {
+						b, readErr := os.ReadFile(path)
+						if readErr != nil {
+							walkErr = fmt.Errorf("RenameNotebook: read %s: %w", path, readErr)
+							return filepath.SkipDir
+						}
+						rel, _ := filepath.Rel(oldDir, path)
+						relSlash := filepath.ToSlash(rel)
+						parts := strings.Split(relSlash, "/")
+						var section, page string
+						if len(parts) == 1 {
+							page = strings.TrimSuffix(parts[0], ".md")
+						} else {
+							section = strings.Join(parts[:len(parts)-1], "/")
+							page = strings.TrimSuffix(parts[len(parts)-1], ".md")
+						}
+						updated := updateFrontmatterField(string(b), "notebook", safeNewNotebook)
+						snapped = append(snapped, renameFileSnapshot{
+							oldPath: path, relPath: rel, oldContent: b, updatedContent: []byte(updated),
+							oldNotebook: safeOldNotebook, newNotebook: safeNewNotebook,
+							oldSection: section, newSection: section, page: page,
+						})
+					}
+					return nil
+				})
+				return snapped, walkErr
+			},
+			rewriteInboundFile: func(file renameFileSnapshot, heldPaths map[string]bool, linkJournal map[string]renameLinkJournalEntry) {
+				a.rewriteInboundPageLinksWithJournal("vault", safeOldNotebook, file.oldSection, file.page, safeNewNotebook, file.newSection, file.page, linkJournal, heldPaths)
+			},
+			clearAndReindexFile: func(file renameFileSnapshot) error {
+				var clearErr error
 				a.coordinator.WithDBWrite(func() {
-					if err := a.db.ClearFileBlocks(nil, "vault", safeOldNotebook, fc.oldSection, fc.page); err != nil && runErr == nil {
-						runErr = fmt.Errorf("RenameNotebook: clear index %s: %w", fc.relPath, err)
+					if err := a.db.ClearFileBlocks(nil, "vault", safeOldNotebook, file.oldSection, file.page); err != nil && clearErr == nil {
+						clearErr = fmt.Errorf("RenameNotebook: clear index %s: %w", file.relPath, err)
 					}
-					if err := a.db.ForgetFile(fc.oldPath); err != nil && runErr == nil {
-						runErr = fmt.Errorf("RenameNotebook: forget index %s: %w", fc.relPath, err)
+					if err := a.db.ForgetFile(file.oldPath); err != nil && clearErr == nil {
+						clearErr = fmt.Errorf("RenameNotebook: forget index %s: %w", file.relPath, err)
 					}
 				})
-				if runErr != nil {
-					break
+				if clearErr != nil {
+					return clearErr
 				}
-				newMdPath := filepath.Join(newDir, fc.relPath)
-				if err := a.reindexFileStrict(newMdPath, "vault", safeNewNotebook, fc.newSection, fc.page, true); err != nil {
-					runErr = fmt.Errorf("RenameNotebook: reindex %s: %w", fc.relPath, err)
-					break
+				newMdPath := filepath.Join(newDir, file.relPath)
+				if err := a.reindexFileStrict(newMdPath, "vault", safeNewNotebook, file.newSection, file.page, true); err != nil {
+					return fmt.Errorf("RenameNotebook: reindex %s: %w", file.relPath, err)
 				}
-			}
-			if runErr == nil {
-				configAttempted = true
-				if err := a.renameReconcileNotebook(safeOldNotebook, safeNewNotebook, false); err != nil {
-					runErr = err
-				}
-			}
-			if runErr != nil {
-				if rollbackErr := a.rollbackRename(oldDir, newDir, files, "vault", linkJournal, configSnapshot, configAttempted && a.renameHooks != nil && a.renameHooks.reconcileNotebook != nil); rollbackErr != nil {
-					runErr = fmt.Errorf("%w (rollback failed: %v)", runErr, rollbackErr)
-				}
-			}
-		})
-		if len(needRetry) > 0 {
-			lockPaths = unionLockPaths(lockPaths, needRetry)
-			continue
-		}
-		if runErr != nil {
-			return runErr
-		}
-		for _, fc := range files {
-			a.rewriteStaleInboundAfterRename(safeOldNotebook, fc.oldSection, fc.page, safeNewNotebook, fc.newSection, fc.page)
-		}
-		return nil
-	}
-	return fmt.Errorf("RenameNotebook: tree lock did not stabilize after concurrent creates")
+				return nil
+			},
+			reconcile: func() error {
+				return a.renameReconcileNotebook(safeOldNotebook, safeNewNotebook, false)
+			},
+			staleSweepFile: func(file renameFileSnapshot) {
+				a.rewriteStaleInboundAfterRename(safeOldNotebook, file.oldSection, file.page, safeNewNotebook, file.newSection, file.page)
+			},
+			rollbackSource: "vault",
+			rollbackReconcileHookEnabled: func(configAttempted bool) bool {
+				return configAttempted && a.renameHooks != nil && a.renameHooks.reconcileNotebook != nil
+			},
+		}, nil
+	})
 }
 
 // DeletePage moves a single page file to .system/trash/ and clears its index

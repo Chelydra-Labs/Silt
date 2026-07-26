@@ -10,6 +10,7 @@
   import { settings } from '../../../settings/store.svelte'
   import PresetControl from '../../../components/settings/PresetControl.svelte'
   import InfoTooltip from '../../../components/settings/InfoTooltip.svelte'
+  import ToggleSwitch from '../../../components/ToggleSwitch.svelte'
   import { DEFAULT_SETTINGS, resolveSettings } from './settings'
   import type { QASettings } from './types'
   import { getQAController } from './state.svelte'
@@ -252,9 +253,13 @@
       </p>
     </div>
 
-    <label
-      class="flex items-start justify-between gap-4 cursor-pointer select-none"
-      for="qa-auto-reembed"
+    <ToggleSwitch
+      labelClass="flex items-start justify-between gap-4 cursor-pointer select-none"
+      id="qa-auto-reembed"
+      aria-labelledby="qa-auto-reembed-label"
+      checked={local.auto_reembed}
+      disabled={!loaded}
+      onchange={(e) => void saveKey('auto_reembed', e.currentTarget.checked)}
     >
       <span class="min-w-0 space-y-0.5">
         <span
@@ -267,25 +272,7 @@
           Re-index a note when you save it. Off = manual rebuild only.
         </span>
       </span>
-      <span class="flex items-center flex-shrink-0">
-        <input
-          id="qa-auto-reembed"
-          type="checkbox"
-          class="keyring-switch peer sr-only"
-          aria-labelledby="qa-auto-reembed-label"
-          checked={local.auto_reembed}
-          disabled={!loaded}
-          onchange={(e) =>
-            void saveKey('auto_reembed', e.currentTarget.checked)}
-        />
-        <span
-          aria-hidden="true"
-          class="keyring-switch-track"
-          class:on={local.auto_reembed}
-          class:disabled={!loaded}
-        ></span>
-      </span>
-    </label>
+    </ToggleSwitch>
 
     <label class="flex flex-col gap-1.5" for="qa-notebook-scope">
       <span
@@ -548,9 +535,13 @@
           </div>
         </details>
 
-        <label
-          class="flex items-start justify-between gap-4 cursor-pointer select-none"
-          for="qa-rerank"
+        <ToggleSwitch
+          labelClass="flex items-start justify-between gap-4 cursor-pointer select-none"
+          id="qa-rerank"
+          aria-labelledby="qa-rerank-label"
+          checked={local.rerank_enabled}
+          onchange={(e) =>
+            void saveKey('rerank_enabled', e.currentTarget.checked)}
         >
           <span class="min-w-0 space-y-0.5">
             <span
@@ -568,23 +559,7 @@
               Re-score retrieved notes by similarity to your question.
             </span>
           </span>
-          <span class="flex items-center flex-shrink-0">
-            <input
-              id="qa-rerank"
-              type="checkbox"
-              class="keyring-switch peer sr-only"
-              aria-labelledby="qa-rerank-label"
-              checked={local.rerank_enabled}
-              onchange={(e) =>
-                void saveKey('rerank_enabled', e.currentTarget.checked)}
-            />
-            <span
-              aria-hidden="true"
-              class="keyring-switch-track"
-              class:on={local.rerank_enabled}
-            ></span>
-          </span>
-        </label>
+        </ToggleSwitch>
       </div>
     {:else}
       <p class="text-text-muted text-type-sm m-0" role="status">
@@ -621,42 +596,6 @@
 </div>
 
 <style>
-  /* Switch track — same contract as Settings → AI (AIProviderTab). */
-  .keyring-switch-track {
-    width: 36px;
-    height: 20px;
-    border-radius: 9999px;
-    background: var(--color-surface-panel-border);
-    position: relative;
-    flex-shrink: 0;
-    margin-top: 2px;
-    transition: background-color 0.15s ease;
-  }
-  .keyring-switch-track.on {
-    background: var(--color-accent-primary-start);
-  }
-  .keyring-switch-track.disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .keyring-switch-track::after {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 16px;
-    height: 16px;
-    border-radius: 9999px;
-    background: var(--color-surface-app);
-    transition: transform 0.15s ease;
-  }
-  .keyring-switch-track.on::after {
-    transform: translateX(16px);
-  }
-  .keyring-switch:focus-visible + .keyring-switch-track {
-    outline: 2px solid var(--color-accent-primary-start);
-    outline-offset: 2px;
-  }
   details > summary::-webkit-details-marker {
     display: none;
   }

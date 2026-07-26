@@ -7,6 +7,7 @@
     embeddingProviderNeedsSetup
   } from '../../../settings/ai-setup'
   import { settings } from '../../../settings/store.svelte'
+  import ToggleSwitch from '../../../components/ToggleSwitch.svelte'
   import { ACTION_CATALOG } from './catalog'
   import { DEFAULT_SETTINGS, resolveSettings } from './settings'
   import type { ActionId, AssistantSettings as Settings } from './types'
@@ -292,25 +293,13 @@
                 </p>
               </div>
             </div>
-            <label
-              class="flex items-center cursor-pointer select-none flex-shrink-0"
-              for="wa-action-{a.id}"
-            >
-              <input
-                id="wa-action-{a.id}"
-                type="checkbox"
-                class="keyring-switch peer sr-only"
-                aria-labelledby="wa-action-{a.id}-label"
-                checked={enabled}
-                onchange={(e) =>
-                  void toggleAction(a.id, e.currentTarget.checked)}
-              />
-              <span
-                aria-hidden="true"
-                class="keyring-switch-track"
-                class:on={enabled}
-              ></span>
-            </label>
+            <ToggleSwitch
+              labelClass="flex items-center cursor-pointer select-none flex-shrink-0"
+              id="wa-action-{a.id}"
+              aria-labelledby="wa-action-{a.id}-label"
+              checked={enabled}
+              onchange={(e) => void toggleAction(a.id, e.currentTarget.checked)}
+            />
           </li>
         {/each}
       </ul>
@@ -333,9 +322,13 @@
         </p>
       </div>
 
-      <label
-        class="flex items-start justify-between gap-4 cursor-pointer select-none"
-        for="wa-vocab-only"
+      <ToggleSwitch
+        labelClass="flex items-start justify-between gap-4 cursor-pointer select-none"
+        id="wa-vocab-only"
+        aria-labelledby="wa-vocab-only-label"
+        checked={draft.existing_vocab_only}
+        onchange={(e) =>
+          void write('existing_vocab_only', e.currentTarget.checked)}
       >
         <span class="min-w-0 space-y-0.5">
           <span
@@ -348,23 +341,7 @@
             Prefer tags already used in your vault over inventing new ones.
           </span>
         </span>
-        <span class="flex items-center flex-shrink-0">
-          <input
-            id="wa-vocab-only"
-            type="checkbox"
-            class="keyring-switch peer sr-only"
-            aria-labelledby="wa-vocab-only-label"
-            checked={draft.existing_vocab_only}
-            onchange={(e) =>
-              void write('existing_vocab_only', e.currentTarget.checked)}
-          />
-          <span
-            aria-hidden="true"
-            class="keyring-switch-track"
-            class:on={draft.existing_vocab_only}
-          ></span>
-        </span>
-      </label>
+      </ToggleSwitch>
 
       <label class="flex flex-col gap-1.5 max-w-xs" for="wa-max-tags">
         <span
@@ -520,38 +497,6 @@
 </div>
 
 <style>
-  /* Switch track — same contract as Settings → AI / Semantic search. */
-  .keyring-switch-track {
-    width: 36px;
-    height: 20px;
-    border-radius: 9999px;
-    background: var(--color-surface-panel-border);
-    position: relative;
-    flex-shrink: 0;
-    margin-top: 2px;
-    transition: background-color 0.15s ease;
-  }
-  .keyring-switch-track.on {
-    background: var(--color-accent-primary-start);
-  }
-  .keyring-switch-track::after {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 16px;
-    height: 16px;
-    border-radius: 9999px;
-    background: var(--color-surface-app);
-    transition: transform 0.15s ease;
-  }
-  .keyring-switch-track.on::after {
-    transform: translateX(16px);
-  }
-  .keyring-switch:focus-visible + .keyring-switch-track {
-    outline: 2px solid var(--color-accent-primary-start);
-    outline-offset: 2px;
-  }
   details > summary::-webkit-details-marker {
     display: none;
   }

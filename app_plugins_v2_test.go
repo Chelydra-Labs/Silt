@@ -1319,9 +1319,7 @@ func TestSeedNetworkAuditFromDisk_PopulatesFromLogFile(t *testing.T) {
 		t.Fatalf("write log: %v", err)
 	}
 	// Clear in-memory, then seed.
-	networkAuditMu.Lock()
-	networkAudit = nil
-	networkAuditMu.Unlock()
+	networkAuditLog.reset()
 	seedNetworkAuditFromDisk(app.vaultPath)
 
 	entries, _ := app.GetNetworkAudit()
@@ -1374,9 +1372,7 @@ func TestSeedNetworkAuditFromDisk_RestartPreservesEntries(t *testing.T) {
 	}
 
 	// Simulate a restart: clear in-memory, then seed from disk.
-	networkAuditMu.Lock()
-	networkAudit = nil
-	networkAuditMu.Unlock()
+	networkAuditLog.reset()
 	seedNetworkAuditFromDisk(app.vaultPath)
 
 	entries, _ := app.GetNetworkAudit()

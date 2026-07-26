@@ -143,6 +143,26 @@ func (a *App) requireGrant(pluginID string, cap plugins.Capability) error {
 	}
 }
 
+// wrapPluginMutate is the shared gating sequence for the plugin-SDK task
+// mutation wrappers (PluginSetTaskOwner/Priority/Tags/Title/Order/Orders,
+// PluginSetTaskBlockedBy, PluginSetTaskRecurrence — all CapContentMutate).
+// It runs the session check → capability grant → mutate, returning the
+// (bool, error) envelope the SDK bindings expect. Extracted so the gating
+// has one source of truth; the per-binding mutator closure carries the
+// field-specific input validation and write-chain call.
+func (a *App) wrapPluginMutate(pluginID, sessionToken string, mutate func() error) (bool, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return false, err
+	}
+	if err := mutate(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // grantedQualifier returns the scope qualifier for a granted capability, or
 // ("", false) if not granted. Used by bindings that narrow scope (file-write
 // notebook vs vault).

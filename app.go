@@ -393,12 +393,8 @@ func (a *App) teardownVaultServices() {
 	// the new vault's on-disk logs, not the closed vault's leftover entries.
 	// Without this, the seed guard (len == 0) would skip reseeding and the
 	// new vault would display the old vault's audit history (#446 hardening).
-	networkAuditMu.Lock()
-	networkAudit = nil
-	networkAuditMu.Unlock()
-	aiAuditMu.Lock()
-	aiAudit = nil
-	aiAuditMu.Unlock()
+	networkAuditLog.reset()
+	aiAuditLog.reset()
 	if a.watcher != nil {
 		// Drop every focus lease before tearing the watcher down so a clean
 		// exit can't strand a file under fsnotify suppression (#38).
