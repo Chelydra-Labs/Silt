@@ -55,13 +55,13 @@ cd frontend && npm run check && npm run build
 - Use [Conventional Commits](https://www.conventionalcommits.org/) prefixes:
   `feat:`, `fix:`, `refactor:`, `docs:`, `chore:`.
 - Keep commits focused and reviewable; one logical change per commit.
-- **Merge PRs with a merge commit, not a squash.** Silt generates its
-  changelog from Conventional Commits at tag time (see *Release notes*
-  below), so the individual `feat:`/`fix:` commits must survive into the
-  history git-cliff reads. Squashing collapses a PR to one commit — and if
-  that one subject isn't conventional, git-cliff drops it and the release
-  ships blank notes. (The global merge tooling auto-detects this from
-  `cliff.toml`; this note makes the override explicit for human contributors.)
+- **Squash-merge PRs**, and make the PR title a user-facing Conventional
+  Commit (`feat:`, `fix:`, `refactor:`, …) — it becomes the squash subject
+  and the one changelog bullet git-cliff renders for that PR. Silt generates
+  its changelog from Conventional Commits at tag time (see *Release notes*
+  below); git-cliff reads the squash subjects on `main` between tags, so a
+  non-conventional title is dropped and the release ships blank notes for
+  that PR.
 
 ## Release notes
 
