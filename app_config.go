@@ -11,8 +11,8 @@ import (
 // replace the frontend read-mutate-saveConfig race. All persistence routes
 // through saveConfigTracked so the hot-reload watcher suppresses our own
 // atomic write. Linked-notebook security reconciliation
-// (reconcileLinkedNotebookSecurityLocked / seedFirstPartyGrants) still lives
-// in app_plugin_sdk.go — a later phase relocates it.
+// (reconcileLinkedNotebookSecurityLocked / seedFirstPartyGrants) lives in
+// app_linked_notebooks.go alongside the rest of the linked-notebook subsystem.
 
 // GetSystemConfig returns an independent snapshot of the parsed system config.
 // IPC callers must not be able to mutate maps and slices in the live config

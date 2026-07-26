@@ -10,7 +10,6 @@ import (
 	"silt/backend/config"
 	"silt/backend/parser"
 	"silt/backend/plugins"
-	"silt/backend/vault"
 	"strings"
 	"time"
 )
@@ -377,111 +376,6 @@ func (a *App) GetPluginRegistry() (parser.PluginRegistry, error) {
 		registry.Settings = map[string]any{}
 	}
 	return registry, nil
-}
-
-// reconcileLinkedNotebookSecurityLocked applies the trusted-root rules to a
-// candidate config. The caller holds configMu and commits the candidate after
-// this function returns.
-func (a *App) reconcileLinkedNotebookSecurityLocked(cfg *config.SystemConfig) []map[string]string {
-	// F3: when a config reloads from disk (fsnotify), preserve the in-memory
-	// RootFingerprint for each linked notebook and quarantine any link whose
-	// root changed or was added by an external edit. The M2 (synced-vault)
-	// adversary can edit config.yaml freely — without these checks they could
-	// redirect an existing link's root_path to an attacker folder, or inject a
-	// brand-new link pointing at a hostile root, both with no fingerprint.
-	var quarantined []map[string]string
-	if a.quarantinedLinks == nil {
-		a.quarantinedLinks = make(map[string]struct{})
-	}
-	// Snapshot the set of known link IDs so we can detect new entries.
-	knownIDs := make(map[string]bool, len(a.cfg.LinkedNotebooks))
-	for _, existing := range a.cfg.LinkedNotebooks {
-		knownIDs[existing.ID] = true
-	}
-	newlyQuarantined := make(map[string]bool) // IDs quarantined in THIS call
-	for i, reloaded := range cfg.LinkedNotebooks {
-		if !knownIDs[reloaded.ID] {
-			// NEW link from an external edit — the M2 adversary injected a
-			// link to an attacker-chosen root. Quarantine immediately; the
-			// user confirms via the re-link modal or unlinks.
-			a.quarantinedLinks[reloaded.ID] = struct{}{}
-			newlyQuarantined[reloaded.ID] = true
-			quarantined = append(quarantined, map[string]string{
-				"id":           reloaded.ID,
-				"display_name": reloaded.DisplayName,
-				"reason":       "new_link_from_external_edit",
-			})
-			log.Printf("applyConfigLocked: quarantined new link %s (appeared in external config edit)", reloaded.DisplayName)
-			continue
-		}
-		for _, existing := range a.cfg.LinkedNotebooks {
-			if reloaded.ID != existing.ID {
-				continue
-			}
-			if reloaded.RootPath != existing.RootPath {
-				// root_path changed via external edit — quarantine and
-				// preserve the trusted in-memory root + fingerprint.
-				a.quarantinedLinks[reloaded.ID] = struct{}{}
-				newlyQuarantined[reloaded.ID] = true
-				cfg.LinkedNotebooks[i].RootPath = existing.RootPath
-				cfg.LinkedNotebooks[i].RootFingerprint = existing.RootFingerprint
-				quarantined = append(quarantined, map[string]string{
-					"id":           reloaded.ID,
-					"display_name": reloaded.DisplayName,
-					"reason":       "root_path_changed",
-				})
-				log.Printf("applyConfigLocked: quarantined %s (root_path changed in external edit)", reloaded.DisplayName)
-			} else {
-				// RootPath unchanged — preserve the fingerprint captured at link time.
-				cfg.LinkedNotebooks[i].RootFingerprint = existing.RootFingerprint
-			}
-			break
-		}
-	}
-	// P2 prune: remove stale quarantine entries for links that no longer exist
-	// in the reloaded config (user unlinked, or synced config removed them).
-	// Keep entries for links quarantined in THIS call (they ARE in the config).
-	for id := range a.quarantinedLinks {
-		if newlyQuarantined[id] {
-			continue
-		}
-		stillExists := false
-		for _, ln := range cfg.LinkedNotebooks {
-			if ln.ID == id {
-				stillExists = true
-				break
-			}
-		}
-		if !stillExists {
-			delete(a.quarantinedLinks, id)
-		}
-	}
-	return quarantined
-}
-
-// seedFirstPartyGrants populates the per-host grants store with every
-// capability for each first-party plugin ID, so bundled plugins are implicitly
-// trusted WITHOUT a special-case bypass in requireGrant. This closes the
-// spoofing vector where a third-party plugin passes 'silt-attachments' as
-// pluginID to bypass all capability checks (#113 security hardening).
-//
-// F4: grants now live in the per-host store (a.grants), not vault-scoped
-// config.yaml. Seeding is in-memory only for the session — the store is NOT
-// re-persisted on every applyConfigLocked (that would write grants.json on
-// every config reload for no reason). The seeded entries persist for the vault
-// session; a fresh launch re-seeds from LoadGrants + this function.
-func (a *App) seedFirstPartyGrants() {
-	if a.grants == nil {
-		a.grants = vault.GrantsStore{}
-	}
-	for id := range plugins.FirstPartyPluginIDs {
-		if a.grants[id] == nil {
-			a.grants[id] = map[string]string{}
-		}
-		for cap := range plugins.KnownCapabilities {
-			a.grants[id][string(cap)] = plugins.QualGranted
-		}
-	}
 }
 
 // GetPluginSettingsForNotebook resolves a plugin's settings map for the
