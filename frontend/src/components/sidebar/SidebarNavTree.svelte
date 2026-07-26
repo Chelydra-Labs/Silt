@@ -47,7 +47,6 @@
     crud: NavCrud
     menu: SidebarContextMenu
     dnd: DragDropManager
-    onSelectNotebook: (notebook: string) => void
     onSelectSection: (section: string) => void
     onSelectPage: (notebook: string, section: string, page: string) => void
     onPinPage: (notebook: string, section: string, page: string) => void
@@ -68,7 +67,6 @@
     crud: crudProp,
     menu: menuProp,
     dnd: dndProp,
-    onSelectNotebook,
     onSelectSection,
     onSelectPage,
     onPinPage,

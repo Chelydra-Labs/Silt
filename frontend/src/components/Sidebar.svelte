@@ -360,7 +360,6 @@
         {crud}
         {menu}
         {dnd}
-        {onSelectNotebook}
         {onSelectSection}
         {onSelectPage}
         {onPinPage}
