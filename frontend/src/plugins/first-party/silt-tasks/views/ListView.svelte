@@ -17,7 +17,7 @@
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
-  import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
+  import BlockedDoneGuard from '../components/BlockedDoneGuard.svelte'
   import {
     coerceTaskRow,
     formatEstimateSum,
@@ -1043,14 +1043,12 @@
     }}
   />
 {/if}
-{#if blockedGuard.pending}
-  <BlockedDoneDialog
-    cardText={blockedGuard.pending.context.clean_content}
-    blockers={blockedGuard.pending.blockers}
-    onConfirm={confirmBlockedDone}
-    onCancel={cancelBlockedDone}
-  />
-{/if}
+<BlockedDoneGuard
+  pending={blockedGuard.pending}
+  cardText={blockedGuard.pending?.context.clean_content}
+  onConfirm={confirmBlockedDone}
+  onCancel={cancelBlockedDone}
+/>
 
 <style>
   .tasks-focused {
@@ -1089,16 +1087,5 @@
   }
   .tasks-dragging {
     opacity: 0.4;
-  }
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
   }
 </style>

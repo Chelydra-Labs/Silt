@@ -18,7 +18,7 @@
     priorityClass
   } from '../types'
   import DependencyPicker from './DependencyPicker.svelte'
-  import BlockedDoneDialog from './BlockedDoneDialog.svelte'
+  import BlockedDoneGuard from './BlockedDoneGuard.svelte'
   import CommentThread from './CommentThread.svelte'
   import Popover from '../../../../components/Popover.svelte'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
@@ -1404,12 +1404,10 @@
     </div>
   </div>
 
-  {#if blockedGuard.pending}
-    <BlockedDoneDialog
-      cardText={task.clean_content}
-      blockers={blockedGuard.pending.blockers}
-      onConfirm={confirmBlockedDone}
-      onCancel={cancelBlockedDone}
-    />
-  {/if}
+  <BlockedDoneGuard
+    pending={blockedGuard.pending}
+    cardText={task.clean_content}
+    onConfirm={confirmBlockedDone}
+    onCancel={cancelBlockedDone}
+  />
 {/if}

@@ -44,8 +44,6 @@
     SiltTableExtensions,
     UniqueBlockIds,
     SiltBlockKeymaps,
-    convertToBlock,
-    setBlockAlign,
     insertTable,
     findActiveBlock,
     TaskMetaSuggest,
@@ -114,6 +112,7 @@
     resolveColor
   } from '../lib/editor/colors'
   import { createSlashMenu } from '../lib/editor/useSlashMenu.svelte'
+  import { createEditorEvents } from './editor/controllers/useEditorEvents.svelte'
   import { clearInsertEditor } from '../lib/dateGlanceState.svelte'
   import {
     setActiveEditor,
@@ -370,21 +369,8 @@
   // EDIT site: a math NodeView dispatches silt:edit-math with its latex,
   // displayMode, DOM-derived coords, and an onCommit that calls its own
   // updateAttributes. CREATE site (/math) opens the popover directly below.
-  function onEditMath(e: Event): void {
-    const detail = (e as CustomEvent).detail as {
-      latex: string
-      displayMode: boolean
-      coords: { left: number; top: number }
-      onCommit: (latex: string) => void
-    } | null
-    if (!detail) return
-    mathPopover = {
-      latex: detail.latex,
-      displayMode: detail.displayMode,
-      coords: detail.coords,
-      onCommit: detail.onCommit
-    }
-  }
+  // The silt:edit-math listener itself lives in the events controller (see
+  // createEditorEvents below); it writes here via the setMathPopover accessor.
 
   function commitMathPopover(latex: string): void {
     const cb = mathPopover?.onCommit
@@ -418,11 +404,8 @@
     showColorPicker = true
   }
 
-  function onOpenColorPicker(e: Event): void {
-    const markType = (e as CustomEvent).detail as
-      'textColor' | 'backgroundColor'
-    if (markType) openColorPickerPopover(markType)
-  }
+  // The silt:open-color-picker listener lives in the events controller; it
+  // calls openColorPickerPopover above.
 
   function applyColorFromPopover(color: string | null): void {
     if (!editorInstance || editorInstance.isDestroyed) return
@@ -1397,26 +1380,20 @@
     }
   })
 
-  // Global event listeners for cross-component hotkeys.
-  function onOpenLinkInput(e: Event): void {
-    const detail = (e as CustomEvent<{ href?: string }>).detail
-    openLinkInput(detail?.href)
-  }
-  function onChangeBlockType(e: Event): void {
-    const detail = (e as CustomEvent).detail
-    if (!editorInstance) return
-    if (detail?.type === 'headerBlock') {
-      convertToBlock(editorInstance, 'headerBlock', detail.depth || 1)
-    } else if (detail?.type === 'noteBlock') {
-      convertToBlock(editorInstance, 'noteBlock')
-    } else if (detail?.type === 'taskBlock') {
-      convertToBlock(editorInstance, 'taskBlock')
+  // Custom-event bus (silt:* window events). Handlers live in the events
+  // controller and bridge into the editor's popover/selection state via
+  // accessors so no state is duplicated. attach()/detach() preserve the
+  // original lifecycle: register during init, unregister in onDestroy.
+  const events = createEditorEvents({
+    getEditor: () => editorInstance,
+    openLinkInput,
+    openColorPickerPopover,
+    setMathPopover: (popover) => {
+      mathPopover = popover
     }
-  }
-  function onSetBlockAlign(e: Event): void {
-    const align = (e as CustomEvent).detail as string
-    if (align && editorInstance) setBlockAlign(editorInstance, align)
-  }
+  })
+  events.attach()
+
   // Dismiss the selection-anchored popovers (link / color / math) when an
   // ancestor scrolls or the window resizes (#594). They capture their anchor
   // coordinates once and render position:fixed, so without this they would
@@ -1457,11 +1434,6 @@
     slash.dismiss()
   }
 
-  window.addEventListener('silt:open-link-input', onOpenLinkInput)
-  window.addEventListener('silt:change-block-type', onChangeBlockType)
-  window.addEventListener('silt:set-block-align', onSetBlockAlign)
-  window.addEventListener('silt:open-color-picker', onOpenColorPicker)
-  window.addEventListener('silt:edit-math', onEditMath)
   window.addEventListener('scroll', onEditorScroll, true)
   window.addEventListener('resize', onWindowResize)
   document.addEventListener('click', onDocumentClick)
@@ -1487,11 +1459,7 @@
     cancelPageLinkSearch()
     pageLinkRace.begin()
     void flushPendingSave().then(() => releaseFocus())
-    window.removeEventListener('silt:open-link-input', onOpenLinkInput)
-    window.removeEventListener('silt:change-block-type', onChangeBlockType)
-    window.removeEventListener('silt:set-block-align', onSetBlockAlign)
-    window.removeEventListener('silt:open-color-picker', onOpenColorPicker)
-    window.removeEventListener('silt:edit-math', onEditMath)
+    events.detach()
     window.removeEventListener('scroll', onEditorScroll, true)
     window.removeEventListener('resize', onWindowResize)
     document.removeEventListener('click', onDocumentClick)

@@ -273,21 +273,6 @@
 {/if}
 
 <style>
-  /* Visually hidden but available to assistive tech (the collapsed-stack live
-     region). Standard visually-hidden pattern; not globalized because no other
-     component needs it yet. */
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-
   .plugin-note-banners {
     display: flex;
     flex-direction: column;
