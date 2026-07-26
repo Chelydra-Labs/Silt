@@ -46,44 +46,15 @@
     SiltBlockKeymaps,
     findActiveBlock,
     TaskMetaSuggest,
-    applyMetaSuggestion,
-    filterMetaKeys,
     MentionSuggest,
-    applyMentionSuggestion,
-    filterOwners,
     BlockRefSuggest,
-    applyBlockRefSuggestion,
     TagSuggest,
-    applyTagSuggestion,
-    filterTags,
-    flattenTagHierarchy,
     PageLinkSuggest,
-    applyPageLinkSuggestion,
-    dismissPageLinkSuggestion,
     normalizePageLinkAlias,
     pageLinkSourceLabel,
     blocksToDoc
   } from '../lib/editor'
-  import type {
-    ParsedBlock,
-    MetaKey,
-    SuggestContext,
-    MentionContext,
-    BlockRefContext,
-    TagContext,
-    TagItem,
-    TagTreeNode,
-    PageLinkContext,
-    PageLinkItem
-  } from '../lib/editor'
-  import {
-    DistinctOwners,
-    QueryTagHierarchy,
-    SearchBlocks,
-    RecordTagUsage,
-    SearchPages,
-    ResolvePageLink
-  } from '../../bindings/silt/app.js'
+  import type { ParsedBlock } from '../lib/editor'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
   import ChoiceDialog from './ChoiceDialog.svelte'
   import { settings, appendDismissedTip } from '../settings/store.svelte'
@@ -98,12 +69,6 @@
   import TableSizePicker from './editor/TableSizePicker.svelte'
   import MathLatexPopover from './editor/MathLatexPopover.svelte'
   import SuggestPopup from './editor/SuggestPopup.svelte'
-  import {
-    createRequestRace,
-    createDebouncedRunner,
-    cycleSelected,
-    ctxStillMatches
-  } from '../lib/editor/useSuggestPopup.svelte'
   import { popupCoordsAt } from '../lib/editor/suggestPopupCoords'
   import {
     deriveColorPalette,
@@ -113,6 +78,7 @@
   import { createSlashMenu } from '../lib/editor/useSlashMenu.svelte'
   import { createEditorEvents } from './editor/controllers/useEditorEvents.svelte'
   import { createPopoversController } from './editor/controllers/usePopovers.svelte'
+  import { useSuggests } from './editor/controllers/useSuggests.svelte'
   import { clearInsertEditor } from '../lib/dateGlanceState.svelte'
   import {
     setActiveEditor,
@@ -182,8 +148,6 @@
   let mathEnabled = $derived(
     settings.config?.ui?.formatting?.math_enabled !== false
   )
-  // Visually-hidden live region text for typeahead open/count announcements.
-  let suggestStatus = $state('')
 
   // Active inline marks in the current selection (#168). Updated on every
   // selection change so the FormatToolbar buttons reflect aria-pressed state.
@@ -270,53 +234,13 @@
     }
   }
 
-  // --- Task metadata suggest (%-autocomplete) ------------------------------
-  // `metaPopup` is null when the popup is closed. While open it carries the
-  // active context (range/position), the filtered key list, and the
-  // highlighted index navigated by ↑/↓.
-  let metaPopup = $state<{
-    ctx: SuggestContext
-    items: MetaKey[]
-    selected: number
-  } | null>(null)
-
-  function onMetaChange(ctx: SuggestContext | null): void {
-    if (!ctx) {
-      metaPopup = null
-      suggestStatus = ''
-      return
-    }
-    const items = filterMetaKeys(ctx.query)
-    metaPopup = items.length === 0 ? null : { ctx, items, selected: 0 }
-    suggestStatus = items.length
-      ? `${items.length} metadata key${items.length === 1 ? '' : 's'} available`
-      : 'No matching metadata keys'
-  }
-
-  function onMetaNavigate(dir: 1 | -1): void {
-    if (!metaPopup) return
-    const next = cycleSelected(metaPopup.selected, dir, metaPopup.items.length)
-    if (next !== null) metaPopup.selected = next
-  }
-
-  function onMetaSelectActive(): void {
-    if (!metaPopup || !editorInstance || editorInstance.isDestroyed) {
-      metaPopup = null
-      return
-    }
-    const item = metaPopup.items[metaPopup.selected]
-    metaPopup = null
-    if (item) applyMetaSuggestion(editorInstance, item.key)
-  }
-
-  function onMetaPick(key: string): void {
-    if (!editorInstance || editorInstance.isDestroyed) {
-      metaPopup = null
-      return
-    }
-    metaPopup = null
-    applyMetaSuggestion(editorInstance, key)
-  }
+  // Suggestion-popover cluster: the five typeaheads (task-metadata %,
+  // @-mention, block-reference, #tag, page-link). Relocated to useSuggests
+  // (editor/controllers/useSuggests.svelte.ts) — the controller owns the popup
+  // $state cells, the debounce/race guards, and the IPC, injecting getEditor so
+  // handlers always see the live editor. Reads below use suggests.<name>.*
+  // (getters keep template reads reactive). Same pattern as createPopoversController.
+  const suggests = useSuggests({ getEditor: () => editorInstance })
 
   function suggestPopupCoords(
     from: number,
@@ -328,545 +252,6 @@
       { x: anchor.left, y: anchor.top, width, height: 260 },
       { width: window.innerWidth, height: window.innerHeight }
     )
-  }
-
-  // --- @-mention typeahead (#184, #332) -----------------------------------
-  // Owners come from the read-only DistinctOwners index projection. #332 fixes
-  // two scale problems: (1) the unbounded SELECT was narrowed to a server-side
-  // prefix filter, and (2) the per-focus re-fetch was replaced by a TTL cache +
-  // in-flight guard so a focus blip within OWNERS_TTL_MS reuses the cached set
-  // instead of round-tripping through SQLite over IPC.
-  let owners = $state<string[]>([])
-  let ownersLoadedAt = 0
-  let ownersLoading = false
-  const OWNERS_TTL_MS = 5000 // a focus blip within 5s reuses the cached set
-  async function loadOwners(): Promise<void> {
-    // TTL + in-flight guard: a rapid focus blip (or repeated onFocus) reuses
-    // the cached set instead of re-querying SQLite over IPC every time (#332).
-    if (ownersLoading) return
-    if (Date.now() - ownersLoadedAt < OWNERS_TTL_MS) return
-    ownersLoading = true
-    try {
-      owners = (await DistinctOwners('')) ?? []
-      ownersLoadedAt = Date.now()
-    } catch (e) {
-      console.error('DistinctOwners failed:', e)
-    } finally {
-      ownersLoading = false
-    }
-  }
-
-  // `mentionPopup` is null when closed. While open it carries the active
-  // context (range/position), the filtered owner list, and the highlighted
-  // index navigated by ↑/↓.
-  let mentionPopup = $state<{
-    ctx: MentionContext
-    items: string[]
-    selected: number
-  } | null>(null)
-
-  // Debounced, race-guarded server refine for non-empty mention queries. The
-  // instant popup comes from the cached full set (filterOwners stays pure); for
-  // a non-empty query we also fire a prefix-bounded DistinctOwners(query) so a
-  // 10k-owner vault never has to filter client-side. The req-id gate discards a
-  // late-resolving fetch whose result no longer matches the current popup (#332).
-  const mentionDebounce = createDebouncedRunner()
-  const mentionRace = createRequestRace()
-  const MENTION_QUERY_DEBOUNCE_MS = 120
-
-  // Debounces the onFocus owner re-fetch so a focus blip doesn't immediately
-  // trigger an IPC round-trip. Cleared on destroy. #332.
-  let focusLoadTimer: ReturnType<typeof setTimeout> | null = null
-
-  function onMentionChange(ctx: MentionContext | null): void {
-    mentionDebounce.cancel()
-    if (!ctx) {
-      mentionPopup = null
-      suggestStatus = ''
-      return
-    }
-    // Preserve the highlighted owner across keystrokes: if the previously
-    // selected owner is still in the new list, keep it highlighted; otherwise
-    // fall back to the top. Without this, typing after ↓-navigating snapped
-    // the highlight back to item 0 every keystroke (#332 review feedback).
-    const prevName = mentionPopup
-      ? mentionPopup.items[mentionPopup.selected]
-      : undefined
-    const pickSelected = (items: string[]): number => {
-      if (!prevName) return 0
-      const idx = items.indexOf(prevName)
-      return idx >= 0 ? idx : 0
-    }
-    // Instant feedback from the cached full set — small vaults never wait.
-    const instant = filterOwners(owners, ctx.query)
-    mentionPopup =
-      instant.length === 0
-        ? null
-        : { ctx, items: instant, selected: pickSelected(instant) }
-    suggestStatus = instant.length
-      ? `${instant.length} owner${instant.length === 1 ? '' : 's'} available`
-      : 'No matching owners'
-
-    // For a non-empty query, refine from the server (prefix filter bounds the
-    // result at scale so a 10k-owner vault never filters client-side). Debounced
-    // + race-guarded: a stale result cannot overwrite the current popup.
-    const q = ctx.query.trim()
-    if (q) {
-      const myId = mentionRace.begin()
-      mentionDebounce.schedule(MENTION_QUERY_DEBOUNCE_MS, () => {
-        void (async () => {
-          try {
-            const serverItems = (await DistinctOwners(q)) ?? []
-            // Superseded by a later keystroke — drop this result.
-            if (!mentionRace.isCurrent(myId)) return
-            // Only apply if the popup is still open for this same context/query.
-            const cur = mentionPopup
-            if (!cur || !ctxStillMatches(cur, ctx)) return
-            mentionPopup =
-              serverItems.length === 0
-                ? null
-                : {
-                    ctx,
-                    items: serverItems,
-                    selected: pickSelected(serverItems)
-                  }
-            suggestStatus = serverItems.length
-              ? `${serverItems.length} owner${serverItems.length === 1 ? '' : 's'} available`
-              : 'No matching owners'
-          } catch (e) {
-            console.error('DistinctOwners(prefix) failed:', e)
-          }
-        })()
-      })
-    }
-  }
-
-  function onMentionNavigate(dir: 1 | -1): void {
-    if (!mentionPopup) return
-    const next = cycleSelected(
-      mentionPopup.selected,
-      dir,
-      mentionPopup.items.length
-    )
-    if (next !== null) mentionPopup.selected = next
-  }
-
-  function onMentionSelectActive(): void {
-    if (!mentionPopup || !editorInstance || editorInstance.isDestroyed) {
-      mentionPopup = null
-      return
-    }
-    const item = mentionPopup.items[mentionPopup.selected]
-    mentionPopup = null
-    if (item) applyMentionSuggestion(editorInstance, item)
-  }
-
-  function onMentionPick(name: string): void {
-    if (!editorInstance || editorInstance.isDestroyed) {
-      mentionPopup = null
-      return
-    }
-    mentionPopup = null
-    applyMentionSuggestion(editorInstance, name)
-  }
-
-  // --- Block-reference typeahead ------------------------------------------
-  interface BlockSearchItem {
-    id: string
-    source: string
-    notebook: string
-    section: string
-    page: string
-    clean_content: string
-  }
-
-  let blkRefPopup = $state<{
-    ctx: BlockRefContext
-    items: BlockSearchItem[]
-    selected: number
-    searching: boolean
-    error: boolean
-  } | null>(null)
-  const blkRefDebounce = createDebouncedRunner()
-  const blkRefRace = createRequestRace()
-  let blkRefRequest:
-    | (Promise<BlockSearchItem[]> & { cancel?: () => Promise<void> | void })
-    | null = null
-  const BLOCK_REF_QUERY_DEBOUNCE_MS = 180
-
-  function cancelBlockRefSearch(): void {
-    blkRefDebounce.cancel()
-    const request = blkRefRequest
-    blkRefRequest = null
-    if (request?.cancel) void request.cancel()
-  }
-
-  function onBlockRefChange(ctx: BlockRefContext | null): void {
-    cancelBlockRefSearch()
-    const myId = blkRefRace.begin()
-    if (!ctx) {
-      blkRefPopup = null
-      suggestStatus = ''
-      return
-    }
-
-    blkRefPopup = {
-      ctx,
-      items: [],
-      selected: 0,
-      searching: ctx.query.trim().length > 0,
-      error: false
-    }
-    if (!ctx.query.trim()) {
-      suggestStatus = 'Type to search for a block'
-      return
-    }
-
-    suggestStatus = 'Searching blocks'
-    blkRefDebounce.schedule(BLOCK_REF_QUERY_DEBOUNCE_MS, () => {
-      void (async () => {
-        const request = SearchBlocks(ctx.query) as Promise<
-          BlockSearchItem[]
-        > & {
-          cancel?: () => Promise<void> | void
-        }
-        blkRefRequest = request
-        try {
-          const items = (await request) ?? []
-          if (!blkRefRace.isCurrent(myId)) return
-          const current = blkRefPopup
-          if (!current || !ctxStillMatches(current, ctx)) return
-          blkRefRequest = null
-          blkRefPopup = { ...current, items, selected: 0, searching: false }
-          suggestStatus = items.length
-            ? `${items.length} block${items.length === 1 ? '' : 's'} available`
-            : 'No matching blocks'
-        } catch (error) {
-          if (!blkRefRace.isCurrent(myId)) return
-          blkRefRequest = null
-          const current = blkRefPopup
-          if (!current || !ctxStillMatches(current, ctx)) return
-          console.error('SearchBlocks failed:', error)
-          blkRefPopup = {
-            ...current,
-            items: [],
-            selected: 0,
-            searching: false,
-            error: true
-          }
-          suggestStatus = 'Block search unavailable'
-        }
-      })()
-    })
-  }
-
-  function onBlockRefNavigate(dir: 1 | -1): void {
-    if (!blkRefPopup?.items.length) return
-    const next = cycleSelected(
-      blkRefPopup.selected,
-      dir,
-      blkRefPopup.items.length
-    )
-    if (next !== null) blkRefPopup.selected = next
-  }
-
-  function onBlockRefSelectActive(): void {
-    const item = blkRefPopup?.items[blkRefPopup.selected]
-    if (item) onBlockRefPick(item.id)
-  }
-
-  function onBlockRefPick(blockId: string): void {
-    cancelBlockRefSearch()
-    blkRefRace.begin()
-    blkRefPopup = null
-    suggestStatus = ''
-    if (!editorInstance || editorInstance.isDestroyed) return
-    applyBlockRefSuggestion(editorInstance, blockId)
-  }
-
-  function blockSourceLabel(source?: string): string {
-    return source?.startsWith('linked:') ? 'Linked' : 'Vault'
-  }
-
-  // --- Tag typeahead -------------------------------------------------------
-  // The hierarchy is stable enough to cache across quick focus changes. A
-  // fresh focus after the TTL catches tags indexed by recent edits.
-  let tags = $state<TagItem[]>([])
-  let tagsLoadedAt = 0
-  let tagsLoading = $state(false)
-  let tagsLoadError = $state(false)
-  const TAGS_TTL_MS = 5000
-  let recentTags = $derived(
-    (settings.config?.ui as { recent_tags?: string[] } | undefined)
-      ?.recent_tags ?? []
-  )
-  let tagPopup = $state<{
-    ctx: TagContext
-    items: TagItem[]
-    selected: number
-  } | null>(null)
-
-  function updateTagPopup(ctx: TagContext): void {
-    const previous = tagPopup?.items[tagPopup.selected]?.path
-    const items = filterTags(tags, ctx.query, recentTags)
-    const previousIndex = previous
-      ? items.findIndex((item) => item.path === previous)
-      : -1
-    tagPopup = { ctx, items, selected: Math.max(0, previousIndex) }
-    suggestStatus = tagsLoadError
-      ? 'Tag suggestions unavailable'
-      : tagsLoading
-        ? 'Loading tags'
-        : items.length
-          ? `${items.length} tag${items.length === 1 ? '' : 's'} available`
-          : 'No matching tags'
-  }
-
-  async function loadTags(): Promise<void> {
-    if (tagsLoading || Date.now() - tagsLoadedAt < TAGS_TTL_MS) return
-    tagsLoading = true
-    tagsLoadError = false
-    if (tagPopup) updateTagPopup(tagPopup.ctx)
-    try {
-      const tree = ((await QueryTagHierarchy()) ?? []) as TagTreeNode[]
-      tags = flattenTagHierarchy(tree)
-      tagsLoadedAt = Date.now()
-    } catch (error) {
-      tagsLoadError = true
-      tagsLoadedAt = Date.now()
-      console.error('QueryTagHierarchy failed:', error)
-    } finally {
-      tagsLoading = false
-      if (tagPopup) updateTagPopup(tagPopup.ctx)
-    }
-  }
-
-  function onTagChange(ctx: TagContext | null): void {
-    if (!ctx) {
-      tagPopup = null
-      suggestStatus = ''
-      return
-    }
-    const opening = !tagPopup
-    updateTagPopup(ctx)
-    if (opening) void loadTags()
-  }
-
-  function onTagNavigate(dir: 1 | -1): void {
-    if (!tagPopup?.items.length) return
-    const next = cycleSelected(tagPopup.selected, dir, tagPopup.items.length)
-    if (next !== null) tagPopup.selected = next
-  }
-
-  function onTagSelectActive(): void {
-    const item = tagPopup?.items[tagPopup.selected]
-    if (item) onTagPick(item.path)
-  }
-
-  function onTagPick(path: string): void {
-    tagPopup = null
-    suggestStatus = ''
-    if (!editorInstance || editorInstance.isDestroyed) return
-    if (!applyTagSuggestion(editorInstance, path)) return
-    void RecordTagUsage(path).catch((error: unknown) => {
-      console.error('RecordTagUsage failed:', error)
-    })
-  }
-
-  // --- Page-link typeahead -------------------------------------------------
-  let pageLinkPopup = $state<{
-    ctx: PageLinkContext
-    items: PageLinkItem[]
-    selected: number
-    searching: boolean
-    resolving: boolean
-    resolvingItem: PageLinkItem | null
-    error: 'search' | 'resolve' | null
-    aliasEnabled: boolean
-    alias: string
-  } | null>(null)
-  const pageLinkDebounce = createDebouncedRunner()
-  const pageLinkRace = createRequestRace()
-  let pageLinkRequest: ReturnType<typeof SearchPages> | null = null
-  const PAGE_LINK_QUERY_DEBOUNCE_MS = 150
-
-  function hasEnoughPageLinkQuery(query: string): boolean {
-    return (
-      Array.from(query).filter((character) => !/\s/u.test(character)).length >=
-      2
-    )
-  }
-
-  function cancelPageLinkSearch(): void {
-    pageLinkDebounce.cancel()
-    const request = pageLinkRequest
-    pageLinkRequest = null
-    if (request?.cancel) void request.cancel()
-  }
-
-  function onPageLinkChange(ctx: PageLinkContext | null): void {
-    cancelPageLinkSearch()
-    const myId = pageLinkRace.begin()
-    if (!ctx) {
-      pageLinkPopup = null
-      suggestStatus = ''
-      return
-    }
-
-    const previous =
-      pageLinkPopup?.ctx.triggerPos === ctx.triggerPos ? pageLinkPopup : null
-    pageLinkPopup = {
-      ctx,
-      items: previous?.items ?? [],
-      selected: previous
-        ? Math.min(previous.selected, Math.max(0, previous.items.length - 1))
-        : 0,
-      searching: false,
-      resolving: false,
-      resolvingItem: null,
-      error: null,
-      aliasEnabled: previous?.aliasEnabled ?? false,
-      alias: previous?.alias ?? ''
-    }
-    if (!hasEnoughPageLinkQuery(ctx.query)) {
-      pageLinkPopup.items = []
-      pageLinkPopup.selected = 0
-      suggestStatus = 'Type at least 2 characters for page suggestions'
-      return
-    }
-
-    pageLinkPopup.searching = true
-    suggestStatus = 'Searching pages'
-    pageLinkDebounce.schedule(PAGE_LINK_QUERY_DEBOUNCE_MS, () => {
-      void (async () => {
-        try {
-          const request = SearchPages(ctx.query.trim(), 50)
-          pageLinkRequest = request
-          const items = (await request) ?? []
-          if (!pageLinkRace.isCurrent(myId)) return
-          const current = pageLinkPopup
-          if (!current || !ctxStillMatches(current, ctx)) return
-          pageLinkRequest = null
-          pageLinkPopup = {
-            ...current,
-            items,
-            selected: 0,
-            searching: false
-          }
-          suggestStatus = items.length
-            ? `${items.length} page${items.length === 1 ? '' : 's'} available`
-            : 'No matching pages'
-        } catch (error) {
-          if (!pageLinkRace.isCurrent(myId)) return
-          pageLinkRequest = null
-          const current = pageLinkPopup
-          if (!current || !ctxStillMatches(current, ctx)) return
-          console.error('SearchPages failed:', error)
-          pageLinkPopup = {
-            ...current,
-            searching: false,
-            error: 'search'
-          }
-          suggestStatus = 'Page search unavailable'
-        }
-      })()
-    })
-  }
-
-  function onPageLinkNavigate(dir: 1 | -1): void {
-    if (!pageLinkPopup?.items.length || pageLinkPopup.resolving) return
-    const next = cycleSelected(
-      pageLinkPopup.selected,
-      dir,
-      pageLinkPopup.items.length
-    )
-    if (next !== null) pageLinkPopup.selected = next
-  }
-
-  function onPageLinkSelectActive(): void {
-    const item = pageLinkPopup?.items[pageLinkPopup.selected]
-    if (item) void onPageLinkPick(item)
-  }
-
-  function onPageLinkAliasKeydown(event: KeyboardEvent): void {
-    if (event.isComposing) return
-
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      dismissPageLinkAlias()
-      return
-    }
-
-    const popup = pageLinkPopup
-    if (!popup?.items.length || popup.resolving) return
-
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault()
-      event.stopPropagation()
-      onPageLinkNavigate(event.key === 'ArrowDown' ? 1 : -1)
-    } else if (event.key === 'Enter' && popup.items[popup.selected]) {
-      event.preventDefault()
-      event.stopPropagation()
-      onPageLinkSelectActive()
-    }
-  }
-
-  function retryPageLink(): void {
-    const popup = pageLinkPopup
-    if (!popup || popup.resolving) return
-    if (popup.error === 'resolve' && popup.resolvingItem) {
-      void onPageLinkPick(popup.resolvingItem)
-      return
-    }
-    onPageLinkChange(popup.ctx)
-  }
-
-  function dismissPageLinkAlias(): void {
-    cancelPageLinkSearch()
-    pageLinkRace.begin()
-    pageLinkPopup = null
-    suggestStatus = ''
-    if (!editorInstance || editorInstance.isDestroyed) return
-    dismissPageLinkSuggestion(editorInstance, true)
-  }
-
-  async function onPageLinkPick(item: PageLinkItem): Promise<void> {
-    const current = pageLinkPopup
-    if (!current || current.resolving || !editorInstance?.isEditable) return
-    cancelPageLinkSearch()
-    const myId = pageLinkRace.begin()
-    pageLinkPopup = {
-      ...current,
-      resolving: true,
-      resolvingItem: item,
-      error: null
-    }
-    suggestStatus = 'Resolving page link'
-    try {
-      const alias = current.aliasEnabled
-        ? current.alias.trim() || item.page
-        : null
-      const inserted = await applyPageLinkSuggestion(
-        editorInstance,
-        item,
-        ResolvePageLink,
-        alias
-      )
-      if (!pageLinkRace.isCurrent(myId)) return
-      if (!inserted)
-        throw new Error('The page-link context is no longer active')
-      pageLinkPopup = null
-      suggestStatus = ''
-    } catch (error) {
-      if (!pageLinkRace.isCurrent(myId)) return
-      console.error('ResolvePageLink failed:', error)
-      const popup = pageLinkPopup
-      if (popup) {
-        pageLinkPopup = { ...popup, resolving: false, error: 'resolve' }
-        suggestStatus = 'Page link could not be inserted'
-      }
-    }
   }
 
   // Capture the initial blocks under untrack to signal that the one-shot
@@ -918,34 +303,34 @@
       notAfter: ['taskBlock', 'headerBlock', 'calloutBlock']
     }),
     TaskMetaSuggest.configure({
-      onChange: onMetaChange,
-      onNavigate: onMetaNavigate,
-      onSelectActive: onMetaSelectActive
+      onChange: suggests.meta.onChange,
+      onNavigate: suggests.meta.navigate,
+      onSelectActive: suggests.meta.selectActive
     }),
     MentionSuggest.configure({
-      owners: () => owners,
-      onChange: onMentionChange,
-      onNavigate: onMentionNavigate,
-      onSelectActive: onMentionSelectActive
+      owners: () => suggests.mention.owners,
+      onChange: suggests.mention.onChange,
+      onNavigate: suggests.mention.navigate,
+      onSelectActive: suggests.mention.selectActive
     }),
     BlockRefSuggest.configure({
-      items: () => blkRefPopup?.items ?? [],
-      onChange: onBlockRefChange,
-      onNavigate: onBlockRefNavigate,
-      onSelectActive: onBlockRefSelectActive
+      items: () => suggests.blockRef.items,
+      onChange: suggests.blockRef.onChange,
+      onNavigate: suggests.blockRef.navigate,
+      onSelectActive: suggests.blockRef.selectActive
     }),
     TagSuggest.configure({
-      items: () => tagPopup?.items ?? [],
-      onChange: onTagChange,
-      onNavigate: onTagNavigate,
-      onSelectActive: onTagSelectActive
+      items: () => suggests.tag.items,
+      onChange: suggests.tag.onChange,
+      onNavigate: suggests.tag.navigate,
+      onSelectActive: suggests.tag.selectActive
     }),
     PageLinkSuggest.configure({
-      items: () => pageLinkPopup?.items ?? [],
-      resolving: () => pageLinkPopup?.resolving ?? false,
-      onChange: onPageLinkChange,
-      onNavigate: onPageLinkNavigate,
-      onSelectActive: onPageLinkSelectActive
+      items: () => suggests.pageLink.items,
+      resolving: () => suggests.pageLink.resolving,
+      onChange: suggests.pageLink.onChange,
+      onNavigate: suggests.pageLink.navigate,
+      onSelectActive: suggests.pageLink.selectActive
     }),
     // Notion-style indent-on-drop + drop-zone indicator (#330, #181
     // follow-up). Watches ProseMirror's handleDrop: when a top-level block
@@ -1065,9 +450,8 @@
       // Refresh the owner list so newly-assigned owners are mentionable.
       // Debounced (~150ms) so a micro focus-blip doesn't fire an IPC round-trip
       // immediately; the TTL guard inside loadOwners collapses repeats (#332).
-      if (focusLoadTimer) clearTimeout(focusLoadTimer)
-      focusLoadTimer = setTimeout(() => void loadOwners(), 150)
-      void loadTags()
+      suggests.mention.refreshOwners()
+      void suggests.tag.loadTags()
     },
     onBlur: () => {
       isFocused = false
@@ -1090,17 +474,9 @@
       isLastBlock = editor.state.doc.childCount <= 1
       onReady?.()
       // Seed the @-mention owner list on mount (#184).
-      void loadOwners()
-      void loadTags()
+      void suggests.mention.loadOwners()
+      void suggests.tag.loadTags()
     }
-  })
-
-  $effect(() => {
-    // Config hot reload replaces recent_tags in the shared settings store.
-    // Re-rank an open picker in place so the editor and caret stay mounted.
-    void recentTags
-    const current = untrack(() => tagPopup)
-    if (current) untrack(() => updateTagPopup(current.ctx))
   })
 
   // --- Spellcheck cluster (Cluster B) — intentionally NOT extracted ---------
@@ -1287,17 +663,11 @@
     // doesn't receive a stale insert after page navigation (#730 harden).
     clearInsertEditor()
     clearActiveEditorState()
-    // Cancel any pending owner-fetch / mention-refine timers so they don't
-    // fire after teardown (#332).
-    mentionDebounce.cancel()
-    if (focusLoadTimer) {
-      clearTimeout(focusLoadTimer)
-      focusLoadTimer = null
-    }
-    cancelBlockRefSearch()
-    blkRefRace.begin()
-    cancelPageLinkSearch()
-    pageLinkRace.begin()
+    // Cancel any pending suggest-popover timers / in-flight searches so they
+    // don't fire after teardown (#332).
+    suggests.mention.destroy()
+    suggests.blockRef.destroy()
+    suggests.pageLink.destroy()
     void flushPendingSave().then(() => releaseFocus())
     events.detach()
     window.removeEventListener('scroll', onEditorScroll, true)
@@ -1639,63 +1009,63 @@
     aria-live="polite"
     style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0"
   >
-    {suggestStatus}
+    {suggests.suggestStatus}
   </div>
-  {#if metaPopup}
-    {@const c = suggestPopupCoords(metaPopup.ctx.from, 260)}
+  {#if suggests.meta.popup}
+    {@const c = suggestPopupCoords(suggests.meta.popup.ctx.from, 260)}
     {#if c}
       <SuggestPopup
-        items={metaPopup.items.map((item) => ({
+        items={suggests.meta.popup.items.map((item) => ({
           id: item.key,
           label: item.key,
           hint: item.description
         }))}
-        selected={metaPopup.selected}
+        selected={suggests.meta.popup.selected}
         coords={c}
         emptyLabel="No matching metadata keys"
         ariaLabel="Task metadata"
         className="meta-suggest"
         onPick={(i) => {
-          const item = metaPopup?.items[i]
-          if (item) onMetaPick(item.key)
+          const item = suggests.meta.popup?.items[i]
+          if (item) suggests.meta.pick(item.key)
         }}
         onHover={(i) => {
-          if (metaPopup) metaPopup.selected = i
+          if (suggests.meta.popup) suggests.meta.popup.selected = i
         }}
       />
     {/if}
   {/if}
-  {#if mentionPopup}
-    {@const c = suggestPopupCoords(mentionPopup.ctx.from, 220)}
+  {#if suggests.mention.popup}
+    {@const c = suggestPopupCoords(suggests.mention.popup.ctx.from, 220)}
     {#if c}
       <SuggestPopup
-        items={mentionPopup.items.map((item) => ({
+        items={suggests.mention.popup.items.map((item) => ({
           id: item,
           label: `@${item}`
         }))}
-        selected={mentionPopup.selected}
+        selected={suggests.mention.popup.selected}
         coords={c}
         emptyLabel="No matching owners"
         ariaLabel="Mention an owner"
         className="mention-suggest"
         onPick={(i) => {
-          const item = mentionPopup?.items[i]
-          if (item) onMentionPick(item)
+          const item = suggests.mention.popup?.items[i]
+          if (item) suggests.mention.pick(item)
         }}
         onHover={(i) => {
-          if (mentionPopup) mentionPopup.selected = i
+          if (suggests.mention.popup) suggests.mention.popup.selected = i
         }}
       />
     {/if}
   {/if}
-  {#if blkRefPopup}
-    {@const c = suggestPopupCoords(blkRefPopup.ctx.from, 360)}
+  {#if suggests.blockRef.popup}
+    {@const c = suggestPopupCoords(suggests.blockRef.popup.ctx.from, 360)}
     {#if c}
       <SuggestPopup
-        items={blkRefPopup.items.map((item) => ({
+        items={suggests.blockRef.popup.items.map((item) => ({
           id: `${item.source || 'vault'}:${item.id}`,
           label: item.clean_content || 'Untitled block',
-          hint: `${blockSourceLabel(item.source)} · ${[
+          hint: `${suggests.blockRef.blockSourceLabel(item.source)} · ${[
             item.notebook,
             item.section,
             item.page
@@ -1703,79 +1073,79 @@
             .filter(Boolean)
             .join(' / ')}`
         }))}
-        selected={blkRefPopup.selected}
+        selected={suggests.blockRef.popup.selected}
         coords={c}
-        emptyLabel={blkRefPopup.error
+        emptyLabel={suggests.blockRef.popup.error
           ? 'Block search unavailable'
-          : blkRefPopup.searching
+          : suggests.blockRef.popup.searching
             ? 'Searching blocks…'
-            : blkRefPopup.ctx.query.trim()
+            : suggests.blockRef.popup.ctx.query.trim()
               ? 'No blocks found'
               : 'Type to search for a block…'}
         ariaLabel="Reference a block"
         className="block-ref-suggest"
         onPick={(i) => {
-          const item = blkRefPopup?.items[i]
-          if (item) onBlockRefPick(item.id)
+          const item = suggests.blockRef.popup?.items[i]
+          if (item) suggests.blockRef.pick(item.id)
         }}
         onHover={(i) => {
-          if (blkRefPopup) blkRefPopup.selected = i
+          if (suggests.blockRef.popup) suggests.blockRef.popup.selected = i
         }}
       />
     {/if}
   {/if}
-  {#if tagPopup}
-    {@const c = suggestPopupCoords(tagPopup.ctx.from, 280)}
+  {#if suggests.tag.popup}
+    {@const c = suggestPopupCoords(suggests.tag.popup.ctx.from, 280)}
     {#if c}
       <SuggestPopup
-        items={tagPopup.items.map((item) => ({
+        items={suggests.tag.popup.items.map((item) => ({
           id: item.path,
           label: `#${item.path}`,
           hint: `${item.count} ${item.count === 1 ? 'use' : 'uses'}`
         }))}
-        selected={tagPopup.selected}
+        selected={suggests.tag.popup.selected}
         coords={c}
-        emptyLabel={tagsLoadError
+        emptyLabel={suggests.tag.tagsLoadError
           ? 'Tag suggestions unavailable'
-          : tagsLoading
+          : suggests.tag.tagsLoading
             ? 'Loading tags…'
             : 'No matching tags'}
         ariaLabel="Insert a tag"
         className="tag-suggest"
         onPick={(i) => {
-          const item = tagPopup?.items[i]
-          if (item) onTagPick(item.path)
+          const item = suggests.tag.popup?.items[i]
+          if (item) suggests.tag.pick(item.path)
         }}
         onHover={(i) => {
-          if (tagPopup) tagPopup.selected = i
+          if (suggests.tag.popup) suggests.tag.popup.selected = i
         }}
       />
     {/if}
   {/if}
-  {#if pageLinkPopup}
-    {@const c = suggestPopupCoords(pageLinkPopup.ctx.from, 340)}
+  {#if suggests.pageLink.popup}
+    {@const c = suggestPopupCoords(suggests.pageLink.popup.ctx.from, 340)}
     {#if c}
       {#snippet pageLinkFooter()}
         <div class="page-link-alias-footer">
-          {#if pageLinkPopup?.resolving}
+          {#if suggests.pageLink.popup?.resolving}
             <div class="page-link-progress" role="status">
               <span class="page-link-spinner" aria-hidden="true"></span>
-              Resolving {pageLinkPopup.resolvingItem?.page ?? 'page'}…
+              Resolving {suggests.pageLink.popup.resolvingItem?.page ?? 'page'}…
             </div>
-          {:else if pageLinkPopup?.error}
+          {:else if suggests.pageLink.popup?.error}
             <div class="page-link-retry" role="alert">
               <span>
-                {pageLinkPopup.error === 'search'
+                {suggests.pageLink.popup.error === 'search'
                   ? 'Couldn’t refresh suggestions.'
                   : 'Couldn’t insert this link.'}
               </span>
-              <button type="button" onclick={retryPageLink}>
-                {pageLinkPopup.error === 'search'
+              <button type="button" onclick={suggests.pageLink.retry}>
+                {suggests.pageLink.popup.error === 'search'
                   ? 'Retry search'
                   : 'Retry link'}
               </button>
             </div>
-          {:else if pageLinkPopup?.searching && pageLinkPopup.items.length}
+          {:else if suggests.pageLink.popup?.searching && suggests.pageLink.popup.items.length}
             <div class="page-link-progress" role="status">
               <span class="page-link-spinner" aria-hidden="true"></span>
               Refreshing suggestions…
@@ -1784,14 +1154,19 @@
           <button
             type="button"
             class="page-link-alias-toggle"
-            aria-pressed={pageLinkPopup?.aliasEnabled ?? false}
-            disabled={pageLinkPopup?.resolving ?? false}
+            aria-pressed={suggests.pageLink.popup?.aliasEnabled ?? false}
+            disabled={suggests.pageLink.popup?.resolving ?? false}
             onclick={() => {
-              if (!pageLinkPopup) return
-              const selected = pageLinkPopup.items[pageLinkPopup.selected]
-              pageLinkPopup.aliasEnabled = !pageLinkPopup.aliasEnabled
-              if (pageLinkPopup.aliasEnabled && !pageLinkPopup.alias) {
-                pageLinkPopup.alias = selected?.page ?? ''
+              if (!suggests.pageLink.popup) return
+              const selected =
+                suggests.pageLink.popup.items[suggests.pageLink.popup.selected]
+              suggests.pageLink.popup.aliasEnabled =
+                !suggests.pageLink.popup.aliasEnabled
+              if (
+                suggests.pageLink.popup.aliasEnabled &&
+                !suggests.pageLink.popup.alias
+              ) {
+                suggests.pageLink.popup.alias = selected?.page ?? ''
               }
             }}
           >
@@ -1800,20 +1175,20 @@
             >
             Use display alias
           </button>
-          {#if pageLinkPopup?.aliasEnabled}
+          {#if suggests.pageLink.popup?.aliasEnabled}
             <label class="page-link-alias-field">
               <span>Alias</span>
               <input
-                value={pageLinkPopup.alias}
-                disabled={pageLinkPopup.resolving}
+                value={suggests.pageLink.popup.alias}
+                disabled={suggests.pageLink.popup.resolving}
                 oninput={(event) => {
-                  if (pageLinkPopup) {
-                    pageLinkPopup.alias = normalizePageLinkAlias(
+                  if (suggests.pageLink.popup) {
+                    suggests.pageLink.popup.alias = normalizePageLinkAlias(
                       event.currentTarget.value
                     )
                   }
                 }}
-                onkeydown={onPageLinkAliasKeydown}
+                onkeydown={suggests.pageLink.aliasKeydown}
                 onfocus={(event) => event.currentTarget.select()}
                 placeholder="Link text"
                 aria-label="Page link display alias"
@@ -1824,9 +1199,9 @@
         </div>
       {/snippet}
       <SuggestPopup
-        items={pageLinkPopup.resolving
+        items={suggests.pageLink.popup.resolving
           ? []
-          : pageLinkPopup.items.map((item) => ({
+          : suggests.pageLink.popup.items.map((item) => ({
               id: `${item.source ?? ''}:${item.notebook}/${item.section}/${item.page}`,
               label: item.page || 'Untitled page',
               hint: [
@@ -1836,27 +1211,29 @@
                 .filter(Boolean)
                 .join(' · ')
             }))}
-        selected={pageLinkPopup.selected}
+        selected={suggests.pageLink.popup.selected}
         coords={c}
-        emptyLabel={pageLinkPopup.resolving
+        emptyLabel={suggests.pageLink.popup.resolving
           ? 'Resolving page link…'
-          : pageLinkPopup.error === 'search'
+          : suggests.pageLink.popup.error === 'search'
             ? 'Page suggestions unavailable'
-            : !hasEnoughPageLinkQuery(pageLinkPopup.ctx.query)
+            : !suggests.pageLink.hasEnoughQuery(
+                  suggests.pageLink.popup.ctx.query
+                )
               ? 'Type at least 2 characters'
-              : pageLinkPopup.searching
+              : suggests.pageLink.popup.searching
                 ? 'Searching pages…'
                 : 'No matching pages'}
         ariaLabel="Link to a page"
         className="page-link-suggest"
         footer={pageLinkFooter}
         onPick={(i) => {
-          const item = pageLinkPopup?.items[i]
-          if (item) void onPageLinkPick(item)
+          const item = suggests.pageLink.popup?.items[i]
+          if (item) void suggests.pageLink.pick(item)
         }}
         onHover={(i) => {
-          if (pageLinkPopup && !pageLinkPopup.resolving) {
-            pageLinkPopup.selected = i
+          if (suggests.pageLink.popup && !suggests.pageLink.popup.resolving) {
+            suggests.pageLink.popup.selected = i
           }
         }}
       />
