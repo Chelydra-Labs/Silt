@@ -12,7 +12,6 @@ import (
 	"silt/backend/db"
 	"silt/backend/dependencies"
 	"silt/backend/parser"
-	"silt/backend/plugins"
 )
 
 // ErrTaskCycle is returned by SetTaskBlockedBy when adding the proposed edge
@@ -44,16 +43,9 @@ func (a *App) SetTaskBlockedBy(blockID string, depIDs []string) error {
 // through PluginContext, never direct wailsjs bindings). Mirrors
 // PluginSetTaskRecurrence.
 func (a *App) PluginSetTaskBlockedBy(pluginID, sessionToken, blockID string, depIDs []string) (bool, error) {
-	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
-		return false, err
-	}
-	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
-		return false, err
-	}
-	if err := a.setTaskBlockedBy(blockID, depIDs); err != nil {
-		return false, err
-	}
-	return true, nil
+	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
+		return a.setTaskBlockedBy(blockID, depIDs)
+	})
 }
 
 // setTaskBlockedBy is the shared core for the app-level and plugin-level entry
