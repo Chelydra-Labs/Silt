@@ -465,6 +465,38 @@ func TestWarnOnDependencyCycle_DetectsHandEditedCycle(t *testing.T) {
 	}
 }
 
+// TestIndexScanResults_CrossFileDependencyCycle is the golden master for the
+// batched indexer's cross-file cycle guard — the load-bearing divergence from
+// IndexFileBlocks' per-file warnOnDependencyCycle. A cycle that spans two files
+// (task A in file1 blocked-by task B in file2, B blocked-by A) is invisible to
+// a per-file check (neither file is cyclic on its own); the batched indexer
+// accumulates edges across all results and must log it. A unification that
+// routed the batched path through the single-file guard would silently drop
+// this detection (#753 safety check).
+func TestIndexScanResults_CrossFileDependencyCycle(t *testing.T) {
+	dm := newTestDB(t)
+	a := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	b := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	// Two files: neither cyclic alone, cyclic only when edges union across files.
+	results := []parser.ScanResult{
+		{Notebook: "N1", Section: "S1", Page: "P1", Blocks: []parser.ParsedBlock{
+			{ID: a, Type: parser.BlockTask, Depth: 0, BlockedBy: []string{b}},
+		}},
+		{Notebook: "N2", Section: "S2", Page: "P2", Blocks: []parser.ParsedBlock{
+			{ID: b, Type: parser.BlockTask, Depth: 0, BlockedBy: []string{a}},
+		}},
+	}
+	var buf strings.Builder
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	if _, _, err := dm.IndexScanResults(results); err != nil {
+		t.Fatalf("IndexScanResults: %v", err)
+	}
+	if !strings.Contains(buf.String(), "cycle detected across indexed files") {
+		t.Errorf("expected a cross-file cycle warning, got log output: %q", buf.String())
+	}
+}
+
 // TestIndexFileBlocks_HandEditedCycleStillIndexes confirms the indexer does
 // NOT reject a cyclic edge set (it caches the edges best-effort) — the guard
 // only logs. This keeps an externally-synced cycle from breaking the index.
