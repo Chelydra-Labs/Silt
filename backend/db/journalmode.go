@@ -15,7 +15,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-// Resilient journal-mode selection for cloud-synced vaults.
+// Resilient journal-mode selection for the local DataDir index, with retry/fallback for transient filesystem locks (AV, network mounts).
 //
 // When the index lived inside the synced vault, a sync engine or antivirus
 // could briefly lock the freshly-created -wal/-shm sidecars at the moment

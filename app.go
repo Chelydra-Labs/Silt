@@ -739,7 +739,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// indexed (valid metadata, no scan error) get a files row — a file that
 	// failed to parse shouldn't be marked "unchanged" next time.
 	var allWarnings []string
-	// Surface storage-layer caveats (cloud-sync detection + WAL fallback)
+	// Surface storage-layer caveats (index-migration notes + WAL fallback)
 	// alongside the per-file warnings below, all via vault:init-warnings.
 	allWarnings = append(allWarnings, storageWarnings...)
 	for _, res := range changed {
