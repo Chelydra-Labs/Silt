@@ -29,7 +29,7 @@
   import type { TaskStatus } from '../../../sdk'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
-  import BlockedDoneDialog from '../components/BlockedDoneDialog.svelte'
+  import BlockedDoneGuard from '../components/BlockedDoneGuard.svelte'
   import ConfirmModal from '../components/ConfirmModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import ColumnHeader from '../components/ColumnHeader.svelte'
@@ -726,14 +726,12 @@
   ></div>
 {/if}
 
-{#if blockedGuard.pending}
-  <BlockedDoneDialog
-    cardText={blockedGuard.pending.context.card.clean_content}
-    blockers={blockedGuard.pending.blockers}
-    onConfirm={dnd.confirmBlockedDone}
-    onCancel={dnd.cancelBlockedDone}
-  />
-{/if}
+<BlockedDoneGuard
+  pending={blockedGuard.pending}
+  cardText={blockedGuard.pending?.context.card.clean_content}
+  onConfirm={dnd.confirmBlockedDone}
+  onCancel={dnd.cancelBlockedDone}
+/>
 
 {#if pendingWipConfirm}
   <ConfirmModal
