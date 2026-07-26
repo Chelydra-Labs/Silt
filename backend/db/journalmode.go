@@ -256,11 +256,11 @@ func classifyWALFallback(dir string, walErr error, reportedMode string, readErr 
 	}
 	if structural {
 		return true, fmt.Sprintf(
-			"WAL journal mode is not supported at %s (%v); using TRUNCATE (rollback journal). The vault works, but this index location cannot use WAL — for best performance move the vault to a purely local folder.",
+			"WAL journal mode is not supported at %s (%v); using TRUNCATE (rollback journal). The vault works, but this index location cannot use WAL — for best performance, move the Silt data directory to a local drive via the SILT_DATA_DIR environment variable.",
 			dir, cause)
 	}
 	return false, fmt.Sprintf(
-		"WAL setup failed after retries at %s (%v), likely a transient sync or antivirus lock; using TRUNCATE for this session. Restarting Silt may restore full performance.",
+		"WAL setup failed after retries at %s (%v), likely a transient antivirus or filesystem lock; using TRUNCATE for this session. Restarting Silt may restore full performance.",
 		dir, cause)
 }
 
