@@ -16,11 +16,11 @@
 // read/write was rewired to the shared accessor) so the optimistic manual-
 // reorder mutation stays safe under rapid reorders. manualOrder.test.ts is the
 // golden master.
-import type { PluginContext, TaskStatus } from '../../../../sdk'
-import { plusDaysISO } from '../../../../sdk'
+import type { PluginContext } from '../../../../sdk'
 import type { GroupBy, SortMode } from '../../state.svelte'
 import type { TaskDetail } from '../../types'
 import type { useBlockedDoneGuard } from '../../shared.svelte'
+import { groupByDispatch, unionTags } from '../../groupByDispatch'
 import { nextManualOrder } from '../manualOrder'
 
 // A rendered Board lane. `value` is the dimension value a drop/quick-add
@@ -46,36 +46,6 @@ export interface BoardDndContext {
 // mapping) so the rendered error text matches the pre-refactor behavior.
 export function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
-}
-
-// Deterministic anchor per bucket so a drop produces a stable due date the
-// next query will re-bin into the same column. Overdue → today nudges an
-// already-late task to the local day; Later → today+30 picks a far-but-finite
-// horizon rather than leaving the task undated. Shared with BoardView's
-// per-column quick-add prefill.
-export function dueDateAnchor(bucketKey: string, iso: string): string {
-  switch (bucketKey) {
-    case 'overdue':
-    case 'today':
-      return iso
-    case 'upcoming':
-      return plusDaysISO(iso, 3)
-    case 'later':
-      return plusDaysISO(iso, 30)
-    case 'undated':
-    default:
-      return ''
-  }
-}
-
-// Multi-membership: a task can appear in several tag columns. Dropping into a
-// tag column ADDS that tag without removing the others.
-function unionTags(card: TaskDetail, tag: string): string[] {
-  const existing = (card.tags ?? '')
-    .split('|')
-    .map((t) => t.trim())
-    .filter(Boolean)
-  return existing.includes(tag) ? existing : [...existing, tag]
 }
 
 export interface BoardDndDeps {
@@ -143,45 +113,15 @@ export function createBoardDndController({
   let reorderInFlight: Promise<void> | null = null
 
   // The dimension-aware drop dispatcher. Each groupBy routes to the SDK
-  // setter that actually owns the binned field on disk.
+  // setter that owns the binned field — the dimension→setter mapping lives in
+  // groupByDispatch so the drop path and the per-column quick-add path share
+  // one source of truth.
   function dispatchDrop(card: TaskDetail, toCol: Lane): Promise<unknown> {
-    const groupBy = getGroupBy()
-    const today = getToday()
-    switch (groupBy) {
-      case 'status':
-        return ctx.updateBlockState(card.id, toCol.value as TaskStatus)
-      case 'owner':
-        // '' clears the owner (the Unassigned column).
-        return ctx.setTaskOwner(card.id, toCol.value)
-      case 'priority':
-        return ctx.setTaskPriority(card.id, Number(toCol.value))
-      case 'dueDate':
-        return ctx.setTaskDueDate(card.id, dueDateAnchor(toCol.value, today))
-      case 'tag':
-        // No Tag column (value='') is a no-op — we don't strip tags on drop.
-        if (!toCol.value) return Promise.resolve(true)
-        return ctx.setTaskTags(card.id, unionTags(card, toCol.value))
-      default:
-        return Promise.resolve(true)
-    }
+    return groupByDispatch[getGroupBy()].setter(ctx, card, toCol, getToday())
   }
 
   function announceMove(toCol: Lane): string {
-    const groupBy = getGroupBy()
-    switch (groupBy) {
-      case 'status':
-        return `Task moved to ${toCol.label}`
-      case 'owner':
-        return `Task reassigned to ${toCol.label}`
-      case 'priority':
-        return `Task priority set to ${toCol.label}`
-      case 'dueDate':
-        return `Task due date set to ${toCol.label}`
-      case 'tag':
-        return toCol.value ? `Tag ${toCol.label} added` : 'No change'
-      default:
-        return 'Task moved'
-    }
+    return groupByDispatch[getGroupBy()].moveLabel(toCol)
   }
 
   // Apply the optimistic dimension move to the rendered columns. Tag is

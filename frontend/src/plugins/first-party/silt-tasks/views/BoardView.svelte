@@ -54,10 +54,10 @@
   import { useBlockChangedReload, useBlockedDoneGuard } from '../shared.svelte'
   import {
     createBoardDndController,
-    dueDateAnchor,
     errMsg,
     type Lane
   } from './controllers/useBoardDnd.svelte'
+  import { dueDateAnchor, groupByDispatch } from '../groupByDispatch'
   import { createStatusColumnsController } from './controllers/useStatusColumns.svelte'
 
   type Props = TaskViewProps
@@ -437,28 +437,21 @@
         }
       }
     }
-    if (groupBy === 'owner') {
-      // Unassigned (value='') → new task already has no owner; nothing to set.
-      return col.value
-        ? { onCreated: (id) => void ctx.setTaskOwner(id, col.value) }
-        : {}
-    }
-    if (groupBy === 'priority') {
-      return {
-        onCreated: (id) => void ctx.setTaskPriority(id, Number(col.value))
-      }
-    }
     if (groupBy === 'dueDate') {
       const anchor = dueDateAnchor(col.value, today)
       return anchor ? { dueDate: anchor } : {}
     }
-    if (groupBy === 'tag') {
-      // No Tag column → new task already has no tags.
+    if (groupBy === 'none') return {}
+    // owner / priority / tag: the dimension→setter mapping lives in
+    // groupByDispatch so the create path and the drop path share one source
+    // of truth. An empty value (Unassigned owner, No Tag) creates a plain
+    // task with no metadata set.
+    const onCreate = groupByDispatch[groupBy].onCreate
+    if (onCreate) {
       return col.value
-        ? { onCreated: (id) => void ctx.setTaskTags(id, [col.value]) }
+        ? { onCreated: (id) => onCreate(ctx, id, col.value) }
         : {}
     }
-    if (groupBy === 'none') return {}
     return null
   }
 
