@@ -1,120 +1,13 @@
-<script module lang="ts">
-  import type { SearchModalResult } from './components/SearchModal.svelte'
-
-  interface RecentPageRef {
-    notebook: string
-    section: string
-    page: string
-  }
-
-  export function createRecentPageRecorder(
-    persist: (ref: RecentPageRef) => Promise<unknown>,
-    refresh: () => void,
-    onError: (error: unknown) => void,
-    delay = 250
-  ) {
-    let refreshTimer: ReturnType<typeof setTimeout> | null = null
-    let generation = 0
-    let pending = 0
-    let refreshNeeded = false
-
-    function scheduleRefresh(): void {
-      if (refreshTimer) clearTimeout(refreshTimer)
-      refreshTimer = setTimeout(() => {
-        refreshTimer = null
-        refreshNeeded = false
-        refresh()
-      }, delay)
-    }
-
-    return {
-      record(ref: RecentPageRef): void {
-        const requestGeneration = generation
-        pending += 1
-        if (refreshTimer) clearTimeout(refreshTimer)
-        refreshTimer = null
-        void persist(ref)
-          .then(() => {
-            if (requestGeneration !== generation) return
-            refreshNeeded = true
-          })
-          .catch(onError)
-          .finally(() => {
-            if (requestGeneration !== generation) return
-            pending -= 1
-            if (pending === 0 && refreshNeeded) scheduleRefresh()
-          })
-      },
-      invalidate(): void {
-        generation += 1
-        pending = 0
-        refreshNeeded = false
-        if (refreshTimer) clearTimeout(refreshTimer)
-        refreshTimer = null
-      }
-    }
-  }
-
-  export function resolveBreadcrumbSectionSelection(
-    currentSection: string,
-    currentPage: string,
-    selectedSection: string
-  ): { section: string; page: string } {
-    const pageIsWithinSelection =
-      !!currentPage &&
-      (currentSection === selectedSection ||
-        currentSection.startsWith(`${selectedSection}/`))
-    return {
-      section: selectedSection,
-      page: pageIsWithinSelection ? currentPage : ''
-    }
-  }
-
-  interface SourceNavigationRef extends RecentPageRef {
-    source?: string
-  }
-
-  export interface SearchNavigationJump {
-    locator: SourceNavigationRef
-    date: string
-    blockId: string
-  }
-
-  export function adaptSearchNavigation(
-    result: SearchModalResult
-  ): SearchNavigationJump {
-    return {
-      locator: {
-        source: result.source,
-        notebook: result.notebook,
-        section: result.section,
-        page: result.page
-      },
-      date: result.file_date,
-      blockId: result.id
-    }
-  }
-
-  export function resolveSourceNavigationTarget<T extends SourceNavigationRef>(
-    catalog: readonly T[],
-    target: SourceNavigationRef
-  ): SourceNavigationRef {
-    if (!target.source) return target
-    const source = target.source || 'vault'
-    return (
-      catalog.find(
-        (item) =>
-          (item.source || 'vault') === source &&
-          item.notebook === target.notebook &&
-          item.section === target.section &&
-          item.page === target.page
-      ) ?? target
-    )
-  }
-</script>
-
 <script lang="ts">
   import { onMount, tick } from 'svelte'
+  import type { SearchModalResult } from './components/SearchModal.svelte'
+  import {
+    createRecentPageRecorder,
+    resolveBreadcrumbSectionSelection,
+    adaptSearchNavigation,
+    resolveSourceNavigationTarget
+  } from './lib/navigationTargets'
+  import type { SourceNavigationRef } from './lib/navigationTargets'
   import {
     IsVaultInitialized,
     InitializeVault,

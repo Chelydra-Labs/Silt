@@ -1,45 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import * as AppModule from './App.svelte'
-
-type Ref = { notebook: string; section: string; page: string }
-const {
+import {
   adaptSearchNavigation,
   createRecentPageRecorder,
   resolveBreadcrumbSectionSelection,
   resolveSourceNavigationTarget
-} = AppModule as unknown as {
-  adaptSearchNavigation: (result: {
-    id: string
-    source: string
-    notebook: string
-    section: string
-    page: string
-    file_date: string
-    clean_content: string
-  }) => {
-    locator: Ref & { source?: string }
-    date: string
-    blockId: string
-  }
-  createRecentPageRecorder: (
-    persist: (ref: Ref) => Promise<unknown>,
-    refresh: () => void,
-    onError: (error: unknown) => void,
-    delay?: number
-  ) => {
-    record: (ref: Ref) => void
-    invalidate: () => void
-  }
-  resolveBreadcrumbSectionSelection: (
-    currentSection: string,
-    currentPage: string,
-    selectedSection: string
-  ) => { section: string; page: string }
-  resolveSourceNavigationTarget: <T extends Ref & { source?: string }>(
-    catalog: readonly T[],
-    target: Ref & { source?: string }
-  ) => Ref & { source?: string }
-}
+} from './lib/navigationTargets'
+
+type Ref = { notebook: string; section: string; page: string }
 
 describe('App navigation coordination', () => {
   afterEach(() => {
