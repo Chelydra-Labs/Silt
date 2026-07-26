@@ -309,6 +309,20 @@ body {
   transition: all 150ms var(--transition-standard);
 }
 
+/* Visually-hidden helper for assistive tech (aria-live regions, labels).
+   Single source of truth; component <style> blocks must not redefine it. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Custom cyber-ink scrollbar */
 ::-webkit-scrollbar {
   width: 4px;

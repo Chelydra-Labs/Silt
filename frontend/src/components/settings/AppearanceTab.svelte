@@ -1019,22 +1019,6 @@
 {/if}
 
 <style>
-  /* Visually hidden but available to assistive tech. Used by the
-     system-scheme aria-live region. Matches the locally-scoped
-     .sr-only in PluginNoteBanners.svelte / Calendar.svelte (no global
-     utility exists). */
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-
   /* Active drag visual for the theme drop target. Wails toggles
      .file-drop-target-active on #theme-file-drop-target while OS files are
      dragged over it; targeted via :global because Wails adds the class at
