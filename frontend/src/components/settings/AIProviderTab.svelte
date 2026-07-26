@@ -13,6 +13,7 @@
   import { createLocalMcpController } from './ai/localMcpController.svelte'
   import ProviderCard from './ai/ProviderCard.svelte'
   import AdvancedTuningGrid from './ai/AdvancedTuningGrid.svelte'
+  import ToggleSwitch from '../ToggleSwitch.svelte'
   import { ringClass } from './SettingsSearch'
   import { getQAController } from '../../plugins/first-party/silt-ai-qa/state.svelte'
   import { makePluginContext } from '../../plugins/context'
@@ -344,28 +345,17 @@
                   model.
                 </span>
               </div>
-              <label
-                class="flex items-center cursor-pointer select-none"
-                for="ai-enable"
-              >
-                <input
-                  id="ai-enable"
-                  type="checkbox"
-                  class="keyring-switch peer sr-only"
-                  aria-labelledby="ai-enable-label"
-                  checked={features.enabled === true}
-                  disabled={ai.featuresSaving}
-                  onchange={(e) =>
-                    void ai.updateFeatures({
-                      enabled: e.currentTarget.checked
-                    })}
-                />
-                <span
-                  aria-hidden="true"
-                  class="keyring-switch-track"
-                  class:on={features.enabled === true}
-                ></span>
-              </label>
+              <ToggleSwitch
+                labelClass="flex items-center cursor-pointer select-none"
+                id="ai-enable"
+                aria-labelledby="ai-enable-label"
+                checked={features.enabled === true}
+                disabled={ai.featuresSaving}
+                onchange={(e) =>
+                  void ai.updateFeatures({
+                    enabled: e.currentTarget.checked
+                  })}
+              />
             </div>
 
             <div
@@ -388,34 +378,23 @@
                     Find notes by meaning. Needs an embedding model.
                   </span>
                 </div>
-                <label
-                  class="flex items-center select-none"
-                  class:cursor-pointer={features.enabled === true}
-                  class:cursor-not-allowed={features.enabled !== true}
-                  for="ai-rag"
+                <ToggleSwitch
+                  labelClass="flex items-center select-none {features.enabled ===
+                  true
+                    ? 'cursor-pointer'
+                    : 'cursor-not-allowed'}"
                   title={features.enabled !== true
                     ? 'Enable AI first'
                     : undefined}
-                >
-                  <input
-                    id="ai-rag"
-                    type="checkbox"
-                    class="keyring-switch peer sr-only"
-                    aria-labelledby="ai-rag-label"
-                    checked={features.rag_enabled === true}
-                    disabled={ai.featuresSaving || features.enabled !== true}
-                    onchange={(e) =>
-                      void ai.updateFeatures({
-                        rag_enabled: e.currentTarget.checked
-                      })}
-                  />
-                  <span
-                    aria-hidden="true"
-                    class="keyring-switch-track"
-                    class:on={features.rag_enabled === true}
-                    class:disabled={features.enabled !== true}
-                  ></span>
-                </label>
+                  id="ai-rag"
+                  aria-labelledby="ai-rag-label"
+                  checked={features.rag_enabled === true}
+                  disabled={ai.featuresSaving || features.enabled !== true}
+                  onchange={(e) =>
+                    void ai.updateFeatures({
+                      rag_enabled: e.currentTarget.checked
+                    })}
+                />
               </div>
 
               {#if ai.ragNeedsEmbeddingSetup}
@@ -483,34 +462,23 @@
                     Show a short summary banner on notes.
                   </span>
                 </div>
-                <label
-                  class="flex items-center select-none"
-                  class:cursor-pointer={features.enabled === true}
-                  class:cursor-not-allowed={features.enabled !== true}
-                  for="ai-summaries"
+                <ToggleSwitch
+                  labelClass="flex items-center select-none {features.enabled ===
+                  true
+                    ? 'cursor-pointer'
+                    : 'cursor-not-allowed'}"
                   title={features.enabled !== true
                     ? 'Enable AI first'
                     : undefined}
-                >
-                  <input
-                    id="ai-summaries"
-                    type="checkbox"
-                    class="keyring-switch peer sr-only"
-                    aria-labelledby="ai-summaries-label"
-                    checked={features.summaries_enabled === true}
-                    disabled={ai.featuresSaving || features.enabled !== true}
-                    onchange={(e) =>
-                      void ai.updateFeatures({
-                        summaries_enabled: e.currentTarget.checked
-                      })}
-                  />
-                  <span
-                    aria-hidden="true"
-                    class="keyring-switch-track"
-                    class:on={features.summaries_enabled === true}
-                    class:disabled={features.enabled !== true}
-                  ></span>
-                </label>
+                  id="ai-summaries"
+                  aria-labelledby="ai-summaries-label"
+                  checked={features.summaries_enabled === true}
+                  disabled={ai.featuresSaving || features.enabled !== true}
+                  onchange={(e) =>
+                    void ai.updateFeatures({
+                      summaries_enabled: e.currentTarget.checked
+                    })}
+                />
               </div>
             </div>
 
@@ -556,26 +524,15 @@
                   Quit stops it.
                 </span>
               </div>
-              <label
-                class="flex items-center cursor-pointer select-none"
-                for="mcp-enable"
-              >
-                <input
-                  id="mcp-enable"
-                  type="checkbox"
-                  class="keyring-switch peer sr-only"
-                  aria-labelledby="mcp-enable-label"
-                  checked={mcp.enabled}
-                  disabled={mcp.saving}
-                  onchange={(e) =>
-                    void mcp.save({ enabled: e.currentTarget.checked })}
-                />
-                <span
-                  aria-hidden="true"
-                  class="keyring-switch-track"
-                  class:on={mcp.enabled}
-                ></span>
-              </label>
+              <ToggleSwitch
+                labelClass="flex items-center cursor-pointer select-none"
+                id="mcp-enable"
+                aria-labelledby="mcp-enable-label"
+                checked={mcp.enabled}
+                disabled={mcp.saving}
+                onchange={(e) =>
+                  void mcp.save({ enabled: e.currentTarget.checked })}
+              />
             </div>
 
             {#if mcp.trayPrompt}
@@ -628,29 +585,17 @@
                     without this.
                   </span>
                 </div>
-                <label
-                  class="flex items-center select-none"
-                  class:cursor-pointer={mcp.enabled}
-                  class:cursor-not-allowed={!mcp.enabled}
-                  for="mcp-write"
-                >
-                  <input
-                    id="mcp-write"
-                    type="checkbox"
-                    class="keyring-switch peer sr-only"
-                    aria-labelledby="mcp-write-label"
-                    checked={mcp.write}
-                    disabled={mcp.saving || !mcp.enabled}
-                    onchange={(e) =>
-                      void mcp.save({ write: e.currentTarget.checked })}
-                  />
-                  <span
-                    aria-hidden="true"
-                    class="keyring-switch-track"
-                    class:on={mcp.write}
-                    class:disabled={!mcp.enabled}
-                  ></span>
-                </label>
+                <ToggleSwitch
+                  labelClass="flex items-center select-none {mcp.enabled
+                    ? 'cursor-pointer'
+                    : 'cursor-not-allowed'}"
+                  id="mcp-write"
+                  aria-labelledby="mcp-write-label"
+                  checked={mcp.write}
+                  disabled={mcp.saving || !mcp.enabled}
+                  onchange={(e) =>
+                    void mcp.save({ write: e.currentTarget.checked })}
+                />
               </div>
 
               <p class="text-text-muted text-type-xs m-0" id="mcp-availability">
@@ -793,25 +738,14 @@
                   base URL for both roles.
                 </span>
               </div>
-              <label
-                class="flex items-center cursor-pointer select-none"
-                for="sync-providers-toggle"
-              >
-                <input
-                  id="sync-providers-toggle"
-                  type="checkbox"
-                  class="keyring-switch peer sr-only"
-                  aria-labelledby="sync-providers-label"
-                  checked={ai.syncProviders}
-                  onchange={(e) =>
-                    void ai.toggleSyncProviders(e.currentTarget.checked)}
-                />
-                <span
-                  aria-hidden="true"
-                  class="keyring-switch-track"
-                  class:on={ai.syncProviders}
-                ></span>
-              </label>
+              <ToggleSwitch
+                labelClass="flex items-center cursor-pointer select-none"
+                id="sync-providers-toggle"
+                aria-labelledby="sync-providers-label"
+                checked={ai.syncProviders}
+                onchange={(e) =>
+                  void ai.toggleSyncProviders(e.currentTarget.checked)}
+              />
             </div>
 
             <!-- Split Role switcher (only visible in split mode) -->
@@ -1087,28 +1021,14 @@
                   </span>
                 </div>
               {/if}
-              <label
-                class="flex items-start gap-3 cursor-pointer select-none"
-                for="ai-keyring-toggle"
+              <ToggleSwitch
+                labelClass="flex items-start gap-3 cursor-pointer select-none"
+                id="ai-keyring-toggle"
+                checked={ai.config.use_keyring}
+                disabled={!ai.config.keyring_available}
+                trackOn={ai.config.use_keyring && ai.config.keyring_available}
+                onchange={(e) => void ai.toggleKeyring(e.currentTarget.checked)}
               >
-                <input
-                  id="ai-keyring-toggle"
-                  type="checkbox"
-                  class="keyring-switch peer sr-only"
-                  checked={ai.config.use_keyring}
-                  disabled={!ai.config.keyring_available}
-                  onchange={(e: Event) =>
-                    void ai.toggleKeyring(
-                      (e.currentTarget as HTMLInputElement).checked
-                    )}
-                />
-                <span
-                  aria-hidden="true"
-                  class="keyring-switch-track"
-                  class:on={ai.config.use_keyring &&
-                    ai.config.keyring_available}
-                  class:disabled={!ai.config.keyring_available}
-                ></span>
                 <span class="flex-1">
                   <span
                     class="text-text-primary text-type-md font-body-md block"
@@ -1125,7 +1045,7 @@
                     re-enter each key.
                   </span>
                 </span>
-              </label>
+              </ToggleSwitch>
             </div>
           </details>
 
@@ -1337,42 +1257,6 @@
 </div>
 
 <style>
-  .keyring-switch-track {
-    width: 36px;
-    height: 20px;
-    border-radius: 9999px;
-    background: var(--color-surface-panel-border);
-    position: relative;
-    flex-shrink: 0;
-    margin-top: 2px;
-    transition: background-color 0.15s ease;
-  }
-  .keyring-switch-track.on {
-    background: var(--color-accent-primary-start);
-  }
-  .keyring-switch-track.disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .keyring-switch-track::after {
-    content: '';
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 16px;
-    height: 16px;
-    border-radius: 9999px;
-    background: #ffffff;
-    transition: transform 0.15s ease;
-  }
-  .keyring-switch-track.on::after {
-    transform: translateX(16px);
-  }
-  .keyring-switch:focus-visible + .keyring-switch-track {
-    outline: 2px solid var(--color-accent-primary-start);
-    outline-offset: 2px;
-  }
-
   /* Remove default details chevron */
   details > summary::-webkit-details-marker {
     display: none;
