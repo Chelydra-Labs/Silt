@@ -643,18 +643,14 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.configMu.Unlock()
 	a.verifyLinkedNotebookFingerprints()
 
-	// Best-effort cloud-sync detection: a vault under a cloud-synced
-	// folder (Google Drive / OneDrive / Dropbox / iCloud) is more prone to
-	// transient file locks and WAL fallback. Never blocks opening; the warning
-	// rides vault:init-warnings so the user is nudged toward a local folder.
-	// The index layer also surfaces its own WAL-fallback caveats via
-	// dbMgr.Warnings(), merged into storageWarnings below.
+	// storageWarnings collects non-fatal caveats surfaced during vault init:
+	// the index relocation/migration notes (paths.ResolveAndMigrateIndexPath,
+	// below) and the DB layer's WAL-fallback warning (dbMgr.Warnings, below).
+	// They ride the vault:init-warnings event so the user is informed without
+	// the vault open being blocked. The index lives in a per-user local
+	// DataDir (out of the synced vault), so the vault's own sync status is not
+	// a Silt hazard and no longer produces a warning here.
 	var storageWarnings []string
-	if provider, ok := db.DetectCloudSyncedFolder(vaultPath); ok {
-		storageWarnings = append(storageWarnings, fmt.Sprintf(
-			"This vault is inside a %s synced folder. Cloud-sync engines can transiently lock files; Silt tolerates this, but for best reliability consider moving the vault to a purely local folder.",
-			provider))
-	}
 
 	// The .system dir holds per-vault app data (config.yaml, themes,
 	// templates, plugins, trash, logs); ensure it exists.
