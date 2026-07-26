@@ -6,8 +6,6 @@ import {
   resolveSourceNavigationTarget
 } from './lib/navigationTargets'
 
-type Ref = { notebook: string; section: string; page: string }
-
 describe('App navigation coordination', () => {
   afterEach(() => {
     vi.useRealTimers()

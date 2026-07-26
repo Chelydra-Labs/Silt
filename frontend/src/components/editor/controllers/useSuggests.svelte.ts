@@ -543,7 +543,7 @@ function createTagSuggest(deps: FactoryDeps) {
   let tagsLoading = $state(false)
   let tagsLoadError = $state(false)
   const TAGS_TTL_MS = 5000
-  let recentTags = $derived(
+  const recentTags = $derived(
     (settings.config?.ui as { recent_tags?: string[] } | undefined)
       ?.recent_tags ?? []
   )
