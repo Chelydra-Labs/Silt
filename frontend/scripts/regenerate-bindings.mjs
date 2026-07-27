@@ -67,8 +67,13 @@ function regenerateEnums() {
     ['run', '-tags', 'tools', './cmd/genenums/', '-update', 'frontend/src/generated/enums.ts'],
     { cwd: REPO_ROOT, stdio: 'inherit' }
   )
+  // Warn-but-pass (do not block `npm install`): consistent with the wails3-CLI
+  // tolerance above. A non-zero status leaves enums.ts possibly stale, but that
+  // is caught authoritatively by the cmd/genenums -compare drift gate in CI
+  // (.github/workflows/ci.yml) and the local pre-push hook (.githooks/pre-push,
+  // when Go files change) — so a soft failure here never ships undetected.
   if ((result.status ?? 1) !== 0) {
-    console.log('[regenerate-bindings] genenums reported a non-zero status — enums.ts may be stale.')
+    console.log('[regenerate-bindings] genenums reported a non-zero status — enums.ts may be stale. The CI + pre-push -compare drift gates will catch this.')
   }
 }
 

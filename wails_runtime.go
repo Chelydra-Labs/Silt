@@ -23,8 +23,11 @@ type FileFilter struct {
 // that hook is used instead so stream/tool-delta payloads can be asserted
 // without a live Wails runtime (#631). Otherwise no-ops when wailsApp is nil
 // (tests have no Wails lifecycle, so event emission is silently skipped
-// to preserve the pre-migration test behavior). name is the canonical
-// EventName const (events.go) so only declared event names can be emitted.
+// to preserve the pre-migration test behavior). name is a canonical EventName
+// const (events.go). Owner-scoped AI stream events compose ":"+pluginID onto a
+// declared base const via aiStreamEventName (e.g. ai:complete:delta:<pluginID>),
+// so those composed names are not themselves in the const block — expected, not
+// drift. pluginID is validated (^[a-z0-9-]+$) before any composed emit.
 func (a *App) emit(name EventName, data ...any) {
 	if a.eventEmit != nil {
 		a.eventEmit(string(name), data...)
