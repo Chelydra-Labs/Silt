@@ -11,6 +11,7 @@ import {
   waitFor
 } from '@testing-library/svelte'
 import { tick } from 'svelte'
+import { Events } from '@wailsio/runtime'
 
 const appMocks = vi.hoisted(() => ({
   ListLanguagePacks: vi.fn(),
@@ -238,5 +239,54 @@ describe('EditorTab spellcheck packs', () => {
       ).toBeNull()
     })
     await tick()
+  })
+
+  it('renders download progress (percent + stage) from the progress event', async () => {
+    // Hold the install in flight so packBusy stays set while we synthesize a
+    // progress event from the backend. The download only resolves once we
+    // release it, letting the component tear down cleanly.
+    let releaseEnsure: () => void = () => {}
+    appMocks.EnsureLanguagePack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseEnsure = resolve
+        })
+    )
+    let progressHandler: ((ev: unknown) => void) | undefined
+    vi.mocked(Events.On).mockImplementation(((_name, cb) => {
+      progressHandler = cb as (ev: unknown) => void
+      return () => {}
+    }) as typeof Events.On)
+
+    render(EditorTab)
+    await waitFor(() => {
+      expect(languageSelect().options.length).toBeGreaterThan(1)
+    })
+
+    // Picking a non-installed language kicks off downloadLanguage, which
+    // sets packBusy and registers the progress subscription.
+    await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
+    await waitFor(() => {
+      expect(appMocks.EnsureLanguagePack).toHaveBeenCalledWith('en-GB')
+    })
+    await tick()
+
+    // The backend emits EventSpellcheckDownloadProgress with byte counters +
+    // the current file; the UI turns those into a percent + a human stage.
+    expect(progressHandler).toBeTruthy()
+    progressHandler!({
+      data: { received: 50, total: 100, file: 'index.aff' }
+    })
+    await tick()
+
+    const card = document.getElementById('editor-spellcheck-packs')!
+    expect(card.textContent).toMatch(/50%/)
+    // stageLabel('index.aff') === 'rules'
+    expect(card.textContent).toMatch(/rules/)
+
+    releaseEnsure()
+    await waitFor(() => {
+      expect(screen.queryByText(/50%/)).toBeNull()
+    })
   })
 })

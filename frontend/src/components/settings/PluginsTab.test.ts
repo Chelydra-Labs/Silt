@@ -38,6 +38,13 @@ const mocks = vi.hoisted(() => ({
   checkPluginUpdate: vi.fn(),
   getNetworkAudit: vi.fn(),
   getPluginSecurityStats: vi.fn().mockResolvedValue([]),
+  // Install flow + capability grant/revoke bindings, exposed so the
+  // characterization tests for those paths can assert call args.
+  validatePluginArchive: vi.fn(),
+  installPlugin: vi.fn(),
+  pickPluginArchive: vi.fn(),
+  requestCapability: vi.fn(),
+  revokeCapability: vi.fn(),
   // Matches the real Events.On signature: (eventName, callback) => cancel.
   // Declaring the arity here keeps mockImplementation callers type-safe.
   eventsOn: vi.fn((_name: string, _cb: () => void) => () => {}),
@@ -48,14 +55,14 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../../bindings/silt/app.js', () => ({
   ListPlugins: mocks.listPlugins,
-  ValidatePluginArchive: vi.fn(),
-  InstallPlugin: vi.fn(),
+  ValidatePluginArchive: mocks.validatePluginArchive,
+  InstallPlugin: mocks.installPlugin,
   UninstallPlugin: vi.fn(),
   EnablePlugin: vi.fn(),
   DisablePlugin: vi.fn(),
-  PickPluginArchive: vi.fn(),
-  RequestCapability: vi.fn(),
-  RevokeCapability: vi.fn(),
+  PickPluginArchive: mocks.pickPluginArchive,
+  RequestCapability: mocks.requestCapability,
+  RevokeCapability: mocks.revokeCapability,
   GetGrantedCapabilities: mocks.getGrantedCapabilities,
   CheckPluginUpdate: mocks.checkPluginUpdate,
   GetNetworkAudit: mocks.getNetworkAudit,
@@ -541,5 +548,193 @@ describe('PluginsTab security stats badge (#518)', () => {
     expect(
       screen.getByRole('status', { name: /1 capability denial/i })
     ).toBeTruthy()
+  })
+})
+
+// Characterization tests for the capability grant path (#113). A disk plugin
+// with requested capabilities renders Grant/Revoke controls in its expanded
+// detail panel; granting calls RequestCapability then refreshes. These pin the
+// behavior before the cluster is extracted into CapabilityGrantList.svelte.
+describe('PluginsTab capability grant/revoke', () => {
+  const diskPlugin = {
+    id: 'cap-plugin',
+    name: 'Cap Plugin',
+    version: '1.0.0',
+    author: 'Test',
+    description: '',
+    icon: 'extension',
+    capabilities: { network: true, 'read-files': true }
+  }
+
+  beforeEach(() => {
+    mocks.listPlugins.mockReset()
+    mocks.loadPlugins.mockReset()
+    mocks.getGrantedCapabilities.mockReset()
+    mocks.getPluginSecurityStats.mockReset()
+    mocks.requestCapability.mockReset()
+    mocks.revokeCapability.mockReset()
+    mocks.listPlugins.mockResolvedValue([diskPlugin])
+    mocks.loadPlugins.mockResolvedValue(undefined)
+    mocks.getGrantedCapabilities.mockResolvedValue({})
+    mocks.getPluginSecurityStats.mockResolvedValue([])
+    mocks.configNoPlugins = {
+      plugins: { active: [], disabled: [], plugin_settings: {} }
+    } as never
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('grants a capability via RequestCapability then refreshes', async () => {
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    // Expand the card to reveal the capability list.
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Cap Plugin: Details$/ })
+    )
+    await flush()
+
+    // network is ungranted → Grant button is present.
+    const grantBtn = screen.getByRole('button', {
+      name: 'Grant Network access'
+    })
+    await fireEvent.click(grantBtn)
+    await flush()
+
+    // qual for `true` serializes to '' (the "granted any" case).
+    expect(mocks.requestCapability).toHaveBeenCalledWith(
+      'cap-plugin',
+      'network',
+      ''
+    )
+    // Grant refreshes the card list (ListPlugins + GetGrantedCapabilities).
+    expect(mocks.listPlugins).toHaveBeenCalledTimes(2)
+  })
+
+  it('revokes a granted capability via RevokeCapability', async () => {
+    mocks.getGrantedCapabilities.mockResolvedValue({
+      'cap-plugin': { network: 'granted' }
+    })
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Cap Plugin: Details$/ })
+    )
+    await flush()
+
+    // network is granted → Revoke button is present (read-files still Grant).
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Revoke Network access' })
+    )
+    await flush()
+
+    expect(mocks.revokeCapability).toHaveBeenCalledWith('cap-plugin', 'network')
+  })
+})
+
+// Characterization tests for the install-from-archive flow: pick → validate →
+// preview → install → reload. These pin the behavior before the cluster is
+// extracted into PluginInstallFlow.svelte.
+describe('PluginsTab install flow', () => {
+  beforeEach(() => {
+    mocks.listPlugins.mockReset()
+    mocks.loadPlugins.mockReset()
+    mocks.getGrantedCapabilities.mockReset()
+    mocks.getPluginSecurityStats.mockReset()
+    mocks.pickPluginArchive.mockReset()
+    mocks.validatePluginArchive.mockReset()
+    mocks.installPlugin.mockReset()
+    mocks.listPlugins.mockResolvedValue([])
+    mocks.loadPlugins.mockResolvedValue(undefined)
+    mocks.getGrantedCapabilities.mockResolvedValue({})
+    mocks.getPluginSecurityStats.mockResolvedValue([])
+    mocks.configNoPlugins = {
+      plugins: { active: [], disabled: [], plugin_settings: {} }
+    } as never
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('picks, validates, previews, and installs a plugin archive', async () => {
+    mocks.pickPluginArchive.mockResolvedValue('/test/demo.silt-plugin')
+    mocks.validatePluginArchive.mockResolvedValue({
+      manifest: {
+        id: 'demo',
+        name: 'Demo Plugin',
+        version: '2.1.0',
+        description: 'A demo',
+        capabilities: { network: true }
+      },
+      warnings: ['uses experimental feature']
+    })
+    mocks.installPlugin.mockResolvedValue(undefined)
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    // 1. Pick → ValidatePluginArchive runs and the preview renders.
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Install from \.silt-plugin/i })
+    )
+    await flush()
+
+    expect(mocks.pickPluginArchive).toHaveBeenCalled()
+    expect(mocks.validatePluginArchive).toHaveBeenCalledWith(
+      '/test/demo.silt-plugin'
+    )
+    expect(screen.getByText('Demo Plugin')).toBeTruthy()
+    expect(screen.getByText(/v2\.1\.0/)).toBeTruthy()
+    expect(screen.getByText('uses experimental feature')).toBeTruthy()
+    expect(screen.getByText('Network access')).toBeTruthy()
+
+    // 2. Confirm → InstallPlugin runs, then reloadAll (loadPlugins) fires.
+    await fireEvent.click(screen.getByRole('button', { name: /^Install$/ }))
+    await flush()
+
+    expect(mocks.installPlugin).toHaveBeenCalledWith('/test/demo.silt-plugin')
+    expect(mocks.loadPlugins).toHaveBeenCalledWith('Work', 'Journal', 'Daily')
+  })
+
+  it('surfaces a validation failure as an error', async () => {
+    mocks.pickPluginArchive.mockResolvedValue('/bad/broken.silt-plugin')
+    mocks.validatePluginArchive.mockRejectedValue(
+      new Error('manifest missing id')
+    )
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Install from \.silt-plugin/i })
+    )
+    await flush()
+
+    expect(
+      screen.getByText(/Validation failed: manifest missing id/i)
+    ).toBeTruthy()
+    // Install must never run for a failed validation.
+    expect(mocks.installPlugin).not.toHaveBeenCalled()
   })
 })
