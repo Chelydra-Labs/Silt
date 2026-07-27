@@ -1,15 +1,16 @@
 package main
 
 // =========================================================================
-// Plugin AI gateway + streaming runtime (#216, #226)
+// Plugin AI gateway (#216, #226)
 // =========================================================================
 //
-// Plugin-facing AI bindings: chat completion (including the async SSE stream),
-// stream cancel / readiness handshake, structured audit events, and embeddings.
-// All are gated exactly like PluginFetch: session token → requireGrant(CapAI)
-// → rate limiter → size cap → service call → audit. Plugins NEVER receive
-// credentials; the provider config + resolved key are snapshotted server-side
-// (withAIPreflight) and handed to the service as a value.
+// Plugin-facing AI bindings: chat completion, structured audit events, and
+// embeddings. Streaming runtime (startAIStream, cancel/ready, session type)
+// lives in app_ai_stream.go (#762). All are gated exactly like PluginFetch:
+// session token → requireGrant(CapAI) → rate limiter → size cap → service
+// call → audit. Plugins NEVER receive credentials; the provider config +
+// resolved key are snapshotted server-side (withAIPreflight) and handed to
+// the service as a value.
 //
 // Streaming (#226): PluginAIComplete(stream=true) returns immediately with a
 // stream_id and pushes deltas via owner-scoped Wails events
@@ -24,44 +25,13 @@ package main
 // needed during the call.
 
 import (
-	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"silt/backend/ai"
 	"silt/backend/config"
 	"silt/backend/plugins"
 	"strings"
-	"time"
 )
-
-// AI stream event bases live in events.go as the canonical EventAIComplete*
-// EventName consts (#226/#635). The full owner-scoped name appends
-// ":"+pluginID so concurrent plugin streams do not share a global bus.
-// Payload still includes plugin_id for debugging.
-
-// aiStreamEventName returns the owner-scoped Wails event name for a stream
-// event base + pluginID (#635). The result is EventName-typed (constructed
-// from a declared base const) so it flows through emit without a cast.
-func aiStreamEventName(base EventName, pluginID string) EventName {
-	if pluginID == "" {
-		return base
-	}
-	return EventName(string(base) + ":" + pluginID)
-}
-
-// aiStreamBufferCap is the max number of unconsumed delta events buffered per
-// stream before the producer aborts (backpressure). Generous for UI consumers
-// that coalesce on rAF; tight enough to bound memory if a plugin stalls.
-const aiStreamBufferCap = 256
-
-// aiStreamReadyWait is how long the producer waits for PluginAIStreamReady
-// before starting anyway. Covers the IPC round-trip for listener attach; if the
-// client never acks (crashed plugin), the stream still proceeds rather than
-// hanging until the provider timeout.
-const aiStreamReadyWait = 2 * time.Second
 
 // PluginAIChatMessage is one chat message crossing the plugin→service boundary.
 // For multi-turn tool use (#595): assistant turns may carry tool_calls, and a
@@ -281,236 +251,6 @@ func (a *App) PluginAIComplete(pluginID, sessionToken string, input PluginAIComp
 		return ai.CompleteResult{}, callErr
 	}
 	return result, nil
-}
-
-// startAIStream launches an async CompleteStream and returns stream_id immediately.
-// The caller's a.wg.Add(1) is balanced when the stream goroutine finishes.
-// drainDone is deferred inside the goroutine so vault-close waits for the stream.
-func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveModel string, req ai.CompleteRequest, drainDone func()) (ai.CompleteResult, error) {
-	// Owner-scoped stream events are named ":<pluginID>"; an empty id would
-	// fall back to the global unscoped bus (#635). Preflight validates this, but
-	// assert structurally so a future refactor cannot silently regress it.
-	if pluginID == "" {
-		a.wg.Done()
-		drainDone()
-		return ai.CompleteResult{}, &ai.AIError{Kind: ai.ErrBadRequest, Message: "plugin_id is required for a streamed completion"}
-	}
-	streamID, err := newAIStreamID()
-	if err != nil {
-		a.wg.Done()
-		drainDone()
-		return ai.CompleteResult{}, &ai.AIError{Kind: ai.ErrUnknown, Message: fmt.Sprintf("allocate stream id: %v", err)}
-	}
-	// Child of vault/app AI context so close/shutdown cancels the HTTP body.
-	streamCtx, streamCancel := context.WithCancel(a.aiContext())
-
-	ready := make(chan struct{})
-	a.aiStreamsMu.Lock()
-	if a.aiStreams == nil {
-		a.aiStreams = make(map[string]*aiStreamSession)
-	}
-	a.aiStreams[streamID] = &aiStreamSession{
-		pluginID: pluginID,
-		cancel:   streamCancel,
-		ready:    ready,
-	}
-	a.aiStreamsMu.Unlock()
-
-	// Buffered channel for backpressure between SSE reader and event emit.
-	// Producer aborts if the buffer fills (consumer not keeping up).
-	deltaCh := make(chan string, aiStreamBufferCap)
-	toolDeltaCh := make(chan ai.ToolCallDelta, aiStreamBufferCap)
-
-	// Audit stream start (one row); terminal status is audited when the
-	// goroutine finishes (#226 — not per-token).
-	a.auditAI(pluginID, aiChatKind, provider.BaseURL, effectiveModel, "stream-start", nil)
-
-	go func() {
-		defer a.wg.Done()
-		defer drainDone()
-		defer streamCancel()
-		defer func() {
-			a.aiStreamsMu.Lock()
-			delete(a.aiStreams, streamID)
-			a.aiStreamsMu.Unlock()
-		}()
-
-		// Wait for the frontend to attach Events.On listeners (PluginAIStreamReady)
-		// before starting the upstream request. Immediate failures (native
-		// provider reject, empty model) would otherwise emit done/error before
-		// createAIStream installs handlers, leaving the client hung (PR #540).
-		select {
-		case <-ready:
-		case <-time.After(aiStreamReadyWait):
-		case <-streamCtx.Done():
-			a.auditAI(pluginID, aiChatKind, provider.BaseURL, effectiveModel, "cancelled", nil)
-			a.emit(aiStreamEventName(EventAICompleteError, pluginID), map[string]any{
-				"stream_id": streamID,
-				"plugin_id": pluginID,
-				"kind":      string(ai.ErrCanceled),
-				"message":   "stream cancelled before start",
-			})
-			return
-		}
-
-		// Fan-out deltas to Wails events on a separate goroutine so the SSE
-		// parser only blocks on the bounded channel (backpressure), not on IPC.
-		// Event names are owner-scoped by pluginID (#635).
-		emitDone := make(chan struct{})
-		go func() {
-			defer close(emitDone)
-			idx := 0
-			for delta := range deltaCh {
-				a.emit(aiStreamEventName(EventAICompleteDelta, pluginID), map[string]any{
-					"stream_id": streamID,
-					"plugin_id": pluginID,
-					"delta":     delta,
-					"index":     idx,
-				})
-				idx++
-			}
-		}()
-
-		// Fan-out tool-call fragments to a parallel event so the chat UX can
-		// surface in-progress tool invocations live (#595).
-		emitToolDone := make(chan struct{})
-		go func() {
-			defer close(emitToolDone)
-			for frag := range toolDeltaCh {
-				a.emit(aiStreamEventName(EventAICompleteToolDelta, pluginID), map[string]any{
-					"stream_id":          streamID,
-					"plugin_id":          pluginID,
-					"index":              frag.Index,
-					"id":                 frag.ID,
-					"name":               frag.Name,
-					"arguments_fragment": frag.ArgumentsFragment,
-				})
-			}
-		}()
-
-		// Natural backpressure: block until the emit goroutine drains a slot
-		// or the stream is cancelled. A default arm would turn a momentary
-		// full buffer into a hard abort mid-answer (PR #540 review).
-		result, callErr := ai.CompleteStream(streamCtx, req, func(delta string) error {
-			select {
-			case deltaCh <- delta:
-				return nil
-			case <-streamCtx.Done():
-				return streamCtx.Err()
-			}
-		}, func(frag ai.ToolCallDelta) error {
-			select {
-			case toolDeltaCh <- frag:
-				return nil
-			case <-streamCtx.Done():
-				return streamCtx.Err()
-			}
-		})
-		close(deltaCh)
-		close(toolDeltaCh)
-		<-emitDone
-		<-emitToolDone
-
-		status := "ok"
-		if callErr != nil {
-			status = aiErrKind(callErr)
-			// Cancellation is a first-class terminal status for audit.
-			if streamCtx.Err() != nil && (errors.Is(callErr, context.Canceled) || strings.Contains(callErr.Error(), "cancel")) {
-				status = "cancelled"
-			}
-			a.auditAI(pluginID, aiChatKind, provider.BaseURL, effectiveModel, status, nil)
-			kind, msg := "unknown", callErr.Error()
-			if e, ok := callErr.(*ai.AIError); ok {
-				kind, msg = string(e.Kind), e.Message
-			}
-			a.emit(aiStreamEventName(EventAICompleteError, pluginID), map[string]any{
-				"stream_id": streamID,
-				"plugin_id": pluginID,
-				"kind":      kind,
-				"message":   msg,
-			})
-			return
-		}
-		a.auditAI(pluginID, aiChatKind, provider.BaseURL, effectiveModel, status, result.Usage)
-		payload := map[string]any{
-			"stream_id": streamID,
-			"plugin_id": pluginID,
-			"content":   result.Content,
-			"model":     result.Model,
-		}
-		if len(result.ToolCalls) > 0 {
-			payload["tool_calls"] = result.ToolCalls
-		}
-		if result.Usage != nil {
-			payload["usage"] = result.Usage
-		}
-		a.emit(aiStreamEventName(EventAICompleteDone, pluginID), payload)
-	}()
-
-	return ai.CompleteResult{StreamID: streamID, Model: effectiveModel}, nil
-}
-
-// PluginAICancelStream aborts an in-flight streamed completion started by
-// PluginAIComplete(stream=true). The plugin must own the stream (pluginID match).
-// Idempotent: cancelling an unknown/finished stream is a no-op success.
-func (a *App) PluginAICancelStream(pluginID, sessionToken, streamID string) error {
-	if err := a.requirePluginSession(pluginID, sessionToken); err != nil {
-		return err
-	}
-	if err := a.requireGrant(pluginID, plugins.CapAI); err != nil {
-		return err
-	}
-	streamID = strings.TrimSpace(streamID)
-	if streamID == "" {
-		return &ai.AIError{Kind: ai.ErrBadRequest, Message: "stream_id is required"}
-	}
-	a.aiStreamsMu.Lock()
-	sess, ok := a.aiStreams[streamID]
-	if ok && sess.pluginID == pluginID {
-		// Leave the map entry; the stream goroutine removes it on exit.
-		cancel := sess.cancel
-		// Unblock a producer still waiting on ready so it observes cancel.
-		if sess.ready != nil {
-			sess.readyOnce.Do(func() { close(sess.ready) })
-		}
-		a.aiStreamsMu.Unlock()
-		cancel()
-		return nil
-	}
-	a.aiStreamsMu.Unlock()
-	return nil
-}
-
-// PluginAIStreamReady signals that the frontend has attached Events.On
-// listeners for streamID and is ready to receive deltas/terminal events.
-// Must be called after PluginAIComplete(stream=true) returns stream_id.
-// Idempotent; unknown streams are a no-op success.
-func (a *App) PluginAIStreamReady(pluginID, sessionToken, streamID string) error {
-	if err := a.requirePluginSession(pluginID, sessionToken); err != nil {
-		return err
-	}
-	if err := a.requireGrant(pluginID, plugins.CapAI); err != nil {
-		return err
-	}
-	streamID = strings.TrimSpace(streamID)
-	if streamID == "" {
-		return &ai.AIError{Kind: ai.ErrBadRequest, Message: "stream_id is required"}
-	}
-	a.aiStreamsMu.Lock()
-	sess, ok := a.aiStreams[streamID]
-	if ok && sess.pluginID == pluginID && sess.ready != nil {
-		sess.readyOnce.Do(func() { close(sess.ready) })
-	}
-	a.aiStreamsMu.Unlock()
-	return nil
-}
-
-func newAIStreamID() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b[:]), nil
 }
 
 // requirePluginSession validates the session token maps to pluginID. Shared by
