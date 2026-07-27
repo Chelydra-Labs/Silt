@@ -205,5 +205,32 @@ describe('FilterBar stale chip (#440)', () => {
   })
 })
 
+describe('FilterBar aria-live announcer', () => {
+  it('announces the active-filter count and updates on change', async () => {
+    // The decomposition moved counts to SmartLists and trimmed its region to
+    // counts-only, so the active-filter announcement must live here. This pins
+    // that contract (AGENTS.md: aria-live for dynamic updates).
+    const { rerender } = render(FilterBar, { props: makeProps() })
+    await tick()
+    let region = document.querySelector('[aria-live="polite"]')
+    expect(region?.textContent?.trim()).toBe('No active filters')
+
+    // Two facets selected (owner + priority) -> activeCount 2.
+    await rerender(
+      makeProps({
+        filters: {
+          owners: ['Alice'],
+          priorities: [1],
+          dueDate: '',
+          tags: []
+        }
+      })
+    )
+    await tick()
+    region = document.querySelector('[aria-live="polite"]')
+    expect(region?.textContent?.trim()).toBe('2 active filters')
+  })
+})
+
 // Keep the PluginContext type import referenced (no-unused).
 export type __KeepCtxImport = _Ctx

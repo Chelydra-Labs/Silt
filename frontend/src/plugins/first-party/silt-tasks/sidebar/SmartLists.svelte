@@ -241,7 +241,7 @@
   {/if}
 </section>
 
-<!-- aria-live region announces count + filter changes -->
+<!-- aria-live region announces count changes (filter changes are announced by the header FilterBar) -->
 <div class="sr-only" aria-live="polite">{liveMessage}</div>
 
 {#if errorMsg}

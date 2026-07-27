@@ -17,6 +17,10 @@
 //     declared const is indistinguishable from a const reference (buildssa folds
 //     both to an identical *ssa.Const) and is allowed.
 //   - Conditional local assignment (phi merge) is conservatively allowed.
+//   - A local reassigned after the emit site (a later Store into the same
+//     alloc) can attribute the later literal to the earlier emit: the
+//     last-store-wins walk ignores the use's program point. Rare and absent
+//     from the current codebase; a proper fix needs SSA dominance/ref analysis.
 //   - Builder/struct-field/map/slice patterns of EventName are not tracked.
 package eventnameliteral
 
