@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { tick } from 'svelte'
 import type { Editor } from 'svelte-tiptap'
 import { settings } from '../../../settings/store.svelte'
 import type {
   SuggestContext,
   MentionContext,
   BlockRefContext,
+  TagContext,
   PageLinkContext,
   MetaKey
 } from '../../../lib/editor'
@@ -95,6 +97,10 @@ function pageLinkCtx(query: string, from = 5): PageLinkContext {
   return { triggerPos: from, query, from, to: from + 2 + query.length }
 }
 
+function tagCtx(query: string, from = 5): TagContext {
+  return { triggerPos: from, query, from, to: from + 1 + query.length }
+}
+
 const META_DUE: MetaKey = { key: 'due', label: 'due', description: 'Due date' }
 
 let harness: SuggestsHarness
@@ -114,6 +120,7 @@ beforeEach(() => {
   mocks.applyBlockRefSuggestion.mockReturnValue(true)
   mocks.applyTagSuggestion.mockReturnValue(true)
   mocks.applyPageLinkSuggestion.mockResolvedValue(true)
+  mocks.recordTagUsage.mockResolvedValue(undefined)
   mocks.distinctOwners.mockResolvedValue(['Alice', 'Bob', 'Carol'])
   mocks.searchBlocks.mockResolvedValue([
     {
@@ -216,6 +223,31 @@ describe('mention controller debounce + race', () => {
     expect(mention.popup?.items).toEqual(['ServerOwner'])
     expect(harness.controller.suggestStatus).toBe('1 owner available')
   })
+
+  it('preserves the highlighted owner across keystrokes', () => {
+    const { mention } = harness.controller
+    mention.onChange(mentionCtx('a'))
+    mention.navigate(1)
+    expect(mention.popup?.selected).toBe(1) // Bob
+
+    // Reorder so Bob lands at a different index.
+    mocks.filterOwners.mockReturnValue(['Carol', 'Bob', 'Alice'])
+    mention.onChange(mentionCtx('ab'))
+    expect(mention.popup?.selected).toBe(1) // tracked Bob to its new slot
+  })
+
+  it('debounces the focus-driven owner refresh by 150ms', () => {
+    const { mention } = harness.controller
+    mention.refreshOwners()
+    expect(mocks.distinctOwners).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(149)
+    expect(mocks.distinctOwners).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(1)
+    expect(mocks.distinctOwners).toHaveBeenCalledTimes(1)
+    expect(mocks.distinctOwners).toHaveBeenCalledWith('')
+  })
 })
 
 // --- blockRef controller status transitions --------------------------------
@@ -259,6 +291,115 @@ describe('blockRef controller suggest-status transitions', () => {
       expect.any(Error)
     )
     errorSpy.mockRestore()
+  })
+})
+
+// --- tag controller ---------------------------------------------------------
+
+describe('tag controller', () => {
+  it('caches the hierarchy for the TTL window so a reopen skips the IPC', async () => {
+    mocks.queryTagHierarchy.mockResolvedValue([
+      { name: 'work', path: 'work', count: 1, children: [] }
+    ])
+    mocks.flattenTagHierarchy.mockReturnValue([{ path: 'work', count: 1 }])
+    mocks.filterTags.mockReturnValue([{ path: 'work', count: 1 }])
+
+    const { tag } = harness.controller
+    tag.onChange(tagCtx('w'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    tag.onChange(null)
+    tag.onChange(tagCtx('w'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(mocks.queryTagHierarchy).toHaveBeenCalledTimes(1)
+    expect(mocks.flattenTagHierarchy).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves the highlighted tag across keystrokes', async () => {
+    mocks.queryTagHierarchy.mockResolvedValue([])
+    mocks.flattenTagHierarchy.mockReturnValue([])
+    mocks.filterTags.mockReturnValue([
+      { path: 'a', count: 1 },
+      { path: 'b', count: 2 },
+      { path: 'c', count: 3 }
+    ])
+
+    const { tag } = harness.controller
+    tag.onChange(tagCtx('x'))
+    await vi.advanceTimersByTimeAsync(0)
+    tag.navigate(1)
+    expect(tag.popup?.selected).toBe(1) // 'b'
+
+    // Reorder so 'b' lands at a different index.
+    mocks.filterTags.mockReturnValue([
+      { path: 'c', count: 3 },
+      { path: 'a', count: 1 },
+      { path: 'b', count: 2 }
+    ])
+    tag.onChange(tagCtx('xy'))
+    expect(tag.popup?.selected).toBe(2) // tracked 'b' to its new index
+  })
+
+  it('pick applies the tag, records usage, and closes', async () => {
+    mocks.queryTagHierarchy.mockResolvedValue([])
+    mocks.flattenTagHierarchy.mockReturnValue([{ path: 'work', count: 1 }])
+    mocks.filterTags.mockReturnValue([{ path: 'work', count: 1 }])
+
+    const { tag } = harness.controller
+    tag.onChange(tagCtx('w'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    tag.pick('work')
+    expect(mocks.applyTagSuggestion).toHaveBeenCalledWith(
+      expect.anything(),
+      'work'
+    )
+    expect(mocks.recordTagUsage).toHaveBeenCalledWith('work')
+    expect(tag.popup).toBeNull()
+  })
+
+  it('surfaces a hierarchy load failure as an error status', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.queryTagHierarchy.mockRejectedValueOnce(new Error('offline'))
+    mocks.flattenTagHierarchy.mockReturnValue([])
+    mocks.filterTags.mockReturnValue([])
+
+    const { tag } = harness.controller
+    tag.onChange(tagCtx('w'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(tag.tagsLoadError).toBe(true)
+    expect(harness.controller.suggestStatus).toBe('Tag suggestions unavailable')
+    expect(errorSpy).toHaveBeenCalledWith(
+      'QueryTagHierarchy failed:',
+      expect.any(Error)
+    )
+    errorSpy.mockRestore()
+  })
+
+  it('re-ranks an open picker when recent_tags changes on hot config', async () => {
+    mocks.queryTagHierarchy.mockResolvedValue([])
+    mocks.flattenTagHierarchy.mockReturnValue([])
+    mocks.filterTags.mockReturnValue([{ path: 'work', count: 1 }])
+
+    const { tag } = harness.controller
+    // Flush the initial $effect run (popup still null → no-op) so it does
+    // not inflate the filterTags call count asserted below.
+    await vi.advanceTimersByTimeAsync(0)
+
+    tag.onChange(tagCtx('w'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    const callsBefore = mocks.filterTags.mock.calls.length
+
+    settings.config = {
+      ui: { recent_tags: ['work'] }
+    } as unknown as typeof settings.config
+    await tick()
+
+    expect(mocks.filterTags.mock.calls.length).toBeGreaterThan(callsBefore)
+    expect(mocks.filterTags).toHaveBeenLastCalledWith([], 'w', ['work'])
   })
 })
 
