@@ -25,7 +25,9 @@
         `${st.rateLimited} rate-limit hit${st.rateLimited === 1 ? '' : 's'}`
       )
     }
-    return parts.join('; ') || 'Security events this session'
+    // Unreachable fallback intentionally omitted: the {#if} guard below
+    // ensures at least one count is > 0, so `parts` is always non-empty here.
+    return parts.join('; ')
   }
 </script>
 

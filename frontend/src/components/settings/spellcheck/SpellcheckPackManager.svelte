@@ -302,11 +302,11 @@
   }
 
   function cancelDownload() {
-    try {
-      void CancelSpellcheckDownload()
-    } catch {
-      /* ignore */
-    }
+    // Best-effort: tell the backend to cancel. The UI updates immediately
+    // regardless; a rejection here (e.g. download already finished server-side)
+    // is non-fatal — the next refresh reconciles state. Handled via .catch
+    // rather than a sync try/catch, which cannot catch a promise rejection.
+    CancelSpellcheckDownload().catch(() => {})
     packStatus = 'Download cancelled.'
     packBusy = null
     packProgress = null
@@ -433,7 +433,7 @@
         </label>
       {:else}
         <p class="text-text-muted text-type-sm font-body-md">
-          Couldn't load word lists.
+          No word lists available.
         </p>
       {/each}
     </fieldset>
@@ -471,7 +471,9 @@
       class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
       role="alert"
     >
-      <span class="material-symbols-outlined text-icon-lg">error</span>
+      <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+        >error</span
+      >
       <div class="flex-1 space-y-2">
         <p>
           {packError ||
@@ -485,7 +487,7 @@
             disabled={packBusy !== null}
             class="px-3 py-1 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm font-label-sm-bold cursor-pointer disabled:opacity-50"
           >
-            Retry download
+            {packBusy === failedLangId ? 'Retrying…' : 'Retry download'}
           </button>
         {:else if failedDomainId}
           <button
@@ -494,7 +496,7 @@
             disabled={packBusy !== null}
             class="px-3 py-1 rounded-lg bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm font-label-sm-bold cursor-pointer disabled:opacity-50"
           >
-            Retry download
+            {packBusy === failedDomainId ? 'Retrying…' : 'Retry download'}
           </button>
         {/if}
       </div>

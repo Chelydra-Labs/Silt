@@ -282,11 +282,16 @@
   onMount(() => {
     void refresh()
     // Live refresh when Go emits a denial / rate-limit aggregate (#518).
+    // Debounced: a misbehaving plugin can emit a burst of denials, and each
+    // event would otherwise fire a GetPluginSecurityStats round-trip.
+    let timer: ReturnType<typeof setTimeout> | null = null
     const off = Events.On(EventName.EventSecurityEvent, () => {
-      void refreshSecurityStats()
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => void refreshSecurityStats(), 250)
     })
     return () => {
       off?.()
+      if (timer) clearTimeout(timer)
     }
   })
 </script>
@@ -296,9 +301,10 @@
        button stays here — it iterates the card list and mutates update flags —
        and is injected beside the install button via the actions snippet. -->
   <section class="mb-6">
-    <PluginInstallFlow {reloadAll}>
+    <PluginInstallFlow {reloadAll} onError={(m) => (actionError = m)}>
       {#snippet actions()}
         <button
+          type="button"
           onclick={checkForUpdates}
           class="ml-2 text-text-muted hover:text-accent-primary-start text-type-xs font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-1 cursor-pointer transition-colors"
         >
@@ -311,8 +317,11 @@
   {#if actionError}
     <div
       class="flex items-start gap-2 p-3 mb-4 rounded-lg bg-error/10 border border-error/30 text-error text-type-sm font-body-md"
+      role="alert"
     >
-      <span class="material-symbols-outlined text-icon-lg">error</span>
+      <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+        >error</span
+      >
       <span class="flex-1">{actionError}</span>
     </div>
   {/if}
@@ -341,6 +350,7 @@
           <div class="flex items-center gap-3 px-4 py-3">
             <span
               class="material-symbols-outlined text-accent-primary-start/80 text-icon-xl"
+              aria-hidden="true"
             >
               {card.icon || 'extension'}
             </span>
@@ -354,6 +364,7 @@
                 >
                 {#if card.updateAvailable}
                   <span
+                    role="status"
                     class="text-type-3xs text-accent-primary-start bg-accent-primary-glow border border-accent-primary-start/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
                   >
                     Update available
@@ -410,10 +421,13 @@
             <button
               onclick={() => (expanded = expanded === card.id ? null : card.id)}
               aria-label={`${card.name}: ${expanded === card.id ? 'Collapse' : 'Details'}`}
-              title="Details"
+              title={expanded === card.id ? 'Collapse' : 'Details'}
               class="text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
             >
-              <span class="material-symbols-outlined text-icon-lg">
+              <span
+                class="material-symbols-outlined text-icon-lg"
+                aria-hidden="true"
+              >
                 {expanded === card.id ? 'expand_less' : 'expand_more'}
               </span>
             </button>
@@ -437,7 +451,10 @@
                 aria-label={`${card.name}: ${card.disabled ? 'Enable' : 'Disable'}`}
                 class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
               >
-                <span class="material-symbols-outlined text-icon-lg">
+                <span
+                  class="material-symbols-outlined text-icon-lg"
+                  aria-hidden="true"
+                >
                   {card.disabled ? 'toggle_off' : 'toggle_on'}
                 </span>
               </button>
@@ -450,8 +467,9 @@
                 aria-label={`${card.name}: Uninstall`}
                 class="text-text-muted hover:text-error border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
               >
-                <span class="material-symbols-outlined text-icon-lg"
-                  >delete</span
+                <span
+                  class="material-symbols-outlined text-icon-lg"
+                  aria-hidden="true">delete</span
                 >
               </button>
             {/if}
@@ -462,7 +480,10 @@
             <div
               class="px-4 pb-2 -mt-1 text-error text-type-xs font-body-md flex items-center gap-1.5"
             >
-              <span class="material-symbols-outlined text-icon-sm">error</span>
+              <span
+                class="material-symbols-outlined text-icon-sm"
+                aria-hidden="true">error</span
+              >
               {card.loadError}
             </div>
           {/if}
@@ -510,11 +531,11 @@
               {#if hasBespokeSettings(card.id) && !card.managedInAI}
                 <!-- #214: dedicated settings tab (not the unified AI tab). -->
                 <div>
-                  <div
+                  <h5
                     class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
                   >
                     Plugin settings
-                  </div>
+                  </h5>
                   {#if onSwitchTab}
                     <button
                       type="button"
@@ -532,11 +553,11 @@
                 </div>
               {:else if card.settingsSchema && card.settingsSchema.length > 0 && !card.managedInAI}
                 <div>
-                  <div
+                  <h5
                     class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
                   >
                     Plugin settings
-                  </div>
+                  </h5>
                   <SettingsForm
                     pluginID={card.id}
                     schema={card.settingsSchema}
@@ -545,11 +566,11 @@
                 </div>
               {:else if pluginSettings(card.id)}
                 <div>
-                  <div
+                  <h5
                     class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
                   >
                     Plugin settings
-                  </div>
+                  </h5>
                   <pre
                     class="text-type-2xs text-text-primary bg-surface-panel/60 border border-surface-panel-border rounded p-2 overflow-x-auto">{JSON.stringify(
                       pluginSettings(card.id),
@@ -567,23 +588,25 @@
 
               {#if card.source === 'first-party'}
                 <button
+                  type="button"
                   onclick={() => openPluginView(card.id)}
                   class="mt-1 text-accent-primary-start text-type-xs font-label-sm-bold hover:brightness-110 bg-transparent border-none cursor-pointer flex items-center gap-1"
                 >
                   Open {card.name} view
-                  <span class="material-symbols-outlined text-icon-sm"
-                    >arrow_forward</span
+                  <span
+                    class="material-symbols-outlined text-icon-sm"
+                    aria-hidden="true">arrow_forward</span
                   >
                 </button>
               {/if}
 
               {#if card.grantedCapabilities?.network}
                 <div>
-                  <div
+                  <h5
                     class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
                   >
                     Network activity
-                  </div>
+                  </h5>
                   <NetworkAuditViewer pluginID={card.id} />
                 </div>
               {/if}

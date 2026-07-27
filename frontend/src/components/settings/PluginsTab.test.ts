@@ -543,6 +543,10 @@ describe('PluginsTab security stats badge (#518)', () => {
       }
     ])
     securityHandler!()
+    // The handler is debounced (250ms) to coalesce bursts of security events
+    // into one GetPluginSecurityStats round-trip; wait past that window, then
+    // flush the re-render.
+    await new Promise((r) => setTimeout(r, 300))
     await flush()
 
     expect(

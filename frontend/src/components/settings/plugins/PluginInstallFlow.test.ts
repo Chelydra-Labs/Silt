@@ -12,7 +12,8 @@ const mocks = vi.hoisted(() => ({
   pickPluginArchive: vi.fn(),
   validatePluginArchive: vi.fn(),
   installPlugin: vi.fn(),
-  reloadAll: vi.fn()
+  reloadAll: vi.fn(),
+  onError: vi.fn()
 }))
 
 vi.mock('../../../../bindings/silt/app.js', () => ({
@@ -34,10 +35,20 @@ describe('PluginInstallFlow', () => {
     mocks.validatePluginArchive.mockReset()
     mocks.installPlugin.mockReset()
     mocks.reloadAll.mockReset()
+    mocks.onError.mockReset()
     mocks.reloadAll.mockResolvedValue(undefined)
   })
 
   afterEach(() => cleanup())
+
+  // Every render passes onError so the component's required prop is satisfied
+  // and install/reload errors can be asserted.
+  function renderIt() {
+    return render(PluginInstallFlow, {
+      reloadAll: mocks.reloadAll,
+      onError: mocks.onError
+    })
+  }
 
   it('picks, validates, and renders the manifest preview', async () => {
     mocks.pickPluginArchive.mockResolvedValue('/x/demo.silt-plugin')
@@ -52,7 +63,7 @@ describe('PluginInstallFlow', () => {
       warnings: ['uses experimental feature']
     })
 
-    render(PluginInstallFlow, { reloadAll: mocks.reloadAll })
+    renderIt()
 
     await fireEvent.click(
       screen.getByRole('button', { name: /Install from \.silt-plugin/i })
@@ -76,7 +87,7 @@ describe('PluginInstallFlow', () => {
     })
     mocks.installPlugin.mockResolvedValue(undefined)
 
-    render(PluginInstallFlow, { reloadAll: mocks.reloadAll })
+    renderIt()
     await fireEvent.click(
       screen.getByRole('button', { name: /Install from \.silt-plugin/i })
     )
@@ -95,7 +106,7 @@ describe('PluginInstallFlow', () => {
       new Error('manifest missing id')
     )
 
-    render(PluginInstallFlow, { reloadAll: mocks.reloadAll })
+    renderIt()
     await fireEvent.click(
       screen.getByRole('button', { name: /Install from \.silt-plugin/i })
     )
@@ -108,9 +119,7 @@ describe('PluginInstallFlow', () => {
   })
 
   it('renders the injected actions snippet beside the install button', async () => {
-    const { component } = render(PluginInstallFlow, {
-      reloadAll: mocks.reloadAll
-    })
+    const { component } = renderIt()
     // The actions snippet is optional; without it the install button still
     // renders and no extra buttons appear.
     expect(
@@ -119,5 +128,64 @@ describe('PluginInstallFlow', () => {
     // Sanity: no stray "Install" confirm button before a preview exists.
     expect(screen.queryByRole('button', { name: /^Install$/ })).toBeNull()
     expect(component).toBeTruthy()
+  })
+
+  it('routes an install/reload failure to onError (not the validation line)', async () => {
+    mocks.pickPluginArchive.mockResolvedValue('/x/demo.silt-plugin')
+    mocks.validatePluginArchive.mockResolvedValue({
+      manifest: { id: 'demo', name: 'Demo', version: '1.0.0' },
+      warnings: []
+    })
+    mocks.installPlugin.mockRejectedValue(new Error('disk full'))
+
+    renderIt()
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Install from \.silt-plugin/i })
+    )
+    await flush()
+
+    await fireEvent.click(screen.getByRole('button', { name: /^Install$/ }))
+    await flush()
+
+    // Install/reload errors are tab-wide → onError; they must NOT appear as a
+    // local "Validation failed:" line (reserved for chooseArchive failures).
+    expect(mocks.onError).toHaveBeenCalledWith('disk full')
+    expect(screen.queryByText(/Validation failed:/i)).toBeNull()
+  })
+
+  it('shows a Validating… state and disables the trigger while validating', async () => {
+    // Hold ValidatePluginArchive pending so validating stays true.
+    type ValidationResult = {
+      manifest: {
+        id: string
+        name: string
+        version?: string
+        description?: string
+        capabilities?: Record<string, true | string>
+      }
+      warnings: string[]
+    }
+    let release: ((value: ValidationResult) => void) | null = null
+    mocks.validatePluginArchive.mockImplementation(
+      () =>
+        new Promise<ValidationResult>((resolve) => {
+          release = resolve
+        })
+    )
+    mocks.pickPluginArchive.mockResolvedValue('/x/demo.silt-plugin')
+
+    renderIt()
+    const trigger = screen.getByRole('button', {
+      name: /Install from \.silt-plugin/i
+    })
+    await fireEvent.click(trigger)
+    await flush()
+
+    expect(screen.getByText(/Validating…/i)).toBeTruthy()
+    expect((trigger as HTMLButtonElement).disabled).toBe(true)
+
+    release!({ manifest: { id: 'demo', name: 'Demo' }, warnings: [] })
+    await flush()
+    expect(screen.queryByText(/Validating…/i)).toBeNull()
   })
 })

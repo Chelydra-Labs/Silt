@@ -35,11 +35,21 @@
       const qual = card.requestedCapabilities?.[cap]
       const qualStr = typeof qual === 'string' ? qual : ''
       await RequestCapability(card.id, cap, qualStr)
-      await onRefresh()
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e))
+      return
     } finally {
       grantBusy = ''
+    }
+    // Grant succeeded; refresh to reflect the new state. A refresh failure is
+    // non-fatal to the grant itself — report it distinctly so the user knows
+    // the capability was granted even if the list didn't update.
+    try {
+      await onRefresh()
+    } catch (e) {
+      onError(
+        `Granted, but the list didn't refresh: ${e instanceof Error ? e.message : String(e)}`
+      )
     }
   }
 
@@ -48,30 +58,40 @@
     onError('')
     try {
       await RevokeCapability(card.id, cap)
-      await onRefresh()
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e))
+      return
     } finally {
       grantBusy = ''
+    }
+    try {
+      await onRefresh()
+    } catch (e) {
+      onError(
+        `Revoked, but the list didn't refresh: ${e instanceof Error ? e.message : String(e)}`
+      )
     }
   }
 </script>
 
 {#if card.requestedCapabilities && Object.keys(card.requestedCapabilities).length > 0}
   <div>
-    <div
+    <h5
       class="text-text-muted text-type-2xs font-label-sm-bold uppercase tracking-widest mt-2 mb-1"
       id="caps-{card.id}"
     >
       Capabilities
-    </div>
+    </h5>
     <ul
       class="text-type-xs font-body-md space-y-1"
       aria-labelledby="caps-{card.id}"
     >
       {#each Object.keys(card.requestedCapabilities) as cap (cap)}
         <li class="flex items-center gap-2">
-          <span class="material-symbols-outlined text-icon-sm text-text-muted">
+          <span
+            class="material-symbols-outlined text-icon-sm text-text-muted"
+            aria-hidden="true"
+          >
             {isGranted(cap) ? 'lock_open' : 'lock'}
           </span>
           <span class="flex-1 text-text-primary">
@@ -88,7 +108,7 @@
               class="text-text-muted hover:text-error text-type-2xs font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-0.5 cursor-pointer disabled:opacity-50"
               aria-label="Revoke {capabilityLabels[cap] ?? cap}"
             >
-              Revoke
+              {grantBusy === cap ? 'Revoking…' : 'Revoke'}
             </button>
           {:else}
             <button
@@ -97,7 +117,7 @@
               class="text-accent-primary-start hover:brightness-110 text-type-2xs font-label-sm-bold bg-transparent border border-accent-primary-start/40 rounded px-2 py-0.5 cursor-pointer disabled:opacity-50"
               aria-label="Grant {capabilityLabels[cap] ?? cap}"
             >
-              Grant
+              {grantBusy === cap ? 'Granting…' : 'Grant'}
             </button>
           {/if}
         </li>

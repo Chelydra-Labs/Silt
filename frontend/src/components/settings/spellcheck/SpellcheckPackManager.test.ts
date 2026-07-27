@@ -267,4 +267,32 @@ describe('SpellcheckPackManager', () => {
       expect(appMocks.EnsureDomainPack).toHaveBeenCalledWith('medical')
     })
   })
+
+  it('retries the download when Retry is clicked after a failure', async () => {
+    appMocks.EnsureLanguagePack.mockRejectedValueOnce(
+      new Error('network timeout')
+    ).mockResolvedValueOnce(undefined)
+    appMocks.ListLanguagePacks.mockResolvedValue([enUS, enGB])
+
+    renderIt()
+    await waitFor(() => {
+      expect(languageSelect().options.length).toBeGreaterThan(1)
+    })
+
+    await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
+    await waitFor(() => screen.getByRole('button', { name: /Retry download/i }))
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Retry download/i })
+    )
+    await waitFor(() => {
+      expect(appMocks.EnsureLanguagePack).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      // Retry succeeds → the Retry affordance disappears.
+      expect(
+        screen.queryByRole('button', { name: /Retry download/i })
+      ).toBeNull()
+    })
+  })
 })
