@@ -136,7 +136,7 @@
     renameError = ''
     errorMsg = ''
     const ok = await persistSavedViews(getTaskHubState().savedViews)
-    if (!ok) errorMsg = 'Failed to save view'
+    if (!ok) errorMsg = 'Saved Views: Failed to save view'
   }
 
   // Overwrite the view's stored dimensions with the current hub state
@@ -168,7 +168,7 @@
     applySavedView(updated) // clears the dirty flag
     errorMsg = ''
     const ok = await persistSavedViews(getTaskHubState().savedViews)
-    if (!ok) errorMsg = 'Failed to save view'
+    if (!ok) errorMsg = 'Saved Views: Failed to save view'
   }
 
   function requestDelete(view: SavedView) {
@@ -196,16 +196,18 @@
     const ok = await persistSavedViews(getTaskHubState().savedViews)
     if (!ok && viewToRemove) {
       saveView(viewToRemove)
-      errorMsg = 'Delete failed — the view will reappear on next launch.'
+      errorMsg =
+        'Saved Views: Delete failed — the view will reappear on next launch.'
     } else if (!ok) {
-      errorMsg = 'Failed to delete view — will retry on next launch'
+      errorMsg =
+        'Saved Views: Failed to delete view — will retry on next launch'
     }
   }
 
   async function persistViewList() {
     errorMsg = ''
     const ok = await persistSavedViews(getTaskHubState().savedViews)
-    if (!ok) errorMsg = 'Failed to save view order'
+    if (!ok) errorMsg = 'Saved Views: Failed to save view order'
   }
 
   // --- Reorder (drag + keyboard move) ------------------------------------

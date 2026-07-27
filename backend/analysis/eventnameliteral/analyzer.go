@@ -50,7 +50,10 @@ func run(pass *analysis.Pass) (any, error) {
 	inst := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 	ssainput := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
 
-	rsv := resolver{valid: eventNameConstValues(pass.Pkg)}
+	rsv := resolver{
+		valid:   eventNameConstValues(pass.Pkg),
+		visited: map[*ssa.Function]bool{},
+	}
 
 	// Index SSA Call instructions by source position so each emit callsite can
 	// be matched to its *ssa.Call and the EventName argument resolved.
@@ -178,8 +181,13 @@ func eventNameConstValues(pkg *types.Package) map[string]bool {
 
 // resolver threads the declared-const value set through the recursive resolver
 // so every Const leaf can distinguish const references from stray literals.
+// visited tracks the helper-chase recursion stack to break cycles: a recursive
+// helper (func rec() EventName { return rec() }) would otherwise recurse
+// eventNameLiteralFromValue → *ssa.Call → helperReturnsLiteral unbounded until
+// the vettool stack-overflows.
 type resolver struct {
-	valid map[string]bool
+	valid   map[string]bool
+	visited map[*ssa.Function]bool
 }
 
 // eventNameLiteralFromValue reports whether v provably traces to a string
@@ -262,6 +270,14 @@ func (r *resolver) helperReturnsLiteral(callee ssa.Value) (string, bool) {
 	if !ok || fn == nil || fn.Blocks == nil {
 		return "", false
 	}
+	// Cycle guard: a recursive helper (direct, mutual, or via a local) would
+	// otherwise recurse eventNameLiteralFromValue → *ssa.Call → here unbounded
+	// until the vettool stack-overflows. Conservative allow on a cycle.
+	if r.visited[fn] {
+		return "", false
+	}
+	r.visited[fn] = true
+	defer delete(r.visited, fn)
 	var only string
 	saw := false
 	for _, b := range fn.Blocks {
@@ -302,6 +318,10 @@ func isEventNameType(t types.Type) bool {
 	return ok && b.Kind() == types.String && n.Obj().Name() == "EventName"
 }
 
+// isAIStreamSSA identifies the aiStreamEventName helper by bare name. It is
+// name-pinned in both this SSA path and the AST fast path
+// (isAIStreamEventNameFun); renaming the helper requires updating both, else
+// the slow path falls through to conservative-allow (false negatives, not a crash).
 func isAIStreamSSA(v *ssa.Function) bool {
 	return v != nil && v.Name() == "aiStreamEventName"
 }

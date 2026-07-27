@@ -53,3 +53,13 @@ func eventFor(i int) EventName { return EventName("helper-lit") }
 func (a *App) badHelperReturn() {
 	a.emit(eventFor(1), nil) // want `emit/emitOrQueue: use an EventName const from events.go, not an EventName\("helper-lit"\) value carried through helper 'eventFor'`
 }
+
+func (a *App) badIndirectStreamViaLocal() {
+	n := aiStreamEventName(EventName("indirect-stream-lit"), "id")
+	a.emit(n, nil) // want `emit/emitOrQueue: use an EventName const from events.go, not an EventName\("indirect-stream-lit"\) value carried through local 'n'`
+}
+
+func (a *App) badHelperReturnViaLocal() {
+	n := eventFor(1)
+	a.emit(n, nil) // want `emit/emitOrQueue: use an EventName const from events.go, not an EventName\("helper-lit"\) value carried through local 'n'`
+}
