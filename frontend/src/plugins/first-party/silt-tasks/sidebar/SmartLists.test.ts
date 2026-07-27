@@ -70,4 +70,18 @@ describe('sidebar/SmartLists (#763)', () => {
     await fireEvent.click(screen.getByTestId('today'))
     expect(getTaskHubState().activeFilter).toBe('today')
   })
+
+  it('reloadSignal prop change triggers a re-query', async () => {
+    const ctx = makeCtx()
+    mocks.sqliteQuery.mockImplementation(async () => mockCounts(1, 0, 0, 0, 1))
+    const { rerender } = render(SmartLists, { ctx, reloadSignal: 0 })
+    await flush()
+    const afterMount = mocks.sqliteQuery.mock.calls.length
+    // Initial $effect fired exactly one query on mount.
+    expect(afterMount).toBeGreaterThanOrEqual(1)
+    // Bumping reloadSignal must drive a fresh query.
+    await rerender({ ctx, reloadSignal: 1 })
+    await flush()
+    expect(mocks.sqliteQuery.mock.calls.length).toBeGreaterThan(afterMount)
+  })
 })

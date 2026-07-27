@@ -7,6 +7,17 @@
 // Tracks EventName literals through locals and same-package single-literal
 // helpers at emit sites. Dynamic compositions (concatenation, params,
 // cross-package helpers) remain allowed.
+//
+// Known limitations (intentionally NOT caught):
+//   - The EventName type and its consts are assumed to live in the same package
+//     as emit/emitOrQueue (today both are package main).
+//   - Cross-package helpers are invisible to buildssa (same-package source
+//     only); even a same-package wrapper around one stays allowed.
+//   - A hand-written EventName("block:changed") whose value collides with a
+//     declared const is indistinguishable from a const reference (buildssa folds
+//     both to an identical *ssa.Const) and is allowed.
+//   - Conditional local assignment (phi merge) is conservatively allowed.
+//   - Builder/struct-field/map/slice patterns of EventName are not tracked.
 package eventnameliteral
 
 import (
@@ -93,15 +104,20 @@ func run(pass *analysis.Pass) (any, error) {
 		if ssaCall == nil {
 			return
 		}
-		ssaArgs := ssaCall.Common().Args
-		// Method calls prepend the receiver; drop it to align with AST call.Args.
-		if len(ssaArgs) == len(call.Args)+1 {
-			ssaArgs = ssaArgs[1:]
+		// Select the EventName-typed arg by type, not position: immune to the
+		// method receiver and to variadic-data slice materialization (a one-arg
+		// `a.emit(n)` call yields SSA args [recv, EventName, []any{}]).
+		var eventArg ssa.Value
+		for _, a := range ssaCall.Common().Args {
+			if isEventNameType(a.Type()) {
+				eventArg = a
+				break
+			}
 		}
-		if len(ssaArgs) < 1 {
+		if eventArg == nil {
 			return
 		}
-		lit, ok := rsv.eventNameLiteralFromValue(ssaArgs[0])
+		lit, ok := rsv.eventNameLiteralFromValue(eventArg)
 		if !ok {
 			return
 		}
@@ -113,13 +129,29 @@ func run(pass *analysis.Pass) (any, error) {
 	return nil, nil
 }
 
-// carrierDescription describes how the literal reached the emit site, based on
-// the AST shape of the callsite argument.
+// carrierDescription names the carrier the literal flowed through (a local
+// variable or helper), based on the AST shape of the callsite argument.
 func carrierDescription(arg ast.Expr) string {
-	if _, ok := ast.Unparen(arg).(*ast.CallExpr); ok {
-		return "a helper call"
+	switch e := ast.Unparen(arg).(type) {
+	case *ast.Ident:
+		return "local '" + e.Name + "'"
+	case *ast.CallExpr:
+		return "helper '" + calleeName(e.Fun) + "'"
+	default:
+		return "a local"
 	}
-	return "a local"
+}
+
+// calleeName extracts a readable name from a call's Fun expression.
+func calleeName(fun ast.Expr) string {
+	switch f := ast.Unparen(fun).(type) {
+	case *ast.Ident:
+		return f.Name
+	case *ast.SelectorExpr:
+		return f.Sel.Name
+	default:
+		return "?"
+	}
 }
 
 // eventNameConstValues returns the string values of package-level consts whose
@@ -189,6 +221,10 @@ func (r *resolver) eventNameLiteralFromValue(v ssa.Value) (lit string, ok bool) 
 		}
 		// Same-package helper whose every EventName return is the same literal.
 		return r.helperReturnsLiteral(common.Value)
+	case *ssa.Phi:
+		// Merge of conditional assignments — can't prove which branch wins, so
+		// allow (e.g. `var n EventName; if cond { n = EventName("x") }; emit(n)`).
+		return "", false
 	default:
 		// *ssa.Parameter, *ssa.FreeVar, *ssa.BinOp (concat), *ssa.Global load,
 		// *ssa.Lookup, *ssa.Extract, … → ALLOW.

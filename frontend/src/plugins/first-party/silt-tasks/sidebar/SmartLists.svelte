@@ -24,7 +24,6 @@
   let { ctx, reloadSignal }: Props = $props()
 
   let hubState = $derived(getTaskHubState())
-  let liveFilters = $derived(hubState.filters)
   let activeFilter = $derived(hubState.activeFilter)
 
   interface Counts {
@@ -44,11 +43,21 @@
   })
 
   let errorMsg = $state('')
+  // Suppresses the empty-state hint during the initial IPC gap — counts
+  // init to all-zeros, so without this the "set a due date" hint flashes
+  // even in a vault with hundreds of tasks. Flipped false on first success.
+  let loading = $state(true)
 
   // Roving tabindex for the smart-list keyboard nav.
   let listFocusIdx = $state(0)
 
+  // Monotonic token: a refresh-navigation during a block:changed debounce
+  // window can race two reloads (last-resolve-wins → count blink). The
+  // guard drops stale results. Mirrors CalendarView/ListView/BoardView.
+  let loadSeq = 0
+
   async function reloadCounts(): Promise<void> {
+    const my = ++loadSeq
     errorMsg = ''
     try {
       const today = ctx.today || localToday()
@@ -67,6 +76,8 @@
         [today, tomorrow, weekAhead, today]
       )
       const row = res.rows?.[0] ?? {}
+      // A newer reload superseded this one; drop the stale result.
+      if (my !== loadSeq) return
       counts = {
         today: Number(row.today ?? 0),
         upcoming: Number(row.upcoming ?? 0),
@@ -74,8 +85,11 @@
         completed: Number(row.completed ?? 0),
         all: Number(row.all ?? 0)
       }
+      loading = false
     } catch (e) {
-      errorMsg = e instanceof Error ? e.message : String(e)
+      // Don't let a stale failure clobber a newer successful reload.
+      if (my !== loadSeq) return
+      errorMsg = 'Smart Lists: ' + (e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -132,24 +146,17 @@
     }
   }
 
-  // aria-live region announces count + filter changes.
+  // aria-live region announces count changes only. Filter state belongs to
+  // the header FilterBar and saved-views count to a sibling section, so
+  // announcing them here would be misleading context now that this region
+  // lives in SmartLists.
   let liveMessage = $state('')
   let lastMsgJson = ''
   $effect(() => {
-    const j = JSON.stringify({
-      c: counts,
-      f: liveFilters,
-      v: hubState.savedViews.length
-    })
+    const j = JSON.stringify({ c: counts })
     if (j !== lastMsgJson) {
       lastMsgJson = j
-      const f = liveFilters
-      liveMessage = `Counts: ${counts.today} today, ${counts.upcoming} upcoming, ${counts.overdue} overdue, ${counts.completed} completed, ${counts.all} total. Active filters: ${
-        f.owners.length +
-        f.priorities.length +
-        (f.dueDate ? 1 : 0) +
-        f.tags.length
-      }. ${hubState.savedViews.length} saved views.`
+      liveMessage = `Counts: ${counts.today} today, ${counts.upcoming} upcoming, ${counts.overdue} overdue, ${counts.completed} completed, ${counts.all} total.`
     }
   })
 </script>
@@ -213,7 +220,7 @@
         </li>
       {/each}
     </ul>
-  {:else}
+  {:else if !loading}
     <p
       class="mt-1 px-2 py-2 text-type-xs font-body-md text-text-muted"
       data-testid="calendar-empty-state"

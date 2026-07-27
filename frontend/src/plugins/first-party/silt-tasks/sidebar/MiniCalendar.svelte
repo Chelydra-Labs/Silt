@@ -66,7 +66,13 @@
   // Roving tabindex for the mini-cal-day keyboard nav.
   let miniFocusIdx = $state(0)
 
+  // Monotonic token: the day-rollover gate can fire on the same tick as a
+  // debounced block:changed flush, racing two reloads (last-resolve-wins →
+  // day-dot blink). Mirrors CalendarView/ListView/BoardView.
+  let loadSeq = 0
+
   async function reloadDayDots(): Promise<void> {
+    const my = ++loadSeq
     errorMsg = ''
     try {
       const first = ymd(startOfMonth(miniCursor))
@@ -87,9 +93,14 @@
       }>) {
         if (r.d) bucket[r.d] = r.c
       }
+      // A newer reload superseded this one; drop the stale bucket.
+      if (my !== loadSeq) return
       byDate = bucket
     } catch (e) {
-      errorMsg = e instanceof Error ? e.message : String(e)
+      // Don't let a stale failure clobber a newer successful reload.
+      if (my !== loadSeq) return
+      errorMsg =
+        'Mini calendar: ' + (e instanceof Error ? e.message : String(e))
     }
   }
 

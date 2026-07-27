@@ -326,16 +326,24 @@ var (
 	// (group 1 = array ident, group 2 = bracket body). Used by the allowlist
 	// pass of collectFrontendEvents to resolve Events.On(ident) calls that
 	// reference such an array or a param guarded by <arr>.includes(param).
+	// Only `const`-declared arrays are recognized — `let`/`var`/`readonly`/
+	// `ReadonlyArray<>` shapes are intentionally skipped (see scanFrontend's
+	// residual-gap list). See #778 for the allowlist design rationale.
 	allowlistArrayRE = regexp.MustCompile(`const\s+(\w+)\s*:\s*[\w.]+\[\]\s*=\s*\[([^\]]*)\]`)
 	// eventsOnVarRE captures Events.On(<bareIdent>, …) where the first arg is
 	// a plain identifier (not a quoted literal, EventName.X, or template). It
 	// also fires on Events.On(EventName.X) capturing "EventName"; the allowlist
 	// pass only emits when the ident resolves to a known allowlist or guarded
 	// param, so the member form is a harmless no-op here (still handled by
-	// eventsOnEventNameRE), avoiding double-processing.
+	// eventsOnEventNameRE), avoiding double-processing. Member-access first
+	// args (this.x, obj.prop) are not matched.
 	eventsOnVarRE = regexp.MustCompile(`Events\.On\s*\(\s*([A-Za-z_]\w*)\s*[,)]`)
 	// includesGuardRE binds a parameter ident to an allowlist array via the
 	// `if (arr.includes(param))` guard shape (group 1 = array, group 2 = param).
+	// The binding is file-global, not scoped to the `if` block: once a param
+	// is guarded anywhere in the file, every Events.On(<param>) in that file
+	// resolves to the array. Scoping would need a real parser; this is a
+	// conservative best-effort approximation.
 	includesGuardRE = regexp.MustCompile(`(\w+)\.includes\((\w+)\)`)
 	// Comment strippers applied to frontend source before the scans above run,
 	// so prose or dead code in comments can't seed false positives (e.g. a
@@ -460,15 +468,18 @@ func collectFrontendEvents(stripped string, nameMap map[string]string, eventsSet
 			allowlistByName[arrayName] = wires
 		}
 	}
-	// Bind guarded params to their allowlist: `if (arr.includes(param))`.
-	paramToAllowlist := map[string]string{}
+	// Bind guarded params to their allowlist(s): `if (arr.includes(param))`.
+	// A param may be guarded by more than one array across a file, so the
+	// value is a union — last-write-wins would silently drop one array's
+	// wires. emit-side takes the union of every bound array's wires.
+	paramToAllowlist := map[string][]string{}
 	for _, m := range includesGuardRE.FindAllStringSubmatch(stripped, -1) {
 		if len(m) < 3 {
 			continue
 		}
 		arrayName, param := m[1], m[2]
 		if _, known := allowlistByName[arrayName]; known {
-			paramToAllowlist[param] = arrayName
+			paramToAllowlist[param] = append(paramToAllowlist[param], arrayName)
 		}
 	}
 	// Emit wires for Events.On(ident) only when ident resolves to a known
@@ -485,9 +496,11 @@ func collectFrontendEvents(stripped string, nameMap map[string]string, eventsSet
 			}
 			continue
 		}
-		if arrayName, ok := paramToAllowlist[ident]; ok {
-			for _, w := range allowlistByName[arrayName] {
-				eventsSet[w] = struct{}{}
+		if arrayNames, ok := paramToAllowlist[ident]; ok {
+			for _, an := range arrayNames {
+				for _, w := range allowlistByName[an] {
+					eventsSet[w] = struct{}{}
+				}
 			}
 		}
 	}
@@ -513,10 +526,14 @@ func collectFrontendEvents(stripped string, nameMap map[string]string, eventsSet
 //     Mixed-type arrays (any element not a resolvable EventName.* member) are
 //     skipped entirely.
 //
-// Not resolved: mixed-type allowlist arrays, locals not bound to an allowlist
-// guard, and arbitrary cross-file dataflow. Those events still appear if
-// another site uses a resolvable form. `${EventName.X}` without a later On may
-// over-count (soft gate only).
+// Not resolved: mixed-type allowlist arrays; arrays declared with `let`/`var`/
+// `readonly`/`ReadonlyArray<>` (only `const`-typed `T[]` is recognized);
+// `Events.On(this.x, …)` / `Events.On(obj.prop, …)` member-access first args;
+// locals not bound to an allowlist guard; and arbitrary cross-file dataflow.
+// The `.includes(param)` guard binds file-globally (not scoped to its `if`
+// block) — a known approximation. Those events still appear if another site
+// uses a resolvable form. `${EventName.X}` without a later On may over-count
+// (soft gate only).
 //
 // EventName keys are loaded from frontend/src/generated/enums.ts (sibling of
 // frontendRoot's parent when frontendRoot is frontend/src). The canonical

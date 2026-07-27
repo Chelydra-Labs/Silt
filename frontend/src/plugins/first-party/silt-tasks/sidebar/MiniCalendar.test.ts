@@ -79,4 +79,18 @@ describe('sidebar/MiniCalendar (#763)', () => {
     expect(todayCell).toBeTruthy()
     expect(todayCell!.getAttribute('aria-current')).toBe('date')
   })
+
+  it('reloadSignal prop change triggers a re-query', async () => {
+    const ctx = makeCtx()
+    mocks.sqliteQuery.mockImplementation(async () => mockDayCounts([]))
+    const { rerender } = render(MiniCalendar, { ctx, reloadSignal: 0 })
+    await flush()
+    const afterMount = mocks.sqliteQuery.mock.calls.length
+    // Initial $effect fired exactly one query on mount.
+    expect(afterMount).toBeGreaterThanOrEqual(1)
+    // Bumping reloadSignal must drive a fresh query.
+    await rerender({ ctx, reloadSignal: 1 })
+    await flush()
+    expect(mocks.sqliteQuery.mock.calls.length).toBeGreaterThan(afterMount)
+  })
 })

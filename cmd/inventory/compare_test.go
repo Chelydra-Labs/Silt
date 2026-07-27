@@ -245,7 +245,7 @@ Events.On(deltaEv, handler)
 func TestCollectFrontendEvents_AllowlistArrayAndVarCall(t *testing.T) {
 	nameMap := map[string]string{
 		"EventFoo": "foo",
-		"EventBar": "bar", // in the map but never referenced → must NOT appear
+		"EventBar": "bar", // declared in an unreferenced array → must NOT appear
 		"EventBaz": "baz",
 	}
 	// Synthetic isolated case (issue #778 / F4): each allowlist member is
@@ -257,9 +257,13 @@ func TestCollectFrontendEvents_AllowlistArrayAndVarCall(t *testing.T) {
 	// guard (the real plugins/events.ts shape); directEvents is passed straight
 	// to Events.On (covers the other branch of step C). `mixed` has a
 	// non-EventName element → skipped entirely (conservative: no partial emit).
+	// `unreferenced` is a clean all-EventName.* array but never referenced by
+	// any Events.On(ident) or .includes(param) → its member must NOT leak
+	// (pins the "emit only on reference" contract).
 	src := `
 const hostEvents: PluginEventName[] = [EventName.EventFoo]
 const directEvents: PluginEventName[] = [EventName.EventBaz]
+const unreferenced: PluginEventName[] = [EventName.EventBar]
 const mixed: PluginEventName[] = [EventName.EventFoo, "literal"]
 if (hostEvents.includes(ev)) {
   Events.On(ev, () => {})
@@ -276,6 +280,12 @@ Events.On(directEvents, () => {})
 	for i := range want {
 		if got[i] != want[i] {
 			t.Errorf("events[%d]=%q want %q", i, got[i], want[i])
+		}
+	}
+	// Negative assertion: a declared-but-unreferenced allowlist must not emit.
+	for _, w := range got {
+		if w == "bar" {
+			t.Errorf("unreferenced allowlist leaked `bar`: events=%v", got)
 		}
 	}
 }

@@ -9,8 +9,8 @@ const EventBar EventName = "bar"
 
 type App struct{}
 
-func (a *App) emit(name EventName, data any)                {}
-func (a *App) emitOrQueue(name EventName, data any)         {}
+func (a *App) emit(name EventName, data ...any)             {}
+func (a *App) emitOrQueue(name EventName, data ...any)      {}
 func aiStreamEventName(base EventName, id string) EventName { return base }
 
 func (a *App) goodConstEmit() {
@@ -41,4 +41,12 @@ func dynHelper(base EventName, id string) EventName {
 
 func (a *App) goodDynamicHelper() {
 	a.emit(dynHelper(EventFoo, "id"), nil)
+}
+
+func (a *App) goodConditionalLocalAssign(cond bool) {
+	var n EventName
+	if cond {
+		n = EventName("branch-typo")
+	}
+	a.emit(n, nil) // phi merge → can't prove → allowed (no diagnostic)
 }
