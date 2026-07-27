@@ -101,7 +101,14 @@ func main() {
 			fmt.Fprintln(os.Stderr, "genenums: read fixture:", err)
 			os.Exit(1)
 		}
-		if string(want) != module {
+		// Formatting-agnostic compare: the committed module is Prettier-formatted
+		// on commit (single quotes, line wrapping, no trailing comma), while this
+		// generator emits raw double-quoted output. Normalizing away whitespace,
+		// commas, and quote style compares the SEMANTIC content (name→value pairs
+		// in source order) so formatter churn cannot cause a false drift, while a
+		// real Go const change (added/removed/renamed/reordered value) still trips
+		// the gate.
+		if normalizeForCompare(string(want)) != normalizeForCompare(module) {
 			fmt.Fprintf(os.Stderr,
 				"genenums: DRIFT — %s does not match the generated module.\n"+
 					"Regenerate with: go run -tags tools ./cmd/genenums/ -update %s\n",
@@ -227,12 +234,10 @@ func writeEnum(b *strings.Builder, goType string, consts []constEntry) {
 }
 
 // tsString renders a Go-extracted string as a double-quoted TS string literal.
-// All enum values are simple ASCII ([a-z0-9:-]); strconv.Quote's escaping is a
-// TS-compatible subset for these, but we re-quote explicitly to avoid any
-// locale/slash surprises.
+// All enum values are simple ASCII ([a-z0-9:-]); escape backslash and
+// double-quote (none appear in the current value sets, but keep the generator
+// correct if one ever does).
 func tsString(s string) string {
-	// Use double quotes; escape backslash and double-quote (none appear in the
-	// current value sets, but keep the generator correct if one ever does).
 	r := strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
 	return "\"" + r.Replace(s) + "\""
 }
@@ -244,4 +249,19 @@ func quoteList(names []string) string {
 		parts[i] = tsString(n)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// normalizeForCompare strips formatting noise (whitespace, commas, quote style)
+// so the drift gate compares SEMANTIC content, not formatter output. The
+// committed module is Prettier-formatted on commit; this generator emits raw
+// double-quoted output. Both reduce to the same canonical string when the
+// name→value pairs (in source order) agree, so formatter churn cannot cause a
+// false drift while a real Go const change still trips the gate.
+func normalizeForCompare(s string) string {
+	r := strings.NewReplacer(
+		" ", "", "\t", "", "\n", "", "\r", "",
+		",", "",
+		"'", "\"",
+	)
+	return r.Replace(s)
 }

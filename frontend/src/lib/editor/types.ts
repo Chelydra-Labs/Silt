@@ -5,7 +5,6 @@
 // remains the single on-disk serializer (#40 contract preserved).
 
 export type BlockType = 'TASK' | 'NOTE' | 'HEADER' | 'CODE'
-export type TaskStatus = 'TODO' | 'DOING' | 'DONE' | ''
 
 export interface ParsedBlock {
   id: string

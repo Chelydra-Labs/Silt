@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { formatAIError, isAbortError } from './formatAIError'
-import { AIErrorKind } from '../../generated/enums'
+import { AIErrorKind, AIErrorKindNames } from '../../generated/enums'
 
 describe('formatAIError', () => {
   it('formats PluginAIError codes without [object Object]', () => {
@@ -52,5 +52,21 @@ describe('isAbortError', () => {
     e.name = 'AbortError'
     expect(isAbortError(e)).toBe(true)
     expect(isAbortError(new Error('x'))).toBe(false)
+  })
+})
+
+// Guards #760: when a new AIErrorKind is added to the Go enum and cmd/genenums
+// regenerates AIErrorKindNames, this test exercises formatAIError against every
+// kind so a new addition cannot silently produce empty or broken output. Kinds
+// without a dedicated friendly mapping (ErrCanceled, ErrUnknown) fall through to
+// the generic message path — still non-empty — which is the intentional design.
+describe('formatAIError exhaustiveness over the Go AIErrorKind enum', () => {
+  it('produces a non-empty message for every declared kind', () => {
+    const values = AIErrorKind as Record<string, string>
+    for (const name of AIErrorKindNames) {
+      const code = values[name]
+      const out = formatAIError({ code, message: `probe ${code}` })
+      expect(out.length, `kind ${name} (${code})`).toBeGreaterThan(0)
+    }
   })
 })

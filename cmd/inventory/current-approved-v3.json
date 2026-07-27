@@ -1196,8 +1196,7 @@
       "frontend/src/updates/store.test.ts"
     ],
     "frontend_events": [
-      "menu:save",
-      "vault:closing"
+      "menu:save"
     ],
     "plugin_method_count": 53
   }
