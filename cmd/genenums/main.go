@@ -101,14 +101,13 @@ func main() {
 			fmt.Fprintln(os.Stderr, "genenums: read fixture:", err)
 			os.Exit(1)
 		}
-		// Formatting-agnostic compare: the committed module is Prettier-formatted
-		// on commit (single quotes, line wrapping, no trailing comma), while this
-		// generator emits raw double-quoted output. Normalizing away whitespace,
-		// commas, and quote style compares the SEMANTIC content (name→value pairs
-		// in source order) so formatter churn cannot cause a false drift, while a
-		// real Go const change (added/removed/renamed/reordered value) still trips
-		// the gate.
-		if normalizeForCompare(string(want)) != normalizeForCompare(module) {
+		// Byte-strict compare: the generator emits Prettier-formatted output,
+		// so any byte-level difference is a real drift — a Go const was added,
+		// removed, renamed, reordered, or had its value changed without
+		// regenerating the module. With formatting aligned to .prettierrc,
+		// formatter churn can no longer mask a const change, so we no longer
+		// normalize away whitespace/commas/quote style.
+		if string(want) != module {
 			fmt.Fprintf(os.Stderr,
 				"genenums: DRIFT — %s does not match the generated module.\n"+
 					"Regenerate with: go run -tags tools ./cmd/genenums/ -update %s\n",
@@ -176,7 +175,12 @@ func generate(root string) (string, error) {
 		writeEnum(&b, src.GoType, consts)
 	}
 
-	return b.String(), nil
+	// writeEnum ends each section with a blank-line separator; the final
+	// section should carry no trailing blank line, so trim the run of
+	// trailing newlines and reinstate exactly one (matches Prettier's
+	// "final newline" convention and the committed file's tail byte-for-byte).
+	out := strings.TrimRight(b.String(), "\n") + "\n"
+	return out, nil
 }
 
 // collectConsts walks parenthesized const blocks and returns every const whose
@@ -251,53 +255,71 @@ func collectConsts(blocks []*ast.GenDecl, goType string) ([]constEntry, error) {
 	return out, nil
 }
 
-// writeEnum emits one TS const object + derived union type for the enum.
+// printWidth is Prettier's default line cap. Lines longer than this wrap.
+const printWidth = 80
+
+// writeEnum emits one TS const object + derived union type + sorted Names array
+// for the enum, matching the project's .prettierrc (singleQuote, trailingComma:
+// 'none', tabWidth: 2, semi: false, printWidth: 80) so -update output is
+// byte-identical to a Prettier-formatted file. Source order is preserved for
+// the object members; Names is sorted for stable consumer iteration.
 func writeEnum(b *strings.Builder, goType string, consts []constEntry) {
 	fmt.Fprintf(b, "// %s — generated from the Go const block. Do not edit by hand.\n", goType)
+
+	// Object: one member per line, comma after every member except the last
+	// (trailingComma: 'none' in .prettierrc).
 	fmt.Fprintf(b, "export const %s = {\n", goType)
-	// Source order is preserved (deterministic); the values are already in
-	// declaration order from collectConsts.
-	names := make([]string, 0, len(consts))
-	for _, c := range consts {
-		fmt.Fprintf(b, "  %s: %s,\n", c.Name, tsString(c.Value))
-		names = append(names, c.Name)
+	for i, c := range consts {
+		comma := ","
+		if i == len(consts)-1 {
+			comma = ""
+		}
+		fmt.Fprintf(b, "  %s: %s%s\n", c.Name, tsString(c.Value), comma)
 	}
 	b.WriteString("} as const\n\n")
-	fmt.Fprintf(b, "export type %s = (typeof %s)[keyof typeof %s]\n\n", goType, goType, goType)
-	// A sorted name list helps consumers iterate without re-deriving keys.
-	sort.Strings(names)
-	fmt.Fprintf(b, "export const %sNames = [%s] as const\n\n", goType, quoteList(names))
-}
 
-// tsString renders a Go-extracted string as a double-quoted TS string literal.
-// All enum values are simple ASCII ([a-z0-9:-]); escape backslash and
-// double-quote (none appear in the current value sets, but keep the generator
-// correct if one ever does).
-func tsString(s string) string {
-	r := strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
-	return "\"" + r.Replace(s) + "\""
-}
-
-// quoteList renders a comma-separated list of quoted TS string literals.
-func quoteList(names []string) string {
-	parts := make([]string, len(names))
-	for i, n := range names {
-		parts[i] = tsString(n)
+	// Union type: one line if it fits within printWidth, else wrap after `=`
+	// with a 2-space-indented continuation (Prettier's break style for this
+	// exact shape).
+	typeOneLine := fmt.Sprintf("export type %s = (typeof %s)[keyof typeof %s]", goType, goType, goType)
+	if len(typeOneLine) <= printWidth {
+		fmt.Fprintf(b, "%s\n\n", typeOneLine)
+	} else {
+		fmt.Fprintf(b, "export type %s =\n  (typeof %s)[keyof typeof %s]\n\n", goType, goType, goType)
 	}
-	return strings.Join(parts, ", ")
+
+	// Names array: sorted; one line if it fits, else multi-line with one
+	// entry per line (2-space indent, no trailing comma on the last entry).
+	names := make([]string, 0, len(consts))
+	for _, c := range consts {
+		names = append(names, c.Name)
+	}
+	sort.Strings(names)
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = tsString(n)
+	}
+	namesOneLine := fmt.Sprintf("export const %sNames = [%s] as const", goType, strings.Join(quoted, ", "))
+	if len(namesOneLine) <= printWidth {
+		fmt.Fprintf(b, "%s\n\n", namesOneLine)
+	} else {
+		fmt.Fprintf(b, "export const %sNames = [\n", goType)
+		for i, q := range quoted {
+			comma := ","
+			if i == len(quoted)-1 {
+				comma = ""
+			}
+			fmt.Fprintf(b, "  %s%s\n", q, comma)
+		}
+		b.WriteString("] as const\n\n")
+	}
 }
 
-// normalizeForCompare strips formatting noise (whitespace, commas, quote style)
-// so the drift gate compares SEMANTIC content, not formatter output. The
-// committed module is Prettier-formatted on commit; this generator emits raw
-// double-quoted output. Both reduce to the same canonical string when the
-// name→value pairs (in source order) agree, so formatter churn cannot cause a
-// false drift while a real Go const change still trips the gate.
-func normalizeForCompare(s string) string {
-	r := strings.NewReplacer(
-		" ", "", "\t", "", "\n", "", "\r", "",
-		",", "",
-		"'", "\"",
-	)
-	return r.Replace(s)
+// tsString renders a Go-extracted string as a single-quoted TS string literal
+// (.prettierrc singleQuote: true). Escape backslash and single quote; the
+// current value set is simple ASCII so neither escape fires, but keep the
+// generator correct if one ever does.
+func tsString(s string) string {
+	r := strings.NewReplacer("\\", "\\\\", "'", "\\'")
+	return "'" + r.Replace(s) + "'"
 }
