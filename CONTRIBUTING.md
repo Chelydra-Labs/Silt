@@ -163,6 +163,11 @@ the Go typed-const blocks and emits the committed
   the `cmd/inventory` parity gate.
 - `frontend/src/generated/` is in `.prettierignore` — it is generated output, not
   hand-formatted.
+- **Event inventory:** `cmd/inventory` resolves frontend `Events.On(EventName.*)`
+  (and template compositions `${EventName.X}:…`) via `enums.ts`. The canonical
+  event surface for the IPC gate is still **`go_events`** (from `events.go`);
+  `frontend_events` is informational subscription coverage — section diffs do
+  not fail the method-signature gate.
 - Design rationale (why Wails's own generator was insufficient):
   [`docs/decisions/0007-shared-enums-codegen.md`](./docs/decisions/0007-shared-enums-codegen.md).
 
