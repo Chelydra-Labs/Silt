@@ -406,12 +406,18 @@ func collectFrontendEvents(stripped string, nameMap map[string]string, eventsSet
 // stripped (see stripComments) before matching, so prose mentions like a
 // test's "// Events.On('menu:save')" can't seed false positives.
 //
-// frontend_events resolves four forms after comment strip:
+// frontend_events is BEST-EFFORT (not a full TS dataflow analysis). It resolves
+// four forms after comment strip:
 //  1. Events.On('literal') — legacy / tests
 //  2. Events.On(EventName.<Ident>) — post-centralization const member
 //  3. Events.On(`${EventName.<Ident>}:...`) — inline template composition
 //  4. `${EventName.<Ident>}` interpolations used to build names before
 //     Events.On (AI stream owner-scoped events) — base wire string only
+//
+// Not resolved: Events.On(variable) where the name is only an allowlist member
+// or other non-template local (e.g. plugins/events.ts host bus). Those events
+// still appear if another file uses a resolvable form. `${EventName.X}` without
+// a later On may over-count (soft gate only).
 //
 // EventName keys are loaded from frontend/src/generated/enums.ts (sibling of
 // frontendRoot's parent when frontendRoot is frontend/src). The canonical

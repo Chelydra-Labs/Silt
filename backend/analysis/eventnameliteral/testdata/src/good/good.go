@@ -33,3 +33,10 @@ func (a *App) goodLocal() {
 	n := EventFoo
 	a.emitOrQueue(n, nil)
 }
+
+// Intentional scope limit: the analyzer does not track EventName("…") through
+// locals (no SSA). Construction-site typos remain a human/review concern.
+func (a *App) goodLocalFromConversion() {
+	n := EventName("indirect-typo")
+	a.emit(n, nil)
+}

@@ -164,22 +164,52 @@ the Go typed-const blocks and emits the committed
 - `frontend/src/generated/` is in `.prettierignore` — it is generated output, not
   hand-formatted.
 - **Event inventory:** `cmd/inventory` resolves frontend `Events.On(EventName.*)`
-  (and template compositions `${EventName.X}:…`) via `enums.ts`. The canonical
-  event surface for the IPC gate is still **`go_events`** (from `events.go`);
-  `frontend_events` is informational subscription coverage — section diffs do
-  not fail the method-signature gate.
+  (and template compositions / `${EventName.X}` interpolations) via `enums.ts`.
+  The canonical event surface for the IPC gate is still **`go_events`** (from
+  `events.go`); `frontend_events` is **best-effort, informational** subscription
+  coverage — section diffs do not fail the method-signature gate. The scan does
+  **not** follow `Events.On(variable)` dataflow (e.g. an allowlist loop that
+  passes a local); those events only appear if another site uses a resolvable
+  form or a `` `${EventName.X}` `` interpolation.
 - Design rationale (why Wails's own generator was insufficient):
   [`docs/decisions/0007-shared-enums-codegen.md`](./docs/decisions/0007-shared-enums-codegen.md).
+
+## Custom Go analyzers (vettools)
+
+Two project-specific analyzers run in CI and the pre-push hook (same pattern:
+`//go:build tools` CLI under `cmd/`, `go build -tags tools -o ./.gobins/…`,
+then `go vet -vettool=… ./...`):
+
+| Analyzer | Package | Catches |
+|----------|---------|---------|
+| **withaipreflightdefer** | `backend/analysis/withaipreflightdefer` | `withAIPreflight`'s done func not deferred (vault-close drain leak) |
+| **eventnameliteral** | `backend/analysis/eventnameliteral` | bare string literals / `EventName("…")` as the first arg to `emit` / `emitOrQueue` |
+
+**eventnameliteral** closes the Go untyped-string-constant hole: after
+`emit` takes `EventName`, a typo’d `a.emit("tpyo:event", …)` still type-checks.
+The analyzer rejects that at CI time. It **allows** declared `EventName` consts,
+`aiStreamEventName(const, pluginID)`, and non-literal expressions (params /
+locals). It does **not** track `n := EventName("typo"); a.emit(n)` — that is
+out of scope (emit-site literals only). `_test.go` is skipped so queue tests
+can keep bare strings.
+
+Local run (Windows may need a `.exe` suffix on the binary path):
+
+```bash
+go build -tags tools -o ./.gobins/eventnameliteral ./cmd/eventnameliteral
+go vet -vettool=./.gobins/eventnameliteral ./...
+```
 
 ## Pre-push hook
 
 `git config core.hooksPath .githooks` enables a fast local Go gate on every
-push:
+push when any `.go` file changed:
 
-- **`go test -race -count=1 ./...`** when any `.go` file changed.
-- **IPC binding-parity check** (`go run -tags tools ./cmd/inventory/ -compare`)
-  when any `.go` file changed — catches approved-methods manifest drift before
-  CI does and prints the `-update` regen command on failure.
+- **`go test -race -count=1 ./...`**
+- **IPC binding-parity** — `go run -tags tools ./cmd/inventory/ -compare`
+- **Shared-enum drift** — `go run -tags tools ./cmd/genenums/ -compare`
+- **withAIPreflight defer-contract** vettool
+- **EventName emit-literal** vettool
 
 This is intentionally a *fast local gate* — it catches Go regressions in
 seconds before you push, so you're not waiting on CI for a broken build.

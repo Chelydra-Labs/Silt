@@ -1,11 +1,15 @@
 // Package eventnameliteral defines a Go analyzer that rejects bare string
 // literals (and EventName("…") conversions) as the first argument to emit /
 // emitOrQueue. Event names must come from declared EventName consts so renames
-// and typos are compile-time / CI-time failures rather than silent runtime
-// mismatches with the frontend.
+// and typos are CI-time failures rather than silent runtime mismatches with
+// the frontend.
+//
+// Scope is emit-site literals only: n := EventName("typo"); a.emit(n) is
+// intentionally allowed (no SSA). Prefer events.go consts at construction.
 package eventnameliteral
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
@@ -53,42 +57,45 @@ func run(pass *analysis.Pass) (any, error) {
 		if len(call.Args) < 1 {
 			return
 		}
-		if isForbiddenEventNameArg(call.Args[0], pass.TypesInfo) {
-			pass.Reportf(call.Args[0].Pos(), "emit/emitOrQueue event name must be an EventName const, not a string literal")
+		if msg, bad := forbiddenEventNameMsg(call.Args[0], pass.TypesInfo); bad {
+			pass.Reportf(call.Args[0].Pos(), "%s", msg)
 		}
 	})
 
 	return nil, nil
 }
 
-// isForbiddenEventNameArg reports whether expr is a bare string literal or an
-// EventName("…") conversion/call with a string-literal argument.
+// forbiddenEventNameMsg reports whether expr is a forbidden emit-site event
+// name and returns a diagnostic that quotes the bad literal when possible.
 // Allowed: EventName-typed consts, aiStreamEventName(const, …), params/locals.
-func isForbiddenEventNameArg(expr ast.Expr, info *types.Info) bool {
+func forbiddenEventNameMsg(expr ast.Expr, info *types.Info) (msg string, bad bool) {
 	expr = ast.Unparen(expr)
 
 	switch e := expr.(type) {
 	case *ast.BasicLit:
-		return e.Kind == token.STRING
+		if e.Kind != token.STRING {
+			return "", false
+		}
+		return fmt.Sprintf("emit/emitOrQueue: use an EventName const from events.go, not bare string literal %s", e.Value), true
 
 	case *ast.CallExpr:
 		// EventName("literal") — type conversion or call with string lit arg.
 		if isEventNameFun(e.Fun, info) && len(e.Args) == 1 {
 			arg := ast.Unparen(e.Args[0])
 			if lit, ok := arg.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-				return true
+				return fmt.Sprintf("emit/emitOrQueue: use an EventName const from events.go, not EventName(%s) conversion", lit.Value), true
 			}
 		}
 		// aiStreamEventName(first, …): reject only if first arg is forbidden.
 		if isAIStreamEventNameFun(e.Fun, info) && len(e.Args) >= 1 {
-			return isForbiddenEventNameArg(e.Args[0], info)
+			return forbiddenEventNameMsg(e.Args[0], info)
 		}
 		// Other calls (helpers returning EventName) are allowed.
-		return false
+		return "", false
 
 	default:
-		// Ident/Selector consts, params, locals, etc. — allowed.
-		return false
+		// Ident/Selector consts, params, locals, etc. — allowed (no SSA).
+		return "", false
 	}
 }
 

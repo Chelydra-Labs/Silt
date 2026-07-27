@@ -1,29 +1,20 @@
 package main
 
 // =========================================================================
-// AI provider bindings (#216)
+// AI provider config + probe + cache (#216)
 // =========================================================================
 //
-// This file exposes the core AI service (backend/ai) over the Wails bridge.
-// Two consumers reach it:
+// Settings-facing AI bindings: GetAIProviderConfig / UpdateAIProviderConfig /
+// SetAIAPIKey / ClearAIAPIKey / TestAIConnection / ListModels / feature toggles.
+// These are NOT capability-gated (core settings, not plugin calls) and never
+// return a raw key — GetAIProviderConfig emits only a HasKey flag.
 //
-//   - Plugins, via PluginAIComplete / PluginAIEmbed. These are gated exactly
-//     like PluginFetch: session token → requireGrant(CapAI) → rate limiter →
-//     size cap → service call → audit. Plugins NEVER receive credentials; the
-//     provider config + resolved key are snapshotted server-side and handed to
-//     the service as a value.
-//   - The first-party AI Provider settings page, via GetAIProviderConfig /
-//     UpdateAIProviderConfig / SetAIAPIKey / ClearAIAPIKey / TestAIConnection.
-//     These are NOT capability-gated (they are core cross-cutting settings, not
-//     plugin calls) but they never return a raw key — GetAIProviderConfig emits
-//     only a HasKey flag.
+// Related files (same package):
+//   - app_ai_keys.go     — OS-keyring resolve/set/migrate (#218, #761)
+//   - app_ai_plugin.go   — plugin gateway (preflight, complete/embed, tools)
+//   - app_ai_stream.go   — streaming runtime + cancel/ready (#226, #762)
 //
-// Lock ordering follows the app.go invariant (vaultMu before configMu). The
-// plugin bindings snapshot the provider config under the locks, RELEASE them,
-// and only then perform the (potentially long) HTTP call so an LLM completion
-// cannot hold vaultMu for 60s. The snapshot is a value copy, so no lock is
-// needed during the call. Auditing happens after the call with no configMu/vaultMu
-// held (auditAI uses its own mutex).
+// Lock ordering follows the app.go invariant (vaultMu before configMu).
 
 import (
 	"context"

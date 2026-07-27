@@ -11,17 +11,21 @@ func (a *App) emitOrQueue(name EventName, data any)         {}
 func aiStreamEventName(base EventName, id string) EventName { return base }
 
 func (a *App) badBareEmit() {
-	a.emit("vault:changed", nil) // want `emit/emitOrQueue event name must be an EventName const, not a string literal`
+	a.emit("vault:changed", nil) // want `emit/emitOrQueue: use an EventName const from events.go, not bare string literal "vault:changed"`
 }
 
 func (a *App) badBareEmitOrQueue() {
-	a.emitOrQueue("ai:chunk", nil) // want `emit/emitOrQueue event name must be an EventName const, not a string literal`
+	a.emitOrQueue("ai:chunk", nil) // want `emit/emitOrQueue: use an EventName const from events.go, not bare string literal "ai:chunk"`
 }
 
 func (a *App) badConversion() {
-	a.emit(EventName("nope"), nil) // want `emit/emitOrQueue event name must be an EventName const, not a string literal`
+	a.emit(EventName("nope"), nil) // want `emit/emitOrQueue: use an EventName const from events.go, not EventName\("nope"\) conversion`
+}
+
+func (a *App) badParenLit() {
+	a.emit(("tpyo:event"), nil) // want `emit/emitOrQueue: use an EventName const from events.go, not bare string literal "tpyo:event"`
 }
 
 func (a *App) badStreamHelperLiteral() {
-	a.emit(aiStreamEventName(EventName("stream-lit"), "id"), nil) // want `emit/emitOrQueue event name must be an EventName const, not a string literal`
+	a.emit(aiStreamEventName(EventName("stream-lit"), "id"), nil) // want `emit/emitOrQueue: use an EventName const from events.go, not EventName\("stream-lit"\) conversion`
 }
