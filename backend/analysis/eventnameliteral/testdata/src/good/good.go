@@ -34,9 +34,11 @@ func (a *App) goodLocal() {
 	a.emitOrQueue(n, nil)
 }
 
-// Intentional scope limit: the analyzer does not track EventName("…") through
-// locals (no SSA). Construction-site typos remain a human/review concern.
-func (a *App) goodLocalFromConversion() {
-	n := EventName("indirect-typo")
-	a.emit(n, nil)
+// A helper composing the name dynamically must stay allowed.
+func dynHelper(base EventName, id string) EventName {
+	return EventName(string(base) + ":" + id)
+}
+
+func (a *App) goodDynamicHelper() {
+	a.emit(dynHelper(EventFoo, "id"), nil)
 }

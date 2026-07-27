@@ -4,6 +4,8 @@ package bad
 
 type EventName string
 
+const EventFoo EventName = "foo"
+
 type App struct{}
 
 func (a *App) emit(name EventName, data any)                {}
@@ -28,4 +30,21 @@ func (a *App) badParenLit() {
 
 func (a *App) badStreamHelperLiteral() {
 	a.emit(aiStreamEventName(EventName("stream-lit"), "id"), nil) // want `emit/emitOrQueue: use an EventName const from events.go, not EventName\("stream-lit"\) conversion`
+}
+
+func (a *App) badLocalFromConversion() {
+	n := EventName("indirect-typo")
+	a.emit(n, nil) // want `emit/emitOrQueue: use an EventName const from events.go, not an EventName\("indirect-typo"\) value carried through a local`
+}
+
+func (a *App) badLocalReassignedTwice() {
+	n := EventFoo
+	n = EventName("now-typo")
+	a.emitOrQueue(n, nil) // want `EventName\("now-typo"\)`
+}
+
+func eventFor(i int) EventName { return EventName("helper-lit") }
+
+func (a *App) badHelperReturn() {
+	a.emit(eventFor(1), nil) // want `EventName\("helper-lit"\) value carried through a helper call`
 }
