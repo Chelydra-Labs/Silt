@@ -167,10 +167,12 @@ the Go typed-const blocks and emits the committed
   (and template compositions / `${EventName.X}` interpolations) via `enums.ts`.
   The canonical event surface for the IPC gate is still **`go_events`** (from
   `events.go`); `frontend_events` is **best-effort, informational** subscription
-  coverage — section diffs do not fail the method-signature gate. The scan does
-  **not** follow `Events.On(variable)` dataflow (e.g. an allowlist loop that
-  passes a local); those events only appear if another site uses a resolvable
-  form or a `` `${EventName.X}` `` interpolation.
+  coverage — section diffs do not fail the method-signature gate. The scan also
+  resolves a typed `EventName.*[]` allowlist array when `Events.On(ident)`
+  references the array or a parameter guarded by `<array>.includes(param)`
+  (e.g. `plugins/events.ts`). It does **not** follow mixed-type arrays,
+  arbitrary non-allowlist locals, or cross-file dataflow; those events only
+  appear if another site uses a resolvable form.
 - Design rationale (why Wails's own generator was insufficient):
   [`docs/decisions/0007-shared-enums-codegen.md`](./docs/decisions/0007-shared-enums-codegen.md).
 

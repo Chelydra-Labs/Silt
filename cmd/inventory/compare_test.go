@@ -241,3 +241,41 @@ Events.On(deltaEv, handler)
 		}
 	}
 }
+
+func TestCollectFrontendEvents_AllowlistArrayAndVarCall(t *testing.T) {
+	nameMap := map[string]string{
+		"EventFoo": "foo",
+		"EventBar": "bar", // in the map but never referenced → must NOT appear
+		"EventBaz": "baz",
+	}
+	// Synthetic isolated case (issue #778 / F4): each allowlist member is
+	// reachable ONLY through its array, not via any other resolvable form, so
+	// this exercises the allowlist pass directly. In the real codebase both
+	// current allowlist members are already covered by direct const-member
+	// subscriptions in other files, so this isolation is what proves the pass
+	// finds members on its own. hostEvents is consumed via a `.includes(ev)`
+	// guard (the real plugins/events.ts shape); directEvents is passed straight
+	// to Events.On (covers the other branch of step C). `mixed` has a
+	// non-EventName element → skipped entirely (conservative: no partial emit).
+	src := `
+const hostEvents: PluginEventName[] = [EventName.EventFoo]
+const directEvents: PluginEventName[] = [EventName.EventBaz]
+const mixed: PluginEventName[] = [EventName.EventFoo, "literal"]
+if (hostEvents.includes(ev)) {
+  Events.On(ev, () => {})
+}
+Events.On(directEvents, () => {})
+`
+	eventsSet := map[string]struct{}{}
+	collectFrontendEvents(stripComments(src), nameMap, eventsSet)
+	got := sortedKeys(eventsSet)
+	want := []string{"baz", "foo"}
+	if len(got) != len(want) {
+		t.Fatalf("events=%v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("events[%d]=%q want %q", i, got[i], want[i])
+		}
+	}
+}
