@@ -177,6 +177,11 @@ jobs:
           go build -tags tools -o ./.gobins/withaipreflightdefer ./cmd/withaipreflightdefer
           go vet -vettool=./.gobins/withaipreflightdefer ./...
 
+      - name: EventName emit-literal analyzer
+        run: |
+          go build -tags tools -o ./.gobins/eventnameliteral ./cmd/eventnameliteral
+          go vet -vettool=./.gobins/eventnameliteral ./...
+
       - name: Test with race detector
         run: go test -race -count=1 ./...
 

@@ -12,5 +12,6 @@ import (
 	_ "golang.org/x/tools/go/ast/inspector"
 	_ "golang.org/x/tools/go/types/typeutil"
 
+	_ "silt/backend/analysis/eventnameliteral"
 	_ "silt/backend/analysis/withaipreflightdefer"
 )
