@@ -25,6 +25,7 @@
   import { aiProviderNeedsSetup } from '../../settings/ai-setup'
   import SettingsForm from './SettingsForm.svelte'
   import NetworkAuditViewer from './NetworkAuditViewer.svelte'
+  import { capabilityLabels, qualifierLabel } from './plugins/capabilityLabels'
   import type { SettingSchema } from '../../plugins/sdk'
 
   /** Session security aggregate from GetPluginSecurityStats (#518). */
@@ -71,25 +72,6 @@
     updateAvailable?: boolean
     /** First-party AI modules: enablement lives under Settings → AI (#632). */
     managedInAI?: boolean
-  }
-
-  /** Human label for a capability id. */
-  const capabilityLabels: Record<string, string> = {
-    'read-files': 'Read notebook files',
-    'write-files': 'Write notebook files',
-    network: 'Network access',
-    'os-open': 'Open files / URLs',
-    'os-clipboard': 'Clipboard',
-    'os-notify': 'Notifications',
-    'ui-surface': 'Render UI surfaces',
-    'editor-schema': 'Extend the editor',
-    'content-mutate': 'Create and modify content',
-    ai: 'AI completions'
-  }
-
-  function qualifierLabel(q: true | string): string {
-    if (q === true || q === 'granted' || q === '') return ''
-    return ` (${q})`
   }
 
   let cards = $state<Card[]>([])
