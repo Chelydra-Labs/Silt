@@ -5,6 +5,7 @@ import type {
   PluginAICompleteResult,
   PluginContext
 } from '../../../sdk'
+import { AIErrorKind } from '../../../../generated/enums'
 
 export type StreamSession = {
   cancel: () => void
@@ -21,7 +22,7 @@ export function isStreamUnsupportedError(e: unknown): boolean {
   const err = e as { code?: string; message?: string }
   const code = String(err?.code ?? '')
   const msg = String(err?.message ?? '')
-  return code.includes('bad-request') || /stream/i.test(msg)
+  return code.includes(AIErrorKind.ErrBadRequest) || /stream/i.test(msg)
 }
 
 export async function completeBuffered(

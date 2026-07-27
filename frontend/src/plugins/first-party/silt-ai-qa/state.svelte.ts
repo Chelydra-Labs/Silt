@@ -5,7 +5,7 @@ import {
   aiProviderNeedsSetup,
   embeddingProviderNeedsSetup
 } from '../../../settings/ai-setup'
-import { AIProviderType } from '../../../generated/enums'
+import { AIProviderType, AIErrorKind } from '../../../generated/enums'
 import { settings as appSettings } from '../../../settings/store.svelte'
 import { createConversation, type Conversation } from './conversation'
 import { hybridRetrieve, RetrieveError } from './retrieve'
@@ -404,7 +404,7 @@ export function createQAController() {
         // Fallback to non-stream if provider rejects streaming.
         if (
           asString((streamErr as { code?: unknown } | null)?.code).includes(
-            'bad-request'
+            AIErrorKind.ErrBadRequest
           ) ||
           /stream/i.test(
             asString((streamErr as { message?: unknown } | null)?.message)
