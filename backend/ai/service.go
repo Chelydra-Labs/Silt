@@ -70,6 +70,34 @@ const (
 	ProviderAnthropic        AIProviderType = "anthropic"
 )
 
+// Dispatch categories returned by providerCategory. The dispatchers (Complete,
+// Embed, ListModels, CompleteStream) switch on these; Local + OpenAI-compatible
+// share the OpenAI request shape, Google and Anthropic have native first-party
+// paths.
+const (
+	categoryOpenAICompatible = "openai-compatible"
+	categoryGoogle           = "google"
+	categoryAnthropic        = "anthropic"
+)
+
+// providerCategory is the single source of truth for provider-type → dispatch
+// routing, shared by Complete, Embed, ListModels, and CompleteStream.
+// provider_exhaustive_test.go fails if a new AIProviderType constant is added
+// without a branch here, so a future provider cannot be introduced without an
+// explicit routing decision. The dispatchers consume the returned category, so
+// this function — not a parallel mirror — is what the exhaustive guard protects.
+func providerCategory(p AIProviderType) string {
+	switch p {
+	case ProviderLocal, ProviderOpenAICompatible:
+		return categoryOpenAICompatible
+	case ProviderGoogle:
+		return categoryGoogle
+	case ProviderAnthropic:
+		return categoryAnthropic
+	}
+	return ""
+}
+
 // httpClient is the dedicated client for all AI provider calls. It carries a
 // CheckRedirect that rejects cross-host redirects AND same-host scheme
 // downgrades (https→http), so a compromised or misconfigured endpoint cannot
@@ -615,14 +643,15 @@ func Complete(ctx context.Context, req CompleteRequest) (CompleteResult, error) 
 	if err := validateBaseURL(baseURL); err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrBadRequest, Message: err.Error()}
 	}
-	switch req.Provider.ProviderType {
-	case ProviderGoogle:
+	switch providerCategory(req.Provider.ProviderType) {
+	case categoryGoogle:
 		return completeGoogle(ctx, req, model, baseURL)
-	case ProviderAnthropic:
+	case categoryAnthropic:
 		return completeAnthropic(ctx, req, model, baseURL)
 	default:
-		// ProviderLocal and ProviderOpenAICompatible (and any unknown value)
-		// all use the OpenAI-compatible shape — it is the universal default.
+		// categoryOpenAICompatible (Local + OpenAI-compatible) and any
+		// unrecognized value all use the OpenAI-compatible shape — it is the
+		// universal default.
 		return completeOpenAI(ctx, req, model, baseURL)
 	}
 }
@@ -650,10 +679,10 @@ func Embed(ctx context.Context, req EmbedRequest) (EmbedResult, error) {
 	if err := validateBaseURL(baseURL); err != nil {
 		return EmbedResult{}, &AIError{Kind: ErrBadRequest, Message: err.Error()}
 	}
-	switch req.Provider.ProviderType {
-	case ProviderGoogle:
+	switch providerCategory(req.Provider.ProviderType) {
+	case categoryGoogle:
 		return embedGoogle(ctx, req, model, baseURL)
-	case ProviderAnthropic:
+	case categoryAnthropic:
 		return EmbedResult{}, &AIError{Kind: ErrBadRequest, Message: "anthropic provider does not support embeddings; use an OpenAI-compatible or local embedding endpoint"}
 	default:
 		return embedOpenAI(ctx, req, model, baseURL)
@@ -695,10 +724,10 @@ func ListModels(ctx context.Context, p AIProvider, which string) ([]AIModel, err
 	if err := validateBaseURL(baseURL); err != nil {
 		return nil, &AIError{Kind: ErrBadRequest, Message: err.Error()}
 	}
-	switch p.ProviderType {
-	case ProviderGoogle:
+	switch providerCategory(p.ProviderType) {
+	case categoryGoogle:
 		return listModelsGoogle(ctx, p, baseURL, which)
-	case ProviderAnthropic:
+	case categoryAnthropic:
 		return listModelsAnthropic(ctx, p, baseURL)
 	default:
 		return listModelsOpenAI(ctx, p, baseURL)

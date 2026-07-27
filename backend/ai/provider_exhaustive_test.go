@@ -2,29 +2,12 @@ package ai
 
 import "testing"
 
-// providerCategory mirrors the provider-type dispatch routing shared by
-// Complete, Embed, ListModels, and CompleteStream: local + openai-compatible
-// share the OpenAI-compatible request shape, google and anthropic have native
-// first-party paths. Every AIProviderType MUST resolve to a category here; the
-// exhaustive check below fails if a new provider constant is added without a
-// branch (and without being added to the allProviders list a developer must
-// extend). This is the compile/test guard #760 asks for so a future provider
-// addition cannot silently fall through to the wrong dispatcher.
-func providerCategory(p AIProviderType) string {
-	switch p {
-	case ProviderLocal, ProviderOpenAICompatible:
-		return "openai-compatible"
-	case ProviderGoogle:
-		return "google"
-	case ProviderAnthropic:
-		return "anthropic"
-	}
-	return ""
-}
-
 // allProviders is the canonical list of provider-type values. When you add a
-// new provider, append it here AND add a branch to providerCategory; the test
-// below then enforces the dispatch branch exists.
+// new provider, append it here AND add a branch to providerCategory (the
+// production routing function in service.go that Complete/Embed/ListModels/
+// CompleteStream all switch on); the tests below then enforce that every known
+// provider resolves to a non-empty category and that no two consts share a
+// value.
 var allProviders = []AIProviderType{
 	ProviderLocal,
 	ProviderOpenAICompatible,
@@ -33,9 +16,10 @@ var allProviders = []AIProviderType{
 }
 
 // TestProviderDispatchExhaustive fails if any known provider constant lacks a
-// dispatch category, or if a dispatch path loses its backing provider. It is
-// the durable replacement for the per-literal ai/config drift test that
-// existed while the constants were duplicated across packages.
+// dispatch category, or if a dispatch path loses its backing provider. It
+// exercises the PRODUCTION providerCategory (service.go) — the single source of
+// truth the four dispatchers route through — so the guard cannot drift from
+// real dispatch the way a parallel mirror could.
 func TestProviderDispatchExhaustive(t *testing.T) {
 	seen := map[string]bool{}
 	for _, p := range allProviders {
