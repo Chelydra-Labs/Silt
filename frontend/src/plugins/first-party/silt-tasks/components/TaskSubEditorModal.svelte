@@ -162,11 +162,17 @@
         const safeSubtree = (subtree ?? []) as ParsedBlock[]
         let normalized = safeSubtree
         if (safeSubtree.length > 0) {
-          const minDepth = Math.min(...safeSubtree.map((b) => b.depth ?? 0))
+          // Compute minDepth over blocks that carry a numeric depth — a single
+          // malformed block with depth:undefined must not force minDepth to 0
+          // and suppress normalization for the whole subtree.
+          const depths = safeSubtree
+            .map((b) => b.depth)
+            .filter((d): d is number => typeof d === 'number')
+          const minDepth = depths.length ? Math.min(...depths) : 0
           if (minDepth > 0) {
             normalized = safeSubtree.map((b) => ({
               ...b,
-              depth: Math.max(0, (b.depth ?? 0) - minDepth)
+              depth: Math.max(0, (b.depth ?? minDepth) - minDepth)
             }))
           }
         }

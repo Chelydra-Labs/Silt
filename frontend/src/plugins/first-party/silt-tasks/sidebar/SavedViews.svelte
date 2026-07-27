@@ -5,9 +5,8 @@
   // and drag/keyboard reorder.
   //
   // Reads the singleton hub state directly (state.svelte.ts) — no prop
-  // drilling. ctx is accepted for consistency with sibling sections.
+  // drilling, no ctx (persistence flows through the settings module).
   import { tick } from 'svelte'
-  import type { PluginContext } from '../../../sdk'
   import {
     getTaskHubState,
     applySavedView,
@@ -22,15 +21,6 @@
   import ConfirmModal from '../components/ConfirmModal.svelte'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import { isDevMode, openInspect } from '../../../../lib/devModeInspect'
-
-  interface Props {
-    ctx: PluginContext
-  }
-
-  // ctx is unused here (all persistence flows through the singleton + the
-  // settings module); kept on the interface for symmetry with SmartLists/
-  // MiniCalendar and future use.
-  let { ctx: _ctx }: Props = $props()
 
   let hubState = $derived(getTaskHubState())
   let errorMsg = $state('')

@@ -60,10 +60,19 @@
 
   // Re-bucket children only when the local-day actually changes — a bare
   // nowTick with no day change is a no-op (mirrors CalendarSidebar's gate).
+  // The first run seeds lastSeenToday WITHOUT bumping reloadSignal: children
+  // already load once at mount, and an initial 0→1 bump would trigger a
+  // wasteful second query whose stale result loadSeq then drops.
   let lastSeenToday = ''
+  let dayGateSeeded = false
   $effect(() => {
     void nowTick
     const t = ctx.today
+    if (!dayGateSeeded) {
+      dayGateSeeded = true
+      lastSeenToday = t
+      return
+    }
     if (t === lastSeenToday) return
     lastSeenToday = t
     reloadSignal++
@@ -76,6 +85,6 @@
   data-test-tasks-sidebar
 >
   <SmartLists {ctx} {reloadSignal} />
-  <SavedViews {ctx} />
+  <SavedViews />
   <MiniCalendar {ctx} {reloadSignal} />
 </aside>

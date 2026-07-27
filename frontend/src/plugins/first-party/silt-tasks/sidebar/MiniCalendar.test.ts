@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, cleanup, fireEvent } from '@testing-library/svelte'
+import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 
 import MiniCalendar from './MiniCalendar.svelte'
 import type { PluginContext } from '../../../sdk'
@@ -92,5 +92,26 @@ describe('sidebar/MiniCalendar (#763)', () => {
     await rerender({ ctx, reloadSignal: 1 })
     await flush()
     expect(mocks.sqliteQuery.mock.calls.length).toBeGreaterThan(afterMount)
+  })
+
+  it('keeps a tabindex=0 entry cell after month navigation (roving-tabindex clamp)', async () => {
+    render(MiniCalendar, { ctx: makeCtx(), reloadSignal: 0 })
+    await flush()
+    // Push miniFocusIdx to the high end by clicking the last rendered day.
+    const cells = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-mini-day]')
+    )
+    await fireEvent.click(cells[cells.length - 1]!)
+    await flush()
+    // Navigate to the next month — the grid may shrink, which would leave
+    // miniFocusIdx out of range without the clamp $effect (no cell would carry
+    // tabindex=0, locking keyboard users out of the grid).
+    await fireEvent.click(screen.getByRole('button', { name: 'Next month' }))
+    await flush()
+    // The roving-tabindex entry point must survive: exactly one gridcell has
+    // tabindex=0 so keyboard users can always re-enter the grid.
+    expect(
+      document.querySelectorAll('[role="gridcell"][tabindex="0"]').length
+    ).toBe(1)
   })
 })

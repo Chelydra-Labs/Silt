@@ -163,6 +163,15 @@
   // calendar and the Date Glance popover.
   let miniWeeks = $derived(computeMonthWeeks(miniCursor))
 
+  // Clamp the roving-tabindex cursor when the visible month shrinks (e.g.
+  // paging from a 6-week to a 5-week month). Without this, miniFocusIdx can
+  // exceed the grid size and no cell carries tabindex=0, locking keyboard
+  // users out of the grid until they click.
+  $effect(() => {
+    const total = miniWeeks.flat().length
+    if (total > 0 && miniFocusIdx > total - 1) miniFocusIdx = total - 1
+  })
+
   function prevMonth() {
     miniCursor = addMonths(miniCursor, -1)
   }

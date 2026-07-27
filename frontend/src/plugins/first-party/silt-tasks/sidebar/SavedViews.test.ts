@@ -110,7 +110,7 @@ describe('sidebar/SavedViews (#763)', () => {
       filters: { owners: [], priorities: [], dueDate: '', tags: [] }
     }
     seedSavedViews([userView])
-    render(SavedViews, { ctx: makeCtx() })
+    render(SavedViews)
     await flush()
     expect(screen.getByTestId('view-u1')).toBeInTheDocument()
     // System views render too.
@@ -130,7 +130,7 @@ describe('sidebar/SavedViews (#763)', () => {
       columns: [{ name: 'TODO' }, { name: 'DOING' }, { name: 'DONE' }]
     }
     seedSavedViews([fullView])
-    render(SavedViews, { ctx: makeCtx() })
+    render(SavedViews)
     await flush()
     const activateBtn = document.querySelector<HTMLElement>(
       '[data-testid="view-u-match"] button'
@@ -149,7 +149,7 @@ describe('sidebar/SavedViews (#763)', () => {
       filters: { owners: [], priorities: [], dueDate: '', tags: [] }
     }
     seedSavedViews([userView])
-    render(SavedViews, { ctx: makeCtx() })
+    render(SavedViews)
     await flush()
     await fireEvent.click(screen.getByTestId('manage-view-u1'))
     await flush()
