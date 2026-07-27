@@ -16,6 +16,7 @@ import {
   UnlinkNotebook
 } from '../../../bindings/silt/app.js'
 import { coerceIPCError } from '../ipcError'
+import { IPCErrorCode } from '../../generated/enums'
 import {
   deleteDisposition,
   deleteTargetLabel,
@@ -66,20 +67,20 @@ export function navigationActionError(
 ): string {
   const parsed = coerceIPCError(error)
   switch (parsed.code) {
-    case 'page_exists':
-    case 'navigation_conflict':
+    case IPCErrorCode.CodePageExists:
+    case IPCErrorCode.CodeNavigationConflict:
       return action === 'duplicate'
         ? 'A page with that name already exists in this section.'
         : 'An item with that name already exists here.'
-    case 'invalid_navigation_path':
+    case IPCErrorCode.CodeInvalidNavigationPath:
       return 'That name cannot be used here.'
-    case 'navigation_not_found':
+    case IPCErrorCode.CodeNavigationNotFound:
       return 'That page is no longer available.'
-    case 'navigation_unavailable':
+    case IPCErrorCode.CodeNavigationUnavailable:
       return 'This linked notebook is offline or unavailable.'
-    case 'navigation_reveal_failed':
+    case IPCErrorCode.CodeNavigationReveal:
       return 'The item could not be revealed in the file manager.'
-    case 'navigation_duplicate':
+    case IPCErrorCode.CodeNavigationDuplicate:
       return 'The page could not be duplicated.'
     default:
       return (

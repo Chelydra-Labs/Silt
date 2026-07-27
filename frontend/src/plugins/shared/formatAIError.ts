@@ -4,6 +4,7 @@
 // objects remain supported for older call sites and tests.
 
 import { asString } from '../../lib/asString'
+import { AIErrorKind } from '../../generated/enums'
 
 function messageOf(e: unknown): string {
   if (typeof e === 'object' && e !== null && 'message' in e) {
@@ -22,21 +23,21 @@ function codeOf(e: unknown): string | undefined {
 
 function messageForCode(code: string | undefined, msg: string): string | null {
   switch (code) {
-    case 'unauthorized':
+    case AIErrorKind.ErrUnauthorized:
       return 'AI provider rejected the request (unauthorized). Check your API key in Settings → AI.'
-    case 'rate-limited':
+    case AIErrorKind.ErrRateLimited:
       return 'AI provider rate limit reached. Wait a moment and try again.'
-    case 'model-missing':
+    case AIErrorKind.ErrModelMissing:
       return 'Chat model is missing or invalid. Configure a model in Settings → AI.'
-    case 'timeout':
+    case AIErrorKind.ErrTimeout:
       return 'AI request timed out. Try again, or check that the provider is reachable.'
-    case 'unreachable':
+    case AIErrorKind.ErrUnreachable:
       return 'Could not reach the AI provider. Check that the local server is running or the endpoint is correct.'
-    case 'forbidden':
+    case AIErrorKind.ErrForbidden:
       return 'AI provider forbade this request.'
-    case 'bad-request':
+    case AIErrorKind.ErrBadRequest:
       return msg || 'AI provider rejected the request.'
-    case 'server':
+    case AIErrorKind.ErrServer:
       return msg || 'AI provider server error. Retry in a moment.'
     default:
       return null

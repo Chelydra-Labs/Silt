@@ -20,6 +20,8 @@
 // badge-lands-on-a-nudge guarantee without forcing the Plugins tab to make an
 // extra async binding call per card.
 
+import { AIProviderType } from '../generated/enums'
+
 export interface AIProviderReadiness {
   /** "local" (Ollama/llama.cpp, keyless) or "openai-compatible" (needs a key). */
   provider_type?: string
@@ -39,7 +41,11 @@ export function aiProviderNeedsSetup(
   // Local providers run keyless. Cloud/openai-compatible endpoints need a key —
   // but only nudge when we KNOW it's absent (has_key === false). An unknown key
   // state does not false-fire (the Plugins-tab badge is model-gated).
-  if (chat.provider_type !== 'local' && chat.has_key === false) return true
+  if (
+    chat.provider_type !== AIProviderType.ProviderLocal &&
+    chat.has_key === false
+  )
+    return true
   return false
 }
 

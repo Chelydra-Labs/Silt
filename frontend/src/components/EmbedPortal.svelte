@@ -9,6 +9,7 @@
   import { Events } from '@wailsio/runtime'
   import RichText from './RichText.svelte'
   import { coerceIPCError } from '../lib/ipcError'
+  import { IPCErrorCode } from '../generated/enums'
   import {
     SiltInlineMarkExtensions,
     BlockReferenceNode,
@@ -96,7 +97,7 @@
       // changes), with the substring as a legacy fallback for any unmigrated
       // return site.
       const isBusy =
-        coerceIPCError(e).code === 'block_being_edited' ||
+        coerceIPCError(e).code === IPCErrorCode.CodeBlockBeingEdited ||
         msg.includes('being edited')
       if (isBusy && attempt < 5) {
         saveTimer = setTimeout(() => void persist(text, attempt + 1), 800)

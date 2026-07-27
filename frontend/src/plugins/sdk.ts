@@ -10,6 +10,7 @@
 
 import type { Component } from 'svelte'
 import type { UiLocationSnapshot } from './ui-location'
+import type { AIErrorKind } from '../generated/enums'
 export type { UiLocationSnapshot, UiLocationTab } from './ui-location'
 
 export type TaskStatus = 'TODO' | 'DOING' | 'DONE'
@@ -658,16 +659,11 @@ export interface PluginContext {
  * of transport.
  */
 export interface PluginAIError {
-  code:
-    | 'unauthorized'
-    | 'rate-limited'
-    | 'model-missing'
-    | 'timeout'
-    | 'unreachable'
-    | 'bad-request'
-    | 'forbidden'
-    | 'server'
-    | 'unknown'
+  // code is the normalized AIErrorKind from the Go enum (cmd/genenums), so the
+  // frontend contract cannot drift from the backend taxonomy. The full set
+  // includes 'canceled' (intentional abort), which the prior hand-typed union
+  // omitted.
+  code: AIErrorKind
   status?: number
   message: string
 }

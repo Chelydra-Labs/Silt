@@ -26,6 +26,7 @@
   } from './store.svelte'
   import { pushNotification } from '../notifications/store.svelte'
   import { coerceIPCError } from '../lib/ipcError'
+  import { IPCErrorCode } from '../generated/enums'
   import { renderTemplatePreview } from './renderTemplatePreview'
 
   interface Props {
@@ -338,7 +339,7 @@
       }
     } catch (e) {
       const ipc = coerceIPCError(e)
-      if (mode === 'new-page' && ipc.code === 'page_exists') {
+      if (mode === 'new-page' && ipc.code === IPCErrorCode.CodePageExists) {
         // Collision: keep picker open so the user can rename or open existing (#652).
         // Snapshot the name that exists so "Open existing" stays correct if the
         // user edits the field toward a new name.

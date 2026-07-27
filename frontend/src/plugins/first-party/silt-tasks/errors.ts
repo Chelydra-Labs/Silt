@@ -14,11 +14,12 @@
  * diagnosable (fail-loudly: never swallow the underlying detail).
  */
 import { coerceIPCErrorMessage } from '../../../lib/ipcError'
+import { IPCErrorCode } from '../../../generated/enums'
 
 export function friendlyTaskError(raw: string): string {
   const { code, message } = coerceIPCErrorMessage(raw)
   // #478: map on the stable code first — resilient to backend prose changes.
-  if (code === 'block_being_edited') {
+  if (code === IPCErrorCode.CodeBlockBeingEdited) {
     return 'This task is open in the editor — save or close it first.'
   }
   // Legacy fallback: until every focus-lock return site carries the code, a
