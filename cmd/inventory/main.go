@@ -317,6 +317,34 @@ var (
 	eventNameConstBlockRE = regexp.MustCompile(`export\s+const\s+EventName\s*=\s*\{([^}]*)\}`)
 	// eventNameEntryRE extracts Key: 'value' pairs inside that block.
 	eventNameEntryRE = regexp.MustCompile(`([A-Za-z0-9_]+)\s*:\s*'([^']*)'`)
+	// eventNameMemberRE extracts the member ident from an EventName.<X>
+	// reference (used to resolve allowlist-array elements).
+	eventNameMemberRE = regexp.MustCompile(`EventName\.([A-Za-z0-9_]+)`)
+	// allowlistArrayRE matches a typed array literal whose elements are
+	// EventName.* members, e.g.
+	//   const hostEvents: PluginEventName[] = [EventName.EventFoo, EventName.EventBar]
+	// (group 1 = array ident, group 2 = bracket body). Used by the allowlist
+	// pass of collectFrontendEvents to resolve Events.On(ident) calls that
+	// reference such an array or a param guarded by <arr>.includes(param).
+	// Only `const`-declared arrays are recognized — `let`/`var`/`readonly`/
+	// `ReadonlyArray<>` shapes are intentionally skipped (see scanFrontend's
+	// residual-gap list). See #778 for the allowlist design rationale.
+	allowlistArrayRE = regexp.MustCompile(`const\s+(\w+)\s*:\s*[\w.]+\[\]\s*=\s*\[([^\]]*)\]`)
+	// eventsOnVarRE captures Events.On(<bareIdent>, …) where the first arg is
+	// a plain identifier (not a quoted literal, EventName.X, or template). It
+	// also fires on Events.On(EventName.X) capturing "EventName"; the allowlist
+	// pass only emits when the ident resolves to a known allowlist or guarded
+	// param, so the member form is a harmless no-op here (still handled by
+	// eventsOnEventNameRE), avoiding double-processing. Member-access first
+	// args (this.x, obj.prop) are not matched.
+	eventsOnVarRE = regexp.MustCompile(`Events\.On\s*\(\s*([A-Za-z_]\w*)\s*[,)]`)
+	// includesGuardRE binds a parameter ident to an allowlist array via the
+	// `if (arr.includes(param))` guard shape (group 1 = array, group 2 = param).
+	// The binding is file-global, not scoped to the `if` block: once a param
+	// is guarded anywhere in the file, every Events.On(<param>) in that file
+	// resolves to the array. Scoping would need a real parser; this is a
+	// conservative best-effort approximation.
+	includesGuardRE = regexp.MustCompile(`(\w+)\.includes\((\w+)\)`)
 	// Comment strippers applied to frontend source before the scans above run,
 	// so prose or dead code in comments can't seed false positives (e.g. a
 	// test's "// Events.On('menu:save')" mention).
@@ -360,6 +388,12 @@ func parseEventNameMap(enumsTS string) map[string]string {
 // `${EventName.X}:...` via nameMap; also keeps bare string literals.
 // Unknown EventName members are skipped. Template forms record the base wire
 // string only (not the dynamic suffix).
+//
+// The fifth pass resolves a typed allowlist array of EventName.* members when
+// Events.On(ident) references the array directly or a parameter guarded by
+// <array>.includes(param) (the plugins/events.ts host-bus shape). Mixed-type
+// arrays (any element not a resolvable EventName.* member) are skipped
+// entirely; bare locals not bound to an allowlist are left unresolved.
 func collectFrontendEvents(stripped string, nameMap map[string]string, eventsSet map[string]struct{}) {
 	for _, m := range eventsOnRE.FindAllStringSubmatch(stripped, -1) {
 		if len(m) < 2 {
@@ -398,6 +432,78 @@ func collectFrontendEvents(stripped string, nameMap map[string]string, eventsSet
 			eventsSet[wire] = struct{}{}
 		}
 	}
+
+	// Allowlist-array pass. Resolves Events.On(ident) where ident references
+	// a typed EventName.*[] array directly or via a guarded param bound by
+	// <array>.includes(param). Conservative: every element of the array body
+	// must be a resolvable EventName.* member; otherwise the whole array is
+	// skipped (no partial resolution — mixed arrays are not analyzable).
+	allowlistByName := map[string][]string{}
+	for _, m := range allowlistArrayRE.FindAllStringSubmatch(stripped, -1) {
+		if len(m) < 3 {
+			continue
+		}
+		arrayName, body := m[1], m[2]
+		var wires []string
+		resolvable := true
+		for _, el := range strings.Split(body, ",") {
+			el = strings.TrimSpace(el)
+			if el == "" {
+				continue
+			}
+			// Require the whole element to be exactly EventName.<X>.
+			mm := eventNameMemberRE.FindStringSubmatch(el)
+			if mm == nil || mm[0] != el {
+				resolvable = false
+				break
+			}
+			wire, ok := nameMap[mm[1]]
+			if !ok {
+				resolvable = false
+				break
+			}
+			wires = append(wires, wire)
+		}
+		if resolvable && len(wires) > 0 {
+			allowlistByName[arrayName] = wires
+		}
+	}
+	// Bind guarded params to their allowlist(s): `if (arr.includes(param))`.
+	// A param may be guarded by more than one array across a file, so the
+	// value is a union — last-write-wins would silently drop one array's
+	// wires. emit-side takes the union of every bound array's wires.
+	paramToAllowlist := map[string][]string{}
+	for _, m := range includesGuardRE.FindAllStringSubmatch(stripped, -1) {
+		if len(m) < 3 {
+			continue
+		}
+		arrayName, param := m[1], m[2]
+		if _, known := allowlistByName[arrayName]; known {
+			paramToAllowlist[param] = append(paramToAllowlist[param], arrayName)
+		}
+	}
+	// Emit wires for Events.On(ident) only when ident resolves to a known
+	// allowlist array (direct reference) or a guarded param. Other bare idents
+	// (EventName itself, unbound locals, template vars) are left as no-ops.
+	for _, m := range eventsOnVarRE.FindAllStringSubmatch(stripped, -1) {
+		if len(m) < 2 {
+			continue
+		}
+		ident := m[1]
+		if wires, ok := allowlistByName[ident]; ok {
+			for _, w := range wires {
+				eventsSet[w] = struct{}{}
+			}
+			continue
+		}
+		if arrayNames, ok := paramToAllowlist[ident]; ok {
+			for _, an := range arrayNames {
+				for _, w := range allowlistByName[an] {
+					eventsSet[w] = struct{}{}
+				}
+			}
+		}
+	}
 }
 
 // scanFrontend walks .ts/.svelte files under frontendRoot and records which
@@ -407,17 +513,27 @@ func collectFrontendEvents(stripped string, nameMap map[string]string, eventsSet
 // test's "// Events.On('menu:save')" can't seed false positives.
 //
 // frontend_events is BEST-EFFORT (not a full TS dataflow analysis). It resolves
-// four forms after comment strip:
+// five forms after comment strip:
 //  1. Events.On('literal') — legacy / tests
 //  2. Events.On(EventName.<Ident>) — post-centralization const member
 //  3. Events.On(`${EventName.<Ident>}:...`) — inline template composition
 //  4. `${EventName.<Ident>}` interpolations used to build names before
 //     Events.On (AI stream owner-scoped events) — base wire string only
+//  5. Allowlist array: a typed `EventName.*[]` array (e.g.
+//     `const host: PluginEventName[] = [EventName.EventBlockChanged, …]`)
+//     referenced by Events.On(<arrayName>) directly, or via a parameter
+//     guarded by `<array>.includes(param)` — used by plugins/events.ts.
+//     Mixed-type arrays (any element not a resolvable EventName.* member) are
+//     skipped entirely.
 //
-// Not resolved: Events.On(variable) where the name is only an allowlist member
-// or other non-template local (e.g. plugins/events.ts host bus). Those events
-// still appear if another file uses a resolvable form. `${EventName.X}` without
-// a later On may over-count (soft gate only).
+// Not resolved: mixed-type allowlist arrays; arrays declared with `let`/`var`/
+// `readonly`/`ReadonlyArray<>` (only `const`-typed `T[]` is recognized);
+// `Events.On(this.x, …)` / `Events.On(obj.prop, …)` member-access first args;
+// locals not bound to an allowlist guard; and arbitrary cross-file dataflow.
+// The `.includes(param)` guard binds file-globally (not scoped to its `if`
+// block) — a known approximation. Those events still appear if another site
+// uses a resolvable form. `${EventName.X}` without a later On may over-count
+// (soft gate only).
 //
 // EventName keys are loaded from frontend/src/generated/enums.ts (sibling of
 // frontendRoot's parent when frontendRoot is frontend/src). The canonical

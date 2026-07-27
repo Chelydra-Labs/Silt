@@ -224,6 +224,21 @@
       (filters.stale ? 1 : 0)
   )
 
+  // aria-live announcer for active-filter changes. The unified sidebar used to
+  // carry this in its combined counts+filters+views region; the decomposition
+  // moved counts to SmartLists and trimmed that region, so filter state lives
+  // here — this is its announcement home (AGENTS.md: aria-live for dynamic
+  // updates). Gates on lastAnnouncedFilters to avoid re-announcing unchanged.
+  let filterLiveMessage = $state('')
+  let lastAnnouncedFilters = -1
+  $effect(() => {
+    const n = activeCount
+    if (n === lastAnnouncedFilters) return
+    lastAnnouncedFilters = n
+    filterLiveMessage =
+      n === 0 ? 'No active filters' : `${n} active filter${n === 1 ? '' : 's'}`
+  })
+
   function dueLabel(): string {
     return DUE_OPTIONS.find((o) => o.value === filters.dueDate)?.label ?? 'All'
   }
@@ -731,4 +746,7 @@
       aria-hidden="true"
     ></div>
   {/if}
+
+  <!-- aria-live: announces active-filter count changes (AGENTS.md a11y). -->
+  <div class="sr-only" aria-live="polite">{filterLiveMessage}</div>
 </div>

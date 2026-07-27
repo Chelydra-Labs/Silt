@@ -207,6 +207,75 @@ describe('TaskSubEditorModal (#304)', () => {
     })
   })
 
+  it('normalizes subtree block depths relative to sub-editor root (starts at depth 0)', async () => {
+    mocks.fetchSubtree.mockResolvedValue([
+      {
+        id: 'child-1',
+        parent_id: 'task-1',
+        type: 'NOTE',
+        depth: 3,
+        raw_text: '- indented sub-note',
+        clean_text: 'indented sub-note',
+        line_number: 5,
+        file_date: '2026-07-01'
+      }
+    ])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      const pm = document.querySelector('.ProseMirror')
+      expect(pm).not.toBeNull()
+      const note = pm?.querySelector('[data-type="note"]')
+      expect(note).not.toBeNull()
+      expect(note?.getAttribute('data-depth')).toBe('0')
+    })
+  })
+
+  it('normalizes sibling depths even when one block has undefined depth', async () => {
+    // A single malformed block with depth:undefined must not force minDepth to
+    // 0 and suppress normalization for its siblings. minDepth is computed over
+    // defined depths only, so the depth:3 sibling still rebases to 0.
+    mocks.fetchSubtree.mockResolvedValue([
+      {
+        id: 'child-1',
+        parent_id: 'task-1',
+        type: 'NOTE',
+        depth: 3,
+        raw_text: '- indented sub-note',
+        clean_text: 'indented sub-note',
+        line_number: 5,
+        file_date: '2026-07-01'
+      },
+      {
+        id: 'child-2',
+        parent_id: 'task-1',
+        type: 'NOTE',
+        // depth intentionally omitted (malformed) — must not suppress normalization.
+        raw_text: '- malformed sub-note',
+        clean_text: 'malformed sub-note',
+        line_number: 6,
+        file_date: '2026-07-01'
+      }
+    ])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      const pm = document.querySelector('.ProseMirror')
+      expect(pm).not.toBeNull()
+      const notes = pm?.querySelectorAll('[data-type="note"]')
+      expect(notes).not.toBeNull()
+      expect(notes!.length).toBeGreaterThanOrEqual(1)
+      // The depth:3 sibling normalizes to 0 despite the undefined-depth sibling.
+      expect(notes![0]?.getAttribute('data-depth')).toBe('0')
+    })
+  })
+
   it('calls fetchSubtree with the block id on mount', async () => {
     render(TaskSubEditorModal, {
       ...BASE_PROPS,

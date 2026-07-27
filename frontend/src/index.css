@@ -675,19 +675,28 @@ body {
    div[data-type=note|task|header] blocks (#649). Keep the `p` selector for
    any nested/legacy path. */
 .ProseMirror p.is-editor-empty:first-child::before,
-.ProseMirror > div[data-type='note'].is-editor-empty:first-child::before,
-.ProseMirror > div[data-type='task'].is-editor-empty:first-child::before,
-.ProseMirror > div[data-type='header'].is-editor-empty:first-child::before,
-.ProseMirror p.is-empty:first-child::before,
-.ProseMirror > div[data-type='note'].is-empty:first-child::before,
-.ProseMirror > div[data-type='task'].is-empty:first-child::before,
-.ProseMirror > div[data-type='header'].is-empty:first-child::before {
+.ProseMirror p.is-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
   color: var(--color-text-muted);
   opacity: 0.5;
   pointer-events: none;
   height: 0;
+}
+
+.ProseMirror > div[data-type='note'].is-editor-empty:first-child::before,
+.ProseMirror > div[data-type='task'].is-editor-empty:first-child::before,
+.ProseMirror > div[data-type='header'].is-editor-empty:first-child::before,
+.ProseMirror > div[data-type='note'].is-empty:first-child::before,
+.ProseMirror > div[data-type='task'].is-empty:first-child::before,
+.ProseMirror > div[data-type='header'].is-empty:first-child::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  left: 28px;
+  top: 4px;
+  color: var(--color-text-muted);
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 /* Task blocks: DONE tasks get strikethrough + muted text. */

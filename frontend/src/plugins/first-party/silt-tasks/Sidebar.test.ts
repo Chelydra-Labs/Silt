@@ -463,6 +463,41 @@ describe('silt-tasks Sidebar (#432)', () => {
     expect(modal.textContent).toContain('Sprint 42')
   })
 
+  it('restore-on-fail: a USER view reappears + alerts when persist rejects', async () => {
+    const userView: SavedView = {
+      id: 'u1',
+      name: 'My View',
+      displayMode: 'list',
+      groupBy: 'owner',
+      scope: 'vault',
+      filters: { owners: [], priorities: [], dueDate: '', tags: [] }
+    }
+    seedSavedViews([userView])
+    // Force the persist to fail this once. The in-memory delete has already
+    // happened, so the sidebar must restore the view (it still exists on disk)
+    // and surface the failure — otherwise the UI would silently desync from the
+    // on-disk saved-view list. Characterization guard for the confirmDelete
+    // restore branch (Sidebar.svelte confirmDelete → saveView(viewToRemove)).
+    mocks.updatePluginSetting.mockRejectedValueOnce(new Error('disk full'))
+    render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-view-u1'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('manage-delete-view'))
+    await flush()
+    await fireEvent.click(screen.getByTestId('delete-view-confirm-confirm'))
+    await flush()
+    // Persist was attempted with the view removed from the in-memory list.
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'saved_views',
+      expect.not.arrayContaining([expect.objectContaining({ id: 'u1' })])
+    )
+    // The view is restored so the UI matches the still-on-disk copy.
+    expect(screen.getByTestId('view-u1')).toBeInTheDocument()
+    // The failure is announced via the error banner (role=alert).
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+
   it('SYSTEM views have no manage button and no grip (read-only)', async () => {
     seedSavedViews()
     render(Sidebar, { ctx: makeCtx(), manifest: MANIFEST })

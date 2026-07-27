@@ -9,8 +9,8 @@ const EventBar EventName = "bar"
 
 type App struct{}
 
-func (a *App) emit(name EventName, data any)                {}
-func (a *App) emitOrQueue(name EventName, data any)         {}
+func (a *App) emit(name EventName, data ...any)             {}
+func (a *App) emitOrQueue(name EventName, data ...any)      {}
 func aiStreamEventName(base EventName, id string) EventName { return base }
 
 func (a *App) goodConstEmit() {
@@ -34,9 +34,41 @@ func (a *App) goodLocal() {
 	a.emitOrQueue(n, nil)
 }
 
-// Intentional scope limit: the analyzer does not track EventName("…") through
-// locals (no SSA). Construction-site typos remain a human/review concern.
-func (a *App) goodLocalFromConversion() {
-	n := EventName("indirect-typo")
-	a.emit(n, nil)
+// A helper composing the name dynamically must stay allowed.
+func dynHelper(base EventName, id string) EventName {
+	return EventName(string(base) + ":" + id)
+}
+
+func (a *App) goodDynamicHelper() {
+	a.emit(dynHelper(EventFoo, "id"), nil)
+}
+
+func (a *App) goodConditionalLocalAssign(cond bool) {
+	var n EventName
+	if cond {
+		n = EventName("branch-typo")
+	}
+	a.emit(n, nil) // phi merge → can't prove → allowed (no diagnostic)
+}
+
+// A recursive EventName-returning helper must not crash the analyzer — the
+// cycle guard in helperReturnsLiteral short-circuits to a conservative allow.
+// (analyzed only; never executed, so the self-call is not a runtime loop.)
+func recEvent() EventName { return recEvent() }
+
+func (a *App) goodRecursiveHelper() {
+	a.emit(recEvent(), nil) // cycle → allowed, no crash
+}
+
+// A helper returning two different literals must not flag — conservative: can't
+// prove which branch wins, so the whole helper is allowed.
+func twoLiterals(i int) EventName {
+	if i > 0 {
+		return EventName("lit-a")
+	}
+	return EventName("lit-b")
+}
+
+func (a *App) goodMultiLiteralHelper() {
+	a.emit(twoLiterals(1), nil) // two literals → allowed (no diagnostic)
 }

@@ -92,6 +92,8 @@ ehthumbs.db
 *.lnk
 ._*
 $RECYCLE.BIN/
+# Windows reserved-name redirect artifact (MSYS2 `> nul` can materialize a file)
+/nul
 
 # IDE extras
 .history/
