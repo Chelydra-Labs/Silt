@@ -96,14 +96,14 @@ func validateAIBaseURL(raw string) error {
 // the dedicated SetAIAPIKey / ClearAIAPIKey bindings so it can be routed to the
 // OS keyring (#218) rather than plaintext config.
 type AIProviderPatch struct {
-	ProviderType    string   `json:"provider_type"`
-	BaseURL         string   `json:"base_url"`
-	Model           string   `json:"model"`
-	Temperature     *float64 `json:"temperature,omitempty"`
-	MaxTokens       *int     `json:"max_tokens,omitempty"`
-	ReasoningEffort *string  `json:"reasoning_effort,omitempty"`
-	TimeoutMs       *int     `json:"timeout_ms,omitempty"`
-	Dimensions      *int     `json:"dimensions,omitempty"`
+	ProviderType    ai.AIProviderType `json:"provider_type"`
+	BaseURL         string            `json:"base_url"`
+	Model           string            `json:"model"`
+	Temperature     *float64          `json:"temperature,omitempty"`
+	MaxTokens       *int              `json:"max_tokens,omitempty"`
+	ReasoningEffort *string           `json:"reasoning_effort,omitempty"`
+	TimeoutMs       *int              `json:"timeout_ms,omitempty"`
+	Dimensions      *int              `json:"dimensions,omitempty"`
 }
 
 // AIPublicProvider is the API-key-scrubbed view of one provider block returned
@@ -111,15 +111,15 @@ type AIProviderPatch struct {
 // config-or-keyring in #218) so the page can show "key set" without ever
 // receiving the secret.
 type AIPublicProvider struct {
-	ProviderType    string   `json:"provider_type"`
-	BaseURL         string   `json:"base_url"`
-	Model           string   `json:"model"`
-	HasKey          bool     `json:"has_key"`
-	Temperature     *float64 `json:"temperature,omitempty"`
-	MaxTokens       *int     `json:"max_tokens,omitempty"`
-	ReasoningEffort *string  `json:"reasoning_effort,omitempty"`
-	TimeoutMs       *int     `json:"timeout_ms,omitempty"`
-	Dimensions      *int     `json:"dimensions,omitempty"`
+	ProviderType    ai.AIProviderType `json:"provider_type"`
+	BaseURL         string            `json:"base_url"`
+	Model           string            `json:"model"`
+	HasKey          bool              `json:"has_key"`
+	Temperature     *float64          `json:"temperature,omitempty"`
+	MaxTokens       *int              `json:"max_tokens,omitempty"`
+	ReasoningEffort *string           `json:"reasoning_effort,omitempty"`
+	TimeoutMs       *int              `json:"timeout_ms,omitempty"`
+	Dimensions      *int              `json:"dimensions,omitempty"`
 }
 
 // AIPublicConfig is the AI settings page's full read view: both provider blocks

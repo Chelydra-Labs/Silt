@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"silt/backend/ai"
 )
 
 func TestDefaults_AI(t *testing.T) {
@@ -16,14 +18,14 @@ func TestDefaults_AI(t *testing.T) {
 	if d.AI.UseKeyring == nil || !*d.AI.UseKeyring {
 		t.Errorf("defaults use_keyring should be true, got %+v", d.AI.UseKeyring)
 	}
-	if d.AI.Chat.ProviderType != AIProviderLocal {
-		t.Errorf("defaults chat provider_type = %q, want %q", d.AI.Chat.ProviderType, AIProviderLocal)
+	if d.AI.Chat.ProviderType != ai.ProviderLocal {
+		t.Errorf("defaults chat provider_type = %q, want %q", d.AI.Chat.ProviderType, ai.ProviderLocal)
 	}
 	if d.AI.Chat.BaseURL != DefaultAIBaseURL {
 		t.Errorf("defaults chat base_url = %q, want %q", d.AI.Chat.BaseURL, DefaultAIBaseURL)
 	}
-	if d.AI.Embedding.ProviderType != AIProviderLocal {
-		t.Errorf("defaults embedding provider_type = %q, want %q", d.AI.Embedding.ProviderType, AIProviderLocal)
+	if d.AI.Embedding.ProviderType != ai.ProviderLocal {
+		t.Errorf("defaults embedding provider_type = %q, want %q", d.AI.Embedding.ProviderType, ai.ProviderLocal)
 	}
 	if d.AI.Chat.Model != "" || d.AI.Embedding.Model != "" {
 		t.Errorf("defaults should ship no model configured: chat=%q embedding=%q", d.AI.Chat.Model, d.AI.Embedding.Model)
@@ -46,12 +48,12 @@ func TestNormalizeAIConfig(t *testing.T) {
 	})
 	t.Run("UnknownProviderTypeCollapsesToLocal", func(t *testing.T) {
 		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: "bogus"}})
-		if out.Chat.ProviderType != AIProviderLocal {
-			t.Errorf("unknown provider_type = %q, want %q", out.Chat.ProviderType, AIProviderLocal)
+		if out.Chat.ProviderType != ai.ProviderLocal {
+			t.Errorf("unknown provider_type = %q, want %q", out.Chat.ProviderType, ai.ProviderLocal)
 		}
 	})
 	t.Run("EmptyBaseURLForLocalGetsDefault", func(t *testing.T) {
-		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: AIProviderLocal}})
+		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: ai.ProviderLocal}})
 		if out.Chat.BaseURL != DefaultAIBaseURL {
 			t.Errorf("empty local base_url = %q, want %q", out.Chat.BaseURL, DefaultAIBaseURL)
 		}
@@ -60,31 +62,31 @@ func TestNormalizeAIConfig(t *testing.T) {
 		// A cloud provider with no URL is a user error, but normalize must NOT
 		// silently inject the Ollama localhost default (that would route a
 		// cloud key to the local machine). The service surfaces the empty URL.
-		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: AIProviderOpenAICompatible}})
+		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: ai.ProviderOpenAICompatible}})
 		if out.Chat.BaseURL != "" {
 			t.Errorf("empty openai-compatible base_url should stay empty, got %q", out.Chat.BaseURL)
 		}
 	})
 	t.Run("GoogleProviderTypePreserved", func(t *testing.T) {
-		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: AIProviderGoogle}})
-		if out.Chat.ProviderType != AIProviderGoogle {
-			t.Errorf("google provider_type = %q, want %q", out.Chat.ProviderType, AIProviderGoogle)
+		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: ai.ProviderGoogle}})
+		if out.Chat.ProviderType != ai.ProviderGoogle {
+			t.Errorf("google provider_type = %q, want %q", out.Chat.ProviderType, ai.ProviderGoogle)
 		}
 	})
 	t.Run("GoogleDefaultBaseURL", func(t *testing.T) {
-		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: AIProviderGoogle}})
+		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: ai.ProviderGoogle}})
 		if out.Chat.BaseURL != DefaultGoogleBaseURL {
 			t.Errorf("empty google base_url = %q, want %q", out.Chat.BaseURL, DefaultGoogleBaseURL)
 		}
 	})
 	t.Run("AnthropicProviderTypePreserved", func(t *testing.T) {
-		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: AIProviderAnthropic}})
-		if out.Chat.ProviderType != AIProviderAnthropic {
-			t.Errorf("anthropic provider_type = %q, want %q", out.Chat.ProviderType, AIProviderAnthropic)
+		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: ai.ProviderAnthropic}})
+		if out.Chat.ProviderType != ai.ProviderAnthropic {
+			t.Errorf("anthropic provider_type = %q, want %q", out.Chat.ProviderType, ai.ProviderAnthropic)
 		}
 	})
 	t.Run("AnthropicDefaultBaseURL", func(t *testing.T) {
-		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: AIProviderAnthropic}})
+		out := NormalizeAIConfig(AIConfig{Chat: AIProviderConfig{ProviderType: ai.ProviderAnthropic}})
 		if out.Chat.BaseURL != DefaultAnthropicBaseURL {
 			t.Errorf("empty anthropic base_url = %q, want %q", out.Chat.BaseURL, DefaultAnthropicBaseURL)
 		}

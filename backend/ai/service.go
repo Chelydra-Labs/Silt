@@ -55,15 +55,19 @@ const MaxResponseBytes = 50 * 1024 * 1024 // 50 MB
 // cannot hang a plugin call indefinitely. Mirrors config.DefaultAITimeoutMs.
 const DefaultTimeout = 60 * time.Second
 
-// Provider-type discriminators used by the dispatcher. These string values MUST
-// match config.AIProvider* — the App binding layer copies the configured value
-// verbatim into AIProvider.ProviderType. Duplicated (rather than imported) so
-// this package stays free of a config import, per the layering rule.
+// AIProviderType is the canonical provider-type discriminator. This package
+// owns the single source of truth; config.AIProviderConfig.ProviderType and the
+// App binding layer's public/patch structs carry this typed value, so the App
+// copies the configured value verbatim with no string-literal duplication and
+// no drift. (config imports ai for the type — acyclic: ai imports no Silt
+// packages, keeping it unit-testable with httptest and no vault.)
+type AIProviderType string
+
 const (
-	ProviderLocal            = "local"
-	ProviderOpenAICompatible = "openai-compatible"
-	ProviderGoogle           = "google"
-	ProviderAnthropic        = "anthropic"
+	ProviderLocal            AIProviderType = "local"
+	ProviderOpenAICompatible AIProviderType = "openai-compatible"
+	ProviderGoogle           AIProviderType = "google"
+	ProviderAnthropic        AIProviderType = "anthropic"
 )
 
 // httpClient is the dedicated client for all AI provider calls. It carries a
@@ -264,9 +268,9 @@ type AIModel struct {
 // Complete/Embed/Probe — keeping this package free of any import on config (or
 // the keyring) so the service is unit-testable with httptest and no vault.
 type AIProvider struct {
-	ProviderType    string // ProviderLocal | ProviderOpenAICompatible | ProviderGoogle | ProviderAnthropic
-	BaseURL         string // e.g. http://localhost:11434
-	APIKey          string // resolved by caller; "" for a keyless local endpoint
+	ProviderType    AIProviderType // ProviderLocal | ProviderOpenAICompatible | ProviderGoogle | ProviderAnthropic
+	BaseURL         string         // e.g. http://localhost:11434
+	APIKey          string         // resolved by caller; "" for a keyless local endpoint
 	Model           string
 	ReasoningEffort *string // "none"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max"; nil = omit (OpenAI-compat only)
 	TimeoutMs       *int

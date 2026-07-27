@@ -761,24 +761,14 @@ func TestTestAIConnection_RejectsBadWhich(t *testing.T) {
 	}
 }
 
-// TestProviderTypeLiteralsMatchConfig guards against silent dispatch drift:
-// the ai package cannot import config (layering rule), so the provider-type
-// string constants are duplicated. If one side ever changes a literal, the
-// dispatcher would silently route through the wrong provider shape. This test
-// asserts both packages agree on every literal value.
-func TestProviderTypeLiteralsMatchConfig(t *testing.T) {
-	pairs := []struct{ aiVal, cfgVal string }{
-		{ai.ProviderLocal, config.AIProviderLocal},
-		{ai.ProviderOpenAICompatible, config.AIProviderOpenAICompatible},
-		{ai.ProviderGoogle, config.AIProviderGoogle},
-		{ai.ProviderAnthropic, config.AIProviderAnthropic},
-	}
-	for _, p := range pairs {
-		if p.aiVal != p.cfgVal {
-			t.Fatalf("provider literal drift: ai=%q config=%q", p.aiVal, p.cfgVal)
-		}
-	}
-}
+// TestProviderTypeLiteralsMatchConfig was a drift guard for the now-removed
+// duplication between ai.Provider* and config.AIProvider*. With provider-type
+// constants unified under the single ai.AIProviderType source of truth
+// (config imports ai for the type), there is no second literal set to drift,
+// so the per-literal equality assertion is impossible by construction. The
+// compile-time exhaustive-switch guard in ai/provider_exhaustive_test.go now
+// provides the stronger guarantee that every provider value has a dispatch
+// branch.
 
 // --- ListModels + model cache ---------------------------------------------
 
@@ -847,7 +837,7 @@ func TestListModels_CacheInvalidatedOnProviderConfigChange(t *testing.T) {
 
 	// Changing the provider config invalidates the cache.
 	if err := app.UpdateAIProviderConfig("chat", AIProviderPatch{
-		ProviderType: config.AIProviderOpenAICompatible,
+		ProviderType: ai.ProviderOpenAICompatible,
 		BaseURL:      srv.URL,
 		Model:        "model-b",
 	}); err != nil {

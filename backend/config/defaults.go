@@ -1,6 +1,9 @@
 package config
 
-import "silt/backend/spellcheck"
+import (
+	"silt/backend/ai"
+	"silt/backend/spellcheck"
+)
 
 // Defaults returns a fully-populated SystemConfig matching the config.yaml
 // scaffolded by vault.ScaffoldVault, so a missing/empty field is never a
@@ -223,8 +226,8 @@ func Defaults() SystemConfig {
 		// vault never phones a model until the user enables AI. UseKeyring
 		// defaults true so the first key lands in the OS keyring (#218).
 		AI: AIConfig{
-			Chat:       AIProviderConfig{ProviderType: AIProviderLocal, BaseURL: DefaultAIBaseURL},
-			Embedding:  AIProviderConfig{ProviderType: AIProviderLocal, BaseURL: DefaultAIBaseURL},
+			Chat:       AIProviderConfig{ProviderType: ai.ProviderLocal, BaseURL: DefaultAIBaseURL},
+			Embedding:  AIProviderConfig{ProviderType: ai.ProviderLocal, BaseURL: DefaultAIBaseURL},
 			Features:   AIFeaturesConfig{}, // all false
 			UseKeyring: boolPtr(true),
 		},
