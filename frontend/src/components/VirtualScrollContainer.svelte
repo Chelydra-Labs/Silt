@@ -3,6 +3,7 @@
   import { onDestroy, tick, untrack } from 'svelte'
   import { FetchPageBlocks, RenamePage } from '../../bindings/silt/app.js'
   import { Events } from '@wailsio/runtime'
+  import { EventName } from '../generated/enums'
   import TipTapEditor from './TipTapEditor.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
   import OutlinePanel from './editor/OutlinePanel.svelte'
@@ -163,7 +164,7 @@
     const nb = notebook,
       sec = section,
       pg = page
-    const off = Events.On('block:changed', (event) => {
+    const off = Events.On(EventName.EventBlockChanged, (event) => {
       const ev: { notebook: string; section: string; page: string } = event.data
       if (ev.notebook === nb && ev.section === sec && ev.page === pg) {
         void loadPage(false)

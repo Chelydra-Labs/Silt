@@ -126,13 +126,7 @@ export type {
   PageLinkResolver,
   PageLinkSuggestOptions
 } from './pageLinkSuggest'
-export type {
-  ParsedBlock,
-  BlockType,
-  TaskStatus,
-  NodeJSON,
-  DocJSON
-} from './types'
+export type { ParsedBlock, BlockType, NodeJSON, DocJSON } from './types'
 export {
   extractHeadings,
   extractHeadingsFromEditor,

@@ -38,7 +38,7 @@ var appVersion = strings.TrimSpace(string(versionBytes))
 // GetStartupEvents to replay on mount. Payload is the first data arg (or nil),
 // matching how Wails delivers a single-arg event as ev.data on the JS side.
 type startupEvent struct {
-	Name    string
+	Name    EventName
 	Payload any
 }
 
@@ -318,7 +318,7 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 		// The settings file exists on disk but is unreadable or
 		// malformed. Don't silently fall through to "no vault" — the
 		// user has a vault setup, something is just broken.
-		a.emitOrQueue("vault:init-error",
+		a.emitOrQueue(EventVaultInitError,
 			fmt.Sprintf("failed to load settings.json: %v", err))
 		return nil
 	}
@@ -328,12 +328,12 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 	// user can accept or reject the change. The settings are still used
 	// in-memory (they are valid JSON with a valid schema).
 	if errors.Is(err, vault.ErrSettingsFingerprintMismatch) {
-		a.emitOrQueue("settings:fingerprint-mismatch", nil)
+		a.emitOrQueue(EventSettingsFingerprintMismatch, nil)
 	}
 	if settings.VaultPath != "" {
 		if _, statErr := os.Stat(settings.VaultPath); statErr == nil {
 			if initErr := a.initializeVaultServices(settings.VaultPath); initErr != nil {
-				a.emitOrQueue("vault:init-error", initErr.Error())
+				a.emitOrQueue(EventVaultInitError, initErr.Error())
 			}
 		}
 	}
@@ -350,7 +350,7 @@ func (a *App) ServiceShutdown() error {
 	}
 	// Emit vault:closing so the frontend plugin loader runs every plugin's
 	// onVaultClose/onShutdown hook (#106) before IPC tears down.
-	a.emit("vault:closing", struct{}{})
+	a.emit(EventVaultClosing, struct{}{})
 	// Wait for any in-flight Wails-bound calls (UpdateBlockState,
 	// QueryTasks, SetLocalMCPConfig) to complete before tearing
 	// down the DB, tracker, and watcher. Without this a fast window

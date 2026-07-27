@@ -3,6 +3,7 @@ import { localToday } from './sdk'
 import { captureUiLocation } from './ui-location'
 import { stripReasoningContent } from './stripReasoning'
 import { asString } from '../lib/asString'
+import { AIErrorKind, EventName } from '../generated/enums'
 import {
   PluginRawQuery,
   PluginMutateBlock,
@@ -109,7 +110,7 @@ function normalizeAIError(err: unknown): NormalizedAIError {
         ? e.code
         : typeof e.kind === 'string'
           ? e.kind
-          : 'unknown'
+          : AIErrorKind.ErrUnknown
     // Never String(object) — that yields "[object Object]" for IPC shapes
     // that only carry code/kind without a message field.
     const message =
@@ -117,7 +118,7 @@ function normalizeAIError(err: unknown): NormalizedAIError {
         ? e.message
         : typeof e.error === 'string' && e.error.trim()
           ? e.error
-          : code !== 'unknown'
+          : code !== AIErrorKind.ErrUnknown
             ? code
             : 'AI request failed'
     const status = typeof e.status === 'number' ? e.status : undefined
@@ -139,7 +140,7 @@ function normalizeAIError(err: unknown): NormalizedAIError {
           : 'unknown error'
   const out = new Error(message) as NormalizedAIError
   out.name = 'PluginAIError'
-  out.code = 'unknown'
+  out.code = AIErrorKind.ErrUnknown
   return out
 }
 
@@ -746,7 +747,7 @@ export function makePluginContext(
             const streamId = start?.stream_id ?? start?.streamId ?? ''
             if (!streamId) {
               throw normalizeAIError({
-                code: 'bad-request',
+                code: AIErrorKind.ErrBadRequest,
                 message: 'stream start returned no stream_id'
               })
             }
@@ -927,10 +928,10 @@ function createAIStream(
   }
 
   // Owner-scoped event names (#635): backend emits ai:complete:*:<pluginID>.
-  const deltaEv = `ai:complete:delta:${pluginID}`
-  const doneEv = `ai:complete:done:${pluginID}`
-  const toolDeltaEv = `ai:complete:tool-delta:${pluginID}`
-  const errorEv = `ai:complete:error:${pluginID}`
+  const deltaEv = `${EventName.EventAICompleteDelta}:${pluginID}`
+  const doneEv = `${EventName.EventAICompleteDone}:${pluginID}`
+  const toolDeltaEv = `${EventName.EventAICompleteToolDelta}:${pluginID}`
+  const errorEv = `${EventName.EventAICompleteError}:${pluginID}`
 
   const offDelta = Events.On(deltaEv, (ev) => {
     const p = payloadOf(ev)
@@ -978,7 +979,7 @@ function createAIStream(
     const p = payloadOf(ev)
     if (!p || p.stream_id !== streamId) return
     const err = normalizeAIError({
-      code: p.kind != null ? asString(p.kind) : 'unknown',
+      code: p.kind != null ? asString(p.kind) : AIErrorKind.ErrUnknown,
       message: p.message != null ? asString(p.message) : 'stream error'
     })
     finalError = err
@@ -1044,7 +1045,7 @@ function createAIStream(
         cancelTimer = setTimeout(() => {
           if (finalResult || finalError) return
           const err = normalizeAIError({
-            code: 'timeout',
+            code: AIErrorKind.ErrTimeout,
             message: 'stream cancelled'
           })
           finalError = err

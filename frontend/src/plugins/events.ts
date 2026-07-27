@@ -17,6 +17,7 @@
 
 import { Events } from '@wailsio/runtime'
 import type { PluginEventName, PluginEventPayload } from './sdk'
+import { EventName } from '../generated/enums'
 type AnyCb = (payload: unknown) => void | Promise<void>
 
 interface Subscription {
@@ -27,8 +28,12 @@ interface Subscription {
 const subscribers = new Map<PluginEventName, Map<string, Set<Subscription>>>()
 
 // Wails event names that need a single global Events.On listener (the rest are
-// dispatched in-process). The handler just forwards the payload into dispatch.
-const wailsHostEvents: PluginEventName[] = ['block:changed', 'config:changed']
+// dispatched in-process). Sourced from the Go EventName enum (cmd/genenums) so
+// the literals cannot drift. The handler just forwards the payload into dispatch.
+const wailsHostEvents: PluginEventName[] = [
+  EventName.EventBlockChanged,
+  EventName.EventConfigChanged
+]
 
 // Stores the per-event unsubscribe function returned by Events.On.
 // v3's Events.Off(name) removes ALL listeners for a name across the entire

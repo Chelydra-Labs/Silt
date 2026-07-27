@@ -16,6 +16,7 @@
     CheckPluginUpdate
   } from '../../../bindings/silt/app.js'
   import { Events } from '@wailsio/runtime'
+  import { EventName } from '../../generated/enums'
   import { loadPlugins, teardownPlugin } from '../../plugins/loader'
   import { firstPartyPlugins } from '../../plugins/registry'
   import { loadedPlugins } from '../../plugins/store.svelte'
@@ -435,7 +436,7 @@
   onMount(() => {
     void refresh()
     // Live refresh when Go emits a denial / rate-limit aggregate (#518).
-    const off = Events.On('security:event', () => {
+    const off = Events.On(EventName.EventSecurityEvent, () => {
       void refreshSecurityStats()
     })
     return () => {

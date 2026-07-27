@@ -104,7 +104,7 @@ func (a *App) SaveUserTemplate(t templates.Template) error {
 		return err
 	}
 	templates.InvalidateTemplateCache(t.ID)
-	a.emit("templates:changed", struct{}{})
+	a.emit(EventTemplatesChanged, struct{}{})
 	log.Printf("templates: SaveUserTemplate → saved %q", t.ID)
 	return nil
 }
@@ -134,7 +134,7 @@ func (a *App) DeleteUserTemplate(id string) error {
 		return err
 	}
 	templates.InvalidateTemplateCache(id)
-	a.emit("templates:changed", struct{}{})
+	a.emit(EventTemplatesChanged, struct{}{})
 	log.Printf("templates: DeleteUserTemplate → removed %q", id)
 	return nil
 }
@@ -163,7 +163,7 @@ func (a *App) RegisterPluginTemplates(pluginID string, tpls []*templates.Templat
 		log.Printf("templates: RegisterPluginTemplates(%q) failed: %v", pluginID, err)
 		return err
 	}
-	a.emit("templates:changed", struct{}{})
+	a.emit(EventTemplatesChanged, struct{}{})
 	log.Printf("templates: RegisterPluginTemplates → %d templates for %q", len(valid), pluginID)
 	return nil
 }
@@ -174,7 +174,7 @@ func (a *App) UnregisterPluginTemplates(pluginID string) {
 	a.wg.Add(1)
 	defer a.wg.Done()
 	templates.UnregisterPluginTemplates(pluginID)
-	a.emit("templates:changed", struct{}{})
+	a.emit(EventTemplatesChanged, struct{}{})
 	log.Printf("templates: UnregisterPluginTemplates → %q", pluginID)
 }
 
@@ -185,7 +185,7 @@ func (a *App) ReloadTemplates() error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 	templates.InvalidateTemplateCache()
-	a.emit("templates:changed", struct{}{})
+	a.emit(EventTemplatesChanged, struct{}{})
 	return nil
 }
 

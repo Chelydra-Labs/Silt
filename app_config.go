@@ -124,7 +124,7 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 	a.seedFirstPartyGrants()
 	a.configMu.Unlock()
 	for _, q := range quarantined {
-		a.emit("linked-notebook:quarantined", q)
+		a.emit(EventLinkedNotebookQuarantined, q)
 	}
 	return nil
 }
@@ -134,11 +134,11 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 // refreshes editor settings, hotkeys, and per-plugin settings.
 func (a *App) applyConfig(cfg config.SystemConfig) {
 	quarantined := a.applyConfigLocked(cfg)
-	a.emit("config:changed", cfg)
+	a.emit(EventConfigChanged, cfg)
 	// F3: emit linked-notebook:quarantined for any links whose root_path
 	// changed in the external edit (synced-vault attack vector).
 	for _, q := range quarantined {
-		a.emit("linked-notebook:quarantined", q)
+		a.emit(EventLinkedNotebookQuarantined, q)
 	}
 }
 

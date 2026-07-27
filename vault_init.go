@@ -48,7 +48,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// defaults keep the vault usable — but a parse error is surfaced.
 	cfg, cfgErr := config.Load(vaultPath)
 	if cfgErr != nil {
-		a.emit("config:error", cfgErr.Error())
+		a.emit(EventConfigError, cfgErr.Error())
 	}
 	// F4: load the per-host grants store BEFORE applyConfigLocked so the
 	// first-party seed merges into the real store, not a transient empty one.
@@ -94,7 +94,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			}
 		}
 		if hasThirdParty {
-			a.emitOrQueue("grants:migration-required", legacy)
+			a.emitOrQueue(EventGrantsMigrationRequired, legacy)
 		}
 	}
 
@@ -274,7 +274,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		}
 	}
 	if len(allWarnings) > 0 {
-		a.emitOrQueue("vault:init-warnings", allWarnings)
+		a.emitOrQueue(EventVaultInitWarnings, allWarnings)
 	}
 
 	watcher, err := monitor.NewDirectoryWatcher(vaultPath, dbMgr, tracker, coord, a.spacesPerTab)
@@ -309,7 +309,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	if a.ctx != nil {
 		cw, wErr := config.NewConfigWatcher(vaultPath,
 			func(reloaded config.SystemConfig) { a.applyConfig(reloaded) },
-			func(e error) { a.emit("config:error", e.Error()) })
+			func(e error) { a.emit(EventConfigError, e.Error()) })
 		if wErr != nil {
 			log.Printf("config watcher disabled: %v", wErr)
 		} else {
@@ -325,7 +325,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	if a.ctx != nil {
 		tw, tErr := templates.NewTemplateWatcher(a.templatesDir(), func() {
 			templates.InvalidateTemplateCache()
-			a.emit("templates:changed", struct{}{})
+			a.emit(EventTemplatesChanged, struct{}{})
 		})
 		if tErr != nil {
 			log.Printf("template watcher disabled: %v", tErr)
@@ -347,7 +347,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// Report any paths the watcher could not subscribe to (fsnotify
 	// limits, permissions, etc.) so the UI can inform the user.
 	if failed := watcher.FailedPaths(); len(failed) > 0 {
-		a.emitOrQueue("vault:watch-coverage", failed)
+		a.emitOrQueue(EventVaultWatchCoverage, failed)
 	}
 
 	// Local MCP host (#687): start when enabled in config.yaml. Safe no-op

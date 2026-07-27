@@ -148,7 +148,7 @@ func (a *App) CloseVault() error {
 	// every plugin's onVaultClose hook (#106) while IPC is still live. The
 	// event is best-effort: if no frontend is mounted (e.g. headless test),
 	// the emit is a no-op (a.emit guards wailsApp == nil internally).
-	a.emit("vault:closing", struct{}{})
+	a.emit(EventVaultClosing, struct{}{})
 	// Hold the write lock across the teardown so concurrent readers can't
 	// dereference a service pointer mid-close.
 	a.vaultMu.Lock()

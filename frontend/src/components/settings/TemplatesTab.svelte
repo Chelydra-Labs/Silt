@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
   import { Events } from '@wailsio/runtime'
+  import { EventName } from '../../generated/enums'
   import {
     DeleteUserTemplate,
     FetchPageMarkdown,
@@ -112,7 +113,7 @@
       event.returnValue = ''
     }
     window.addEventListener('beforeunload', warnBeforeUnload)
-    const offVaultClosing = Events.On('vault:closing', () => {
+    const offVaultClosing = Events.On(EventName.EventVaultClosing, () => {
       selectionRequestGeneration += 1
       loadingBody = false
       draft = null

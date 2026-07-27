@@ -40,10 +40,12 @@ import { loadPlugins } from '../../../plugins/loader'
 import { getActiveLocation } from '../../../plugins/location.svelte'
 import type * as main from '../../../../bindings/silt/models.js'
 import type * as aiTypes from '../../../../bindings/silt/backend/ai/models.js'
+import { AIProviderType } from '../../../generated/enums'
 
 export type Which = 'chat' | 'embedding'
-export type ProviderType =
-  'local' | 'openai-compatible' | 'google' | 'anthropic'
+// ProviderType is sourced from the Go AIProviderType enum via cmd/genenums so
+// the frontend cannot drift from the backend dispatcher's provider set (#760).
+export type ProviderType = AIProviderType
 type TestOutcome = { ok: boolean; message?: string }
 type AuditState = 'idle' | 'loading' | 'loaded' | 'error'
 type PersistResult = { ok: true } | { ok: false; message: string }
@@ -57,12 +59,16 @@ export const ANTHROPIC_DEFAULT = 'https://api.anthropic.com'
 
 // Anthropic has no native embeddings endpoint.
 export function supportsEmbeddings(type: string): boolean {
-  return type !== 'anthropic'
+  return type !== AIProviderType.ProviderAnthropic
 }
 
 // Providers that accept a reasoning_effort-style field on chat completions.
 export function supportsReasoningEffort(type: string): boolean {
-  return type === 'openai-compatible' || type === 'google' || type === 'local'
+  return (
+    type === AIProviderType.ProviderOpenAICompatible ||
+    type === AIProviderType.ProviderGoogle ||
+    type === AIProviderType.ProviderLocal
+  )
 }
 
 function presetLabel(
@@ -98,11 +104,11 @@ const DIM_PRESETS = [
 
 export function providerDefaultURL(type: string): string {
   switch (type) {
-    case 'local':
+    case AIProviderType.ProviderLocal:
       return LOCAL_DEFAULT
-    case 'google':
+    case AIProviderType.ProviderGoogle:
       return GOOGLE_DEFAULT
-    case 'anthropic':
+    case AIProviderType.ProviderAnthropic:
       return ANTHROPIC_DEFAULT
     default:
       return OPENAI_DEFAULT
@@ -114,10 +120,22 @@ export const PROVIDER_TYPES: {
   icon: string
   label: string
 }[] = [
-  { value: 'local', icon: 'dns', label: 'Local (Ollama)' },
-  { value: 'openai-compatible', icon: 'cloud', label: 'OpenAI-compatible' },
-  { value: 'google', icon: 'auto_awesome', label: 'Google AI' },
-  { value: 'anthropic', icon: 'psychology', label: 'Anthropic' }
+  { value: AIProviderType.ProviderLocal, icon: 'dns', label: 'Local (Ollama)' },
+  {
+    value: AIProviderType.ProviderOpenAICompatible,
+    icon: 'cloud',
+    label: 'OpenAI-compatible'
+  },
+  {
+    value: AIProviderType.ProviderGoogle,
+    icon: 'auto_awesome',
+    label: 'Google AI'
+  },
+  {
+    value: AIProviderType.ProviderAnthropic,
+    icon: 'psychology',
+    label: 'Anthropic'
+  }
 ]
 
 // Plain-object round-trip so Svelte 5's deep proxy can track nested field
@@ -465,7 +483,9 @@ export function createAIProviderController() {
       if (b.provider_type === t) return true
       const oldDefault = providerDefaultURL(b.provider_type)
       b.provider_type = t
-      const nativeTarget = t === 'google' || t === 'anthropic'
+      const nativeTarget =
+        t === AIProviderType.ProviderGoogle ||
+        t === AIProviderType.ProviderAnthropic
       if (nativeTarget || b.base_url === oldDefault || !b.base_url) {
         b.base_url = providerDefaultURL(t)
       }
@@ -487,7 +507,9 @@ export function createAIProviderController() {
       void (async () => {
         const ok = await updateOne('chat', type)
         if (ok) {
-          const embedType = supportsEmbeddings(type) ? type : 'local'
+          const embedType = supportsEmbeddings(type)
+            ? type
+            : AIProviderType.ProviderLocal
           await updateOne('embedding', embedType)
         }
       })()
@@ -636,10 +658,10 @@ export function createAIProviderController() {
     const chatSupportsEmbed = supportsEmbeddings(config.chat.provider_type)
     config.embedding.provider_type = chatSupportsEmbed
       ? config.chat.provider_type
-      : 'local'
+      : AIProviderType.ProviderLocal
     config.embedding.base_url = chatSupportsEmbed
       ? config.chat.base_url
-      : providerDefaultURL('local')
+      : providerDefaultURL(AIProviderType.ProviderLocal)
 
     modelLists['embedding'] = []
     modelError['embedding'] = null

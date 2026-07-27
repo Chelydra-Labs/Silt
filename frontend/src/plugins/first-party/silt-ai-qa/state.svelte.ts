@@ -5,6 +5,7 @@ import {
   aiProviderNeedsSetup,
   embeddingProviderNeedsSetup
 } from '../../../settings/ai-setup'
+import { AIProviderType, AIErrorKind } from '../../../generated/enums'
 import { settings as appSettings } from '../../../settings/store.svelte'
 import { createConversation, type Conversation } from './conversation'
 import { hybridRetrieve, RetrieveError } from './retrieve'
@@ -112,7 +113,7 @@ export function createQAController() {
     const providerType = String(
       appSettings.config?.ai?.embedding?.provider_type ?? ''
     )
-    if (providerType !== 'google') return
+    if (providerType !== AIProviderType.ProviderGoogle) return
     try {
       // task_type_used records whether the index was built with Google's
       // document/query task-type asymmetry. Missing or 'none' on a Google
@@ -139,7 +140,7 @@ export function createQAController() {
       await metaSet(
         ctx,
         'task_type_used',
-        providerType === 'google' ? 'asymmetric' : 'none'
+        providerType === AIProviderType.ProviderGoogle ? 'asymmetric' : 'none'
       )
     } catch {
       /* best-effort */
@@ -403,7 +404,7 @@ export function createQAController() {
         // Fallback to non-stream if provider rejects streaming.
         if (
           asString((streamErr as { code?: unknown } | null)?.code).includes(
-            'bad-request'
+            AIErrorKind.ErrBadRequest
           ) ||
           /stream/i.test(
             asString((streamErr as { message?: unknown } | null)?.message)

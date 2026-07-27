@@ -40,11 +40,51 @@ function hasWailsCli() {
   return result.status === 0
 }
 
+function hasGo() {
+  const probe = process.platform === 'win32' ? 'where' : 'which'
+  const result = spawnSync(probe, ['go'], { stdio: 'ignore' })
+  return result.status === 0
+}
+
+// Regenerate the shared-enum TS module (frontend/src/generated/enums.ts) from
+// the four Go typed-const enum blocks. Independent of the wails3 step: it only
+// needs the Go toolchain (always present in a Wails project), and the enums.ts
+// is committed (unlike frontend/bindings/) so the FE typechecks without it.
+// Tolerates a missing `go` the same way the wails3 step tolerates a missing
+// CLI — print a pointer and move on so `npm install` never hard-fails on a dev
+// tool.
+function regenerateEnums() {
+  if (!hasGo()) {
+    console.log(
+      '[regenerate-bindings] `go` not found on PATH — skipping enum regen. ' +
+        'frontend/src/generated/enums.ts will be stale until you re-run ' +
+        '`npm run generate` with Go installed.'
+    )
+    return
+  }
+  const result = spawnSync(
+    'go',
+    ['run', '-tags', 'tools', './cmd/genenums/', '-update', 'frontend/src/generated/enums.ts'],
+    { cwd: REPO_ROOT, stdio: 'inherit' }
+  )
+  // Warn-but-pass (do not block `npm install`): consistent with the wails3-CLI
+  // tolerance above. A non-zero status leaves enums.ts possibly stale, but that
+  // is caught authoritatively by the cmd/genenums -compare drift gate in CI
+  // (.github/workflows/ci.yml) and the local pre-push hook (.githooks/pre-push,
+  // when Go files change) — so a soft failure here never ships undetected.
+  if ((result.status ?? 1) !== 0) {
+    console.log('[regenerate-bindings] genenums reported a non-zero status — enums.ts may be stale. The CI + pre-push -compare drift gates will catch this.')
+  }
+}
+
 const SKIP_FLAG = process.env.SILT_SKIP_BINDING_REGEN
 if (SKIP_FLAG === '1' || SKIP_FLAG === 'true') {
   console.log('[regenerate-bindings] skipped (SILT_SKIP_BINDING_REGEN set)')
   process.exit(0)
 }
+
+// Enums regenerate independently of the wails3 CLI (Go-only, committed output).
+regenerateEnums()
 
 if (!hasWailsCli()) {
   console.log(

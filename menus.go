@@ -39,13 +39,13 @@ func setupMenus(app *application.App, siltApp *App) {
 	// --- File ---
 	fileMenu := menu.AddSubmenu("File")
 	fileMenu.Add("New Page").SetAccelerator("Ctrl+N").OnClick(safeMenuCallback("new-page", func(ctx *application.Context) {
-		siltApp.emit("menu:new-page")
+		siltApp.emit(EventMenuNewPage)
 	}))
 	fileMenu.Add("Open Vault...").SetAccelerator("Ctrl+O").OnClick(safeMenuCallback("open-vault", func(ctx *application.Context) {
-		siltApp.emit("menu:open-vault")
+		siltApp.emit(EventMenuOpenVault)
 	}))
 	fileMenu.Add("Save").SetAccelerator("Ctrl+S").OnClick(safeMenuCallback("save", func(ctx *application.Context) {
-		siltApp.emit("menu:save")
+		siltApp.emit(EventMenuSave)
 	}))
 	fileMenu.AddSeparator()
 	fileMenu.AddRole(application.Quit)
@@ -63,20 +63,20 @@ func setupMenus(app *application.App, siltApp *App) {
 	// --- View ---
 	viewMenu := menu.AddSubmenu("View")
 	viewMenu.Add("Toggle Sidebar").SetAccelerator("Ctrl+B").OnClick(safeMenuCallback("toggle-sidebar", func(ctx *application.Context) {
-		siltApp.emit("menu:toggle-sidebar")
+		siltApp.emit(EventMenuToggleSidebar)
 	}))
 	viewMenu.Add("Toggle Format Toolbar").OnClick(safeMenuCallback("toggle-format-toolbar", func(ctx *application.Context) {
-		siltApp.emit("menu:toggle-format-toolbar")
+		siltApp.emit(EventMenuToggleFormatToolbar)
 	}))
 	viewMenu.Add("Find...").SetAccelerator("Ctrl+F").OnClick(safeMenuCallback("find", func(ctx *application.Context) {
-		siltApp.emit("menu:find")
+		siltApp.emit(EventMenuFind)
 	}))
 	viewMenu.Add("Focus Mode").OnClick(safeMenuCallback("focus-mode", func(ctx *application.Context) {
-		siltApp.emit("menu:focus-mode")
+		siltApp.emit(EventMenuFocusMode)
 	}))
 	viewMenu.AddSeparator()
 	viewMenu.Add("Settings...").SetAccelerator("Ctrl+,").OnClick(safeMenuCallback("settings", func(ctx *application.Context) {
-		siltApp.emit("menu:settings")
+		siltApp.emit(EventMenuSettings)
 	}))
 	// Dev Mode Inspect (#679/#684). Disabled when Dev Mode and SILT_DEBUG are
 	// both off so the item stays discoverable but inert. Label is "Open" not
@@ -94,7 +94,7 @@ func setupMenus(app *application.App, siltApp *App) {
 	// --- Help ---
 	helpMenu := menu.AddSubmenu("Help")
 	helpMenu.Add("About Silt").OnClick(safeMenuCallback("about", func(ctx *application.Context) {
-		siltApp.emit("menu:about")
+		siltApp.emit(EventMenuAbout)
 	}))
 
 	app.Menu.SetApplicationMenu(menu)

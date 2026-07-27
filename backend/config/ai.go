@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 
+	"silt/backend/ai"
 	"silt/backend/mcp"
 )
 
@@ -82,30 +83,27 @@ func AIPluginLoadEnabled(features AIFeaturesConfig, pluginID string) bool {
 // dedicated SetAIAPIKey binding is the only write path; a full SaveSystemConfig
 // round-trip preserves the existing key server-side (see SaveSystemConfig).
 type AIProviderConfig struct {
-	ProviderType    string   `yaml:"provider_type,omitempty" json:"provider_type"`                 // "local" | "openai-compatible"
-	BaseURL         string   `yaml:"base_url,omitempty" json:"base_url"`                           // e.g. http://localhost:11434 (Ollama) or https://openrouter.ai/api/v1
-	APIKey          string   `yaml:"api_key,omitempty" json:"-"`                                   // NEVER serialized to JS
-	Model           string   `yaml:"model,omitempty" json:"model"`                                 // e.g. qwen3:30b-a3b, nomic-embed-text
-	Temperature     *float64 `yaml:"temperature,omitempty" json:"temperature,omitempty"`           // chat only
-	MaxTokens       *int     `yaml:"max_tokens,omitempty" json:"max_tokens,omitempty"`             // chat only
-	ReasoningEffort *string  `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"` // chat only: "none"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max"
-	TimeoutMs       *int     `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`             // per-call; default 60000
-	Dimensions      *int     `yaml:"dimensions,omitempty" json:"dimensions,omitempty"`             // embeddings only (truncation)
+	ProviderType    ai.AIProviderType `yaml:"provider_type,omitempty" json:"provider_type"`                 // ai.ProviderLocal | ai.ProviderOpenAICompatible | ai.ProviderGoogle | ai.ProviderAnthropic
+	BaseURL         string            `yaml:"base_url,omitempty" json:"base_url"`                           // e.g. http://localhost:11434 (Ollama) or https://openrouter.ai/api/v1
+	APIKey          string            `yaml:"api_key,omitempty" json:"-"`                                   // NEVER serialized to JS
+	Model           string            `yaml:"model,omitempty" json:"model"`                                 // e.g. qwen3:30b-a3b, nomic-embed-text
+	Temperature     *float64          `yaml:"temperature,omitempty" json:"temperature,omitempty"`           // chat only
+	MaxTokens       *int              `yaml:"max_tokens,omitempty" json:"max_tokens,omitempty"`             // chat only
+	ReasoningEffort *string           `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"` // chat only: "none"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max"
+	TimeoutMs       *int              `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`             // per-call; default 60000
+	Dimensions      *int              `yaml:"dimensions,omitempty" json:"dimensions,omitempty"`             // embeddings only (truncation)
 }
 
-// AI provider type discriminators. "local" targets an Ollama/llama.cpp instance
-// on the same machine (no key expected by default); "openai-compatible" targets
-// a cloud/local OpenAI-compatible endpoint (OpenRouter, LM Studio, OpenAI,
+// AI provider type discriminators live in backend/ai (the canonical
+// ai.AIProviderType enum). config imports that type rather than re-declaring
+// the literals so the dispatcher and the persisted config cannot drift — see
+// ai.ProviderLocal / ProviderOpenAICompatible / ProviderGoogle /
+// ProviderAnthropic. "local" targets an Ollama/llama.cpp instance on the same
+// machine (no key expected by default); "openai-compatible" targets a
+// cloud/local OpenAI-compatible endpoint (OpenRouter, LM Studio, OpenAI,
 // llama-server) where a Bearer token is expected. "google" and "anthropic"
 // target the providers' native first-party APIs (#479), bypassing the OpenAI
-// compat shape for better stability + structured-output support. The ai package
-// dispatches on these values; the string literals MUST match ai.Provider*.
-const (
-	AIProviderLocal            = "local"
-	AIProviderOpenAICompatible = "openai-compatible"
-	AIProviderGoogle           = "google"
-	AIProviderAnthropic        = "anthropic"
-)
+// compat shape for better stability + structured-output support.
 
 // DefaultAIBaseURL is the conventional local endpoint (Ollama's default port).
 // Used as the default base URL when providerType is "local" and none is set.
@@ -165,23 +163,23 @@ func NormalizeAIConfig(ai AIConfig) AIConfig {
 // block (Dimensions applies); the unused advanced knob on the wrong block is
 // dropped so a stale value cannot drift in config.yaml.
 func normalizeAIProvider(p AIProviderConfig, isChat bool) AIProviderConfig {
-	p.ProviderType = strings.TrimSpace(p.ProviderType)
+	p.ProviderType = ai.AIProviderType(strings.TrimSpace(string(p.ProviderType)))
 	switch p.ProviderType {
-	case AIProviderLocal, AIProviderOpenAICompatible, AIProviderGoogle, AIProviderAnthropic:
+	case ai.ProviderLocal, ai.ProviderOpenAICompatible, ai.ProviderGoogle, ai.ProviderAnthropic:
 		// known type — keep as-is
 	default:
 		// Unknown/empty → local (the safest default — nothing leaves the
 		// machine, no key expected).
-		p.ProviderType = AIProviderLocal
+		p.ProviderType = ai.ProviderLocal
 	}
 	p.BaseURL = strings.TrimSpace(p.BaseURL)
 	if p.BaseURL == "" {
 		switch p.ProviderType {
-		case AIProviderLocal:
+		case ai.ProviderLocal:
 			p.BaseURL = DefaultAIBaseURL
-		case AIProviderGoogle:
+		case ai.ProviderGoogle:
 			p.BaseURL = DefaultGoogleBaseURL
-		case AIProviderAnthropic:
+		case ai.ProviderAnthropic:
 			p.BaseURL = DefaultAnthropicBaseURL
 		}
 	}

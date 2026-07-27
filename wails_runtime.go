@@ -23,16 +23,20 @@ type FileFilter struct {
 // that hook is used instead so stream/tool-delta payloads can be asserted
 // without a live Wails runtime (#631). Otherwise no-ops when wailsApp is nil
 // (tests have no Wails lifecycle, so event emission is silently skipped
-// to preserve the pre-migration test behavior).
-func (a *App) emit(name string, data ...any) {
+// to preserve the pre-migration test behavior). name is a canonical EventName
+// const (events.go). Owner-scoped AI stream events compose ":"+pluginID onto a
+// declared base const via aiStreamEventName (e.g. ai:complete:delta:<pluginID>),
+// so those composed names are not themselves in the const block — expected, not
+// drift. pluginID is validated (^[a-z0-9-]+$) before any composed emit.
+func (a *App) emit(name EventName, data ...any) {
 	if a.eventEmit != nil {
-		a.eventEmit(name, data...)
+		a.eventEmit(string(name), data...)
 		return
 	}
 	if a.wailsApp == nil {
 		return
 	}
-	a.wailsApp.Event.Emit(name, data...)
+	a.wailsApp.Event.Emit(string(name), data...)
 }
 
 // emitOrQueue emits a Wails event OR, until MarkFrontendReady signals the
@@ -49,7 +53,7 @@ func (a *App) emit(name string, data ...any) {
 // is emitted ONLY. Emitting AND queueing during the IPC round-trip gap between
 // listener registration and MarkFrontendReady would double-deliver (live +
 // replay), surfacing two modals/toasts for a single event.
-func (a *App) emitOrQueue(name string, data ...any) {
+func (a *App) emitOrQueue(name EventName, data ...any) {
 	var payload any
 	if len(data) > 0 {
 		payload = data[0]

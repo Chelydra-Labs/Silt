@@ -10,6 +10,7 @@ import {
   SetOpenDevtoolsOnStartup
 } from '../../bindings/silt/app.js'
 import { Events } from '@wailsio/runtime'
+import { EventName } from '../generated/enums'
 import type * as config from '../../bindings/silt/backend/config/models.js'
 
 export type SystemConfig = config.SystemConfig
@@ -186,7 +187,7 @@ let _offConfigError: (() => void) | null = null
 
 export function initConfigHotReload(): void {
   if (offConfigChanged) return // idempotent
-  offConfigChanged = Events.On('config:changed', (ev) => {
+  offConfigChanged = Events.On(EventName.EventConfigChanged, (ev) => {
     const cfg: SystemConfig = ev.data
     settings.config = cfg
     settings.error = ''
@@ -194,7 +195,7 @@ export function initConfigHotReload(): void {
       settings.pendingExternal = true
     }
   })
-  _offConfigError = Events.On('config:error', (ev) => {
+  _offConfigError = Events.On(EventName.EventConfigError, (ev) => {
     const msg: string = ev.data
     // A reload failed to parse (e.g. external edit broke the YAML). Keep the
     // last-good config; surface a non-blocking error so the user knows.

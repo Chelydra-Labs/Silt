@@ -12,6 +12,7 @@
     Which,
     AIProviderController
   } from './aiProviderController.svelte'
+  import { AIProviderType } from '../../../generated/enums'
 
   interface Props {
     which: Which
@@ -26,7 +27,7 @@
   const typeLabel = $derived(
     which === 'chat' ? 'Chat Provider Type' : 'Embedding Provider Type'
   )
-  const isLocal = $derived(b.provider_type === 'local')
+  const isLocal = $derived(b.provider_type === AIProviderType.ProviderLocal)
   const embedUnsupported = $derived(
     which === 'embedding' && !supportsEmbeddings(b.provider_type)
   )

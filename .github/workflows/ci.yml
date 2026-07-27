@@ -164,6 +164,14 @@ jobs:
         #   go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json
         run: go run -tags tools ./cmd/inventory/ -compare cmd/inventory/current-approved-v3.json
 
+      - name: Shared-enums drift check
+        # The four Go enum families (AIProviderType, AIErrorKind, IPCErrorCode,
+        # EventName) are the source of truth; frontend/src/generated/enums.ts is
+        # generated from them. A Go const change MUST regenerate the TS module
+        # in-PR or this gate fails:
+        #   go run -tags tools ./cmd/genenums/ -update frontend/src/generated/enums.ts
+        run: go run -tags tools ./cmd/genenums/ -compare frontend/src/generated/enums.ts
+
       - name: withAIPreflight defer-contract analyzer
         run: |
           go build -tags tools -o ./.gobins/withaipreflightdefer ./cmd/withaipreflightdefer

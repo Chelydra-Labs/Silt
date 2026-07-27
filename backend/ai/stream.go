@@ -122,8 +122,8 @@ func CompleteStream(ctx context.Context, req CompleteRequest, onDelta StreamDelt
 	if err := validateBaseURL(baseURL); err != nil {
 		return CompleteResult{}, &AIError{Kind: ErrBadRequest, Message: err.Error()}
 	}
-	switch req.Provider.ProviderType {
-	case ProviderGoogle, ProviderAnthropic:
+	switch providerCategory(req.Provider.ProviderType) {
+	case categoryGoogle, categoryAnthropic:
 		// No SSE streaming for native providers in v1. Fall back to a buffered
 		// non-stream completion and emit the full content as one delta so the
 		// stream contract (deltas + final result) holds transparently for

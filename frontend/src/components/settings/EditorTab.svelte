@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack, onMount } from 'svelte'
   import { Events } from '@wailsio/runtime'
+  import { EventName } from '../../generated/enums'
   import {
     settings,
     saveConfig,
@@ -91,23 +92,26 @@
 
   function subscribeProgress() {
     unsubscribeProgress()
-    progressUnsub = Events.On('spellcheck:download:progress', (ev) => {
-      const p = ev?.data as
-        | {
-            received?: number
-            total?: number
-            id?: string
-            file?: string
-          }
-        | undefined
-      if (!p) return
-      if (p.file) {
-        packStage = stageLabel(p.file)
+    progressUnsub = Events.On(
+      EventName.EventSpellcheckDownloadProgress,
+      (ev) => {
+        const p = ev?.data as
+          | {
+              received?: number
+              total?: number
+              id?: string
+              file?: string
+            }
+          | undefined
+        if (!p) return
+        if (p.file) {
+          packStage = stageLabel(p.file)
+        }
+        if (p.total && p.total > 0 && typeof p.received === 'number') {
+          packProgress = Math.min(100, Math.round((p.received / p.total) * 100))
+        }
       }
-      if (p.total && p.total > 0 && typeof p.received === 'number') {
-        packProgress = Math.min(100, Math.round((p.received / p.total) * 100))
-      }
-    })
+    )
   }
 
   function stageLabel(file: string): string {

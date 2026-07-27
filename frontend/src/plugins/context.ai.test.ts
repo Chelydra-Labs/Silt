@@ -6,6 +6,7 @@
 // canonical vi.mock + vi.hoisted pattern).
 
 import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { AIErrorKind } from '../generated/enums'
 
 const mocks = vi.hoisted(() => {
   const eventHandlers = new Map<string, Set<(ev: { data?: unknown }) => void>>()
@@ -219,7 +220,7 @@ describe('ctx.ai.complete', () => {
       // The Go AIError serializes as a JSON error over IPC; the SDK wrapper
       // coerces it into the documented PluginAIError shape so plugin catch
       // blocks can branch on `code` regardless of IPC transport quirks.
-      kind: 'model-missing',
+      kind: AIErrorKind.ErrModelMissing,
       status: 404,
       message: 'no such model'
     })
@@ -227,7 +228,7 @@ describe('ctx.ai.complete', () => {
     await expect(
       ctx.ai.complete({ messages: [{ role: 'user', content: 'x' }] })
     ).rejects.toMatchObject({
-      code: 'model-missing',
+      code: AIErrorKind.ErrModelMissing,
       status: 404,
       message: 'no such model'
     })
@@ -235,7 +236,7 @@ describe('ctx.ai.complete', () => {
 
   it('prefers `code` over legacy `kind` when both shapes are possible', async () => {
     mocks.pluginAIComplete.mockRejectedValueOnce({
-      code: 'rate-limited',
+      code: AIErrorKind.ErrRateLimited,
       status: 429,
       message: 'slow down'
     })
@@ -243,7 +244,7 @@ describe('ctx.ai.complete', () => {
     await expect(
       ctx.ai.complete({ messages: [{ role: 'user', content: 'x' }] })
     ).rejects.toMatchObject({
-      code: 'rate-limited',
+      code: AIErrorKind.ErrRateLimited,
       status: 429,
       message: 'slow down'
     })
@@ -476,13 +477,13 @@ describe('ctx.ai.embed', () => {
 
   it('normalizes a binding rejection to PluginAIError shape', async () => {
     mocks.pluginAIEmbed.mockRejectedValueOnce({
-      kind: 'unauthorized',
+      kind: AIErrorKind.ErrUnauthorized,
       status: 401,
       message: 'no key'
     })
     const ctx = makePluginContext('p')
     await expect(ctx.ai.embed({ texts: ['x'] })).rejects.toMatchObject({
-      code: 'unauthorized',
+      code: AIErrorKind.ErrUnauthorized,
       status: 401,
       message: 'no key'
     })

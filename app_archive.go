@@ -51,7 +51,7 @@ func (a *App) ExportVault(destPath string) (vault.ExportResult, error) {
 	}
 	vaultName := filepath.Base(filepath.Clean(src))
 	return vault.ExportVaultTree(src, destPath, vaultName, appVersion, func(phase string, current, total int) {
-		a.emit("vault:archive:progress", map[string]any{
+		a.emit(EventVaultArchiveProgress, map[string]any{
 			"phase":   phase,
 			"current": current,
 			"total":   total,
@@ -91,7 +91,7 @@ func (a *App) ImportVault(archivePath, destPath string) (vault.ImportResult, err
 	defer a.wg.Done()
 
 	res, err := vault.ImportVaultTree(archivePath, destPath, func(phase string, current, total int) {
-		a.emit("vault:archive:progress", map[string]any{
+		a.emit(EventVaultArchiveProgress, map[string]any{
 			"phase":   phase,
 			"current": current,
 			"total":   total,

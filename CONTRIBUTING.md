@@ -148,6 +148,24 @@ part of the build, then runs `svelte-check` + `vite build` — that is the real
 Go↔binding consistency guarantee (if a signature changed and the frontend
 import went stale, the type-check fails the build).
 
+## Shared enums — `cmd/genenums`
+
+Four constant families — `AIProviderType`, `AIErrorKind`, `IPCErrorCode`, and
+`EventName` — have **Go as the single source of truth**. `cmd/genenums` parses
+the Go typed-const blocks and emits the committed
+`frontend/src/generated/enums.ts`, which the frontend imports directly.
+
+- `npm install` / `npm run generate` regenerate `enums.ts` alongside the Wails
+  bindings (same `prepare` script).
+- After changing a Go const in one of the four families, regenerate and commit
+  the module: `go run -tags tools ./cmd/genenums/ -update frontend/src/generated/enums.ts`
+- CI runs `cmd/genenums -compare` (formatting-agnostic) as a drift gate, mirroring
+  the `cmd/inventory` parity gate.
+- `frontend/src/generated/` is in `.prettierignore` — it is generated output, not
+  hand-formatted.
+- Design rationale (why Wails's own generator was insufficient):
+  [`docs/decisions/0007-shared-enums-codegen.md`](./docs/decisions/0007-shared-enums-codegen.md).
+
 ## Pre-push hook
 
 `git config core.hooksPath .githooks` enables a fast local Go gate on every

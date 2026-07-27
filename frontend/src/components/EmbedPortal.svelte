@@ -9,6 +9,7 @@
   import { Events } from '@wailsio/runtime'
   import RichText from './RichText.svelte'
   import { coerceIPCError } from '../lib/ipcError'
+  import { IPCErrorCode, EventName } from '../generated/enums'
   import {
     SiltInlineMarkExtensions,
     BlockReferenceNode,
@@ -96,7 +97,7 @@
       // changes), with the substring as a legacy fallback for any unmigrated
       // return site.
       const isBusy =
-        coerceIPCError(e).code === 'block_being_edited' ||
+        coerceIPCError(e).code === IPCErrorCode.CodeBlockBeingEdited ||
         msg.includes('being edited')
       if (isBusy && attempt < 5) {
         saveTimer = setTimeout(() => void persist(text, attempt + 1), 800)
@@ -251,7 +252,7 @@
     } satisfies EmbedChain)
     void load()
     // Live sync: refresh when the source block changes anywhere.
-    offEvent = Events.On('block:changed', (event) => {
+    offEvent = Events.On(EventName.EventBlockChanged, (event) => {
       const ev = event.data
       if (ev && ev.id === uuid && !editing && !saveTimer) {
         void load()

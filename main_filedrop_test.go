@@ -86,7 +86,7 @@ func TestThemeDropTargetConstants(t *testing.T) {
 	if themeFileDropTargetID != "theme-file-drop-target" {
 		t.Fatalf("themeFileDropTargetID = %q; want %q", themeFileDropTargetID, "theme-file-drop-target")
 	}
-	if themeFilesDroppedEvent != "theme:files-dropped" {
-		t.Fatalf("themeFilesDroppedEvent = %q; want %q", themeFilesDroppedEvent, "theme:files-dropped")
+	if EventThemeFilesDropped != "theme:files-dropped" {
+		t.Fatalf("EventThemeFilesDropped = %q; want %q", EventThemeFilesDropped, "theme:files-dropped")
 	}
 }
