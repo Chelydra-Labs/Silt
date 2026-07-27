@@ -23,8 +23,6 @@ import (
 // for config mutations. The editor's spellcheck layer (dictionary.ts) reads
 // lists reactively from settings.config.
 
-const spellcheckDownloadProgressEvent = "spellcheck:download:progress"
-
 // Active pack download cancel (UI only allows one at a time).
 var (
 	spellPackCancelMu sync.Mutex
@@ -174,7 +172,7 @@ func (a *App) EnsureLanguagePack(lang string) error {
 		clearSpellPackCancel()
 	}()
 	emit := func(received, total int64, stage string) {
-		a.emit(spellcheckDownloadProgressEvent, map[string]any{
+		a.emit(EventSpellcheckDownloadProgress, map[string]any{
 			"kind":     "language",
 			"id":       lang,
 			"received": received,
@@ -211,7 +209,7 @@ func (a *App) EnsureDomainPack(id string) error {
 		clearSpellPackCancel()
 	}()
 	emit := func(received, total int64, stage string) {
-		a.emit(spellcheckDownloadProgressEvent, map[string]any{
+		a.emit(EventSpellcheckDownloadProgress, map[string]any{
 			"kind":     "domain",
 			"id":       id,
 			"received": received,

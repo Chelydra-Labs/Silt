@@ -26,6 +26,7 @@
     RecordRecentPage
   } from '../bindings/silt/app.js'
   import { Events } from '@wailsio/runtime'
+  import { EventName } from './generated/enums'
   import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -676,23 +677,26 @@
     let prevDisabled: string[] = settings.config?.plugins?.disabled ?? []
     // Initialize the tab hot-reload baseline from the settings store.
     tabPersistence.initBaseline(settings.config?.ui?.open_tabs)
-    const offConfigChangedReload = Events.On('config:changed', (ev) => {
-      const cfg: SystemConfig = ev.data
-      const next = cfg?.plugins?.disabled ?? []
-      if (!arraysEqual(prevDisabled, next)) {
-        prevDisabled = [...next]
-        loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
-          console.error('Plugin reload after config change failed:', e)
-        )
+    const offConfigChangedReload = Events.On(
+      EventName.EventConfigChanged,
+      (ev) => {
+        const cfg: SystemConfig = ev.data
+        const next = cfg?.plugins?.disabled ?? []
+        if (!arraysEqual(prevDisabled, next)) {
+          prevDisabled = [...next]
+          loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
+            console.error('Plugin reload after config change failed:', e)
+          )
+        }
+        // Re-hydrate / reconcile tabs from an external ui.open_tabs edit.
+        // tabSetKey is intentionally locator-only: a view-mode change must
+        // NOT trigger a full re-hydrate (that would rebuild tabs and remount
+        // editors on every in-app toggle, since the frontend's own
+        // persistTabs write also fires config:changed). Logic lives in the
+        // persistence module; the plugin-reload half stays here.
+        tabPersistence.handleConfigChangedTabRehydrate(cfg)
       }
-      // Re-hydrate / reconcile tabs from an external ui.open_tabs edit.
-      // tabSetKey is intentionally locator-only: a view-mode change must
-      // NOT trigger a full re-hydrate (that would rebuild tabs and remount
-      // editors on every in-app toggle, since the frontend's own
-      // persistTabs write also fires config:changed). Logic lives in the
-      // persistence module; the plugin-reload half stays here.
-      tabPersistence.handleConfigChangedTabRehydrate(cfg)
-    })
+    )
 
     function handleOpenSettings(e: Event) {
       const detail = (e as CustomEvent).detail
@@ -987,20 +991,23 @@
     // `plugins:changed` is a Wails event (Go runtime.EventsEmit), so it must
     // be received via Events.On — a DOM addEventListener would never fire.
     const offPluginsChanged = Events.On(
-      'plugins:changed',
+      EventName.EventPluginsChanged,
       () => void handlePluginsChanged()
     )
-    const offTemplateDraftVaultClosing = Events.On('vault:closing', () => {
-      clearRetainedTemplateDraft()
-      recentPageRecorder.invalidate()
-    })
+    const offTemplateDraftVaultClosing = Events.On(
+      EventName.EventVaultClosing,
+      () => {
+        clearRetainedTemplateDraft()
+        recentPageRecorder.invalidate()
+      }
+    )
     // `vault:moved` fires after a successful vault Move/Copy-Switch (#141).
     // The backend has already reinitialized services at the new path; reset
     // navigation, close settings, and reload the (vault-scoped) config store
     // so the UI reflects the new workspace. If the optional old-vault removal
     // didn't happen, payload.warning carries the reason → surface a non-
     // blocking toast (the move itself succeeded).
-    const offVaultMoved = Events.On('vault:moved', (ev) => {
+    const offVaultMoved = Events.On(EventName.EventVaultMoved, (ev) => {
       const e: { from?: string; to?: string; warning?: string } = ev.data
       activeNotebook = ''
       activeSection = ''
@@ -1032,7 +1039,7 @@
       showSettingsMismatch = true
     }
     const offSettingsMismatch = Events.On(
-      'settings:fingerprint-mismatch',
+      EventName.EventSettingsFingerprintMismatch,
       handleSettingsMismatch
     )
     // F4: grants migration — the vault's legacy config.yaml carries a grants
@@ -1043,9 +1050,12 @@
       pendingLegacyGrants = grants
       showGrantsMigration = true
     }
-    const offGrantsMigration = Events.On('grants:migration-required', (ev) => {
-      handleGrantsMigration(ev.data)
-    })
+    const offGrantsMigration = Events.On(
+      EventName.EventGrantsMigrationRequired,
+      (ev) => {
+        handleGrantsMigration(ev.data)
+      }
+    )
     // F3: linked-notebook quarantined — the root was moved or tampered with.
     // Refresh the quarantine list so the modal shows the latest set.
     async function handleLinkedQuarantined() {
@@ -1056,7 +1066,7 @@
       }
     }
     const offLinkedQuarantined = Events.On(
-      'linked-notebook:quarantined',
+      EventName.EventLinkedNotebookQuarantined,
       () => {
         void handleLinkedQuarantined()
       }
@@ -1074,7 +1084,7 @@
         autoDismissMs: 0
       })
     }
-    const offVaultInitError = Events.On('vault:init-error', (ev) => {
+    const offVaultInitError = Events.On(EventName.EventVaultInitError, (ev) => {
       handleVaultInitError(ev.data)
     })
     // Non-fatal init warnings (symlink skips, permission errors during scan).
@@ -1087,9 +1097,12 @@
         autoDismissMs: 0
       })
     }
-    const offVaultInitWarnings = Events.On('vault:init-warnings', (ev) => {
-      handleVaultInitWarnings(ev.data)
-    })
+    const offVaultInitWarnings = Events.On(
+      EventName.EventVaultInitWarnings,
+      (ev) => {
+        handleVaultInitWarnings(ev.data)
+      }
+    )
     // fsnotify subscription failures (watch limit, permissions). File-change
     // watching is degraded for these paths — indexing and autosave
     // reconciliation may not track external edits to them.
@@ -1101,75 +1114,91 @@
         autoDismissMs: 0
       })
     }
-    const offVaultWatchCoverage = Events.On('vault:watch-coverage', (ev) => {
-      handleVaultWatchCoverage(ev.data)
-    })
+    const offVaultWatchCoverage = Events.On(
+      EventName.EventVaultWatchCoverage,
+      (ev) => {
+        handleVaultWatchCoverage(ev.data)
+      }
+    )
     // Mass id re-mint detection (#443): an external tool/sync stripped the
     // block-identity comments from a previously-indexed file, so the parser
     // re-minted fresh UUIDs — which can break note-to-note links pointing at
     // those blocks. The toast (built by reMintToast) is sticky, leads with
     // the user-visible impact, and offers a "Show file" CTA. The builder is
     // extracted so its payload-shaping contract is unit-testable.
-    const offReMintWarning = Events.On('index:re-mint-warning', (ev) => {
-      const w: ReMintWarning = ev.data
-      if (!w) return
-      pushNotification(reMintToast(w, openPage))
-    })
+    const offReMintWarning = Events.On(
+      EventName.EventIndexReMintWarning,
+      (ev) => {
+        const w: ReMintWarning = ev.data
+        if (!w) return
+        pushNotification(reMintToast(w, openPage))
+      }
+    )
     // Wiki-link rename rewrite summary (#545 harden). Partial failures used
     // to be log-only; surface a toast so inbound [[…]] that failed to update
     // are not silent.
-    const offPageLinksRewritten = Events.On('page-links:rewritten', (ev) => {
-      const d = ev?.data as { rewritten?: number; failed?: number } | undefined
-      if (!d) return
-      const rewritten = d.rewritten ?? 0
-      const failed = d.failed ?? 0
-      if (failed > 0) {
-        pushNotification({
-          kind: 'error',
-          message:
-            rewritten > 0
-              ? `Updated ${rewritten} linked page(s); ${failed} could not be rewritten.`
-              : `Could not rewrite wiki-links in ${failed} page(s). Check the log for details.`,
-          autoDismissMs: 0
-        })
-      } else if (rewritten > 0) {
-        pushNotification({
-          kind: 'info',
-          message: `Updated wiki-links in ${rewritten} page(s).`,
-          autoDismissMs: 4000
-        })
+    const offPageLinksRewritten = Events.On(
+      EventName.EventPageLinksRewritten,
+      (ev) => {
+        const d = ev?.data as
+          { rewritten?: number; failed?: number } | undefined
+        if (!d) return
+        const rewritten = d.rewritten ?? 0
+        const failed = d.failed ?? 0
+        if (failed > 0) {
+          pushNotification({
+            kind: 'error',
+            message:
+              rewritten > 0
+                ? `Updated ${rewritten} linked page(s); ${failed} could not be rewritten.`
+                : `Could not rewrite wiki-links in ${failed} page(s). Check the log for details.`,
+            autoDismissMs: 0
+          })
+        } else if (rewritten > 0) {
+          pushNotification({
+            kind: 'info',
+            message: `Updated wiki-links in ${rewritten} page(s).`,
+            autoDismissMs: 4000
+          })
+        }
       }
-    })
+    )
 
     // Native menu events (#503) — the Go-side menu items emit these; wire
     // them to the same handlers the keyboard shortcuts use so menu and
     // hotkey actions are indistinguishable.
-    const offMenuNewPage = Events.On('menu:new-page', () => {
+    const offMenuNewPage = Events.On(EventName.EventMenuNewPage, () => {
       templatePickerMode = 'new-page'
       showTemplatePicker = !showTemplatePicker
     })
-    const offMenuOpenVault = Events.On('menu:open-vault', () => {
+    const offMenuOpenVault = Events.On(EventName.EventMenuOpenVault, () => {
       void handleSwitchVault()
     })
-    const offMenuSave = Events.On('menu:save', () => void handleMenuSave())
-    const offMenuToggleSidebar = Events.On('menu:toggle-sidebar', () => {
-      sidebarCollapsed = !sidebarCollapsed
-      manuallyCollapsed = sidebarCollapsed
-    })
+    const offMenuSave = Events.On(
+      EventName.EventMenuSave,
+      () => void handleMenuSave()
+    )
+    const offMenuToggleSidebar = Events.On(
+      EventName.EventMenuToggleSidebar,
+      () => {
+        sidebarCollapsed = !sidebarCollapsed
+        manuallyCollapsed = sidebarCollapsed
+      }
+    )
     const offMenuToggleFormatToolbar = Events.On(
-      'menu:toggle-format-toolbar',
+      EventName.EventMenuToggleFormatToolbar,
       () => void toggleFormatToolbar()
     )
-    const offMenuFind = Events.On('menu:find', () => {
+    const offMenuFind = Events.On(EventName.EventMenuFind, () => {
       findBarState.openFind()
     })
-    const offMenuFocusMode = Events.On('menu:focus-mode', () => {
+    const offMenuFocusMode = Events.On(EventName.EventMenuFocusMode, () => {
       void toggleFocusMode()
     })
-    const offMenuSettings = Events.On('menu:settings', () => {
+    const offMenuSettings = Events.On(EventName.EventMenuSettings, () => {
       openSettings('general')
     })
-    const offMenuAbout = Events.On('menu:about', () => {
+    const offMenuAbout = Events.On(EventName.EventMenuAbout, () => {
       openSettings('about')
     })
 
@@ -1183,22 +1212,22 @@
     // startup event is indistinguishable from a live one to the handler.
     function dispatchStartupEvent(name: string, data: unknown): void {
       switch (name) {
-        case 'settings:fingerprint-mismatch':
+        case EventName.EventSettingsFingerprintMismatch:
           handleSettingsMismatch()
           break
-        case 'grants:migration-required':
+        case EventName.EventGrantsMigrationRequired:
           handleGrantsMigration(data as Record<string, Record<string, string>>)
           break
-        case 'linked-notebook:quarantined':
+        case EventName.EventLinkedNotebookQuarantined:
           void handleLinkedQuarantined()
           break
-        case 'vault:init-error':
+        case EventName.EventVaultInitError:
           handleVaultInitError(data as string)
           break
-        case 'vault:init-warnings':
+        case EventName.EventVaultInitWarnings:
           handleVaultInitWarnings(data as string[])
           break
-        case 'vault:watch-coverage':
+        case EventName.EventVaultWatchCoverage:
           handleVaultWatchCoverage(data as string[])
           break
         default:

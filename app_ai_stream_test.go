@@ -296,7 +296,7 @@ func TestPluginAIComplete_Stream_EmitsToolDeltas(t *testing.T) {
 		}
 		mu.Lock()
 		got = append(got, captured{name: name, data: payload})
-		if strings.HasPrefix(name, aiEventCompleteDone) || strings.HasPrefix(name, aiEventCompleteError) {
+		if strings.HasPrefix(name, string(EventAICompleteDone)) || strings.HasPrefix(name, string(EventAICompleteError)) {
 			select {
 			case <-done:
 			default:
@@ -363,8 +363,8 @@ func TestPluginAIComplete_Stream_EmitsToolDeltas(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	wantToolEvent := aiStreamEventName(aiEventCompleteToolDelta, pluginID)
-	wantDoneEvent := aiStreamEventName(aiEventCompleteDone, pluginID)
+	wantToolEvent := string(aiStreamEventName(EventAICompleteToolDelta, pluginID))
+	wantDoneEvent := string(aiStreamEventName(EventAICompleteDone, pluginID))
 	var toolDeltas int
 	var sawDone bool
 	for _, e := range got {
@@ -393,7 +393,7 @@ func TestPluginAIComplete_Stream_EmitsToolDeltas(t *testing.T) {
 			}
 		}
 		// Must not emit unscoped global names for this stream.
-		if e.name == aiEventCompleteToolDelta || e.name == aiEventCompleteDone {
+		if e.name == string(EventAICompleteToolDelta) || e.name == string(EventAICompleteDone) {
 			t.Errorf("unscoped event %q emitted; want owner-scoped names", e.name)
 		}
 	}

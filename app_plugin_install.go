@@ -179,5 +179,5 @@ func (a *App) DisablePlugin(pluginID string) error {
 }
 
 func (a *App) emitPluginsChanged() {
-	a.emit("plugins:changed", struct{}{})
+	a.emit(EventPluginsChanged, struct{}{})
 }

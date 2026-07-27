@@ -6,6 +6,7 @@
 // settings/store.svelte.ts).
 import { ListTemplates } from '../../bindings/silt/app.js'
 import { Events } from '@wailsio/runtime'
+import { EventName } from '../generated/enums'
 import type * as templates from '../../bindings/silt/backend/templates/models.js'
 
 export interface TemplatesListingState {
@@ -106,7 +107,7 @@ export function initTemplates(): () => void {
   void loadTemplates()
   // Debounce so a burst of changes coalesces into one ListTemplates call.
   let reloadTimer: ReturnType<typeof setTimeout> | null = null
-  offTemplatesChanged = Events.On('templates:changed', () => {
+  offTemplatesChanged = Events.On(EventName.EventTemplatesChanged, () => {
     if (reloadTimer !== null) clearTimeout(reloadTimer)
     reloadTimer = setTimeout(() => {
       reloadTimer = null

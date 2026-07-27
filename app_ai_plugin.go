@@ -37,23 +37,19 @@ import (
 	"time"
 )
 
-// AI stream event name prefixes (#226). Owner-scoped full names append
-// ":"+pluginID so concurrent plugin streams do not share a global bus (#635).
+// AI stream event bases live in events.go as the canonical EventAIComplete*
+// EventName consts (#226/#635). The full owner-scoped name appends
+// ":"+pluginID so concurrent plugin streams do not share a global bus.
 // Payload still includes plugin_id for debugging.
-const (
-	aiEventCompleteDelta     = "ai:complete:delta"
-	aiEventCompleteDone      = "ai:complete:done"
-	aiEventCompleteError     = "ai:complete:error"
-	aiEventCompleteToolDelta = "ai:complete:tool-delta"
-)
 
 // aiStreamEventName returns the owner-scoped Wails event name for a stream
-// event base + pluginID (#635).
-func aiStreamEventName(base, pluginID string) string {
+// event base + pluginID (#635). The result is EventName-typed (constructed
+// from a declared base const) so it flows through emit without a cast.
+func aiStreamEventName(base EventName, pluginID string) EventName {
 	if pluginID == "" {
 		return base
 	}
-	return base + ":" + pluginID
+	return EventName(string(base) + ":" + pluginID)
 }
 
 // aiStreamBufferCap is the max number of unconsumed delta events buffered per
@@ -348,7 +344,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 		case <-time.After(aiStreamReadyWait):
 		case <-streamCtx.Done():
 			a.auditAI(pluginID, aiChatKind, provider.BaseURL, effectiveModel, "cancelled", nil)
-			a.emit(aiStreamEventName(aiEventCompleteError, pluginID), map[string]any{
+			a.emit(aiStreamEventName(EventAICompleteError, pluginID), map[string]any{
 				"stream_id": streamID,
 				"plugin_id": pluginID,
 				"kind":      string(ai.ErrCanceled),
@@ -365,7 +361,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 			defer close(emitDone)
 			idx := 0
 			for delta := range deltaCh {
-				a.emit(aiStreamEventName(aiEventCompleteDelta, pluginID), map[string]any{
+				a.emit(aiStreamEventName(EventAICompleteDelta, pluginID), map[string]any{
 					"stream_id": streamID,
 					"plugin_id": pluginID,
 					"delta":     delta,
@@ -381,7 +377,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 		go func() {
 			defer close(emitToolDone)
 			for frag := range toolDeltaCh {
-				a.emit(aiStreamEventName(aiEventCompleteToolDelta, pluginID), map[string]any{
+				a.emit(aiStreamEventName(EventAICompleteToolDelta, pluginID), map[string]any{
 					"stream_id":          streamID,
 					"plugin_id":          pluginID,
 					"index":              frag.Index,
@@ -427,7 +423,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 			if e, ok := callErr.(*ai.AIError); ok {
 				kind, msg = string(e.Kind), e.Message
 			}
-			a.emit(aiStreamEventName(aiEventCompleteError, pluginID), map[string]any{
+			a.emit(aiStreamEventName(EventAICompleteError, pluginID), map[string]any{
 				"stream_id": streamID,
 				"plugin_id": pluginID,
 				"kind":      kind,
@@ -448,7 +444,7 @@ func (a *App) startAIStream(pluginID string, provider ai.AIProvider, effectiveMo
 		if result.Usage != nil {
 			payload["usage"] = result.Usage
 		}
-		a.emit(aiStreamEventName(aiEventCompleteDone, pluginID), payload)
+		a.emit(aiStreamEventName(EventAICompleteDone, pluginID), payload)
 	}()
 
 	return ai.CompleteResult{StreamID: streamID, Model: effectiveModel}, nil

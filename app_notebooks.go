@@ -150,7 +150,7 @@ func (a *App) nameCollidesWithLink(name, excludeID string) bool {
 // recovery path. Called from the watcher goroutine; only touches the event
 // emitter (no locks).
 func (a *App) onReMintWarning(w monitor.ReMintWarning) {
-	a.emit("index:re-mint-warning", w)
+	a.emit(EventIndexReMintWarning, w)
 }
 
 // CreateSection creates a section folder under an explicit parent section.

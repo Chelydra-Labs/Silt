@@ -184,7 +184,7 @@ func (a *App) ApplyTheme(id, mode string) (ActiveThemeResult, error) {
 
 	res := buildThemeResult(t, mode)
 	log.Printf("themes: ApplyTheme(id=%q mode=%q) → resolved %q", id, mode, t.ID)
-	a.emit("theme:changed", map[string]string{
+	a.emit(EventThemeChanged, map[string]string{
 		"id": t.ID, "mode": mode,
 	})
 	return res, nil
@@ -254,7 +254,7 @@ func (a *App) ImportTheme(srcPath string) (*themes.ImportResult, error) {
 	}
 	log.Printf("themes: ImportTheme(%q) → imported as %q (renamed=%v)", filepath.Base(srcPath), res.Info.ID, res.Renamed)
 	themes.InvalidateThemeCache(res.Info.ID)
-	a.emit("themes:changed", struct{}{})
+	a.emit(EventThemesChanged, struct{}{})
 	return res, nil
 }
 
@@ -378,14 +378,14 @@ func (a *App) SaveCustomTheme(req SaveCustomThemeRequest) (*SaveCustomThemeResul
 		}); err != nil {
 			return nil, fmt.Errorf("failed to persist active theme: %w", err)
 		}
-		a.emit("theme:changed", map[string]string{
+		a.emit(EventThemeChanged, map[string]string{
 			"id": info.ID, "mode": settings.ThemeMode,
 		})
 		result.Applied = true
 	}
 
 	log.Printf("themes: SaveCustomTheme → id=%q overwrite=%v applied=%v", info.ID, req.Overwrite, result.Applied)
-	a.emit("themes:changed", struct{}{})
+	a.emit(EventThemesChanged, struct{}{})
 	return result, nil
 }
 
@@ -423,11 +423,11 @@ func (a *App) RenameCustomTheme(id, name string) error {
 		if mode == "" {
 			mode = "dark"
 		}
-		a.emit("theme:changed", map[string]string{
+		a.emit(EventThemeChanged, map[string]string{
 			"id": id, "mode": mode, "name": name,
 		})
 	}
-	a.emit("themes:changed", struct{}{})
+	a.emit(EventThemesChanged, struct{}{})
 	return nil
 }
 
@@ -470,6 +470,6 @@ func (a *App) DeleteCustomTheme(id string) error {
 		return err
 	}
 	log.Printf("themes: DeleteCustomTheme(%q)", id)
-	a.emit("themes:changed", struct{}{})
+	a.emit(EventThemesChanged, struct{}{})
 	return nil
 }

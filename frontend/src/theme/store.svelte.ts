@@ -21,6 +21,7 @@ import {
   SaveCustomTheme
 } from '../../bindings/silt/app.js'
 import { Events } from '@wailsio/runtime'
+import { EventName } from '../generated/enums'
 import type * as themes from '../../bindings/silt/backend/themes/models.js'
 import type {
   ActiveThemeResult,
@@ -257,7 +258,7 @@ export async function initTheme(): Promise<() => void> {
   // resolved {id, mode, name?}. When id+mode already match (common after our
   // own applyTheme), skip the GetActiveTheme round-trip + re-inject — but
   // still apply a payload name so active rename (#533) updates the label.
-  offThemeChanged = Events.On('theme:changed', (ev) => {
+  offThemeChanged = Events.On(EventName.EventThemeChanged, (ev) => {
     void (async () => {
       const payload: { id?: string; mode?: string; name?: string } | null =
         ev.data
@@ -594,7 +595,7 @@ export function initThemes(): () => void {
   // than N concurrent round-trips whose responses may arrive
   // out-of-order.
   let reloadTimer: ReturnType<typeof setTimeout> | null = null
-  offThemesChanged = Events.On('themes:changed', () => {
+  offThemesChanged = Events.On(EventName.EventThemesChanged, () => {
     if (reloadTimer !== null) clearTimeout(reloadTimer)
     reloadTimer = setTimeout(() => {
       reloadTimer = null

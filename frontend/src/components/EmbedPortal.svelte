@@ -9,7 +9,7 @@
   import { Events } from '@wailsio/runtime'
   import RichText from './RichText.svelte'
   import { coerceIPCError } from '../lib/ipcError'
-  import { IPCErrorCode } from '../generated/enums'
+  import { IPCErrorCode, EventName } from '../generated/enums'
   import {
     SiltInlineMarkExtensions,
     BlockReferenceNode,
@@ -252,7 +252,7 @@
     } satisfies EmbedChain)
     void load()
     // Live sync: refresh when the source block changes anywhere.
-    offEvent = Events.On('block:changed', (event) => {
+    offEvent = Events.On(EventName.EventBlockChanged, (event) => {
       const ev = event.data
       if (ev && ev.id === uuid && !editing && !saveTimer) {
         void load()

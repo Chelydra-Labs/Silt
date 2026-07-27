@@ -147,12 +147,12 @@ func (a *App) PickBackgroundImage(zone string) (*BackgroundImageResult, error) {
 	// targetID is the on-disk theme the asset was written to (a fork
 	// counts as the new active theme — its selection was persisted
 	// above), and settings.ThemeMode is the unchanged current mode.
-	a.emit("theme:changed", map[string]string{
+	a.emit(EventThemeChanged, map[string]string{
 		"id": targetID, "mode": settings.ThemeMode,
 	})
 	// themes:changed (plural) refreshes the picker listing so the
 	// forked theme appears / the cached entry is dropped.
-	a.emit("themes:changed", struct{}{})
+	a.emit(EventThemesChanged, struct{}{})
 	log.Printf("themes: PickBackgroundImage(zone=%q) → theme %q forked=%v base64=%v", zone, targetID, forked, isBase64)
 	return &BackgroundImageResult{
 		ThemeID:   targetID,

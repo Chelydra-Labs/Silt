@@ -173,7 +173,7 @@ func (a *App) rewriteStaleInboundAfterRename(oldNB, oldSec, oldPage, newNB, newS
 	if rewritten > 0 {
 		log.Printf("rewriteStaleInboundAfterRename: rewritten=%d (%s/%s/%s → %s/%s/%s)",
 			rewritten, oldNB, oldSec, oldPage, newNB, newSec, newPage)
-		a.emit("page-links:rewritten", pageLinksRewriteResult{Rewritten: rewritten})
+		a.emit(EventPageLinksRewritten, pageLinksRewriteResult{Rewritten: rewritten})
 	}
 }
 
@@ -208,7 +208,7 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldSource, oldNB, oldSec, oldPa
 	})
 	if err != nil {
 		log.Printf("rewriteInboundPageLinks: list: %v", err)
-		a.emit("page-links:rewritten", pageLinksRewriteResult{Failed: 1})
+		a.emit(EventPageLinksRewritten, pageLinksRewriteResult{Failed: 1})
 		return
 	}
 	if len(rows) == 0 {
@@ -330,7 +330,7 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldSource, oldNB, oldSec, oldPa
 	if rewritten > 0 || failed > 0 {
 		log.Printf("rewriteInboundPageLinks: rewritten=%d failed=%d (%s/%s/%s → %s/%s/%s)",
 			rewritten, failed, oldNB, oldSec, oldPage, newNB, newSec, newPage)
-		a.emit("page-links:rewritten", pageLinksRewriteResult{
+		a.emit(EventPageLinksRewritten, pageLinksRewriteResult{
 			Rewritten: rewritten,
 			Failed:    failed,
 		})

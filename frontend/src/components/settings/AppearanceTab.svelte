@@ -10,6 +10,7 @@
   // populated by ListThemes); zero per-theme code branches.
   import { onMount } from 'svelte'
   import { Events } from '@wailsio/runtime'
+  import { EventName } from '../../generated/enums'
   import { injectTokens } from '../../theme/inject'
   import { displayFamilyName } from '../../theme/fonts'
   import {
@@ -74,7 +75,7 @@
     // function the picker button's pickAndImportTheme calls after the native
     // open dialog — so success/error feedback routes through the same
     // themeStatus live region either way.
-    const offDrop = Events.On('theme:files-dropped', (ev) => {
+    const offDrop = Events.On(EventName.EventThemeFilesDropped, (ev) => {
       handleDroppedFiles(ev?.data)
     })
     return () => {

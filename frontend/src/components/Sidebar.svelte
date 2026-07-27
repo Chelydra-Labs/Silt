@@ -2,6 +2,7 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { onMount } from 'svelte'
   import { Events } from '@wailsio/runtime'
+  import { EventName } from '../generated/enums'
   import SidebarPluginPanels from './sidebar/SidebarPluginPanels.svelte'
   import SidebarNavTree from './sidebar/SidebarNavTree.svelte'
   import PluginSidebarPanels from './PluginSidebarPanels.svelte'
@@ -304,7 +305,7 @@
     window.addEventListener('create-page-inline', handleCreatePageInlineEvent)
     window.addEventListener('open-navigation-create', handleNavigationCreate)
     const offConfigChanged = Events.On(
-      'config:changed',
+      EventName.EventConfigChanged,
       () => void loader.loadNavigationPreferences()
     )
     return () => {

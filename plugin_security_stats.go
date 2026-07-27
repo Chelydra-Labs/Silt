@@ -19,12 +19,12 @@ type PluginSecurityStats struct {
 
 // SecurityEvent is the payload of the Wails `security:event` emission (#518).
 type SecurityEvent struct {
-	PluginID     string `json:"pluginId"`
-	Kind         string `json:"kind"` // "capability_denied" | "rate_limited"
-	Capability   string `json:"capability,omitempty"`
-	Denials      int    `json:"denials"`
-	RateLimited  int    `json:"rateLimited"`
-	At           int64  `json:"at"` // unix ms
+	PluginID    string `json:"pluginId"`
+	Kind        string `json:"kind"` // "capability_denied" | "rate_limited"
+	Capability  string `json:"capability,omitempty"`
+	Denials     int    `json:"denials"`
+	RateLimited int    `json:"rateLimited"`
+	At          int64  `json:"at"` // unix ms
 }
 
 // pluginSecurityStats is an in-memory per-plugin counter map.
@@ -97,7 +97,7 @@ func (a *App) recordCapabilityDenied(pluginID, capability string) {
 		return
 	}
 	st := a.securityStats.recordDenial(pluginID, capability)
-	a.emit("security:event", SecurityEvent{
+	a.emit(EventSecurityEvent, SecurityEvent{
 		PluginID:    pluginID,
 		Kind:        "capability_denied",
 		Capability:  capability,
@@ -113,7 +113,7 @@ func (a *App) recordRateLimited(pluginID string) {
 		return
 	}
 	st := a.securityStats.recordRateLimit(pluginID)
-	a.emit("security:event", SecurityEvent{
+	a.emit(EventSecurityEvent, SecurityEvent{
 		PluginID:    pluginID,
 		Kind:        "rate_limited",
 		Denials:     st.Denials,

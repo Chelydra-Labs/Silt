@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { Events } from '@wailsio/runtime'
+  import { EventName } from '../../generated/enums'
   import {
     PickVaultExportPath,
     ExportVault,
@@ -64,7 +65,7 @@
   // emitting when the call returns. Re-mounting (re-opening) re-subscribes.
   let offProgress: (() => void) | null = null
   $effect(() => {
-    offProgress = Events.On('vault:archive:progress', (ev) => {
+    offProgress = Events.On(EventName.EventVaultArchiveProgress, (ev) => {
       const p = ev.data as Record<string, unknown>
       if (p && typeof p.current === 'number' && typeof p.total === 'number') {
         progress = {

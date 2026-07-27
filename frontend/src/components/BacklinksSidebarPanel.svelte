@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { Events } from '@wailsio/runtime'
+  import { EventName } from '../generated/enums'
   import { GetBacklinksPaged } from '../../bindings/silt/app.js'
 
   export type Backlink = {
@@ -217,7 +218,7 @@
   }
 
   onMount(() => {
-    const offBlock = Events.On('block:changed', () => {
+    const offBlock = Events.On(EventName.EventBlockChanged, () => {
       if (refreshTimer) clearTimeout(refreshTimer)
       refreshTimer = setTimeout(() => {
         refreshTimer = null

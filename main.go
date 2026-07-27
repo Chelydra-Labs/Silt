@@ -116,11 +116,6 @@ func clearCacheOnVersionChange(cacheDir, currentVersion string) {
 // attachments, etc.) through the theme path.
 const themeFileDropTargetID = "theme-file-drop-target"
 
-// themeFilesDroppedEvent bridges an OS file drop on the Appearance target to the
-// frontend theme importer. The payload is the dropped paths as []string,
-// matching the existing native-picker import path so the component can reuse it.
-const themeFilesDroppedEvent = "theme:files-dropped"
-
 // themeDropPaths returns the file paths to forward to the theme importer for a
 // window file-drop, or nil when the drop did not land on the Appearance target
 // or carried no files. Pure (no App / WindowEvent dependency) so the routing
@@ -151,7 +146,7 @@ func setupMainWindowEvents(window *application.WebviewWindow, siltApp *App) {
 		if len(paths) == 0 {
 			return
 		}
-		siltApp.emit(themeFilesDroppedEvent, paths)
+		siltApp.emit(EventThemeFilesDropped, paths)
 	})
 
 	window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {

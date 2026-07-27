@@ -335,7 +335,7 @@ func (a *App) invalidateLinkedConfig(source string) {
 // the old config. Called from the watcher goroutine.
 func (a *App) onLinkedConfigChange(source string) {
 	a.invalidateLinkedConfig(source)
-	a.emit("linked-config:changed", source)
+	a.emit(EventLinkedConfigChanged, source)
 }
 
 // quarantineLink adds a linked notebook ID to the quarantine set and emits
@@ -357,7 +357,7 @@ func (a *App) quarantineLink(id, reason string) {
 		}
 	}
 	a.configMu.Unlock()
-	a.emitOrQueue("linked-notebook:quarantined", map[string]string{
+	a.emitOrQueue(EventLinkedNotebookQuarantined, map[string]string{
 		"id":           id,
 		"display_name": displayName,
 		"reason":       reason,

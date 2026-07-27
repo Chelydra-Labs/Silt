@@ -238,74 +238,55 @@ func collapseWS(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// scanGoEvents walks every .go file under root (skipping _test.go and the
-// usual non-source directories) and collects the string-literal event names
-// passed to a.emit / a.wailsApp.Event.Emit (the v3 event-emission wrappers).
+// scanGoEvents reads the canonical EventName const block in events.go and
+// returns the sorted set of declared event-name string values. Every emit site
+// now references an EventName const (not a bare string literal), so the
+// declared const block IS the authoritative event surface — scanning call sites
+// for literals would find nothing. Returns an empty slice (not an error) if
+// events.go is absent or unparseable so the gate degrades gracefully.
 func scanGoEvents(root string) []string {
 	seen := map[string]struct{}{}
-	fset := token.NewFileSet()
-
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			if path != root {
-				switch filepath.Base(path) {
-				case "vendor", "node_modules", ".git", "build":
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		src, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		file, err := parser.ParseFile(fset, path, src, parser.AllErrors)
-		if err != nil {
-			return nil // skip unparseable rather than aborting
-		}
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) < 1 {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel == nil {
-				return true
-			}
-			// v3 emits events via a.emit(name, ...) or, at the lowest level,
-			// a.wailsApp.Event.Emit(name, ...). Both take the event name as
-			// Args[0] (no ctx parameter, unlike v2's EventsEmit). We match on
-			// the method name ("emit" / "Emit") without resolving the full
-			// receiver chain (that would pull in go/types); the method name
-			// plus Args[0]-is-a-string-literal check is specific enough.
-			if sel.Sel.Name != "emit" && sel.Sel.Name != "Emit" {
-				return true
-			}
-			// Scanning Args[0:] for the first string literal tolerates unusual
-			// shapes and silently skips calls where the name is a variable
-			// (e.g. updateProgressEvent, or the name parameter forwarded by
-			// the emit/emitOrQueue wrappers themselves).
-			for _, arg := range call.Args {
-				lit, ok := arg.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					continue
-				}
-				if name, err := strconv.Unquote(lit.Value); err == nil {
-					seen[name] = struct{}{}
-				}
-				break
-			}
-			return true
-		})
+	path := filepath.Join(root, "events.go")
+	src, err := os.ReadFile(path)
+	if err != nil {
 		return nil
-	})
-
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, src, parser.AllErrors)
+	if err != nil {
+		return nil // skip unparseable rather than aborting
+	}
+	for _, decl := range file.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		// lastType tracks the inherited type across specs in a parenthesized
+		// const block (a ValueSpec that omits the type inherits the preceding
+		// spec's type), matching Go's const-declaration semantics.
+		lastType := ""
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			if vs.Type != nil {
+				if id, ok := vs.Type.(*ast.Ident); ok {
+					lastType = id.Name
+				}
+			}
+			if lastType != "EventName" || len(vs.Names) == 0 || len(vs.Values) == 0 {
+				continue
+			}
+			lit, ok := vs.Values[0].(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				continue
+			}
+			if name, err := strconv.Unquote(lit.Value); err == nil {
+				seen[name] = struct{}{}
+			}
+		}
+	}
 	return sortedKeys(seen)
 }
 

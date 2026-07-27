@@ -3,7 +3,7 @@ import { localToday } from './sdk'
 import { captureUiLocation } from './ui-location'
 import { stripReasoningContent } from './stripReasoning'
 import { asString } from '../lib/asString'
-import { AIErrorKind } from '../generated/enums'
+import { AIErrorKind, EventName } from '../generated/enums'
 import {
   PluginRawQuery,
   PluginMutateBlock,
@@ -928,10 +928,10 @@ function createAIStream(
   }
 
   // Owner-scoped event names (#635): backend emits ai:complete:*:<pluginID>.
-  const deltaEv = `ai:complete:delta:${pluginID}`
-  const doneEv = `ai:complete:done:${pluginID}`
-  const toolDeltaEv = `ai:complete:tool-delta:${pluginID}`
-  const errorEv = `ai:complete:error:${pluginID}`
+  const deltaEv = `${EventName.EventAICompleteDelta}:${pluginID}`
+  const doneEv = `${EventName.EventAICompleteDone}:${pluginID}`
+  const toolDeltaEv = `${EventName.EventAICompleteToolDelta}:${pluginID}`
+  const errorEv = `${EventName.EventAICompleteError}:${pluginID}`
 
   const offDelta = Events.On(deltaEv, (ev) => {
     const p = payloadOf(ev)

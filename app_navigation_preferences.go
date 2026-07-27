@@ -142,7 +142,7 @@ func (a *App) RecordTagUsage(tag string) error {
 		return err
 	}
 	if changed {
-		a.emit("config:changed", changedCfg)
+		a.emit(EventConfigChanged, changedCfg)
 	}
 	return nil
 }

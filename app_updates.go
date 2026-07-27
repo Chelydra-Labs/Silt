@@ -20,11 +20,6 @@ import (
 // (vault:archive:progress). No token is embedded — unauthenticated reads of
 // the public repo are sufficient at 24h-throttled desktop volumes (#312 AC7).
 
-// updateProgressEvent is the Wails event name the frontend subscribes to for
-// download progress. Payload: {received:int64, total:int64} (total is -1 when
-// ContentLength is unknown).
-const updateProgressEvent = "update:download:progress"
-
 // UpdateSettingsResult is the frontend-facing view of the update preferences
 // in settings.json. AutoCheck is the resolved default-on value (nil→true).
 // ShouldAutoCheck is the backend's throttled startup decision (autoCheck &&
@@ -79,7 +74,7 @@ func (a *App) CheckForUpdates() (updates.UpdateInfo, error) {
 func (a *App) DownloadUpdate(assetURL string) (string, error) {
 	client := updates.NewClient(appVersion)
 	emitProgress := func(received, total int64) {
-		a.emit(updateProgressEvent, map[string]any{
+		a.emit(EventUpdateDownloadProgress, map[string]any{
 			"received": received,
 			"total":    total,
 		})

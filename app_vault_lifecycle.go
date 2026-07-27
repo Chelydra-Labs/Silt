@@ -193,7 +193,7 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 	if result.RemoveOldErr != "" {
 		payload["warning"] = "Vault moved, but the original folder could not be removed: " + result.RemoveOldErr
 	}
-	a.emit("vault:moved", payload)
+	a.emit(EventVaultMoved, payload)
 	return result, nil
 }
 
@@ -294,7 +294,7 @@ func (a *App) SwitchVault(path string) error {
 	if switchErr != nil {
 		return switchErr
 	}
-	a.emit("vault:moved", map[string]string{
+	a.emit(EventVaultMoved, map[string]string{
 		"from": "",
 		"to":   abs,
 	})

@@ -10,7 +10,7 @@
 
 import type { Component } from 'svelte'
 import type { UiLocationSnapshot } from './ui-location'
-import type { AIErrorKind } from '../generated/enums'
+import { EventName, type AIErrorKind } from '../generated/enums'
 export type { UiLocationSnapshot, UiLocationTab } from './ui-location'
 
 export type TaskStatus = 'TODO' | 'DOING' | 'DONE'
@@ -849,10 +849,16 @@ export interface PluginDbApi {
 
 // --- v2 SDK typed event bus (#106) ---------------------------------------
 
-/** Names of the host events a plugin may subscribe to via ctx.on. */
+/** Names of the host events a plugin may subscribe to via ctx.on.
+ *
+ *  The two Wails host events the plugin bus forwards are sourced from the Go
+ *  EventName enum (cmd/genenums) so the literals cannot drift. The remaining
+ *  members are frontend-INTERNAL dispatches (emitted in-process via the plugin
+ *  bus's `dispatch`, never crossing the IPC boundary) — they stay as literals
+ *  because they have no Go-side counterpart. */
 export type PluginEventName =
-  | 'block:changed'
-  | 'config:changed'
+  | typeof EventName.EventBlockChanged
+  | typeof EventName.EventConfigChanged
   | 'active-notebook:changed'
   | 'selection:changed'
   | 'editor:save'

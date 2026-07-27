@@ -18,6 +18,7 @@ import {
   SetUpdateSettings
 } from '../../bindings/silt/app.js'
 import { Events, Browser, Application } from '@wailsio/runtime'
+import { EventName } from '../generated/enums'
 import { pushNotification } from '../notifications/store.svelte'
 
 export type UpdateStatus =
@@ -223,7 +224,7 @@ export async function downloadAndInstall(assetUrl: string): Promise<void> {
 
 function subscribeProgress(): void {
   unsubscribeProgress()
-  progressUnsub = Events.On('update:download:progress', (ev) => {
+  progressUnsub = Events.On(EventName.EventUpdateDownloadProgress, (ev) => {
     const p: { received: number; total: number } = ev.data
     if (!p) return
     if (p.total > 0) {
