@@ -263,15 +263,8 @@ type App struct {
 	renameHooks *renameHooks
 }
 
-// aiStreamSession is one in-flight PluginAIComplete(stream=true) call.
-// ready is closed when the frontend has attached Events.On listeners
-// (PluginAIStreamReady) so terminal events are not lost to a race.
-type aiStreamSession struct {
-	pluginID  string
-	cancel    context.CancelFunc
-	ready     chan struct{}
-	readyOnce sync.Once
-}
+// aiStreamSession type lives in app_ai_stream.go (#762). App fields
+// aiStreams / aiStreamsMu stay here with the rest of the App struct.
 
 // linkedConfigEntry is one slot in App.linkedConfigs. mtime is the on-disk
 // modification time of the co-located config.yaml at the moment cfg was

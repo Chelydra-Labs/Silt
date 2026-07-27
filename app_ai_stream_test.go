@@ -474,3 +474,111 @@ func TestUpdateAIFeatures_DisablingCancelsInFlightStreams(t *testing.T) {
 		t.Error("expected the disabled stream to be removed from aiStreams")
 	}
 }
+
+// TestPluginAIComplete_Stream_BackpressureBlocksThenCancelUnblocks pins the
+// natural-backpressure contract in startAIStream: when the emit consumer is
+// stalled, the SSE producer blocks on the bounded delta channel (capacity
+// aiStreamBufferCap) rather than dropping tokens or hard-aborting mid-answer.
+// Cancel must unblock that wait so the stream goroutine drains (PR #540).
+func TestPluginAIComplete_Stream_BackpressureBlocksThenCancelUnblocks(t *testing.T) {
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.Plugins.Disabled = nil
+	app.configMu.Unlock()
+
+	// Stall every emit so the fan-out goroutine never drains deltaCh.
+	// Release on cancel so the test can finish cleanly.
+	var (
+		stallMu     sync.Mutex
+		stallClosed bool
+		stallCh     = make(chan struct{})
+	)
+	releaseStall := func() {
+		stallMu.Lock()
+		defer stallMu.Unlock()
+		if !stallClosed {
+			stallClosed = true
+			close(stallCh)
+		}
+	}
+	defer releaseStall()
+	app.eventEmit = func(name string, data ...any) {
+		<-stallCh
+	}
+
+	// SSE server floods more deltas than the buffer can hold, then waits for
+	// cancel so we observe producer backpressure rather than natural EOF.
+	const flood = aiStreamBufferCap + 64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		for i := 0; i < flood; i++ {
+			fmt.Fprintf(w, "data: {\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"x%d\"}}]}\n\n", i)
+			if flusher != nil {
+				flusher.Flush()
+			}
+			// If the client cancelled, stop flooding.
+			select {
+			case <-r.Context().Done():
+				return
+			default:
+			}
+		}
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	pointAIProviderAt(t, app, "chat", srv.URL, "test")
+
+	tok, err := app.RegisterPluginSession("silt-tasks")
+	if err != nil {
+		t.Fatalf("RegisterPluginSession: %v", err)
+	}
+	res, err := app.PluginAIComplete("silt-tasks", tok, PluginAICompleteInput{
+		Messages: []PluginAIChatMessage{{Role: "user", Content: "ping"}},
+		Stream:   true,
+	})
+	if err != nil {
+		t.Fatalf("stream start: %v", err)
+	}
+	if err := app.PluginAIStreamReady("silt-tasks", tok, res.StreamID); err != nil {
+		t.Fatalf("ready: %v", err)
+	}
+
+	// Give the producer time to fill the buffer and block on send.
+	time.Sleep(200 * time.Millisecond)
+
+	app.aiStreamsMu.Lock()
+	live := app.aiStreams[res.StreamID] != nil
+	app.aiStreamsMu.Unlock()
+	if !live {
+		t.Fatal("expected stream still live while blocked on backpressure")
+	}
+
+	// Cancel must unblock the producer (select on streamCtx.Done) and drain WGs.
+	if err := app.PluginAICancelStream("silt-tasks", tok, res.StreamID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	releaseStall() // let any in-flight emit return
+
+	waitDone := make(chan struct{})
+	go func() {
+		app.vaultClosingWG.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("vaultClosingWG did not drain after cancel under backpressure — producer stuck")
+	}
+
+	wgDone := make(chan struct{})
+	go func() {
+		app.wg.Wait()
+		close(wgDone)
+	}()
+	select {
+	case <-wgDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("a.wg did not drain after cancel under backpressure")
+	}
+}

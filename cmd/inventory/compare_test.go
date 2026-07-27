@@ -185,3 +185,59 @@ func TestStripComments_BlockComment(t *testing.T) {
 		t.Errorf("expected 'kept', got %q", matches[0][1])
 	}
 }
+
+func TestParseEventNameMap(t *testing.T) {
+	enums := `
+export const EventName = {
+  EventMenuSave: 'menu:save',
+  EventBlockChanged: 'block:changed',
+  EventAICompleteDelta: 'ai:complete:delta'
+} as const
+`
+	got := parseEventNameMap(enums)
+	want := map[string]string{
+		"EventMenuSave":        "menu:save",
+		"EventBlockChanged":    "block:changed",
+		"EventAICompleteDelta": "ai:complete:delta",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len=%d want %d: %v", len(got), len(want), got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("got[%q]=%q want %q", k, got[k], v)
+		}
+	}
+	if len(parseEventNameMap("export const Other = { X: 'y' } as const")) != 0 {
+		t.Error("expected empty map when EventName block missing")
+	}
+}
+
+func TestCollectFrontendEvents_ConstMemberAndTemplate(t *testing.T) {
+	nameMap := map[string]string{
+		"EventMenuSave":        "menu:save",
+		"EventAICompleteDelta": "ai:complete:delta",
+		"EventBlockChanged":    "block:changed",
+	}
+	src := `
+Events.On(EventName.EventMenuSave, () => {})
+Events.On(` + "`${EventName.EventAICompleteDelta}:${pluginId}`" + `, handler)
+Events.On('legacy:literal', () => {})
+// Events.On(EventName.EventBlockChanged, dead)
+Events.On(EventName.UnknownMember, () => {})
+const deltaEv = ` + "`${EventName.EventAICompleteDelta}:${pluginID}`" + `
+Events.On(deltaEv, handler)
+`
+	eventsSet := map[string]struct{}{}
+	collectFrontendEvents(stripComments(src), nameMap, eventsSet)
+	got := sortedKeys(eventsSet)
+	want := []string{"ai:complete:delta", "legacy:literal", "menu:save"}
+	if len(got) != len(want) {
+		t.Fatalf("events=%v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("events[%d]=%q want %q", i, got[i], want[i])
+		}
+	}
+}

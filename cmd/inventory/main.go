@@ -298,8 +298,25 @@ var (
 	runtimePathRE = regexp.MustCompile(`['"\x60][^'"\x60]*@wailsio/runtime[^'"\x60]*['"\x60]`)
 	// eventsOnRE captures the event-name string literal handed to Events.On
 	// (the v3 runtime API; v2 used EventsOn). \s* spans the newlines seen in
-	// this codebase's multi-line calls.
+	// this codebase's multi-line calls. Kept for legacy / test fixtures.
 	eventsOnRE = regexp.MustCompile(`Events\.On\s*\(\s*['"\x60]([^'"\x60]+)['"\x60]`)
+	// eventsOnEventNameRE matches Events.On(EventName.<Ident>...) — the
+	// post-centralization form used by real subscriptions.
+	eventsOnEventNameRE = regexp.MustCompile(`Events\.On\s*\(\s*EventName\.([A-Za-z0-9_]+)`)
+	// eventsOnTemplateRE matches template compositions like
+	// Events.On(`${EventName.X}:${pluginId}`) and records only the base
+	// EventName value (not the dynamic suffix).
+	eventsOnTemplateRE = regexp.MustCompile("Events\\.On\\s*\\(\\s*`\\$\\{EventName\\.([A-Za-z0-9_]+)\\}")
+	// eventNameTemplateInterpRE matches `${EventName.X}` interpolations used to
+	// build owner-scoped names before Events.On (e.g. AI stream:
+	// const deltaEv = `${EventName.EventAICompleteDelta}:${pluginID}`).
+	// Records the base wire string only.
+	eventNameTemplateInterpRE = regexp.MustCompile(`\$\{EventName\.([A-Za-z0-9_]+)\}`)
+	// eventNameConstBlockRE isolates the export const EventName = { ... } block
+	// in frontend/src/generated/enums.ts.
+	eventNameConstBlockRE = regexp.MustCompile(`export\s+const\s+EventName\s*=\s*\{([^}]*)\}`)
+	// eventNameEntryRE extracts Key: 'value' pairs inside that block.
+	eventNameEntryRE = regexp.MustCompile(`([A-Za-z0-9_]+)\s*:\s*'([^']*)'`)
 	// Comment strippers applied to frontend source before the scans above run,
 	// so prose or dead code in comments can't seed false positives (e.g. a
 	// test's "// Events.On('menu:save')" mention).
@@ -315,20 +332,109 @@ func stripComments(src string) string {
 	return lineCommentRE.ReplaceAllString(src, "")
 }
 
+// parseEventNameMap extracts Key → wire-string pairs from the generated
+// enums.ts EventName const object:
+//
+//	export const EventName = {
+//	  EventFoo: 'foo:bar',
+//	  ...
+//	} as const
+//
+// Returns an empty map if the block is missing or has no entries.
+func parseEventNameMap(enumsTS string) map[string]string {
+	out := map[string]string{}
+	m := eventNameConstBlockRE.FindStringSubmatch(enumsTS)
+	if len(m) < 2 {
+		return out
+	}
+	for _, entry := range eventNameEntryRE.FindAllStringSubmatch(m[1], -1) {
+		if len(entry) >= 3 {
+			out[entry[1]] = entry[2]
+		}
+	}
+	return out
+}
+
+// collectFrontendEvents harvests Events.On subscription names from stripped
+// frontend source. Resolves EventName.<Ident> and template compositions
+// `${EventName.X}:...` via nameMap; also keeps bare string literals.
+// Unknown EventName members are skipped. Template forms record the base wire
+// string only (not the dynamic suffix).
+func collectFrontendEvents(stripped string, nameMap map[string]string, eventsSet map[string]struct{}) {
+	for _, m := range eventsOnRE.FindAllStringSubmatch(stripped, -1) {
+		if len(m) < 2 {
+			continue
+		}
+		// Skip template literals (handled by eventsOnTemplateRE); bare
+		// eventsOnRE would otherwise record the unexpanded `${...}` text.
+		if strings.Contains(m[1], "${") {
+			continue
+		}
+		eventsSet[m[1]] = struct{}{}
+	}
+	for _, m := range eventsOnEventNameRE.FindAllStringSubmatch(stripped, -1) {
+		if len(m) < 2 {
+			continue
+		}
+		if wire, ok := nameMap[m[1]]; ok {
+			eventsSet[wire] = struct{}{}
+		}
+	}
+	for _, m := range eventsOnTemplateRE.FindAllStringSubmatch(stripped, -1) {
+		if len(m) < 2 {
+			continue
+		}
+		if wire, ok := nameMap[m[1]]; ok {
+			eventsSet[wire] = struct{}{}
+		}
+	}
+	// Standalone template interpolations (assigned to locals then passed to
+	// Events.On) — same base-only recording as eventsOnTemplateRE.
+	for _, m := range eventNameTemplateInterpRE.FindAllStringSubmatch(stripped, -1) {
+		if len(m) < 2 {
+			continue
+		}
+		if wire, ok := nameMap[m[1]]; ok {
+			eventsSet[wire] = struct{}{}
+		}
+	}
+}
+
 // scanFrontend walks .ts/.svelte files under frontendRoot and records which
 // files import the App bindings / @wailsio/runtime, plus the set of Events.On
-// event-name string literals. Paths are repo-relative with forward slashes.
-// Comments are stripped (see stripComments) before matching, so prose mentions
-// like a test's "// Events.On('menu:save')" can't seed false positives.
+// subscriptions. Paths are repo-relative with forward slashes. Comments are
+// stripped (see stripComments) before matching, so prose mentions like a
+// test's "// Events.On('menu:save')" can't seed false positives.
 //
-// frontend_events is BEST-EFFORT and literal-only: post-centralization every
-// real subscription passes an EventName.* const (not a string literal), which
-// this regex cannot resolve, so most real subscriptions are NOT captured here.
-// The canonical event surface is go_events (read from events.go's const block).
+// frontend_events is BEST-EFFORT (not a full TS dataflow analysis). It resolves
+// four forms after comment strip:
+//  1. Events.On('literal') — legacy / tests
+//  2. Events.On(EventName.<Ident>) — post-centralization const member
+//  3. Events.On(`${EventName.<Ident>}:...`) — inline template composition
+//  4. `${EventName.<Ident>}` interpolations used to build names before
+//     Events.On (AI stream owner-scoped events) — base wire string only
+//
+// Not resolved: Events.On(variable) where the name is only an allowlist member
+// or other non-template local (e.g. plugins/events.ts host bus). Those events
+// still appear if another file uses a resolvable form. `${EventName.X}` without
+// a later On may over-count (soft gate only).
+//
+// EventName keys are loaded from frontend/src/generated/enums.ts (sibling of
+// frontendRoot's parent when frontendRoot is frontend/src). The canonical
+// event surface for the IPC gate remains go_events (events.go const block);
+// frontend_events is informational subscription coverage.
 func scanFrontend(frontendRoot string) (bindingImports, runtimeImports, frontendEvents []string) {
 	bindSet := map[string]struct{}{}
 	runtimeSet := map[string]struct{}{}
 	eventsSet := map[string]struct{}{}
+
+	// enums.ts lives at frontend/src/generated/enums.ts; frontendRoot is
+	// typically <repo>/frontend/src.
+	enumsPath := filepath.Join(frontendRoot, "generated", "enums.ts")
+	nameMap := map[string]string{}
+	if enumsSrc, err := os.ReadFile(enumsPath); err == nil {
+		nameMap = parseEventNameMap(string(enumsSrc))
+	}
 
 	_ = filepath.Walk(frontendRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -358,11 +464,7 @@ func scanFrontend(frontendRoot string) (bindingImports, runtimeImports, frontend
 		if runtimePathRE.MatchString(s) {
 			runtimeSet[rel] = struct{}{}
 		}
-		for _, m := range eventsOnRE.FindAllStringSubmatch(s, -1) {
-			if len(m) >= 2 {
-				eventsSet[m[1]] = struct{}{}
-			}
-		}
+		collectFrontendEvents(s, nameMap, eventsSet)
 		return nil
 	})
 
