@@ -300,11 +300,31 @@ var (
 	// (the v3 runtime API; v2 used EventsOn). \s* spans the newlines seen in
 	// this codebase's multi-line calls.
 	eventsOnRE = regexp.MustCompile(`Events\.On\s*\(\s*['"\x60]([^'"\x60]+)['"\x60]`)
+	// Comment strippers applied to frontend source before the scans above run,
+	// so prose or dead code in comments can't seed false positives (e.g. a
+	// test's "// Events.On('menu:save')" mention).
+	blockCommentRE = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	lineCommentRE  = regexp.MustCompile(`//.*`)
 )
+
+// stripComments removes JS/TS/Svelte comments from src so the frontend scans
+// never harvest matches from commented-out code or prose. Block comments are
+// stripped non-greedy across newlines; line comments run to end-of-line.
+func stripComments(src string) string {
+	src = blockCommentRE.ReplaceAllString(src, "")
+	return lineCommentRE.ReplaceAllString(src, "")
+}
 
 // scanFrontend walks .ts/.svelte files under frontendRoot and records which
 // files import the App bindings / @wailsio/runtime, plus the set of Events.On
 // event-name string literals. Paths are repo-relative with forward slashes.
+// Comments are stripped (see stripComments) before matching, so prose mentions
+// like a test's "// Events.On('menu:save')" can't seed false positives.
+//
+// frontend_events is BEST-EFFORT and literal-only: post-centralization every
+// real subscription passes an EventName.* const (not a string literal), which
+// this regex cannot resolve, so most real subscriptions are NOT captured here.
+// The canonical event surface is go_events (read from events.go's const block).
 func scanFrontend(frontendRoot string) (bindingImports, runtimeImports, frontendEvents []string) {
 	bindSet := map[string]struct{}{}
 	runtimeSet := map[string]struct{}{}
@@ -331,7 +351,7 @@ func scanFrontend(frontendRoot string) (bindingImports, runtimeImports, frontend
 		}
 		rel = filepath.ToSlash(rel)
 
-		s := string(src)
+		s := stripComments(string(src))
 		if bindingPathRE.MatchString(s) {
 			bindSet[rel] = struct{}{}
 		}

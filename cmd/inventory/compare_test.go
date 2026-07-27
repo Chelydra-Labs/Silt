@@ -152,3 +152,36 @@ func TestSetDiff(t *testing.T) {
 		t.Errorf("expected no drift, got added=%v removed=%v", added, removed)
 	}
 }
+
+// TestStripComments_NoCommentFalsePositive pins the menu:save fix: a literal
+// Events.On call that lives only in a comment must not be harvested, while a
+// real literal call on the next line still is. Mirrors the exact prose in
+// App.menu-save.test.ts that previously seeded the false positive.
+func TestStripComments_NoCommentFalsePositive(t *testing.T) {
+	src := "// onMount registers the Events.On('menu:save') handler; let it flush.\n" +
+		"Events.On('real:thing', () => {})\n"
+	stripped := stripComments(src)
+	matches := eventsOnRE.FindAllStringSubmatch(stripped, -1)
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly 1 match (the real call) after stripping, got %d: %v", len(matches), matches)
+	}
+	if matches[0][1] != "real:thing" {
+		t.Errorf("expected 'real:thing', got %q", matches[0][1])
+	}
+}
+
+// TestStripComments_BlockComment covers the /* ... */ form, including a
+// multi-line block (the (?s) non-greedy case).
+func TestStripComments_BlockComment(t *testing.T) {
+	src := "/* Events.On('blocked:one') */\n" +
+		"/*\n  Events.On('blocked:two')\n*/\n" +
+		"Events.On('kept', () => {})\n"
+	stripped := stripComments(src)
+	matches := eventsOnRE.FindAllStringSubmatch(stripped, -1)
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly 1 match (the real call), got %d: %v", len(matches), matches)
+	}
+	if matches[0][1] != "kept" {
+		t.Errorf("expected 'kept', got %q", matches[0][1])
+	}
+}

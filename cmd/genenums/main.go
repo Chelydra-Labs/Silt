@@ -164,7 +164,12 @@ func generate(root string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		consts := collectConsts(blocks, src.GoType)
+		consts, err := collectConsts(blocks, src.GoType)
+		if err != nil {
+			// collectConsts names the const + type; annotate with the source
+			// file so the message is actionable when the gate trips.
+			return "", fmt.Errorf("%s: %w", src.File, err)
+		}
 		if len(consts) == 0 {
 			return "", fmt.Errorf("no consts of type %s found in %s", src.GoType, src.File)
 		}
@@ -178,7 +183,20 @@ func generate(root string) (string, error) {
 // (explicit or inherited) declared type matches goType, preserving source order.
 // Go semantics: within a parenthesized const declaration, a ValueSpec that
 // omits the type inherits the type of the preceding spec in the same block.
-func collectConsts(blocks []*ast.GenDecl, goType string) []constEntry {
+//
+// A ValueSpec may declare several consts in parallel (`A, B Foo = "x", "y"`):
+// vs.Names and vs.Values are parallel slices, so we pair them up to
+// min(len(Names), len(Values)) and emit one constEntry per pair.
+//
+// Every emitted const must be backed by a string literal — these enums are
+// string-valued by construction, so a non-string-literal value (iota, const
+// alias, …) means the generator cannot faithfully emit it. Returning an error
+// here keeps the output complete so the drift gate can catch any change; a
+// silent skip would let both committed + regenerated output miss the const
+// with no signal. A type-only spec (len(Values) == 0, the iota-inheritance
+// form `B Foo` after an iota expression) has no value to emit and is skipped
+// without error.
+func collectConsts(blocks []*ast.GenDecl, goType string) ([]constEntry, error) {
 	var out []constEntry
 	for _, gd := range blocks {
 		// lastType tracks the inherited type across specs in THIS block only.
@@ -196,23 +214,41 @@ func collectConsts(blocks []*ast.GenDecl, goType string) []constEntry {
 			if lastType != goType {
 				continue
 			}
-			if len(vs.Names) == 0 || len(vs.Values) == 0 {
+			if len(vs.Names) == 0 {
 				continue
 			}
-			lit, ok := vs.Values[0].(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				// Non-string-literal const (e.g. an iota); skip — these enums are
-				// all string-valued by construction.
+			// Type-only spec (no value list, e.g. `B Foo` carrying an iota
+			// expression forward): nothing to emit, skip gracefully.
+			if len(vs.Values) == 0 {
 				continue
 			}
-			val, err := strconv.Unquote(lit.Value)
-			if err != nil {
-				continue
+			// Names and Values are parallel slices; pair them up to min length
+			// so a multi-name spec emits one entry per declared const.
+			n := len(vs.Names)
+			if len(vs.Values) < n {
+				n = len(vs.Values)
 			}
-			out = append(out, constEntry{Name: vs.Names[0].Name, Value: val})
+			for i := 0; i < n; i++ {
+				lit, ok := vs.Values[i].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					// String-typed enums must be backed by string literals; a
+					// non-literal can't be faithfully emitted and would let the
+					// drift gate miss a missing const. Fail loud.
+					return nil, fmt.Errorf(
+						"const %s of type %s has a non-string-literal value (only string literals are supported)",
+						vs.Names[i].Name, goType,
+					)
+				}
+				val, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					return nil, fmt.Errorf("const %s of type %s: unquote %s: %w",
+						vs.Names[i].Name, goType, lit.Value, err)
+				}
+				out = append(out, constEntry{Name: vs.Names[i].Name, Value: val})
+			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // writeEnum emits one TS const object + derived union type for the enum.
