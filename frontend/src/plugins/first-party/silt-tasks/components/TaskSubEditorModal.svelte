@@ -160,7 +160,17 @@
         // as an empty subtree so the editor opens blank for the user to
         // add notes, instead of crashing on blocksToDoc(null).map.
         const safeSubtree = (subtree ?? []) as ParsedBlock[]
-        editorInstance.commands.setContent(blocksToDoc(safeSubtree), {
+        let normalized = safeSubtree
+        if (safeSubtree.length > 0) {
+          const minDepth = Math.min(...safeSubtree.map((b) => b.depth ?? 0))
+          if (minDepth > 0) {
+            normalized = safeSubtree.map((b) => ({
+              ...b,
+              depth: Math.max(0, (b.depth ?? 0) - minDepth)
+            }))
+          }
+        }
+        editorInstance.commands.setContent(blocksToDoc(normalized), {
           emitUpdate: false
         })
       } finally {
@@ -389,12 +399,21 @@
     </header>
 
     <!-- Editor body -->
-    <div class="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 min-h-0">
+    <div
+      class="relative flex-1 overflow-y-auto custom-scrollbar px-5 py-4 min-h-0"
+    >
       {#if loading}
-        <div class="text-text-muted text-center py-10 font-body-md">
-          Loading sub-notes…
+        <div
+          class="absolute inset-0 z-10 flex items-center justify-center bg-surface-modal/80 backdrop-blur-xs"
+        >
+          <div class="text-text-muted font-body-md">Loading sub-notes…</div>
         </div>
-      {:else}
+      {:else if loadError}
+        <div class="text-status-danger text-center py-10 font-body-md">
+          Load failed: {loadError}
+        </div>
+      {/if}
+      {#if $editorStore}
         <EditorContent editor={$editorStore} />
       {/if}
     </div>

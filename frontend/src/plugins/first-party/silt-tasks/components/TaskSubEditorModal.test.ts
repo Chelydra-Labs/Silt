@@ -207,6 +207,33 @@ describe('TaskSubEditorModal (#304)', () => {
     })
   })
 
+  it('normalizes subtree block depths relative to sub-editor root (starts at depth 0)', async () => {
+    mocks.fetchSubtree.mockResolvedValue([
+      {
+        id: 'child-1',
+        parent_id: 'task-1',
+        type: 'NOTE',
+        depth: 3,
+        raw_text: '- indented sub-note',
+        clean_text: 'indented sub-note',
+        line_number: 5,
+        file_date: '2026-07-01'
+      }
+    ])
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() => {
+      const pm = document.querySelector('.ProseMirror')
+      expect(pm).not.toBeNull()
+      const note = pm?.querySelector('[data-type="note"]')
+      expect(note).not.toBeNull()
+      expect(note?.getAttribute('data-depth')).toBe('0')
+    })
+  })
+
   it('calls fetchSubtree with the block id on mount', async () => {
     render(TaskSubEditorModal, {
       ...BASE_PROPS,
