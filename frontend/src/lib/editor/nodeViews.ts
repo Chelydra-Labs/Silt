@@ -95,7 +95,11 @@ export function syncOuterDomAttrs(
   next: Record<string, string>
 ): void {
   for (const attr of Array.from(el.attributes)) {
-    if (attr.name.startsWith('data-') && !(attr.name in next)) {
+    if (
+      attr.name.startsWith('data-') &&
+      attr.name !== 'data-placeholder' &&
+      !(attr.name in next)
+    ) {
       el.removeAttribute(attr.name)
     }
   }
