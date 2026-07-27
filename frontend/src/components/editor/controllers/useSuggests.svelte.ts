@@ -174,10 +174,6 @@ function createSuggestController<
     navigate,
     close,
     getEditor,
-    editorAlive(): boolean {
-      const editor = getEditor()
-      return !!editor && !editor.isDestroyed
-    },
     setStatus
   }
 }
@@ -683,13 +679,20 @@ function createPageLinkSuggest(deps: FactoryDeps) {
 
     const previous =
       ctrl.popup?.ctx.triggerPos === ctx.triggerPos ? ctrl.popup : null
+    // Build the complete popup once and assign via a single setPopup, matching
+    // the tag/blockRef factories. Mutating the local ref after setPopup would
+    // bypass the $state proxy's set trap (no per-field notification) — correct
+    // today only because the mutations finish before Svelte flushes.
+    const enough = hasEnoughQuery(ctx.query)
     const popup: PageLinkPopup = {
       ctx,
-      items: previous?.items ?? [],
-      selected: previous
-        ? Math.min(previous.selected, Math.max(0, previous.items.length - 1))
+      items: enough ? (previous?.items ?? []) : [],
+      selected: enough
+        ? previous
+          ? Math.min(previous.selected, Math.max(0, previous.items.length - 1))
+          : 0
         : 0,
-      searching: false,
+      searching: enough,
       resolving: false,
       resolvingItem: null,
       error: null,
@@ -697,14 +700,11 @@ function createPageLinkSuggest(deps: FactoryDeps) {
       alias: previous?.alias ?? ''
     }
     ctrl.setPopup(popup)
-    if (!hasEnoughQuery(ctx.query)) {
-      popup.items = []
-      popup.selected = 0
+    if (!enough) {
       deps.setStatus('Type at least 2 characters for page suggestions')
       return
     }
 
-    popup.searching = true
     deps.setStatus('Searching pages')
     pageLinkDebounce.schedule(PAGE_LINK_QUERY_DEBOUNCE_MS, () => {
       void (async () => {
