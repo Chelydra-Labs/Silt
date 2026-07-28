@@ -162,7 +162,7 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
   // Per-notebook tab scoping: the tab strip + editor surface show only tabs
   // for the active notebook. The full openTabs array (all notebooks) persists
   // to config.yaml so switching notebooks preserves each notebook's set.
-  let displayedTabs = $derived(
+  const displayedTabs = $derived(
     openTabs.filter((t) => t.notebook === deps.getActiveNotebook())
   )
 

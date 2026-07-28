@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventName } from '../generated/enums'
+import type { SystemConfig } from '../settings/store.svelte'
+import type { SettingsDialogsController } from './useSettingsDialogs.svelte'
+import type { TabManagerController } from '../lib/tabs/useTabManager.svelte'
 
 // Events.On subscriptions are captured so a test can (a) assert the event names
 // attach() registered, (b) invoke a handler directly to simulate a live emit,
@@ -45,7 +48,7 @@ import {
 } from './useStartupEvents.svelte'
 
 interface HandlerBus {
-  handlers: Map<string, (...args: any[]) => void>
+  handlers: Map<string, (...args: unknown[]) => void>
   offSpies: ReturnType<typeof vi.fn>[]
 }
 
@@ -55,23 +58,23 @@ function makeBus(): HandlerBus {
 
 function makeDeps(): {
   deps: StartupEventsDeps
-  settingsDialogs: any
-  tabManager: any
+  settingsDialogs: SettingsDialogsController
+  tabManager: TabManagerController
 } {
   const nav = { notebook: 'Work', section: 'Inbox', page: 'Alpha' }
-  const settingsDialogs: any = {
+  const settingsDialogs = {
     openSettingsMismatch: vi.fn(),
     openGrantsMigration: vi.fn(),
     setQuarantinedLinks: vi.fn()
-  }
-  const tabManager: any = {
+  } as unknown as SettingsDialogsController
+  const tabManager = {
     initBaseline: vi.fn(),
     handleConfigChangedTabRehydrate: vi.fn(),
     resetTabs: vi.fn(),
     invalidateRecentPages: vi.fn(),
     pageRenamed: vi.fn(),
     openPage: vi.fn()
-  }
+  } as unknown as TabManagerController
   const deps: StartupEventsDeps = {
     getActiveNotebook: () => nav.notebook,
     getActiveSection: () => nav.section,
@@ -87,7 +90,10 @@ function makeDeps(): {
     }),
     setActiveView: vi.fn(),
     getSettings: () =>
-      ({ plugins: { disabled: [] }, ui: { open_tabs: [] } }) as any,
+      ({
+        plugins: { disabled: [] },
+        ui: { open_tabs: [] }
+      }) as unknown as SystemConfig,
     setSettingsSection: vi.fn(),
     setShowSearch: vi.fn(),
     setShowQuickAdd: vi.fn(),
@@ -114,7 +120,7 @@ function makeDeps(): {
 // Wire the Events.On mock to a fresh capture bus for each test.
 function wireEventsOn(bus: HandlerBus): void {
   mocks.eventsOn.mockImplementation(
-    (name: string, handler: (...args: any[]) => void) => {
+    (name: string, handler: (...args: unknown[]) => void) => {
       bus.handlers.set(name, handler)
       const off = vi.fn()
       bus.offSpies.push(off)
@@ -162,7 +168,7 @@ describe('useStartupEvents (#768)', () => {
     controller = createStartupEvents(deps)
     controller.attach()
 
-    bus.handlers.get(EventName.EventMenuSave)!({ data: undefined } as any)
+    bus.handlers.get(EventName.EventMenuSave)!({ data: undefined })
     expect(deps.handleMenuSave).toHaveBeenCalledOnce()
   })
 

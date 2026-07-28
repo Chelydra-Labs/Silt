@@ -26,9 +26,9 @@ import {
 // map; the rest read state the controller can't own.
 function makeDeps(overrides: Partial<GlobalHotkeyDispatchDeps> = {}): {
   deps: GlobalHotkeyDispatchDeps
-  spies: Record<string, (...args: any[]) => any>
+  spies: Record<string, (...args: unknown[]) => unknown>
 } {
-  const spies: Record<string, (...args: any[]) => any> = {
+  const spies: Record<string, (...args: unknown[]) => unknown> = {
     toggleSearch: vi.fn(),
     toggleQuickSwitcher: vi.fn(),
     toggleGlobalReplace: vi.fn(),
