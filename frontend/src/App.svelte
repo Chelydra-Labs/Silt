@@ -2,7 +2,6 @@
   import { onMount, tick } from 'svelte'
   import type { SearchModalResult } from './components/SearchModal.svelte'
   import {
-    createRecentPageRecorder,
     resolveBreadcrumbSectionSelection,
     adaptSearchNavigation,
     resolveSourceNavigationTarget
@@ -14,19 +13,8 @@
     CloseVault,
     GetSidebarWidth,
     SetSidebarWidth,
-    ConfirmSettingsChange,
-    ConfirmGrantsMigration,
-    DeclineGrantsMigration,
-    ResolveQuarantinedLinks,
-    PickLinkedNotebook,
-    UnlinkNotebook,
-    CreateStandaloneTask,
-    MarkFrontendReady,
-    GetStartupEvents,
-    RecordRecentPage
+    CreateStandaloneTask
   } from '../bindings/silt/app.js'
-  import { Events } from '@wailsio/runtime'
-  import { EventName } from './generated/enums'
   import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -44,28 +32,18 @@
   import SettingsMismatchDialog from './components/settings/SettingsMismatchDialog.svelte'
   import GrantsMigrationDialog from './components/settings/GrantsMigrationDialog.svelte'
   import QuarantinedLinksDialog from './components/settings/QuarantinedLinksDialog.svelte'
-  import {
-    clearRetainedTemplateDraft,
-    hasUnsavedTemplateDraft
-  } from './components/settings/templateDraftSession'
+  import { hasUnsavedTemplateDraft } from './components/settings/templateDraftSession'
   import { shortcutBinding } from './settings/shortcutActions'
-  import { createRecentSaveTracker } from './lib/editor/recentSaveTracker'
   import {
     getSettingsSections,
     resolveSettingsSectionId
   } from './components/settings/settingsSections.svelte'
   import QuickAddTask from './plugins/first-party/silt-tasks/components/QuickAddTask.svelte'
   import { loadPlugins } from './plugins/loader'
-  import { refreshGrants } from './plugins/grants.svelte'
-  import { revokeRevokedContributions } from './plugins/reconcile'
   import {
     initConfigHotReload,
     loadConfig,
-    settings,
-    type SystemConfig,
-    toggleFormatToolbar,
-    toggleFocusMode,
-    toggleTypewriterMode
+    settings
   } from './settings/store.svelte'
   import { isDevMode, openInspect } from './lib/devModeInspect'
   import ContextMenu from './components/ContextMenu.svelte'
@@ -73,14 +51,12 @@
   import { initThemes } from './theme/store.svelte'
   import { initTemplates } from './templates/store.svelte'
   import TemplatePicker from './templates/TemplatePicker.svelte'
-  import { resolveGlobalHotkey } from './shell/globalHotkeys'
+  import { createSettingsDialogs } from './shell/useSettingsDialogs.svelte'
+  import { createGlobalHotkeyDispatch } from './shell/useGlobalHotkeyDispatch.svelte'
+  import { createStartupEvents } from './shell/useStartupEvents.svelte'
   import { effectiveHotkeys } from './settings/shortcutActions'
   import { findBarState } from './lib/editor/search/findBarState.svelte'
-  import {
-    clearAllEditors,
-    editorKey,
-    getEditor
-  } from './lib/editor/editorRegistry.svelte'
+  import { editorKey, getEditor } from './lib/editor/editorRegistry.svelte'
   import SidebarResizeHandle from './components/SidebarResizeHandle.svelte'
   import PluginModalHost from './components/PluginModalHost.svelte'
   import { getAIAvailability } from './plugins/shared/ai-chat/availability'
@@ -99,33 +75,16 @@
     closeShortcutHelp
   } from './lib/shortcutHelpState.svelte'
   import { setActiveLocation } from './plugins/location.svelte'
-  import {
-    clearSelectionFocus,
-    clearSelectionFocusIfPage,
-    setOpenTabsProvider
-  } from './plugins/ui-location'
+  import { clearSelectionFocus } from './plugins/ui-location'
   import ToastContainer from './components/ToastContainer.svelte'
   import Onboarding from './components/Onboarding.svelte'
   import { pushNotification } from './notifications/store.svelte'
-  import { reMintToast, type ReMintWarning } from './lib/reMintToast'
   import {
     initStartupUpdateCheck,
     disposeUpdateStore
   } from './updates/store.svelte'
-  import {
-    openPage as openPageState,
-    closeTab as closeTabState,
-    promotePreview as promotePreviewState,
-    cycleTab as cycleTabState,
-    reorderTab as reorderTabState,
-    setTabViewMode as setTabViewModeState,
-    mergeReorderedTabs,
-    type TabEntry,
-    type PageRef,
-    type OpenPageMode,
-    type ViewMode
-  } from './lib/tabs'
-  import { createTabPersistence } from './lib/tabs/persistence.svelte'
+  import { type OpenPageMode } from './lib/tabs'
+  import { createTabManager } from './lib/tabs/useTabManager.svelte'
   import { nextView } from './lib/viewCycle'
   import {
     flattenNavigation,
@@ -134,69 +93,25 @@
     type NavigationCatalogItem
   } from './lib/navigationCatalog'
   import type { NavigationPreferences } from './lib/sidebar/types'
-  import {
-    isStandaloneTaskRef,
-    routeJumpTarget
-  } from './lib/standaloneTasksNav'
-  import {
-    OPEN_TASKS_FOR_PAGE_EVENT,
-    type OpenTasksForPageDetail
-  } from './components/editor/EditorUtilityBar.svelte'
-  import { enterTaskPageRoute } from './plugins/first-party/silt-tasks/state.svelte'
+  import { routeJumpTarget } from './lib/standaloneTasksNav'
 
   let isInitialized = $state(false)
   let loading = $state(true)
 
-  // Tab state (#142). The tab list + active id are the source of truth for
-  // the multi-page editor surface. The legacy active-notebook/section/page
-  // triple (still read by Sidebar, plugins, breadcrumbs) is kept in sync
-  // from the active tab by the tabSync effect below. The Sidebar's
-  // onSelectPage callback funnels through openPage(); onSelectNotebook/
-  // onSelectSection set the triple directly (sidebar context without a tab
-  // change).
-  let openTabs = $state<TabEntry[]>([])
-  let activeTabId = $state<string>('')
-
-  // Fail-loud guard (#374 hardening): the `.silt` synthetic notebook is
-  // hidden by design — under no circumstance should it ever materialize
-  // as a tab in `openTabs`. The routing guard in `openPage` /
-  // `handleSearchJump` / `handleNavigateToBlock` covers every funnel in
-  // this file today, but future call sites could forget. This effect
-  // runs every time `openTabs` mutates; if any entry's notebook is
-  // `.silt` we log a loud warning (so the regression is visible in the
-  // console) and drop the entry from the in-memory state. We
-  // intentionally do not auto-remove silently — the warning is the
-  // point — but the removal prevents a leaked `.silt` tab from
-  // surviving into the next renderer pass.
-  $effect(() => {
-    const stray = openTabs.find((t) => isStandaloneTaskRef(t.notebook))
-    if (stray) {
-      console.warn(
-        '[silt] routing invariant violated: a .silt tab was added to openTabs. ',
-        'Removing it. This should be impossible — please file a bug with the stack trace.',
-        stray
-      )
-      openTabs = openTabs.filter((t) => t.id !== stray.id)
-      // If that stray tab happened to be active, clear the active id
-      // too — `syncActiveFromTab` will pick a sane replacement off the
-      // MRU head.
-      if (activeTabId === stray.id) activeTabId = ''
-      // Persist the cleanup so config.yaml's open_tabs stops re-emitting
-      // the stray entry on every launch. Without this, an upgrade-time
-      // user would see a console.warn loop on every restart until they
-      // manually edit their config.
-      schedulePersistTabs()
-    }
+  // Tab manager (#142, #768). Owns openTabs/activeTabId, the per-notebook
+  // displayedTabs derivation, the `.silt-stray` guard, the open-tabs provider,
+  // and the open/select/close/promote/reorder/cycle/view-mode handlers. Deps
+  // getters read the navigation triple + settings lazily (the controller's
+  // $effect/$derived evaluate after init, by which point the triple exists).
+  const tabManager = createTabManager({
+    getActiveNotebook: () => activeNotebook,
+    setActiveNotebook: (nb) => (activeNotebook = nb),
+    setActiveSection: (sec) => (activeSection = sec),
+    setActivePage: (pg) => (activePage = pg),
+    getSettings: () => settings.config ?? {},
+    confirmTemplateTransition,
+    openTasksView
   })
-
-  // Per-notebook tab scoping: the tab strip and editor surface only show
-  // tabs for the active notebook. The full openTabs array (all notebooks)
-  // persists to config.yaml so switching notebooks preserves each
-  // notebook's tab set. (#142 — user request: tabs should not carry over
-  // when switching notebooks.)
-  let displayedTabs = $derived(
-    openTabs.filter((t) => t.notebook === activeNotebook)
-  )
 
   // Navigation state (3-level: notebook > section > page). Kept in sync with
   // the active tab; also set directly by onSelectNotebook/onSelectSection
@@ -243,121 +158,9 @@
     setActiveLocation(activeNotebook, activeSection, activePage)
   })
 
-  // Register open-tabs provider for agent UI location (#680). Cleared on unmount.
-  $effect(() => {
-    const tabs = openTabs
-    const activeId = activeTabId
-    setOpenTabsProvider(() =>
-      tabs.map((t) => ({
-        notebook: t.notebook,
-        section: t.section,
-        page: t.page,
-        preview: t.preview,
-        active: t.id === activeId
-      }))
-    )
-    return () => setOpenTabsProvider(null)
-  })
-
   // --- Tab management (#142) -----------------------------------------------
-
-  // The per-vault default view mode a freshly-opened tab starts in (#195).
-  // Read live from the settings store so a config.yaml edit takes effect on
-  // the next open without a rebind.
-  let defaultViewMode = $derived(
-    settings.config?.editor?.default_view_mode === 'source'
-      ? ('source' as const)
-      : ('edit' as const)
-  )
-
-  // The single entry point for opening a page. All "open a page" callers
-  // (sidebar click, search jump, navigate-to-block, refs) funnel through
-  // here so the preview/pin logic lives in one place. Wraps the pure state
-  // machine from tabs.ts and applies the result to the $state runes.
-  function openPage(
-    ref: PageRef,
-    mode: OpenPageMode,
-    blockTarget: { fileDate?: string; blockId?: string } | undefined = undefined
-  ): void {
-    // Standalone-task navigation router (#374). A `.silt` page locator
-    // is a synthetic notebook whose only purpose is the standalone-tasks
-    // file (#368). Routing through the editor's open-page funnel would
-    // open a raw `.silt / tasks` tab and leak the synthetic notebook name
-    // into the tab header. Delegate to openTasksView instead.
-    const target = routeJumpTarget({ ...ref, blockTarget })
-    if (target.kind === 'tasks-view') {
-      openTasksView(target.blockTarget?.blockId)
-      return
-    }
-    const enablePreviewTabs = settings.config?.ui?.enable_preview_tabs !== false
-    const maxOpenTabs = settings.config?.ui?.max_open_tabs ?? 8
-    const result = openPageState(
-      { tabs: openTabs, activeId: activeTabId },
-      ref,
-      mode,
-      { enablePreviewTabs, maxOpenTabs, blockTarget, defaultViewMode }
-    )
-    openTabs = result.tabs
-    activeTabId = result.activeId
-    syncActiveFromTab()
-    schedulePersistTabs()
-    recordRecentActivation(ref)
-  }
-
-  const recentPageRecorder = createRecentPageRecorder(
-    (ref) => RecordRecentPage(ref.notebook, ref.section, ref.page),
-    () =>
-      window.dispatchEvent(new CustomEvent('navigation-preferences-changed')),
-    (error) => console.error('RecordRecentPage failed:', error)
-  )
-
-  function recordRecentActivation(ref: PageRef): void {
-    recentPageRecorder.record(ref)
-  }
-  const trackRecentSave = createRecentSaveTracker((tabId) => {
-    const tab = openTabs.find((candidate) => candidate.id === tabId)
-    if (tab) recordRecentActivation(tab)
-  })
-
-  // Toggle a tab between Edit and Source view (#195). The mode lives on
-  // TabEntry (single source of truth) and persists to config.yaml on the next
-  // debounced flush. No window-event indirection — App owns the state.
-  function handleToggleViewMode(tabId: string): void {
-    const tab = openTabs.find((t) => t.id === tabId)
-    if (!tab) return
-    const next: ViewMode = tab.viewMode === 'edit' ? 'source' : 'edit'
-    openTabs = setTabViewModeState(
-      { tabs: openTabs, activeId: activeTabId },
-      tabId,
-      next
-    ).tabs
-    schedulePersistTabs()
-  }
-
-  // Sync activeNotebook/Section/Page from the active tab so every downstream
-  // consumer (Sidebar, plugins, breadcrumbs) keeps working unchanged.
-  function syncActiveFromTab(): void {
-    const tab = openTabs.find((t) => t.id === activeTabId)
-    if (tab) {
-      activeNotebook = tab.notebook
-      activeSection = tab.section
-      activePage = tab.page
-    }
-  }
-
-  function selectNotebookContext(notebook: string): void {
-    if (!confirmTemplateTransition()) return
-    activeNotebook = notebook
-    const notebookTabs = openTabs
-      .filter((tab) => tab.notebook === notebook)
-      .sort((a, b) => b.lastActivatedAt - a.lastActivatedAt)
-    activeTabId = notebookTabs[0]?.id ?? ''
-    if (activeTabId) syncActiveFromTab()
-    else {
-      activeSection = ''
-      activePage = ''
-    }
-  }
+  // openPage / handlers / persistence / the open-tabs provider all live in the
+  // tabManager controller above.
 
   function confirmTemplateTransition(): boolean {
     return (
@@ -394,7 +197,7 @@
     item: NavigationCatalogItem,
     mode: OpenPageMode
   ): void {
-    openPage(item, mode)
+    tabManager.openPage(item, mode)
     activeView = 'notes'
   }
 
@@ -433,110 +236,6 @@
     }
   }
 
-  function handleSelectTab(id: string): void {
-    activeTabId = id
-    // Bump MRU ordering.
-    const now = Date.now()
-    openTabs = openTabs.map((t) =>
-      t.id === id ? { ...t, lastActivatedAt: now } : t
-    )
-    syncActiveFromTab()
-    schedulePersistTabs()
-    const activated = openTabs.find((tab) => tab.id === id)
-    if (activated) recordRecentActivation(activated)
-  }
-
-  function handleCloseTab(id: string): void {
-    const closing = openTabs.find((t) => t.id === id)
-    if (closing) {
-      clearSelectionFocusIfPage(closing.notebook, closing.section, closing.page)
-    }
-    const result = closeTabState({ tabs: openTabs, activeId: activeTabId }, id)
-    openTabs = result.tabs
-    activeTabId = result.activeId
-    syncActiveFromTab()
-    schedulePersistTabs()
-  }
-
-  function handlePromoteTab(id: string): void {
-    openTabs = promotePreviewState(
-      { tabs: openTabs, activeId: activeTabId },
-      id
-    ).tabs
-    schedulePersistTabs()
-  }
-
-  function handleReorderTab(
-    fromId: string,
-    toId: string,
-    before: boolean
-  ): void {
-    // industry-standard parity (#175 AC4): dragging a preview tab pins it on drop.
-    // The promotion happens before the reorder so the pinned tab is the
-    // one that gets spliced into the new position.
-    const draggedTab = openTabs.find((t) => t.id === fromId)
-    if (draggedTab?.preview) {
-      openTabs = promotePreviewState(
-        { tabs: openTabs, activeId: activeTabId },
-        fromId
-      ).tabs
-    }
-    // Reorder within the displayed (per-notebook) tabs, then splice the
-    // reordered subset back into the full openTabs array — non-displayed
-    // (other-notebook) tabs keep their relative positions.
-    const result = reorderTabState(
-      { tabs: displayedTabs, activeId: activeTabId },
-      fromId,
-      toId,
-      before
-    )
-    openTabs = mergeReorderedTabs(openTabs, result.tabs, activeNotebook)
-    schedulePersistTabs()
-  }
-
-  function handleCycleTab(dir: 1 | -1): void {
-    // Cycle within the displayed (per-notebook) tabs only — Ctrl+Tab must
-    // not jump to a hidden tab in another notebook (#142 review: cycling
-    // across openTabs violated per-notebook scoping).
-    const result = cycleTabState(
-      { tabs: displayedTabs, activeId: activeTabId },
-      dir
-    )
-    // Merge the MRU-bumped tabs (from the cycled subset) back into the
-    // full openTabs array. cycleTabState → activateTab bumps
-    // lastActivatedAt on the newly-active tab; without this merge,
-    // repeated Ctrl+Tab presses would use stale timestamps and the
-    // cycling order would degrade (#142 review: discarded MRU bump).
-    openTabs = openTabs.map((t) => {
-      const updated = result.tabs.find((x) => x.id === t.id)
-      return updated ?? t
-    })
-    activeTabId = result.activeId
-    syncActiveFromTab()
-    schedulePersistTabs()
-  }
-
-  // --- Tab persistence (debounced 250ms, pinned-only) ----------------------
-  // Extracted into lib/tabs/persistence.svelte.ts; the reactive $state runes
-  // (openTabs, activeTabId) stay here and are read/written through the deps
-  // interface. schedulePersistTabs / loadPersistedTabs are destructured for
-  // direct use at the many call sites; the rest (baseline seed, config:changed
-  // rehydrate, unmount flush) hangs off the factory object.
-  const tabPersistence = createTabPersistence({
-    getTabs: () => openTabs,
-    getActiveId: () => activeTabId,
-    setTabs: (t) => (openTabs = t),
-    setActiveId: (id) => (activeTabId = id),
-    syncActiveFromTab,
-    setTabViewMode: (id, mode) => {
-      openTabs = setTabViewModeState(
-        { tabs: openTabs, activeId: activeTabId },
-        id,
-        mode
-      ).tabs
-    }
-  })
-  const { schedulePersistTabs, loadPersistedTabs } = tabPersistence
   let showSearch = $state(false)
   let showQuickSwitcher = $state(false)
   let navigationCatalog = $state<NavigationCatalogItem[]>([])
@@ -567,21 +266,10 @@
   let settingsSection = $state('general')
   let showTemplatePicker = $state(false)
   let templatePickerMode = $state<'new-page' | 'insert'>('new-page')
-  // F20: set when the backend emits settings:fingerprint-mismatch — the
-  // trust-anchor fields (vault_path / trusted_publishers) changed since the
-  // last launch. The modal asks the user to confirm or dismiss; confirm
-  // clears the sentinel via ConfirmSettingsChange so the next launch is quiet.
-  let showSettingsMismatch = $state(false)
-  // F4: set when the backend detects a legacy grants: block in this vault's
-  // config.yaml that the host has never seen. The modal asks the user to
-  // confirm moving grants to per-host storage.
-  let showGrantsMigration = $state(false)
-  let pendingLegacyGrants = $state<Record<string, Record<string, string>>>({})
-  // F3: quarantined linked notebooks (root_path moved or tampered). The modal
-  // offers re-link (PickLinkedNotebook) or unlink (UnlinkNotebook).
-  let quarantinedLinks = $state<
-    { id: string; display_name: string; root_path: string }[]
-  >([])
+  // Settings / quarantine dialog controller (#768). Owns the three modal
+  // overlays' open state + their IPC action handlers. Driven by the
+  // startup-events handlers (open*) and the dialog props (close*/confirm*).
+  const settingsDialogs = createSettingsDialogs()
 
   // Focused block ancestry path highlighting
   let activeFocusedBlockAncestors = $state<string[]>([])
@@ -616,6 +304,79 @@
     }
   }
 
+  // Global-hotkey dispatch (#768). Owns the window 'keydown' listener that
+  // resolves a config-driven chord and switch-dispatches the action to App's
+  // shell state. Every side effect is a closure over App's $state / handlers;
+  // attach()/detach() wire into onMount init + cleanup.
+  const hotkeyDispatch = createGlobalHotkeyDispatch({
+    getHotkeys: () => effectiveHotkeys(settings.config?.hotkeys ?? {}),
+    getHasDisplayedTabs: () => tabManager.displayedTabs.length > 0,
+    getActiveTabId: () => tabManager.activeTabId,
+    isActiveTabDisplayed: () =>
+      tabManager.displayedTabs.some((t) => t.id === tabManager.activeTabId),
+    getSidebarCollapsed: () => sidebarCollapsed,
+    toggleSearch: () => (showSearch = !showSearch),
+    toggleQuickSwitcher: () => (showQuickSwitcher = !showQuickSwitcher),
+    toggleGlobalReplace: () => (showGlobalReplace = !showGlobalReplace),
+    toggleQuickAdd: () => (showQuickAdd = !showQuickAdd),
+    setSidebarCollapsed: (collapsed) => {
+      sidebarCollapsed = collapsed
+      manuallyCollapsed = collapsed
+    },
+    toggleShortcutHelp: () => toggleShortcutHelp(),
+    toggleDateGlance: () => toggleDateGlance(getActiveEditor()),
+    openFind: () => findBarState.openFind(),
+    openReplace: () => findBarState.openReplace(),
+    cycleView: () => cycleView(),
+    openTemplatePicker: () => {
+      templatePickerMode = 'new-page'
+      showTemplatePicker = !showTemplatePicker
+    },
+    requestNavigationCreation: (kind) => void requestNavigationCreation(kind),
+    openSettings: () => openSettings(),
+    toggleViewMode: (tabId) => tabManager.handleToggleViewMode(tabId),
+    closeTab: (tabId) => tabManager.handleCloseTab(tabId),
+    cycleTab: (dir) => tabManager.handleCycleTab(dir)
+  })
+
+  // Startup-events controller (#768). Owns every onMount-registered listener
+  // (Wails Events.On + startup-lifecycle window addEventListener), the
+  // dispatchStartupEvent replay router, and the MarkFrontendReady backlog
+  // drain. attach()/dispose() wire into onMount init + cleanup. Deps are lazy
+  // closures over App's $state + App-defined handlers.
+  const startup = createStartupEvents({
+    getActiveNotebook: () => activeNotebook,
+    getActiveSection: () => activeSection,
+    getActivePage: () => activePage,
+    setActiveNotebook: (nb) => (activeNotebook = nb),
+    setActiveSection: (sec) => (activeSection = sec),
+    setActivePage: (pg) => (activePage = pg),
+    setActiveView: (view) => (activeView = view),
+    getSettings: () => settings.config,
+    setSettingsSection: (id) => (settingsSection = id),
+    setShowSearch: (v) => (showSearch = v),
+    setShowQuickAdd: (v) => (showQuickAdd = v),
+    getShowTemplatePicker: () => showTemplatePicker,
+    setShowTemplatePicker: (v) => (showTemplatePicker = v),
+    setTemplatePickerMode: (m) => (templatePickerMode = m),
+    setSelectedTag: (t) => (selectedTag = t),
+    getSidebarCollapsed: () => sidebarCollapsed,
+    setSidebarCollapsed: (collapsed) => {
+      sidebarCollapsed = collapsed
+      manuallyCollapsed = collapsed
+    },
+    setSearchTargetHeading: (h) => (searchTargetHeading = h),
+    setSearchTargetKey: (k) => (searchTargetKey = k),
+    getNavigationCatalog: () => navigationCatalog,
+    settingsDialogs,
+    tabManager,
+    openSettings,
+    openTasksView,
+    handleSwitchVault,
+    handleMenuSave,
+    handleSearchJump
+  })
+
   onMount(() => {
     async function checkInit() {
       try {
@@ -648,7 +409,7 @@
       })
       .catch(() => {})
     // Restore the persisted open-tab set from config.yaml (#142).
-    void loadPersistedTabs()
+    void tabManager.loadPersistedTabs()
     // Subscribe to config hot-reload (config:changed from Go) so the settings
     // store refreshes on external edits to .system/config.yaml.
     initConfigHotReload()
@@ -669,634 +430,19 @@
     // available (AC2). Runs independently of any vault being open.
     void initStartupUpdateCheck()
 
-    // Hot-reload the plugin registry when an external config.yaml edit
-    // changes plugins.disabled (e.g. the user hand-edits the file as
-    // documented in docs/PLUGIN_DEVELOPMENT.md). Diff against the last
-    // seen value so unrelated config changes (theme, hotkeys, etc.) do
-    // not pay the ESM-import + plugin init cost.
-    let prevDisabled: string[] = settings.config?.plugins?.disabled ?? []
-    // Initialize the tab hot-reload baseline from the settings store.
-    tabPersistence.initBaseline(settings.config?.ui?.open_tabs)
-    const offConfigChangedReload = Events.On(
-      EventName.EventConfigChanged,
-      (ev) => {
-        const cfg: SystemConfig = ev.data
-        const next = cfg?.plugins?.disabled ?? []
-        if (!arraysEqual(prevDisabled, next)) {
-          prevDisabled = [...next]
-          loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
-            console.error('Plugin reload after config change failed:', e)
-          )
-        }
-        // Re-hydrate / reconcile tabs from an external ui.open_tabs edit.
-        // tabSetKey is intentionally locator-only: a view-mode change must
-        // NOT trigger a full re-hydrate (that would rebuild tabs and remount
-        // editors on every in-app toggle, since the frontend's own
-        // persistTabs write also fires config:changed). Logic lives in the
-        // persistence module; the plugin-reload half stays here.
-        tabPersistence.handleConfigChangedTabRehydrate(cfg)
-      }
-    )
-
-    function handleOpenSettings(e: Event) {
-      const detail = (e as CustomEvent).detail
-      // ctx.openSettings dispatches detail: tab ?? '' — an empty/missing
-      // detail means "general".
-      const section = typeof detail === 'string' && detail ? detail : 'general'
-      openSettings(section)
-    }
-
-    // Tasks hub command palette (#436) delegates Find task / Add task to the
-    // app-level SearchModal and QuickAdd overlays via these host events.
-    function handleOpenSearch() {
-      showSearch = true
-    }
-    function handleOpenQuickAdd() {
-      showQuickAdd = true
-    }
-
-    function handleOpenTasksForPage(
-      e: CustomEvent<OpenTasksForPageDetail>
-    ): void {
-      const target = e.detail
-      if (
-        !target?.source ||
-        !target.notebook ||
-        !target.page ||
-        !target.nonce ||
-        isStandaloneTaskRef(target.notebook)
-      )
-        return
-      enterTaskPageRoute(target, {
-        displayMode: 'list',
-        activeFilter: 'all',
-        filters: { owners: [], priorities: [], dueDate: '', tags: [] }
-      })
-      openTasksView(undefined)
-    }
-
-    // Summary-strip chips in GeneralTab dispatch this to jump between
-    // settings sections while already in the settings view (no view change).
-    function handleSettingsJump(e: Event) {
-      const detail = (e as CustomEvent).detail
-      if (!detail || typeof detail.section !== 'string') return
-      // Validate against the live section registry via the shared resolver so
-      // a typo'd id from a future dispatcher can't render an empty/broken
-      // panel. Falls back to 'general' on a miss rather than navigating nowhere.
-      settingsSection = resolveSettingsSectionId(
-        detail.section,
-        getSettingsSections().map((s) => s.id)
-      )
-    }
-    // Move keyboard focus into the active sidebar (#326 item 8). Expands the
-    // sidebar if collapsed, then focuses the first focusable element inside it
-    // (a tree node, a smart-list radio, a scope radio, or a search input —
-    // whichever the active sidebar surfaces first). Ctrl+Shift+B is not a
-    // format shortcut, so it fires globally even while the editor is focused.
-    async function focusSidebar() {
-      if (sidebarCollapsed) {
-        sidebarCollapsed = false
-        manuallyCollapsed = false
-      }
-      await tick()
-      // One rAF so the expand's width transition has started and the target
-      // is laid out before we focus it.
-      requestAnimationFrame(() => {
-        const aside = document.querySelector<HTMLElement>('[data-sidebar]')
-        if (!aside) return
-        const focusable = aside.querySelector<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-        )
-        focusable?.focus()
-      })
-    }
-
-    function handleGlobalKeyDown(e: KeyboardEvent) {
-      // Config-driven global shortcuts. Resolution (editor-focus guard +
-      // first-match-wins ordering) lives in the pure resolveGlobalHotkey so
-      // it is unit-tested; this handler only switch-dispatches the result.
-      const hotkeys = effectiveHotkeys(settings.config?.hotkeys ?? {})
-      const eventTarget = e.target
-      const editorFocused =
-        eventTarget instanceof Element && !!eventTarget.closest('.ProseMirror')
-      const action = resolveGlobalHotkey(
-        e,
-        hotkeys,
-        editorFocused,
-        displayedTabs.length > 0
-      )
-      if (!action) return
-      e.preventDefault()
-      switch (action) {
-        case 'open_search':
-          showSearch = !showSearch
-          break
-        case 'new_page':
-          void requestNavigationCreation('page')
-          break
-        case 'new_section':
-          void requestNavigationCreation('section')
-          break
-        case 'new_notebook':
-          void requestNavigationCreation('notebook')
-          break
-        case 'open_quick_switcher':
-          showQuickSwitcher = !showQuickSwitcher
-          break
-        case 'open_shortcuts_help':
-          toggleShortcutHelp()
-          break
-        case 'open_date_glance':
-          // Caret placement when an editor is focused; chip otherwise.
-          toggleDateGlance(getActiveEditor())
-          break
-        case 'find_in_page':
-          findBarState.openFind()
-          break
-        case 'replace':
-          findBarState.openReplace()
-          break
-        case 'global_replace':
-          showGlobalReplace = !showGlobalReplace
-          break
-        case 'toggle_sidebar':
-          sidebarCollapsed = !sidebarCollapsed
-          manuallyCollapsed = sidebarCollapsed
-          break
-        case 'focus_sidebar':
-          void focusSidebar()
-          break
-        case 'cycle_view_layout':
-          cycleView()
-          break
-        case 'open_template_picker':
-          templatePickerMode = 'new-page'
-          showTemplatePicker = !showTemplatePicker
-          break
-        case 'new_task':
-          showQuickAdd = !showQuickAdd
-          break
-        case 'toggle_view_mode':
-          // Flip the active tab's view mode directly (#195) — no window-event
-          // indirection, App owns the per-tab state.
-          if (activeTabId) handleToggleViewMode(activeTabId)
-          break
-        case 'toggle_format_toolbar':
-          void toggleFormatToolbar()
-          break
-        case 'toggle_focus_mode':
-          void toggleFocusMode()
-          break
-        case 'toggle_typewriter_mode':
-          void toggleTypewriterMode()
-          break
-        case 'open_settings':
-          openSettings()
-          break
-        case 'next_tab':
-          handleCycleTab(1)
-          break
-        case 'prev_tab':
-          handleCycleTab(-1)
-          break
-        case 'close_tab':
-          // Guard: only close if the active tab is visible in the current
-          // notebook's displayed set (#142 review: closing a hidden tab
-          // from another notebook would be surprising to the user).
-          if (activeTabId && displayedTabs.some((t) => t.id === activeTabId)) {
-            handleCloseTab(activeTabId)
-          }
-          break
-      }
-    }
-
-    // Smart Graph navigation: refs/embeds/tag-pills dispatch these.
-    function handleNavigateToBlock(e: Event) {
-      const d = (e as CustomEvent).detail
-      if (d) {
-        const ref = resolveSourceNavigationTarget(navigationCatalog, {
-          source: d.source,
-          notebook: d.notebook,
-          section: d.section ?? '',
-          page: d.page
-        })
-        // Standalone-task routing guard (#374). A `.silt` notebook ref
-        // routes to the Tasks view instead of a raw page tab. The Tasks
-        // view's `focusBlockId` prop handles scroll+highlight on mount.
-        const target = routeJumpTarget({
-          notebook: ref.notebook,
-          section: ref.section,
-          page: ref.page,
-          blockTarget: d.blockId ? { blockId: d.blockId } : undefined
-        })
-        if (target.kind === 'tasks-view') {
-          openTasksView(target.blockTarget?.blockId)
-          return
-        }
-        handleSearchJump(ref, d.date, d.blockId)
-      }
-    }
-    // Wiki-link navigation (#545). Opens the resolved page; optional heading
-    // scrolls to the matching HEADER block after open.
-    function handleNavigateToPage(e: Event) {
-      const d = (e as CustomEvent).detail
-      if (!d?.notebook || !d?.page) return
-      const ref = resolveSourceNavigationTarget(navigationCatalog, {
-        source: d.source,
-        notebook: d.notebook,
-        section: d.section ?? '',
-        page: d.page
-      })
-      handleSearchJump(ref, d.date ?? '', d.blockId ?? '')
-      if (d.heading) {
-        searchTargetHeading = d.heading
-        searchTargetKey = `heading:${d.heading}:${Date.now()}`
-      }
-    }
-    function handleNavigateToTag(e: Event) {
-      const tagPath = (e as CustomEvent).detail
-      if (tagPath) {
-        selectedTag = tagPath
-        activeView = 'tags'
-      }
-    }
-    function handleSwitchView(e: Event) {
-      // PluginsTab "Open view" + any other switch-view dispatcher.
-      const detail = (e as CustomEvent).detail
-      if (typeof detail === 'string' && detail) {
-        activeView = detail
-      }
-    }
-    function handleOpenPluginManager() {
-      // The plugin manager is the "Plugins" section inside Settings.
-      openSettings('plugins')
-    }
-    async function handlePluginsChanged() {
-      // Refresh grants BEFORE re-running discovery so re-registration reads the
-      // updated capabilities (fixes the race where loadPlugins read a stale
-      // grant cache), then drop contributions from plugins that lost a
-      // capability without a full reload (#582). grants.svelte no longer
-      // subscribes to plugins:changed itself — this is the single orchestrator.
-      await refreshGrants()
-      revokeRevokedContributions()
-      // Re-run discovery with the live location so newly installed/enabled
-      // plugins appear and removed ones drop out.
-      loadPlugins(activeNotebook, activeSection, activePage).catch((e) =>
-        console.error('Plugin reload failed:', e)
-      )
-    }
-    function handleOpenTemplatePicker() {
-      templatePickerMode = 'new-page'
-      showTemplatePicker = true
-    }
-    function handlePageRenamed(e: Event) {
-      const { notebook, section, oldName, newName } = (e as CustomEvent)
-        .detail as {
-        notebook: string
-        section: string
-        oldName: string
-        newName: string
-      }
-      openTabs = openTabs.map((t) =>
-        t.notebook === notebook && t.section === section && t.page === oldName
-          ? { ...t, page: newName }
-          : t
-      )
-      if (
-        activeNotebook === notebook &&
-        activeSection === section &&
-        activePage === oldName
-      ) {
-        activePage = newName
-      }
-    }
-
-    window.addEventListener('keydown', handleGlobalKeyDown)
-    window.addEventListener('navigate-to-block', handleNavigateToBlock)
-    window.addEventListener('navigate-to-page', handleNavigateToPage)
-    window.addEventListener('navigate-to-tag', handleNavigateToTag)
-    window.addEventListener('switch-view', handleSwitchView)
-    window.addEventListener('open-plugin-manager', handleOpenPluginManager)
-    window.addEventListener('open-settings', handleOpenSettings)
-    window.addEventListener('open-template-picker', handleOpenTemplatePicker)
-    window.addEventListener('open-search', handleOpenSearch)
-    window.addEventListener('open-quick-add', handleOpenQuickAdd)
-    window.addEventListener(OPEN_TASKS_FOR_PAGE_EVENT, handleOpenTasksForPage)
-    const onChangeVault = () => {
-      void handleSwitchVault()
-    }
-    window.addEventListener('silt:change-vault', onChangeVault)
-    window.addEventListener('silt:settings-jump', handleSettingsJump)
-    window.addEventListener('page-renamed', handlePageRenamed)
-    // `plugins:changed` is a Wails event (Go runtime.EventsEmit), so it must
-    // be received via Events.On — a DOM addEventListener would never fire.
-    const offPluginsChanged = Events.On(
-      EventName.EventPluginsChanged,
-      () => void handlePluginsChanged()
-    )
-    const offTemplateDraftVaultClosing = Events.On(
-      EventName.EventVaultClosing,
-      () => {
-        clearRetainedTemplateDraft()
-        recentPageRecorder.invalidate()
-      }
-    )
-    // `vault:moved` fires after a successful vault Move/Copy-Switch (#141).
-    // The backend has already reinitialized services at the new path; reset
-    // navigation, close settings, and reload the (vault-scoped) config store
-    // so the UI reflects the new workspace. If the optional old-vault removal
-    // didn't happen, payload.warning carries the reason → surface a non-
-    // blocking toast (the move itself succeeded).
-    const offVaultMoved = Events.On(EventName.EventVaultMoved, (ev) => {
-      const e: { from?: string; to?: string; warning?: string } = ev.data
-      activeNotebook = ''
-      activeSection = ''
-      activePage = ''
-      openTabs = []
-      activeTabId = ''
-      activeView = 'notes'
-      clearSelectionFocus()
-      // Drop any editor reconciliation handles tied to the old vault so a
-      // teardown that bypassed Svelte $effect cleanup can't leave a stale
-      // editor buffer flushing into the new vault (#345).
-      clearAllEditors()
-      loadConfig().catch((e) =>
-        console.error('Post-move config reload failed:', e)
-      )
-      window.dispatchEvent(new CustomEvent('refresh-navigation'))
-      if (e?.warning) {
-        pushNotification({ kind: 'error', message: e.warning })
-      }
-    })
-    // F20: trust-anchor fingerprint mismatch — the backend detected that
-    // vault_path or trusted_publishers changed since last launch (possible
-    // tampering, or a legit external edit). Show a confirmation modal; the
-    // user can confirm (clears the sentinel) or dismiss (mismatch persists
-    // on next launch). Extracted to a named handler so both the live
-    // Events.On listener and the startup-event replay (dispatchStartupEvent)
-    // run the exact same code.
-    function handleSettingsMismatch() {
-      showSettingsMismatch = true
-    }
-    const offSettingsMismatch = Events.On(
-      EventName.EventSettingsFingerprintMismatch,
-      handleSettingsMismatch
-    )
-    // F4: grants migration — the vault's legacy config.yaml carries a grants
-    // block this host has never seen. Show a one-time confirmation modal.
-    function handleGrantsMigration(
-      grants: Record<string, Record<string, string>>
-    ) {
-      pendingLegacyGrants = grants
-      showGrantsMigration = true
-    }
-    const offGrantsMigration = Events.On(
-      EventName.EventGrantsMigrationRequired,
-      (ev) => {
-        handleGrantsMigration(ev.data)
-      }
-    )
-    // F3: linked-notebook quarantined — the root was moved or tampered with.
-    // Refresh the quarantine list so the modal shows the latest set.
-    async function handleLinkedQuarantined() {
-      try {
-        quarantinedLinks = await ResolveQuarantinedLinks()
-      } catch (e) {
-        console.error('ResolveQuarantinedLinks failed:', e)
-      }
-    }
-    const offLinkedQuarantined = Events.On(
-      EventName.EventLinkedNotebookQuarantined,
-      () => {
-        void handleLinkedQuarantined()
-      }
-    )
-    // Vault init failed during startup (settings.json unreadable, DB open
-    // failed, network-filesystem vault, watcher start failed, …). Without
-    // this listener the backend error vanishes and every page renders blank
-    // with no clue why — the user sees a dead frame. Surface it as a sticky
-    // error toast so the cause is visible. (Wails delivers OnStartup after
-    // the frontend mounts, so this listener is registered in time.)
-    function handleVaultInitError(msg: string) {
-      pushNotification({
-        kind: 'error',
-        message: `Vault failed to initialize: ${msg}`,
-        autoDismissMs: 0
-      })
-    }
-    const offVaultInitError = Events.On(EventName.EventVaultInitError, (ev) => {
-      handleVaultInitError(ev.data)
-    })
-    // Non-fatal init warnings (symlink skips, permission errors during scan).
-    // These don't block usage but explain missing/partial content.
-    function handleVaultInitWarnings(warnings: string[]) {
-      if (!warnings?.length) return
-      pushNotification({
-        kind: 'info',
-        message: `Vault initialized with warnings: ${warnings.join('; ')}`,
-        autoDismissMs: 0
-      })
-    }
-    const offVaultInitWarnings = Events.On(
-      EventName.EventVaultInitWarnings,
-      (ev) => {
-        handleVaultInitWarnings(ev.data)
-      }
-    )
-    // fsnotify subscription failures (watch limit, permissions). File-change
-    // watching is degraded for these paths — indexing and autosave
-    // reconciliation may not track external edits to them.
-    function handleVaultWatchCoverage(failedPaths: string[]) {
-      if (!failedPaths?.length) return
-      pushNotification({
-        kind: 'info',
-        message: `File watching unavailable for ${failedPaths.length} path(s). External edits to these folders won't auto-sync.`,
-        autoDismissMs: 0
-      })
-    }
-    const offVaultWatchCoverage = Events.On(
-      EventName.EventVaultWatchCoverage,
-      (ev) => {
-        handleVaultWatchCoverage(ev.data)
-      }
-    )
-    // Mass id re-mint detection (#443): an external tool/sync stripped the
-    // block-identity comments from a previously-indexed file, so the parser
-    // re-minted fresh UUIDs — which can break note-to-note links pointing at
-    // those blocks. The toast (built by reMintToast) is sticky, leads with
-    // the user-visible impact, and offers a "Show file" CTA. The builder is
-    // extracted so its payload-shaping contract is unit-testable.
-    const offReMintWarning = Events.On(
-      EventName.EventIndexReMintWarning,
-      (ev) => {
-        const w: ReMintWarning = ev.data
-        if (!w) return
-        pushNotification(reMintToast(w, openPage))
-      }
-    )
-    // Wiki-link rename rewrite summary (#545 harden). Partial failures used
-    // to be log-only; surface a toast so inbound [[…]] that failed to update
-    // are not silent.
-    const offPageLinksRewritten = Events.On(
-      EventName.EventPageLinksRewritten,
-      (ev) => {
-        const d = ev?.data as
-          { rewritten?: number; failed?: number } | undefined
-        if (!d) return
-        const rewritten = d.rewritten ?? 0
-        const failed = d.failed ?? 0
-        if (failed > 0) {
-          pushNotification({
-            kind: 'error',
-            message:
-              rewritten > 0
-                ? `Updated ${rewritten} linked page(s); ${failed} could not be rewritten.`
-                : `Could not rewrite wiki-links in ${failed} page(s). Check the log for details.`,
-            autoDismissMs: 0
-          })
-        } else if (rewritten > 0) {
-          pushNotification({
-            kind: 'info',
-            message: `Updated wiki-links in ${rewritten} page(s).`,
-            autoDismissMs: 4000
-          })
-        }
-      }
-    )
-
-    // Native menu events (#503) — the Go-side menu items emit these; wire
-    // them to the same handlers the keyboard shortcuts use so menu and
-    // hotkey actions are indistinguishable.
-    const offMenuNewPage = Events.On(EventName.EventMenuNewPage, () => {
-      templatePickerMode = 'new-page'
-      showTemplatePicker = !showTemplatePicker
-    })
-    const offMenuOpenVault = Events.On(EventName.EventMenuOpenVault, () => {
-      void handleSwitchVault()
-    })
-    const offMenuSave = Events.On(
-      EventName.EventMenuSave,
-      () => void handleMenuSave()
-    )
-    const offMenuToggleSidebar = Events.On(
-      EventName.EventMenuToggleSidebar,
-      () => {
-        sidebarCollapsed = !sidebarCollapsed
-        manuallyCollapsed = sidebarCollapsed
-      }
-    )
-    const offMenuToggleFormatToolbar = Events.On(
-      EventName.EventMenuToggleFormatToolbar,
-      () => void toggleFormatToolbar()
-    )
-    const offMenuFind = Events.On(EventName.EventMenuFind, () => {
-      findBarState.openFind()
-    })
-    const offMenuFocusMode = Events.On(EventName.EventMenuFocusMode, () => {
-      void toggleFocusMode()
-    })
-    const offMenuSettings = Events.On(EventName.EventMenuSettings, () => {
-      openSettings('general')
-    })
-    const offMenuAbout = Events.On(EventName.EventMenuAbout, () => {
-      openSettings('about')
-    })
-
-    // Wails v3 fires ServiceStartup before the webview exists, so every
-    // startup-time emit (vault:init-error, settings:fingerprint-mismatch,
-    // grants:migration-required, vault:init-warnings, vault:watch-coverage,
-    // linked-notebook:quarantined) is lost — no JS listener was registered
-    // yet. The backend stashes those via emitOrQueue; here we mark the
-    // frontend ready (stop queueing), drain the queue, and replay each event
-    // through the same named handler its live Events.On listener uses, so a
-    // startup event is indistinguishable from a live one to the handler.
-    function dispatchStartupEvent(name: string, data: unknown): void {
-      switch (name) {
-        case EventName.EventSettingsFingerprintMismatch:
-          handleSettingsMismatch()
-          break
-        case EventName.EventGrantsMigrationRequired:
-          handleGrantsMigration(data as Record<string, Record<string, string>>)
-          break
-        case EventName.EventLinkedNotebookQuarantined:
-          void handleLinkedQuarantined()
-          break
-        case EventName.EventVaultInitError:
-          handleVaultInitError(data as string)
-          break
-        case EventName.EventVaultInitWarnings:
-          handleVaultInitWarnings(data as string[])
-          break
-        case EventName.EventVaultWatchCoverage:
-          handleVaultWatchCoverage(data as string[])
-          break
-        default:
-          break
-      }
-    }
-
-    void (async () => {
-      try {
-        await MarkFrontendReady()
-        const missed = await GetStartupEvents()
-        for (const ev of missed ?? []) {
-          dispatchStartupEvent(ev.Name, ev.Payload)
-        }
-      } catch (e) {
-        console.error('Startup event replay failed:', e)
-      }
-    })()
+    hotkeyDispatch.attach()
+    startup.attach()
 
     return () => {
-      window.removeEventListener('keydown', handleGlobalKeyDown)
-      window.removeEventListener('navigate-to-block', handleNavigateToBlock)
-      window.removeEventListener('navigate-to-page', handleNavigateToPage)
-      window.removeEventListener('navigate-to-tag', handleNavigateToTag)
-      window.removeEventListener('switch-view', handleSwitchView)
-      window.removeEventListener('open-plugin-manager', handleOpenPluginManager)
-      window.removeEventListener('open-settings', handleOpenSettings)
-      window.removeEventListener(
-        'open-template-picker',
-        handleOpenTemplatePicker
-      )
-      window.removeEventListener('open-search', handleOpenSearch)
-      window.removeEventListener('open-quick-add', handleOpenQuickAdd)
-      window.removeEventListener(
-        OPEN_TASKS_FOR_PAGE_EVENT,
-        handleOpenTasksForPage
-      )
-      window.removeEventListener('silt:change-vault', onChangeVault)
-      window.removeEventListener('silt:settings-jump', handleSettingsJump)
-      window.removeEventListener('page-renamed', handlePageRenamed)
-      offPluginsChanged()
-      offVaultMoved()
-      offTemplateDraftVaultClosing()
-      recentPageRecorder.invalidate()
-      offConfigChangedReload()
-      offSettingsMismatch()
-      offGrantsMigration()
-      offLinkedQuarantined()
-      offVaultInitError()
-      offVaultInitWarnings()
-      offVaultWatchCoverage()
-      offReMintWarning()
-      offPageLinksRewritten()
-      offMenuNewPage()
-      offMenuOpenVault()
-      offMenuSave()
-      offMenuToggleSidebar()
-      offMenuToggleFormatToolbar()
-      offMenuFind()
-      offMenuFocusMode()
-      offMenuSettings()
-      offMenuAbout()
+      hotkeyDispatch.detach()
+      startup.dispose()
       disposeEditorTokens()
       disposeThemes()
       disposeTemplates()
       disposeUpdateStore()
-      // Flush any pending tab-state persistence so the user's last tab
+      // Flush any pending tab-state persistence so the user's last
       // change survives a component unmount / app close (#142 hardening).
-      tabPersistence.flushPendingPersist()
+      tabManager.flushPendingPersist()
     }
   })
 
@@ -1311,7 +457,7 @@
           console.error('Post-init config load failed:', e)
         )
         // Restore the persisted tab set from config.yaml (#142).
-        void loadPersistedTabs()
+        void tabManager.loadPersistedTabs()
         window.dispatchEvent(new CustomEvent('refresh-navigation'))
       }
     } catch (e) {
@@ -1333,8 +479,7 @@
       activePage = ''
       activeView = 'notes'
       // Clear the tab strip (#142).
-      openTabs = []
-      activeTabId = ''
+      tabManager.resetTabs()
     } catch (e) {
       console.error('Failed to close vault:', e)
     }
@@ -1375,13 +520,15 @@
     // navigation does not re-bump the MRU timestamp (the state machine's
     // activate-only path is a true no-op on tab state, just sets the
     // scroll-to-block target). Otherwise open in preview mode.
-    const activeTab = openTabs.find((t) => t.id === activeTabId)
+    const activeTab = tabManager.openTabs.find(
+      (t) => t.id === tabManager.activeTabId
+    )
     const isSamePage =
       activeTab &&
       activeTab.notebook === notebook &&
       activeTab.section === section &&
       activeTab.page === page
-    openPage(locator, isSamePage ? 'activate-only' : 'preview', {
+    tabManager.openPage(locator, isSamePage ? 'activate-only' : 'preview', {
       fileDate: date,
       blockId
     })
@@ -1395,7 +542,7 @@
   // Navigates to the freshly-created page (the reactive cascade loads it in
   // the editor) and refreshes the sidebar tree so the new page appears.
   function handleTemplatePageCreated(page: string): void {
-    openPage(
+    tabManager.openPage(
       { notebook: activeNotebook, section: activeSection, page },
       'preview'
     )
@@ -1452,8 +599,8 @@
     (activeView === 'notes' || activeView === 'backlinks') &&
       !!activeNotebook &&
       !!activePage &&
-      !!activeTabId &&
-      displayedTabs.length > 0
+      !!tabManager.activeTabId &&
+      tabManager.displayedTabs.length > 0
   )
 
   // Switch to the Settings view and select a section (general/editor/
@@ -1519,85 +666,6 @@
   function cycleView() {
     activeView = nextView(activeView)
   }
-
-  // Order-independent string-array equality (the disabled list is a set
-  // semantically — config.yaml can re-order it without changing meaning).
-  // Used by the config:changed handler to decide whether to re-run
-  // loadPlugins on a hot-reload.
-  function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
-    if (a.length !== b.length) return false
-    const setA = new Set(a)
-    return b.every((x) => setA.has(x))
-  }
-
-  // --- Startup / quarantine dialog IPC handlers ----------------------------
-  // The three modal overlays (SettingsMismatchDialog, GrantsMigrationDialog,
-  // QuarantinedLinksDialog) are presentational components; the IPC calls and
-  // error/notification paths stay here and are passed down as props. Each
-  // handler mirrors the exact inline onclick that lived in the markup before
-  // the extraction.
-
-  async function confirmSettingsMismatch(): Promise<void> {
-    try {
-      await ConfirmSettingsChange()
-      showSettingsMismatch = false
-    } catch (e) {
-      pushNotification({
-        kind: 'error',
-        message: `Failed to confirm settings change: ${String(e)}`
-      })
-    }
-  }
-
-  // Decline and Escape share the same path: persist the decline so the
-  // sentinel clears, then close. A failure here is log-only (non-fatal).
-  async function declineGrantsMigration(): Promise<void> {
-    try {
-      await DeclineGrantsMigration()
-    } catch (e) {
-      console.error('DeclineGrantsMigration failed:', e)
-    }
-    showGrantsMigration = false
-  }
-
-  async function confirmGrantsMigration(): Promise<void> {
-    try {
-      await ConfirmGrantsMigration(pendingLegacyGrants)
-      showGrantsMigration = false
-    } catch (e) {
-      pushNotification({
-        kind: 'error',
-        message: `Failed to move plugin permissions: ${String(e)}`
-      })
-    }
-  }
-
-  async function handleUnlinkNotebook(id: string): Promise<void> {
-    const q = quarantinedLinks.find((l) => l.id === id)
-    try {
-      await UnlinkNotebook(id)
-      quarantinedLinks = quarantinedLinks.filter((l) => l.id !== id)
-    } catch (e) {
-      pushNotification({
-        kind: 'error',
-        message: `Failed to unlink ${q?.display_name ?? id}: ${String(e)}`
-      })
-    }
-  }
-
-  async function handleRelinkNotebook(id: string): Promise<void> {
-    const q = quarantinedLinks.find((l) => l.id === id)
-    try {
-      await UnlinkNotebook(id)
-      await PickLinkedNotebook()
-      quarantinedLinks = quarantinedLinks.filter((l) => l.id !== id)
-    } catch (e) {
-      pushNotification({
-        kind: 'error',
-        message: `Failed to re-link ${q?.display_name ?? id}: ${String(e)}`
-      })
-    }
-  }
 </script>
 
 <main
@@ -1621,12 +689,12 @@
     >
       {#if activeView === 'notes' || activeView === 'backlinks'}
         <TabStrip
-          tabs={displayedTabs}
-          {activeTabId}
-          onSelectTab={handleSelectTab}
-          onCloseTab={handleCloseTab}
-          onPromoteTab={handlePromoteTab}
-          onReorderTab={handleReorderTab}
+          tabs={tabManager.displayedTabs}
+          activeTabId={tabManager.activeTabId}
+          onSelectTab={tabManager.handleSelectTab}
+          onCloseTab={tabManager.handleCloseTab}
+          onPromoteTab={tabManager.handlePromoteTab}
+          onReorderTab={tabManager.handleReorderTab}
           showDirtyIndicators={settings.config?.ui
             ?.show_tab_dirty_indicators !== false}
         />
@@ -1737,15 +805,18 @@
           bind:collapsed={sidebarCollapsed}
           {sidebarWidth}
           {sidebarDragging}
-          onSelectNotebook={selectNotebookContext}
+          onSelectNotebook={tabManager.selectNotebookContext}
           onSelectSection={(sec) => (activeSection = sec)}
           onSelectPage={(nb, sec, pg) => {
             // Single-click opens in preview mode (industry-standard parity, #142).
-            openPage({ notebook: nb, section: sec, page: pg }, 'preview')
+            tabManager.openPage(
+              { notebook: nb, section: sec, page: pg },
+              'preview'
+            )
           }}
           onPinPage={(nb, sec, pg) => {
             // Double-click / middle-click opens a pinned tab (#142).
-            openPage({ notebook: nb, section: sec, page: pg }, 'pin')
+            tabManager.openPage({ notebook: nb, section: sec, page: pg }, 'pin')
           }}
           onSelectView={selectView}
           onNavigationLoaded={(tree) => {
@@ -1764,11 +835,7 @@
             // points to the new location. Matching on fromSection is critical —
             // without it, a same-named sibling in another section would also be
             // repointed, causing its next save to write to the wrong path.
-            openTabs = openTabs.map((t) =>
-              t.notebook === nb && t.section === fromSection && t.page === page
-                ? { ...t, section: toSection }
-                : t
-            )
+            tabManager.pageMoved(nb, fromSection, toSection, page)
             if (
               activeNotebook === nb &&
               activePage === page &&
@@ -1776,7 +843,6 @@
             ) {
               activeSection = toSection
             }
-            schedulePersistTabs()
           }}
         />
 
@@ -1799,7 +865,8 @@
               class="absolute bottom-2 left-1/2 -translate-x-1/2 z-[999] bg-red-600 text-white text-type-2xs font-mono px-2 py-1 rounded opacity-80 pointer-events-none"
             >
               view={activeView} nb={activeNotebook || '-'} pg={activePage ||
-                '-'} tab={activeTabId || '-'} dt={displayedTabs.length} nr={notesReady}
+                '-'} tab={tabManager.activeTabId || '-'} dt={tabManager
+                .displayedTabs.length} nr={notesReady}
             </div>
           {/if}
           {#if activeView === 'notes' || activeView === 'backlinks'}
@@ -1810,10 +877,10 @@
               {activeView}
               linked={activeNotebookMetadata?.linked ?? false}
               disconnected={activeNotebookMetadata?.disconnected ?? false}
-              onSelectNotebook={selectNotebookContext}
+              onSelectNotebook={tabManager.selectNotebookContext}
               onSelectSection={openSectionContext}
               onOpenPage={() =>
-                openPage(
+                tabManager.openPage(
                   {
                     notebook: activeNotebook,
                     section: activeSection,
@@ -1827,13 +894,15 @@
               <div
                 id="silt-tabpanel"
                 role="tabpanel"
-                aria-labelledby="silt-tab-{activeTabId}"
+                aria-labelledby="silt-tab-{tabManager.activeTabId}"
                 class="flex-1 min-h-0 flex flex-col overflow-hidden"
               >
-                {#each displayedTabs as tab (tab.id)}
+                {#each tabManager.displayedTabs as tab (tab.id)}
                   <div
                     class="flex-1 min-h-0 flex flex-col overflow-hidden"
-                    style:display={tab.id === activeTabId ? 'flex' : 'none'}
+                    style:display={tab.id === tabManager.activeTabId
+                      ? 'flex'
+                      : 'none'}
                   >
                     <VirtualScrollContainer
                       source={navigationNotebookMetadata[tab.notebook]
@@ -1842,48 +911,41 @@
                       section={tab.section}
                       page={tab.page}
                       viewMode={tab.viewMode}
-                      onToggleViewMode={() => handleToggleViewMode(tab.id)}
-                      isActive={tab.id === activeTabId}
-                      targetBlockId={tab.id === activeTabId
+                      onToggleViewMode={() =>
+                        tabManager.handleToggleViewMode(tab.id)}
+                      isActive={tab.id === tabManager.activeTabId}
+                      targetBlockId={tab.id === tabManager.activeTabId
                         ? searchTargetBlockId
                         : ''}
-                      targetHeading={tab.id === activeTabId
+                      targetHeading={tab.id === tabManager.activeTabId
                         ? searchTargetHeading
                         : ''}
-                      targetKey={tab.id === activeTabId ? searchTargetKey : ''}
-                      activeFocusedBlockAncestors={tab.id === activeTabId
+                      targetKey={tab.id === tabManager.activeTabId
+                        ? searchTargetKey
+                        : ''}
+                      activeFocusedBlockAncestors={tab.id ===
+                      tabManager.activeTabId
                         ? activeFocusedBlockAncestors
                         : []}
-                      onBlockFocus={tab.id === activeTabId
+                      onBlockFocus={tab.id === tabManager.activeTabId
                         ? handleBlockFocus
                         : undefined}
-                      onBlockBlur={tab.id === activeTabId
+                      onBlockBlur={tab.id === tabManager.activeTabId
                         ? handleBlockBlur
                         : undefined}
                       onPageRenamed={(newName) => {
                         // Update the tab's page name AND the active triple.
-                        openTabs = openTabs.map((t) =>
-                          t.id === tab.id ? { ...t, page: newName } : t
-                        )
-                        if (tab.id === activeTabId) activePage = newName
+                        tabManager.renameTab(tab.id, newName)
+                        if (tab.id === tabManager.activeTabId)
+                          activePage = newName
                       }}
                       onFirstEdit={tab.preview
-                        ? () => handlePromoteTab(tab.id)
+                        ? () => tabManager.handlePromoteTab(tab.id)
                         : undefined}
                       onSaveStateChange={(s) => {
                         // Surface the editor's save state on the tab header
                         // so it's visible from any tab (#167, #546).
-                        openTabs = openTabs.map((t) =>
-                          t.id === tab.id
-                            ? {
-                                ...t,
-                                dirty: s.dirty,
-                                saveError: s.error,
-                                savePhase: s.phase
-                              }
-                            : t
-                        )
-                        trackRecentSave(tab.id, s)
+                        tabManager.setTabSaveState(tab.id, s)
                       }}
                     />
                   </div>
@@ -1903,18 +965,18 @@
                 <h2
                   class="font-headline-md text-headline-md text-text-primary mb-2"
                 >
-                  {#if openTabs.length > 0 && !activeTabId}
+                  {#if tabManager.openTabs.length > 0 && !tabManager.activeTabId}
                     No active tab — click a tab above to switch
                   {:else if !activeNotebook}
                     Create or open a notebook to begin
-                  {:else if openTabs.length === 0}
+                  {:else if tabManager.openTabs.length === 0}
                     No pages open
                   {:else}
                     Select or create a page
                   {/if}
                 </h2>
                 <p class="text-text-muted font-body-md max-w-md mb-5">
-                  {#if openTabs.length === 0}
+                  {#if tabManager.openTabs.length === 0}
                     Click a page in the sidebar to open it in a tab.
                     Single-click opens a preview; double-click opens a pinned
                     tab.
@@ -1924,7 +986,7 @@
                     section and a page to start writing.
                   {/if}
                 </p>
-                {#if activeNotebook && openTabs.length === 0}
+                {#if activeNotebook && tabManager.openTabs.length === 0}
                   <div class="flex items-center gap-3">
                     <button
                       onclick={() => {
@@ -2113,24 +1175,24 @@
   {/if}
 
   <SettingsMismatchDialog
-    open={showSettingsMismatch}
-    onClose={() => (showSettingsMismatch = false)}
-    onConfirm={confirmSettingsMismatch}
+    open={settingsDialogs.showSettingsMismatch}
+    onClose={settingsDialogs.closeSettingsMismatch}
+    onConfirm={settingsDialogs.confirmSettingsMismatch}
   />
 
   <GrantsMigrationDialog
-    open={showGrantsMigration}
-    {pendingLegacyGrants}
-    onDecline={declineGrantsMigration}
-    onConfirm={confirmGrantsMigration}
+    open={settingsDialogs.showGrantsMigration}
+    pendingLegacyGrants={settingsDialogs.pendingLegacyGrants}
+    onDecline={settingsDialogs.declineGrantsMigration}
+    onConfirm={settingsDialogs.confirmGrantsMigration}
   />
 
   <QuarantinedLinksDialog
-    open={quarantinedLinks.length > 0}
-    {quarantinedLinks}
-    onClose={() => (quarantinedLinks = [])}
-    onUnlink={handleUnlinkNotebook}
-    onRelink={handleRelinkNotebook}
+    open={settingsDialogs.quarantinedLinks.length > 0}
+    quarantinedLinks={settingsDialogs.quarantinedLinks}
+    onClose={settingsDialogs.clearQuarantinedLinks}
+    onUnlink={settingsDialogs.handleUnlinkNotebook}
+    onRelink={settingsDialogs.handleRelinkNotebook}
   />
 
   <!-- Plugin rendered-UI surfaces (#117) -->
