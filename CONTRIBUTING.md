@@ -191,11 +191,13 @@ then `go vet -vettool=… ./...`):
 
 **eventnameliteral** closes the Go untyped-string-constant hole: after
 `emit` takes `EventName`, a typo’d `a.emit("tpyo:event", …)` still type-checks.
-The analyzer rejects that at CI time. It **allows** declared `EventName` consts,
-`aiStreamEventName(const, pluginID)`, and non-literal expressions (params /
-locals). It does **not** track `n := EventName("typo"); a.emit(n)` — that is
-out of scope (emit-site literals only). `_test.go` is skipped so queue tests
-can keep bare strings.
+The analyzer rejects that at CI time. It flags bare string literals,
+`EventName("…")` conversions, and those values carried through locals or
+same-package single-literal helpers (dominance-aware stores into locals). It
+**allows** declared `EventName` consts (including imported packages),
+`aiStreamEventName(const, pluginID)`, params, dynamic helpers, phi merges, and
+builder/field/map/slice patterns. `_test.go` is skipped so queue tests can keep
+bare strings.
 
 Local run (Windows may need a `.exe` suffix on the binary path):
 

@@ -9,18 +9,12 @@
 // cross-package helpers) remain allowed.
 //
 // Known limitations (intentionally NOT caught):
-//   - The EventName type and its consts are assumed to live in the same package
-//     as emit/emitOrQueue (today both are package main).
 //   - Cross-package helpers are invisible to buildssa (same-package source
 //     only); even a same-package wrapper around one stays allowed.
 //   - A hand-written EventName("block:changed") whose value collides with a
 //     declared const is indistinguishable from a const reference (buildssa folds
 //     both to an identical *ssa.Const) and is allowed.
 //   - Conditional local assignment (phi merge) is conservatively allowed.
-//   - A local reassigned after the emit site (a later Store into the same
-//     alloc) can attribute the later literal to the earlier emit: the
-//     last-store-wins walk ignores the use's program point. Rare and absent
-//     from the current codebase; a proper fix needs SSA dominance/ref analysis.
 //   - Builder/struct-field/map/slice patterns of EventName are not tracked.
 package eventnameliteral
 
@@ -162,14 +156,26 @@ func calleeName(fun ast.Expr) string {
 }
 
 // eventNameConstValues returns the string values of package-level consts whose
-// type is EventName. buildssa folds both `n := EventFoo` and
-// `n := EventName("x")` into identical *ssa.Const instructions, so a folded
-// Const whose value matches one of these is treated as a const reference
-// (allowed), not a stray literal.
+// type is EventName, from pkg and every package it directly imports. buildssa
+// folds both `n := EventFoo` and `n := EventName("x")` into identical
+// *ssa.Const instructions, so a folded Const whose value matches one of these
+// is treated as a const reference (allowed), not a stray literal. Imported
+// consts (e.g. otherpkg.EventFoo) fold the same way and must be in the set.
 func eventNameConstValues(pkg *types.Package) map[string]bool {
 	out := make(map[string]bool)
-	if pkg == nil || pkg.Scope() == nil {
+	collectEventNameConsts(pkg, out)
+	if pkg == nil {
 		return out
+	}
+	for _, imp := range pkg.Imports() {
+		collectEventNameConsts(imp, out)
+	}
+	return out
+}
+
+func collectEventNameConsts(pkg *types.Package, out map[string]bool) {
+	if pkg == nil || pkg.Scope() == nil {
+		return
 	}
 	for _, name := range pkg.Scope().Names() {
 		c, ok := pkg.Scope().Lookup(name).(*types.Const)
@@ -180,7 +186,6 @@ func eventNameConstValues(pkg *types.Package) map[string]bool {
 			out[constant.StringVal(c.Val())] = true
 		}
 	}
-	return out
 }
 
 // resolver threads the declared-const value set through the recursive resolver
@@ -215,9 +220,9 @@ func (r *resolver) eventNameLiteralFromValue(v ssa.Value) (lit string, ok bool) 
 	case *ssa.MakeInterface:
 		return r.eventNameLiteralFromValue(v.X)
 	case *ssa.UnOp:
-		// *Alloc — a load of a local slot. Find the dominating Store.
+		// *Alloc — a load of a local slot. Find the nearest dominating Store.
 		if alloc, ok := v.X.(*ssa.Alloc); ok {
-			return r.literalFromAlloc(alloc)
+			return r.literalFromAlloc(alloc, v)
 		}
 		return "", false
 	case *ssa.Call:
@@ -244,26 +249,87 @@ func (r *resolver) eventNameLiteralFromValue(v ssa.Value) (lit string, ok bool) 
 	}
 }
 
-// literalFromAlloc finds the last Store into alloc within its enclosing
-// function; last write wins. No store, or a store this resolver can't prove is
-// a literal, → ALLOW.
-func (r *resolver) literalFromAlloc(alloc *ssa.Alloc) (string, bool) {
-	var storeVal ssa.Value
+// literalFromAlloc finds the nearest Store into alloc that dominates the use
+// instruction (load). A store after the use, or in a block that does not
+// dominate the use, is ignored. Zero dominating candidates → ALLOW.
+func (r *resolver) literalFromAlloc(alloc *ssa.Alloc, use ssa.Instruction) (string, bool) {
 	parent := alloc.Parent()
-	if parent == nil {
+	if parent == nil || use == nil {
 		return "", false
 	}
+	useBlock := use.Block()
+	if useBlock == nil {
+		return "", false
+	}
+	useIdx := instrIndex(useBlock, use)
+	if useIdx < 0 {
+		return "", false
+	}
+
+	var best *ssa.Store
+	bestIdx := -1
 	for _, b := range parent.Blocks {
-		for _, instr := range b.Instrs {
-			if s, ok := instr.(*ssa.Store); ok && s.Addr == alloc {
-				storeVal = s.Val
+		for i, instr := range b.Instrs {
+			s, ok := instr.(*ssa.Store)
+			if !ok || s.Addr != alloc {
+				continue
+			}
+			if b == useBlock {
+				// Same block: only stores strictly before the use.
+				if i >= useIdx {
+					continue
+				}
+				if best == nil || best.Block() != useBlock || i > bestIdx {
+					best = s
+					bestIdx = i
+				}
+				continue
+			}
+			if !b.Dominates(useBlock) {
+				continue
+			}
+			// Among dominating blocks, prefer the deepest (nearest to use).
+			// Dominators of a node are totally ordered, so one block dominates
+			// the other when both dominate useBlock.
+			if best == nil {
+				best = s
+				bestIdx = i
+				continue
+			}
+			bestBlock := best.Block()
+			switch {
+			case b == bestBlock:
+				if i > bestIdx {
+					best = s
+					bestIdx = i
+				}
+			case bestBlock.Dominates(b):
+				// b is strictly closer to use than bestBlock.
+				best = s
+				bestIdx = i
+			case b.Dominates(bestBlock):
+				// best is closer; keep it.
+			default:
+				// Incomparable dominators — cannot pick a unique reaching
+				// definition; conservative allow.
+				return "", false
 			}
 		}
 	}
-	if storeVal == nil {
+	if best == nil {
 		return "", false
 	}
-	return r.eventNameLiteralFromValue(storeVal)
+	return r.eventNameLiteralFromValue(best.Val)
+}
+
+// instrIndex returns the index of instr in b.Instrs, or -1 if absent.
+func instrIndex(b *ssa.BasicBlock, instr ssa.Instruction) int {
+	for i, in := range b.Instrs {
+		if in == instr {
+			return i
+		}
+	}
+	return -1
 }
 
 // helperReturnsLiteral chases a same-package helper only if every EventName-typed

@@ -72,3 +72,11 @@ func twoLiterals(i int) EventName {
 func (a *App) goodMultiLiteralHelper() {
 	a.emit(twoLiterals(1), nil) // two literals → allowed (no diagnostic)
 }
+
+// Store after emit must not poison the earlier use (dominance-aware locals).
+func (a *App) goodEmitThenLaterStore() {
+	n := EventFoo
+	a.emit(n, nil) // const at emit — allowed
+	n = EventName("later-store-typo")
+	_ = n
+}

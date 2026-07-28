@@ -63,3 +63,9 @@ func (a *App) badHelperReturnViaLocal() {
 	n := eventFor(1)
 	a.emit(n, nil) // want `emit/emitOrQueue: use an EventName const from events.go, not an EventName\("helper-lit"\) value carried through local 'n'`
 }
+
+// Local assigned EventName("typo") before emit — still flagged (dominating store).
+func (a *App) badLocalTypoBeforeEmit() {
+	n := EventName("before-emit-typo")
+	a.emit(n, nil) // want `emit/emitOrQueue: use an EventName const from events.go, not an EventName\("before-emit-typo"\) value carried through local 'n'`
+}
