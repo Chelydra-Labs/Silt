@@ -8,4 +8,4 @@
   }: { testid?: string; [key: string]: unknown } = $props()
 </script>
 
-<div {testid} data-testid={testid}></div>
+<div data-testid={testid}></div>
