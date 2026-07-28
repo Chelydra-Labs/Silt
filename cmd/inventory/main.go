@@ -320,16 +320,21 @@ var (
 	// eventNameMemberRE extracts the member ident from an EventName.<X>
 	// reference (used to resolve allowlist-array elements).
 	eventNameMemberRE = regexp.MustCompile(`EventName\.([A-Za-z0-9_]+)`)
-	// allowlistArrayRE matches a typed array literal whose elements are
-	// EventName.* members, e.g.
+	// allowlistArrayRE matches an array literal whose elements are EventName.*
+	// members, e.g.
 	//   const hostEvents: PluginEventName[] = [EventName.EventFoo, EventName.EventBar]
+	//   let xs: readonly Foo[] = [EventName.EventFoo]
+	//   var ys: ReadonlyArray<Foo> = [EventName.EventFoo]
+	//   const zs = [EventName.EventFoo] as const
 	// (group 1 = array ident, group 2 = bracket body). Used by the allowlist
 	// pass of collectFrontendEvents to resolve Events.On(ident) calls that
 	// reference such an array or a param guarded by <arr>.includes(param).
-	// Only `const`-declared arrays are recognized — `let`/`var`/`readonly`/
-	// `ReadonlyArray<>` shapes are intentionally skipped (see scanFrontend's
-	// residual-gap list). See #778 for the allowlist design rationale.
-	allowlistArrayRE = regexp.MustCompile(`const\s+(\w+)\s*:\s*[\w.]+\[\]\s*=\s*\[([^\]]*)\]`)
+	// See #778 / #784 for the allowlist design rationale.
+	allowlistArrayRE = regexp.MustCompile(
+		`(?:const|let|var)\s+(\w+)\s*` +
+			`(?::\s*(?:readonly\s+)?(?:[\w.]+\s*\[\]|ReadonlyArray\s*<[^>]+>))?\s*` +
+			`=\s*\[([^\]]*)\](?:\s*as\s+const)?`,
+	)
 	// eventsOnVarRE captures Events.On(<bareIdent>, …) where the first arg is
 	// a plain identifier (not a quoted literal, EventName.X, or template). It
 	// also fires on Events.On(EventName.X) capturing "EventName"; the allowlist
@@ -338,12 +343,9 @@ var (
 	// eventsOnEventNameRE), avoiding double-processing. Member-access first
 	// args (this.x, obj.prop) are not matched.
 	eventsOnVarRE = regexp.MustCompile(`Events\.On\s*\(\s*([A-Za-z_]\w*)\s*[,)]`)
-	// includesGuardRE binds a parameter ident to an allowlist array via the
-	// `if (arr.includes(param))` guard shape (group 1 = array, group 2 = param).
-	// The binding is file-global, not scoped to the `if` block: once a param
-	// is guarded anywhere in the file, every Events.On(<param>) in that file
-	// resolves to the array. Scoping would need a real parser; this is a
-	// conservative best-effort approximation.
+	// includesGuardRE matches `arr.includes(param)` (group 1 = array, group 2 =
+	// param). Binding to Events.On(param) is scope-aware — see
+	// collectFrontendEvents — not file-global.
 	includesGuardRE = regexp.MustCompile(`(\w+)\.includes\((\w+)\)`)
 	// Comment strippers applied to frontend source before the scans above run,
 	// so prose or dead code in comments can't seed false positives (e.g. a
@@ -389,11 +391,12 @@ func parseEventNameMap(enumsTS string) map[string]string {
 // Unknown EventName members are skipped. Template forms record the base wire
 // string only (not the dynamic suffix).
 //
-// The fifth pass resolves a typed allowlist array of EventName.* members when
+// The fifth pass resolves an allowlist array of EventName.* members when
 // Events.On(ident) references the array directly or a parameter guarded by
-// <array>.includes(param) (the plugins/events.ts host-bus shape). Mixed-type
-// arrays (any element not a resolvable EventName.* member) are skipped
-// entirely; bare locals not bound to an allowlist are left unresolved.
+// <array>.includes(param) in the same enclosing function scope (the
+// plugins/events.ts host-bus shape). Mixed-type arrays (any element not a
+// resolvable EventName.* member) are skipped entirely; bare locals not bound
+// to an allowlist are left unresolved.
 func collectFrontendEvents(stripped string, nameMap map[string]string, eventsSet map[string]struct{}) {
 	for _, m := range eventsOnRE.FindAllStringSubmatch(stripped, -1) {
 		if len(m) < 2 {
@@ -434,10 +437,10 @@ func collectFrontendEvents(stripped string, nameMap map[string]string, eventsSet
 	}
 
 	// Allowlist-array pass. Resolves Events.On(ident) where ident references
-	// a typed EventName.*[] array directly or via a guarded param bound by
-	// <array>.includes(param). Conservative: every element of the array body
-	// must be a resolvable EventName.* member; otherwise the whole array is
-	// skipped (no partial resolution — mixed arrays are not analyzable).
+	// an EventName.*[] array directly or via a guarded param bound by
+	// <array>.includes(param) in the same function scope. Conservative: every
+	// element of the array body must be a resolvable EventName.* member;
+	// otherwise the whole array is skipped (no partial resolution).
 	allowlistByName := map[string][]string{}
 	for _, m := range allowlistArrayRE.FindAllStringSubmatch(stripped, -1) {
 		if len(m) < 3 {
@@ -468,42 +471,225 @@ func collectFrontendEvents(stripped string, nameMap map[string]string, eventsSet
 			allowlistByName[arrayName] = wires
 		}
 	}
-	// Bind guarded params to their allowlist(s): `if (arr.includes(param))`.
-	// A param may be guarded by more than one array across a file, so the
-	// value is a union — last-write-wins would silently drop one array's
-	// wires. emit-side takes the union of every bound array's wires.
-	paramToAllowlist := map[string][]string{}
-	for _, m := range includesGuardRE.FindAllStringSubmatch(stripped, -1) {
-		if len(m) < 3 {
-			continue
-		}
-		arrayName, param := m[1], m[2]
-		if _, known := allowlistByName[arrayName]; known {
-			paramToAllowlist[param] = append(paramToAllowlist[param], arrayName)
-		}
+
+	// Scope-aware includes → Events.On binding. Collect guards and On(ident)
+	// sites with byte offsets; bind only when both sit in the same enclosing
+	// function body (or both at top level). Prefer under-count when scopes
+	// cannot be determined (unbalanced braces → no function scopes).
+	type guardSite struct {
+		array, param string
+		off          int
 	}
-	// Emit wires for Events.On(ident) only when ident resolves to a known
-	// allowlist array (direct reference) or a guarded param. Other bare idents
-	// (EventName itself, unbound locals, template vars) are left as no-ops.
-	for _, m := range eventsOnVarRE.FindAllStringSubmatch(stripped, -1) {
-		if len(m) < 2 {
+	type onSite struct {
+		ident string
+		off   int
+	}
+	var guards []guardSite
+	for _, idx := range includesGuardRE.FindAllStringSubmatchIndex(stripped, -1) {
+		// idx: full start/end, g1 start/end, g2 start/end
+		if len(idx) < 6 || idx[2] < 0 || idx[4] < 0 {
 			continue
 		}
-		ident := m[1]
-		if wires, ok := allowlistByName[ident]; ok {
+		arrayName := stripped[idx[2]:idx[3]]
+		param := stripped[idx[4]:idx[5]]
+		if _, known := allowlistByName[arrayName]; !known {
+			continue
+		}
+		guards = append(guards, guardSite{array: arrayName, param: param, off: idx[0]})
+	}
+	var onVars []onSite
+	for _, idx := range eventsOnVarRE.FindAllStringSubmatchIndex(stripped, -1) {
+		if len(idx) < 4 || idx[2] < 0 {
+			continue
+		}
+		onVars = append(onVars, onSite{ident: stripped[idx[2]:idx[3]], off: idx[0]})
+	}
+	fnScopes := functionBodyScopes(stripped)
+
+	// Emit wires for Events.On(ident) only when ident resolves to a known
+	// allowlist array (direct reference) or a same-scope guarded param.
+	for _, on := range onVars {
+		if wires, ok := allowlistByName[on.ident]; ok {
 			for _, w := range wires {
 				eventsSet[w] = struct{}{}
 			}
 			continue
 		}
-		if arrayNames, ok := paramToAllowlist[ident]; ok {
-			for _, an := range arrayNames {
-				for _, w := range allowlistByName[an] {
-					eventsSet[w] = struct{}{}
-				}
+		// Union of every same-scope allowlist that guards this param.
+		seenArr := map[string]struct{}{}
+		for _, g := range guards {
+			if g.param != on.ident {
+				continue
+			}
+			if !sameEnclosingFunction(fnScopes, g.off, on.off) {
+				continue
+			}
+			if _, dup := seenArr[g.array]; dup {
+				continue
+			}
+			seenArr[g.array] = struct{}{}
+			for _, w := range allowlistByName[g.array] {
+				eventsSet[w] = struct{}{}
 			}
 		}
 	}
+}
+
+// functionBodyScopes returns [openBrace, closeBraceExclusive) ranges for `{...}`
+// bodies that look like function/method/arrow bodies: the `{` is preceded
+// (skipping whitespace) by `)` or `=>`. Best-effort brace matching only —
+// strings/templates are not tracked; unbalanced input yields whatever closes
+// were found (callers treat missing shared scope as no bind).
+func functionBodyScopes(src string) [][2]int {
+	var scopes [][2]int
+	// stack holds open-brace offsets; -1 marks a non-function `{`.
+	var stack []int
+	for i := 0; i < len(src); i++ {
+		switch src[i] {
+		case '{':
+			if isFunctionBodyOpen(src, i) {
+				stack = append(stack, i)
+			} else {
+				stack = append(stack, -1)
+			}
+		case '}':
+			if len(stack) == 0 {
+				continue
+			}
+			open := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if open >= 0 {
+				scopes = append(scopes, [2]int{open, i + 1})
+			}
+		}
+	}
+	return scopes
+}
+
+// isFunctionBodyOpen reports whether the `{` at bracePos starts a function-like
+// body (`...=> {` or `function …() {` / method `name() {`), not control-flow
+// `if`/`for`/`while`/`switch`/`catch`/`with` blocks that also end in `) {`.
+func isFunctionBodyOpen(src string, bracePos int) bool {
+	j := bracePos - 1
+	for j >= 0 && isASCIISpace(src[j]) {
+		j--
+	}
+	if j < 0 {
+		return false
+	}
+	// Arrow: `=> {`
+	if src[j] == '>' && j >= 1 && src[j-1] == '=' {
+		return true
+	}
+	if src[j] != ')' {
+		return false
+	}
+	// Walk back from `)` across a balanced call/param list to the matching `(`,
+	// then decide whether this is a function/method head vs control-flow.
+	depth := 0
+	k := j
+	for ; k >= 0; k-- {
+		switch src[k] {
+		case ')':
+			depth++
+		case '(':
+			depth--
+			if depth == 0 {
+				// k points at the opening `(`.
+				return looksLikeFunctionHead(src, k)
+			}
+		}
+	}
+	// Unbalanced parens — prefer under-count (not a function body).
+	return false
+}
+
+func isASCIISpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+}
+
+// looksLikeFunctionHead reports whether the `(` at openParen is a function/
+// method/arrow-param list rather than `if (` / `for (` / etc.
+func looksLikeFunctionHead(src string, openParen int) bool {
+	j := openParen - 1
+	for j >= 0 && isASCIISpace(src[j]) {
+		j--
+	}
+	if j < 0 {
+		// Bare `(...) {` — treat as arrow-params / IIFE-style function head.
+		return true
+	}
+	// Ident immediately before `(`: could be a control-flow keyword (`if (`),
+	// `function (`, or a function/method name (`subscribeHost(`).
+	if !isIdentByte(src[j]) {
+		// e.g. `.method(` already stepped off the name, or `) (` — function-like.
+		return true
+	}
+	end := j + 1
+	for j >= 0 && (isIdentByte(src[j]) || (src[j] >= '0' && src[j] <= '9')) {
+		j--
+	}
+	word := src[j+1 : end]
+	switch word {
+	case "if", "for", "while", "switch", "catch", "with":
+		return false
+	case "function":
+		return true
+	}
+	// Named function/method: `function name(` has `function` before the name;
+	// bare `name() {` / `async name() {` / `get x() {` count as function bodies.
+	// Peek one more word for `function` / `async` / `get` / `set` / `static`.
+	for j >= 0 && isASCIISpace(src[j]) {
+		j--
+	}
+	if j >= 0 && isIdentByte(src[j]) {
+		end2 := j + 1
+		j2 := j
+		for j2 >= 0 && isIdentByte(src[j2]) {
+			j2--
+		}
+		kw := src[j2+1 : end2]
+		switch kw {
+		case "function", "async", "get", "set", "static":
+			return true
+		case "if", "for", "while", "switch", "catch", "with":
+			return false
+		}
+	}
+	// Default: ident before `(` is a function/method name.
+	return true
+}
+
+func isIdentByte(b byte) bool {
+	return b == '_' || b == '$' || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
+}
+
+// innermostFunction returns the tightest function-body range containing pos.
+func innermostFunction(scopes [][2]int, pos int) (lo, hi int, ok bool) {
+	best := -1
+	for _, s := range scopes {
+		if pos > s[0] && pos < s[1] {
+			width := s[1] - s[0]
+			if !ok || width < best {
+				lo, hi, best, ok = s[0], s[1], width, true
+			}
+		}
+	}
+	return lo, hi, ok
+}
+
+// sameEnclosingFunction reports whether a and b share the same innermost
+// function body, or both sit outside any function (file top-level).
+func sameEnclosingFunction(scopes [][2]int, a, b int) bool {
+	la, ha, oka := innermostFunction(scopes, a)
+	lb, hb, okb := innermostFunction(scopes, b)
+	if !oka && !okb {
+		return true
+	}
+	if oka != okb {
+		return false
+	}
+	return la == lb && ha == hb
 }
 
 // scanFrontend walks .ts/.svelte files under frontendRoot and records which
@@ -519,21 +705,21 @@ func collectFrontendEvents(stripped string, nameMap map[string]string, eventsSet
 //  3. Events.On(`${EventName.<Ident>}:...`) — inline template composition
 //  4. `${EventName.<Ident>}` interpolations used to build names before
 //     Events.On (AI stream owner-scoped events) — base wire string only
-//  5. Allowlist array: a typed `EventName.*[]` array (e.g.
-//     `const host: PluginEventName[] = [EventName.EventBlockChanged, …]`)
-//     referenced by Events.On(<arrayName>) directly, or via a parameter
-//     guarded by `<array>.includes(param)` — used by plugins/events.ts.
-//     Mixed-type arrays (any element not a resolvable EventName.* member) are
-//     skipped entirely.
+//  5. Allowlist array: an `EventName.*[]` / `readonly T[]` / `ReadonlyArray<T>`
+//     array (const/let/var, optional `as const`) referenced by
+//     Events.On(<arrayName>) directly, or via a parameter guarded by
+//     `<array>.includes(param)` in the **same enclosing function scope** —
+//     used by plugins/events.ts. Mixed-type arrays (any element not a
+//     resolvable EventName.* member) are skipped entirely.
 //
-// Not resolved: mixed-type allowlist arrays; arrays declared with `let`/`var`/
-// `readonly`/`ReadonlyArray<>` (only `const`-typed `T[]` is recognized);
+// Not resolved: mixed-type allowlist arrays;
 // `Events.On(this.x, …)` / `Events.On(obj.prop, …)` member-access first args;
-// locals not bound to an allowlist guard; and arbitrary cross-file dataflow.
-// The `.includes(param)` guard binds file-globally (not scoped to its `if`
-// block) — a known approximation. Those events still appear if another site
-// uses a resolvable form. `${EventName.X}` without a later On may over-count
-// (soft gate only).
+// locals not bound to a same-scope allowlist guard; cross-function
+// `.includes` → `Events.On` pairs (guard in A does not bind On in B); and
+// arbitrary cross-file dataflow. Brace/function-scope detection is
+// lightweight (no TS parser) — ambiguous cases under-count rather than
+// over-count. Those events still appear if another site uses a resolvable
+// form. `${EventName.X}` without a later On may over-count (soft gate only).
 //
 // EventName keys are loaded from frontend/src/generated/enums.ts (sibling of
 // frontendRoot's parent when frontendRoot is frontend/src). The canonical

@@ -289,3 +289,92 @@ Events.On(directEvents, () => {})
 		}
 	}
 }
+
+// TestCollectFrontendEvents_AllowlistDeclVariants pins #784 broader decl
+// shapes: let/var, readonly T[], ReadonlyArray<T>, and trailing `as const`.
+func TestCollectFrontendEvents_AllowlistDeclVariants(t *testing.T) {
+	nameMap := map[string]string{
+		"EventA": "a",
+		"EventB": "b",
+		"EventC": "c",
+		"EventD": "d",
+	}
+	src := `
+let letEvents: readonly PluginEventName[] = [EventName.EventA]
+var varEvents: ReadonlyArray<PluginEventName> = [EventName.EventB]
+const asConstEvents = [EventName.EventC] as const
+const plain: PluginEventName[] = [EventName.EventD]
+Events.On(letEvents, () => {})
+Events.On(varEvents, () => {})
+Events.On(asConstEvents, () => {})
+Events.On(plain, () => {})
+`
+	eventsSet := map[string]struct{}{}
+	collectFrontendEvents(stripComments(src), nameMap, eventsSet)
+	got := sortedKeys(eventsSet)
+	want := []string{"a", "b", "c", "d"}
+	if len(got) != len(want) {
+		t.Fatalf("events=%v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("events[%d]=%q want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestCollectFrontendEvents_IncludesScopeAware pins #784: .includes binding is
+// not file-global. Unrelated arrays, cross-function guards, and unreferenced
+// allowlists must not leak; same-scope hostEvents+includes still resolves.
+func TestCollectFrontendEvents_IncludesScopeAware(t *testing.T) {
+	nameMap := map[string]string{
+		"EventFoo":  "foo",
+		"EventBar":  "bar",
+		"EventBaz":  "baz",
+		"EventQuux": "quux",
+	}
+	src := `
+const hostEvents: PluginEventName[] = [EventName.EventFoo]
+const other: PluginEventName[] = [EventName.EventBar]
+const unreferenced: PluginEventName[] = [EventName.EventQuux]
+const directEvents: PluginEventName[] = [EventName.EventBaz]
+
+function subscribeHost(ev) {
+  if (hostEvents.includes(ev)) {
+    Events.On(ev, () => {})
+  }
+}
+
+function unrelatedIncludes(ev) {
+  if (other.includes(ev)) {
+    // not an Events.On — must not bind other → ev for other functions
+  }
+}
+
+function otherFn(ev) {
+  // Guard lives in subscribeHost / unrelatedIncludes; must NOT resolve here.
+  Events.On(ev, () => {})
+}
+
+Events.On(directEvents, () => {})
+`
+	eventsSet := map[string]struct{}{}
+	collectFrontendEvents(stripComments(src), nameMap, eventsSet)
+	got := sortedKeys(eventsSet)
+	want := []string{"baz", "foo"}
+	if len(got) != len(want) {
+		t.Fatalf("events=%v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("events[%d]=%q want %q", i, got[i], want[i])
+		}
+	}
+	for _, leak := range []string{"bar", "quux"} {
+		for _, w := range got {
+			if w == leak {
+				t.Errorf("leaked %q: events=%v", leak, got)
+			}
+		}
+	}
+}
