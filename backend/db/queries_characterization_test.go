@@ -7,9 +7,9 @@ import (
 	"silt/backend/parser"
 )
 
-// Characterization tests for the residual queries.go APIs before the #767
-// domain-file split. Locks current behavior so a cut-paste regression fails
-// immediately. Functions already covered strongly elsewhere are omitted.
+// Package-local coverage for block/task/tag/dependency read APIs. Locks
+// current behavior so regressions fail immediately. Functions already covered
+// strongly elsewhere are omitted.
 
 func TestGetBlockLocation_HappyAndMissing(t *testing.T) {
 	dm := newTestDB(t)

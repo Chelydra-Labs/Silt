@@ -1,8 +1,8 @@
 package db
 
-// Block location and page-block read queries. Split from queries.go so the
-// db package keeps one file per read domain (ARCHITECTURE.md points at the
-// package, not individual files). All methods stay on *DatabaseManager.
+// Block location and page-block read queries. One file per read domain in
+// package db (ARCHITECTURE.md points at the package, not individual files).
+// All methods stay on *DatabaseManager.
 
 import (
 	"database/sql"

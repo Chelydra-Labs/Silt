@@ -1,9 +1,9 @@
 package db
 
-// Task filter and dependency-graph read queries. Split from queries.go so the
-// db package keeps one file per read domain. Dependency helpers live here
-// because they are task-graph reads used by the DONE guard and blocked_by
-// setter. All methods stay on *DatabaseManager.
+// Task filter and dependency-graph read queries. One file per read domain in
+// package db. Dependency helpers live here because they are task-graph reads
+// used by the DONE guard and blocked_by setter. All methods stay on
+// *DatabaseManager.
 
 import (
 	"database/sql"

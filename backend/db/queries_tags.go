@@ -1,8 +1,7 @@
 package db
 
-// Tag hierarchy and tag-scoped block read queries. Split from queries.go so
-// the db package keeps one file per read domain. All methods stay on
-// *DatabaseManager.
+// Tag hierarchy and tag-scoped block read queries. One file per read domain
+// in package db. All methods stay on *DatabaseManager.
 
 import (
 	"database/sql"
