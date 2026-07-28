@@ -20,9 +20,7 @@
   } from '../lib/editor/proposedEdit/ProposedEditExtension'
   import {
     Spellcheck,
-    requestSpellcheckRecheck,
-    findMisspellingAt,
-    findMisspellingAtOrAfter
+    requestSpellcheckRecheck
   } from '../lib/editor/spellcheck/SpellcheckExtension'
   import {
     loadDictionary,
@@ -79,6 +77,8 @@
   import { createEditorEvents } from './editor/controllers/useEditorEvents.svelte'
   import { createPopoversController } from './editor/controllers/usePopovers.svelte'
   import { useSuggests } from './editor/controllers/useSuggests.svelte'
+  import { createTemplateInsert } from './editor/controllers/useTemplateInsert.svelte'
+  import { createSpellcheckMenu } from './editor/controllers/useSpellcheckMenu.svelte'
   import { clearInsertEditor } from '../lib/dateGlanceState.svelte'
   import {
     setActiveEditor,
@@ -138,11 +138,14 @@
   let editorReady = $state(false)
   let isFocused = $state(false)
   let suppressUpdate = false
-  let showTemplatePicker = $state(false)
-  // Pending template insert when the page is non-empty and the cursor is not
-  // at the end (#664). ChoiceDialog offers insert-at-cursor vs append-to-end.
-  let pendingTemplateBlocks = $state<ParsedBlock[] | null>(null)
-  let templateInsertReturnFocus = $state<HTMLElement | null>(null)
+  // Template-insert cluster (#664): the showTemplatePicker /
+  // pendingTemplateBlocks / templateInsertReturnFocus $state cells and the
+  // seven handlers they gate (insert-at-cursor vs append-to-end confirmation).
+  // Relocated to createTemplateInsert; reads below use templateInsert.*
+  // (getters keep template reads reactive).
+  const templateInsert = createTemplateInsert({
+    getEditor: () => editorInstance
+  })
   // Per-vault math opt-out (#191). Live so toggling it in Settings takes effect
   // on the next slash-menu open (hides the /math command).
   let mathEnabled = $derived(
@@ -479,16 +482,13 @@
     }
   })
 
-  // --- Spellcheck cluster (Cluster B) — intentionally NOT extracted ---------
-  // The popover cluster above moved to createPopoversController; the spellcheck
-  // surface below stays inline. Unlike the popovers (pure open/apply/cancel on
-  // selection coords), spellcheck is intrinsically coupled to ProseMirror
-  // decoration/selection state: it reads editor.view.dom for the contextmenu
-  // handler, mutates decorations via findMisspellingAt /
-  // findMisspellingAtOrAfter / requestSpellcheckRecheck, and fans out into
-  // pushNotification + editor-readiness. The `silt:open-spellcheck` listener is
-  // deliberately co-located with the contextmenu $effect (useEditorEvents left
-  // it behind for the same reason). Splitting it would fracture a cohesive unit
+  // --- Spellcheck dictionary loading — intentionally NOT extracted ---------
+  // Only the dictionary/config $effect stays inline here; the menu surface
+  // (spellMenu state, openSpellMenuAt, the contextmenu + silt:open-spellcheck
+  // listeners) moved to createSpellcheckMenu. This $effect stays because it is
+  // intrinsically coupled to ProseMirror decoration rechecks — it calls
+  // requestSpellcheckRecheck(editor) and fans out into pushNotification +
+  // editor-readiness. Splitting it would fracture a cohesive decoration unit
   // for no decoupling gain.
   // Spellcheck (#196 / #336 / #337): load language dictionary + custom words +
   // domain packs whenever config changes. Disabled → reset → no underlines.
@@ -545,64 +545,13 @@
   // the suggestions popover. Disabled when spellcheck is off (no decorations to
   // click). The menu is also opened by the FormatToolbar spellcheck button via
   // the `silt:open-spellcheck` window event (finds the misspelling at/after the
-  // cursor) — keeps the toolbar decoupled from the editor internals.
-  let spellMenu = $state<{
-    word: string
-    range: { from: number; to: number }
-    anchor: { x: number; y: number }
-  } | null>(null)
-
-  function openSpellMenuAt(
-    editor: Editor,
-    pos: number,
-    coords: { x: number; y: number },
-    useFallback = false
-  ): void {
-    // Right-click (useFallback=false): only open if the user clicked ON a
-    // misspelled word. Toolbar button (useFallback=true): if the cursor isn't
-    // on a misspelling, jump to the next one so the button isn't a silent no-op.
-    const m =
-      findMisspellingAt(editor, pos) ??
-      (useFallback ? findMisspellingAtOrAfter(editor, pos) : null)
-    if (!m) return
-    spellMenu = {
-      word: m.word,
-      range: { from: m.from, to: m.to },
-      anchor: coords
-    }
-  }
-
-  $effect(() => {
-    const editor = editorInstance
-    // Guard like every other view-access site: during edit↔source switches
-    // svelte-tiptap tears the editor down, nulling editorView. isDestroyed is
-    // `editorView?.isDestroyed ?? true`, so it's true exactly when view.dom
-    // would throw "view is not available" — bail before touching the proxy.
-    if (!editor || editor.isDestroyed) return
-    if (settings.config?.editor?.spellcheck_enabled === false) return
-    const dom = editor.view.dom
-    const onContext = (e: MouseEvent) => {
-      if (settings.config?.editor?.spellcheck_enabled === false) return
-      const pos = editor.view.posAtCoords({ left: e.clientX, top: e.clientY })
-      if (pos == null) return
-      const m = findMisspellingAt(editor, pos.pos)
-      if (!m) return
-      e.preventDefault()
-      e.stopPropagation()
-      openSpellMenuAt(editor, pos.pos, { x: e.clientX, y: e.clientY })
-    }
-    const onOpenBtn = (e: Event) => {
-      const detail = (e as CustomEvent).detail as
-        { x: number; y: number } | undefined
-      const head = editor.state.selection.head
-      openSpellMenuAt(editor, head, detail ?? { x: 100, y: 100 }, true)
-    }
-    dom.addEventListener('contextmenu', onContext)
-    window.addEventListener('silt:open-spellcheck', onOpenBtn)
-    return () => {
-      dom.removeEventListener('contextmenu', onContext)
-      window.removeEventListener('silt:open-spellcheck', onOpenBtn)
-    }
+  // cursor) — keeps the toolbar decoupled from the editor internals. Relocated
+  // to createSpellcheckMenu; reads below use spellcheckMenu.* (getters keep
+  // template reads reactive). The dictionary-loading $effect above STAYS here
+  // (coupled to requestSpellcheckRecheck); only the menu surface + DOM
+  // listeners moved.
+  const spellcheckMenu = createSpellcheckMenu({
+    getEditor: () => editorInstance
   })
 
   // Custom-event bus (silt:* window events). Handlers live in the events
@@ -670,6 +619,7 @@
     suggests.pageLink.destroy()
     void flushPendingSave().then(() => releaseFocus())
     events.detach()
+    spellcheckMenu.dispose()
     window.removeEventListener('scroll', onEditorScroll, true)
     window.removeEventListener('resize', onWindowResize)
     document.removeEventListener('click', onDocumentClick)
@@ -787,84 +737,8 @@
     onOpenTableSizePicker: popovers.openTableSizePicker,
     onOpenColorPicker: popovers.openColorPickerPopover,
     onShowEmbedPicker: popovers.openEmbedPicker,
-    onShowTemplatePicker: () => {
-      showTemplatePicker = true
-    }
+    onShowTemplatePicker: templateInsert.openTemplatePicker
   })
-
-  // True when the page has no meaningful content (empty trailing note only).
-  function isEditorEffectivelyEmpty(editor: Editor): boolean {
-    const text = editor.state.doc.textContent.trim()
-    if (text.length > 0) return false
-    // Allow a single empty note/header; anything else counts as non-empty.
-    let blockCount = 0
-    editor.state.doc.forEach(() => {
-      blockCount += 1
-    })
-    return blockCount <= 1
-  }
-
-  // Cursor is at (or past) the end of the last block's content.
-  function isCursorAtDocEnd(editor: Editor): boolean {
-    const from = editor.state.selection.$from
-    const end = editor.state.doc.content.size
-    // Selection at or after the last position inside the doc.
-    return from.pos >= end - 1
-  }
-
-  function insertTemplateBlocks(
-    blocks: ParsedBlock[],
-    mode: 'cursor' | 'append'
-  ): void {
-    if (!editorInstance || editorInstance.isDestroyed) return
-    const doc = blocksToDoc(blocks)
-    if (mode === 'append') {
-      const end = editorInstance.state.doc.content.size
-      editorInstance.commands.insertContentAt(end, doc.content)
-    } else {
-      editorInstance.commands.insertContent(doc.content)
-    }
-    editorInstance.commands.focus()
-  }
-
-  // Insert rendered template blocks. Empty pages insert immediately; non-empty
-  // pages with the cursor mid-content confirm first (#664).
-  function handleTemplateInsert(blocks: ParsedBlock[]): void {
-    if (!editorInstance || editorInstance.isDestroyed) return
-    if (
-      isEditorEffectivelyEmpty(editorInstance) ||
-      isCursorAtDocEnd(editorInstance)
-    ) {
-      insertTemplateBlocks(blocks, 'cursor')
-      return
-    }
-    // Capture focus before the dialog mounts so restore works for
-    // programmatic open (not only button-click paths).
-    templateInsertReturnFocus =
-      (document.activeElement as HTMLElement | null) ?? null
-    pendingTemplateBlocks = blocks
-  }
-
-  function clearTemplateInsertDialog(): void {
-    pendingTemplateBlocks = null
-    templateInsertReturnFocus = null
-  }
-
-  function confirmTemplateAtCursor(): void {
-    if (!pendingTemplateBlocks) return
-    insertTemplateBlocks(pendingTemplateBlocks, 'cursor')
-    clearTemplateInsertDialog()
-  }
-
-  function confirmTemplateAppend(): void {
-    if (!pendingTemplateBlocks) return
-    insertTemplateBlocks(pendingTemplateBlocks, 'append')
-    clearTemplateInsertDialog()
-  }
-
-  function cancelTemplateInsert(): void {
-    clearTemplateInsertDialog()
-  }
 
   // --- Focus lock (reuses the #38 TTL-lease bindings) -----------------------
 
@@ -962,13 +836,13 @@
       {selectionEmpty}
       {selectionCoords}
     />
-    {#if spellMenu && editorInstance}
+    {#if spellcheckMenu.spellMenu && editorInstance}
       <SpellcheckMenu
         editor={editorInstance}
-        word={spellMenu.word}
-        range={spellMenu.range}
-        anchor={spellMenu.anchor}
-        onClose={() => (spellMenu = null)}
+        word={spellcheckMenu.spellMenu.word}
+        range={spellcheckMenu.spellMenu.range}
+        anchor={spellcheckMenu.spellMenu.anchor}
+        onClose={() => (spellcheckMenu.spellMenu = null)}
       />
     {/if}
     {#if cursorInTable && editorInstance}
@@ -1354,25 +1228,25 @@
   {/if}
 </div>
 
-{#if showTemplatePicker}
+{#if templateInsert.showTemplatePicker}
   <TemplatePicker
     mode="insert"
-    onClose={() => (showTemplatePicker = false)}
-    onInsertBlocks={handleTemplateInsert}
+    onClose={() => (templateInsert.showTemplatePicker = false)}
+    onInsertBlocks={templateInsert.handleTemplateInsert}
   />
 {/if}
 
-{#if pendingTemplateBlocks}
+{#if templateInsert.pendingTemplateBlocks}
   <ChoiceDialog
     title="Insert template?"
     message="This page already has content. Insert the template at the cursor, or append it at the end?"
     primaryLabel="Insert at cursor"
     secondaryLabel="Append to end"
-    returnFocusTo={templateInsertReturnFocus}
+    returnFocusTo={templateInsert.templateInsertReturnFocus}
     dataTestId="template-insert-choice"
-    onPrimary={confirmTemplateAtCursor}
-    onSecondary={confirmTemplateAppend}
-    onCancel={cancelTemplateInsert}
+    onPrimary={templateInsert.confirmTemplateAtCursor}
+    onSecondary={templateInsert.confirmTemplateAppend}
+    onCancel={templateInsert.cancelTemplateInsert}
   />
 {/if}
 
