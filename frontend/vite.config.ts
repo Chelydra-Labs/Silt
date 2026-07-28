@@ -1,6 +1,10 @@
-import {defineConfig} from 'vite'
-import {svelte} from '@sveltejs/vite-plugin-svelte'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { defineConfig } from 'vite'
+import { svelte } from '@sveltejs/vite-plugin-svelte'
 import tailwindcss from '@tailwindcss/vite'
+
+const root = path.dirname(fileURLToPath(import.meta.url))
 
 // https://vite.dev/config/
 // Vitest config lives in vitest.config.ts (which takes precedence over a
@@ -20,6 +24,10 @@ export default defineConfig({
     strictPort: true
   },
   resolve: {
-    preserveSymlinks: true
+    preserveSymlinks: true,
+    alias: {
+      // Same as vitest.config.ts — tests are the main consumer (#766).
+      '$silt-app': path.resolve(root, 'bindings/silt/app.js')
+    }
   }
 })

@@ -16,16 +16,18 @@ const mocks = vi.hoisted(() => ({
   eventsOn: vi.fn()
 }))
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  ListTemplates: mocks.listTemplates,
-  GetTemplate: mocks.getTemplate,
-  SaveUserTemplate: mocks.saveUserTemplate,
-  DeleteUserTemplate: mocks.deleteUserTemplate,
-  FetchPageMarkdown: mocks.fetchPageMarkdown,
-  RenderTemplate: vi.fn().mockResolvedValue('# Preview'),
-  RenderTemplateBlocks: vi.fn().mockResolvedValue([]),
-  CreatePageFromTemplate: vi.fn()
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ListTemplates: mocks.listTemplates,
+    GetTemplate: mocks.getTemplate,
+    SaveUserTemplate: mocks.saveUserTemplate,
+    DeleteUserTemplate: mocks.deleteUserTemplate,
+    FetchPageMarkdown: mocks.fetchPageMarkdown,
+    RenderTemplate: vi.fn().mockResolvedValue('# Preview'),
+    RenderTemplateBlocks: vi.fn().mockResolvedValue([]),
+    CreatePageFromTemplate: vi.fn()
+  })
+)
 vi.mock('@wailsio/runtime', () => ({
   Events: { On: mocks.eventsOn }
 }))

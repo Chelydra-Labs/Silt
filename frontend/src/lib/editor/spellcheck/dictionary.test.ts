@@ -3,14 +3,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import enUsAff from '../../../../public/dictionaries/en-US/index.aff?raw'
 import enUsDic from '../../../../public/dictionaries/en-US/index.dic?raw'
 
-const mocks = vi.hoisted(() => ({
-  EnsureLanguagePack: vi.fn(),
-  GetLanguagePackContent: vi.fn(),
-  EnsureDomainPack: vi.fn(),
-  GetDomainPackWords: vi.fn()
-}))
+const mocks = vi.hoisted(() =>
+  createAppIpcMocks({
+    EnsureLanguagePack: vi.fn(),
+    GetLanguagePackContent: vi.fn(),
+    EnsureDomainPack: vi.fn(),
+    GetDomainPackWords: vi.fn()
+  })
+)
 
-vi.mock('../../../../bindings/silt/app.js', () => mocks)
+vi.mock('$silt-app', () => mocks)
 
 import {
   parseWordListText,

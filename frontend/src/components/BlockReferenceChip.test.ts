@@ -18,9 +18,11 @@ const mocks = vi.hoisted(() => ({
   resolveBlockReference: vi.fn()
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  ResolveBlockReference: mocks.resolveBlockReference
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ResolveBlockReference: mocks.resolveBlockReference
+  })
+)
 
 const FIXTURE_UUID = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff'
 

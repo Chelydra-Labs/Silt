@@ -37,14 +37,16 @@ const mocks = vi.hoisted(() => ({
   eventsOn: vi.fn(() => () => {})
 }))
 
-vi.mock('../../../../bindings/silt/app.js', () => ({
-  DistinctOwners: mocks.distinctOwners,
-  SearchBlocks: mocks.searchBlocks,
-  QueryTagHierarchy: mocks.queryTagHierarchy,
-  RecordTagUsage: mocks.recordTagUsage,
-  SearchPages: mocks.searchPages,
-  ResolvePageLink: mocks.resolvePageLink
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    DistinctOwners: mocks.distinctOwners,
+    SearchBlocks: mocks.searchBlocks,
+    QueryTagHierarchy: mocks.queryTagHierarchy,
+    RecordTagUsage: mocks.recordTagUsage,
+    SearchPages: mocks.searchPages,
+    ResolvePageLink: mocks.resolvePageLink
+  })
+)
 
 vi.mock('@wailsio/runtime', () => ({
   Events: { On: mocks.eventsOn },

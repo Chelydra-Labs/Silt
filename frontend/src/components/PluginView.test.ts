@@ -22,11 +22,13 @@ const mockMakePluginContext = vi.hoisted(() =>
 )
 const mockGetSessionToken = vi.hoisted(() => vi.fn(() => 'tok'))
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  PluginRawQuery: vi.fn(),
-  PluginMutateBlock: vi.fn(),
-  PluginUpdateBlockState: vi.fn()
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    PluginRawQuery: vi.fn(),
+    PluginMutateBlock: vi.fn(),
+    PluginUpdateBlockState: vi.fn()
+  })
+)
 vi.mock('../plugins/store.svelte', () => ({
   loadedPlugins: mocks.loadedPlugins
 }))

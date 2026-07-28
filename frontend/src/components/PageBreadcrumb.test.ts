@@ -8,9 +8,11 @@ import {
 import type { NavigationTree } from '../lib/sidebar/types'
 
 const mocks = vi.hoisted(() => ({ resolvePageLink: vi.fn() }))
-vi.mock('../../bindings/silt/app.js', () => ({
-  ResolvePageLink: mocks.resolvePageLink
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ResolvePageLink: mocks.resolvePageLink
+  })
+)
 
 const base = {
   notebook: 'Work',

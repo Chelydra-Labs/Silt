@@ -11,9 +11,11 @@ import {
 } from '../notifications/store.svelte'
 
 const mocks = vi.hoisted(() => ({ resolvePageLink: vi.fn() }))
-vi.mock('../../bindings/silt/app.js', () => ({
-  ResolvePageLink: mocks.resolvePageLink
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ResolvePageLink: mocks.resolvePageLink
+  })
+)
 
 const ref = { notebook: 'Work', section: 'Projects/Active', page: 'Plan' }
 

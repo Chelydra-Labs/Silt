@@ -63,17 +63,19 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  SaveFileBlocks: mocks.saveFileBlocks,
-  AcquireFocusLock: mocks.acquireFocusLock,
-  RefreshFocusLock: mocks.refreshFocusLock,
-  ReleaseFocusLock: mocks.releaseFocusLock,
-  OpenDevTools: mocks.openDevTools,
-  // TipTapEditor seeds the @-mention owner list on mount/focus (#184).
-  DistinctOwners: mocks.distinctOwners,
-  QueryTagHierarchy: mocks.queryTagHierarchy,
-  RecordTagUsage: mocks.recordTagUsage
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    SaveFileBlocks: mocks.saveFileBlocks,
+    AcquireFocusLock: mocks.acquireFocusLock,
+    RefreshFocusLock: mocks.refreshFocusLock,
+    ReleaseFocusLock: mocks.releaseFocusLock,
+    OpenDevTools: mocks.openDevTools,
+    // TipTapEditor seeds the @-mention owner list on mount/focus (#184).
+    DistinctOwners: mocks.distinctOwners,
+    QueryTagHierarchy: mocks.queryTagHierarchy,
+    RecordTagUsage: mocks.recordTagUsage
+  })
+)
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {

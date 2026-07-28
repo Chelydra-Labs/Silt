@@ -11,11 +11,13 @@ const mocks = vi.hoisted(() => ({
   activeNotebook: 'Work'
 }))
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  AddAttachment: mocks.addAttachment,
-  OpenAttachment: vi.fn(),
-  DeleteAttachment: vi.fn()
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    AddAttachment: mocks.addAttachment,
+    OpenAttachment: vi.fn(),
+    DeleteAttachment: vi.fn()
+  })
+)
 
 // The plugin module imports Attachments.svelte; stub it so the Svelte compiler
 // doesn't interfere with the unit test.

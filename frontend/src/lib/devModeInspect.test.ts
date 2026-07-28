@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const openDevTools = vi.fn()
-vi.mock('../../bindings/silt/app.js', () => ({
-  OpenDevTools: (...args: unknown[]) => openDevTools(...args)
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    OpenDevTools: (...args: unknown[]) => openDevTools(...args)
+  })
+)
 
 vi.mock('../settings/store.svelte', () => ({
   settings: {

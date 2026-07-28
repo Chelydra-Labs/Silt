@@ -1,19 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NavOrderManager, sortByName, type NavOrderState } from './navOrder'
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  GetNavOrder: vi.fn().mockResolvedValue({
-    notebooks: ['Work', 'Personal'],
-    sections: { Work: ['Journal', 'Projects'] },
-    pages: { 'Work/Journal': ['2026-06-22', '2026-06-21'] }
-  }),
-  SetNavNotebookOrder: vi.fn().mockResolvedValue(undefined),
-  SetNavSectionOrder: vi.fn().mockResolvedValue(undefined),
-  SetNavPageOrder: vi.fn().mockResolvedValue(undefined),
-  ClearNavNotebookOrder: vi.fn().mockResolvedValue(undefined),
-  ClearNavSectionOrder: vi.fn().mockResolvedValue(undefined),
-  ClearNavPageOrder: vi.fn().mockResolvedValue(undefined)
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    GetNavOrder: vi.fn().mockResolvedValue({
+      notebooks: ['Work', 'Personal'],
+      sections: { Work: ['Journal', 'Projects'] },
+      pages: { 'Work/Journal': ['2026-06-22', '2026-06-21'] }
+    }),
+    SetNavNotebookOrder: vi.fn().mockResolvedValue(undefined),
+    SetNavSectionOrder: vi.fn().mockResolvedValue(undefined),
+    SetNavPageOrder: vi.fn().mockResolvedValue(undefined),
+    ClearNavNotebookOrder: vi.fn().mockResolvedValue(undefined),
+    ClearNavSectionOrder: vi.fn().mockResolvedValue(undefined),
+    ClearNavPageOrder: vi.fn().mockResolvedValue(undefined)
+  })
+)
 
 describe('sortByName', () => {
   it('returns items in alphabetical order without a custom order', () => {
@@ -54,7 +56,7 @@ describe('NavOrderManager', () => {
   })
 
   it('persists notebook, nested section, and page scopes through narrow calls', async () => {
-    const bindings = await import('../../../bindings/silt/app.js')
+    const bindings = await import('$silt-app')
     const manager = new NavOrderManager({ onStateChange: () => {} })
     await manager.load()
 
@@ -81,7 +83,7 @@ describe('NavOrderManager', () => {
   })
 
   it('keeps different order scopes independent at the IPC boundary', async () => {
-    const bindings = await import('../../../bindings/silt/app.js')
+    const bindings = await import('$silt-app')
     const manager = new NavOrderManager({ onStateChange: () => {} })
     await manager.load()
 
@@ -112,7 +114,7 @@ describe('NavOrderManager', () => {
   })
 
   it('uses narrow clear calls for empty explicit orders', async () => {
-    const bindings = await import('../../../bindings/silt/app.js')
+    const bindings = await import('$silt-app')
     const manager = new NavOrderManager({ onStateChange: () => {} })
     await manager.load()
 
@@ -126,7 +128,7 @@ describe('NavOrderManager', () => {
   })
 
   it('rolls back only the failed scope', async () => {
-    const bindings = await import('../../../bindings/silt/app.js')
+    const bindings = await import('$silt-app')
     vi.mocked(bindings.SetNavSectionOrder).mockRejectedValueOnce(
       new Error('save failed')
     )
@@ -141,7 +143,7 @@ describe('NavOrderManager', () => {
   })
 
   it('leaves defaults in place when loading fails', async () => {
-    const { GetNavOrder } = await import('../../../bindings/silt/app.js')
+    const { GetNavOrder } = await import('$silt-app')
     vi.mocked(GetNavOrder).mockRejectedValueOnce(new Error('no vault'))
     const manager = new NavOrderManager({ onStateChange: () => {} })
     await manager.load()

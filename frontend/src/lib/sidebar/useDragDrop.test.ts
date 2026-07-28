@@ -5,16 +5,18 @@ import type { NavSection } from './types'
 import { NavOrderManager } from './navOrder'
 
 // Mock the Wails IPC bindings.
-vi.mock('../../../bindings/silt/app.js', () => ({
-  MovePage: vi.fn().mockResolvedValue(undefined),
-  GetNavOrder: vi.fn().mockResolvedValue({}),
-  SetNavNotebookOrder: vi.fn().mockResolvedValue(undefined),
-  SetNavSectionOrder: vi.fn().mockResolvedValue(undefined),
-  SetNavPageOrder: vi.fn().mockResolvedValue(undefined),
-  ClearNavNotebookOrder: vi.fn().mockResolvedValue(undefined),
-  ClearNavSectionOrder: vi.fn().mockResolvedValue(undefined),
-  ClearNavPageOrder: vi.fn().mockResolvedValue(undefined)
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    MovePage: vi.fn().mockResolvedValue(undefined),
+    GetNavOrder: vi.fn().mockResolvedValue({}),
+    SetNavNotebookOrder: vi.fn().mockResolvedValue(undefined),
+    SetNavSectionOrder: vi.fn().mockResolvedValue(undefined),
+    SetNavPageOrder: vi.fn().mockResolvedValue(undefined),
+    ClearNavNotebookOrder: vi.fn().mockResolvedValue(undefined),
+    ClearNavSectionOrder: vi.fn().mockResolvedValue(undefined),
+    ClearNavPageOrder: vi.fn().mockResolvedValue(undefined)
+  })
+)
 
 function makeSections(): NavSection[] {
   return [
@@ -130,7 +132,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop reorders sections via navOrder', async () => {
-    const { SetNavSectionOrder } = await import('../../../bindings/silt/app.js')
+    const { SetNavSectionOrder } = await import('$silt-app')
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
@@ -148,7 +150,7 @@ describe('DragDropManager', () => {
   })
 
   it('reorders nested siblings under their canonical parent key', async () => {
-    const { SetNavSectionOrder } = await import('../../../bindings/silt/app.js')
+    const { SetNavSectionOrder } = await import('$silt-app')
     const nested: NavSection[] = [
       {
         name: 'Projects',
@@ -181,7 +183,7 @@ describe('DragDropManager', () => {
   })
 
   it('persists only leaf names for deeply nested section reorder', async () => {
-    const { SetNavSectionOrder } = await import('../../../bindings/silt/app.js')
+    const { SetNavSectionOrder } = await import('$silt-app')
     const nested: NavSection[] = [
       {
         name: 'Projects',
@@ -230,7 +232,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop reorders root-level pages via persistPageOrder (#369)', async () => {
-    const { SetNavPageOrder } = await import('../../../bindings/silt/app.js')
+    const { SetNavPageOrder } = await import('$silt-app')
     // Synthetic root section (name === '') supplies the section-less page
     // list the sidebar renders at Sidebar.svelte:866.
     const rootPages: NavSection[] = [
@@ -295,7 +297,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop page→section calls MovePage', async () => {
-    const { MovePage } = await import('../../../bindings/silt/app.js')
+    const { MovePage } = await import('$silt-app')
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
@@ -320,7 +322,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop same-section page→section is a no-op', async () => {
-    const { MovePage } = await import('../../../bindings/silt/app.js')
+    const { MovePage } = await import('$silt-app')
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
@@ -333,7 +335,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop page→__root__ moves the page out of its section', async () => {
-    const { MovePage } = await import('../../../bindings/silt/app.js')
+    const { MovePage } = await import('$silt-app')
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()
@@ -352,7 +354,7 @@ describe('DragDropManager', () => {
   })
 
   it('handleDrop page→__root__ is a no-op when the page is already at root', async () => {
-    const { MovePage } = await import('../../../bindings/silt/app.js')
+    const { MovePage } = await import('$silt-app')
     const deps = makeDeps()
     const dnd = new DragDropManager(deps)
     const e = makeDragEvent()

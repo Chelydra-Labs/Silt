@@ -1,5 +1,19 @@
 import { vi, afterAll } from 'vitest'
 import '@testing-library/jest-dom/vitest'
+import {
+  createAppIpcMocks,
+  SILT_APP_BINDINGS
+} from './src/lib/testing/ipcMock'
+
+// Available inside vi.hoisted / vi.mock factories (those run before ESM imports).
+// Tests should not import createAppIpcMocks for use inside hoisted callbacks.
+;(globalThis as unknown as {
+  createAppIpcMocks: typeof createAppIpcMocks
+  SILT_APP_BINDINGS: typeof SILT_APP_BINDINGS
+}).createAppIpcMocks = createAppIpcMocks
+;(globalThis as unknown as { SILT_APP_BINDINGS: typeof SILT_APP_BINDINGS }).SILT_APP_BINDINGS =
+  SILT_APP_BINDINGS
+
 
 // jsdom omits or stubs layout-dependent DOM APIs that TipTap v3's Placeholder
 // viewport tracker touches during editor construction. Force-override them

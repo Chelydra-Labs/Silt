@@ -22,13 +22,15 @@ const mockEventsOn = vi.hoisted(() =>
 const mockClosePluginDB = vi.hoisted(() =>
   vi.fn(() => Promise.resolve(undefined))
 )
-vi.mock('../../bindings/silt/app.js', () => ({
-  ListPlugins: mockListPlugins,
-  ReadPluginSource: mockReadPluginSource,
-  RegisterPluginSession: mockRegisterSession,
-  UnregisterPluginSession: mockUnregisterSession,
-  ClosePluginDB: mockClosePluginDB
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ListPlugins: mockListPlugins,
+    ReadPluginSource: mockReadPluginSource,
+    RegisterPluginSession: mockRegisterSession,
+    UnregisterPluginSession: mockUnregisterSession,
+    ClosePluginDB: mockClosePluginDB
+  })
+)
 // Events.On returns a per-listener disposer (v3 contract). The mock mirrors
 // that so cleanupPlugin / clearAllSubscribers can call the captured disposer
 // without throwing.

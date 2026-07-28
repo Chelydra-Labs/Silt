@@ -3,9 +3,11 @@ import { AutosaveManager } from './useAutosave'
 import type { AutosaveDeps } from './useAutosave'
 
 // Mock the Wails IPC binding.
-vi.mock('../../../bindings/silt/app.js', () => ({
-  SaveFileBlocks: vi.fn().mockResolvedValue(undefined)
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    SaveFileBlocks: vi.fn().mockResolvedValue(undefined)
+  })
+)
 
 // Mock the perf budget utility.
 vi.mock('../perf/frame-budget', () => ({
@@ -53,7 +55,7 @@ describe('AutosaveManager', () => {
   })
 
   it('saves after the configured delay', async () => {
-    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
+    const { SaveFileBlocks } = await import('$silt-app')
     const deps = makeDeps()
     const autosave = new AutosaveManager(deps)
 
@@ -76,7 +78,7 @@ describe('AutosaveManager', () => {
   })
 
   it('debounces rapid triggers', async () => {
-    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
+    const { SaveFileBlocks } = await import('$silt-app')
     const deps = makeDeps()
     const autosave = new AutosaveManager(deps)
 
@@ -91,7 +93,7 @@ describe('AutosaveManager', () => {
   })
 
   it('flush() saves immediately', async () => {
-    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
+    const { SaveFileBlocks } = await import('$silt-app')
     const deps = makeDeps()
     const autosave = new AutosaveManager(deps)
 
@@ -102,7 +104,7 @@ describe('AutosaveManager', () => {
   })
 
   it('flush() is a no-op when no save is pending', async () => {
-    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
+    const { SaveFileBlocks } = await import('$silt-app')
     const deps = makeDeps()
     const autosave = new AutosaveManager(deps)
 
@@ -112,7 +114,7 @@ describe('AutosaveManager', () => {
   })
 
   it('reports errors via onStateChange', async () => {
-    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
+    const { SaveFileBlocks } = await import('$silt-app')
     vi.mocked(SaveFileBlocks).mockRejectedValueOnce(new Error('disk full'))
     const deps = makeDeps()
     const autosave = new AutosaveManager(deps)
@@ -238,7 +240,7 @@ describe('AutosaveManager', () => {
     })
 
     it('emits error phase on save failure', async () => {
-      const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
+      const { SaveFileBlocks } = await import('$silt-app')
       vi.mocked(SaveFileBlocks).mockRejectedValueOnce(new Error('disk full'))
       const deps = makeDeps()
       const autosave = new AutosaveManager(deps)
@@ -287,7 +289,7 @@ describe('AutosaveManager', () => {
   })
 
   it('does not save when editor is null', async () => {
-    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
+    const { SaveFileBlocks } = await import('$silt-app')
     const deps = makeDeps({ getEditor: () => null })
     const autosave = new AutosaveManager(deps)
 
@@ -313,7 +315,7 @@ describe('AutosaveManager', () => {
   })
 
   it('reads current identity after a page rename (stale-capture regression)', async () => {
-    const { SaveFileBlocks } = await import('../../../bindings/silt/app.js')
+    const { SaveFileBlocks } = await import('$silt-app')
     let currentPage = 'OldPage'
     const deps = makeDeps({ getPage: () => currentPage })
     const autosave = new AutosaveManager(deps)

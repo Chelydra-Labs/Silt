@@ -12,10 +12,12 @@ const mocks = vi.hoisted(() => ({
   GetOpenTabs: vi.fn(),
   SetOpenTabs: vi.fn()
 }))
-vi.mock('../../../bindings/silt/app.js', () => ({
-  GetOpenTabs: mocks.GetOpenTabs,
-  SetOpenTabs: mocks.SetOpenTabs
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    GetOpenTabs: mocks.GetOpenTabs,
+    SetOpenTabs: mocks.SetOpenTabs
+  })
+)
 
 function makeDeps(): TabPersistenceDeps & {
   setTabs: Mock

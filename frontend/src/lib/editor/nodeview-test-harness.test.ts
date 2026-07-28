@@ -13,10 +13,8 @@
 import { describe, it, expect, vi } from 'vitest'
 
 // --- IPC mocks (must be hoisted before any component import) ---------------
-// The NodeView components import from '../../bindings/silt/app.js' (relative
-// to the .svelte source). vi.mock resolves by module identity, so mocking the
-// same resolved file from this test file (at lib/editor/) applies to every
-// component that imports it.
+// Production components still import relative bindings paths; the `$silt-app`
+// alias resolves to the same module, so this mock applies everywhere.
 const mocks = vi.hoisted(() => ({
   resolveBlockReference: vi.fn(),
   resolvePageLink: vi.fn(),
@@ -28,16 +26,18 @@ const mocks = vi.hoisted(() => ({
   releaseFocusLock: vi.fn()
 }))
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  ResolveBlockReference: mocks.resolveBlockReference,
-  ResolvePageLink: mocks.resolvePageLink,
-  PluginMutateBlock: mocks.pluginMutateBlock,
-  FetchPageBlocks: mocks.fetchPageBlocks,
-  SaveFileBlocks: mocks.saveFileBlocks,
-  AcquireFocusLock: mocks.acquireFocusLock,
-  RefreshFocusLock: mocks.refreshFocusLock,
-  ReleaseFocusLock: mocks.releaseFocusLock
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ResolveBlockReference: mocks.resolveBlockReference,
+    ResolvePageLink: mocks.resolvePageLink,
+    PluginMutateBlock: mocks.pluginMutateBlock,
+    FetchPageBlocks: mocks.fetchPageBlocks,
+    SaveFileBlocks: mocks.saveFileBlocks,
+    AcquireFocusLock: mocks.acquireFocusLock,
+    RefreshFocusLock: mocks.refreshFocusLock,
+    ReleaseFocusLock: mocks.releaseFocusLock
+  })
+)
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {

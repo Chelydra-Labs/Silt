@@ -9,17 +9,19 @@ const mocks = vi.hoisted(() => ({
   SetShowFormatToolbar: vi.fn().mockResolvedValue(undefined)
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  GetSystemConfig: vi.fn(),
-  GetConfigLoadError: vi.fn(),
-  SaveSystemConfig: vi.fn(),
-  UpdatePluginSetting: vi.fn(),
-  AppendDismissedTip: vi.fn(),
-  SetShowFormatToolbar: mocks.SetShowFormatToolbar,
-  SetFocusMode: vi.fn(),
-  SetTypewriterMode: vi.fn(),
-  SetOpenDevtoolsOnStartup: mocks.SetOpenDevtoolsOnStartup
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    GetSystemConfig: vi.fn(),
+    GetConfigLoadError: vi.fn(),
+    SaveSystemConfig: vi.fn(),
+    UpdatePluginSetting: vi.fn(),
+    AppendDismissedTip: vi.fn(),
+    SetShowFormatToolbar: mocks.SetShowFormatToolbar,
+    SetFocusMode: vi.fn(),
+    SetTypewriterMode: vi.fn(),
+    SetOpenDevtoolsOnStartup: mocks.SetOpenDevtoolsOnStartup
+  })
+)
 vi.mock('@wailsio/runtime', () => ({
   Events: {
     On: vi.fn(() => () => {})

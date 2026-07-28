@@ -8,9 +8,11 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 const mockGetGranted = vi.hoisted(() => vi.fn(() => Promise.resolve({})))
 const mockEventsOn = vi.hoisted(() => vi.fn())
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  GetGrantedCapabilities: mockGetGranted
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    GetGrantedCapabilities: mockGetGranted
+  })
+)
 vi.mock('@wailsio/runtime', () => ({
   Events: {
     On: mockEventsOn

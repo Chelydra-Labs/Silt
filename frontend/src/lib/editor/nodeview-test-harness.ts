@@ -10,13 +10,10 @@
 // code path.
 //
 // IMPORTANT: this module does NOT mock the Wails IPC bindings. Each test file
-// MUST set up its own `vi.mock('../../bindings/silt/app.js', ...)` (via
-// `vi.hoisted`) before importing anything that triggers NodeView component
-// mounting. The canonical pattern is in AppearanceTab.test.ts. The relative
-// path from a test at `frontend/src/components/X.test.ts` to the bindings is
-// `'../../bindings/silt/app.js'`; from `frontend/src/lib/editor/X.test.ts`
-// it is `'../../../bindings/silt/app.js'`. Both resolve to the same module,
-// so vitest's mock applies to every component that imports the bindings.
+// MUST set up its own `vi.mock('$silt-app', ...)` (via `vi.hoisted` +
+// global `createAppIpcMocks` from vitest.setup / ipcMock.ts) before importing
+// anything that triggers NodeView component mounting. The `$silt-app` alias
+// always resolves to `bindings/silt/app.js`, so path depth no longer matters.
 
 import { Editor } from '@tiptap/core'
 import type { Editor as EditorType } from '@tiptap/core'

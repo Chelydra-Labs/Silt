@@ -3,11 +3,13 @@ import { FocusLockManager } from './useFocusLock'
 import type { FocusLockDeps } from './useFocusLock'
 
 // Mock the Wails IPC bindings.
-vi.mock('../../../bindings/silt/app.js', () => ({
-  AcquireFocusLock: vi.fn().mockResolvedValue(undefined),
-  ReleaseFocusLock: vi.fn().mockResolvedValue(undefined),
-  RefreshFocusLock: vi.fn().mockResolvedValue(undefined)
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    AcquireFocusLock: vi.fn().mockResolvedValue(undefined),
+    ReleaseFocusLock: vi.fn().mockResolvedValue(undefined),
+    RefreshFocusLock: vi.fn().mockResolvedValue(undefined)
+  })
+)
 
 function makeDeps(overrides: Partial<FocusLockDeps> = {}): FocusLockDeps {
   return {
@@ -31,8 +33,7 @@ describe('FocusLockManager', () => {
   })
 
   it('acquires and releases the lock', async () => {
-    const { AcquireFocusLock, ReleaseFocusLock } =
-      await import('../../../bindings/silt/app.js')
+    const { AcquireFocusLock, ReleaseFocusLock } = await import('$silt-app')
     const lock = new FocusLockManager(makeDeps())
 
     await lock.acquire()
@@ -53,7 +54,7 @@ describe('FocusLockManager', () => {
   })
 
   it('release() is a no-op when not locked', async () => {
-    const { ReleaseFocusLock } = await import('../../../bindings/silt/app.js')
+    const { ReleaseFocusLock } = await import('$silt-app')
     const lock = new FocusLockManager(makeDeps())
 
     await lock.release()
@@ -61,7 +62,7 @@ describe('FocusLockManager', () => {
   })
 
   it('heartbeat refreshes the lock periodically', async () => {
-    const { RefreshFocusLock } = await import('../../../bindings/silt/app.js')
+    const { RefreshFocusLock } = await import('$silt-app')
     const lock = new FocusLockManager(makeDeps())
 
     await lock.acquire()
@@ -79,7 +80,7 @@ describe('FocusLockManager', () => {
   })
 
   it('stopHeartbeat stops the refresh cycle', async () => {
-    const { RefreshFocusLock } = await import('../../../bindings/silt/app.js')
+    const { RefreshFocusLock } = await import('$silt-app')
     const lock = new FocusLockManager(makeDeps())
 
     await lock.acquire()
@@ -91,7 +92,7 @@ describe('FocusLockManager', () => {
   })
 
   it('startHeartbeat restarts (does not stack)', async () => {
-    const { RefreshFocusLock } = await import('../../../bindings/silt/app.js')
+    const { RefreshFocusLock } = await import('$silt-app')
     const lock = new FocusLockManager(makeDeps())
 
     await lock.acquire()
@@ -105,7 +106,7 @@ describe('FocusLockManager', () => {
   })
 
   it('acquire logs error but does not throw on IPC failure', async () => {
-    const { AcquireFocusLock } = await import('../../../bindings/silt/app.js')
+    const { AcquireFocusLock } = await import('$silt-app')
     vi.mocked(AcquireFocusLock).mockRejectedValueOnce(new Error('IPC fail'))
     const lock = new FocusLockManager(makeDeps())
 
@@ -124,8 +125,7 @@ describe('FocusLockManager', () => {
   })
 
   it('reads current identity after a page rename (stale-capture regression)', async () => {
-    const { AcquireFocusLock, ReleaseFocusLock } =
-      await import('../../../bindings/silt/app.js')
+    const { AcquireFocusLock, ReleaseFocusLock } = await import('$silt-app')
     let currentPage = 'OldPage'
     const lock = new FocusLockManager(makeDeps({ getPage: () => currentPage }))
 

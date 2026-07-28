@@ -25,58 +25,60 @@ const mocks = vi.hoisted(() => ({
   }
 }))
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  GetCloseToTray: vi.fn().mockResolvedValue(false),
-  SetCloseToTray: vi.fn().mockResolvedValue(undefined),
-  ListPlugins: vi.fn().mockResolvedValue([]),
-  GetGrantedCapabilities: vi.fn().mockResolvedValue({}),
-  PluginRawQuery: vi.fn(),
-  GetPluginSettingsForNotebook: vi.fn().mockResolvedValue({}),
-  UpdatePluginSetting: vi.fn(),
-  // AppearanceTab loads the theme list in a $effect on mount.
-  ListThemes: vi.fn().mockResolvedValue([]),
-  // GeneralTab custom dictionary + EditorTab pack catalogs.
-  GetCustomDictionary: vi.fn().mockResolvedValue([]),
-  AddCustomDictionaryWord: vi.fn().mockResolvedValue([]),
-  RemoveCustomDictionaryWord: vi.fn().mockResolvedValue([]),
-  PickCustomDictionaryExportPath: vi.fn().mockResolvedValue(''),
-  PickCustomDictionaryImportFile: vi.fn().mockResolvedValue(''),
-  ExportCustomDictionary: vi.fn().mockResolvedValue(undefined),
-  ImportCustomDictionary: vi
-    .fn()
-    .mockResolvedValue({ added: 0, skipped: 0, total_read: 0 }),
-  ListLanguagePacks: vi.fn().mockResolvedValue([
-    {
-      id: 'en-US',
-      label: 'English (US)',
-      license: 'MIT',
-      approx_bytes: 600000,
-      bundled: true,
-      downloadable: false,
-      installed: true,
-      version: '3.0.0'
-    }
-  ]),
-  ListDomainPacks: vi.fn().mockResolvedValue([
-    {
-      id: 'software-terms',
-      label: 'Software terms',
-      license: 'MIT',
-      approx_bytes: 8000,
-      bundled: true,
-      downloadable: false,
-      installed: true,
-      default_on: true,
-      version: ''
-    }
-  ]),
-  EnsureLanguagePack: vi.fn().mockResolvedValue(undefined),
-  EnsureDomainPack: vi.fn().mockResolvedValue(undefined),
-  CancelSpellcheckDownload: vi.fn(),
-  GetLanguagePackContent: vi.fn(),
-  GetDomainPackWords: vi.fn().mockResolvedValue([]),
-  UpdateAIFeatures: vi.fn()
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    GetCloseToTray: vi.fn().mockResolvedValue(false),
+    SetCloseToTray: vi.fn().mockResolvedValue(undefined),
+    ListPlugins: vi.fn().mockResolvedValue([]),
+    GetGrantedCapabilities: vi.fn().mockResolvedValue({}),
+    PluginRawQuery: vi.fn(),
+    GetPluginSettingsForNotebook: vi.fn().mockResolvedValue({}),
+    UpdatePluginSetting: vi.fn(),
+    // AppearanceTab loads the theme list in a $effect on mount.
+    ListThemes: vi.fn().mockResolvedValue([]),
+    // GeneralTab custom dictionary + EditorTab pack catalogs.
+    GetCustomDictionary: vi.fn().mockResolvedValue([]),
+    AddCustomDictionaryWord: vi.fn().mockResolvedValue([]),
+    RemoveCustomDictionaryWord: vi.fn().mockResolvedValue([]),
+    PickCustomDictionaryExportPath: vi.fn().mockResolvedValue(''),
+    PickCustomDictionaryImportFile: vi.fn().mockResolvedValue(''),
+    ExportCustomDictionary: vi.fn().mockResolvedValue(undefined),
+    ImportCustomDictionary: vi
+      .fn()
+      .mockResolvedValue({ added: 0, skipped: 0, total_read: 0 }),
+    ListLanguagePacks: vi.fn().mockResolvedValue([
+      {
+        id: 'en-US',
+        label: 'English (US)',
+        license: 'MIT',
+        approx_bytes: 600000,
+        bundled: true,
+        downloadable: false,
+        installed: true,
+        version: '3.0.0'
+      }
+    ]),
+    ListDomainPacks: vi.fn().mockResolvedValue([
+      {
+        id: 'software-terms',
+        label: 'Software terms',
+        license: 'MIT',
+        approx_bytes: 8000,
+        bundled: true,
+        downloadable: false,
+        installed: true,
+        default_on: true,
+        version: ''
+      }
+    ]),
+    EnsureLanguagePack: vi.fn().mockResolvedValue(undefined),
+    EnsureDomainPack: vi.fn().mockResolvedValue(undefined),
+    CancelSpellcheckDownload: vi.fn(),
+    GetLanguagePackContent: vi.fn(),
+    GetDomainPackWords: vi.fn().mockResolvedValue([]),
+    UpdateAIFeatures: vi.fn()
+  })
+)
 vi.mock('../../plugins/store.svelte', () => ({
   loadedPlugins: mocks.loadedPlugins
 }))

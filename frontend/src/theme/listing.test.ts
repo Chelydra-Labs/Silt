@@ -10,15 +10,17 @@ const { listThemesMock, eventsOnMock, injectTokensMock } = vi.hoisted(() => ({
   injectTokensMock: vi.fn()
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  ApplyTheme: vi.fn(),
-  GetActiveTheme: vi.fn(),
-  ListThemes: listThemesMock,
-  ExportActiveTheme: vi.fn(),
-  ImportTheme: vi.fn(),
-  PickExportPath: vi.fn(),
-  PickThemeFile: vi.fn()
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ApplyTheme: vi.fn(),
+    GetActiveTheme: vi.fn(),
+    ListThemes: listThemesMock,
+    ExportActiveTheme: vi.fn(),
+    ImportTheme: vi.fn(),
+    PickExportPath: vi.fn(),
+    PickThemeFile: vi.fn()
+  })
+)
 vi.mock('@wailsio/runtime', () => ({
   Events: {
     On: eventsOnMock

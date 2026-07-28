@@ -25,10 +25,12 @@ const mocks = vi.hoisted(() => ({
   eventsOn: vi.fn(() => () => {})
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  ResolveBlockReference: mocks.resolveBlockReference,
-  MutateBlock: mocks.mutateBlock
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ResolveBlockReference: mocks.resolveBlockReference,
+    MutateBlock: mocks.mutateBlock
+  })
+)
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {

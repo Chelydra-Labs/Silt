@@ -59,21 +59,23 @@ const mocks = vi.hoisted(() => ({
   }
 }))
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  ListPlugins: mocks.listPlugins,
-  ValidatePluginArchive: mocks.validatePluginArchive,
-  InstallPlugin: mocks.installPlugin,
-  UninstallPlugin: vi.fn(),
-  EnablePlugin: vi.fn(),
-  DisablePlugin: vi.fn(),
-  PickPluginArchive: mocks.pickPluginArchive,
-  RequestCapability: mocks.requestCapability,
-  RevokeCapability: mocks.revokeCapability,
-  GetGrantedCapabilities: mocks.getGrantedCapabilities,
-  CheckPluginUpdate: mocks.checkPluginUpdate,
-  GetNetworkAudit: mocks.getNetworkAudit,
-  GetPluginSecurityStats: mocks.getPluginSecurityStats
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ListPlugins: mocks.listPlugins,
+    ValidatePluginArchive: mocks.validatePluginArchive,
+    InstallPlugin: mocks.installPlugin,
+    UninstallPlugin: vi.fn(),
+    EnablePlugin: vi.fn(),
+    DisablePlugin: vi.fn(),
+    PickPluginArchive: mocks.pickPluginArchive,
+    RequestCapability: mocks.requestCapability,
+    RevokeCapability: mocks.revokeCapability,
+    GetGrantedCapabilities: mocks.getGrantedCapabilities,
+    CheckPluginUpdate: mocks.checkPluginUpdate,
+    GetNetworkAudit: mocks.getNetworkAudit,
+    GetPluginSecurityStats: mocks.getPluginSecurityStats
+  })
+)
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {

@@ -54,39 +54,41 @@ const mockPlugins = vi.hoisted(() => ({
 }))
 const mockGetSessionToken = vi.hoisted(() => vi.fn(() => 'tok-test'))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  ListNavigation: mocks.listNavigation,
-  CreateNotebook: mocks.createNotebook,
-  CreateSection: mocks.createSection,
-  CreatePage: mocks.createPage,
-  PickNotebookFolder: mocks.pickNotebookFolder,
-  PickLinkedNotebook: mocks.pickLinkedNotebook,
-  UnlinkNotebook: mocks.unlinkNotebook,
-  RenamePage: mocks.renamePage,
-  RenameSection: mocks.renameSection,
-  RenameNotebook: mocks.renameNotebook,
-  DeletePage: mocks.deletePage,
-  DeleteSection: mocks.deleteSection,
-  DeleteNotebook: mocks.deleteNotebook,
-  RevealNotebookInOS: mocks.revealNotebookInOS,
-  RevealPageInOS: mocks.revealPageInOS,
-  DuplicatePage: mocks.duplicatePage,
-  ResolvePageLink: mocks.resolvePageLink,
-  GetNavOrder: mocks.getNavOrder,
-  SetNavNotebookOrder: mocks.setNavNotebookOrder,
-  SetNavSectionOrder: mocks.setNavSectionOrder,
-  SetNavPageOrder: mocks.setNavPageOrder,
-  ClearNavNotebookOrder: mocks.clearNavNotebookOrder,
-  ClearNavSectionOrder: mocks.clearNavSectionOrder,
-  ClearNavPageOrder: mocks.clearNavPageOrder,
-  MovePage: mocks.movePage,
-  GetNavigationPreferences: mocks.getNavigationPreferences,
-  SetNavigationSectionExpanded: mocks.setNavigationSectionExpanded,
-  SetSidebarView: mocks.setSidebarView,
-  SetFavoritePage: mocks.setFavoritePage,
-  QueryTagHierarchy: mocks.queryTagHierarchy,
-  OpenDevTools: mocks.openDevTools
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ListNavigation: mocks.listNavigation,
+    CreateNotebook: mocks.createNotebook,
+    CreateSection: mocks.createSection,
+    CreatePage: mocks.createPage,
+    PickNotebookFolder: mocks.pickNotebookFolder,
+    PickLinkedNotebook: mocks.pickLinkedNotebook,
+    UnlinkNotebook: mocks.unlinkNotebook,
+    RenamePage: mocks.renamePage,
+    RenameSection: mocks.renameSection,
+    RenameNotebook: mocks.renameNotebook,
+    DeletePage: mocks.deletePage,
+    DeleteSection: mocks.deleteSection,
+    DeleteNotebook: mocks.deleteNotebook,
+    RevealNotebookInOS: mocks.revealNotebookInOS,
+    RevealPageInOS: mocks.revealPageInOS,
+    DuplicatePage: mocks.duplicatePage,
+    ResolvePageLink: mocks.resolvePageLink,
+    GetNavOrder: mocks.getNavOrder,
+    SetNavNotebookOrder: mocks.setNavNotebookOrder,
+    SetNavSectionOrder: mocks.setNavSectionOrder,
+    SetNavPageOrder: mocks.setNavPageOrder,
+    ClearNavNotebookOrder: mocks.clearNavNotebookOrder,
+    ClearNavSectionOrder: mocks.clearNavSectionOrder,
+    ClearNavPageOrder: mocks.clearNavPageOrder,
+    MovePage: mocks.movePage,
+    GetNavigationPreferences: mocks.getNavigationPreferences,
+    SetNavigationSectionExpanded: mocks.setNavigationSectionExpanded,
+    SetSidebarView: mocks.setSidebarView,
+    SetFavoritePage: mocks.setFavoritePage,
+    QueryTagHierarchy: mocks.queryTagHierarchy,
+    OpenDevTools: mocks.openDevTools
+  })
+)
 
 vi.mock('../settings/store.svelte', () => ({
   settings: settingsMock

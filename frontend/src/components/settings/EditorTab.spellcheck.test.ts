@@ -13,17 +13,19 @@ import {
 import { tick } from 'svelte'
 import { Events } from '@wailsio/runtime'
 
-const appMocks = vi.hoisted(() => ({
-  ListLanguagePacks: vi.fn(),
-  ListDomainPacks: vi.fn(),
-  EnsureLanguagePack: vi.fn(),
-  EnsureDomainPack: vi.fn(),
-  CancelSpellcheckDownload: vi.fn(),
-  GetLanguagePackContent: vi.fn(),
-  GetDomainPackWords: vi.fn()
-}))
+const appMocks = vi.hoisted(() =>
+  createAppIpcMocks({
+    ListLanguagePacks: vi.fn(),
+    ListDomainPacks: vi.fn(),
+    EnsureLanguagePack: vi.fn(),
+    EnsureDomainPack: vi.fn(),
+    CancelSpellcheckDownload: vi.fn(),
+    GetLanguagePackContent: vi.fn(),
+    GetDomainPackWords: vi.fn()
+  })
+)
 
-vi.mock('../../../bindings/silt/app.js', () => appMocks)
+vi.mock('$silt-app', () => appMocks)
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {

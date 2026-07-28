@@ -16,11 +16,13 @@ const mocks = vi.hoisted(() => ({
   onError: vi.fn()
 }))
 
-vi.mock('../../../../bindings/silt/app.js', () => ({
-  PickPluginArchive: mocks.pickPluginArchive,
-  ValidatePluginArchive: mocks.validatePluginArchive,
-  InstallPlugin: mocks.installPlugin
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    PickPluginArchive: mocks.pickPluginArchive,
+    ValidatePluginArchive: mocks.validatePluginArchive,
+    InstallPlugin: mocks.installPlugin
+  })
+)
 
 import PluginInstallFlow from './PluginInstallFlow.svelte'
 

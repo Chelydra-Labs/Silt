@@ -28,13 +28,15 @@ const mocks = vi.hoisted(() => ({
   Quit: vi.fn()
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  CheckForUpdates: mocks.CheckForUpdates,
-  DownloadUpdate: mocks.DownloadUpdate,
-  InstallUpdate: mocks.InstallUpdate,
-  GetUpdateSettings: mocks.GetUpdateSettings,
-  SetUpdateSettings: mocks.SetUpdateSettings
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    CheckForUpdates: mocks.CheckForUpdates,
+    DownloadUpdate: mocks.DownloadUpdate,
+    InstallUpdate: mocks.InstallUpdate,
+    GetUpdateSettings: mocks.GetUpdateSettings,
+    SetUpdateSettings: mocks.SetUpdateSettings
+  })
+)
 vi.mock('@wailsio/runtime', () => ({
   Events: {
     On: mocks.EventsOn

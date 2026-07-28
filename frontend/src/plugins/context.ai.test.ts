@@ -48,12 +48,14 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  PluginAIComplete: mocks.pluginAIComplete,
-  PluginAIEmbed: mocks.pluginAIEmbed,
-  PluginAICancelStream: mocks.pluginAICancelStream,
-  PluginAIStreamReady: mocks.pluginAIStreamReady
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    PluginAIComplete: mocks.pluginAIComplete,
+    PluginAIEmbed: mocks.pluginAIEmbed,
+    PluginAICancelStream: mocks.pluginAICancelStream,
+    PluginAIStreamReady: mocks.pluginAIStreamReady
+  })
+)
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {

@@ -12,9 +12,11 @@ const mocks = vi.hoisted(() => ({
   updatePluginSetting: vi.fn()
 }))
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  UpdatePluginSetting: mocks.updatePluginSetting
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    UpdatePluginSetting: mocks.updatePluginSetting
+  })
+)
 
 import SettingsForm from './SettingsForm.svelte'
 

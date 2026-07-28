@@ -55,16 +55,18 @@ const mocks = vi.hoisted(() => ({
   pushNotification: vi.fn()
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  ListTemplates: vi.fn(),
-  GetTemplate: vi.fn(),
-  RenderTemplate: vi.fn().mockResolvedValue('# Preview content'),
-  SaveUserTemplate: vi.fn(),
-  DeleteUserTemplate: vi.fn(),
-  ReloadTemplates: vi.fn(),
-  CreatePageFromTemplate: vi.fn().mockResolvedValue('2026-06-15'),
-  RenderTemplateBlocks: vi.fn().mockResolvedValue([])
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ListTemplates: vi.fn(),
+    GetTemplate: vi.fn(),
+    RenderTemplate: vi.fn().mockResolvedValue('# Preview content'),
+    SaveUserTemplate: vi.fn(),
+    DeleteUserTemplate: vi.fn(),
+    ReloadTemplates: vi.fn(),
+    CreatePageFromTemplate: vi.fn().mockResolvedValue('2026-06-15'),
+    RenderTemplateBlocks: vi.fn().mockResolvedValue([])
+  })
+)
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {
@@ -212,8 +214,7 @@ describe('TemplatePicker (#55)', () => {
   })
 
   it('dispatches focus-page-title on successful CreatePageFromTemplate (#95)', async () => {
-    const { CreatePageFromTemplate } =
-      await import('../../bindings/silt/app.js')
+    const { CreatePageFromTemplate } = await import('$silt-app')
     ;(CreatePageFromTemplate as ReturnType<typeof vi.fn>).mockResolvedValue(
       '2026-06-15'
     )
@@ -256,8 +257,7 @@ describe('TemplatePicker (#55)', () => {
   })
 
   it('pushes a toast when CreatePageFromTemplate fails (#94)', async () => {
-    const { CreatePageFromTemplate } =
-      await import('../../bindings/silt/app.js')
+    const { CreatePageFromTemplate } = await import('$silt-app')
     ;(CreatePageFromTemplate as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error('disk full')
     )
@@ -286,7 +286,7 @@ describe('TemplatePicker (#55)', () => {
   })
 
   it('pushes a toast when RenderTemplateBlocks fails (#94)', async () => {
-    const { RenderTemplateBlocks } = await import('../../bindings/silt/app.js')
+    const { RenderTemplateBlocks } = await import('$silt-app')
     ;(RenderTemplateBlocks as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error('IPC lost')
     )
@@ -327,8 +327,7 @@ describe('TemplatePicker (#55)', () => {
       }
     ]
     try {
-      const { CreatePageFromTemplate } =
-        await import('../../bindings/silt/app.js')
+      const { CreatePageFromTemplate } = await import('$silt-app')
       const createFn = CreatePageFromTemplate as ReturnType<typeof vi.fn>
       createFn.mockReset()
       createFn.mockResolvedValue('2026-06-15')
@@ -356,8 +355,7 @@ describe('TemplatePicker (#55)', () => {
   })
 
   it('blocks create when a required placeholder is empty (#650)', async () => {
-    const { CreatePageFromTemplate } =
-      await import('../../bindings/silt/app.js')
+    const { CreatePageFromTemplate } = await import('$silt-app')
     const createFn = CreatePageFromTemplate as ReturnType<typeof vi.fn>
     createFn.mockClear()
     mocks.setTemplateStatus.mockClear()
@@ -390,8 +388,7 @@ describe('TemplatePicker (#55)', () => {
   })
 
   it('surfaces page_exists with open-existing choice (#652)', async () => {
-    const { CreatePageFromTemplate } =
-      await import('../../bindings/silt/app.js')
+    const { CreatePageFromTemplate } = await import('$silt-app')
     const createFn = CreatePageFromTemplate as ReturnType<typeof vi.fn>
     createFn.mockReset()
     createFn.mockRejectedValueOnce(
