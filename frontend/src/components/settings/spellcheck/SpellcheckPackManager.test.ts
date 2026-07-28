@@ -295,4 +295,77 @@ describe('SpellcheckPackManager', () => {
       ).toBeNull()
     })
   })
+
+  it('cancel invokes CancelSpellcheckDownload, shows cancelled status, and clears busy', async () => {
+    // Hold the install in flight so packBusy is set and the Cancel button renders.
+    let releaseEnsure: () => void = () => {}
+    appMocks.EnsureLanguagePack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseEnsure = resolve
+        })
+    )
+    appMocks.CancelSpellcheckDownload.mockResolvedValue(undefined)
+
+    renderIt()
+    await waitFor(() => {
+      expect(languageSelect().options.length).toBeGreaterThan(1)
+    })
+    await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
+    await waitFor(() => {
+      expect(appMocks.EnsureLanguagePack).toHaveBeenCalledWith('en-GB')
+    })
+
+    const cancelBtn = await waitFor(() =>
+      screen.getByRole('button', { name: 'Cancel' })
+    )
+    await fireEvent.click(cancelBtn)
+    await tick()
+
+    expect(appMocks.CancelSpellcheckDownload).toHaveBeenCalled()
+    expect(screen.getByText(/Download cancelled/i)).toBeTruthy()
+    // packBusy cleared → the Cancel affordance disappears.
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+
+    // Let the held install settle so no promise dangles past unmount.
+    releaseEnsure()
+    await tick()
+  })
+
+  it('swallows a rejecting CancelSpellcheckDownload without surfacing an error', async () => {
+    // Guards the .catch(() => {}) fix: a backend cancel that rejects must not
+    // produce an error banner (the UI still resets to "Download cancelled").
+    let releaseEnsure: () => void = () => {}
+    appMocks.EnsureLanguagePack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseEnsure = resolve
+        })
+    )
+    appMocks.CancelSpellcheckDownload.mockRejectedValue(
+      new Error('no active download')
+    )
+
+    renderIt()
+    await waitFor(() => {
+      expect(languageSelect().options.length).toBeGreaterThan(1)
+    })
+    await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
+    await waitFor(() => {
+      expect(appMocks.EnsureLanguagePack).toHaveBeenCalledWith('en-GB')
+    })
+
+    await fireEvent.click(
+      await waitFor(() => screen.getByRole('button', { name: 'Cancel' }))
+    )
+    await tick()
+
+    expect(appMocks.CancelSpellcheckDownload).toHaveBeenCalled()
+    expect(screen.getByText(/Download cancelled/i)).toBeTruthy()
+    // The rejection was swallowed by .catch — no error alert appears.
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    releaseEnsure()
+    await tick()
+  })
 })

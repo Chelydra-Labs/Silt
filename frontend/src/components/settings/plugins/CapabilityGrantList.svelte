@@ -103,6 +103,7 @@
             <span class="text-type-2xs text-text-muted italic">trusted</span>
           {:else if isGranted(cap)}
             <button
+              type="button"
               onclick={() => revoke(cap)}
               disabled={grantBusy === cap}
               class="text-text-muted hover:text-error text-type-2xs font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-0.5 cursor-pointer disabled:opacity-50"
@@ -112,6 +113,7 @@
             </button>
           {:else}
             <button
+              type="button"
               onclick={() => grant(cap)}
               disabled={grantBusy === cap}
               class="text-accent-primary-start hover:brightness-110 text-type-2xs font-label-sm-bold bg-transparent border border-accent-primary-start/40 rounded px-2 py-0.5 cursor-pointer disabled:opacity-50"

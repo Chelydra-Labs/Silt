@@ -85,12 +85,17 @@
     return spellcheckDomains ?? (['software-terms'] as string[])
   }
 
-  async function refreshPacks() {
+  // Returns true when both lists loaded; false on failure (packError set).
+  // Callers that set a success packStatus before refreshing clear it on a
+  // failed refresh, so the UI never shows a success line alongside the error.
+  async function refreshPacks(): Promise<boolean> {
     try {
       languagePacks = await ListLanguagePacks()
       domainPacks = await ListDomainPacks()
+      return true
     } catch (e) {
       packError = friendlyPackError(e)
+      return false
     } finally {
       packsLoading = false
     }
@@ -170,7 +175,7 @@
     try {
       await EnsureLanguagePack(id)
       packStatus = `${pack.label} downloaded. Save settings to apply.`
-      await refreshPacks()
+      if (!(await refreshPacks())) packStatus = null
       return true
     } catch (err) {
       const msg = String(err)
@@ -248,7 +253,7 @@
     try {
       await EnsureDomainPack(id)
       packStatus = `${pack.label} downloaded. Save settings to apply.`
-      await refreshPacks()
+      if (!(await refreshPacks())) packStatus = null
       return true
     } catch (err) {
       const msg = String(err)

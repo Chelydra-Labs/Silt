@@ -53,6 +53,11 @@
         warnings: result.warnings ?? []
       }
     } catch (e) {
+      // Drop the path that failed validation so a later confirmInstall can't
+      // target an archive the backend rejected. The preview/Install button are
+      // already gone (preview is null), but the path shouldn't linger as dead
+      // state that a future code path could trip over.
+      pendingPath = ''
       previewError = e instanceof Error ? e.message : String(e)
     } finally {
       validating = false

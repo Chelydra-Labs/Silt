@@ -420,6 +420,7 @@
             <!-- Expand details -->
             <button
               onclick={() => (expanded = expanded === card.id ? null : card.id)}
+              aria-expanded={expanded === card.id}
               aria-label={`${card.name}: ${expanded === card.id ? 'Collapse' : 'Details'}`}
               title={expanded === card.id ? 'Collapse' : 'Details'}
               class="text-text-muted hover:text-text-primary border-none bg-transparent cursor-pointer p-1.5 rounded transition-colors"
