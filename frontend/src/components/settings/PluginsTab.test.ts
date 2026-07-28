@@ -772,6 +772,8 @@ describe('PluginsTab check for updates (#787)', () => {
 
     const checkBtn = screen.getByRole('button', { name: /Check for updates/i })
     await fireEvent.click(checkBtn)
+    expect(checkBtn).toBeDisabled()
+    expect(checkBtn).toHaveTextContent(/Checking/i)
     await fireEvent.click(checkBtn)
     await fireEvent.click(checkBtn)
 
@@ -779,6 +781,7 @@ describe('PluginsTab check for updates (#787)', () => {
     await flush()
     await waitFor(() => {
       expect(mocks.checkPluginUpdate).toHaveBeenCalledTimes(2)
+      expect(checkBtn).not.toBeDisabled()
     })
   })
 
@@ -797,7 +800,10 @@ describe('PluginsTab check for updates (#787)', () => {
     )
     await flush()
     await waitFor(() => {
-      expect(screen.getByText(/Checked 2 plugins — no updates/)).toBeTruthy()
+      // Badge chips also use role=status; scope to the check summary live region.
+      const status = screen.getByText(/Checked 2 plugins — no updates/)
+      expect(status).toHaveAttribute('role', 'status')
+      expect(status).toHaveAttribute('aria-live', 'polite')
     })
   })
 
@@ -818,12 +824,66 @@ describe('PluginsTab check for updates (#787)', () => {
     )
     await flush()
     await waitFor(() => {
-      expect(
-        screen.getByText(/Checked 2 plugins — 1 update available/)
-      ).toBeTruthy()
+      const status = screen.getByText(/Checked 2 plugins — 1 update available/)
+      expect(status).toHaveAttribute('role', 'status')
+      expect(status).toHaveAttribute('aria-live', 'polite')
     })
     const cardA = screen.getByText('Plugin A').closest('.rounded-lg')
     expect(cardA?.textContent).toMatch(/Update available/i)
+  })
+
+  it('clears stale Update available badges on a later check with no updates', async () => {
+    mocks.checkPluginUpdate
+      .mockResolvedValueOnce({ updateAvailable: true })
+      .mockResolvedValueOnce({ updateAvailable: false })
+      .mockResolvedValue({ updateAvailable: false })
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      const cardA = screen.getByText('Plugin A').closest('.rounded-lg')
+      expect(cardA?.textContent).toMatch(/Update available/i)
+    })
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      expect(screen.getByText(/Checked 2 plugins — no updates/)).toBeTruthy()
+    })
+    const cardA = screen.getByText('Plugin A').closest('.rounded-lg')
+    expect(cardA?.textContent).not.toMatch(/Update available/i)
+  })
+
+  it('summarizes when every update check fails', async () => {
+    mocks.checkPluginUpdate.mockRejectedValue(new Error('network down'))
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Couldn't check 2 plugins for updates/)
+      ).toBeTruthy()
+    })
   })
 })
 

@@ -455,10 +455,12 @@
     </div>
     {#if packBusy}
       <div class="flex flex-wrap items-center gap-2 min-w-0">
+        <!-- Omit value until the first progress event so the bar is
+             indeterminate rather than a misleading 0%. -->
         <progress
-          class="spellcheck-pack-progress h-2 w-32 max-w-full accent-[var(--color-accent-primary-end)]"
+          class="spellcheck-pack-progress h-2 w-40 max-w-full accent-[var(--color-accent-primary-end)]"
           max="100"
-          value={packProgress ?? 0}
+          value={packProgress != null ? packProgress : undefined}
           aria-label={packStatus ?? 'Downloading dictionary pack'}
         ></progress>
         {#if packProgress != null}

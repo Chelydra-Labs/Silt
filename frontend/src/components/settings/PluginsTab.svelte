@@ -164,6 +164,7 @@
           updateUrl: c.updateUrl!
         }))
       let found = 0
+      let failed = 0
       const availableIds = new Set<string>()
       for (const t of targets) {
         try {
@@ -174,16 +175,33 @@
           }
         } catch {
           // best-effort — network errors are non-fatal for update checks
+          failed++
         }
       }
-      cards = cards.map((c) =>
-        availableIds.has(c.id) ? { ...c, updateAvailable: true } : c
-      )
+      // Rewrite flags from this pass so a later "no updates" check clears
+      // stale badges (only touch disk plugins that were eligible this run).
+      const checkedIds = new Set(targets.map((t) => t.id))
+      cards = cards.map((c) => {
+        if (!checkedIds.has(c.id)) return c
+        return { ...c, updateAvailable: availableIds.has(c.id) }
+      })
       const n = targets.length
-      updateCheckSummary =
-        found === 0
-          ? `Checked ${n} plugins — no updates`
-          : `Checked ${n} plugins — ${found} update${found === 1 ? '' : 's'} available`
+      if (n === 0) {
+        updateCheckSummary = 'No plugins support update checks'
+      } else if (failed === n) {
+        updateCheckSummary = `Couldn't check ${n} plugin${n === 1 ? '' : 's'} for updates`
+      } else if (found === 0) {
+        updateCheckSummary =
+          failed > 0
+            ? `Checked ${n - failed} of ${n} plugins — no updates (${failed} failed)`
+            : `Checked ${n} plugins — no updates`
+      } else {
+        const failNote =
+          failed > 0
+            ? ` (${failed} check${failed === 1 ? '' : 's'} failed)`
+            : ''
+        updateCheckSummary = `Checked ${n} plugins — ${found} update${found === 1 ? '' : 's'} available${failNote}`
+      }
     } finally {
       checkingUpdates = false
     }

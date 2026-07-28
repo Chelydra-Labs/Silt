@@ -209,12 +209,14 @@ describe('SpellcheckPackManager', () => {
 
     expect(progressEl()).toBeTruthy()
     expect(progressEl().max).toBe(100)
-    expect(progressEl().value).toBe(0)
+    // Indeterminate until the first progress event (no value attribute).
+    expect(progressEl().hasAttribute('value')).toBe(false)
 
     expect(progressHandler).toBeTruthy()
     progressHandler!({ data: { received: 25, total: 100, file: 'index.dic' } })
     await tick()
 
+    expect(progressEl().hasAttribute('value')).toBe(true)
     expect(progressEl().value).toBe(25)
     // Visible percent/stage for sighted users (aria-hidden; not live).
     expect(card.textContent).toMatch(/25%/)

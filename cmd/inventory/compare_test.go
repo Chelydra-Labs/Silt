@@ -378,3 +378,25 @@ Events.On(directEvents, () => {})
 		}
 	}
 }
+
+func TestBindingPathRE_SiltAppAlias(t *testing.T) {
+	// Vitest/Vite tests mock via `$silt-app`; inventory must count those as
+	// bindings imports the same as relative `…/bindings/silt/app.js` paths.
+	cases := []struct {
+		src  string
+		want bool
+	}{
+		{`import { ListPlugins } from '$silt-app'`, true},
+		{`vi.mock('$silt-app', () => appMocks)`, true},
+		{`import { X } from '../../../bindings/silt/app.js'`, true},
+		{`import { X } from './something-else'`, false},
+		{`// '$silt-app' in a comment is stripped before match`, false},
+	}
+	for _, tc := range cases {
+		s := stripComments(tc.src)
+		got := bindingPathRE.MatchString(s)
+		if got != tc.want {
+			t.Errorf("src=%q MatchString=%v want %v", tc.src, got, tc.want)
+		}
+	}
+}
