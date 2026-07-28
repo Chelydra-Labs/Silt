@@ -6,7 +6,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
-	github.com/wailsapp/wails/v3 v3.0.0-alpha2.117
+	github.com/wailsapp/wails/v3 v3.0.0-alpha2.119
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/sys v0.47.0
 	golang.org/x/tools v0.48.0
