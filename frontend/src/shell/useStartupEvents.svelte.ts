@@ -124,6 +124,10 @@ export function createStartupEvents(
   let off: Array<() => void> = []
   // Captured window listeners for removeEventListener on dispose.
   let windowListeners: Array<[string, EventListener]> = []
+  // Set by dispose(); checked between awaits in the startup-replay drain so a
+  // stale handler can't fan queued events into dialogs/notifications after the
+  // controller has torn down (HMR / fast vault-switch at launch).
+  let disposed = false
 
   // --- config:changed: plugin-reload diff + tab rehydrate -----------------
   // prevDisabled is captured at attach() so the first event after mount
@@ -156,13 +160,20 @@ export function createStartupEvents(
   // contributions from plugins that lost a capability (#582). This is the
   // single orchestrator for plugins:changed.
   async function handlePluginsChanged(): Promise<void> {
-    await refreshGrants()
-    revokeRevokedContributions()
-    loadPlugins(
-      deps.getActiveNotebook(),
-      deps.getActiveSection(),
-      deps.getActivePage()
-    ).catch((e) => console.error('Plugin reload failed:', e))
+    // refreshGrants can reject; without this guard the rejection is unhandled
+    // and the downstream revoke + reload silently never run (the plugin-reload
+    // half of plugins:changed is lost with no log).
+    try {
+      await refreshGrants()
+      revokeRevokedContributions()
+      loadPlugins(
+        deps.getActiveNotebook(),
+        deps.getActiveSection(),
+        deps.getActivePage()
+      ).catch((e) => console.error('Plugin reload failed:', e))
+    } catch (e) {
+      console.error('Plugin change handling failed:', e)
+    }
   }
 
   // --- dialog / notification handlers (shared by live + replay paths) -----
@@ -280,39 +291,50 @@ export function createStartupEvents(
   function handleNavigateToBlock(e: Event): void {
     const d = (e as CustomEvent).detail
     if (!d) return
-    const ref = resolveSourceNavigationTarget(deps.getNavigationCatalog(), {
-      source: d.source,
-      notebook: d.notebook,
-      section: d.section ?? '',
-      page: d.page
-    })
-    // Standalone-task routing guard: a `.silt` notebook ref routes to the
-    // Tasks view instead of a raw page tab.
-    const target = routeJumpTarget({
-      notebook: ref.notebook,
-      section: ref.section,
-      page: ref.page,
-      blockTarget: d.blockId ? { blockId: d.blockId } : undefined
-    })
-    if (target.kind === 'tasks-view') {
-      deps.openTasksView(target.blockTarget?.blockId)
-      return
+    // resolveSourceNavigationTarget walks the (possibly-malformed/external)
+    // navigation catalog; a throw here would propagate into the window-event
+    // dispatch loop and silently drop the navigation. Catch + log instead.
+    try {
+      const ref = resolveSourceNavigationTarget(deps.getNavigationCatalog(), {
+        source: d.source,
+        notebook: d.notebook,
+        section: d.section ?? '',
+        page: d.page
+      })
+      // Standalone-task routing guard: a `.silt` notebook ref routes to the
+      // Tasks view instead of a raw page tab.
+      const target = routeJumpTarget({
+        notebook: ref.notebook,
+        section: ref.section,
+        page: ref.page,
+        blockTarget: d.blockId ? { blockId: d.blockId } : undefined
+      })
+      if (target.kind === 'tasks-view') {
+        deps.openTasksView(target.blockTarget?.blockId)
+        return
+      }
+      deps.handleSearchJump(ref, d.date, d.blockId)
+    } catch (err) {
+      console.error('navigate-to-block failed:', err)
     }
-    deps.handleSearchJump(ref, d.date, d.blockId)
   }
   function handleNavigateToPage(e: Event): void {
     const d = (e as CustomEvent).detail
     if (!d?.notebook || !d?.page) return
-    const ref = resolveSourceNavigationTarget(deps.getNavigationCatalog(), {
-      source: d.source,
-      notebook: d.notebook,
-      section: d.section ?? '',
-      page: d.page
-    })
-    deps.handleSearchJump(ref, d.date ?? '', d.blockId ?? '')
-    if (d.heading) {
-      deps.setSearchTargetHeading(d.heading)
-      deps.setSearchTargetKey(`heading:${d.heading}:${Date.now()}`)
+    try {
+      const ref = resolveSourceNavigationTarget(deps.getNavigationCatalog(), {
+        source: d.source,
+        notebook: d.notebook,
+        section: d.section ?? '',
+        page: d.page
+      })
+      deps.handleSearchJump(ref, d.date ?? '', d.blockId ?? '')
+      if (d.heading) {
+        deps.setSearchTargetHeading(d.heading)
+        deps.setSearchTargetKey(`heading:${d.heading}:${Date.now()}`)
+      }
+    } catch (err) {
+      console.error('navigate-to-page failed:', err)
     }
   }
   function handleNavigateToTag(e: Event): void {
@@ -535,7 +557,9 @@ export function createStartupEvents(
     void (async () => {
       try {
         await MarkFrontendReady()
+        if (disposed) return
         const missed = await GetStartupEvents()
+        if (disposed) return
         for (const ev of missed ?? []) {
           dispatchStartupEvent(ev.Name, ev.Payload)
         }
@@ -546,6 +570,8 @@ export function createStartupEvents(
   }
 
   function dispose(): void {
+    if (disposed) return
+    disposed = true
     for (const [name, handler] of windowListeners) {
       window.removeEventListener(name, handler)
     }

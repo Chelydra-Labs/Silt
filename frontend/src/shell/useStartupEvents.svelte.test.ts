@@ -191,6 +191,47 @@ describe('useStartupEvents (#768)', () => {
     expect(mocks.GetStartupEvents).toHaveBeenCalledOnce()
   })
 
+  it('does not replay queued events when dispose() races the replay drain', async () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    // Stall MarkFrontendReady so dispose() can interleave between the awaits
+    // in the replay IIFE (MarkFrontendReady → GetStartupEvents → fan-out).
+    let resolveReady!: () => void
+    mocks.MarkFrontendReady.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveReady = resolve
+      })
+    )
+    mocks.GetStartupEvents.mockResolvedValue([
+      { Name: EventName.EventSettingsFingerprintMismatch, Payload: undefined }
+    ])
+    const { deps, settingsDialogs } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    // Tear down while MarkFrontendReady is still pending, then let the drain
+    // proceed. The disposed guard must short-circuit BEFORE GetStartupEvents,
+    // so neither the fetch nor the handler fan-out runs.
+    controller.dispose()
+    resolveReady()
+    // Flush the microtask queue so the stalled IIFE resumes past the await.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(mocks.GetStartupEvents).not.toHaveBeenCalled()
+    expect(settingsDialogs.openSettingsMismatch).not.toHaveBeenCalled()
+  })
+
+  it('dispose() is idempotent (safe under double teardown)', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps, tabManager } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+    controller.dispose()
+    // A second dispose (e.g. afterEach after a manual dispose) must be a no-op.
+    controller.dispose()
+    expect(tabManager.invalidateRecentPages).toHaveBeenCalledOnce()
+  })
+
   it('a page-renamed window event forwards to tabManager + mirrors nav', () => {
     const bus = makeBus()
     wireEventsOn(bus)

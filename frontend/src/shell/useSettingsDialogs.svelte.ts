@@ -38,19 +38,19 @@ export interface SettingsDialogsController {
   get showGrantsMigration(): boolean
   get pendingLegacyGrants(): LegacyGrants
   get quarantinedLinks(): QuarantinedLink[]
-  // Open/close mutators. open* are driven by the startup-events controller
-  // (live + replay); close*/clear* back the dialog onClose props.
-  openSettingsMismatch(): void
-  closeSettingsMismatch(): void
-  openGrantsMigration(grants: LegacyGrants): void
-  setQuarantinedLinks(links: QuarantinedLink[]): void
-  clearQuarantinedLinks(): void
-  // IPC action handlers (bound to the dialog confirm/decline/unlink/relink).
-  confirmSettingsMismatch(): Promise<void>
-  declineGrantsMigration(): Promise<void>
-  confirmGrantsMigration(): Promise<void>
-  handleUnlinkNotebook(id: string): Promise<void>
-  handleRelinkNotebook(id: string): Promise<void>
+  // Declared as function properties (not method shorthand): these are closures
+  // that capture module state and never use `this`, so passing them unbound as
+  // dialog callback props (onConfirm/onClose/…) is type-safe.
+  openSettingsMismatch: () => void
+  closeSettingsMismatch: () => void
+  openGrantsMigration: (grants: LegacyGrants) => void
+  setQuarantinedLinks: (links: QuarantinedLink[]) => void
+  clearQuarantinedLinks: () => void
+  confirmSettingsMismatch: () => Promise<void>
+  declineGrantsMigration: () => Promise<void>
+  confirmGrantsMigration: () => Promise<void>
+  handleUnlinkNotebook: (id: string) => Promise<void>
+  handleRelinkNotebook: (id: string) => Promise<void>
 }
 
 /**
