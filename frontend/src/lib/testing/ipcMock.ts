@@ -36,9 +36,7 @@ export function createAppIpcMocks<T extends Record<string, unknown>>(
 
 declare global {
   // Injected by frontend/vitest.setup.ts for hoisted mock factories.
-  // eslint-disable-next-line no-var
   var createAppIpcMocks: typeof import('./ipcMock').createAppIpcMocks
-  // eslint-disable-next-line no-var
   var SILT_APP_BINDINGS: typeof import('./ipcMock').SILT_APP_BINDINGS
 }
 

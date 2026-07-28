@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
   import { fade } from 'svelte/transition'
   import {
     ListPlugins,
@@ -165,7 +166,7 @@
         }))
       let found = 0
       let failed = 0
-      const availableIds = new Set<string>()
+      const availableIds = new SvelteSet<string>()
       for (const t of targets) {
         try {
           const info = await CheckPluginUpdate(t.id, t.version, t.updateUrl)
@@ -180,7 +181,7 @@
       }
       // Rewrite flags from this pass so a later "no updates" check clears
       // stale badges (only touch disk plugins that were eligible this run).
-      const checkedIds = new Set(targets.map((t) => t.id))
+      const checkedIds = new SvelteSet(targets.map((t) => t.id))
       cards = cards.map((c) => {
         if (!checkedIds.has(c.id)) return c
         return { ...c, updateAvailable: availableIds.has(c.id) }
