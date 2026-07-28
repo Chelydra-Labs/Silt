@@ -43,6 +43,8 @@
    *  delegated to SecurityBadge. */
   let securityByPlugin = $state<Record<string, SecurityStats>>({})
   let actionError = $state('')
+  let checkingUpdates = $state(false)
+  let updateCheckSummary = $state('')
 
   async function refreshSecurityStats() {
     try {
@@ -148,23 +150,43 @@
   }
 
   async function checkForUpdates() {
+    if (checkingUpdates) return
+    checkingUpdates = true
+    updateCheckSummary = ''
     actionError = ''
-    for (const card of cards) {
-      if (!card.updateUrl || card.source !== 'disk') continue
-      try {
-        const info = await CheckPluginUpdate(
-          card.id,
-          card.version,
-          card.updateUrl
-        )
-        if (info?.updateAvailable) {
-          card.updateAvailable = true
+    try {
+      // Snapshot targets by id so a mid-loop refresh() cannot detach mutations.
+      const targets = cards
+        .filter((c) => c.updateUrl && c.source === 'disk')
+        .map((c) => ({
+          id: c.id,
+          version: c.version,
+          updateUrl: c.updateUrl!
+        }))
+      let found = 0
+      const availableIds = new Set<string>()
+      for (const t of targets) {
+        try {
+          const info = await CheckPluginUpdate(t.id, t.version, t.updateUrl)
+          if (info?.updateAvailable) {
+            availableIds.add(t.id)
+            found++
+          }
+        } catch {
+          // best-effort — network errors are non-fatal for update checks
         }
-      } catch {
-        // best-effort — network errors are non-fatal for update checks
       }
+      cards = cards.map((c) =>
+        availableIds.has(c.id) ? { ...c, updateAvailable: true } : c
+      )
+      const n = targets.length
+      updateCheckSummary =
+        found === 0
+          ? `Checked ${n} plugins — no updates`
+          : `Checked ${n} plugins — ${found} update${found === 1 ? '' : 's'} available`
+    } finally {
+      checkingUpdates = false
     }
-    cards = [...cards]
   }
 
   // #447: nudge when an enabled AI-capable plugin has no chat model configured.
@@ -306,12 +328,22 @@
         <button
           type="button"
           onclick={checkForUpdates}
-          class="ml-2 text-text-muted hover:text-accent-primary-start text-type-xs font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-1 cursor-pointer transition-colors"
+          disabled={checkingUpdates}
+          class="ml-2 text-text-muted hover:text-accent-primary-start text-type-xs font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-1 cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-default"
         >
-          Check for updates
+          {checkingUpdates ? 'Checking…' : 'Check for updates'}
         </button>
       {/snippet}
     </PluginInstallFlow>
+    {#if updateCheckSummary}
+      <p
+        class="mt-2 text-type-xs text-text-muted font-body-md"
+        role="status"
+        aria-live="polite"
+      >
+        {updateCheckSummary}
+      </p>
+    {/if}
   </section>
 
   {#if actionError}

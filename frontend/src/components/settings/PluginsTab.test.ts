@@ -656,6 +656,177 @@ describe('PluginsTab capability grant/revoke', () => {
   })
 })
 
+// #787: checkForUpdates must not mutate detached card objects if refresh()
+// replaces `cards` mid-loop, must ignore concurrent re-entry, and must show a
+// one-line summary for zero / K updates.
+describe('PluginsTab check for updates (#787)', () => {
+  const updatableA = {
+    id: 'plug-a',
+    name: 'Plugin A',
+    version: '1.0.0',
+    author: 'Test',
+    description: '',
+    icon: 'extension',
+    update_url: 'https://example.com/a/update.json'
+  }
+  const updatableB = {
+    id: 'plug-b',
+    name: 'Plugin B',
+    version: '2.0.0',
+    author: 'Test',
+    description: '',
+    icon: 'extension',
+    update_url: 'https://example.com/b/update.json'
+  }
+
+  beforeEach(() => {
+    mocks.listPlugins.mockReset()
+    mocks.loadPlugins.mockReset()
+    mocks.getGrantedCapabilities.mockReset()
+    mocks.getPluginSecurityStats.mockReset()
+    mocks.checkPluginUpdate.mockReset()
+    mocks.listPlugins.mockResolvedValue([updatableA, updatableB])
+    mocks.loadPlugins.mockResolvedValue(undefined)
+    mocks.getGrantedCapabilities.mockResolvedValue({})
+    mocks.getPluginSecurityStats.mockResolvedValue([])
+    mocks.configNoPlugins = {
+      plugins: { active: [], disabled: [], plugin_settings: {} }
+    } as never
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('applies update badges by id after a mid-check list refresh', async () => {
+    // Disk plugin with a grantable cap so we can trigger refresh() mid-check.
+    const withCap = {
+      ...updatableA,
+      capabilities: { network: true as const }
+    }
+    mocks.listPlugins.mockResolvedValue([withCap, updatableB])
+    mocks.requestCapability.mockReset()
+    mocks.requestCapability.mockResolvedValue(undefined)
+
+    let resolveA!: (v: { updateAvailable: boolean }) => void
+    mocks.checkPluginUpdate.mockImplementation((id: string) => {
+      if (id === 'plug-a') {
+        return new Promise((resolve) => {
+          resolveA = resolve
+        })
+      }
+      return Promise.resolve({ updateAvailable: false })
+    })
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+
+    // While CheckPluginUpdate(plug-a) is in flight, refresh replaces cards
+    // with new object identities (name change proves the swap).
+    mocks.listPlugins.mockResolvedValue([
+      { ...withCap, name: 'Plugin A Renamed' },
+      updatableB
+    ])
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Plugin A: Details$/ })
+    )
+    await flush()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Grant Network access' })
+    )
+    await flush()
+    expect(screen.getByText('Plugin A Renamed')).toBeTruthy()
+
+    resolveA({ updateAvailable: true })
+    await flush()
+    await waitFor(() => {
+      const card = screen.getByText('Plugin A Renamed').closest('.rounded-lg')
+      expect(card?.textContent).toMatch(/Update available/i)
+    })
+  })
+
+  it('ignores concurrent check clicks (CheckPluginUpdate once per eligible plugin)', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    mocks.checkPluginUpdate.mockImplementation(async () => {
+      await gate
+      return { updateAvailable: false }
+    })
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    const checkBtn = screen.getByRole('button', { name: /Check for updates/i })
+    await fireEvent.click(checkBtn)
+    await fireEvent.click(checkBtn)
+    await fireEvent.click(checkBtn)
+
+    release()
+    await flush()
+    await waitFor(() => {
+      expect(mocks.checkPluginUpdate).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  it('shows summary when no updates are available', async () => {
+    mocks.checkPluginUpdate.mockResolvedValue({ updateAvailable: false })
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      expect(screen.getByText(/Checked 2 plugins — no updates/)).toBeTruthy()
+    })
+  })
+
+  it('shows summary when K updates are available', async () => {
+    mocks.checkPluginUpdate.mockImplementation(async (id: string) => ({
+      updateAvailable: id === 'plug-a'
+    }))
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Checked 2 plugins — 1 update available/)
+      ).toBeTruthy()
+    })
+    const cardA = screen.getByText('Plugin A').closest('.rounded-lg')
+    expect(cardA?.textContent).toMatch(/Update available/i)
+  })
+})
+
 // Characterization tests for the install-from-archive flow: pick → validate →
 // preview → install → reload. These pin the behavior before the cluster is
 // extracted into PluginInstallFlow.svelte.
