@@ -156,7 +156,9 @@ func (dm *DatabaseManager) QueryBlocksByTag(tagPath string) ([]parser.TaskResult
 	}
 	defer rows.Close()
 
-	var results []parser.TaskResult
+	// Non-nil empty so Wails marshals JSON `[]` (not `null`) — TagsExplorer
+	// reads results.length without a null-guard (same contract as DistinctOwners).
+	results := make([]parser.TaskResult, 0)
 	for rows.Next() {
 		var r parser.TaskResult
 		var parentID sql.NullString

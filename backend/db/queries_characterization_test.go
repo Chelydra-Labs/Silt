@@ -119,8 +119,30 @@ func TestQueryBlocksByTag_PrefixSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryBlocksByTag empty: %v", err)
 	}
-	if len(empty) != 0 {
-		t.Errorf("empty tag path should return no rows, got %d", len(empty))
+	// Non-nil empty so Wails marshals JSON `[]` (not `null`) for TagsExplorer.
+	if empty == nil || len(empty) != 0 {
+		t.Errorf("empty tag path: want non-nil empty slice, got %#v", empty)
+	}
+
+	none, err := dm.QueryBlocksByTag("no-such-tag")
+	if err != nil {
+		t.Fatalf("QueryBlocksByTag no-such-tag: %v", err)
+	}
+	if none == nil || len(none) != 0 {
+		t.Errorf("zero-match path: want non-nil empty slice, got %#v", none)
+	}
+}
+
+func TestQueryTasksWithFilters_EmptyNonNil(t *testing.T) {
+	dm := newTestDB(t)
+	// No tasks indexed — zero-match filter must still return non-nil empty
+	// for the QueryTasks IPC JSON `[]` contract.
+	got, err := dm.QueryTasksWithFilters(parser.TaskQueryFilter{Owner: "nobody"})
+	if err != nil {
+		t.Fatalf("QueryTasksWithFilters: %v", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Errorf("want non-nil empty slice, got %#v", got)
 	}
 }
 

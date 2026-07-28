@@ -83,7 +83,9 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 	}
 	defer rows.Close()
 
-	var results []parser.TaskResult
+	// Non-nil empty so Wails marshals JSON `[]` (not `null`) on zero matches —
+	// same IPC contract as DistinctOwners.
+	results := make([]parser.TaskResult, 0)
 	var blockIDs []interface{}
 	for rows.Next() {
 		var r parser.TaskResult
@@ -190,6 +192,9 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 		}
 		tagIndex[blockID] = append(tagIndex[blockID], tag)
 	}
+	if err := tagRows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating task tags: %w", err)
+	}
 	if err := tagRows.Close(); err != nil {
 		return nil, err
 	}
@@ -218,6 +223,10 @@ func (dm *DatabaseManager) QueryTasksWithFilters(filter parser.TaskQueryFilter) 
 			return nil, err
 		}
 		depIndex[blockID] = append(depIndex[blockID], depID)
+	}
+	if err := depRows.Err(); err != nil {
+		depRows.Close()
+		return nil, fmt.Errorf("failed iterating task dependencies: %w", err)
 	}
 	if err := depRows.Close(); err != nil {
 		return nil, err
