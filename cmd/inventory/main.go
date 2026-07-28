@@ -292,9 +292,9 @@ func scanGoEvents(root string) []string {
 
 var (
 	// A string literal containing the respective v3 binding/runtime import
-	// path. Covers both the extensionless and .js import forms used in the
-	// frontend.
-	bindingPathRE = regexp.MustCompile(`['"\x60][^'"\x60]*bindings/silt/app[^'"\x60]*['"\x60]`)
+	// path. Covers extensionless and .js forms, plus the test alias `$silt-app`
+	// (vitest/vite resolve → bindings/silt/app.js).
+	bindingPathRE = regexp.MustCompile(`['"\x60](?:[^'"\x60]*bindings/silt/app[^'"\x60]*|\$silt-app)['"\x60]`)
 	runtimePathRE = regexp.MustCompile(`['"\x60][^'"\x60]*@wailsio/runtime[^'"\x60]*['"\x60]`)
 	// eventsOnRE captures the event-name string literal handed to Events.On
 	// (the v3 runtime API; v2 used EventsOn). \s* spans the newlines seen in

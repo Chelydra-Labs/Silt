@@ -206,7 +206,10 @@ describe('EditorTab spellcheck packs', () => {
       expect(appMocks.EnsureLanguagePack).toHaveBeenCalled()
     })
     await waitFor(() => {
-      expect(screen.getByText(/Download cancelled/i)).toBeTruthy()
+      // Live region + visible status both carry the cancel message (#788).
+      expect(screen.getAllByText(/Download cancelled/i).length).toBeGreaterThan(
+        0
+      )
     })
     expect(screen.queryByRole('button', { name: /Retry download/i })).toBeNull()
     expect(languageSelect().value).toBe('en-US')
