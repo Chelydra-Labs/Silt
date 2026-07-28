@@ -285,6 +285,12 @@ func (r *resolver) literalFromAlloc(alloc *ssa.Alloc, use ssa.Instruction) (stri
 				}
 				continue
 			}
+			// Same-block store is already the closest possible reaching def;
+			// no cross-block dominator can supersede it. Guard so correctness
+			// does not depend on SSA visiting dominators before the use block.
+			if best != nil && best.Block() == useBlock {
+				continue
+			}
 			if !b.Dominates(useBlock) {
 				continue
 			}
