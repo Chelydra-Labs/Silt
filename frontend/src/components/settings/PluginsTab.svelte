@@ -167,6 +167,7 @@
       let found = 0
       let failed = 0
       const availableIds = new SvelteSet<string>()
+      const failedIds = new SvelteSet<string>()
       for (const t of targets) {
         try {
           const info = await CheckPluginUpdate(t.id, t.version, t.updateUrl)
@@ -176,14 +177,16 @@
           }
         } catch {
           // best-effort — network errors are non-fatal for update checks
+          failedIds.add(t.id)
           failed++
         }
       }
-      // Rewrite flags from this pass so a later "no updates" check clears
-      // stale badges (only touch disk plugins that were eligible this run).
+      // Rewrite flags from successful checks so a later "no updates" pass
+      // clears stale badges. Failed checks keep the prior badge — a flaky
+      // network must not erase a previously confirmed update.
       const checkedIds = new SvelteSet(targets.map((t) => t.id))
       cards = cards.map((c) => {
-        if (!checkedIds.has(c.id)) return c
+        if (!checkedIds.has(c.id) || failedIds.has(c.id)) return c
         return { ...c, updateAvailable: availableIds.has(c.id) }
       })
       const n = targets.length

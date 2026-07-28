@@ -444,6 +444,156 @@ describe('SpellcheckPackManager', () => {
     await tick()
   })
 
+  it('stale Ensure after cancel does not clobber a later download', async () => {
+    // Cancel a language Ensure, start a domain Ensure while the first is still
+    // pending, then resolve the first — gen guard must keep the domain busy UI.
+    let releaseLang: () => void = () => {}
+    let releaseDomain: () => void = () => {}
+    appMocks.EnsureLanguagePack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseLang = resolve
+        })
+    )
+    appMocks.EnsureDomainPack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDomain = resolve
+        })
+    )
+    appMocks.CancelSpellcheckDownload.mockResolvedValue(undefined)
+    appMocks.ListDomainPacks.mockResolvedValue([
+      {
+        id: 'software-terms',
+        label: 'Software terms',
+        license: 'MIT',
+        approx_bytes: 8000,
+        bundled: true,
+        installed: true,
+        default_on: true,
+        version: ''
+      },
+      {
+        id: 'medical',
+        label: 'Medical terms',
+        license: 'MIT',
+        approx_bytes: 12000,
+        bundled: false,
+        downloadable: true,
+        installed: false,
+        default_on: false,
+        version: ''
+      }
+    ])
+
+    renderIt()
+    await waitFor(() => {
+      expect(languageSelect().options.length).toBeGreaterThan(1)
+    })
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Medical terms/i)).toBeTruthy()
+    })
+
+    await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
+    await waitFor(() => {
+      expect(appMocks.EnsureLanguagePack).toHaveBeenCalledWith('en-GB')
+    })
+    await fireEvent.click(
+      await waitFor(() => screen.getByRole('button', { name: 'Cancel' }))
+    )
+    await tick()
+
+    const medical = screen.getByRole('checkbox', {
+      name: /Medical terms/i
+    }) as HTMLInputElement
+    await fireEvent.click(medical)
+    await waitFor(() => {
+      expect(appMocks.EnsureDomainPack).toHaveBeenCalledWith('medical')
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    })
+    expect(
+      screen.getAllByText(/Downloading Medical terms/i).length
+    ).toBeGreaterThan(0)
+
+    // Stale language Ensure succeeds — must not clear domain busy or status.
+    releaseLang()
+    await tick()
+    await tick()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    expect(screen.queryByText(/English \(UK\) downloaded/i)).toBeNull()
+    expect(
+      screen.getAllByText(/Downloading Medical terms/i).length
+    ).toBeGreaterThan(0)
+
+    appMocks.ListDomainPacks.mockResolvedValue([
+      {
+        id: 'software-terms',
+        label: 'Software terms',
+        license: 'MIT',
+        approx_bytes: 8000,
+        bundled: true,
+        installed: true,
+        default_on: true,
+        version: ''
+      },
+      {
+        id: 'medical',
+        label: 'Medical terms',
+        license: 'MIT',
+        approx_bytes: 12000,
+        bundled: false,
+        downloadable: true,
+        installed: true,
+        default_on: false,
+        version: ''
+      }
+    ])
+    releaseDomain()
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    })
+    expect(
+      screen.getAllByText(/Medical terms downloaded/i).length
+    ).toBeGreaterThan(0)
+  })
+
+  it('shows a visible (aria-hidden) downloading status while busy', async () => {
+    let releaseEnsure: () => void = () => {}
+    appMocks.EnsureLanguagePack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseEnsure = resolve
+        })
+    )
+
+    renderIt()
+    await waitFor(() => {
+      expect(languageSelect().options.length).toBeGreaterThan(1)
+    })
+    await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
+    await waitFor(() => {
+      expect(appMocks.EnsureLanguagePack).toHaveBeenCalledWith('en-GB')
+    })
+    await tick()
+
+    const live = document.querySelector(
+      '#editor-spellcheck-packs [aria-live="polite"]'
+    ) as HTMLElement
+    expect(live?.textContent).toMatch(/Downloading English \(UK\)/i)
+
+    // Sighted copy lives outside the live region (aria-hidden), not only sr-only.
+    const visible = Array.from(
+      document.querySelectorAll('#editor-spellcheck-packs [aria-hidden="true"]')
+    ).find((el) => /Downloading English \(UK\)/i.test(el.textContent ?? ''))
+    expect(visible).toBeTruthy()
+    expect(live.contains(visible!)).toBe(false)
+
+    releaseEnsure()
+    await tick()
+  })
+
   it('swallows a rejecting CancelSpellcheckDownload without surfacing an error', async () => {
     // Guards the .catch(() => {}) fix: a backend cancel that rejects must not
     // produce an error banner (the UI still resets to "Download cancelled").

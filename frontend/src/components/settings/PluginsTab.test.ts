@@ -885,6 +885,41 @@ describe('PluginsTab check for updates (#787)', () => {
       ).toBeTruthy()
     })
   })
+
+  it('preserves Update available badges when a later check fails', async () => {
+    mocks.checkPluginUpdate
+      .mockResolvedValueOnce({ updateAvailable: true })
+      .mockResolvedValueOnce({ updateAvailable: false })
+      .mockRejectedValue(new Error('network down'))
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      const cardA = screen.getByText('Plugin A').closest('.rounded-lg')
+      expect(cardA?.textContent).toMatch(/Update available/i)
+    })
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Couldn't check 2 plugins for updates/)
+      ).toBeTruthy()
+    })
+    const cardA = screen.getByText('Plugin A').closest('.rounded-lg')
+    expect(cardA?.textContent).toMatch(/Update available/i)
+  })
 })
 
 // Characterization tests for the install-from-archive flow: pick → validate →

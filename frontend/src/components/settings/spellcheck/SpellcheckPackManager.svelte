@@ -75,6 +75,9 @@
   let failedLangId = $state<string | null>(null)
   let failedDomainId = $state<string | null>(null)
   let progressUnsub: (() => void) | null = null
+  // Bumped on cancel (and each new download start) so a stale Ensure* finally
+  // cannot clear packBusy / tear down a newer download's progress subscription.
+  let downloadGen = 0
 
   function setDomainList(ids: string[]) {
     spellcheckDomains = ids
@@ -165,6 +168,7 @@
     const pack = languagePacks.find((p) => p.id === id)
     if (!pack) return false
     if (pack.bundled || pack.installed) return true
+    const gen = ++downloadGen
     packBusy = id
     packProgress = null
     packStage = null
@@ -174,10 +178,12 @@
     subscribeProgress()
     try {
       await EnsureLanguagePack(id)
+      if (gen !== downloadGen) return false
       packStatus = `${pack.label} downloaded. Save settings to apply.`
       if (!(await refreshPacks())) packStatus = null
       return true
     } catch (err) {
+      if (gen !== downloadGen) return false
       const msg = String(err)
       if (msg.toLowerCase().includes('cancel')) {
         packStatus = 'Download cancelled.'
@@ -190,10 +196,12 @@
       }
       return false
     } finally {
-      packBusy = null
-      packProgress = null
-      packStage = null
-      unsubscribeProgress()
+      if (gen === downloadGen) {
+        packBusy = null
+        packProgress = null
+        packStage = null
+        unsubscribeProgress()
+      }
     }
   }
 
@@ -243,6 +251,7 @@
     const pack = domainPacks.find((p) => p.id === id)
     if (!pack) return false
     if (pack.bundled || pack.installed) return true
+    const gen = ++downloadGen
     packBusy = id
     packProgress = null
     packStage = null
@@ -252,10 +261,12 @@
     subscribeProgress()
     try {
       await EnsureDomainPack(id)
+      if (gen !== downloadGen) return false
       packStatus = `${pack.label} downloaded. Save settings to apply.`
       if (!(await refreshPacks())) packStatus = null
       return true
     } catch (err) {
+      if (gen !== downloadGen) return false
       const msg = String(err)
       if (msg.toLowerCase().includes('cancel')) {
         packStatus = 'Download cancelled.'
@@ -268,10 +279,12 @@
       }
       return false
     } finally {
-      packBusy = null
-      packProgress = null
-      packStage = null
-      unsubscribeProgress()
+      if (gen === downloadGen) {
+        packBusy = null
+        packProgress = null
+        packStage = null
+        unsubscribeProgress()
+      }
     }
   }
 
@@ -307,6 +320,9 @@
   }
 
   function cancelDownload() {
+    // Invalidate in-flight Ensure* so its finally cannot clobber a later
+    // download's busy/progress subscription or overwrite this cancel status.
+    downloadGen++
     // Best-effort: tell the backend to cancel. The UI updates immediately
     // regardless; a rejection here (e.g. download already finished server-side)
     // is non-fatal — the next refresh reconciles state. Handled via .catch
@@ -463,6 +479,16 @@
           value={packProgress != null ? packProgress : undefined}
           aria-label={packStatus ?? 'Downloading dictionary pack'}
         ></progress>
+        <!-- Sighted status (pack name / stage line). Live region above stays
+             sr-only so percent ticks never re-announce; this is aria-hidden. -->
+        {#if packStatus}
+          <span
+            class="text-text-muted text-type-sm font-body-md"
+            aria-hidden="true"
+          >
+            {packStatus}
+          </span>
+        {/if}
         {#if packProgress != null}
           <span
             class="text-text-muted text-type-sm font-body-md tabular-nums"
