@@ -36,12 +36,14 @@ vi.mock('./grants.svelte', () => ({
   resetGrantsForTests: vi.fn(),
   setGrantsForTests: vi.fn()
 }))
-vi.mock('../../bindings/silt/app.js', () => ({
-  ListPlugins: vi.fn(() => Promise.resolve([])),
-  ReadPluginSource: vi.fn(),
-  RegisterPluginSession: vi.fn(() => Promise.resolve('t')),
-  UnregisterPluginSession: vi.fn(() => Promise.resolve(undefined))
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ListPlugins: vi.fn(() => Promise.resolve([])),
+    ReadPluginSource: vi.fn(),
+    RegisterPluginSession: vi.fn(() => Promise.resolve('t')),
+    UnregisterPluginSession: vi.fn(() => Promise.resolve(undefined))
+  })
+)
 vi.mock('@wailsio/runtime', () => ({
   Events: { On: mockEventsOn },
   Call: { ByID: vi.fn(), ByName: vi.fn() },

@@ -9,10 +9,12 @@ const mocks = vi.hoisted(() => ({
   openDevTools: vi.fn().mockResolvedValue(undefined)
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  ResolvePageLink: mocks.resolvePageLink,
-  OpenDevTools: mocks.openDevTools
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ResolvePageLink: mocks.resolvePageLink,
+    OpenDevTools: mocks.openDevTools
+  })
+)
 
 const settingsMock = vi.hoisted(() => ({
   config: null as null | { ui?: { open_devtools_on_startup?: boolean } }

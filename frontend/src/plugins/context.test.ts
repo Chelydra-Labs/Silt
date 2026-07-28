@@ -21,14 +21,16 @@ const mocks = vi.hoisted(() => ({
   }))
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  PluginRawQuery: mocks.pluginRawQuery,
-  PluginMutateBlock: mocks.pluginMutateBlock,
-  PluginUpdateBlockState: mocks.pluginUpdateBlockState,
-  PluginUpdateTaskMeta: mocks.pluginUpdateTaskMeta,
-  PluginSetTaskOrder: mocks.pluginSetTaskOrder,
-  GetPluginSettingsForNotebook: mocks.getPluginSettingsForNotebook
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    PluginRawQuery: mocks.pluginRawQuery,
+    PluginMutateBlock: mocks.pluginMutateBlock,
+    PluginUpdateBlockState: mocks.pluginUpdateBlockState,
+    PluginUpdateTaskMeta: mocks.pluginUpdateTaskMeta,
+    PluginSetTaskOrder: mocks.pluginSetTaskOrder,
+    GetPluginSettingsForNotebook: mocks.getPluginSettingsForNotebook
+  })
+)
 
 vi.mock('./location.svelte', () => ({
   getActiveLocation: mocks.getActiveLocation

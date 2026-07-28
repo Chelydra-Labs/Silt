@@ -7,6 +7,13 @@
     "resolveJsonModule": true,
     "types": ["node"],
     "verbatimModuleSyntax": true,
+    // Match Vite/Vitest `$silt-app` alias so svelte-check resolves test imports (#766).
+    // baseUrl is required for paths today; ignoreDeprecations silences the TS 7.0 notice.
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "paths": {
+      "$silt-app": ["./bindings/silt/app.js"]
+    },
     /**
      * Typecheck JS in `.svelte` and `.js` files by default.
      * Disable checkJs if you'd like to use dynamic types in JS.

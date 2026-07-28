@@ -20,11 +20,13 @@ const mocks = vi.hoisted(() => ({
   activeSection: 'Journal'
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  ResolvePageLink: mocks.resolvePageLink,
-  CreatePage: mocks.createPage,
-  ListNavigation: mocks.listNavigation
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ResolvePageLink: mocks.resolvePageLink,
+    CreatePage: mocks.createPage,
+    ListNavigation: mocks.listNavigation
+  })
+)
 
 vi.mock('../plugins/location.svelte', () => ({
   getActiveLocation: () => ({

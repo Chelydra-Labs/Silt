@@ -9,10 +9,12 @@ import CrashingSettings from './__fixtures__/CrashingSettings.svelte'
 import PluginSettingsPanel from './PluginSettingsPanel.svelte'
 import type { RegisteredPlugin } from '../../plugins/sdk'
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  GetPluginSettingsForNotebook: vi.fn().mockResolvedValue({}),
-  UpdatePluginSetting: vi.fn().mockResolvedValue(undefined)
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    GetPluginSettingsForNotebook: vi.fn().mockResolvedValue({}),
+    UpdatePluginSetting: vi.fn().mockResolvedValue(undefined)
+  })
+)
 
 vi.mock('../../plugins/surfaces', () => ({
   getSurfaces: vi.fn(() => []),

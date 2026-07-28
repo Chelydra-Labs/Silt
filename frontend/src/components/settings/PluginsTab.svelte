@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
   import { fade } from 'svelte/transition'
   import {
     ListPlugins,
@@ -43,6 +44,8 @@
    *  delegated to SecurityBadge. */
   let securityByPlugin = $state<Record<string, SecurityStats>>({})
   let actionError = $state('')
+  let checkingUpdates = $state(false)
+  let updateCheckSummary = $state('')
 
   async function refreshSecurityStats() {
     try {
@@ -148,23 +151,64 @@
   }
 
   async function checkForUpdates() {
+    if (checkingUpdates) return
+    checkingUpdates = true
+    updateCheckSummary = ''
     actionError = ''
-    for (const card of cards) {
-      if (!card.updateUrl || card.source !== 'disk') continue
-      try {
-        const info = await CheckPluginUpdate(
-          card.id,
-          card.version,
-          card.updateUrl
-        )
-        if (info?.updateAvailable) {
-          card.updateAvailable = true
+    try {
+      // Snapshot targets by id so a mid-loop refresh() cannot detach mutations.
+      const targets = cards
+        .filter((c) => c.updateUrl && c.source === 'disk')
+        .map((c) => ({
+          id: c.id,
+          version: c.version,
+          updateUrl: c.updateUrl!
+        }))
+      let found = 0
+      let failed = 0
+      const availableIds = new SvelteSet<string>()
+      const failedIds = new SvelteSet<string>()
+      for (const t of targets) {
+        try {
+          const info = await CheckPluginUpdate(t.id, t.version, t.updateUrl)
+          if (info?.updateAvailable) {
+            availableIds.add(t.id)
+            found++
+          }
+        } catch {
+          // best-effort — network errors are non-fatal for update checks
+          failedIds.add(t.id)
+          failed++
         }
-      } catch {
-        // best-effort — network errors are non-fatal for update checks
       }
+      // Rewrite flags from successful checks so a later "no updates" pass
+      // clears stale badges. Failed checks keep the prior badge — a flaky
+      // network must not erase a previously confirmed update.
+      const checkedIds = new SvelteSet(targets.map((t) => t.id))
+      cards = cards.map((c) => {
+        if (!checkedIds.has(c.id) || failedIds.has(c.id)) return c
+        return { ...c, updateAvailable: availableIds.has(c.id) }
+      })
+      const n = targets.length
+      if (n === 0) {
+        updateCheckSummary = 'No plugins support update checks'
+      } else if (failed === n) {
+        updateCheckSummary = `Couldn't check ${n} plugin${n === 1 ? '' : 's'} for updates`
+      } else if (found === 0) {
+        updateCheckSummary =
+          failed > 0
+            ? `Checked ${n - failed} of ${n} plugins — no updates (${failed} failed)`
+            : `Checked ${n} plugins — no updates`
+      } else {
+        const failNote =
+          failed > 0
+            ? ` (${failed} check${failed === 1 ? '' : 's'} failed)`
+            : ''
+        updateCheckSummary = `Checked ${n} plugins — ${found} update${found === 1 ? '' : 's'} available${failNote}`
+      }
+    } finally {
+      checkingUpdates = false
     }
-    cards = [...cards]
   }
 
   // #447: nudge when an enabled AI-capable plugin has no chat model configured.
@@ -306,12 +350,22 @@
         <button
           type="button"
           onclick={checkForUpdates}
-          class="ml-2 text-text-muted hover:text-accent-primary-start text-type-xs font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-1 cursor-pointer transition-colors"
+          disabled={checkingUpdates}
+          class="ml-2 text-text-muted hover:text-accent-primary-start text-type-xs font-label-sm-bold bg-transparent border border-surface-panel-border rounded px-2 py-1 cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-default"
         >
-          Check for updates
+          {checkingUpdates ? 'Checking…' : 'Check for updates'}
         </button>
       {/snippet}
     </PluginInstallFlow>
+    {#if updateCheckSummary}
+      <p
+        class="mt-2 text-type-xs text-text-muted font-body-md"
+        role="status"
+        aria-live="polite"
+      >
+        {updateCheckSummary}
+      </p>
+    {/if}
   </section>
 
   {#if actionError}

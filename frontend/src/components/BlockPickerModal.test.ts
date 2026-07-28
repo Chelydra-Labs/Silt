@@ -11,9 +11,11 @@ const mocks = vi.hoisted(() => ({
   SearchBlocks: vi.fn()
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  SearchBlocks: mocks.SearchBlocks
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    SearchBlocks: mocks.SearchBlocks
+  })
+)
 
 import BlockPickerModal from './BlockPickerModal.svelte'
 

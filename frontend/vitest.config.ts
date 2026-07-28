@@ -1,6 +1,10 @@
-import {defineConfig} from 'vitest/config'
-import {svelte} from '@sveltejs/vite-plugin-svelte'
-import {svelteTesting} from '@testing-library/svelte/vite'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { defineConfig } from 'vitest/config'
+import { svelte } from '@sveltejs/vite-plugin-svelte'
+import { svelteTesting } from '@testing-library/svelte/vite'
+
+const root = path.dirname(fileURLToPath(import.meta.url))
 
 // Vitest config for the theme engine coverage (#74) and the picker
 // component tests (#50). The Svelte plugin compiles .svelte components
@@ -11,7 +15,11 @@ import {svelteTesting} from '@testing-library/svelte/vite'
 export default defineConfig({
   plugins: [svelte(), svelteTesting()],
   resolve: {
-    preserveSymlinks: true
+    preserveSymlinks: true,
+    alias: {
+      // Stable path for Wails app bindings so tests mock once regardless of depth (#766).
+      '$silt-app': path.resolve(root, 'bindings/silt/app.js')
+    }
   },
   test: {
     environment: 'jsdom',

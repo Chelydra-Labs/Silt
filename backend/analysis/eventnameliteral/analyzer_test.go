@@ -9,5 +9,5 @@ import (
 )
 
 func TestAnalyzer(t *testing.T) {
-	analysistest.Run(t, analysistest.TestData(), eventnameliteral.Analyzer, "bad", "good")
+	analysistest.Run(t, analysistest.TestData(), eventnameliteral.Analyzer, "bad", "good", "crosspkg")
 }

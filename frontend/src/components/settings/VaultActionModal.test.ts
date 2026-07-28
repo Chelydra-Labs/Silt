@@ -13,14 +13,16 @@ import {
 } from '@testing-library/svelte'
 import VaultActionModal from './VaultActionModal.svelte'
 
-const mocks = vi.hoisted(() => ({
-  PickVaultDestination: vi.fn(),
-  MoveVault: vi.fn(),
-  CopyVault: vi.fn(),
-  SwitchVault: vi.fn()
-}))
+const mocks = vi.hoisted(() =>
+  createAppIpcMocks({
+    PickVaultDestination: vi.fn(),
+    MoveVault: vi.fn(),
+    CopyVault: vi.fn(),
+    SwitchVault: vi.fn()
+  })
+)
 
-vi.mock('../../../bindings/silt/app.js', () => mocks)
+vi.mock('$silt-app', () => mocks)
 vi.mock('@wailsio/runtime', () => ({
   Events: {
     On: vi.fn(() => () => {})

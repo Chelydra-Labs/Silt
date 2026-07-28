@@ -122,27 +122,29 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  GetAIProviderConfig: mocks.GetAIProviderConfig,
-  UpdateAIProviderConfig: mocks.UpdateAIProviderConfig,
-  UpdateAIFeatures: mocks.UpdateAIFeatures,
-  SetAIAPIKey: mocks.SetAIAPIKey,
-  CopyAIAPIKey: mocks.CopyAIAPIKey,
-  ClearAIAPIKey: mocks.ClearAIAPIKey,
-  SetUseKeyring: mocks.SetUseKeyring,
-  TestAIConnection: mocks.TestAIConnection,
-  ListModels: mocks.ListModels,
-  GetAIAudit: mocks.GetAIAudit,
-  ClearAIAudit: mocks.ClearAIAudit,
-  UpdatePluginSetting: mocks.UpdatePluginSetting,
-  GetCloseToTray: mocks.GetCloseToTray,
-  SetCloseToTray: mocks.SetCloseToTray,
-  GetLocalMCPConfig: mocks.GetLocalMCPConfig,
-  GetLocalMCPStatus: mocks.GetLocalMCPStatus,
-  GetLocalMCPInstallHint: mocks.GetLocalMCPInstallHint,
-  GetLocalMCPToken: mocks.GetLocalMCPToken,
-  SetLocalMCPConfig: mocks.SetLocalMCPConfig
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    GetAIProviderConfig: mocks.GetAIProviderConfig,
+    UpdateAIProviderConfig: mocks.UpdateAIProviderConfig,
+    UpdateAIFeatures: mocks.UpdateAIFeatures,
+    SetAIAPIKey: mocks.SetAIAPIKey,
+    CopyAIAPIKey: mocks.CopyAIAPIKey,
+    ClearAIAPIKey: mocks.ClearAIAPIKey,
+    SetUseKeyring: mocks.SetUseKeyring,
+    TestAIConnection: mocks.TestAIConnection,
+    ListModels: mocks.ListModels,
+    GetAIAudit: mocks.GetAIAudit,
+    ClearAIAudit: mocks.ClearAIAudit,
+    UpdatePluginSetting: mocks.UpdatePluginSetting,
+    GetCloseToTray: mocks.GetCloseToTray,
+    SetCloseToTray: mocks.SetCloseToTray,
+    GetLocalMCPConfig: mocks.GetLocalMCPConfig,
+    GetLocalMCPStatus: mocks.GetLocalMCPStatus,
+    GetLocalMCPInstallHint: mocks.GetLocalMCPInstallHint,
+    GetLocalMCPToken: mocks.GetLocalMCPToken,
+    SetLocalMCPConfig: mocks.SetLocalMCPConfig
+  })
+)
 
 vi.mock('../../settings/store.svelte', async (importOriginal) => {
   const actual =

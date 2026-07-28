@@ -25,10 +25,12 @@ const mocks = vi.hoisted(() => ({
   onToggleViewMode: vi.fn()
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  FetchPageBlocks: vi.fn(() => Promise.resolve([])),
-  RenamePage: vi.fn(() => Promise.resolve(undefined))
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    FetchPageBlocks: vi.fn(() => Promise.resolve([])),
+    RenamePage: vi.fn(() => Promise.resolve(undefined))
+  })
+)
 vi.mock('@wailsio/runtime', () => ({
   // VSC stores the returned unsubscribe and calls it on destroy; return a noop.
   Events: {
@@ -527,7 +529,7 @@ describe('VirtualScrollContainer heading/block scroll (#545)', () => {
   })
 
   it('scrolls to a matching HEADER on targetHeading + targetKey', async () => {
-    const { FetchPageBlocks } = await import('../../bindings/silt/app.js')
+    const { FetchPageBlocks } = await import('$silt-app')
     vi.mocked(FetchPageBlocks).mockResolvedValue([headerBlock] as never)
 
     render(VirtualScrollContainer, {
@@ -544,7 +546,7 @@ describe('VirtualScrollContainer heading/block scroll (#545)', () => {
   })
 
   it('gives up after MAX_SCROLL_ATTEMPTS when no header matches', async () => {
-    const { FetchPageBlocks } = await import('../../bindings/silt/app.js')
+    const { FetchPageBlocks } = await import('$silt-app')
     vi.mocked(FetchPageBlocks).mockResolvedValue([
       { ...headerBlock, id: 'other', clean_text: 'Other' }
     ] as never)
@@ -562,7 +564,7 @@ describe('VirtualScrollContainer heading/block scroll (#545)', () => {
   })
 
   it('scrolls to a block by targetBlockId when the block exists', async () => {
-    const { FetchPageBlocks } = await import('../../bindings/silt/app.js')
+    const { FetchPageBlocks } = await import('$silt-app')
     vi.mocked(FetchPageBlocks).mockResolvedValue([headerBlock] as never)
 
     render(VirtualScrollContainer, {

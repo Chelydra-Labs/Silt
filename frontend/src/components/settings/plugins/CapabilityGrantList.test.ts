@@ -23,10 +23,12 @@ const mocks = vi.hoisted(() => ({
   onError: vi.fn()
 }))
 
-vi.mock('../../../../bindings/silt/app.js', () => ({
-  RequestCapability: mocks.requestCapability,
-  RevokeCapability: mocks.revokeCapability
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    RequestCapability: mocks.requestCapability,
+    RevokeCapability: mocks.revokeCapability
+  })
+)
 
 type GrantProps = ComponentProps<typeof CapabilityGrantList>
 

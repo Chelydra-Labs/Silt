@@ -42,9 +42,11 @@ vi.mock('@wailsio/runtime', () => ({
   }
 }))
 
-vi.mock('../../../../bindings/silt/app.js', () => ({
-  OpenDevTools: mocks.openDevTools
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    OpenDevTools: mocks.openDevTools
+  })
+)
 
 vi.mock('../../../settings/store.svelte', () => ({
   settings: settingsMock

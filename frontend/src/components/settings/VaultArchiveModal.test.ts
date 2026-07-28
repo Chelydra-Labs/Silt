@@ -15,13 +15,15 @@ import {
 } from '@testing-library/svelte'
 import VaultArchiveModal from './VaultArchiveModal.svelte'
 
-const mocks = vi.hoisted(() => ({
-  PickVaultExportPath: vi.fn(),
-  ExportVault: vi.fn(),
-  PickVaultArchive: vi.fn(),
-  PickVaultDestination: vi.fn(),
-  ImportVault: vi.fn()
-}))
+const mocks = vi.hoisted(() =>
+  createAppIpcMocks({
+    PickVaultExportPath: vi.fn(),
+    ExportVault: vi.fn(),
+    PickVaultArchive: vi.fn(),
+    PickVaultDestination: vi.fn(),
+    ImportVault: vi.fn()
+  })
+)
 
 // Capture the progress handler so a test can emit synthetic events.
 const runtimeMocks = vi.hoisted(() => {
@@ -40,7 +42,7 @@ const runtimeMocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../../bindings/silt/app.js', () => mocks)
+vi.mock('$silt-app', () => mocks)
 vi.mock('@wailsio/runtime', () => ({
   Events: {
     On: runtimeMocks.EventsOn

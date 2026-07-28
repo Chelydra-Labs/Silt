@@ -30,9 +30,11 @@ const mocks = vi.hoisted(() => ({
   setAutoCheckImpl: null as ((_on: boolean) => void) | null
 }))
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  GetAppVersion: mocks.GetAppVersion
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    GetAppVersion: mocks.GetAppVersion
+  })
+)
 vi.mock('@wailsio/runtime', () => ({
   Browser: {
     OpenURL: mocks.BrowserOpenURL

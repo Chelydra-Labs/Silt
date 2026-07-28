@@ -17,15 +17,17 @@ import { tick } from 'svelte'
 import type { ComponentProps } from 'svelte'
 import { Events } from '@wailsio/runtime'
 
-const appMocks = vi.hoisted(() => ({
-  ListLanguagePacks: vi.fn(),
-  ListDomainPacks: vi.fn(),
-  EnsureLanguagePack: vi.fn(),
-  EnsureDomainPack: vi.fn(),
-  CancelSpellcheckDownload: vi.fn()
-}))
+const appMocks = vi.hoisted(() =>
+  createAppIpcMocks({
+    ListLanguagePacks: vi.fn(),
+    ListDomainPacks: vi.fn(),
+    EnsureLanguagePack: vi.fn(),
+    EnsureDomainPack: vi.fn(),
+    CancelSpellcheckDownload: vi.fn()
+  })
+)
 
-vi.mock('../../../../bindings/silt/app.js', () => appMocks)
+vi.mock('$silt-app', () => appMocks)
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {
@@ -93,6 +95,8 @@ describe('SpellcheckPackManager', () => {
     appMocks.EnsureLanguagePack.mockReset()
     appMocks.EnsureDomainPack.mockReset()
     appMocks.CancelSpellcheckDownload.mockReset()
+    vi.mocked(Events.On).mockReset()
+    vi.mocked(Events.On).mockImplementation(() => () => {})
   })
 
   afterEach(() => cleanup())
@@ -166,13 +170,16 @@ describe('SpellcheckPackManager', () => {
 
     await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
     await waitFor(() => {
-      expect(screen.getByText(/Download cancelled/i)).toBeTruthy()
+      // Live region + visible status both carry the same string (#788).
+      expect(screen.getAllByText(/Download cancelled/i).length).toBeGreaterThan(
+        0
+      )
     })
     expect(screen.queryByRole('button', { name: /Retry download/i })).toBeNull()
     expect(languageSelect().value).toBe('en-US')
   })
 
-  it('renders the percent + stage label from a progress event', async () => {
+  it('updates a native progress element from progress events (#788)', async () => {
     let releaseEnsure: () => void = () => {}
     appMocks.EnsureLanguagePack.mockImplementation(
       () =>
@@ -196,19 +203,124 @@ describe('SpellcheckPackManager', () => {
     })
     await tick()
 
+    const card = document.getElementById('editor-spellcheck-packs')!
+    const progressEl = () =>
+      card.querySelector('progress') as HTMLProgressElement
+
+    expect(progressEl()).toBeTruthy()
+    expect(progressEl().max).toBe(100)
+    // Indeterminate until the first progress event (no value attribute).
+    expect(progressEl().hasAttribute('value')).toBe(false)
+
     expect(progressHandler).toBeTruthy()
     progressHandler!({ data: { received: 25, total: 100, file: 'index.dic' } })
     await tick()
 
-    const card = document.getElementById('editor-spellcheck-packs')!
+    expect(progressEl().hasAttribute('value')).toBe(true)
+    expect(progressEl().value).toBe(25)
+    // Visible percent/stage for sighted users (aria-hidden; not live).
     expect(card.textContent).toMatch(/25%/)
-    // stageLabel('index.dic') === 'word list'
     expect(card.textContent).toMatch(/word list/)
+
+    progressHandler!({ data: { received: 50, total: 100, file: 'index.dic' } })
+    await tick()
+    expect(progressEl().value).toBe(50)
+
+    progressHandler!({ data: { received: 100, total: 100, file: 'index.dic' } })
+    await tick()
+    expect(progressEl().value).toBe(100)
 
     releaseEnsure()
     await waitFor(() => {
-      expect(screen.queryByText(/25%/)).toBeNull()
+      expect(card.querySelector('progress')).toBeNull()
     })
+  })
+
+  it('live region announces state transitions only, not percent ticks (#788)', async () => {
+    let releaseEnsure: () => void = () => {}
+    appMocks.EnsureLanguagePack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseEnsure = resolve
+        })
+    )
+    let progressHandler: ((ev: unknown) => void) | undefined
+    vi.mocked(Events.On).mockImplementation(((_name, cb) => {
+      progressHandler = cb as (ev: unknown) => void
+      return () => {}
+    }) as typeof Events.On)
+
+    renderIt()
+    await waitFor(() => {
+      expect(languageSelect().options.length).toBeGreaterThan(1)
+    })
+    await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
+    await waitFor(() => {
+      expect(appMocks.EnsureLanguagePack).toHaveBeenCalledWith('en-GB')
+    })
+    await tick()
+
+    const live = document.querySelector(
+      '#editor-spellcheck-packs [aria-live="polite"]'
+    ) as HTMLElement
+    expect(live).toBeTruthy()
+    expect(live.classList.contains('sr-only')).toBe(true)
+    // Start announcement (lang name), not percent.
+    expect(live.textContent).toMatch(/Downloading English \(UK\)/i)
+    expect(live.textContent).not.toMatch(/%/)
+
+    const snapshots: string[] = [live.textContent?.trim() ?? '']
+    for (const pct of [0, 10, 25, 50, 75, 100]) {
+      progressHandler!({
+        data: { received: pct, total: 100, file: 'index.dic' }
+      })
+      await tick()
+      snapshots.push(live.textContent?.trim() ?? '')
+    }
+
+    // Percent ticks must not rewrite the polite live region.
+    const unique = new Set(snapshots)
+    expect(unique.size).toBeLessThanOrEqual(3)
+    expect(unique.size).toBe(1)
+
+    releaseEnsure()
+    await waitFor(() => {
+      expect(live.textContent).toMatch(/downloaded|Save settings/i)
+    })
+    // Success is a second distinct announcement after start.
+    expect(live.textContent).not.toMatch(/%/)
+  })
+
+  it('Cancel is outside the polite live region while download is in flight (#788)', async () => {
+    let releaseEnsure: () => void = () => {}
+    appMocks.EnsureLanguagePack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseEnsure = resolve
+        })
+    )
+
+    renderIt()
+    await waitFor(() => {
+      expect(languageSelect().options.length).toBeGreaterThan(1)
+    })
+    await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
+    await waitFor(() => {
+      expect(appMocks.EnsureLanguagePack).toHaveBeenCalledWith('en-GB')
+    })
+
+    const cancelBtn = await waitFor(() =>
+      screen.getByRole('button', { name: 'Cancel' })
+    )
+    const live = document.querySelector(
+      '#editor-spellcheck-packs [aria-live="polite"]'
+    ) as HTMLElement
+    expect(live).toBeTruthy()
+    expect(live.contains(cancelBtn)).toBe(false)
+    expect(cancelBtn.closest('[aria-live]')).toBeNull()
+
+    releaseEnsure()
+    await tick()
   })
 
   it('toggling the enable checkbox writes back through the bindable prop', async () => {
@@ -323,11 +435,161 @@ describe('SpellcheckPackManager', () => {
     await tick()
 
     expect(appMocks.CancelSpellcheckDownload).toHaveBeenCalled()
-    expect(screen.getByText(/Download cancelled/i)).toBeTruthy()
+    expect(screen.getAllByText(/Download cancelled/i).length).toBeGreaterThan(0)
     // packBusy cleared → the Cancel affordance disappears.
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
 
     // Let the held install settle so no promise dangles past unmount.
+    releaseEnsure()
+    await tick()
+  })
+
+  it('stale Ensure after cancel does not clobber a later download', async () => {
+    // Cancel a language Ensure, start a domain Ensure while the first is still
+    // pending, then resolve the first — gen guard must keep the domain busy UI.
+    let releaseLang: () => void = () => {}
+    let releaseDomain: () => void = () => {}
+    appMocks.EnsureLanguagePack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseLang = resolve
+        })
+    )
+    appMocks.EnsureDomainPack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDomain = resolve
+        })
+    )
+    appMocks.CancelSpellcheckDownload.mockResolvedValue(undefined)
+    appMocks.ListDomainPacks.mockResolvedValue([
+      {
+        id: 'software-terms',
+        label: 'Software terms',
+        license: 'MIT',
+        approx_bytes: 8000,
+        bundled: true,
+        installed: true,
+        default_on: true,
+        version: ''
+      },
+      {
+        id: 'medical',
+        label: 'Medical terms',
+        license: 'MIT',
+        approx_bytes: 12000,
+        bundled: false,
+        downloadable: true,
+        installed: false,
+        default_on: false,
+        version: ''
+      }
+    ])
+
+    renderIt()
+    await waitFor(() => {
+      expect(languageSelect().options.length).toBeGreaterThan(1)
+    })
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Medical terms/i)).toBeTruthy()
+    })
+
+    await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
+    await waitFor(() => {
+      expect(appMocks.EnsureLanguagePack).toHaveBeenCalledWith('en-GB')
+    })
+    await fireEvent.click(
+      await waitFor(() => screen.getByRole('button', { name: 'Cancel' }))
+    )
+    await tick()
+
+    const medical = screen.getByRole('checkbox', {
+      name: /Medical terms/i
+    }) as HTMLInputElement
+    await fireEvent.click(medical)
+    await waitFor(() => {
+      expect(appMocks.EnsureDomainPack).toHaveBeenCalledWith('medical')
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    })
+    expect(
+      screen.getAllByText(/Downloading Medical terms/i).length
+    ).toBeGreaterThan(0)
+
+    // Stale language Ensure succeeds — must not clear domain busy or status.
+    releaseLang()
+    await tick()
+    await tick()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    expect(screen.queryByText(/English \(UK\) downloaded/i)).toBeNull()
+    expect(
+      screen.getAllByText(/Downloading Medical terms/i).length
+    ).toBeGreaterThan(0)
+
+    appMocks.ListDomainPacks.mockResolvedValue([
+      {
+        id: 'software-terms',
+        label: 'Software terms',
+        license: 'MIT',
+        approx_bytes: 8000,
+        bundled: true,
+        installed: true,
+        default_on: true,
+        version: ''
+      },
+      {
+        id: 'medical',
+        label: 'Medical terms',
+        license: 'MIT',
+        approx_bytes: 12000,
+        bundled: false,
+        downloadable: true,
+        installed: true,
+        default_on: false,
+        version: ''
+      }
+    ])
+    releaseDomain()
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    })
+    expect(
+      screen.getAllByText(/Medical terms downloaded/i).length
+    ).toBeGreaterThan(0)
+  })
+
+  it('shows a visible (aria-hidden) downloading status while busy', async () => {
+    let releaseEnsure: () => void = () => {}
+    appMocks.EnsureLanguagePack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseEnsure = resolve
+        })
+    )
+
+    renderIt()
+    await waitFor(() => {
+      expect(languageSelect().options.length).toBeGreaterThan(1)
+    })
+    await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
+    await waitFor(() => {
+      expect(appMocks.EnsureLanguagePack).toHaveBeenCalledWith('en-GB')
+    })
+    await tick()
+
+    const live = document.querySelector(
+      '#editor-spellcheck-packs [aria-live="polite"]'
+    ) as HTMLElement
+    expect(live?.textContent).toMatch(/Downloading English \(UK\)/i)
+
+    // Sighted copy lives outside the live region (aria-hidden), not only sr-only.
+    const visible = Array.from(
+      document.querySelectorAll('#editor-spellcheck-packs [aria-hidden="true"]')
+    ).find((el) => /Downloading English \(UK\)/i.test(el.textContent ?? ''))
+    expect(visible).toBeTruthy()
+    expect(live.contains(visible!)).toBe(false)
+
     releaseEnsure()
     await tick()
   })
@@ -361,7 +623,7 @@ describe('SpellcheckPackManager', () => {
     await tick()
 
     expect(appMocks.CancelSpellcheckDownload).toHaveBeenCalled()
-    expect(screen.getByText(/Download cancelled/i)).toBeTruthy()
+    expect(screen.getAllByText(/Download cancelled/i).length).toBeGreaterThan(0)
     // The rejection was swallowed by .catch — no error alert appears.
     expect(screen.queryByRole('alert')).toBeNull()
 

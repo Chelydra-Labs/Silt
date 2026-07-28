@@ -48,9 +48,13 @@ Repo-specific rules that augment the global `~/.config/opencode/AGENTS.md`.
 - Plugin JS runs in the main webview; the SDK (`PluginContext`) is the
   contract — direct Wails binding access (`bindings/silt/app.js`) is
   deprecated and will break when per-plugin webviews land (#151/#152).
-- Frontend tests mock `../../bindings/silt/app.js` via `vi.mock` +
-  `vi.hoisted` (see `frontend/src/components/settings/AppearanceTab.test.ts`
-  for the canonical pattern). Never hit real IPC in a test.
+- Frontend tests mock Wails bindings via the `$silt-app` alias and
+  `createAppIpcMocks` from `frontend/src/lib/testing/ipcMock.ts` (registered
+  on `globalThis` in `vitest.setup.ts` so it is safe inside `vi.hoisted` —
+  do not import it for use in hoisted/mock factories). Keep
+  `vi.hoisted(() => createAppIpcMocks({...}))` + `vi.mock('$silt-app', () =>
+  appMocks)` in each test file (`vi.mock` is not hoisted from helpers). See
+  `GeneralTab.test.ts` for a fuller example. Never hit real IPC in a test.
 - Keep `PLAN.md` as a temporary planning artifact — never stage, commit, or
   push it (it is `.gitignore`d).
 - **Merge-commit PRs** (`gh pr merge --merge`), not squash. git-cliff

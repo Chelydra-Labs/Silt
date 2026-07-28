@@ -43,9 +43,9 @@ const bindings = vi.hoisted(() => ({
   GetStartupEvents: vi.fn(async () => [])
 }))
 
-vi.mock('../bindings/silt/app.js', () => {
+vi.mock('$silt-app', () => {
   const noop = () => Promise.resolve(undefined)
-  return {
+  return createAppIpcMocks({
     IsVaultInitialized: bindings.IsVaultInitialized,
     InitializeVault: vi.fn(noop),
     CloseVault: vi.fn(noop),
@@ -64,7 +64,7 @@ vi.mock('../bindings/silt/app.js', () => {
     GetStartupEvents: bindings.GetStartupEvents,
     RecordRecentPage: vi.fn(noop),
     UpdateAIFeatures: vi.fn(noop)
-  }
+  })
 })
 
 vi.mock('@wailsio/runtime', () => ({

@@ -23,11 +23,13 @@ const mocks = vi.hoisted(() => ({
   SaveFileBlocks: vi.fn()
 }))
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  SearchBlocksPaged: mocks.SearchBlocksPaged,
-  FetchPageBlocks: mocks.FetchPageBlocks,
-  SaveFileBlocks: mocks.SaveFileBlocks
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    SearchBlocksPaged: mocks.SearchBlocksPaged,
+    FetchPageBlocks: mocks.FetchPageBlocks,
+    SaveFileBlocks: mocks.SaveFileBlocks
+  })
+)
 vi.mock('@wailsio/runtime', () => ({
   Events: {
     On: vi.fn(() => () => {})

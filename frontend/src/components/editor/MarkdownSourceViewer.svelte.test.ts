@@ -57,11 +57,13 @@ vi.mock('../../lib/editor/pageMarkdown', () => ({
   savePageMarkdown: (...args: unknown[]) => mocks.savePageMarkdown(...args),
   fetchPageMarkdown: (...args: unknown[]) => mocks.fetchPageMarkdown(...args)
 }))
-vi.mock('../../../bindings/silt/app.js', () => ({
-  AcquireFocusLock: (...args: unknown[]) => mocks.AcquireFocusLock(...args),
-  ReleaseFocusLock: (...args: unknown[]) => mocks.ReleaseFocusLock(...args),
-  RefreshFocusLock: (...args: unknown[]) => mocks.RefreshFocusLock(...args)
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    AcquireFocusLock: (...args: unknown[]) => mocks.AcquireFocusLock(...args),
+    ReleaseFocusLock: (...args: unknown[]) => mocks.ReleaseFocusLock(...args),
+    RefreshFocusLock: (...args: unknown[]) => mocks.RefreshFocusLock(...args)
+  })
+)
 
 import MarkdownSourceViewer from './MarkdownSourceViewer.svelte'
 import type { ParsedBlock } from '../../lib/editor/types'

@@ -168,11 +168,13 @@ the Go typed-const blocks and emits the committed
   The canonical event surface for the IPC gate is still **`go_events`** (from
   `events.go`); `frontend_events` is **best-effort, informational** subscription
   coverage — section diffs do not fail the method-signature gate. The scan also
-  resolves a typed `EventName.*[]` allowlist array when `Events.On(ident)`
-  references the array or a parameter guarded by `<array>.includes(param)`
-  (e.g. `plugins/events.ts`). It does **not** follow mixed-type arrays,
-  arbitrary non-allowlist locals, or cross-file dataflow; those events only
-  appear if another site uses a resolvable form.
+  resolves an `EventName.*[]` allowlist (`const`/`let`/`var`, `readonly T[]` /
+  `ReadonlyArray<T>`, optional `as const`) when `Events.On(ident)` references
+  the array or a parameter guarded by `<array>.includes(param)` in the **same
+  enclosing function scope** (e.g. `plugins/events.ts`). It does **not** follow
+  mixed-type arrays, cross-function includes→On pairs, arbitrary non-allowlist
+  locals, or cross-file dataflow; those events only appear if another site uses
+  a resolvable form.
 - Design rationale (why Wails's own generator was insufficient):
   [`docs/decisions/0007-shared-enums-codegen.md`](./docs/decisions/0007-shared-enums-codegen.md).
 
@@ -189,11 +191,13 @@ then `go vet -vettool=… ./...`):
 
 **eventnameliteral** closes the Go untyped-string-constant hole: after
 `emit` takes `EventName`, a typo’d `a.emit("tpyo:event", …)` still type-checks.
-The analyzer rejects that at CI time. It **allows** declared `EventName` consts,
-`aiStreamEventName(const, pluginID)`, and non-literal expressions (params /
-locals). It does **not** track `n := EventName("typo"); a.emit(n)` — that is
-out of scope (emit-site literals only). `_test.go` is skipped so queue tests
-can keep bare strings.
+The analyzer rejects that at CI time. It flags bare string literals,
+`EventName("…")` conversions, and those values carried through locals or
+same-package single-literal helpers (dominance-aware stores into locals). It
+**allows** declared `EventName` consts (including imported packages),
+`aiStreamEventName(const, pluginID)`, params, dynamic helpers, phi merges, and
+builder/field/map/slice patterns. `_test.go` is skipped so queue tests can keep
+bare strings.
 
 Local run (Windows may need a `.exe` suffix on the binary path):
 

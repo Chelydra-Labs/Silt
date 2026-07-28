@@ -22,11 +22,13 @@ vi.mock('../../plugins/loader', () => ({
   getSessionToken: vi.fn(() => 'session-token')
 }))
 
-vi.mock('../../../bindings/silt/app.js', () => ({
-  GetPluginSettingsForNotebook: vi.fn().mockResolvedValue({}),
-  UpdatePluginSetting: vi.fn().mockResolvedValue(undefined),
-  PluginRawQuery: vi.fn()
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    GetPluginSettingsForNotebook: vi.fn().mockResolvedValue({}),
+    UpdatePluginSetting: vi.fn().mockResolvedValue(undefined),
+    PluginRawQuery: vi.fn()
+  })
+)
 
 import {
   registerSurface,

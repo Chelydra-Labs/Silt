@@ -19,19 +19,21 @@ const mocks = vi.hoisted(() => ({
   eventsOn: vi.fn(() => () => {})
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  SearchPages: mocks.searchPages,
-  ResolvePageLink: mocks.resolvePageLink,
-  QueryTagHierarchy: mocks.queryTagHierarchy,
-  RecordTagUsage: mocks.recordTagUsage,
-  DistinctOwners: mocks.distinctOwners,
-  SearchBlocks: mocks.searchBlocks,
-  ResolveBlockReference: mocks.resolveBlockReference,
-  SaveFileBlocks: mocks.saveFileBlocks,
-  AcquireFocusLock: mocks.acquireFocusLock,
-  RefreshFocusLock: mocks.refreshFocusLock,
-  ReleaseFocusLock: mocks.releaseFocusLock
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    SearchPages: mocks.searchPages,
+    ResolvePageLink: mocks.resolvePageLink,
+    QueryTagHierarchy: mocks.queryTagHierarchy,
+    RecordTagUsage: mocks.recordTagUsage,
+    DistinctOwners: mocks.distinctOwners,
+    SearchBlocks: mocks.searchBlocks,
+    ResolveBlockReference: mocks.resolveBlockReference,
+    SaveFileBlocks: mocks.saveFileBlocks,
+    AcquireFocusLock: mocks.acquireFocusLock,
+    RefreshFocusLock: mocks.refreshFocusLock,
+    ReleaseFocusLock: mocks.releaseFocusLock
+  })
+)
 
 vi.mock('@wailsio/runtime', () => ({
   Events: { On: mocks.eventsOn },

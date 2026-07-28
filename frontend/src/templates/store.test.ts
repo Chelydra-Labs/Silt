@@ -1,16 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // Mock the Wails-bound functions before importing the store.
-vi.mock('../../bindings/silt/app.js', () => ({
-  ListTemplates: vi.fn(),
-  GetTemplate: vi.fn(),
-  RenderTemplate: vi.fn(),
-  SaveUserTemplate: vi.fn(),
-  DeleteUserTemplate: vi.fn(),
-  ReloadTemplates: vi.fn(),
-  CreatePageFromTemplate: vi.fn(),
-  RenderTemplateBlocks: vi.fn()
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    ListTemplates: vi.fn(),
+    GetTemplate: vi.fn(),
+    RenderTemplate: vi.fn(),
+    SaveUserTemplate: vi.fn(),
+    DeleteUserTemplate: vi.fn(),
+    ReloadTemplates: vi.fn(),
+    CreatePageFromTemplate: vi.fn(),
+    RenderTemplateBlocks: vi.fn()
+  })
+)
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {
@@ -44,7 +46,7 @@ import {
 } from './store.svelte'
 
 // Import the mocked modules to configure their behavior.
-import { ListTemplates } from '../../bindings/silt/app.js'
+import { ListTemplates } from '$silt-app'
 import { Events } from '@wailsio/runtime'
 import type * as tpl from '../../bindings/silt/backend/templates/models.js'
 

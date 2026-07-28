@@ -13,9 +13,11 @@ const mocks = vi.hoisted(() => ({
   eventsOn: vi.fn()
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  GetBacklinksPaged: mocks.getBacklinksPaged
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    GetBacklinksPaged: mocks.getBacklinksPaged
+  })
+)
 
 vi.mock('@wailsio/runtime', () => ({
   Events: { On: mocks.eventsOn },

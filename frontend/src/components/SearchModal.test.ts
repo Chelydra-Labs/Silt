@@ -7,11 +7,13 @@ const mocks = vi.hoisted(() => ({
   QueryTagHierarchy: vi.fn()
 }))
 
-vi.mock('../../bindings/silt/app.js', () => ({
-  SearchBlocksPaged: mocks.SearchBlocksPaged,
-  ListNavigation: mocks.ListNavigation,
-  QueryTagHierarchy: mocks.QueryTagHierarchy
-}))
+vi.mock('$silt-app', () =>
+  createAppIpcMocks({
+    SearchBlocksPaged: mocks.SearchBlocksPaged,
+    ListNavigation: mocks.ListNavigation,
+    QueryTagHierarchy: mocks.QueryTagHierarchy
+  })
+)
 
 import SearchModal from './SearchModal.svelte'
 
