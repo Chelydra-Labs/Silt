@@ -6,7 +6,13 @@
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  waitFor
+} from '@testing-library/svelte'
 
 const mocks = vi.hoisted(() => ({
   listPlugins: vi.fn(),
@@ -544,14 +550,14 @@ describe('PluginsTab security stats badge (#518)', () => {
     ])
     securityHandler!()
     // The handler is debounced (250ms) to coalesce bursts of security events
-    // into one GetPluginSecurityStats round-trip; wait past that window, then
-    // flush the re-render.
-    await new Promise((r) => setTimeout(r, 300))
-    await flush()
-
-    expect(
-      screen.getByRole('status', { name: /1 capability denial/i })
-    ).toBeTruthy()
+    // into one GetPluginSecurityStats round-trip. Poll for the badge rather
+    // than sleeping a fixed duration, so the assertion is robust to timer
+    // drift under CI load.
+    await waitFor(() => {
+      expect(
+        screen.getByRole('status', { name: /1 capability denial/i })
+      ).toBeTruthy()
+    })
   })
 })
 
