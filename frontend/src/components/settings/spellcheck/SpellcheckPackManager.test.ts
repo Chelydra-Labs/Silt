@@ -95,6 +95,8 @@ describe('SpellcheckPackManager', () => {
     appMocks.EnsureLanguagePack.mockReset()
     appMocks.EnsureDomainPack.mockReset()
     appMocks.CancelSpellcheckDownload.mockReset()
+    vi.mocked(Events.On).mockReset()
+    vi.mocked(Events.On).mockImplementation(() => () => {})
   })
 
   afterEach(() => cleanup())
@@ -168,13 +170,16 @@ describe('SpellcheckPackManager', () => {
 
     await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
     await waitFor(() => {
-      expect(screen.getByText(/Download cancelled/i)).toBeTruthy()
+      // Live region + visible status both carry the same string (#788).
+      expect(screen.getAllByText(/Download cancelled/i).length).toBeGreaterThan(
+        0
+      )
     })
     expect(screen.queryByRole('button', { name: /Retry download/i })).toBeNull()
     expect(languageSelect().value).toBe('en-US')
   })
 
-  it('renders the percent + stage label from a progress event', async () => {
+  it('updates a native progress element from progress events (#788)', async () => {
     let releaseEnsure: () => void = () => {}
     appMocks.EnsureLanguagePack.mockImplementation(
       () =>
@@ -198,19 +203,122 @@ describe('SpellcheckPackManager', () => {
     })
     await tick()
 
+    const card = document.getElementById('editor-spellcheck-packs')!
+    const progressEl = () =>
+      card.querySelector('progress') as HTMLProgressElement
+
+    expect(progressEl()).toBeTruthy()
+    expect(progressEl().max).toBe(100)
+    expect(progressEl().value).toBe(0)
+
     expect(progressHandler).toBeTruthy()
     progressHandler!({ data: { received: 25, total: 100, file: 'index.dic' } })
     await tick()
 
-    const card = document.getElementById('editor-spellcheck-packs')!
+    expect(progressEl().value).toBe(25)
+    // Visible percent/stage for sighted users (aria-hidden; not live).
     expect(card.textContent).toMatch(/25%/)
-    // stageLabel('index.dic') === 'word list'
     expect(card.textContent).toMatch(/word list/)
+
+    progressHandler!({ data: { received: 50, total: 100, file: 'index.dic' } })
+    await tick()
+    expect(progressEl().value).toBe(50)
+
+    progressHandler!({ data: { received: 100, total: 100, file: 'index.dic' } })
+    await tick()
+    expect(progressEl().value).toBe(100)
 
     releaseEnsure()
     await waitFor(() => {
-      expect(screen.queryByText(/25%/)).toBeNull()
+      expect(card.querySelector('progress')).toBeNull()
     })
+  })
+
+  it('live region announces state transitions only, not percent ticks (#788)', async () => {
+    let releaseEnsure: () => void = () => {}
+    appMocks.EnsureLanguagePack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseEnsure = resolve
+        })
+    )
+    let progressHandler: ((ev: unknown) => void) | undefined
+    vi.mocked(Events.On).mockImplementation(((_name, cb) => {
+      progressHandler = cb as (ev: unknown) => void
+      return () => {}
+    }) as typeof Events.On)
+
+    renderIt()
+    await waitFor(() => {
+      expect(languageSelect().options.length).toBeGreaterThan(1)
+    })
+    await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
+    await waitFor(() => {
+      expect(appMocks.EnsureLanguagePack).toHaveBeenCalledWith('en-GB')
+    })
+    await tick()
+
+    const live = document.querySelector(
+      '#editor-spellcheck-packs [aria-live="polite"]'
+    ) as HTMLElement
+    expect(live).toBeTruthy()
+    expect(live.classList.contains('sr-only')).toBe(true)
+    // Start announcement (lang name), not percent.
+    expect(live.textContent).toMatch(/Downloading English \(UK\)/i)
+    expect(live.textContent).not.toMatch(/%/)
+
+    const snapshots: string[] = [live.textContent?.trim() ?? '']
+    for (const pct of [0, 10, 25, 50, 75, 100]) {
+      progressHandler!({
+        data: { received: pct, total: 100, file: 'index.dic' }
+      })
+      await tick()
+      snapshots.push(live.textContent?.trim() ?? '')
+    }
+
+    // Percent ticks must not rewrite the polite live region.
+    const unique = new Set(snapshots)
+    expect(unique.size).toBeLessThanOrEqual(3)
+    expect(unique.size).toBe(1)
+
+    releaseEnsure()
+    await waitFor(() => {
+      expect(live.textContent).toMatch(/downloaded|Save settings/i)
+    })
+    // Success is a second distinct announcement after start.
+    expect(live.textContent).not.toMatch(/%/)
+  })
+
+  it('Cancel is outside the polite live region while download is in flight (#788)', async () => {
+    let releaseEnsure: () => void = () => {}
+    appMocks.EnsureLanguagePack.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseEnsure = resolve
+        })
+    )
+
+    renderIt()
+    await waitFor(() => {
+      expect(languageSelect().options.length).toBeGreaterThan(1)
+    })
+    await fireEvent.change(languageSelect(), { target: { value: 'en-GB' } })
+    await waitFor(() => {
+      expect(appMocks.EnsureLanguagePack).toHaveBeenCalledWith('en-GB')
+    })
+
+    const cancelBtn = await waitFor(() =>
+      screen.getByRole('button', { name: 'Cancel' })
+    )
+    const live = document.querySelector(
+      '#editor-spellcheck-packs [aria-live="polite"]'
+    ) as HTMLElement
+    expect(live).toBeTruthy()
+    expect(live.contains(cancelBtn)).toBe(false)
+    expect(cancelBtn.closest('[aria-live]')).toBeNull()
+
+    releaseEnsure()
+    await tick()
   })
 
   it('toggling the enable checkbox writes back through the bindable prop', async () => {
@@ -325,7 +433,7 @@ describe('SpellcheckPackManager', () => {
     await tick()
 
     expect(appMocks.CancelSpellcheckDownload).toHaveBeenCalled()
-    expect(screen.getByText(/Download cancelled/i)).toBeTruthy()
+    expect(screen.getAllByText(/Download cancelled/i).length).toBeGreaterThan(0)
     // packBusy cleared → the Cancel affordance disappears.
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
 
@@ -363,7 +471,7 @@ describe('SpellcheckPackManager', () => {
     await tick()
 
     expect(appMocks.CancelSpellcheckDownload).toHaveBeenCalled()
-    expect(screen.getByText(/Download cancelled/i)).toBeTruthy()
+    expect(screen.getAllByText(/Download cancelled/i).length).toBeGreaterThan(0)
     // The rejection was swallowed by .catch — no error alert appears.
     expect(screen.queryByRole('alert')).toBeNull()
 

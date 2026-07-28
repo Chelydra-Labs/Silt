@@ -444,20 +444,40 @@
     </fieldset>
   {/if}
 
-  <div
-    class="flex flex-wrap items-center gap-3 min-h-[1.5rem]"
-    aria-live="polite"
-  >
+  <!-- Progress bar is visual-only; aria-live announces state transitions
+       (start / cancel / success / failure), not percent ticks. Cancel stays
+       outside the live region so SR does not re-read the button each tick. -->
+  <div class="flex flex-wrap items-center gap-3 min-h-[1.5rem]">
+    <div class="sr-only" aria-live="polite">
+      {#if packStatus}
+        {packStatus}
+      {/if}
+    </div>
     {#if packBusy}
-      <p class="text-text-muted text-type-sm font-body-md">
-        {packStatus ?? `Downloading…`}
-        {#if packStage}
-          — {packStage}
-        {/if}
+      <div class="flex flex-wrap items-center gap-2 min-w-0">
+        <progress
+          class="spellcheck-pack-progress h-2 w-32 max-w-full accent-[var(--color-accent-primary-end)]"
+          max="100"
+          value={packProgress ?? 0}
+          aria-label={packStatus ?? 'Downloading dictionary pack'}
+        ></progress>
         {#if packProgress != null}
-          ({packProgress}%)
+          <span
+            class="text-text-muted text-type-sm font-body-md tabular-nums"
+            aria-hidden="true"
+          >
+            {packProgress}%{#if packStage}
+              · {packStage}{/if}
+          </span>
+        {:else if packStage}
+          <span
+            class="text-text-muted text-type-sm font-body-md"
+            aria-hidden="true"
+          >
+            {packStage}
+          </span>
         {/if}
-      </p>
+      </div>
       <button
         type="button"
         onclick={cancelDownload}
@@ -466,7 +486,7 @@
         Cancel
       </button>
     {:else if packStatus}
-      <p class="text-text-muted text-type-sm font-body-md">
+      <p class="text-text-muted text-type-sm font-body-md" aria-hidden="true">
         {packStatus}
       </p>
     {/if}
