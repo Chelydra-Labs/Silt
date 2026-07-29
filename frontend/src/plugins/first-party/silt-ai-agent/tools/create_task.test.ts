@@ -16,6 +16,7 @@ function makeCtx(opts: CtxOpts = {}): {
   ctx: PluginContext
   createTask: ReturnType<typeof vi.fn>
   createBlock: ReturnType<typeof vi.fn>
+  createPage: ReturnType<typeof vi.fn>
   setTaskDueDate: ReturnType<typeof vi.fn>
   setTaskOwner: ReturnType<typeof vi.fn>
   setTaskPriority: ReturnType<typeof vi.fn>
@@ -32,12 +33,14 @@ function makeCtx(opts: CtxOpts = {}): {
   const createBlock = opts.rejectCreate
     ? reject('createBlock')
     : vi.fn(async () => opts.blockId ?? 'task-uuid')
+  const createPage = vi.fn(async () => 'page-uuid')
   const mk = (name: 'due' | 'owner' | 'priority' | 'tags') =>
     opts.rejectSetter === name ? reject(name) : ok
   const ctx = {
     activeNotebook: opts.activeNotebook ?? '',
     createTask,
     createBlock,
+    createPage,
     setTaskDueDate: mk('due'),
     setTaskOwner: mk('owner'),
     setTaskPriority: mk('priority'),
@@ -47,6 +50,7 @@ function makeCtx(opts: CtxOpts = {}): {
     ctx,
     createTask,
     createBlock,
+    createPage,
     setTaskDueDate: ctx.setTaskDueDate as ReturnType<typeof vi.fn>,
     setTaskOwner: ctx.setTaskOwner as ReturnType<typeof vi.fn>,
     setTaskPriority: ctx.setTaskPriority as ReturnType<typeof vi.fn>,
@@ -69,8 +73,10 @@ describe('create_task', () => {
     expect(res.content).toContain('standalone tasks list')
   })
 
-  it('creates a page-scoped task via ctx.createBlock when page is given', async () => {
-    const { ctx, createBlock, createTask } = makeCtx({ blockId: 'blk-2' })
+  it('creates the page (idempotent) before appending a page-scoped task', async () => {
+    const { ctx, createPage, createBlock, createTask } = makeCtx({
+      blockId: 'blk-2'
+    })
     const res = await handleCreateTask(ctx, {
       text: 'ship feature',
       notebook: 'Work',
@@ -79,6 +85,12 @@ describe('create_task', () => {
       after: 'anchor-id'
     })
     expect(res.error).toBeUndefined()
+    // SaveFileBlocks fails closed on a missing page file (#691), so the page
+    // must exist before createBlock — createPage is the idempotent ensure.
+    expect(createPage).toHaveBeenCalledWith('Work', 'Sprint 42', 'Plan')
+    expect(createPage.mock.invocationCallOrder[0]).toBeLessThan(
+      createBlock.mock.invocationCallOrder[0]
+    )
     expect(createBlock).toHaveBeenCalledWith({
       type: 'TASK',
       text: 'ship feature',
@@ -89,6 +101,27 @@ describe('create_task', () => {
     })
     expect(createTask).not.toHaveBeenCalled()
     expect(res.content).toContain('Work/Sprint 42/Plan')
+  })
+
+  it('errors when page-scoped anchors arrive without a page', async () => {
+    // notebook/section/after are meaningless on the standalone path; failing
+    // loudly lets the model self-correct instead of silently misplacing the task.
+    const standalone = makeCtx({ blockId: 'blk-x' })
+    const res = await handleCreateTask(standalone.ctx, {
+      text: 't',
+      after: 'anchor-id'
+    })
+    expect(res.error).toMatch(/require a page/)
+    expect(standalone.createTask).not.toHaveBeenCalled()
+    expect(standalone.createBlock).not.toHaveBeenCalled()
+
+    const withNotebook = makeCtx({ blockId: 'blk-y' })
+    const res2 = await handleCreateTask(withNotebook.ctx, {
+      text: 't',
+      notebook: 'Work'
+    })
+    expect(res2.error).toMatch(/require a page/)
+    expect(withNotebook.createTask).not.toHaveBeenCalled()
   })
 
   it('falls back to the active notebook for a page-scoped task', async () => {

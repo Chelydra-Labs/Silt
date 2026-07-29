@@ -120,13 +120,35 @@ export async function handleCreateTask(
   // Placement: page-scoped only when a page (and its notebook) resolve.
   const page =
     args.page === undefined || args.page === null ? '' : asString(args.page)
+  const notebookArg =
+    args.notebook === undefined || args.notebook === null
+      ? ''
+      : asString(args.notebook)
+  const sectionArg =
+    args.section === undefined || args.section === null
+      ? ''
+      : asString(args.section)
+  const afterArg =
+    args.after === undefined || args.after === null
+      ? undefined
+      : asString(args.after)
+
+  // notebook/section/after are page-scoped anchors — meaningless without a
+  // page (the standalone path ignores them). Fail loudly so the model
+  // self-corrects instead of the task silently landing in the wrong place.
+  if (!page && (notebookArg || sectionArg || afterArg !== undefined)) {
+    return {
+      content: '',
+      error:
+        'notebook/section/after require a page; pass page to place the task ' +
+        'on a page, or omit them for a standalone task.'
+    }
+  }
+
   let blockId: string
   let placement: string
   if (page) {
-    const notebook =
-      (args.notebook === undefined || args.notebook === null
-        ? ''
-        : asString(args.notebook)) || ctx.activeNotebook
+    const notebook = notebookArg || ctx.activeNotebook
     if (!notebook) {
       return {
         content: '',
@@ -135,23 +157,22 @@ export async function handleCreateTask(
           'open a notebook (omit page for a standalone task).'
       }
     }
-    const section =
-      args.section === undefined || args.section === null
-        ? ''
-        : asString(args.section)
-    const after =
-      args.after === undefined || args.after === null
-        ? undefined
-        : asString(args.after)
+    // Ensure the page exists before appending — SaveFileBlocks fails closed on
+    // a missing page file (the #691 rename/delete guard), so a task targeted at
+    // a new page would otherwise error as "page moved or deleted." createPage
+    // is idempotent (a no-op when the page already exists).
+    await ctx.createPage(notebook, sectionArg, page)
     blockId = await ctx.createBlock({
       type: 'TASK',
       text,
       notebook,
-      section,
+      section: sectionArg,
       page,
-      after
+      after: afterArg
     })
-    placement = [notebook, section, page].filter((s) => s.length > 0).join('/')
+    placement = [notebook, sectionArg, page]
+      .filter((s) => s.length > 0)
+      .join('/')
   } else {
     // ctx.createTask lands a GFM checkbox in .silt/tasks.md.
     blockId = await ctx.createTask({ title: text })
