@@ -487,7 +487,9 @@ All bindings hang off the single Wails v3 service (`*App` registered via `applic
 auto-exposed to the frontend as JSON RPC. Grouped by domain:
 
 - **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `FetchPageMarkdown` / `SavePageMarkdown` (raw source body), `UpdateBlockState`
-  (task-checkbox transition + atomic file rewrite + re-index),
+  (task-checkbox transition + atomic file rewrite + re-index; returns the spawned
+  recurrence instance's UUID on a recurring TODO/DOING→DONE transition, `""`
+  otherwise — the `Plugin*` wrapper surfaces it as `{ok, spawned_id}`),
   `MutateBlock`, `QueryTasks` (dashboard filter query). **Task dependencies**:
   `SetTaskBlockedBy` / `PluginSetTaskBlockedBy` (cycle-checked
   `[blocked_by::]` token rewrite) and `GetTaskBlockers` (open-prerequisite
@@ -582,7 +584,9 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   a network call). `GetAIAudit` / `ClearAIAudit` expose the plugin-AI-call log
   (in-memory, mirrored to per-plugin `ai.log`; `ClearAIAudit` truncates both).
   `PluginAIAuditEvent` appends redacted structured agent events (tool_call,
-  staging_decision) to the same log. Provider types: `local` |
+  tool_result, staging_decision) to the same log; the closed allowlist of
+  persisted keys holds only bounded identifiers (including `block_id`, a UUID,
+  so agent write-tool mutations are traceable without leaking prose). Provider types: `local` |
   `openai-compatible` (universal default, OpenAI-shaped) | `google` |
   `anthropic` (native first-party APIs). NOT capability-gated (core settings),
   but `PluginAIComplete` / `PluginAIEmbed` / `PluginAIAuditEvent` are.
@@ -1296,7 +1300,7 @@ See `frontend/src/plugins/sdk.ts` for the full typed contract and
 PluginContext is a thin frontend wrapper over four Wails bindings on App:
 
 - PluginRawQuery(sql, params) — read-only; rejects anything not starting with SELECT/WITH; routed through ExecutionCoordinator.WithDBRead; returns row maps.
-- PluginMutateBlock(id, text) / PluginUpdateBlockState(id, status) — wrap MutateBlock / UpdateBlockState (same atomic-write + re-index + lock path as the core editor).
+- PluginMutateBlock(id, text) / PluginUpdateBlockState(id, status) — wrap MutateBlock / UpdateBlockState (same atomic-write + re-index + lock path as the core editor). PluginUpdateBlockState returns `{ok, spawned_id}`, carrying the recurrence instance UUID minted by a recurring TODO/DOING→DONE transition (empty otherwise).
 - GetPluginRegistry() / ListPlugins() / ReadPluginSource(id) — discovery.
 - ValidatePluginArchive / PickPluginArchive / InstallPlugin / UninstallPlugin / EnablePlugin / DisablePlugin — `.silt-plugin` distribution (see backend/plugins package; zip-slip + traversal guarded, atomic extract).
 
