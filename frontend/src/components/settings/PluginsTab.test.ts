@@ -1202,6 +1202,80 @@ describe('PluginsTab check for updates failure surfacing (#810)', () => {
   })
 })
 
+// #813: the concurrency cap must bound simultaneous in-flight update checks so N
+// hung plugins can't stack their per-call deadlines. The parallelism test in the
+// #794 block uses fewer plugins than the cap (2 < 4), so it would still pass if
+// the cap were Infinity — this locks the perf invariant by asserting at most the
+// cap are ever in-flight at once.
+describe('PluginsTab update-check concurrency cap (#813)', () => {
+  const plugins = Array.from({ length: 6 }, (_, i) => ({
+    id: `plug-${i}`,
+    name: `Plugin ${i}`,
+    version: '1.0.0',
+    author: 'Test',
+    description: '',
+    icon: 'extension',
+    update_url: `https://example.com/${i}/update.json`
+  }))
+
+  beforeEach(() => {
+    mocks.listPlugins.mockReset()
+    mocks.loadPlugins.mockReset()
+    mocks.getGrantedCapabilities.mockReset()
+    mocks.getPluginSecurityStats.mockReset()
+    mocks.checkPluginUpdate.mockReset()
+    mocks.listPlugins.mockResolvedValue(plugins)
+    mocks.loadPlugins.mockResolvedValue(undefined)
+    mocks.getGrantedCapabilities.mockResolvedValue({})
+    mocks.getPluginSecurityStats.mockResolvedValue([])
+    mocks.configNoPlugins = {
+      plugins: { active: [], disabled: [], plugin_settings: {} }
+    } as never
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('caps simultaneous in-flight checks at the concurrency limit', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    mocks.checkPluginUpdate.mockImplementation(() => {
+      inFlight++
+      if (inFlight > maxInFlight) maxInFlight = inFlight
+      // Resolve on the next macrotask so workers overlap. The cap-many workers
+      // grab their first item synchronously before any timer fires, so
+      // maxInFlight records the cap deterministically regardless of CI jitter.
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          inFlight--
+          resolve({ updateAvailable: false })
+        }, 0)
+      })
+    })
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      expect(screen.getByText(/Checked 6 plugins — no updates/)).toBeTruthy()
+    })
+
+    // Exactly the cap (UPDATE_CHECK_CONCURRENCY = 4) were ever in-flight at once
+    // across 6 plugins. This fails if the cap is raised to Infinity or removed
+    // — the perf invariant #813 exists to guarantee.
+    expect(maxInFlight).toBe(4)
+  })
+})
+
 // Characterization tests for the install-from-archive flow: pick → validate →
 // preview → install → reload. These pin the behavior before the cluster is
 // extracted into PluginInstallFlow.svelte.
