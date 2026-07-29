@@ -117,6 +117,30 @@ describe('useTabManager — pageMoved / renameTab / setTabSaveState (#768)', () 
     expect(find(tabs, 'Beta').saveError).toBeNull()
   })
 
+  it('setTabSaveState mutates in place — does not reassign openTabs (#814)', () => {
+    // Replacing the openTabs array on every autosave state change forced App's
+    // editor {#each} to re-render, re-passing equal props to the mounted
+    // VirtualScrollContainer and re-invalidating its load $effect — flashing
+    // the centered "Loading..." overlay on every save. Save-state must update
+    // in place so the array (and thus the {#each}) is not churned.
+    const alpha = find(tabs, 'Alpha')
+    const arrayBefore = tabs.openTabs
+    const entryBefore = tabs.openTabs.find((t) => t.id === alpha.id)!
+    tabs.setTabSaveState(alpha.id, {
+      phase: 'saving',
+      dirty: true,
+      error: null
+    })
+    // Array + entry identity preserved → no {#each} re-render churn.
+    expect(tabs.openTabs).toBe(arrayBefore)
+    expect(tabs.openTabs.find((t) => t.id === alpha.id)).toBe(entryBefore)
+    // Fields still update — the tab strip's dirty/save badge reacts through
+    // the deep $state proxy.
+    const after = tabs.openTabs.find((t) => t.id === alpha.id)!
+    expect(after.dirty).toBe(true)
+    expect(after.savePhase).toBe('saving')
+  })
+
   it('setTabSaveState bumps the recents MRU only on a confirmed save', () => {
     // Clear activations recorded during seeding so the assertion is isolated.
     mocks.RecordRecentPage.mockClear()
