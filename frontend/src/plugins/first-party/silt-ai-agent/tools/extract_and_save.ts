@@ -21,6 +21,7 @@
 
 import type { PluginAIChatMessage, PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
+import { auditWrite } from './_util'
 import type { ToolResult } from '../tool-registry'
 import { UNTRUSTED_CONTENT_SECURITY } from '../security'
 
@@ -187,6 +188,7 @@ export async function handleExtractAndSave(
   // --- 1. Validate + normalize args -----------------------------------------
   const rawIds = args.source_block_ids
   if (!Array.isArray(rawIds)) {
+    auditWrite(ctx, 'extract_and_save', 'error')
     return {
       content: '',
       error: 'source_block_ids must be an array of UUIDs'
@@ -194,12 +196,14 @@ export async function handleExtractAndSave(
   }
   const ids = rawIds.map((x) => asString(x)).filter((s) => s.length > 0)
   if (ids.length === 0) {
+    auditWrite(ctx, 'extract_and_save', 'error')
     return {
       content: '',
       error: 'source_block_ids must contain at least one UUID'
     }
   }
   if (ids.length > MAX_SOURCE_IDS) {
+    auditWrite(ctx, 'extract_and_save', 'error')
     return {
       content: '',
       error: `source_block_ids exceeds the ${MAX_SOURCE_IDS}-id limit (got ${ids.length})`
@@ -209,6 +213,7 @@ export async function handleExtractAndSave(
   const mode = asString(args.mode) as ExtractionMode
   const cfg = MODE_CONFIGS[mode]
   if (!cfg) {
+    auditWrite(ctx, 'extract_and_save', 'error')
     return {
       content: '',
       error: `mode must be one of summary, flashcards, qa_pairs, action_items (got "${asString(args.mode)}")`
@@ -217,12 +222,14 @@ export async function handleExtractAndSave(
 
   const target = normalizeTarget(args.target)
   if (typeof target === 'string') {
+    auditWrite(ctx, 'extract_and_save', 'error')
     return { content: '', error: target }
   }
 
   // --- 2. Read source blocks (read-only) ------------------------------------
   const sources = await fetchSourceBlocks(ctx, ids)
   if (sources.length === 0) {
+    auditWrite(ctx, 'extract_and_save', 'error')
     return {
       content: '',
       error: 'none of the source_block_ids were found'
@@ -318,6 +325,7 @@ export async function handleExtractAndSave(
     .join('/')
   const head = `Extracted ${mode} from ${foundIds.length} source block(s) → ${pagePath} (${createdBlockIds.length} block(s)).`
   const tail = parsed.salvaged && parsed.warning ? `\n⚠ ${parsed.warning}` : ''
+  auditWrite(ctx, 'extract_and_save', 'ok')
   return {
     content: `${head}${tail}\nCreated block(s): ${createdBlockIds.join(', ')}`
   }

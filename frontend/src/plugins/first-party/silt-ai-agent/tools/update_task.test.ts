@@ -21,6 +21,8 @@ interface CtxOpts {
   rejectAll?: boolean
   /** Reject a single named setter (partial-failure tests). */
   rejectSetter?: 'recurrence'
+  /** Optional AI facet so audit-event assertions can opt in. */
+  ai?: { auditEvent: ReturnType<typeof vi.fn> }
 }
 
 function makeCtx(opts: CtxOpts = {}): {
@@ -103,7 +105,8 @@ function makeCtx(opts: CtxOpts = {}): {
     setTaskEstimate,
     setTaskBlockedBy,
     setTaskTitle,
-    mutateBlock
+    mutateBlock,
+    ...(opts.ai ? { ai: opts.ai } : {})
   } as unknown as PluginContext
   return {
     ctx,
@@ -367,6 +370,38 @@ describe('update_task', () => {
     expect(res.error).toMatch(/capability denied/)
     // Every write attempt rejected; read-only snapshot still ran.
     expect(c.sqliteQuery).toHaveBeenCalled()
+  })
+
+  it('emits a tool_result audit event on success', async () => {
+    const auditEvent = vi.fn(async (_payload: unknown) => {})
+    const c = makeCtx({ snap: { ...SNAP }, ai: { auditEvent } })
+    const res = await handleUpdateTask(c.ctx, {
+      task_id: 't1',
+      due: '2026-08-01'
+    })
+    expect(res.error).toBeUndefined()
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool_result',
+        tool: 'update_task',
+        status: 'ok'
+      })
+    )
+    expect(auditEvent.mock.calls[0][0]).toMatchObject({ block_id: 't1' })
+  })
+
+  it('emits a tool_result audit event with status error on invalid args', async () => {
+    const auditEvent = vi.fn(async (_payload: unknown) => {})
+    const c = makeCtx({ snap: { ...SNAP }, ai: { auditEvent } })
+    const res = await handleUpdateTask(c.ctx, { task_id: 't1', status: 'WOOF' })
+    expect(res.error).toMatch(/status/)
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool_result',
+        tool: 'update_task',
+        status: 'error'
+      })
+    )
   })
 
   it('exposes the tool def shape', () => {

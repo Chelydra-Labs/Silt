@@ -423,6 +423,13 @@ func TestRedactAIAuditFields_AllowlistOnly(t *testing.T) {
 		"tool_call_id": "call_1",
 		"outcome":      "confirmed",
 		"side":         "vector",
+		// #811: block_id is the one vault-content-adjacent key allowed — a block
+		// UUID is a fixed-shape identifier with no room for prose, so agent
+		// write-tool mutations become traceable without leaking body text.
+		"block_id": "7c2a3f1e-1111-2222-3333-444455556666",
+		// Freeform-text and path-bearing keys MUST still be dropped.
+		"args": "/home/user/vault/secret.md",
+		"path": "C:\\Users\\someone\\vault\\page.md",
 	}
 	out := redactAIAuditFields(in)
 	if out["tool"] != "search_notes" {
@@ -443,10 +450,30 @@ func TestRedactAIAuditFields_AllowlistOnly(t *testing.T) {
 	if out["side"] != "vector" {
 		t.Errorf("side = %v", out["side"])
 	}
-	for _, banned := range []string{"note", "summary", "details", "content"} {
+	if out["block_id"] != "7c2a3f1e-1111-2222-3333-444455556666" {
+		t.Errorf("block_id = %v, want the UUID preserved", out["block_id"])
+	}
+	for _, banned := range []string{"note", "summary", "details", "content", "args", "path"} {
 		if _, ok := out[banned]; ok {
 			t.Errorf("%s must be dropped, got %v", banned, out[banned])
 		}
+	}
+}
+
+// TestRedactAIAuditFields_BlockIdNotAPath is the #811 regression: a block id
+// is a UUID, never a path, so it survives redaction unchanged; a same-shaped
+// value under a banned key (content/path) is dropped regardless of its value.
+func TestRedactAIAuditFields_BlockIdNotAPath(t *testing.T) {
+	const uuid = "7c2a3f1e-1111-2222-3333-444455556666"
+	out := redactAIAuditFields(map[string]any{
+		"block_id": uuid,
+		"content":  uuid, // banned key — must drop even though the value is a UUID
+	})
+	if out["block_id"] != uuid {
+		t.Errorf("block_id = %v, want %q", out["block_id"], uuid)
+	}
+	if _, ok := out["content"]; ok {
+		t.Errorf("content must be dropped regardless of value, got %v", out["content"])
 	}
 }
 

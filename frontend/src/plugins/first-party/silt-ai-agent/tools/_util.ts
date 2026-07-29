@@ -1,5 +1,38 @@
 // Small helpers shared across the agent tools.
 
+import type { PluginContext } from '../../../sdk'
+
+/**
+ * Emit one consistent agent-write-tool audit event (#811). The payload carries
+ * ONLY allowlist-safe keys (tool / status / block_id) so the Go redactor
+ * (`plugin_audit.go` `allowedAIAuditDetailKeys`) preserves it: a block UUID
+ * identifies WHAT was mutated without leaking the block's prose body. Best-effort
+ * and fire-and-forget — failures are swallowed so audit can never break a tool
+ * handler's own return shape.
+ *
+ * The agent loop already emits a coarse `tool_call` start/ok/error event per
+ * dispatch; this is the complementary fine-grained "what it mutated" record that
+ * makes agent-initiated vault changes traceable in the per-plugin `ai.log`.
+ */
+export function auditWrite(
+  ctx: PluginContext,
+  tool: string,
+  status: 'ok' | 'error',
+  blockId?: string
+): void {
+  try {
+    void ctx.ai.auditEvent?.({
+      kind: 'tool_result',
+      tool,
+      status,
+      ...(blockId ? { block_id: blockId } : {})
+    })
+  } catch {
+    // Defensive: a test double cast through `unknown` may omit `ai`. Audit is
+    // best-effort and must never throw inside a tool handler.
+  }
+}
+
 /** Clamp a value into [min, max], defaulting when absent/non-finite. */
 export function clampInt(
   v: unknown,

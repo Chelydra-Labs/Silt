@@ -19,7 +19,7 @@
 
 import type { PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
-import { isValidYMD } from './_util'
+import { auditWrite, isValidYMD } from './_util'
 import type { ToolResult } from '../tool-registry'
 
 export const createTaskToolDef = {
@@ -87,6 +87,7 @@ export async function handleCreateTask(
 ): Promise<ToolResult> {
   const text = asString(args.text).trim()
   if (!text) {
+    auditWrite(ctx, 'create_task', 'error')
     return { content: '', error: 'text must not be empty' }
   }
 
@@ -97,6 +98,7 @@ export async function handleCreateTask(
       ? null
       : asString(args.due).trim()
   if (due && !isValidYMD(due)) {
+    auditWrite(ctx, 'create_task', 'error')
     return {
       content: '',
       error: `due must be a real YYYY-MM-DD date (got "${due}")`
@@ -110,6 +112,7 @@ export async function handleCreateTask(
   if (args.priority !== undefined && args.priority !== null) {
     const p = Number(args.priority)
     if (!Number.isInteger(p) || p < 1 || p > 3) {
+      auditWrite(ctx, 'create_task', 'error')
       return {
         content: '',
         error: 'priority must be an integer 1–3 (1=Critical, 2=Normal, 3=Low)'
@@ -139,6 +142,7 @@ export async function handleCreateTask(
   // page (the standalone path ignores them). Fail loudly so the model
   // self-corrects instead of the task silently landing in the wrong place.
   if (!page && (notebookArg || sectionArg || afterArg !== undefined)) {
+    auditWrite(ctx, 'create_task', 'error')
     return {
       content: '',
       error:
@@ -152,6 +156,7 @@ export async function handleCreateTask(
   if (page) {
     const notebook = notebookArg || ctx.activeNotebook
     if (!notebook) {
+      auditWrite(ctx, 'create_task', 'error')
       return {
         content: '',
         error:
@@ -195,12 +200,14 @@ export async function handleCreateTask(
     tags
   })
   if (failed.length > 0) {
+    auditWrite(ctx, 'create_task', 'ok', blockId)
     return {
       content: '',
       error: `Task created (block ${blockId} on ${placement}) but metadata failed: ${failed.join('; ')}`
     }
   }
 
+  auditWrite(ctx, 'create_task', 'ok', blockId)
   return {
     content: `Created task "${text}" on ${placement} (block ${blockId}). Use query_tasks to list or filter it, or update_task to change its fields.`
   }

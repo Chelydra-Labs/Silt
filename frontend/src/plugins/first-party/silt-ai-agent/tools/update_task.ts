@@ -16,7 +16,7 @@
 
 import type { PluginContext, TaskStatus } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
-import { isValidYMD } from './_util'
+import { auditWrite, isValidYMD } from './_util'
 import type { ToolResult } from '../tool-registry'
 
 const TASK_STATUSES: TaskStatus[] = ['TODO', 'DOING', 'DONE']
@@ -100,6 +100,7 @@ export async function handleUpdateTask(
 ): Promise<ToolResult> {
   const taskId = asString(args.task_id).trim()
   if (!taskId) {
+    auditWrite(ctx, 'update_task', 'error', taskId)
     return { content: '', error: 'task_id must not be empty' }
   }
 
@@ -108,6 +109,7 @@ export async function handleUpdateTask(
   if (args.status !== undefined && args.status !== null) {
     const s = asString(args.status).toUpperCase()
     if (!TASK_STATUSES.includes(s as TaskStatus)) {
+      auditWrite(ctx, 'update_task', 'error', taskId)
       return {
         content: '',
         error: `status must be one of ${TASK_STATUSES.join(', ')} (got "${asString(args.status)}")`
@@ -117,6 +119,7 @@ export async function handleUpdateTask(
   }
   const due = optionalString(args.due)
   if (due.set && due.value && !isValidYMD(due.value)) {
+    auditWrite(ctx, 'update_task', 'error', taskId)
     return {
       content: '',
       error: `due must be a real YYYY-MM-DD date (got "${due.value}")`
@@ -127,6 +130,7 @@ export async function handleUpdateTask(
   if (args.priority !== undefined && args.priority !== null) {
     const p = Number(args.priority)
     if (!Number.isInteger(p) || p < 1 || p > 3) {
+      auditWrite(ctx, 'update_task', 'error', taskId)
       return {
         content: '',
         error: 'priority must be an integer 1–3 (1=Critical, 2=Normal, 3=Low)'
@@ -147,6 +151,7 @@ export async function handleUpdateTask(
       ? undefined
       : asString(args.title).trim()
   if (title !== undefined && !title) {
+    auditWrite(ctx, 'update_task', 'error', taskId)
     return { content: '', error: 'title must not be empty' }
   }
 
@@ -161,6 +166,7 @@ export async function handleUpdateTask(
     blockedBy.set ||
     title !== undefined
   if (!hasMutation) {
+    auditWrite(ctx, 'update_task', 'error', taskId)
     return { content: '', error: 'no fields supplied to update' }
   }
 
@@ -169,12 +175,14 @@ export async function handleUpdateTask(
   try {
     snap = await readSnapshot(ctx, taskId)
   } catch (e: unknown) {
+    auditWrite(ctx, 'update_task', 'error', taskId)
     return {
       content: '',
       error: `lookup failed for task ${taskId}: ${e instanceof Error ? e.message : String(e)}`
     }
   }
   if (!snap) {
+    auditWrite(ctx, 'update_task', 'error', taskId)
     return { content: '', error: `task ${taskId} not found` }
   }
 
@@ -251,12 +259,14 @@ export async function handleUpdateTask(
   }
 
   if (failed.length > 0) {
+    auditWrite(ctx, 'update_task', 'error', taskId)
     return {
       content: '',
       error: `Updated task ${taskId} with failures: ${failed.join('; ')}${spawnNote ? ` (${spawnNote})` : ''}`
     }
   }
 
+  auditWrite(ctx, 'update_task', 'ok', taskId)
   return {
     content: `Updated task ${taskId}.${spawnNote ? ` ${spawnNote}` : ''}`
   }

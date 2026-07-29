@@ -149,6 +149,12 @@ const maxAIAuditDetailBytes = 2 * 1024
 // short developer-shaped identifiers belong here; the redactor relies on this
 // so a path or vault snippet embedded inside a longer string has nowhere to
 // land. Add a key only if its value is a bounded scalar (id / label / count).
+//
+// `block_id` is the one vault-content-adjacent key allowed: its value is a
+// block UUID (#811), a fixed-shape identifier with no room for prose, so agent
+// write-tool mutations ("agent created/updated block X") become traceable in
+// ai.log without leaking the block's body text. A UUID never carries authored
+// prose, so it is safe where content/note/path are not.
 var allowedAIAuditDetailKeys = map[string]struct{}{
 	"tool":         {},
 	"tool_call_id": {},
@@ -159,6 +165,7 @@ var allowedAIAuditDetailKeys = map[string]struct{}{
 	"iteration":    {},
 	"error_kind":   {},
 	"plugin":       {},
+	"block_id":     {},
 	// Server-only backstop marker when detail JSON is oversized.
 	"detail_truncated": {},
 }

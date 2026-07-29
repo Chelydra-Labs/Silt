@@ -11,6 +11,7 @@ function makeCtx(opts: {
   row?: { clean_content: string; type: string }
   mutateOk?: boolean
   setTagsOk?: boolean
+  ai?: { auditEvent: ReturnType<typeof vi.fn> }
 }): {
   ctx: PluginContext
   mutateBlock: ReturnType<typeof vi.fn>
@@ -29,7 +30,8 @@ function makeCtx(opts: {
   const ctx = {
     mutateBlock,
     setTaskTags,
-    sqliteQuery
+    sqliteQuery,
+    ...(opts.ai ? { ai: opts.ai } : {})
   } as unknown as PluginContext
   return { ctx, mutateBlock, setTaskTags, sqliteQuery }
 }
@@ -155,6 +157,27 @@ describe('update_block', () => {
       content: '   '
     })
     expect(noBody.error).toMatch(/content/)
+  })
+
+  it('emits a tool_result audit event on success', async () => {
+    const auditEvent = vi.fn(async (_payload: unknown) => {})
+    const { ctx } = makeCtx({
+      row: { clean_content: 'old note', type: 'NOTE' },
+      ai: { auditEvent }
+    })
+    const res = await handleUpdateBlock(ctx, {
+      block_id: 'b1',
+      content: 'shiny new note text'
+    })
+    expect(res.error).toBeUndefined()
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool_result',
+        tool: 'update_block',
+        status: 'ok'
+      })
+    )
+    expect(auditEvent.mock.calls[0][0]).toMatchObject({ block_id: 'b1' })
   })
 
   it('stripTaskMetadata removes checkbox + tokens and collapses whitespace', () => {

@@ -22,6 +22,7 @@ function makeCtx(opts: {
   sources: SourceBlock[]
   completeContent?: string
   completeError?: Error
+  auditEvent?: ReturnType<typeof vi.fn>
 }): {
   ctx: PluginContext
   complete: ReturnType<typeof vi.fn>
@@ -64,7 +65,8 @@ function makeCtx(opts: {
     sqliteQuery,
     ai: {
       complete,
-      embed: vi.fn(async () => ({ embeddings: [], model: 'm', dimensions: 0 }))
+      embed: vi.fn(async () => ({ embeddings: [], model: 'm', dimensions: 0 })),
+      ...(opts.auditEvent ? { auditEvent: opts.auditEvent } : {})
     },
     createPage,
     createBlock,
@@ -392,6 +394,32 @@ describe('extract_and_save', () => {
     const text = (createBlock.mock.calls[0][0] as { text: string }).text
     expect(text.length).toBeLessThan(8_300)
     expect(text).toContain('…[truncated]')
+  })
+
+  it('emits a tool_result audit event on success', async () => {
+    const auditEvent = vi.fn(async (_payload: unknown) => {})
+    const { ctx } = makeCtx({
+      sources: SOURCES,
+      completeContent: JSON.stringify({
+        summary: 'Postgres uses MVCC; Redis is single-threaded.'
+      }),
+      auditEvent
+    })
+    const res = await handleExtractAndSave(ctx, {
+      source_block_ids: ['src-1', 'src-2'],
+      mode: 'summary',
+      target: TARGET
+    })
+    expect(res.error).toBeUndefined()
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool_result',
+        tool: 'extract_and_save',
+        status: 'ok'
+      })
+    )
+    // extract_and_save creates multiple blocks → no single block_id.
+    expect(auditEvent.mock.calls[0][0]).not.toHaveProperty('block_id')
   })
 
   it('exposes the tool def shape', () => {
