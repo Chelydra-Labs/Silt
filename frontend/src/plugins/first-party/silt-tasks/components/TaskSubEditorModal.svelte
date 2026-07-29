@@ -19,16 +19,23 @@
   import type { ParsedBlock } from '../../../../lib/editor'
   import type { PluginContext } from '../../../sdk'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
+  import TaskMetadataSidebar from './TaskMetadataSidebar.svelte'
+  import type { TaskDetail } from '../types'
+  import { fetchTaskDetail } from '../query'
 
   /**
-   * Focused Task Sub-Editor Modal (#304). Double-clicking a Kanban task card
-   * opens this glassy overlay hosting a scoped TipTap instance seeded with the
-   * task's child sub-tree. On save (debounced), the edited sub-tree is spliced
-   * back into the parent file atomically via saveSubtreeBlocks (#305).
+   * Focused Task Sub-Editor Modal (#304, #780). Opens as a glassy overlay
+   * hosting a scoped TipTap instance seeded with the task's child sub-tree.
+   * On save (debounced), the edited sub-tree is spliced back into the parent
+   * file atomically via saveSubtreeBlocks (#305).
    *
-   * Mirrors the main editor's TipTap setup (createEditor + extension set) but
-   * with a self-contained autosave targeting the subtree splice IPC, plus the
-   * Standard modal pattern: focus-trap + Esc-with-unsaved-prompt + focus-restore.
+   * Two-column body (#780): main = scoped TipTap editor with its autosave
+   * pipeline; right sidebar = TaskMetadataSidebar (the same metadata surface
+   * the TaskEditDrawer uses). On narrow viewports the sidebar collapses into
+   * a disclosure so the editor keeps space.
+   *
+   * Standard modal pattern: focus-trap + Esc-with-unsaved-prompt +
+   * focus-restore.
    */
   interface Props {
     blockId: string
@@ -38,6 +45,8 @@
     parentTaskText: string
     ctx: PluginContext
     onClose: () => void
+    /** Fired after a successful metadata write so the host can re-query. */
+    onMetaChanged?: () => void
   }
 
   let {
@@ -47,12 +56,18 @@
     page,
     parentTaskText,
     ctx,
-    onClose
+    onClose,
+    onMetaChanged
   }: Props = $props()
 
-  // Standalone (.silt) tasks have no source page; show a friendly label
-  // instead of the synthetic `.silt › (none) › tasks.md` path.
   let isStandalone = $derived(notebook === STANDALONE_TASKS_NOTEBOOK)
+
+  // --- Task detail hydration (#780) ---
+  // The modal is opened with parentTaskText (the task's clean_content from the
+  // host view). We re-fetch the full TaskDetail via fetchTaskDetail so the
+  // metadata sidebar has every field. parentTaskText is the optimistic title
+  // before the fetch resolves.
+  let task = $state<TaskDetail | null>(null)
 
   // --- Editor setup ---
   let editorInstance: Editor | null = $state(null)
@@ -62,21 +77,10 @@
   let saveError = $state('')
   let saving = $state(false)
   let saveTimer: ReturnType<typeof setTimeout> | null = null
-  // Re-queue signal: when persist() is called while a save is in flight, the
-  // early-return sets this so the in-flight save re-runs once it resolves —
-  // otherwise edits made during the IPC window would be silently dropped.
   let saveRequested = false
-  // Snapshot of the doc captured at early-return time. The retry after an
-  // in-flight save flushes this snapshot directly (bypassing the live editor)
-  // so an unmount that destroys the editor before the save resolves can't
-  // drop the edit — the doc is already serialized.
   let pendingSnapshot: ParsedBlock[] | null = null
-  // The currently in-flight save promise, so close/teardown can await a full
-  // drain (persist → any re-queued flush) before unmounting.
   let inFlight: Promise<void> = Promise.resolve()
 
-  // Suppress the onUpdate handler during a programmatic setContent so it
-  // doesn't register as user input (mirrors TipTapEditor's suppressUpdate).
   let suppressUpdate = false
 
   // --- Focus trap (Tab/Shift+Tab cycle within the dialog) ---
@@ -90,10 +94,6 @@
     return Array.from(dialogRef.querySelectorAll<HTMLElement>(FOCUSABLE))
   }
 
-  // Build the editor with the same extension surface as the main editor, minus
-  // the suggest/drag-handle/keymap features that assume the host page context.
-  // The seed is fetched async, so createEditor starts empty and we setContent
-  // once the subtree loads.
   const extensions = [
     StarterKit.configure({
       heading: false,
@@ -123,9 +123,6 @@
     Focus
   ]
 
-  // Capture the editor store once under untrack so the one-shot creation
-  // doesn't establish a reactive dependency. The Editor instance is captured
-  // from onCreate (the svelte-tiptap convention, mirroring TipTapEditor.svelte).
   const editorStore = untrack(() =>
     createEditor({
       extensions,
@@ -138,8 +135,6 @@
       },
       onCreate: ({ editor }) => {
         editorInstance = editor as Editor
-        // Load the subtree once the editor exists so setContent can run, then
-        // focus so keyboard users land in the editor on open.
         void loadSubtree().then(() => {
           queueMicrotask(() => editorInstance?.commands.focus())
         })
@@ -155,16 +150,9 @@
       if (!editorInstance || editorInstance.isDestroyed) return
       suppressUpdate = true
       try {
-        // `fetchSubtree` can resolve to null when the task has no children
-        // yet (a Go nil slice serializes to JSON null, not []). Treat that
-        // as an empty subtree so the editor opens blank for the user to
-        // add notes, instead of crashing on blocksToDoc(null).map.
         const safeSubtree = (subtree ?? []) as ParsedBlock[]
         let normalized = safeSubtree
         if (safeSubtree.length > 0) {
-          // Compute minDepth over blocks that carry a numeric depth — a single
-          // malformed block with depth:undefined must not force minDepth to 0
-          // and suppress normalization for the whole subtree.
           const depths = safeSubtree
             .map((b) => b.depth)
             .filter((d): d is number => typeof d === 'number')
@@ -180,8 +168,6 @@
           emitUpdate: false
         })
       } finally {
-        // ensure suppressUpdate resets even if setContent throws, so a
-        // later failed load can't permanently silence user-typing saves.
         suppressUpdate = false
       }
       unsavedChanges = false
@@ -189,6 +175,17 @@
       loadError = e instanceof Error ? e.message : String(e)
     } finally {
       loading = false
+    }
+  }
+
+  // Hydrate the full TaskDetail so the metadata sidebar has every field.
+  // A fetch failure (missing binding in test, deleted block) is non-fatal —
+  // the sidebar simply doesn't render and the editor works standalone.
+  async function loadTaskDetail() {
+    try {
+      task = await fetchTaskDetail(ctx, blockId)
+    } catch {
+      task = null
     }
   }
 
@@ -201,10 +198,6 @@
 
   async function persist() {
     if (!editorInstance || editorInstance.isDestroyed) return
-    // A save is already in flight: don't drop this edit. Capture the doc
-    // snapshot NOW so the in-flight save's finally can flush it directly,
-    // without needing the live editor (which onDestroy may tear down before
-    // the IPC resolves on the unmount-without-close path).
     if (saving) {
       saveRequested = true
       pendingSnapshot = docToBlocks(editorInstance.getJSON())
@@ -212,7 +205,6 @@
     }
     const edited = docToBlocks(editorInstance.getJSON())
     saving = true
-    // Track the in-flight save so drainSave (close/teardown) can await it.
     inFlight = (async () => {
       try {
         await ctx.saveSubtreeBlocks(blockId, edited)
@@ -222,9 +214,6 @@
         saveError = e instanceof Error ? e.message : String(e)
       } finally {
         saving = false
-        // If an edit landed while this save was in flight, flush the captured
-        // snapshot directly — bypassing the editor entirely so an unmount
-        // that destroyed it can't drop the edit.
         if (saveRequested && pendingSnapshot) {
           const next = pendingSnapshot
           saveRequested = false
@@ -247,11 +236,7 @@
     await inFlight
   }
 
-  // drainSave awaits the full save pipeline (the in-flight save plus any
-  // edit-triggered re-queue) so close/teardown can't unmount before the
-  // latest edits are persisted. Returns once no save is pending.
   async function drainSave(): Promise<void> {
-    // Cancel any debounced save not yet fired so persist() runs immediately.
     if (saveTimer) {
       clearTimeout(saveTimer)
       saveTimer = null
@@ -260,24 +245,26 @@
       void persist()
     }
     await inFlight
-    // If persist re-queued itself, chase the tail until the queue drains.
     while (saveRequested || saving) {
       await inFlight
     }
   }
 
-  // --- Close with unsaved-edits guard (#306) ---
   async function attemptClose() {
     if (unsavedChanges || saving) {
-      // Flush the full save pipeline before closing so no edit is dropped.
       await drainSave()
       unsavedChanges = false
     }
     onClose()
   }
 
+  // Mirrors whether the sidebar has a popover/dialog open so Esc doesn't close
+  // the modal mid-interaction.
+  let sidebarBusy = $state(false)
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
+      if (sidebarBusy) return
       e.preventDefault()
       e.stopPropagation()
       void attemptClose()
@@ -303,25 +290,38 @@
     }
   }
 
+  // --- Responsive sidebar (#780) ---
+  // On narrow viewports the sidebar collapses into a disclosure so the editor
+  // keeps space. Default open on wide viewports.
+  let isNarrow = $state(false)
+  let sidebarOpen = $state(true)
+
+  $effect(() => {
+    const mq = window.matchMedia('(max-width: 768px)')
+    const sync = () => {
+      isNarrow = mq.matches
+      if (mq.matches) sidebarOpen = false
+      else sidebarOpen = true
+    }
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  })
+
+  // Header title prefers the fetched task's clean_content; parentTaskText is
+  // the optimistic fallback before the fetch resolves.
+  let headerTitle = $derived(task?.clean_content ?? parentTaskText)
+
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement
-    // Keydown is handled by <svelte:window onkeydown={handleKeydown}> in the
-    // template (standard modal keydown pattern) — no addEventListener here, or
-    // every Esc/Tab would fire the handler twice.
+    void loadTaskDetail()
     return () => {
-      // Flush any in-flight + pending save before teardown so an unmount
-      // (navigation) can't drop edits. attemptClose is the user-facing path
-      // and already drains; this is the safety net for unmount-without-close.
-      // Fire-and-forget drainSave — Svelte's cleanup can't await, but the
-      // IPC call still reaches the backend and persists.
       void drainSave()
       previouslyFocused?.focus?.()
     }
   })
 
   onDestroy(() => {
-    // svelte-tiptap editors are destroyed on unmount automatically; this is a
-    // belt-and-suspenders guard for HMR / rapid re-mount during tests.
     if (editorInstance && !editorInstance.isDestroyed) {
       editorInstance.destroy()
     }
@@ -346,8 +346,7 @@
   class="fixed inset-0 z-[180] flex items-center justify-center p-6 bg-black/40 backdrop-blur-[2px]"
   transition:fly={{ y: -12, duration: 150 }}
 >
-  <!-- Backdrop: a sibling button so the click is keyboard/AT-reachable but
-       excluded from the tab order. -->
+  <!-- Backdrop -->
   <button
     tabindex="-1"
     aria-label="Close sub-editor"
@@ -360,7 +359,9 @@
     aria-modal="true"
     aria-labelledby="sub-editor-title"
     tabindex="-1"
-    class="relative z-10 w-full max-w-3xl h-[80vh] rounded-xl border border-border-active shadow-2xl flex flex-col overflow-hidden"
+    class="relative z-10 w-full {isNarrow
+      ? 'max-w-3xl'
+      : 'max-w-5xl'} h-[80vh] rounded-xl border border-border-active shadow-2xl flex flex-col overflow-hidden"
     style="backdrop-filter: blur(16px) saturate(140%); background: color-mix(in srgb, var(--color-surface-modal) 94%, transparent);"
   >
     <!-- Header: breadcrumbs + parent task title + status -->
@@ -369,7 +370,7 @@
     >
       <span
         class="material-symbols-outlined text-accent-primary-start text-type-2xl"
-        >zoom_in</span
+        aria-hidden="true">zoom_in</span
       >
       <div class="min-w-0 flex-1">
         <div
@@ -380,10 +381,10 @@
           {:else}
             {notebook}<span
               class="material-symbols-outlined text-type-2xs align-middle"
-              >chevron_right</span
+              aria-hidden="true">chevron_right</span
             >{section || '(none)'}<span
               class="material-symbols-outlined text-type-2xs align-middle"
-              >chevron_right</span
+              aria-hidden="true">chevron_right</span
             >{page}
           {/if}
         </div>
@@ -391,7 +392,7 @@
           id="sub-editor-title"
           class="text-text-primary font-label-md text-base truncate"
         >
-          {parentTaskText}
+          {headerTitle}
         </h2>
       </div>
       <button
@@ -400,48 +401,105 @@
         class="text-text-muted hover:text-text-primary transition-colors p-1 rounded"
         aria-label="Close sub-editor"
       >
-        <span class="material-symbols-outlined text-type-2xl">close</span>
+        <span class="material-symbols-outlined text-type-2xl" aria-hidden="true"
+          >close</span
+        >
       </button>
     </header>
 
-    <!-- Editor body -->
-    <div
-      class="relative flex-1 overflow-y-auto custom-scrollbar px-5 py-4 min-h-0"
-    >
-      {#if loading}
+    <!-- Two-column body (#780) -->
+    <div class="flex-1 flex {isNarrow ? 'flex-col' : 'flex-row'} min-h-0">
+      <!-- Main: editor column -->
+      <div class="flex-1 flex flex-col min-w-0 min-h-0">
+        {#if isNarrow && task}
+          <button
+            type="button"
+            class="flex items-center justify-between px-5 py-2 border-b border-surface-modal-border text-type-sm font-label-sm-bold text-text-primary hover:bg-hover transition-colors flex-shrink-0"
+            aria-expanded={sidebarOpen}
+            aria-controls="sub-editor-sidebar"
+            onclick={() => (sidebarOpen = !sidebarOpen)}
+          >
+            <span class="flex items-center gap-1.5">
+              <span
+                class="material-symbols-outlined text-icon-md"
+                aria-hidden="true">tune</span
+              >
+              Details
+            </span>
+            <span
+              class="material-symbols-outlined text-icon-sm text-text-muted"
+              aria-hidden="true"
+              >{sidebarOpen ? 'expand_less' : 'expand_more'}</span
+            >
+          </button>
+        {/if}
+
+        <!-- Editor body -->
         <div
-          class="absolute inset-0 z-10 flex items-center justify-center bg-surface-modal/80 backdrop-blur-xs"
+          class="relative flex-1 overflow-y-auto custom-scrollbar px-5 py-4 min-h-0"
         >
-          <div class="text-text-muted font-body-md">Loading sub-notes…</div>
+          {#if loading}
+            <div
+              class="absolute inset-0 z-10 flex items-center justify-center bg-surface-modal/80 backdrop-blur-xs"
+            >
+              <div class="text-text-muted font-body-md">Loading sub-notes…</div>
+            </div>
+          {:else if loadError}
+            <div class="text-status-danger text-center py-10 font-body-md">
+              Load failed: {loadError}
+            </div>
+          {/if}
+          {#if $editorStore}
+            <EditorContent editor={$editorStore} />
+          {/if}
         </div>
-      {:else if loadError}
-        <div class="text-status-danger text-center py-10 font-body-md">
-          Load failed: {loadError}
-        </div>
-      {/if}
-      {#if $editorStore}
-        <EditorContent editor={$editorStore} />
+
+        <!-- Status footer -->
+        <footer
+          class="flex items-center justify-between px-5 py-2 border-t border-surface-modal-border flex-shrink-0"
+        >
+          <span
+            class="text-type-xs font-label-sm {saveError
+              ? 'text-status-danger'
+              : unsavedChanges
+                ? 'text-status-warn'
+                : 'text-text-muted'}"
+            role={saveError ? 'alert' : 'status'}
+            aria-live={saveError ? 'assertive' : 'polite'}
+          >
+            {statusText}
+          </span>
+          <span class="text-type-2xs text-text-muted font-label-sm">
+            Esc to close
+          </span>
+        </footer>
+      </div>
+
+      <!-- Sidebar: metadata (#780) -->
+      {#if task && !isNarrow}
+        <aside
+          class="w-80 flex-shrink-0 border-l border-surface-modal-border overflow-y-auto custom-scrollbar px-4 py-4"
+        >
+          <TaskMetadataSidebar
+            {task}
+            {ctx}
+            {onMetaChanged}
+            bind:busy={sidebarBusy}
+          />
+        </aside>
+      {:else if task && isNarrow && sidebarOpen}
+        <aside
+          id="sub-editor-sidebar"
+          class="flex-shrink-0 border-t border-surface-modal-border overflow-y-auto custom-scrollbar px-4 py-4 max-h-[40vh]"
+        >
+          <TaskMetadataSidebar
+            {task}
+            {ctx}
+            {onMetaChanged}
+            bind:busy={sidebarBusy}
+          />
+        </aside>
       {/if}
     </div>
-
-    <!-- Status footer -->
-    <footer
-      class="flex items-center justify-between px-5 py-2 border-t border-surface-modal-border flex-shrink-0"
-    >
-      <span
-        class="text-type-xs font-label-sm {saveError
-          ? 'text-status-danger'
-          : unsavedChanges
-            ? 'text-status-warn'
-            : 'text-text-muted'}"
-        role={saveError ? 'alert' : 'status'}
-        aria-live={saveError ? 'assertive' : 'polite'}
-      >
-        {statusText}
-      </span>
-      <span class="text-type-2xs text-text-muted font-label-sm">
-        Esc to close
-      </span>
-    </footer>
   </div>
 </div>

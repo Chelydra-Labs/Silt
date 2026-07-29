@@ -7,7 +7,8 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 // (fired by setContent + focus) resolve caret rects through
 // Range.getClientRects, which jsdom omits — stub it the same way the main
 // editor's context-menu test does. elementFromPoint is touched by the
-// Placeholder viewport tracker during editor construction.
+// Placeholder viewport tracker during editor construction. matchMedia is used
+// by the responsive sidebar collapse (#780) and is absent from jsdom.
 if (typeof document !== 'undefined' && !document.elementFromPoint) {
   document.elementFromPoint = () => document.body
 }
@@ -70,6 +71,20 @@ if (!Element.prototype.animate) {
   } as unknown as Element['animate']
 }
 
+// Override the global matchMedia polyfill (vitest.setup.ts) with a mutable
+// mock so the responsive-collapse test can flip `matches` per test.
+const mql = {
+  matches: false,
+  media: '',
+  onchange: null,
+  addEventListener: vi.fn(),
+  removeEventListener: vi.fn(),
+  addListener: vi.fn(),
+  removeListener: vi.fn(),
+  dispatchEvent: vi.fn()
+}
+window.matchMedia = vi.fn(() => mql)
+
 vi.mock('@wailsio/runtime', () => ({
   Events: {
     On: vi.fn(() => () => {})
@@ -101,8 +116,45 @@ import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
 
 const mocks = vi.hoisted(() => ({
   fetchSubtree: vi.fn(),
-  saveSubtreeBlocks: vi.fn()
+  saveSubtreeBlocks: vi.fn(),
+  sqliteQuery: vi.fn()
 }))
+
+function makeTaskRow(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    id: 'task-1',
+    source: 'vault',
+    notebook: 'Work',
+    section: 'Journal',
+    page: 'Daily',
+    file_date: '2026-07-01',
+    line_number: 1,
+    clean_content: 'Ship the feature',
+    status: 'TODO',
+    owner: '',
+    start_date: '',
+    due_date: '2026-07-15',
+    priority: 2,
+    pinned: 0,
+    progress: 0,
+    recurrence: '',
+    comments_count: 0,
+    links_count: 0,
+    created_at: '',
+    completed_at: '',
+    manual_order: 0,
+    modified_at: '',
+    estimate_minutes: null,
+    subtask_total: 0,
+    subtask_done: 0,
+    tags: null,
+    blocked_by: null,
+    is_blocked: 0,
+    ...overrides
+  }
+}
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   return {
@@ -113,6 +165,9 @@ function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
     ...v2CtxStubs,
     fetchSubtree: mocks.fetchSubtree,
     saveSubtreeBlocks: mocks.saveSubtreeBlocks,
+    sqliteQuery: mocks.sqliteQuery,
+    // CommentThread (mounted via TaskMetadataSidebar) subscribes to block:changed.
+    on: () => () => {},
     ...overrides
   } as PluginContext
 }
@@ -134,6 +189,10 @@ describe('TaskSubEditorModal (#304)', () => {
   beforeEach(() => {
     mocks.fetchSubtree.mockReset().mockResolvedValue([])
     mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
+    mocks.sqliteQuery
+      .mockReset()
+      .mockResolvedValue({ rows: [], truncated: false })
+    mql.matches = false
   })
 
   afterEach(() => cleanup())
@@ -391,5 +450,87 @@ describe('TaskSubEditorModal (#304)', () => {
     await new Promise((r) => setTimeout(r, 10))
 
     expect(calls.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('TaskSubEditorModal — metadata sidebar (#780)', () => {
+  beforeEach(() => {
+    mocks.fetchSubtree.mockReset().mockResolvedValue([])
+    mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
+    mocks.sqliteQuery
+      .mockReset()
+      .mockResolvedValue({ rows: [makeTaskRow()], truncated: false })
+    mql.matches = false
+  })
+
+  afterEach(() => cleanup())
+
+  it('renders the editor and the metadata sidebar side-by-side on wide viewports', async () => {
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    // Wait for the editor to mount.
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    // Wait for the task detail to hydrate so the sidebar renders.
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+
+    // The sidebar's Status heading is present alongside the editor.
+    expect(screen.getByText('Status')).toBeTruthy()
+    expect(screen.getByText('Due date')).toBeTruthy()
+  })
+
+  it('a metadata change persists via ctx and fires onMetaChanged', async () => {
+    const onMetaChanged = vi.fn()
+    const updateBlockState = vi
+      .fn()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx({ updateBlockState }),
+      onMetaChanged,
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+
+    // Click DONE in the sidebar's status radiogroup.
+    const done = screen.getByRole('radio', { name: 'Done' })
+    await fireEvent.click(done)
+    await flush()
+
+    expect(updateBlockState).toHaveBeenCalledWith('task-1', 'DONE')
+    expect(onMetaChanged).toHaveBeenCalled()
+  })
+
+  it('collapses the sidebar into a disclosure on narrow viewports', async () => {
+    mql.matches = true
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+
+    // The disclosure toggle is present and collapsed by default on narrow.
+    const toggle = screen.getByRole('button', { name: 'Details' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    // Expanding reveals the sidebar.
+    await fireEvent.click(toggle)
+    await tick()
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('Status')).toBeTruthy()
   })
 })
