@@ -22,7 +22,6 @@ function makeCtx(opts: CtxOpts = {}): {
   setTaskPriority: ReturnType<typeof vi.fn>
   setTaskTags: ReturnType<typeof vi.fn>
 } {
-  const ok = vi.fn(async () => true)
   const reject = (name: string) =>
     vi.fn(async () => {
       throw new Error(`${name} denied`)
@@ -34,8 +33,11 @@ function makeCtx(opts: CtxOpts = {}): {
     ? reject('createBlock')
     : vi.fn(async () => opts.blockId ?? 'task-uuid')
   const createPage = vi.fn(async () => 'page-uuid')
+  // Each setter gets its own mock instance so per-setter call assertions are
+  // independent — a shared mock would let owner/priority/tags calls masquerade
+  // as setTaskDueDate calls.
   const mk = (name: 'due' | 'owner' | 'priority' | 'tags') =>
-    opts.rejectSetter === name ? reject(name) : ok
+    opts.rejectSetter === name ? reject(name) : vi.fn(async () => true)
   const ctx = {
     activeNotebook: opts.activeNotebook ?? '',
     createTask,
@@ -136,9 +138,15 @@ describe('create_task', () => {
     )
   })
 
-  it('applies metadata via the dedicated setters with the right args', async () => {
-    const { ctx, setTaskDueDate, setTaskOwner, setTaskPriority, setTaskTags } =
-      makeCtx({ blockId: 'blk-4' })
+  it('folds due into createTask on the standalone path (single atomic write)', async () => {
+    const {
+      ctx,
+      createTask,
+      setTaskDueDate,
+      setTaskOwner,
+      setTaskPriority,
+      setTaskTags
+    } = makeCtx({ blockId: 'blk-4' })
     const res = await handleCreateTask(ctx, {
       text: 't',
       due: '2026-08-01',
@@ -147,11 +155,29 @@ describe('create_task', () => {
       tags: ['work', '#urgent']
     })
     expect(res.error).toBeUndefined()
-    expect(setTaskDueDate).toHaveBeenCalledWith('blk-4', '2026-08-01')
+    // Standalone: due rides along on createTask (one write), not a second setter.
+    expect(createTask).toHaveBeenCalledWith({
+      title: 't',
+      dueDate: '2026-08-01'
+    })
+    expect(setTaskDueDate).not.toHaveBeenCalled()
     expect(setTaskOwner).toHaveBeenCalledWith('blk-4', 'chris')
     expect(setTaskPriority).toHaveBeenCalledWith('blk-4', 2)
     // Leading # is stripped — setTaskTags takes raw tag paths.
     expect(setTaskTags).toHaveBeenCalledWith('blk-4', ['work', 'urgent'])
+  })
+
+  it('uses the setTaskDueDate setter on the page-scoped path (createBlock has no dueDate)', async () => {
+    const { ctx, createTask, setTaskDueDate } = makeCtx({ blockId: 'blk-4b' })
+    const res = await handleCreateTask(ctx, {
+      text: 't',
+      due: '2026-08-01',
+      notebook: 'Work',
+      page: 'Plan'
+    })
+    expect(res.error).toBeUndefined()
+    expect(createTask).not.toHaveBeenCalled()
+    expect(setTaskDueDate).toHaveBeenCalledWith('blk-4b', '2026-08-01')
   })
 
   it('omits setter calls for fields the caller did not supply', async () => {

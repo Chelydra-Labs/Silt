@@ -293,6 +293,21 @@ describe('update_task', () => {
     expect(c.setTaskTitle).not.toHaveBeenCalled()
   })
 
+  it('treats title:null as skip (not an empty-string error)', async () => {
+    // title can't be cleared, so null means "no change" — consistent with how
+    // every other nullable field treats null. Only an explicit empty/whitespace
+    // string is an error.
+    const c = makeCtx({ snap: { ...SNAP } })
+    const res = await handleUpdateTask(c.ctx, {
+      task_id: 't1',
+      title: null,
+      due: '2026-08-01'
+    })
+    expect(res.error).toBeUndefined()
+    expect(c.setTaskTitle).not.toHaveBeenCalled()
+    expect(c.setTaskDueDate).toHaveBeenCalledWith('t1', '2026-08-01')
+  })
+
   it('errors when no fields are supplied', async () => {
     const c = makeCtx({ snap: { ...SNAP } })
     const res = await handleUpdateTask(c.ctx, { task_id: 't1' })

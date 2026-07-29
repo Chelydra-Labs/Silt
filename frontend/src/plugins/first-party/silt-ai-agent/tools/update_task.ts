@@ -138,7 +138,12 @@ export async function handleUpdateTask(
   const estimate = optionalString(args.estimate)
   const tags = optionalStringArray(args.tags)
   const blockedBy = optionalStringArray(args.blocked_by)
-  const title = args.title === undefined ? undefined : asString(args.title)
+  // null is treated as "not supplied" (skip), like undefined — title genuinely
+  // cannot be cleared, so only an explicit empty/whitespace string errors.
+  const title =
+    args.title === undefined || args.title === null
+      ? undefined
+      : asString(args.title)
   if (title !== undefined && !title.trim()) {
     return { content: '', error: 'title must not be empty' }
   }

@@ -176,16 +176,20 @@ export async function handleCreateTask(
       .filter((s) => s.length > 0)
       .join('/')
   } else {
-    // ctx.createTask lands a GFM checkbox in .silt/tasks.md.
-    blockId = await ctx.createTask({ title: text })
+    // createTask accepts dueDate — fold it into the single atomic create so the
+    // standalone path doesn't re-open the file to write [due::] (and risk a
+    // create-then-setter partial failure). The page-scoped path keeps the
+    // setter because createBlock has no dueDate param.
+    blockId = await ctx.createTask({ title: text, dueDate: due ?? undefined })
     placement = 'standalone tasks list'
   }
 
   // Apply metadata via the dedicated setters (structured fields, not prose).
   // A failure here is partial: the task exists, so report the id rather than
-  // letting the model retry creation and duplicate it.
+  // letting the model retry creation and duplicate it. due is only set here on
+  // the page-scoped path — standalone folded it into createTask above.
   const failed = await applyMetadata(ctx, blockId, {
-    due,
+    due: page ? due : null,
     owner,
     priority,
     tags
