@@ -7,6 +7,7 @@ import {
   ExportCustomDictionary,
   ImportCustomDictionary
 } from '../../../../bindings/silt/app.js'
+import { mirrorCustomDictionary } from '../../../settings/store.svelte'
 import { friendlyPackError } from './dictionaryStatus.svelte'
 
 /**
@@ -80,6 +81,9 @@ export const customDictionary = {
     busy = true
     try {
       words = await AddCustomDictionaryWord(w)
+      // Go self-writes suppress config:changed, so mirror the resolved list
+      // into the live config so the spellcheck $effect re-checks immediately.
+      mirrorCustomDictionary(words)
       if (!word) newWord = ''
     } catch (e) {
       error = friendlyPackError(e)
@@ -96,6 +100,7 @@ export const customDictionary = {
     busy = true
     try {
       words = await RemoveCustomDictionaryWord(word)
+      mirrorCustomDictionary(words)
     } catch (e) {
       error = friendlyPackError(e)
     } finally {
@@ -136,6 +141,7 @@ export const customDictionary = {
       if (!path) return
       const summary = await ImportCustomDictionary(path)
       words = await GetCustomDictionary()
+      mirrorCustomDictionary(words)
       if (summary.added === 0 && summary.skipped > 0) {
         status = `No new words — ${summary.skipped} were already in your dictionary.`
       } else if (summary.skipped > 0) {
