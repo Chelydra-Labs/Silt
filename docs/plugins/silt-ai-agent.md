@@ -68,6 +68,8 @@ Three tiers of write safety apply:
   source blocks are never touched. `create_task` / `update_task` route task
   structured fields (status, owner, due, priority, tags, recurrence, …) through
   the dedicated SDK setters, not the prose — `update_block` remains prose-only.
+  A `status: DONE` on a recurring task spawns the next instance; `update_task`
+  returns the spawned instance's id directly from the transition.
 - **Staged (destructive)** — `rename_tag` rewrites the hashtag token across
   every matching block in one shot, so it routes through the confirmation gate
   in **Safety model** below before any block is touched.
@@ -109,7 +111,8 @@ marker). SQL is parameterized throughout — the agent has no raw-SQL tool.
 
 - **Direct writes** (`create_note`, `create_task`, `update_block`,
   `update_task`, `extract_and_save`) apply immediately as single reversible
-  markdown edits.
+  markdown edits, and each emits a redacted `tool_result` audit event (the
+  mutated block's UUID) traceable in the per-plugin `ai.log`.
 - **Staged / destructive** ops (`rename_tag`) pause for explicit confirmation
   in the drawer before any vault mutation.
 - Tool results that contain vault text are wrapped in

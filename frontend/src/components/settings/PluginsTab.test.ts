@@ -1007,6 +1007,273 @@ describe('PluginsTab check for updates timeout (#794)', () => {
       'https://example.com/b/update.json'
     )
   })
+
+  it('parallelizes checks so two hung plugins both time out within one deadline', async () => {
+    // Both checks hang forever. Under the old sequential loop this would take
+    // n * 8s (16s for two); with the concurrency cap both start immediately and
+    // settle after a single 8s window. Proving both were CALLED after one
+    // deadline advance distinguishes parallel from sequential dispatch.
+    mocks.checkPluginUpdate.mockImplementation(() => new Promise(() => {}))
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await tick()
+    await vi.advanceTimersByTimeAsync(0)
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await tick()
+
+    // One deadline window resolves BOTH hung checks (parallel dispatch).
+    await vi.advanceTimersByTimeAsync(8000)
+    await tick()
+
+    const checkBtn = screen.getByRole('button', {
+      name: /Check for updates/i
+    })
+    expect(checkBtn).not.toBeDisabled()
+    // Both plugins were dispatched before either timed out — the concurrency
+    // cap, not serialization, bounded the wait.
+    expect(mocks.checkPluginUpdate).toHaveBeenCalledTimes(2)
+    expect(
+      screen.getByText(/Couldn't check 2 plugins for updates/)
+    ).toBeTruthy()
+  })
+})
+
+// #810: a partial update-check failure (one or more plugins timing out or
+// erroring) must surface WHICH plugin failed — both a per-card "Check failed"
+// chip and the failed plugin name(s) in the summary — instead of only a count.
+describe('PluginsTab check for updates failure surfacing (#810)', () => {
+  const updatableA = {
+    id: 'plug-a',
+    name: 'Plugin A',
+    version: '1.0.0',
+    author: 'Test',
+    description: '',
+    icon: 'extension',
+    update_url: 'https://example.com/a/update.json'
+  }
+  const updatableB = {
+    id: 'plug-b',
+    name: 'Plugin B',
+    version: '2.0.0',
+    author: 'Test',
+    description: '',
+    icon: 'extension',
+    update_url: 'https://example.com/b/update.json'
+  }
+
+  beforeEach(() => {
+    mocks.listPlugins.mockReset()
+    mocks.loadPlugins.mockReset()
+    mocks.getGrantedCapabilities.mockReset()
+    mocks.getPluginSecurityStats.mockReset()
+    mocks.checkPluginUpdate.mockReset()
+    mocks.listPlugins.mockResolvedValue([updatableA, updatableB])
+    mocks.loadPlugins.mockResolvedValue(undefined)
+    mocks.getGrantedCapabilities.mockResolvedValue({})
+    mocks.getPluginSecurityStats.mockResolvedValue([])
+    mocks.configNoPlugins = {
+      plugins: { active: [], disabled: [], plugin_settings: {} }
+    } as never
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('renders a Check failed chip on the failed card and names it in the summary', async () => {
+    mocks.checkPluginUpdate.mockImplementation((id: string) =>
+      id === 'plug-a'
+        ? Promise.reject(new Error('network down'))
+        : Promise.resolve({ updateAvailable: false })
+    )
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      // Summary names the failed plugin.
+      expect(screen.getByText(/failed: Plugin A/i)).toBeTruthy()
+    })
+
+    // Only the failed card carries the Check failed chip.
+    const cardA = screen.getByText('Plugin A').closest('.rounded-lg')
+    const cardB = screen.getByText('Plugin B').closest('.rounded-lg')
+    expect(cardA?.textContent).toMatch(/Check failed/i)
+    expect(cardB?.textContent).not.toMatch(/Check failed/i)
+  })
+
+  it('clears the Check failed chip on a subsequent successful check', async () => {
+    // First check: plug-a fails → chip shows.
+    mocks.checkPluginUpdate.mockImplementation((id: string) =>
+      id === 'plug-a'
+        ? Promise.reject(new Error('network down'))
+        : Promise.resolve({ updateAvailable: false })
+    )
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      expect(
+        screen.getByText('Plugin A').closest('.rounded-lg')?.textContent
+      ).toMatch(/Check failed/i)
+    })
+
+    // Second check: plug-a succeeds (no update) → chip clears.
+    mocks.checkPluginUpdate.mockResolvedValue({ updateAvailable: false })
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      expect(screen.getByText(/Checked 2 plugins — no updates/)).toBeTruthy()
+    })
+    expect(
+      screen.getByText('Plugin A').closest('.rounded-lg')?.textContent
+    ).not.toMatch(/Check failed/i)
+  })
+
+  it('preserves a prior Update available badge across a flaky failure', async () => {
+    // First check: plug-a has an update → badge shows.
+    mocks.checkPluginUpdate.mockImplementation(async (id: string) => ({
+      updateAvailable: id === 'plug-a'
+    }))
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      expect(
+        screen.getByText('Plugin A').closest('.rounded-lg')?.textContent
+      ).toMatch(/Update available/i)
+    })
+
+    // Second check: plug-a fails → the confirmed badge survives, and the
+    // failure chip shows alongside it.
+    mocks.checkPluginUpdate.mockImplementation((id: string) =>
+      id === 'plug-a'
+        ? Promise.reject(new Error('network down'))
+        : Promise.resolve({ updateAvailable: false })
+    )
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      expect(screen.getByText(/failed: Plugin A/i)).toBeTruthy()
+    })
+
+    const cardA = screen.getByText('Plugin A').closest('.rounded-lg')
+    expect(cardA?.textContent).toMatch(/Update available/i)
+    expect(cardA?.textContent).toMatch(/Check failed/i)
+  })
+})
+
+// #813: the concurrency cap must bound simultaneous in-flight update checks so N
+// hung plugins can't stack their per-call deadlines. The parallelism test in the
+// #794 block uses fewer plugins than the cap (2 < 4), so it would still pass if
+// the cap were Infinity — this locks the perf invariant by asserting at most the
+// cap are ever in-flight at once.
+describe('PluginsTab update-check concurrency cap (#813)', () => {
+  const plugins = Array.from({ length: 6 }, (_, i) => ({
+    id: `plug-${i}`,
+    name: `Plugin ${i}`,
+    version: '1.0.0',
+    author: 'Test',
+    description: '',
+    icon: 'extension',
+    update_url: `https://example.com/${i}/update.json`
+  }))
+
+  beforeEach(() => {
+    mocks.listPlugins.mockReset()
+    mocks.loadPlugins.mockReset()
+    mocks.getGrantedCapabilities.mockReset()
+    mocks.getPluginSecurityStats.mockReset()
+    mocks.checkPluginUpdate.mockReset()
+    mocks.listPlugins.mockResolvedValue(plugins)
+    mocks.loadPlugins.mockResolvedValue(undefined)
+    mocks.getGrantedCapabilities.mockResolvedValue({})
+    mocks.getPluginSecurityStats.mockResolvedValue([])
+    mocks.configNoPlugins = {
+      plugins: { active: [], disabled: [], plugin_settings: {} }
+    } as never
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('caps simultaneous in-flight checks at the concurrency limit', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    mocks.checkPluginUpdate.mockImplementation(() => {
+      inFlight++
+      if (inFlight > maxInFlight) maxInFlight = inFlight
+      // Resolve on the next macrotask so workers overlap. The cap-many workers
+      // grab their first item synchronously before any timer fires, so
+      // maxInFlight records the cap deterministically regardless of CI jitter.
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          inFlight--
+          resolve({ updateAvailable: false })
+        }, 0)
+      })
+    })
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await flush()
+    await waitFor(() => {
+      expect(screen.getByText(/Checked 6 plugins — no updates/)).toBeTruthy()
+    })
+
+    // Exactly the cap (UPDATE_CHECK_CONCURRENCY = 4) were ever in-flight at once
+    // across 6 plugins. This fails if the cap is raised to Infinity or removed
+    // — the perf invariant #813 exists to guarantee.
+    expect(maxInFlight).toBe(4)
+  })
 })
 
 // Characterization tests for the install-from-archive flow: pick → validate →

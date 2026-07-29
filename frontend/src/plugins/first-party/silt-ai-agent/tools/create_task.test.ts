@@ -10,6 +10,8 @@ interface CtxOpts {
   rejectSetter?: 'due' | 'owner' | 'priority' | 'tags'
   /** Make createTask / createBlock reject (capability-denied test). */
   rejectCreate?: boolean
+  /** Optional AI facet so audit-event assertions can opt in. */
+  ai?: { auditEvent: ReturnType<typeof vi.fn> }
 }
 
 function makeCtx(opts: CtxOpts = {}): {
@@ -46,7 +48,8 @@ function makeCtx(opts: CtxOpts = {}): {
     setTaskDueDate: mk('due'),
     setTaskOwner: mk('owner'),
     setTaskPriority: mk('priority'),
-    setTaskTags: mk('tags')
+    setTaskTags: mk('tags'),
+    ...(opts.ai ? { ai: opts.ai } : {})
   } as unknown as PluginContext
   return {
     ctx,
@@ -244,6 +247,47 @@ describe('create_task', () => {
     expect(res.error).toMatch(/Task created/i)
     expect(res.error).toContain('blk-9')
     expect(res.error).toMatch(/priority/)
+  })
+
+  it('emits a tool_result audit event on success', async () => {
+    const auditEvent = vi.fn(async (_payload: unknown) => {})
+    const { ctx } = makeCtx({ blockId: 'blk-1', ai: { auditEvent } })
+    const res = await handleCreateTask(ctx, { text: 'draft proposal' })
+    expect(res.error).toBeUndefined()
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool_result',
+        tool: 'create_task',
+        status: 'ok'
+      })
+    )
+    expect(auditEvent.mock.calls[0][0]).toMatchObject({ block_id: 'blk-1' })
+  })
+
+  it('audits status error (not ok) when a metadata setter partially fails', async () => {
+    // The block IS created, but the tool returns an error to the agent — the
+    // audit must record the error outcome so ai.log forensics match the agent's
+    // result (consistent with update_task's partial-failure branch).
+    const auditEvent = vi.fn(async (_payload: unknown) => {})
+    const { ctx } = makeCtx({
+      blockId: 'blk-9',
+      rejectSetter: 'priority',
+      ai: { auditEvent }
+    })
+    const res = await handleCreateTask(ctx, {
+      text: 't',
+      owner: 'maya',
+      priority: 2
+    })
+    expect(res.error).toMatch(/Task created/i)
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool_result',
+        tool: 'create_task',
+        status: 'error'
+      })
+    )
+    expect(auditEvent.mock.calls[0][0]).toMatchObject({ block_id: 'blk-9' })
   })
 
   it('exposes the tool def shape', () => {

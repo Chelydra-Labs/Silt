@@ -37,6 +37,11 @@ export interface Card {
   updateUrl?: string
   /** True when a newer version is available (#111). */
   updateAvailable?: boolean
+  /** True when the last update check for this plugin failed (#810). Cleared on
+   *  a subsequent successful check; survives a flaky failure alongside a prior
+   *  `updateAvailable` so a bad network doesn't silently drop a confirmed
+   *  update. */
+  updateCheckFailed?: boolean
   /** First-party AI modules: enablement lives under Settings → AI (#632). */
   managedInAI?: boolean
 }

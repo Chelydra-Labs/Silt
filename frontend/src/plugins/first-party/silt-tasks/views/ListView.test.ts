@@ -197,7 +197,7 @@ describe('Tasks view', () => {
   beforeEach(() => {
     mocks.sqliteQuery.mockReset()
     mocks.updateBlockState.mockReset()
-    mocks.updateBlockState.mockResolvedValue(true)
+    mocks.updateBlockState.mockResolvedValue({ ok: true, spawnedId: '' })
     mocks.createTask.mockReset().mockResolvedValue('new-task-id')
     mocks.blockChangedCallbacks.length = 0
   })
@@ -953,7 +953,9 @@ describe('Tasks view — truncated footer (#372 hardening)', () => {
 describe('Tasks view — grouping engine (#423)', () => {
   beforeEach(() => {
     mocks.sqliteQuery.mockReset()
-    mocks.updateBlockState.mockReset().mockResolvedValue(true)
+    mocks.updateBlockState
+      .mockReset()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
     mocks.createTask.mockReset().mockResolvedValue('new-task-id')
     mocks.blockChangedCallbacks.length = 0
   })
@@ -1095,7 +1097,9 @@ describe('Tasks view — grouping engine (#423)', () => {
 describe('Tasks view — manual ordering (#426)', () => {
   beforeEach(() => {
     mocks.sqliteQuery.mockReset()
-    mocks.updateBlockState.mockReset().mockResolvedValue(true)
+    mocks.updateBlockState
+      .mockReset()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
     mocks.setTaskOrder.mockReset().mockResolvedValue(true)
     mocks.setTaskOrders.mockReset().mockResolvedValue(true)
     mocks.createTask.mockReset().mockResolvedValue('new-task-id')

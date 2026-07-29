@@ -14,6 +14,7 @@
 
 import type { PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
+import { auditWrite } from './_util'
 import type { ToolResult } from '../tool-registry'
 
 export const updateBlockToolDef = {
@@ -53,10 +54,12 @@ export async function handleUpdateBlock(
 ): Promise<ToolResult> {
   const blockId = asString(args.block_id).trim()
   if (!blockId) {
+    auditWrite(ctx, 'update_block', 'error', blockId)
     return { content: '', error: 'block_id must not be empty' }
   }
   const newContent = asString(args.content)
   if (!newContent.trim()) {
+    auditWrite(ctx, 'update_block', 'error', blockId)
     return { content: '', error: 'content must not be empty' }
   }
   const tagOverride = Array.isArray(args.tags) ? (args.tags as unknown[]) : null
@@ -68,6 +71,7 @@ export async function handleUpdateBlock(
   )
   const row = rows[0]
   if (!row) {
+    auditWrite(ctx, 'update_block', 'error', blockId)
     return { content: '', error: `block ${blockId} not found` }
   }
   const type = asString(row.type).toUpperCase()
@@ -81,6 +85,7 @@ export async function handleUpdateBlock(
   if (isTask) {
     body = stripTaskMetadata(newContent)
     if (!body) {
+      auditWrite(ctx, 'update_block', 'error', blockId)
       return {
         content: '',
         error:
@@ -96,6 +101,7 @@ export async function handleUpdateBlock(
   // 3. Mutate the block body.
   const ok = await ctx.mutateBlock(blockId, body)
   if (!ok) {
+    auditWrite(ctx, 'update_block', 'error', blockId)
     return { content: '', error: `mutateBlock failed for block ${blockId}` }
   }
 
@@ -104,6 +110,7 @@ export async function handleUpdateBlock(
     const tags = normalizeTags(tagOverride)
     const tagOk = await ctx.setTaskTags(blockId, tags)
     if (!tagOk) {
+      auditWrite(ctx, 'update_block', 'error', blockId)
       return {
         content: '',
         error: `body updated but setTaskTags failed for block ${blockId}`
@@ -111,6 +118,7 @@ export async function handleUpdateBlock(
     }
   }
 
+  auditWrite(ctx, 'update_block', 'ok', blockId)
   return {
     content: `Updated block ${blockId} (${type || 'BLOCK'}).`
   }

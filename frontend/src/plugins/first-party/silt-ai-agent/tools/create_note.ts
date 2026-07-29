@@ -9,6 +9,7 @@
 
 import type { PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
+import { auditWrite } from './_util'
 import type { ToolResult } from '../tool-registry'
 
 export const createNoteToolDef = {
@@ -44,10 +45,12 @@ export async function handleCreateNote(
 ): Promise<ToolResult> {
   const page = asString(args.page).trim()
   if (!page) {
+    auditWrite(ctx, 'create_note', 'error')
     return { content: '', error: 'page must not be empty' }
   }
   const body = asString(args.content)
   if (!body.trim()) {
+    auditWrite(ctx, 'create_note', 'error')
     return { content: '', error: 'content must not be empty' }
   }
 
@@ -56,6 +59,7 @@ export async function handleCreateNote(
       ? args.notebook
       : ctx.activeNotebook
   if (!notebook) {
+    auditWrite(ctx, 'create_note', 'error')
     return {
       content: '',
       error:
@@ -81,6 +85,7 @@ export async function handleCreateNote(
   const pagePath = [notebook, section, page]
     .filter((s) => s.length > 0)
     .join('/')
+  auditWrite(ctx, 'create_note', 'ok', blockId)
   return {
     content: `Created note on ${pagePath} (block ${blockId}). Use read_blocks with this id to verify.`
   }

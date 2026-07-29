@@ -32,7 +32,7 @@ func TestUpdateBlockState_CompletedAtLifecycle(t *testing.T) {
 	filePath := indexTestFile(t, app, notebook, section, page, fileDate, content)
 
 	// TODO → DONE: [completed:: now] must appear.
-	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
 		t.Fatalf("TODO→DONE: %v", err)
 	}
 	updated, _ := os.ReadFile(filePath)
@@ -44,7 +44,7 @@ func TestUpdateBlockState_CompletedAtLifecycle(t *testing.T) {
 	firstCompleted := extractToken(firstDone, "[completed:: ")
 
 	// DONE → TODO (reopen): [completed::] must be cleared.
-	if err := app.UpdateBlockState(taskID, "TODO"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "TODO"); err != nil {
 		t.Fatalf("DONE→TODO: %v", err)
 	}
 	updated, _ = os.ReadFile(filePath)
@@ -57,7 +57,7 @@ func TestUpdateBlockState_CompletedAtLifecycle(t *testing.T) {
 	// Sleep briefly so the timestamp (second-granularity) is guaranteed to
 	// differ when re-completing — otherwise the overwrite assertion is vacuous.
 	time.Sleep(1100 * time.Millisecond)
-	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
 		t.Fatalf("re-DONE: %v", err)
 	}
 	updated, _ = os.ReadFile(filePath)
@@ -99,7 +99,7 @@ func TestUpdateBlockState_RecurrenceSpawnHasCreatedAt(t *testing.T) {
 	content := "- [ ] water plants [due:: 2026-07-01] [recur:: every week] <!-- id: " + taskID + " -->\n"
 	filePath := indexTestFile(t, app, "W", "S", "RecurSpawn", "2026-07-01", content)
 
-	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
 		t.Fatalf("UpdateBlockState DONE: %v", err)
 	}
 	updated, _ := os.ReadFile(filePath)

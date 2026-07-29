@@ -155,6 +155,37 @@
   // timeout lands in the call's catch as a normal failure so the existing
   // failed/summary paths count it.
   const UPDATE_CHECK_TIMEOUT_MS = 8000
+  // Bound concurrent update checks (#813) so N simultaneously-hung plugins
+  // don't stack their per-call deadlines (n * 8s worst case). A small cap
+  // keeps total wall-clock near one deadline regardless of plugin count.
+  const UPDATE_CHECK_CONCURRENCY = 4
+
+  // Resolve `fn(item)` for every item with at most `limit` in flight, settling
+  // every call (one rejection never aborts siblings — the allSettled shape the
+  // sequential loop already used, just parallelized). Preserves input order in
+  // the result array so callers can re-join with the targets snapshot by index.
+  async function mapWithConcurrency<T, R>(
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<R>
+  ): Promise<PromiseSettledResult<R>[]> {
+    const results: PromiseSettledResult<R>[] = new Array(items.length)
+    let cursor = 0
+    async function worker() {
+      while (cursor < items.length) {
+        const i = cursor++
+        try {
+          results[i] = { status: 'fulfilled', value: await fn(items[i]) }
+        } catch (e) {
+          results[i] = { status: 'rejected', reason: e }
+        }
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(limit, items.length) }, worker)
+    )
+    return results
+  }
 
   // Race an IPC promise against a deadline. The underlying promise keeps
   // settling after the race resolves, so its eventual rejection is swallowed
@@ -176,11 +207,12 @@
     updateCheckSummary = ''
     actionError = ''
     try {
-      // Snapshot targets by id so a mid-loop refresh() cannot detach mutations.
+      // Snapshot targets by id so a mid-check refresh() cannot detach mutations.
       const targets = cards
         .filter((c) => c.updateUrl && c.source === 'disk')
         .map((c) => ({
           id: c.id,
+          name: c.name,
           version: c.version,
           updateUrl: c.updateUrl!
         }))
@@ -188,29 +220,45 @@
       let failed = 0
       const availableIds = new SvelteSet<string>()
       const failedIds = new SvelteSet<string>()
-      for (const t of targets) {
-        try {
-          const info = await withDeadline(
+      // Parallel + concurrency-capped (#813): a hung plugin only costs one
+      // deadline regardless of plugin count. Order is preserved so the settled
+      // array re-joins with `targets` by index.
+      const settled = await mapWithConcurrency(
+        targets,
+        UPDATE_CHECK_CONCURRENCY,
+        (t) =>
+          withDeadline(
             CheckPluginUpdate(t.id, t.version, t.updateUrl),
             UPDATE_CHECK_TIMEOUT_MS
           )
-          if (info?.updateAvailable) {
-            availableIds.add(t.id)
-            found++
-          }
-        } catch {
-          // best-effort — network errors are non-fatal for update checks
+      )
+      targets.forEach((t, i) => {
+        const r = settled[i]
+        if (r.status === 'fulfilled' && r.value?.updateAvailable) {
+          availableIds.add(t.id)
+          found++
+        } else if (r.status === 'rejected') {
+          // best-effort — network errors / timeouts are non-fatal for update checks
           failedIds.add(t.id)
           failed++
         }
-      }
+      })
       // Rewrite flags from successful checks so a later "no updates" pass
-      // clears stale badges. Failed checks keep the prior badge — a flaky
-      // network must not erase a previously confirmed update.
+      // clears stale badges. Failed checks keep the prior "Update available"
+      // badge — a flaky network must not erase a previously confirmed update —
+      // but flip a separate "Check failed" chip (#810) so the user can see
+      // WHICH plugin failed without scanning the card list.
       const checkedIds = new SvelteSet(targets.map((t) => t.id))
       cards = cards.map((c) => {
-        if (!checkedIds.has(c.id) || failedIds.has(c.id)) return c
-        return { ...c, updateAvailable: availableIds.has(c.id) }
+        if (!checkedIds.has(c.id)) return c
+        if (failedIds.has(c.id)) {
+          return { ...c, updateCheckFailed: true }
+        }
+        return {
+          ...c,
+          updateAvailable: availableIds.has(c.id),
+          updateCheckFailed: false
+        }
       })
       const n = targets.length
       if (n === 0) {
@@ -228,6 +276,21 @@
             ? ` (${failed} check${failed === 1 ? '' : 's'} failed)`
             : ''
         updateCheckSummary = `Checked ${n} plugins — ${found} update${found === 1 ? '' : 's'} available${failNote}`
+      }
+      // Name the failed plugins (#810) so the user can locate the culprit(s)
+      // without scanning the card list. Skipped when EVERY check failed (the
+      // "Couldn't check N…" line already conveys it and the per-card chips
+      // cover identity). List up to three by name; beyond that, name the first
+      // and summarize the rest.
+      if (failed > 0 && failed < n) {
+        const failedNames = targets
+          .filter((t) => failedIds.has(t.id))
+          .map((t) => t.name)
+        const named = failedNames.slice(0, 3)
+        const rest = failedNames.length - named.length
+        const namePart =
+          rest > 0 ? `${named.join(', ')} +${rest} more` : named.join(', ')
+        updateCheckSummary += ` — failed: ${namePart}`
       }
     } finally {
       checkingUpdates = false
@@ -445,6 +508,14 @@
                     class="text-type-3xs text-accent-primary-start bg-accent-primary-glow border border-accent-primary-start/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
                   >
                     Update available
+                  </span>
+                {/if}
+                {#if card.updateCheckFailed}
+                  <span
+                    role="status"
+                    class="text-type-3xs text-error bg-error/10 border border-error/30 rounded px-1.5 py-0.5 uppercase tracking-wider"
+                  >
+                    Check failed
                   </span>
                 {/if}
                 {#if card.author}

@@ -423,6 +423,13 @@ func TestRedactAIAuditFields_AllowlistOnly(t *testing.T) {
 		"tool_call_id": "call_1",
 		"outcome":      "confirmed",
 		"side":         "vector",
+		// #811: block_id is the one vault-content-adjacent key allowed — a block
+		// UUID is a fixed-shape identifier with no room for prose, so agent
+		// write-tool mutations become traceable without leaking body text.
+		"block_id": "7c2a3f1e-1111-2222-3333-444455556666",
+		// Freeform-text and path-bearing keys MUST still be dropped.
+		"args": "/home/user/vault/secret.md",
+		"path": "C:\\Users\\someone\\vault\\page.md",
 	}
 	out := redactAIAuditFields(in)
 	if out["tool"] != "search_notes" {
@@ -443,10 +450,62 @@ func TestRedactAIAuditFields_AllowlistOnly(t *testing.T) {
 	if out["side"] != "vector" {
 		t.Errorf("side = %v", out["side"])
 	}
-	for _, banned := range []string{"note", "summary", "details", "content"} {
+	if out["block_id"] != "7c2a3f1e-1111-2222-3333-444455556666" {
+		t.Errorf("block_id = %v, want the UUID preserved", out["block_id"])
+	}
+	for _, banned := range []string{"note", "summary", "details", "content", "args", "path"} {
 		if _, ok := out[banned]; ok {
 			t.Errorf("%s must be dropped, got %v", banned, out[banned])
 		}
+	}
+}
+
+// TestRedactAIAuditFields_BlockIdNotAPath is the #811 regression: a block id
+// is a UUID, never a path, so it survives redaction unchanged; a same-shaped
+// value under a banned key (content/path) is dropped regardless of its value.
+func TestRedactAIAuditFields_BlockIdNotAPath(t *testing.T) {
+	const uuid = "7c2a3f1e-1111-2222-3333-444455556666"
+	out := redactAIAuditFields(map[string]any{
+		"block_id": uuid,
+		"content":  uuid, // banned key — must drop even though the value is a UUID
+	})
+	if out["block_id"] != uuid {
+		t.Errorf("block_id = %v, want %q", out["block_id"], uuid)
+	}
+	if _, ok := out["content"]; ok {
+		t.Errorf("content must be dropped regardless of value, got %v", out["content"])
+	}
+}
+
+// TestRedactAIAuditFields_BlockIdMustBeUUID is the #811 hardening regression:
+// block_id reaches the redactor from model-supplied args (update_block/
+// update_task pass the caller's id verbatim), so it must match a UUID shape —
+// prose, paths, and fragments placed there are dropped, never persisted to the
+// synced ai.log.
+func TestRedactAIAuditFields_BlockIdMustBeUUID(t *testing.T) {
+	const uuid = "7c2a3f1e-1111-2222-3333-444455556666"
+	for _, bad := range []string{
+		"not a uuid, just prose",
+		"/home/user/vault/secret.md",                 // POSIX path
+		"C:\\Users\\someone\\vault\\page.md",         // Windows path
+		"7c2a3f1e",                                   // truncated fragment
+		"7c2a3f1e-1111-2222-3333-444455556666-extra", // overlong
+		"",
+	} {
+		out := redactAIAuditFields(map[string]any{"block_id": bad})
+		if _, ok := out["block_id"]; ok {
+			t.Errorf("block_id=%q must be dropped (not a UUID), got %v", bad, out["block_id"])
+		}
+	}
+	// A valid UUID survives unchanged.
+	out := redactAIAuditFields(map[string]any{"block_id": uuid})
+	if out["block_id"] != uuid {
+		t.Errorf("block_id UUID = %v, want %q preserved", out["block_id"], uuid)
+	}
+	// A non-string block_id (e.g. a number) is also dropped.
+	outNum := redactAIAuditFields(map[string]any{"block_id": 12345})
+	if _, ok := outNum["block_id"]; ok {
+		t.Errorf("non-string block_id must be dropped, got %v", outNum["block_id"])
 	}
 }
 

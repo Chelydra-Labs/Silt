@@ -89,7 +89,13 @@ func (a *App) DistinctOwners(prefix string) ([]string, error) {
 // block's UUID, file metadata, and the lock by file path, then re-locate the
 // target line inside the file write lock by scanning for the UUID comment. The
 // UUID is the source of truth for the target line, not the cached line number.
-func (a *App) UpdateBlockState(blockID string, newState string) error {
+//
+// The first return value is the spawned recurrence instance's UUID when a
+// recurring task transitions TODO/DOING → DONE (the next instance is spliced
+// below the completed line in the same atomic write); it is empty for every
+// other transition (non-recurring, TODO/DOING, or an already-DONE no-op). The
+// frontend can chain off it directly instead of re-querying for the sibling.
+func (a *App) UpdateBlockState(blockID string, newState string) (string, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	// Guard against a meaningless no-op that the frontend might interpret
@@ -97,11 +103,11 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 	switch newState {
 	case "TODO", "DOING", "DONE":
 	default:
-		return fmt.Errorf("invalid target status: %s (valid: TODO, DOING, DONE)", newState)
+		return "", fmt.Errorf("invalid target status: %s (valid: TODO, DOING, DONE)", newState)
 	}
 
 	if a.db == nil {
-		return fmt.Errorf("vault database not loaded")
+		return "", fmt.Errorf("vault database not loaded")
 	}
 
 	a.wg.Add(1)
@@ -114,12 +120,12 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 		return e
 	})
 	if err != nil {
-		return fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
+		return "", fmt.Errorf("block %s not found in SQLite: %w", blockID, err)
 	}
 	notebook, section, page, blockType := loc.Notebook, loc.Section, loc.Page, loc.BlockType
 
 	if blockType != string(parser.BlockTask) {
-		return fmt.Errorf("block %s is not a task", blockID)
+		return "", fmt.Errorf("block %s is not a task", blockID)
 	}
 
 	// Defense-in-depth against path traversal: notebook/section/page originate
@@ -129,20 +135,21 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 	safeSection := sanitizePathSegment(section)
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
-		return fmt.Errorf("invalid file metadata for block %s: notebook=%q section=%q page=%q", blockID, notebook, section, page)
+		return "", fmt.Errorf("invalid file metadata for block %s: notebook=%q section=%q page=%q", blockID, notebook, section, page)
 	}
 	// Resolve the notebook content dir from the block's source (#100): vault
 	// blocks live under <vault>/<notebook>, linked blocks under their root.
 	notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
 	if err != nil {
-		return fmt.Errorf("resolve notebook dir for block %s: %w", blockID, err)
+		return "", fmt.Errorf("resolve notebook dir for block %s: %w", blockID, err)
 	}
 	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
 	if !isPathWithinRoot(filePath, notebookDir) {
-		return fmt.Errorf("resolved file path %q escapes notebook root %q", filePath, notebookDir)
+		return "", fmt.Errorf("resolved file path %q escapes notebook root %q", filePath, notebookDir)
 	}
 
 	var writeErr error
+	var spawnedID string // UUID minted by the recurrence spawn inside the lock
 	a.coordinator.LockBlockWrite(blockID, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
 			// Don't clobber a file the user is actively editing (the editor
@@ -213,6 +220,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 						if nb, ok := buildNextRecurrence(parsedBlocks[i], parsedBlocks, i); ok {
 							parsedBlocks[i].Recurrence = ""
 							parsedBlocks = insertBlockAfter(parsedBlocks, i, nb)
+							spawnedID = nb.ID // surface the minted id to the caller (#812)
 						}
 					}
 					found = true
@@ -256,7 +264,9 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 	}) // LockBlockWrite
 
 	if writeErr != nil {
-		return writeErr
+		// A write failure means the spawn (if any) never persisted, so do not
+		// surface a spawned id for a non-durable block.
+		return "", writeErr
 	}
 	a.emitBlockChanged(blockID, safeNotebook, safeSection, safePage, "")
 
@@ -294,7 +304,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) error {
 			a.emitBlockChanged(depID, sanitizePathSegment(depLoc.Notebook), sanitizePathSegment(depLoc.Section), sanitizePathSegment(depLoc.Page), "")
 		}
 	}
-	return nil
+	return spawnedID, nil
 }
 
 // buildNextRecurrence computes the next instance of a recurring task from the

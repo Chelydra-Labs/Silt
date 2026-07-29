@@ -3,7 +3,11 @@ import type { PluginContext } from '../../../sdk'
 import { clearTools } from '../tool-registry'
 import { createNoteToolDef, handleCreateNote } from './create_note'
 
-function makeCtx(opts: { activeNotebook?: string; blockId?: string }): {
+function makeCtx(opts: {
+  activeNotebook?: string
+  blockId?: string
+  ai?: { auditEvent: ReturnType<typeof vi.fn> }
+}): {
   ctx: PluginContext
   createPage: ReturnType<typeof vi.fn>
   createBlock: ReturnType<typeof vi.fn>
@@ -13,7 +17,8 @@ function makeCtx(opts: { activeNotebook?: string; blockId?: string }): {
   const ctx = {
     activeNotebook: opts.activeNotebook ?? '',
     createPage,
-    createBlock
+    createBlock,
+    ...(opts.ai ? { ai: opts.ai } : {})
   } as unknown as PluginContext
   return { ctx, createPage, createBlock }
 }
@@ -107,6 +112,41 @@ describe('create_note', () => {
     expect(noPage.error).toMatch(/page/)
     const noContent = await handleCreateNote(ctx, { page: 'P', content: '' })
     expect(noContent.error).toMatch(/content/)
+  })
+
+  it('emits a tool_result audit event on success', async () => {
+    const auditEvent = vi.fn(async (_payload: unknown) => {})
+    const { ctx } = makeCtx({ blockId: 'blk-1', ai: { auditEvent } })
+    const res = await handleCreateNote(ctx, {
+      notebook: 'Work',
+      page: 'P',
+      content: 'note body'
+    })
+    expect(res.error).toBeUndefined()
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool_result',
+        tool: 'create_note',
+        status: 'ok'
+      })
+    )
+    expect(auditEvent.mock.calls[0][0]).toMatchObject({
+      block_id: expect.any(String)
+    })
+  })
+
+  it('emits a tool_result audit event with status error on invalid args', async () => {
+    const auditEvent = vi.fn(async (_payload: unknown) => {})
+    const { ctx } = makeCtx({ ai: { auditEvent } })
+    const res = await handleCreateNote(ctx, { page: '', content: 'x' })
+    expect(res.error).toBeDefined()
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool_result',
+        tool: 'create_note',
+        status: 'error'
+      })
+    )
   })
 
   it('exposes the tool def shape', () => {

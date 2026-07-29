@@ -52,7 +52,7 @@ func TestUpdateBlockState_RecurrenceSpawnsNextInstance(t *testing.T) {
 		"- [ ] other task <!-- id: cccccccc-1111-1111-1111-111111111111 -->\n"
 	filePath := indexTestFile(t, app, notebook, section, page, fileDate, content)
 
-	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
 		t.Fatalf("UpdateBlockState DONE: %v", err)
 	}
 
@@ -138,7 +138,7 @@ func TestUpdateBlockState_RecurrenceAllIntervals(t *testing.T) {
 		t.Run(tc.rule, func(t *testing.T) {
 			content := "- [ ] task [due:: " + tc.due + "] [recur:: " + tc.rule + "] <!-- id: " + tc.taskID + " -->\n"
 			filePath := indexTestFile(t, app, "W", "S", "P"+tc.pageIdx, "2026-07-01", content)
-			if err := app.UpdateBlockState(tc.taskID, "DONE"); err != nil {
+			if _, err := app.UpdateBlockState(tc.taskID, "DONE"); err != nil {
 				t.Fatalf("UpdateBlockState: %v", err)
 			}
 			updated, _ := os.ReadFile(filePath)
@@ -161,7 +161,7 @@ func TestUpdateBlockState_RecurrenceMonthEndRollover(t *testing.T) {
 	const taskID = "eeeeeeee-1111-1111-1111-111111111111"
 	content := "- [ ] pay rent [due:: 2026-01-31] [recur:: every month] <!-- id: " + taskID + " -->\n"
 	filePath := indexTestFile(t, app, "W", "S", "Rent", "2026-01-31", content)
-	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
 		t.Fatalf("UpdateBlockState: %v", err)
 	}
 	updated, _ := os.ReadFile(filePath)
@@ -186,7 +186,7 @@ func TestUpdateBlockState_RecurrenceMissingDueDate(t *testing.T) {
 	const taskID = "ffffffff-1111-1111-1111-111111111111"
 	content := "- [ ] daily standup [recur:: every day] <!-- id: " + taskID + " -->\n"
 	filePath := indexTestFile(t, app, "W", "S", "Standup", "2026-07-01", content)
-	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
 		t.Fatalf("UpdateBlockState: %v", err)
 	}
 	updated, _ := os.ReadFile(filePath)
@@ -205,7 +205,7 @@ func TestUpdateBlockState_RecurrenceMalformedNoop(t *testing.T) {
 	const taskID = "99999999-1111-1111-1111-111111111111"
 	content := "- [ ] task [recur:: fortnightly-ish] <!-- id: " + taskID + " -->\n"
 	filePath := indexTestFile(t, app, "W", "S", "Bad", "2026-07-01", content)
-	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
 		t.Fatalf("UpdateBlockState must not fail on malformed recurrence: %v", err)
 	}
 	updated, _ := os.ReadFile(filePath)
@@ -229,7 +229,7 @@ func TestUpdateBlockState_RecurrenceDoesNotFireOnTODO(t *testing.T) {
 	filePath := indexTestFile(t, app, "W", "S", "NoFire", "2026-07-01", content)
 
 	// TODO -> DOING: no spawn.
-	if err := app.UpdateBlockState(taskID, "DOING"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DOING"); err != nil {
 		t.Fatalf("UpdateBlockState DOING: %v", err)
 	}
 	updated, _ := os.ReadFile(filePath)
@@ -238,7 +238,7 @@ func TestUpdateBlockState_RecurrenceDoesNotFireOnTODO(t *testing.T) {
 	}
 
 	// DOING -> TODO (revert): no spawn.
-	if err := app.UpdateBlockState(taskID, "TODO"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "TODO"); err != nil {
 		t.Fatalf("UpdateBlockState TODO: %v", err)
 	}
 	updated, _ = os.ReadFile(filePath)
@@ -271,7 +271,7 @@ func TestUpdateBlockState_RecurrenceIndexCoherence(t *testing.T) {
 		t.Fatalf("expected 1 TODO matching task before, got %+v", matching)
 	}
 
-	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
 		t.Fatalf("UpdateBlockState: %v", err)
 	}
 
@@ -323,7 +323,7 @@ func TestUpdateBlockState_NonRecurringNoSpawn(t *testing.T) {
 	const taskID = "abcdef01-1111-1111-1111-111111111111"
 	content := "- [ ] plain task [due:: 2026-07-01] <!-- id: " + taskID + " -->\n"
 	filePath := indexTestFile(t, app, "W", "S", "Plain", "2026-07-01", content)
-	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
 		t.Fatalf("UpdateBlockState: %v", err)
 	}
 	updated, _ := os.ReadFile(filePath)
@@ -344,7 +344,7 @@ func TestUpdateBlockState_DoubleDoneDoesNotDoubleSpawn(t *testing.T) {
 	filePath := indexTestFile(t, app, "W", "S", "DoubleDone", "2026-07-01", content)
 
 	// First DONE → spawns 1 instance.
-	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
 		t.Fatalf("first DONE: %v", err)
 	}
 	updated, _ := os.ReadFile(filePath)
@@ -354,7 +354,7 @@ func TestUpdateBlockState_DoubleDoneDoesNotDoubleSpawn(t *testing.T) {
 	}
 
 	// Second DONE on the same block → must NOT spawn again.
-	if err := app.UpdateBlockState(taskID, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DONE"); err != nil {
 		t.Fatalf("second DONE: %v", err)
 	}
 	updated, _ = os.ReadFile(filePath)
@@ -375,7 +375,7 @@ func TestUpdateBlockState_DoneUndoRedone(t *testing.T) {
 	filePath := indexTestFile(t, app, "W", "S", "UndoRedo", "2026-07-01", content)
 
 	// DONE → spawns instance #1.
-	app.UpdateBlockState(taskID, "DONE")
+	_, _ = app.UpdateBlockState(taskID, "DONE")
 	updated, _ := os.ReadFile(filePath)
 	if strings.Count(string(updated), "- [ ] task [due::") != 1 {
 		t.Fatalf("after first DONE: expected 1 TODO in:\n%s", updated)
@@ -383,11 +383,71 @@ func TestUpdateBlockState_DoneUndoRedone(t *testing.T) {
 
 	// Revert to TODO — the completed block no longer has [recur::], so this
 	// is just a checkbox flip back.
-	app.UpdateBlockState(taskID, "TODO")
+	_, _ = app.UpdateBlockState(taskID, "TODO")
 	updated, _ = os.ReadFile(filePath)
 	// Now the original block is TODO again but WITHOUT [recur::] (it was
 	// stripped). No new spawn should happen on revert.
 	if strings.Count(string(updated), "[recur::") != 1 {
 		t.Logf("note: original block's recur was stripped; only the spawned instance carries it")
 	}
+}
+
+// TestUpdateBlockState_ReturnsSpawnedID asserts the new return contract for
+// UpdateBlockState (#812): the spawned recurrence instance UUID is returned
+// to the caller. A recurring →DONE transition returns a non-empty UUID that
+// differs from the completed block and exists in the file; a non-recurring
+// DONE and a non-DONE recurring transition both return "".
+func TestUpdateBlockState_ReturnsSpawnedID(t *testing.T) {
+	t.Run("recurring_TODO_to_DONE_returns_spawned_id", func(t *testing.T) {
+		app := newTestApp(t)
+		const taskID = "e1e1e1e1-0001-0001-0001-000000000001"
+		content := "- [ ] water plants [due:: 2026-07-01] [recur:: every week] <!-- id: " + taskID + " -->\n"
+		filePath := indexTestFile(t, app, "W", "S", "RetSpawn", "2026-07-01", content)
+
+		spawnedID, err := app.UpdateBlockState(taskID, "DONE")
+		if err != nil {
+			t.Fatalf("UpdateBlockState DONE: %v", err)
+		}
+		if spawnedID == "" {
+			t.Fatalf("expected non-empty spawned id for recurring DONE, got %q", spawnedID)
+		}
+		if spawnedID == taskID {
+			t.Errorf("spawned id must differ from the completed block id, both were %q", taskID)
+		}
+		updated, _ := os.ReadFile(filePath)
+		if !strings.Contains(string(updated), spawnedID) {
+			t.Errorf("spawned id %q not present in updated file:\n%s", spawnedID, updated)
+		}
+	})
+
+	t.Run("non_recurring_DONE_returns_empty", func(t *testing.T) {
+		app := newTestApp(t)
+		const taskID = "e2e2e2e2-0002-0002-0002-000000000002"
+		content := "- [ ] plain task [due:: 2026-07-01] <!-- id: " + taskID + " -->\n"
+		indexTestFile(t, app, "W", "S", "RetPlain", "2026-07-01", content)
+
+		spawnedID, err := app.UpdateBlockState(taskID, "DONE")
+		if err != nil {
+			t.Fatalf("UpdateBlockState DONE: %v", err)
+		}
+		if spawnedID != "" {
+			t.Errorf("expected empty spawned id for non-recurring DONE, got %q", spawnedID)
+		}
+	})
+
+	t.Run("recurring_DOING_returns_empty", func(t *testing.T) {
+		app := newTestApp(t)
+		const taskID = "e3e3e3e3-0003-0003-0003-000000000003"
+		content := "- [ ] water plants [due:: 2026-07-01] [recur:: every week] <!-- id: " + taskID + " -->\n"
+		indexTestFile(t, app, "W", "S", "RetDoing", "2026-07-01", content)
+
+		// Recurrence only fires on the DONE transition, so DOING returns "".
+		spawnedID, err := app.UpdateBlockState(taskID, "DOING")
+		if err != nil {
+			t.Fatalf("UpdateBlockState DOING: %v", err)
+		}
+		if spawnedID != "" {
+			t.Errorf("expected empty spawned id for DOING transition (not DONE), got %q", spawnedID)
+		}
+	})
 }

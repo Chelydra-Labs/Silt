@@ -14,6 +14,7 @@ package main
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"time"
 
@@ -149,6 +150,16 @@ const maxAIAuditDetailBytes = 2 * 1024
 // short developer-shaped identifiers belong here; the redactor relies on this
 // so a path or vault snippet embedded inside a longer string has nowhere to
 // land. Add a key only if its value is a bounded scalar (id / label / count).
+//
+// `block_id` is the one vault-content-adjacent key allowed: its value is a
+// block UUID (#811), a fixed-shape identifier with no room for prose, so agent
+// write-tool mutations ("agent created/updated block X") become traceable in
+// ai.log without leaking the block's body text. Unlike the other keys (whose
+// values originate server-side), block_id reaches the redactor from
+// model-supplied args (update_block/update_task pass the caller's id verbatim),
+// so the redactor ENFORCES a UUID shape on it (uuidShapeRe): any prose/path a
+// prompt-injected agent placed there is dropped rather than persisted to the
+// synced ai.log.
 var allowedAIAuditDetailKeys = map[string]struct{}{
 	"tool":         {},
 	"tool_call_id": {},
@@ -159,9 +170,16 @@ var allowedAIAuditDetailKeys = map[string]struct{}{
 	"iteration":    {},
 	"error_kind":   {},
 	"plugin":       {},
+	"block_id":     {},
 	// Server-only backstop marker when detail JSON is oversized.
 	"detail_truncated": {},
 }
+
+// uuidShapeRe matches a canonical UUID (8-4-4-4-12 hex). block_id is the only
+// allowlisted key whose value can originate from model-supplied args rather than
+// a server-minted id, so redactAIAuditFields enforces this shape on it —
+// anything else (prose, a path, a truncated fragment) is dropped.
+var uuidShapeRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // redactAIAuditFields filters to the allowlisted metadata keys and coerces
 // values to short safe scalars (no nested freeform blobs).
@@ -175,9 +193,20 @@ func redactAIAuditFields(fields map[string]any) map[string]any {
 		if _, ok := allowedAIAuditDetailKeys[lk]; !ok {
 			continue
 		}
-		if safe, ok := coerceAIAuditScalar(v); ok {
-			out[lk] = safe
+		safe, ok := coerceAIAuditScalar(v)
+		if !ok {
+			continue
 		}
+		// block_id is the one allowlisted key sourced from model-supplied args
+		// (update_block/update_task pass the caller's id verbatim), not a
+		// server-minted id. Enforce a UUID shape so prose/path placed there is
+		// dropped rather than persisted to the synced ai.log.
+		if lk == "block_id" {
+			if s, isStr := safe.(string); !isStr || !uuidShapeRe.MatchString(s) {
+				continue
+			}
+		}
+		out[lk] = safe
 	}
 	return out
 }

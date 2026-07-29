@@ -211,16 +211,27 @@ func (a *App) PluginMutateBlock(pluginID, sessionToken, blockID, newText string)
 	return true, nil
 }
 
+// PluginBlockStateResult is the SDK return for a status transition: Ok is true
+// when the transition applied, and SpawnedId carries the UUID of the recurrence
+// instance spawned by a recurring TODO/DOING → DONE transition (empty
+// otherwise). Returning the id from the atomic Go transition lets the agent
+// chain off it directly instead of re-querying for the sibling (#812).
+type PluginBlockStateResult struct {
+	Ok        bool   `json:"ok"`
+	SpawnedId string `json:"spawned_id"`
+}
+
 // PluginUpdateBlockState wraps UpdateBlockState for the plugin SDK.
 // Session-token verified (#236).
-func (a *App) PluginUpdateBlockState(pluginID, sessionToken, blockID, status string) (bool, error) {
+func (a *App) PluginUpdateBlockState(pluginID, sessionToken, blockID, status string) (PluginBlockStateResult, error) {
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
-		return false, err
+		return PluginBlockStateResult{}, err
 	}
-	if err := a.UpdateBlockState(blockID, status); err != nil {
-		return false, err
+	spawnedID, err := a.UpdateBlockState(blockID, status)
+	if err != nil {
+		return PluginBlockStateResult{}, err
 	}
-	return true, nil
+	return PluginBlockStateResult{Ok: true, SpawnedId: spawnedID}, nil
 }
 
 // PluginUpdateTaskMeta updates per-task metadata (pin, progress) by

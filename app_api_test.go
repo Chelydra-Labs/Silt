@@ -113,7 +113,7 @@ func TestUpdateBlockState_TransitionsTaskStatus(t *testing.T) {
 	}
 
 	// TODO -> DOING
-	if err := app.UpdateBlockState("22222222-2222-2222-2222-222222222222", "DOING"); err != nil {
+	if _, err := app.UpdateBlockState("22222222-2222-2222-2222-222222222222", "DOING"); err != nil {
 		t.Fatalf("UpdateBlockState TODO->DOING: %v", err)
 	}
 	updated, err := os.ReadFile(filePath)
@@ -125,7 +125,7 @@ func TestUpdateBlockState_TransitionsTaskStatus(t *testing.T) {
 	}
 
 	// DOING -> DONE
-	if err := app.UpdateBlockState("22222222-2222-2222-2222-222222222222", "DONE"); err != nil {
+	if _, err := app.UpdateBlockState("22222222-2222-2222-2222-222222222222", "DONE"); err != nil {
 		t.Fatalf("UpdateBlockState DOING->DONE: %v", err)
 	}
 	updated, _ = os.ReadFile(filePath)
@@ -134,7 +134,7 @@ func TestUpdateBlockState_TransitionsTaskStatus(t *testing.T) {
 	}
 
 	// DONE -> TODO
-	if err := app.UpdateBlockState("22222222-2222-2222-2222-222222222222", "TODO"); err != nil {
+	if _, err := app.UpdateBlockState("22222222-2222-2222-2222-222222222222", "TODO"); err != nil {
 		t.Fatalf("UpdateBlockState DONE->TODO: %v", err)
 	}
 	updated, _ = os.ReadFile(filePath)
@@ -163,7 +163,7 @@ func TestUpdateBlockState_RejectsTraversalMetadata(t *testing.T) {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
-	err := app.UpdateBlockState("55555555-5555-5555-5555-555555555555", "DOING")
+	_, err := app.UpdateBlockState("55555555-5555-5555-5555-555555555555", "DOING")
 	if err == nil {
 		t.Fatalf("expected UpdateBlockState to reject traversal metadata")
 	}
@@ -190,7 +190,7 @@ func TestUpdateBlockState_RejectsNonTaskBlock(t *testing.T) {
 		t.Fatalf("IndexFileBlocks: %v", err)
 	}
 
-	if err := app.UpdateBlockState("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "DOING"); err == nil {
+	if _, err := app.UpdateBlockState("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "DOING"); err == nil {
 		t.Errorf("expected UpdateBlockState to reject a non-task block")
 	}
 }
@@ -198,7 +198,7 @@ func TestUpdateBlockState_RejectsNonTaskBlock(t *testing.T) {
 func TestUpdateBlockState_RejectsInvalidStatus(t *testing.T) {
 	app := newTestApp(t)
 
-	err := app.UpdateBlockState("any-block-id", "INVALID")
+	_, err := app.UpdateBlockState("any-block-id", "INVALID")
 	if err == nil {
 		t.Fatalf("expected error for invalid status")
 	}
@@ -1024,9 +1024,9 @@ func TestPluginUpdateBlockState_WrapsUpdate(t *testing.T) {
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "do it")
 	tok := registerTestSession(t, app, "test-plugin")
 
-	ok, err := app.PluginUpdateBlockState("test-plugin", tok, taskID, "DONE")
-	if err != nil || !ok {
-		t.Fatalf("PluginUpdateBlockState: ok=%v err=%v", ok, err)
+	result, err := app.PluginUpdateBlockState("test-plugin", tok, taskID, "DONE")
+	if err != nil || !result.Ok {
+		t.Fatalf("PluginUpdateBlockState: ok=%v err=%v", result.Ok, err)
 	}
 	var status string
 	_ = app.db.SQLDB().QueryRow("SELECT status FROM tasks WHERE block_id = ?", taskID).Scan(&status)
