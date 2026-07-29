@@ -1050,7 +1050,24 @@ export const SiltBlockKeymaps = Extension.create({
       // tables, …) are handled by addProseMirrorPlugins so they read
       // settings.config.hotkeys on every keydown.
       'Alt-ArrowUp': () => moveActiveBlock(this.editor, -1),
-      'Alt-ArrowDown': () => moveActiveBlock(this.editor, 1)
+      'Alt-ArrowDown': () => moveActiveBlock(this.editor, 1),
+
+      // Shift-Enter inside a task block opens the TaskSubEditorModal (#781).
+      // Fires the silt:open-task-editor window event (consumed by
+      // TaskEditorModalHost). Returns true (handled) so the keypress doesn't
+      // also insert a line break. Only fires for taskBlock — not note/region.
+      'Shift-Enter': () => {
+        const info = currentBlockInfo(this.editor)
+        if (!info || info.node.type.name !== 'taskBlock') return false
+        const blockId = info.node.attrs.id
+        if (!blockId) return false
+        window.dispatchEvent(
+          new CustomEvent('silt:open-task-editor', {
+            detail: { blockId }
+          })
+        )
+        return true
+      }
     }
   }
 })
