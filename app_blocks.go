@@ -457,6 +457,23 @@ func (a *App) MutateBlock(blockID, newText string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	return a.writeBlockText(blockID, func(_ string) (string, error) {
+		return cleanText, nil
+	})
+}
+
+// writeBlockText rewrites a block's clean text through the canonical
+// lock→parse→render→atomic-write→reindex→emit chain shared by every programmatic
+// block-body edit. transform receives the block's current CleanText as parsed
+// from disk INSIDE the write locks (so it cannot race a concurrent writer) and
+// returns the new CleanText. The caller MUST hold vaultMu (at least RLock) and
+// have incremented the waitgroup, matching MutateBlock's entry contract.
+//
+// Extracted from MutateBlock so PromoteUnlinkedMention edits a source block on
+// the identical write path as a user edit (one on-disk format definition, one
+// reindex path, one block:changed emission). MutateBlock passes a constant
+// transform; PromoteUnlinkedMention passes the link-wrapping transform.
+func (a *App) writeBlockText(blockID string, transform func(currentClean string) (string, error)) error {
 	var loc db.BlockLocation
 	err := a.coordinator.WithDBReadResult(func() error {
 		var e error
@@ -514,10 +531,10 @@ func (a *App) MutateBlock(blockID, newText string) error {
 			// Parse the whole file, mutate the target block in the slice, then
 			// re-render through the single serializer (RenderFileContent). This
 			// preserves unmanaged lines (code fences, prose) via the original
-			// body and keeps MutateBlock on the same write path as every other
-			// writer, so there is one on-disk format definition.
-			// Use the file's modification time as the default date for blocks
-			// whose comment lacks a @ date suffix — matches the scanner's behavior.
+			// body and keeps every writer on the same write path, so there is
+			// one on-disk format definition. Use the file's modification time as
+			// the default date for blocks whose comment lacks a @ date suffix —
+			// matches the scanner's behavior.
 			fileDate := fileOrDefaultDate(filePath)
 			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileDate, a.spacesPerTab)
 			if parseErr != nil {
@@ -527,7 +544,12 @@ func (a *App) MutateBlock(blockID, newText string) error {
 			found := false
 			for i := range parsedBlocks {
 				if parsedBlocks[i].ID == blockID {
-					parsedBlocks[i].CleanText = cleanText
+					newClean, terr := transform(parsedBlocks[i].CleanText)
+					if terr != nil {
+						writeErr = terr
+						return
+					}
+					parsedBlocks[i].CleanText = newClean
 					// [modified::] stamp (#440): body edit on a TASK line.
 					if parsedBlocks[i].Type == parser.BlockTask {
 						parsedBlocks[i].ModifiedAt = time.Now().Format("2006-01-02T15:04:05")
@@ -564,7 +586,7 @@ func (a *App) MutateBlock(blockID, newText string) error {
 					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, reblocks, remeta.Tags, remeta.Warnings...)
 				})
 				if idxErr != nil {
-					log.Printf("MutateBlock: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
+					log.Printf("writeBlockText: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
 				}
 			}
 		})

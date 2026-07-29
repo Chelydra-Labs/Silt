@@ -329,6 +329,10 @@
         "signature": "GetTrustedPublishers() ([]string, error)"
       },
       {
+        "name": "GetUnlinkedMentionsPaged",
+        "signature": "GetUnlinkedMentionsPaged(notebook, section, page, cursor string, limit int) (db.UnlinkedMentionsResult, error)"
+      },
+      {
         "name": "GetUpdateSettings",
         "signature": "GetUpdateSettings() (UpdateSettingsResult, error)"
       },
@@ -683,6 +687,10 @@
       {
         "name": "PrepareBackgroundAsset",
         "signature": "PrepareBackgroundAsset(srcPath string) (*PrepareBackgroundAssetResult, error)"
+      },
+      {
+        "name": "PromoteUnlinkedMention",
+        "signature": "PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSection, targetPage string) error"
       },
       {
         "name": "QueryBlocksByTag",
@@ -1062,6 +1070,7 @@
       "frontend/src/components/editor/MarkdownSourceViewer.svelte",
       "frontend/src/components/editor/MarkdownSourceViewer.svelte.test.ts",
       "frontend/src/components/editor/PluginNoteBanners.test.ts",
+      "frontend/src/components/editor/TaskBlockView.test.ts",
       "frontend/src/components/editor/controllers/useSuggests.svelte.ts",
       "frontend/src/components/editor/controllers/useSuggests.test.ts",
       "frontend/src/components/settings/AIProviderTab.test.ts",
@@ -1096,7 +1105,9 @@
       "frontend/src/lib/editor/blockDepthDom.test.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
       "frontend/src/lib/editor/pageMarkdown.ts",
+      "frontend/src/lib/editor/spellcheck/customDictionary.svelte.test.ts",
       "frontend/src/lib/editor/spellcheck/customDictionary.svelte.ts",
+      "frontend/src/lib/editor/spellcheck/customDictionary.test.ts",
       "frontend/src/lib/editor/spellcheck/dictionary.test.ts",
       "frontend/src/lib/editor/spellcheck/dictionary.ts",
       "frontend/src/lib/editor/useAutosave.test.ts",
@@ -1167,6 +1178,7 @@
       "frontend/src/components/editor/GlobalReplaceModal.test.ts",
       "frontend/src/components/editor/SelectionBubble.svelte",
       "frontend/src/components/editor/SelectionBubble.test.ts",
+      "frontend/src/components/editor/TaskBlockView.test.ts",
       "frontend/src/components/editor/controllers/useSuggests.test.ts",
       "frontend/src/components/settings/AboutTab.svelte",
       "frontend/src/components/settings/AboutTab.test.ts",
@@ -1185,6 +1197,7 @@
       "frontend/src/components/settings/spellcheck/SpellcheckPackManager.test.ts",
       "frontend/src/lib/editor/blockDepthDom.test.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
+      "frontend/src/lib/editor/spellcheck/customDictionary.svelte.test.ts",
       "frontend/src/plugins/context.ai.test.ts",
       "frontend/src/plugins/context.ts",
       "frontend/src/plugins/events.test.ts",
@@ -1194,6 +1207,7 @@
       "frontend/src/plugins/first-party/silt-tasks/components/CommentThread.test.ts",
       "frontend/src/plugins/first-party/silt-tasks/components/DependencyPicker.test.ts",
       "frontend/src/plugins/first-party/silt-tasks/components/TaskEditDrawer.test.ts",
+      "frontend/src/plugins/first-party/silt-tasks/components/TaskMetadataSidebar.test.ts",
       "frontend/src/plugins/first-party/silt-tasks/components/TaskSubEditorModal.test.ts",
       "frontend/src/plugins/first-party/silt-tasks/sidebar/SavedViews.test.ts",
       "frontend/src/plugins/first-party/silt-tasks/views/BoardView.test.ts",

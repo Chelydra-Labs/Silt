@@ -50,6 +50,11 @@ const (
 	CodeNavigationUnavailable IPCErrorCode = "navigation_unavailable"
 	CodeNavigationDuplicate   IPCErrorCode = "navigation_duplicate"
 	CodeNavigationReveal      IPCErrorCode = "navigation_reveal_failed"
+	// CodeAmbiguousTarget: PromoteUnlinkedMention rejected because the target
+	// page's leaf name resolves to more than one page (would wire a link to the
+	// wrong destination). The unlinked-mentions UI surfaces the candidates and
+	// disables Link; this is the server-side safety net.
+	CodeAmbiguousTarget IPCErrorCode = "ambiguous_target"
 )
 
 // IPCError carries a machine-readable Code across the Wails boundary so the
