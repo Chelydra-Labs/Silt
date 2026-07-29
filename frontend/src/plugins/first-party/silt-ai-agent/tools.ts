@@ -20,6 +20,7 @@ import {
   handleGetRelatedNotes
 } from './tools/get_related_notes'
 import { updateBlockToolDef, handleUpdateBlock } from './tools/update_block'
+import { updateTaskToolDef, handleUpdateTask } from './tools/update_task'
 import {
   listTagsTool,
   findUntaggedTool,
@@ -61,6 +62,7 @@ const P0_TOOLS: AgentToolDef[] = [
 const P1_TOOLS: AgentToolDef[] = [
   { ...getRelatedNotesToolDef, handler: handleGetRelatedNotes },
   { ...updateBlockToolDef, handler: handleUpdateBlock },
+  { ...updateTaskToolDef, handler: handleUpdateTask },
   listTagsTool,
   findUntaggedTool,
   // rename_tag is also exported with handler/commit wired; the explicit form
