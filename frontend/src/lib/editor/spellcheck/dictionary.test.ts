@@ -159,6 +159,18 @@ describe('diacritic-aware suggestions (#815)', () => {
     // only Hunspell output within the limit.
     expect(suggest('aeiouaeiou').length).toBeLessThanOrEqual(5)
   })
+
+  it('offers a two-accent form even when a single-accent form also validates', () => {
+    setCustomWords(['résume', 'résumé'])
+    const out = suggest('resume')
+    expect(out).toContain('résume')
+    expect(out).toContain('résumé')
+  })
+
+  it('restores a macron for a custom form', () => {
+    setCustomWords(['rōmaji'])
+    expect(suggest('romaji')).toContain('rōmaji')
+  })
 })
 
 describe('loadDomainPacks', () => {

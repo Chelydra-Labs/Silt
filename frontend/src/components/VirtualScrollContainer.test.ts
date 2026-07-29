@@ -213,13 +213,17 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(screen.queryByText('✓ Saved')).toBeNull()
   })
 
-  it('shows assertive Save failed when the editor reports an error', async () => {
+  it('announces the save error via a persistent assertive live region', async () => {
     render(VirtualScrollContainer, { props: baseProps() })
     await fireEvent.click(screen.getByTestId('tiptap-stub-emit-error'))
-    const status = screen.getByText('Save failed')
-    expect(status).toBeTruthy()
-    const live = status.closest('[aria-live]')
-    expect(live?.getAttribute('aria-live')).toBe('assertive')
+    // The visible pill labels the failure.
+    expect(screen.getByText('Save failed')).toBeInTheDocument()
+    // A stable assertive live region carries the error message for screen
+    // readers. A fresh-mount live block (the pill appearing only on error)
+    // can be missed by some screen readers, so the text lives in a persistent
+    // region rather than on the pill itself.
+    const live = document.querySelector('[aria-live="assertive"]')
+    expect(live?.textContent).toContain('disk full')
   })
 })
 

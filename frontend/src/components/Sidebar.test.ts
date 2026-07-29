@@ -488,6 +488,59 @@ describe('Sidebar', () => {
     ).toBeInTheDocument()
   })
 
+  it('keeps the list visible when a background refresh fails (#817 error path)', async () => {
+    const firstData = {
+      expanded_sections: [],
+      recent_pages: [
+        {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          opened_at: 10
+        }
+      ],
+      favorites: [],
+      sidebar_view: 'quick'
+    }
+    // Initial load resolves; the next (background) refresh rejects,
+    // simulating a transient IPC failure during an autosave-triggered
+    // preference refresh.
+    mocks.getNavigationPreferences
+      .mockResolvedValueOnce(firstData)
+      .mockRejectedValue(new Error('refresh failed'))
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    // Initial load completed: the list is shown.
+    expect(
+      screen.getByRole('button', { name: /Work \/ Journal \/ Daily/ })
+    ).toBeInTheDocument()
+
+    // A failed background refresh must NOT replace the list with an error
+    // block — the list stays and the error surfaces as a non-displacing banner.
+    window.dispatchEvent(new CustomEvent('navigation-preferences-changed'))
+    await flush()
+    expect(
+      screen.getByRole('button', { name: /Work \/ Journal \/ Daily/ })
+    ).toBeInTheDocument()
+    expect(screen.getByText('refresh failed')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Try again' })
+    ).toBeInTheDocument()
+  })
+
   it('reverts to the tree tab when SetSidebarView rejects on switch', async () => {
     mocks.setSidebarView.mockRejectedValue(
       new Error('Sidebar view preference could not be saved.')

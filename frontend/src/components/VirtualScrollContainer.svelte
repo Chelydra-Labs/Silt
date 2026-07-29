@@ -701,18 +701,21 @@
     <DateGlanceChip active={_isActive} />
   </div>
 
+  {#if viewMode === 'edit'}
+    <!-- Persistent live region: a fresh-mount aria-live block can be missed by
+         screen readers, so the save-error text lives in a stable region. -->
+    <div class="sr-only" role="status" aria-live="assertive">
+      {saveError ?? ''}
+    </div>
+  {/if}
   <!-- Floating Editor Status Bar (save-error + word count) -->
   {#if viewMode === 'edit' && (saveError || (showWordCount && wordCount > 0))}
     <div
       class="absolute bottom-6 right-6 z-40 flex items-center gap-3 px-3.5 py-1.5 bg-surface-popover/80 backdrop-blur-md border border-surface-popover-border/60 rounded-full shadow-lg text-type-xs font-medium tracking-wide text-text-muted transition-all duration-300 opacity-70 hover:opacity-100 select-none"
     >
       {#if saveError}
-        <!-- Fail-loud save error indicator -->
-        <div
-          class="flex items-center gap-1.5"
-          role="status"
-          aria-live="assertive"
-        >
+        <!-- Fail-loud visual indicator (announced via the live region above). -->
+        <div class="flex items-center gap-1.5">
           <span class="w-2 h-2 rounded-full bg-status-danger animate-pulse"
           ></span>
           <span class="text-status-danger font-semibold">Save failed</span>

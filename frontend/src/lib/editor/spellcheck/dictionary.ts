@@ -283,15 +283,15 @@ export function ignoreWordSession(word: string): void {
 // the typed ASCII token and validate each candidate via checkWord (which
 // unions Hunspell + custom + domain). This surfaces accepted accented forms
 // (café, naïve, Wärtsilä) for ASCII approximations, without ever inventing an
-// accent the active word set does not accept. Ligatures (æ, œ, ß) and atomic
-// letters (ø, ð, þ, ł, đ) are deliberately excluded — they are not
-// single-diacritic restorations and would only coin non-words.
+// accent the active word set does not accept. Known v1 gaps (deliberately not
+// restored): German ß (an ss→ß ligature, a different generator path), œ/æ
+// ligatures, and Slavic carons/hooks (š č ř ž).
 const ACCENT_VARIANTS: Record<string, string[]> = {
-  a: ['à', 'á', 'â', 'ã', 'ä', 'å'],
-  e: ['è', 'é', 'ê', 'ë'],
-  i: ['ì', 'í', 'î', 'ï'],
-  o: ['ò', 'ó', 'ô', 'õ', 'ö'],
-  u: ['ù', 'ú', 'û', 'ü'],
+  a: ['à', 'á', 'â', 'ã', 'ä', 'å', 'ā'],
+  e: ['è', 'é', 'ê', 'ë', 'ē'],
+  i: ['ì', 'í', 'î', 'ï', 'ī'],
+  o: ['ò', 'ó', 'ô', 'õ', 'ö', 'ō'],
+  u: ['ù', 'ú', 'û', 'ü', 'ū'],
   c: ['ç'],
   n: ['ñ'],
   y: ['ý', 'ÿ']
@@ -315,9 +315,10 @@ function replaceChar(word: string, idx: number, ch: string): string {
 /**
  * Validated accent-restored forms of `word`. Tier 1 tries a single diacritic
  * (covers café, naïve, façade, piñata); Tier 2 tries two (résumé, Wärtsilä,
- * Noël) only when Tier 1 finds nothing, and is skipped once the word has more
- * than five accent-eligible slots so the candidate set stays bounded. Every
- * candidate is checkWord-validated before it is offered.
+ * Noël). Both tiers are collected together so a strictly-better two-accent
+ * match (résumé) is not preempted by a weaker single-accent one (résume).
+ * Tier 2 is skipped once the word has more than five accent-eligible slots so
+ * the candidate set stays bounded. Every candidate is checkWord-validated.
  */
 function diacriticSuggestions(word: string): string[] {
   const positions: number[] = []
@@ -326,40 +327,42 @@ function diacriticSuggestions(word: string): string[] {
   }
   if (positions.length === 0) return []
 
-  const validate = (candidates: string[]): string[] => {
-    const hits: string[] = []
-    const seen = new Set<string>()
+  const seen = new Set<string>([word])
+  const hits: string[] = []
+  const validate = (candidates: string[]): void => {
     for (const c of candidates) {
-      if (c === word || seen.has(c)) continue
+      if (seen.has(c)) continue
       seen.add(c)
       if (checkWord(c)) hits.push(c)
     }
-    return hits
   }
 
-  // Tier 1: one accent per candidate.
+  // Tier 1: one accent per candidate (café, naïve, façade, piñata).
   const tier1: string[] = []
   for (const i of positions) {
     for (const v of accentVariants(word[i])) tier1.push(replaceChar(word, i, v))
   }
-  const tier1Hits = validate(tier1)
-  if (tier1Hits.length > 0) return tier1Hits
+  validate(tier1)
 
-  // Tier 2: two accents (bounded — skip long words to avoid combinatorial blowup).
-  if (positions.length > 5) return []
-  const tier2: string[] = []
-  for (let p = 0; p < positions.length; p++) {
-    for (let q = p + 1; q < positions.length; q++) {
-      const ip = positions[p]
-      const iq = positions[q]
-      for (const vp of accentVariants(word[ip])) {
-        for (const vq of accentVariants(word[iq])) {
-          tier2.push(replaceChar(replaceChar(word, ip, vp), iq, vq))
+  // Tier 2: two accents. Runs alongside Tier 1 (NOT only when Tier 1 is empty)
+  // so a strictly-better two-accent match (résumé) is not preempted by a
+  // weaker single-accent one (résume). Bounded — skip long words.
+  if (positions.length <= 5) {
+    const tier2: string[] = []
+    for (let p = 0; p < positions.length; p++) {
+      for (let q = p + 1; q < positions.length; q++) {
+        const ip = positions[p]
+        const iq = positions[q]
+        for (const vp of accentVariants(word[ip])) {
+          for (const vq of accentVariants(word[iq])) {
+            tier2.push(replaceChar(replaceChar(word, ip, vp), iq, vq))
+          }
         }
       }
     }
+    validate(tier2)
   }
-  return validate(tier2)
+  return hits
 }
 
 /** Top-N suggestions for a misspelled word (empty if none). */

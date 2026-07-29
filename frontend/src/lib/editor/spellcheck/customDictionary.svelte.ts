@@ -59,7 +59,13 @@ export const customDictionary = {
     return words.filter((w) => w.toLowerCase().includes(f))
   },
 
-  /** Load the resolved list from the backend. Called on card open. */
+  /**
+   * Load the resolved list from the backend. Called on card open. Display-only:
+   * deliberately does NOT mirror into the live config (unlike add/remove/
+   * importFile), because an external edit to config.yaml emits config:changed,
+   * which the hot-reload handler already uses to refresh settings.config for
+   * the spellcheck effect.
+   */
   async load(): Promise<void> {
     loading = true
     error = null

@@ -76,18 +76,27 @@
   role="tabpanel"
   aria-label="Quick Access"
   aria-labelledby="sidebar-tab-quick"
+  aria-busy={loading}
   class="flex-1 overflow-y-auto custom-scrollbar px-2 py-1 flex flex-col gap-3"
 >
+  <div class="sr-only" aria-live="polite">
+    {loading
+      ? 'Loading saved pages.'
+      : error
+        ? 'Saved pages could not be refreshed. Showing the last list.'
+        : ''}
+  </div>
   {#if loading}
     <p class="px-2 py-1 m-0 text-type-2xs text-surface-sidebar-text-muted">
       Loading saved pages…
     </p>
-  {:else if error}
-    <div class="px-2 py-1" role="status">
-      <p class="m-0 text-type-2xs text-status-warn">{error}</p>
-      <button class="retry" type="button" onclick={onRetry}>Try again</button>
-    </div>
   {:else}
+    {#if error}
+      <div class="px-2 py-1" role="status">
+        <p class="m-0 text-type-2xs text-status-warn">{error}</p>
+        <button class="retry" type="button" onclick={onRetry}>Try again</button>
+      </div>
+    {/if}
     <!-- Pinned Section -->
     <div class="flex flex-col gap-1">
       <div
