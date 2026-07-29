@@ -8,7 +8,8 @@
 // blocks we strip any leading checkbox and [key:: value] metadata tokens the
 // model supplied, so it cannot inject conflicting tokens into the re-rendered
 // markdown (which would ambiguity-resolve against the preserved fields on the
-// next parse). Dedicated tools change metadata; NOTE/HEADER blocks rewrite
+// next parse). Dedicated tools change metadata — use update_task for TASK
+// status/owner/due/priority/tags/recurrence/etc.; NOTE/HEADER blocks rewrite
 // freely. Single-block updates are not staged (reversible prose, one undo).
 
 import type { PluginContext } from '../../../sdk'
@@ -22,8 +23,8 @@ export const updateBlockToolDef = {
     'TASK metadata (status/owner/due/priority) is stored in structured ' +
     'fields, not the prose, so it is preserved automatically — for TASK ' +
     'blocks any checkbox or [key:: value] tokens in the supplied content ' +
-    'are stripped before writing (use the dedicated tools to change ' +
-    'metadata). NOTE/HEADER blocks may be rewritten freely. ' +
+    'are stripped before writing (use update_task to change metadata). ' +
+    'NOTE/HEADER blocks may be rewritten freely. ' +
     "Optional tags override the block's tags.",
   parameters: {
     type: 'object',

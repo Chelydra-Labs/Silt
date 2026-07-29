@@ -58,14 +58,16 @@ the same data via `ctx.getUiLocation()`.
 
 ### Tool catalog
 
-Thirteen tools, registered in three tiers. Most are read-only and run inline.
+Fifteen tools, registered in three tiers. Most are read-only and run inline.
 Three tiers of write safety apply:
 
 - **Read-only** — query the vault and return text; no mutation.
 - **Direct write** — append or rewrite markdown. These are *not* staged: each is
   a single, reversible edit (markdown is the source of truth and each change is
   one undo step). `extract_and_save` only ever writes to a brand-new page, so
-  source blocks are never touched.
+  source blocks are never touched. `create_task` / `update_task` route task
+  structured fields (status, owner, due, priority, tags, recurrence, …) through
+  the dedicated SDK setters, not the prose — `update_block` remains prose-only.
 - **Staged (destructive)** — `rename_tag` rewrites the hashtag token across
   every matching block in one shot, so it routes through the confirmation gate
   in **Safety model** below before any block is touched.
@@ -77,8 +79,10 @@ Three tiers of write safety apply:
 | | `get_backlinks` | read-only | `target` (req, UUID or page path), `include_embeds?` (default true), `max_results?` (1–100, default 20) |
 | | `query_tasks` | read-only | `status?`, `owner?`, `priority_min?` (1–3), `due_before?`, `due_after?`, `tags?`, `notebook?`, `is_blocked?`, `limit?` (1–50, default 20) |
 | | `create_note` | direct write | `page` (req), `content` (req), `notebook?` (default = active), `section?`, `tags?` |
+| | `create_task` | direct write | `text` (req), `due?`, `owner?`, `priority?` (1–3), `tags?`, `notebook?`/`section?`/`page?`/`after?` (omit for a standalone task in `.silt/tasks.md`) |
 | **P1** | `get_related_notes` | read-only | `block_id` (req), `top_k?` (1–50, default 10), `min_score?` (0–1, default 0.5) |
 | | `update_block` | direct write | `block_id` (req), `content` (req), `tags?` (TASK → `setTaskTags`; else folded as `#hashtags`) |
+| | `update_task` | direct write | `task_id` (req), `status?` (TODO/DOING/DONE), `due?`, `owner?`, `priority?` (1–3), `tags?`, `recurrence?`, `estimate?`, `blocked_by?`, `title?` (only supplied fields change; empty clears) |
 | | `list_tags` | read-only | _(none)_ — tag paths with usage counts, top 200 |
 | | `find_untagged` | read-only | `scope?` (notebook), `limit?` (1–100, default 20) — TASK blocks with no tags |
 | | `rename_tag` | **staged** | `old_tag` (req), `new_tag` (req) — bulk `#hashtag` rewrite |
@@ -103,8 +107,9 @@ marker). SQL is parameterized throughout — the agent has no raw-SQL tool.
 
 ## Write policy & untrusted content
 
-- **Direct writes** (`create_note`, `update_block`, `extract_and_save`) apply
-  immediately as single reversible markdown edits.
+- **Direct writes** (`create_note`, `create_task`, `update_block`,
+  `update_task`, `extract_and_save`) apply immediately as single reversible
+  markdown edits.
 - **Staged / destructive** ops (`rename_tag`) pause for explicit confirmation
   in the drawer before any vault mutation.
 - Tool results that contain vault text are wrapped in

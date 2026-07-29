@@ -150,6 +150,26 @@
     }
   }
 
+  // A single hung CheckPluginUpdate (network stall, backend deadlock) must not
+  // pin checkingUpdates forever. Each call is raced against this deadline; a
+  // timeout lands in the call's catch as a normal failure so the existing
+  // failed/summary paths count it.
+  const UPDATE_CHECK_TIMEOUT_MS = 8000
+
+  // Race an IPC promise against a deadline. The underlying promise keeps
+  // settling after the race resolves, so its eventual rejection is swallowed
+  // (it surfaces as neither an unhandled rejection nor a second failure), and
+  // the timer is cleared on settle so a fast success never arms a late
+  // timeout rejection.
+  function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+    let timer!: ReturnType<typeof setTimeout>
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('update check timed out')), ms)
+    })
+    p.catch(() => {})
+    return Promise.race([p, timeout]).finally(() => clearTimeout(timer))
+  }
+
   async function checkForUpdates() {
     if (checkingUpdates) return
     checkingUpdates = true
@@ -170,7 +190,10 @@
       const failedIds = new SvelteSet<string>()
       for (const t of targets) {
         try {
-          const info = await CheckPluginUpdate(t.id, t.version, t.updateUrl)
+          const info = await withDeadline(
+            CheckPluginUpdate(t.id, t.version, t.updateUrl),
+            UPDATE_CHECK_TIMEOUT_MS
+          )
           if (info?.updateAvailable) {
             availableIds.add(t.id)
             found++

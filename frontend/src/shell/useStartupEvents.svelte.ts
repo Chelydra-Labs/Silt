@@ -52,7 +52,7 @@ import { findBarState } from '../lib/editor/search/findBarState.svelte'
 import {
   OPEN_TASKS_FOR_PAGE_EVENT,
   type OpenTasksForPageDetail
-} from '../components/editor/EditorUtilityBar.svelte'
+} from '../components/editor/openTasksForPage'
 import type { NavigationCatalogItem } from '../lib/navigationCatalog'
 import type { TabManagerController } from '../lib/tabs/useTabManager.svelte'
 import type { SettingsDialogsController } from './useSettingsDialogs.svelte'
