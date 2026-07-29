@@ -27,9 +27,11 @@ export const updateTaskToolDef = {
     "Update a task's structured metadata and/or status by UUID. Only " +
     'supplied fields change; prose is never altered (use update_block for ' +
     'prose). status transitions go through the status-transition path so a ' +
-    'DONE on a recurring task spawns the next instance as usual. Pass an ' +
-    'empty string/array (or null) for due/owner/tags/recurrence/estimate/' +
-    'blocked_by to clear the field.',
+    'DONE on a recurring task spawns the next instance as usual; the spawned ' +
+    "instance's id is best-effort (if not returned, call query_tasks to find " +
+    'it). Pass an empty string/array (or null) for due/owner/tags/' +
+    'recurrence/estimate/blocked_by to clear the field. priority and status ' +
+    'cannot be cleared.',
   parameters: {
     type: 'object',
     required: ['task_id'],
@@ -86,6 +88,9 @@ interface TaskSnapshot {
   notebook: string
   section: string
   page: string
+  /** Pre-transition line number — the recurrence spawn is spliced directly
+   *  below the completed line, so this anchors the spawn lookup. */
+  lineNumber: number
   recur: string | null
 }
 
@@ -150,7 +155,15 @@ export async function handleUpdateTask(
   }
 
   // Existence pre-check + recurrence/location snapshot for spawn reporting.
-  const snap = await readSnapshot(ctx, taskId)
+  let snap: TaskSnapshot | null
+  try {
+    snap = await readSnapshot(ctx, taskId)
+  } catch (e: unknown) {
+    return {
+      content: '',
+      error: `lookup failed for task ${taskId}: ${e instanceof Error ? e.message : String(e)}`
+    }
+  }
   if (!snap) {
     return { content: '', error: `task ${taskId} not found` }
   }
@@ -198,8 +211,12 @@ export async function handleUpdateTask(
     await runSetter('title', () => ctx.setTaskTitle(taskId, title), failed)
 
   // The recurrence rule that governs a DONE spawn: a just-set rule wins over
-  // the pre-existing snapshot.
-  const effectiveRecur = recurrence.set ? recurrence.value || null : snap.recur
+  // the pre-existing snapshot, but only if the write actually landed — a
+  // rejected setTaskRecurrence leaves the on-disk rule unchanged, and the
+  // server would spawn against the prior rule (or not at all).
+  const recurFailed = failed.some((f) => f.startsWith('recurrence:'))
+  const effectiveRecur =
+    recurrence.set && !recurFailed ? recurrence.value || null : snap.recur
 
   // Status transition (routes through updateBlockState → server-side spawn).
   let spawnNote = ''
@@ -237,7 +254,7 @@ async function readSnapshot(
   taskId: string
 ): Promise<TaskSnapshot | null> {
   const { rows } = await ctx.sqliteQuery(
-    'SELECT b.notebook, b.section, b.page, t.recur ' +
+    'SELECT b.notebook, b.section, b.page, b.line_number, t.recur ' +
       'FROM blocks b JOIN tasks t ON t.block_id = b.id ' +
       'WHERE b.id = ?',
     [taskId]
@@ -248,16 +265,19 @@ async function readSnapshot(
     notebook: asString(row.notebook),
     section: asString(row.section),
     page: asString(row.page),
+    lineNumber: Number(row.line_number),
     recur: row.recur == null ? null : asString(row.recur)
   }
 }
 
 /**
  * After a DONE transition on a recurring task, the server splices a fresh TODO
- * below the completed line. The status binding returns no id, so best-effort
- * resolve the immediate-next TODO sibling in the same file. If exactly one
- * confident candidate is found, report its id; otherwise report the spawn
- * textually and point the model at query_tasks. Never guess a wrong id.
+ * directly below the completed line (app_recurrence_test.go: spawnedIdx ==
+ * completedIdx + 1), so the first TODO block whose line_number exceeds the
+ * completed task's pre-transition line is the spawn — precise even when the
+ * page holds other recurring TODOs. updateBlockState returns no id, so resolve
+ * it here; if the lookup fails or finds nothing, report the spawn textually
+ * with the page path so the model can narrow a query_tasks call. Never guess.
  */
 async function reportSpawnedInstance(
   ctx: PluginContext,
@@ -265,26 +285,26 @@ async function reportSpawnedInstance(
   snap: TaskSnapshot,
   recur: string
 ): Promise<string> {
+  const pagePath = [snap.notebook, snap.section, snap.page]
+    .filter((s) => s.length > 0)
+    .join('/')
   let spawnedId: string | null = null
   try {
     const { rows } = await ctx.sqliteQuery(
       'SELECT b.id FROM blocks b JOIN tasks t ON t.block_id = b.id ' +
         'WHERE b.notebook = ? AND b.section = ? AND b.page = ? ' +
-        "AND t.status = 'TODO' AND t.recur IS NOT NULL " +
-        'ORDER BY b.line_number ASC LIMIT 2',
-      [snap.notebook, snap.section, snap.page]
+        "AND b.line_number > ? AND b.id != ? AND t.status = 'TODO' " +
+        'ORDER BY b.line_number ASC LIMIT 1',
+      [snap.notebook, snap.section, snap.page, snap.lineNumber, taskId]
     )
-    // The spawned instance is the first TODO-with-recur in the file that is
-    // not the just-completed task itself.
-    const candidate = rows.find((r) => asString(r.id) !== taskId)
-    if (candidate) spawnedId = asString(candidate.id)
+    if (rows[0]) spawnedId = asString(rows[0].id)
   } catch {
     spawnedId = null
   }
   if (spawnedId) {
     return `Recurrence "${recur}" spawned a new instance (block ${spawnedId}); the original is now DONE.`
   }
-  return `Recurrence "${recur}" spawned a new TODO instance; use query_tasks to find it (the id is not returned by the status transition).`
+  return `Recurrence "${recur}" spawned a new TODO instance in ${pagePath}; use query_tasks to find it (the id is not returned by the status transition).`
 }
 
 /** Run a setter, appending a labeled failure reason on rejection. */

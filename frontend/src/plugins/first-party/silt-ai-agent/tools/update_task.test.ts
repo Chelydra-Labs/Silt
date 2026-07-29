@@ -9,12 +9,15 @@ interface CtxOpts {
     notebook: string
     section: string
     page: string
+    lineNumber?: number
     recur: string | null
   }
   /** Sibling rows returned by the spawn lookup. */
   siblings?: Array<{ id: string }>
   /** Make every setter + updateBlockState reject (capability-denied). */
   rejectAll?: boolean
+  /** Reject a single named setter (partial-failure tests). */
+  rejectSetter?: 'recurrence'
 }
 
 function makeCtx(opts: CtxOpts = {}): {
@@ -39,6 +42,10 @@ function makeCtx(opts: CtxOpts = {}): {
           throw new Error('capability denied')
         })
       : vi.fn(async () => true)
+  const reject = (name: string) =>
+    vi.fn(async () => {
+      throw new Error(`${name} failed`)
+    })
   const sqliteQuery = vi.fn(async (sql: string) => {
     // readSnapshot query projects notebook/section/page + recur by block id.
     if (sql.includes('SELECT b.notebook')) {
@@ -49,6 +56,7 @@ function makeCtx(opts: CtxOpts = {}): {
             notebook: opts.snap.notebook,
             section: opts.snap.section,
             page: opts.snap.page,
+            line_number: opts.snap.lineNumber ?? 10,
             recur: opts.snap.recur
           }
         ] as unknown as Record<string, unknown>[],
@@ -69,7 +77,8 @@ function makeCtx(opts: CtxOpts = {}): {
   const setTaskOwner = mk()
   const setTaskPriority = mk()
   const setTaskTags = mk()
-  const setTaskRecurrence = mk()
+  const setTaskRecurrence =
+    opts.rejectSetter === 'recurrence' ? reject('recurrence') : mk()
   const setTaskEstimate = mk()
   const setTaskBlockedBy = mk()
   const setTaskTitle = mk()
@@ -158,16 +167,24 @@ describe('update_task', () => {
 
   it('reports the spawned instance on a recurring DONE', async () => {
     const c = makeCtx({
-      snap: { ...SNAP, recur: 'every week' },
-      siblings: [{ id: 'spawned-1' }, { id: 't1' }]
+      snap: { ...SNAP, recur: 'every week', lineNumber: 10 },
+      siblings: [{ id: 'spawned-1' }]
     })
     const res = await handleUpdateTask(c.ctx, { task_id: 't1', status: 'DONE' })
     expect(c.updateBlockState).toHaveBeenCalledWith('t1', 'DONE')
     expect(res.content).toContain('spawned-1')
     expect(res.content).toMatch(/every week/)
+    // The spawn lookup is the second sqliteQuery call; it must localize to the
+    // line directly below the completed task (D1 fix), not the first recurring
+    // TODO anywhere in the file.
+    const spawnCall = c.sqliteQuery.mock.calls[1]
+    expect(spawnCall[0]).toMatch(/line_number >/)
+    const spawnParams = spawnCall[1] as unknown[]
+    expect(spawnParams[3]).toBe(10) // completed task's line number
+    expect(spawnParams[4]).toBe('t1') // excludes the completed task itself
   })
 
-  it('falls back to a textual spawn note when the sibling is not found', async () => {
+  it('falls back to a textual spawn note (with page path) when not found', async () => {
     const c = makeCtx({
       snap: { ...SNAP, recur: 'every week' },
       siblings: []
@@ -175,7 +192,41 @@ describe('update_task', () => {
     const res = await handleUpdateTask(c.ctx, { task_id: 't1', status: 'DONE' })
     expect(res.content).toMatch(/spawn/i)
     expect(res.content).toMatch(/query_tasks/)
+    expect(res.content).toContain('Work/Sprint/Plan')
     expect(res.content).not.toContain('spawned-1')
+  })
+
+  it('gates the spawn note on a just-set recurrence (not a failed one)', async () => {
+    // recurrence set succeeds on a task with no prior rule → spawn note cites
+    // the just-set rule.
+    const ok = makeCtx({
+      snap: { ...SNAP, recur: null, lineNumber: 10 },
+      siblings: [{ id: 'spawned-2' }]
+    })
+    const res = await handleUpdateTask(ok.ctx, {
+      task_id: 't1',
+      recurrence: 'every month',
+      status: 'DONE'
+    })
+    expect(res.error).toBeUndefined()
+    expect(res.content).toContain('every month')
+    expect(res.content).toContain('spawned-2')
+
+    // recurrence set FAILS on a task with a prior 'every week' rule → spawn
+    // note must cite the on-disk rule (every week), not the rejected value.
+    const fail = makeCtx({
+      snap: { ...SNAP, recur: 'every week', lineNumber: 10 },
+      siblings: [{ id: 'spawned-3' }],
+      rejectSetter: 'recurrence'
+    })
+    const failRes = await handleUpdateTask(fail.ctx, {
+      task_id: 't1',
+      recurrence: 'every month',
+      status: 'DONE'
+    })
+    expect(failRes.error).toMatch(/recurrence/)
+    expect(failRes.error).toContain('every week')
+    expect(failRes.error).not.toMatch(/every month/)
   })
 
   it('returns a not-found error for an unknown task id', async () => {

@@ -175,7 +175,7 @@ export async function handleCreateTask(
   }
 
   return {
-    content: `Created task "${text}" on ${placement} (block ${blockId}). Use query_tasks to list or filter it.`
+    content: `Created task "${text}" on ${placement} (block ${blockId}). Use query_tasks to list or filter it, or update_task to change its fields.`
   }
 }
 
