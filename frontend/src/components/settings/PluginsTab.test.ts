@@ -922,6 +922,93 @@ describe('PluginsTab check for updates (#787)', () => {
   })
 })
 
+// #794: a single hung CheckPluginUpdate (network stall, backend deadlock) must
+// not pin checkingUpdates forever. Each call is raced against a deadline; a
+// never-resolving call is counted as failed once the deadline elapses, the
+// loop completes, and the summary shows the partial-failure wording.
+describe('PluginsTab check for updates timeout (#794)', () => {
+  const updatableA = {
+    id: 'plug-a',
+    name: 'Plugin A',
+    version: '1.0.0',
+    author: 'Test',
+    description: '',
+    icon: 'extension',
+    update_url: 'https://example.com/a/update.json'
+  }
+  const updatableB = {
+    id: 'plug-b',
+    name: 'Plugin B',
+    version: '2.0.0',
+    author: 'Test',
+    description: '',
+    icon: 'extension',
+    update_url: 'https://example.com/b/update.json'
+  }
+
+  beforeEach(() => {
+    mocks.listPlugins.mockReset()
+    mocks.loadPlugins.mockReset()
+    mocks.getGrantedCapabilities.mockReset()
+    mocks.getPluginSecurityStats.mockReset()
+    mocks.checkPluginUpdate.mockReset()
+    mocks.listPlugins.mockResolvedValue([updatableA, updatableB])
+    mocks.loadPlugins.mockResolvedValue(undefined)
+    mocks.getGrantedCapabilities.mockResolvedValue({})
+    mocks.getPluginSecurityStats.mockResolvedValue([])
+    mocks.configNoPlugins = {
+      plugins: { active: [], disabled: [], plugin_settings: {} }
+    } as never
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    cleanup()
+  })
+
+  it('counts a never-resolving check as failed once the deadline elapses', async () => {
+    // plug-a hangs forever; plug-b resolves cleanly with no update.
+    mocks.checkPluginUpdate.mockImplementation((id: string) =>
+      id === 'plug-a'
+        ? new Promise(() => {})
+        : Promise.resolve({ updateAvailable: false })
+    )
+
+    render(PluginsTab, {
+      activeNotebook: 'Work',
+      activeSection: 'Journal',
+      activePage: 'Daily'
+    })
+    await tick()
+    await vi.advanceTimersByTimeAsync(0)
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Check for updates/i })
+    )
+    await tick()
+
+    // Advance past the per-call deadline so plug-a's race rejects on timeout.
+    await vi.advanceTimersByTimeAsync(8000)
+    await tick()
+
+    const checkBtn = screen.getByRole('button', {
+      name: /Check for updates/i
+    })
+    // The loop completed; the button is interactive again.
+    expect(checkBtn).not.toBeDisabled()
+    expect(checkBtn).not.toHaveTextContent(/Checking/i)
+    const summary = screen.getByText(/Checked 1 of 2 plugins/)
+    expect(summary).toHaveAttribute('role', 'status')
+    expect(summary.textContent).toMatch(/1 failed/)
+    // The hung plugin did not block its sibling from being checked.
+    expect(mocks.checkPluginUpdate).toHaveBeenCalledWith(
+      'plug-b',
+      '2.0.0',
+      'https://example.com/b/update.json'
+    )
+  })
+})
+
 // Characterization tests for the install-from-archive flow: pick → validate →
 // preview → install → reload. These pin the behavior before the cluster is
 // extracted into PluginInstallFlow.svelte.
