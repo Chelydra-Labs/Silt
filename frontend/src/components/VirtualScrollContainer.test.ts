@@ -200,20 +200,17 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(screen.queryByText('Save failed')).toBeNull()
   })
 
-  it('shows polite Saving… while a write is in flight #546', async () => {
+  it('stays silent while a write is in flight #546', async () => {
     render(VirtualScrollContainer, { props: baseProps() })
     await fireEvent.click(screen.getByTestId('tiptap-stub-emit-saving'))
-    const status = screen.getByText('Saving…')
-    const live = status.closest('[aria-live]')
-    expect(live?.getAttribute('aria-live')).toBe('polite')
+    expect(screen.queryByText('Saving…')).toBeNull()
   })
 
-  it('shows polite Saved on success confirmation #546', async () => {
+  it('stays silent on success confirmation #546', async () => {
     render(VirtualScrollContainer, { props: baseProps() })
     await fireEvent.click(screen.getByTestId('tiptap-stub-emit-saved'))
-    const status = screen.getByText('Saved')
-    const live = status.closest('[aria-live]')
-    expect(live?.getAttribute('aria-live')).toBe('polite')
+    expect(screen.queryByText('Saved')).toBeNull()
+    expect(screen.queryByText('✓ Saved')).toBeNull()
   })
 
   it('shows assertive Save failed when the editor reports an error', async () => {

@@ -114,11 +114,7 @@
   let outlineOpen = $state(false)
 
   // Editor status state
-  let dirty = $state(false)
   let saveError = $state<string | null>(null)
-  let savePhase = $state<'idle' | 'pending' | 'saving' | 'saved' | 'error'>(
-    'idle'
-  )
   let wordCount = $state(0)
   let showWordCount = $derived(
     settings.config?.editor?.show_word_count === true
@@ -591,9 +587,7 @@
                 bind:activeMarks
                 bind:wordCount
                 onSaveStateChange={(s) => {
-                  dirty = s.dirty
                   saveError = s.error
-                  savePhase = s.phase
                   onSaveStateChange?.(s)
                 }}
               />
@@ -707,8 +701,8 @@
     <DateGlanceChip active={_isActive} />
   </div>
 
-  <!-- Floating Editor Status Bar (honest save phase + word count) -->
-  {#if viewMode === 'edit' && (saveError || savePhase === 'saving' || savePhase === 'saved' || (showWordCount && wordCount > 0))}
+  <!-- Floating Editor Status Bar (save-error + word count) -->
+  {#if viewMode === 'edit' && (saveError || (showWordCount && wordCount > 0))}
     <div
       class="absolute bottom-6 right-6 z-40 flex items-center gap-3 px-3.5 py-1.5 bg-surface-popover/80 backdrop-blur-md border border-surface-popover-border/60 rounded-full shadow-lg text-type-xs font-medium tracking-wide text-text-muted transition-all duration-300 opacity-70 hover:opacity-100 select-none"
     >
@@ -723,26 +717,10 @@
           ></span>
           <span class="text-status-danger font-semibold">Save failed</span>
         </div>
-      {:else if savePhase === 'saving'}
-        <!-- In-flight write: the honest "Saving…" (#546). Debounce (pending)
-             stays silent so it never misleads. -->
-        <div class="flex items-center gap-1.5" role="status" aria-live="polite">
-          <span class="w-2 h-2 rounded-full bg-text-muted animate-pulse"></span>
-          <span class="text-text-muted">Saving…</span>
-        </div>
-      {:else if savePhase === 'saved'}
-        <!-- Transient success confirmation (held ~2s by AutosaveManager). -->
-        <div class="flex items-center gap-1.5" role="status" aria-live="polite">
-          <span
-            class="material-symbols-outlined text-icon-sm text-status-success"
-            >check_circle</span
-          >
-          <span class="text-text-muted">Saved</span>
-        </div>
       {/if}
 
       {#if showWordCount && wordCount > 0}
-        {#if saveError || savePhase === 'saving' || savePhase === 'saved'}
+        {#if saveError}
           <div class="w-px h-3 bg-surface-popover-border"></div>
         {/if}
         <div class="font-mono text-text-muted/80" role="status" aria-live="off">
