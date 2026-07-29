@@ -396,16 +396,19 @@ export function createTabManager(deps: TabManagerDeps): TabManagerController {
       error: string | null
     }
   ): void {
-    openTabs = openTabs.map((t) =>
-      t.id === tabId
-        ? {
-            ...t,
-            dirty: state.dirty,
-            saveError: state.error,
-            savePhase: state.phase
-          }
-        : t
-    )
+    // Mutate the tab's save-state fields in place rather than replacing the
+    // openTabs array. Replacing it (`openTabs = openTabs.map(...)`) forced
+    // App's editor {#each} to re-render on every autosave state change,
+    // re-passing equal props to the mounted VirtualScrollContainer and
+    // re-invalidating its load $effect — flashing the centered "Loading..."
+    // overlay on every save (#814). The deep $state proxy still notifies the
+    // tab strip's dirty/save badge, and save-state isn't persisted, so no
+    // schedulePersistTabs is wanted here.
+    const tab = openTabs.find((t) => t.id === tabId)
+    if (!tab) return
+    tab.dirty = state.dirty
+    tab.saveError = state.error
+    tab.savePhase = state.phase
     trackRecentSave(tabId, state)
   }
 
