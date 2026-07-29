@@ -666,7 +666,7 @@
       },
       {
         "name": "PluginUpdateBlockState",
-        "signature": "PluginUpdateBlockState(pluginID, sessionToken, blockID, status string) (bool, error)"
+        "signature": "PluginUpdateBlockState(pluginID, sessionToken, blockID, status string) (PluginBlockStateResult, error)"
       },
       {
         "name": "PluginUpdateTaskMeta",
@@ -974,7 +974,7 @@
       },
       {
         "name": "UpdateBlockState",
-        "signature": "UpdateBlockState(blockID string, newState string) error"
+        "signature": "UpdateBlockState(blockID string, newState string) (string, error)"
       },
       {
         "name": "UpdatePluginSetting",
@@ -1024,8 +1024,11 @@
       "vault:watch-coverage"
     ],
     "frontend_binding_imports": [
+      "frontend/src/App.hotkeys.test.ts",
       "frontend/src/App.menu-save.test.ts",
+      "frontend/src/App.startup-events.test.ts",
       "frontend/src/App.svelte",
+      "frontend/src/App.tabs.test.ts",
       "frontend/src/components/BacklinksSidebarPanel.svelte",
       "frontend/src/components/BacklinksSidebarPanel.test.ts",
       "frontend/src/components/BlockPickerModal.svelte",
@@ -1048,6 +1051,7 @@
       "frontend/src/components/TipTapEditor.context-menu.test.ts",
       "frontend/src/components/TipTapEditor.page-link-suggest.test.ts",
       "frontend/src/components/TipTapEditor.tag-suggest.test.ts",
+      "frontend/src/components/TipTapEditor.template-insert.test.ts",
       "frontend/src/components/TipTapEditor.test.ts",
       "frontend/src/components/TitleBar.svelte",
       "frontend/src/components/VirtualScrollContainer.svelte",
@@ -1110,6 +1114,8 @@
       "frontend/src/lib/sidebar/useSidebarContextMenu.svelte.ts",
       "frontend/src/lib/tabs/persistence.svelte.test.ts",
       "frontend/src/lib/tabs/persistence.svelte.ts",
+      "frontend/src/lib/tabs/useTabManager.svelte.test.ts",
+      "frontend/src/lib/tabs/useTabManager.svelte.ts",
       "frontend/src/lib/testing/ipcMock.ts",
       "frontend/src/plugins/context.ai.test.ts",
       "frontend/src/plugins/context.test.ts",
@@ -1124,6 +1130,10 @@
       "frontend/src/plugins/loader.vault-close.test.ts",
       "frontend/src/settings/store.svelte.test.ts",
       "frontend/src/settings/store.svelte.ts",
+      "frontend/src/shell/useSettingsDialogs.svelte.test.ts",
+      "frontend/src/shell/useSettingsDialogs.svelte.ts",
+      "frontend/src/shell/useStartupEvents.svelte.test.ts",
+      "frontend/src/shell/useStartupEvents.svelte.ts",
       "frontend/src/templates/TemplatePicker.svelte",
       "frontend/src/templates/TemplatePicker.test.ts",
       "frontend/src/templates/store.svelte.ts",
@@ -1135,8 +1145,10 @@
       "frontend/src/updates/store.test.ts"
     ],
     "frontend_runtime_imports": [
+      "frontend/src/App.hotkeys.test.ts",
       "frontend/src/App.menu-save.test.ts",
-      "frontend/src/App.svelte",
+      "frontend/src/App.startup-events.test.ts",
+      "frontend/src/App.tabs.test.ts",
       "frontend/src/components/BacklinksSidebarPanel.svelte",
       "frontend/src/components/BacklinksSidebarPanel.test.ts",
       "frontend/src/components/EmbedPortal.svelte",
@@ -1146,6 +1158,7 @@
       "frontend/src/components/TipTapEditor.context-menu.test.ts",
       "frontend/src/components/TipTapEditor.page-link-suggest.test.ts",
       "frontend/src/components/TipTapEditor.tag-suggest.test.ts",
+      "frontend/src/components/TipTapEditor.template-insert.test.ts",
       "frontend/src/components/TipTapEditor.test.ts",
       "frontend/src/components/TitleBar.svelte",
       "frontend/src/components/TitleBar.test.ts",
@@ -1193,6 +1206,8 @@
       "frontend/src/plugins/shared/ai-chat/ChatShell.test.ts",
       "frontend/src/settings/store.svelte.test.ts",
       "frontend/src/settings/store.svelte.ts",
+      "frontend/src/shell/useStartupEvents.svelte.test.ts",
+      "frontend/src/shell/useStartupEvents.svelte.ts",
       "frontend/src/templates/TemplatePicker.test.ts",
       "frontend/src/templates/store.svelte.ts",
       "frontend/src/templates/store.test.ts",
