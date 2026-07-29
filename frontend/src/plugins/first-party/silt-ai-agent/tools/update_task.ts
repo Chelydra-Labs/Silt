@@ -140,11 +140,13 @@ export async function handleUpdateTask(
   const blockedBy = optionalStringArray(args.blocked_by)
   // null is treated as "not supplied" (skip), like undefined — title genuinely
   // cannot be cleared, so only an explicit empty/whitespace string errors.
+  // Trim before setTaskTitle so model-supplied surrounding whitespace doesn't
+  // leak into the prose title (mirrors create_task's asString(text).trim()).
   const title =
     args.title === undefined || args.title === null
       ? undefined
-      : asString(args.title)
-  if (title !== undefined && !title.trim()) {
+      : asString(args.title).trim()
+  if (title !== undefined && !title) {
     return { content: '', error: 'title must not be empty' }
   }
 
@@ -352,5 +354,6 @@ function optionalStringArray(raw: unknown): {
     .map((t) => asString(t).trim())
     .filter((t) => t.length > 0)
     .map((t) => t.replace(/^#+/, ''))
+    .filter((t) => t.length > 0)
   return { set: true, value: arr }
 }

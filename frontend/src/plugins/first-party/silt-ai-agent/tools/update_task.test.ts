@@ -167,6 +167,14 @@ describe('update_task', () => {
     expect(c.setTaskBlockedBy).toHaveBeenCalledWith('t1', [])
   })
 
+  it('drops a tag that becomes empty after the #-strip', async () => {
+    // '###' survives the leading-empty filter but strips to '' — without the
+    // trailing filter this would write a malformed empty tag to the prose.
+    const c = makeCtx({ snap: { ...SNAP } })
+    await handleUpdateTask(c.ctx, { task_id: 't1', tags: ['###', 'work'] })
+    expect(c.setTaskTags).toHaveBeenCalledWith('t1', ['work'])
+  })
+
   it('rejects an impossible calendar date without writing', async () => {
     const c = makeCtx({ snap: { ...SNAP } })
     const res = await handleUpdateTask(c.ctx, {
@@ -306,6 +314,14 @@ describe('update_task', () => {
     expect(res.error).toBeUndefined()
     expect(c.setTaskTitle).not.toHaveBeenCalled()
     expect(c.setTaskDueDate).toHaveBeenCalledWith('t1', '2026-08-01')
+  })
+
+  it('trims surrounding whitespace from title before writing', async () => {
+    // Mirrors create_task's asString(text).trim() — model-supplied padding
+    // must not leak into the prose title.
+    const c = makeCtx({ snap: { ...SNAP } })
+    await handleUpdateTask(c.ctx, { task_id: 't1', title: '  Water plants  ' })
+    expect(c.setTaskTitle).toHaveBeenCalledWith('t1', 'Water plants')
   })
 
   it('errors when no fields are supplied', async () => {
