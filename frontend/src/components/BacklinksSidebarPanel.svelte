@@ -2,7 +2,12 @@
   import { onMount } from 'svelte'
   import { Events } from '@wailsio/runtime'
   import { EventName } from '../generated/enums'
-  import { GetBacklinksPaged } from '../../bindings/silt/app.js'
+  import {
+    GetBacklinksPaged,
+    GetUnlinkedMentionsPaged,
+    PromoteUnlinkedMention
+  } from '../../bindings/silt/app.js'
+  import { pushNotification } from '../notifications/store.svelte'
 
   export type Backlink = {
     linkKind: 'page' | 'block-ref' | 'embed'
@@ -16,6 +21,31 @@
 
   type BacklinksPage = {
     results: Backlink[]
+    cursor: string
+    hasMore: boolean
+  }
+
+  type PagePath = {
+    source: string
+    notebook: string
+    section: string
+    page: string
+  }
+
+  type UnlinkedMention = {
+    source: string
+    sourceNotebook: string
+    sourceSection: string
+    sourcePage: string
+    sourceBlockIds: string[]
+    matchCount: number
+    title: string
+    ambiguous: boolean
+    candidates?: PagePath[]
+  }
+
+  type UnlinkedMentionsPage = {
+    results: UnlinkedMention[]
     cursor: string
     hasMore: boolean
   }
@@ -38,6 +68,14 @@
   let request = 0
   let refreshTimer: ReturnType<typeof setTimeout> | null = null
   const pageSize = 50
+
+  // Unlinked-mentions leg.
+  let unlinked = $state<UnlinkedMention[]>([])
+  let unlinkedLoading = $state(false)
+  let unlinkedExpanded = $state(false)
+  let unlinkedBusyBlockId = $state<string | null>(null)
+  let unlinkedError = $state('')
+  let unlinkedRequest = 0
 
   const groups = $derived.by(() => {
     // Ephemeral grouping inside $derived — plain Map is correct.
@@ -148,6 +186,7 @@
 
   function refresh(): void {
     void loadFirstPage(notebook, section, page, backlinks.length > 0)
+    void loadUnlinked(notebook, section, page)
   }
 
   async function loadMore(): Promise<void> {
@@ -171,6 +210,92 @@
           : 'More backlinks could not be loaded.'
     } finally {
       if (sequence === request) loadingMore = false
+    }
+  }
+
+  async function getUnlinkedPage(
+    activeNotebook: string,
+    activeSection: string,
+    activePage: string
+  ): Promise<UnlinkedMention[]> {
+    const result = (await GetUnlinkedMentionsPaged(
+      activeNotebook,
+      activeSection,
+      activePage,
+      '',
+      pageSize
+    )) as unknown as UnlinkedMentionsPage | null
+    return result?.results ?? []
+  }
+
+  // loadUnlinked fetches the unlinked-mentions leg. Runs alongside the backlinks
+  // refresh (same debounced block:changed trigger) but with its own request
+  // sequence so a slow backlinks page never suppresses an unlinked refresh.
+  async function loadUnlinked(
+    activeNotebook: string,
+    activeSection: string,
+    activePage: string
+  ): Promise<void> {
+    const sequence = ++unlinkedRequest
+    if (!activeNotebook || !activePage) {
+      unlinked = []
+      unlinkedError = ''
+      return
+    }
+    unlinkedLoading = true
+    unlinkedError = ''
+    try {
+      const results = await getUnlinkedPage(
+        activeNotebook,
+        activeSection,
+        activePage
+      )
+      if (sequence !== unlinkedRequest) return
+      unlinked = results
+    } catch (cause) {
+      if (sequence !== unlinkedRequest) return
+      unlinkedError =
+        cause instanceof Error
+          ? cause.message
+          : 'Unlinked mentions could not be loaded.'
+    } finally {
+      if (sequence === unlinkedRequest) unlinkedLoading = false
+    }
+  }
+
+  // promoteMention wraps the first plain-text mention of the page title in the
+  // chosen source block with a [[shortest]] link. On success the entry migrates
+  // into the backlinks leg on the next refresh; the optimistic removal keeps the
+  // row from flickering until the debounced refresh lands.
+  async function promoteMention(mention: UnlinkedMention, blockId: string) {
+    if (mention.ambiguous || unlinkedBusyBlockId) return
+    unlinkedBusyBlockId = blockId
+    try {
+      await PromoteUnlinkedMention(blockId, notebook, section, page)
+      pushNotification({
+        kind: 'success',
+        message: `Linked “${mention.title}” in ${mention.sourcePage}.`
+      })
+      // Optimistically drop the promoted block from the row; the debounced
+      // block:changed refresh reconciles the rest (migrating it into backlinks).
+      unlinked = unlinked
+        .map((m) =>
+          m === mention
+            ? {
+                ...m,
+                sourceBlockIds: m.sourceBlockIds.filter((id) => id !== blockId),
+                matchCount: Math.max(0, m.matchCount - 1)
+              }
+            : m
+        )
+        .filter((m) => m.sourceBlockIds.length > 0)
+      refresh()
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : 'Could not link the mention.'
+      pushNotification({ kind: 'error', message })
+    } finally {
+      unlinkedBusyBlockId = null
     }
   }
 
@@ -218,6 +343,7 @@
   }
 
   onMount(() => {
+    void loadUnlinked(notebook, section, page)
     const offBlock = Events.On(EventName.EventBlockChanged, () => {
       if (refreshTimer) clearTimeout(refreshTimer)
       refreshTimer = setTimeout(() => {
@@ -227,6 +353,7 @@
     })
     return () => {
       request++
+      unlinkedRequest++
       if (refreshTimer) clearTimeout(refreshTimer)
       offBlock()
     }
@@ -240,7 +367,9 @@
       clearTimeout(refreshTimer)
       refreshTimer = null
     }
+    unlinkedExpanded = false
     void loadFirstPage(activeNotebook, activeSection, activePage, false)
+    void loadUnlinked(activeNotebook, activeSection, activePage)
   })
 </script>
 
@@ -456,6 +585,149 @@
             </button>
           {/if}
         </div>
+      {/if}
+      {#if unlinked.length > 0 || unlinkedLoading || unlinkedError}
+        <section
+          class="mt-2 rounded-lg border border-surface-sidebar-border bg-surface-panel/35 overflow-hidden"
+          aria-labelledby="unlinked-mentions-title"
+        >
+          <h3 class="m-0">
+            <button
+              type="button"
+              class="w-full px-2.5 py-2 border-none bg-transparent text-left flex items-center gap-2 text-surface-sidebar-text hover:bg-hover cursor-pointer transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start"
+              aria-expanded={unlinkedExpanded}
+              aria-controls="unlinked-mentions-body"
+              onclick={() => (unlinkedExpanded = !unlinkedExpanded)}
+            >
+              <span
+                class="material-symbols-outlined text-icon-md text-accent-primary-start transition-transform {unlinkedExpanded
+                  ? 'rotate-90'
+                  : ''}"
+                aria-hidden="true">chevron_right</span
+              >
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-label-sm-bold text-label-sm">
+                  Unlinked mentions
+                </span>
+                <span
+                  id="unlinked-mentions-title"
+                  class="block truncate text-type-3xs text-surface-sidebar-text-muted"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  {unlinkedLoading
+                    ? 'Finding unlinked mentions…'
+                    : unlinked.length === 1
+                      ? '1 page mentions this title'
+                      : `${unlinked.length} pages mention this title`}
+                </span>
+              </span>
+            </button>
+          </h3>
+          {#if unlinkedExpanded}
+            <div
+              id="unlinked-mentions-body"
+              class="border-t border-surface-sidebar-border/70"
+            >
+              {#if unlinkedError}
+                <p
+                  class="m-0 px-2.5 py-2 text-type-2xs text-status-warn"
+                  role="alert"
+                >
+                  {unlinkedError}
+                </p>
+              {/if}
+              <ul class="m-0 p-0 list-none">
+                {#each unlinked as mention, index (`${mention.source}\u0000${mention.sourceNotebook}\u0000${mention.sourceSection}\u0000${mention.sourcePage}:${index}`)}
+                  <li
+                    class="border-b border-surface-sidebar-border/60 last:border-b-0"
+                  >
+                    <div
+                      class="px-2.5 py-2 flex items-center gap-2 text-surface-sidebar-text"
+                    >
+                      <button
+                        type="button"
+                        class="min-w-0 flex-1 border-none bg-transparent text-left p-0 cursor-pointer hover:text-accent-primary-start focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start rounded"
+                        onclick={() =>
+                          openPage({
+                            sourceNotebook: mention.sourceNotebook,
+                            sourceSection: mention.sourceSection,
+                            sourcePage: mention.sourcePage,
+                            source: mention.source ?? 'vault'
+                          } as Backlink)}
+                        aria-label={`Open page ${mention.sourcePage}`}
+                      >
+                        <span class="flex items-center gap-1.5 min-w-0">
+                          <span
+                            class="truncate font-label-sm-bold text-label-sm"
+                            >{mention.sourcePage}</span
+                          >
+                          <span
+                            class="flex-shrink-0 rounded-full border border-surface-sidebar-border bg-surface-sidebar px-1.5 py-0.5 text-type-3xs uppercase tracking-wider text-surface-sidebar-text-muted font-label-sm-bold"
+                            aria-label={`${mention.matchCount} mention${mention.matchCount === 1 ? '' : 's'}`}
+                            >{mention.matchCount}</span
+                          >
+                          {#if mention.ambiguous}
+                            <span
+                              class="flex-shrink-0 rounded-full border border-status-warn/40 bg-status-warn/10 px-1.5 py-0.5 text-type-3xs uppercase tracking-wider text-status-warn font-label-sm-bold"
+                              title={mention.candidates
+                                ?.map(
+                                  (c) => `${c.notebook}/${c.section}/${c.page}`
+                                )
+                                .join(', ')}>Ambiguous</span
+                            >
+                          {/if}
+                        </span>
+                        <span
+                          class="block truncate text-type-3xs text-surface-sidebar-text-muted"
+                        >
+                          {[mention.sourceNotebook, mention.sourceSection]
+                            .filter(Boolean)
+                            .join(' / ')}
+                        </span>
+                      </button>
+                    </div>
+                    {#if mention.ambiguous}
+                      <p
+                        class="m-0 px-2.5 pb-2 text-type-3xs text-surface-sidebar-text-muted"
+                      >
+                        Link disabled — title matches
+                        {mention.candidates
+                          ?.map((c) => `${c.notebook}/${c.section}/${c.page}`)
+                          .join(', ')}.
+                      </p>
+                    {:else}
+                      <ul class="m-0 p-0 pb-1 list-none">
+                        {#each mention.sourceBlockIds as blockId, bIndex (`${blockId}:${bIndex}`)}
+                          <li
+                            class="px-2.5 flex items-center justify-between gap-2"
+                          >
+                            <span
+                              class="truncate text-type-3xs text-surface-sidebar-text-muted font-mono"
+                              >{blockId.slice(0, 8)}…</span
+                            >
+                            <button
+                              type="button"
+                              class="flex-shrink-0 rounded border border-surface-sidebar-border bg-transparent px-2 py-0.5 text-type-3xs text-accent-primary-start hover:bg-accent-primary-start/10 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
+                              disabled={unlinkedBusyBlockId === blockId}
+                              aria-label={`Link mention of ${mention.title} in block ${blockId.slice(0, 8)} on page ${mention.sourcePage}`}
+                              aria-busy={unlinkedBusyBlockId === blockId}
+                              onclick={() => promoteMention(mention, blockId)}
+                            >
+                              {unlinkedBusyBlockId === blockId
+                                ? 'Linking…'
+                                : 'Link'}
+                            </button>
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
+        </section>
       {/if}
     {/if}
   </div>
