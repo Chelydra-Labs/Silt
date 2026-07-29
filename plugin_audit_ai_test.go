@@ -477,6 +477,38 @@ func TestRedactAIAuditFields_BlockIdNotAPath(t *testing.T) {
 	}
 }
 
+// TestRedactAIAuditFields_BlockIdMustBeUUID is the #811 hardening regression:
+// block_id reaches the redactor from model-supplied args (update_block/
+// update_task pass the caller's id verbatim), so it must match a UUID shape —
+// prose, paths, and fragments placed there are dropped, never persisted to the
+// synced ai.log.
+func TestRedactAIAuditFields_BlockIdMustBeUUID(t *testing.T) {
+	const uuid = "7c2a3f1e-1111-2222-3333-444455556666"
+	for _, bad := range []string{
+		"not a uuid, just prose",
+		"/home/user/vault/secret.md",                 // POSIX path
+		"C:\\Users\\someone\\vault\\page.md",         // Windows path
+		"7c2a3f1e",                                   // truncated fragment
+		"7c2a3f1e-1111-2222-3333-444455556666-extra", // overlong
+		"",
+	} {
+		out := redactAIAuditFields(map[string]any{"block_id": bad})
+		if _, ok := out["block_id"]; ok {
+			t.Errorf("block_id=%q must be dropped (not a UUID), got %v", bad, out["block_id"])
+		}
+	}
+	// A valid UUID survives unchanged.
+	out := redactAIAuditFields(map[string]any{"block_id": uuid})
+	if out["block_id"] != uuid {
+		t.Errorf("block_id UUID = %v, want %q preserved", out["block_id"], uuid)
+	}
+	// A non-string block_id (e.g. a number) is also dropped.
+	outNum := redactAIAuditFields(map[string]any{"block_id": 12345})
+	if _, ok := outNum["block_id"]; ok {
+		t.Errorf("non-string block_id must be dropped, got %v", outNum["block_id"])
+	}
+}
+
 func TestPluginAIAuditEvent_RejectsOversizedJSON(t *testing.T) {
 	app := newTestApp(t)
 	resetAIAuditState(t)
