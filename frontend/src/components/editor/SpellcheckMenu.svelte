@@ -50,8 +50,9 @@
 
   async function addToDictionary(): Promise<void> {
     await customDictionary.add(word)
-    // The config:changed event refreshes the editor's $effect (which calls
-    // setCustomWords + recheck), so the word un-flags immediately. No reload.
+    // add() mirrors the word into the live config locally — Go self-writes
+    // suppress config:changed — which retriggers the spellcheck $effect
+    // (setCustomWords + recheck), so the word un-flags immediately.
     closeAndRestoreFocus()
   }
 

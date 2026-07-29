@@ -278,12 +278,109 @@ export function ignoreWordSession(word: string): void {
   }
 }
 
-/** Top-N Hunspell suggestions for a misspelled word (empty if none). */
+// --- Diacritic restoration (#815) ----------------------------------------
+// When a token is flagged misspelled, restore common Latin diacritics onto
+// the typed ASCII token and validate each candidate via checkWord (which
+// unions Hunspell + custom + domain). This surfaces accepted accented forms
+// (café, naïve, Wärtsilä) for ASCII approximations, without ever inventing an
+// accent the active word set does not accept. Known v1 gaps (deliberately not
+// restored): German ß (an ss→ß ligature, a different generator path), œ/æ
+// ligatures, and Slavic carons/hooks (š č ř ž).
+const ACCENT_VARIANTS: Record<string, string[]> = {
+  a: ['à', 'á', 'â', 'ã', 'ä', 'å', 'ā'],
+  e: ['è', 'é', 'ê', 'ë', 'ē'],
+  i: ['ì', 'í', 'î', 'ï', 'ī'],
+  o: ['ò', 'ó', 'ô', 'õ', 'ö', 'ō'],
+  u: ['ù', 'ú', 'û', 'ü', 'ū'],
+  c: ['ç'],
+  n: ['ñ'],
+  y: ['ý', 'ÿ']
+}
+
+/** Accented variants of `ch`, matching its case so proper nouns keep their
+ *  capitalization (Wartsila → Wärtsilä, Cafe → Café). checkWord lowercases for
+ *  the custom/domain Set lookup, so case only affects the surfaced form. */
+function accentVariants(ch: string): string[] {
+  const variants = ACCENT_VARIANTS[ch.toLowerCase()]
+  if (!variants) return []
+  return ch === ch.toLowerCase()
+    ? variants
+    : variants.map((v) => v.toUpperCase())
+}
+
+function replaceChar(word: string, idx: number, ch: string): string {
+  return word.slice(0, idx) + ch + word.slice(idx + 1)
+}
+
+/**
+ * Validated accent-restored forms of `word`. Tier 1 tries a single diacritic
+ * (covers café, naïve, façade, piñata); Tier 2 tries two (résumé, Wärtsilä,
+ * Noël). Both tiers are collected together so a strictly-better two-accent
+ * match (résumé) is not preempted by a weaker single-accent one (résume).
+ * Tier 2 is skipped once the word has more than five accent-eligible slots so
+ * the candidate set stays bounded. Every candidate is checkWord-validated.
+ */
+function diacriticSuggestions(word: string): string[] {
+  const positions: number[] = []
+  for (let i = 0; i < word.length; i++) {
+    if (accentVariants(word[i]).length > 0) positions.push(i)
+  }
+  if (positions.length === 0) return []
+
+  const seen = new Set<string>([word])
+  const hits: string[] = []
+  const validate = (candidates: string[]): void => {
+    for (const c of candidates) {
+      if (seen.has(c)) continue
+      seen.add(c)
+      if (checkWord(c)) hits.push(c)
+    }
+  }
+
+  // Tier 1: one accent per candidate (café, naïve, façade, piñata).
+  const tier1: string[] = []
+  for (const i of positions) {
+    for (const v of accentVariants(word[i])) tier1.push(replaceChar(word, i, v))
+  }
+  validate(tier1)
+
+  // Tier 2: two accents. Runs alongside Tier 1 (NOT only when Tier 1 is empty)
+  // so a strictly-better two-accent match (résumé) is not preempted by a
+  // weaker single-accent one (résume). Bounded — skip long words.
+  if (positions.length <= 5) {
+    const tier2: string[] = []
+    for (let p = 0; p < positions.length; p++) {
+      for (let q = p + 1; q < positions.length; q++) {
+        const ip = positions[p]
+        const iq = positions[q]
+        for (const vp of accentVariants(word[ip])) {
+          for (const vq of accentVariants(word[iq])) {
+            tier2.push(replaceChar(replaceChar(word, ip, vp), iq, vq))
+          }
+        }
+      }
+    }
+    validate(tier2)
+  }
+  return hits
+}
+
+/** Top-N suggestions for a misspelled word (empty if none). */
 export function suggest(word: string, limit = 5): string[] {
   if (!dict) return []
-  // Pass the token as written so casing fixes (rockford → Rockford) surface.
-  // Drop only exact self-matches (no-op replace). Keep case variants — those
-  // are real corrections for proper nouns stored in title case.
-  const suggestions = dict.suggest(word).filter((s) => s !== word)
-  return suggestions.slice(0, limit)
+  // Accent-restored forms rank above edit-distance noise: an exact ASCII-fold
+  // match to an accepted accented word is the correction the user wants.
+  // Hunspell's own suggestions follow (casing fixes like rockford → Rockford).
+  // The token is passed as written; only exact self-matches are dropped so
+  // case-variant corrections for proper nouns are still surfaced.
+  const merged = [...diacriticSuggestions(word), ...dict.suggest(word)]
+  const seen = new Set<string>([word])
+  const out: string[] = []
+  for (const s of merged) {
+    if (seen.has(s)) continue
+    seen.add(s)
+    out.push(s)
+    if (out.length >= limit) break
+  }
+  return out
 }

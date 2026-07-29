@@ -105,6 +105,74 @@ describe('proper-noun casing (bundled en-US)', () => {
   })
 })
 
+describe('diacritic-aware suggestions (#815)', () => {
+  beforeEach(async () => {
+    resetDictionary()
+    setCustomWords([])
+    setDomainWords([])
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const body = String(url).endsWith('.aff') ? enUsAff : enUsDic
+        return { ok: true, status: 200, text: async () => body }
+      })
+    )
+    await loadDictionary('en-US')
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('suggests a single-accent custom form for an ASCII token (Tier 1)', () => {
+    setCustomWords(['café'])
+    expect(suggest('cafe')).toContain('café')
+  })
+
+  it('suggests a two-accent custom form when no single-accent form validates (Tier 2)', () => {
+    setCustomWords(['wärtsilä'])
+    expect(suggest('Wartsila')).toContain('Wärtsilä')
+  })
+
+  it('an added accented word is both unflagged and one-click correctable', () => {
+    setCustomWords(['wärtsilä'])
+    expect(checkWord('Wärtsilä')).toBe(true)
+    expect(suggest('Wartsila')).toContain('Wärtsilä')
+  })
+
+  it('does not regress Hunspell casing suggestions', () => {
+    expect(suggest('rockford')).toContain('Rockford')
+  })
+
+  it('does not invent accents for a misspelling with no valid accented form', () => {
+    // 'teh' has an accent-eligible 'e' but no accepted accented variant, so no
+    // diacritic candidate should be proposed — Hunspell's plain suggestions
+    // pass through untouched (no spurious accented coinages).
+    const out = suggest('teh')
+    const hasAccent = (s: string) =>
+      s !== s.normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    expect(out.some(hasAccent)).toBe(false)
+  })
+
+  it('keeps the candidate set bounded for a long vowel-heavy word', () => {
+    // Tier 2 is skipped (>5 accent slots), so this stays cheap and returns
+    // only Hunspell output within the limit.
+    expect(suggest('aeiouaeiou').length).toBeLessThanOrEqual(5)
+  })
+
+  it('offers a two-accent form even when a single-accent form also validates', () => {
+    setCustomWords(['résume', 'résumé'])
+    const out = suggest('resume')
+    expect(out).toContain('résume')
+    expect(out).toContain('résumé')
+  })
+
+  it('restores a macron for a custom form', () => {
+    setCustomWords(['rōmaji'])
+    expect(suggest('romaji')).toContain('rōmaji')
+  })
+})
+
 describe('loadDomainPacks', () => {
   beforeEach(() => {
     resetDictionary()

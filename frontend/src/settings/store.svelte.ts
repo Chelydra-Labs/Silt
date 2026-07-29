@@ -210,6 +210,23 @@ export async function reloadFromBackend(): Promise<void> {
 }
 
 /**
+ * Mirror a freshly-resolved custom dictionary into the live config snapshot.
+ * Go self-writes (AddCustomDictionaryWord / Remove / Import) suppress the
+ * fsnotify event that would otherwise emit `config:changed`, so the snapshot
+ * is never refreshed by the hot-reload path. Without this local mirror the
+ * spellcheck `$effect` in TipTapEditor — which keys off
+ * `config.editor.custom_dictionary` — never re-runs, so a just-added word
+ * stays underlined. Mirrors the same local-update discipline as
+ * toggleFormatToolbar / toggleFocusMode.
+ */
+export function mirrorCustomDictionary(words: string[]): void {
+  const cfg = settings.config
+  if (!cfg) return
+  if (!cfg.editor) cfg.editor = {} as EditorConfig
+  cfg.editor.custom_dictionary = words
+}
+
+/**
  * Toggle the formatting toolbar visibility state. Writes the single field
  * atomically via the backend (SetShowFormatToolbar) and mirrors it into the
  * config snapshot — it deliberately does NOT call saveConfig, which would clear
