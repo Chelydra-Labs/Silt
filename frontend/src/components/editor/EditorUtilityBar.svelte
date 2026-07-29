@@ -1,23 +1,9 @@
-<script module lang="ts">
-  export const OPEN_TASKS_FOR_PAGE_EVENT = 'silt:open-tasks-for-page' as const
-
-  export interface OpenTasksForPageDetail {
-    source: string
-    notebook: string
-    section: string
-    page: string
-    nonce: string
-  }
-
-  declare global {
-    interface WindowEventMap {
-      'silt:open-tasks-for-page': CustomEvent<OpenTasksForPageDetail>
-    }
-  }
-</script>
-
 <script lang="ts">
   import type { Editor } from 'svelte-tiptap'
+  import {
+    OPEN_TASKS_FOR_PAGE_EVENT,
+    type OpenTasksForPageDetail
+  } from './openTasksForPage'
   import FormatToolbar from './FormatToolbar.svelte'
   import { settings } from '../../settings/store.svelte'
   import { isSystemDark } from '../../lib/systemTheme.svelte'
