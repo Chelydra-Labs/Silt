@@ -151,7 +151,7 @@ func TestUpdateBlockState_StampsModified(t *testing.T) {
 	taskID := "cccccccc-dddd-eeee-ffff-000000000000"
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "status stamp")
 
-	if err := app.UpdateBlockState(taskID, "DOING"); err != nil {
+	if _, err := app.UpdateBlockState(taskID, "DOING"); err != nil {
 		t.Fatalf("UpdateBlockState: %v", err)
 	}
 	var modified sql.NullString

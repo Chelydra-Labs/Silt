@@ -166,8 +166,14 @@ export interface PluginContext {
   sqliteQuery: (sql: string, params?: unknown[]) => Promise<SqliteQueryResult>
   /** Rewrite a block's body text by UUID (preserves task syntax + UUID). */
   mutateBlock: (id: string, text: string) => Promise<boolean>
-  /** Transition a task block's status. */
-  updateBlockState: (id: string, status: TaskStatus) => Promise<boolean>
+  /** Transition a task block's status. On a recurring TODO/DOING → DONE
+   *  transition, `spawnedId` carries the UUID of the next instance the server
+   *  spliced below the completed line; it is empty for every other transition.
+   *  `ok` is true when the transition applied (an error throws instead). */
+  updateBlockState: (
+    id: string,
+    status: TaskStatus
+  ) => Promise<{ ok: boolean; spawnedId: string }>
   /**
    * Update per-task metadata (pin, progress). Both fields are optional;
    * pass undefined to skip a field. Pin and progress are file-resident

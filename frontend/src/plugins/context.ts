@@ -217,8 +217,16 @@ export function makePluginContext(
       ),
     mutateBlock: (id, text) =>
       PluginMutateBlock(pluginID, sessionToken ?? '', id, text),
-    updateBlockState: (id, status: TaskStatus) =>
-      PluginUpdateBlockState(pluginID, sessionToken ?? '', id, status),
+    updateBlockState: async (id, status: TaskStatus) => {
+      const res = await PluginUpdateBlockState(
+        pluginID,
+        sessionToken ?? '',
+        id,
+        status
+      )
+      // Binding serializes the Go struct as { ok, spawned_id }; expose camelCase.
+      return { ok: res?.ok ?? false, spawnedId: res?.spawned_id ?? '' }
+    },
     // Pin/progress are file-resident user intent (ARCHITECTURE §0). The
     // Go side uses int sentinels for the tri-state pin (#123):
     //   -2 = clear the [pin::] token, -1 = no change,

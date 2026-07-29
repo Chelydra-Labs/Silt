@@ -9,10 +9,10 @@
 // untouched.
 //
 // status routes through ctx.updateBlockState so DONE preserves the server-side
-// recurrence auto-spawn (a fresh TODO is spliced below the completed line).
-// Because updateBlockState returns only a boolean, the spawned instance's UUID
-// is not surfaced through the binding — on a recurring DONE the tool reports
-// the transition + the spawn and best-effort resolves the new sibling's id.
+// recurrence auto-spawn (a fresh TODO is spliced below the completed line). The
+// status transition returns the spawned instance's id from the atomic Go write
+// (#812); the tool reports it directly, and only falls back to an index lookup
+// when the server did not return an id (older server / unexpected gap).
 
 import type { PluginContext, TaskStatus } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
@@ -28,10 +28,10 @@ export const updateTaskToolDef = {
     'supplied fields change; prose is never altered (use update_block for ' +
     'prose). status transitions go through the status-transition path so a ' +
     'DONE on a recurring task spawns the next instance as usual; the spawned ' +
-    "instance's id is best-effort (if not returned, call query_tasks to find " +
-    'it). Pass an empty string/array (or null) for due/owner/tags/' +
-    'recurrence/estimate/blocked_by to clear the field. priority and status ' +
-    'cannot be cleared.',
+    "instance's id is returned by the transition when available (otherwise " +
+    'call query_tasks to find it). Pass an empty string/array (or null) for ' +
+    'due/owner/tags/recurrence/estimate/blocked_by to clear the field. ' +
+    'priority and status cannot be cleared.',
   parameters: {
     type: 'object',
     required: ['task_id'],
@@ -231,14 +231,22 @@ export async function handleUpdateTask(
   // Status transition (routes through updateBlockState → server-side spawn).
   let spawnNote = ''
   if (status !== null) {
+    let spawnedId = ''
     try {
-      await ctx.updateBlockState(taskId, status)
+      const res = await ctx.updateBlockState(taskId, status)
+      spawnedId = res?.spawnedId ?? ''
     } catch (e: unknown) {
       failed.push(`status: ${e instanceof Error ? e.message : String(e)}`)
       status = null
     }
     if (status === 'DONE' && effectiveRecur) {
-      spawnNote = await reportSpawnedInstance(ctx, taskId, snap, effectiveRecur)
+      spawnNote = await reportSpawnedInstance(
+        ctx,
+        taskId,
+        snap,
+        effectiveRecur,
+        spawnedId
+      )
     }
   }
 
@@ -281,24 +289,44 @@ async function readSnapshot(
 }
 
 /**
- * After a DONE transition on a recurring task, the server splices a fresh TODO
- * directly below the completed line (app_recurrence_test.go: spawnedIdx ==
- * completedIdx + 1), so the first TODO block whose line_number exceeds the
- * completed task's pre-transition line is the spawn — precise even when the
- * page holds other recurring TODOs. updateBlockState returns no id, so resolve
- * it here; if the lookup fails or finds nothing, report the spawn textually
- * with the page path so the model can narrow a query_tasks call. Never guess.
+ * After a DONE transition on a recurring task, report the spawned instance. The
+ * server returns the spawned id from the atomic Go transition (#812); use it
+ * directly when present. Only when it is empty (older server / unexpected gap)
+ * fall back to the index heuristic below. If neither yields an id, report the
+ * spawn textually with the page path so the model can narrow a query_tasks
+ * call. Never guess.
  */
 async function reportSpawnedInstance(
   ctx: PluginContext,
   taskId: string,
   snap: TaskSnapshot,
-  recur: string
+  recur: string,
+  serverSpawnedId: string
 ): Promise<string> {
+  const spawnedId =
+    serverSpawnedId || (await resolveSpawnedIdByIndex(ctx, taskId, snap))
+  if (spawnedId) {
+    return `Recurrence "${recur}" spawned a new instance (block ${spawnedId}); the original is now DONE.`
+  }
   const pagePath = [snap.notebook, snap.section, snap.page]
     .filter((s) => s.length > 0)
     .join('/')
-  let spawnedId: string | null = null
+  return `Recurrence "${recur}" spawned a new TODO instance in ${pagePath}; use query_tasks to find it.`
+}
+
+/**
+ * Defense-in-depth fallback (#812): resolve the spawned id from the index when
+ * the server did not return one. The server splices a fresh TODO directly below
+ * the completed line (app_recurrence_test.go: spawnedIdx == completedIdx + 1),
+ * so the first TODO block whose line_number exceeds the completed task's
+ * pre-transition line is the spawn. Returns "" when the lookup fails or finds
+ * nothing.
+ */
+async function resolveSpawnedIdByIndex(
+  ctx: PluginContext,
+  taskId: string,
+  snap: TaskSnapshot
+): Promise<string> {
   try {
     const { rows } = await ctx.sqliteQuery(
       'SELECT b.id FROM blocks b JOIN tasks t ON t.block_id = b.id ' +
@@ -307,14 +335,11 @@ async function reportSpawnedInstance(
         'ORDER BY b.line_number ASC LIMIT 1',
       [snap.notebook, snap.section, snap.page, snap.lineNumber, taskId]
     )
-    if (rows[0]) spawnedId = asString(rows[0].id)
+    if (rows[0]) return asString(rows[0].id)
   } catch {
-    spawnedId = null
+    // best-effort — leave empty and report the spawn textually
   }
-  if (spawnedId) {
-    return `Recurrence "${recur}" spawned a new instance (block ${spawnedId}); the original is now DONE.`
-  }
-  return `Recurrence "${recur}" spawned a new TODO instance in ${pagePath}; use query_tasks to find it (the id is not returned by the status transition).`
+  return ''
 }
 
 /** Run a setter, appending a labeled failure reason on rejection. */

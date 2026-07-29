@@ -1201,13 +1201,13 @@ func TestUpdateBlockState_RefusedWhileFocusLocked(t *testing.T) {
 		t.Fatalf("AcquireFocusLock: %v", err)
 	}
 	// A status change on a focus-locked file must refuse, not clobber the edit.
-	if err := app.UpdateBlockState(id, "DONE"); !errors.Is(err, errBlockBeingEdited) {
+	if _, err := app.UpdateBlockState(id, "DONE"); !errors.Is(err, errBlockBeingEdited) {
 		t.Fatalf("expected errBlockBeingEdited while focus-locked, got %v", err)
 	}
 	if err := app.ReleaseFocusLock("W", "S", "FocusLockStatus"); err != nil {
 		t.Fatalf("ReleaseFocusLock: %v", err)
 	}
-	if err := app.UpdateBlockState(id, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(id, "DONE"); err != nil {
 		t.Fatalf("UpdateBlockState after release: %v", err)
 	}
 }

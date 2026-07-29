@@ -14,6 +14,9 @@ interface CtxOpts {
   }
   /** Sibling rows returned by the spawn lookup. */
   siblings?: Array<{ id: string }>
+  /** The spawned id the server returns from the status transition (#812).
+   *  When set, the tool must use it directly and skip the index fallback. */
+  spawnedId?: string
   /** Make every setter + updateBlockState reject (capability-denied). */
   rejectAll?: boolean
   /** Reject a single named setter (partial-failure tests). */
@@ -72,7 +75,13 @@ function makeCtx(opts: CtxOpts = {}): {
       truncated: false
     }
   })
-  const updateBlockState = mk()
+  // updateBlockState returns the new {ok, spawnedId} struct (#812); the other
+  // setters still resolve to a boolean.
+  const updateBlockState = useDeny
+    ? vi.fn(async () => {
+        throw new Error('capability denied')
+      })
+    : vi.fn(async () => ({ ok: true, spawnedId: opts.spawnedId ?? '' }))
   const setTaskDueDate = mk()
   const setTaskOwner = mk()
   const setTaskPriority = mk()
@@ -194,7 +203,25 @@ describe('update_task', () => {
     expect(res.content).not.toMatch(/spawn/i)
   })
 
-  it('reports the spawned instance on a recurring DONE', async () => {
+  it('uses the server-returned spawned id directly (no index lookup)', async () => {
+    // #812: the status transition returns the spawned id from the atomic Go
+    // write, so the tool must report it directly and skip the heuristic query.
+    const c = makeCtx({
+      snap: { ...SNAP, recur: 'every week', lineNumber: 10 },
+      spawnedId: 'server-spawn',
+      siblings: [{ id: 'should-not-be-used' }]
+    })
+    const res = await handleUpdateTask(c.ctx, { task_id: 't1', status: 'DONE' })
+    expect(c.updateBlockState).toHaveBeenCalledWith('t1', 'DONE')
+    expect(res.content).toContain('server-spawn')
+    expect(res.content).not.toContain('should-not-be-used')
+    // Only the readSnapshot query ran — the index fallback was skipped.
+    expect(c.sqliteQuery).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports the spawned instance via the index fallback when the server omits the id', async () => {
+    // Defense-in-depth (#812): when the server returns no spawned id, fall back
+    // to the index heuristic to locate the sibling spliced below the line.
     const c = makeCtx({
       snap: { ...SNAP, recur: 'every week', lineNumber: 10 },
       siblings: [{ id: 'spawned-1' }]

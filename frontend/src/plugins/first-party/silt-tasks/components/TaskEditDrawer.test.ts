@@ -302,7 +302,9 @@ describe('TaskEditDrawer — status radiogroup', () => {
   beforeEach(() => cleanup())
 
   it('picking DONE commits via ctx.updateBlockState', async () => {
-    const updateBlockState = vi.fn().mockResolvedValue(true)
+    const updateBlockState = vi
+      .fn()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
     const ctx = makeCtx({ updateBlockState })
     const { container } = render(TaskEditDrawer, {
       props: { task: makeTask(), ctx, onClose: () => {} }
@@ -315,7 +317,9 @@ describe('TaskEditDrawer — status radiogroup', () => {
   })
 
   it('pauses with the shared BlockedDoneDialog when DONE is picked on a blocked task', async () => {
-    const updateBlockState = vi.fn().mockResolvedValue(true)
+    const updateBlockState = vi
+      .fn()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
     const getTaskBlockers = vi
       .fn()
       .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prerequisite' }])
@@ -337,7 +341,9 @@ describe('TaskEditDrawer — status radiogroup', () => {
   })
 
   it('confirming the guard completes the DONE transition', async () => {
-    const updateBlockState = vi.fn().mockResolvedValue(true)
+    const updateBlockState = vi
+      .fn()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
     const getTaskBlockers = vi
       .fn()
       .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prerequisite' }])
@@ -357,7 +363,9 @@ describe('TaskEditDrawer — status radiogroup', () => {
   })
 
   it('cancelling the guard leaves status unchanged (no write)', async () => {
-    const updateBlockState = vi.fn().mockResolvedValue(true)
+    const updateBlockState = vi
+      .fn()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
     const getTaskBlockers = vi
       .fn()
       .mockResolvedValue([{ id: 'dep-1', clean_content: 'Prerequisite' }])
@@ -383,7 +391,9 @@ describe('TaskEditDrawer — status radiogroup', () => {
   })
 
   it('rapid arrow-key navigation commits only the final status once (#442)', async () => {
-    const updateBlockState = vi.fn().mockResolvedValue(true)
+    const updateBlockState = vi
+      .fn()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
     const ctx = makeCtx({ updateBlockState })
     const { container } = render(TaskEditDrawer, {
       // Unblocked so landing on DONE via arrow doesn't trigger the guard.

@@ -188,7 +188,7 @@ func TestGetTaskBlockers_OpenOnly(t *testing.T) {
 	}
 
 	// Complete blocker1; only blocker2 should remain open.
-	if err := app.UpdateBlockState(blocker1, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(blocker1, "DONE"); err != nil {
 		t.Fatalf("UpdateBlockState blocker1 DONE: %v", err)
 	}
 	open, err = app.GetTaskBlockers(subject)
@@ -224,7 +224,7 @@ func TestUpdateBlockState_DoneFanOutEmitsForDependents(t *testing.T) {
 	// the fan-out exists to enable: after completing the blocker, the
 	// dependent's open-blocker list drops to empty (proving the derived state
 	// would refresh on a re-query).
-	if err := app.UpdateBlockState(blocker, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(blocker, "DONE"); err != nil {
 		t.Fatalf("UpdateBlockState blocker DONE: %v", err)
 	}
 	open, err := app.GetTaskBlockers(dependent)
@@ -240,7 +240,7 @@ func TestUpdateBlockState_DoneFanOutEmitsForDependents(t *testing.T) {
 	const lone = "a7b8c9d0-3333-3333-3333-333333333333"
 	content2 := "- [ ] lone <!-- id: " + lone + " -->\n"
 	indexTestFile(t, app, "W", "S", "FanOutLone", "2026-07-01", content2)
-	if err := app.UpdateBlockState(lone, "DONE"); err != nil {
+	if _, err := app.UpdateBlockState(lone, "DONE"); err != nil {
 		t.Fatalf("UpdateBlockState lone DONE: %v", err)
 	}
 }

@@ -269,7 +269,9 @@ async function renderBoardWithSort(
 describe('BoardView — dimension-aware Board (#421)', () => {
   beforeEach(async () => {
     mocks.tasksSettings = {}
-    mocks.updateBlockState.mockReset().mockResolvedValue(true)
+    mocks.updateBlockState
+      .mockReset()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
     mocks.setTaskOwner.mockReset().mockResolvedValue(true)
     mocks.setTaskPriority.mockReset().mockResolvedValue(true)
     mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
@@ -1411,7 +1413,9 @@ describe('BoardView — dimension-aware Board (#421)', () => {
 describe('BoardView — block:changed debounced reload', () => {
   beforeEach(async () => {
     mocks.tasksSettings = {}
-    mocks.updateBlockState.mockReset().mockResolvedValue(true)
+    mocks.updateBlockState
+      .mockReset()
+      .mockResolvedValue({ ok: true, spawnedId: '' })
     mocks.setTaskOwner.mockReset().mockResolvedValue(true)
     mocks.setTaskPriority.mockReset().mockResolvedValue(true)
     mocks.setTaskDueDate.mockReset().mockResolvedValue(true)
