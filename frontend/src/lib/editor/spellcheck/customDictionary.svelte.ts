@@ -24,6 +24,37 @@ let busy = $state(false)
 let error = $state<string | null>(null)
 let status = $state<string | null>(null)
 
+/**
+ * One-slot pending queue for the mutating actions (#822). A second action
+ * called mid-flight is captured here and run when the in-flight one resolves,
+ * instead of being silently dropped. A third call overwrites this slot
+ * (last-write-wins) — the right semantics for a dictionary, where only the
+ * user's most recent intent matters.
+ */
+let pendingAction: (() => Promise<void>) | null = null
+
+/**
+ * Shared executor for add/remove/import/export: owns the `busy` flag and
+ * drains the pending slot from `finally`. Body errors flow through
+ * friendlyPackError into `error` (never swallowed). On release, if a second
+ * action was queued, it is re-invoked here — it re-enters the public method,
+ * re-checks `busy` (now false), and runs to completion, so the user's intent
+ * is preserved rather than dropped.
+ */
+async function runAction(body: () => Promise<void>): Promise<void> {
+  busy = true
+  try {
+    await body()
+  } catch (e) {
+    error = friendlyPackError(e)
+  } finally {
+    busy = false
+    const next = pendingAction
+    pendingAction = null
+    if (next) void next()
+  }
+}
+
 export const customDictionary = {
   get words() {
     return words
@@ -64,7 +95,7 @@ export const customDictionary = {
    * deliberately does NOT mirror into the live config (unlike add/remove/
    * importFile), because an external edit to config.yaml emits config:changed,
    * which the hot-reload handler already uses to refresh settings.config for
-   * the spellcheck effect.
+   * the spellcheck effect. Not busy-guarded, so not part of the pending queue.
    */
   async load(): Promise<void> {
     loading = true
@@ -81,68 +112,65 @@ export const customDictionary = {
   /** Add the current newWord (or a passed-in word) via the IPC. */
   async add(word?: string): Promise<void> {
     const w = (word ?? newWord).trim()
-    if (!w || busy) return
+    if (!w) return
+    if (busy) {
+      pendingAction = () => customDictionary.add(word)
+      return
+    }
     error = null
     status = null
-    busy = true
-    try {
+    await runAction(async () => {
       words = await AddCustomDictionaryWord(w)
       // Go self-writes suppress config:changed, so mirror the resolved list
       // into the live config so the spellcheck $effect re-checks immediately.
       mirrorCustomDictionary(words)
       if (!word) newWord = ''
-    } catch (e) {
-      error = friendlyPackError(e)
-    } finally {
-      busy = false
-    }
+    })
   },
 
   /** Remove a word via the IPC. */
   async remove(word: string): Promise<void> {
-    if (busy) return
+    if (busy) {
+      pendingAction = () => customDictionary.remove(word)
+      return
+    }
     error = null
     status = null
-    busy = true
-    try {
+    await runAction(async () => {
       words = await RemoveCustomDictionaryWord(word)
       mirrorCustomDictionary(words)
-    } catch (e) {
-      error = friendlyPackError(e)
-    } finally {
-      busy = false
-    }
+    })
   },
 
   /** Export via native save dialog. */
   async exportFile(): Promise<void> {
-    if (busy) return
+    if (busy) {
+      pendingAction = () => customDictionary.exportFile()
+      return
+    }
     error = null
     status = null
     if (words.length === 0) {
       status = 'Nothing to export — your dictionary is empty.'
       return
     }
-    busy = true
-    try {
+    await runAction(async () => {
       const path = await PickCustomDictionaryExportPath()
       if (!path) return
       await ExportCustomDictionary(path)
       status = 'Dictionary exported.'
-    } catch (e) {
-      error = friendlyPackError(e)
-    } finally {
-      busy = false
-    }
+    })
   },
 
   /** Import via native open dialog; merges into vault dictionary. */
   async importFile(): Promise<void> {
-    if (busy) return
+    if (busy) {
+      pendingAction = () => customDictionary.importFile()
+      return
+    }
     error = null
     status = null
-    busy = true
-    try {
+    await runAction(async () => {
       const path = await PickCustomDictionaryImportFile()
       if (!path) return
       const summary = await ImportCustomDictionary(path)
@@ -155,10 +183,18 @@ export const customDictionary = {
       } else {
         status = `Added ${summary.added} words.`
       }
-    } catch (e) {
-      error = friendlyPackError(e)
-    } finally {
-      busy = false
-    }
+    })
   }
+}
+
+/** Test-only: reset all reactive state and the pending slot. */
+export function _resetForTests(): void {
+  words = []
+  filter = ''
+  newWord = ''
+  loading = false
+  busy = false
+  error = null
+  status = null
+  pendingAction = null
 }
