@@ -177,11 +177,20 @@ describe('create_task', () => {
     expect(createTask).not.toHaveBeenCalled()
   })
 
-  it('rejects a malformed due date without creating anything', async () => {
-    const { ctx, createTask } = makeCtx()
-    const res = await handleCreateTask(ctx, { text: 't', due: 'Aug 1' })
-    expect(res.error).toMatch(/due/)
-    expect(createTask).not.toHaveBeenCalled()
+  it('rejects a malformed or impossible due date without creating anything', async () => {
+    const a = makeCtx()
+    const malformed = await handleCreateTask(a.ctx, { text: 't', due: 'Aug 1' })
+    expect(malformed.error).toMatch(/due/)
+    expect(a.createTask).not.toHaveBeenCalled()
+
+    // Well-formed but not a real calendar date (month 13 / day overflow).
+    const b = makeCtx()
+    const impossible = await handleCreateTask(b.ctx, {
+      text: 't',
+      due: '2026-13-40'
+    })
+    expect(impossible.error).toMatch(/due/)
+    expect(b.createTask).not.toHaveBeenCalled()
   })
 
   it('errors when a page-scoped task has no notebook and no active notebook', async () => {

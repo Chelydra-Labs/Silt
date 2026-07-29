@@ -156,6 +156,27 @@ describe('update_task', () => {
     expect(c.setTaskTags).toHaveBeenCalledWith('t1', [])
   })
 
+  it('clears an array field on null (description contract: null clears)', async () => {
+    const c = makeCtx({ snap: { ...SNAP } })
+    await handleUpdateTask(c.ctx, {
+      task_id: 't1',
+      tags: null,
+      blocked_by: null
+    })
+    expect(c.setTaskTags).toHaveBeenCalledWith('t1', [])
+    expect(c.setTaskBlockedBy).toHaveBeenCalledWith('t1', [])
+  })
+
+  it('rejects an impossible calendar date without writing', async () => {
+    const c = makeCtx({ snap: { ...SNAP } })
+    const res = await handleUpdateTask(c.ctx, {
+      task_id: 't1',
+      due: '2026-13-40'
+    })
+    expect(res.error).toMatch(/due/)
+    expect(c.setTaskDueDate).not.toHaveBeenCalled()
+  })
+
   it('transitions status via updateBlockState', async () => {
     const c = makeCtx({ snap: { ...SNAP, recur: null } })
     const res = await handleUpdateTask(c.ctx, { task_id: 't1', status: 'DONE' })

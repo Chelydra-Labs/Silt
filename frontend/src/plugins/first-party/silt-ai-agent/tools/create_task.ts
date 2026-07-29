@@ -19,6 +19,7 @@
 
 import type { PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
+import { isValidYMD } from './_util'
 import type { ToolResult } from '../tool-registry'
 
 export const createTaskToolDef = {
@@ -80,8 +81,6 @@ export const createTaskToolDef = {
   }
 }
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
-
 export async function handleCreateTask(
   ctx: PluginContext,
   args: Record<string, unknown>
@@ -97,8 +96,11 @@ export async function handleCreateTask(
     args.due === undefined || args.due === null
       ? null
       : asString(args.due).trim()
-  if (due && !DATE_RE.test(due)) {
-    return { content: '', error: `due must be YYYY-MM-DD (got "${due}")` }
+  if (due && !isValidYMD(due)) {
+    return {
+      content: '',
+      error: `due must be a real YYYY-MM-DD date (got "${due}")`
+    }
   }
   const owner =
     args.owner === undefined || args.owner === null

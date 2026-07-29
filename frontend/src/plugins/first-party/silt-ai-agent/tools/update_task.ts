@@ -16,10 +16,10 @@
 
 import type { PluginContext, TaskStatus } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
+import { isValidYMD } from './_util'
 import type { ToolResult } from '../tool-registry'
 
 const TASK_STATUSES: TaskStatus[] = ['TODO', 'DOING', 'DONE']
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 export const updateTaskToolDef = {
   name: 'update_task',
@@ -116,8 +116,11 @@ export async function handleUpdateTask(
     status = s as TaskStatus
   }
   const due = optionalString(args.due)
-  if (due.set && due.value && !DATE_RE.test(due.value)) {
-    return { content: '', error: `due must be YYYY-MM-DD (got "${due.value}")` }
+  if (due.set && due.value && !isValidYMD(due.value)) {
+    return {
+      content: '',
+      error: `due must be a real YYYY-MM-DD date (got "${due.value}")`
+    }
   }
   const owner = optionalString(args.owner)
   let priority: number | null | undefined
@@ -329,12 +332,16 @@ function optionalString(raw: unknown): { set: boolean; value: string } {
   return { set: true, value: raw === null ? '' : asString(raw) }
 }
 
-/** Resolve an optional string-array field with the same set/clear semantics. */
+/** Resolve an optional string-array field with the same set/clear semantics.
+ *  null clears (matches optionalString); undefined and non-array types are
+ *  skipped — the registry's `type: 'array'` check keeps stray types out, so the
+ *  non-array branch is just defense-in-depth. */
 function optionalStringArray(raw: unknown): {
   set: boolean
   value: string[]
 } {
   if (raw === undefined) return { set: false, value: [] }
+  if (raw === null) return { set: true, value: [] }
   if (!Array.isArray(raw)) return { set: false, value: [] }
   const arr = raw
     .map((t) => asString(t).trim())
