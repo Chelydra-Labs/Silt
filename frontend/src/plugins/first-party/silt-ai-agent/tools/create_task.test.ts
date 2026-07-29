@@ -264,6 +264,32 @@ describe('create_task', () => {
     expect(auditEvent.mock.calls[0][0]).toMatchObject({ block_id: 'blk-1' })
   })
 
+  it('audits status error (not ok) when a metadata setter partially fails', async () => {
+    // The block IS created, but the tool returns an error to the agent — the
+    // audit must record the error outcome so ai.log forensics match the agent's
+    // result (consistent with update_task's partial-failure branch).
+    const auditEvent = vi.fn(async (_payload: unknown) => {})
+    const { ctx } = makeCtx({
+      blockId: 'blk-9',
+      rejectSetter: 'priority',
+      ai: { auditEvent }
+    })
+    const res = await handleCreateTask(ctx, {
+      text: 't',
+      owner: 'maya',
+      priority: 2
+    })
+    expect(res.error).toMatch(/Task created/i)
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool_result',
+        tool: 'create_task',
+        status: 'error'
+      })
+    )
+    expect(auditEvent.mock.calls[0][0]).toMatchObject({ block_id: 'blk-9' })
+  })
+
   it('exposes the tool def shape', () => {
     expect(createTaskToolDef.name).toBe('create_task')
     expect(createTaskToolDef.parameters.required).toEqual(['text'])

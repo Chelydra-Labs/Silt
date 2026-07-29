@@ -200,7 +200,10 @@ export async function handleCreateTask(
     tags
   })
   if (failed.length > 0) {
-    auditWrite(ctx, 'create_task', 'ok', blockId)
+    // The block was created, but the tool returns an error to the agent — audit
+    // the error outcome (not 'ok') so ai.log forensics match the agent's result
+    // (mirrors update_task's partial-failure branch).
+    auditWrite(ctx, 'create_task', 'error', blockId)
     return {
       content: '',
       error: `Task created (block ${blockId} on ${placement}) but metadata failed: ${failed.join('; ')}`
