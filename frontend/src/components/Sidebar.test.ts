@@ -379,6 +379,115 @@ describe('Sidebar', () => {
     ).toBeInTheDocument()
   })
 
+  // --- #817: background preference refresh must not flash the loading state ---
+  // Every autosave bumps recents, which dispatches navigation-preferences-changed,
+  // which calls loadNavigationPreferences. Before the fix that function unconditionally
+  // set preferencesLoading=true, flashing "Loading saved pages…" on every save. The
+  // loader now only flips the loading flag on the initial (no-prior-data) fetch.
+
+  it('does not flash "Loading saved pages…" on a background refresh (#817)', async () => {
+    const firstData = {
+      expanded_sections: [],
+      recent_pages: [
+        {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          opened_at: 10
+        }
+      ],
+      favorites: [],
+      sidebar_view: 'quick'
+    }
+    // First call (initial mount) resolves; every later call hangs so we can
+    // observe the in-flight refresh without it completing.
+    mocks.getNavigationPreferences
+      .mockResolvedValueOnce(firstData)
+      .mockImplementation(() => new Promise(() => {}))
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    // Initial load completed: the Quick Access panel shows the list, no loader.
+    expect(
+      screen.getByRole('button', { name: /Work \/ Journal \/ Daily/ })
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Loading saved pages…')).toBeNull()
+
+    // Same trigger autosave/recents bumps use — fires a background refresh.
+    window.dispatchEvent(new CustomEvent('navigation-preferences-changed'))
+    await flush()
+    // Refresh is in-flight, but the list stays put and no loading flash appears.
+    expect(screen.queryByText('Loading saved pages…')).toBeNull()
+    expect(
+      screen.getByRole('button', { name: /Work \/ Journal \/ Daily/ })
+    ).toBeInTheDocument()
+  })
+
+  it('shows "Loading saved pages…" on the initial fetch until it resolves (#817)', async () => {
+    // Gate the initial fetch on a deferred so we can observe the empty-state
+    // loading surface before any data arrives.
+    let resolveFirst!: (value: unknown) => void
+    mocks.getNavigationPreferences.mockReturnValue(
+      new Promise((resolve) => {
+        resolveFirst = resolve
+      })
+    )
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    // The Quick Access panel must be visible to see its loading surface; the
+    // tab is operable independent of the pending preference fetch.
+    await fireEvent.click(
+      screen.getByRole('tab', { name: /Quick access bookmarks and recents/i })
+    )
+    await flush()
+    expect(screen.getByText('Loading saved pages…')).toBeInTheDocument()
+
+    // Resolve the initial fetch — loading clears and the list renders.
+    resolveFirst({
+      expanded_sections: [],
+      recent_pages: [
+        {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          opened_at: 10
+        }
+      ],
+      favorites: [],
+      sidebar_view: 'quick'
+    })
+    await flush()
+    expect(screen.queryByText('Loading saved pages…')).toBeNull()
+    expect(
+      screen.getByRole('button', { name: /Work \/ Journal \/ Daily/ })
+    ).toBeInTheDocument()
+  })
+
   it('reverts to the tree tab when SetSidebarView rejects on switch', async () => {
     mocks.setSidebarView.mockRejectedValue(
       new Error('Sidebar view preference could not be saved.')

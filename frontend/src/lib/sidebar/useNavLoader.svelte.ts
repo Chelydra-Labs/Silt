@@ -120,9 +120,14 @@ export function useNavLoader(deps: UseNavLoaderDeps) {
   }
 
   let preferenceLoadSequence = 0
+  // Tracks whether preferences have ever been successfully fetched, so
+  // background refreshes (e.g. every autosave via recents bump) can swap
+  // the result silently instead of flashing the "Loading saved pages…"
+  // empty-state surface on every call.
+  let preferencesLoaded = false
   async function loadNavigationPreferences() {
     const sequence = ++preferenceLoadSequence
-    preferencesLoading = true
+    if (!preferencesLoaded) preferencesLoading = true
     try {
       const loaded = await GetNavigationPreferences()
       if (sequence !== preferenceLoadSequence) return
@@ -133,6 +138,7 @@ export function useNavLoader(deps: UseNavLoaderDeps) {
         favorites: loaded?.favorites ?? [],
         sidebar_view: sidebarView
       }
+      preferencesLoaded = true
       if (!sidebarTabHydrated) {
         sidebarTab = sidebarView
         sidebarTabHydrated = true
