@@ -151,6 +151,109 @@
     truncated: boolean
   }
 
+  // Wails encodes Go structs with encoding/json tags (mostly snake_case). Vitest
+  // mocks may still use camelCase. Dual-read at the IPC boundary so production
+  // wire and tests both normalize to the camelCase view model below.
+  function pick(
+    obj: Record<string, unknown> | null | undefined,
+    camel: string,
+    snake: string
+  ): unknown {
+    if (!obj) return undefined
+    if (camel in obj && obj[camel] !== undefined) return obj[camel]
+    if (snake in obj && obj[snake] !== undefined) return obj[snake]
+    return undefined
+  }
+
+  function asString(v: unknown, fallback = ''): string {
+    return typeof v === 'string' ? v : fallback
+  }
+
+  function asStringArray(v: unknown): string[] {
+    return Array.isArray(v) ? v.map((x) => String(x)) : []
+  }
+
+  function asBool(v: unknown): boolean {
+    return Boolean(v)
+  }
+
+  function asInt(v: unknown, fallback = 0): number {
+    return typeof v === 'number' && Number.isFinite(v) ? v : fallback
+  }
+
+  function mapBacklink(raw: unknown): Backlink {
+    const row = (raw ?? {}) as Record<string, unknown>
+    const kind = asString(pick(row, 'linkKind', 'link_kind'), 'page')
+    return {
+      linkKind:
+        kind === 'block-ref' || kind === 'embed' || kind === 'page'
+          ? kind
+          : 'page',
+      source: asString(row.source, 'vault'),
+      sourceNotebook: asString(pick(row, 'sourceNotebook', 'source_notebook')),
+      sourceSection: asString(pick(row, 'sourceSection', 'source_section')),
+      sourcePage: asString(pick(row, 'sourcePage', 'source_page')),
+      sourceBlockId: asString(pick(row, 'sourceBlockId', 'source_block_id')),
+      snippet: asString(row.snippet)
+    }
+  }
+
+  function mapPagePath(raw: unknown): PagePath {
+    const row = (raw ?? {}) as Record<string, unknown>
+    return {
+      source: asString(row.source, 'vault'),
+      notebook: asString(row.notebook),
+      section: asString(row.section),
+      page: asString(row.page)
+    }
+  }
+
+  function mapUnlinkedMention(raw: unknown): UnlinkedMention {
+    const row = (raw ?? {}) as Record<string, unknown>
+    const candidatesRaw = pick(row, 'candidates', 'candidates')
+    return {
+      source: asString(row.source, 'vault'),
+      sourceNotebook: asString(pick(row, 'sourceNotebook', 'source_notebook')),
+      sourceSection: asString(pick(row, 'sourceSection', 'source_section')),
+      sourcePage: asString(pick(row, 'sourcePage', 'source_page')),
+      sourceBlockIds: asStringArray(
+        pick(row, 'sourceBlockIds', 'source_block_ids')
+      ),
+      sourceSnippets: asStringArray(
+        pick(row, 'sourceSnippets', 'source_snippets')
+      ),
+      matchCount: asInt(pick(row, 'matchCount', 'match_count'), 0),
+      title: asString(row.title),
+      ambiguous: asBool(row.ambiguous),
+      candidates: Array.isArray(candidatesRaw)
+        ? candidatesRaw.map(mapPagePath)
+        : undefined
+    }
+  }
+
+  function mapBacklinksPage(raw: unknown): BacklinksPage {
+    const r = (raw ?? {}) as Record<string, unknown>
+    const results = Array.isArray(r.results) ? r.results.map(mapBacklink) : []
+    return {
+      results,
+      cursor: asString(r.cursor),
+      hasMore: asBool(pick(r, 'hasMore', 'has_more'))
+    }
+  }
+
+  function mapUnlinkedMentionsPage(raw: unknown): UnlinkedMentionsPage {
+    const r = (raw ?? {}) as Record<string, unknown>
+    const results = Array.isArray(r.results)
+      ? r.results.map(mapUnlinkedMention)
+      : []
+    return {
+      results,
+      cursor: asString(r.cursor),
+      hasMore: asBool(pick(r, 'hasMore', 'has_more')),
+      truncated: asBool(pick(r, 'truncated', 'truncated'))
+    }
+  }
+
   interface Props {
     notebook: string
     section: string
@@ -210,14 +313,14 @@
     activePage: string,
     activeCursor: string
   ): Promise<BacklinksPage> {
-    const result = (await GetBacklinksPaged(
+    const result = await GetBacklinksPaged(
       activeNotebook,
       activeSection,
       activePage,
       activeCursor,
       pageSize
-    )) as unknown as BacklinksPage | null
-    return result ?? { results: [], cursor: '', hasMore: false }
+    )
+    return mapBacklinksPage(result)
   }
 
   function backlinkKey(link: Backlink): string {
@@ -328,19 +431,14 @@
     activePage: string,
     activeCursor: string
   ): Promise<UnlinkedMentionsPage> {
-    const result = (await GetUnlinkedMentionsPaged(
+    const result = await GetUnlinkedMentionsPaged(
       activeNotebook,
       activeSection,
       activePage,
       activeCursor,
       pageSize
-    )) as unknown as UnlinkedMentionsPage | null
-    return {
-      results: result?.results ?? [],
-      cursor: result?.cursor ?? '',
-      hasMore: Boolean(result?.hasMore),
-      truncated: Boolean(result?.truncated)
-    }
+    )
+    return mapUnlinkedMentionsPage(result)
   }
 
   // loadUnlinked fetches the unlinked-mentions leg. Runs alongside the backlinks
