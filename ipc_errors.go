@@ -51,11 +51,11 @@ const (
 	CodeNavigationDuplicate   IPCErrorCode = "navigation_duplicate"
 	CodeNavigationReveal      IPCErrorCode = "navigation_reveal_failed"
 	// CodeAmbiguousTarget: PromoteUnlinkedMention rejected because the target
-	// could not be resolved to a single page — either the explicit path is
-	// missing from inventory and the leaf name is ambiguous, or the title is
-	// empty. The unlinked-mentions UI offers candidate chips for one-click
-	// disambiguation; this is the server-side safety net when no unique path
-	// is supplied.
+	// could not be resolved to a single page — the explicit path is missing
+	// from inventory and the leaf name is ambiguous. Empty titles return a
+	// plain error instead (not this code). The unlinked-mentions UI offers
+	// candidate chips for one-click disambiguation; this is the server-side
+	// safety net when no unique path is supplied.
 	CodeAmbiguousTarget IPCErrorCode = "ambiguous_target"
 )
 

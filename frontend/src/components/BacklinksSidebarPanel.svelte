@@ -898,7 +898,7 @@
                         >
                           <span
                             class="min-w-0 truncate text-type-3xs text-surface-sidebar-text-muted"
-                            title={blockId}
+                            title={snip || undefined}
                           >
                             {#each emphasizeTitle(snip, mention.title) as part, pIdx (`${bIndex}-${pIdx}`)}
                               {#if part.mark}
