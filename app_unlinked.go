@@ -58,7 +58,15 @@ func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSectio
 		return NewIPCError(CodeAmbiguousTarget, "cannot promote an empty page title")
 	}
 
-	pages, err := a.db.ListDistinctPages()
+	var pages []db.PageLoc
+	err := a.coordinator.WithDBReadResult(func() error {
+		got, err := a.db.ListDistinctPages()
+		if err != nil {
+			return err
+		}
+		pages = got
+		return nil
+	})
 	if err != nil {
 		return fmt.Errorf("promote unlinked mention: list pages: %w", err)
 	}
@@ -74,7 +82,7 @@ func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSectio
 	}
 
 	targetSource := a.resolveSourceByName(targetNotebook)
-	loc := db.PageLoc{Source: targetSource, Notebook: targetNotebook, Section: targetSection, Page: targetPage}
+	loc := db.PageLoc{Source: targetSource, Notebook: targetNotebook, Section: targetSection, Page: title}
 	shortest := db.ShortestUniquePath(loc, pages)
 
 	titleRE := db.WordBoundaryTitleRE(title)
