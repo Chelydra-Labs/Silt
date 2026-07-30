@@ -37,32 +37,34 @@ vi.mock('@wailsio/runtime', () => ({
 
 import BacklinksSidebarPanel from './BacklinksSidebarPanel.svelte'
 
+// Wire-shaped fixtures match Go encoding/json tags (Wails IPC). The panel
+// normalizes to a camelCase view model at the boundary.
 const links = [
   {
     linkKind: 'page' as const,
-    sourceNotebook: 'Work',
-    sourceSection: 'Projects',
-    sourcePage: 'Launch plan',
+    source_notebook: 'Work',
+    source_section: 'Projects',
+    source_page: 'Launch plan',
     source: 'vault',
-    sourceBlockId: '',
+    source_block_id: '',
     snippet: 'See [[Research]] before launch.'
   },
   {
     linkKind: 'block-ref' as const,
-    sourceNotebook: 'Work',
-    sourceSection: 'Projects',
-    sourcePage: 'Launch plan',
+    source_notebook: 'Work',
+    source_section: 'Projects',
+    source_page: 'Launch plan',
     source: 'vault',
-    sourceBlockId: 'block-42',
+    source_block_id: 'block-42',
     snippet: 'Evidence from ((block-7)).'
   },
   {
     linkKind: 'embed' as const,
-    sourceNotebook: 'Archive',
-    sourceSection: '',
-    sourcePage: 'Reading notes',
+    source_notebook: 'Archive',
+    source_section: '',
+    source_page: 'Reading notes',
     source: 'linked:archive',
-    sourceBlockId: 'block-99',
+    source_block_id: 'block-99',
     snippet: 'Embedded context for the review.'
   }
 ]
@@ -74,7 +76,52 @@ function renderPanel() {
 }
 
 function pageResult(results = links, cursor = '', hasMore = false) {
-  return { results, cursor, hasMore }
+  return { results, cursor, has_more: hasMore }
+}
+
+function unlinkedWire(opts: {
+  results?: Record<string, unknown>[]
+  cursor?: string
+  hasMore?: boolean
+  truncated?: boolean
+}) {
+  return {
+    results: opts.results ?? [],
+    cursor: opts.cursor ?? '',
+    has_more: opts.hasMore ?? false,
+    truncated: opts.truncated ?? false
+  }
+}
+
+function unlinkedMentionWire(partial: {
+  source_page: string
+  source_block_ids?: string[]
+  source_snippets?: string[]
+  source_notebook?: string
+  source_section?: string
+  source?: string
+  match_count?: number
+  title?: string
+  ambiguous?: boolean
+  candidates?: {
+    source?: string
+    notebook: string
+    section: string
+    page: string
+  }[]
+}) {
+  return {
+    source: partial.source ?? 'vault',
+    source_notebook: partial.source_notebook ?? 'Work',
+    source_section: partial.source_section ?? 'Projects',
+    source_page: partial.source_page,
+    source_block_ids: partial.source_block_ids ?? ['block-42'],
+    source_snippets: partial.source_snippets ?? ['see Research here'],
+    match_count: partial.match_count ?? 1,
+    title: partial.title ?? 'Research',
+    ambiguous: partial.ambiguous ?? false,
+    ...(partial.candidates ? { candidates: partial.candidates } : {})
+  }
 }
 
 describe('BacklinksSidebarPanel', () => {
@@ -87,7 +134,7 @@ describe('BacklinksSidebarPanel', () => {
     mocks.getBacklinksPaged.mockReset().mockResolvedValue(pageResult())
     mocks.getUnlinkedMentionsPaged
       .mockReset()
-      .mockResolvedValue({ results: [], cursor: '', hasMore: false })
+      .mockResolvedValue(unlinkedWire({}))
     mocks.promoteUnlinkedMention.mockReset().mockResolvedValue(undefined)
     mocks.pushNotification.mockReset()
     mocks.eventsOn.mockReset().mockImplementation((event, callback) => {
@@ -166,7 +213,11 @@ describe('BacklinksSidebarPanel', () => {
     mocks.getBacklinksPaged.mockResolvedValue(
       pageResult([
         links[0],
-        { ...links[0], source: 'linked:team-drive', sourceBlockId: 'linked-1' }
+        {
+          ...links[0],
+          source: 'linked:team-drive',
+          source_block_id: 'linked-1'
+        }
       ])
     )
     renderPanel()
@@ -349,18 +400,19 @@ describe('BacklinksSidebarPanel', () => {
       results: [
         {
           source: 'vault',
-          sourceNotebook: 'Work',
-          sourceSection: 'Projects',
-          sourcePage: 'Launch plan',
-          sourceBlockIds: ['block-42'],
-          sourceSnippets: ['review the Research notes before launch'],
-          matchCount: 1,
+          source_notebook: 'Work',
+          source_section: 'Projects',
+          source_page: 'Launch plan',
+          source_block_ids: ['block-42'],
+          source_snippets: ['review the Research notes before launch'],
+          match_count: 1,
           title: 'Research',
           ambiguous: false
         }
       ],
       cursor: '',
-      hasMore: false
+      has_more: false,
+      truncated: false
     })
     renderPanel()
     await screen.findByText('1 page mentions this title')
@@ -394,19 +446,19 @@ describe('BacklinksSidebarPanel', () => {
       results: [
         {
           source: 'vault',
-          sourceNotebook: 'Work',
-          sourceSection: 'Projects',
-          sourcePage: 'Launch plan',
+          source_notebook: 'Work',
+          source_section: 'Projects',
+          source_page: 'Launch plan',
           // aria-label uses blockId.slice(0, 8) → "block-42"
-          sourceBlockIds: ['block-42'],
-          sourceSnippets: ['see [[Onboarding]] for the Onboarding details'],
-          matchCount: 1,
+          source_block_ids: ['block-42'],
+          source_snippets: ['see [[Onboarding]] for the Onboarding details'],
+          match_count: 1,
           title: 'Onboarding',
           ambiguous: false
         }
       ],
       cursor: '',
-      hasMore: false
+      has_more: false
     })
     renderPanel()
     await screen.findByText('1 page mentions this title')
@@ -436,20 +488,20 @@ describe('BacklinksSidebarPanel', () => {
       results: [
         {
           source: 'vault',
-          sourceNotebook: 'Work',
-          sourceSection: 'Projects',
-          sourcePage: 'Launch plan',
-          sourceBlockIds: ['block-42'],
-          sourceSnippets: [
+          source_notebook: 'Work',
+          source_section: 'Projects',
+          source_page: 'Launch plan',
+          source_block_ids: ['block-42'],
+          source_snippets: [
             'see [[Onboarding#Setup|start]] then Onboarding again'
           ],
-          matchCount: 1,
+          match_count: 1,
           title: 'Onboarding',
           ambiguous: false
         }
       ],
       cursor: '',
-      hasMore: false
+      has_more: false
     })
     renderPanel()
     await screen.findByText('1 page mentions this title')
@@ -475,12 +527,12 @@ describe('BacklinksSidebarPanel', () => {
     let unlinkedCleared = false
     const mention = {
       source: 'vault',
-      sourceNotebook: 'Work',
-      sourceSection: 'Projects',
-      sourcePage: 'Launch plan',
-      sourceBlockIds: ['block-42'],
-      sourceSnippets: ['see Research here'],
-      matchCount: 1,
+      source_notebook: 'Work',
+      source_section: 'Projects',
+      source_page: 'Launch plan',
+      source_block_ids: ['block-42'],
+      source_snippets: ['see Research here'],
+      match_count: 1,
       title: 'Research',
       ambiguous: false
     }
@@ -488,7 +540,7 @@ describe('BacklinksSidebarPanel', () => {
       Promise.resolve({
         results: unlinkedCleared ? [] : [mention],
         cursor: '',
-        hasMore: false
+        has_more: false
       })
     )
     mocks.promoteUnlinkedMention.mockImplementation(async () => {
@@ -526,12 +578,12 @@ describe('BacklinksSidebarPanel', () => {
       results: [
         {
           source: 'vault',
-          sourceNotebook: 'Work',
-          sourceSection: 'Journal',
-          sourcePage: 'Notes',
-          sourceBlockIds: ['block-7'],
-          sourceSnippets: ['Standup notes from today'],
-          matchCount: 1,
+          source_notebook: 'Work',
+          source_section: 'Journal',
+          source_page: 'Notes',
+          source_block_ids: ['block-7'],
+          source_snippets: ['Standup notes from today'],
+          match_count: 1,
           title: 'Standup',
           ambiguous: true,
           candidates: [
@@ -551,7 +603,7 @@ describe('BacklinksSidebarPanel', () => {
         }
       ],
       cursor: '',
-      hasMore: false
+      has_more: false
     })
     renderPanel()
     await screen.findByText('1 page mentions this title')
@@ -595,18 +647,18 @@ describe('BacklinksSidebarPanel', () => {
         results: [
           {
             source: 'vault',
-            sourceNotebook: 'Work',
-            sourceSection: 'Projects',
-            sourcePage: 'Launch plan',
-            sourceBlockIds: ['block-42'],
-            sourceSnippets: ['see Research here'],
-            matchCount: 1,
+            source_notebook: 'Work',
+            source_section: 'Projects',
+            source_page: 'Launch plan',
+            source_block_ids: ['block-42'],
+            source_snippets: ['see Research here'],
+            match_count: 1,
             title: 'Research',
             ambiguous: false
           }
         ],
         cursor: '',
-        hasMore: false
+        has_more: false
       })
     renderPanel()
     await screen.findByText('Unlinked mentions could not be loaded.')
@@ -629,12 +681,12 @@ describe('BacklinksSidebarPanel', () => {
           ? [
               {
                 source: 'vault',
-                sourceNotebook: 'Work',
-                sourceSection: 'Projects',
-                sourcePage: 'Meeting notes',
-                sourceBlockIds: ['block-99'],
-                sourceSnippets: ['second Research note'],
-                matchCount: 1,
+                source_notebook: 'Work',
+                source_section: 'Projects',
+                source_page: 'Meeting notes',
+                source_block_ids: ['block-99'],
+                source_snippets: ['second Research note'],
+                match_count: 1,
                 title: 'Research',
                 ambiguous: false
               }
@@ -642,18 +694,21 @@ describe('BacklinksSidebarPanel', () => {
           : [
               {
                 source: 'vault',
-                sourceNotebook: 'Work',
-                sourceSection: 'Projects',
-                sourcePage: 'Meeting notes',
-                sourceBlockIds: ['block-42', 'block-99'],
-                sourceSnippets: ['first Research note', 'second Research note'],
-                matchCount: 2,
+                source_notebook: 'Work',
+                source_section: 'Projects',
+                source_page: 'Meeting notes',
+                source_block_ids: ['block-42', 'block-99'],
+                source_snippets: [
+                  'first Research note',
+                  'second Research note'
+                ],
+                match_count: 2,
                 title: 'Research',
                 ambiguous: false
               }
             ],
         cursor: '',
-        hasMore: false
+        has_more: false
       })
     )
     mocks.promoteUnlinkedMention.mockImplementation(async () => {
@@ -687,23 +742,23 @@ describe('BacklinksSidebarPanel', () => {
   it('loads more unlinked mentions via the Load more button and appends', async () => {
     const first = {
       source: 'vault',
-      sourceNotebook: 'Work',
-      sourceSection: 'Projects',
-      sourcePage: 'Daily log',
-      sourceBlockIds: ['block-42'],
-      sourceSnippets: ['Research today'],
-      matchCount: 1,
+      source_notebook: 'Work',
+      source_section: 'Projects',
+      source_page: 'Daily log',
+      source_block_ids: ['block-42'],
+      source_snippets: ['Research today'],
+      match_count: 1,
       title: 'Research',
       ambiguous: false
     }
     const second = {
       source: 'vault',
-      sourceNotebook: 'Archive',
-      sourceSection: '',
-      sourcePage: 'Inbox notes',
-      sourceBlockIds: ['block-7'],
-      sourceSnippets: ['more Research'],
-      matchCount: 1,
+      source_notebook: 'Archive',
+      source_section: '',
+      source_page: 'Inbox notes',
+      source_block_ids: ['block-7'],
+      source_snippets: ['more Research'],
+      match_count: 1,
       title: 'Research',
       ambiguous: false
     }
@@ -711,9 +766,9 @@ describe('BacklinksSidebarPanel', () => {
       .mockResolvedValueOnce({
         results: [first],
         cursor: 'next-page',
-        hasMore: true
+        has_more: true
       })
-      .mockResolvedValueOnce({ results: [second], cursor: '', hasMore: false })
+      .mockResolvedValueOnce({ results: [second], cursor: '', has_more: false })
     renderPanel()
 
     await screen.findByText('1+ pages mention this title')
@@ -740,18 +795,18 @@ describe('BacklinksSidebarPanel', () => {
       results: [
         {
           source: 'vault',
-          sourceNotebook: 'Work',
-          sourceSection: 'Projects',
-          sourcePage: 'Meeting notes',
-          sourceBlockIds: ['block-42', 'block-99'],
-          sourceSnippets: ['first Research', 'second Research'],
-          matchCount: 2,
+          source_notebook: 'Work',
+          source_section: 'Projects',
+          source_page: 'Meeting notes',
+          source_block_ids: ['block-42', 'block-99'],
+          source_snippets: ['first Research', 'second Research'],
+          match_count: 2,
           title: 'Research',
           ambiguous: false
         }
       ],
       cursor: '',
-      hasMore: false
+      has_more: false
     })
     mocks.promoteUnlinkedMention.mockImplementation(
       () => new Promise<void>((resolve) => (resolvePromote = resolve))
@@ -783,5 +838,361 @@ describe('BacklinksSidebarPanel', () => {
         'Research'
       )
     )
+  })
+
+  it('shows incomplete status when FTS scan is truncated', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          source_notebook: 'Work',
+          source_section: 'Projects',
+          source_page: 'Launch plan',
+          source_block_ids: ['block-42'],
+          source_snippets: ['see Research here'],
+          match_count: 1,
+          title: 'Research',
+          ambiguous: false
+        }
+      ],
+      cursor: '',
+      has_more: false,
+      truncated: true
+    })
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(
+      await screen.findByText(
+        /Results may be incomplete — matching text is capped for performance/
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('does not show incomplete banner when truncated is false or omitted', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          source_notebook: 'Work',
+          source_section: 'Projects',
+          source_page: 'Launch plan',
+          source_block_ids: ['block-42'],
+          source_snippets: ['see Research here'],
+          match_count: 1,
+          title: 'Research',
+          ambiguous: false
+        }
+      ],
+      cursor: '',
+      has_more: false
+      // truncated omitted — defaults false via dual-read mapper
+    } as Record<string, unknown>)
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    expect(screen.queryByText(/may be incomplete/)).not.toBeInTheDocument()
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(
+      screen.queryByText(/Results may be incomplete/)
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps incomplete banner after Load more when scan is truncated', async () => {
+    const mention = (page: string, blockId: string) => ({
+      source: 'vault',
+      source_notebook: 'Work',
+      source_section: 'Projects',
+      source_page: page,
+      source_block_ids: [blockId],
+      source_snippets: ['see Research here'],
+      match_count: 1,
+      title: 'Research',
+      ambiguous: false
+    })
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce({
+        results: [mention('Page A', 'block-01')],
+        cursor: 'cursor-1',
+        has_more: true,
+        truncated: true
+      })
+      .mockResolvedValueOnce({
+        results: [mention('Page B', 'block-02')],
+        cursor: '',
+        has_more: false,
+        truncated: true
+      })
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(
+      await screen.findByText(
+        /Results may be incomplete — matching text is capped for performance/
+      )
+    ).toBeInTheDocument()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Load more unlinked mentions' })
+    )
+    await screen.findByText('Page B')
+    expect(
+      screen.getByText(
+        /Results may be incomplete — matching text is capped for performance/
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/pages mention this title · may be incomplete/)
+    ).toBeInTheDocument()
+  })
+
+  it('shows truncated-only empty state when scan is capped with no residual pages', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [],
+      cursor: '',
+      has_more: false,
+      truncated: true
+    })
+    renderPanel()
+    await screen.findByText(
+      /No promotable plain mentions in the first results · may be incomplete/
+    )
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(
+      await screen.findByText(
+        /Matching text is capped for performance — no promotable plain mentions/
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('keeps truncated cue after a failed same-page refresh', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          source_notebook: 'Work',
+          source_section: 'Projects',
+          source_page: 'Launch plan',
+          source_block_ids: ['block-42'],
+          source_snippets: ['see Research here'],
+          match_count: 1,
+          title: 'Research',
+          ambiguous: false
+        }
+      ],
+      cursor: '',
+      has_more: false,
+      truncated: true
+    })
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await screen.findByText(
+      /Results may be incomplete — matching text is capped for performance/
+    )
+
+    let reject!: (reason: Error) => void
+    mocks.getUnlinkedMentionsPaged.mockReturnValueOnce(
+      new Promise((_resolve, fail) => {
+        reject = fail
+      })
+    )
+    blockChanged?.()
+    await new Promise((resolve) => setTimeout(resolve, 210))
+    reject(new Error('index unavailable'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'index unavailable'
+    )
+    // Prior residual row + incompleteness cue survive the failed refresh.
+    // Backlinks + unlinked both name a Launch plan open control.
+    expect(
+      screen.getAllByRole('button', { name: 'Open page Launch plan' }).length
+    ).toBeGreaterThanOrEqual(2)
+    expect(
+      await screen.findByText(
+        /Results may be incomplete — matching text is capped for performance/
+      )
+    ).toBeInTheDocument()
+    await waitFor(() => {
+      // Header subtitle + expanded status both mention incompleteness.
+      expect(
+        screen.getAllByText(/may be incomplete/).length
+      ).toBeGreaterThanOrEqual(2)
+    })
+  })
+
+  it('maps Wails snake_case wire payloads for unlinked page title, load more, and truncated', async () => {
+    // Regression: production IPC uses Go json tags (has_more, source_page, …).
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [
+            unlinkedMentionWire({
+              source_page: 'Wire page',
+              source_block_ids: ['block-wire'],
+              source_snippets: ['plain Research hit']
+            })
+          ],
+          cursor: 'wire-cursor',
+          hasMore: true,
+          truncated: true
+        })
+      )
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [
+            unlinkedMentionWire({
+              source_page: 'Second wire',
+              source_block_ids: ['block-wire-2'],
+              source_snippets: ['another Research']
+            })
+          ],
+          hasMore: false,
+          truncated: true
+        })
+      )
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(await screen.findByText('Wire page')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: /Link mention of Research in block block-wi/
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Load more unlinked mentions' })
+    ).toBeInTheDocument()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Load more unlinked mentions' })
+    )
+    await screen.findByText('Second wire')
+    expect(
+      screen.getByText(
+        /Results may be incomplete — matching text is capped for performance/
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('still accepts camelCase mocks via dual-read boundary', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          sourceNotebook: 'Work',
+          sourceSection: 'Projects',
+          sourcePage: 'Camel page',
+          sourceBlockIds: ['block-camel'],
+          sourceSnippets: ['camel Research'],
+          matchCount: 1,
+          title: 'Research',
+          ambiguous: false
+        }
+      ],
+      cursor: '',
+      hasMore: false,
+      truncated: false
+    })
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(await screen.findByText('Camel page')).toBeInTheDocument()
+  })
+
+  it('clears load-more loading when a same-page refresh supersedes mid-flight', async () => {
+    const first = unlinkedMentionWire({
+      source_page: 'Page A',
+      source_block_ids: ['block-01']
+    })
+    const second = unlinkedMentionWire({
+      source_page: 'Page B',
+      source_block_ids: ['block-02']
+    })
+    const refreshed = unlinkedMentionWire({
+      source_page: 'Refreshed page',
+      source_block_ids: ['block-01'],
+      source_snippets: ['refreshed Research']
+    })
+
+    let resolveMore!: (value: unknown) => void
+    let unlinkedCalls = 0
+    mocks.getUnlinkedMentionsPaged.mockImplementation(() => {
+      unlinkedCalls += 1
+      if (unlinkedCalls === 1) {
+        return Promise.resolve(
+          unlinkedWire({
+            results: [first],
+            cursor: 'cursor-1',
+            hasMore: true,
+            truncated: true
+          })
+        )
+      }
+      if (unlinkedCalls === 2) {
+        return new Promise((resolve) => {
+          resolveMore = resolve
+        })
+      }
+      // Refresh (and any later) full reload.
+      return Promise.resolve(
+        unlinkedWire({
+          results: [refreshed],
+          hasMore: false,
+          truncated: true
+        })
+      )
+    })
+
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await screen.findByText('Page A')
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Load more unlinked mentions' })
+    )
+    expect(
+      screen.getByRole('button', { name: 'Loading more unlinked mentions' })
+    ).toBeDisabled()
+
+    // Same-page refresh bumps unlinkedRequest and clears load-more loading.
+    blockChanged?.()
+    await new Promise((resolve) => setTimeout(resolve, 210))
+    await screen.findByText('Refreshed page')
+
+    // Late load-more resolution must not re-stick Loading more… or append Page B.
+    resolveMore(
+      unlinkedWire({
+        results: [second],
+        hasMore: false,
+        truncated: true
+      })
+    )
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', {
+          name: 'Loading more unlinked mentions'
+        })
+      ).not.toBeInTheDocument()
+    })
+    expect(screen.queryByText('Page B')).not.toBeInTheDocument()
+    expect(
+      screen.getAllByText(/may be incomplete/).length
+    ).toBeGreaterThanOrEqual(1)
   })
 })

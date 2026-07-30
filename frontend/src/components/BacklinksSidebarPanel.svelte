@@ -147,6 +147,111 @@
     results: UnlinkedMention[]
     cursor: string
     hasMore: boolean
+    /** FTS candidate pool hit the scan cap — residual list may be incomplete. */
+    truncated: boolean
+  }
+
+  // Wails encodes Go structs with encoding/json tags (mostly snake_case). Vitest
+  // mocks may still use camelCase. Dual-read at the IPC boundary so production
+  // wire and tests both normalize to the camelCase view model below.
+  function pick(
+    obj: Record<string, unknown> | null | undefined,
+    camel: string,
+    snake: string
+  ): unknown {
+    if (!obj) return undefined
+    if (camel in obj && obj[camel] !== undefined) return obj[camel]
+    if (snake in obj && obj[snake] !== undefined) return obj[snake]
+    return undefined
+  }
+
+  function asString(v: unknown, fallback = ''): string {
+    return typeof v === 'string' ? v : fallback
+  }
+
+  function asStringArray(v: unknown): string[] {
+    return Array.isArray(v) ? v.map((x) => String(x)) : []
+  }
+
+  function asBool(v: unknown): boolean {
+    return Boolean(v)
+  }
+
+  function asInt(v: unknown, fallback = 0): number {
+    return typeof v === 'number' && Number.isFinite(v) ? v : fallback
+  }
+
+  function mapBacklink(raw: unknown): Backlink {
+    const row = (raw ?? {}) as Record<string, unknown>
+    const kind = asString(pick(row, 'linkKind', 'link_kind'), 'page')
+    return {
+      linkKind:
+        kind === 'block-ref' || kind === 'embed' || kind === 'page'
+          ? kind
+          : 'page',
+      source: asString(row.source, 'vault'),
+      sourceNotebook: asString(pick(row, 'sourceNotebook', 'source_notebook')),
+      sourceSection: asString(pick(row, 'sourceSection', 'source_section')),
+      sourcePage: asString(pick(row, 'sourcePage', 'source_page')),
+      sourceBlockId: asString(pick(row, 'sourceBlockId', 'source_block_id')),
+      snippet: asString(row.snippet)
+    }
+  }
+
+  function mapPagePath(raw: unknown): PagePath {
+    const row = (raw ?? {}) as Record<string, unknown>
+    return {
+      source: asString(row.source, 'vault'),
+      notebook: asString(row.notebook),
+      section: asString(row.section),
+      page: asString(row.page)
+    }
+  }
+
+  function mapUnlinkedMention(raw: unknown): UnlinkedMention {
+    const row = (raw ?? {}) as Record<string, unknown>
+    const candidatesRaw = pick(row, 'candidates', 'candidates')
+    return {
+      source: asString(row.source, 'vault'),
+      sourceNotebook: asString(pick(row, 'sourceNotebook', 'source_notebook')),
+      sourceSection: asString(pick(row, 'sourceSection', 'source_section')),
+      sourcePage: asString(pick(row, 'sourcePage', 'source_page')),
+      sourceBlockIds: asStringArray(
+        pick(row, 'sourceBlockIds', 'source_block_ids')
+      ),
+      sourceSnippets: asStringArray(
+        pick(row, 'sourceSnippets', 'source_snippets')
+      ),
+      matchCount: asInt(pick(row, 'matchCount', 'match_count'), 0),
+      title: asString(row.title),
+      ambiguous: asBool(row.ambiguous),
+      candidates: Array.isArray(candidatesRaw)
+        ? candidatesRaw.map(mapPagePath)
+        : undefined
+    }
+  }
+
+  function mapBacklinksPage(raw: unknown): BacklinksPage {
+    const r = (raw ?? {}) as Record<string, unknown>
+    const results = Array.isArray(r.results) ? r.results.map(mapBacklink) : []
+    return {
+      results,
+      cursor: asString(r.cursor),
+      hasMore: asBool(pick(r, 'hasMore', 'has_more'))
+    }
+  }
+
+  function mapUnlinkedMentionsPage(raw: unknown): UnlinkedMentionsPage {
+    const r = (raw ?? {}) as Record<string, unknown>
+    const results = Array.isArray(r.results)
+      ? r.results.map(mapUnlinkedMention)
+      : []
+    return {
+      results,
+      cursor: asString(r.cursor),
+      hasMore: asBool(pick(r, 'hasMore', 'has_more')),
+      truncated: asBool(pick(r, 'truncated', 'truncated'))
+    }
   }
 
   interface Props {
@@ -180,6 +285,8 @@
   let unlinkedCursor = $state('')
   let unlinkedHasMore = $state(false)
   let unlinkedLoadingMore = $state(false)
+  /** Pool-level: FTS scan hit unlinkedScanCap (orthogonal to page hasMore). */
+  let unlinkedTruncated = $state(false)
 
   const groups = $derived.by(() => {
     // Ephemeral grouping inside $derived — plain Map is correct.
@@ -206,14 +313,14 @@
     activePage: string,
     activeCursor: string
   ): Promise<BacklinksPage> {
-    const result = (await GetBacklinksPaged(
+    const result = await GetBacklinksPaged(
       activeNotebook,
       activeSection,
       activePage,
       activeCursor,
       pageSize
-    )) as unknown as BacklinksPage | null
-    return result ?? { results: [], cursor: '', hasMore: false }
+    )
+    return mapBacklinksPage(result)
   }
 
   function backlinkKey(link: Backlink): string {
@@ -290,7 +397,8 @@
 
   function refresh(): void {
     void loadFirstPage(notebook, section, page, backlinks.length > 0)
-    void loadUnlinked(notebook, section, page)
+    // Same-page refresh: keep residual rows + truncated until success/error.
+    void loadUnlinked(notebook, section, page, false)
   }
 
   async function loadMore(): Promise<void> {
@@ -323,37 +431,50 @@
     activePage: string,
     activeCursor: string
   ): Promise<UnlinkedMentionsPage> {
-    const result = (await GetUnlinkedMentionsPaged(
+    const result = await GetUnlinkedMentionsPaged(
       activeNotebook,
       activeSection,
       activePage,
       activeCursor,
       pageSize
-    )) as unknown as UnlinkedMentionsPage | null
-    return result ?? { results: [], cursor: '', hasMore: false }
+    )
+    return mapUnlinkedMentionsPage(result)
   }
 
   // loadUnlinked fetches the unlinked-mentions leg. Runs alongside the backlinks
   // refresh (same debounced block:changed trigger) but with its own request
   // sequence so a slow backlinks page never suppresses an unlinked refresh.
+  //
+  // resetProjection: true on page navigation (drop prior rows/flags immediately).
+  // false on same-page refresh so a failed reload keeps residual rows and the
+  // incompleteness cue (mirrors backlinks retain-on-error).
   async function loadUnlinked(
     activeNotebook: string,
     activeSection: string,
-    activePage: string
+    activePage: string,
+    resetProjection = false
   ): Promise<void> {
     const sequence = ++unlinkedRequest
     if (!activeNotebook || !activePage) {
       unlinked = []
       unlinkedCursor = ''
       unlinkedHasMore = false
+      unlinkedTruncated = false
       unlinkedError = ''
       return
     }
     unlinkedLoading = true
-    unlinkedCursor = ''
-    unlinkedHasMore = false
+    // Full reload supersedes in-flight Load more (sequence bump alone would leave
+    // unlinkedLoadingMore stuck true in the more-path finally).
+    unlinkedLoadingMore = false
     unlinkedError = ''
     unlinkedErrorAction = 'initial'
+    if (resetProjection) {
+      unlinked = []
+      unlinkedCursor = ''
+      unlinkedHasMore = false
+      unlinkedTruncated = false
+    }
     try {
       const page = await getUnlinkedPage(
         activeNotebook,
@@ -365,6 +486,7 @@
       unlinked = page.results ?? []
       unlinkedCursor = page.cursor ?? ''
       unlinkedHasMore = Boolean(page.hasMore)
+      unlinkedTruncated = Boolean(page.truncated)
     } catch (cause) {
       if (sequence !== unlinkedRequest) return
       unlinkedErrorAction = 'initial'
@@ -372,6 +494,7 @@
         cause instanceof Error
           ? cause.message
           : 'Unlinked mentions could not be loaded.'
+      // Keep prior unlinked rows + truncated flag on failed refresh.
     } finally {
       if (sequence === unlinkedRequest) unlinkedLoading = false
     }
@@ -410,8 +533,18 @@
     activeSection: string,
     activePage: string
   ): Promise<void> {
-    if (unlinkedLoadingMore || !unlinkedHasMore || !unlinkedCursor) return
-    const sequence = ++unlinkedRequest
+    // Match backlinks loadMore: snapshot sequence without bumping so a concurrent
+    // full reload (++unlinkedRequest) supersedes this page without leaving
+    // unlinkedLoadingMore stuck true.
+    if (
+      unlinkedLoading ||
+      unlinkedLoadingMore ||
+      !unlinkedHasMore ||
+      !unlinkedCursor
+    ) {
+      return
+    }
+    const sequence = unlinkedRequest
     const nextCursor = unlinkedCursor
     unlinkedLoadingMore = true
     unlinkedError = ''
@@ -427,6 +560,8 @@
       unlinked = uniqueUnlinked(unlinked, page.results ?? [])
       unlinkedCursor = page.cursor ?? ''
       unlinkedHasMore = Boolean(page.hasMore)
+      // Pool-level flag: keep true if either page reports the FTS cap.
+      unlinkedTruncated = unlinkedTruncated || Boolean(page.truncated)
     } catch (cause) {
       if (sequence !== unlinkedRequest) return
       unlinkedErrorAction = 'more'
@@ -443,7 +578,8 @@
     if (unlinkedErrorAction === 'more') {
       void loadMoreUnlinked(notebook, section, page)
     } else {
-      void loadUnlinked(notebook, section, page)
+      // Retry keeps projection so a second failure does not blank the section.
+      void loadUnlinked(notebook, section, page, false)
     }
   }
 
@@ -567,7 +703,8 @@
     }
     unlinkedExpanded = false
     void loadFirstPage(activeNotebook, activeSection, activePage, false)
-    void loadUnlinked(activeNotebook, activeSection, activePage)
+    // Page navigation: drop prior unlinked projection immediately.
+    void loadUnlinked(activeNotebook, activeSection, activePage, true)
   })
 </script>
 
@@ -784,7 +921,7 @@
           {/if}
         </div>
       {/if}
-      {#if unlinked.length > 0 || unlinkedLoading || unlinkedError}
+      {#if unlinked.length > 0 || unlinkedLoading || unlinkedError || unlinkedTruncated}
         <section
           class="mt-2 rounded-lg border border-surface-sidebar-border bg-surface-panel/35 overflow-hidden"
           aria-labelledby="unlinked-mentions-title"
@@ -815,13 +952,24 @@
                   aria-live="polite"
                   aria-atomic="true"
                 >
-                  {unlinkedLoading
-                    ? 'Finding unlinked mentions…'
-                    : unlinkedHasMore
-                      ? `${unlinked.length}+ pages mention this title`
-                      : unlinked.length === 1
-                        ? '1 page mentions this title'
-                        : `${unlinked.length} pages mention this title`}
+                  {#if unlinkedLoading}
+                    Finding unlinked mentions…
+                  {:else if unlinkedTruncated && unlinked.length === 0}
+                    No promotable plain mentions in the first results · may be
+                    incomplete
+                  {:else if unlinkedHasMore}
+                    {unlinked.length}+ pages mention this title{unlinkedTruncated
+                      ? ' · may be incomplete'
+                      : ''}
+                  {:else if unlinked.length === 1}
+                    1 page mentions this title{unlinkedTruncated
+                      ? ' · may be incomplete'
+                      : ''}
+                  {:else}
+                    {unlinked.length} pages mention this title{unlinkedTruncated
+                      ? ' · may be incomplete'
+                      : ''}
+                  {/if}
                 </span>
               </span>
             </button>
@@ -851,6 +999,16 @@
               id="unlinked-mentions-body"
               class="border-t border-surface-sidebar-border/70"
             >
+              {#if unlinkedTruncated}
+                <!-- Visual reinforcement only; subtitle is the single live region. -->
+                <div
+                  class="px-2.5 py-2 text-type-2xs font-body-md text-status-warn bg-status-warn/10 border-b border-status-warn/30"
+                >
+                  {unlinked.length === 0
+                    ? 'Matching text is capped for performance — no promotable plain mentions in the first results.'
+                    : 'Results may be incomplete — matching text is capped for performance.'}
+                </div>
+              {/if}
               <ul class="m-0 p-0 list-none">
                 {#each unlinked as mention, index (`${mention.source}\u0000${mention.sourceNotebook}\u0000${mention.sourceSection}\u0000${mention.sourcePage}:${index}`)}
                   <li
@@ -976,7 +1134,7 @@
                 <button
                   type="button"
                   class="w-full border-t border-surface-sidebar-border/70 bg-transparent px-2.5 py-2 text-label-sm font-label-sm-bold text-accent-primary-start hover:bg-hover cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
-                  disabled={unlinkedLoadingMore}
+                  disabled={unlinkedLoading || unlinkedLoadingMore}
                   aria-label={unlinkedLoadingMore
                     ? 'Loading more unlinked mentions'
                     : 'Load more unlinked mentions'}
