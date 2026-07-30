@@ -628,6 +628,36 @@ func TestUnlinked_ScanCapUnderExactOver(t *testing.T) {
 	}
 }
 
+// TestUnlinked_ScanCapTruncatedZeroResidual: FTS pool hits the cap but every
+// candidate is fully linked (no residual plain) — Truncated stays true with an
+// empty residual page list so the UI can still warn.
+func TestUnlinked_ScanCapTruncatedZeroResidual(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic home"),
+	})
+	for i := 0; i < unlinkedScanCap+1; i++ {
+		pg := fmt.Sprintf("Link%04d", i)
+		bid := fmt.Sprintf("%08x-bbbb-4bbb-8bbb-bbbbbbbbbbbb", i)
+		idxU(t, dm, "vault", "NB", "Sec", pg, []parser.ParsedBlock{
+			noteBlock(bid, "see [[Topic]] only"),
+		})
+	}
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if !res.Truncated {
+		t.Error("expected Truncated=true when FTS pool exceeds cap")
+	}
+	if len(res.Results) != 0 {
+		t.Fatalf("expected 0 residual pages (fully linked only), got %d", len(res.Results))
+	}
+	if res.HasMore {
+		t.Error("empty residual set must not report HasMore")
+	}
+}
+
 // TestUnlinked_DbClosed returns ErrDBClosed.
 func TestUnlinked_DbClosed(t *testing.T) {
 	dm := newTestDB(t)

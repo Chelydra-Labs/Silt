@@ -815,7 +815,7 @@ describe('BacklinksSidebarPanel', () => {
     )
     expect(
       await screen.findByText(
-        /Results may be incomplete — common titles are capped for performance/
+        /Results may be incomplete — matching text is capped for performance/
       )
     ).toBeInTheDocument()
   })
@@ -882,7 +882,7 @@ describe('BacklinksSidebarPanel', () => {
     )
     expect(
       await screen.findByText(
-        /Results may be incomplete — common titles are capped for performance/
+        /Results may be incomplete — matching text is capped for performance/
       )
     ).toBeInTheDocument()
     await fireEvent.click(
@@ -891,11 +891,91 @@ describe('BacklinksSidebarPanel', () => {
     await screen.findByText('Page B')
     expect(
       screen.getByText(
-        /Results may be incomplete — common titles are capped for performance/
+        /Results may be incomplete — matching text is capped for performance/
       )
     ).toBeInTheDocument()
     expect(
       screen.getByText(/pages mention this title · may be incomplete/)
     ).toBeInTheDocument()
+  })
+
+  it('shows truncated-only empty state when scan is capped with no residual pages', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [],
+      cursor: '',
+      hasMore: false,
+      truncated: true
+    })
+    renderPanel()
+    await screen.findByText(
+      /Scan capped — no promotable plain mentions in the first results/
+    )
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(
+      await screen.findByText(
+        /Matching text is capped for performance — no promotable plain mentions/
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('keeps truncated cue after a failed same-page refresh', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          sourceNotebook: 'Work',
+          sourceSection: 'Projects',
+          sourcePage: 'Launch plan',
+          sourceBlockIds: ['block-42'],
+          sourceSnippets: ['see Research here'],
+          matchCount: 1,
+          title: 'Research',
+          ambiguous: false
+        }
+      ],
+      cursor: '',
+      hasMore: false,
+      truncated: true
+    })
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await screen.findByText(
+      /Results may be incomplete — matching text is capped for performance/
+    )
+
+    let reject!: (reason: Error) => void
+    mocks.getUnlinkedMentionsPaged.mockReturnValueOnce(
+      new Promise((_resolve, fail) => {
+        reject = fail
+      })
+    )
+    blockChanged?.()
+    await new Promise((resolve) => setTimeout(resolve, 210))
+    reject(new Error('index unavailable'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'index unavailable'
+    )
+    // Prior residual row + incompleteness cue survive the failed refresh.
+    // Backlinks + unlinked both name a Launch plan open control.
+    expect(
+      screen.getAllByRole('button', { name: 'Open page Launch plan' }).length
+    ).toBeGreaterThanOrEqual(2)
+    expect(
+      await screen.findByText(
+        /Results may be incomplete — matching text is capped for performance/
+      )
+    ).toBeInTheDocument()
+    await waitFor(() => {
+      // Header subtitle + expanded status both mention incompleteness.
+      expect(
+        screen.getAllByText(/may be incomplete/).length
+      ).toBeGreaterThanOrEqual(2)
+    })
   })
 })

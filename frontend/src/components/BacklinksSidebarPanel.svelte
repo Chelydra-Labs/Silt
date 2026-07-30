@@ -294,7 +294,8 @@
 
   function refresh(): void {
     void loadFirstPage(notebook, section, page, backlinks.length > 0)
-    void loadUnlinked(notebook, section, page)
+    // Same-page refresh: keep residual rows + truncated until success/error.
+    void loadUnlinked(notebook, section, page, false)
   }
 
   async function loadMore(): Promise<void> {
@@ -345,10 +346,15 @@
   // loadUnlinked fetches the unlinked-mentions leg. Runs alongside the backlinks
   // refresh (same debounced block:changed trigger) but with its own request
   // sequence so a slow backlinks page never suppresses an unlinked refresh.
+  //
+  // resetProjection: true on page navigation (drop prior rows/flags immediately).
+  // false on same-page refresh so a failed reload keeps residual rows and the
+  // incompleteness cue (mirrors backlinks retain-on-error).
   async function loadUnlinked(
     activeNotebook: string,
     activeSection: string,
-    activePage: string
+    activePage: string,
+    resetProjection = false
   ): Promise<void> {
     const sequence = ++unlinkedRequest
     if (!activeNotebook || !activePage) {
@@ -360,11 +366,14 @@
       return
     }
     unlinkedLoading = true
-    unlinkedCursor = ''
-    unlinkedHasMore = false
-    unlinkedTruncated = false
     unlinkedError = ''
     unlinkedErrorAction = 'initial'
+    if (resetProjection) {
+      unlinked = []
+      unlinkedCursor = ''
+      unlinkedHasMore = false
+      unlinkedTruncated = false
+    }
     try {
       const page = await getUnlinkedPage(
         activeNotebook,
@@ -384,6 +393,7 @@
         cause instanceof Error
           ? cause.message
           : 'Unlinked mentions could not be loaded.'
+      // Keep prior unlinked rows + truncated flag on failed refresh.
     } finally {
       if (sequence === unlinkedRequest) unlinkedLoading = false
     }
@@ -457,7 +467,8 @@
     if (unlinkedErrorAction === 'more') {
       void loadMoreUnlinked(notebook, section, page)
     } else {
-      void loadUnlinked(notebook, section, page)
+      // Retry keeps projection so a second failure does not blank the section.
+      void loadUnlinked(notebook, section, page, false)
     }
   }
 
@@ -581,7 +592,8 @@
     }
     unlinkedExpanded = false
     void loadFirstPage(activeNotebook, activeSection, activePage, false)
-    void loadUnlinked(activeNotebook, activeSection, activePage)
+    // Page navigation: drop prior unlinked projection immediately.
+    void loadUnlinked(activeNotebook, activeSection, activePage, true)
   })
 </script>
 
@@ -826,19 +838,25 @@
                 </span>
                 <span
                   class="block truncate text-type-3xs text-surface-sidebar-text-muted"
-                  aria-live="polite"
-                  aria-atomic="true"
                 >
-                  {unlinkedLoading
-                    ? 'Finding unlinked mentions…'
-                    : unlinkedHasMore
-                      ? `${unlinked.length}+ pages mention this title`
-                      : unlinked.length === 1
-                        ? '1 page mentions this title'
-                        : `${unlinked.length} pages mention this title`}{unlinkedTruncated &&
-                  !unlinkedLoading
-                    ? ' · may be incomplete'
-                    : ''}
+                  {#if unlinkedLoading}
+                    Finding unlinked mentions…
+                  {:else if unlinkedTruncated && unlinked.length === 0}
+                    Scan capped — no promotable plain mentions in the first
+                    results
+                  {:else if unlinkedHasMore}
+                    {unlinked.length}+ pages mention this title{unlinkedTruncated
+                      ? ' · may be incomplete'
+                      : ''}
+                  {:else if unlinked.length === 1}
+                    1 page mentions this title{unlinkedTruncated
+                      ? ' · may be incomplete'
+                      : ''}
+                  {:else}
+                    {unlinked.length} pages mention this title{unlinkedTruncated
+                      ? ' · may be incomplete'
+                      : ''}
+                  {/if}
                 </span>
               </span>
             </button>
@@ -870,12 +888,14 @@
             >
               {#if unlinkedTruncated}
                 <div
-                  class="px-2.5 py-2 text-type-3xs text-surface-sidebar-text-muted bg-surface-panel/40 border-b border-surface-sidebar-border/60"
+                  class="px-2.5 py-2 text-type-3xs text-surface-sidebar-text-muted bg-status-warn/10 border-b border-status-warn/25"
                   role="status"
                   aria-live="polite"
+                  aria-atomic="true"
                 >
-                  Results may be incomplete — common titles are capped for
-                  performance.
+                  {unlinked.length === 0
+                    ? 'Matching text is capped for performance — no promotable plain mentions in the first results.'
+                    : 'Results may be incomplete — matching text is capped for performance.'}
                 </div>
               {/if}
               <ul class="m-0 p-0 list-none">
