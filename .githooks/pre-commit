@@ -82,5 +82,32 @@ else
   exit 1
 fi
 
+# ESLint on staged FE sources only (not full-repo lint:typed). Catches unused
+# vars, a11y, and type-aware rules that Prettier cannot see — the class of
+# failure that otherwise only shows up in CI's Frontend job.
+ESLINT_REL_TMP=$(mktemp) || exit 1
+trap 'rm -f "$STAGED_TMP" "$FE_TMP" "$FE_REL_TMP" "$ESLINT_REL_TMP"' EXIT
+: >"$ESLINT_REL_TMP"
+while IFS= read -r -d '' path || [ -n "$path" ]; do
+  case "$path" in
+    frontend/src/*)
+      case "$path" in
+        *.ts|*.js|*.svelte)
+          printf '%s\0' "${path#frontend/}" >>"$ESLINT_REL_TMP"
+          ;;
+      esac
+      ;;
+  esac
+done <"$STAGED_TMP"
+
+if [ -s "$ESLINT_REL_TMP" ]; then
+  echo "Linting staged frontend files (eslint --max-warnings 0)..."
+  if ! (cd frontend && xargs -0 -n 40 npx eslint --max-warnings 0 <"$ESLINT_REL_TMP"); then
+    echo "ERROR: ESLint failed on staged frontend files; see output above."
+    echo "  Fix the reported issues (or run: cd frontend && npm run lint:typed)."
+    exit 1
+  fi
+fi
+
 echo "Pre-commit checks passed!"
 exit 0

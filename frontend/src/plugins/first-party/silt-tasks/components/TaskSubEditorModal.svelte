@@ -317,7 +317,6 @@
     window.matchMedia('(max-width: 768px)').matches
   let isNarrow = $state(initialNarrow)
   let sidebarOpen = $state(!initialNarrow)
-  let sidebarSeeded = true
   let wideDetailsBtn = $state<HTMLButtonElement | undefined>(undefined)
   let narrowDetailsBtn = $state<HTMLButtonElement | undefined>(undefined)
 
