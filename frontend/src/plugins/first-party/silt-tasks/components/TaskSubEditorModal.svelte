@@ -14,6 +14,8 @@
     SiltDetailsExtensions,
     SiltTableExtensions,
     UniqueBlockIds,
+    SiltHardBreak,
+    SiltBlockKeymaps,
     blocksToDoc,
     docToBlocks
   } from '../../../../lib/editor'
@@ -111,14 +113,20 @@
       codeBlock: false,
       horizontalRule: false,
       trailingNode: false,
+      // Stock HardBreak refuses isolating parents; SiltHardBreak replaces it (#828).
+      hardBreak: false,
       link: { openOnClick: false, autolink: true }
     }),
+    SiltHardBreak,
     ...SiltBlockExtensionsWithNodeViews,
     ...SiltInlineMarkExtensions,
     ...SiltColorMarkExtensions,
     ...SiltDetailsExtensions,
     ...SiltTableExtensions,
     UniqueBlockIds,
+    // Outliner Enter + Shift-Enter soft break (#828). siltSubEditorHost below
+    // keeps task Shift-Enter from re-opening the modal for nested tasks.
+    SiltBlockKeymaps,
     TrailingNode.configure({
       node: 'noteBlock',
       notAfter: ['taskBlock', 'headerBlock', 'calloutBlock']

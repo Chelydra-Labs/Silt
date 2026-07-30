@@ -1052,31 +1052,31 @@ export const SiltBlockKeymaps = Extension.create({
       'Alt-ArrowUp': () => moveActiveBlock(this.editor, -1),
       'Alt-ArrowDown': () => moveActiveBlock(this.editor, 1),
 
-      // Shift-Enter inside a task block opens the TaskSubEditorModal (#781).
-      // Fires the silt:open-task-editor window event (consumed by
-      // TaskEditorModalHost). Returns true (handled) so the keypress doesn't
-      // also insert a line break. Only fires for taskBlock — not note/region.
-      // Suppressed inside an open TaskSubEditorModal (siltSubEditorHost storage
-      // flag) so drilling into a nested sub-task doesn't tear the modal down.
+      // Shift-Enter: soft line break in the current prose block (#828), except
+      // on a main-outline taskBlock where it opens TaskSubEditorModal (#781).
+      // Inside the sub-editor (siltSubEditorHost.active) always soft-break so
+      // nested task rows don't tear the modal down mid-autosave.
       'Shift-Enter': () => {
         const info = currentBlockInfo(this.editor)
-        if (!info || info.node.type.name !== 'taskBlock') return false
-        // Inside the TaskSubEditorModal, drilling into a nested sub-task would
-        // tear the modal down mid-autosave. Fall through (return false) so
-        // Shift-Enter keeps its default hard-break behaviour instead.
-        const subEditorStorage = this.editor.storage as unknown as Record<
-          string,
-          { active?: boolean }
-        >
-        if (subEditorStorage.siltSubEditorHost?.active) return false
-        const blockId = info.node.attrs.id
-        if (!blockId) return false
-        window.dispatchEvent(
-          new CustomEvent('silt:open-task-editor', {
-            detail: { blockId }
-          })
-        )
-        return true
+        if (info?.node.type.name === 'taskBlock') {
+          const subEditorStorage = this.editor.storage as unknown as Record<
+            string,
+            { active?: boolean }
+          >
+          if (!subEditorStorage.siltSubEditorHost?.active) {
+            const blockId = info.node.attrs.id
+            if (blockId) {
+              window.dispatchEvent(
+                new CustomEvent('silt:open-task-editor', {
+                  detail: { blockId }
+                })
+              )
+              return true
+            }
+          }
+        }
+        // SiltHardBreak.setHardBreak works inside isolating note/task/header.
+        return this.editor.commands.setHardBreak()
       }
     }
   }

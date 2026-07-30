@@ -41,6 +41,7 @@
     SiltDetailsExtensions,
     SiltTableExtensions,
     UniqueBlockIds,
+    SiltHardBreak,
     SiltBlockKeymaps,
     findActiveBlock,
     TaskMetaSuggest,
@@ -290,8 +291,11 @@
       codeBlock: false,
       horizontalRule: false,
       trailingNode: false,
+      // Stock HardBreak refuses isolating parents; SiltHardBreak replaces it (#828).
+      hardBreak: false,
       link: { openOnClick: false, autolink: true }
     }),
+    SiltHardBreak,
     ...SiltBlockExtensionsWithNodeViews,
     ...SiltInlineMarkExtensions,
     ...SiltColorMarkExtensions,
