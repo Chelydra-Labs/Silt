@@ -54,14 +54,19 @@ type UnlinkedMentionsResult struct {
 	ScanCursor string            `json:"scan_cursor"`
 }
 
-// unlinkedScanCap bounds each FTS candidate batch. A title that appears in more
-// than this many blocks is almost certainly a common word; unbounded scans would
-// dominate IPC cost. Callers may request further batches via ScanCursor (user-
-// gated "Scan more") — each round is still capped. When a batch fills the cap
-// with more matches beyond it, Truncated is true. Mirrors searchFlatCap's
-// rationale. Cost per call is O(window) join/fetch for the batch, not O(all
-// FTS matches in the vault).
+// unlinkedScanCap bounds each FTS candidate batch (post CODE/self filter). A
+// title that appears in more than this many blocks is almost certainly a common
+// word; unbounded scans would dominate IPC cost. Callers may request further
+// batches via ScanCursor (user-gated "Scan more") — each round is still capped.
+// When a batch fills the cap with more FTS matches beyond it, Truncated is true.
+// Mirrors searchFlatCap's rationale.
 const unlinkedScanCap = 500
+
+// unlinkedScanFillRounds caps how many FTS keyset probes one call may run when
+// CODE/self filters under-fill the candidate window. Each probe is still
+// LIMIT unlinkedScanCap+1, so worst-case FTS rows examined ≈ rounds×cap — still
+// bounded, never O(all vault matches).
+const unlinkedScanFillRounds = 4
 
 // scanCursorPrefix versions the opaque FTS batch keyset (decimal rowid after
 // the last included candidate). Invalid/unknown tokens soft-reset to 0.
@@ -221,24 +226,24 @@ type unlinkedBlock struct {
 	id, source, notebook, section, page, clean string
 }
 
-// scanUnlinkedCandidateBlocks runs one bounded FTS5 phrase batch over
-// clean_content and returns raw candidate blocks plus whether more matches
-// exist beyond this batch.
+// scanUnlinkedCandidateBlocks runs a bounded FTS5 phrase window over
+// clean_content and returns candidate blocks (post CODE/self filter) plus
+// whether more FTS matches exist beyond the window.
 //
 // WHY FTS rowid subquery (not path ORDER BY on the join): EXPLAIN shows
 // path-ordered plans do MATCH → join → TEMP B-TREE sort on path columns before
 // LIMIT, so common titles still materialize the full match set. A nested
 // `SELECT rowid FROM blocks_fts … ORDER BY rowid LIMIT N` uses FTS index 64
-// (rowid-ordered) and stops at N before joining blocks — cost O(cap) per call.
-// CODE / self-page filters run in Go after the join so they cannot push work
-// past the FTS LIMIT (filters after LIMIT would under-fill and skip rowids).
-// Residual pages are still path-sorted in Go; scan order only defines the batch.
+// (rowid-ordered) and stops at N before joining blocks.
 //
-// afterRowid is an exclusive lower bound (0 = from the start). LIMIT is
-// unlinkedScanCap+1 so Truncated is true only when a row exists beyond the cap
-// (same exact-boundary rule as PluginRawQuery). lastRowid is the last FTS
-// rowid in the kept window (keyset for the next batch), including rows later
-// dropped as CODE/self so continuation does not skip past them incorrectly.
+// CODE / self-page filters run in Go after each probe. A single probe can
+// under-fill when many hits are CODE/self, so we loop-fill up to
+// unlinkedScanFillRounds probes until we have unlinkedScanCap keepers or FTS
+// is exhausted — still O(rounds×cap), never O(all vault matches). lastRowid is
+// the last FTS rowid examined (including filtered rows) so scan_cursor does not
+// skip past dropped hits. Residual plain filtering happens in the caller.
+//
+// afterRowid is an exclusive lower bound (0 = from the start).
 func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source, notebook, section, page string, afterRowid int64) ([]unlinkedBlock, bool, int64, error) {
 	phrase := buildUnlinkedFTSPhrase(title)
 	if phrase == "" {
@@ -247,8 +252,9 @@ func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source
 	if afterRowid < 0 {
 		afterRowid = 0
 	}
+
 	// FTS-first keyset: bound MATCH work, then PK-join blocks (no path TEMP sort).
-	q := `SELECT b.rowid, b.id, b.source, b.notebook, b.section, b.page, b.type, COALESCE(b.clean_content,'')
+	const q = `SELECT b.rowid, b.id, b.source, b.notebook, b.section, b.page, b.type, COALESCE(b.clean_content,'')
 		FROM (
 			SELECT rowid AS rid FROM blocks_fts
 			WHERE blocks_fts MATCH ?
@@ -257,45 +263,81 @@ func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source
 			LIMIT ?
 		) AS f
 		JOIN blocks b ON b.rowid = f.rid`
-	rows, err := db.Query(q, phrase, afterRowid, unlinkedScanCap+1)
-	if err != nil {
-		return nil, false, 0, fmt.Errorf("unlinked mentions: fts scan: %w", err)
-	}
-	defer rows.Close()
+
 	type rawRow struct {
 		unlinkedBlock
 		blockType string
 	}
-	var raw []rawRow
-	for rows.Next() {
-		var r rawRow
-		if err := rows.Scan(&r.rowid, &r.id, &r.source, &r.notebook, &r.section, &r.page, &r.blockType, &r.clean); err != nil {
-			return nil, false, 0, fmt.Errorf("unlinked mentions: scan: %w", err)
-		}
-		raw = append(raw, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, false, 0, err
-	}
-	truncated := len(raw) > unlinkedScanCap
-	if truncated {
-		raw = raw[:unlinkedScanCap]
-	}
-	var last int64
-	if len(raw) > 0 {
-		last = raw[len(raw)-1].rowid
-	}
-	out := make([]unlinkedBlock, 0, len(raw))
-	for _, r := range raw {
+	keep := func(r rawRow) bool {
 		if r.blockType == "CODE" {
-			continue
+			return false
 		}
 		if r.source == source && r.notebook == notebook && r.section == section && r.page == page {
-			continue
+			return false
 		}
-		out = append(out, r.unlinkedBlock)
+		return true
 	}
-	return out, truncated, last, nil
+
+	out := make([]unlinkedBlock, 0, unlinkedScanCap)
+	after := afterRowid
+	var last int64
+	moreFTS := false
+
+	for round := 0; round < unlinkedScanFillRounds && len(out) < unlinkedScanCap; round++ {
+		rows, err := db.Query(q, phrase, after, unlinkedScanCap+1)
+		if err != nil {
+			return nil, false, 0, fmt.Errorf("unlinked mentions: fts scan: %w", err)
+		}
+		var raw []rawRow
+		for rows.Next() {
+			var r rawRow
+			if err := rows.Scan(&r.rowid, &r.id, &r.source, &r.notebook, &r.section, &r.page, &r.blockType, &r.clean); err != nil {
+				rows.Close()
+				return nil, false, 0, fmt.Errorf("unlinked mentions: scan: %w", err)
+			}
+			raw = append(raw, r)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, false, 0, err
+		}
+		if len(raw) == 0 {
+			moreFTS = false
+			break
+		}
+
+		probeMore := len(raw) > unlinkedScanCap
+		if probeMore {
+			raw = raw[:unlinkedScanCap]
+		}
+
+		filled := false
+		for i, r := range raw {
+			last = r.rowid
+			if !keep(r) {
+				continue
+			}
+			out = append(out, r.unlinkedBlock)
+			if len(out) >= unlinkedScanCap {
+				// Cap reached mid-probe: more FTS exists if unread probe rows remain
+				// or the limit+1 probe saw another hit.
+				moreFTS = (i+1 < len(raw)) || probeMore
+				filled = true
+				break
+			}
+		}
+		if filled {
+			break
+		}
+		after = last
+		moreFTS = probeMore
+		if !probeMore {
+			break
+		}
+	}
+
+	return out, moreFTS, last, nil
 }
 
 // encodeUnlinkedScanCursor builds the opaque next-batch keyset from the last

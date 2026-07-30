@@ -601,6 +601,8 @@
   // scanMoreUnlinked fetches the next capped FTS candidate batch (beyond the
   // current window). Residual Load more stays on unlinkedBatchScanIn; this path
   // advances the batch and appends unique residual pages from the new window.
+  // Blocked while residual has_more so unread pages in the current batch are
+  // not abandoned when the residual cursor resets to the next batch.
   async function scanMoreUnlinked(
     activeNotebook: string,
     activeSection: string,
@@ -610,6 +612,7 @@
       unlinkedLoading ||
       unlinkedLoadingMore ||
       unlinkedScanningMore ||
+      unlinkedHasMore ||
       !unlinkedTruncated ||
       !unlinkedScanCursor
     ) {
@@ -1029,8 +1032,10 @@
                 >
                   {#if unlinkedLoading}
                     Finding unlinked mentions…
+                  {:else if unlinkedScanningMore}
+                    Scanning more mentions…
                   {:else if unlinkedTruncated && unlinked.length === 0}
-                    No promotable plain mentions in the first results · may be
+                    No promotable plain mentions in this batch · may be
                     incomplete
                   {:else if unlinkedHasMore}
                     {unlinked.length}+ pages mention this title{unlinkedTruncated
@@ -1083,25 +1088,39 @@
                 >
                   <p class="m-0">
                     {unlinked.length === 0
-                      ? 'Matching text is capped for performance — no promotable plain mentions in the first results.'
+                      ? 'Matching text is capped for performance — no promotable plain mentions in this batch.'
                       : 'Results may be incomplete — matching text is capped for performance.'}
                   </p>
                   {#if unlinkedScanCursor}
+                    {@const scanBlockedByResidual = unlinkedHasMore}
                     <button
                       type="button"
-                      class="mt-1.5 p-0 border-none bg-transparent text-accent-primary-start text-type-2xs font-label-sm-bold underline cursor-pointer disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start rounded"
+                      class="mt-2 w-full rounded border border-status-warn/40 bg-surface-panel/50 px-2.5 py-1.5 text-label-sm font-label-sm-bold text-accent-primary-start hover:bg-hover cursor-pointer transition-colors disabled:cursor-not-allowed disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
                       disabled={unlinkedLoading ||
                         unlinkedLoadingMore ||
-                        unlinkedScanningMore}
+                        unlinkedScanningMore ||
+                        scanBlockedByResidual}
+                      title={scanBlockedByResidual
+                        ? 'Load remaining pages in this batch first'
+                        : undefined}
                       aria-label={unlinkedScanningMore
                         ? 'Scanning more unlinked mention candidates'
-                        : 'Scan more unlinked mention candidates'}
+                        : scanBlockedByResidual
+                          ? 'Load remaining unlinked pages in this batch before scanning more candidates'
+                          : 'Scan more unlinked mention candidates'}
                       onclick={() => scanMoreUnlinked(notebook, section, page)}
                     >
                       {unlinkedScanningMore
                         ? 'Scanning…'
                         : 'Scan more mentions'}
                     </button>
+                    {#if scanBlockedByResidual}
+                      <p
+                        class="mt-1 mb-0 text-type-3xs text-surface-sidebar-text-muted"
+                      >
+                        Load remaining pages in this batch before scanning more.
+                      </p>
+                    {/if}
                   {/if}
                 </div>
               {/if}

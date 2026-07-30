@@ -794,6 +794,52 @@ func TestPromote_AmbiguousRejected(t *testing.T) {
 	}
 }
 
+// TestUnlinked_ScanFillSkipsCodeToReachPlain: CODE hits under-fill a single FTS
+// probe; loop-fill continues within unlinkedScanFillRounds so plain residuals
+// appear on the first open without requiring Scan more.
+func TestUnlinked_ScanFillSkipsCodeToReachPlain(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "home page"),
+	})
+	// A full FTS probe of CODE-only hits would yield zero keepers without fill.
+	for i := 0; i < unlinkedScanCap; i++ {
+		pg := fmt.Sprintf("Code%04d", i)
+		bid := fmt.Sprintf("%08x-cccc-4ccc-8ccc-cccccccccccc", i)
+		idxU(t, dm, "vault", "NB", "Sec", pg, []parser.ParsedBlock{
+			{ID: bid, Type: parser.BlockCode, RawText: "const Topic = 1", CleanText: "const Topic = 1", LineNumber: 1},
+		})
+	}
+	const plainN = 3
+	for i := 0; i < plainN; i++ {
+		pg := fmt.Sprintf("Plain%04d", i)
+		bid := fmt.Sprintf("%08x-dddd-4ddd-8ddd-dddddddddddd", i)
+		idxU(t, dm, "vault", "NB", "Sec", pg, []parser.ParsedBlock{
+			noteBlock(bid, "mentions Topic here"),
+		})
+	}
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if res.Truncated {
+		t.Error("FTS exhausted after fill — Truncated should be false")
+	}
+	if res.ScanCursor != "" {
+		t.Errorf("ScanCursor should be empty when not truncated, got %q", res.ScanCursor)
+	}
+	if len(res.Results) != plainN {
+		t.Fatalf("loop-fill should surface %d plain residuals on first open, got %d: %+v", plainN, len(res.Results), res.Results)
+	}
+	for i, m := range res.Results {
+		want := fmt.Sprintf("Plain%04d", i)
+		if m.SourcePage != want {
+			t.Errorf("result[%d]: got %q want %q", i, m.SourcePage, want)
+		}
+	}
+}
+
 // TestUnlinked_ScanCursorMultiBatch verifies capped FTS continuation surfaces
 // residuals beyond the first unlinkedScanCap window without unbounded default scans.
 func TestUnlinked_ScanCursorMultiBatch(t *testing.T) {

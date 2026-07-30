@@ -573,18 +573,21 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `docs/decisions/0006-backlinks-query-strategy.md`.   `GetUnlinkedMentionsPaged`
   surfaces residual plain-text mentions of the current page title — an FTS5
   phrase query (`clean_content : "title"`) rides the existing `blocks_fts`
-  index. Each call fetches one **rowid-keyset batch**: a nested
+  index. Each call fetches a **rowid-keyset window**: nested
   `SELECT rowid FROM blocks_fts … ORDER BY rowid LIMIT unlinkedScanCap+1`
-  bounds MATCH work before joining `blocks` (path-ordered join plans TEMP-sort
-  the full match set; the FTS subquery does not). CODE and self-page rows are
-  dropped in Go after the join so filters cannot push work past the FTS LIMIT.
-  When the batch fills the cap with more FTS hits beyond it, the envelope sets
-  `truncated: true` and `scan_cursor` (opaque keyset: last included FTS
+  probes bound MATCH work before joining `blocks` (path-ordered join plans
+  TEMP-sort the full match set; the FTS subquery does not). CODE and self-page
+  rows are dropped in Go after each probe; the scanner **loop-fills** up to a
+  small round cap (`unlinkedScanFillRounds`) until it has `unlinkedScanCap`
+  keepers or FTS is exhausted — still O(rounds×cap), never O(all vault matches).
+  When the window fills with more FTS hits beyond it, the envelope sets
+  `truncated: true` and `scan_cursor` (opaque keyset: last examined FTS
   rowid) so the client can request the next batch explicitly. Page-level
   `has_more` / `cursor` only page residual source pages **within the current
   batch** — orthogonal to `truncated` / `scan_cursor`. Residual presentation
-  is path-sorted in Go; scan order only defines the batch window. Cost per
-  call is O(batch), not O(all vault matches); further batches are user-gated.
+  is path-sorted in Go; scan order only defines the batch window. Further
+  batches are user-gated (**Scan more**); the UI blocks Scan more while residual
+  Load more remains for the current batch so unread residual pages are not dropped.
   A Go-side word-boundary regex confirms each hit, then
   `FirstPlainTitleOccurrence` keeps only title spans that do not overlap a
   `[[…]]` wiki-link (same rule as promote). Blocks that already link the page
@@ -1007,9 +1010,10 @@ clickable chips — each chip promotes to that explicit target in one click,
   section surfaces an accessible incompleteness notice (header subtitle and
   expanded status strip) so common-title caps are never silent. **Load more**
   advances the residual page cursor within the current FTS batch; **Scan more
-  mentions** (when `truncated` and `scan_cursor` are set) requests the next
-  capped FTS batch and appends unique residual pages — the two controls are
-  distinct so pool continuation is never confused with residual paging.
+  mentions** (when `truncated` and `scan_cursor` are set, and residual
+  `has_more` is false) requests the next capped FTS batch and appends unique
+  residual pages — blocked while unread residual pages remain in the current
+  batch so continuation does not abandon them. The two controls stay distinct.
 
 5.5 Search & Writing Aids
 
