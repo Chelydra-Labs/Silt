@@ -66,10 +66,11 @@
     if (!snippet) return []
     if (!title) return [{ text: snippet, mark: false }]
 
-    // Wiki-link spans [[…]] (incl. #heading / |alias). Overlap check only —
-    // same residual rule as backend FirstPlainTitleOccurrence.
+    // Wiki-link spans for residual skip. Inner body excludes brackets so the
+    // span cannot cross nested `[`/`]` — aligned with parser.PageLinkRegex
+    // (backend FirstPlainTitleOccurrence). Still covers #heading / |alias.
     const linked: { start: number; end: number }[] = []
-    const pageLinkRe = /\[\[[\s\S]*?\]\]/g
+    const pageLinkRe = /\[\[[^[\]]*?\]\]/g
     for (const m of snippet.matchAll(pageLinkRe)) {
       if (m.index === undefined) continue
       linked.push({ start: m.index, end: m.index + m[0].length })

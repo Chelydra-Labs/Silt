@@ -431,6 +431,43 @@ describe('BacklinksSidebarPanel', () => {
     expect(html).not.toMatch(/^[\s\S]*<mark[^>]*>Onboarding<\/mark>[\s\S]*\[\[/)
   })
 
+  it('skips heading/alias wiki spans when emphasizing residual plain titles', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          sourceNotebook: 'Work',
+          sourceSection: 'Projects',
+          sourcePage: 'Launch plan',
+          sourceBlockIds: ['block-42'],
+          sourceSnippets: [
+            'see [[Onboarding#Setup|start]] then Onboarding again'
+          ],
+          matchCount: 1,
+          title: 'Onboarding',
+          ambiguous: false
+        }
+      ],
+      cursor: '',
+      hasMore: false
+    })
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await screen.findByRole('button', {
+      name: /Link mention of Onboarding in block block-42/
+    })
+
+    const marked = screen.getByText('Onboarding', { selector: 'mark' })
+    const html = marked.parentElement?.innerHTML ?? ''
+    // Full wiki span (heading+alias) stays unmarked; residual plain is marked.
+    expect(html).toMatch(
+      /\[\[Onboarding#Setup\|start\]\][\s\S]*<mark[^>]*>Onboarding<\/mark>/
+    )
+  })
+
   it('calls PromoteUnlinkedMention on Link and migrates the row out of the unlinked leg', async () => {
     // Return the mention until PromoteUnlinkedMention runs; the post-promote
     // refresh's loadUnlinked then returns the now-empty page (server migrated
