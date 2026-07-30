@@ -54,6 +54,9 @@ func TestUnlinked_SingleWordTitle(t *testing.T) {
 	if m.Ambiguous {
 		t.Errorf("unique title should not be ambiguous")
 	}
+	if res.Truncated {
+		t.Error("single match must not report Truncated")
+	}
 	if len(m.SourceSnippets) != 1 {
 		t.Fatalf("expected 1 snippet parallel to block ids, got %d", len(m.SourceSnippets))
 	}
@@ -523,6 +526,105 @@ func TestUnlinked_ShortTitleSkipped(t *testing.T) {
 	}
 	if len(res.Results) != 0 {
 		t.Errorf("1-rune title should be skipped, got %d", len(res.Results))
+	}
+	if res.Truncated {
+		t.Error("short-title early exit must not report Truncated")
+	}
+}
+
+// idxUMany indexes n source pages each with one plain mention of title.
+// Block IDs are deterministic UUIDs so FTS ORDER BY id is stable.
+func idxUMany(t *testing.T, dm *DatabaseManager, title string, n int) {
+	t.Helper()
+	idxU(t, dm, "vault", "NB", "Sec", title, []parser.ParsedBlock{
+		noteBlock(uuidU, title+" home"),
+	})
+	for i := 0; i < n; i++ {
+		// Zero-padded page names keep lexicographic order aligned with insert order.
+		pg := fmt.Sprintf("Src%04d", i)
+		bid := fmt.Sprintf("%08x-aaaa-4aaa-8aaa-aaaaaaaaaaaa", i)
+		idxU(t, dm, "vault", "NB", "Sec", pg, []parser.ParsedBlock{
+			noteBlock(bid, "mentions "+title+" here"),
+		})
+	}
+}
+
+// TestUnlinked_ScanCapUnderExactOver verifies Truncated is false at and below
+// unlinkedScanCap and true only when FTS candidates exceed the cap (limit+1 probe).
+func TestUnlinked_ScanCapUnderExactOver(t *testing.T) {
+	// Under cap.
+	dmUnder := newTestDB(t)
+	idxUMany(t, dmUnder, "Topic", 3)
+	under, err := dmUnder.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", 50)
+	if err != nil {
+		t.Fatalf("under: %v", err)
+	}
+	if under.Truncated {
+		t.Error("under cap: Truncated should be false")
+	}
+	if len(under.Results) != 3 {
+		t.Fatalf("under cap: expected 3 residual pages, got %d", len(under.Results))
+	}
+
+	// Exact cap: unlinkedScanCap FTS candidates → not truncated.
+	dmExact := newTestDB(t)
+	idxUMany(t, dmExact, "Topic", unlinkedScanCap)
+	exactSeen := 0
+	exactCursor := ""
+	for {
+		exact, err := dmExact.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", exactCursor, 100)
+		if err != nil {
+			t.Fatalf("exact: %v", err)
+		}
+		if exact.Truncated {
+			t.Error("exact cap: Truncated should be false")
+		}
+		exactSeen += len(exact.Results)
+		if !exact.HasMore {
+			break
+		}
+		exactCursor = exact.Cursor
+	}
+	if exactSeen != unlinkedScanCap {
+		t.Fatalf("exact cap: expected %d residual pages, got %d", unlinkedScanCap, exactSeen)
+	}
+
+	// Over cap: one extra FTS candidate → Truncated; residual set is the ordered top-N.
+	dmOver := newTestDB(t)
+	idxUMany(t, dmOver, "Topic", unlinkedScanCap+1)
+	over, err := dmOver.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", 50)
+	if err != nil {
+		t.Fatalf("over: %v", err)
+	}
+	if !over.Truncated {
+		t.Error("over cap: Truncated should be true")
+	}
+	// Page limit 50: first page has 50 residual pages; pool still truncated.
+	if len(over.Results) != 50 {
+		t.Fatalf("over cap page: expected 50 results, got %d", len(over.Results))
+	}
+	if !over.HasMore {
+		t.Error("over cap: HasMore should be true (residual pages > limit)")
+	}
+	// Walk all residual pages from the capped pool — should be exactly the cap.
+	seen := 0
+	cursor := ""
+	for {
+		page, err := dmOver.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", cursor, 100)
+		if err != nil {
+			t.Fatalf("over walk: %v", err)
+		}
+		if !page.Truncated {
+			t.Error("over walk: Truncated must stay true on every page")
+		}
+		seen += len(page.Results)
+		if !page.HasMore {
+			break
+		}
+		cursor = page.Cursor
+	}
+	if seen != unlinkedScanCap {
+		t.Errorf("over walk: expected %d residual pages from capped pool, got %d", unlinkedScanCap, seen)
 	}
 }
 

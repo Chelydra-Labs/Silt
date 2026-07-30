@@ -38,16 +38,24 @@ type UnlinkedMention struct {
 
 // UnlinkedMentionsResult is the cursor-paged envelope returned by
 // GetUnlinkedMentionsPaged, mirroring BacklinksResult.
+//
+// HasMore is page-level: more residual source pages exist in the current FTS
+// candidate pool beyond this cursor page. Truncated is pool-level: the FTS
+// candidate fetch hit unlinkedScanCap, so residual mentions beyond the ordered
+// top-N candidates may be missing. The two flags are independent.
 type UnlinkedMentionsResult struct {
-	Results []UnlinkedMention `json:"results"`
-	Cursor  string            `json:"cursor"`
-	HasMore bool              `json:"has_more"`
+	Results   []UnlinkedMention `json:"results"`
+	Cursor    string            `json:"cursor"`
+	HasMore   bool              `json:"has_more"`
+	Truncated bool              `json:"truncated"`
 }
 
 // unlinkedScanCap bounds the FTS candidate fetch. A title that appears in more
-// than this many blocks is almost certainly a common word the author does not
-// want to mass-link; the top results by source-page order are enough to surface
-// the feature. Mirrors searchFlatCap's rationale.
+// than this many blocks is almost certainly a common word; unbounded scans would
+// dominate IPC cost. The ordered top-N candidates are enough to surface the
+// feature. When the cap binds, Truncated is true so the UI can warn that results
+// may be incomplete — distinct from page-level HasMore. Mirrors searchFlatCap's
+// rationale.
 const unlinkedScanCap = 500
 
 // GetUnlinkedMentionsPaged returns source pages whose clean_content has a
@@ -92,7 +100,7 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 	}
 	titleRef := ResolvePageLinkAgainst(title, pages)
 
-	candidates, err := dm.scanUnlinkedCandidateBlocks(db, title, source, notebook, section, page)
+	candidates, scanTruncated, err := dm.scanUnlinkedCandidateBlocks(db, title, source, notebook, section, page)
 	if err != nil {
 		return UnlinkedMentionsResult{}, err
 	}
@@ -155,7 +163,11 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 		}
 		if !found {
 			// Cursor sorts at or past every item → empty page.
-			return UnlinkedMentionsResult{Results: []UnlinkedMention{}}, nil
+			// Pool-level Truncated still applies (scan already ran).
+			return UnlinkedMentionsResult{
+				Results:   []UnlinkedMention{},
+				Truncated: scanTruncated,
+			}, nil
 		}
 	}
 
@@ -174,9 +186,10 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 		nextCursor = encodeUnlinkedCursor(pageItems[len(pageItems)-1])
 	}
 	return UnlinkedMentionsResult{
-		Results: pageItems,
-		Cursor:  nextCursor,
-		HasMore: hasMore,
+		Results:   pageItems,
+		Cursor:    nextCursor,
+		HasMore:   hasMore,
+		Truncated: scanTruncated,
 	}, nil
 }
 
@@ -185,13 +198,18 @@ type unlinkedBlock struct {
 }
 
 // scanUnlinkedCandidateBlocks runs the FTS5 phrase match over clean_content and
-// returns raw candidate blocks. The caller keeps only blocks with a residual
-// plain title occurrence (FirstPlainTitleOccurrence). Excludes the active page
-// itself and CODE blocks (code mentions are not actionable prose to promote).
-func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source, notebook, section, page string) ([]unlinkedBlock, error) {
+// returns raw candidate blocks plus whether the ordered fetch hit unlinkedScanCap.
+// The caller keeps only blocks with a residual plain title occurrence
+// (FirstPlainTitleOccurrence). Excludes the active page itself and CODE blocks
+// (code mentions are not actionable prose to promote).
+//
+// ORDER BY matches the residual page sort key so the capped set is stable.
+// LIMIT is unlinkedScanCap+1 so Truncated is true only when a row exists beyond
+// the cap (same exact-boundary rule as PluginRawQuery).
+func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source, notebook, section, page string) ([]unlinkedBlock, bool, error) {
 	phrase := buildUnlinkedFTSPhrase(title)
 	if phrase == "" {
-		return nil, nil
+		return nil, false, nil
 	}
 	q := `SELECT b.id, COALESCE(b.source,'vault'), b.notebook, b.section, b.page, COALESCE(b.clean_content,'')
 		FROM blocks_fts
@@ -199,21 +217,28 @@ func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source
 		WHERE blocks_fts MATCH ?
 		  AND b.type <> 'CODE'
 		  AND NOT (COALESCE(b.source,'vault') = ? AND b.notebook = ? AND b.section = ? AND b.page = ?)
+		ORDER BY COALESCE(b.source,'vault'), b.notebook, b.section, b.page, b.id
 		LIMIT ?`
-	rows, err := db.Query(q, phrase, source, notebook, section, page, unlinkedScanCap)
+	rows, err := db.Query(q, phrase, source, notebook, section, page, unlinkedScanCap+1)
 	if err != nil {
-		return nil, fmt.Errorf("unlinked mentions: fts scan: %w", err)
+		return nil, false, fmt.Errorf("unlinked mentions: fts scan: %w", err)
 	}
 	defer rows.Close()
 	var out []unlinkedBlock
 	for rows.Next() {
 		var c unlinkedBlock
 		if err := rows.Scan(&c.id, &c.source, &c.notebook, &c.section, &c.page, &c.clean); err != nil {
-			return nil, fmt.Errorf("unlinked mentions: scan: %w", err)
+			return nil, false, fmt.Errorf("unlinked mentions: scan: %w", err)
 		}
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(out) > unlinkedScanCap {
+		return out[:unlinkedScanCap], true, nil
+	}
+	return out, false, nil
 }
 
 // buildUnlinkedFTSPhrase turns a page title into an FTS5 phrase MATCH expression
