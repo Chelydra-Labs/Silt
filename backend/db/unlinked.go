@@ -13,16 +13,22 @@ import (
 
 // UnlinkedMention is one source page that mentions the active page's title in
 // prose WITHOUT a [[…]] link to it. Surfaced by the backlinks panel so an author
-// can promote a plain-text mention into a real page-link. MatchCount and
-// SourceBlockIDs aggregate every matching block on that source page; Ambiguous
-// is true when the title resolves to more than one page (Link stays disabled —
-// promote is rejected server-side to avoid wiring a link to the wrong page).
+// can promote a plain-text mention into a real page-link. MatchCount,
+// SourceBlockIDs, and SourceSnippets aggregate every matching block on that
+// source page (snippets are parallel to block IDs — one contextual excerpt per
+// match). Ambiguous is true when the title resolves to more than one page;
+// the UI offers candidate chips and PromoteUnlinkedMention accepts an explicit
+// path so the author can disambiguate without guessing.
 type UnlinkedMention struct {
-	Source         string            `json:"source"`
-	SourceNotebook string            `json:"source_notebook"`
-	SourceSection  string            `json:"source_section"`
-	SourcePage     string            `json:"source_page"`
-	SourceBlockIDs []string          `json:"source_block_ids"`
+	Source         string   `json:"source"`
+	SourceNotebook string   `json:"source_notebook"`
+	SourceSection  string   `json:"source_section"`
+	SourcePage     string   `json:"source_page"`
+	SourceBlockIDs []string `json:"source_block_ids"`
+	// SourceSnippets is parallel to SourceBlockIDs: a 120-rune contextual
+	// excerpt of clean_content centered on the title match (same helper as
+	// backlink snippets).
+	SourceSnippets []string          `json:"source_snippets"`
 	MatchCount     int               `json:"match_count"`
 	Title          string            `json:"title"`
 	Ambiguous      bool              `json:"ambiguous"`
@@ -53,7 +59,7 @@ const unlinkedScanCap = 500
 // sub-2-rune title return an empty result (short names yield too many false
 // hits and are not actionable). Ambiguous titles (same leaf name on more than
 // one page) are still surfaced — with Ambiguous=true and Candidates populated —
-// but the promote IPC rejects them, so the UI disables the Link action.
+// so the UI can offer one-click disambiguation chips.
 func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, page, cursor string, limit int) (UnlinkedMentionsResult, error) {
 	title := strings.TrimSpace(page)
 	if title == "" || len([]rune(title)) < 2 {
@@ -130,6 +136,7 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 			order = append(order, k)
 		}
 		m.SourceBlockIDs = append(m.SourceBlockIDs, c.id)
+		m.SourceSnippets = append(m.SourceSnippets, snippet(c.clean, title))
 		m.MatchCount++
 	}
 

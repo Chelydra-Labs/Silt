@@ -39,10 +39,36 @@
     sourceSection: string
     sourcePage: string
     sourceBlockIds: string[]
+    /** Parallel to sourceBlockIds — contextual excerpt per matched block. */
+    sourceSnippets?: string[]
     matchCount: number
     title: string
     ambiguous: boolean
     candidates?: PagePath[]
+  }
+
+  /** Split snippet into text segments with the first case-insensitive title match marked. */
+  function emphasizeTitle(
+    snippet: string,
+    title: string
+  ): { text: string; mark: boolean }[] {
+    if (!snippet) return []
+    if (!title) return [{ text: snippet, mark: false }]
+    const lower = snippet.toLowerCase()
+    const needle = title.toLowerCase()
+    const idx = lower.indexOf(needle)
+    if (idx < 0) return [{ text: snippet, mark: false }]
+    const parts: { text: string; mark: boolean }[] = []
+    if (idx > 0) parts.push({ text: snippet.slice(0, idx), mark: false })
+    parts.push({ text: snippet.slice(idx, idx + title.length), mark: true })
+    if (idx + title.length < snippet.length) {
+      parts.push({ text: snippet.slice(idx + title.length), mark: false })
+    }
+    return parts
+  }
+
+  function candidatePathLabel(c: PagePath): string {
+    return [c.notebook, c.section, c.page].filter(Boolean).join('/')
   }
 
   type UnlinkedMentionsPage = {
@@ -336,31 +362,45 @@
   }
 
   // promoteMention wraps the first plain-text mention of the page title in the
-  // chosen source block with a [[shortest]] link. On success the entry migrates
-  // into the backlinks leg on the next refresh; the optimistic removal keeps the
-  // row from flickering until the debounced refresh lands.
-  async function promoteMention(mention: UnlinkedMention, blockId: string) {
-    if (mention.ambiguous || unlinkedBusy.has(blockId)) return
+  // chosen source block with a [[shortest]] link. target overrides the active
+  // page path when the author picks an ambiguous candidate chip. On success the
+  // entry migrates into the backlinks leg on the next refresh; optimistic
+  // removal keeps the row from flickering until the debounced refresh lands.
+  async function promoteMention(
+    mention: UnlinkedMention,
+    blockId: string,
+    target?: { notebook: string; section: string; page: string }
+  ) {
+    if (unlinkedBusy.has(blockId)) return
+    // Non-ambiguous rows use the active page; ambiguous rows require an explicit
+    // candidate target (chip click). Guard against a bare Link on ambiguous.
+    if (mention.ambiguous && !target) return
+    const destNb = target?.notebook ?? notebook
+    const destSec = target?.section ?? section
+    const destPage = target?.page ?? page
     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- immutable reassign triggers $state
     unlinkedBusy = new Set(unlinkedBusy).add(blockId)
     try {
-      await PromoteUnlinkedMention(blockId, notebook, section, page)
+      await PromoteUnlinkedMention(blockId, destNb, destSec, destPage)
       pushNotification({
         kind: 'success',
         message: `Linked “${mention.title}” in ${mention.sourcePage}.`
       })
-      // Optimistically drop the promoted block from the row; the debounced
-      // block:changed refresh reconciles the rest (migrating it into backlinks).
+      // Optimistically drop the promoted block (and its parallel snippet) from
+      // the row; the debounced block:changed refresh reconciles the rest.
       unlinked = unlinked
-        .map((m) =>
-          m === mention
-            ? {
-                ...m,
-                sourceBlockIds: m.sourceBlockIds.filter((id) => id !== blockId),
-                matchCount: Math.max(0, m.matchCount - 1)
-              }
-            : m
-        )
+        .map((m) => {
+          if (m !== mention) return m
+          const idx = m.sourceBlockIds.indexOf(blockId)
+          const nextIds = m.sourceBlockIds.filter((id) => id !== blockId)
+          const nextSnips = (m.sourceSnippets ?? []).filter((_, i) => i !== idx)
+          return {
+            ...m,
+            sourceBlockIds: nextIds,
+            sourceSnippets: nextSnips,
+            matchCount: Math.max(0, m.matchCount - 1)
+          }
+        })
         .filter((m) => m.sourceBlockIds.length > 0)
       refresh()
     } catch (cause) {
@@ -369,7 +409,7 @@
         err.code === IPCErrorCode.CodeBlockBeingEdited
           ? 'Save or close the file in the editor first, then retry.'
           : err.code === IPCErrorCode.CodeAmbiguousTarget
-            ? 'This title now matches multiple pages — disambiguate manually.'
+            ? 'This title now matches multiple pages — pick a candidate to link.'
             : err.message || 'Could not link the mention.'
       pushNotification({ kind: 'error', message })
     } finally {
@@ -771,39 +811,71 @@
                         </span>
                       </button>
                     </div>
-                    {#if mention.ambiguous}
-                      <p
-                        class="m-0 px-2.5 pb-2 text-type-3xs text-surface-sidebar-text-muted line-clamp-2"
-                        title={`Link disabled — title matches ${mention.candidates?.map((c) => `${c.notebook}/${c.section}/${c.page}`).join(', ')}.`}
-                      >
-                        Link disabled — title matches
-                        {mention.candidates
-                          ?.map((c) => `${c.notebook}/${c.section}/${c.page}`)
-                          .join(', ')}.
-                      </p>
-                    {:else}
-                      <ul class="m-0 p-0 pb-1 list-none">
-                        {#each mention.sourceBlockIds as blockId, bIndex (`${blockId}:${bIndex}`)}
-                          <li
-                            class="px-2.5 flex items-center justify-between gap-2"
+                    <ul class="m-0 p-0 pb-1 list-none">
+                      {#each mention.sourceBlockIds as blockId, bIndex (`${blockId}:${bIndex}`)}
+                        {@const snip = mention.sourceSnippets?.[bIndex] ?? ''}
+                        <li
+                          class="px-2.5 py-0.5 flex flex-col gap-1 {mention.ambiguous
+                            ? 'items-stretch'
+                            : 'sm:flex-row sm:items-center sm:justify-between'}"
+                        >
+                          <span
+                            class="min-w-0 truncate text-type-3xs text-surface-sidebar-text-muted"
+                            title={blockId}
                           >
-                            <span
-                              class="truncate text-type-3xs text-surface-sidebar-text-muted font-mono"
-                              >{blockId.slice(0, 8)}…</span
+                            {#each emphasizeTitle(snip, mention.title) as part, pIdx (`${bIndex}-${pIdx}`)}
+                              {#if part.mark}
+                                <mark
+                                  class="bg-editor-highlight/50 text-inherit rounded-sm px-0.5"
+                                  >{part.text}</mark
+                                >
+                              {:else}
+                                {part.text}
+                              {/if}
+                            {:else}
+                              <span class="italic">Mention</span>
+                            {/each}
+                          </span>
+                          {#if mention.ambiguous}
+                            <div
+                              class="flex flex-wrap gap-1 pb-0.5"
+                              role="group"
+                              aria-label={`Link targets for mention of ${mention.title}`}
                             >
+                              {#each mention.candidates ?? [] as cand, cIdx (`${cand.notebook}/${cand.section}/${cand.page}:${cIdx}`)}
+                                <button
+                                  type="button"
+                                  class="max-w-full truncate rounded-full border border-surface-sidebar-border bg-surface-sidebar px-2 py-0.5 text-type-3xs text-accent-primary-start hover:bg-accent-primary-start/10 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
+                                  disabled={unlinkedBusy.has(blockId)}
+                                  title={candidatePathLabel(cand)}
+                                  aria-label={`Link mention of ${mention.title} as ${candidatePathLabel(cand)} in block ${blockId.slice(0, 8)} on page ${mention.sourcePage}`}
+                                  onclick={() =>
+                                    promoteMention(mention, blockId, {
+                                      notebook: cand.notebook,
+                                      section: cand.section,
+                                      page: cand.page
+                                    })}
+                                >
+                                  {unlinkedBusy.has(blockId)
+                                    ? 'Linking…'
+                                    : candidatePathLabel(cand)}
+                                </button>
+                              {/each}
+                            </div>
+                          {:else}
                             <button
                               type="button"
-                              class="flex-shrink-0 rounded border border-surface-sidebar-border bg-transparent px-2 py-0.5 text-type-3xs text-accent-primary-start hover:bg-accent-primary-start/10 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
+                              class="flex-shrink-0 self-end sm:self-auto rounded border border-surface-sidebar-border bg-transparent px-2 py-0.5 text-type-3xs text-accent-primary-start hover:bg-accent-primary-start/10 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
                               disabled={unlinkedBusy.has(blockId)}
                               aria-label={`Link mention of ${mention.title} in block ${blockId.slice(0, 8)} on page ${mention.sourcePage}`}
                               onclick={() => promoteMention(mention, blockId)}
                             >
                               {unlinkedBusy.has(blockId) ? 'Linking…' : 'Link'}
                             </button>
-                          </li>
-                        {/each}
-                      </ul>
-                    {/if}
+                          {/if}
+                        </li>
+                      {/each}
+                    </ul>
                   </li>
                 {/each}
               </ul>
