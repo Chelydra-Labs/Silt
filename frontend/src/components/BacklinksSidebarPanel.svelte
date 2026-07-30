@@ -74,9 +74,12 @@
   let unlinked = $state<UnlinkedMention[]>([])
   let unlinkedLoading = $state(false)
   let unlinkedExpanded = $state(false)
-  let unlinkedBusyBlockId = $state<string | null>(null)
+  let unlinkedBusy = $state<Set<string>>(new Set())
   let unlinkedError = $state('')
   let unlinkedRequest = 0
+  let unlinkedCursor = $state('')
+  let unlinkedHasMore = $state(false)
+  let unlinkedLoadingMore = $state(false)
 
   const groups = $derived.by(() => {
     // Ephemeral grouping inside $derived — plain Map is correct.
@@ -217,16 +220,17 @@
   async function getUnlinkedPage(
     activeNotebook: string,
     activeSection: string,
-    activePage: string
-  ): Promise<UnlinkedMention[]> {
+    activePage: string,
+    activeCursor: string
+  ): Promise<UnlinkedMentionsPage> {
     const result = (await GetUnlinkedMentionsPaged(
       activeNotebook,
       activeSection,
       activePage,
-      '',
+      activeCursor,
       pageSize
     )) as unknown as UnlinkedMentionsPage | null
-    return result?.results ?? []
+    return result ?? { results: [], cursor: '', hasMore: false }
   }
 
   // loadUnlinked fetches the unlinked-mentions leg. Runs alongside the backlinks
@@ -240,19 +244,26 @@
     const sequence = ++unlinkedRequest
     if (!activeNotebook || !activePage) {
       unlinked = []
+      unlinkedCursor = ''
+      unlinkedHasMore = false
       unlinkedError = ''
       return
     }
     unlinkedLoading = true
+    unlinkedCursor = ''
+    unlinkedHasMore = false
     unlinkedError = ''
     try {
-      const results = await getUnlinkedPage(
+      const page = await getUnlinkedPage(
         activeNotebook,
         activeSection,
-        activePage
+        activePage,
+        ''
       )
       if (sequence !== unlinkedRequest) return
-      unlinked = results
+      unlinked = page.results ?? []
+      unlinkedCursor = page.cursor ?? ''
+      unlinkedHasMore = Boolean(page.hasMore)
     } catch (cause) {
       if (sequence !== unlinkedRequest) return
       unlinkedError =
@@ -264,13 +275,74 @@
     }
   }
 
+  function unlinkedMentionKey(mention: UnlinkedMention): string {
+    return [
+      mention.source ?? 'vault',
+      mention.sourceNotebook,
+      mention.sourceSection,
+      mention.sourcePage
+    ].join('\u0000')
+  }
+
+  // The cursor is a keyset over the same composite key, so appended pages
+  // should never overlap — this dedup is defensive against any ordering drift.
+  function uniqueUnlinked(
+    current: UnlinkedMention[],
+    incoming: UnlinkedMention[]
+  ): UnlinkedMention[] {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local helper set
+    const seen = new Set(current.map(unlinkedMentionKey))
+    return [
+      ...current,
+      ...incoming.filter((mention) => {
+        const key = unlinkedMentionKey(mention)
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    ]
+  }
+
+  async function loadMoreUnlinked(
+    activeNotebook: string,
+    activeSection: string,
+    activePage: string
+  ): Promise<void> {
+    if (unlinkedLoadingMore || !unlinkedHasMore || !unlinkedCursor) return
+    const sequence = ++unlinkedRequest
+    const nextCursor = unlinkedCursor
+    unlinkedLoadingMore = true
+    unlinkedError = ''
+    try {
+      const page = await getUnlinkedPage(
+        activeNotebook,
+        activeSection,
+        activePage,
+        nextCursor
+      )
+      if (sequence !== unlinkedRequest) return
+      unlinked = uniqueUnlinked(unlinked, page.results ?? [])
+      unlinkedCursor = page.cursor ?? ''
+      unlinkedHasMore = Boolean(page.hasMore)
+    } catch (cause) {
+      if (sequence !== unlinkedRequest) return
+      unlinkedError =
+        cause instanceof Error
+          ? cause.message
+          : 'More unlinked mentions could not be loaded.'
+    } finally {
+      if (sequence === unlinkedRequest) unlinkedLoadingMore = false
+    }
+  }
+
   // promoteMention wraps the first plain-text mention of the page title in the
   // chosen source block with a [[shortest]] link. On success the entry migrates
   // into the backlinks leg on the next refresh; the optimistic removal keeps the
   // row from flickering until the debounced refresh lands.
   async function promoteMention(mention: UnlinkedMention, blockId: string) {
-    if (mention.ambiguous || unlinkedBusyBlockId) return
-    unlinkedBusyBlockId = blockId
+    if (mention.ambiguous || unlinkedBusy.has(blockId)) return
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- immutable reassign triggers $state
+    unlinkedBusy = new Set(unlinkedBusy).add(blockId)
     try {
       await PromoteUnlinkedMention(blockId, notebook, section, page)
       pushNotification({
@@ -301,7 +373,10 @@
             : err.message || 'Could not link the mention.'
       pushNotification({ kind: 'error', message })
     } finally {
-      unlinkedBusyBlockId = null
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- immutable reassign triggers $state
+      const cleared = new Set(unlinkedBusy)
+      cleared.delete(blockId)
+      unlinkedBusy = cleared
     }
   }
 
@@ -349,7 +424,6 @@
   }
 
   onMount(() => {
-    void loadUnlinked(notebook, section, page)
     const offBlock = Events.On(EventName.EventBlockChanged, () => {
       if (refreshTimer) clearTimeout(refreshTimer)
       refreshTimer = setTimeout(() => {
@@ -612,20 +686,24 @@
                 aria-hidden="true">chevron_right</span
               >
               <span class="min-w-0 flex-1">
-                <span class="block truncate font-label-sm-bold text-label-sm">
+                <span
+                  id="unlinked-mentions-title"
+                  class="block truncate font-label-sm-bold text-label-sm"
+                >
                   Unlinked mentions
                 </span>
                 <span
-                  id="unlinked-mentions-title"
                   class="block truncate text-type-3xs text-surface-sidebar-text-muted"
                   aria-live="polite"
                   aria-atomic="true"
                 >
                   {unlinkedLoading
                     ? 'Finding unlinked mentions…'
-                    : unlinked.length === 1
-                      ? '1 page mentions this title'
-                      : `${unlinked.length} pages mention this title`}
+                    : unlinkedHasMore
+                      ? `${unlinked.length}+ pages mention this title`
+                      : unlinked.length === 1
+                        ? '1 page mentions this title'
+                        : `${unlinked.length} pages mention this title`}
                 </span>
               </span>
             </button>
@@ -695,7 +773,8 @@
                     </div>
                     {#if mention.ambiguous}
                       <p
-                        class="m-0 px-2.5 pb-2 text-type-3xs text-surface-sidebar-text-muted"
+                        class="m-0 px-2.5 pb-2 text-type-3xs text-surface-sidebar-text-muted line-clamp-2"
+                        title={`Link disabled — title matches ${mention.candidates?.map((c) => `${c.notebook}/${c.section}/${c.page}`).join(', ')}.`}
                       >
                         Link disabled — title matches
                         {mention.candidates
@@ -715,14 +794,11 @@
                             <button
                               type="button"
                               class="flex-shrink-0 rounded border border-surface-sidebar-border bg-transparent px-2 py-0.5 text-type-3xs text-accent-primary-start hover:bg-accent-primary-start/10 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
-                              disabled={unlinkedBusyBlockId !== null}
+                              disabled={unlinkedBusy.has(blockId)}
                               aria-label={`Link mention of ${mention.title} in block ${blockId.slice(0, 8)} on page ${mention.sourcePage}`}
-                              aria-busy={unlinkedBusyBlockId === blockId}
                               onclick={() => promoteMention(mention, blockId)}
                             >
-                              {unlinkedBusyBlockId === blockId
-                                ? 'Linking…'
-                                : 'Link'}
+                              {unlinkedBusy.has(blockId) ? 'Linking…' : 'Link'}
                             </button>
                           </li>
                         {/each}
@@ -731,6 +807,19 @@
                   </li>
                 {/each}
               </ul>
+              {#if unlinkedHasMore}
+                <button
+                  type="button"
+                  class="w-full border-t border-surface-sidebar-border/70 bg-transparent px-2.5 py-2 text-label-sm font-label-sm-bold text-accent-primary-start hover:bg-hover cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
+                  disabled={unlinkedLoadingMore}
+                  aria-label={unlinkedLoadingMore
+                    ? 'Loading more unlinked mentions'
+                    : 'Load more unlinked mentions'}
+                  onclick={() => loadMoreUnlinked(notebook, section, page)}
+                >
+                  {unlinkedLoadingMore ? 'Loading more…' : 'Load more'}
+                </button>
+              {/if}
             </div>
           {/if}
         </section>

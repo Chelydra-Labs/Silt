@@ -474,4 +474,102 @@ describe('BacklinksSidebarPanel', () => {
     expect(screen.getByText(/Work\/Journal\/Standup/)).toBeInTheDocument()
     expect(mocks.promoteUnlinkedMention).not.toHaveBeenCalled()
   })
+
+  it('loads more unlinked mentions via the Load more button and appends', async () => {
+    const first = {
+      source: 'vault',
+      sourceNotebook: 'Work',
+      sourceSection: 'Projects',
+      sourcePage: 'Daily log',
+      sourceBlockIds: ['block-42'],
+      matchCount: 1,
+      title: 'Research',
+      ambiguous: false
+    }
+    const second = {
+      source: 'vault',
+      sourceNotebook: 'Archive',
+      sourceSection: '',
+      sourcePage: 'Inbox notes',
+      sourceBlockIds: ['block-7'],
+      matchCount: 1,
+      title: 'Research',
+      ambiguous: false
+    }
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce({
+        results: [first],
+        cursor: 'next-page',
+        hasMore: true
+      })
+      .mockResolvedValueOnce({ results: [second], cursor: '', hasMore: false })
+    renderPanel()
+
+    await screen.findByText('1+ pages mention this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+
+    const loadMore = await screen.findByRole('button', {
+      name: 'Load more unlinked mentions'
+    })
+    await fireEvent.click(loadMore)
+
+    await screen.findByText('2 pages mention this title')
+    expect(screen.getByText('Daily log')).toBeInTheDocument()
+    expect(screen.getByText('Inbox notes')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Load more unlinked mentions' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('disables only the in-flight row while a promote is pending (per-row busy)', async () => {
+    let resolvePromote!: () => void
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          sourceNotebook: 'Work',
+          sourceSection: 'Projects',
+          sourcePage: 'Meeting notes',
+          sourceBlockIds: ['block-42', 'block-99'],
+          matchCount: 2,
+          title: 'Research',
+          ambiguous: false
+        }
+      ],
+      cursor: '',
+      hasMore: false
+    })
+    mocks.promoteUnlinkedMention.mockImplementation(
+      () => new Promise<void>((resolve) => (resolvePromote = resolve))
+    )
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+
+    const first = await screen.findByRole('button', {
+      name: /Link mention of Research in block block-42/
+    })
+    const second = await screen.findByRole('button', {
+      name: /Link mention of Research in block block-99/
+    })
+
+    await fireEvent.click(first)
+    await waitFor(() => expect(first).toBeDisabled())
+    // Per-row busy: only the in-flight block is locked; the sibling stays open.
+    expect(second).not.toBeDisabled()
+
+    resolvePromote()
+    await waitFor(() =>
+      expect(mocks.promoteUnlinkedMention).toHaveBeenCalledWith(
+        'block-42',
+        'Work',
+        'Knowledge',
+        'Research'
+      )
+    )
+  })
 })
