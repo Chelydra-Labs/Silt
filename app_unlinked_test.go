@@ -117,8 +117,50 @@ func TestPromoteUnlinkedMention_Rewrite(t *testing.T) {
 	}
 }
 
-// TestPromoteUnlinkedMention_AmbiguousRejected verifies an ambiguous target is
-// rejected with an *IPCError carrying CodeAmbiguousTarget.
+// TestPromoteUnlinkedMention_ExplicitPathDisambiguates verifies that when a leaf
+// title is ambiguous, supplying the full (notebook, section, page) of one
+// candidate promotes to that page rather than rejecting.
+func TestPromoteUnlinkedMention_ExplicitPathDisambiguates(t *testing.T) {
+	app := newTestApp(t)
+	const srcBlock = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	// Two pages share the leaf title "Standup".
+	writeNotePageWithMention(t, app, "Work", "Journal", "Standup", "2026-06-13",
+		"uuuuuuuu-uuuu-4uuu-8uuu-uuuuuuuuuuuu", "journal entry")
+	writeNotePageWithMention(t, app, "Work", "Log", "Standup", "2026-06-13",
+		"vvvvvvvv-vvvv-4vvv-8vvv-vvvvvvvvvvvv", "log entry")
+	// Source page mentions Standup in prose.
+	writeNotePageWithMention(t, app, "Work", "Sec", "Notes", "2026-06-13",
+		srcBlock, "Standup today")
+
+	if err := app.PromoteUnlinkedMention(srcBlock, "Work", "Journal", "Standup"); err != nil {
+		t.Fatalf("explicit-path promote: %v", err)
+	}
+
+	var clean string
+	_ = app.db.SQLDB().QueryRow("SELECT clean_content FROM blocks WHERE id = ?", srcBlock).Scan(&clean)
+	// Shortest unique path for Work/Journal/Standup among two Standups should
+	// include enough path to disambiguate (section or more).
+	if !strings.Contains(clean, "[[") || !strings.Contains(clean, "Standup]]") {
+		t.Errorf("expected wiki-link wrap in %q", clean)
+	}
+	// Must not still be plain "Standup today" without brackets around the title.
+	if strings.Contains(clean, "Standup today") && !strings.Contains(clean, "[[") {
+		t.Errorf("title was not wrapped: %q", clean)
+	}
+
+	// Migrates into backlinks for the Journal Standup specifically.
+	bl, _ := app.db.GetBacklinks("vault", "Work", "Journal", "Standup")
+	if len(bl) != 1 || bl[0].Kind != "page" {
+		t.Errorf("post-promote backlinks for Journal/Standup: got %+v", bl)
+	}
+	blLog, _ := app.db.GetBacklinks("vault", "Work", "Log", "Standup")
+	if len(blLog) != 0 {
+		t.Errorf("Log/Standup should not gain a backlink, got %+v", blLog)
+	}
+}
+
+// TestPromoteUnlinkedMention_AmbiguousRejected verifies that without a matching
+// explicit path, an ambiguous leaf title is still rejected with CodeAmbiguousTarget.
 func TestPromoteUnlinkedMention_AmbiguousRejected(t *testing.T) {
 	app := newTestApp(t)
 	const srcBlock = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
@@ -132,7 +174,8 @@ func TestPromoteUnlinkedMention_AmbiguousRejected(t *testing.T) {
 		{ID: srcBlock, Type: parser.BlockNote, RawText: "Standup today", CleanText: "Standup today", LineNumber: 1},
 	})
 
-	err := app.PromoteUnlinkedMention(srcBlock, "Work", "Journal", "Standup")
+	// Path not in inventory → leaf fallback → ambiguous reject.
+	err := app.PromoteUnlinkedMention(srcBlock, "Work", "Missing", "Standup")
 	if err == nil {
 		t.Fatal("expected ambiguous rejection, got nil")
 	}

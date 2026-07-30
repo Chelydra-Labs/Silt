@@ -41,9 +41,13 @@ func (a *App) GetUnlinkedMentionsPaged(notebook, section, page, cursor string, l
 // PromoteUnlinkedMention wraps the first plain-text occurrence of the target
 // page's title in sourceBlockID's body with a [[shortest]] link, writing through
 // the same atomic chain as MutateBlock (so embeds/backlinks refresh on the next
-// block:changed). Ambiguous targets (leaf name on >1 page) are rejected with an
-// *IPCError carrying CodeAmbiguousTarget — the UI must surface the candidates
-// and let the author disambiguate manually rather than silently wiring the link.
+// block:changed).
+//
+// Target resolution prefers an explicit (notebook, section, page) path when that
+// location exists in the page inventory — so the UI can promote ambiguous leaf
+// titles via a candidate chip without guessing. When the triple is not in the
+// inventory, resolution falls back to leaf-name lookup and rejects ambiguous
+// leaves with CodeAmbiguousTarget.
 func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSection, targetPage string) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -70,20 +74,32 @@ func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSectio
 	if err != nil {
 		return fmt.Errorf("promote unlinked mention: list pages: %w", err)
 	}
-	// Ambiguity uses the same leaf-name resolution as the unlinked query, so a
-	// row marked Ambiguous=true can never be promoted.
-	if ref := db.ResolvePageLinkAgainst(title, pages); ref.Ambiguous {
-		cands := make([]string, 0, len(ref.Candidates))
-		for _, c := range ref.Candidates {
-			cands = append(cands, c.Notebook+"/"+c.Section+"/"+c.Page)
-		}
-		return NewIPCError(CodeAmbiguousTarget,
-			fmt.Sprintf("page title %q is ambiguous (matches: %s)", title, strings.Join(cands, ", ")))
-	}
 
 	targetSource := a.resolveSourceByName(targetNotebook)
 	loc := db.PageLoc{Source: targetSource, Notebook: targetNotebook, Section: targetSection, Page: title}
-	shortest := db.ShortestUniquePath(loc, pages)
+	chosen, ok := findExactPageLoc(pages, loc)
+	if !ok {
+		// Explicit path missing — fall back to leaf resolution (unique only).
+		ref := db.ResolvePageLinkAgainst(title, pages)
+		if ref.Ambiguous {
+			cands := make([]string, 0, len(ref.Candidates))
+			for _, c := range ref.Candidates {
+				cands = append(cands, c.Notebook+"/"+c.Section+"/"+c.Page)
+			}
+			return NewIPCError(CodeAmbiguousTarget,
+				fmt.Sprintf("page title %q is ambiguous (matches: %s)", title, strings.Join(cands, ", ")))
+		}
+		if !ref.Exists {
+			return fmt.Errorf("page %q not found in inventory", title)
+		}
+		chosen = db.PageLoc{
+			Source:   ref.Source,
+			Notebook: ref.Notebook,
+			Section:  ref.Section,
+			Page:     ref.Page,
+		}
+	}
+	shortest := db.ShortestUniquePath(chosen, pages)
 
 	titleRE := db.WordBoundaryTitleRE(title)
 	return a.writeBlockText(sourceBlockID, func(currentClean string) (string, error) {
@@ -93,6 +109,19 @@ func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSectio
 		}
 		return newText, nil
 	})
+}
+
+// findExactPageLoc returns the inventory page matching source+notebook+section+page.
+func findExactPageLoc(pages []db.PageLoc, want db.PageLoc) (db.PageLoc, bool) {
+	for _, p := range pages {
+		if p.Source == want.Source &&
+			p.Notebook == want.Notebook &&
+			p.Section == want.Section &&
+			p.Page == want.Page {
+			return p, true
+		}
+	}
+	return db.PageLoc{}, false
 }
 
 // wrapFirstUnlinkedOccurrence wraps the first title match in clean (per titleRE)
