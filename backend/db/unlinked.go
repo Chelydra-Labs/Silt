@@ -49,11 +49,13 @@ type UnlinkedMentionsResult struct {
 // the feature. Mirrors searchFlatCap's rationale.
 const unlinkedScanCap = 500
 
-// GetUnlinkedMentionsPaged returns source pages whose clean_content mentions
-// the active page's title as plain prose, excluding pages that already link to
-// it via [[…]]. Matches are case-insensitive whole-word(s); multi-word titles
-// are matched as a phrase. Results are deduped by source page and cursor-paged
-// by the same keyset pattern as GetBacklinksPaged.
+// GetUnlinkedMentionsPaged returns source pages whose clean_content has a
+// residual plain (non-[[…]]) whole-word mention of the active page's title.
+// Blocks that already contain a [[…]] to the page still appear when plain
+// residual text remains; fully-linked-only blocks are excluded. Matches are
+// case-insensitive whole-word(s); multi-word titles are matched as a phrase.
+// Results are deduped by source page and cursor-paged by the same keyset
+// pattern as GetBacklinksPaged.
 //
 // The title is the active page's leaf `page` name; queries with a blank or
 // sub-2-rune title return an empty result (short names yield too many false
@@ -89,24 +91,18 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 	}
 	titleRef := ResolvePageLinkAgainst(title, pages)
 
-	// Already-linked source blocks: any block carrying a [[…]] that resolves to
-	// this page. Mirrors legPageLinks' resolve-gate (LinkTargetRawCandidates →
-	// reverse index → ResolvePageLinkAgainst). Those blocks are NOT unlinked.
-	linkedBlocks, err := dm.blocksAlreadyLinkedTo(db, pages, source, notebook, section, page)
-	if err != nil {
-		return UnlinkedMentionsResult{}, err
-	}
-
 	candidates, err := dm.scanUnlinkedCandidateBlocks(db, title, source, notebook, section, page)
 	if err != nil {
 		return UnlinkedMentionsResult{}, err
 	}
 
-	// Dedupe by source page, dropping already-linked blocks and confirming each
-	// block's clean_content actually contains the title as whole word(s). The
-	// FTS phrase matches any indexed column (notebook/section included), so the
-	// Go-side word-boundary check is the authority for "this block's body
-	// mentions the title".
+	// Dedupe by source page. Include a block only when clean_content has a
+	// residual plain (non-[[…]]) whole-word title occurrence — same rule as
+	// PromoteUnlinkedMention / FirstPlainTitleOccurrence. Blocks that only
+	// mention the title inside an already-linked span stay out; mixed
+	// linked+plain blocks surface so the residual plain hit can be promoted.
+	// FTS may match notebook/section columns, so the Go-side residual check is
+	// the authority for "this block's body has a promotable plain mention".
 	titleRE := WordBoundaryTitleRE(title)
 	type pageKey struct {
 		src, nb, sec, pg string
@@ -114,10 +110,8 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 	order := []pageKey{}
 	byKey := map[pageKey]*UnlinkedMention{}
 	for _, c := range candidates {
-		if linkedBlocks[c.id] {
-			continue
-		}
-		if !titleRE.MatchString(c.clean) {
+		start, end, ok := FirstPlainTitleOccurrence(c.clean, titleRE)
+		if !ok {
 			continue
 		}
 		k := pageKey{c.source, c.notebook, c.section, c.page}
@@ -136,7 +130,9 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 			order = append(order, k)
 		}
 		m.SourceBlockIDs = append(m.SourceBlockIDs, c.id)
-		m.SourceSnippets = append(m.SourceSnippets, snippet(c.clean, title))
+		// Center the snippet on the residual plain span (not the first raw
+		// title substring, which may sit inside an earlier [[…]]).
+		m.SourceSnippets = append(m.SourceSnippets, snippetAround(c.clean, start, end))
 		m.MatchCount++
 	}
 
@@ -255,31 +251,41 @@ func WordBoundaryTitleRE(title string) *regexp.Regexp {
 	return regexp.MustCompile(`(?i)(?:^|[^\p{L}\p{N}_])(` + regexp.QuoteMeta(title) + `)(?:$|[^\p{L}\p{N}_])`)
 }
 
-// blocksAlreadyLinkedTo returns the set of source_block_ids whose [[…]] resolves
-// non-ambiguously to (source, notebook, section, page). Mirrors legPageLinks.
-func (dm *DatabaseManager) blocksAlreadyLinkedTo(db *sql.DB, pages []PageLoc, source, notebook, section, page string) (map[string]bool, error) {
-	candidates := LinkTargetRawCandidates([]LinkTargetSpec{
-		{Source: source, Notebook: notebook, Section: section, Page: page},
-	})
-	rows, err := listPageLinksByTargetRaws(db, candidates)
-	if err != nil {
-		return nil, fmt.Errorf("unlinked mentions: page links: %w", err)
+// FirstPlainTitleOccurrence returns the byte range [start,end) of the first
+// whole-word title match in clean that does NOT overlap a [[…]] page-link span.
+// Matches inside wiki links are skipped so list and promote share one rule:
+// residual plain text remains promotable even when the block already links the
+// same page once. ok is false when no residual plain occurrence exists.
+func FirstPlainTitleOccurrence(clean string, titleRE *regexp.Regexp) (start, end int, ok bool) {
+	if titleRE == nil || clean == "" {
+		return 0, 0, false
 	}
-	if len(rows) == 0 {
-		return map[string]bool{}, nil
+	type span struct{ start, end int }
+	var linked []span
+	for _, idx := range parser.PageLinkRegex.FindAllStringSubmatchIndex(clean, -1) {
+		if len(idx) >= 2 {
+			linked = append(linked, span{idx[0], idx[1]})
+		}
 	}
-	linked := make(map[string]bool, len(rows))
-	for _, r := range rows {
-		ref := ResolvePageLinkAgainst(r.TargetRaw, pages)
-		if !ref.Exists || ref.Ambiguous {
+	inLinked := func(s, e int) bool {
+		for _, sp := range linked {
+			if s < sp.end && e > sp.start {
+				return true
+			}
+		}
+		return false
+	}
+	for _, m := range titleRE.FindAllStringSubmatchIndex(clean, -1) {
+		// WordBoundaryTitleRE captures the title as group 1 (m[2]:m[3]).
+		if len(m) < 4 {
 			continue
 		}
-		if ref.Source != source || ref.Notebook != notebook || ref.Section != section || ref.Page != page {
+		if inLinked(m[2], m[3]) {
 			continue
 		}
-		linked[r.SourceBlockID] = true
+		return m[2], m[3], true
 	}
-	return linked, nil
+	return 0, 0, false
 }
 
 // sortUnlinkedMentions stably sorts by (source, source_notebook, source_section,

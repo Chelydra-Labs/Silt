@@ -476,7 +476,8 @@ func snippet(text, token string) string {
 				}
 			}
 
-			// Determine whether we need ellipsis markers.
+			// Oversized wiki-link token: replace with elided form "[[…]]"
+			// and extract context around the elided placeholder.
 			wantPrefix := idx > 0
 			wantSuffix := idx+effectiveLen < len(runes)
 			markerSlots := 0
@@ -490,9 +491,6 @@ func snippet(text, token string) string {
 			if contentBudget < 0 {
 				contentBudget = 0
 			}
-
-			// Oversized wiki-link token: replace with elided form "[[…]]"
-			// and extract context around the elided placeholder.
 			if strings.HasPrefix(token, "[[") && effectiveLen > contentBudget {
 				elided := "[[" + snippetEllipsis + "]]" // 4 runes
 				elidedRunes := []rune(elided)
@@ -504,42 +502,107 @@ func snippet(text, token string) string {
 				return snippet(string(replacement), elided)
 			}
 
-			// Distribute padding around the token within contentBudget.
-			pad := contentBudget - effectiveLen
-			if pad < 0 {
-				pad = 0
-			}
-			before := pad / 2
-			after := pad - before
-			start := idx - before
-			if start < 0 {
-				start = 0
-				after += before
-			}
-			end := idx + effectiveLen + after
-			if end > len(runes) {
-				end = len(runes)
-			}
-			// Final cap: content must fit within budget minus markers.
-			if end-start > contentBudget {
-				excess := (end - start) - contentBudget
-				end -= excess
-			}
-
-			prefix := ""
-			suffix := ""
-			if start > 0 {
-				prefix = snippetEllipsis
-			}
-			if end < len(runes) {
-				suffix = snippetEllipsis
-			}
-			return prefix + string(runes[start:end]) + suffix
+			return snippetWindow(runes, idx, effectiveLen, budget)
 		}
 	}
 
 	// Fallback: plain prefix, reserving one rune for the ellipsis marker.
 	return string(runes[:budget-1]) + snippetEllipsis
+}
+
+// snippetAround returns a contextual excerpt of text centered on the byte
+// range [byteStart, byteEnd). Used when the match position is already known
+// (e.g. residual plain title after skipping [[…]] spans) so the window is not
+// pulled toward an earlier identical substring.
+func snippetAround(text string, byteStart, byteEnd int) string {
+	if text == "" {
+		return ""
+	}
+	if byteStart < 0 {
+		byteStart = 0
+	}
+	if byteEnd > len(text) {
+		byteEnd = len(text)
+	}
+	if byteStart > byteEnd {
+		byteStart, byteEnd = byteEnd, byteStart
+	}
+	budget := backlinkSnippetRunes
+	if utf8.RuneCountInString(text) <= budget {
+		return text
+	}
+	runes := []rune(text)
+	runeStart := utf8.RuneCountInString(text[:byteStart])
+	runeEnd := utf8.RuneCountInString(text[:byteEnd])
+	if runeStart > len(runes) {
+		runeStart = len(runes)
+	}
+	if runeEnd < runeStart {
+		runeEnd = runeStart
+	}
+	if runeEnd > len(runes) {
+		runeEnd = len(runes)
+	}
+	return snippetWindow(runes, runeStart, runeEnd-runeStart, budget)
+}
+
+// snippetWindow pads a known rune span to backlinkSnippetRunes with ellipsis.
+func snippetWindow(runes []rune, idx, effectiveLen, budget int) string {
+	if effectiveLen < 0 {
+		effectiveLen = 0
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > len(runes) {
+		idx = len(runes)
+	}
+	if idx+effectiveLen > len(runes) {
+		effectiveLen = len(runes) - idx
+	}
+
+	wantPrefix := idx > 0
+	wantSuffix := idx+effectiveLen < len(runes)
+	markerSlots := 0
+	if wantPrefix {
+		markerSlots++
+	}
+	if wantSuffix {
+		markerSlots++
+	}
+	contentBudget := budget - markerSlots
+	if contentBudget < 0 {
+		contentBudget = 0
+	}
+
+	pad := contentBudget - effectiveLen
+	if pad < 0 {
+		pad = 0
+	}
+	before := pad / 2
+	after := pad - before
+	start := idx - before
+	if start < 0 {
+		after += -start
+		start = 0
+	}
+	end := idx + effectiveLen + after
+	if end > len(runes) {
+		end = len(runes)
+	}
+	if end-start > contentBudget {
+		end = start + contentBudget
+	}
+
+	prefix := ""
+	suffix := ""
+	if start > 0 {
+		prefix = snippetEllipsis
+	}
+	if end < len(runes) {
+		suffix = snippetEllipsis
+	}
+	return prefix + string(runes[start:end]) + suffix
 }
 
 // runeIndex returns the index of the first occurrence of needle in haystack,

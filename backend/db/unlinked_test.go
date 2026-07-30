@@ -193,29 +193,100 @@ func TestUnlinked_CodeBlocksExcluded(t *testing.T) {
 	}
 }
 
-// TestUnlinked_AlreadyLinkedExcluded verifies a block that already contains a
-// [[…]] resolving to the target page is NOT surfaced as unlinked.
-func TestUnlinked_AlreadyLinkedExcluded(t *testing.T) {
+// TestUnlinked_ResidualPlainInMixedBlock verifies a block that already has a
+// [[…]] to the target still surfaces when residual plain title text remains
+// (list/promote parity). Fully-linked-only blocks stay excluded.
+func TestUnlinked_ResidualPlainInMixedBlock(t *testing.T) {
 	dm := newTestDB(t)
 	idxU(t, dm, "vault", "NB", "Sec", "Onboarding", []parser.ParsedBlock{
 		noteBlock(uuidU, "Onboarding"),
 	})
-	idxU(t, dm, "vault", "NB", "Sec", "Linked", []parser.ParsedBlock{
+	// Mixed: linked + residual plain — must appear.
+	idxU(t, dm, "vault", "NB", "Sec", "Mixed", []parser.ParsedBlock{
 		noteBlock(uuidV, "see [[Onboarding]] for the Onboarding details"),
 	})
+	// Linked only — must not appear.
+	idxU(t, dm, "vault", "NB", "Sec", "LinkedOnly", []parser.ParsedBlock{
+		noteBlock(uuidW, "see [[Onboarding]] only"),
+	})
+	// Plain only — still appears.
 	idxU(t, dm, "vault", "NB", "Sec", "Plain", []parser.ParsedBlock{
-		noteBlock(uuidW, "see Onboarding details"),
+		noteBlock(uuidX, "see Onboarding details"),
 	})
 
 	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
-	if len(res.Results) != 1 {
-		t.Fatalf("expected only the Plain page (Linked excluded), got %d: %+v", len(res.Results), res.Results)
+	got := map[string]UnlinkedMention{}
+	for _, m := range res.Results {
+		got[m.SourcePage] = m
 	}
-	if res.Results[0].SourcePage != "Plain" {
-		t.Errorf("expected Plain, got %q", res.Results[0].SourcePage)
+	if _, ok := got["LinkedOnly"]; ok {
+		t.Errorf("fully-linked-only page must be excluded, got %+v", got["LinkedOnly"])
+	}
+	if _, ok := got["Plain"]; !ok {
+		t.Errorf("plain-only page missing: %+v", res.Results)
+	}
+	mixed, ok := got["Mixed"]
+	if !ok {
+		t.Fatalf("mixed linked+plain page missing: %+v", res.Results)
+	}
+	if mixed.MatchCount != 1 || len(mixed.SourceBlockIDs) != 1 || mixed.SourceBlockIDs[0] != uuidV {
+		t.Errorf("mixed mention unexpected: %+v", mixed)
+	}
+	if len(mixed.SourceSnippets) != 1 {
+		t.Fatalf("expected 1 residual snippet, got %d", len(mixed.SourceSnippets))
+	}
+	// Snippet must center on residual plain "Onboarding", not only the [[…]] hit.
+	// The plain occurrence is preceded by "the ", so that context should appear.
+	snip := mixed.SourceSnippets[0]
+	if !strings.Contains(strings.ToLower(snip), "onboarding") {
+		t.Errorf("snippet missing title: %q", snip)
+	}
+	if !strings.Contains(snip, "details") && !strings.Contains(strings.ToLower(snip), "the onboarding") {
+		t.Errorf("snippet should reflect residual plain context, got %q", snip)
+	}
+}
+
+// TestUnlinked_LinkedOnlyBlockExcluded verifies a block whose only title hit is
+// inside [[…]] is not surfaced (no residual plain).
+func TestUnlinked_LinkedOnlyBlockExcluded(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Onboarding", []parser.ParsedBlock{
+		noteBlock(uuidU, "Onboarding"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
+		noteBlock(uuidV, "see [[Onboarding]] and nothing else"),
+	})
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if len(res.Results) != 0 {
+		t.Fatalf("linked-only: expected 0 mentions, got %d: %+v", len(res.Results), res.Results)
+	}
+}
+
+// TestFirstPlainTitleOccurrence verifies residual detection skips [[…]] spans.
+func TestFirstPlainTitleOccurrence(t *testing.T) {
+	re := WordBoundaryTitleRE("Onboarding")
+	_, _, ok := FirstPlainTitleOccurrence("see [[Onboarding]] only", re)
+	if ok {
+		t.Error("linked-only should have no residual plain")
+	}
+	start, end, ok := FirstPlainTitleOccurrence("see [[Onboarding]] and Onboarding too", re)
+	if !ok {
+		t.Fatal("expected residual plain")
+	}
+	got := "see [[Onboarding]] and Onboarding too"[start:end]
+	if !strings.EqualFold(got, "Onboarding") {
+		t.Errorf("residual span %q", got)
+	}
+	// Prefer the plain hit after the link, not the title inside [[…]].
+	if start < strings.Index("see [[Onboarding]] and Onboarding too", "]]") {
+		t.Errorf("residual start %d should be after the wiki link", start)
 	}
 }
 
