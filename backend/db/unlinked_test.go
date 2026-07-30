@@ -37,7 +37,7 @@ func TestUnlinked_SingleWordTitle(t *testing.T) {
 		noteBlock(uuidV, "review the Onboarding steps before launch"),
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestUnlinked_MultiWordTitle(t *testing.T) {
 		noteBlock(uuidX, "friction during onboarding is different"), // reversed order
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding Friction", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding Friction", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestUnlinked_CaseInsensitive(t *testing.T) {
 		noteBlock(uuidW, "see ONBOARDING here"),
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestUnlinked_WordBoundary(t *testing.T) {
 		noteBlock(uuidW, "multiple targets were found"), // "targets" — not whole word
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Target", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Target", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestUnlinked_NonAsciiTitle(t *testing.T) {
 		noteBlock(uuidW, "les cafés sont bons"),   // "cafés" — substring, not whole word
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Café", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Café", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestUnlinked_SelfPageExcluded(t *testing.T) {
 		noteBlock(uuidV, "see Onboarding"),
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestUnlinked_CodeBlocksExcluded(t *testing.T) {
 		{ID: uuidV, Type: parser.BlockCode, RawText: "const Onboarding = 1", CleanText: "const Onboarding = 1", LineNumber: 1},
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestUnlinked_ResidualPlainInMixedBlock(t *testing.T) {
 		noteBlock(uuidX, "see Onboarding details"),
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestUnlinked_LinkedOnlyBlockExcluded(t *testing.T) {
 		noteBlock(uuidV, "see [[Onboarding]] and nothing else"),
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestUnlinked_ResidualSnippetCentersOnPlain(t *testing.T) {
 		noteBlock(uuidV, clean),
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestUnlinked_DedupeBySourcePage(t *testing.T) {
 		noteBlock(uuidX, "third Onboarding note"),
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestUnlinked_AmbiguousBasename(t *testing.T) {
 		noteBlock(uuidW, "today's Standup went well"),
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Journal", "Standup", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Journal", "Standup", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestUnlinked_SourceAware(t *testing.T) {
 		noteBlock(uuidV, "linked note about Onboarding"),
 	})
 
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -460,7 +460,7 @@ func TestUnlinked_Pagination(t *testing.T) {
 	cursor := ""
 	pages := 0
 	for {
-		res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", cursor, 5)
+		res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", cursor, "", 5)
 		if err != nil {
 			t.Fatalf("GetUnlinkedMentionsPaged cursor=%q: %v", cursor, err)
 		}
@@ -500,11 +500,11 @@ func TestUnlinked_LimitCapping(t *testing.T) {
 			noteBlock(bid, "Onboarding"),
 		})
 	}
-	r0, _ := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 0)
+	r0, _ := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 0)
 	if len(r0.Results) != 3 {
 		t.Errorf("limit 0 (default 50): expected all 3, got %d", len(r0.Results))
 	}
-	rBig, _ := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 99999)
+	rBig, _ := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 99999)
 	if len(rBig.Results) != 3 {
 		t.Errorf("limit 99999 (clamped): expected all 3, got %d", len(rBig.Results))
 	}
@@ -520,7 +520,7 @@ func TestUnlinked_ShortTitleSkipped(t *testing.T) {
 	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
 		noteBlock(uuidV, "a single A letter"),
 	})
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "A", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "A", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -533,12 +533,13 @@ func TestUnlinked_ShortTitleSkipped(t *testing.T) {
 }
 
 // idxUMany indexes n source pages each with one plain mention of title.
-// Zero-padded Src%04d names make path ORDER BY (source, notebook, section, page)
-// produce a stable top-N residual set under the scan cap.
+// Src%04d names are stable labels for set-membership assertions across batches.
+// The title page body deliberately omits the title token so it does not consume
+// an FTS batch slot (self-page is filtered in Go after the FTS LIMIT).
 func idxUMany(t *testing.T, dm *DatabaseManager, title string, n int) {
 	t.Helper()
 	idxU(t, dm, "vault", "NB", "Sec", title, []parser.ParsedBlock{
-		noteBlock(uuidU, title+" home"),
+		noteBlock(uuidU, "home page"),
 	})
 	for i := 0; i < n; i++ {
 		pg := fmt.Sprintf("Src%04d", i)
@@ -549,77 +550,17 @@ func idxUMany(t *testing.T, dm *DatabaseManager, title string, n int) {
 	}
 }
 
-// TestUnlinked_ScanCapUnderExactOver verifies Truncated is false at and below
-// unlinkedScanCap and true only when FTS candidates exceed the cap (limit+1 probe).
-func TestUnlinked_ScanCapUnderExactOver(t *testing.T) {
-	// Under cap.
-	dmUnder := newTestDB(t)
-	idxUMany(t, dmUnder, "Topic", 3)
-	under, err := dmUnder.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", 50)
-	if err != nil {
-		t.Fatalf("under: %v", err)
-	}
-	if under.Truncated {
-		t.Error("under cap: Truncated should be false")
-	}
-	if len(under.Results) != 3 {
-		t.Fatalf("under cap: expected 3 residual pages, got %d", len(under.Results))
-	}
-
-	// Exact cap: unlinkedScanCap FTS candidates → not truncated.
-	dmExact := newTestDB(t)
-	idxUMany(t, dmExact, "Topic", unlinkedScanCap)
-	exactSeen := 0
-	exactCursor := ""
-	for {
-		exact, err := dmExact.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", exactCursor, 100)
-		if err != nil {
-			t.Fatalf("exact: %v", err)
-		}
-		if exact.Truncated {
-			t.Error("exact cap: Truncated should be false")
-		}
-		exactSeen += len(exact.Results)
-		if !exact.HasMore {
-			break
-		}
-		exactCursor = exact.Cursor
-	}
-	if exactSeen != unlinkedScanCap {
-		t.Fatalf("exact cap: expected %d residual pages, got %d", unlinkedScanCap, exactSeen)
-	}
-
-	// Over cap: one extra FTS candidate → Truncated; residual set is the ordered top-N.
-	dmOver := newTestDB(t)
-	idxUMany(t, dmOver, "Topic", unlinkedScanCap+1)
-	over, err := dmOver.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", 50)
-	if err != nil {
-		t.Fatalf("over: %v", err)
-	}
-	if !over.Truncated {
-		t.Error("over cap: Truncated should be true")
-	}
-	// Page limit 50: first page has 50 residual pages; pool still truncated.
-	if len(over.Results) != 50 {
-		t.Fatalf("over cap page: expected 50 results, got %d", len(over.Results))
-	}
-	if !over.HasMore {
-		t.Error("over cap: HasMore should be true (residual pages > limit)")
-	}
-	if over.Results[0].SourcePage != "Src0000" {
-		t.Errorf("over cap first residual: got %q want Src0000", over.Results[0].SourcePage)
-	}
-	// Walk all residual pages from the capped pool — ordered path top-N only.
-	var pages []string
+// collectUnlinkedPages walks residual cursor pages for one FTS batch (scanCursor).
+func collectUnlinkedPages(t *testing.T, dm *DatabaseManager, scanCursor string) (pages []string, truncated bool, nextScan string) {
+	t.Helper()
 	cursor := ""
 	for {
-		page, err := dmOver.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", cursor, 100)
+		page, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", cursor, scanCursor, 100)
 		if err != nil {
-			t.Fatalf("over walk: %v", err)
+			t.Fatalf("collect scan=%q cursor=%q: %v", scanCursor, cursor, err)
 		}
-		if !page.Truncated {
-			t.Error("over walk: Truncated must stay true on every page")
-		}
+		truncated = page.Truncated
+		nextScan = page.ScanCursor
 		for _, m := range page.Results {
 			pages = append(pages, m.SourcePage)
 		}
@@ -628,21 +569,103 @@ func TestUnlinked_ScanCapUnderExactOver(t *testing.T) {
 		}
 		cursor = page.Cursor
 	}
+	return pages, truncated, nextScan
+}
+
+// TestUnlinked_ScanCapUnderExactOver verifies Truncated is false at and below
+// unlinkedScanCap and true only when FTS candidates exceed the cap (limit+1 probe).
+func TestUnlinked_ScanCapUnderExactOver(t *testing.T) {
+	// Under cap.
+	dmUnder := newTestDB(t)
+	idxUMany(t, dmUnder, "Topic", 3)
+	under, err := dmUnder.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("under: %v", err)
+	}
+	if under.Truncated {
+		t.Error("under cap: Truncated should be false")
+	}
+	if under.ScanCursor != "" {
+		t.Error("under cap: ScanCursor should be empty")
+	}
+	if len(under.Results) != 3 {
+		t.Fatalf("under cap: expected 3 residual pages, got %d", len(under.Results))
+	}
+
+	// Exact cap: unlinkedScanCap FTS candidates → not truncated.
+	dmExact := newTestDB(t)
+	idxUMany(t, dmExact, "Topic", unlinkedScanCap)
+	exactPages, exactTrunc, exactScan := collectUnlinkedPages(t, dmExact, "")
+	if exactTrunc {
+		t.Error("exact cap: Truncated should be false")
+	}
+	if exactScan != "" {
+		t.Error("exact cap: ScanCursor should be empty")
+	}
+	if len(exactPages) != unlinkedScanCap {
+		t.Fatalf("exact cap: expected %d residual pages, got %d", unlinkedScanCap, len(exactPages))
+	}
+
+	// Over cap: one extra FTS candidate → Truncated + ScanCursor; first batch has cap residuals.
+	dmOver := newTestDB(t)
+	idxUMany(t, dmOver, "Topic", unlinkedScanCap+1)
+	over, err := dmOver.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("over: %v", err)
+	}
+	if !over.Truncated {
+		t.Error("over cap: Truncated should be true")
+	}
+	if over.ScanCursor == "" {
+		t.Error("over cap: ScanCursor required when Truncated")
+	}
+	// Page limit 50: first page has 50 residual pages; pool still truncated.
+	if len(over.Results) != 50 {
+		t.Fatalf("over cap page: expected 50 results, got %d", len(over.Results))
+	}
+	if !over.HasMore {
+		t.Error("over cap: HasMore should be true (residual pages > limit)")
+	}
+	// Walk all residual pages from the first batch — exactly cap pages, path-sorted.
+	pages, trunc, scanOut := collectUnlinkedPages(t, dmOver, "")
+	if !trunc {
+		t.Error("over walk: Truncated must stay true on every page")
+	}
+	if scanOut == "" {
+		t.Error("over walk: ScanCursor must stay set while truncated")
+	}
 	if len(pages) != unlinkedScanCap {
-		t.Fatalf("over walk: expected %d residual pages from capped pool, got %d", unlinkedScanCap, len(pages))
+		t.Fatalf("over walk: expected %d residual pages from capped batch, got %d", unlinkedScanCap, len(pages))
 	}
-	for i, got := range pages {
-		want := fmt.Sprintf("Src%04d", i)
-		if got != want {
-			t.Fatalf("over walk residual[%d]: got %q want %q (ordered top-N broken)", i, got, want)
+	// Residual presentation is path-sorted within the batch.
+	for i := 1; i < len(pages); i++ {
+		if pages[i] < pages[i-1] {
+			t.Fatalf("over walk: residual pages not path-sorted at %d: %q < %q", i, pages[i], pages[i-1])
 		}
 	}
-	// Cap excludes the last inserted path (Src0500 when cap is 500).
-	excluded := fmt.Sprintf("Src%04d", unlinkedScanCap)
-	for _, got := range pages {
-		if got == excluded {
-			t.Fatalf("over walk: residual set must not include %s (beyond ordered cap)", excluded)
+	// First batch is a proper subset of all Src pages; the missing one is reachable via scan continuation.
+	allWant := map[string]bool{}
+	for i := 0; i < unlinkedScanCap+1; i++ {
+		allWant[fmt.Sprintf("Src%04d", i)] = true
+	}
+	batchSet := map[string]bool{}
+	for _, p := range pages {
+		if !allWant[p] {
+			t.Fatalf("over walk: unexpected page %q", p)
 		}
+		batchSet[p] = true
+	}
+	if len(batchSet) != unlinkedScanCap {
+		t.Fatalf("over walk: expected %d unique pages, got %d", unlinkedScanCap, len(batchSet))
+	}
+	var missing []string
+	for p := range allWant {
+		if !batchSet[p] {
+			missing = append(missing, p)
+		}
+	}
+	if len(missing) != 1 {
+		t.Fatalf("over walk: expected exactly 1 page beyond first batch, got %v", missing)
 	}
 }
 
@@ -661,12 +684,15 @@ func TestUnlinked_ScanCapTruncatedZeroResidual(t *testing.T) {
 			noteBlock(bid, "see [[Topic]] only"),
 		})
 	}
-	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", 50)
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
 	if !res.Truncated {
 		t.Error("expected Truncated=true when FTS pool exceeds cap")
+	}
+	if res.ScanCursor == "" {
+		t.Error("expected ScanCursor when Truncated")
 	}
 	if len(res.Results) != 0 {
 		t.Fatalf("expected 0 residual pages (fully linked only), got %d", len(res.Results))
@@ -680,7 +706,7 @@ func TestUnlinked_ScanCapTruncatedZeroResidual(t *testing.T) {
 func TestUnlinked_DbClosed(t *testing.T) {
 	dm := newTestDB(t)
 	_ = dm.Close()
-	_, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	_, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
 	if err != ErrDBClosed {
 		t.Errorf("expected ErrDBClosed, got %v", err)
 	}
@@ -723,7 +749,7 @@ func TestPromote_RewriteMigratesToBacklinks(t *testing.T) {
 	})
 
 	// Before: 1 unlinked mention, 0 backlinks.
-	res, _ := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	res, _ := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
 	if len(res.Results) != 1 {
 		t.Fatalf("baseline unlinked: expected 1, got %d", len(res.Results))
 	}
@@ -738,7 +764,7 @@ func TestPromote_RewriteMigratesToBacklinks(t *testing.T) {
 	})
 
 	// After: unlinked drops to 0, backlinks gains the page-link.
-	res, _ = dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	res, _ = dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
 	if len(res.Results) != 0 {
 		t.Fatalf("post-promote unlinked: expected 0, got %d: %+v", len(res.Results), res.Results)
 	}
@@ -762,8 +788,250 @@ func TestPromote_AmbiguousRejected(t *testing.T) {
 		noteBlock(uuidW, "Standup mention"),
 	})
 
-	res, _ := dm.GetUnlinkedMentionsPaged("vault", "NB", "Journal", "Standup", "", 50)
+	res, _ := dm.GetUnlinkedMentionsPaged("vault", "NB", "Journal", "Standup", "", "", 50)
 	if len(res.Results) != 1 || !res.Results[0].Ambiguous {
 		t.Fatalf("expected 1 ambiguous mention, got %+v", res.Results)
+	}
+}
+
+// TestUnlinked_ScanCursorMultiBatch verifies capped FTS continuation surfaces
+// residuals beyond the first unlinkedScanCap window without unbounded default scans.
+func TestUnlinked_ScanCursorMultiBatch(t *testing.T) {
+	dm := newTestDB(t)
+	const extra = 3
+	idxUMany(t, dm, "Topic", unlinkedScanCap+extra)
+
+	batch1, trunc1, scan1 := collectUnlinkedPages(t, dm, "")
+	if !trunc1 || scan1 == "" {
+		t.Fatalf("batch1: want truncated with scan_cursor, got trunc=%v scan=%q", trunc1, scan1)
+	}
+	if len(batch1) != unlinkedScanCap {
+		t.Fatalf("batch1: expected %d residuals, got %d", unlinkedScanCap, len(batch1))
+	}
+
+	batch2, trunc2, scan2 := collectUnlinkedPages(t, dm, scan1)
+	if trunc2 {
+		t.Error("batch2: should exhaust remaining candidates (not truncated)")
+	}
+	if scan2 != "" {
+		t.Errorf("batch2: ScanCursor should be empty when not truncated, got %q", scan2)
+	}
+	if len(batch2) != extra {
+		t.Fatalf("batch2: expected %d residuals, got %d", extra, len(batch2))
+	}
+
+	// Batches are disjoint and cover the full residual set.
+	seen := map[string]bool{}
+	for _, p := range batch1 {
+		if seen[p] {
+			t.Fatalf("duplicate in batch1: %s", p)
+		}
+		seen[p] = true
+	}
+	for _, p := range batch2 {
+		if seen[p] {
+			t.Fatalf("batch2 overlaps batch1: %s", p)
+		}
+		seen[p] = true
+	}
+	if len(seen) != unlinkedScanCap+extra {
+		t.Fatalf("union size: got %d want %d", len(seen), unlinkedScanCap+extra)
+	}
+	for i := 0; i < unlinkedScanCap+extra; i++ {
+		want := fmt.Sprintf("Src%04d", i)
+		if !seen[want] {
+			t.Errorf("missing residual %s across batches", want)
+		}
+	}
+}
+
+// TestUnlinked_ScanCursorInvalidSoftResets treats garbage scan_cursor as first batch.
+func TestUnlinked_ScanCursorInvalidSoftResets(t *testing.T) {
+	dm := newTestDB(t)
+	idxUMany(t, dm, "Topic", 3)
+	good, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("good: %v", err)
+	}
+	bad, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "!!!not-a-cursor!!!", 50)
+	if err != nil {
+		t.Fatalf("bad scan cursor: %v", err)
+	}
+	if len(bad.Results) != len(good.Results) {
+		t.Fatalf("invalid scan_cursor should soft-reset to first batch: got %d want %d", len(bad.Results), len(good.Results))
+	}
+}
+
+// TestUnlinked_ScanCursorResidualFilterAcrossBatches: first batch is fully linked
+// (truncated, zero residual); second batch has plain residuals.
+func TestUnlinked_ScanCursorResidualFilterAcrossBatches(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic home"),
+	})
+	// First unlinkedScanCap FTS hits: linked only.
+	for i := 0; i < unlinkedScanCap; i++ {
+		pg := fmt.Sprintf("Link%04d", i)
+		bid := fmt.Sprintf("%08x-bbbb-4bbb-8bbb-bbbbbbbbbbbb", i)
+		idxU(t, dm, "vault", "NB", "Sec", pg, []parser.ParsedBlock{
+			noteBlock(bid, "see [[Topic]] only"),
+		})
+	}
+	// One more plain residual beyond the first batch.
+	idxU(t, dm, "vault", "NB", "Sec", "PlainBeyond", []parser.ParsedBlock{
+		noteBlock(uuidV, "plain Topic mention"),
+	})
+
+	first, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if !first.Truncated || first.ScanCursor == "" {
+		t.Fatalf("first: want truncated+scan_cursor, got %+v", first)
+	}
+	if len(first.Results) != 0 {
+		t.Fatalf("first: expected 0 residual (linked-only batch), got %d", len(first.Results))
+	}
+
+	second, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", first.ScanCursor, 50)
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if second.Truncated {
+		t.Error("second: should not be truncated")
+	}
+	if len(second.Results) != 1 || second.Results[0].SourcePage != "PlainBeyond" {
+		t.Fatalf("second: expected PlainBeyond residual, got %+v", second.Results)
+	}
+}
+
+// TestUnlinked_HasMoreOrthogonalToTruncated: residual paging and FTS truncation
+// are independent flags.
+func TestUnlinked_HasMoreOrthogonalToTruncated(t *testing.T) {
+	dm := newTestDB(t)
+	idxUMany(t, dm, "Topic", unlinkedScanCap+1)
+
+	page, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 10)
+	if err != nil {
+		t.Fatalf("page: %v", err)
+	}
+	if !page.Truncated || !page.HasMore {
+		t.Fatalf("want truncated && has_more on first small page, got trunc=%v more=%v", page.Truncated, page.HasMore)
+	}
+	if page.ScanCursor == "" || page.Cursor == "" {
+		t.Fatal("want both residual cursor and scan_cursor")
+	}
+
+	// Exhaust residual pages within the first batch; truncated stays true.
+	cursor := page.Cursor
+	for {
+		next, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", cursor, "", 100)
+		if err != nil {
+			t.Fatalf("more: %v", err)
+		}
+		if !next.Truncated {
+			t.Error("truncated must remain true while FTS window is capped")
+		}
+		if next.ScanCursor == "" {
+			t.Error("scan_cursor must remain set while truncated")
+		}
+		if !next.HasMore {
+			break
+		}
+		cursor = next.Cursor
+	}
+}
+
+// TestUnlinked_EncodeDecodeScanCursor verifies scan keyset round-trip + soft reset.
+func TestUnlinked_EncodeDecodeScanCursor(t *testing.T) {
+	enc := encodeUnlinkedScanCursor(42)
+	if enc == "" {
+		t.Fatal("empty scan cursor for positive rowid")
+	}
+	if got := decodeUnlinkedScanCursor(enc); got != 42 {
+		t.Errorf("round-trip: got %d want 42", got)
+	}
+	if decodeUnlinkedScanCursor("") != 0 {
+		t.Error("empty → 0")
+	}
+	if decodeUnlinkedScanCursor("!!!") != 0 {
+		t.Error("garbage → 0")
+	}
+	if encodeUnlinkedScanCursor(0) != "" {
+		t.Error("rowid 0 should not encode")
+	}
+}
+
+// unlinkedScanSQL is the production candidate batch shape (kept in sync with
+// scanUnlinkedCandidateBlocks) for EXPLAIN regression.
+const unlinkedScanSQL = `SELECT b.rowid, b.id, b.source, b.notebook, b.section, b.page, b.type, COALESCE(b.clean_content,'')
+		FROM (
+			SELECT rowid AS rid FROM blocks_fts
+			WHERE blocks_fts MATCH ?
+			  AND rowid > ?
+			ORDER BY rowid
+			LIMIT ?
+		) AS f
+		JOIN blocks b ON b.rowid = f.rid`
+
+const unlinkedPathOrderSQL = `SELECT b.rowid, b.id, b.source, b.notebook, b.section, b.page, COALESCE(b.clean_content,'')
+		FROM blocks_fts
+		JOIN blocks b ON b.rowid = blocks_fts.rowid
+		WHERE blocks_fts MATCH ?
+		  AND b.type <> 'CODE'
+		  AND NOT (b.source = ? AND b.notebook = ? AND b.section = ? AND b.page = ?)
+		ORDER BY b.source, b.notebook, b.section, b.page
+		LIMIT ?`
+
+func explainDetails(t *testing.T, dm *DatabaseManager, sql string, args ...any) []string {
+	t.Helper()
+	rows, err := dm.SQLDB().Query("EXPLAIN QUERY PLAN "+sql, args...)
+	if err != nil {
+		t.Fatalf("EXPLAIN: %v", err)
+	}
+	defer rows.Close()
+	var plans []string
+	for rows.Next() {
+		var selectid, order, from, detail string
+		if err := rows.Scan(&selectid, &order, &from, &detail); err != nil {
+			t.Fatalf("scan EXPLAIN: %v", err)
+		}
+		plans = append(plans, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("EXPLAIN rows: %v", err)
+	}
+	return plans
+}
+
+// TestUnlinked_ScanPlanRowidKeyset documents why we use an FTS rowid subquery:
+// path-ordered join plans TEMP-sort the full match set; the production shape
+// limits inside blocks_fts (INDEX 64 rowid order) before joining blocks.
+func TestUnlinked_ScanPlanRowidKeyset(t *testing.T) {
+	dm := newTestDB(t)
+	// Enough matches that a bad plan would sort a large set (still cheap in CI).
+	idxUMany(t, dm, "Topic", 80)
+	phrase := buildUnlinkedFTSPhrase("Topic")
+
+	pathPlans := explainDetails(t, dm, unlinkedPathOrderSQL, phrase, "vault", "NB", "Sec", "Topic", unlinkedScanCap+1)
+	pathJoined := strings.ToUpper(strings.Join(pathPlans, " | "))
+	if !strings.Contains(pathJoined, "TEMP") {
+		t.Logf("path-order plan (often TEMP B-TREE): %v", pathPlans)
+	}
+
+	rowidPlans := explainDetails(t, dm, unlinkedScanSQL, phrase, int64(0), unlinkedScanCap+1)
+	rowidJoined := strings.Join(rowidPlans, " | ")
+	upper := strings.ToUpper(rowidJoined)
+	if !strings.Contains(rowidJoined, "blocks_fts") {
+		t.Errorf("expected blocks_fts in plan, got %v", rowidPlans)
+	}
+	// Production plan must not TEMP-sort the FTS match set for path/rowid order
+	// on the outer join (LIMIT lives inside the FTS subquery).
+	if strings.Contains(upper, "TEMP B-TREE") {
+		t.Errorf("FTS rowid subquery plan should not use TEMP B-TREE; plan=%v", rowidPlans)
+	}
+	// Prefer the rowid-ordered FTS index (SQLite reports INDEX 64:…> for ORDER BY rowid).
+	if !strings.Contains(rowidJoined, "64:") && !strings.Contains(upper, "CO-ROUTINE") {
+		t.Logf("plan missing INDEX 64 marker (SQLite version variance OK if no TEMP): %v", rowidPlans)
 	}
 }

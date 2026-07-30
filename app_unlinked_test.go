@@ -30,7 +30,7 @@ func TestGetUnlinkedMentionsPaged_SourceResolution(t *testing.T) {
 		{ID: "vvvvvvvv-vvvv-4vvv-8vvv-vvvvvvvvvvvv", Type: parser.BlockNote, RawText: "review Onboarding soon", CleanText: "review Onboarding soon", LineNumber: 1},
 	})
 
-	res, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", 50)
+	res, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestGetUnlinkedMentionsPaged_DBClosed(t *testing.T) {
 	if err := app.db.Close(); err != nil {
 		t.Fatalf("close db: %v", err)
 	}
-	_, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", 50)
+	_, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", "", 50)
 	if err == nil {
 		t.Fatal("expected an error when the database is closed, got nil")
 	}
@@ -103,7 +103,7 @@ func TestPromoteUnlinkedMention_Rewrite(t *testing.T) {
 	}
 
 	// The mention migrates: unlinked drops to 0, backlinks gains the page-link.
-	res, _ := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", 50)
+	res, _ := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", "", 50)
 	if len(res.Results) != 0 {
 		t.Errorf("post-promote unlinked: expected 0, got %d: %+v", len(res.Results), res.Results)
 	}
@@ -200,7 +200,7 @@ func TestPromoteUnlinkedMention_MixedResidual(t *testing.T) {
 		srcBlock, "see [[Onboarding]] and Onboarding too")
 
 	// Pre: residual plain surfaces in unlinked.
-	pre, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", 50)
+	pre, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("pre GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestPromoteUnlinkedMention_MixedResidual(t *testing.T) {
 		t.Errorf("post-promote body: got %q", clean)
 	}
 
-	post, _ := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", 50)
+	post, _ := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", "", 50)
 	if len(post.Results) != 0 {
 		t.Errorf("post-promote unlinked: expected 0, got %d: %+v", len(post.Results), post.Results)
 	}

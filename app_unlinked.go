@@ -11,8 +11,10 @@ import (
 // GetUnlinkedMentionsPaged returns source pages that mention the active page's
 // title in prose without linking it, so the backlinks panel can offer a "Link"
 // action. Source-aware (notebook → source resolved server-side). Cursor/limit
-// mirror GetBacklinksPaged. See db.GetUnlinkedMentionsPaged for matching rules.
-func (a *App) GetUnlinkedMentionsPaged(notebook, section, page, cursor string, limit int) (db.UnlinkedMentionsResult, error) {
+// mirror GetBacklinksPaged. scanCursor continues a capped FTS batch when the
+// prior response set truncated + scan_cursor (empty starts the first batch).
+// See db.GetUnlinkedMentionsPaged for matching rules.
+func (a *App) GetUnlinkedMentionsPaged(notebook, section, page, cursor, scanCursor string, limit int) (db.UnlinkedMentionsResult, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
@@ -24,7 +26,7 @@ func (a *App) GetUnlinkedMentionsPaged(notebook, section, page, cursor string, l
 	source := a.resolveSourceByName(notebook)
 	var res db.UnlinkedMentionsResult
 	err := a.coordinator.WithDBReadResult(func() error {
-		got, err := a.db.GetUnlinkedMentionsPaged(source, notebook, section, page, cursor, limit)
+		got, err := a.db.GetUnlinkedMentionsPaged(source, notebook, section, page, cursor, scanCursor, limit)
 		if err != nil {
 			return err
 		}

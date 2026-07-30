@@ -330,7 +330,7 @@
       },
       {
         "name": "GetUnlinkedMentionsPaged",
-        "signature": "GetUnlinkedMentionsPaged(notebook, section, page, cursor string, limit int) (db.UnlinkedMentionsResult, error)"
+        "signature": "GetUnlinkedMentionsPaged(notebook, section, page, cursor, scanCursor string, limit int) (db.UnlinkedMentionsResult, error)"
       },
       {
         "name": "GetUpdateSettings",
