@@ -389,6 +389,48 @@ describe('BacklinksSidebarPanel', () => {
     expect(screen.queryByText(/block-42/)).not.toBeInTheDocument()
   })
 
+  it('emphasizes residual plain title in mixed [[link]] + plain snippets', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          sourceNotebook: 'Work',
+          sourceSection: 'Projects',
+          sourcePage: 'Launch plan',
+          // aria-label uses blockId.slice(0, 8) → "block-42"
+          sourceBlockIds: ['block-42'],
+          sourceSnippets: ['see [[Onboarding]] for the Onboarding details'],
+          matchCount: 1,
+          title: 'Onboarding',
+          ambiguous: false
+        }
+      ],
+      cursor: '',
+      hasMore: false
+    })
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await screen.findByRole('button', {
+      name: /Link mention of Onboarding in block block-42/
+    })
+
+    const marked = screen.getByText('Onboarding', { selector: 'mark' })
+    expect(marked).toBeInTheDocument()
+    const row = marked.parentElement
+    expect(row?.textContent).toBe(
+      'see [[Onboarding]] for the Onboarding details'
+    )
+    // Residual plain is marked: wiki link appears before <mark>, not inside it.
+    const html = row?.innerHTML ?? ''
+    expect(html).toMatch(
+      /\[\[Onboarding\]\][\s\S]*<mark[^>]*>Onboarding<\/mark>/
+    )
+    expect(html).not.toMatch(/^[\s\S]*<mark[^>]*>Onboarding<\/mark>[\s\S]*\[\[/)
+  })
+
   it('calls PromoteUnlinkedMention on Link and migrates the row out of the unlinked leg', async () => {
     // Return the mention until PromoteUnlinkedMention runs; the post-promote
     // refresh's loadUnlinked then returns the now-empty page (server migrated

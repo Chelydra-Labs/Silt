@@ -11,14 +11,16 @@ import (
 	"silt/backend/parser"
 )
 
-// UnlinkedMention is one source page that mentions the active page's title in
-// prose WITHOUT a [[…]] link to it. Surfaced by the backlinks panel so an author
-// can promote a plain-text mention into a real page-link. MatchCount,
+// UnlinkedMention is one source page with at least one residual plain (non-[[…]])
+// whole-word mention of the active page's title. Blocks that already [[link]]
+// the page still appear when plain residual text remains. Surfaced by the
+// backlinks panel so an author can promote that plain hit. MatchCount,
 // SourceBlockIDs, and SourceSnippets aggregate every matching block on that
 // source page (snippets are parallel to block IDs — one contextual excerpt per
-// match). Ambiguous is true when the title resolves to more than one page;
-// the UI offers candidate chips and PromoteUnlinkedMention accepts an explicit
-// path so the author can disambiguate without guessing.
+// match, centered on the residual plain span). Ambiguous is true when the title
+// resolves to more than one page; the UI offers candidate chips and
+// PromoteUnlinkedMention accepts an explicit path so the author can
+// disambiguate without guessing.
 type UnlinkedMention struct {
 	Source         string   `json:"source"`
 	SourceNotebook string   `json:"source_notebook"`
@@ -26,8 +28,7 @@ type UnlinkedMention struct {
 	SourcePage     string   `json:"source_page"`
 	SourceBlockIDs []string `json:"source_block_ids"`
 	// SourceSnippets is parallel to SourceBlockIDs: a 120-rune contextual
-	// excerpt of clean_content centered on the title match (same helper as
-	// backlink snippets).
+	// excerpt of clean_content centered on the residual plain title span.
 	SourceSnippets []string          `json:"source_snippets"`
 	MatchCount     int               `json:"match_count"`
 	Title          string            `json:"title"`
@@ -184,9 +185,9 @@ type unlinkedBlock struct {
 }
 
 // scanUnlinkedCandidateBlocks runs the FTS5 phrase match over clean_content and
-// returns the raw candidate blocks (caller drops already-linked blocks and
-// confirms the word-boundary match in Go). Excludes the active page itself and
-// CODE blocks (code mentions are not actionable prose to promote).
+// returns raw candidate blocks. The caller keeps only blocks with a residual
+// plain title occurrence (FirstPlainTitleOccurrence). Excludes the active page
+// itself and CODE blocks (code mentions are not actionable prose to promote).
 func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source, notebook, section, page string) ([]unlinkedBlock, error) {
 	phrase := buildUnlinkedFTSPhrase(title)
 	if phrase == "" {

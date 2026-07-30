@@ -290,6 +290,66 @@ func TestFirstPlainTitleOccurrence(t *testing.T) {
 	}
 }
 
+// TestUnlinked_ResidualSnippetCentersOnPlain verifies long mixed blocks produce
+// a snippet window anchored on the residual plain title, not the earlier [[…]].
+func TestUnlinked_ResidualSnippetCentersOnPlain(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Onboarding", []parser.ParsedBlock{
+		noteBlock(uuidU, "Onboarding"),
+	})
+	// >120 runes: early wiki link, then a distant residual plain hit.
+	prefix := strings.Repeat("x", 80)
+	mid := strings.Repeat("y", 80)
+	suffix := strings.Repeat("z", 80)
+	clean := prefix + "[[Onboarding]]" + mid + " Onboarding " + suffix
+	idxU(t, dm, "vault", "NB", "Sec", "Long", []parser.ParsedBlock{
+		noteBlock(uuidV, clean),
+	})
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if len(res.Results) != 1 || len(res.Results[0].SourceSnippets) != 1 {
+		t.Fatalf("expected 1 mention with snippet, got %+v", res.Results)
+	}
+	snip := res.Results[0].SourceSnippets[0]
+	if strings.Contains(snip, "[[Onboarding]]") {
+		t.Errorf("snippet still anchored on early wiki link: %q", snip)
+	}
+	if !strings.Contains(snip, "Onboarding") {
+		t.Errorf("snippet missing residual title: %q", snip)
+	}
+	// Residual-centered window should include mid/suffix context, not the x-prefix.
+	if strings.Contains(snip, strings.Repeat("x", 20)) {
+		t.Errorf("snippet dominated by early prefix (wrong center): %q", snip)
+	}
+	if !strings.Contains(snip, "y") && !strings.Contains(snip, "z") {
+		t.Errorf("snippet missing residual neighborhood: %q", snip)
+	}
+}
+
+// TestSnippetAround_CentersOnByteSpan unit-tests position-aware excerpting.
+func TestSnippetAround_CentersOnByteSpan(t *testing.T) {
+	prefix := strings.Repeat("a", 80)
+	mid := " TARGET "
+	suffix := strings.Repeat("b", 80)
+	text := prefix + mid + suffix
+	start := len(prefix) + 1 // 'T' of TARGET
+	end := start + len("TARGET")
+	got := snippetAround(text, start, end)
+	if strings.Contains(got, strings.Repeat("a", 20)) && !strings.Contains(got, "TARGET") {
+		t.Fatalf("unexpected: %q", got)
+	}
+	if !strings.Contains(got, "TARGET") {
+		t.Errorf("expected TARGET in %q", got)
+	}
+	// Window should pull from both sides of the known span.
+	if !strings.Contains(got, "a") || !strings.Contains(got, "b") {
+		t.Errorf("expected padding from both sides: %q", got)
+	}
+}
+
 // TestUnlinked_DedupeBySourcePage verifies multiple matching blocks on the same
 // source page collapse into one mention with MatchCount + SourceBlockIDs.
 func TestUnlinked_DedupeBySourcePage(t *testing.T) {
