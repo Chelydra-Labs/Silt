@@ -217,4 +217,64 @@ describe('customDictionary one-slot pending queue (#822)', () => {
     expect(mocks.ExportCustomDictionary).not.toHaveBeenCalled()
     expect(customDictionary.error).toBeNull()
   })
+
+  it('captures the resolved word (not the raw arg) when add() is queued mid-flight', async () => {
+    // Drive busy with a held no-arg add; its body clears newWord on resolve.
+    const firstDef = deferred<string[]>()
+    mocks.AddCustomDictionaryWord.mockReturnValue(firstDef.promise)
+
+    customDictionary.newWord = 'first'
+    const firstP = customDictionary.add() // no-arg, in flight
+    expect(customDictionary.busy).toBe(true)
+
+    // The queued call is no-arg. Before CHANGE A the closure captured the raw
+    // `word` (undefined) and re-read newWord at drain time, so a field change
+    // after queueing would target the wrong word (or no-op on a cleared field).
+    customDictionary.newWord = 'hello'
+    customDictionary.add() // no-arg, queued while busy
+    expect(mocks.AddCustomDictionaryWord).toHaveBeenCalledTimes(1) // only first
+
+    // Simulate the user retyping the field before the queue drains. Before the
+    // fix the queued add would target 'world' here.
+    customDictionary.newWord = 'world'
+
+    // Re-mock so the drained add resolves with the captured word's result.
+    mocks.AddCustomDictionaryWord.mockResolvedValue(['hello'])
+    firstDef.resolve(['first'])
+    await firstP
+
+    await vi.waitFor(() => {
+      // 'hello' was captured at queue time; 'world' (current newWord) is not used.
+      expect(mocks.AddCustomDictionaryWord).toHaveBeenCalledWith('hello')
+      expect(customDictionary.words).toEqual(['hello'])
+    })
+    expect(mocks.AddCustomDictionaryWord).not.toHaveBeenCalledWith('world')
+    // newWord is cleared by the in-flight no-arg add's body on resolve.
+    expect(customDictionary.newWord).toBe('')
+    expect(customDictionary.busy).toBe(false)
+  })
+
+  it('skips load() while a mutation is in flight so the result is not clobbered', async () => {
+    // If load() ran while busy, it would overwrite `words` with this list.
+    mocks.GetCustomDictionary.mockResolvedValue(['STALE'])
+
+    const addDef = deferred<string[]>()
+    mocks.AddCustomDictionaryWord.mockReturnValue(addDef.promise)
+
+    const addP = customDictionary.add('foo')
+    expect(customDictionary.busy).toBe(true)
+
+    // Concurrent load while the add is in flight: must no-op (CHANGE B). It
+    // returns before touching loading/words, so the in-flight result wins.
+    await customDictionary.load()
+
+    expect(mocks.GetCustomDictionary).not.toHaveBeenCalled()
+    expect(customDictionary.loading).toBe(false)
+
+    addDef.resolve(['foo'])
+    await addP
+
+    expect(customDictionary.words).toEqual(['foo'])
+    expect(mocks.GetCustomDictionary).not.toHaveBeenCalled()
+  })
 })

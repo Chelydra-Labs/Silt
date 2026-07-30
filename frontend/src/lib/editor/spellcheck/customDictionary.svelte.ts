@@ -95,9 +95,13 @@ export const customDictionary = {
    * deliberately does NOT mirror into the live config (unlike add/remove/
    * importFile), because an external edit to config.yaml emits config:changed,
    * which the hot-reload handler already uses to refresh settings.config for
-   * the spellcheck effect. Not busy-guarded, so not part of the pending queue.
+   * the spellcheck effect. Busy-guarded (skipped, not queued) so a concurrent
+   * reload can't clobber an in-flight mutation's result.
    */
   async load(): Promise<void> {
+    // A mutation may be in flight; it already updates `words`, so skip a
+    // concurrent reload that could clobber the just-applied result.
+    if (busy) return
     loading = true
     error = null
     try {
@@ -114,7 +118,9 @@ export const customDictionary = {
     const w = (word ?? newWord).trim()
     if (!w) return
     if (busy) {
-      pendingAction = () => customDictionary.add(word)
+      // Capture the resolved word, not the raw arg: the no-arg path reads
+      // newWord at call time, which may change before the queue drains.
+      pendingAction = () => customDictionary.add(w)
       return
     }
     error = null
