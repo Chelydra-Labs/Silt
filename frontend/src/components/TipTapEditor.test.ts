@@ -320,4 +320,59 @@ describe('Shift-Enter in taskBlock opens the modal (#781)', () => {
     editor.destroy()
     container.remove()
   })
+
+  it('does NOT dispatch silt:open-task-editor inside a TaskSubEditorModal', async () => {
+    const TASK_ID = 'task-shift-enter-sub-001'
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    const editor = new Editor({
+      element: container,
+      extensions: [
+        StarterKit.configure({
+          heading: false,
+          bulletList: false,
+          orderedList: false,
+          listItem: false,
+          blockquote: false,
+          codeBlock: false,
+          horizontalRule: false,
+          trailingNode: false
+        }),
+        ...SiltBlockExtensionsWithNodeViews,
+        SiltBlockKeymaps,
+        UniqueBlockIds
+      ],
+      content: blocksToDoc([
+        mkBlock('TASK', { id: TASK_ID, clean_text: 'a task', status: 'TODO' })
+      ])
+    })
+    await new Promise((r) => setTimeout(r, 0))
+
+    // Mark this editor as the one rendered inside TaskSubEditorModal — the
+    // flag TaskSubEditorModal registers on its host editor.
+    ;(editor.storage as unknown as Record<string, unknown>).siltSubEditorHost =
+      {
+        active: true
+      }
+
+    const handler = vi.fn()
+    window.addEventListener('silt:open-task-editor', handler)
+
+    editor.commands.focus()
+    const pm = container.querySelector('.ProseMirror') as HTMLElement
+    pm.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        shiftKey: true,
+        bubbles: true
+      })
+    )
+
+    expect(handler).not.toHaveBeenCalled()
+
+    window.removeEventListener('silt:open-task-editor', handler)
+    editor.destroy()
+    container.remove()
+  })
 })

@@ -50,6 +50,10 @@
     $props()
 
   let devModeEnabled = $derived(isDevMode())
+  let inSubEditor = $derived(
+    (editor.storage as unknown as Record<string, { active?: boolean }>)
+      .siltSubEditorHost?.active === true
+  )
   let menuEl = $state<HTMLDivElement | null>(null)
 
   // Close the menu: focus the editor first (while still mounted) then signal
@@ -310,7 +314,7 @@
         Copy Block Embed
       </button>
 
-      {#if menu.activeBlockNode?.type.name === 'taskBlock'}
+      {#if menu.activeBlockNode?.type.name === 'taskBlock' && !inSubEditor}
         <button
           type="button"
           class="context-menu-item"
