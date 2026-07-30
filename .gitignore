@@ -1,5 +1,7 @@
 # Wails build output
 build/bin/
+# Disposable mac icon emitted by `wails3 generate icons` (product is Win+Linux only)
+build/darwin/
 *.exe
 wails-*.json
 
