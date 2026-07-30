@@ -13,7 +13,8 @@ const siltConfigKeymapsKey = new PluginKey('siltConfigDrivenKeymaps')
 //
 // Ports the keydown logic from the legacy BlockRenderer.svelte (lines 280-398)
 // to TipTap keyboard shortcuts / ProseMirror keymap bindings:
-//   - Enter: create a new NoteBlock at the same depth below the cursor.
+//   - Enter: split at the caret into a new NoteBlock at the same depth
+//     (text after the caret moves to the new block; empty when at end).
 //   - Backspace at start: merge into a same-type sibling above; else clear
 //     bullet, unindent, then delete+focus-prev.
 //   - Delete at end: merge a same-type sibling below into this block (or drop
@@ -799,6 +800,8 @@ export const SiltBlockKeymaps = Extension.create({
       Enter: () => {
         const info = currentBlockInfo(this.editor)
         if (!info) return false
+        // codeBlock content model is text*; leave default handling alone.
+        if (info.node.type.spec.code) return false
 
         // Default to a plain (no-bullet) line. Only noteBlocks inherit /
         // resequence the bullet marker — pressing Enter after a task or
@@ -808,29 +811,59 @@ export const SiltBlockKeymaps = Extension.create({
           nextBullet = getNextBullet(info.node.attrs.bullet || '')
         }
 
-        // Create a new NoteBlock at the same depth right after the current block.
-        const newBlock = {
-          type: 'noteBlock',
-          attrs: {
-            id: null,
+        const { state } = this.editor
+        const { selection, schema } = state
+        const noteType = schema.nodes.noteBlock
+        if (!noteType) return false
+
+        const blockPos = info.pos
+        // Content lives inside the block node (between open/close tokens).
+        const contentEnd = blockPos + info.node.nodeSize - 1
+
+        try {
+          let tr = state.tr
+          // Non-empty selection: drop it first so split is at the caret
+          // (standard editor Enter-with-selection semantics).
+          if (!selection.empty) {
+            tr = tr.delete(selection.from, selection.to)
+          }
+          const cutFrom = tr.selection.from
+          const mappedContentEnd = tr.mapping.map(contentEnd)
+
+          // Text after the caret moves to the new block; empty when at end.
+          const afterContent =
+            cutFrom < mappedContentEnd
+              ? tr.doc.slice(cutFrom, mappedContentEnd).content
+              : null
+          if (cutFrom < mappedContentEnd) {
+            tr = tr.delete(cutFrom, mappedContentEnd)
+          }
+
+          const attrs = {
+            id: null as string | null,
             depth: info.depth,
             bullet: nextBullet,
             file_date: new Date().toISOString().slice(0, 10)
           }
+          const newNode =
+            afterContent && afterContent.size > 0
+              ? noteType.create(attrs, afterContent)
+              : noteType.create(attrs)
+
+          // After in-block delete, block still starts at blockPos.
+          const blockNode = tr.doc.nodeAt(blockPos)
+          if (!blockNode) return false
+          const insertPos = blockPos + blockNode.nodeSize
+          tr = tr.insert(insertPos, newNode)
+          // Caret at start of the new block (same-tx; no focus() split —
+          // see mergeSiblingBlock).
+          tr = tr.setSelection(TextSelection.create(tr.doc, insertPos + 1))
+          this.editor.view.dispatch(tr)
+          return true
+        } catch (e) {
+          console.error('Enter split: dispatch failed', e)
+          return false
         }
-        const insertPos = info.pos + info.node.nodeSize
-        this.editor.view.dispatch(
-          this.editor.state.tr.insert(insertPos, [
-            this.editor.state.schema.nodeFromJSON(newBlock)
-          ])
-        )
-        // Move cursor into the new block.
-        const newPos = insertPos + 1
-        this.editor.commands.focus()
-        const tr = this.editor.state.tr
-        const sel = TextSelection.create(this.editor.state.doc, newPos, newPos)
-        this.editor.view.dispatch(tr.setSelection(sel))
-        return true
       },
 
       Backspace: () => {

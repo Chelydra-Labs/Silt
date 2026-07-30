@@ -226,6 +226,70 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
     expect(newBlock.attrs.bullet).toBe('')
     editor.destroy()
   })
+
+  it('splits mid-text bulleted note: text after caret moves to the new li', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(blockDoc('noteBlock', 'hello world'))
+    // Place caret between "hello " and "world" (after 6 chars of content).
+    const blockStart = 1 // doc pos of first block content
+    editor.commands.setTextSelection(blockStart + 6)
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    const first = editor.state.doc.child(0)
+    const second = editor.state.doc.child(1)
+    expect(first.type.name).toBe('noteBlock')
+    expect(first.textContent).toBe('hello ')
+    expect(first.attrs.bullet).toBe('- ')
+    expect(second.type.name).toBe('noteBlock')
+    expect(second.textContent).toBe('world')
+    expect(second.attrs.bullet).toBe('- ')
+    // Caret at start of the new block's content.
+    expect(editor.state.selection.from).toBe(
+      first.nodeSize + 1 // after first block open → start of second content
+    )
+    editor.destroy()
+  })
+
+  it('splits mid-text ordered note and resequences the next marker', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'alpha beta' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.setTextSelection(1 + 6) // after "alpha "
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).textContent).toBe('alpha ')
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('1. ')
+    expect(editor.state.doc.child(1).textContent).toBe('beta')
+    expect(editor.state.doc.child(1).attrs.bullet).toBe('2. ')
+    editor.destroy()
+  })
+
+  it('Enter with a non-empty selection drops the selection then splits', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(blockDoc('noteBlock', 'one two three'))
+    // Select " two" (chars 3..7) then Enter → first "one", second " three".
+    editor.commands.setTextSelection({ from: 1 + 3, to: 1 + 7 })
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).textContent).toBe('one')
+    expect(editor.state.doc.child(1).textContent).toBe(' three')
+    editor.destroy()
+  })
 })
 
 describe('Shift-Enter soft line break (#828)', () => {
