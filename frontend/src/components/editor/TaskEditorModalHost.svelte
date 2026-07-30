@@ -90,6 +90,13 @@
       window.removeEventListener('silt:open-task-editor', onOpenTaskEditor)
   })
 
+  $effect(() => {
+    // Vault switch (or unload) nulls ctx while loaders re-initialize; clear the
+    // stale task so the previous vault's task doesn't re-render once the new
+    // context is ready.
+    if (!ctx) openTask = null
+  })
+
   onDestroy(() => {
     openTask = null
   })
