@@ -252,6 +252,51 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
     editor.destroy()
   })
 
+  it('mid-text Enter on taskBlock keeps full task body and appends empty note', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(blockDoc('taskBlock', 'buy milk and bread'))
+    // Caret after "buy milk " — must not demote "and bread" off the task.
+    editor.commands.setTextSelection(1 + 'buy milk '.length)
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    const task = editor.state.doc.child(0)
+    const note = editor.state.doc.child(1)
+    expect(task.type.name).toBe('taskBlock')
+    expect(task.textContent).toBe('buy milk and bread')
+    expect(task.attrs.status).toBe('TODO')
+    expect(note.type.name).toBe('noteBlock')
+    expect(note.textContent).toBe('')
+    expect(note.attrs.bullet).toBe('')
+    editor.destroy()
+  })
+
+  it('mid-text Enter on headerBlock keeps full header and appends empty note', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'headerBlock',
+          attrs: { id: 'h1', depth: 1 },
+          content: [{ type: 'text', text: 'Section Title Extra' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.setTextSelection(1 + 'Section Title '.length)
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).type.name).toBe('headerBlock')
+    expect(editor.state.doc.child(0).textContent).toBe('Section Title Extra')
+    expect(editor.state.doc.child(1).type.name).toBe('noteBlock')
+    expect(editor.state.doc.child(1).textContent).toBe('')
+    editor.destroy()
+  })
+
   it('splits mid-text ordered note and resequences the next marker', () => {
     const editor = makeEditorWithKeymaps()
     const doc: DocJSON = {

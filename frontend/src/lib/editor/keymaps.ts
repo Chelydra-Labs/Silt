@@ -857,8 +857,12 @@ export const SiltBlockKeymaps = Extension.create({
         // Default to a plain (no-bullet) line. Only noteBlocks inherit /
         // resequence the bullet marker — pressing Enter after a task or
         // header should start a fresh plain line, not a bulleted one (#258).
+        // Mid-text split (move trailing content onto the new block) is also
+        // noteBlock-only: task/header/callout keep their full body and only
+        // append an empty note below (avoids demoting trailing task text).
+        const isNote = info.node.type.name === 'noteBlock'
         let nextBullet = ''
-        if (info.node.type.name === 'noteBlock') {
+        if (isNote) {
           nextBullet = getNextBullet(info.node.attrs.bullet || '')
         }
 
@@ -881,12 +885,13 @@ export const SiltBlockKeymaps = Extension.create({
           const cutFrom = tr.selection.from
           const mappedContentEnd = tr.mapping.map(contentEnd)
 
-          // Text after the caret moves to the new block; empty when at end.
+          // noteBlock only: text after the caret moves to the new block.
+          // Other block types leave the source intact and insert empty below.
           const afterContent =
-            cutFrom < mappedContentEnd
+            isNote && cutFrom < mappedContentEnd
               ? tr.doc.slice(cutFrom, mappedContentEnd).content
               : null
-          if (cutFrom < mappedContentEnd) {
+          if (isNote && cutFrom < mappedContentEnd) {
             tr = tr.delete(cutFrom, mappedContentEnd)
           }
 
