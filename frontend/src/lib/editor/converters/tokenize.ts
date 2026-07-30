@@ -50,6 +50,10 @@ export type PageLinkToken = {
   heading?: string
   alias?: string
 }
+/** Soft line break inside a single prose block (`<br>` in clean_text, #828). */
+export type HardBreakToken = {
+  kind: 'hardBreak'
+}
 export type Token =
   | TextToken
   | MarkToken
@@ -58,6 +62,7 @@ export type Token =
   | MentionToken
   | MathInlineToken
   | PageLinkToken
+  | HardBreakToken
 
 // ---- Tokenize stage: recursive-descent parser ----------------------------
 
@@ -223,6 +228,11 @@ const ATOMIC_INLINE_TOKEN =
 // mark stage (`code` MARK_PATTERN, shielded) re-applies the code mark to it.
 const CODE_SPAN_RE = /`[^`]+`/y
 
+// Soft line break stored as HTML <br> inside a single prose clean_text line
+// (#828). Accept <br>, <br/>, <br /> (case-insensitive). Matched before other
+// atomics so a bare `<` from a break is never left as plain text.
+const HARD_BREAK_RE = /<br\s*\/?>/iy
+
 // Split clean_text on atomic inline tokens, SHIELDING inline code spans first.
 // Text segments are later parsed for inline marks; atomic + code-span segments
 // are emitted as-is (opaque — their content is never re-parsed for marks, so
@@ -244,7 +254,19 @@ function splitAtomicTokens(text: string): Token[] {
       i += codeMatch[0].length
       continue
     }
-    // 2. Atomic inline token at this position.
+    // 2. Soft line break (<br>) — one managed prose line, visual break (#828).
+    HARD_BREAK_RE.lastIndex = i
+    const brMatch = HARD_BREAK_RE.exec(text)
+    if (brMatch && brMatch.index === i) {
+      if (plain) {
+        tokens.push({ kind: 'text', text: plain, marks: [] })
+        plain = ''
+      }
+      tokens.push({ kind: 'hardBreak' })
+      i += brMatch[0].length
+      continue
+    }
+    // 3. Atomic inline token at this position.
     ATOMIC_INLINE_TOKEN.lastIndex = i
     const match = ATOMIC_INLINE_TOKEN.exec(text)
     if (match && match.index === i) {

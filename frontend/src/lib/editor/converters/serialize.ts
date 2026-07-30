@@ -41,6 +41,8 @@ function tokenToNodeJSON(t: Token, inheritedMarks: MarkRef[] = []): NodeJSON[] {
       if (t.alias) attrs.alias = t.alias
       return [{ type: 'pageLinkNode', attrs }]
     }
+    case 'hardBreak':
+      return [{ type: 'hardBreak' }]
     case 'mark': {
       const own: MarkRef = {
         type: t.markType,
@@ -198,6 +200,10 @@ export function serializeInlineContent(content?: NodeJSON[]): string {
       if (child.attrs?.alias) link += `|${asString(child.attrs.alias)}`
       link += ']]'
       result += link
+    } else if (child.type === 'hardBreak') {
+      // Soft break inside one prose line — HTML <br>, not a bare newline (#828).
+      closeAll()
+      result += '<br>'
     } else if (child.content) {
       closeAll()
       result += serializeInlineContent(child.content)
