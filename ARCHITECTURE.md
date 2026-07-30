@@ -573,12 +573,19 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `docs/decisions/0006-backlinks-query-strategy.md`.   `GetUnlinkedMentionsPaged`
   surfaces residual plain-text mentions of the current page title — an FTS5
   phrase query (`clean_content : "title"`) rides the existing `blocks_fts`
-  index (cost ∝ matches, not a full scan); candidates are ordered by source
-  path and capped (`unlinkedScanCap`) so common titles cannot unbounded-scan.
-  When the cap binds, the result envelope sets `truncated: true` (pool-level
-  incompleteness). Page-level `has_more` / `cursor` only page residual source
-  pages **within** that candidate pool — the two flags are independent. A
-  Go-side word-boundary regex confirms each hit, then
+  index. Each call fetches one **rowid-keyset batch**: a nested
+  `SELECT rowid FROM blocks_fts … ORDER BY rowid LIMIT unlinkedScanCap+1`
+  bounds MATCH work before joining `blocks` (path-ordered join plans TEMP-sort
+  the full match set; the FTS subquery does not). CODE and self-page rows are
+  dropped in Go after the join so filters cannot push work past the FTS LIMIT.
+  When the batch fills the cap with more FTS hits beyond it, the envelope sets
+  `truncated: true` and `scan_cursor` (opaque keyset: last included FTS
+  rowid) so the client can request the next batch explicitly. Page-level
+  `has_more` / `cursor` only page residual source pages **within the current
+  batch** — orthogonal to `truncated` / `scan_cursor`. Residual presentation
+  is path-sorted in Go; scan order only defines the batch window. Cost per
+  call is O(batch), not O(all vault matches); further batches are user-gated.
+  A Go-side word-boundary regex confirms each hit, then
   `FirstPlainTitleOccurrence` keeps only title spans that do not overlap a
   `[[…]]` wiki-link (same rule as promote). Blocks that already link the page
   once still surface when residual plain text remains; fully-linked-only
@@ -996,10 +1003,13 @@ source page, the row migrates out of the unlinked leg and the new link
 reappears among the backlinks groups. Mentions whose title resolves to more
 than one page (ambiguous basename) are flagged and render candidate paths as
 clickable chips — each chip promotes to that explicit target in one click,
-never auto-promoted without a choice. When the API reports `truncated`, the
-section surfaces an accessible incompleteness notice (header subtitle and
-expanded status strip) so common-title caps are never silent; Load more still
-only advances the residual page cursor within the capped candidate pool.
+  never auto-promoted without a choice. When the API reports `truncated`, the
+  section surfaces an accessible incompleteness notice (header subtitle and
+  expanded status strip) so common-title caps are never silent. **Load more**
+  advances the residual page cursor within the current FTS batch; **Scan more
+  mentions** (when `truncated` and `scan_cursor` are set) requests the next
+  capped FTS batch and appends unique residual pages — the two controls are
+  distinct so pool continuation is never confused with residual paging.
 
 5.5 Search & Writing Aids
 
