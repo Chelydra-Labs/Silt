@@ -277,6 +277,92 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
     editor.destroy()
   })
 
+  it('renumbers following ordered items after mid-list Enter (no duplicate numbers)', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'one' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'two three' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'four' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n4', depth: 0, bullet: '4. ' },
+          content: [{ type: 'text', text: 'five' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // Caret in item 2 between "two " and "three"
+    // pos: block0 size 5 (2+3), content of n2 starts at 5+1=6, after "two " = 6+4=10
+    const n2ContentStart = 1 + editor.state.doc.child(0).nodeSize
+    editor.commands.setTextSelection(n2ContentStart + 4)
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(5)
+    const bullets = [0, 1, 2, 3, 4].map(
+      (i) => editor.state.doc.child(i).attrs.bullet
+    )
+    expect(bullets).toEqual(['1. ', '2. ', '3. ', '4. ', '5. '])
+    expect(editor.state.doc.child(1).textContent).toBe('two ')
+    expect(editor.state.doc.child(2).textContent).toBe('three')
+    expect(editor.state.doc.child(3).textContent).toBe('four')
+    expect(editor.state.doc.child(4).textContent).toBe('five')
+    editor.destroy()
+  })
+
+  it('renumbers following ordered items after end-of-item Enter', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1) ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2) ' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3) ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // End of item 2
+    const endOfN2 =
+      editor.state.doc.child(0).nodeSize + editor.state.doc.child(1).nodeSize
+    editor.commands.setTextSelection(endOfN2 - 1)
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(4)
+    expect(
+      [0, 1, 2, 3].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['1) ', '2) ', '3) ', '4) '])
+    expect(editor.state.doc.child(2).textContent).toBe('')
+    expect(editor.state.doc.child(3).textContent).toBe('c')
+    editor.destroy()
+  })
+
   it('Enter with a non-empty selection drops the selection then splits', () => {
     const editor = makeEditorWithKeymaps()
     editor.commands.setContent(blockDoc('noteBlock', 'one two three'))

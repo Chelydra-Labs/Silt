@@ -1,7 +1,12 @@
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
+import {
+  Plugin,
+  PluginKey,
+  TextSelection,
+  type Transaction
+} from '@tiptap/pm/state'
 import { keydownHandler } from '@tiptap/pm/keymap'
 import { freshId } from './uniqueIdPlugin'
 import { resolveShortcut } from '../../settings/hotkeys'
@@ -84,6 +89,52 @@ function getNextBullet(currentBullet: string): string {
     return `${nextNum}${punc}`
   }
   return currentBullet
+}
+
+/** Parse `1. ` / `2) ` ordered markers; null for unordered/plain. */
+function parseOrderedBullet(
+  bullet: string
+): { n: number; punc: string } | null {
+  const match = (bullet || '').match(/^(\d+)([.)]\s)$/)
+  if (!match) return null
+  return { n: parseInt(match[1], 10), punc: match[2] }
+}
+
+/**
+ * After inserting an ordered noteBlock, renumber every following contiguous
+ * same-depth ordered note with the same punctuation so mid-list Enter does
+ * not leave duplicate numbers (2 → new 3, old 3 stays 3).
+ *
+ * Walks siblings after `fromPos` (the new block's doc position). Stops at the
+ * first non-matching block (different type, depth, or bullet style).
+ */
+function renumberFollowingOrdered(
+  tr: Transaction,
+  fromPos: number,
+  startNum: number,
+  punc: string,
+  depth: number
+): Transaction {
+  const startNode = tr.doc.nodeAt(fromPos)
+  if (!startNode) return tr
+  let pos = fromPos + startNode.nodeSize
+  let expected = startNum + 1
+  while (pos < tr.doc.content.size) {
+    const node = tr.doc.nodeAt(pos)
+    if (!node || node.type.name !== 'noteBlock') break
+    if ((node.attrs.depth || 0) !== depth) break
+    const parsed = parseOrderedBullet(String(node.attrs.bullet || ''))
+    if (!parsed || parsed.punc !== punc) break
+    const want = `${expected}${punc}`
+    if (String(node.attrs.bullet || '') !== want) {
+      tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, bullet: want })
+    }
+    expected++
+    const after = tr.doc.nodeAt(pos)
+    if (!after) break
+    pos += after.nodeSize
+  }
+  return tr
 }
 
 // Convert the current block to a new type (#169). Provides the correct attrs
@@ -855,6 +906,18 @@ export const SiltBlockKeymaps = Extension.create({
           if (!blockNode) return false
           const insertPos = blockPos + blockNode.nodeSize
           tr = tr.insert(insertPos, newNode)
+          // Ordered lists: bump every following same-depth ordered marker so
+          // mid-list Enter does not leave duplicate numbers.
+          const ordered = parseOrderedBullet(nextBullet)
+          if (ordered) {
+            tr = renumberFollowingOrdered(
+              tr,
+              insertPos,
+              ordered.n,
+              ordered.punc,
+              info.depth
+            )
+          }
           // Caret at start of the new block (same-tx; no focus() split —
           // see mergeSiblingBlock).
           tr = tr.setSelection(TextSelection.create(tr.doc, insertPos + 1))
