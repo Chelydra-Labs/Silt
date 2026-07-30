@@ -211,15 +211,19 @@ func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source
 	if phrase == "" {
 		return nil, false, nil
 	}
-	// source is NOT NULL DEFAULT 'vault' — no COALESCE (keeps ORDER BY aligned
-	// with idx_blocks_src_file). clean_content may be empty; COALESCE for scan.
+	// source is NOT NULL DEFAULT 'vault'. ORDER BY matches idx_blocks_src_file
+	// prefix (source, notebook, section, page) so the planner can walk in order
+	// and stop at LIMIT — no trailing b.id (UUID PK is not on that index and
+	// forced a full match-set sort). Page-level residual sort/cursor is the same
+	// path key; within-page block order is not load-bearing for the cap.
+	// clean_content may be empty; COALESCE for scan.
 	q := `SELECT b.id, b.source, b.notebook, b.section, b.page, COALESCE(b.clean_content,'')
 		FROM blocks_fts
 		JOIN blocks b ON b.rowid = blocks_fts.rowid
 		WHERE blocks_fts MATCH ?
 		  AND b.type <> 'CODE'
 		  AND NOT (b.source = ? AND b.notebook = ? AND b.section = ? AND b.page = ?)
-		ORDER BY b.source, b.notebook, b.section, b.page, b.id
+		ORDER BY b.source, b.notebook, b.section, b.page
 		LIMIT ?`
 	rows, err := db.Query(q, phrase, source, notebook, section, page, unlinkedScanCap+1)
 	if err != nil {
