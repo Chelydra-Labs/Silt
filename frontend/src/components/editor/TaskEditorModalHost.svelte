@@ -22,6 +22,10 @@
   const PLUGIN_ID = 'silt-tasks'
 
   let openTask = $state<TaskDetail | null>(null)
+  // Monotonic open sequence: if two distinct tasks are opened before the first
+  // fetch resolves, the stale fetch is discarded so the user lands on the task
+  // they most recently clicked — not whichever fetch happened to resolve last.
+  let openSeq = 0
 
   // Build the plugin context the same way AIChatDrawer does: cache per token
   // so closing and reopening doesn't create a new context.
@@ -42,10 +46,11 @@
     if (!detail?.blockId) return
     // Don't open if already showing this task.
     if (openTask?.id === detail.blockId) return
-    void openTaskEditor(detail.blockId)
+    const seq = ++openSeq
+    void openTaskEditor(seq, detail.blockId)
   }
 
-  async function openTaskEditor(blockId: string): Promise<void> {
+  async function openTaskEditor(seq: number, blockId: string): Promise<void> {
     const currentCtx = ctx
     if (!currentCtx) {
       pushNotification({
@@ -56,6 +61,8 @@
     }
     try {
       const detail = await fetchTaskDetail(currentCtx, blockId)
+      // A newer open superseded this one — discard the stale result silently.
+      if (seq !== openSeq) return
       if (!detail) {
         pushNotification({
           kind: 'info',
@@ -65,6 +72,7 @@
       }
       openTask = detail
     } catch {
+      if (seq !== openSeq) return
       pushNotification({
         kind: 'error',
         message: "Couldn't open this task — try again."

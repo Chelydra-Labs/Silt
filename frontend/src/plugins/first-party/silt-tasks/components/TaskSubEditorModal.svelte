@@ -4,6 +4,7 @@
   import type { Editor } from 'svelte-tiptap'
   import { fly } from 'svelte/transition'
   import StarterKit from '@tiptap/starter-kit'
+  import { Extension } from '@tiptap/core'
   import Placeholder from '@tiptap/extension-placeholder'
   import { CharacterCount, Focus, TrailingNode } from '@tiptap/extensions'
   import {
@@ -126,7 +127,16 @@
       placeholder: 'Write sub-notes, sub-tasks…'
     }),
     CharacterCount,
-    Focus
+    Focus,
+    // Marks this editor as the Task Sub-Editor modal host so TaskBlockView can
+    // suppress its "open in modal" pencil for nested sub-tasks (#781). Drilling
+    // into a sub-task from inside the modal would swap it via {#key} with no
+    // autosave-flush guarantee, risking dropped keystrokes and a confusing
+    // affordance — the in-page editor is the only intended entry point.
+    Extension.create({
+      name: 'siltSubEditorHost',
+      addStorage: () => ({ active: true })
+    })
   ]
 
   const editorStore = untrack(() =>
@@ -320,9 +330,13 @@
 
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement
+    // Lock background scroll while the full-screen modal is open.
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
     if (!initialTask) void loadTaskDetail()
     return () => {
       void drainSave()
+      document.body.style.overflow = prevOverflow
       previouslyFocused?.focus?.()
     }
   })
