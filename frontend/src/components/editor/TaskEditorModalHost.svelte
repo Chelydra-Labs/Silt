@@ -6,6 +6,7 @@
   import TaskSubEditorModal from '../../plugins/first-party/silt-tasks/components/TaskSubEditorModal.svelte'
   import { fetchTaskDetail } from '../../plugins/first-party/silt-tasks/query'
   import type { TaskDetail } from '../../plugins/first-party/silt-tasks/types'
+  import { pushNotification } from '../../notifications/store.svelte'
 
   /**
    * Host for the in-page task-block modal (#781). Listens for the
@@ -46,11 +47,28 @@
 
   async function openTaskEditor(blockId: string): Promise<void> {
     const currentCtx = ctx
-    if (!currentCtx) return
+    if (!currentCtx) {
+      pushNotification({
+        kind: 'info',
+        message: "Tasks plugin isn't ready — try again in a moment."
+      })
+      return
+    }
     try {
-      openTask = await fetchTaskDetail(currentCtx, blockId)
+      const detail = await fetchTaskDetail(currentCtx, blockId)
+      if (!detail) {
+        pushNotification({
+          kind: 'info',
+          message: 'This task no longer exists.'
+        })
+        return
+      }
+      openTask = detail
     } catch {
-      openTask = null
+      pushNotification({
+        kind: 'error',
+        message: "Couldn't open this task — try again."
+      })
     }
   }
 
@@ -70,17 +88,16 @@
 </script>
 
 {#if openTask && ctx}
-  <TaskSubEditorModal
-    blockId={openTask.id}
-    notebook={openTask.notebook}
-    section={openTask.section}
-    page={openTask.page}
-    parentTaskText={openTask.clean_content}
-    {ctx}
-    onClose={closeModal}
-    onMetaChanged={() => {
-      // Re-hydrate so the sidebar reflects the persisted metadata.
-      void openTaskEditor(openTask!.id)
-    }}
-  />
+  {#key openTask.id}
+    <TaskSubEditorModal
+      blockId={openTask.id}
+      notebook={openTask.notebook}
+      section={openTask.section}
+      page={openTask.page}
+      parentTaskText={openTask.clean_content}
+      initialTask={openTask}
+      {ctx}
+      onClose={closeModal}
+    />
+  {/key}
 {/if}

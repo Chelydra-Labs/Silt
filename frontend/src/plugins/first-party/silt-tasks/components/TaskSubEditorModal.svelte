@@ -47,6 +47,10 @@
     onClose: () => void
     /** Fired after a successful metadata write so the host can re-query. */
     onMetaChanged?: () => void
+    /** Pre-fetched task detail; when supplied the modal seeds the metadata
+     *  sidebar synchronously and skips its own fetch (avoids a late sidebar
+     *  pop-in on open). */
+    initialTask?: TaskDetail
   }
 
   let {
@@ -55,6 +59,7 @@
     section,
     page,
     parentTaskText,
+    initialTask,
     ctx,
     onClose,
     onMetaChanged
@@ -64,10 +69,11 @@
 
   // --- Task detail hydration (#780) ---
   // The modal is opened with parentTaskText (the task's clean_content from the
-  // host view). We re-fetch the full TaskDetail via fetchTaskDetail so the
-  // metadata sidebar has every field. parentTaskText is the optimistic title
-  // before the fetch resolves.
-  let task = $state<TaskDetail | null>(null)
+  // host view). When the host supplies initialTask (the page-editor path), the
+  // sidebar seeds from it synchronously and skips the fetch. Otherwise we
+  // re-fetch the full TaskDetail via fetchTaskDetail so the sidebar has every
+  // field; parentTaskText is the optimistic title before the fetch resolves.
+  let task = $state<TaskDetail | null>(untrack(() => initialTask ?? null))
 
   // --- Editor setup ---
   let editorInstance: Editor | null = $state(null)
@@ -314,7 +320,7 @@
 
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement
-    void loadTaskDetail()
+    if (!initialTask) void loadTaskDetail()
     return () => {
       void drainSave()
       previouslyFocused?.focus?.()
