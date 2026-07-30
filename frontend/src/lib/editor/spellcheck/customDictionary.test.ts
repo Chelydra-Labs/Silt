@@ -164,6 +164,33 @@ describe('customDictionary one-slot pending queue (#822)', () => {
     expect(customDictionary.busy).toBe(false)
   })
 
+  it('releases busy and runs the queued action when the in-flight action rejects', async () => {
+    const importDef = deferred<{ added: number; skipped: number }>()
+    mocks.PickCustomDictionaryImportFile.mockResolvedValue('/vocab.txt')
+    mocks.ImportCustomDictionary.mockReturnValue(importDef.promise)
+    mocks.GetCustomDictionary.mockResolvedValue(['apple'])
+
+    const importP = customDictionary.importFile()
+    expect(customDictionary.busy).toBe(true)
+
+    // Queue an add while the import is in flight.
+    mocks.AddCustomDictionaryWord.mockResolvedValue(['apple', 'banana'])
+    customDictionary.add('banana')
+    expect(mocks.AddCustomDictionaryWord).not.toHaveBeenCalled()
+
+    // The in-flight import rejects (network/disk failure).
+    importDef.reject(new Error('network timeout'))
+    await importP
+
+    // busy is released and the queued add still runs + succeeds despite the
+    // in-flight rejection — the rejection must not strand the pending action.
+    await vi.waitFor(() => {
+      expect(mocks.AddCustomDictionaryWord).toHaveBeenCalledWith('banana')
+      expect(customDictionary.words).toEqual(['apple', 'banana'])
+    })
+    expect(customDictionary.busy).toBe(false)
+  })
+
   it('releases busy with no error when a queued export dialog is cancelled', async () => {
     // Non-empty dict so the drained export passes the empty-check and reaches
     // the save dialog (where the cancel / empty-path early-return lives).
