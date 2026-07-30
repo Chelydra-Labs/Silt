@@ -16,14 +16,15 @@ import {
   FIXTURE_UUID_A,
   FIXTURE_UUID_B
 } from '../lib/editor/nodeview-test-harness'
-import { docToBlocks } from '../lib/editor'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import {
   SiltBlockExtensionsWithNodeViews,
+  SiltHardBreak,
   SiltBlockKeymaps,
   UniqueBlockIds,
-  blocksToDoc
+  blocksToDoc,
+  docToBlocks
 } from '../lib/editor'
 
 const mocks = vi.hoisted(() => ({
@@ -224,129 +225,103 @@ describe('TipTapEditor smart-graph content (#127)', () => {
   })
 })
 
+function pressShiftEnter(editor: Editor): void {
+  const event = new KeyboardEvent('keydown', {
+    key: 'Enter',
+    shiftKey: true,
+    bubbles: true
+  })
+  editor.view.someProp('handleKeyDown', (handler) => {
+    handler(editor.view, event)
+  })
+}
+
+function makeShiftEnterEditor(content: ReturnType<typeof blocksToDoc>): Editor {
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const editor = new Editor({
+    element: container,
+    extensions: [
+      StarterKit.configure({
+        heading: false,
+        bulletList: false,
+        orderedList: false,
+        listItem: false,
+        blockquote: false,
+        codeBlock: false,
+        horizontalRule: false,
+        trailingNode: false,
+        hardBreak: false
+      }),
+      SiltHardBreak,
+      ...SiltBlockExtensionsWithNodeViews,
+      SiltBlockKeymaps,
+      UniqueBlockIds
+    ],
+    content
+  })
+  // Attach container for cleanup via editor.view.dom parent.
+  ;(editor as Editor & { __testContainer?: HTMLElement }).__testContainer =
+    container
+  return editor
+}
+
+function destroyShiftEnterEditor(editor: Editor): void {
+  const container = (editor as Editor & { __testContainer?: HTMLElement })
+    .__testContainer
+  editor.destroy()
+  container?.remove()
+}
+
 describe('Shift-Enter in taskBlock opens the modal (#781)', () => {
   it('dispatches silt:open-task-editor with the block id', async () => {
     const TASK_ID = 'task-shift-enter-001'
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-
-    const editor = new Editor({
-      element: container,
-      extensions: [
-        StarterKit.configure({
-          heading: false,
-          bulletList: false,
-          orderedList: false,
-          listItem: false,
-          blockquote: false,
-          codeBlock: false,
-          horizontalRule: false,
-          trailingNode: false
-        }),
-        ...SiltBlockExtensionsWithNodeViews,
-        SiltBlockKeymaps,
-        UniqueBlockIds
-      ],
-      content: blocksToDoc([
+    const editor = makeShiftEnterEditor(
+      blocksToDoc([
         mkBlock('TASK', { id: TASK_ID, clean_text: 'a task', status: 'TODO' })
       ])
-    })
+    )
     await new Promise((r) => setTimeout(r, 0))
 
     const handler = vi.fn()
     window.addEventListener('silt:open-task-editor', handler)
 
-    // Focus + place the caret inside the task block.
     editor.commands.focus()
-    const pm = container.querySelector('.ProseMirror') as HTMLElement
-    pm.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'Enter',
-        shiftKey: true,
-        bubbles: true
-      })
-    )
+    pressShiftEnter(editor)
 
     expect(handler).toHaveBeenCalledTimes(1)
     const detail = (handler.mock.calls[0][0] as CustomEvent).detail
     expect(detail).toEqual({ blockId: TASK_ID })
 
     window.removeEventListener('silt:open-task-editor', handler)
-    editor.destroy()
-    container.remove()
+    destroyShiftEnterEditor(editor)
   })
 
   it('does NOT dispatch silt:open-task-editor inside a noteBlock', async () => {
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-
-    const editor = new Editor({
-      element: container,
-      extensions: [
-        StarterKit.configure({
-          heading: false,
-          bulletList: false,
-          orderedList: false,
-          listItem: false,
-          blockquote: false,
-          codeBlock: false,
-          horizontalRule: false,
-          trailingNode: false
-        }),
-        ...SiltBlockExtensionsWithNodeViews,
-        SiltBlockKeymaps,
-        UniqueBlockIds
-      ],
-      content: blocksToDoc([mkBlock('NOTE', { clean_text: 'a note' })])
-    })
+    const editor = makeShiftEnterEditor(
+      blocksToDoc([mkBlock('NOTE', { clean_text: 'a note' })])
+    )
     await new Promise((r) => setTimeout(r, 0))
 
     const handler = vi.fn()
     window.addEventListener('silt:open-task-editor', handler)
 
     editor.commands.focus()
-    const pm = container.querySelector('.ProseMirror') as HTMLElement
-    pm.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'Enter',
-        shiftKey: true,
-        bubbles: true
-      })
-    )
+    pressShiftEnter(editor)
 
     expect(handler).not.toHaveBeenCalled()
 
     window.removeEventListener('silt:open-task-editor', handler)
-    editor.destroy()
-    container.remove()
+    destroyShiftEnterEditor(editor)
   })
 
   it('does NOT dispatch silt:open-task-editor inside a TaskSubEditorModal', async () => {
     const TASK_ID = 'task-shift-enter-sub-001'
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-
-    const editor = new Editor({
-      element: container,
-      extensions: [
-        StarterKit.configure({
-          heading: false,
-          bulletList: false,
-          orderedList: false,
-          listItem: false,
-          blockquote: false,
-          codeBlock: false,
-          horizontalRule: false,
-          trailingNode: false
-        }),
-        ...SiltBlockExtensionsWithNodeViews,
-        SiltBlockKeymaps,
-        UniqueBlockIds
-      ],
-      content: blocksToDoc([
+    const editor = makeShiftEnterEditor(
+      blocksToDoc([
         mkBlock('TASK', { id: TASK_ID, clean_text: 'a task', status: 'TODO' })
       ])
-    })
+    )
     await new Promise((r) => setTimeout(r, 0))
 
     // Mark this editor as the one rendered inside TaskSubEditorModal — the
@@ -360,19 +335,38 @@ describe('Shift-Enter in taskBlock opens the modal (#781)', () => {
     window.addEventListener('silt:open-task-editor', handler)
 
     editor.commands.focus()
-    const pm = container.querySelector('.ProseMirror') as HTMLElement
-    pm.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'Enter',
-        shiftKey: true,
-        bubbles: true
-      })
-    )
+    pressShiftEnter(editor)
 
     expect(handler).not.toHaveBeenCalled()
+    // Soft break instead (#828).
+    expect(editor.state.doc.childCount).toBe(1)
+    const json = editor.state.doc.child(0).toJSON() as {
+      content?: Array<{ type: string }>
+    }
+    expect((json.content || []).some((c) => c.type === 'hardBreak')).toBe(true)
 
     window.removeEventListener('silt:open-task-editor', handler)
-    editor.destroy()
-    container.remove()
+    destroyShiftEnterEditor(editor)
+  })
+})
+
+describe('Shift-Enter soft break in noteBlock (#828)', () => {
+  it('inserts hardBreak and keeps a single block', async () => {
+    const editor = makeShiftEnterEditor(
+      blocksToDoc([
+        mkBlock('NOTE', { id: 'note-1', clean_text: 'hello world' })
+      ])
+    )
+    await new Promise((r) => setTimeout(r, 0))
+
+    editor.commands.focus('end')
+    pressShiftEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(1)
+    const saved = docToBlocks(editor.getJSON())
+    expect(saved).toHaveLength(1)
+    expect(saved[0].clean_text).toContain('<br>')
+
+    destroyShiftEnterEditor(editor)
   })
 })

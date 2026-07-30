@@ -40,6 +40,7 @@ export {
   applyEditCaret
 } from './editCaretRestore'
 export type { EditCaretSnapshot } from './editCaretRestore'
+export { SiltHardBreak } from './hardBreak'
 export {
   SiltBlockKeymaps,
   convertToBlock,

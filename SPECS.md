@@ -1112,6 +1112,14 @@ a block and `Backspace` at the start merge the adjacent same-type same-parent
 sibling into one block (survivor keeps its UUID); cross-type, cross-parent,
 and code-block boundaries fall through to the per-type default.
 
+**Enter vs Shift+Enter.** `Enter` always creates a new note block at the same
+depth (outliner row). `Shift+Enter` inserts a soft line break inside the
+current prose block (NOTE/HEADER, and task rows only inside the task
+sub-editor). Soft breaks are stored as HTML `<br>` inside that block’s single
+`clean_text` line — they do not create a new block id and do not use bare
+newlines (which the prose renderer collapses). On a main-outline task row,
+`Shift+Enter` opens the task sub-editor instead.
+
 ### Block types
 
 Silt round-trips the standard markdown block-level vocabulary. Each block type
@@ -1128,14 +1136,16 @@ are standard syntax, interchangeable with Obsidian / Joplin / GitHub / VS Code.
 | GFM table | `| a | b |` pipe syntax | Editable grid with Tab/arrow nav, column resize, zebra + hover theming, and a 6-operation contextual toolbar (merge is omitted — GFM can't represent spans). One managed `TABLE` block — the block identity is on a trailing line after the last row. |
 
 **Multi-line blocks.** The Go parser reads files line-by-line and `renderBlock`
-collapses `\n`→space for prose blocks (TASK/NOTE/HEADER). All multi-line block
-types use the **unified region-block model**: each multi-line region —
-fenced code (`CODE`), GFM table (`TABLE`), `<details>` HTML (`DETAILS`), and
-Obsidian callout (`CALLOUT`) — is accumulated into ONE managed `ParsedBlock`
-whose `clean_text` retains internal newlines. The block identity comment lives
-on its own dedicated trailing line after the region content, so the on-disk
-format stays strictly GFM/HTML/Obsidian syntax (interoperable with Obsidian,
-GitHub, VS Code). The frontend converter is a clean 1:1 map — no regrouping.
+collapses `\n`→space for prose blocks (TASK/NOTE/HEADER). Visual soft breaks
+inside a single prose block are encoded as HTML `<br>` in `clean_text` (still
+one managed line / one `ParsedBlock`). All multi-line block types use the
+**unified region-block model**: each multi-line region — fenced code (`CODE`),
+GFM table (`TABLE`), `<details>` HTML (`DETAILS`), and Obsidian callout
+(`CALLOUT`) — is accumulated into ONE managed `ParsedBlock` whose `clean_text`
+retains internal newlines. The block identity comment lives on its own
+dedicated trailing line after the region content, so the on-disk format stays
+strictly GFM/HTML/Obsidian syntax (interoperable with Obsidian, GitHub,
+VS Code). The frontend converter is a clean 1:1 map — no regrouping.
 Literal pipes in table cells are escaped as `\|`.
 
 10. System Configuration Engine

@@ -46,7 +46,8 @@ export type {
   MarkToken,
   EmbedToken,
   BlockReferenceToken,
-  PageLinkToken
+  PageLinkToken,
+  HardBreakToken
 } from './tokenize'
 
 export { serializeInlineContent } from './serialize'

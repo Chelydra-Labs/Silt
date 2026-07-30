@@ -6,8 +6,10 @@ import {
   SiltInlineMarkExtensions,
   SiltColorMarkExtensions,
   UniqueBlockIds,
+  SiltHardBreak,
   SiltBlockKeymaps
 } from './index'
+import { docToBlocks } from './converters'
 import { EmbedNode, BlockReferenceNode, CalloutBlock } from './schema'
 import {
   setBlockAlign,
@@ -34,8 +36,10 @@ function makeEditor(): Editor {
         blockquote: false,
         codeBlock: false,
         horizontalRule: false,
-        trailingNode: false
+        trailingNode: false,
+        hardBreak: false
       }),
+      SiltHardBreak,
       ...SiltBlockExtensions,
       ...SiltInlineMarkExtensions,
       ...SiltColorMarkExtensions,
@@ -62,8 +66,10 @@ function makeEditorWithKeymaps(): Editor {
         blockquote: false,
         codeBlock: false,
         horizontalRule: false,
-        trailingNode: false
+        trailingNode: false,
+        hardBreak: false
       }),
+      SiltHardBreak,
       ...SiltBlockExtensions,
       ...SiltInlineMarkExtensions,
       ...SiltColorMarkExtensions,
@@ -218,6 +224,141 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
     const newBlock = editor.state.doc.child(1)
     expect(newBlock.type.name).toBe('noteBlock')
     expect(newBlock.attrs.bullet).toBe('')
+    editor.destroy()
+  })
+})
+
+describe('Shift-Enter soft line break (#828)', () => {
+  function pressShiftEnter(editor: Editor): void {
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      shiftKey: true,
+      bubbles: true
+    })
+    editor.view.someProp('handleKeyDown', (handler) => {
+      handler(editor.view, event)
+    })
+  }
+
+  function pressEnter(editor: Editor): void {
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+    editor.view.someProp('handleKeyDown', (handler) => {
+      handler(editor.view, event)
+    })
+  }
+
+  it('inserts a hardBreak in a noteBlock without creating a new block', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n-soft', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'hello world' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // Caret after "hello" (doc pos: 1 open note + 5 chars = 6).
+    editor.commands.setTextSelection(6)
+    editor.commands.focus()
+
+    pressShiftEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(1)
+    const block = editor.state.doc.child(0)
+    expect(block.type.name).toBe('noteBlock')
+    expect(block.attrs.id).toBe('n-soft')
+    const json = block.toJSON() as {
+      content?: Array<{ type: string; text?: string }>
+    }
+    const types = (json.content || []).map((c) => c.type)
+    expect(types).toContain('hardBreak')
+    expect(types.filter((t) => t === 'hardBreak')).toHaveLength(1)
+    // Caret sits after the hardBreak (start of the new visual line).
+    expect(editor.state.selection.from).toBeGreaterThan(6)
+    const saved = docToBlocks(editor.getJSON() as DocJSON)
+    expect(saved).toHaveLength(1)
+    expect(saved[0].clean_text).toBe('hello<br> world')
+    editor.destroy()
+  })
+
+  it('inserts a hardBreak in a headerBlock without creating a new block', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'headerBlock',
+          attrs: { id: 'h-soft', depth: 1 },
+          content: [{ type: 'text', text: 'Title line' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.focus('end')
+
+    pressShiftEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).type.name).toBe('headerBlock')
+    const json = editor.state.doc.child(0).toJSON() as {
+      content?: Array<{ type: string }>
+    }
+    expect((json.content || []).some((c) => c.type === 'hardBreak')).toBe(true)
+    editor.destroy()
+  })
+
+  it('still creates a new noteBlock on Enter after a soft-broken note', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n-soft-enter', depth: 0, bullet: '' },
+          content: [
+            { type: 'text', text: 'line one' },
+            { type: 'hardBreak' },
+            { type: 'text', text: 'line two' }
+          ]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.focus('end')
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).attrs.id).toBe('n-soft-enter')
+    expect(editor.state.doc.child(1).type.name).toBe('noteBlock')
+    editor.destroy()
+  })
+
+  it('inserts a hardBreak on an empty noteBlock', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n-empty', depth: 0, bullet: '' },
+          content: []
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.focus('start')
+
+    pressShiftEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(1)
+    const json = editor.state.doc.child(0).toJSON() as {
+      content?: Array<{ type: string }>
+    }
+    expect((json.content || []).some((c) => c.type === 'hardBreak')).toBe(true)
     editor.destroy()
   })
 })
