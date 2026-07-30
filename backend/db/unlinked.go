@@ -211,13 +211,15 @@ func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source
 	if phrase == "" {
 		return nil, false, nil
 	}
-	q := `SELECT b.id, COALESCE(b.source,'vault'), b.notebook, b.section, b.page, COALESCE(b.clean_content,'')
+	// source is NOT NULL DEFAULT 'vault' — no COALESCE (keeps ORDER BY aligned
+	// with idx_blocks_src_file). clean_content may be empty; COALESCE for scan.
+	q := `SELECT b.id, b.source, b.notebook, b.section, b.page, COALESCE(b.clean_content,'')
 		FROM blocks_fts
 		JOIN blocks b ON b.rowid = blocks_fts.rowid
 		WHERE blocks_fts MATCH ?
 		  AND b.type <> 'CODE'
-		  AND NOT (COALESCE(b.source,'vault') = ? AND b.notebook = ? AND b.section = ? AND b.page = ?)
-		ORDER BY COALESCE(b.source,'vault'), b.notebook, b.section, b.page, b.id
+		  AND NOT (b.source = ? AND b.notebook = ? AND b.section = ? AND b.page = ?)
+		ORDER BY b.source, b.notebook, b.section, b.page, b.id
 		LIMIT ?`
 	rows, err := db.Query(q, phrase, source, notebook, section, page, unlinkedScanCap+1)
 	if err != nil {

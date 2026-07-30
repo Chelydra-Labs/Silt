@@ -838,6 +838,8 @@
                 </span>
                 <span
                   class="block truncate text-type-3xs text-surface-sidebar-text-muted"
+                  aria-live="polite"
+                  aria-atomic="true"
                 >
                   {#if unlinkedLoading}
                     Finding unlinked mentions…
@@ -887,11 +889,9 @@
               class="border-t border-surface-sidebar-border/70"
             >
               {#if unlinkedTruncated}
+                <!-- Visual reinforcement only; subtitle is the single live region. -->
                 <div
                   class="px-2.5 py-2 text-type-3xs text-surface-sidebar-text-muted bg-status-warn/10 border-b border-status-warn/25"
-                  role="status"
-                  aria-live="polite"
-                  aria-atomic="true"
                 >
                   {unlinked.length === 0
                     ? 'Matching text is capped for performance — no promotable plain mentions in the first results.'
