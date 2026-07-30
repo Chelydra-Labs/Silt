@@ -47,7 +47,16 @@
     candidates?: PagePath[]
   }
 
-  /** Split snippet into text segments with the first case-insensitive title match marked. */
+  /** True when ch is a Unicode letter, number, or underscore (word char). */
+  function isWordChar(ch: string | undefined): boolean {
+    if (!ch) return false
+    return /[\p{L}\p{N}_]/u.test(ch)
+  }
+
+  /**
+   * Split snippet into text segments with the first case-insensitive,
+   * word-boundary title match marked (aligned with backend WordBoundaryTitleRE).
+   */
   function emphasizeTitle(
     snippet: string,
     title: string
@@ -56,11 +65,29 @@
     if (!title) return [{ text: snippet, mark: false }]
     const lower = snippet.toLowerCase()
     const needle = title.toLowerCase()
-    const idx = lower.indexOf(needle)
+    let from = 0
+    let idx = -1
+    while (from <= lower.length - needle.length) {
+      const at = lower.indexOf(needle, from)
+      if (at < 0) break
+      const before = at > 0 ? snippet[at - 1] : undefined
+      const after =
+        at + needle.length < snippet.length
+          ? snippet[at + needle.length]
+          : undefined
+      if (!isWordChar(before) && !isWordChar(after)) {
+        idx = at
+        break
+      }
+      from = at + 1
+    }
     if (idx < 0) return [{ text: snippet, mark: false }]
     const parts: { text: string; mark: boolean }[] = []
     if (idx > 0) parts.push({ text: snippet.slice(0, idx), mark: false })
-    parts.push({ text: snippet.slice(idx, idx + title.length), mark: true })
+    parts.push({
+      text: snippet.slice(idx, idx + title.length),
+      mark: true
+    })
     if (idx + title.length < snippet.length) {
       parts.push({ text: snippet.slice(idx + title.length), mark: false })
     }
@@ -69,6 +96,38 @@
 
   function candidatePathLabel(c: PagePath): string {
     return [c.notebook, c.section, c.page].filter(Boolean).join('/')
+  }
+
+  function pathLabel(nb: string, sec: string, pg: string): string {
+    return [nb, sec, pg].filter(Boolean).join('/')
+  }
+
+  /** Drop one block from a mention, keeping sourceBlockIds ∥ sourceSnippets paired. */
+  function dropMentionBlock(
+    mention: UnlinkedMention,
+    blockId: string
+  ): UnlinkedMention | null {
+    const snips = mention.sourceSnippets ?? []
+    const nextIds: string[] = []
+    const nextSnips: string[] = []
+    let removed = false
+    for (let i = 0; i < mention.sourceBlockIds.length; i++) {
+      if (!removed && mention.sourceBlockIds[i] === blockId) {
+        removed = true
+        continue
+      }
+      nextIds.push(mention.sourceBlockIds[i])
+      // Keep parallel length: missing snip slots become ''.
+      nextSnips.push(snips[i] ?? '')
+    }
+    if (!removed) return mention
+    if (nextIds.length === 0) return null
+    return {
+      ...mention,
+      sourceBlockIds: nextIds,
+      sourceSnippets: nextSnips,
+      matchCount: Math.max(0, mention.matchCount - 1)
+    }
   }
 
   type UnlinkedMentionsPage = {
@@ -102,6 +161,8 @@
   let unlinkedExpanded = $state(false)
   let unlinkedBusy = $state<Set<string>>(new Set())
   let unlinkedError = $state('')
+  /** Which unlinked fetch failed — drives Try again (reload vs load-more). */
+  let unlinkedErrorAction = $state<'initial' | 'more'>('initial')
   let unlinkedRequest = 0
   let unlinkedCursor = $state('')
   let unlinkedHasMore = $state(false)
@@ -279,6 +340,7 @@
     unlinkedCursor = ''
     unlinkedHasMore = false
     unlinkedError = ''
+    unlinkedErrorAction = 'initial'
     try {
       const page = await getUnlinkedPage(
         activeNotebook,
@@ -292,6 +354,7 @@
       unlinkedHasMore = Boolean(page.hasMore)
     } catch (cause) {
       if (sequence !== unlinkedRequest) return
+      unlinkedErrorAction = 'initial'
       unlinkedError =
         cause instanceof Error
           ? cause.message
@@ -339,6 +402,7 @@
     const nextCursor = unlinkedCursor
     unlinkedLoadingMore = true
     unlinkedError = ''
+    unlinkedErrorAction = 'more'
     try {
       const page = await getUnlinkedPage(
         activeNotebook,
@@ -352,12 +416,21 @@
       unlinkedHasMore = Boolean(page.hasMore)
     } catch (cause) {
       if (sequence !== unlinkedRequest) return
+      unlinkedErrorAction = 'more'
       unlinkedError =
         cause instanceof Error
           ? cause.message
           : 'More unlinked mentions could not be loaded.'
     } finally {
       if (sequence === unlinkedRequest) unlinkedLoadingMore = false
+    }
+  }
+
+  function retryUnlinked(): void {
+    if (unlinkedErrorAction === 'more') {
+      void loadMoreUnlinked(notebook, section, page)
+    } else {
+      void loadUnlinked(notebook, section, page)
     }
   }
 
@@ -382,26 +455,18 @@
     unlinkedBusy = new Set(unlinkedBusy).add(blockId)
     try {
       await PromoteUnlinkedMention(blockId, destNb, destSec, destPage)
+      const destLabel = pathLabel(destNb, destSec, destPage)
       pushNotification({
         kind: 'success',
-        message: `Linked “${mention.title}” in ${mention.sourcePage}.`
+        message: target
+          ? `Linked “${mention.title}” as ${destLabel} in ${mention.sourcePage}.`
+          : `Linked “${mention.title}” in ${mention.sourcePage}.`
       })
-      // Optimistically drop the promoted block (and its parallel snippet) from
-      // the row; the debounced block:changed refresh reconciles the rest.
+      // Optimistically drop the promoted block with ids∥snippets kept paired;
+      // the debounced block:changed refresh reconciles the rest.
       unlinked = unlinked
-        .map((m) => {
-          if (m !== mention) return m
-          const idx = m.sourceBlockIds.indexOf(blockId)
-          const nextIds = m.sourceBlockIds.filter((id) => id !== blockId)
-          const nextSnips = (m.sourceSnippets ?? []).filter((_, i) => i !== idx)
-          return {
-            ...m,
-            sourceBlockIds: nextIds,
-            sourceSnippets: nextSnips,
-            matchCount: Math.max(0, m.matchCount - 1)
-          }
-        })
-        .filter((m) => m.sourceBlockIds.length > 0)
+        .map((m) => (m === mention ? dropMentionBlock(m, blockId) : m))
+        .filter((m): m is UnlinkedMention => m != null)
       refresh()
     } catch (cause) {
       const err = coerceIPCError(cause)
@@ -748,19 +813,31 @@
               </span>
             </button>
           </h3>
+          {#if unlinkedError}
+            <div
+              class="m-1.5 p-2.5 rounded-lg border border-status-warn/35 bg-status-warn/10"
+              role="alert"
+            >
+              <p class="m-0 text-type-xs font-label-sm-bold text-text-primary">
+                {unlinkedErrorAction === 'more'
+                  ? 'More unlinked mentions could not be loaded.'
+                  : 'Unlinked mentions could not be loaded.'}
+              </p>
+              <p class="mt-1 mb-0 text-type-2xs text-text-muted">
+                {unlinkedError}
+              </p>
+              <button
+                type="button"
+                class="mt-2 p-0 border-none bg-transparent text-accent-primary-start text-type-xs underline cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start rounded"
+                onclick={retryUnlinked}>Try again</button
+              >
+            </div>
+          {/if}
           {#if unlinkedExpanded}
             <div
               id="unlinked-mentions-body"
               class="border-t border-surface-sidebar-border/70"
             >
-              {#if unlinkedError}
-                <p
-                  class="m-0 px-2.5 py-2 text-type-2xs text-status-warn"
-                  role="alert"
-                >
-                  {unlinkedError}
-                </p>
-              {/if}
               <ul class="m-0 p-0 list-none">
                 {#each unlinked as mention, index (`${mention.source}\u0000${mention.sourceNotebook}\u0000${mention.sourceSection}\u0000${mention.sourcePage}:${index}`)}
                   <li
@@ -833,7 +910,10 @@
                                 {part.text}
                               {/if}
                             {:else}
-                              <span class="italic">Mention</span>
+                              <span
+                                class="italic text-surface-sidebar-text-muted"
+                                >No preview</span
+                              >
                             {/each}
                           </span>
                           {#if mention.ambiguous}

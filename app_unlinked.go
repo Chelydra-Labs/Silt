@@ -59,7 +59,8 @@ func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSectio
 
 	title := strings.TrimSpace(targetPage)
 	if title == "" {
-		return NewIPCError(CodeAmbiguousTarget, "cannot promote an empty page title")
+		// Plain error — not CodeAmbiguousTarget (that maps to "pick a candidate").
+		return fmt.Errorf("cannot promote an empty page title")
 	}
 
 	var pages []db.PageLoc

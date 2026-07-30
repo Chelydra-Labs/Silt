@@ -12,7 +12,8 @@ const mocks = vi.hoisted(() => ({
   getBacklinksPaged: vi.fn(),
   getUnlinkedMentionsPaged: vi.fn(),
   promoteUnlinkedMention: vi.fn(),
-  eventsOn: vi.fn()
+  eventsOn: vi.fn(),
+  pushNotification: vi.fn()
 }))
 
 vi.mock('$silt-app', () =>
@@ -22,6 +23,10 @@ vi.mock('$silt-app', () =>
     PromoteUnlinkedMention: mocks.promoteUnlinkedMention
   })
 )
+
+vi.mock('../notifications/store.svelte', () => ({
+  pushNotification: mocks.pushNotification
+}))
 
 vi.mock('@wailsio/runtime', () => ({
   Events: { On: mocks.eventsOn },
@@ -84,6 +89,7 @@ describe('BacklinksSidebarPanel', () => {
       .mockReset()
       .mockResolvedValue({ results: [], cursor: '', hasMore: false })
     mocks.promoteUnlinkedMention.mockReset().mockResolvedValue(undefined)
+    mocks.pushNotification.mockReset()
     mocks.eventsOn.mockReset().mockImplementation((event, callback) => {
       if (event === 'block:changed') blockChanged = callback
       return off
@@ -493,6 +499,110 @@ describe('BacklinksSidebarPanel', () => {
         'Standup'
       )
     )
+    await waitFor(() =>
+      expect(mocks.pushNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'success',
+          message: expect.stringContaining('as Work/Journal/Standup')
+        })
+      )
+    )
+  })
+
+  it('retries unlinked load via Try again after a fetch error', async () => {
+    mocks.getUnlinkedMentionsPaged
+      .mockRejectedValueOnce(new Error('index unavailable'))
+      .mockResolvedValueOnce({
+        results: [
+          {
+            source: 'vault',
+            sourceNotebook: 'Work',
+            sourceSection: 'Projects',
+            sourcePage: 'Launch plan',
+            sourceBlockIds: ['block-42'],
+            sourceSnippets: ['see Research here'],
+            matchCount: 1,
+            title: 'Research',
+            ambiguous: false
+          }
+        ],
+        cursor: '',
+        hasMore: false
+      })
+    renderPanel()
+    await screen.findByText('Unlinked mentions could not be loaded.')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    const retry = await screen.findByRole('button', { name: 'Try again' })
+    await fireEvent.click(retry)
+    await screen.findByText('1 page mentions this title')
+    expect(mocks.getUnlinkedMentionsPaged).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps remaining block snippets paired after promoting one of two blocks', async () => {
+    // After promote, refresh reloads unlinked — return the post-promote shape
+    // so the optimistic drop is not overwritten with the pre-promote payload.
+    let promoted = false
+    mocks.getUnlinkedMentionsPaged.mockImplementation(() =>
+      Promise.resolve({
+        results: promoted
+          ? [
+              {
+                source: 'vault',
+                sourceNotebook: 'Work',
+                sourceSection: 'Projects',
+                sourcePage: 'Meeting notes',
+                sourceBlockIds: ['block-99'],
+                sourceSnippets: ['second Research note'],
+                matchCount: 1,
+                title: 'Research',
+                ambiguous: false
+              }
+            ]
+          : [
+              {
+                source: 'vault',
+                sourceNotebook: 'Work',
+                sourceSection: 'Projects',
+                sourcePage: 'Meeting notes',
+                sourceBlockIds: ['block-42', 'block-99'],
+                sourceSnippets: ['first Research note', 'second Research note'],
+                matchCount: 2,
+                title: 'Research',
+                ambiguous: false
+              }
+            ],
+        cursor: '',
+        hasMore: false
+      })
+    )
+    mocks.promoteUnlinkedMention.mockImplementation(async () => {
+      promoted = true
+    })
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await fireEvent.click(
+      await screen.findByRole('button', {
+        name: /Link mention of Research in block block-42/
+      })
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', {
+          name: /Link mention of Research in block block-42/
+        })
+      ).not.toBeInTheDocument()
+    )
+    expect(screen.getByText(/second/)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: /Link mention of Research in block block-99/
+      })
+    ).toBeInTheDocument()
   })
 
   it('loads more unlinked mentions via the Load more button and appends', async () => {

@@ -543,13 +543,15 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     await flush()
 
     // The disclosure toggle is present and collapsed by default on narrow.
-    const toggle = screen.getByRole('button', { name: 'Details' })
+    const toggle = screen.getByRole('button', { name: 'Show details' })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).not.toHaveAttribute('aria-controls')
 
     // Expanding reveals the sidebar.
     await fireEvent.click(toggle)
     await tick()
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(toggle).toHaveAttribute('aria-controls', 'sub-editor-sidebar')
     expect(screen.getByText('Status')).toBeTruthy()
   })
 
@@ -600,7 +602,7 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     // Resize to narrow — preference stays closed (no auto-expand).
     fireMqlChange(true)
     await tick()
-    const narrowToggle = screen.getByRole('button', { name: 'Details' })
+    const narrowToggle = screen.getByRole('button', { name: 'Show details' })
     expect(narrowToggle).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByText('Status')).toBeNull()
 
