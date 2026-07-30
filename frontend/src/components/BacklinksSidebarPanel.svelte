@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { Events } from '@wailsio/runtime'
-  import { EventName } from '../generated/enums'
+  import { EventName, IPCErrorCode } from '../generated/enums'
   import {
     GetBacklinksPaged,
     GetUnlinkedMentionsPaged,
     PromoteUnlinkedMention
   } from '../../bindings/silt/app.js'
   import { pushNotification } from '../notifications/store.svelte'
+  import { coerceIPCError } from '../lib/ipcError'
 
   export type Backlink = {
     linkKind: 'page' | 'block-ref' | 'embed'
@@ -291,8 +292,13 @@
         .filter((m) => m.sourceBlockIds.length > 0)
       refresh()
     } catch (cause) {
+      const err = coerceIPCError(cause)
       const message =
-        cause instanceof Error ? cause.message : 'Could not link the mention.'
+        err.code === IPCErrorCode.CodeBlockBeingEdited
+          ? 'Save or close the file in the editor first, then retry.'
+          : err.code === IPCErrorCode.CodeAmbiguousTarget
+            ? 'This title now matches multiple pages — disambiguate manually.'
+            : err.message || 'Could not link the mention.'
       pushNotification({ kind: 'error', message })
     } finally {
       unlinkedBusyBlockId = null
@@ -709,7 +715,7 @@
                             <button
                               type="button"
                               class="flex-shrink-0 rounded border border-surface-sidebar-border bg-transparent px-2 py-0.5 text-type-3xs text-accent-primary-start hover:bg-accent-primary-start/10 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
-                              disabled={unlinkedBusyBlockId === blockId}
+                              disabled={unlinkedBusyBlockId !== null}
                               aria-label={`Link mention of ${mention.title} in block ${blockId.slice(0, 8)} on page ${mention.sourcePage}`}
                               aria-busy={unlinkedBusyBlockId === blockId}
                               onclick={() => promoteMention(mention, blockId)}
