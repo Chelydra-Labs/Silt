@@ -306,23 +306,44 @@
     }
   }
 
-  // --- Responsive sidebar (#780) ---
-  // On narrow viewports the sidebar collapses into a disclosure so the editor
-  // keeps space. Default open on wide viewports.
-  let isNarrow = $state(false)
-  let sidebarOpen = $state(true)
+  // --- Responsive sidebar (#780 / #826) ---
+  // isNarrow is layout-only (column vs side-by-side). sidebarOpen is the user's
+  // open/closed preference: seeded once from the initial viewport, then only
+  // changed by the toggle — resize must not clobber a manual choice.
+  // Seed synchronously so the first paint matches the viewport (no flash of
+  // open sidebar on narrow).
+  const initialNarrow =
+    typeof window !== 'undefined' &&
+    window.matchMedia('(max-width: 768px)').matches
+  let isNarrow = $state(initialNarrow)
+  let sidebarOpen = $state(!initialNarrow)
+  let wideDetailsBtn = $state<HTMLButtonElement | undefined>(undefined)
+  let narrowDetailsBtn = $state<HTMLButtonElement | undefined>(undefined)
 
   $effect(() => {
     const mq = window.matchMedia('(max-width: 768px)')
     const sync = () => {
       isNarrow = mq.matches
-      if (mq.matches) sidebarOpen = false
-      else sidebarOpen = true
     }
     sync()
     mq.addEventListener('change', sync)
     return () => mq.removeEventListener('change', sync)
   })
+
+  function toggleSidebar() {
+    const next = !sidebarOpen
+    // Before unmounting the sidebar, pull focus back to the toggle so the
+    // modal focus trap does not land on a destroyed control.
+    if (!next && typeof document !== 'undefined') {
+      const active = document.activeElement as HTMLElement | null
+      const aside = document.getElementById('sub-editor-sidebar')
+      if (active && aside?.contains(active)) {
+        const btn = isNarrow ? narrowDetailsBtn : wideDetailsBtn
+        btn?.focus()
+      }
+    }
+    sidebarOpen = next
+  }
 
   // Header title prefers the fetched task's clean_content; parentTaskText is
   // the optimistic fallback before the fetch resolves.
@@ -415,6 +436,23 @@
           {headerTitle}
         </h2>
       </div>
+      {#if task && !isNarrow}
+        <button
+          type="button"
+          bind:this={wideDetailsBtn}
+          class="flex items-center gap-1 text-text-muted hover:text-text-primary transition-colors px-2 py-1 rounded text-type-sm font-label-sm-bold"
+          aria-expanded={sidebarOpen}
+          aria-controls={sidebarOpen ? 'sub-editor-sidebar' : undefined}
+          aria-label={sidebarOpen ? 'Hide details' : 'Show details'}
+          onclick={toggleSidebar}
+        >
+          <span
+            class="material-symbols-outlined text-icon-md"
+            aria-hidden="true">tune</span
+          >
+          Details
+        </button>
+      {/if}
       <button
         type="button"
         onclick={attemptClose}
@@ -434,10 +472,12 @@
         {#if isNarrow && task}
           <button
             type="button"
+            bind:this={narrowDetailsBtn}
             class="flex items-center justify-between px-5 py-2 border-b border-surface-modal-border text-type-sm font-label-sm-bold text-text-primary hover:bg-hover transition-colors flex-shrink-0"
             aria-expanded={sidebarOpen}
-            aria-controls="sub-editor-sidebar"
-            onclick={() => (sidebarOpen = !sidebarOpen)}
+            aria-controls={sidebarOpen ? 'sub-editor-sidebar' : undefined}
+            aria-label={sidebarOpen ? 'Hide details' : 'Show details'}
+            onclick={toggleSidebar}
           >
             <span class="flex items-center gap-1.5">
               <span
@@ -495,9 +535,10 @@
         </footer>
       </div>
 
-      <!-- Sidebar: metadata (#780) -->
-      {#if task && !isNarrow}
+      <!-- Sidebar: metadata (#780 / #826) — gated on sidebarOpen for both layouts -->
+      {#if task && sidebarOpen && !isNarrow}
         <aside
+          id="sub-editor-sidebar"
           class="w-80 flex-shrink-0 border-l border-surface-modal-border overflow-y-auto custom-scrollbar px-4 py-4"
         >
           <TaskMetadataSidebar
@@ -507,7 +548,7 @@
             bind:busy={sidebarBusy}
           />
         </aside>
-      {:else if task && isNarrow && sidebarOpen}
+      {:else if task && sidebarOpen && isNarrow}
         <aside
           id="sub-editor-sidebar"
           class="flex-shrink-0 border-t border-surface-modal-border overflow-y-auto custom-scrollbar px-4 py-4 max-h-[40vh]"

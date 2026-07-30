@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"silt/backend/parser"
@@ -52,6 +53,12 @@ func TestUnlinked_SingleWordTitle(t *testing.T) {
 	}
 	if m.Ambiguous {
 		t.Errorf("unique title should not be ambiguous")
+	}
+	if len(m.SourceSnippets) != 1 {
+		t.Fatalf("expected 1 snippet parallel to block ids, got %d", len(m.SourceSnippets))
+	}
+	if !strings.Contains(strings.ToLower(m.SourceSnippets[0]), "onboarding") {
+		t.Errorf("snippet should contain title, got %q", m.SourceSnippets[0])
 	}
 }
 
@@ -238,6 +245,14 @@ func TestUnlinked_DedupeBySourcePage(t *testing.T) {
 	}
 	if len(m.SourceBlockIDs) != 3 {
 		t.Errorf("SourceBlockIDs: got %d want 3", len(m.SourceBlockIDs))
+	}
+	if len(m.SourceSnippets) != len(m.SourceBlockIDs) {
+		t.Errorf("SourceSnippets length %d != SourceBlockIDs %d", len(m.SourceSnippets), len(m.SourceBlockIDs))
+	}
+	for i, snip := range m.SourceSnippets {
+		if !strings.Contains(strings.ToLower(snip), "onboarding") {
+			t.Errorf("snippet[%d] missing title: %q", i, snip)
+		}
 	}
 }
 

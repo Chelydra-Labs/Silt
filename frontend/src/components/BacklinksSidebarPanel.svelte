@@ -39,10 +39,95 @@
     sourceSection: string
     sourcePage: string
     sourceBlockIds: string[]
+    /** Parallel to sourceBlockIds — contextual excerpt per matched block. */
+    sourceSnippets?: string[]
     matchCount: number
     title: string
     ambiguous: boolean
     candidates?: PagePath[]
+  }
+
+  /** True when ch is a Unicode letter, number, or underscore (word char). */
+  function isWordChar(ch: string | undefined): boolean {
+    if (!ch) return false
+    return /[\p{L}\p{N}_]/u.test(ch)
+  }
+
+  /**
+   * Split snippet into text segments with the first case-insensitive,
+   * word-boundary title match marked (aligned with backend WordBoundaryTitleRE).
+   */
+  function emphasizeTitle(
+    snippet: string,
+    title: string
+  ): { text: string; mark: boolean }[] {
+    if (!snippet) return []
+    if (!title) return [{ text: snippet, mark: false }]
+    const lower = snippet.toLowerCase()
+    const needle = title.toLowerCase()
+    let from = 0
+    let idx = -1
+    while (from <= lower.length - needle.length) {
+      const at = lower.indexOf(needle, from)
+      if (at < 0) break
+      const before = at > 0 ? snippet[at - 1] : undefined
+      const after =
+        at + needle.length < snippet.length
+          ? snippet[at + needle.length]
+          : undefined
+      if (!isWordChar(before) && !isWordChar(after)) {
+        idx = at
+        break
+      }
+      from = at + 1
+    }
+    if (idx < 0) return [{ text: snippet, mark: false }]
+    const parts: { text: string; mark: boolean }[] = []
+    if (idx > 0) parts.push({ text: snippet.slice(0, idx), mark: false })
+    parts.push({
+      text: snippet.slice(idx, idx + title.length),
+      mark: true
+    })
+    if (idx + title.length < snippet.length) {
+      parts.push({ text: snippet.slice(idx + title.length), mark: false })
+    }
+    return parts
+  }
+
+  function candidatePathLabel(c: PagePath): string {
+    return [c.notebook, c.section, c.page].filter(Boolean).join('/')
+  }
+
+  function pathLabel(nb: string, sec: string, pg: string): string {
+    return [nb, sec, pg].filter(Boolean).join('/')
+  }
+
+  /** Drop one block from a mention, keeping sourceBlockIds ∥ sourceSnippets paired. */
+  function dropMentionBlock(
+    mention: UnlinkedMention,
+    blockId: string
+  ): UnlinkedMention | null {
+    const snips = mention.sourceSnippets ?? []
+    const nextIds: string[] = []
+    const nextSnips: string[] = []
+    let removed = false
+    for (let i = 0; i < mention.sourceBlockIds.length; i++) {
+      if (!removed && mention.sourceBlockIds[i] === blockId) {
+        removed = true
+        continue
+      }
+      nextIds.push(mention.sourceBlockIds[i])
+      // Keep parallel length: missing snip slots become ''.
+      nextSnips.push(snips[i] ?? '')
+    }
+    if (!removed) return mention
+    if (nextIds.length === 0) return null
+    return {
+      ...mention,
+      sourceBlockIds: nextIds,
+      sourceSnippets: nextSnips,
+      matchCount: Math.max(0, mention.matchCount - 1)
+    }
   }
 
   type UnlinkedMentionsPage = {
@@ -76,6 +161,8 @@
   let unlinkedExpanded = $state(false)
   let unlinkedBusy = $state<Set<string>>(new Set())
   let unlinkedError = $state('')
+  /** Which unlinked fetch failed — drives Try again (reload vs load-more). */
+  let unlinkedErrorAction = $state<'initial' | 'more'>('initial')
   let unlinkedRequest = 0
   let unlinkedCursor = $state('')
   let unlinkedHasMore = $state(false)
@@ -253,6 +340,7 @@
     unlinkedCursor = ''
     unlinkedHasMore = false
     unlinkedError = ''
+    unlinkedErrorAction = 'initial'
     try {
       const page = await getUnlinkedPage(
         activeNotebook,
@@ -266,6 +354,7 @@
       unlinkedHasMore = Boolean(page.hasMore)
     } catch (cause) {
       if (sequence !== unlinkedRequest) return
+      unlinkedErrorAction = 'initial'
       unlinkedError =
         cause instanceof Error
           ? cause.message
@@ -313,6 +402,7 @@
     const nextCursor = unlinkedCursor
     unlinkedLoadingMore = true
     unlinkedError = ''
+    unlinkedErrorAction = 'more'
     try {
       const page = await getUnlinkedPage(
         activeNotebook,
@@ -326,6 +416,7 @@
       unlinkedHasMore = Boolean(page.hasMore)
     } catch (cause) {
       if (sequence !== unlinkedRequest) return
+      unlinkedErrorAction = 'more'
       unlinkedError =
         cause instanceof Error
           ? cause.message
@@ -335,33 +426,47 @@
     }
   }
 
+  function retryUnlinked(): void {
+    if (unlinkedErrorAction === 'more') {
+      void loadMoreUnlinked(notebook, section, page)
+    } else {
+      void loadUnlinked(notebook, section, page)
+    }
+  }
+
   // promoteMention wraps the first plain-text mention of the page title in the
-  // chosen source block with a [[shortest]] link. On success the entry migrates
-  // into the backlinks leg on the next refresh; the optimistic removal keeps the
-  // row from flickering until the debounced refresh lands.
-  async function promoteMention(mention: UnlinkedMention, blockId: string) {
-    if (mention.ambiguous || unlinkedBusy.has(blockId)) return
+  // chosen source block with a [[shortest]] link. target overrides the active
+  // page path when the author picks an ambiguous candidate chip. On success the
+  // entry migrates into the backlinks leg on the next refresh; optimistic
+  // removal keeps the row from flickering until the debounced refresh lands.
+  async function promoteMention(
+    mention: UnlinkedMention,
+    blockId: string,
+    target?: { notebook: string; section: string; page: string }
+  ) {
+    if (unlinkedBusy.has(blockId)) return
+    // Non-ambiguous rows use the active page; ambiguous rows require an explicit
+    // candidate target (chip click). Guard against a bare Link on ambiguous.
+    if (mention.ambiguous && !target) return
+    const destNb = target?.notebook ?? notebook
+    const destSec = target?.section ?? section
+    const destPage = target?.page ?? page
     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- immutable reassign triggers $state
     unlinkedBusy = new Set(unlinkedBusy).add(blockId)
     try {
-      await PromoteUnlinkedMention(blockId, notebook, section, page)
+      await PromoteUnlinkedMention(blockId, destNb, destSec, destPage)
+      const destLabel = pathLabel(destNb, destSec, destPage)
       pushNotification({
         kind: 'success',
-        message: `Linked “${mention.title}” in ${mention.sourcePage}.`
+        message: target
+          ? `Linked “${mention.title}” as ${destLabel} in ${mention.sourcePage}.`
+          : `Linked “${mention.title}” in ${mention.sourcePage}.`
       })
-      // Optimistically drop the promoted block from the row; the debounced
-      // block:changed refresh reconciles the rest (migrating it into backlinks).
+      // Optimistically drop the promoted block with ids∥snippets kept paired;
+      // the debounced block:changed refresh reconciles the rest.
       unlinked = unlinked
-        .map((m) =>
-          m === mention
-            ? {
-                ...m,
-                sourceBlockIds: m.sourceBlockIds.filter((id) => id !== blockId),
-                matchCount: Math.max(0, m.matchCount - 1)
-              }
-            : m
-        )
-        .filter((m) => m.sourceBlockIds.length > 0)
+        .map((m) => (m === mention ? dropMentionBlock(m, blockId) : m))
+        .filter((m): m is UnlinkedMention => m != null)
       refresh()
     } catch (cause) {
       const err = coerceIPCError(cause)
@@ -369,7 +474,7 @@
         err.code === IPCErrorCode.CodeBlockBeingEdited
           ? 'Save or close the file in the editor first, then retry.'
           : err.code === IPCErrorCode.CodeAmbiguousTarget
-            ? 'This title now matches multiple pages — disambiguate manually.'
+            ? 'This title now matches multiple pages — pick a candidate to link.'
             : err.message || 'Could not link the mention.'
       pushNotification({ kind: 'error', message })
     } finally {
@@ -708,19 +813,31 @@
               </span>
             </button>
           </h3>
+          {#if unlinkedError}
+            <div
+              class="m-1.5 p-2.5 rounded-lg border border-status-warn/35 bg-status-warn/10"
+              role="alert"
+            >
+              <p class="m-0 text-type-xs font-label-sm-bold text-text-primary">
+                {unlinkedErrorAction === 'more'
+                  ? 'More unlinked mentions could not be loaded.'
+                  : 'Unlinked mentions could not be loaded.'}
+              </p>
+              <p class="mt-1 mb-0 text-type-2xs text-text-muted">
+                {unlinkedError}
+              </p>
+              <button
+                type="button"
+                class="mt-2 p-0 border-none bg-transparent text-accent-primary-start text-type-xs underline cursor-pointer focus-visible:ring-2 focus-visible:ring-accent-primary-start rounded"
+                onclick={retryUnlinked}>Try again</button
+              >
+            </div>
+          {/if}
           {#if unlinkedExpanded}
             <div
               id="unlinked-mentions-body"
               class="border-t border-surface-sidebar-border/70"
             >
-              {#if unlinkedError}
-                <p
-                  class="m-0 px-2.5 py-2 text-type-2xs text-status-warn"
-                  role="alert"
-                >
-                  {unlinkedError}
-                </p>
-              {/if}
               <ul class="m-0 p-0 list-none">
                 {#each unlinked as mention, index (`${mention.source}\u0000${mention.sourceNotebook}\u0000${mention.sourceSection}\u0000${mention.sourcePage}:${index}`)}
                   <li
@@ -771,39 +888,74 @@
                         </span>
                       </button>
                     </div>
-                    {#if mention.ambiguous}
-                      <p
-                        class="m-0 px-2.5 pb-2 text-type-3xs text-surface-sidebar-text-muted line-clamp-2"
-                        title={`Link disabled — title matches ${mention.candidates?.map((c) => `${c.notebook}/${c.section}/${c.page}`).join(', ')}.`}
-                      >
-                        Link disabled — title matches
-                        {mention.candidates
-                          ?.map((c) => `${c.notebook}/${c.section}/${c.page}`)
-                          .join(', ')}.
-                      </p>
-                    {:else}
-                      <ul class="m-0 p-0 pb-1 list-none">
-                        {#each mention.sourceBlockIds as blockId, bIndex (`${blockId}:${bIndex}`)}
-                          <li
-                            class="px-2.5 flex items-center justify-between gap-2"
+                    <ul class="m-0 p-0 pb-1 list-none">
+                      {#each mention.sourceBlockIds as blockId, bIndex (`${blockId}:${bIndex}`)}
+                        {@const snip = mention.sourceSnippets?.[bIndex] ?? ''}
+                        <li
+                          class="px-2.5 py-0.5 flex flex-col gap-1 {mention.ambiguous
+                            ? 'items-stretch'
+                            : 'sm:flex-row sm:items-center sm:justify-between'}"
+                        >
+                          <span
+                            class="min-w-0 line-clamp-2 text-type-3xs text-surface-sidebar-text-muted leading-snug"
+                            title={snip || undefined}
                           >
-                            <span
-                              class="truncate text-type-3xs text-surface-sidebar-text-muted font-mono"
-                              >{blockId.slice(0, 8)}…</span
+                            {#each emphasizeTitle(snip, mention.title) as part, pIdx (`${bIndex}-${pIdx}`)}
+                              {#if part.mark}
+                                <mark
+                                  class="bg-editor-highlight/50 text-inherit rounded-sm px-0.5"
+                                  >{part.text}</mark
+                                >
+                              {:else}
+                                {part.text}
+                              {/if}
+                            {:else}
+                              <span
+                                class="italic text-surface-sidebar-text-muted"
+                                >No preview</span
+                              >
+                            {/each}
+                          </span>
+                          {#if mention.ambiguous}
+                            <div
+                              class="flex flex-wrap gap-1 pb-0.5"
+                              role="group"
+                              aria-label={`Link targets for mention of ${mention.title}`}
                             >
+                              {#each mention.candidates ?? [] as cand, cIdx (`${cand.notebook}/${cand.section}/${cand.page}:${cIdx}`)}
+                                <button
+                                  type="button"
+                                  class="max-w-full truncate rounded-full border border-surface-sidebar-border bg-surface-sidebar px-2 py-0.5 text-type-3xs text-accent-primary-start hover:bg-accent-primary-start/10 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
+                                  disabled={unlinkedBusy.has(blockId)}
+                                  title={candidatePathLabel(cand)}
+                                  aria-label={`Link mention of ${mention.title} as ${candidatePathLabel(cand)} in block ${blockId.slice(0, 8)} on page ${mention.sourcePage}`}
+                                  onclick={() =>
+                                    promoteMention(mention, blockId, {
+                                      notebook: cand.notebook,
+                                      section: cand.section,
+                                      page: cand.page
+                                    })}
+                                >
+                                  {unlinkedBusy.has(blockId)
+                                    ? 'Linking…'
+                                    : candidatePathLabel(cand)}
+                                </button>
+                              {/each}
+                            </div>
+                          {:else}
                             <button
                               type="button"
-                              class="flex-shrink-0 rounded border border-surface-sidebar-border bg-transparent px-2 py-0.5 text-type-3xs text-accent-primary-start hover:bg-accent-primary-start/10 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
+                              class="flex-shrink-0 self-end sm:self-auto rounded border border-surface-sidebar-border bg-transparent px-2 py-0.5 text-type-3xs text-accent-primary-start hover:bg-accent-primary-start/10 cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
                               disabled={unlinkedBusy.has(blockId)}
                               aria-label={`Link mention of ${mention.title} in block ${blockId.slice(0, 8)} on page ${mention.sourcePage}`}
                               onclick={() => promoteMention(mention, blockId)}
                             >
                               {unlinkedBusy.has(blockId) ? 'Linking…' : 'Link'}
                             </button>
-                          </li>
-                        {/each}
-                      </ul>
-                    {/if}
+                          {/if}
+                        </li>
+                      {/each}
+                    </ul>
                   </li>
                 {/each}
               </ul>

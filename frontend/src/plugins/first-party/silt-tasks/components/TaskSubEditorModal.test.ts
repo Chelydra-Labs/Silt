@@ -72,18 +72,32 @@ if (!Element.prototype.animate) {
 }
 
 // Override the global matchMedia polyfill (vitest.setup.ts) with a mutable
-// mock so the responsive-collapse test can flip `matches` per test.
+// mock so the responsive-collapse test can flip `matches` per test and fire
+// change listeners (resize must not clobber sidebarOpen — #826).
+const mqlListeners: Array<() => void> = []
 const mql = {
   matches: false,
   media: '',
   onchange: null,
-  addEventListener: vi.fn(),
-  removeEventListener: vi.fn(),
+  addEventListener: vi.fn((event: string, fn: () => void) => {
+    if (event === 'change') mqlListeners.push(fn)
+  }),
+  removeEventListener: vi.fn((event: string, fn: () => void) => {
+    if (event === 'change') {
+      const i = mqlListeners.indexOf(fn)
+      if (i >= 0) mqlListeners.splice(i, 1)
+    }
+  }),
   addListener: vi.fn(),
   removeListener: vi.fn(),
   dispatchEvent: vi.fn()
 }
 window.matchMedia = vi.fn(() => mql)
+
+function fireMqlChange(matches: boolean) {
+  mql.matches = matches
+  for (const fn of [...mqlListeners]) fn()
+}
 
 vi.mock('@wailsio/runtime', () => ({
   Events: {
@@ -453,7 +467,7 @@ describe('TaskSubEditorModal (#304)', () => {
   })
 })
 
-describe('TaskSubEditorModal — metadata sidebar (#780)', () => {
+describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
   beforeEach(() => {
     mocks.fetchSubtree.mockReset().mockResolvedValue([])
     mocks.saveSubtreeBlocks.mockReset().mockResolvedValue(true)
@@ -461,6 +475,7 @@ describe('TaskSubEditorModal — metadata sidebar (#780)', () => {
       .mockReset()
       .mockResolvedValue({ rows: [makeTaskRow()], truncated: false })
     mql.matches = false
+    mqlListeners.length = 0
   })
 
   afterEach(() => cleanup())
@@ -482,6 +497,10 @@ describe('TaskSubEditorModal — metadata sidebar (#780)', () => {
     // The sidebar's Status heading is present alongside the editor.
     expect(screen.getByText('Status')).toBeTruthy()
     expect(screen.getByText('Due date')).toBeTruthy()
+    // Wide layout exposes a Details toggle in the header (#826).
+    expect(
+      screen.getByRole('button', { name: 'Hide details' })
+    ).toBeInTheDocument()
   })
 
   it('a metadata change persists via ctx and fires onMetaChanged', async () => {
@@ -524,13 +543,79 @@ describe('TaskSubEditorModal — metadata sidebar (#780)', () => {
     await flush()
 
     // The disclosure toggle is present and collapsed by default on narrow.
-    const toggle = screen.getByRole('button', { name: 'Details' })
+    const toggle = screen.getByRole('button', { name: 'Show details' })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).not.toHaveAttribute('aria-controls')
 
     // Expanding reveals the sidebar.
     await fireEvent.click(toggle)
     await tick()
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(toggle).toHaveAttribute('aria-controls', 'sub-editor-sidebar')
     expect(screen.getByText('Status')).toBeTruthy()
+  })
+
+  it('collapses the wide sidebar via the header Details toggle (#826)', async () => {
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+
+    expect(screen.getByText('Status')).toBeTruthy()
+    const hide = screen.getByRole('button', { name: 'Hide details' })
+    await fireEvent.click(hide)
+    await tick()
+
+    expect(screen.queryByText('Status')).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Show details' })
+    ).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Show details' }))
+    await tick()
+    expect(screen.getByText('Status')).toBeTruthy()
+  })
+
+  it('does not override sidebarOpen when the viewport crosses the breakpoint (#826)', async () => {
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+
+    // User collapses on wide.
+    await fireEvent.click(screen.getByRole('button', { name: 'Hide details' }))
+    await tick()
+    expect(screen.queryByText('Status')).toBeNull()
+
+    // Resize to narrow — preference stays closed (no auto-expand).
+    fireMqlChange(true)
+    await tick()
+    const narrowToggle = screen.getByRole('button', { name: 'Show details' })
+    expect(narrowToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Status')).toBeNull()
+
+    // Expand on narrow, then resize back to wide — stays open.
+    await fireEvent.click(narrowToggle)
+    await tick()
+    expect(screen.getByText('Status')).toBeTruthy()
+
+    fireMqlChange(false)
+    await tick()
+    expect(screen.getByText('Status')).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Hide details' })
+    ).toHaveAttribute('aria-expanded', 'true')
   })
 })
