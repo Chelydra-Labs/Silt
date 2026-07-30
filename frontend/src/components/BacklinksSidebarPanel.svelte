@@ -147,6 +147,8 @@
     results: UnlinkedMention[]
     cursor: string
     hasMore: boolean
+    /** FTS candidate pool hit the scan cap — residual list may be incomplete. */
+    truncated: boolean
   }
 
   interface Props {
@@ -180,6 +182,8 @@
   let unlinkedCursor = $state('')
   let unlinkedHasMore = $state(false)
   let unlinkedLoadingMore = $state(false)
+  /** Pool-level: FTS scan hit unlinkedScanCap (orthogonal to page hasMore). */
+  let unlinkedTruncated = $state(false)
 
   const groups = $derived.by(() => {
     // Ephemeral grouping inside $derived — plain Map is correct.
@@ -330,7 +334,12 @@
       activeCursor,
       pageSize
     )) as unknown as UnlinkedMentionsPage | null
-    return result ?? { results: [], cursor: '', hasMore: false }
+    return {
+      results: result?.results ?? [],
+      cursor: result?.cursor ?? '',
+      hasMore: Boolean(result?.hasMore),
+      truncated: Boolean(result?.truncated)
+    }
   }
 
   // loadUnlinked fetches the unlinked-mentions leg. Runs alongside the backlinks
@@ -346,12 +355,14 @@
       unlinked = []
       unlinkedCursor = ''
       unlinkedHasMore = false
+      unlinkedTruncated = false
       unlinkedError = ''
       return
     }
     unlinkedLoading = true
     unlinkedCursor = ''
     unlinkedHasMore = false
+    unlinkedTruncated = false
     unlinkedError = ''
     unlinkedErrorAction = 'initial'
     try {
@@ -365,6 +376,7 @@
       unlinked = page.results ?? []
       unlinkedCursor = page.cursor ?? ''
       unlinkedHasMore = Boolean(page.hasMore)
+      unlinkedTruncated = Boolean(page.truncated)
     } catch (cause) {
       if (sequence !== unlinkedRequest) return
       unlinkedErrorAction = 'initial'
@@ -427,6 +439,8 @@
       unlinked = uniqueUnlinked(unlinked, page.results ?? [])
       unlinkedCursor = page.cursor ?? ''
       unlinkedHasMore = Boolean(page.hasMore)
+      // Pool-level flag: keep true if either page reports the FTS cap.
+      unlinkedTruncated = unlinkedTruncated || Boolean(page.truncated)
     } catch (cause) {
       if (sequence !== unlinkedRequest) return
       unlinkedErrorAction = 'more'
@@ -784,7 +798,7 @@
           {/if}
         </div>
       {/if}
-      {#if unlinked.length > 0 || unlinkedLoading || unlinkedError}
+      {#if unlinked.length > 0 || unlinkedLoading || unlinkedError || unlinkedTruncated}
         <section
           class="mt-2 rounded-lg border border-surface-sidebar-border bg-surface-panel/35 overflow-hidden"
           aria-labelledby="unlinked-mentions-title"
@@ -821,7 +835,10 @@
                       ? `${unlinked.length}+ pages mention this title`
                       : unlinked.length === 1
                         ? '1 page mentions this title'
-                        : `${unlinked.length} pages mention this title`}
+                        : `${unlinked.length} pages mention this title`}{unlinkedTruncated &&
+                  !unlinkedLoading
+                    ? ' · may be incomplete'
+                    : ''}
                 </span>
               </span>
             </button>
@@ -851,6 +868,16 @@
               id="unlinked-mentions-body"
               class="border-t border-surface-sidebar-border/70"
             >
+              {#if unlinkedTruncated}
+                <div
+                  class="px-2.5 py-2 text-type-3xs text-surface-sidebar-text-muted bg-surface-panel/40 border-b border-surface-sidebar-border/60"
+                  role="status"
+                  aria-live="polite"
+                >
+                  Results may be incomplete — common titles are capped for
+                  performance.
+                </div>
+              {/if}
               <ul class="m-0 p-0 list-none">
                 {#each unlinked as mention, index (`${mention.source}\u0000${mention.sourceNotebook}\u0000${mention.sourceSection}\u0000${mention.sourcePage}:${index}`)}
                   <li

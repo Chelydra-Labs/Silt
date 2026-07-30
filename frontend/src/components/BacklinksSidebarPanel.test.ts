@@ -85,9 +85,12 @@ describe('BacklinksSidebarPanel', () => {
     blockChanged = undefined
     off.mockReset()
     mocks.getBacklinksPaged.mockReset().mockResolvedValue(pageResult())
-    mocks.getUnlinkedMentionsPaged
-      .mockReset()
-      .mockResolvedValue({ results: [], cursor: '', hasMore: false })
+    mocks.getUnlinkedMentionsPaged.mockReset().mockResolvedValue({
+      results: [],
+      cursor: '',
+      hasMore: false,
+      truncated: false
+    })
     mocks.promoteUnlinkedMention.mockReset().mockResolvedValue(undefined)
     mocks.pushNotification.mockReset()
     mocks.eventsOn.mockReset().mockImplementation((event, callback) => {
@@ -360,7 +363,8 @@ describe('BacklinksSidebarPanel', () => {
         }
       ],
       cursor: '',
-      hasMore: false
+      hasMore: false,
+      truncated: false
     })
     renderPanel()
     await screen.findByText('1 page mentions this title')
@@ -783,5 +787,115 @@ describe('BacklinksSidebarPanel', () => {
         'Research'
       )
     )
+  })
+
+  it('shows incomplete status when FTS scan is truncated', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          sourceNotebook: 'Work',
+          sourceSection: 'Projects',
+          sourcePage: 'Launch plan',
+          sourceBlockIds: ['block-42'],
+          sourceSnippets: ['see Research here'],
+          matchCount: 1,
+          title: 'Research',
+          ambiguous: false
+        }
+      ],
+      cursor: '',
+      hasMore: false,
+      truncated: true
+    })
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(
+      await screen.findByText(
+        /Results may be incomplete — common titles are capped for performance/
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('does not show incomplete banner when truncated is false or omitted', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          sourceNotebook: 'Work',
+          sourceSection: 'Projects',
+          sourcePage: 'Launch plan',
+          sourceBlockIds: ['block-42'],
+          sourceSnippets: ['see Research here'],
+          matchCount: 1,
+          title: 'Research',
+          ambiguous: false
+        }
+      ],
+      cursor: '',
+      hasMore: false
+      // truncated omitted — defaults false via Boolean(result?.truncated)
+    } as { results: unknown[]; cursor: string; hasMore: boolean })
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    expect(screen.queryByText(/may be incomplete/)).not.toBeInTheDocument()
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(
+      screen.queryByText(/Results may be incomplete/)
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps incomplete banner after Load more when scan is truncated', async () => {
+    const mention = (page: string, blockId: string) => ({
+      source: 'vault',
+      sourceNotebook: 'Work',
+      sourceSection: 'Projects',
+      sourcePage: page,
+      sourceBlockIds: [blockId],
+      sourceSnippets: ['see Research here'],
+      matchCount: 1,
+      title: 'Research',
+      ambiguous: false
+    })
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce({
+        results: [mention('Page A', 'block-01')],
+        cursor: 'cursor-1',
+        hasMore: true,
+        truncated: true
+      })
+      .mockResolvedValueOnce({
+        results: [mention('Page B', 'block-02')],
+        cursor: '',
+        hasMore: false,
+        truncated: true
+      })
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(
+      await screen.findByText(
+        /Results may be incomplete — common titles are capped for performance/
+      )
+    ).toBeInTheDocument()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Load more unlinked mentions' })
+    )
+    await screen.findByText('Page B')
+    expect(
+      screen.getByText(
+        /Results may be incomplete — common titles are capped for performance/
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/pages mention this title · may be incomplete/)
+    ).toBeInTheDocument()
   })
 })
