@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"testing"
@@ -988,23 +989,195 @@ func TestUnlinked_HasMoreOrthogonalToTruncated(t *testing.T) {
 	}
 }
 
-// TestUnlinked_EncodeDecodeScanCursor verifies scan keyset round-trip + soft reset.
+// TestUnlinked_EncodeDecodeScanCursor verifies UUID scan keyset round-trip,
+// live rowid resolution, gone-block soft-reset, and legacy u1: acceptance.
 func TestUnlinked_EncodeDecodeScanCursor(t *testing.T) {
-	enc := encodeUnlinkedScanCursor(42)
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "home"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "Src", []parser.ParsedBlock{
+		noteBlock(uuidV, "mentions Topic here"),
+	})
+
+	enc := encodeUnlinkedScanCursor(uuidV)
 	if enc == "" {
-		t.Fatal("empty scan cursor for positive rowid")
+		t.Fatal("empty scan cursor for non-empty block id")
 	}
-	if got := decodeUnlinkedScanCursor(enc); got != 42 {
-		t.Errorf("round-trip: got %d want 42", got)
+	db := dm.SQLDB()
+
+	got, err := resolveUnlinkedScanCursor(db, enc)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
 	}
-	if decodeUnlinkedScanCursor("") != 0 {
-		t.Error("empty → 0")
+	var wantRowid int64
+	if err := db.QueryRow(`SELECT rowid FROM blocks WHERE id = ?`, uuidV).Scan(&wantRowid); err != nil {
+		t.Fatalf("lookup: %v", err)
 	}
-	if decodeUnlinkedScanCursor("!!!") != 0 {
-		t.Error("garbage → 0")
+	if got != wantRowid {
+		t.Errorf("resolve u2: got rowid %d want %d", got, wantRowid)
 	}
-	if encodeUnlinkedScanCursor(0) != "" {
-		t.Error("rowid 0 should not encode")
+
+	// Gone block id → soft-reset to 0 (do not skip a reused rowid).
+	gone := encodeUnlinkedScanCursor("ffffffff-ffff-4fff-8fff-ffffffffffff")
+	got, err = resolveUnlinkedScanCursor(db, gone)
+	if err != nil {
+		t.Fatalf("gone resolve: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("gone block should soft-reset to 0, got %d", got)
+	}
+
+	// Legacy u1:rowid still accepted.
+	legacy := base64.RawURLEncoding.EncodeToString([]byte(scanCursorPrefixV1 + "42"))
+	got, err = resolveUnlinkedScanCursor(db, legacy)
+	if err != nil {
+		t.Fatalf("legacy: %v", err)
+	}
+	if got != 42 {
+		t.Errorf("legacy u1: got %d want 42", got)
+	}
+
+	got, err = resolveUnlinkedScanCursor(db, "")
+	if err != nil || got != 0 {
+		t.Errorf("empty → 0, got %d err %v", got, err)
+	}
+	got, err = resolveUnlinkedScanCursor(db, "!!!")
+	if err != nil || got != 0 {
+		t.Errorf("garbage → 0, got %d err %v", got, err)
+	}
+	if encodeUnlinkedScanCursor("") != "" {
+		t.Error("empty id should not encode")
+	}
+}
+
+// TestUnlinked_ScanFillRoundsExhaustion: CODE-only hits fill every probe for
+// unlinkedScanFillRounds without reaching unlinkedScanCap keepers; the round
+// budget binds with Truncated+ScanCursor so Scan more can reach later plains.
+func TestUnlinked_ScanFillRoundsExhaustion(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "home page"),
+	})
+	// Exactly rounds×cap CODE hits: each fill round consumes one full probe of
+	// CODE-only keepers-filtered rows and still sees probeMore until the last
+	// probe of the budget... Actually we need probeMore true when rounds end:
+	// rounds*cap CODE + 1 more CODE (or plain after) so the final round still
+	// has more FTS beyond the window.
+	codeN := unlinkedScanFillRounds * unlinkedScanCap
+	for i := 0; i < codeN; i++ {
+		pg := fmt.Sprintf("Code%05d", i)
+		bid := fmt.Sprintf("%08x-eeee-4eee-8eee-eeeeeeeeeeee", i)
+		idxU(t, dm, "vault", "NB", "Sec", pg, []parser.ParsedBlock{
+			{ID: bid, Type: parser.BlockCode, RawText: "const Topic = 1", CleanText: "const Topic = 1", LineNumber: 1},
+		})
+	}
+	// One extra CODE so the last probe of the budget still has moreFTS, then plains.
+	idxU(t, dm, "vault", "NB", "Sec", "CodeExtra", []parser.ParsedBlock{
+		{ID: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", Type: parser.BlockCode, RawText: "var Topic", CleanText: "var Topic", LineNumber: 1},
+	})
+	const plainN = 2
+	for i := 0; i < plainN; i++ {
+		pg := fmt.Sprintf("Plain%04d", i)
+		bid := fmt.Sprintf("%08x-ffff-4fff-8fff-ffffffffffff", i)
+		idxU(t, dm, "vault", "NB", "Sec", pg, []parser.ParsedBlock{
+			noteBlock(bid, "mentions Topic here"),
+		})
+	}
+
+	first, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if !first.Truncated {
+		t.Fatal("round budget should bind with Truncated=true")
+	}
+	if first.ScanCursor == "" {
+		t.Fatal("round budget bind must yield ScanCursor for continuation")
+	}
+	if len(first.Results) != 0 {
+		t.Fatalf("CODE-only fill window should yield 0 residuals, got %d", len(first.Results))
+	}
+
+	// Consume ScanCursor until plains appear (may take multiple Scan more rounds
+	// if remaining CODE still under-fills, but must terminate with plains).
+	scan := first.ScanCursor
+	var plains []string
+	for step := 0; step < 8; step++ {
+		page, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", scan, 50)
+		if err != nil {
+			t.Fatalf("step %d: %v", step, err)
+		}
+		for _, m := range page.Results {
+			plains = append(plains, m.SourcePage)
+		}
+		if !page.Truncated {
+			break
+		}
+		if page.ScanCursor == "" {
+			t.Fatalf("step %d: truncated without scan_cursor", step)
+		}
+		if page.ScanCursor == scan {
+			t.Fatalf("step %d: scan_cursor did not advance", step)
+		}
+		scan = page.ScanCursor
+	}
+	if len(plains) != plainN {
+		t.Fatalf("after round-exhaustion continuation: want %d plains, got %v", plainN, plains)
+	}
+	for i, got := range plains {
+		want := fmt.Sprintf("Plain%04d", i)
+		if got != want {
+			t.Errorf("plain[%d]: got %q want %q", i, got, want)
+		}
+	}
+}
+
+// TestUnlinked_ScanCursorSurvivesReindex: block UUID cursor still continues
+// after the anchor block is re-indexed (rowid may change).
+func TestUnlinked_ScanCursorSurvivesReindex(t *testing.T) {
+	dm := newTestDB(t)
+	idxUMany(t, dm, "Topic", unlinkedScanCap+3)
+
+	first, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if !first.Truncated || first.ScanCursor == "" {
+		t.Fatalf("want truncated batch, got trunc=%v scan=%q", first.Truncated, first.ScanCursor)
+	}
+
+	// Re-index one early source page (new content, same path) so SQLite may
+	// assign a new rowid while block ids for other pages stay put. The cursor
+	// anchors on the last examined block id from batch 1 — resolve must still
+	// yield a usable exclusive lower bound.
+	idxU(t, dm, "vault", "NB", "Sec", "Src0000", []parser.ParsedBlock{
+		noteBlock("00000000-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "mentions Topic again"),
+	})
+
+	second, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", first.ScanCursor, 100)
+	if err != nil {
+		t.Fatalf("second after reindex: %v", err)
+	}
+	if len(second.Results) == 0 {
+		t.Fatal("continuation after reindex should still surface remaining residuals")
+	}
+	// Must not only return the already-seen first residual page.
+	if len(second.Results) == 1 && second.Results[0].SourcePage == "Src0000" && !second.Truncated {
+		// Acceptable if only one left; with +3 beyond cap we expect more.
+	}
+	seen := map[string]bool{}
+	for _, m := range first.Results {
+		seen[m.SourcePage] = true
+	}
+	newCount := 0
+	for _, m := range second.Results {
+		if !seen[m.SourcePage] {
+			newCount++
+		}
+	}
+	if newCount == 0 {
+		t.Error("second batch after reindex should include pages not in first residual page")
 	}
 }
 

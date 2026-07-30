@@ -68,9 +68,10 @@ const unlinkedScanCap = 500
 // bounded, never O(all vault matches).
 const unlinkedScanFillRounds = 4
 
-// scanCursorPrefix versions the opaque FTS batch keyset (decimal rowid after
-// the last included candidate). Invalid/unknown tokens soft-reset to 0.
-const scanCursorPrefix = "u1:"
+// scanCursorPrefixV2 versions the opaque FTS batch keyset as a stable block
+// UUID (survives re-index rowid churn). Legacy u1:rowid tokens still decode.
+const scanCursorPrefixV2 = "u2:"
+const scanCursorPrefixV1 = "u1:"
 
 // GetUnlinkedMentionsPaged returns source pages whose clean_content has a
 // residual plain (non-[[…]]) whole-word mention of the active page's title.
@@ -82,9 +83,10 @@ const scanCursorPrefix = "u1:"
 //
 // scanCursor selects the FTS candidate batch: empty starts at the lowest
 // matching rowid; a prior result's ScanCursor continues after that batch's
-// last rowid. Residual cursor pages only within the current batch window.
-// Client-accumulated batches: the UI appends unique residual pages across
-// Scan more rounds (see ARCHITECTURE §4.3 / §5.4).
+// last examined block (resolved by stable block id → current rowid). Residual
+// cursor pages only within the current batch window. Client-accumulated
+// batches: the UI appends unique residual pages across Scan more rounds
+// (see ARCHITECTURE §4.3 / §5.4).
 //
 // The title is the active page's leaf `page` name; queries with a blank or
 // sub-2-rune title return an empty result (short names yield too many false
@@ -120,8 +122,11 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 	}
 	titleRef := ResolvePageLinkAgainst(title, pages)
 
-	afterRowid := decodeUnlinkedScanCursor(scanCursor)
-	candidates, scanTruncated, lastRowid, err := dm.scanUnlinkedCandidateBlocks(db, title, source, notebook, section, page, afterRowid)
+	afterRowid, err := resolveUnlinkedScanCursor(db, scanCursor)
+	if err != nil {
+		return UnlinkedMentionsResult{}, err
+	}
+	candidates, scanTruncated, lastID, err := dm.scanUnlinkedCandidateBlocks(db, title, source, notebook, section, page, afterRowid)
 	if err != nil {
 		return UnlinkedMentionsResult{}, err
 	}
@@ -174,7 +179,7 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 
 	outScanCursor := ""
 	if scanTruncated {
-		outScanCursor = encodeUnlinkedScanCursor(lastRowid)
+		outScanCursor = encodeUnlinkedScanCursor(lastID)
 	}
 
 	startIdx := 0
@@ -228,7 +233,8 @@ type unlinkedBlock struct {
 
 // scanUnlinkedCandidateBlocks runs a bounded FTS5 phrase window over
 // clean_content and returns candidate blocks (post CODE/self filter) plus
-// whether more FTS matches exist beyond the window.
+// whether more FTS matches exist beyond the window and the last examined
+// block id (for a stable scan_cursor).
 //
 // WHY FTS rowid subquery (not path ORDER BY on the join): EXPLAIN shows
 // path-ordered plans do MATCH → join → TEMP B-TREE sort on path columns before
@@ -239,15 +245,15 @@ type unlinkedBlock struct {
 // CODE / self-page filters run in Go after each probe. A single probe can
 // under-fill when many hits are CODE/self, so we loop-fill up to
 // unlinkedScanFillRounds probes until we have unlinkedScanCap keepers or FTS
-// is exhausted — still O(rounds×cap), never O(all vault matches). lastRowid is
-// the last FTS rowid examined (including filtered rows) so scan_cursor does not
+// is exhausted — still O(rounds×cap), never O(all vault matches). lastID is
+// the last FTS hit examined (including filtered rows) so scan_cursor does not
 // skip past dropped hits. Residual plain filtering happens in the caller.
 //
 // afterRowid is an exclusive lower bound (0 = from the start).
-func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source, notebook, section, page string, afterRowid int64) ([]unlinkedBlock, bool, int64, error) {
+func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source, notebook, section, page string, afterRowid int64) ([]unlinkedBlock, bool, string, error) {
 	phrase := buildUnlinkedFTSPhrase(title)
 	if phrase == "" {
-		return nil, false, 0, nil
+		return nil, false, "", nil
 	}
 	if afterRowid < 0 {
 		afterRowid = 0
@@ -280,27 +286,28 @@ func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source
 
 	out := make([]unlinkedBlock, 0, unlinkedScanCap)
 	after := afterRowid
-	var last int64
+	var lastRowid int64
+	var lastID string
 	moreFTS := false
 
 	for round := 0; round < unlinkedScanFillRounds && len(out) < unlinkedScanCap; round++ {
 		rows, err := db.Query(q, phrase, after, unlinkedScanCap+1)
 		if err != nil {
-			return nil, false, 0, fmt.Errorf("unlinked mentions: fts scan: %w", err)
+			return nil, false, "", fmt.Errorf("unlinked mentions: fts scan: %w", err)
 		}
 		var raw []rawRow
 		for rows.Next() {
 			var r rawRow
 			if err := rows.Scan(&r.rowid, &r.id, &r.source, &r.notebook, &r.section, &r.page, &r.blockType, &r.clean); err != nil {
 				rows.Close()
-				return nil, false, 0, fmt.Errorf("unlinked mentions: scan: %w", err)
+				return nil, false, "", fmt.Errorf("unlinked mentions: scan: %w", err)
 			}
 			raw = append(raw, r)
 		}
 		err = rows.Err()
 		rows.Close()
 		if err != nil {
-			return nil, false, 0, err
+			return nil, false, "", err
 		}
 		if len(raw) == 0 {
 			moreFTS = false
@@ -314,7 +321,8 @@ func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source
 
 		filled := false
 		for i, r := range raw {
-			last = r.rowid
+			lastRowid = r.rowid
+			lastID = r.id
 			if !keep(r) {
 				continue
 			}
@@ -330,45 +338,72 @@ func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source
 		if filled {
 			break
 		}
-		after = last
+		after = lastRowid
 		moreFTS = probeMore
 		if !probeMore {
 			break
 		}
+		// Round budget exhausted with probeMore still true: moreFTS stays true
+		// and lastID anchors scan_cursor so Scan more can continue.
 	}
 
-	return out, moreFTS, last, nil
+	return out, moreFTS, lastID, nil
 }
 
 // encodeUnlinkedScanCursor builds the opaque next-batch keyset from the last
-// included candidate rowid (next fetch uses rowid > last).
-func encodeUnlinkedScanCursor(lastRowid int64) string {
-	if lastRowid <= 0 {
+// examined block UUID (stable across re-index rowid changes).
+func encodeUnlinkedScanCursor(lastBlockID string) string {
+	id := strings.TrimSpace(lastBlockID)
+	if id == "" {
 		return ""
 	}
-	return base64.RawURLEncoding.EncodeToString([]byte(scanCursorPrefix + strconv.FormatInt(lastRowid, 10)))
+	return base64.RawURLEncoding.EncodeToString([]byte(scanCursorPrefixV2 + id))
 }
 
-// decodeUnlinkedScanCursor returns the exclusive lower-bound rowid for the next
-// FTS batch. Empty or invalid tokens soft-reset to 0 (first batch), matching
-// residual cursor tolerance.
-func decodeUnlinkedScanCursor(scanCursor string) int64 {
+// resolveUnlinkedScanCursor maps an opaque scan_cursor to an exclusive lower-
+// bound rowid for the next FTS probe.
+//
+// u2:<block-id> (current): look up the block's live rowid. If the block was
+// re-indexed it keeps its UUID at a new rowid — continuation stays correct.
+// If the block is gone, soft-reset to 0 (client uniqueUnlinked dedups any
+// re-walk) rather than risk skipping a rowid reused by an unrelated block.
+//
+// u1:<rowid> (legacy): accept raw rowid for in-flight clients; empty/invalid
+// tokens also soft-reset to 0.
+func resolveUnlinkedScanCursor(db *sql.DB, scanCursor string) (int64, error) {
 	if scanCursor == "" {
-		return 0
+		return 0, nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(scanCursor)
 	if err != nil {
-		return 0
+		return 0, nil
 	}
 	s := string(raw)
-	if !strings.HasPrefix(s, scanCursorPrefix) {
-		return 0
+	switch {
+	case strings.HasPrefix(s, scanCursorPrefixV2):
+		id := strings.TrimSpace(s[len(scanCursorPrefixV2):])
+		if id == "" {
+			return 0, nil
+		}
+		var rowid int64
+		err := db.QueryRow(`SELECT rowid FROM blocks WHERE id = ?`, id).Scan(&rowid)
+		if err == sql.ErrNoRows {
+			// Anchor block gone — restart from the beginning (safe + deduped).
+			return 0, nil
+		}
+		if err != nil {
+			return 0, fmt.Errorf("unlinked mentions: resolve scan_cursor: %w", err)
+		}
+		return rowid, nil
+	case strings.HasPrefix(s, scanCursorPrefixV1):
+		n, err := strconv.ParseInt(s[len(scanCursorPrefixV1):], 10, 64)
+		if err != nil || n < 0 {
+			return 0, nil
+		}
+		return n, nil
+	default:
+		return 0, nil
 	}
-	n, err := strconv.ParseInt(s[len(scanCursorPrefix):], 10, 64)
-	if err != nil || n < 0 {
-		return 0
-	}
-	return n
 }
 
 // buildUnlinkedFTSPhrase turns a page title into an FTS5 phrase MATCH expression

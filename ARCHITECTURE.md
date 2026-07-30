@@ -581,8 +581,10 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   small round cap (`unlinkedScanFillRounds`) until it has `unlinkedScanCap`
   keepers or FTS is exhausted — still O(rounds×cap), never O(all vault matches).
   When the window fills with more FTS hits beyond it, the envelope sets
-  `truncated: true` and `scan_cursor` (opaque keyset: last examined FTS
-  rowid) so the client can request the next batch explicitly. Page-level
+  `truncated: true` and `scan_cursor` (opaque keyset: last examined block
+  UUID, resolved to the live rowid on continue so re-index rowid churn does
+  not skip or double-count; gone anchors soft-reset) so the client can request
+  the next batch explicitly. Page-level
   `has_more` / `cursor` only page residual source pages **within the current
   batch** — orthogonal to `truncated` / `scan_cursor`. Residual presentation
   is path-sorted in Go; scan order only defines the batch window. Further
