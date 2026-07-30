@@ -9,6 +9,7 @@ import {
   SiltDetailsExtensions,
   SiltTableExtensions,
   UniqueBlockIds,
+  SiltHardBreak,
   insertTable
 } from './index'
 import {
@@ -79,8 +80,10 @@ function makeEditor() {
         horizontalRule: false,
         // TrailingNode auto-appends an empty paragraph after setContent; our
         // block model manages its own trailing blocks.
-        trailingNode: false
+        trailingNode: false,
+        hardBreak: false
       }),
+      SiltHardBreak,
       ...SiltBlockExtensions,
       ...SiltInlineMarkExtensions,
       ...SiltColorMarkExtensions,
@@ -171,6 +174,69 @@ describe('detectBullet (#327)', () => {
     ['-x (no space after dash)', '']
   ])('detectBullet(%j) === %j', (input, expected) => {
     expect(detectBullet(input)).toBe(expected)
+  })
+})
+
+describe('hardBreak / <br> soft line break (#828)', () => {
+  it('round-trips <br> inside a NOTE clean_text', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: 'a<br>b', depth: 0 })]
+    const doc = blocksToDoc(blocks)
+    const note = doc.content?.[0]
+    const types = (note?.content || []).map((c) => c.type)
+    expect(types).toEqual(['text', 'hardBreak', 'text'])
+    const back = docToBlocks(doc)
+    expect(back).toHaveLength(1)
+    expect(back[0].clean_text).toBe('a<br>b')
+  })
+
+  it('accepts <br/>, <br />, and <BR> on parse and emits canonical <br>', () => {
+    for (const form of ['a<br/>b', 'a<br />b', 'a<BR>b'] as const) {
+      const back = docToBlocks(
+        blocksToDoc([mkBlock('NOTE', { clean_text: form })])
+      )
+      expect(back[0].clean_text).toBe('a<br>b')
+    }
+  })
+
+  it('round-trips consecutive hard breaks', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: 'a<br><br>b' })]
+    expect(docToBlocks(blocksToDoc(blocks))[0].clean_text).toBe('a<br><br>b')
+  })
+
+  it('keeps alignment marker after soft-broken content', () => {
+    const blocks = [
+      mkBlock('NOTE', {
+        clean_text: 'a<br>b <!-- silt-align: center -->'
+      })
+    ]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back[0].clean_text).toBe('a<br>b <!-- silt-align: center -->')
+  })
+
+  it('round-trips quote-prefixed notes with soft breaks', () => {
+    const blocks = [
+      mkBlock('NOTE', {
+        raw_text: '> a<br>b',
+        clean_text: '> a<br>b'
+      })
+    ]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back[0].clean_text).toBe('> a<br>b')
+  })
+
+  it('round-trips marks around a hard break', () => {
+    const blocks = [mkBlock('NOTE', { clean_text: '**bold**<br>plain' })]
+    const back = docToBlocks(blocksToDoc(blocks))
+    expect(back[0].clean_text).toBe('**bold**<br>plain')
+  })
+
+  it('survives TipTap setContent → getJSON with hardBreak nodes', () => {
+    const editor = makeEditor()
+    const blocks = [mkBlock('NOTE', { clean_text: 'line1<br>line2' })]
+    editor.commands.setContent(blocksToDoc(blocks))
+    const back = docToBlocks(editor.getJSON() as DocJSON)
+    expect(back[0].clean_text).toBe('line1<br>line2')
+    editor.destroy()
   })
 })
 
