@@ -353,7 +353,9 @@ describe('Shift-Enter in taskBlock opens the modal (#781)', () => {
 describe('Shift-Enter soft break in noteBlock (#828)', () => {
   it('inserts hardBreak and keeps a single block', async () => {
     const editor = makeShiftEnterEditor(
-      blocksToDoc([mkBlock('NOTE', { id: 'note-1', clean_text: 'hello world' })])
+      blocksToDoc([
+        mkBlock('NOTE', { id: 'note-1', clean_text: 'hello world' })
+      ])
     )
     await new Promise((r) => setTimeout(r, 0))
 
