@@ -43,6 +43,12 @@
     busy?: boolean
   }
 
+  // busy is a write-only $bindable: the sidebar pushes its interaction state UP
+  // to the host's Esc guard (TaskEditDrawer + TaskSubEditorModal bind it); the
+  // sidebar never reads its own value, so the default is never consumed here.
+  // Do NOT mirror it onto aria-busy — "a popover is open" is not a loading
+  // state and would mislead assistive tech.
+  // eslint-disable-next-line no-useless-assignment
   let { task, ctx, onMetaChanged, busy = $bindable() }: Props = $props()
 
   let rootRef = $state<HTMLDivElement | null>(null)
@@ -536,7 +542,7 @@
   })
 </script>
 
-<div bind:this={rootRef} class="space-y-6" aria-busy={busy}>
+<div bind:this={rootRef} class="space-y-6">
   {#if metaError}
     <ErrorBanner
       message={`Couldn't save: ${metaError}`}

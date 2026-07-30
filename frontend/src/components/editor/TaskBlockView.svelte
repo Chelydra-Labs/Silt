@@ -50,7 +50,7 @@
        opacity-0 group-hover:opacity-100 reveal pattern. -->
   <button
     type="button"
-    class="material-symbols-outlined text-text-muted hover:text-accent-primary-start transition-colors duration-150 mt-0.5 select-none text-icon-lg opacity-0 group-hover:opacity-100 cursor-pointer bg-transparent border-none p-0"
+    class="material-symbols-outlined text-text-muted hover:text-accent-primary-start transition-colors duration-150 mt-0.5 select-none text-icon-lg opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start rounded cursor-pointer bg-transparent border-none p-0"
     aria-label="Open task editor"
     title="Open task editor"
     onclick={(e) => {
