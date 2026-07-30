@@ -897,7 +897,7 @@
                             : 'sm:flex-row sm:items-center sm:justify-between'}"
                         >
                           <span
-                            class="min-w-0 truncate text-type-3xs text-surface-sidebar-text-muted"
+                            class="min-w-0 line-clamp-2 text-type-3xs text-surface-sidebar-text-muted leading-snug"
                             title={snip || undefined}
                           >
                             {#each emphasizeTitle(snip, mention.title) as part, pIdx (`${bIndex}-${pIdx}`)}
