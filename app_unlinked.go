@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"silt/backend/db"
-	"silt/backend/parser"
 )
 
 // GetUnlinkedMentionsPaged returns source pages that mention the active page's
@@ -125,37 +124,15 @@ func findExactPageLoc(pages []db.PageLoc, want db.PageLoc) (db.PageLoc, bool) {
 	return db.PageLoc{}, false
 }
 
-// wrapFirstUnlinkedOccurrence wraps the first title match in clean (per titleRE)
-// that is NOT already inside a [[…]] span, producing before+"[[linkTarget]]"+after.
-// Returns (clean, false) when no promotable occurrence exists. Already-linked
-// spans are located via parser.PageLinkRegex so heading/alias variants are
-// covered by the same grammar that indexed them.
+// wrapFirstUnlinkedOccurrence wraps the first residual plain title match in
+// clean (per titleRE / db.FirstPlainTitleOccurrence), producing
+// before+"[[linkTarget]]"+after. Returns (clean, false) when no promotable
+// occurrence exists. List and promote share FirstPlainTitleOccurrence so a
+// block that already links the page once can still promote a remaining plain hit.
 func wrapFirstUnlinkedOccurrence(clean string, titleRE *regexp.Regexp, linkTarget string) (string, bool) {
-	type span struct{ start, end int }
-	var linked []span
-	for _, idx := range parser.PageLinkRegex.FindAllStringSubmatchIndex(clean, -1) {
-		if len(idx) >= 2 {
-			linked = append(linked, span{idx[0], idx[1]})
-		}
+	start, end, ok := db.FirstPlainTitleOccurrence(clean, titleRE)
+	if !ok {
+		return clean, false
 	}
-	inLinked := func(s, e int) bool {
-		for _, sp := range linked {
-			if s < sp.end && e > sp.start { // overlap
-				return true
-			}
-		}
-		return false
-	}
-	for _, m := range titleRE.FindAllStringSubmatchIndex(clean, -1) {
-		// WordBoundaryTitleRE captures the title as group 1 (m[2]:m[3]); the
-		// leading/trailing boundary char (m[0]:m[1]) is not part of the title.
-		if len(m) < 4 {
-			continue
-		}
-		if inLinked(m[2], m[3]) {
-			continue
-		}
-		return clean[:m[2]] + "[[" + linkTarget + "]]" + clean[m[3]:], true
-	}
-	return clean, false
+	return clean[:start] + "[[" + linkTarget + "]]" + clean[end:], true
 }

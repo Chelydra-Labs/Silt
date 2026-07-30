@@ -54,8 +54,10 @@
   }
 
   /**
-   * Split snippet into text segments with the first case-insensitive,
-   * word-boundary title match marked (aligned with backend WordBoundaryTitleRE).
+   * Split snippet into text segments with the first residual plain title match
+   * marked. Mirrors backend FirstPlainTitleOccurrence: case-insensitive
+   * word-boundary match, skipping hits inside [[…]] wiki-link spans so mixed
+   * snippets emphasize the promotable plain occurrence, not the already-linked one.
    */
   function emphasizeTitle(
     snippet: string,
@@ -63,6 +65,19 @@
   ): { text: string; mark: boolean }[] {
     if (!snippet) return []
     if (!title) return [{ text: snippet, mark: false }]
+
+    // Wiki-link spans for residual skip. Inner body excludes brackets so the
+    // span cannot cross nested `[`/`]` — aligned with parser.PageLinkRegex
+    // (backend FirstPlainTitleOccurrence). Still covers #heading / |alias.
+    const linked: { start: number; end: number }[] = []
+    const pageLinkRe = /\[\[[^[\]]*?\]\]/g
+    for (const m of snippet.matchAll(pageLinkRe)) {
+      if (m.index === undefined) continue
+      linked.push({ start: m.index, end: m.index + m[0].length })
+    }
+    const inLinked = (s: number, e: number) =>
+      linked.some((sp) => s < sp.end && e > sp.start)
+
     const lower = snippet.toLowerCase()
     const needle = title.toLowerCase()
     let from = 0
@@ -70,12 +85,10 @@
     while (from <= lower.length - needle.length) {
       const at = lower.indexOf(needle, from)
       if (at < 0) break
+      const end = at + needle.length
       const before = at > 0 ? snippet[at - 1] : undefined
-      const after =
-        at + needle.length < snippet.length
-          ? snippet[at + needle.length]
-          : undefined
-      if (!isWordChar(before) && !isWordChar(after)) {
+      const after = end < snippet.length ? snippet[end] : undefined
+      if (!isWordChar(before) && !isWordChar(after) && !inLinked(at, end)) {
         idx = at
         break
       }

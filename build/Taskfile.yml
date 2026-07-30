@@ -191,15 +191,20 @@ tasks:
       - wails3 generate bindings -f '{{.BUILD_FLAGS}}' -clean=true -time-type=Date{{if eq .OBFUSCATED "true"}} -obfuscated{{end}}
 
   generate:icons:
-    summary: Generates the Windows `.ico` from the app icon. (macOS `.icns` / `Assets.car` generation removed — macOS is out of scope; Windows + Linux only.)
+    # Windows + Linux product scope only. wails alpha2.118+ always emits a mac
+    # path when MacFilename is non-empty (struct-tag default), so we pass an
+    # explicit -macfilename under build/darwin/ and discard it from packaging.
+    summary: Generates platform icons from appicon.png (Windows .ico required; .icns emitted only to satisfy wails CLI).
     run: once
     dir: build
     sources:
       - "appicon.png"
     generates:
       - "windows/icon.ico"
+      - "darwin/icon.icns"
     cmds:
-      - wails3 generate icons -input appicon.png -windowsfilename windows/icon.ico
+      - mkdir -p windows darwin
+      - wails3 generate icons -input appicon.png -windowsfilename windows/icon.ico -macfilename darwin/icon.icns
 
   dev:frontend:
     summary: Runs the frontend in development mode

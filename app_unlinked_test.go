@@ -188,6 +188,48 @@ func TestPromoteUnlinkedMention_AmbiguousRejected(t *testing.T) {
 	}
 }
 
+// TestPromoteUnlinkedMention_MixedResidual verifies the full promote path on a
+// block that already links the target once and still has a plain residual hit:
+// wrap the residual, drop from unlinked list, gain a backlink edge.
+func TestPromoteUnlinkedMention_MixedResidual(t *testing.T) {
+	app := newTestApp(t)
+	const srcBlock = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	writeNotePageWithMention(t, app, "Work", "Sec", "Onboarding", "2026-06-13",
+		"uuuuuuuu-uuuu-4uuu-8uuu-uuuuuuuuuuuu", "the onboarding guide")
+	writeNotePageWithMention(t, app, "Work", "Sec", "Notes", "2026-06-13",
+		srcBlock, "see [[Onboarding]] and Onboarding too")
+
+	// Pre: residual plain surfaces in unlinked.
+	pre, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", 50)
+	if err != nil {
+		t.Fatalf("pre GetUnlinkedMentionsPaged: %v", err)
+	}
+	if len(pre.Results) != 1 {
+		t.Fatalf("pre unlinked: expected 1, got %d: %+v", len(pre.Results), pre.Results)
+	}
+
+	if err := app.PromoteUnlinkedMention(srcBlock, "Work", "Sec", "Onboarding"); err != nil {
+		t.Fatalf("PromoteUnlinkedMention: %v", err)
+	}
+
+	var clean string
+	if err := app.db.SQLDB().QueryRow("SELECT clean_content FROM blocks WHERE id = ?", srcBlock).Scan(&clean); err != nil {
+		t.Fatalf("read clean: %v", err)
+	}
+	if clean != "see [[Onboarding]] and [[Onboarding]] too" {
+		t.Errorf("post-promote body: got %q", clean)
+	}
+
+	post, _ := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", 50)
+	if len(post.Results) != 0 {
+		t.Errorf("post-promote unlinked: expected 0, got %d: %+v", len(post.Results), post.Results)
+	}
+	bl, _ := app.db.GetBacklinks("vault", "Work", "Sec", "Onboarding")
+	if len(bl) == 0 {
+		t.Errorf("post-promote backlinks: expected >=1 page-link, got %+v", bl)
+	}
+}
+
 // TestWrapFirstUnlinkedOccurrence verifies the plain-text→[[shortest]] rewrite
 // helper directly: surrounding prose preserved, only the first promotable
 // occurrence wrapped, and occurrences already inside [[…]] are skipped.
