@@ -4,9 +4,23 @@
 
   // SvelteNodeViewRenderer auto-applies a `node-{type.name}` (camelCase) class
   // to the wrapper, so we don't redeclare it here (#179).
-  let { node, updateAttributes }: NodeViewProps = $props()
+  let { node, editor, updateAttributes }: NodeViewProps = $props()
 
   const status = $derived(node.attrs.status || 'TODO')
+  // Suppress the open-in-modal pencil when this task block is rendered inside
+  // the Task Sub-Editor modal itself (the modal's editor sets a custom storage
+  // flag): drilling into a nested sub-task would tear the modal down mid-autosave
+  // with no flush guarantee. The page editor is the only intended entry point
+  // (#781). editor.storage is a plain record at runtime; read our own key via a
+  // cast since TipTap's Storage type doesn't declare custom extension keys.
+  let inSubEditor = $derived(
+    (
+      editor?.storage as unknown as Record<
+        string,
+        { active?: boolean } | undefined
+      >
+    )?.siltSubEditorHost?.active === true
+  )
   let isEmpty = $derived(
     node.content.size === 0 || node.textContent.trim() === ''
   )
@@ -44,6 +58,29 @@
   >
     drag_indicator
   </span>
+
+  {#if !inSubEditor}
+    <!-- Open-in-modal trigger (#781): hover-revealed pencil that opens the
+         TaskSubEditorModal for this task block. Mirrors the drag handle's
+         opacity-0 group-hover:opacity-100 reveal pattern. -->
+    <button
+      type="button"
+      class="material-symbols-outlined text-text-muted hover:text-accent-primary-start transition-colors duration-150 mt-0.5 select-none text-icon-lg opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start rounded cursor-pointer bg-transparent border-none p-0"
+      aria-label="Open task editor"
+      title="Open task editor"
+      onclick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        window.dispatchEvent(
+          new CustomEvent('silt:open-task-editor', {
+            detail: { blockId: node.attrs.id }
+          })
+        )
+      }}
+    >
+      edit_note
+    </button>
+  {/if}
 
   <!-- Checkbox -->
   {#if status === 'TODO'}

@@ -10,12 +10,16 @@ import userEvent from '@testing-library/user-event'
 
 const mocks = vi.hoisted(() => ({
   getBacklinksPaged: vi.fn(),
+  getUnlinkedMentionsPaged: vi.fn(),
+  promoteUnlinkedMention: vi.fn(),
   eventsOn: vi.fn()
 }))
 
 vi.mock('$silt-app', () =>
   createAppIpcMocks({
-    GetBacklinksPaged: mocks.getBacklinksPaged
+    GetBacklinksPaged: mocks.getBacklinksPaged,
+    GetUnlinkedMentionsPaged: mocks.getUnlinkedMentionsPaged,
+    PromoteUnlinkedMention: mocks.promoteUnlinkedMention
   })
 )
 
@@ -76,6 +80,10 @@ describe('BacklinksSidebarPanel', () => {
     blockChanged = undefined
     off.mockReset()
     mocks.getBacklinksPaged.mockReset().mockResolvedValue(pageResult())
+    mocks.getUnlinkedMentionsPaged
+      .mockReset()
+      .mockResolvedValue({ results: [], cursor: '', hasMore: false })
+    mocks.promoteUnlinkedMention.mockReset().mockResolvedValue(undefined)
     mocks.eventsOn.mockReset().mockImplementation((event, callback) => {
       if (event === 'block:changed') blockChanged = callback
       return off
@@ -328,5 +336,240 @@ describe('BacklinksSidebarPanel', () => {
     expect(
       screen.queryByRole('button', { name: 'Load more backlinks' })
     ).not.toBeInTheDocument()
+  })
+
+  it('renders the Unlinked mentions section collapsed by default, then expands to reveal Link buttons', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          sourceNotebook: 'Work',
+          sourceSection: 'Projects',
+          sourcePage: 'Launch plan',
+          sourceBlockIds: ['block-42'],
+          matchCount: 1,
+          title: 'Research',
+          ambiguous: false
+        }
+      ],
+      cursor: '',
+      hasMore: false
+    })
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+
+    const disclosure = screen.getByRole('button', {
+      name: /Unlinked mentions/
+    })
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false')
+    // Collapsed by default: no Link button yet.
+    expect(
+      screen.queryByRole('button', { name: /Link mention of Research/ })
+    ).not.toBeInTheDocument()
+
+    await fireEvent.click(disclosure)
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      await screen.findByRole('button', {
+        name: /Link mention of Research in block block-42/
+      })
+    ).toBeInTheDocument()
+  })
+
+  it('calls PromoteUnlinkedMention on Link and migrates the row out of the unlinked leg', async () => {
+    // Return the mention until PromoteUnlinkedMention runs; the post-promote
+    // refresh's loadUnlinked then returns the now-empty page (server migrated
+    // the mention into the backlinks leg), so the row disappears for good.
+    let unlinkedCleared = false
+    const mention = {
+      source: 'vault',
+      sourceNotebook: 'Work',
+      sourceSection: 'Projects',
+      sourcePage: 'Launch plan',
+      sourceBlockIds: ['block-42'],
+      matchCount: 1,
+      title: 'Research',
+      ambiguous: false
+    }
+    mocks.getUnlinkedMentionsPaged.mockImplementation(() =>
+      Promise.resolve({
+        results: unlinkedCleared ? [] : [mention],
+        cursor: '',
+        hasMore: false
+      })
+    )
+    mocks.promoteUnlinkedMention.mockImplementation(async () => {
+      unlinkedCleared = true
+    })
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+
+    await fireEvent.click(
+      await screen.findByRole('button', {
+        name: /Link mention of Research in block block-42/
+      })
+    )
+
+    await waitFor(() =>
+      expect(mocks.promoteUnlinkedMention).toHaveBeenCalledWith(
+        'block-42',
+        'Work',
+        'Knowledge',
+        'Research'
+      )
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: /Link mention of Research/ })
+      ).not.toBeInTheDocument()
+    )
+  })
+
+  it('disables the Link action and shows candidates for ambiguous mentions', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          sourceNotebook: 'Work',
+          sourceSection: 'Journal',
+          sourcePage: 'Standup',
+          sourceBlockIds: ['block-7'],
+          matchCount: 1,
+          title: 'Standup',
+          ambiguous: true,
+          candidates: [
+            {
+              source: 'vault',
+              notebook: 'Work',
+              section: 'Journal',
+              page: 'Standup'
+            },
+            {
+              source: 'vault',
+              notebook: 'Work',
+              section: 'Log',
+              page: 'Standup'
+            }
+          ]
+        }
+      ],
+      cursor: '',
+      hasMore: false
+    })
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+
+    const chip = await screen.findByText('Ambiguous')
+    expect(chip).toBeInTheDocument()
+    // Ambiguous rows render the candidates hint, not a Link button.
+    expect(
+      screen.queryByRole('button', { name: /Link mention of Standup/ })
+    ).not.toBeInTheDocument()
+    expect(screen.getByText(/Work\/Journal\/Standup/)).toBeInTheDocument()
+    expect(mocks.promoteUnlinkedMention).not.toHaveBeenCalled()
+  })
+
+  it('loads more unlinked mentions via the Load more button and appends', async () => {
+    const first = {
+      source: 'vault',
+      sourceNotebook: 'Work',
+      sourceSection: 'Projects',
+      sourcePage: 'Daily log',
+      sourceBlockIds: ['block-42'],
+      matchCount: 1,
+      title: 'Research',
+      ambiguous: false
+    }
+    const second = {
+      source: 'vault',
+      sourceNotebook: 'Archive',
+      sourceSection: '',
+      sourcePage: 'Inbox notes',
+      sourceBlockIds: ['block-7'],
+      matchCount: 1,
+      title: 'Research',
+      ambiguous: false
+    }
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce({
+        results: [first],
+        cursor: 'next-page',
+        hasMore: true
+      })
+      .mockResolvedValueOnce({ results: [second], cursor: '', hasMore: false })
+    renderPanel()
+
+    await screen.findByText('1+ pages mention this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+
+    const loadMore = await screen.findByRole('button', {
+      name: 'Load more unlinked mentions'
+    })
+    await fireEvent.click(loadMore)
+
+    await screen.findByText('2 pages mention this title')
+    expect(screen.getByText('Daily log')).toBeInTheDocument()
+    expect(screen.getByText('Inbox notes')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Load more unlinked mentions' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('disables only the in-flight row while a promote is pending (per-row busy)', async () => {
+    let resolvePromote!: () => void
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          sourceNotebook: 'Work',
+          sourceSection: 'Projects',
+          sourcePage: 'Meeting notes',
+          sourceBlockIds: ['block-42', 'block-99'],
+          matchCount: 2,
+          title: 'Research',
+          ambiguous: false
+        }
+      ],
+      cursor: '',
+      hasMore: false
+    })
+    mocks.promoteUnlinkedMention.mockImplementation(
+      () => new Promise<void>((resolve) => (resolvePromote = resolve))
+    )
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+
+    const first = await screen.findByRole('button', {
+      name: /Link mention of Research in block block-42/
+    })
+    const second = await screen.findByRole('button', {
+      name: /Link mention of Research in block block-99/
+    })
+
+    await fireEvent.click(first)
+    await waitFor(() => expect(first).toBeDisabled())
+    // Per-row busy: only the in-flight block is locked; the sibling stays open.
+    expect(second).not.toBeDisabled()
+
+    resolvePromote()
+    await waitFor(() =>
+      expect(mocks.promoteUnlinkedMention).toHaveBeenCalledWith(
+        'block-42',
+        'Work',
+        'Knowledge',
+        'Research'
+      )
+    )
   })
 })

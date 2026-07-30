@@ -16,6 +16,7 @@
 // through `?` placeholders; nothing is string-interpolated into the SQL.
 
 import { plusDaysISO } from '../../sdk'
+import type { PluginContext } from '../../sdk'
 import type {
   CalendarFilter,
   DueDateFilter,
@@ -24,6 +25,45 @@ import type {
   SortMode,
   TaskFilters
 } from './state.svelte'
+import { coerceTaskRow, type TaskDetail } from './types'
+
+/**
+ * The canonical task-detail column projection shared by every task query. The
+ * base SELECT + the tags/blocked_by/is_blocked subqueries. `buildQuery` uses
+ * this as its FROM clause; `fetchTaskDetail` reuses it for a single-row WHERE
+ * b.id = ? lookup so the two paths always project the same columns.
+ */
+const TASK_DETAIL_SELECT = `SELECT b.id, b.source, b.notebook, b.section, b.page, b.file_date, b.line_number,
+           b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
+           t.pinned, t.progress, t.recur AS recurrence, t.comments_count, t.links_count,
+           t.created_at, t.completed_at, t.manual_order,
+           t.modified_at, t.estimate_minutes, t.subtask_total, t.subtask_done,
+           (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags,
+           (SELECT GROUP_CONCAT(blocked_by_id, '|') FROM task_dependencies WHERE block_id = b.id) AS blocked_by,
+           EXISTS (
+             SELECT 1 FROM task_dependencies d
+             JOIN tasks bt ON bt.block_id = d.blocked_by_id
+             WHERE d.block_id = b.id AND bt.status != 'DONE'
+           ) AS is_blocked
+    FROM blocks b JOIN tasks t ON b.id = t.block_id`
+
+/**
+ * Fetch the full TaskDetail for a single task block by id. Runs the canonical
+ * task-detail projection (same columns as buildQuery) with `WHERE b.id = ?`
+ * and coerces the row via coerceTaskRow. Returns null when the block doesn't
+ * exist or isn't a task. Used by TaskSubEditorModal + TaskEditorModalHost to
+ * hydrate the metadata sidebar without a list-view reload (#780).
+ */
+export async function fetchTaskDetail(
+  ctx: PluginContext,
+  blockId: string
+): Promise<TaskDetail | null> {
+  const res = await ctx.sqliteQuery(`${TASK_DETAIL_SELECT} WHERE b.id = ?`, [
+    blockId
+  ])
+  if (!res.rows || res.rows.length === 0) return null
+  return coerceTaskRow(res.rows[0])
+}
 
 /**
  * The shape `buildQuery` reads from the PluginContext. Pass an explicit
@@ -197,19 +237,7 @@ export function buildQuery(
   ctx: QueryCtxLike,
   options?: BuildQueryOptions
 ): { sql: string; params: unknown[] } {
-  const baseSelect = `SELECT b.id, b.source, b.notebook, b.section, b.page, b.file_date, b.line_number,
-           b.clean_content, t.status, t.owner, t.start_date, t.due_date, t.priority,
-           t.pinned, t.progress, t.recur AS recurrence, t.comments_count, t.links_count,
-           t.created_at, t.completed_at, t.manual_order,
-           t.modified_at, t.estimate_minutes, t.subtask_total, t.subtask_done,
-           (SELECT GROUP_CONCAT(raw_path, '|') FROM tags WHERE block_id = b.id) AS tags,
-           (SELECT GROUP_CONCAT(blocked_by_id, '|') FROM task_dependencies WHERE block_id = b.id) AS blocked_by,
-           EXISTS (
-             SELECT 1 FROM task_dependencies d
-             JOIN tasks bt ON bt.block_id = d.blocked_by_id
-             WHERE d.block_id = b.id AND bt.status != 'DONE'
-           ) AS is_blocked
-    FROM blocks b JOIN tasks t ON b.id = t.block_id`
+  const baseSelect = TASK_DETAIL_SELECT
   const where: string[] = []
   const params: unknown[] = []
   // Ambient navigation resolves a unique notebook display name, so it must

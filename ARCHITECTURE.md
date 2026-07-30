@@ -570,7 +570,16 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   lookup, parameterized by the target page's block IDs) — source-aware,
   deduped, stably sorted. Pagination bounds IPC and DOM work; collection cost
   is proportional to inbound edge count, not total block count. See ADR
-  `docs/decisions/0006-backlinks-query-strategy.md`.
+  `docs/decisions/0006-backlinks-query-strategy.md`. `GetUnlinkedMentionsPaged`
+  (#782) surfaces plain-text mentions of the current page title that are not
+  yet `[[…]]` links — an FTS5 phrase query (`clean_content : "title"`) rides
+  the existing `blocks_fts` index (cost ∝ matches, not a full scan); a Go-side
+  word-boundary regex confirms each hit lives in body text, and an anti-join
+  against `page_links` (mirroring the backlinks reverse lookup) excludes pages
+  that already link here. `PromoteUnlinkedMention` resolves the title's
+  shortest unique path, rejects ambiguous leaf names with `ambiguous_target`
+  rather than guessing, and rewrites the first unlinked occurrence in the
+  source block into a `[[…]]` page link — migrating it into the backlinks leg.
 - **AI providers** (#216, #218, #479, #632) — `GetAIProviderConfig` (key-scrubbed
   read; emits `has_key` flags + `features`, never the raw secret),
   `UpdateAIProviderConfig` (provider type / base URL / model / tuning — never
@@ -961,6 +970,18 @@ panel is empty-state-aware (no page open → prompt; no backlinks → hint with
 link syntax) and surfaces load/error states with `aria-live` regions. An
 explicit Load more control appends later pages without expanding the initial
 IPC payload or DOM projection.
+
+Beneath the backlinks groups, a collapsible **Unlinked mentions** section
+lists other pages whose body text mentions the current page title in plain
+text (no `[[…]]` link yet). It queries `GetUnlinkedMentionsPaged` (§4.3) on
+mount and on the same debounced `block:changed` cycle. The section is
+collapsed by default; each row shows the source page, a match count badge,
+and a Link action that calls `PromoteUnlinkedMention` to convert the first
+occurrence into a real page link. On success the row migrates out of the
+unlinked leg and reappears among the backlinks groups. Mentions whose title
+resolves to more than one page (ambiguous basename) are flagged and rendered
+with their candidate paths — the Link action is withheld so the user resolves
+the ambiguity before linking, never auto-promoted.
 
 5.5 Search & Writing Aids
 

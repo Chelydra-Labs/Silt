@@ -50,6 +50,10 @@
     $props()
 
   let devModeEnabled = $derived(isDevMode())
+  let inSubEditor = $derived(
+    (editor.storage as unknown as Record<string, { active?: boolean }>)
+      .siltSubEditorHost?.active === true
+  )
   let menuEl = $state<HTMLDivElement | null>(null)
 
   // Close the menu: focus the editor first (while still mounted) then signal
@@ -109,6 +113,19 @@
 
   function handleDeleteBlock(): void {
     deleteBlock(clipboardDeps())
+    close()
+  }
+
+  /** Edit task in modal (#781): dispatches the silt:open-task-editor window
+   *  event consumed by TaskEditorModalHost. Only shown for taskBlock targets. */
+  function handleEditTaskInModal(): void {
+    if (menu.activeBlockId) {
+      window.dispatchEvent(
+        new CustomEvent('silt:open-task-editor', {
+          detail: { blockId: menu.activeBlockId }
+        })
+      )
+    }
     close()
   }
 
@@ -296,6 +313,18 @@
         >
         Copy Block Embed
       </button>
+
+      {#if menu.activeBlockNode?.type.name === 'taskBlock' && !inSubEditor}
+        <button
+          type="button"
+          class="context-menu-item"
+          role="menuitem"
+          onclick={handleEditTaskInModal}
+        >
+          <span class="material-symbols-outlined text-icon-md">edit_note</span>
+          Edit task in modal…
+        </button>
+      {/if}
 
       <div class="context-menu-separator"></div>
       <button

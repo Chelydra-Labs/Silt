@@ -445,6 +445,66 @@ describe('TipTapEditor context menu', () => {
 
     unmount()
   })
+
+  it('shows "Edit task in modal…" for a taskBlock and dispatches the event (#781)', async () => {
+    const blocks = [mkBlock('TASK', { clean_text: 'my task', status: 'TODO' })]
+    const { container, unmount } = render(TipTapEditor, {
+      props: {
+        notebook: 'NB',
+        section: 'S',
+        page: 'P',
+        blocks,
+        onUpdate: () => {}
+      }
+    })
+
+    await waitFor(() => {
+      expect(container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+
+    await openContextMenu(container)
+
+    expect(container.textContent).toContain('Edit task in modal…')
+
+    const handler = vi.fn()
+    window.addEventListener('silt:open-task-editor', handler)
+
+    const item = Array.from(
+      container.querySelectorAll('[role="menuitem"]')
+    ).find((btn) =>
+      btn.textContent?.includes('Edit task in modal')
+    ) as HTMLElement
+    expect(item).toBeTruthy()
+    await fireEvent.click(item)
+
+    expect(handler).toHaveBeenCalledTimes(1)
+
+    window.removeEventListener('silt:open-task-editor', handler)
+    unmount()
+  })
+
+  it('hides "Edit task in modal…" for a non-task block (#781)', async () => {
+    const blocks = [mkBlock('NOTE', { clean_text: 'just a note' })]
+    const { container, unmount } = render(TipTapEditor, {
+      props: {
+        notebook: 'NB',
+        section: 'S',
+        page: 'P',
+        blocks,
+        onUpdate: () => {}
+      }
+    })
+
+    await waitFor(() => {
+      expect(container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+
+    await openContextMenu(container)
+
+    expect(container.textContent).not.toContain('Edit task in modal')
+
+    unmount()
+  })
 })
 
 // @-mention typeahead: focus-debounce + TTL cache + debounced/race-guarded

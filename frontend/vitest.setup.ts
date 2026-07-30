@@ -23,6 +23,23 @@ if (typeof document !== 'undefined') {
   document.elementFromPoint = vi.fn(() => document.body)
 }
 
+// jsdom does not implement window.matchMedia. Any component using a
+// responsive breakpoint (e.g. TaskSubEditorModal's two-column → disclosure
+// collapse) would otherwise throw in every test that renders it.
+if (typeof window !== 'undefined' && !window.matchMedia) {
+  window.matchMedia = (query: string): MediaQueryList =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => true
+    }) as MediaQueryList
+}
+
 // Svelte 5 transitions (transition:fly/fade) call element.animate(), which
 // jsdom does not implement. Polyfill globally so any component using a
 // transition renders in tests without per-file stubs.
