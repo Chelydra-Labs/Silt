@@ -86,7 +86,7 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 	// Already-linked source blocks: any block carrying a [[…]] that resolves to
 	// this page. Mirrors legPageLinks' resolve-gate (LinkTargetRawCandidates →
 	// reverse index → ResolvePageLinkAgainst). Those blocks are NOT unlinked.
-	linkedBlocks, err := dm.blocksAlreadyLinkedTo(db, source, notebook, section, page)
+	linkedBlocks, err := dm.blocksAlreadyLinkedTo(db, pages, source, notebook, section, page)
 	if err != nil {
 		return UnlinkedMentionsResult{}, err
 	}
@@ -101,7 +101,7 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 	// FTS phrase matches any indexed column (notebook/section included), so the
 	// Go-side word-boundary check is the authority for "this block's body
 	// mentions the title".
-	titleRE := wordBoundaryRE(title)
+	titleRE := WordBoundaryTitleRE(title)
 	type pageKey struct {
 		src, nb, sec, pg string
 	}
@@ -238,14 +238,19 @@ func buildUnlinkedFTSPhrase(title string) string {
 	return `clean_content : "` + cleaned + `"`
 }
 
-// wordBoundaryRE compiles a case-insensitive, word-boundary regex for title.
-func wordBoundaryRE(title string) *regexp.Regexp {
-	return regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(title) + `\b`)
+// WordBoundaryTitleRE compiles a case-insensitive, Unicode-aware word-boundary
+// regex for title, capturing the title itself as group 1. RE2's \b is
+// ASCII-only (a [0-9A-Za-z_] boundary), so it silently fails for accented or
+// CJK titles (e.g. "Café", "会议") — the explicit [^\p{L}\p{N}_] boundaries are
+// Unicode-correct. Callers use MatchString for an existence check and group 1's
+// indices (SubmatchIndex[2]:[3]) to wrap exactly the title text.
+func WordBoundaryTitleRE(title string) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)(?:^|[^\p{L}\p{N}_])(` + regexp.QuoteMeta(title) + `)(?:$|[^\p{L}\p{N}_])`)
 }
 
 // blocksAlreadyLinkedTo returns the set of source_block_ids whose [[…]] resolves
 // non-ambiguously to (source, notebook, section, page). Mirrors legPageLinks.
-func (dm *DatabaseManager) blocksAlreadyLinkedTo(db *sql.DB, source, notebook, section, page string) (map[string]bool, error) {
+func (dm *DatabaseManager) blocksAlreadyLinkedTo(db *sql.DB, pages []PageLoc, source, notebook, section, page string) (map[string]bool, error) {
 	candidates := LinkTargetRawCandidates([]LinkTargetSpec{
 		{Source: source, Notebook: notebook, Section: section, Page: page},
 	})
@@ -255,10 +260,6 @@ func (dm *DatabaseManager) blocksAlreadyLinkedTo(db *sql.DB, source, notebook, s
 	}
 	if len(rows) == 0 {
 		return map[string]bool{}, nil
-	}
-	pages, err := listDistinctPages(db)
-	if err != nil {
-		return nil, fmt.Errorf("unlinked mentions: list pages for resolve: %w", err)
 	}
 	linked := make(map[string]bool, len(rows))
 	for _, r := range rows {

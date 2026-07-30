@@ -122,6 +122,28 @@ func TestUnlinked_WordBoundary(t *testing.T) {
 	}
 }
 
+// TestUnlinked_NonAsciiTitle verifies accented titles surface mentions: RE2's
+// \b is ASCII-only, so the Unicode-aware boundaries in WordBoundaryTitleRE are
+// required for a title like "Café" to match whole-word prose and be promotable.
+func TestUnlinked_NonAsciiTitle(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Café", []parser.ParsedBlock{
+		noteBlock(uuidU, "Café project"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
+		noteBlock(uuidV, "le café ouvre bientôt"), // accented whole-word mention — must match
+		noteBlock(uuidW, "les cafés sont bons"),   // "cafés" — substring, not whole word
+	})
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Café", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if len(res.Results) != 1 || res.Results[0].MatchCount != 1 {
+		t.Fatalf("non-ascii: expected 1 page / 1 match, got %+v", res.Results)
+	}
+}
+
 // TestUnlinked_SelfPageExcluded verifies the active page's own blocks are never
 // returned as unlinked mentions of themselves.
 func TestUnlinked_SelfPageExcluded(t *testing.T) {

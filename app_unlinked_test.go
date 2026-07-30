@@ -4,10 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
+	"silt/backend/db"
 	"silt/backend/parser"
 )
 
@@ -149,7 +149,7 @@ func TestPromoteUnlinkedMention_AmbiguousRejected(t *testing.T) {
 // helper directly: surrounding prose preserved, only the first promotable
 // occurrence wrapped, and occurrences already inside [[…]] are skipped.
 func TestWrapFirstUnlinkedOccurrence(t *testing.T) {
-	titleRE := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta("Onboarding") + `\b`)
+	titleRE := db.WordBoundaryTitleRE("Onboarding")
 	got, ok := wrapFirstUnlinkedOccurrence("see Onboarding soon", titleRE, "Onboarding")
 	if !ok || got != "see [[Onboarding]] soon" {
 		t.Errorf("plain wrap: ok=%v got=%q", ok, got)
@@ -163,5 +163,17 @@ func TestWrapFirstUnlinkedOccurrence(t *testing.T) {
 	got, ok = wrapFirstUnlinkedOccurrence("nothing here", titleRE, "Onboarding")
 	if ok || got != "nothing here" {
 		t.Errorf("no-match: ok=%v got=%q", ok, got)
+	}
+	// Non-ASCII titles: RE2's \b is ASCII-only, so accented titles need the
+	// Unicode-aware boundaries in db.WordBoundaryTitleRE to match and wrap.
+	accentRE := db.WordBoundaryTitleRE("Café")
+	got, ok = wrapFirstUnlinkedOccurrence("le Café ouvert", accentRE, "Café")
+	if !ok || got != "le [[Café]] ouvert" {
+		t.Errorf("accented wrap: ok=%v got=%q", ok, got)
+	}
+	// A title that is a substring of a larger word must not match (boundary).
+	got, ok = wrapFirstUnlinkedOccurrence("les Cafés sont là", accentRE, "Café")
+	if ok || got != "les Cafés sont là" {
+		t.Errorf("accented substring should not match: ok=%v got=%q", ok, got)
 	}
 }

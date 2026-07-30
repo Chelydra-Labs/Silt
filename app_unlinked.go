@@ -77,7 +77,7 @@ func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSectio
 	loc := db.PageLoc{Source: targetSource, Notebook: targetNotebook, Section: targetSection, Page: targetPage}
 	shortest := db.ShortestUniquePath(loc, pages)
 
-	titleRE := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(title) + `\b`)
+	titleRE := db.WordBoundaryTitleRE(title)
 	return a.writeBlockText(sourceBlockID, func(currentClean string) (string, error) {
 		newText, ok := wrapFirstUnlinkedOccurrence(currentClean, titleRE, shortest)
 		if !ok {
@@ -109,13 +109,15 @@ func wrapFirstUnlinkedOccurrence(clean string, titleRE *regexp.Regexp, linkTarge
 		return false
 	}
 	for _, m := range titleRE.FindAllStringSubmatchIndex(clean, -1) {
-		if len(m) < 2 {
+		// WordBoundaryTitleRE captures the title as group 1 (m[2]:m[3]); the
+		// leading/trailing boundary char (m[0]:m[1]) is not part of the title.
+		if len(m) < 4 {
 			continue
 		}
-		if inLinked(m[0], m[1]) {
+		if inLinked(m[2], m[3]) {
 			continue
 		}
-		return clean[:m[0]] + "[[" + linkTarget + "]]" + clean[m[1]:], true
+		return clean[:m[2]] + "[[" + linkTarget + "]]" + clean[m[3]:], true
 	}
 	return clean, false
 }
