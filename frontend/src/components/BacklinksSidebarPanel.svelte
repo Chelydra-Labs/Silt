@@ -464,6 +464,9 @@
       return
     }
     unlinkedLoading = true
+    // Full reload supersedes in-flight Load more (sequence bump alone would leave
+    // unlinkedLoadingMore stuck true in the more-path finally).
+    unlinkedLoadingMore = false
     unlinkedError = ''
     unlinkedErrorAction = 'initial'
     if (resetProjection) {
@@ -530,8 +533,18 @@
     activeSection: string,
     activePage: string
   ): Promise<void> {
-    if (unlinkedLoadingMore || !unlinkedHasMore || !unlinkedCursor) return
-    const sequence = ++unlinkedRequest
+    // Match backlinks loadMore: snapshot sequence without bumping so a concurrent
+    // full reload (++unlinkedRequest) supersedes this page without leaving
+    // unlinkedLoadingMore stuck true.
+    if (
+      unlinkedLoading ||
+      unlinkedLoadingMore ||
+      !unlinkedHasMore ||
+      !unlinkedCursor
+    ) {
+      return
+    }
+    const sequence = unlinkedRequest
     const nextCursor = unlinkedCursor
     unlinkedLoadingMore = true
     unlinkedError = ''
@@ -942,8 +955,8 @@
                   {#if unlinkedLoading}
                     Finding unlinked mentions…
                   {:else if unlinkedTruncated && unlinked.length === 0}
-                    Scan capped — no promotable plain mentions in the first
-                    results
+                    No promotable plain mentions in the first results · may be
+                    incomplete
                   {:else if unlinkedHasMore}
                     {unlinked.length}+ pages mention this title{unlinkedTruncated
                       ? ' · may be incomplete'
@@ -1121,7 +1134,7 @@
                 <button
                   type="button"
                   class="w-full border-t border-surface-sidebar-border/70 bg-transparent px-2.5 py-2 text-label-sm font-label-sm-bold text-accent-primary-start hover:bg-hover cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
-                  disabled={unlinkedLoadingMore}
+                  disabled={unlinkedLoading || unlinkedLoadingMore}
                   aria-label={unlinkedLoadingMore
                     ? 'Loading more unlinked mentions'
                     : 'Load more unlinked mentions'}

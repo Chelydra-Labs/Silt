@@ -533,14 +533,14 @@ func TestUnlinked_ShortTitleSkipped(t *testing.T) {
 }
 
 // idxUMany indexes n source pages each with one plain mention of title.
-// Block IDs are deterministic UUIDs so FTS ORDER BY id is stable.
+// Zero-padded Src%04d names make path ORDER BY (source, notebook, section, page)
+// produce a stable top-N residual set under the scan cap.
 func idxUMany(t *testing.T, dm *DatabaseManager, title string, n int) {
 	t.Helper()
 	idxU(t, dm, "vault", "NB", "Sec", title, []parser.ParsedBlock{
 		noteBlock(uuidU, title+" home"),
 	})
 	for i := 0; i < n; i++ {
-		// Zero-padded page names keep lexicographic order aligned with insert order.
 		pg := fmt.Sprintf("Src%04d", i)
 		bid := fmt.Sprintf("%08x-aaaa-4aaa-8aaa-aaaaaaaaaaaa", i)
 		idxU(t, dm, "vault", "NB", "Sec", pg, []parser.ParsedBlock{
@@ -606,8 +606,11 @@ func TestUnlinked_ScanCapUnderExactOver(t *testing.T) {
 	if !over.HasMore {
 		t.Error("over cap: HasMore should be true (residual pages > limit)")
 	}
-	// Walk all residual pages from the capped pool — should be exactly the cap.
-	seen := 0
+	if over.Results[0].SourcePage != "Src0000" {
+		t.Errorf("over cap first residual: got %q want Src0000", over.Results[0].SourcePage)
+	}
+	// Walk all residual pages from the capped pool — ordered path top-N only.
+	var pages []string
 	cursor := ""
 	for {
 		page, err := dmOver.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", cursor, 100)
@@ -617,14 +620,29 @@ func TestUnlinked_ScanCapUnderExactOver(t *testing.T) {
 		if !page.Truncated {
 			t.Error("over walk: Truncated must stay true on every page")
 		}
-		seen += len(page.Results)
+		for _, m := range page.Results {
+			pages = append(pages, m.SourcePage)
+		}
 		if !page.HasMore {
 			break
 		}
 		cursor = page.Cursor
 	}
-	if seen != unlinkedScanCap {
-		t.Errorf("over walk: expected %d residual pages from capped pool, got %d", unlinkedScanCap, seen)
+	if len(pages) != unlinkedScanCap {
+		t.Fatalf("over walk: expected %d residual pages from capped pool, got %d", unlinkedScanCap, len(pages))
+	}
+	for i, got := range pages {
+		want := fmt.Sprintf("Src%04d", i)
+		if got != want {
+			t.Fatalf("over walk residual[%d]: got %q want %q (ordered top-N broken)", i, got, want)
+		}
+	}
+	// Cap excludes the last inserted path (Src0500 when cap is 500).
+	excluded := fmt.Sprintf("Src%04d", unlinkedScanCap)
+	for _, got := range pages {
+		if got == excluded {
+			t.Fatalf("over walk: residual set must not include %s (beyond ordered cap)", excluded)
+		}
 	}
 }
 

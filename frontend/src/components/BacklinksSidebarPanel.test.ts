@@ -959,7 +959,7 @@ describe('BacklinksSidebarPanel', () => {
     })
     renderPanel()
     await screen.findByText(
-      /Scan capped — no promotable plain mentions in the first results/
+      /No promotable plain mentions in the first results · may be incomplete/
     )
     await fireEvent.click(
       screen.getByRole('button', { name: /Unlinked mentions/ })
@@ -1110,5 +1110,89 @@ describe('BacklinksSidebarPanel', () => {
       screen.getByRole('button', { name: /Unlinked mentions/ })
     )
     expect(await screen.findByText('Camel page')).toBeInTheDocument()
+  })
+
+  it('clears load-more loading when a same-page refresh supersedes mid-flight', async () => {
+    const first = unlinkedMentionWire({
+      source_page: 'Page A',
+      source_block_ids: ['block-01']
+    })
+    const second = unlinkedMentionWire({
+      source_page: 'Page B',
+      source_block_ids: ['block-02']
+    })
+    const refreshed = unlinkedMentionWire({
+      source_page: 'Refreshed page',
+      source_block_ids: ['block-01'],
+      source_snippets: ['refreshed Research']
+    })
+
+    let resolveMore!: (value: unknown) => void
+    let unlinkedCalls = 0
+    mocks.getUnlinkedMentionsPaged.mockImplementation(() => {
+      unlinkedCalls += 1
+      if (unlinkedCalls === 1) {
+        return Promise.resolve(
+          unlinkedWire({
+            results: [first],
+            cursor: 'cursor-1',
+            hasMore: true,
+            truncated: true
+          })
+        )
+      }
+      if (unlinkedCalls === 2) {
+        return new Promise((resolve) => {
+          resolveMore = resolve
+        })
+      }
+      // Refresh (and any later) full reload.
+      return Promise.resolve(
+        unlinkedWire({
+          results: [refreshed],
+          hasMore: false,
+          truncated: true
+        })
+      )
+    })
+
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await screen.findByText('Page A')
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Load more unlinked mentions' })
+    )
+    expect(
+      screen.getByRole('button', { name: 'Loading more unlinked mentions' })
+    ).toBeDisabled()
+
+    // Same-page refresh bumps unlinkedRequest and clears load-more loading.
+    blockChanged?.()
+    await new Promise((resolve) => setTimeout(resolve, 210))
+    await screen.findByText('Refreshed page')
+
+    // Late load-more resolution must not re-stick Loading more… or append Page B.
+    resolveMore(
+      unlinkedWire({
+        results: [second],
+        hasMore: false,
+        truncated: true
+      })
+    )
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', {
+          name: 'Loading more unlinked mentions'
+        })
+      ).not.toBeInTheDocument()
+    })
+    expect(screen.queryByText('Page B')).not.toBeInTheDocument()
+    expect(
+      screen.getAllByText(/may be incomplete/).length
+    ).toBeGreaterThanOrEqual(1)
   })
 })
