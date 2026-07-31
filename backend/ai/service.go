@@ -372,13 +372,93 @@ type providerRequest struct {
 	classifyErr func(raw []byte, status int) *AIError
 }
 
-// maxRetryAfter caps how long we honor a provider Retry-After header so a
-// hostile or misconfigured endpoint cannot stall the call for minutes (#628).
+// maxRetryAfter caps how long we honor a provider Retry-After header or body
+// retryDelay so a hostile or misconfigured endpoint cannot stall the call for
+// minutes (#628, #846).
 const maxRetryAfter = 30 * time.Second
 
 // overallTimeoutMargin is added to the computed overall deadline envelope so
 // scheduling jitter and timer resolution do not race the last attempt (#628).
 const overallTimeoutMargin = 250 * time.Millisecond
+
+// capRetryDelay clamps a positive retry wait to maxRetryAfter.
+func capRetryDelay(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	if d > maxRetryAfter {
+		return maxRetryAfter
+	}
+	return d
+}
+
+// parseRetryDelayBody extracts a suggested wait from common provider error
+// bodies when the HTTP Retry-After header is absent. Google Gemini 429 /
+// RESOURCE_EXHAUSTED responses often carry google.rpc.RetryInfo.retryDelay
+// (e.g. "53s") in error.details without a Retry-After header (#846).
+func parseRetryDelayBody(raw []byte) time.Duration {
+	if len(raw) == 0 {
+		return 0
+	}
+	var envelope struct {
+		Error struct {
+			Details []struct {
+				Type       string `json:"@type"`
+				RetryDelay string `json:"retryDelay"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return 0
+	}
+	for _, d := range envelope.Error.Details {
+		if d.RetryDelay == "" {
+			continue
+		}
+		// Prefer RetryInfo; still accept any detail that carries retryDelay
+		// (some shims omit or alter @type).
+		if d.Type != "" {
+			lt := strings.ToLower(d.Type)
+			if !strings.Contains(lt, "retryinfo") && !strings.Contains(lt, "retry") {
+				continue
+			}
+		}
+		if wait := parseDurationSecondsToken(d.RetryDelay); wait > 0 {
+			return capRetryDelay(wait)
+		}
+	}
+	return 0
+}
+
+// parseDurationSecondsToken parses "53s", "1.5s", or plain integer seconds.
+func parseDurationSecondsToken(v string) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	// Go's ParseDuration accepts "53s", "1.5s".
+	if d, err := time.ParseDuration(v); err == nil && d > 0 {
+		return d
+	}
+	return 0
+}
+
+// resolveRetryAfter picks the larger of the HTTP Retry-After header and any
+// body-embedded retry delay (both already capped).
+func resolveRetryAfter(header string, body []byte) time.Duration {
+	h := parseRetryAfter(header)
+	b := parseRetryDelayBody(body)
+	if b > h {
+		return b
+	}
+	return h
+}
 
 // sendOnce builds and sends one attempt. It is the per-attempt half of
 // sendWithRetry: timeout + request build + send + response size cap + status
@@ -444,7 +524,7 @@ func sendOnce(ctx context.Context, pr providerRequest, timeoutMs *int) (raw []by
 		}
 		ra := time.Duration(0)
 		if isTransient(e) {
-			ra = parseRetryAfter(resp.Header.Get("Retry-After"))
+			ra = resolveRetryAfter(resp.Header.Get("Retry-After"), raw)
 		}
 		return nil, resp.StatusCode, ra, e
 	}
@@ -462,21 +542,10 @@ func parseRetryAfter(v string) time.Duration {
 		if secs <= 0 {
 			return 0
 		}
-		d := time.Duration(secs) * time.Second
-		if d > maxRetryAfter {
-			return maxRetryAfter
-		}
-		return d
+		return capRetryDelay(time.Duration(secs) * time.Second)
 	}
 	if t, err := http.ParseTime(v); err == nil {
-		d := time.Until(t)
-		if d <= 0 {
-			return 0
-		}
-		if d > maxRetryAfter {
-			return maxRetryAfter
-		}
-		return d
+		return capRetryDelay(time.Until(t))
 	}
 	return 0
 }
@@ -556,15 +625,15 @@ func isTransient(aiErr *AIError) bool {
 
 // retryBackoff is the wait before each retry attempt; its length also caps the
 // retry count (len entries → len retries on top of the initial attempt). The
-// schedule is modest because 5xx/429 responses arrive immediately, so the
-// waits — not request latency — dominate the cost of a persistent failure.
-// ~2s of total backoff is a cheap price for absorbing a provider's transient
-// blip (e.g. Google's OpenAI-compatible shim intermittently returns INTERNAL
-// 500s). A package var (not a const) so tests can shrink it to keep the suite
-// fast.
+// schedule absorbs short provider throttles (RPM bursts) without unbounded
+// waits; longer server-suggested delays still come from Retry-After /
+// retryDelay (capped). ~12s ladder + up to maxRetryAfter per gap stays within
+// a chat-appropriate envelope (#628, #846). A package var (not a const) so
+// tests can shrink it to keep the suite fast.
 var retryBackoff = []time.Duration{
-	500 * time.Millisecond,
-	1500 * time.Millisecond,
+	1 * time.Second,
+	3 * time.Second,
+	8 * time.Second,
 }
 
 // sendWithRetry wraps sendOnce with bounded retry on transient provider errors

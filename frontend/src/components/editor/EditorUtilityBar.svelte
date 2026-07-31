@@ -9,8 +9,7 @@
   import { isSystemDark } from '../../lib/systemTheme.svelte'
 
   // EditorUtilityBar — extracted from VirtualScrollContainer (#202).
-  // Now simply acts as a container for FormatToolbar since action controls
-  // (View Mode, Zen Mode, Focus Mode) have been relocated to the TabStrip.
+  // FormatToolbar + page actions. Note page zoom lives in the bottom status pill.
 
   interface Props {
     editor: Editor | null

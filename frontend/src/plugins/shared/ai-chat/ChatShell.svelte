@@ -1,9 +1,20 @@
 <script lang="ts">
   import { tick, type Snippet } from 'svelte'
   import { Browser } from '@wailsio/runtime'
-  import type { AIChatEntry, ConfirmationEntry, EvidenceTarget } from './types'
+  import type {
+    AIChatEntry,
+    ConfirmationEntry,
+    EvidenceTarget,
+    ToolCallEntry,
+    ToolResultEntry
+  } from './types'
   import { renderChatMarkdown } from './renderChatMarkdown'
   import { isSafeLinkHref } from '../../../lib/editor/converters/validate'
+  import {
+    filterTranscriptForBusyDisplay,
+    groupTranscript,
+    toolActivitySummaryLabel
+  } from './groupTranscript'
 
   interface Props {
     title?: string
@@ -59,6 +70,12 @@
   )
   const pendingConfirmationId = $derived(pendingConfirmation?.id ?? null)
   const composerDisabled = $derived(!providerReady || !!pendingConfirmation)
+  // While a run is in progress, hide only the current turn's tool cards so
+  // prior multi-turn activity disclosures stay visible (#845).
+  const displayTranscript = $derived(
+    filterTranscriptForBusyDisplay(transcript, busy)
+  )
+  const displaySegments = $derived(groupTranscript(displayTranscript))
 
   function entryPreview(value: unknown, limit = 96): string {
     const text = typeof value === 'string' ? value : safeJson(value)
@@ -302,8 +319,111 @@
       </div>
     {/if}
 
-    {#each transcript as entry (entry.id)}
-      {#if entry.kind === 'text'}
+    {#each displaySegments as segment (segment.kind === 'entry' ? segment.entry.id : segment.id)}
+      {#if segment.kind === 'tool-activity'}
+        {@const group = segment}
+        <article class="utility-card tool-activity-group">
+          <button
+            type="button"
+            class="utility-summary"
+            aria-expanded={expanded[group.id] ?? false}
+            aria-controls={`${group.id}-details`}
+            onclick={() => toggleExpanded(group.id)}
+          >
+            <span
+              class="tool-glyph material-symbols-outlined"
+              aria-hidden="true">construction</span
+            >
+            <span class="utility-copy">
+              <strong
+                >{toolActivitySummaryLabel(
+                  group.callCount,
+                  group.resultCount
+                )}</strong
+              >
+            </span>
+            <span class="material-symbols-outlined" aria-hidden="true"
+              >{expanded[group.id] ? 'expand_less' : 'expand_more'}</span
+            >
+          </button>
+          {#if expanded[group.id]}
+            <div id={`${group.id}-details`} class="tool-activity-body">
+              {#each group.items as item (item.id)}
+                {#if item.kind === 'tool-call'}
+                  {@const call = item as ToolCallEntry}
+                  <div class="tool-activity-item">
+                    <button
+                      type="button"
+                      class="utility-summary nested"
+                      aria-expanded={expanded[call.id] ?? false}
+                      aria-controls={`${call.id}-details`}
+                      onclick={() => toggleExpanded(call.id)}
+                    >
+                      <span
+                        class="tool-glyph material-symbols-outlined"
+                        aria-hidden="true">terminal</span
+                      >
+                      <span class="utility-copy">
+                        <span class="entry-label">Tool call</span>
+                        <strong>{call.toolName}</strong>
+                        <span>{entryPreview(call.args)}</span>
+                      </span>
+                      <span class="material-symbols-outlined" aria-hidden="true"
+                        >{expanded[call.id]
+                          ? 'expand_less'
+                          : 'expand_more'}</span
+                      >
+                    </button>
+                    {#if expanded[call.id]}
+                      <pre id={`${call.id}-details`}>{safeJson(call.args)}</pre>
+                    {/if}
+                  </div>
+                {:else}
+                  {@const result = item as ToolResultEntry}
+                  <div
+                    class="tool-activity-item"
+                    class:error-card={!!result.error}
+                  >
+                    <button
+                      type="button"
+                      class="utility-summary nested"
+                      aria-expanded={expanded[result.id] ?? false}
+                      aria-controls={`${result.id}-details`}
+                      onclick={() => toggleExpanded(result.id)}
+                    >
+                      <span
+                        class="tool-glyph material-symbols-outlined"
+                        aria-hidden="true"
+                        >{result.error ? 'error' : 'check_circle'}</span
+                      >
+                      <span class="utility-copy">
+                        <span class="entry-label">Tool result</span>
+                        <strong>{result.toolName}</strong>
+                        <span
+                          >{entryPreview(result.error ?? result.output)}</span
+                        >
+                      </span>
+                      {#if result.truncated}<span class="truncated"
+                          >Truncated</span
+                        >{/if}
+                      <span class="material-symbols-outlined" aria-hidden="true"
+                        >{expanded[result.id]
+                          ? 'expand_less'
+                          : 'expand_more'}</span
+                      >
+                    </button>
+                    {#if expanded[result.id]}
+                      <pre id={`${result.id}-details`}>{result.error ??
+                          result.output}</pre>
+                    {/if}
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        </article>
+      {:else if segment.entry.kind === 'text'}
+        {@const entry = segment.entry}
         <article
           class="message"
           class:user-message={entry.role === 'user'}
@@ -326,7 +446,8 @@
             <span class="stream-caret" aria-hidden="true"></span>
           {/if}
         </article>
-      {:else if entry.kind === 'evidence'}
+      {:else if segment.entry.kind === 'evidence'}
+        {@const entry = segment.entry}
         <article class="evidence-card">
           <span class="citation-index">{entry.citationIndex}</span>
           <div class="evidence-copy">
@@ -345,60 +466,8 @@
             >
           </button>
         </article>
-      {:else if entry.kind === 'tool-call'}
-        <article class="utility-card">
-          <button
-            type="button"
-            class="utility-summary"
-            aria-expanded={expanded[entry.id] ?? false}
-            aria-controls={`${entry.id}-details`}
-            onclick={() => toggleExpanded(entry.id)}
-          >
-            <span
-              class="tool-glyph material-symbols-outlined"
-              aria-hidden="true">terminal</span
-            >
-            <span class="utility-copy">
-              <span class="entry-label">Tool call</span>
-              <strong>{entry.toolName}</strong>
-              <span>{entryPreview(entry.args)}</span>
-            </span>
-            <span class="material-symbols-outlined" aria-hidden="true"
-              >{expanded[entry.id] ? 'expand_less' : 'expand_more'}</span
-            >
-          </button>
-          {#if expanded[entry.id]}
-            <pre id={`${entry.id}-details`}>{safeJson(entry.args)}</pre>
-          {/if}
-        </article>
-      {:else if entry.kind === 'tool-result'}
-        <article class:error-card={!!entry.error} class="utility-card">
-          <button
-            type="button"
-            class="utility-summary"
-            aria-expanded={expanded[entry.id] ?? false}
-            aria-controls={`${entry.id}-details`}
-            onclick={() => toggleExpanded(entry.id)}
-          >
-            <span
-              class="tool-glyph material-symbols-outlined"
-              aria-hidden="true">{entry.error ? 'error' : 'check_circle'}</span
-            >
-            <span class="utility-copy">
-              <span class="entry-label">Tool result</span>
-              <strong>{entry.toolName}</strong>
-              <span>{entryPreview(entry.error ?? entry.output)}</span>
-            </span>
-            {#if entry.truncated}<span class="truncated">Truncated</span>{/if}
-            <span class="material-symbols-outlined" aria-hidden="true"
-              >{expanded[entry.id] ? 'expand_less' : 'expand_more'}</span
-            >
-          </button>
-          {#if expanded[entry.id]}
-            <pre id={`${entry.id}-details`}>{entry.error ?? entry.output}</pre>
-          {/if}
-        </article>
-      {:else if entry.kind === 'proposal'}
+      {:else if segment.entry.kind === 'proposal'}
+        {@const entry = segment.entry}
         <article class="proposal-card">
           <div class="proposal-heading">
             <span class="material-symbols-outlined" aria-hidden="true"
@@ -428,7 +497,8 @@
             <span class="resolved-label">{entry.state}</span>
           {/if}
         </article>
-      {:else if entry.kind === 'confirmation'}
+      {:else if segment.entry.kind === 'confirmation'}
+        {@const entry = segment.entry}
         {#if (entry.state ?? 'pending') === 'pending'}
           <div
             class="confirmation-card"
@@ -479,7 +549,8 @@
             {entry.summary} — {entry.state}
           </div>
         {/if}
-      {:else if entry.kind === 'status'}
+      {:else if segment.entry.kind === 'status'}
+        {@const entry = segment.entry}
         <div
           role={entry.status === 'error' ? 'alert' : 'status'}
           class:error-status={entry.status === 'error'}
@@ -824,6 +895,17 @@
     border-radius: 0.5rem;
     background: color-mix(in srgb, var(--color-surface-card) 72%, transparent);
   }
+  .tool-activity-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0 0.35rem 0.45rem;
+    border-top: 1px solid var(--color-surface-panel-border);
+  }
+  .tool-activity-item {
+    border-radius: 0.35rem;
+    background: color-mix(in srgb, var(--color-surface-card) 55%, transparent);
+  }
   .utility-summary {
     display: flex;
     align-items: center;
@@ -835,6 +917,9 @@
     text-align: left;
     background: transparent;
     cursor: pointer;
+  }
+  .utility-summary.nested {
+    padding: 0.4rem 0.5rem;
   }
   .utility-summary:hover {
     background: var(--color-hover);

@@ -84,11 +84,12 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create blocks table: %w", err)
 	}
 
-	// Migration: add the `source` discriminator to pre-existing blocks tables
-	// (a vault created before #100). Idempotent via the try-ignore pattern used
-	// for the tasks columns above; existing rows inherit the 'vault' default.
+	// Migration: add columns to pre-existing blocks tables. Idempotent via the
+	// try-ignore pattern; duplicate column name is a no-op on warm reopen.
 	for _, col := range []struct{ name, defn string }{
 		{"source", "TEXT NOT NULL DEFAULT 'vault'"},
+		// Unicode simple-fold key for O(index) leaf ambiguity (#844).
+		{"page_fold", "TEXT"},
 	} {
 		alter := fmt.Sprintf("ALTER TABLE blocks ADD COLUMN %s %s", col.name, col.defn)
 		if _, err := db.Exec(alter); err != nil {
@@ -366,6 +367,9 @@ func (dm *DatabaseManager) initSchema() error {
 	if err := backfillBlockReferences(db); err != nil {
 		return fmt.Errorf("failed to backfill block_references: %w", err)
 	}
+	if err := backfillPageFold(db); err != nil {
+		return fmt.Errorf("failed to backfill page_fold: %w", err)
+	}
 
 	// Create covered indexes
 	indexes := []string{
@@ -375,9 +379,10 @@ func (dm *DatabaseManager) initSchema() error {
 		// this does not rebuild on every launch.
 		"DROP INDEX IF EXISTS idx_blocks_file;",
 		"CREATE INDEX IF NOT EXISTS idx_blocks_src_file ON blocks(source, notebook, section, page, file_date);",
-		// Leaf-title lookup for unlinked ambiguity (#839): case-insensitive
-		// DISTINCT pages WHERE lower(page)=lower(?) (matches PageMatchesTarget).
-		"CREATE INDEX IF NOT EXISTS idx_blocks_page_lower ON blocks(lower(page));",
+		// Leaf lookup uses page_fold only (#844); drop obsolete ASCII lower index.
+		"DROP INDEX IF EXISTS idx_blocks_page_lower;",
+		// Unicode simple-fold leaf key (#844): O(index) EqualFold-class lookup.
+		"CREATE INDEX IF NOT EXISTS idx_blocks_page_fold ON blocks(page_fold);",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_tags_lookup ON tags(level_0, level_1, level_2);",
 		// QueryBlocksByTag and the tag filter in QueryTasksWithFilters both
@@ -511,6 +516,116 @@ func backfillBlockReferences(db *sql.DB) error {
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit backfill tx: %w", err)
+	}
+	return nil
+}
+
+// pageFoldBackfillMarker records a completed warm-upgrade fill of blocks.page_fold (#844).
+const pageFoldBackfillMarker = "page_fold_backfill"
+
+// dropBlocksFTSTriggers removes FTS sync triggers so bulk blocks UPDATEs that
+// only touch non-FTS columns (e.g. page_fold) do not re-tokenize every row.
+func dropBlocksFTSTriggers(db *sql.DB) error {
+	for _, name := range []string{"blocks_fts_ai", "blocks_fts_ad", "blocks_fts_au"} {
+		if _, err := db.Exec("DROP TRIGGER IF EXISTS " + name); err != nil {
+			return fmt.Errorf("drop %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// backfillPageFold fills NULL page_fold values and records a one-shot marker.
+// After the marker exists it still heals any residual NULL folds (missed writers).
+// Warm vaults already have FTS AFTER UPDATE triggers; those are dropped for the
+// bulk write and recreated via ensureFTSOn so page_fold backfill does not
+// thrash the external-content FTS index.
+func backfillPageFold(db *sql.DB) error {
+	var nullCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM blocks WHERE page_fold IS NULL`).Scan(&nullCount); err != nil {
+		return fmt.Errorf("count null page_fold: %w", err)
+	}
+	var appliedAt int64
+	markerErr := db.QueryRow("SELECT applied_at FROM schema_migrations WHERE name = ?", pageFoldBackfillMarker).Scan(&appliedAt)
+	hasMarker := markerErr == nil
+	if markerErr != nil && markerErr != sql.ErrNoRows {
+		return fmt.Errorf("probe %s marker: %w", pageFoldBackfillMarker, markerErr)
+	}
+	if nullCount == 0 {
+		if hasMarker {
+			return nil
+		}
+		// Empty vault or all rows already folded — record marker only.
+		_, err := db.Exec(
+			"INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+			pageFoldBackfillMarker, time.Now().UnixNano(),
+		)
+		if err != nil {
+			return fmt.Errorf("record %s marker: %w", pageFoldBackfillMarker, err)
+		}
+		return nil
+	}
+
+	// Suppress FTS re-tokenization for non-content column updates.
+	if err := dropBlocksFTSTriggers(db); err != nil {
+		return err
+	}
+	// Always restore triggers, even if the backfill tx fails mid-way.
+	defer func() { _ = ensureFTSOn(db) }()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin page_fold backfill tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Stream row-by-row: only NULL folds; cache fold strings per distinct page.
+	rows, err := tx.Query(`SELECT rowid, page FROM blocks WHERE page_fold IS NULL`)
+	if err != nil {
+		return fmt.Errorf("scan null page_fold rows: %w", err)
+	}
+	stmt, err := tx.Prepare("UPDATE blocks SET page_fold = ? WHERE rowid = ?")
+	if err != nil {
+		rows.Close()
+		return fmt.Errorf("prepare page_fold update: %w", err)
+	}
+	foldCache := make(map[string]string)
+	for rows.Next() {
+		var rowid int64
+		var page string
+		if err := rows.Scan(&rowid, &page); err != nil {
+			rows.Close()
+			stmt.Close()
+			return fmt.Errorf("scan row during page_fold backfill: %w", err)
+		}
+		fold, ok := foldCache[page]
+		if !ok {
+			fold = pageFoldKey(page)
+			foldCache[page] = fold
+		}
+		if _, err := stmt.Exec(fold, rowid); err != nil {
+			rows.Close()
+			stmt.Close()
+			return fmt.Errorf("page_fold update rowid %d: %w", rowid, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		stmt.Close()
+		return fmt.Errorf("iterate null page_fold rows: %w", err)
+	}
+	rows.Close()
+	stmt.Close()
+
+	if !hasMarker {
+		if _, err := tx.Exec(
+			"INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+			pageFoldBackfillMarker, time.Now().UnixNano(),
+		); err != nil {
+			return fmt.Errorf("record %s marker: %w", pageFoldBackfillMarker, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit page_fold backfill tx: %w", err)
 	}
 	return nil
 }

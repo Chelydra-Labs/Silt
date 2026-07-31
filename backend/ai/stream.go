@@ -274,14 +274,20 @@ func streamOpenAIConnectOnce(ctx context.Context, req CompleteRequest, baseURL s
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
 		cancel()
-		msg := strings.TrimSpace(string(raw))
-		if len(msg) > 500 {
-			msg = msg[:500] + "…"
+		// Prefer structured OpenAI-compat prose over dumping the raw JSON body.
+		var aiErr *AIError
+		if e := openaiClassifyError(raw, resp.StatusCode); e != nil {
+			aiErr = e
+		} else {
+			msg := strings.TrimSpace(string(raw))
+			if len(msg) > 500 {
+				msg = msg[:500] + "…"
+			}
+			aiErr = &AIError{Kind: classifyStatus(resp.StatusCode), Status: resp.StatusCode, Message: msg}
 		}
-		aiErr := &AIError{Kind: classifyStatus(resp.StatusCode), Status: resp.StatusCode, Message: msg}
 		ra := time.Duration(0)
 		if isTransient(aiErr) {
-			ra = parseRetryAfter(resp.Header.Get("Retry-After"))
+			ra = resolveRetryAfter(resp.Header.Get("Retry-After"), raw)
 		}
 		return nil, ra, aiErr
 	}

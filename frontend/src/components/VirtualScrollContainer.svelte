@@ -25,6 +25,12 @@
     toggleFormatToolbar
   } from '../settings/store.svelte'
   import { shortcutBinding } from '../settings/shortcutActions'
+  import {
+    noteZoom,
+    NOTE_ZOOM_DEFAULT,
+    NOTE_ZOOM_MAX,
+    NOTE_ZOOM_MIN
+  } from '../lib/noteZoom.svelte'
 
   interface Props {
     /** Canonical content root (`vault` or `linked:<id>`). */
@@ -87,6 +93,9 @@
   let showFormatToolbar = $derived(
     settings.config?.ui?.show_format_toolbar !== false
   )
+  // Note chrome (zoom + optional format/page tasks) for real notebooks only —
+  // not the standalone `.silt` tasks surface.
+  let showEditorUtilityBar = $derived(notebook !== '.silt')
   // The view-mode hotkey is per-vault remappable; read it live so the toggle's
   // tooltip + aria-keyshortcuts never go stale after a remap (the binding in
   // config.yaml is already in display form, e.g. "Ctrl+Shift+V").
@@ -119,6 +128,18 @@
   let showWordCount = $derived(
     settings.config?.editor?.show_word_count === true
   )
+  // Keep the top-right action tray open when a control is already engaged so
+  // the user can reverse it without hunting for a collapsed affordance.
+  let editorActionsPinned = $derived(
+    settings.config?.editor?.focus_mode === true ||
+      outlineOpen ||
+      viewMode === 'source'
+  )
+  // Bottom status pill stays open for save failures (fail-loud) or non-default
+  // zoom so the user can see/reset without hunting a collapsed control.
+  let editorStatusPinned = $derived(
+    !!saveError || noteZoom.factor !== NOTE_ZOOM_DEFAULT
+  )
 
   $effect(() => {
     if (notebook && page) {
@@ -126,6 +147,22 @@
         void loadPage(true)
       })
     }
+  })
+
+  // Ctrl/Meta + wheel zooms note content only (#843). Gated to real notebooks
+  // (same as utility-bar chrome) so `.silt` tasks cannot inherit orphan zoom.
+  // Non-passive so we can preventDefault and stop webview page zoom.
+  $effect(() => {
+    const el = containerEl
+    if (!el || !showEditorUtilityBar) return
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      e.preventDefault()
+      if (e.deltaY < 0) noteZoom.zoomIn()
+      else if (e.deltaY > 0) noteZoom.zoomOut()
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
   })
 
   $effect(() => {
@@ -501,7 +538,7 @@
   {#if viewMode === 'edit' && findBarState.open}
     <FindBar editor={editorInstance!} onClose={() => findBarState.close()} />
   {/if}
-  {#if pageLocator || (viewMode === 'edit' && showFormatToolbar)}
+  {#if showEditorUtilityBar}
     <EditorUtilityBar
       editor={editorInstance}
       {activeMarks}
@@ -522,7 +559,12 @@
       bind:this={containerEl}
       class="silt-texture-surface flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-surface-editor min-h-0"
     >
-      <div class="relative z-[1] flex flex-col">
+      <!-- Page zoom scales title + editor/source only — not utility bar/find/chrome (#843). -->
+      <div
+        class="relative z-[1] flex flex-col note-page-zoom"
+        style={showEditorUtilityBar ? `zoom: ${noteZoom.factor}` : undefined}
+        data-testid="note-page-zoom"
+      >
         <header class="mb-8">
           <h1
             bind:this={titleEl}
@@ -617,87 +659,102 @@
     {/if}
   </div>
 
-  <!-- Floating Editor Actions Bar -->
+  <!-- Top-right: flyout only on the ⋯ cluster — calendar is outside so it
+       does not open the tray. -->
   <div
-    class="absolute right-6 z-40 flex items-center gap-1 p-1 bg-surface-popover/60 backdrop-blur-md border border-surface-popover-border/50 rounded-full shadow-lg transition-all duration-300 opacity-60 hover:opacity-100 hover:scale-105"
-    class:top-4={!(viewMode === 'edit' && showFormatToolbar)}
-    class:top-14={viewMode === 'edit' && showFormatToolbar}
+    class="editor-float-row"
+    class:top-4={!showEditorUtilityBar}
+    class:top-14={showEditorUtilityBar}
+    data-testid="editor-float-actions"
   >
-    <!-- Focus Mode Toggle -->
-    <button
-      onclick={toggleFocusMode}
-      class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
-      class:text-accent-primary-start={settings.config?.editor?.focus_mode ===
-        true}
-      class:text-text-muted={settings.config?.editor?.focus_mode !== true}
-      title={settings.config?.editor?.focus_mode === true
-        ? `Exit Focus Mode${focusModeHotkey ? ` (${focusModeHotkey})` : ''}`
-        : `Enter Focus Mode${focusModeHotkey ? ` (${focusModeHotkey})` : ''}`}
-      aria-label="Toggle Focus Mode"
+    <div
+      class="editor-float-actions"
+      class:editor-float-actions--pinned={editorActionsPinned}
+      role="toolbar"
+      aria-label="Editor actions"
     >
-      <span class="material-symbols-outlined text-icon-lg"
-        >center_focus_strong</span
-      >
-    </button>
-
-    <!-- Format Toolbar Toggle -->
-    <button
-      onclick={toggleFormatToolbar}
-      class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
-      class:text-accent-primary-start={showFormatToolbar}
-      class:text-text-muted={!showFormatToolbar}
-      title={showFormatToolbar
-        ? `Hide Formatting Toolbar${formatToolbarHotkey ? ` (${formatToolbarHotkey})` : ''}`
-        : `Show Formatting Toolbar${formatToolbarHotkey ? ` (${formatToolbarHotkey})` : ''}`}
-      aria-label="Toggle Formatting Toolbar"
-    >
-      <span class="material-symbols-outlined text-icon-lg">text_format</span>
-    </button>
-
-    {#if viewMode === 'edit'}
-      <button
-        type="button"
-        onclick={() => {
-          outlineOpen = !outlineOpen
-        }}
-        class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover"
-        class:text-accent-primary-start={outlineOpen}
-        class:text-text-muted={!outlineOpen}
-        title={outlineOpen ? 'Hide outline' : 'Show outline'}
-        aria-label="Toggle document outline"
-        aria-pressed={outlineOpen}
-      >
-        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
-          >list</span
+      <!-- Tray grows left of the ⋯ peek. -->
+      <div class="editor-float-actions__tray">
+        <button
+          type="button"
+          onclick={toggleFocusMode}
+          class="editor-float-actions__btn"
+          class:editor-float-actions__btn--on={settings.config?.editor
+            ?.focus_mode === true}
+          title={settings.config?.editor?.focus_mode === true
+            ? `Exit Focus Mode${focusModeHotkey ? ` (${focusModeHotkey})` : ''}`
+            : `Enter Focus Mode${focusModeHotkey ? ` (${focusModeHotkey})` : ''}`}
+          aria-label="Toggle Focus Mode"
         >
-      </button>
-    {/if}
+          <span
+            class="material-symbols-outlined text-icon-lg"
+            aria-hidden="true">center_focus_strong</span
+          >
+        </button>
 
-    <div class="w-px h-4 bg-surface-popover-border mx-0.5"></div>
+        <button
+          type="button"
+          onclick={toggleFormatToolbar}
+          class="editor-float-actions__btn"
+          class:editor-float-actions__btn--on={showFormatToolbar}
+          title={showFormatToolbar
+            ? `Hide Formatting Toolbar${formatToolbarHotkey ? ` (${formatToolbarHotkey})` : ''}`
+            : `Show Formatting Toolbar${formatToolbarHotkey ? ` (${formatToolbarHotkey})` : ''}`}
+          aria-label="Toggle Formatting Toolbar"
+        >
+          <span
+            class="material-symbols-outlined text-icon-lg"
+            aria-hidden="true">text_format</span
+          >
+        </button>
 
-    <!-- View Mode Toggle — a toggle button: stable accessible name + aria-pressed
-         conveys state (the canonical pattern), and the title carries the
-         contextual action + the live (remappable) hotkey for sighted users. -->
-    <button
-      onclick={() => onToggleViewMode?.()}
-      class="h-8 w-8 flex items-center justify-center rounded-full transition-colors border-none bg-transparent cursor-pointer focus:outline-none hover:bg-hover text-text-muted"
-      title={viewMode === 'edit'
-        ? `View Markdown Source (${viewModeHotkey})`
-        : `View Rich Text (${viewModeHotkey})`}
-      aria-label="Toggle source view"
-      aria-pressed={viewMode === 'source'}
-      aria-keyshortcuts={viewModeHotkey}
-    >
-      <span class="material-symbols-outlined text-icon-lg">
-        {viewMode === 'edit' ? 'code' : 'menu_book'}
+        {#if viewMode === 'edit'}
+          <button
+            type="button"
+            onclick={() => {
+              outlineOpen = !outlineOpen
+            }}
+            class="editor-float-actions__btn"
+            class:editor-float-actions__btn--on={outlineOpen}
+            title={outlineOpen ? 'Hide outline' : 'Show outline'}
+            aria-label="Toggle document outline"
+            aria-pressed={outlineOpen}
+          >
+            <span
+              class="material-symbols-outlined text-icon-lg"
+              aria-hidden="true">list</span
+            >
+          </button>
+        {/if}
+
+        <div class="editor-float-actions__sep" aria-hidden="true"></div>
+
+        <button
+          type="button"
+          onclick={() => onToggleViewMode?.()}
+          class="editor-float-actions__btn"
+          title={viewMode === 'edit'
+            ? `View Markdown Source (${viewModeHotkey})`
+            : `View Rich Text (${viewModeHotkey})`}
+          aria-label="Toggle source view"
+          aria-pressed={viewMode === 'source'}
+          aria-keyshortcuts={viewModeHotkey}
+        >
+          <span
+            class="material-symbols-outlined text-icon-lg"
+            aria-hidden="true"
+          >
+            {viewMode === 'edit' ? 'code' : 'menu_book'}
+          </span>
+        </button>
+      </div>
+
+      <span class="editor-float-actions__peek" aria-hidden="true">
+        <span class="material-symbols-outlined text-icon-lg">more_horiz</span>
       </span>
-    </button>
+    </div>
 
-    <div class="w-px h-4 bg-surface-popover-border mx-0.5"></div>
-
-    <!-- Date Glance opener — contextual to the writing surface.
-         Only the active tab registers the chip anchor (inactive panels are
-         display:none and would report a 0×0 rect). -->
+    <!-- Outside the hover group — does not open the actions tray. -->
     <DateGlanceChip active={_isActive} />
   </div>
 
@@ -708,25 +765,71 @@
       {saveError ?? ''}
     </div>
   {/if}
-  <!-- Floating Editor Status Bar (save-error + word count) -->
-  {#if viewMode === 'edit' && (saveError || (showWordCount && wordCount > 0))}
+  <!-- Bottom status: word count always on when enabled. Zoom flyout only from
+       the % control (not word count). Outside .note-page-zoom. -->
+  {#if viewMode === 'edit' && showEditorUtilityBar}
     <div
-      class="absolute bottom-6 right-6 z-40 flex items-center gap-3 px-3.5 py-1.5 bg-surface-popover/80 backdrop-blur-md border border-surface-popover-border/60 rounded-full shadow-lg text-type-xs font-medium tracking-wide text-text-muted transition-all duration-300 opacity-70 hover:opacity-100 select-none"
+      class="editor-status-pill"
+      data-testid="editor-status-pill"
+      aria-label="Editor status"
     >
       {#if saveError}
-        <!-- Fail-loud visual indicator (announced via the live region above). -->
-        <div class="flex items-center gap-1.5">
-          <span class="w-2 h-2 rounded-full bg-status-danger animate-pulse"
-          ></span>
-          <span class="text-status-danger font-semibold">Save failed</span>
+        <div class="editor-status-pill__error">
+          <span class="editor-status-pill__error-dot" aria-hidden="true"></span>
+          <span class="editor-status-pill__error-label">Save failed</span>
         </div>
+        <div class="editor-status-pill__sep" aria-hidden="true"></div>
       {/if}
 
-      {#if showWordCount && wordCount > 0}
-        {#if saveError}
-          <div class="w-px h-3 bg-surface-popover-border"></div>
-        {/if}
-        <div class="font-mono text-text-muted/80" role="status" aria-live="off">
+      <!-- Hover/focus only on this wrap opens zoom − / +. % always visible. -->
+      <div
+        class="editor-status-pill__zoom-wrap"
+        class:editor-status-pill__zoom-wrap--pinned={editorStatusPinned}
+        role="group"
+        aria-label="Page zoom"
+      >
+        <button
+          type="button"
+          class="editor-status-pill__zoom-btn editor-status-pill__zoom-extra"
+          onclick={() => noteZoom.zoomOut()}
+          disabled={noteZoom.factor <= NOTE_ZOOM_MIN}
+          aria-label="Zoom out"
+          title="Zoom out (Ctrl+scroll)"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true"
+            >zoom_out</span
+          >
+        </button>
+        <button
+          type="button"
+          class="editor-status-pill__zoom-pct font-label-sm"
+          onclick={() => noteZoom.reset()}
+          aria-label={`Zoom ${noteZoom.percent}%. Reset to 100%`}
+          title="Zoom (Ctrl+scroll). Click to reset to 100%"
+        >
+          {noteZoom.percent}%
+        </button>
+        <button
+          type="button"
+          class="editor-status-pill__zoom-btn editor-status-pill__zoom-extra"
+          onclick={() => noteZoom.zoomIn()}
+          disabled={noteZoom.factor >= NOTE_ZOOM_MAX}
+          aria-label="Zoom in"
+          title="Zoom in (Ctrl+scroll)"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true"
+            >zoom_in</span
+          >
+        </button>
+      </div>
+
+      {#if showWordCount}
+        <div class="editor-status-pill__sep" aria-hidden="true"></div>
+        <div
+          class="editor-status-pill__words font-mono"
+          role="status"
+          aria-live="off"
+        >
           {wordCount}
           {wordCount === 1 ? 'word' : 'words'}
         </div>
@@ -749,5 +852,314 @@
     content: 'Untitled';
     color: var(--color-text-muted);
     opacity: 0.4;
+  }
+
+  /* --- Top-right: row positions cluster + calendar; only ⋯ cluster expands --- */
+  .editor-float-row {
+    position: absolute;
+    right: 1.5rem;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .editor-float-row.top-4 {
+    top: 1rem;
+  }
+
+  .editor-float-row.top-14 {
+    top: 3.5rem;
+  }
+
+  .editor-float-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.1rem;
+    padding: 0.2rem;
+    border-radius: 9999px;
+    background: color-mix(
+      in srgb,
+      var(--color-surface-popover) 55%,
+      transparent
+    );
+    backdrop-filter: blur(10px);
+    border: 1px solid
+      color-mix(in srgb, var(--color-surface-popover-border) 45%, transparent);
+    box-shadow: 0 4px 18px color-mix(in srgb, black 8%, transparent);
+    transition:
+      background 160ms ease,
+      border-color 160ms ease,
+      box-shadow 160ms ease,
+      opacity 160ms ease;
+    opacity: 0.42;
+  }
+
+  .editor-float-actions__peek {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+    transition:
+      width 140ms ease,
+      opacity 120ms ease;
+  }
+
+  .editor-float-actions__tray {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    max-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition:
+      max-width 200ms ease,
+      opacity 140ms ease;
+  }
+
+  .editor-float-actions:hover,
+  .editor-float-actions:focus-within,
+  .editor-float-actions--pinned {
+    opacity: 1;
+    background: color-mix(
+      in srgb,
+      var(--color-surface-popover) 82%,
+      transparent
+    );
+    border-color: color-mix(
+      in srgb,
+      var(--color-surface-popover-border) 65%,
+      transparent
+    );
+    box-shadow: 0 6px 22px color-mix(in srgb, black 12%, transparent);
+  }
+
+  .editor-float-actions:hover .editor-float-actions__peek,
+  .editor-float-actions:focus-within .editor-float-actions__peek,
+  .editor-float-actions--pinned .editor-float-actions__peek {
+    width: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+    transition:
+      width 120ms ease 80ms,
+      opacity 80ms ease 60ms;
+  }
+
+  .editor-float-actions:hover .editor-float-actions__tray,
+  .editor-float-actions:focus-within .editor-float-actions__tray,
+  .editor-float-actions--pinned .editor-float-actions__tray {
+    max-width: 18rem;
+    opacity: 1;
+  }
+
+  .editor-float-actions__btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: none;
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition:
+      color 120ms ease,
+      background 120ms ease;
+  }
+
+  .editor-float-actions__btn:hover {
+    background: var(--color-hover);
+  }
+
+  .editor-float-actions__btn:focus-visible {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: 1px;
+  }
+
+  .editor-float-actions__btn--on {
+    color: var(--color-accent-primary-start);
+  }
+
+  .editor-float-actions__sep {
+    width: 1px;
+    height: 1rem;
+    margin-inline: 0.15rem;
+    background: var(--color-surface-popover-border);
+    flex-shrink: 0;
+  }
+
+  /* --- Bottom: word count always visible; zoom flyout only from % wrap --- */
+  .editor-status-pill {
+    position: absolute;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.55rem 0.3rem 0.4rem;
+    border-radius: 9999px;
+    background: color-mix(
+      in srgb,
+      var(--color-surface-popover) 78%,
+      transparent
+    );
+    backdrop-filter: blur(10px);
+    border: 1px solid
+      color-mix(in srgb, var(--color-surface-popover-border) 55%, transparent);
+    box-shadow: 0 4px 16px color-mix(in srgb, black 10%, transparent);
+    color: var(--color-text-muted);
+    font-size: var(--text-type-xs, 0.75rem);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    user-select: none;
+    opacity: 0.78;
+  }
+
+  .editor-status-pill__zoom-wrap {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    border-radius: 9999px;
+    transition: background 120ms ease;
+  }
+
+  .editor-status-pill__zoom-wrap:hover,
+  .editor-status-pill__zoom-wrap:focus-within,
+  .editor-status-pill__zoom-wrap--pinned {
+    background: color-mix(in srgb, var(--color-hover) 55%, transparent);
+  }
+
+  /* − / + only appear when the zoom wrap (not word count) is hovered. */
+  .editor-status-pill__zoom-extra {
+    max-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    border: none;
+    pointer-events: none;
+    transition:
+      max-width 180ms ease,
+      opacity 120ms ease;
+  }
+
+  .editor-status-pill__zoom-wrap:hover .editor-status-pill__zoom-extra,
+  .editor-status-pill__zoom-wrap:focus-within .editor-status-pill__zoom-extra,
+  .editor-status-pill__zoom-wrap--pinned .editor-status-pill__zoom-extra {
+    max-width: 1.75rem;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .editor-status-pill__sep {
+    width: 1px;
+    height: 0.85rem;
+    background: var(--color-surface-popover-border);
+    flex-shrink: 0;
+  }
+
+  .editor-status-pill__error {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding-inline: 0.15rem;
+  }
+
+  .editor-status-pill__error-dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 9999px;
+    background: var(--color-status-danger);
+    animation: editor-status-pulse 1.4s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+
+  .editor-status-pill__error-label {
+    color: var(--color-status-danger);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .editor-status-pill__zoom-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.55rem;
+    height: 1.55rem;
+    padding: 0;
+    border: none;
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition:
+      color 120ms ease,
+      background 120ms ease;
+  }
+
+  .editor-status-pill__zoom-btn .material-symbols-outlined {
+    font-size: 1rem;
+  }
+
+  .editor-status-pill__zoom-btn:hover:not(:disabled) {
+    color: var(--color-text-primary);
+    background: var(--color-hover);
+  }
+
+  .editor-status-pill__zoom-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .editor-status-pill__zoom-btn:focus-visible,
+  .editor-status-pill__zoom-pct:focus-visible {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: 1px;
+  }
+
+  .editor-status-pill__zoom-pct {
+    min-width: 2.6rem;
+    height: 1.55rem;
+    padding: 0 0.2rem;
+    border: none;
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: inherit;
+    text-align: center;
+    cursor: pointer;
+    transition:
+      color 120ms ease,
+      background 120ms ease;
+  }
+
+  .editor-status-pill__zoom-pct:hover {
+    color: var(--color-text-primary);
+    background: var(--color-hover);
+  }
+
+  .editor-status-pill__words {
+    padding-inline: 0.25rem 0.35rem;
+    color: color-mix(in srgb, var(--color-text-muted) 88%, transparent);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @keyframes editor-status-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
   }
 </style>

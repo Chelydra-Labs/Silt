@@ -14,6 +14,56 @@ import (
 	"strings"
 )
 
+// openaiError is the common OpenAI-compatible error envelope:
+// {"error":{"message":"...","type":"insufficient_quota","code":"..."}}.
+type openaiError struct {
+	Error struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    any    `json:"code"`
+	} `json:"error"`
+}
+
+// openaiClassifyError maps an OpenAI-compatible structured error body to an
+// AIError with a prose message (not the raw JSON). Returns nil when the body
+// is not the expected shape so the default status path runs.
+func openaiClassifyError(raw []byte, status int) *AIError {
+	var oe openaiError
+	if err := json.Unmarshal(raw, &oe); err != nil || strings.TrimSpace(oe.Error.Message) == "" {
+		return nil
+	}
+	kind := classifyStatus(status)
+	typ := strings.ToLower(strings.TrimSpace(oe.Error.Type))
+	codeStr := ""
+	switch c := oe.Error.Code.(type) {
+	case string:
+		codeStr = strings.ToLower(c)
+	}
+	switch {
+	case typ == "insufficient_quota" || codeStr == "insufficient_quota" ||
+		strings.Contains(strings.ToLower(oe.Error.Message), "insufficient_quota"):
+		kind = ErrRateLimited
+	case typ == "rate_limit_exceeded" || codeStr == "rate_limit_exceeded" ||
+		strings.Contains(typ, "rate_limit"):
+		kind = ErrRateLimited
+	case typ == "invalid_request_error":
+		kind = ErrBadRequest
+	case typ == "authentication_error" || typ == "invalid_api_key":
+		kind = ErrUnauthorized
+	case typ == "permission_error":
+		kind = ErrForbidden
+	case typ == "not_found_error":
+		kind = ErrModelMissing
+	case typ == "server_error" || typ == "api_error":
+		kind = ErrServer
+	}
+	msg := strings.TrimSpace(oe.Error.Message)
+	if len(msg) > 500 {
+		msg = msg[:500] + "…"
+	}
+	return &AIError{Kind: kind, Status: status, Message: msg}
+}
+
 // chatRequest is the OpenAI-compatible /v1/chat/completions request body.
 type chatRequest struct {
 	Model           string          `json:"model"`
@@ -226,6 +276,7 @@ func completeOpenAI(ctx context.Context, req CompleteRequest, model, baseURL str
 				r.Header.Set("Authorization", "Bearer "+req.Provider.APIKey)
 			}
 		},
+		classifyErr: openaiClassifyError,
 	}
 	raw, _, aiErr := sendWithRetry(ctx, pr, req.Provider.TimeoutMs)
 	if aiErr != nil {
@@ -273,6 +324,7 @@ func embedOpenAI(ctx context.Context, req EmbedRequest, model, baseURL string) (
 				r.Header.Set("Authorization", "Bearer "+req.Provider.APIKey)
 			}
 		},
+		classifyErr: openaiClassifyError,
 	}
 	raw, _, aiErr := sendWithRetry(ctx, pr, req.Provider.TimeoutMs)
 	if aiErr != nil {
@@ -316,6 +368,7 @@ func listModelsOpenAI(ctx context.Context, p AIProvider, baseURL string) ([]AIMo
 				r.Header.Set("Authorization", "Bearer "+p.APIKey)
 			}
 		},
+		classifyErr: openaiClassifyError,
 	}
 	raw, _, aiErr := sendWithRetry(ctx, pr, p.TimeoutMs)
 	if aiErr != nil {

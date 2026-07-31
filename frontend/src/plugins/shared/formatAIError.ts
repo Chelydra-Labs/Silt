@@ -21,12 +21,63 @@ function codeOf(e: unknown): string | undefined {
   return undefined
 }
 
+/** Prefer nested provider prose when the message is a JSON error envelope. */
+function extractProviderProse(msg: string): string {
+  const t = msg.trim()
+  if (!t.startsWith('{')) return t
+  try {
+    const parsed = JSON.parse(t) as {
+      error?: { message?: unknown }
+      message?: unknown
+    }
+    const nested = parsed?.error?.message ?? parsed?.message
+    if (typeof nested === 'string' && nested.trim()) return nested.trim()
+  } catch {
+    // keep raw
+  }
+  return t
+}
+
+/** Trim provider detail for secondary UI copy (avoid dumping huge JSON bodies). */
+function shortProviderDetail(msg: string, max = 220): string {
+  const t = extractProviderProse(msg)
+  if (!t) return ''
+  // Still looks like raw JSON — do not append noise to friendly copy.
+  if (t.startsWith('{') && t.includes('"error"')) return ''
+  if (t.length <= max) return t
+  return t.slice(0, max).trimEnd() + '…'
+}
+
+function looksLikeQuotaOrCapacity(msg: string): boolean {
+  const m = msg.toLowerCase()
+  return (
+    m.includes('quota') ||
+    m.includes('billing') ||
+    m.includes('capacity') ||
+    m.includes('resource exhausted') ||
+    m.includes('resource_exhausted') ||
+    m.includes('exceeded your current') ||
+    m.includes('daily') ||
+    m.includes('spend')
+  )
+}
+
 function messageForCode(code: string | undefined, msg: string): string | null {
   switch (code) {
     case AIErrorKind.ErrUnauthorized:
       return 'AI provider rejected the request (unauthorized). Check your API key in Settings → AI.'
-    case AIErrorKind.ErrRateLimited:
+    case AIErrorKind.ErrRateLimited: {
+      // Keep a stable primary phrase; append provider detail so paid-tier
+      // quota/capacity failures are not misread as a generic short throttle (#846).
+      const detail = shortProviderDetail(msg)
+      if (detail && looksLikeQuotaOrCapacity(detail)) {
+        return `AI provider quota or capacity limit reached. ${detail}`
+      }
+      if (detail) {
+        return `AI provider rate limit reached. ${detail}`
+      }
       return 'AI provider rate limit reached. Wait a moment and try again.'
+    }
     case AIErrorKind.ErrModelMissing:
       return 'Chat model is missing or invalid. Configure a model in Settings → AI.'
     case AIErrorKind.ErrTimeout:

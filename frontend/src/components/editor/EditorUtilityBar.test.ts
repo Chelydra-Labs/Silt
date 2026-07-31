@@ -108,4 +108,51 @@ describe('EditorUtilityBar (#202 — simplified)', () => {
       screen.queryByRole('button', { name: 'Open tasks on this page' })
     ).toBeNull()
   })
+
+  it('renders FormatToolbar when showFormatting is true', () => {
+    render(EditorUtilityBar, {
+      props: {
+        editor: null,
+        activeMarks: new Set<string>(),
+        showFormatting: true
+      }
+    })
+    expect(
+      document.querySelector('[data-testid="format-toolbar-stub"]')
+    ).toBeTruthy()
+  })
+
+  it('omits FormatToolbar when showFormatting is false but keeps Page Tasks', () => {
+    render(EditorUtilityBar, {
+      props: {
+        editor: null,
+        activeMarks: new Set<string>(),
+        showFormatting: false,
+        pageLocator: {
+          source: 'vault',
+          notebook: 'NB',
+          section: '',
+          page: 'PG'
+        }
+      }
+    })
+    expect(
+      document.querySelector('[data-testid="format-toolbar-stub"]')
+    ).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Open tasks on this page' })
+    ).toBeInTheDocument()
+  })
+
+  it('does not host page zoom controls (they live in the bottom status pill)', () => {
+    render(EditorUtilityBar, {
+      props: {
+        editor: null,
+        activeMarks: new Set<string>(),
+        showFormatting: false
+      }
+    })
+    expect(screen.queryByRole('group', { name: 'Page zoom' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Zoom in' })).toBeNull()
+  })
 })

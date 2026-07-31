@@ -44,6 +44,46 @@ describe('formatAIError', () => {
     })
     expect(formatAIError(unauthorized)).toMatch(/API key/i)
   })
+
+  it('appends provider detail for rate-limited and quota-worded errors (#846)', () => {
+    expect(
+      formatAIError({
+        code: AIErrorKind.ErrRateLimited,
+        message: 'Please retry in 2s.'
+      })
+    ).toMatch(/rate limit reached\. Please retry in 2s/i)
+
+    expect(
+      formatAIError({
+        code: AIErrorKind.ErrRateLimited,
+        message: 'You exceeded your current quota for this project.'
+      })
+    ).toMatch(/quota or capacity/i)
+
+    expect(
+      formatAIError({
+        code: AIErrorKind.ErrRateLimited,
+        message: ''
+      })
+    ).toBe('AI provider rate limit reached. Wait a moment and try again.')
+  })
+
+  it('extracts prose from OpenAI-compatible JSON error bodies (#846)', () => {
+    const raw = JSON.stringify({
+      error: {
+        message: 'You exceeded your current quota, please check your plan.',
+        type: 'insufficient_quota',
+        code: 'insufficient_quota'
+      }
+    })
+    const out = formatAIError({
+      code: AIErrorKind.ErrRateLimited,
+      message: raw
+    })
+    expect(out).toMatch(/quota or capacity/i)
+    expect(out).toMatch(/check your plan/i)
+    expect(out).not.toContain('{"error"')
+  })
 })
 
 describe('isAbortError', () => {

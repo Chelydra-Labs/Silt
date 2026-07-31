@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   settings: {
     config: {
       ui: { show_format_toolbar: true },
-      editor: { focus_mode: false },
+      editor: { focus_mode: false, show_word_count: false as boolean },
       hotkeys: { toggle_view_mode: 'Ctrl+Shift+V' }
     }
   },
@@ -88,10 +88,21 @@ describe('VirtualScrollContainer editor chrome', () => {
     mocks.toggleFormatToolbar.mockClear()
     mocks.onToggleViewMode.mockClear()
     mocks.settings.config.ui.show_format_toolbar = true
+    mocks.settings.config.editor.focus_mode = false
+    mocks.settings.config.editor.show_word_count = false
     // Reset the hotkey (one test remaps it) so test order can't bleed.
     mocks.settings.config.hotkeys = { toggle_view_mode: 'Ctrl+Shift+V' }
   })
   afterEach(() => cleanup())
+
+  /**
+   * jsdom does not apply :hover/:focus-within styles, so collapsed-tray
+   * controls stay opacity:0. Query with hidden:true (they remain in the a11y
+   * tree and tab order; real browsers expand via CSS focus-within/hover).
+   */
+  function actionButton(name: string | RegExp) {
+    return screen.getByRole('button', { name, hidden: true })
+  }
 
   it('renders the EditorUtilityBar in edit mode with the toolbar enabled', () => {
     render(VirtualScrollContainer, { props: baseProps() })
@@ -117,9 +128,7 @@ describe('VirtualScrollContainer editor chrome', () => {
     // Source view: the read-only markdown projection renders in place of the
     // editor (#171/#194).
     expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
-    // The toggle is a toggle button: a STABLE accessible name + aria-pressed
-    // conveys state (no dynamic-label/pressed redundancy). The title carries
-    // the contextual action + the live (remappable) hotkey.
+    // Source pins the tray open, so the toggle is visible without hover.
     const toggle = screen.getByRole('button', { name: 'Toggle source view' })
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
     expect(toggle).toHaveAttribute('title', 'View Rich Text (Ctrl+Shift+V)')
@@ -142,10 +151,99 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
   })
 
-  it('keeps page actions available when the formatting toolbar is disabled', () => {
+  it('keeps the utility bar when the formatting toolbar is disabled', () => {
     mocks.settings.config.ui.show_format_toolbar = false
     render(VirtualScrollContainer, { props: baseProps() })
     expect(screen.getByTestId('editor-utility-bar-stub')).toBeInTheDocument()
+  })
+
+  it('applies session note zoom on the content wrapper only (#843)', async () => {
+    const { noteZoom } = await import('../lib/noteZoom.svelte')
+    noteZoom.reset()
+    render(VirtualScrollContainer, { props: baseProps() })
+    const zoomRoot = screen.getByTestId('note-page-zoom')
+    expect(zoomRoot).toHaveStyle({ zoom: '1' })
+    noteZoom.zoomIn()
+    await waitFor(() => {
+      expect(screen.getByTestId('note-page-zoom')).toHaveStyle({ zoom: '1.1' })
+    })
+    // Ctrl+wheel on the scroll surface steps zoom (#843).
+    const surface = zoomRoot.parentElement
+    expect(surface).toBeTruthy()
+    await fireEvent.wheel(surface!, { deltaY: 100, ctrlKey: true })
+    await waitFor(() => {
+      expect(screen.getByTestId('note-page-zoom')).toHaveStyle({ zoom: '1' })
+    })
+    noteZoom.reset()
+  })
+
+  it('hosts page zoom in the bottom status pill (outside content zoom)', async () => {
+    const { noteZoom } = await import('../lib/noteZoom.svelte')
+    noteZoom.reset()
+    render(VirtualScrollContainer, { props: baseProps() })
+
+    const pill = screen.getByTestId('editor-status-pill')
+    expect(pill).toBeInTheDocument()
+    expect(pill.closest('[data-testid="note-page-zoom"]')).toBeNull()
+
+    const zoomWrap = pill.querySelector('.editor-status-pill__zoom-wrap')
+    expect(zoomWrap).toBeInTheDocument()
+    expect(zoomWrap).not.toHaveClass('editor-status-pill__zoom-wrap--pinned')
+    // Current % is always visible as the collapsed affordance.
+    expect(
+      screen.getByRole('button', { name: 'Zoom 100%. Reset to 100%' })
+    ).toHaveTextContent('100%')
+    expect(screen.getByRole('group', { name: 'Page zoom' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Zoom in' })).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    await waitFor(() => {
+      expect(
+        screen
+          .getByTestId('editor-status-pill')
+          .querySelector('.editor-status-pill__zoom-wrap')
+      ).toHaveClass('editor-status-pill__zoom-wrap--pinned')
+      expect(
+        screen.getByRole('button', { name: 'Zoom 110%. Reset to 100%' })
+      ).toHaveTextContent('110%')
+    })
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Zoom 110%. Reset to 100%' })
+    )
+    await waitFor(() => {
+      expect(
+        screen
+          .getByTestId('editor-status-pill')
+          .querySelector('.editor-status-pill__zoom-wrap')
+      ).not.toHaveClass('editor-status-pill__zoom-wrap--pinned')
+      expect(
+        screen.getByRole('button', { name: 'Zoom 100%. Reset to 100%' })
+      ).toHaveTextContent('100%')
+    })
+    noteZoom.reset()
+  })
+
+  it('always shows word count when enabled (outside zoom flyout)', () => {
+    mocks.settings.config.editor.show_word_count = true
+    render(VirtualScrollContainer, { props: baseProps() })
+    const pill = screen.getByTestId('editor-status-pill')
+    expect(pill).toHaveTextContent('0 words')
+    expect(pill.querySelector('.editor-status-pill__words')).toBeInTheDocument()
+    expect(
+      pill
+        .querySelector('.editor-status-pill__zoom-wrap')
+        ?.contains(pill.querySelector('.editor-status-pill__words')!)
+    ).toBe(false)
+  })
+
+  it('hides word count text when the preference is off (zoom still shown)', () => {
+    mocks.settings.config.editor.show_word_count = false
+    render(VirtualScrollContainer, { props: baseProps() })
+    const pill = screen.getByTestId('editor-status-pill')
+    expect(pill).toBeInTheDocument()
+    expect(pill).not.toHaveTextContent('words')
+    expect(screen.getByRole('group', { name: 'Page zoom' })).toBeInTheDocument()
   })
 
   it('does not add page chrome for standalone task content', () => {
@@ -154,23 +252,62 @@ describe('VirtualScrollContainer editor chrome', () => {
       props: { ...baseProps(), notebook: '.silt', page: 'tasks' }
     })
     expect(screen.queryByTestId('editor-utility-bar-stub')).toBeNull()
+    expect(screen.queryByTestId('editor-status-pill')).toBeNull()
+  })
+
+  it('does not apply note zoom on standalone .silt tasks (#843)', async () => {
+    const { noteZoom } = await import('../lib/noteZoom.svelte')
+    noteZoom.setFactor(1.5)
+    render(VirtualScrollContainer, {
+      props: { ...baseProps(), notebook: '.silt', page: 'tasks' }
+    })
+    const zoomRoot = screen.getByTestId('note-page-zoom')
+    expect(zoomRoot.getAttribute('style') ?? '').not.toMatch(/zoom/)
+    noteZoom.reset()
+  })
+
+  it('collapses top-right actions by default; date glance stays outside flyout', () => {
+    render(VirtualScrollContainer, { props: baseProps() })
+    const row = screen.getByTestId('editor-float-actions')
+    const cluster = row.querySelector('.editor-float-actions')
+    expect(cluster).toBeTruthy()
+    expect(cluster).not.toHaveClass('editor-float-actions--pinned')
+    expect(
+      cluster!.querySelector('.editor-float-actions__peek')
+    ).toBeInTheDocument()
+    expect(
+      cluster!.querySelector('.editor-float-actions__tray')
+    ).toBeInTheDocument()
+    expect(actionButton('Toggle Focus Mode')).toBeInTheDocument()
+    const dateBtn = screen.getByRole('button', { name: 'Pick a date' })
+    expect(dateBtn).toBeInTheDocument()
+    // Calendar is a sibling of the ⋯ cluster — hovering it must not open tray.
+    expect(cluster!.contains(dateBtn)).toBe(false)
+  })
+
+  it('pins the action tray open in source view', () => {
+    render(VirtualScrollContainer, {
+      props: { ...baseProps(), viewMode: 'source' }
+    })
+    expect(
+      screen
+        .getByTestId('editor-float-actions')
+        .querySelector('.editor-float-actions')
+    ).toHaveClass('editor-float-actions--pinned')
+    expect(
+      screen.getByRole('button', { name: 'Toggle source view' })
+    ).toBeInTheDocument()
   })
 
   it('renders the floating toggle buttons and dispatches their handlers', async () => {
     render(VirtualScrollContainer, { props: baseProps() })
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Toggle Focus Mode' })
-    )
+    await fireEvent.click(actionButton('Toggle Focus Mode'))
     expect(mocks.toggleFocusMode).toHaveBeenCalledTimes(1)
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Toggle Formatting Toolbar' })
-    )
+    await fireEvent.click(actionButton('Toggle Formatting Toolbar'))
     expect(mocks.toggleFormatToolbar).toHaveBeenCalledTimes(1)
     // The view-mode button fires the onToggleViewMode callback (#195) — App
     // owns the per-tab state now, not a module store.
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Toggle source view' })
-    )
+    await fireEvent.click(actionButton('Toggle source view'))
     expect(mocks.onToggleViewMode).toHaveBeenCalledTimes(1)
   })
 
@@ -178,7 +315,7 @@ describe('VirtualScrollContainer editor chrome', () => {
     // Remap the hotkey; the tooltip + aria-keyshortcuts must follow.
     mocks.settings.config.hotkeys = { toggle_view_mode: 'Ctrl+E' }
     render(VirtualScrollContainer, { props: baseProps() })
-    const toggle = screen.getByRole('button', { name: 'Toggle source view' })
+    const toggle = actionButton('Toggle source view')
     expect(toggle).toHaveAttribute('aria-keyshortcuts', 'Ctrl+E')
     expect(toggle.getAttribute('title')).toContain('(Ctrl+E)')
   })

@@ -37,8 +37,6 @@ func (dm *DatabaseManager) invalidateUnlinkedScanCache() {
 	defer dm.unlinkedScanCacheMu.Unlock()
 	dm.unlinkedScanCacheGen++
 	dm.unlinkedScanCache = nil
-	dm.nonASCIILeaves = nil
-	dm.nonASCIILeavesOK = false
 }
 
 func (dm *DatabaseManager) unlinkedScanCacheGet(key unlinkedScanCacheKey) (unlinkedScanCacheEntry, bool) {

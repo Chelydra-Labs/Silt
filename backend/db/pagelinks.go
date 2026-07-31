@@ -101,141 +101,41 @@ func scanDistinctPages(db *sql.DB, whereSQL string, args []any) ([]PageLoc, erro
 	return out, rows.Err()
 }
 
-// leafIsASCII reports whether s contains only ASCII runes. SQLite lower() is
-// ASCII-only; Unicode case folding must use Go strings.EqualFold.
-func leafIsASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= unicode.MaxASCII {
-			return false
+// pageFoldKey maps each rune to the minimum code point in its unicode.SimpleFold
+// cycle. Strings that compare equal under strings.EqualFold share the same key
+// (and ß vs "ss" do not — SimpleFold, not full case fold).
+func pageFoldKey(page string) string {
+	if page == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(page))
+	for _, r := range page {
+		b.WriteRune(simpleFoldMin(r))
+	}
+	return b.String()
+}
+
+// simpleFoldMin returns the smallest rune in r's SimpleFold equivalence class.
+func simpleFoldMin(r rune) rune {
+	min := r
+	for c := unicode.SimpleFold(r); c != r; c = unicode.SimpleFold(c) {
+		if c < min {
+			min = c
 		}
 	}
-	return true
+	return min
 }
 
 // listPagesByLeaf returns distinct page locations whose leaf page name matches
-// leaf with the same case-folding rules as PageMatchesTarget (EqualFold).
-//
-// ASCII leaves use indexed lower(page) (idx_blocks_page_lower) plus an
-// EqualFold merge against cached non-ASCII leaves so Unicode folds of ASCII
-// letters (K vs U+212A K) cannot look uniquely resolved. Non-ASCII leaves
-// filter the full page inventory in Go (SQLite lower() is ASCII-only).
+// leaf with the same case-folding rules as PageMatchesTarget (EqualFold), via
+// the persisted page_fold column (idx_blocks_page_fold).
 func (dm *DatabaseManager) listPagesByLeaf(db *sql.DB, leaf string) ([]PageLoc, error) {
 	leaf = strings.TrimSpace(leaf)
 	if leaf == "" {
 		return nil, nil
 	}
-	if !leafIsASCII(leaf) {
-		return listPagesByLeafEqualFoldAll(db, leaf)
-	}
-	asciiHits, err := scanDistinctPages(db, `lower(page) = lower(?)`, []any{leaf})
-	if err != nil {
-		return nil, err
-	}
-	extras, err := dm.nonASCIILeavesMatching(db, leaf)
-	if err != nil {
-		return nil, err
-	}
-	return mergePageLocs(asciiHits, extras), nil
-}
-
-// listPagesByLeafEqualFoldAll scans every distinct page and keeps EqualFold
-// leaf matches. Used for non-ASCII titles (Café/CAFÉ). Large-vault bound for
-// this path needs a persisted Unicode-folded key (tracked follow-up).
-func listPagesByLeafEqualFoldAll(db *sql.DB, leaf string) ([]PageLoc, error) {
-	all, err := scanDistinctPages(db, ``, nil)
-	if err != nil {
-		return nil, err
-	}
-	var out []PageLoc
-	for _, p := range all {
-		if strings.EqualFold(p.Page, leaf) {
-			out = append(out, p)
-		}
-	}
-	return out, nil
-}
-
-// nonASCIILeavesMatching returns cached non-ASCII page locs that EqualFold
-// match leaf. Cache is rebuilt after block mutations (same gen as unlinked FTS).
-func (dm *DatabaseManager) nonASCIILeavesMatching(db *sql.DB, leaf string) ([]PageLoc, error) {
-	leaves, err := dm.cachedNonASCIILeaves(db)
-	if err != nil {
-		return nil, err
-	}
-	var out []PageLoc
-	for _, p := range leaves {
-		if strings.EqualFold(p.Page, leaf) {
-			out = append(out, p)
-		}
-	}
-	return out, nil
-}
-
-func (dm *DatabaseManager) cachedNonASCIILeaves(db *sql.DB) ([]PageLoc, error) {
-	dm.unlinkedScanCacheMu.Lock()
-	if dm.nonASCIILeavesOK {
-		out := append([]PageLoc(nil), dm.nonASCIILeaves...)
-		dm.unlinkedScanCacheMu.Unlock()
-		return out, nil
-	}
-	// Capture generation before unlocking so a concurrent invalidate cannot
-	// let this rebuild publish a pre-mutation snapshot after gen bumps.
-	buildGen := dm.unlinkedScanCacheGen
-	dm.unlinkedScanCacheMu.Unlock()
-
-	// Build outside the lock (DISTINCT can be large).
-	all, err := scanDistinctPages(db, ``, nil)
-	if err != nil {
-		return nil, err
-	}
-	var nonASCII []PageLoc
-	for _, p := range all {
-		if !leafIsASCII(p.Page) {
-			nonASCII = append(nonASCII, p)
-		}
-	}
-
-	dm.unlinkedScanCacheMu.Lock()
-	defer dm.unlinkedScanCacheMu.Unlock()
-	// Only publish if no mutation invalidated caches during the scan — same
-	// generation gate as unlinkedScanCachePut.
-	if buildGen == dm.unlinkedScanCacheGen && !dm.nonASCIILeavesOK {
-		dm.nonASCIILeaves = nonASCII
-		dm.nonASCIILeavesOK = true
-	}
-	if dm.nonASCIILeavesOK {
-		return append([]PageLoc(nil), dm.nonASCIILeaves...), nil
-	}
-	// Stale rebuild discarded; return this scan's result without caching so
-	// the caller still sees post-scan data for this request (next call rebuilds).
-	return nonASCII, nil
-}
-
-func mergePageLocs(a, b []PageLoc) []PageLoc {
-	if len(b) == 0 {
-		return a
-	}
-	if len(a) == 0 {
-		return b
-	}
-	type key struct{ s, n, sec, p string }
-	seen := make(map[key]struct{}, len(a)+len(b))
-	out := make([]PageLoc, 0, len(a)+len(b))
-	add := func(p PageLoc) {
-		k := key{p.Source, p.Notebook, p.Section, p.Page}
-		if _, ok := seen[k]; ok {
-			return
-		}
-		seen[k] = struct{}{}
-		out = append(out, p)
-	}
-	for _, p := range a {
-		add(p)
-	}
-	for _, p := range b {
-		add(p)
-	}
-	return out
+	return scanDistinctPages(db, `page_fold = ?`, []any{pageFoldKey(leaf)})
 }
 
 // pageExistsExact reports whether a concrete path is present in the blocks index.
