@@ -523,17 +523,54 @@ func backfillBlockReferences(db *sql.DB) error {
 // pageFoldBackfillMarker records a completed warm-upgrade fill of blocks.page_fold (#844).
 const pageFoldBackfillMarker = "page_fold_backfill"
 
-// backfillPageFold sets page_fold = pageFoldKey(page) on every blocks row in one
-// restart-safe transaction. Idempotent via schema_migrations.
+// dropBlocksFTSTriggers removes FTS sync triggers so bulk blocks UPDATEs that
+// only touch non-FTS columns (e.g. page_fold) do not re-tokenize every row.
+func dropBlocksFTSTriggers(db *sql.DB) error {
+	for _, name := range []string{"blocks_fts_ai", "blocks_fts_ad", "blocks_fts_au"} {
+		if _, err := db.Exec("DROP TRIGGER IF EXISTS " + name); err != nil {
+			return fmt.Errorf("drop %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// backfillPageFold fills NULL page_fold values and records a one-shot marker.
+// After the marker exists it still heals any residual NULL folds (missed writers).
+// Warm vaults already have FTS AFTER UPDATE triggers; those are dropped for the
+// bulk write and recreated via ensureFTSOn so page_fold backfill does not
+// thrash the external-content FTS index.
 func backfillPageFold(db *sql.DB) error {
+	var nullCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM blocks WHERE page_fold IS NULL`).Scan(&nullCount); err != nil {
+		return fmt.Errorf("count null page_fold: %w", err)
+	}
 	var appliedAt int64
-	err := db.QueryRow("SELECT applied_at FROM schema_migrations WHERE name = ?", pageFoldBackfillMarker).Scan(&appliedAt)
-	if err == nil {
+	markerErr := db.QueryRow("SELECT applied_at FROM schema_migrations WHERE name = ?", pageFoldBackfillMarker).Scan(&appliedAt)
+	hasMarker := markerErr == nil
+	if markerErr != nil && markerErr != sql.ErrNoRows {
+		return fmt.Errorf("probe %s marker: %w", pageFoldBackfillMarker, markerErr)
+	}
+	if nullCount == 0 {
+		if hasMarker {
+			return nil
+		}
+		// Empty vault or all rows already folded — record marker only.
+		_, err := db.Exec(
+			"INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+			pageFoldBackfillMarker, time.Now().UnixNano(),
+		)
+		if err != nil {
+			return fmt.Errorf("record %s marker: %w", pageFoldBackfillMarker, err)
+		}
 		return nil
 	}
-	if err != sql.ErrNoRows {
-		return fmt.Errorf("probe %s marker: %w", pageFoldBackfillMarker, err)
+
+	// Suppress FTS re-tokenization for non-content column updates.
+	if err := dropBlocksFTSTriggers(db); err != nil {
+		return err
 	}
+	// Always restore triggers, even if the backfill tx fails mid-way.
+	defer func() { _ = ensureFTSOn(db) }()
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -541,23 +578,23 @@ func backfillPageFold(db *sql.DB) error {
 	}
 	defer tx.Rollback()
 
-	// One table scan: update each row by rowid. Caching fold by page avoids
-	// recomputing pageFoldKey for repeated titles without N× full-table UPDATEs.
-	rows, err := tx.Query("SELECT rowid, page FROM blocks")
+	// Stream row-by-row: only NULL folds; cache fold strings per distinct page.
+	rows, err := tx.Query(`SELECT rowid, page FROM blocks WHERE page_fold IS NULL`)
 	if err != nil {
-		return fmt.Errorf("scan blocks for page_fold backfill: %w", err)
+		return fmt.Errorf("scan null page_fold rows: %w", err)
 	}
-	type rowFold struct {
-		rowid int64
-		fold  string
+	stmt, err := tx.Prepare("UPDATE blocks SET page_fold = ? WHERE rowid = ?")
+	if err != nil {
+		rows.Close()
+		return fmt.Errorf("prepare page_fold update: %w", err)
 	}
 	foldCache := make(map[string]string)
-	var updates []rowFold
 	for rows.Next() {
 		var rowid int64
 		var page string
 		if err := rows.Scan(&rowid, &page); err != nil {
 			rows.Close()
+			stmt.Close()
 			return fmt.Errorf("scan row during page_fold backfill: %w", err)
 		}
 		fold, ok := foldCache[page]
@@ -565,28 +602,27 @@ func backfillPageFold(db *sql.DB) error {
 			fold = pageFoldKey(page)
 			foldCache[page] = fold
 		}
-		updates = append(updates, rowFold{rowid: rowid, fold: fold})
+		if _, err := stmt.Exec(fold, rowid); err != nil {
+			rows.Close()
+			stmt.Close()
+			return fmt.Errorf("page_fold update rowid %d: %w", rowid, err)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return fmt.Errorf("iterate blocks during page_fold backfill: %w", err)
+		stmt.Close()
+		return fmt.Errorf("iterate null page_fold rows: %w", err)
 	}
 	rows.Close()
-
-	stmt, err := tx.Prepare("UPDATE blocks SET page_fold = ? WHERE rowid = ?")
-	if err != nil {
-		return fmt.Errorf("prepare page_fold update: %w", err)
-	}
-	for _, u := range updates {
-		if _, err := stmt.Exec(u.fold, u.rowid); err != nil {
-			stmt.Close()
-			return fmt.Errorf("page_fold update rowid %d: %w", u.rowid, err)
-		}
-	}
 	stmt.Close()
 
-	if _, err := tx.Exec("INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)", pageFoldBackfillMarker, time.Now().UnixNano()); err != nil {
-		return fmt.Errorf("record %s marker: %w", pageFoldBackfillMarker, err)
+	if !hasMarker {
+		if _, err := tx.Exec(
+			"INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+			pageFoldBackfillMarker, time.Now().UnixNano(),
+		); err != nil {
+			return fmt.Errorf("record %s marker: %w", pageFoldBackfillMarker, err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit page_fold backfill tx: %w", err)
