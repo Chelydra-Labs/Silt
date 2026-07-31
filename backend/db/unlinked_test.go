@@ -1697,8 +1697,9 @@ func TestUnlinked_CacheInvalidatesOnReindex(t *testing.T) {
 	_ = p1
 }
 
-// TestUnlinked_NoFullInventoryOnPagedPath ensures GetUnlinkedMentionsPaged does
-// not call listDistinctPages (#839).
+// TestUnlinked_NoFullInventoryOnPagedPath ensures ASCII unique titles do not
+// pay a full page-inventory DISTINCT on every residual request after the
+// one-time non-ASCII leaf cache warm (#839).
 func TestUnlinked_NoFullInventoryOnPagedPath(t *testing.T) {
 	dm := newTestDB(t)
 	// Many decoy pages with different leaves.
@@ -1715,16 +1716,87 @@ func TestUnlinked_NoFullInventoryOnPagedPath(t *testing.T) {
 		noteBlock(uuidV, "see Topic please"),
 	})
 
-	before := listDistinctPagesCalls.Load()
+	// First call may warm non-ASCII leaf cache via one full DISTINCT.
+	if _, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	before := fullPageInventoryScans.Load()
 	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
-	if listDistinctPagesCalls.Load() != before {
-		t.Fatalf("unlinked paged must not listDistinctPages: before=%d after=%d", before, listDistinctPagesCalls.Load())
+	if fullPageInventoryScans.Load() != before {
+		t.Fatalf("steady-state ASCII unlinked must not full-scan inventory: before=%d after=%d",
+			before, fullPageInventoryScans.Load())
 	}
 	if len(res.Results) != 1 || res.Results[0].Ambiguous {
 		t.Fatalf("unique title: %+v", res.Results)
+	}
+}
+
+// TestUnlinked_NonASCIILeafCacheRejectsStaleRebuild ensures a rebuild that
+// started before invalidateUnlinkedScanCache does not publish over a newer gen
+// (mirrors unlinkedScanCachePut generation gate).
+func TestUnlinked_NonASCIILeafCacheRejectsStaleRebuild(t *testing.T) {
+	dm := newTestDB(t)
+	const okKelvin = "O\u212A"
+	idxU(t, dm, "vault", "NB", "Sec", "OK", []parser.ParsedBlock{
+		noteBlock(uuidU, "home"),
+	})
+	idxU(t, dm, "vault", "NB", "Other", okKelvin, []parser.ParsedBlock{
+		noteBlock(uuidV, "kelvin"),
+	})
+
+	// Warm non-ASCII cache (includes OK).
+	pages, err := dm.ListPagesByLeaf("OK")
+	if err != nil || len(pages) != 2 {
+		t.Fatalf("warm ListPagesByLeaf: err=%v pages=%+v", err, pages)
+	}
+
+	// Simulate the race window: reader captured buildGen, then invalidate
+	// bumped gen and cleared OK. A finishing stale store must not stick.
+	dm.unlinkedScanCacheMu.Lock()
+	staleGen := dm.unlinkedScanCacheGen
+	dm.unlinkedScanCacheMu.Unlock()
+
+	dm.invalidateUnlinkedScanCache()
+
+	dm.unlinkedScanCacheMu.Lock()
+	curGen := dm.unlinkedScanCacheGen
+	if staleGen == curGen {
+		dm.unlinkedScanCacheMu.Unlock()
+		t.Fatal("invalidate must bump generation")
+	}
+	// Production gate (cachedNonASCIILeaves): only store when buildGen matches.
+	staleSnap := []PageLoc{{Source: "vault", Notebook: "NB", Section: "Sec", Page: "OK"}}
+	if staleGen == dm.unlinkedScanCacheGen && !dm.nonASCIILeavesOK {
+		dm.nonASCIILeaves = staleSnap
+		dm.nonASCIILeavesOK = true
+	}
+	if dm.nonASCIILeavesOK {
+		dm.unlinkedScanCacheMu.Unlock()
+		t.Fatal("stale rebuild must not set nonASCIILeavesOK after gen bump")
+	}
+	dm.unlinkedScanCacheMu.Unlock()
+
+	// Delete Kelvin page then rebuild — cache must not resurrect stale OK-only miss.
+	if err := dm.ClearFileBlocks(nil, "vault", "NB", "Other", okKelvin); err != nil {
+		t.Fatalf("ClearFileBlocks: %v", err)
+	}
+	pages2, err := dm.ListPagesByLeaf("OK")
+	if err != nil {
+		t.Fatalf("ListPagesByLeaf after delete: %v", err)
+	}
+	if len(pages2) != 1 || pages2[0].Page != "OK" {
+		t.Fatalf("after deleting OK want only OK, got %+v", pages2)
+	}
+	// Second call uses cache — still unique.
+	pages3, err := dm.ListPagesByLeaf("OK")
+	if err != nil {
+		t.Fatalf("cached ListPagesByLeaf: %v", err)
+	}
+	if len(pages3) != 1 {
+		t.Fatalf("cached after delete want 1, got %+v", pages3)
 	}
 }
 

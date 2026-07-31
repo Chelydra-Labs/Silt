@@ -61,20 +61,23 @@ func (dm *DatabaseManager) PageExistsExact(source, notebook, section, page strin
 	return pageExistsExact(db, source, notebook, section, page)
 }
 
-// listDistinctPagesCalls counts full-inventory scans (tests for #839).
-// atomic: production concurrent readers may hit ListDistinctPages.
-var listDistinctPagesCalls atomic.Uint64
+// fullPageInventoryScans counts unbounded DISTINCT page-inventory scans
+// (empty WHERE on scanDistinctPages). Used by tests for #839; atomic for
+// concurrent readers. Prefer this over listDistinctPages-only counters.
+var fullPageInventoryScans atomic.Uint64
 
 // listDistinctPages is the no-handle-reentry internal helper. Callers that
 // already hold a handle lease MUST call this instead of ListDistinctPages.
 func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
-	listDistinctPagesCalls.Add(1)
 	return scanDistinctPages(db, `` /* no WHERE */, nil)
 }
 
 // scanDistinctPages runs SELECT DISTINCT page locs with an optional WHERE
 // clause (and bind args). empty whereSQL means full inventory.
 func scanDistinctPages(db *sql.DB, whereSQL string, args []any) ([]PageLoc, error) {
+	if strings.TrimSpace(whereSQL) == "" {
+		fullPageInventoryScans.Add(1)
+	}
 	q := `
 		SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
 		FROM blocks`
@@ -175,9 +178,12 @@ func (dm *DatabaseManager) cachedNonASCIILeaves(db *sql.DB) ([]PageLoc, error) {
 		dm.unlinkedScanCacheMu.Unlock()
 		return out, nil
 	}
+	// Capture generation before unlocking so a concurrent invalidate cannot
+	// let this rebuild publish a pre-mutation snapshot after gen bumps.
+	buildGen := dm.unlinkedScanCacheGen
 	dm.unlinkedScanCacheMu.Unlock()
 
-	// Build outside the lock (DISTINCT can be large). Re-check before store.
+	// Build outside the lock (DISTINCT can be large).
 	all, err := scanDistinctPages(db, ``, nil)
 	if err != nil {
 		return nil, err
@@ -191,11 +197,18 @@ func (dm *DatabaseManager) cachedNonASCIILeaves(db *sql.DB) ([]PageLoc, error) {
 
 	dm.unlinkedScanCacheMu.Lock()
 	defer dm.unlinkedScanCacheMu.Unlock()
-	if !dm.nonASCIILeavesOK {
+	// Only publish if no mutation invalidated caches during the scan — same
+	// generation gate as unlinkedScanCachePut.
+	if buildGen == dm.unlinkedScanCacheGen && !dm.nonASCIILeavesOK {
 		dm.nonASCIILeaves = nonASCII
 		dm.nonASCIILeavesOK = true
 	}
-	return append([]PageLoc(nil), dm.nonASCIILeaves...), nil
+	if dm.nonASCIILeavesOK {
+		return append([]PageLoc(nil), dm.nonASCIILeaves...), nil
+	}
+	// Stale rebuild discarded; return this scan's result without caching so
+	// the caller still sees post-scan data for this request (next call rebuilds).
+	return nonASCII, nil
 }
 
 func mergePageLocs(a, b []PageLoc) []PageLoc {
