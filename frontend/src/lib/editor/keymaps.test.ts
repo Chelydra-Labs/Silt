@@ -203,6 +203,95 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
     editor.destroy()
   })
 
+  it('Enter on empty bulleted note clears the bullet (exits the list)', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '- ' }
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.focus('end')
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('')
+    editor.destroy()
+  })
+
+  it('Enter on empty ordered note clears the marker (exits the list)', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '2. ' }
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.focus('end')
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('')
+    editor.destroy()
+  })
+
+  it('Enter on empty quoted note clears the quote (exits the quote)', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '', quote: '> ' }
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.focus('end')
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).attrs.quote).toBe('')
+    editor.destroy()
+  })
+
+  it('mid-text Enter on a quoted note keeps quote on both halves', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '', quote: '> ' },
+          content: [{ type: 'text', text: 'hello world' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.setTextSelection(1 + 6) // after "hello "
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).textContent).toBe('hello ')
+    expect(editor.state.doc.child(0).attrs.quote).toBe('> ')
+    expect(editor.state.doc.child(1).textContent).toBe('world')
+    expect(editor.state.doc.child(1).attrs.quote).toBe('> ')
+    expect(editor.state.doc.child(1).attrs.bullet).toBe('')
+    editor.destroy()
+  })
+
   it('continues plain (no-bullet) after Enter on a plain noteBlock', () => {
     const editor = makeEditorWithKeymaps()
     const doc: DocJSON = {

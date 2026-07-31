@@ -1305,6 +1305,71 @@ describe('BacklinksSidebarPanel', () => {
     expect(screen.queryByText(/may be incomplete/)).not.toBeInTheDocument()
   })
 
+  it('Scan more merges additional blocks when the same page reappears', async () => {
+    const batch1 = unlinkedMentionWire({
+      source_page: 'Shared page',
+      source_block_ids: ['block-a'],
+      source_snippets: ['alpha Research hit'],
+      match_count: 1
+    })
+    const batch2 = unlinkedMentionWire({
+      source_page: 'Shared page',
+      source_block_ids: ['block-b', 'block-c'],
+      source_snippets: ['beta Research hit', 'gamma Research hit'],
+      match_count: 2
+    })
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch1],
+          truncated: true,
+          scanCursor: 'scan-token-1'
+        })
+      )
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch2],
+          truncated: false,
+          scanCursor: ''
+        })
+      )
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await screen.findByText('Shared page')
+    expect(screen.getByLabelText('1 mention')).toBeInTheDocument()
+    await fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Scan more unlinked mention candidates'
+      })
+    )
+    await waitFor(() => {
+      expect(screen.getByLabelText('3 mentions')).toBeInTheDocument()
+    })
+    // One page row; three link targets (one per merged block).
+    expect(screen.getAllByText('Shared page')).toHaveLength(1)
+    expect(
+      screen.getAllByRole('button', { name: /Link mention of Research/ })
+    ).toHaveLength(3)
+    expect(
+      screen.getByRole('button', {
+        name: /Link mention of Research in block block-a/
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: /Link mention of Research in block block-b/
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: /Link mention of Research in block block-c/
+      })
+    ).toBeInTheDocument()
+  })
+
   it('disables Scan more while residual has_more so unread batch pages are not dropped', async () => {
     mocks.getUnlinkedMentionsPaged.mockResolvedValue(
       unlinkedWire({

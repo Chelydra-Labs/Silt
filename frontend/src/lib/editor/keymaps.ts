@@ -861,9 +861,36 @@ export const SiltBlockKeymaps = Extension.create({
         // noteBlock-only: task/header/callout keep their full body and only
         // append an empty note below (avoids demoting trailing task text).
         const isNote = info.node.type.name === 'noteBlock'
+
+        // Empty list/quote item + Enter exits the container (Word/Docs/Notion
+        // convention; mirrors Backspace bullet/quote clear). Nested depth is
+        // left alone — unindent is Tab/Backspace, not Enter.
+        if (isNote && isBlockEmpty(info.node)) {
+          const bullet = (info.node.attrs.bullet as string) || ''
+          const quote = (info.node.attrs.quote as string) || ''
+          if (bullet) {
+            this.editor.view.dispatch(
+              this.editor.state.tr.setNodeAttribute(info.pos, 'bullet', '')
+            )
+            return true
+          }
+          if (quote) {
+            this.editor.view.dispatch(
+              this.editor.state.tr.setNodeAttribute(info.pos, 'quote', '')
+            )
+            return true
+          }
+        }
+
         let nextBullet = ''
+        let nextQuote = ''
         if (isNote) {
           nextBullet = getNextBullet(info.node.attrs.bullet || '')
+          // Quote continues across mid-text / end-of-line Enter (markdown `>`
+          // lines); empty quote already exited above.
+          nextQuote = (info.node.attrs.quote as string) || ''
+          // Quote and bullet are mutually exclusive on noteBlock.
+          if (nextQuote) nextBullet = ''
         }
 
         const { state } = this.editor
@@ -899,6 +926,7 @@ export const SiltBlockKeymaps = Extension.create({
             id: null as string | null,
             depth: info.depth,
             bullet: nextBullet,
+            quote: nextQuote,
             file_date: new Date().toISOString().slice(0, 10)
           }
           const newNode =

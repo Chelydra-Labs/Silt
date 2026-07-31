@@ -529,8 +529,8 @@
     ].join('\u0000')
   }
 
-  // The cursor is a keyset over the same composite key, so appended pages
-  // should never overlap — this dedup is defensive against any ordering drift.
+  // The residual cursor is a keyset over the same composite key, so appended
+  // pages should never overlap — this dedup is defensive against ordering drift.
   function uniqueUnlinked(
     current: UnlinkedMention[],
     incoming: UnlinkedMention[]
@@ -546,6 +546,53 @@
         return true
       })
     ]
+  }
+
+  // Scan more advances the FTS keyset: the same source page can reappear with
+  // additional blocks. Merge block ids/snippets instead of dropping the page.
+  function mergeUnlinked(
+    current: UnlinkedMention[],
+    incoming: UnlinkedMention[]
+  ): UnlinkedMention[] {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local helper map
+    const byKey = new Map<string, UnlinkedMention>()
+    const order: string[] = []
+    for (const m of current) {
+      const k = unlinkedMentionKey(m)
+      byKey.set(k, {
+        ...m,
+        sourceBlockIds: [...m.sourceBlockIds],
+        sourceSnippets: [...(m.sourceSnippets ?? [])]
+      })
+      order.push(k)
+    }
+    for (const m of incoming) {
+      const k = unlinkedMentionKey(m)
+      const ex = byKey.get(k)
+      if (!ex) {
+        byKey.set(k, {
+          ...m,
+          sourceBlockIds: [...m.sourceBlockIds],
+          sourceSnippets: [...(m.sourceSnippets ?? [])]
+        })
+        order.push(k)
+        continue
+      }
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local helper set
+      const seenIds = new Set(ex.sourceBlockIds)
+      const snippets = ex.sourceSnippets ?? []
+      const inSnips = m.sourceSnippets ?? []
+      for (let i = 0; i < m.sourceBlockIds.length; i++) {
+        const id = m.sourceBlockIds[i]
+        if (seenIds.has(id)) continue
+        seenIds.add(id)
+        ex.sourceBlockIds.push(id)
+        snippets.push(inSnips[i] ?? '')
+      }
+      ex.sourceSnippets = snippets
+      ex.matchCount = ex.sourceBlockIds.length
+    }
+    return order.map((k) => byKey.get(k)!)
   }
 
   async function loadMoreUnlinked(
@@ -600,7 +647,7 @@
 
   // scanMoreUnlinked fetches the next capped FTS candidate batch (beyond the
   // current window). Residual Load more stays on unlinkedBatchScanIn; this path
-  // advances the batch and appends unique residual pages from the new window.
+  // advances the batch and merges residual pages (same page may gain blocks).
   // Blocked while residual has_more so unread pages in the current batch are
   // not abandoned when the residual cursor resets to the next batch.
   async function scanMoreUnlinked(
@@ -632,7 +679,7 @@
         nextScan
       )
       if (sequence !== unlinkedRequest) return
-      unlinked = uniqueUnlinked(unlinked, page.results ?? [])
+      unlinked = mergeUnlinked(unlinked, page.results ?? [])
       unlinkedCursor = page.cursor ?? ''
       unlinkedHasMore = Boolean(page.hasMore)
       unlinkedTruncated = Boolean(page.truncated)
