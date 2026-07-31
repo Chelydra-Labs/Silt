@@ -281,7 +281,7 @@ func streamOpenAIConnectOnce(ctx context.Context, req CompleteRequest, baseURL s
 		aiErr := &AIError{Kind: classifyStatus(resp.StatusCode), Status: resp.StatusCode, Message: msg}
 		ra := time.Duration(0)
 		if isTransient(aiErr) {
-			ra = parseRetryAfter(resp.Header.Get("Retry-After"))
+			ra = resolveRetryAfter(resp.Header.Get("Retry-After"), raw)
 		}
 		return nil, ra, aiErr
 	}

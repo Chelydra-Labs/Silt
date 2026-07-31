@@ -677,6 +677,48 @@ func TestParseRetryAfter(t *testing.T) {
 	}
 }
 
+func TestParseRetryDelayBody_GoogleRetryInfo(t *testing.T) {
+	body := []byte(`{
+		"error": {
+			"code": 429,
+			"message": "You exceeded your current quota. Please retry in 53.016342224s.",
+			"status": "RESOURCE_EXHAUSTED",
+			"details": [
+				{
+					"@type": "type.googleapis.com/google.rpc.RetryInfo",
+					"retryDelay": "53s"
+				}
+			]
+		}
+	}`)
+	if d := parseRetryDelayBody(body); d != maxRetryAfter {
+		t.Errorf("53s should cap at maxRetryAfter: got %v", d)
+	}
+	bodyShort := []byte(`{
+		"error": {
+			"message": "rate limited",
+			"status": "RESOURCE_EXHAUSTED",
+			"details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "2.5s"}]
+		}
+	}`)
+	if d := parseRetryDelayBody(bodyShort); d != 2500*time.Millisecond {
+		t.Errorf("2.5s: got %v", d)
+	}
+	if d := parseRetryDelayBody([]byte(`{"error":{}}`)); d != 0 {
+		t.Errorf("empty details: got %v", d)
+	}
+}
+
+func TestResolveRetryAfter_PrefersLarger(t *testing.T) {
+	body := []byte(`{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"5s"}]}}`)
+	if d := resolveRetryAfter("2", body); d != 5*time.Second {
+		t.Errorf("body wins: got %v", d)
+	}
+	if d := resolveRetryAfter("10", body); d != 10*time.Second {
+		t.Errorf("header wins: got %v", d)
+	}
+}
+
 func TestJitterDuration_ZeroStaysZero(t *testing.T) {
 	if d := jitterDuration(0); d != 0 {
 		t.Errorf("got %v, want 0", d)
