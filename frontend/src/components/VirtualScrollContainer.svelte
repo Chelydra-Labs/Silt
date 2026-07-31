@@ -144,10 +144,8 @@
     editorActionsManualOpen || editorActionsModePinned
   )
   let editorActionsExpanded = $derived(editorActionsPinned)
-  // Collapsed active hint: any engaged option including format toolbar on.
-  let editorActionsActiveHint = $derived(
-    editorActionsModePinned || showFormatToolbar
-  )
+  // Collapsed active hint: true non-default modes only (not default-on format toolbar).
+  let editorActionsActiveHint = $derived(editorActionsModePinned)
 
   function toggleEditorActions() {
     editorActionsManualOpen = !editorActionsManualOpen

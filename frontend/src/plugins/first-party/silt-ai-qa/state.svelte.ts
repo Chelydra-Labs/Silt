@@ -19,6 +19,7 @@ import {
   indexPage,
   metaGet,
   metaSet,
+  migrateIndex as migrateIndexForReconcile,
   needsFullRebuildForModel,
   rebuildIndex,
   resetIndexState
@@ -259,14 +260,19 @@ export function createQAController() {
             staleSearchToasted = false
           }
         } else {
-          progress = {
-            status: 'ready',
-            done: 0,
-            total: 0,
-            model: info.model,
-            dimensions: info.dimensions,
-            chunkCount: info.chunkCount,
-            message: `Indexed ${info.chunkCount} notes`
+          // Heal pre-existing orphans / missing pages left by older builds (#850).
+          await reconcileIndex(ctx)
+          if (!disposed) {
+            const after = await getIndexInfo(ctx)
+            progress = {
+              status: 'ready',
+              done: 0,
+              total: 0,
+              model: after.model,
+              dimensions: after.dimensions,
+              chunkCount: after.chunkCount,
+              message: `Indexed ${after.chunkCount} notes`
+            }
           }
         }
       } catch (e: unknown) {
@@ -282,20 +288,89 @@ export function createQAController() {
     })
   }
 
+  type PageLoc = { notebook: string; section: string; page: string }
+
   /** Pending page keys when embed was not ready — retried with backoff. */
-  let pendingPages: Record<
+  let pendingNotReady: Record<string, PageLoc> = Object.create(null) as Record<
     string,
-    { notebook: string; section: string; page: string }
-  > = Object.create(null) as Record<
+    PageLoc
+  >
+  /** Debounced page set — all keys drain after reindex_debounce_ms (no last-wins). */
+  let pendingDebounce: Record<string, PageLoc> = Object.create(null) as Record<
     string,
-    { notebook: string; section: string; page: string }
+    PageLoc
   >
   let readyRetryTimer: ReturnType<typeof setTimeout> | null = null
   let readyRetryAttempt = 0
   const READY_RETRY_MAX = 6
+  /** Cap missing-page backfill on vault open so open stays snappy. */
+  const RECONCILE_MISSING_CAP = 40
 
   function pageKey(notebook: string, section: string, page: string): string {
     return `${notebook}\0${section}\0${page}`
+  }
+
+  function emptyPageMap(): Record<string, PageLoc> {
+    return Object.create(null) as Record<string, PageLoc>
+  }
+
+  /**
+   * Drop orphan chunk rows (pages gone from the note store) and schedule a
+   * bounded set of missing pages for incremental index (#850 IDX-10).
+   */
+  async function reconcileIndex(ctx: PluginContext) {
+    await migrateIndexForReconcile(ctx)
+    const { rows: chunkPages } = await ctx.pluginDb.query(
+      `SELECT DISTINCT notebook, section, page FROM chunks`
+    )
+    for (const r of chunkPages) {
+      if (disposed) return
+      const notebook = asString(r.notebook)
+      const section = asString(r.section)
+      const page = asString(r.page)
+      if (!notebook || !page) continue
+      const { rows } = await ctx.sqliteQuery(
+        `SELECT COUNT(*) AS n FROM blocks
+          WHERE notebook = ? AND section = ? AND page = ?`,
+        [notebook, section, page]
+      )
+      if (Number(rows[0]?.n ?? 0) === 0) {
+        await dropPageIndex(ctx, notebook, section, page)
+      }
+    }
+
+    // Missing pages: present in core blocks but not in chunks.
+    const { rows: blockPages } = await ctx.sqliteQuery(
+      `SELECT DISTINCT notebook, section, page FROM blocks
+        WHERE clean_content IS NOT NULL AND trim(clean_content) != ''
+        LIMIT ?`,
+      [RECONCILE_MISSING_CAP * 4]
+    )
+    // Plain object (not Set) — avoids svelte/prefer-svelte-reactivity in .svelte.ts.
+    const indexed: Record<string, true> = Object.create(null)
+    for (const r of chunkPages) {
+      indexed[
+        `${asString(r.notebook)}\0${asString(r.section)}\0${asString(r.page)}`
+      ] = true
+    }
+    let scheduled = 0
+    for (const r of blockPages) {
+      if (disposed || scheduled >= RECONCILE_MISSING_CAP) break
+      const notebook = asString(r.notebook)
+      const section = asString(r.section)
+      const page = asString(r.page)
+      if (!notebook || !page) continue
+      if (
+        settings.notebook_scope.length > 0 &&
+        !settings.notebook_scope.includes(notebook)
+      ) {
+        continue
+      }
+      const key = pageKey(notebook, section, page)
+      if (indexed[key]) continue
+      schedulePageIndex(ctx, notebook, section, page)
+      scheduled++
+    }
   }
 
   function scheduleReadyRetry(ctx: PluginContext) {
@@ -321,14 +396,36 @@ export function createQAController() {
         return
       }
       readyRetryAttempt = 0
-      const queued = Object.values(pendingPages)
-      pendingPages = Object.create(null) as typeof pendingPages
+      const queued = Object.values(pendingNotReady)
+      pendingNotReady = emptyPageMap()
       void ensureIndex(ctx).then(() => {
         for (const p of queued) {
           schedulePageIndex(ctx, p.notebook, p.section, p.page)
         }
       })
     }, delay)
+  }
+
+  async function indexOnePage(
+    ctx: PluginContext,
+    notebook: string,
+    section: string,
+    page: string
+  ) {
+    // Empty page (deleted) → drop vectors; otherwise hash-diff index.
+    const { rows } = await ctx.sqliteQuery(
+      `SELECT COUNT(*) AS n FROM blocks
+        WHERE notebook = ? AND section = ? AND page = ?`,
+      [notebook, section, page]
+    )
+    const n = Number(rows[0]?.n ?? 0)
+    if (n === 0) {
+      await dropPageIndex(ctx, notebook, section, page)
+      return
+    }
+    await indexPage(ctx, notebook, section, page, settings, (p) => {
+      if (!disposed) progress = p
+    })
   }
 
   function schedulePageIndex(
@@ -338,21 +435,22 @@ export function createQAController() {
     page: string
   ) {
     if (disposed || !notebook || !page) return
+    const loc = { notebook, section, page }
+    const key = pageKey(notebook, section, page)
     if (!embedReady()) {
-      pendingPages[pageKey(notebook, section, page)] = {
-        notebook,
-        section,
-        page
-      }
+      pendingNotReady[key] = loc
       scheduleReadyRetry(ctx)
       return
     }
+    pendingDebounce[key] = loc
     if (indexTimer) clearTimeout(indexTimer)
     indexTimer = setTimeout(() => {
+      const batch = Object.values(pendingDebounce)
+      pendingDebounce = emptyPageMap()
       void runIndexJob(async () => {
         if (disposed) return
         try {
-          // Model change mid-session: full rebuild instead of partial page.
+          // Model change mid-session: full rebuild instead of partial pages.
           const model = configuredEmbedModel()
           if (await needsFullRebuildForModel(ctx, model)) {
             await rebuildIndex(ctx, settings, (p) => {
@@ -361,23 +459,11 @@ export function createQAController() {
             if (!disposed) await stampTaskTypeMeta(ctx)
             return
           }
-          // Empty page (deleted) → drop vectors; otherwise hash-diff index.
-          const { rows } = await ctx.sqliteQuery(
-            `SELECT COUNT(*) AS n FROM blocks
-              WHERE notebook = ? AND section = ? AND page = ?`,
-            [notebook, section, page]
-          )
-          const n = Number(rows[0]?.n ?? 0)
-          if (n === 0) {
-            await dropPageIndex(ctx, notebook, section, page)
-            if (!disposed) {
-              await refreshIndexInfo(ctx)
-            }
-            return
+          for (const p of batch) {
+            if (disposed) return
+            await indexOnePage(ctx, p.notebook, p.section, p.page)
           }
-          await indexPage(ctx, notebook, section, page, settings, (p) => {
-            if (!disposed) progress = p
-          })
+          if (!disposed) await refreshIndexInfo(ctx)
         } catch (e: unknown) {
           if (!disposed) {
             progress = {
@@ -552,7 +638,8 @@ export function createQAController() {
     indexTimer = null
     if (readyRetryTimer) clearTimeout(readyRetryTimer)
     readyRetryTimer = null
-    pendingPages = Object.create(null) as typeof pendingPages
+    pendingNotReady = emptyPageMap()
+    pendingDebounce = emptyPageMap()
     void stop()
     resetIndexState()
   }

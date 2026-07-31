@@ -4,6 +4,7 @@ import {
   resetIndexState,
   getIndexInfo,
   vectorSearch,
+  dropPageIndex,
   DEFAULT_MIN_COSINE_SIMILARITY
 } from './embed_index'
 import type { PluginContext } from '../../sdk'
@@ -59,6 +60,35 @@ describe('getIndexInfo', () => {
       dimensions: 768,
       chunkCount: 42
     })
+  })
+})
+
+describe('dropPageIndex', () => {
+  beforeEach(() => resetIndexState())
+
+  it('deletes chunks and embeddings for the page', async () => {
+    const exec = vi.fn(async () => {})
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('chunk_id FROM chunks')) {
+        return { rows: [{ chunk_id: 'c1' }, { chunk_id: 'c2' }] }
+      }
+      return { rows: [] }
+    })
+    const ctx = {
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query,
+        exec
+      }
+    } as unknown as PluginContext
+
+    await dropPageIndex(ctx, 'Work', 'Notes', 'Gone')
+    expect(exec).toHaveBeenCalledWith(`DELETE FROM chunks WHERE chunk_id = ?`, [
+      'c1'
+    ])
+    expect(exec).toHaveBeenCalledWith(`DELETE FROM chunks WHERE chunk_id = ?`, [
+      'c2'
+    ])
   })
 })
 

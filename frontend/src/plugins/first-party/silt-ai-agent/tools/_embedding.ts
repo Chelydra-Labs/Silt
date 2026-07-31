@@ -16,7 +16,7 @@ import type { PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
 
 /** Candidate pool cap. Bounds per-call embedding cost when the cache is cold. */
-export const CANDIDATE_LIMIT = 200
+export const CANDIDATE_LIMIT = 100
 
 /** Cache table for on-demand embeddings (lazy-created on first miss). */
 export const CACHE_DDL =

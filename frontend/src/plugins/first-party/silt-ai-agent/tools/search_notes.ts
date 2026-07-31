@@ -84,7 +84,9 @@ export async function handleSearchNotes(
     top_k: topK,
     hybrid_weight: 0, // primary: pure FTS recall
     min_score: 0,
-    max_context_chars: 100_000,
+    // Bound tool→model context: agent multi-turn history grows fast; 100k was
+    // a quiet chat-token burner. Align with a generous QA-scale budget.
+    max_context_chars: 32_000,
     rerank_enabled: true,
     filterPassages:
       filters.notebook || filters.section || filters.type
