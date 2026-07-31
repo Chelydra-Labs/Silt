@@ -3,8 +3,8 @@ package db
 import "time"
 
 // unlinkedScanCacheMaxEntries bounds process-local FTS window cache size.
-// The backlinks panel typically holds one active title; a small LRU-ish cap
-// covers multi-window Scan more without retaining large vault scans.
+// The backlinks panel typically holds one active title; a small cap covers
+// multi-window Scan more without retaining large vault scans.
 const unlinkedScanCacheMaxEntries = 16
 
 // unlinkedScanCacheTTL is defense-in-depth against missed invalidation.
@@ -50,9 +50,7 @@ func (dm *DatabaseManager) unlinkedScanCacheGet(key unlinkedScanCacheKey) (unlin
 		delete(dm.unlinkedScanCache, key)
 		return unlinkedScanCacheEntry{}, false
 	}
-	// Touch for crude LRU: re-insert moves to "newest" only if we tracked order;
-	// with a small map, TTL + gen invalidation is enough. Copy blocks slice header
-	// so callers cannot mutate the cached backing array via append.
+	// Copy blocks so callers cannot mutate the cached backing array via append.
 	out := ent
 	if len(ent.blocks) > 0 {
 		cp := make([]unlinkedBlock, len(ent.blocks))
@@ -65,15 +63,31 @@ func (dm *DatabaseManager) unlinkedScanCacheGet(key unlinkedScanCacheKey) (unlin
 func (dm *DatabaseManager) unlinkedScanCachePut(key unlinkedScanCacheKey, ent unlinkedScanCacheEntry) {
 	dm.unlinkedScanCacheMu.Lock()
 	defer dm.unlinkedScanCacheMu.Unlock()
+	// Drop puts from a scan that started under a superseded generation so a
+	// concurrent reindex cannot re-insert a stale window under an old gen key
+	// (orphans) or race with a fresh gen that happens to reuse the same fields.
+	if key.gen != dm.unlinkedScanCacheGen {
+		return
+	}
 	if dm.unlinkedScanCache == nil {
 		dm.unlinkedScanCache = make(map[unlinkedScanCacheKey]unlinkedScanCacheEntry, unlinkedScanCacheMaxEntries)
 	}
-	// Evict arbitrary entries when over cap (gen/TTL keep correctness).
+	// Evict oldest storedAt when over cap.
 	for len(dm.unlinkedScanCache) >= unlinkedScanCacheMaxEntries {
-		for k := range dm.unlinkedScanCache {
-			delete(dm.unlinkedScanCache, k)
+		var oldestKey unlinkedScanCacheKey
+		var oldestAt time.Time
+		first := true
+		for k, v := range dm.unlinkedScanCache {
+			if first || v.storedAt.Before(oldestAt) {
+				oldestKey = k
+				oldestAt = v.storedAt
+				first = false
+			}
+		}
+		if first {
 			break
 		}
+		delete(dm.unlinkedScanCache, oldestKey)
 	}
 	ent.storedAt = time.Now()
 	if len(ent.blocks) > 0 {

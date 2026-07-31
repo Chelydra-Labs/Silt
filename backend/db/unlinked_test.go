@@ -1508,6 +1508,12 @@ func TestUnlinked_AmbiguousCandidateCap(t *testing.T) {
 	if got := len(res.Results[0].Candidates); got != unlinkedAmbiguousCandidateCap {
 		t.Fatalf("candidates cap: got %d want %d", got, unlinkedAmbiguousCandidateCap)
 	}
+	if !res.Results[0].CandidatesTruncated {
+		t.Error("expected CandidatesTruncated when collisions exceed cap")
+	}
+	if res.Results[0].CandidatesTotal != collisions {
+		t.Errorf("CandidatesTotal: got %d want %d", res.Results[0].CandidatesTotal, collisions)
+	}
 	// Active section affinity: S00/Standup should sort first among candidates.
 	if res.Results[0].Candidates[0].Section != "S00" {
 		t.Errorf("expected active section first, got %+v", res.Results[0].Candidates[0])

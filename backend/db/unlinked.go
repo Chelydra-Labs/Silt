@@ -30,11 +30,18 @@ type UnlinkedMention struct {
 	SourceBlockIDs []string `json:"source_block_ids"`
 	// SourceSnippets is parallel to SourceBlockIDs: a 120-rune contextual
 	// excerpt of clean_content centered on the residual plain title span.
-	SourceSnippets []string          `json:"source_snippets"`
-	MatchCount     int               `json:"match_count"`
-	Title          string            `json:"title"`
-	Ambiguous      bool              `json:"ambiguous"`
-	Candidates     []parser.PagePath `json:"candidates"`
+	SourceSnippets []string `json:"source_snippets"`
+	MatchCount     int      `json:"match_count"`
+	Title          string   `json:"title"`
+	Ambiguous      bool     `json:"ambiguous"`
+	// Candidates is a capped, stable-sorted promote-target list when Ambiguous.
+	Candidates []parser.PagePath `json:"candidates"`
+	// CandidatesTruncated is true when more leaf collisions exist than were
+	// returned in Candidates (UI can show "and N more").
+	CandidatesTruncated bool `json:"candidates_truncated"`
+	// CandidatesTotal is the full leaf-collision count before the wire cap
+	// (0 when not ambiguous).
+	CandidatesTotal int `json:"candidates_total"`
 }
 
 // UnlinkedMentionsResult is the cursor-paged envelope returned by
@@ -128,7 +135,7 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 
 	// Leaf-bounded ambiguity (#839): only pages sharing this leaf name, not
 	// the full vault inventory. Cap candidates for IPC/UI.
-	titleRef, err := resolveUnlinkedTitleAmbiguity(db, title, notebook, section)
+	titleAmb, err := resolveUnlinkedTitleAmbiguity(db, title, notebook, section)
 	if err != nil {
 		return UnlinkedMentionsResult{}, fmt.Errorf("unlinked mentions: resolve title: %w", err)
 	}
@@ -180,13 +187,15 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 		m := byKey[k]
 		if m == nil {
 			m = &UnlinkedMention{
-				Source:         c.source,
-				SourceNotebook: c.notebook,
-				SourceSection:  c.section,
-				SourcePage:     c.page,
-				Title:          title,
-				Ambiguous:      titleRef.Ambiguous,
-				Candidates:     titleRef.Candidates,
+				Source:              c.source,
+				SourceNotebook:      c.notebook,
+				SourceSection:       c.section,
+				SourcePage:          c.page,
+				Title:               title,
+				Ambiguous:           titleAmb.ambiguous,
+				Candidates:          copyPagePaths(titleAmb.candidates),
+				CandidatesTruncated: titleAmb.truncated,
+				CandidatesTotal:     titleAmb.total,
 			}
 			byKey[k] = m
 			order = append(order, k)
@@ -258,18 +267,26 @@ type unlinkedBlock struct {
 	id, source, notebook, section, page, clean string
 }
 
+// unlinkedTitleAmbiguity is the leaf-resolve result for residual rows.
+type unlinkedTitleAmbiguity struct {
+	ambiguous  bool
+	candidates []parser.PagePath
+	truncated  bool
+	total      int
+}
+
 // resolveUnlinkedTitleAmbiguity resolves the active page leaf against only
 // pages that share that leaf name (indexed page= lookup), then caps Candidates
 // for the residual wire shape. Active notebook/section are preferred in sort
 // order so promote chips surface nearby paths first.
-func resolveUnlinkedTitleAmbiguity(db *sql.DB, title, activeNotebook, activeSection string) (parser.PageReference, error) {
+func resolveUnlinkedTitleAmbiguity(db *sql.DB, title, activeNotebook, activeSection string) (unlinkedTitleAmbiguity, error) {
 	pages, err := listPagesByLeaf(db, title)
 	if err != nil {
-		return parser.PageReference{}, err
+		return unlinkedTitleAmbiguity{}, err
 	}
 	ref := ResolvePageLinkAgainst(title, pages)
 	if !ref.Ambiguous || len(ref.Candidates) == 0 {
-		return ref, nil
+		return unlinkedTitleAmbiguity{ambiguous: ref.Ambiguous, candidates: ref.Candidates}, nil
 	}
 	sort.SliceStable(ref.Candidates, func(i, j int) bool {
 		a, b := ref.Candidates[i], ref.Candidates[j]
@@ -289,10 +306,30 @@ func resolveUnlinkedTitleAmbiguity(db *sql.DB, title, activeNotebook, activeSect
 		}
 		return a.Page < b.Page
 	})
-	if len(ref.Candidates) > unlinkedAmbiguousCandidateCap {
-		ref.Candidates = ref.Candidates[:unlinkedAmbiguousCandidateCap]
+	total := len(ref.Candidates)
+	truncated := total > unlinkedAmbiguousCandidateCap
+	cands := ref.Candidates
+	if truncated {
+		cands = append([]parser.PagePath(nil), ref.Candidates[:unlinkedAmbiguousCandidateCap]...)
+	} else {
+		cands = append([]parser.PagePath(nil), ref.Candidates...)
 	}
-	return ref, nil
+	return unlinkedTitleAmbiguity{
+		ambiguous:  true,
+		candidates: cands,
+		truncated:  truncated,
+		total:      total,
+	}, nil
+}
+
+// copyPagePaths returns a shallow copy so residual rows do not share a slice header.
+func copyPagePaths(in []parser.PagePath) []parser.PagePath {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]parser.PagePath, len(in))
+	copy(out, in)
+	return out
 }
 
 // scanUnlinkedCandidateBlocks runs a bounded FTS5 phrase window over

@@ -611,7 +611,9 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   lookup (`idx_blocks_page`), not a full page inventory scan; when multiple
   locations share the leaf, `ambiguous` is true and `candidates` are
   stable-sorted (active notebook/section first) and **capped**
-  (`unlinkedAmbiguousCandidateCap`) on each residual row. Unique leaves stay
+  (`unlinkedAmbiguousCandidateCap`) on each residual row, with
+  `candidates_truncated` / `candidates_total` when the full collision set
+  exceeds the cap. Unique leaves stay
   O(leaf matches). `PromoteUnlinkedMention` takes an explicit
   `(notebook, section, page)` target: exact path existence is authoritative
   (UI chip); otherwise leaf resolution against same-leaf pages rejects true
@@ -1024,7 +1026,12 @@ source page, the row migrates out of the unlinked leg and the new link
 reappears among the backlinks groups. Mentions whose title resolves to more
 than one page (ambiguous basename) are flagged and render candidate paths as
 clickable chips — each chip promotes to that explicit target in one click,
-  never auto-promoted without a choice. When the API reports `truncated`, the
+  never auto-promoted without a choice. Server-side leaf lookup caps the chip
+  list (`candidates` + `candidates_truncated` / `candidates_total`); the UI
+  shows a “+N more” affordance when collisions exceed the cap so truncation is
+  never silent. Residual **Load more** may reuse a short-lived server FTS
+  candidate-window cache (§4.3); **Scan more** still advances the next window.
+  When the API reports `truncated`, the
   section surfaces an accessible incompleteness notice (header subtitle and
   expanded status strip) so common-title caps are never silent. **Load more**
   advances the residual page cursor within the current FTS batch; **Scan more

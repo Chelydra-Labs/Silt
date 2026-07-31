@@ -95,12 +95,20 @@ func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSectio
 			}
 			ref := db.ResolvePageLinkAgainst(title, leafPages)
 			if ref.Ambiguous {
-				cands := make([]string, 0, len(ref.Candidates))
-				for _, c := range ref.Candidates {
+				const maxErrCands = 8
+				cands := make([]string, 0, maxErrCands)
+				for i, c := range ref.Candidates {
+					if i >= maxErrCands {
+						break
+					}
 					cands = append(cands, c.Notebook+"/"+c.Section+"/"+c.Page)
 				}
-				return NewIPCError(CodeAmbiguousTarget,
-					fmt.Sprintf("page title %q is ambiguous (matches: %s)", title, strings.Join(cands, ", ")))
+				msg := fmt.Sprintf("page title %q is ambiguous (matches: %s)", title, strings.Join(cands, ", "))
+				if len(ref.Candidates) > maxErrCands {
+					msg = fmt.Sprintf("page title %q is ambiguous (%d matches; e.g. %s)",
+						title, len(ref.Candidates), strings.Join(cands, ", "))
+				}
+				return NewIPCError(CodeAmbiguousTarget, msg)
 			}
 			if !ref.Exists {
 				return fmt.Errorf("page %q not found in inventory", title)
