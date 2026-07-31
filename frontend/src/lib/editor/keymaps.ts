@@ -880,7 +880,14 @@ export const SiltBlockKeymaps = Extension.create({
         // Empty list/quote item + Enter exits the container (Word/Docs/Notion
         // convention; mirrors Backspace bullet/quote clear). Nested depth is
         // left alone — unindent is Tab/Backspace, not Enter.
-        if (isNote && isBlockEmpty(info.node)) {
+        // Only when the selection is collapsed: a cross-block selection must
+        // delete the range first (standard Enter-with-selection), not clear
+        // the marker while leaving selected content intact.
+        if (
+          isNote &&
+          this.editor.state.selection.empty &&
+          isBlockEmpty(info.node)
+        ) {
           const bullet = (info.node.attrs.bullet as string) || ''
           const quote = (info.node.attrs.quote as string) || ''
           if (bullet) {

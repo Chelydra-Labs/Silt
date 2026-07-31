@@ -791,6 +791,52 @@ describe('BacklinksSidebarPanel', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('Load more merges additional blocks when the same page reappears', async () => {
+    const page1 = unlinkedMentionWire({
+      source_page: 'Shared residual',
+      source_block_ids: ['block-r1'],
+      source_snippets: ['first Research'],
+      match_count: 1
+    })
+    const page1more = unlinkedMentionWire({
+      source_page: 'Shared residual',
+      source_block_ids: ['block-r2'],
+      source_snippets: ['second Research'],
+      match_count: 1
+    })
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [page1],
+          cursor: 'res-cursor',
+          hasMore: true
+        })
+      )
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [page1more],
+          cursor: '',
+          hasMore: false
+        })
+      )
+    renderPanel()
+    await screen.findByText('1+ pages mention this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(screen.getByLabelText('1 mention')).toBeInTheDocument()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Load more unlinked mentions' })
+    )
+    await waitFor(() => {
+      expect(screen.getByLabelText('2 mentions')).toBeInTheDocument()
+    })
+    expect(screen.getAllByText('Shared residual')).toHaveLength(1)
+    expect(
+      screen.getAllByRole('button', { name: /Link mention of Research/ })
+    ).toHaveLength(2)
+  })
+
   it('disables only the in-flight row while a promote is pending (per-row busy)', async () => {
     let resolvePromote!: () => void
     mocks.getUnlinkedMentionsPaged.mockResolvedValue({
@@ -1282,11 +1328,11 @@ describe('BacklinksSidebarPanel', () => {
       screen.getByRole('button', { name: /Unlinked mentions/ })
     )
     await screen.findByText('Batch one')
-    await fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Scan more unlinked mention candidates'
-      })
-    )
+    const scanBtn = screen.getByRole('button', {
+      name: 'Scan more unlinked mention candidates'
+    })
+    scanBtn.focus()
+    await fireEvent.click(scanBtn)
     await screen.findByText('Batch two')
     expect(mocks.getUnlinkedMentionsPaged).toHaveBeenLastCalledWith(
       'Work',
@@ -1303,6 +1349,12 @@ describe('BacklinksSidebarPanel', () => {
       })
     ).not.toBeInTheDocument()
     expect(screen.queryByText(/may be incomplete/)).not.toBeInTheDocument()
+    // Final scan: announce completion and move focus to the section toggle.
+    await waitFor(() => {
+      expect(screen.getByText(/Scan complete/)).toBeInTheDocument()
+    })
+    const toggle = screen.getByRole('button', { name: /Unlinked mentions/ })
+    expect(document.activeElement).toBe(toggle)
   })
 
   it('Scan more merges additional blocks when the same page reappears', async () => {

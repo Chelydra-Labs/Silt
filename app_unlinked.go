@@ -23,6 +23,12 @@ func (a *App) GetUnlinkedMentionsPaged(notebook, section, page, cursor, scanCurs
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	// Trim before source resolve and DB self-filter so padded linked-notebook
+	// names still map correctly and the active page is excluded.
+	notebook = strings.TrimSpace(notebook)
+	section = strings.TrimSpace(section)
+	page = strings.TrimSpace(page)
+
 	source := a.resolveSourceByName(notebook)
 	var res db.UnlinkedMentionsResult
 	err := a.coordinator.WithDBReadResult(func() error {

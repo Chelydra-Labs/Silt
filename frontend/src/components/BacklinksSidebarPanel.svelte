@@ -298,6 +298,12 @@
    * Empty string = first batch. Distinct from unlinkedScanCursor (next batch out).
    */
   let unlinkedBatchScanIn = $state('')
+  /**
+   * One-shot polite status after Scan more finishes the last FTS batch (button
+   * unmounts). Cleared on the next load/scan so the live region stays accurate.
+   */
+  let unlinkedScanStatus = $state('')
+  let unlinkedSectionToggleEl = $state<HTMLButtonElement | undefined>(undefined)
 
   const groups = $derived.by(() => {
     // Ephemeral grouping inside $derived — plain Map is correct.
@@ -461,6 +467,7 @@
     unlinkedTruncated = false
     unlinkedScanCursor = ''
     unlinkedBatchScanIn = ''
+    unlinkedScanStatus = ''
   }
 
   // loadUnlinked fetches the unlinked-mentions leg. Runs alongside the backlinks
@@ -489,6 +496,7 @@
     unlinkedScanningMore = false
     unlinkedError = ''
     unlinkedErrorAction = 'initial'
+    unlinkedScanStatus = ''
     if (resetProjection) {
       clearUnlinkedProjection()
     }
@@ -529,27 +537,8 @@
     ].join('\u0000')
   }
 
-  // The residual cursor is a keyset over the same composite key, so appended
-  // pages should never overlap — this dedup is defensive against ordering drift.
-  function uniqueUnlinked(
-    current: UnlinkedMention[],
-    incoming: UnlinkedMention[]
-  ): UnlinkedMention[] {
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local helper set
-    const seen = new Set(current.map(unlinkedMentionKey))
-    return [
-      ...current,
-      ...incoming.filter((mention) => {
-        const key = unlinkedMentionKey(mention)
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-    ]
-  }
-
-  // Scan more advances the FTS keyset: the same source page can reappear with
-  // additional blocks. Merge block ids/snippets instead of dropping the page.
+  // Merge residual/scan pages: same source page can reappear with additional
+  // blocks (within a batch or across Scan more). Concatenate ids/snippets.
   function mergeUnlinked(
     current: UnlinkedMention[],
     incoming: UnlinkedMention[]
@@ -627,7 +616,9 @@
         batchScan
       )
       if (sequence !== unlinkedRequest) return
-      unlinked = uniqueUnlinked(unlinked, page.results ?? [])
+      // Merge (not drop-dedup): a page already listed can gain more blocks on
+      // a later residual page of the same FTS batch.
+      unlinked = mergeUnlinked(unlinked, page.results ?? [])
       unlinkedCursor = page.cursor ?? ''
       unlinkedHasMore = Boolean(page.hasMore)
       // Pool-level flag: keep true if either page reports the FTS cap.
@@ -670,6 +661,7 @@
     unlinkedScanningMore = true
     unlinkedError = ''
     unlinkedErrorAction = 'scan'
+    unlinkedScanStatus = ''
     try {
       const page = await getUnlinkedPage(
         activeNotebook,
@@ -679,12 +671,22 @@
         nextScan
       )
       if (sequence !== unlinkedRequest) return
+      const beforeCount = unlinked.length
       unlinked = mergeUnlinked(unlinked, page.results ?? [])
       unlinkedCursor = page.cursor ?? ''
       unlinkedHasMore = Boolean(page.hasMore)
       unlinkedTruncated = Boolean(page.truncated)
       unlinkedScanCursor = page.scanCursor ?? ''
       unlinkedBatchScanIn = nextScan
+      // Final batch: Scan more button unmounts — announce and restore focus.
+      if (!unlinkedScanCursor) {
+        const added = unlinked.length - beforeCount
+        unlinkedScanStatus =
+          added > 0
+            ? `Scan complete. ${added} more page${added === 1 ? '' : 's'} found.`
+            : 'Scan complete. No additional pages in this batch.'
+        queueMicrotask(() => unlinkedSectionToggleEl?.focus())
+      }
     } catch (cause) {
       if (sequence !== unlinkedRequest) return
       unlinkedErrorAction = 'scan'
@@ -1054,6 +1056,7 @@
           <h3 class="m-0">
             <button
               type="button"
+              bind:this={unlinkedSectionToggleEl}
               class="w-full px-2.5 py-2 border-none bg-transparent text-left flex items-center gap-2 text-surface-sidebar-text hover:bg-hover cursor-pointer transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start"
               aria-expanded={unlinkedExpanded}
               aria-controls="unlinked-mentions-body"
@@ -1081,6 +1084,8 @@
                     Finding unlinked mentions…
                   {:else if unlinkedScanningMore}
                     Scanning more mentions…
+                  {:else if unlinkedScanStatus}
+                    {unlinkedScanStatus}
                   {:else if unlinkedTruncated && unlinked.length === 0}
                     No promotable plain mentions in this batch · may be
                     incomplete

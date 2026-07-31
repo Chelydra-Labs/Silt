@@ -224,6 +224,36 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
     editor.destroy()
   })
 
+  it('Enter with selection spanning empty bullet and next block deletes selection', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '- ' }
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'keep me' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // Selection from empty bullet content into "keep me" (drop "keep ").
+    const secondStart = 1 + editor.state.doc.child(0).nodeSize
+    editor.commands.setTextSelection({ from: 1, to: secondStart + 5 })
+
+    pressEnter(editor)
+
+    // Must not only clear the bullet while leaving selected text intact.
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('- ')
+    expect(editor.state.doc.textContent).not.toContain('keep ')
+    expect(editor.state.doc.childCount).toBeGreaterThanOrEqual(2)
+    editor.destroy()
+  })
+
   it('Enter on empty ordered note clears the marker (exits the list)', () => {
     const editor = makeEditorWithKeymaps()
     const doc: DocJSON = {

@@ -42,6 +42,32 @@ func TestGetUnlinkedMentionsPaged_SourceResolution(t *testing.T) {
 	}
 }
 
+// TestGetUnlinkedMentionsPaged_PaddedPathSelfFilter: wrapper trims notebook/
+// section/page before source resolve and DB self-exclusion so padded IPC
+// values do not list the active page as its own unlinked mention.
+func TestGetUnlinkedMentionsPaged_PaddedPathSelfFilter(t *testing.T) {
+	app := newTestApp(t)
+	idxUApp(t, app, "vault", "Work", "Sec", "Onboarding", []parser.ParsedBlock{
+		{ID: "uuuuuuuu-uuuu-4uuu-8uuu-uuuuuuuuuuuu", Type: parser.BlockNote, RawText: "self Onboarding", CleanText: "self Onboarding", LineNumber: 1},
+	})
+	idxUApp(t, app, "vault", "Work", "Sec", "Notes", []parser.ParsedBlock{
+		{ID: "vvvvvvvv-vvvv-4vvv-8vvv-vvvvvvvvvvvv", Type: parser.BlockNote, RawText: "review Onboarding soon", CleanText: "review Onboarding soon", LineNumber: 1},
+	})
+
+	res, err := app.GetUnlinkedMentionsPaged("  Work  ", "  Sec  ", "  Onboarding  ", "", "", 50)
+	if err != nil {
+		t.Fatalf("padded GetUnlinkedMentionsPaged: %v", err)
+	}
+	for _, m := range res.Results {
+		if m.SourcePage == "Onboarding" {
+			t.Fatalf("active page must not appear as unlinked mention: %+v", res.Results)
+		}
+	}
+	if len(res.Results) != 1 || res.Results[0].SourcePage != "Notes" {
+		t.Fatalf("want only Notes, got %+v", res.Results)
+	}
+}
+
 // TestGetUnlinkedMentionsPaged_DBClosed verifies the DB-closed error path: after
 // closing the underlying manager, the wrapper surfaces an error rather than
 // panicking or returning stale data.
