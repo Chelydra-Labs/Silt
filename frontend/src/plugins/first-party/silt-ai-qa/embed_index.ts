@@ -236,6 +236,37 @@ export async function rebuildIndex(
 }
 
 /**
+ * Drop all vector chunks for a page (delete / external remove). Safe when the
+ * page already has no rows.
+ */
+export async function dropPageIndex(
+  ctx: PluginContext,
+  notebook: string,
+  section: string,
+  page: string
+): Promise<void> {
+  await migrateIndex(ctx)
+  const { rows: existing } = await ctx.pluginDb.query(
+    `SELECT chunk_id FROM chunks
+      WHERE notebook = ? AND section = ? AND page = ?`,
+    [notebook, section, page]
+  )
+  for (const r of existing) {
+    const id = String(r.chunk_id)
+    await ctx.pluginDb.exec(`DELETE FROM chunks WHERE chunk_id = ?`, [id])
+    if (embedTableReady) {
+      try {
+        await ctx.pluginDb.exec(`DELETE FROM embeddings WHERE chunk_id = ?`, [
+          id
+        ])
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/**
  * Incremental: re-index one page's blocks (hash-diff).
  */
 export async function indexPage(

@@ -8,8 +8,6 @@ export type { RetrievedPassage } from '../../shared/retrieval/hybrid'
 export interface QASettings {
   /** Notebooks to index. Empty = all notebooks. */
   notebook_scope: string[]
-  /** Re-embed on editor:save / block:changed when true. */
-  auto_reembed: boolean
   /** Vector weight α in weighted RRF (0 = pure FTS, 1 = pure vector). */
   hybrid_weight: number
   /** Max fused passages returned to the RAG prompt. */

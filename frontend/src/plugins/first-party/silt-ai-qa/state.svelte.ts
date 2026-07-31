@@ -13,6 +13,7 @@ import { buildRAGMessages, NO_RESULTS_MESSAGE, parseCitations } from './rag'
 import { resolveSettings } from './settings'
 import type { Citation, IndexProgress, QASettings } from './types'
 import {
+  dropPageIndex,
   ensureIndexReady,
   getIndexInfo,
   indexPage,
@@ -281,13 +282,71 @@ export function createQAController() {
     })
   }
 
+  /** Pending page keys when embed was not ready — retried with backoff. */
+  let pendingPages: Record<
+    string,
+    { notebook: string; section: string; page: string }
+  > = Object.create(null) as Record<
+    string,
+    { notebook: string; section: string; page: string }
+  >
+  let readyRetryTimer: ReturnType<typeof setTimeout> | null = null
+  let readyRetryAttempt = 0
+  const READY_RETRY_MAX = 6
+
+  function pageKey(notebook: string, section: string, page: string): string {
+    return `${notebook}\0${section}\0${page}`
+  }
+
+  function scheduleReadyRetry(ctx: PluginContext) {
+    if (readyRetryTimer || disposed) return
+    const delay = Math.min(30_000, 1000 * 2 ** readyRetryAttempt)
+    readyRetryTimer = setTimeout(() => {
+      readyRetryTimer = null
+      if (disposed) return
+      if (!embedReady()) {
+        readyRetryAttempt = Math.min(readyRetryAttempt + 1, READY_RETRY_MAX)
+        if (readyRetryAttempt < READY_RETRY_MAX) {
+          scheduleReadyRetry(ctx)
+        } else if (!disposed) {
+          progress = {
+            status: 'error',
+            done: 0,
+            total: 0,
+            lastError:
+              'Search index could not start — check Settings → AI embedding, then save a note or rebuild.',
+            message: 'Indexing paused until embedding is ready'
+          }
+        }
+        return
+      }
+      readyRetryAttempt = 0
+      const queued = Object.values(pendingPages)
+      pendingPages = Object.create(null) as typeof pendingPages
+      void ensureIndex(ctx).then(() => {
+        for (const p of queued) {
+          schedulePageIndex(ctx, p.notebook, p.section, p.page)
+        }
+      })
+    }, delay)
+  }
+
   function schedulePageIndex(
     ctx: PluginContext,
     notebook: string,
     section: string,
     page: string
   ) {
-    if (!settings.auto_reembed || !embedReady() || disposed) return
+    if (disposed || !notebook || !page) return
+    if (!embedReady()) {
+      pendingPages[pageKey(notebook, section, page)] = {
+        notebook,
+        section,
+        page
+      }
+      scheduleReadyRetry(ctx)
+      return
+    }
     if (indexTimer) clearTimeout(indexTimer)
     indexTimer = setTimeout(() => {
       void runIndexJob(async () => {
@@ -300,6 +359,20 @@ export function createQAController() {
               if (!disposed) progress = p
             })
             if (!disposed) await stampTaskTypeMeta(ctx)
+            return
+          }
+          // Empty page (deleted) → drop vectors; otherwise hash-diff index.
+          const { rows } = await ctx.sqliteQuery(
+            `SELECT COUNT(*) AS n FROM blocks
+              WHERE notebook = ? AND section = ? AND page = ?`,
+            [notebook, section, page]
+          )
+          const n = Number(rows[0]?.n ?? 0)
+          if (n === 0) {
+            await dropPageIndex(ctx, notebook, section, page)
+            if (!disposed) {
+              await refreshIndexInfo(ctx)
+            }
             return
           }
           await indexPage(ctx, notebook, section, page, settings, (p) => {
@@ -477,6 +550,9 @@ export function createQAController() {
     disposed = true
     if (indexTimer) clearTimeout(indexTimer)
     indexTimer = null
+    if (readyRetryTimer) clearTimeout(readyRetryTimer)
+    readyRetryTimer = null
+    pendingPages = Object.create(null) as typeof pendingPages
     void stop()
     resetIndexState()
   }

@@ -253,27 +253,6 @@
       </p>
     </div>
 
-    <ToggleSwitch
-      labelClass="flex items-start justify-between gap-4 cursor-pointer select-none"
-      id="qa-auto-reembed"
-      aria-labelledby="qa-auto-reembed-label"
-      checked={local.auto_reembed}
-      disabled={!loaded}
-      onchange={(e) => void saveKey('auto_reembed', e.currentTarget.checked)}
-    >
-      <span class="min-w-0 space-y-0.5">
-        <span
-          class="text-text-primary text-type-sm font-semibold block"
-          id="qa-auto-reembed-label"
-        >
-          Auto-update on save
-        </span>
-        <span class="text-text-muted text-type-xs font-label-sm block">
-          Re-index a note when you save it. Off = manual rebuild only.
-        </span>
-      </span>
-    </ToggleSwitch>
-
     <label class="flex flex-col gap-1.5" for="qa-notebook-scope">
       <span
         class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"

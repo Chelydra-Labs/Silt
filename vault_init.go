@@ -302,6 +302,11 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// The handler is called from the watcher goroutine; it only emits a Wails
 	// event (safe — no vaultMu/configMu access).
 	watcher.SetReMintWarningHandler(a.onReMintWarning)
+	// External fsnotify reindex/clear → block:changed so plugin indexes (QA
+	// vectors) stay consistent with the note store (#850).
+	watcher.SetPageChangedHandler(func(notebook, section, page string) {
+		a.emitBlockChanged("", notebook, section, page, "")
+	})
 
 	// Start hot-reload of .system/config.yaml. External edits re-parse and
 	// emit config:changed without a restart (SPECS.md §9.2). Silt's own

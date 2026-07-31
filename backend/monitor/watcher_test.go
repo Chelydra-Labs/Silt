@@ -1064,3 +1064,51 @@ func TestReMint_SingleEditNotFlagged(t *testing.T) {
 		t.Fatalf("single new task on a 7-block file should not flag (1 < threshold 3); got %v", got)
 	}
 }
+
+func TestPageChangedHandler_ReindexAndClear(t *testing.T) {
+	vaultPath := t.TempDir()
+	nb := filepath.Join(vaultPath, "Work", "Notes")
+	if err := os.MkdirAll(nb, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pagePath := filepath.Join(nb, "Page.md")
+	if err := os.WriteFile(pagePath, []byte("- hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dm, err := db.NewDatabaseManager("")
+	if err != nil {
+		t.Fatalf("NewDatabaseManager: %v", err)
+	}
+	t.Cleanup(func() { _ = dm.Close() })
+	coord := core.NewExecutionCoordinator(dm.SQLDB())
+	tracker := NewWriteTracker()
+	t.Cleanup(tracker.Stop)
+	dw, err := NewDirectoryWatcher(vaultPath, dm, tracker, coord, 4)
+	if err != nil {
+		t.Fatalf("NewDirectoryWatcher: %v", err)
+	}
+
+	var mu sync.Mutex
+	var events [][3]string
+	dw.SetPageChangedHandler(func(notebook, section, page string) {
+		mu.Lock()
+		events = append(events, [3]string{notebook, section, page})
+		mu.Unlock()
+	})
+
+	dw.reindexFile(pagePath)
+	mu.Lock()
+	if len(events) != 1 || events[0] != [3]string{"Work", "Notes", "Page"} {
+		t.Fatalf("reindex notify: got %v", events)
+	}
+	events = nil
+	mu.Unlock()
+
+	_ = dw.clearIndexForFile(pagePath)
+	mu.Lock()
+	if len(events) != 1 || events[0] != [3]string{"Work", "Notes", "Page"} {
+		t.Fatalf("clear notify: got %v", events)
+	}
+	mu.Unlock()
+}
