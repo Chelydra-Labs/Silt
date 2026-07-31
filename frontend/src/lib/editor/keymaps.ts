@@ -105,8 +105,9 @@ function parseOrderedBullet(
  * same-depth ordered note with the same punctuation so mid-list Enter does
  * not leave duplicate numbers (2 → new 3, old 3 stays 3).
  *
- * Walks siblings after `fromPos` (the new block's doc position). Stops at the
- * first non-matching block (different type, depth, or bullet style).
+ * Walks document order after `fromPos`. Deeper nested notes (attrs.depth >
+ * depth) are skipped so a child under item 2 does not stop renumber of later
+ * same-depth parents. Stops at a shallower block, non-note, or bullet-style break.
  */
 function renumberFollowingOrdered(
   tr: Transaction,
@@ -122,7 +123,13 @@ function renumberFollowingOrdered(
   while (pos < tr.doc.content.size) {
     const node = tr.doc.nodeAt(pos)
     if (!node || node.type.name !== 'noteBlock') break
-    if ((node.attrs.depth || 0) !== depth) break
+    const nodeDepth = (node.attrs.depth as number) || 0
+    if (nodeDepth > depth) {
+      // Nested under a prior sibling — skip, keep scanning for same-depth peers.
+      pos += node.nodeSize
+      continue
+    }
+    if (nodeDepth < depth) break
     const parsed = parseOrderedBullet(String(node.attrs.bullet || ''))
     if (!parsed || parsed.punc !== punc) break
     const want = `${expected}${punc}`
@@ -196,14 +203,22 @@ function currentBlockInfo(editor: Editor) {
 }
 
 /**
- * A block is "empty" when it carries no editable content — either no inline
- * children, or only whitespace. Whitespace-only blocks behave as empty for
- * BOTH the Backspace unindent/delete path and the Delete drop-empty path so
- * the two boundary keys stay symmetric (otherwise a spaces-only block would
- * unindent on Backspace but merge on Delete).
+ * A block is "empty" when it carries no visible content — no inline children,
+ * or only whitespace text with no atomic inlines. Block refs / embeds are
+ * atoms with empty textContent but are still content (Enter must not treat
+ * `- ((uuid))` as an empty list item and clear the bullet).
+ * Whitespace-only blocks behave as empty for BOTH the Backspace
+ * unindent/delete path and the Delete drop-empty path so the two boundary
+ * keys stay symmetric.
  */
 function isBlockEmpty(node: ProseMirrorNode): boolean {
-  return node.content.size === 0 || node.textContent.trim() === ''
+  if (node.content.size === 0) return true
+  if (node.textContent.trim() !== '') return false
+  let hasAtom = false
+  node.forEach((child) => {
+    if (child.isAtom) hasAtom = true
+  })
+  return !hasAtom
 }
 
 function setBlockDepth(

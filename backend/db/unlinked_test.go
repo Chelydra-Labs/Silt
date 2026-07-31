@@ -3,6 +3,7 @@ package db
 import (
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -989,8 +990,8 @@ func TestUnlinked_HasMoreOrthogonalToTruncated(t *testing.T) {
 	}
 }
 
-// TestUnlinked_EncodeDecodeScanCursor verifies UUID scan keyset round-trip,
-// live rowid resolution, gone-block soft-reset, and legacy u1: acceptance.
+// TestUnlinked_EncodeDecodeScanCursor verifies u3 rowid keyset round-trip,
+// legacy u2 soft-reset, and legacy u1 acceptance.
 func TestUnlinked_EncodeDecodeScanCursor(t *testing.T) {
 	dm := newTestDB(t)
 	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
@@ -999,33 +1000,37 @@ func TestUnlinked_EncodeDecodeScanCursor(t *testing.T) {
 	idxU(t, dm, "vault", "NB", "Sec", "Src", []parser.ParsedBlock{
 		noteBlock(uuidV, "mentions Topic here"),
 	})
-
-	enc := encodeUnlinkedScanCursor(uuidV)
-	if enc == "" {
-		t.Fatal("empty scan cursor for non-empty block id")
-	}
 	db := dm.SQLDB()
+	var wantRowid int64
+	if err := db.QueryRow(`SELECT rowid FROM blocks WHERE id = ?`, uuidV).Scan(&wantRowid); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+
+	enc := encodeUnlinkedScanCursor(wantRowid, uuidV)
+	if enc == "" {
+		t.Fatal("empty scan cursor for positive rowid")
+	}
 
 	got, err := resolveUnlinkedScanCursor(db, enc)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	var wantRowid int64
-	if err := db.QueryRow(`SELECT rowid FROM blocks WHERE id = ?`, uuidV).Scan(&wantRowid); err != nil {
-		t.Fatalf("lookup: %v", err)
-	}
 	if got != wantRowid {
-		t.Errorf("resolve u2: got rowid %d want %d", got, wantRowid)
+		t.Errorf("resolve u3: got rowid %d want %d", got, wantRowid)
 	}
 
-	// Gone block id → soft-reset to 0 (do not skip a reused rowid).
-	gone := encodeUnlinkedScanCursor("ffffffff-ffff-4fff-8fff-ffffffffffff")
-	got, err = resolveUnlinkedScanCursor(db, gone)
-	if err != nil {
-		t.Fatalf("gone resolve: %v", err)
+	// u3 without id still works.
+	encRowOnly := encodeUnlinkedScanCursor(wantRowid, "")
+	got, err = resolveUnlinkedScanCursor(db, encRowOnly)
+	if err != nil || got != wantRowid {
+		t.Errorf("u3 row-only: got %d err %v want %d", got, err, wantRowid)
 	}
-	if got != 0 {
-		t.Errorf("gone block should soft-reset to 0, got %d", got)
+
+	// Legacy u2:uuid soft-resets (live UUID→rowid was a skip hazard).
+	legacyU2 := base64.RawURLEncoding.EncodeToString([]byte(scanCursorPrefixV2 + uuidV))
+	got, err = resolveUnlinkedScanCursor(db, legacyU2)
+	if err != nil || got != 0 {
+		t.Errorf("legacy u2 should soft-reset to 0, got %d err %v", got, err)
 	}
 
 	// Legacy u1:rowid still accepted.
@@ -1046,8 +1051,8 @@ func TestUnlinked_EncodeDecodeScanCursor(t *testing.T) {
 	if err != nil || got != 0 {
 		t.Errorf("garbage → 0, got %d err %v", got, err)
 	}
-	if encodeUnlinkedScanCursor("") != "" {
-		t.Error("empty id should not encode")
+	if encodeUnlinkedScanCursor(0, uuidV) != "" {
+		t.Error("non-positive rowid should not encode")
 	}
 }
 
@@ -1133,8 +1138,8 @@ func TestUnlinked_ScanFillRoundsExhaustion(t *testing.T) {
 	}
 }
 
-// TestUnlinked_ScanCursorSurvivesReindex: block UUID cursor still continues
-// after the anchor block is re-indexed (rowid may change).
+// TestUnlinked_ScanCursorSurvivesReindex: immutable rowid cursor still continues
+// after an early non-anchor page is re-indexed.
 func TestUnlinked_ScanCursorSurvivesReindex(t *testing.T) {
 	dm := newTestDB(t)
 	idxUMany(t, dm, "Topic", unlinkedScanCap+3)
@@ -1148,9 +1153,8 @@ func TestUnlinked_ScanCursorSurvivesReindex(t *testing.T) {
 	}
 
 	// Re-index one early source page (new content, same path) so SQLite may
-	// assign a new rowid while block ids for other pages stay put. The cursor
-	// anchors on the last examined block id from batch 1 — resolve must still
-	// yield a usable exclusive lower bound.
+	// assign a new rowid while other pages stay put. Cursor stores the scan-time
+	// exclusive rowid bound — must still surface remaining residuals.
 	idxU(t, dm, "vault", "NB", "Sec", "Src0000", []parser.ParsedBlock{
 		noteBlock("00000000-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "mentions Topic again"),
 	})
@@ -1161,10 +1165,6 @@ func TestUnlinked_ScanCursorSurvivesReindex(t *testing.T) {
 	}
 	if len(second.Results) == 0 {
 		t.Fatal("continuation after reindex should still surface remaining residuals")
-	}
-	// Must not only return the already-seen first residual page.
-	if len(second.Results) == 1 && second.Results[0].SourcePage == "Src0000" && !second.Truncated {
-		// Acceptable if only one left; with +3 beyond cap we expect more.
 	}
 	seen := map[string]bool{}
 	for _, m := range first.Results {
@@ -1181,6 +1181,111 @@ func TestUnlinked_ScanCursorSurvivesReindex(t *testing.T) {
 	}
 }
 
+// TestUnlinked_ScanCursorAnchorReindexDoesNotSkip: re-indexing the last-examined
+// anchor block to a higher rowid must not skip unread matches that still sit
+// between the old bound and the anchor's new rowid (u2 live-UUID hazard).
+func TestUnlinked_ScanCursorAnchorReindexDoesNotSkip(t *testing.T) {
+	dm := newTestDB(t)
+	// Cap+3 plain sources so batch 1 truncates with a known tail.
+	idxUMany(t, dm, "Topic", unlinkedScanCap+3)
+
+	first, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", unlinkedScanCap)
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if !first.Truncated || first.ScanCursor == "" {
+		t.Fatalf("want truncated, got trunc=%v scan=%q", first.Truncated, first.ScanCursor)
+	}
+
+	// Decode the immutable bound, then re-index the anchor block id (if present
+	// in the cursor) so it would move to a higher rowid under the old u2 scheme.
+	raw, err := base64.RawURLEncoding.DecodeString(first.ScanCursor)
+	if err != nil {
+		t.Fatalf("decode cursor: %v", err)
+	}
+	s := string(raw)
+	if !strings.HasPrefix(s, scanCursorPrefixV3) {
+		t.Fatalf("want u3 cursor, got %q", s)
+	}
+	rest := s[len(scanCursorPrefixV3):]
+	boundStr, anchorID, _ := strings.Cut(rest, ":")
+	bound, err := strconv.ParseInt(boundStr, 10, 64)
+	if err != nil || bound <= 0 {
+		t.Fatalf("bad bound in cursor %q", s)
+	}
+
+	// Collect pages that should appear after the bound (second batch before reindex).
+	before, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", first.ScanCursor, 100)
+	if err != nil {
+		t.Fatalf("before reindex continue: %v", err)
+	}
+	wantPages := map[string]bool{}
+	for _, m := range before.Results {
+		wantPages[m.SourcePage] = true
+	}
+	if len(wantPages) == 0 {
+		t.Fatal("expected residual pages beyond first batch")
+	}
+
+	// Re-index the anchor block (or any block at the bound rowid) so its live
+	// rowid moves past unread matches — u3 must still use the stored bound.
+	if anchorID != "" {
+		var pg string
+		db := dm.SQLDB()
+		_ = db.QueryRow(`SELECT page FROM blocks WHERE id = ?`, anchorID).Scan(&pg)
+		if pg != "" && pg != "Topic" {
+			idxU(t, dm, "vault", "NB", "Sec", pg, []parser.ParsedBlock{
+				noteBlock(anchorID, "mentions Topic after reindex"),
+			})
+		}
+	} else {
+		// Fallback: re-index last residual page from batch 1.
+		last := first.Results[len(first.Results)-1]
+		idxU(t, dm, "vault", last.SourceNotebook, last.SourceSection, last.SourcePage, []parser.ParsedBlock{
+			noteBlock("00000000-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "mentions Topic after reindex"),
+		})
+	}
+
+	after, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", first.ScanCursor, 100)
+	if err != nil {
+		t.Fatalf("after anchor reindex: %v", err)
+	}
+	gotPages := map[string]bool{}
+	for _, m := range after.Results {
+		gotPages[m.SourcePage] = true
+	}
+	for pg := range wantPages {
+		if !gotPages[pg] {
+			t.Errorf("after anchor reindex, missing residual page %q (would skip under live UUID cursor)", pg)
+		}
+	}
+}
+
+// TestUnlinked_PaddedPageSelfFilter: trimmed title and self-exclusion use the
+// same normalized page so padded IPC values do not list the active page.
+func TestUnlinked_PaddedPageSelfFilter(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "self mentions Topic on own page"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "Other", []parser.ParsedBlock{
+		noteBlock(uuidV, "other mentions Topic"),
+	})
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "  Topic  ", "", "", 50)
+	if err != nil {
+		t.Fatalf("padded page: %v", err)
+	}
+	for _, m := range res.Results {
+		if m.SourcePage == "Topic" {
+			t.Fatalf("active page must not appear as unlinked mention, got %+v", res.Results)
+		}
+	}
+	if len(res.Results) != 1 || res.Results[0].SourcePage != "Other" {
+		t.Fatalf("want only Other, got %+v", res.Results)
+	}
+}
+
 // unlinkedScanSQL is the production candidate batch shape (kept in sync with
 // scanUnlinkedCandidateBlocks) for EXPLAIN regression.
 const unlinkedScanSQL = `SELECT b.rowid, b.id, b.source, b.notebook, b.section, b.page, b.type, COALESCE(b.clean_content,'')
@@ -1191,7 +1296,8 @@ const unlinkedScanSQL = `SELECT b.rowid, b.id, b.source, b.notebook, b.section, 
 			ORDER BY rowid
 			LIMIT ?
 		) AS f
-		JOIN blocks b ON b.rowid = f.rid`
+		JOIN blocks b ON b.rowid = f.rid
+		ORDER BY f.rid`
 
 const unlinkedPathOrderSQL = `SELECT b.rowid, b.id, b.source, b.notebook, b.section, b.page, COALESCE(b.clean_content,'')
 		FROM blocks_fts

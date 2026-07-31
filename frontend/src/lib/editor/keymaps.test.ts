@@ -497,6 +497,93 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
     editor.destroy()
   })
 
+  it('renumbers same-depth ordered peers past nested children', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'parent one' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'parent two' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2a', depth: 1, bullet: '1. ' },
+          content: [{ type: 'text', text: 'nested under two' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'parent three' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // End of item 2 (before nested child)
+    const endOfN2 =
+      editor.state.doc.child(0).nodeSize + editor.state.doc.child(1).nodeSize
+    editor.commands.setTextSelection(endOfN2 - 1)
+
+    pressEnter(editor)
+
+    // 1, 2, new empty 3, nested child, former 3 → 4
+    expect(editor.state.doc.childCount).toBe(5)
+    expect(
+      [0, 1, 2, 3, 4].map((i) => ({
+        bullet: editor.state.doc.child(i).attrs.bullet,
+        depth: editor.state.doc.child(i).attrs.depth
+      }))
+    ).toEqual([
+      { bullet: '1. ', depth: 0 },
+      { bullet: '2. ', depth: 0 },
+      { bullet: '3. ', depth: 0 },
+      { bullet: '1. ', depth: 1 },
+      { bullet: '4. ', depth: 0 }
+    ])
+    editor.destroy()
+  })
+
+  it('Enter on bulleted note with only a block ref continues the list', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '- ' },
+          content: [
+            {
+              type: 'blockReferenceNode',
+              attrs: { uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }
+            }
+          ]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.focus('end')
+
+    pressEnter(editor)
+
+    // Atom-only body is not empty — continue list, do not clear bullet.
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('- ')
+    expect(editor.state.doc.child(0).childCount).toBe(1)
+    expect(editor.state.doc.child(0).child(0).type.name).toBe(
+      'blockReferenceNode'
+    )
+    expect(editor.state.doc.child(1).type.name).toBe('noteBlock')
+    expect(editor.state.doc.child(1).attrs.bullet).toBe('- ')
+    expect(editor.state.doc.child(1).textContent).toBe('')
+    editor.destroy()
+  })
+
   it('Enter with a non-empty selection drops the selection then splits', () => {
     const editor = makeEditorWithKeymaps()
     editor.commands.setContent(blockDoc('noteBlock', 'one two three'))
