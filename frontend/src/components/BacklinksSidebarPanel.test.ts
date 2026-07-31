@@ -84,12 +84,14 @@ function unlinkedWire(opts: {
   cursor?: string
   hasMore?: boolean
   truncated?: boolean
+  scanCursor?: string
 }) {
   return {
     results: opts.results ?? [],
     cursor: opts.cursor ?? '',
     has_more: opts.hasMore ?? false,
-    truncated: opts.truncated ?? false
+    truncated: opts.truncated ?? false,
+    scan_cursor: opts.scanCursor ?? ''
   }
 }
 
@@ -789,6 +791,52 @@ describe('BacklinksSidebarPanel', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('Load more merges additional blocks when the same page reappears', async () => {
+    const page1 = unlinkedMentionWire({
+      source_page: 'Shared residual',
+      source_block_ids: ['block-r1'],
+      source_snippets: ['first Research'],
+      match_count: 1
+    })
+    const page1more = unlinkedMentionWire({
+      source_page: 'Shared residual',
+      source_block_ids: ['block-r2'],
+      source_snippets: ['second Research'],
+      match_count: 1
+    })
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [page1],
+          cursor: 'res-cursor',
+          hasMore: true
+        })
+      )
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [page1more],
+          cursor: '',
+          hasMore: false
+        })
+      )
+    renderPanel()
+    await screen.findByText('1+ pages mention this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(screen.getByLabelText('1 mention')).toBeInTheDocument()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Load more unlinked mentions' })
+    )
+    await waitFor(() => {
+      expect(screen.getByLabelText('2 mentions')).toBeInTheDocument()
+    })
+    expect(screen.getAllByText('Shared residual')).toHaveLength(1)
+    expect(
+      screen.getAllByRole('button', { name: /Link mention of Research/ })
+    ).toHaveLength(2)
+  })
+
   it('disables only the in-flight row while a promote is pending (per-row busy)', async () => {
     let resolvePromote!: () => void
     mocks.getUnlinkedMentionsPaged.mockResolvedValue({
@@ -857,7 +905,8 @@ describe('BacklinksSidebarPanel', () => {
       ],
       cursor: '',
       has_more: false,
-      truncated: true
+      truncated: true,
+      scan_cursor: 'scan-next'
     })
     renderPanel()
     await screen.findByText(/may be incomplete/)
@@ -868,6 +917,11 @@ describe('BacklinksSidebarPanel', () => {
       await screen.findByText(
         /Results may be incomplete — matching text is capped for performance/
       )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'Scan more unlinked mention candidates'
+      })
     ).toBeInTheDocument()
   })
 
@@ -918,13 +972,15 @@ describe('BacklinksSidebarPanel', () => {
         results: [mention('Page A', 'block-01')],
         cursor: 'cursor-1',
         has_more: true,
-        truncated: true
+        truncated: true,
+        scan_cursor: 'scan-next'
       })
       .mockResolvedValueOnce({
         results: [mention('Page B', 'block-02')],
         cursor: '',
         has_more: false,
-        truncated: true
+        truncated: true,
+        scan_cursor: 'scan-next'
       })
     renderPanel()
     await screen.findByText(/may be incomplete/)
@@ -940,6 +996,15 @@ describe('BacklinksSidebarPanel', () => {
       screen.getByRole('button', { name: 'Load more unlinked mentions' })
     )
     await screen.findByText('Page B')
+    // Residual Load more keeps the same batch scan input (empty = first batch).
+    expect(mocks.getUnlinkedMentionsPaged).toHaveBeenLastCalledWith(
+      'Work',
+      'Knowledge',
+      'Research',
+      'cursor-1',
+      '',
+      50
+    )
     expect(
       screen.getByText(
         /Results may be incomplete — matching text is capped for performance/
@@ -955,19 +1020,25 @@ describe('BacklinksSidebarPanel', () => {
       results: [],
       cursor: '',
       has_more: false,
-      truncated: true
+      truncated: true,
+      scan_cursor: 'scan-next'
     })
     renderPanel()
     await screen.findByText(
-      /No promotable plain mentions in the first results · may be incomplete/
+      /No promotable plain mentions in this batch · may be incomplete/
     )
     await fireEvent.click(
       screen.getByRole('button', { name: /Unlinked mentions/ })
     )
     expect(
       await screen.findByText(
-        /Matching text is capped for performance — no promotable plain mentions/
+        /Matching text is capped for performance — no promotable plain mentions in this batch/
       )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'Scan more unlinked mention candidates'
+      })
     ).toBeInTheDocument()
   })
 
@@ -988,7 +1059,8 @@ describe('BacklinksSidebarPanel', () => {
       ],
       cursor: '',
       has_more: false,
-      truncated: true
+      truncated: true,
+      scan_cursor: 'scan-next'
     })
     renderPanel()
     await screen.findByText(/may be incomplete/)
@@ -1044,7 +1116,8 @@ describe('BacklinksSidebarPanel', () => {
           ],
           cursor: 'wire-cursor',
           hasMore: true,
-          truncated: true
+          truncated: true,
+          scanCursor: 'scan-wire'
         })
       )
       .mockResolvedValueOnce(
@@ -1057,7 +1130,8 @@ describe('BacklinksSidebarPanel', () => {
             })
           ],
           hasMore: false,
-          truncated: true
+          truncated: true,
+          scanCursor: 'scan-wire'
         })
       )
     renderPanel()
@@ -1137,7 +1211,8 @@ describe('BacklinksSidebarPanel', () => {
             results: [first],
             cursor: 'cursor-1',
             hasMore: true,
-            truncated: true
+            truncated: true,
+            scanCursor: 'scan-next'
           })
         )
       }
@@ -1151,7 +1226,8 @@ describe('BacklinksSidebarPanel', () => {
         unlinkedWire({
           results: [refreshed],
           hasMore: false,
-          truncated: true
+          truncated: true,
+          scanCursor: 'scan-next'
         })
       )
     })
@@ -1180,7 +1256,8 @@ describe('BacklinksSidebarPanel', () => {
       unlinkedWire({
         results: [second],
         hasMore: false,
-        truncated: true
+        truncated: true,
+        scanCursor: 'scan-next'
       })
     )
     await waitFor(() => {
@@ -1194,5 +1271,430 @@ describe('BacklinksSidebarPanel', () => {
     expect(
       screen.getAllByText(/may be incomplete/).length
     ).toBeGreaterThanOrEqual(1)
+  })
+
+  it('does not show Scan more when truncated without scan_cursor', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue(
+      unlinkedWire({
+        results: [
+          unlinkedMentionWire({
+            source_page: 'Only page',
+            source_block_ids: ['block-1']
+          })
+        ],
+        truncated: true
+        // scan_cursor omitted / empty
+      })
+    )
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(
+      screen.queryByRole('button', {
+        name: 'Scan more unlinked mention candidates'
+      })
+    ).not.toBeInTheDocument()
+  })
+
+  it('Scan more fetches next FTS batch with scan_cursor and appends residuals', async () => {
+    const first = unlinkedMentionWire({
+      source_page: 'Batch one',
+      source_block_ids: ['block-01']
+    })
+    const second = unlinkedMentionWire({
+      source_page: 'Batch two',
+      source_block_ids: ['block-02']
+    })
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [first],
+          truncated: true,
+          scanCursor: 'scan-token-1'
+        })
+      )
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [second],
+          truncated: false,
+          scanCursor: ''
+        })
+      )
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await screen.findByText('Batch one')
+    const scanBtn = screen.getByRole('button', {
+      name: 'Scan more unlinked mention candidates'
+    })
+    scanBtn.focus()
+    await fireEvent.click(scanBtn)
+    await screen.findByText('Batch two')
+    expect(mocks.getUnlinkedMentionsPaged).toHaveBeenLastCalledWith(
+      'Work',
+      'Knowledge',
+      'Research',
+      '',
+      'scan-token-1',
+      50
+    )
+    expect(screen.getByText('Batch one')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', {
+        name: 'Scan more unlinked mention candidates'
+      })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText(/may be incomplete/)).not.toBeInTheDocument()
+    // Final scan: announce completion and move focus to the section toggle.
+    await waitFor(() => {
+      expect(screen.getByText(/Scan complete/)).toBeInTheDocument()
+    })
+    const toggle = screen.getByRole('button', { name: /Unlinked mentions/ })
+    expect(document.activeElement).toBe(toggle)
+  })
+
+  it('Load more after final Scan clears one-shot scan status so count returns', async () => {
+    const batch1 = unlinkedMentionWire({
+      source_page: 'Scan page',
+      source_block_ids: ['b1']
+    })
+    const batch2a = unlinkedMentionWire({
+      source_page: 'Residual A',
+      source_block_ids: ['b2a']
+    })
+    const batch2b = unlinkedMentionWire({
+      source_page: 'Residual B',
+      source_block_ids: ['b2b']
+    })
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch1],
+          truncated: true,
+          scanCursor: 'scan-final'
+        })
+      )
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch2a],
+          cursor: 'res-next',
+          hasMore: true,
+          truncated: false,
+          scanCursor: ''
+        })
+      )
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch2b],
+          cursor: '',
+          hasMore: false,
+          truncated: false,
+          scanCursor: ''
+        })
+      )
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Scan more unlinked mention candidates'
+      })
+    )
+    await waitFor(() => {
+      expect(screen.getByText(/Scan complete/)).toBeInTheDocument()
+    })
+    // Residual Load more must clear the one-shot status so the live count shows.
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Load more unlinked mentions' })
+    )
+    await waitFor(() => {
+      expect(screen.queryByText(/Scan complete/)).not.toBeInTheDocument()
+    })
+    expect(screen.getByText(/pages mention this title/)).toBeInTheDocument()
+    expect(screen.getByText('Residual B')).toBeInTheDocument()
+  })
+
+  it('Scan more merges additional blocks when the same page reappears', async () => {
+    const batch1 = unlinkedMentionWire({
+      source_page: 'Shared page',
+      source_block_ids: ['block-a'],
+      source_snippets: ['alpha Research hit'],
+      match_count: 1
+    })
+    const batch2 = unlinkedMentionWire({
+      source_page: 'Shared page',
+      source_block_ids: ['block-b', 'block-c'],
+      source_snippets: ['beta Research hit', 'gamma Research hit'],
+      match_count: 2
+    })
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch1],
+          truncated: true,
+          scanCursor: 'scan-token-1'
+        })
+      )
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch2],
+          truncated: false,
+          scanCursor: ''
+        })
+      )
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await screen.findByText('Shared page')
+    expect(screen.getByLabelText('1 mention')).toBeInTheDocument()
+    await fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Scan more unlinked mention candidates'
+      })
+    )
+    await waitFor(() => {
+      expect(screen.getByLabelText('3 mentions')).toBeInTheDocument()
+    })
+    // One page row; three link targets (one per merged block).
+    expect(screen.getAllByText('Shared page')).toHaveLength(1)
+    expect(
+      screen.getAllByRole('button', { name: /Link mention of Research/ })
+    ).toHaveLength(3)
+    expect(
+      screen.getByRole('button', {
+        name: /Link mention of Research in block block-a/
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: /Link mention of Research in block block-b/
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: /Link mention of Research in block block-c/
+      })
+    ).toBeInTheDocument()
+  })
+
+  it('disables Scan more while residual has_more so unread batch pages are not dropped', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue(
+      unlinkedWire({
+        results: [
+          unlinkedMentionWire({
+            source_page: 'Page A',
+            source_block_ids: ['block-01']
+          })
+        ],
+        cursor: 'cursor-1',
+        hasMore: true,
+        truncated: true,
+        scanCursor: 'scan-next'
+      })
+    )
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    const scanBtn = await screen.findByRole('button', {
+      name: 'Load remaining unlinked pages in this batch before scanning more candidates'
+    })
+    expect(scanBtn).toBeDisabled()
+    expect(
+      screen.getByText(
+        /Load remaining pages in this batch before scanning more/
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('Load more after Scan more passes the batch scan_cursor input', async () => {
+    const batch1 = unlinkedMentionWire({
+      source_page: 'Batch1 page',
+      source_block_ids: ['b1']
+    })
+    const batch2a = unlinkedMentionWire({
+      source_page: 'Batch2a',
+      source_block_ids: ['b2a']
+    })
+    const batch2b = unlinkedMentionWire({
+      source_page: 'Batch2b',
+      source_block_ids: ['b2b']
+    })
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch1],
+          truncated: true,
+          scanCursor: 'scan-token-1'
+        })
+      )
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch2a],
+          cursor: 'res-cursor-2',
+          hasMore: true,
+          truncated: true,
+          scanCursor: 'scan-token-2'
+        })
+      )
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch2b],
+          hasMore: false,
+          truncated: true,
+          scanCursor: 'scan-token-2'
+        })
+      )
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await screen.findByText('Batch1 page')
+    await fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Scan more unlinked mention candidates'
+      })
+    )
+    await screen.findByText('Batch2a')
+    // Residual has_more on batch 2 — Scan more blocked until Load more finishes.
+    expect(
+      screen.getByRole('button', {
+        name: 'Load remaining unlinked pages in this batch before scanning more candidates'
+      })
+    ).toBeDisabled()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Load more unlinked mentions' })
+    )
+    await screen.findByText('Batch2b')
+    expect(mocks.getUnlinkedMentionsPaged).toHaveBeenLastCalledWith(
+      'Work',
+      'Knowledge',
+      'Research',
+      'res-cursor-2',
+      'scan-token-1',
+      50
+    )
+  })
+
+  it('retries Scan more via Try again after a scan failure', async () => {
+    const first = unlinkedMentionWire({
+      source_page: 'Batch one',
+      source_block_ids: ['block-01']
+    })
+    const second = unlinkedMentionWire({
+      source_page: 'Batch two',
+      source_block_ids: ['block-02']
+    })
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [first],
+          truncated: true,
+          scanCursor: 'scan-token-1'
+        })
+      )
+      .mockRejectedValueOnce(new Error('scan failed'))
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [second],
+          truncated: false
+        })
+      )
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await screen.findByText('Batch one')
+    await fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Scan more unlinked mention candidates'
+      })
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'More mention candidates could not be scanned.'
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('scan failed')
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await screen.findByText('Batch two')
+    expect(mocks.getUnlinkedMentionsPaged).toHaveBeenLastCalledWith(
+      'Work',
+      'Knowledge',
+      'Research',
+      '',
+      'scan-token-1',
+      50
+    )
+  })
+
+  it('keeps scan_cursor after a failed same-page refresh so Scan more still works', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue(
+      unlinkedWire({
+        results: [
+          unlinkedMentionWire({
+            source_page: 'Launch plan',
+            source_block_ids: ['block-42']
+          })
+        ],
+        truncated: true,
+        scanCursor: 'scan-keep'
+      })
+    )
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await screen.findByRole('button', {
+      name: 'Scan more unlinked mention candidates'
+    })
+
+    mocks.getUnlinkedMentionsPaged.mockRejectedValueOnce(
+      new Error('index unavailable')
+    )
+    blockChanged?.()
+    await new Promise((resolve) => setTimeout(resolve, 210))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'index unavailable'
+    )
+    // Prior scan control remains available after failed refresh.
+    expect(
+      screen.getByRole('button', {
+        name: 'Scan more unlinked mention candidates'
+      })
+    ).toBeInTheDocument()
+  })
+
+  it('initial unlinked fetch passes empty residual and scan cursors', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue(
+      unlinkedWire({
+        results: [
+          unlinkedMentionWire({
+            source_page: 'Notes',
+            source_block_ids: ['b1']
+          })
+        ]
+      })
+    )
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    expect(mocks.getUnlinkedMentionsPaged).toHaveBeenCalledWith(
+      'Work',
+      'Knowledge',
+      'Research',
+      '',
+      '',
+      50
+    )
   })
 })

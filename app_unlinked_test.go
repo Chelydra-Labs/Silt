@@ -30,7 +30,7 @@ func TestGetUnlinkedMentionsPaged_SourceResolution(t *testing.T) {
 		{ID: "vvvvvvvv-vvvv-4vvv-8vvv-vvvvvvvvvvvv", Type: parser.BlockNote, RawText: "review Onboarding soon", CleanText: "review Onboarding soon", LineNumber: 1},
 	})
 
-	res, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", 50)
+	res, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -42,6 +42,32 @@ func TestGetUnlinkedMentionsPaged_SourceResolution(t *testing.T) {
 	}
 }
 
+// TestGetUnlinkedMentionsPaged_PaddedPathSelfFilter: wrapper trims notebook/
+// section/page before source resolve and DB self-exclusion so padded IPC
+// values do not list the active page as its own unlinked mention.
+func TestGetUnlinkedMentionsPaged_PaddedPathSelfFilter(t *testing.T) {
+	app := newTestApp(t)
+	idxUApp(t, app, "vault", "Work", "Sec", "Onboarding", []parser.ParsedBlock{
+		{ID: "uuuuuuuu-uuuu-4uuu-8uuu-uuuuuuuuuuuu", Type: parser.BlockNote, RawText: "self Onboarding", CleanText: "self Onboarding", LineNumber: 1},
+	})
+	idxUApp(t, app, "vault", "Work", "Sec", "Notes", []parser.ParsedBlock{
+		{ID: "vvvvvvvv-vvvv-4vvv-8vvv-vvvvvvvvvvvv", Type: parser.BlockNote, RawText: "review Onboarding soon", CleanText: "review Onboarding soon", LineNumber: 1},
+	})
+
+	res, err := app.GetUnlinkedMentionsPaged("  Work  ", "  Sec  ", "  Onboarding  ", "", "", 50)
+	if err != nil {
+		t.Fatalf("padded GetUnlinkedMentionsPaged: %v", err)
+	}
+	for _, m := range res.Results {
+		if m.SourcePage == "Onboarding" {
+			t.Fatalf("active page must not appear as unlinked mention: %+v", res.Results)
+		}
+	}
+	if len(res.Results) != 1 || res.Results[0].SourcePage != "Notes" {
+		t.Fatalf("want only Notes, got %+v", res.Results)
+	}
+}
+
 // TestGetUnlinkedMentionsPaged_DBClosed verifies the DB-closed error path: after
 // closing the underlying manager, the wrapper surfaces an error rather than
 // panicking or returning stale data.
@@ -50,7 +76,7 @@ func TestGetUnlinkedMentionsPaged_DBClosed(t *testing.T) {
 	if err := app.db.Close(); err != nil {
 		t.Fatalf("close db: %v", err)
 	}
-	_, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", 50)
+	_, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", "", 50)
 	if err == nil {
 		t.Fatal("expected an error when the database is closed, got nil")
 	}
@@ -103,7 +129,7 @@ func TestPromoteUnlinkedMention_Rewrite(t *testing.T) {
 	}
 
 	// The mention migrates: unlinked drops to 0, backlinks gains the page-link.
-	res, _ := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", 50)
+	res, _ := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", "", 50)
 	if len(res.Results) != 0 {
 		t.Errorf("post-promote unlinked: expected 0, got %d: %+v", len(res.Results), res.Results)
 	}
@@ -159,6 +185,34 @@ func TestPromoteUnlinkedMention_ExplicitPathDisambiguates(t *testing.T) {
 	}
 }
 
+// TestPromoteUnlinkedMention_PaddedExplicitPath: whitespace around notebook/
+// section/page must still resolve the exact inventory path (candidate chips
+// or IPC padding must not fall through to ambiguous_target).
+func TestPromoteUnlinkedMention_PaddedExplicitPath(t *testing.T) {
+	app := newTestApp(t)
+	const srcBlock = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	writeNotePageWithMention(t, app, "Work", "Journal", "Standup", "2026-06-13",
+		"uuuuuuuu-uuuu-4uuu-8uuu-uuuuuuuuuuuu", "journal entry")
+	writeNotePageWithMention(t, app, "Work", "Log", "Standup", "2026-06-13",
+		"vvvvvvvv-vvvv-4vvv-8vvv-vvvvvvvvvvvv", "log entry")
+	writeNotePageWithMention(t, app, "Work", "Sec", "Notes", "2026-06-13",
+		srcBlock, "Standup today")
+
+	if err := app.PromoteUnlinkedMention(srcBlock, "  Work  ", "  Journal  ", "  Standup  "); err != nil {
+		t.Fatalf("padded explicit-path promote: %v", err)
+	}
+
+	var clean string
+	_ = app.db.SQLDB().QueryRow("SELECT clean_content FROM blocks WHERE id = ?", srcBlock).Scan(&clean)
+	if !strings.Contains(clean, "[[") || !strings.Contains(clean, "Standup]]") {
+		t.Errorf("expected wiki-link wrap after padded path promote: %q", clean)
+	}
+	bl, _ := app.db.GetBacklinks("vault", "Work", "Journal", "Standup")
+	if len(bl) != 1 || bl[0].Kind != "page" {
+		t.Errorf("Journal/Standup backlink after padded promote: got %+v", bl)
+	}
+}
+
 // TestPromoteUnlinkedMention_AmbiguousRejected verifies that without a matching
 // explicit path, an ambiguous leaf title is still rejected with CodeAmbiguousTarget.
 func TestPromoteUnlinkedMention_AmbiguousRejected(t *testing.T) {
@@ -200,7 +254,7 @@ func TestPromoteUnlinkedMention_MixedResidual(t *testing.T) {
 		srcBlock, "see [[Onboarding]] and Onboarding too")
 
 	// Pre: residual plain surfaces in unlinked.
-	pre, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", 50)
+	pre, err := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", "", 50)
 	if err != nil {
 		t.Fatalf("pre GetUnlinkedMentionsPaged: %v", err)
 	}
@@ -220,7 +274,7 @@ func TestPromoteUnlinkedMention_MixedResidual(t *testing.T) {
 		t.Errorf("post-promote body: got %q", clean)
 	}
 
-	post, _ := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", 50)
+	post, _ := app.GetUnlinkedMentionsPaged("Work", "Sec", "Onboarding", "", "", 50)
 	if len(post.Results) != 0 {
 		t.Errorf("post-promote unlinked: expected 0, got %d: %+v", len(post.Results), post.Results)
 	}

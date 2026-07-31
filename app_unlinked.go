@@ -11,8 +11,10 @@ import (
 // GetUnlinkedMentionsPaged returns source pages that mention the active page's
 // title in prose without linking it, so the backlinks panel can offer a "Link"
 // action. Source-aware (notebook → source resolved server-side). Cursor/limit
-// mirror GetBacklinksPaged. See db.GetUnlinkedMentionsPaged for matching rules.
-func (a *App) GetUnlinkedMentionsPaged(notebook, section, page, cursor string, limit int) (db.UnlinkedMentionsResult, error) {
+// mirror GetBacklinksPaged. scanCursor continues a capped FTS batch when the
+// prior response set truncated + scan_cursor (empty starts the first batch).
+// See db.GetUnlinkedMentionsPaged for matching rules.
+func (a *App) GetUnlinkedMentionsPaged(notebook, section, page, cursor, scanCursor string, limit int) (db.UnlinkedMentionsResult, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
@@ -21,10 +23,16 @@ func (a *App) GetUnlinkedMentionsPaged(notebook, section, page, cursor string, l
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	// Trim before source resolve and DB self-filter so padded linked-notebook
+	// names still map correctly and the active page is excluded.
+	notebook = strings.TrimSpace(notebook)
+	section = strings.TrimSpace(section)
+	page = strings.TrimSpace(page)
+
 	source := a.resolveSourceByName(notebook)
 	var res db.UnlinkedMentionsResult
 	err := a.coordinator.WithDBReadResult(func() error {
-		got, err := a.db.GetUnlinkedMentionsPaged(source, notebook, section, page, cursor, limit)
+		got, err := a.db.GetUnlinkedMentionsPaged(source, notebook, section, page, cursor, scanCursor, limit)
 		if err != nil {
 			return err
 		}
@@ -56,6 +64,10 @@ func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSectio
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	// Normalize the explicit path before source resolve and exact PageLoc match
+	// so padded candidate-chip values still hit inventory (avoid false ambiguous).
+	targetNotebook = strings.TrimSpace(targetNotebook)
+	targetSection = strings.TrimSpace(targetSection)
 	title := strings.TrimSpace(targetPage)
 	if title == "" {
 		// Plain error — not CodeAmbiguousTarget (that maps to "pick a candidate").

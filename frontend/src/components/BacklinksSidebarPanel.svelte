@@ -147,8 +147,10 @@
     results: UnlinkedMention[]
     cursor: string
     hasMore: boolean
-    /** FTS candidate pool hit the scan cap — residual list may be incomplete. */
+    /** FTS candidate batch hit the scan cap — residual list may be incomplete. */
     truncated: boolean
+    /** Opaque keyset for the next FTS batch when truncated (empty otherwise). */
+    scanCursor: string
   }
 
   // Wails encodes Go structs with encoding/json tags (mostly snake_case). Vitest
@@ -250,7 +252,8 @@
       results,
       cursor: asString(r.cursor),
       hasMore: asBool(pick(r, 'hasMore', 'has_more')),
-      truncated: asBool(pick(r, 'truncated', 'truncated'))
+      truncated: asBool(pick(r, 'truncated', 'truncated')),
+      scanCursor: asString(pick(r, 'scanCursor', 'scan_cursor'))
     }
   }
 
@@ -279,14 +282,28 @@
   let unlinkedExpanded = $state(false)
   let unlinkedBusy = $state<Set<string>>(new Set())
   let unlinkedError = $state('')
-  /** Which unlinked fetch failed — drives Try again (reload vs load-more). */
-  let unlinkedErrorAction = $state<'initial' | 'more'>('initial')
+  /** Which unlinked fetch failed — drives Try again (reload vs load-more vs scan). */
+  let unlinkedErrorAction = $state<'initial' | 'more' | 'scan'>('initial')
   let unlinkedRequest = 0
   let unlinkedCursor = $state('')
   let unlinkedHasMore = $state(false)
   let unlinkedLoadingMore = $state(false)
-  /** Pool-level: FTS scan hit unlinkedScanCap (orthogonal to page hasMore). */
+  let unlinkedScanningMore = $state(false)
+  /** Pool-level: FTS batch hit unlinkedScanCap (orthogonal to page hasMore). */
   let unlinkedTruncated = $state(false)
+  /** Next FTS batch keyset from the API (Scan more). Empty when not truncated. */
+  let unlinkedScanCursor = $state('')
+  /**
+   * scanCursor INPUT used for the batch currently being residual-paged.
+   * Empty string = first batch. Distinct from unlinkedScanCursor (next batch out).
+   */
+  let unlinkedBatchScanIn = $state('')
+  /**
+   * One-shot polite status after Scan more finishes the last FTS batch (button
+   * unmounts). Cleared on the next load/scan so the live region stays accurate.
+   */
+  let unlinkedScanStatus = $state('')
+  let unlinkedSectionToggleEl = $state<HTMLButtonElement | undefined>(undefined)
 
   const groups = $derived.by(() => {
     // Ephemeral grouping inside $derived — plain Map is correct.
@@ -429,16 +446,28 @@
     activeNotebook: string,
     activeSection: string,
     activePage: string,
-    activeCursor: string
+    activeCursor: string,
+    activeScanCursor: string
   ): Promise<UnlinkedMentionsPage> {
     const result = await GetUnlinkedMentionsPaged(
       activeNotebook,
       activeSection,
       activePage,
       activeCursor,
+      activeScanCursor,
       pageSize
     )
     return mapUnlinkedMentionsPage(result)
+  }
+
+  function clearUnlinkedProjection(): void {
+    unlinked = []
+    unlinkedCursor = ''
+    unlinkedHasMore = false
+    unlinkedTruncated = false
+    unlinkedScanCursor = ''
+    unlinkedBatchScanIn = ''
+    unlinkedScanStatus = ''
   }
 
   // loadUnlinked fetches the unlinked-mentions leg. Runs alongside the backlinks
@@ -456,30 +485,27 @@
   ): Promise<void> {
     const sequence = ++unlinkedRequest
     if (!activeNotebook || !activePage) {
-      unlinked = []
-      unlinkedCursor = ''
-      unlinkedHasMore = false
-      unlinkedTruncated = false
+      clearUnlinkedProjection()
       unlinkedError = ''
       return
     }
     unlinkedLoading = true
-    // Full reload supersedes in-flight Load more (sequence bump alone would leave
-    // unlinkedLoadingMore stuck true in the more-path finally).
+    // Full reload supersedes in-flight Load more / Scan more (sequence bump alone
+    // would leave loading flags stuck true in their finally blocks).
     unlinkedLoadingMore = false
+    unlinkedScanningMore = false
     unlinkedError = ''
     unlinkedErrorAction = 'initial'
+    unlinkedScanStatus = ''
     if (resetProjection) {
-      unlinked = []
-      unlinkedCursor = ''
-      unlinkedHasMore = false
-      unlinkedTruncated = false
+      clearUnlinkedProjection()
     }
     try {
       const page = await getUnlinkedPage(
         activeNotebook,
         activeSection,
         activePage,
+        '',
         ''
       )
       if (sequence !== unlinkedRequest) return
@@ -487,6 +513,8 @@
       unlinkedCursor = page.cursor ?? ''
       unlinkedHasMore = Boolean(page.hasMore)
       unlinkedTruncated = Boolean(page.truncated)
+      unlinkedScanCursor = page.scanCursor ?? ''
+      unlinkedBatchScanIn = ''
     } catch (cause) {
       if (sequence !== unlinkedRequest) return
       unlinkedErrorAction = 'initial'
@@ -509,23 +537,51 @@
     ].join('\u0000')
   }
 
-  // The cursor is a keyset over the same composite key, so appended pages
-  // should never overlap — this dedup is defensive against any ordering drift.
-  function uniqueUnlinked(
+  // Merge residual/scan pages: same source page can reappear with additional
+  // blocks (within a batch or across Scan more). Concatenate ids/snippets.
+  function mergeUnlinked(
     current: UnlinkedMention[],
     incoming: UnlinkedMention[]
   ): UnlinkedMention[] {
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local helper set
-    const seen = new Set(current.map(unlinkedMentionKey))
-    return [
-      ...current,
-      ...incoming.filter((mention) => {
-        const key = unlinkedMentionKey(mention)
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local helper map
+    const byKey = new Map<string, UnlinkedMention>()
+    const order: string[] = []
+    for (const m of current) {
+      const k = unlinkedMentionKey(m)
+      byKey.set(k, {
+        ...m,
+        sourceBlockIds: [...m.sourceBlockIds],
+        sourceSnippets: [...(m.sourceSnippets ?? [])]
       })
-    ]
+      order.push(k)
+    }
+    for (const m of incoming) {
+      const k = unlinkedMentionKey(m)
+      const ex = byKey.get(k)
+      if (!ex) {
+        byKey.set(k, {
+          ...m,
+          sourceBlockIds: [...m.sourceBlockIds],
+          sourceSnippets: [...(m.sourceSnippets ?? [])]
+        })
+        order.push(k)
+        continue
+      }
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local helper set
+      const seenIds = new Set(ex.sourceBlockIds)
+      const snippets = ex.sourceSnippets ?? []
+      const inSnips = m.sourceSnippets ?? []
+      for (let i = 0; i < m.sourceBlockIds.length; i++) {
+        const id = m.sourceBlockIds[i]
+        if (seenIds.has(id)) continue
+        seenIds.add(id)
+        ex.sourceBlockIds.push(id)
+        snippets.push(inSnips[i] ?? '')
+      }
+      ex.sourceSnippets = snippets
+      ex.matchCount = ex.sourceBlockIds.length
+    }
+    return order.map((k) => byKey.get(k)!)
   }
 
   async function loadMoreUnlinked(
@@ -539,6 +595,7 @@
     if (
       unlinkedLoading ||
       unlinkedLoadingMore ||
+      unlinkedScanningMore ||
       !unlinkedHasMore ||
       !unlinkedCursor
     ) {
@@ -546,22 +603,29 @@
     }
     const sequence = unlinkedRequest
     const nextCursor = unlinkedCursor
+    const batchScan = unlinkedBatchScanIn
     unlinkedLoadingMore = true
     unlinkedError = ''
     unlinkedErrorAction = 'more'
+    // One-shot final-scan status must not pin the subtitle during residual paging.
+    unlinkedScanStatus = ''
     try {
       const page = await getUnlinkedPage(
         activeNotebook,
         activeSection,
         activePage,
-        nextCursor
+        nextCursor,
+        batchScan
       )
       if (sequence !== unlinkedRequest) return
-      unlinked = uniqueUnlinked(unlinked, page.results ?? [])
+      // Merge (not drop-dedup): a page already listed can gain more blocks on
+      // a later residual page of the same FTS batch.
+      unlinked = mergeUnlinked(unlinked, page.results ?? [])
       unlinkedCursor = page.cursor ?? ''
       unlinkedHasMore = Boolean(page.hasMore)
       // Pool-level flag: keep true if either page reports the FTS cap.
       unlinkedTruncated = unlinkedTruncated || Boolean(page.truncated)
+      if (page.scanCursor) unlinkedScanCursor = page.scanCursor
     } catch (cause) {
       if (sequence !== unlinkedRequest) return
       unlinkedErrorAction = 'more'
@@ -574,9 +638,74 @@
     }
   }
 
+  // scanMoreUnlinked fetches the next capped FTS candidate batch (beyond the
+  // current window). Residual Load more stays on unlinkedBatchScanIn; this path
+  // advances the batch and merges residual pages (same page may gain blocks).
+  // Blocked while residual has_more so unread pages in the current batch are
+  // not abandoned when the residual cursor resets to the next batch.
+  async function scanMoreUnlinked(
+    activeNotebook: string,
+    activeSection: string,
+    activePage: string
+  ): Promise<void> {
+    if (
+      unlinkedLoading ||
+      unlinkedLoadingMore ||
+      unlinkedScanningMore ||
+      unlinkedHasMore ||
+      !unlinkedTruncated ||
+      !unlinkedScanCursor
+    ) {
+      return
+    }
+    const sequence = unlinkedRequest
+    const nextScan = unlinkedScanCursor
+    unlinkedScanningMore = true
+    unlinkedError = ''
+    unlinkedErrorAction = 'scan'
+    unlinkedScanStatus = ''
+    try {
+      const page = await getUnlinkedPage(
+        activeNotebook,
+        activeSection,
+        activePage,
+        '',
+        nextScan
+      )
+      if (sequence !== unlinkedRequest) return
+      const beforeCount = unlinked.length
+      unlinked = mergeUnlinked(unlinked, page.results ?? [])
+      unlinkedCursor = page.cursor ?? ''
+      unlinkedHasMore = Boolean(page.hasMore)
+      unlinkedTruncated = Boolean(page.truncated)
+      unlinkedScanCursor = page.scanCursor ?? ''
+      unlinkedBatchScanIn = nextScan
+      // Final batch: Scan more button unmounts — announce and restore focus.
+      if (!unlinkedScanCursor) {
+        const added = unlinked.length - beforeCount
+        unlinkedScanStatus =
+          added > 0
+            ? `Scan complete. ${added} more page${added === 1 ? '' : 's'} found.`
+            : 'Scan complete. No additional pages in this batch.'
+        queueMicrotask(() => unlinkedSectionToggleEl?.focus())
+      }
+    } catch (cause) {
+      if (sequence !== unlinkedRequest) return
+      unlinkedErrorAction = 'scan'
+      unlinkedError =
+        cause instanceof Error
+          ? cause.message
+          : 'More mention candidates could not be scanned.'
+    } finally {
+      if (sequence === unlinkedRequest) unlinkedScanningMore = false
+    }
+  }
+
   function retryUnlinked(): void {
     if (unlinkedErrorAction === 'more') {
       void loadMoreUnlinked(notebook, section, page)
+    } else if (unlinkedErrorAction === 'scan') {
+      void scanMoreUnlinked(notebook, section, page)
     } else {
       // Retry keeps projection so a second failure does not blank the section.
       void loadUnlinked(notebook, section, page, false)
@@ -929,6 +1058,7 @@
           <h3 class="m-0">
             <button
               type="button"
+              bind:this={unlinkedSectionToggleEl}
               class="w-full px-2.5 py-2 border-none bg-transparent text-left flex items-center gap-2 text-surface-sidebar-text hover:bg-hover cursor-pointer transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-primary-start"
               aria-expanded={unlinkedExpanded}
               aria-controls="unlinked-mentions-body"
@@ -954,8 +1084,12 @@
                 >
                   {#if unlinkedLoading}
                     Finding unlinked mentions…
+                  {:else if unlinkedScanningMore}
+                    Scanning more mentions…
+                  {:else if unlinkedScanStatus}
+                    {unlinkedScanStatus}
                   {:else if unlinkedTruncated && unlinked.length === 0}
-                    No promotable plain mentions in the first results · may be
+                    No promotable plain mentions in this batch · may be
                     incomplete
                   {:else if unlinkedHasMore}
                     {unlinked.length}+ pages mention this title{unlinkedTruncated
@@ -982,7 +1116,9 @@
               <p class="m-0 text-type-xs font-label-sm-bold text-text-primary">
                 {unlinkedErrorAction === 'more'
                   ? 'More unlinked mentions could not be loaded.'
-                  : 'Unlinked mentions could not be loaded.'}
+                  : unlinkedErrorAction === 'scan'
+                    ? 'More mention candidates could not be scanned.'
+                    : 'Unlinked mentions could not be loaded.'}
               </p>
               <p class="mt-1 mb-0 text-type-2xs text-text-muted">
                 {unlinkedError}
@@ -1004,9 +1140,42 @@
                 <div
                   class="px-2.5 py-2 text-type-2xs font-body-md text-status-warn bg-status-warn/10 border-b border-status-warn/30"
                 >
-                  {unlinked.length === 0
-                    ? 'Matching text is capped for performance — no promotable plain mentions in the first results.'
-                    : 'Results may be incomplete — matching text is capped for performance.'}
+                  <p class="m-0">
+                    {unlinked.length === 0
+                      ? 'Matching text is capped for performance — no promotable plain mentions in this batch.'
+                      : 'Results may be incomplete — matching text is capped for performance.'}
+                  </p>
+                  {#if unlinkedScanCursor}
+                    {@const scanBlockedByResidual = unlinkedHasMore}
+                    <button
+                      type="button"
+                      class="mt-2 w-full rounded border border-status-warn/40 bg-surface-panel/50 px-2.5 py-1.5 text-label-sm font-label-sm-bold text-accent-primary-start hover:bg-hover cursor-pointer transition-colors disabled:cursor-not-allowed disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
+                      disabled={unlinkedLoading ||
+                        unlinkedLoadingMore ||
+                        unlinkedScanningMore ||
+                        scanBlockedByResidual}
+                      title={scanBlockedByResidual
+                        ? 'Load remaining pages in this batch first'
+                        : undefined}
+                      aria-label={unlinkedScanningMore
+                        ? 'Scanning more unlinked mention candidates'
+                        : scanBlockedByResidual
+                          ? 'Load remaining unlinked pages in this batch before scanning more candidates'
+                          : 'Scan more unlinked mention candidates'}
+                      onclick={() => scanMoreUnlinked(notebook, section, page)}
+                    >
+                      {unlinkedScanningMore
+                        ? 'Scanning…'
+                        : 'Scan more mentions'}
+                    </button>
+                    {#if scanBlockedByResidual}
+                      <p
+                        class="mt-1 mb-0 text-type-3xs text-surface-sidebar-text-muted"
+                      >
+                        Load remaining pages in this batch before scanning more.
+                      </p>
+                    {/if}
+                  {/if}
                 </div>
               {/if}
               <ul class="m-0 p-0 list-none">
@@ -1134,7 +1303,9 @@
                 <button
                   type="button"
                   class="w-full border-t border-surface-sidebar-border/70 bg-transparent px-2.5 py-2 text-label-sm font-label-sm-bold text-accent-primary-start hover:bg-hover cursor-pointer transition-colors disabled:cursor-wait disabled:opacity-65 focus-visible:ring-2 focus-visible:ring-accent-primary-start"
-                  disabled={unlinkedLoading || unlinkedLoadingMore}
+                  disabled={unlinkedLoading ||
+                    unlinkedLoadingMore ||
+                    unlinkedScanningMore}
                   aria-label={unlinkedLoadingMore
                     ? 'Loading more unlinked mentions'
                     : 'Load more unlinked mentions'}

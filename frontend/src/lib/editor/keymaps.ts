@@ -1,7 +1,12 @@
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
+import {
+  Plugin,
+  PluginKey,
+  TextSelection,
+  type Transaction
+} from '@tiptap/pm/state'
 import { keydownHandler } from '@tiptap/pm/keymap'
 import { freshId } from './uniqueIdPlugin'
 import { resolveShortcut } from '../../settings/hotkeys'
@@ -13,7 +18,8 @@ const siltConfigKeymapsKey = new PluginKey('siltConfigDrivenKeymaps')
 //
 // Ports the keydown logic from the legacy BlockRenderer.svelte (lines 280-398)
 // to TipTap keyboard shortcuts / ProseMirror keymap bindings:
-//   - Enter: create a new NoteBlock at the same depth below the cursor.
+//   - Enter: split at the caret into a new NoteBlock at the same depth
+//     (text after the caret moves to the new block; empty when at end).
 //   - Backspace at start: merge into a same-type sibling above; else clear
 //     bullet, unindent, then delete+focus-prev.
 //   - Delete at end: merge a same-type sibling below into this block (or drop
@@ -85,6 +91,59 @@ function getNextBullet(currentBullet: string): string {
   return currentBullet
 }
 
+/** Parse `1. ` / `2) ` ordered markers; null for unordered/plain. */
+function parseOrderedBullet(
+  bullet: string
+): { n: number; punc: string } | null {
+  const match = (bullet || '').match(/^(\d+)([.)]\s)$/)
+  if (!match) return null
+  return { n: parseInt(match[1], 10), punc: match[2] }
+}
+
+/**
+ * After inserting an ordered noteBlock, renumber every following contiguous
+ * same-depth ordered note with the same punctuation so mid-list Enter does
+ * not leave duplicate numbers (2 → new 3, old 3 stays 3).
+ *
+ * Walks document order after `fromPos`. Deeper nested notes (attrs.depth >
+ * depth) are skipped so a child under item 2 does not stop renumber of later
+ * same-depth parents. Stops at a shallower block, non-note, or bullet-style break.
+ */
+function renumberFollowingOrdered(
+  tr: Transaction,
+  fromPos: number,
+  startNum: number,
+  punc: string,
+  depth: number
+): Transaction {
+  const startNode = tr.doc.nodeAt(fromPos)
+  if (!startNode) return tr
+  let pos = fromPos + startNode.nodeSize
+  let expected = startNum + 1
+  while (pos < tr.doc.content.size) {
+    const node = tr.doc.nodeAt(pos)
+    if (!node || node.type.name !== 'noteBlock') break
+    const nodeDepth = (node.attrs.depth as number) || 0
+    if (nodeDepth > depth) {
+      // Nested under a prior sibling — skip, keep scanning for same-depth peers.
+      pos += node.nodeSize
+      continue
+    }
+    if (nodeDepth < depth) break
+    const parsed = parseOrderedBullet(String(node.attrs.bullet || ''))
+    if (!parsed || parsed.punc !== punc) break
+    const want = `${expected}${punc}`
+    if (String(node.attrs.bullet || '') !== want) {
+      tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, bullet: want })
+    }
+    expected++
+    const after = tr.doc.nodeAt(pos)
+    if (!after) break
+    pos += after.nodeSize
+  }
+  return tr
+}
+
 // Convert the current block to a new type (#169). Provides the correct attrs
 // for each type (discarding type-specific attrs that don't apply). Shared by
 // the keymap shortcuts and TipTapEditor's slash command handler.
@@ -144,14 +203,22 @@ function currentBlockInfo(editor: Editor) {
 }
 
 /**
- * A block is "empty" when it carries no editable content — either no inline
- * children, or only whitespace. Whitespace-only blocks behave as empty for
- * BOTH the Backspace unindent/delete path and the Delete drop-empty path so
- * the two boundary keys stay symmetric (otherwise a spaces-only block would
- * unindent on Backspace but merge on Delete).
+ * A block is "empty" when it carries no visible content — no inline children,
+ * or only whitespace text with no atomic inlines. Block refs / embeds are
+ * atoms with empty textContent but are still content (Enter must not treat
+ * `- ((uuid))` as an empty list item and clear the bullet).
+ * Whitespace-only blocks behave as empty for BOTH the Backspace
+ * unindent/delete path and the Delete drop-empty path so the two boundary
+ * keys stay symmetric.
  */
 function isBlockEmpty(node: ProseMirrorNode): boolean {
-  return node.content.size === 0 || node.textContent.trim() === ''
+  if (node.content.size === 0) return true
+  if (node.textContent.trim() !== '') return false
+  let hasAtom = false
+  node.forEach((child) => {
+    if (child.isAtom) hasAtom = true
+  })
+  return !hasAtom
 }
 
 function setBlockDepth(
@@ -799,38 +866,122 @@ export const SiltBlockKeymaps = Extension.create({
       Enter: () => {
         const info = currentBlockInfo(this.editor)
         if (!info) return false
+        // codeBlock content model is text*; leave default handling alone.
+        if (info.node.type.spec.code) return false
 
         // Default to a plain (no-bullet) line. Only noteBlocks inherit /
         // resequence the bullet marker — pressing Enter after a task or
         // header should start a fresh plain line, not a bulleted one (#258).
-        let nextBullet = ''
-        if (info.node.type.name === 'noteBlock') {
-          nextBullet = getNextBullet(info.node.attrs.bullet || '')
-        }
+        // Mid-text split (move trailing content onto the new block) is also
+        // noteBlock-only: task/header/callout keep their full body and only
+        // append an empty note below (avoids demoting trailing task text).
+        const isNote = info.node.type.name === 'noteBlock'
 
-        // Create a new NoteBlock at the same depth right after the current block.
-        const newBlock = {
-          type: 'noteBlock',
-          attrs: {
-            id: null,
-            depth: info.depth,
-            bullet: nextBullet,
-            file_date: new Date().toISOString().slice(0, 10)
+        // Empty list/quote item + Enter exits the container (Word/Docs/Notion
+        // convention; mirrors Backspace bullet/quote clear). Nested depth is
+        // left alone — unindent is Tab/Backspace, not Enter.
+        // Only when the selection is collapsed: a cross-block selection must
+        // delete the range first (standard Enter-with-selection), not clear
+        // the marker while leaving selected content intact.
+        if (
+          isNote &&
+          this.editor.state.selection.empty &&
+          isBlockEmpty(info.node)
+        ) {
+          const bullet = (info.node.attrs.bullet as string) || ''
+          const quote = (info.node.attrs.quote as string) || ''
+          if (bullet) {
+            this.editor.view.dispatch(
+              this.editor.state.tr.setNodeAttribute(info.pos, 'bullet', '')
+            )
+            return true
+          }
+          if (quote) {
+            this.editor.view.dispatch(
+              this.editor.state.tr.setNodeAttribute(info.pos, 'quote', '')
+            )
+            return true
           }
         }
-        const insertPos = info.pos + info.node.nodeSize
-        this.editor.view.dispatch(
-          this.editor.state.tr.insert(insertPos, [
-            this.editor.state.schema.nodeFromJSON(newBlock)
-          ])
-        )
-        // Move cursor into the new block.
-        const newPos = insertPos + 1
-        this.editor.commands.focus()
-        const tr = this.editor.state.tr
-        const sel = TextSelection.create(this.editor.state.doc, newPos, newPos)
-        this.editor.view.dispatch(tr.setSelection(sel))
-        return true
+
+        let nextBullet = ''
+        let nextQuote = ''
+        if (isNote) {
+          nextBullet = getNextBullet(info.node.attrs.bullet || '')
+          // Quote continues across mid-text / end-of-line Enter (markdown `>`
+          // lines); empty quote already exited above.
+          nextQuote = (info.node.attrs.quote as string) || ''
+          // Quote and bullet are mutually exclusive on noteBlock.
+          if (nextQuote) nextBullet = ''
+        }
+
+        const { state } = this.editor
+        const { selection, schema } = state
+        const noteType = schema.nodes.noteBlock
+        if (!noteType) return false
+
+        const blockPos = info.pos
+        // Content lives inside the block node (between open/close tokens).
+        const contentEnd = blockPos + info.node.nodeSize - 1
+
+        try {
+          let tr = state.tr
+          // Non-empty selection: drop it first so split is at the caret
+          // (standard editor Enter-with-selection semantics).
+          if (!selection.empty) {
+            tr = tr.delete(selection.from, selection.to)
+          }
+          const cutFrom = tr.selection.from
+          const mappedContentEnd = tr.mapping.map(contentEnd)
+
+          // noteBlock only: text after the caret moves to the new block.
+          // Other block types leave the source intact and insert empty below.
+          const afterContent =
+            isNote && cutFrom < mappedContentEnd
+              ? tr.doc.slice(cutFrom, mappedContentEnd).content
+              : null
+          if (isNote && cutFrom < mappedContentEnd) {
+            tr = tr.delete(cutFrom, mappedContentEnd)
+          }
+
+          const attrs = {
+            id: null as string | null,
+            depth: info.depth,
+            bullet: nextBullet,
+            quote: nextQuote,
+            file_date: new Date().toISOString().slice(0, 10)
+          }
+          const newNode =
+            afterContent && afterContent.size > 0
+              ? noteType.create(attrs, afterContent)
+              : noteType.create(attrs)
+
+          // After in-block delete, block still starts at blockPos.
+          const blockNode = tr.doc.nodeAt(blockPos)
+          if (!blockNode) return false
+          const insertPos = blockPos + blockNode.nodeSize
+          tr = tr.insert(insertPos, newNode)
+          // Ordered lists: bump every following same-depth ordered marker so
+          // mid-list Enter does not leave duplicate numbers.
+          const ordered = parseOrderedBullet(nextBullet)
+          if (ordered) {
+            tr = renumberFollowingOrdered(
+              tr,
+              insertPos,
+              ordered.n,
+              ordered.punc,
+              info.depth
+            )
+          }
+          // Caret at start of the new block (same-tx; no focus() split —
+          // see mergeSiblingBlock).
+          tr = tr.setSelection(TextSelection.create(tr.doc, insertPos + 1))
+          this.editor.view.dispatch(tr)
+          return true
+        } catch (e) {
+          console.error('Enter split: dispatch failed', e)
+          return false
+        }
       },
 
       Backspace: () => {

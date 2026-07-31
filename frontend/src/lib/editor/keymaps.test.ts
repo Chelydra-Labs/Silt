@@ -203,6 +203,125 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
     editor.destroy()
   })
 
+  it('Enter on empty bulleted note clears the bullet (exits the list)', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '- ' }
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.focus('end')
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('')
+    editor.destroy()
+  })
+
+  it('Enter with selection spanning empty bullet and next block deletes selection', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '- ' }
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'keep me' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // Selection from empty bullet content into "keep me" (drop "keep ").
+    const secondStart = 1 + editor.state.doc.child(0).nodeSize
+    editor.commands.setTextSelection({ from: 1, to: secondStart + 5 })
+
+    pressEnter(editor)
+
+    // Must not only clear the bullet while leaving selected text intact.
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('- ')
+    expect(editor.state.doc.textContent).not.toContain('keep ')
+    expect(editor.state.doc.childCount).toBeGreaterThanOrEqual(2)
+    editor.destroy()
+  })
+
+  it('Enter on empty ordered note clears the marker (exits the list)', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '2. ' }
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.focus('end')
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('')
+    editor.destroy()
+  })
+
+  it('Enter on empty quoted note clears the quote (exits the quote)', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '', quote: '> ' }
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.focus('end')
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(1)
+    expect(editor.state.doc.child(0).attrs.quote).toBe('')
+    editor.destroy()
+  })
+
+  it('mid-text Enter on a quoted note keeps quote on both halves', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '', quote: '> ' },
+          content: [{ type: 'text', text: 'hello world' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.setTextSelection(1 + 6) // after "hello "
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).textContent).toBe('hello ')
+    expect(editor.state.doc.child(0).attrs.quote).toBe('> ')
+    expect(editor.state.doc.child(1).textContent).toBe('world')
+    expect(editor.state.doc.child(1).attrs.quote).toBe('> ')
+    expect(editor.state.doc.child(1).attrs.bullet).toBe('')
+    editor.destroy()
+  })
+
   it('continues plain (no-bullet) after Enter on a plain noteBlock', () => {
     const editor = makeEditorWithKeymaps()
     const doc: DocJSON = {
@@ -224,6 +343,288 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
     const newBlock = editor.state.doc.child(1)
     expect(newBlock.type.name).toBe('noteBlock')
     expect(newBlock.attrs.bullet).toBe('')
+    editor.destroy()
+  })
+
+  it('splits mid-text bulleted note: text after caret moves to the new li', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(blockDoc('noteBlock', 'hello world'))
+    // Place caret between "hello " and "world" (after 6 chars of content).
+    const blockStart = 1 // doc pos of first block content
+    editor.commands.setTextSelection(blockStart + 6)
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    const first = editor.state.doc.child(0)
+    const second = editor.state.doc.child(1)
+    expect(first.type.name).toBe('noteBlock')
+    expect(first.textContent).toBe('hello ')
+    expect(first.attrs.bullet).toBe('- ')
+    expect(second.type.name).toBe('noteBlock')
+    expect(second.textContent).toBe('world')
+    expect(second.attrs.bullet).toBe('- ')
+    // Caret at start of the new block's content.
+    expect(editor.state.selection.from).toBe(
+      first.nodeSize + 1 // after first block open → start of second content
+    )
+    editor.destroy()
+  })
+
+  it('mid-text Enter on taskBlock keeps full task body and appends empty note', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(blockDoc('taskBlock', 'buy milk and bread'))
+    // Caret after "buy milk " — must not demote "and bread" off the task.
+    editor.commands.setTextSelection(1 + 'buy milk '.length)
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    const task = editor.state.doc.child(0)
+    const note = editor.state.doc.child(1)
+    expect(task.type.name).toBe('taskBlock')
+    expect(task.textContent).toBe('buy milk and bread')
+    expect(task.attrs.status).toBe('TODO')
+    expect(note.type.name).toBe('noteBlock')
+    expect(note.textContent).toBe('')
+    expect(note.attrs.bullet).toBe('')
+    editor.destroy()
+  })
+
+  it('mid-text Enter on headerBlock keeps full header and appends empty note', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'headerBlock',
+          attrs: { id: 'h1', depth: 1 },
+          content: [{ type: 'text', text: 'Section Title Extra' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.setTextSelection(1 + 'Section Title '.length)
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).type.name).toBe('headerBlock')
+    expect(editor.state.doc.child(0).textContent).toBe('Section Title Extra')
+    expect(editor.state.doc.child(1).type.name).toBe('noteBlock')
+    expect(editor.state.doc.child(1).textContent).toBe('')
+    editor.destroy()
+  })
+
+  it('splits mid-text ordered note and resequences the next marker', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'alpha beta' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.setTextSelection(1 + 6) // after "alpha "
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).textContent).toBe('alpha ')
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('1. ')
+    expect(editor.state.doc.child(1).textContent).toBe('beta')
+    expect(editor.state.doc.child(1).attrs.bullet).toBe('2. ')
+    editor.destroy()
+  })
+
+  it('renumbers following ordered items after mid-list Enter (no duplicate numbers)', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'one' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'two three' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'four' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n4', depth: 0, bullet: '4. ' },
+          content: [{ type: 'text', text: 'five' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // Caret in item 2 between "two " and "three"
+    // pos: block0 size 5 (2+3), content of n2 starts at 5+1=6, after "two " = 6+4=10
+    const n2ContentStart = 1 + editor.state.doc.child(0).nodeSize
+    editor.commands.setTextSelection(n2ContentStart + 4)
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(5)
+    const bullets = [0, 1, 2, 3, 4].map(
+      (i) => editor.state.doc.child(i).attrs.bullet
+    )
+    expect(bullets).toEqual(['1. ', '2. ', '3. ', '4. ', '5. '])
+    expect(editor.state.doc.child(1).textContent).toBe('two ')
+    expect(editor.state.doc.child(2).textContent).toBe('three')
+    expect(editor.state.doc.child(3).textContent).toBe('four')
+    expect(editor.state.doc.child(4).textContent).toBe('five')
+    editor.destroy()
+  })
+
+  it('renumbers following ordered items after end-of-item Enter', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1) ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2) ' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3) ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // End of item 2
+    const endOfN2 =
+      editor.state.doc.child(0).nodeSize + editor.state.doc.child(1).nodeSize
+    editor.commands.setTextSelection(endOfN2 - 1)
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(4)
+    expect(
+      [0, 1, 2, 3].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['1) ', '2) ', '3) ', '4) '])
+    expect(editor.state.doc.child(2).textContent).toBe('')
+    expect(editor.state.doc.child(3).textContent).toBe('c')
+    editor.destroy()
+  })
+
+  it('renumbers same-depth ordered peers past nested children', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'parent one' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'parent two' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2a', depth: 1, bullet: '1. ' },
+          content: [{ type: 'text', text: 'nested under two' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'parent three' }]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    // End of item 2 (before nested child)
+    const endOfN2 =
+      editor.state.doc.child(0).nodeSize + editor.state.doc.child(1).nodeSize
+    editor.commands.setTextSelection(endOfN2 - 1)
+
+    pressEnter(editor)
+
+    // 1, 2, new empty 3, nested child, former 3 → 4
+    expect(editor.state.doc.childCount).toBe(5)
+    expect(
+      [0, 1, 2, 3, 4].map((i) => ({
+        bullet: editor.state.doc.child(i).attrs.bullet,
+        depth: editor.state.doc.child(i).attrs.depth
+      }))
+    ).toEqual([
+      { bullet: '1. ', depth: 0 },
+      { bullet: '2. ', depth: 0 },
+      { bullet: '3. ', depth: 0 },
+      { bullet: '1. ', depth: 1 },
+      { bullet: '4. ', depth: 0 }
+    ])
+    editor.destroy()
+  })
+
+  it('Enter on bulleted note with only a block ref continues the list', () => {
+    const editor = makeEditorWithKeymaps()
+    const doc: DocJSON = {
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '- ' },
+          content: [
+            {
+              type: 'blockReferenceNode',
+              attrs: { uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }
+            }
+          ]
+        }
+      ]
+    }
+    editor.commands.setContent(doc)
+    editor.commands.focus('end')
+
+    pressEnter(editor)
+
+    // Atom-only body is not empty — continue list, do not clear bullet.
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('- ')
+    expect(editor.state.doc.child(0).childCount).toBe(1)
+    expect(editor.state.doc.child(0).child(0).type.name).toBe(
+      'blockReferenceNode'
+    )
+    expect(editor.state.doc.child(1).type.name).toBe('noteBlock')
+    expect(editor.state.doc.child(1).attrs.bullet).toBe('- ')
+    expect(editor.state.doc.child(1).textContent).toBe('')
+    editor.destroy()
+  })
+
+  it('Enter with a non-empty selection drops the selection then splits', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent(blockDoc('noteBlock', 'one two three'))
+    // Select " two" (chars 3..7) then Enter → first "one", second " three".
+    editor.commands.setTextSelection({ from: 1 + 3, to: 1 + 7 })
+
+    pressEnter(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).textContent).toBe('one')
+    expect(editor.state.doc.child(1).textContent).toBe(' three')
     editor.destroy()
   })
 })

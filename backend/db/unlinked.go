@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"silt/backend/parser"
@@ -40,23 +41,41 @@ type UnlinkedMention struct {
 // GetUnlinkedMentionsPaged, mirroring BacklinksResult.
 //
 // HasMore is page-level: more residual source pages exist in the current FTS
-// candidate pool beyond this cursor page. Truncated is pool-level: the FTS
-// candidate fetch hit unlinkedScanCap, so residual mentions beyond the ordered
-// top-N candidates may be missing. The two flags are independent.
+// candidate window beyond this cursor page. Truncated is pool-level: more FTS
+// candidates exist beyond the current window (past unlinkedScanCap for this
+// batch). ScanCursor is the opaque keyset to fetch the next FTS batch when
+// Truncated is true (empty otherwise). Residual cursor/HasMore are orthogonal
+// to Truncated/ScanCursor — see scanUnlinkedCandidateBlocks.
 type UnlinkedMentionsResult struct {
-	Results   []UnlinkedMention `json:"results"`
-	Cursor    string            `json:"cursor"`
-	HasMore   bool              `json:"has_more"`
-	Truncated bool              `json:"truncated"`
+	Results    []UnlinkedMention `json:"results"`
+	Cursor     string            `json:"cursor"`
+	HasMore    bool              `json:"has_more"`
+	Truncated  bool              `json:"truncated"`
+	ScanCursor string            `json:"scan_cursor"`
 }
 
-// unlinkedScanCap bounds the FTS candidate fetch. A title that appears in more
-// than this many blocks is almost certainly a common word; unbounded scans would
-// dominate IPC cost. The ordered top-N candidates are enough to surface the
-// feature. When the cap binds, Truncated is true so the UI can warn that results
-// may be incomplete — distinct from page-level HasMore. Mirrors searchFlatCap's
-// rationale.
+// unlinkedScanCap bounds each FTS candidate batch (post CODE/self filter). A
+// title that appears in more than this many blocks is almost certainly a common
+// word; unbounded scans would dominate IPC cost. Callers may request further
+// batches via ScanCursor (user-gated "Scan more") — each round is still capped.
+// When a batch fills the cap with more FTS matches beyond it, Truncated is true.
+// Mirrors searchFlatCap's rationale.
 const unlinkedScanCap = 500
+
+// unlinkedScanFillRounds caps how many FTS keyset probes one call may run when
+// CODE/self filters under-fill the candidate window. Each probe is still
+// LIMIT unlinkedScanCap+1, so worst-case FTS rows examined ≈ rounds×cap — still
+// bounded, never O(all vault matches).
+const unlinkedScanFillRounds = 4
+
+// scanCursorPrefixV3 versions the opaque FTS batch keyset as the exclusive
+// lower-bound rowid observed at scan time (immutable bound). A trailing block
+// id is stored for diagnostics only — never re-resolved to a live rowid (that
+// skips unread rows when the anchor is re-indexed to a higher rowid).
+// Legacy u2:uuid soft-resets (client dedups); u1:rowid still decodes.
+const scanCursorPrefixV3 = "u3:"
+const scanCursorPrefixV2 = "u2:"
+const scanCursorPrefixV1 = "u1:"
 
 // GetUnlinkedMentionsPaged returns source pages whose clean_content has a
 // residual plain (non-[[…]]) whole-word mention of the active page's title.
@@ -66,13 +85,24 @@ const unlinkedScanCap = 500
 // Results are deduped by source page and cursor-paged by the same keyset
 // pattern as GetBacklinksPaged.
 //
+// scanCursor selects the FTS candidate batch: empty starts at the lowest
+// matching rowid; a prior result's ScanCursor continues after that batch's
+// last examined rowid (immutable bound from scan time). Residual cursor pages
+// only within the current batch window. Client-accumulated batches: the UI
+// merges residual pages across Scan more rounds (see ARCHITECTURE §4.3 / §5.4).
+//
 // The title is the active page's leaf `page` name; queries with a blank or
 // sub-2-rune title return an empty result (short names yield too many false
 // hits and are not actionable). Ambiguous titles (same leaf name on more than
 // one page) are still surfaced — with Ambiguous=true and Candidates populated —
 // so the UI can offer one-click disambiguation chips.
-func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, page, cursor string, limit int) (UnlinkedMentionsResult, error) {
-	title := strings.TrimSpace(page)
+func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, page, cursor, scanCursor string, limit int) (UnlinkedMentionsResult, error) {
+	// Normalize path once so title MATCH and self-page exclusion agree (padded
+	// IPC page values must not surface the active page as its own unlinked hit).
+	page = strings.TrimSpace(page)
+	notebook = strings.TrimSpace(notebook)
+	section = strings.TrimSpace(section)
+	title := page
 	if title == "" || len([]rune(title)) < 2 {
 		return UnlinkedMentionsResult{Results: []UnlinkedMention{}}, nil
 	}
@@ -100,7 +130,8 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 	}
 	titleRef := ResolvePageLinkAgainst(title, pages)
 
-	candidates, scanTruncated, err := dm.scanUnlinkedCandidateBlocks(db, title, source, notebook, section, page)
+	afterRowid := resolveUnlinkedScanCursor(scanCursor)
+	candidates, scanTruncated, lastRowid, lastID, err := dm.scanUnlinkedCandidateBlocks(db, title, source, notebook, section, page, afterRowid)
 	if err != nil {
 		return UnlinkedMentionsResult{}, err
 	}
@@ -151,6 +182,11 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 	}
 	sortUnlinkedMentions(all)
 
+	outScanCursor := ""
+	if scanTruncated {
+		outScanCursor = encodeUnlinkedScanCursor(lastRowid, lastID)
+	}
+
 	startIdx := 0
 	if cursorKey, ok := decodeUnlinkedCursor(cursor); ok {
 		found := false
@@ -163,10 +199,11 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 		}
 		if !found {
 			// Cursor sorts at or past every item → empty page.
-			// Pool-level Truncated still applies (scan already ran).
+			// Pool-level Truncated / ScanCursor still apply (scan already ran).
 			return UnlinkedMentionsResult{
-				Results:   []UnlinkedMention{},
-				Truncated: scanTruncated,
+				Results:    []UnlinkedMention{},
+				Truncated:  scanTruncated,
+				ScanCursor: outScanCursor,
 			}, nil
 		}
 	}
@@ -186,65 +223,201 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 		nextCursor = encodeUnlinkedCursor(pageItems[len(pageItems)-1])
 	}
 	return UnlinkedMentionsResult{
-		Results:   pageItems,
-		Cursor:    nextCursor,
-		HasMore:   hasMore,
-		Truncated: scanTruncated,
+		Results:    pageItems,
+		Cursor:     nextCursor,
+		HasMore:    hasMore,
+		Truncated:  scanTruncated,
+		ScanCursor: outScanCursor,
 	}, nil
 }
 
 type unlinkedBlock struct {
+	rowid                                      int64
 	id, source, notebook, section, page, clean string
 }
 
-// scanUnlinkedCandidateBlocks runs the FTS5 phrase match over clean_content and
-// returns raw candidate blocks plus whether the ordered fetch hit unlinkedScanCap.
-// The caller keeps only blocks with a residual plain title occurrence
-// (FirstPlainTitleOccurrence). Excludes the active page itself and CODE blocks
-// (code mentions are not actionable prose to promote).
+// scanUnlinkedCandidateBlocks runs a bounded FTS5 phrase window over
+// clean_content and returns candidate blocks (post CODE/self filter) plus
+// whether more FTS matches exist beyond the window and the last examined
+// (rowid, block id) for scan_cursor.
 //
-// ORDER BY matches the residual page sort key so the capped set is stable.
-// LIMIT is unlinkedScanCap+1 so Truncated is true only when a row exists beyond
-// the cap (same exact-boundary rule as PluginRawQuery).
-func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source, notebook, section, page string) ([]unlinkedBlock, bool, error) {
+// WHY FTS rowid subquery (not path ORDER BY on the join): EXPLAIN shows
+// path-ordered plans do MATCH → join → TEMP B-TREE sort on path columns before
+// LIMIT, so common titles still materialize the full match set. A nested
+// `SELECT rowid FROM blocks_fts … ORDER BY rowid LIMIT N` uses FTS index 64
+// (rowid-ordered) and stops at N before joining blocks.
+//
+// CODE / self-page filters run in Go after each probe. A single probe can
+// under-fill when many hits are CODE/self, so we loop-fill up to
+// unlinkedScanFillRounds probes until we have unlinkedScanCap keepers or FTS
+// is exhausted — still O(rounds×cap), never O(all vault matches). lastRowid is
+// the last FTS hit examined (including filtered rows) so scan_cursor does not
+// skip past dropped hits. Residual plain filtering happens in the caller.
+//
+// afterRowid is an exclusive lower bound (0 = from the start).
+func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source, notebook, section, page string, afterRowid int64) ([]unlinkedBlock, bool, int64, string, error) {
 	phrase := buildUnlinkedFTSPhrase(title)
 	if phrase == "" {
-		return nil, false, nil
+		return nil, false, 0, "", nil
 	}
-	// source is NOT NULL DEFAULT 'vault'. ORDER BY matches idx_blocks_src_file
-	// prefix (source, notebook, section, page) so the planner can walk in order
-	// and stop at LIMIT — no trailing b.id (UUID PK is not on that index and
-	// forced a full match-set sort). Page-level residual sort/cursor is the same
-	// path key; within-page block order is not load-bearing for the cap.
-	// clean_content may be empty; COALESCE for scan.
-	q := `SELECT b.id, b.source, b.notebook, b.section, b.page, COALESCE(b.clean_content,'')
-		FROM blocks_fts
-		JOIN blocks b ON b.rowid = blocks_fts.rowid
-		WHERE blocks_fts MATCH ?
-		  AND b.type <> 'CODE'
-		  AND NOT (b.source = ? AND b.notebook = ? AND b.section = ? AND b.page = ?)
-		ORDER BY b.source, b.notebook, b.section, b.page
-		LIMIT ?`
-	rows, err := db.Query(q, phrase, source, notebook, section, page, unlinkedScanCap+1)
-	if err != nil {
-		return nil, false, fmt.Errorf("unlinked mentions: fts scan: %w", err)
+	if afterRowid < 0 {
+		afterRowid = 0
 	}
-	defer rows.Close()
-	var out []unlinkedBlock
-	for rows.Next() {
-		var c unlinkedBlock
-		if err := rows.Scan(&c.id, &c.source, &c.notebook, &c.section, &c.page, &c.clean); err != nil {
-			return nil, false, fmt.Errorf("unlinked mentions: scan: %w", err)
+
+	// FTS-first keyset: bound MATCH work, then PK-join blocks (no path TEMP sort).
+	// Outer ORDER BY f.rid keeps iteration order identical to the keyset so
+	// lastRowid/lastID always reflect the highest examined rid in the probe.
+	const q = `SELECT b.rowid, b.id, b.source, b.notebook, b.section, b.page, b.type, COALESCE(b.clean_content,'')
+		FROM (
+			SELECT rowid AS rid FROM blocks_fts
+			WHERE blocks_fts MATCH ?
+			  AND rowid > ?
+			ORDER BY rowid
+			LIMIT ?
+		) AS f
+		JOIN blocks b ON b.rowid = f.rid
+		ORDER BY f.rid`
+
+	type rawRow struct {
+		unlinkedBlock
+		blockType string
+	}
+	keep := func(r rawRow) bool {
+		if r.blockType == "CODE" {
+			return false
 		}
-		out = append(out, c)
+		if r.source == source && r.notebook == notebook && r.section == section && r.page == page {
+			return false
+		}
+		return true
 	}
-	if err := rows.Err(); err != nil {
-		return nil, false, err
+
+	out := make([]unlinkedBlock, 0, unlinkedScanCap)
+	after := afterRowid
+	var lastRowid int64
+	var lastID string
+	moreFTS := false
+
+	for round := 0; round < unlinkedScanFillRounds && len(out) < unlinkedScanCap; round++ {
+		rows, err := db.Query(q, phrase, after, unlinkedScanCap+1)
+		if err != nil {
+			return nil, false, 0, "", fmt.Errorf("unlinked mentions: fts scan: %w", err)
+		}
+		var raw []rawRow
+		for rows.Next() {
+			var r rawRow
+			if err := rows.Scan(&r.rowid, &r.id, &r.source, &r.notebook, &r.section, &r.page, &r.blockType, &r.clean); err != nil {
+				rows.Close()
+				return nil, false, 0, "", fmt.Errorf("unlinked mentions: scan: %w", err)
+			}
+			raw = append(raw, r)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, false, 0, "", err
+		}
+		if len(raw) == 0 {
+			moreFTS = false
+			break
+		}
+
+		probeMore := len(raw) > unlinkedScanCap
+		if probeMore {
+			raw = raw[:unlinkedScanCap]
+		}
+
+		filled := false
+		for i, r := range raw {
+			lastRowid = r.rowid
+			lastID = r.id
+			if !keep(r) {
+				continue
+			}
+			out = append(out, r.unlinkedBlock)
+			if len(out) >= unlinkedScanCap {
+				// Cap reached mid-probe: more FTS exists if unread probe rows remain
+				// or the limit+1 probe saw another hit.
+				moreFTS = (i+1 < len(raw)) || probeMore
+				filled = true
+				break
+			}
+		}
+		if filled {
+			break
+		}
+		after = lastRowid
+		moreFTS = probeMore
+		if !probeMore {
+			break
+		}
+		// Round budget exhausted with probeMore still true: moreFTS stays true
+		// and lastRowid anchors scan_cursor so Scan more can continue.
 	}
-	if len(out) > unlinkedScanCap {
-		return out[:unlinkedScanCap], true, nil
+
+	return out, moreFTS, lastRowid, lastID, nil
+}
+
+// encodeUnlinkedScanCursor builds the opaque next-batch keyset from the last
+// examined FTS rowid (immutable exclusive bound) plus block id (diagnostic).
+//
+// WHY store scan-time rowid (not live UUID→rowid): re-resolving the anchor to
+// its current rowid skips unread matches when that block is re-indexed to a
+// higher rowid. Implicit SQLite rowids on `blocks` are monotonic in practice
+// for this workload (no AUTOINCREMENT; reuse only if the highest rowid is
+// deleted then re-inserted, or on overflow). Rare reuse is bounded by the
+// truncated surface and client-side block-id merge/dedup — do not "fix" by
+// re-resolving to a live rowid.
+func encodeUnlinkedScanCursor(lastRowid int64, lastBlockID string) string {
+	if lastRowid <= 0 {
+		return ""
 	}
-	return out, false, nil
+	id := strings.TrimSpace(lastBlockID)
+	payload := scanCursorPrefixV3 + strconv.FormatInt(lastRowid, 10)
+	if id != "" {
+		payload += ":" + id
+	}
+	return base64.RawURLEncoding.EncodeToString([]byte(payload))
+}
+
+// resolveUnlinkedScanCursor maps an opaque scan_cursor to an exclusive lower-
+// bound rowid for the next FTS probe. Invalid/legacy tokens soft-reset to 0.
+//
+// u3:<rowid>[:<block-id>] (current): stored scan-time rowid (immutable bound).
+// u2:<block-id> (legacy): soft-reset (live UUID→rowid was a skip hazard).
+// u1:<rowid> (legacy): accept raw rowid.
+func resolveUnlinkedScanCursor(scanCursor string) int64 {
+	if scanCursor == "" {
+		return 0
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(scanCursor)
+	if err != nil {
+		return 0
+	}
+	s := string(raw)
+	switch {
+	case strings.HasPrefix(s, scanCursorPrefixV3):
+		rest := s[len(scanCursorPrefixV3):]
+		rowPart := rest
+		if i := strings.IndexByte(rest, ':'); i >= 0 {
+			rowPart = rest[:i]
+		}
+		n, err := strconv.ParseInt(rowPart, 10, 64)
+		if err != nil || n < 0 {
+			return 0
+		}
+		return n
+	case strings.HasPrefix(s, scanCursorPrefixV2):
+		return 0
+	case strings.HasPrefix(s, scanCursorPrefixV1):
+		n, err := strconv.ParseInt(s[len(scanCursorPrefixV1):], 10, 64)
+		if err != nil || n < 0 {
+			return 0
+		}
+		return n
+	default:
+		return 0
+	}
 }
 
 // buildUnlinkedFTSPhrase turns a page title into an FTS5 phrase MATCH expression
