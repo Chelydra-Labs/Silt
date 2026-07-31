@@ -40,14 +40,15 @@ func (dm *DatabaseManager) ListDistinctPages() ([]PageLoc, error) {
 	return listDistinctPages(db)
 }
 
-// ListPagesByLeaf returns distinct locations whose leaf page name equals leaf.
+// ListPagesByLeaf returns distinct locations whose leaf page name matches leaf
+// under EqualFold (same rules as PageMatchesTarget).
 func (dm *DatabaseManager) ListPagesByLeaf(leaf string) ([]PageLoc, error) {
 	db, release, err := dm.handle()
 	if err != nil {
 		return nil, ErrDBClosed
 	}
 	defer release()
-	return listPagesByLeaf(db, leaf)
+	return dm.listPagesByLeaf(db, leaf)
 }
 
 // PageExistsExact reports whether the concrete path exists in the blocks index.
@@ -110,19 +111,34 @@ func leafIsASCII(s string) bool {
 
 // listPagesByLeaf returns distinct page locations whose leaf page name matches
 // leaf with the same case-folding rules as PageMatchesTarget (EqualFold).
-// ASCII leaves use indexed lower(page) (idx_blocks_page_lower). Non-ASCII
-// leaves filter the page inventory in Go — SQLite lower() would miss pairs
-// like Café/CAFÉ.
-func listPagesByLeaf(db *sql.DB, leaf string) ([]PageLoc, error) {
+//
+// ASCII leaves use indexed lower(page) (idx_blocks_page_lower) plus an
+// EqualFold merge against cached non-ASCII leaves so Unicode folds of ASCII
+// letters (K vs U+212A K) cannot look uniquely resolved. Non-ASCII leaves
+// filter the full page inventory in Go (SQLite lower() is ASCII-only).
+func (dm *DatabaseManager) listPagesByLeaf(db *sql.DB, leaf string) ([]PageLoc, error) {
 	leaf = strings.TrimSpace(leaf)
 	if leaf == "" {
 		return nil, nil
 	}
-	if leafIsASCII(leaf) {
-		return scanDistinctPages(db, `lower(page) = lower(?)`, []any{leaf})
+	if !leafIsASCII(leaf) {
+		return listPagesByLeafEqualFoldAll(db, leaf)
 	}
-	// Non-ASCII: full distinct page set, then EqualFold on the leaf only.
-	// Rare path (accented/CJK titles); correctness over SQL lower().
+	asciiHits, err := scanDistinctPages(db, `lower(page) = lower(?)`, []any{leaf})
+	if err != nil {
+		return nil, err
+	}
+	extras, err := dm.nonASCIILeavesMatching(db, leaf)
+	if err != nil {
+		return nil, err
+	}
+	return mergePageLocs(asciiHits, extras), nil
+}
+
+// listPagesByLeafEqualFoldAll scans every distinct page and keeps EqualFold
+// leaf matches. Used for non-ASCII titles (Café/CAFÉ). Large-vault bound for
+// this path needs a persisted Unicode-folded key (tracked follow-up).
+func listPagesByLeafEqualFoldAll(db *sql.DB, leaf string) ([]PageLoc, error) {
 	all, err := scanDistinctPages(db, ``, nil)
 	if err != nil {
 		return nil, err
@@ -134,6 +150,79 @@ func listPagesByLeaf(db *sql.DB, leaf string) ([]PageLoc, error) {
 		}
 	}
 	return out, nil
+}
+
+// nonASCIILeavesMatching returns cached non-ASCII page locs that EqualFold
+// match leaf. Cache is rebuilt after block mutations (same gen as unlinked FTS).
+func (dm *DatabaseManager) nonASCIILeavesMatching(db *sql.DB, leaf string) ([]PageLoc, error) {
+	leaves, err := dm.cachedNonASCIILeaves(db)
+	if err != nil {
+		return nil, err
+	}
+	var out []PageLoc
+	for _, p := range leaves {
+		if strings.EqualFold(p.Page, leaf) {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func (dm *DatabaseManager) cachedNonASCIILeaves(db *sql.DB) ([]PageLoc, error) {
+	dm.unlinkedScanCacheMu.Lock()
+	if dm.nonASCIILeavesOK {
+		out := append([]PageLoc(nil), dm.nonASCIILeaves...)
+		dm.unlinkedScanCacheMu.Unlock()
+		return out, nil
+	}
+	dm.unlinkedScanCacheMu.Unlock()
+
+	// Build outside the lock (DISTINCT can be large). Re-check before store.
+	all, err := scanDistinctPages(db, ``, nil)
+	if err != nil {
+		return nil, err
+	}
+	var nonASCII []PageLoc
+	for _, p := range all {
+		if !leafIsASCII(p.Page) {
+			nonASCII = append(nonASCII, p)
+		}
+	}
+
+	dm.unlinkedScanCacheMu.Lock()
+	defer dm.unlinkedScanCacheMu.Unlock()
+	if !dm.nonASCIILeavesOK {
+		dm.nonASCIILeaves = nonASCII
+		dm.nonASCIILeavesOK = true
+	}
+	return append([]PageLoc(nil), dm.nonASCIILeaves...), nil
+}
+
+func mergePageLocs(a, b []PageLoc) []PageLoc {
+	if len(b) == 0 {
+		return a
+	}
+	if len(a) == 0 {
+		return b
+	}
+	type key struct{ s, n, sec, p string }
+	seen := make(map[key]struct{}, len(a)+len(b))
+	out := make([]PageLoc, 0, len(a)+len(b))
+	add := func(p PageLoc) {
+		k := key{p.Source, p.Notebook, p.Section, p.Page}
+		if _, ok := seen[k]; ok {
+			return
+		}
+		seen[k] = struct{}{}
+		out = append(out, p)
+	}
+	for _, p := range a {
+		add(p)
+	}
+	for _, p := range b {
+		add(p)
+	}
+	return out
 }
 
 // pageExistsExact reports whether a concrete path is present in the blocks index.

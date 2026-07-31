@@ -135,7 +135,7 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 
 	// Leaf-bounded ambiguity (#839): only pages sharing this leaf name, not
 	// the full vault inventory. Cap candidates for IPC/UI.
-	titleAmb, err := resolveUnlinkedTitleAmbiguity(db, title, notebook, section)
+	titleAmb, err := dm.resolveUnlinkedTitleAmbiguity(db, title, notebook, section)
 	if err != nil {
 		return UnlinkedMentionsResult{}, fmt.Errorf("unlinked mentions: resolve title: %w", err)
 	}
@@ -276,11 +276,11 @@ type unlinkedTitleAmbiguity struct {
 }
 
 // resolveUnlinkedTitleAmbiguity resolves the active page leaf against only
-// pages that share that leaf name (indexed page= lookup), then caps Candidates
+// pages that share that leaf name (EqualFold leaf lookup), then caps Candidates
 // for the residual wire shape. Active notebook/section are preferred in sort
 // order so promote chips surface nearby paths first.
-func resolveUnlinkedTitleAmbiguity(db *sql.DB, title, activeNotebook, activeSection string) (unlinkedTitleAmbiguity, error) {
-	pages, err := listPagesByLeaf(db, title)
+func (dm *DatabaseManager) resolveUnlinkedTitleAmbiguity(db *sql.DB, title, activeNotebook, activeSection string) (unlinkedTitleAmbiguity, error) {
+	pages, err := dm.listPagesByLeaf(db, title)
 	if err != nil {
 		return unlinkedTitleAmbiguity{}, err
 	}

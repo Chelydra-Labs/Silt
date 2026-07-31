@@ -1484,6 +1484,131 @@ func TestUnlinked_LeafLookupCaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestUnlinked_LeafLookupASCIIQueryUnicodeFold covers ASCII title vs Unicode
+// fold (OK vs O+U+212A Kelvin): must not look unique. Single-letter "K" is
+// rejected by the unlinked min-title-length gate; multi-rune pair is required.
+func TestUnlinked_LeafLookupASCIIQueryUnicodeFold(t *testing.T) {
+	dm := newTestDB(t)
+	const okKelvin = "O\u212A" // OK — EqualFold-equivalent to "OK"
+	if !strings.EqualFold("OK", okKelvin) {
+		t.Fatal("precondition: Go EqualFold must treat OK and OK as equal")
+	}
+	idxU(t, dm, "vault", "NB", "Sec", "OK", []parser.ParsedBlock{
+		noteBlock(uuidU, "home"),
+	})
+	idxU(t, dm, "vault", "NB", "Other", okKelvin, []parser.ParsedBlock{
+		noteBlock(uuidV, "kelvin page"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
+		noteBlock(uuidW, "see OK please"),
+	})
+
+	pages, err := dm.ListPagesByLeaf("OK")
+	if err != nil {
+		t.Fatalf("ListPagesByLeaf: %v", err)
+	}
+	if len(pages) != 2 {
+		t.Fatalf("OK/OK EqualFold: got %d want 2: %+v", len(pages), pages)
+	}
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "OK", "", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected 1 mention, got %d", len(res.Results))
+	}
+	if !res.Results[0].Ambiguous {
+		t.Fatal("ASCII OK must be Ambiguous when OK also exists")
+	}
+	if got := len(res.Results[0].Candidates); got < 2 {
+		t.Fatalf("candidates: got %d want >=2: %+v", got, res.Results[0].Candidates)
+	}
+}
+
+// TestUnlinked_CacheInvalidatesOnDeleteBlockFromPage covers residual FTS
+// invalidation on single-block delete.
+func TestUnlinked_CacheInvalidatesOnDeleteBlockFromPage(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcA", []parser.ParsedBlock{
+		noteBlock(uuidV, "about Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcB", []parser.ParsedBlock{
+		noteBlock(uuidW, "about Topic"),
+	})
+
+	unlinkedScanCalls.Store(0)
+	if _, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("warm scans=%d", unlinkedScanCalls.Load())
+	}
+
+	if err := dm.DeleteBlockFromPage(uuidW, "vault", "NB", "Sec", "SrcB"); err != nil {
+		t.Fatalf("DeleteBlockFromPage: %v", err)
+	}
+
+	all, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("after delete: %v", err)
+	}
+	if unlinkedScanCalls.Load() != 2 {
+		t.Fatalf("after DeleteBlockFromPage scans=%d want 2", unlinkedScanCalls.Load())
+	}
+	for _, m := range all.Results {
+		if m.SourcePage == "SrcB" {
+			t.Fatalf("stale cache served SrcB: %+v", all.Results)
+		}
+	}
+}
+
+// TestUnlinked_CacheInvalidatesOnClearSourceBlocks covers linked-source wipe.
+func TestUnlinked_CacheInvalidatesOnClearSourceBlocks(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcA", []parser.ParsedBlock{
+		noteBlock(uuidV, "about Topic"),
+	})
+	idxU(t, dm, "linked:ext", "Ext", "Sec", "SrcB", []parser.ParsedBlock{
+		noteBlock(uuidW, "linked about Topic"),
+	})
+
+	unlinkedScanCalls.Store(0)
+	pre, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	if len(pre.Results) != 2 {
+		t.Fatalf("want 2 mentions, got %d", len(pre.Results))
+	}
+
+	if err := dm.ClearSourceBlocks("linked:ext"); err != nil {
+		t.Fatalf("ClearSourceBlocks: %v", err)
+	}
+
+	all, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("after clear source: %v", err)
+	}
+	if unlinkedScanCalls.Load() != 2 {
+		t.Fatalf("after ClearSourceBlocks scans=%d want 2", unlinkedScanCalls.Load())
+	}
+	for _, m := range all.Results {
+		if m.Source == "linked:ext" || m.SourcePage == "SrcB" {
+			t.Fatalf("stale linked source still present: %+v", all.Results)
+		}
+	}
+	if len(all.Results) != 1 || all.Results[0].SourcePage != "SrcA" {
+		t.Fatalf("want only SrcA, got %+v", all.Results)
+	}
+}
+
 // TestUnlinked_LeafLookupUnicodeCaseFold covers non-ASCII case pairs that
 // SQLite lower() cannot fold (Café vs CAFÉ) — must match EqualFold.
 func TestUnlinked_LeafLookupUnicodeCaseFold(t *testing.T) {

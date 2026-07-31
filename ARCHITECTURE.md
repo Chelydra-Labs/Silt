@@ -607,8 +607,12 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   once still surface when residual plain text remains; fully-linked-only
   blocks stay out. Each matched block carries a contextual `source_snippets`
   excerpt (120-rune window centered on the residual plain span).
-  **Leaf ambiguity** for the active title uses an indexed `page = ?` distinct
-  lookup (`idx_blocks_page`), not a full page inventory scan; when multiple
+  **Leaf ambiguity** for the active title uses an indexed
+  `lower(page) = lower(?)` lookup (`idx_blocks_page_lower`) for ASCII leaves,
+  merged with EqualFold matches against cached non-ASCII leaves so Unicode
+  folds of ASCII letters (e.g. K vs U+212A Kelvin) cannot look uniquely
+  resolved. Non-ASCII leaves filter distinct page paths in Go with
+  `strings.EqualFold` (SQLite `lower()` is ASCII-only). When multiple
   locations share the leaf, `ambiguous` is true and `candidates` are
   stable-sorted (active notebook/section first) and **capped**
   (`unlinkedAmbiguousCandidateCap`) on each residual row, with
