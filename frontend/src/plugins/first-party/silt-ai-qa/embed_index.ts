@@ -413,12 +413,20 @@ async function indexChunks(
   })
 }
 
-/** KNN vector search for a query string. */
+/**
+ * Default minimum cosine similarity for QA vector hits (mirrors
+ * get_related_notes min_score). vec0 distance_metric=cosine stores distance
+ * ≈ 1 − similarity, so we keep rows with distance ≤ 1 − floor.
+ */
+export const DEFAULT_MIN_COSINE_SIMILARITY = 0.5
+
+/** KNN vector search for a query string. Drops hits below the similarity floor. */
 export async function vectorSearch(
   ctx: PluginContext,
   query: string,
   topK: number,
-  queryVec?: number[]
+  queryVec?: number[],
+  minCosineSimilarity: number = DEFAULT_MIN_COSINE_SIMILARITY
 ): Promise<RankedHit[]> {
   await migrateIndex(ctx)
   const dimsStr = await metaGet(ctx, 'dimensions')
@@ -436,6 +444,12 @@ export async function vectorSearch(
     ).embeddings[0]
   if (!vec) return []
 
+  const floor = Math.min(1, Math.max(0, minCosineSimilarity))
+  // Cosine distance: lower is closer. Fetch a wider K then filter so the floor
+  // does not leave top_k under-filled solely because distant neighbors ranked in.
+  const fetchK = Math.max(topK * 3, topK)
+  const maxDistance = 1 - floor
+
   const { rows } = await ctx.pluginDb.query(
     `SELECT e.chunk_id AS chunk_id, e.distance AS distance,
             c.block_id AS block_id, c.notebook AS notebook,
@@ -446,18 +460,21 @@ export async function vectorSearch(
       WHERE e.embedding MATCH vec_f32(?)
         AND k = ?
       ORDER BY e.distance`,
-    [vecLiteral(vec), topK]
+    [vecLiteral(vec), fetchK]
   )
 
-  return rows.map((r) => ({
-    blockId: asString(r.block_id ?? r.chunk_id),
-    notebook: asString(r.notebook),
-    section: asString(r.section),
-    page: asString(r.page),
-    lineNumber: Number(r.line_number ?? 0),
-    text: asString(r.text),
-    score: Number(r.distance ?? 0)
-  }))
+  return rows
+    .map((r) => ({
+      blockId: asString(r.block_id ?? r.chunk_id),
+      notebook: asString(r.notebook),
+      section: asString(r.section),
+      page: asString(r.page),
+      lineNumber: Number(r.line_number ?? 0),
+      text: asString(r.text),
+      score: Number(r.distance ?? 0)
+    }))
+    .filter((h) => Number.isFinite(h.score) && h.score <= maxDistance)
+    .slice(0, topK)
 }
 
 export async function getIndexInfo(

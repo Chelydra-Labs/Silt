@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   needsFullRebuildForModel,
   resetIndexState,
-  getIndexInfo
+  getIndexInfo,
+  vectorSearch,
+  DEFAULT_MIN_COSINE_SIMILARITY
 } from './embed_index'
 import type { PluginContext } from '../../sdk'
 import { asString } from '../../../lib/asString'
@@ -57,5 +59,103 @@ describe('getIndexInfo', () => {
       dimensions: 768,
       chunkCount: 42
     })
+  })
+})
+
+describe('vectorSearch similarity floor', () => {
+  beforeEach(() => resetIndexState())
+
+  it('excludes chunks below the cosine similarity floor', async () => {
+    const maxKeep = 1 - DEFAULT_MIN_COSINE_SIMILARITY
+    const ctx = {
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('index_meta') && sql.includes('SELECT')) {
+            return { rows: [{ value: '2' }] }
+          }
+          if (sql.includes('embeddings')) {
+            return {
+              rows: [
+                {
+                  chunk_id: 'c-near',
+                  block_id: 'b-near',
+                  notebook: 'N',
+                  section: 'S',
+                  page: 'P',
+                  line_number: 1,
+                  text: 'relevant',
+                  distance: 0.1 // similarity ~0.9
+                },
+                {
+                  chunk_id: 'c-far',
+                  block_id: 'b-far',
+                  notebook: 'N',
+                  section: 'S',
+                  page: 'P',
+                  line_number: 2,
+                  text: 'noise',
+                  distance: maxKeep + 0.2 // below floor
+                }
+              ]
+            }
+          }
+          return { rows: [] }
+        }),
+        exec: vi.fn(async () => {})
+      },
+      ai: {
+        embed: vi.fn(async () => ({
+          embeddings: [[1, 0]],
+          model: 'm',
+          dimensions: 2
+        }))
+      }
+    } as unknown as PluginContext
+
+    const hits = await vectorSearch(ctx, 'q', 10, [1, 0])
+    expect(hits.map((h) => h.blockId)).toEqual(['b-near'])
+  })
+
+  it('keeps chunks at or above the floor', async () => {
+    const ctx = {
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('index_meta') && sql.includes('SELECT')) {
+            return { rows: [{ value: '2' }] }
+          }
+          if (sql.includes('embeddings')) {
+            return {
+              rows: [
+                {
+                  chunk_id: 'c1',
+                  block_id: 'b1',
+                  notebook: 'N',
+                  section: 'S',
+                  page: 'P',
+                  line_number: 1,
+                  text: 'hit',
+                  distance: 0.5 // similarity 0.5 — on the floor
+                }
+              ]
+            }
+          }
+          return { rows: [] }
+        }),
+        exec: vi.fn(async () => {})
+      },
+      ai: {
+        embed: vi.fn(async () => ({
+          embeddings: [[1, 0]],
+          model: 'm',
+          dimensions: 2
+        }))
+      }
+    } as unknown as PluginContext
+
+    const hits = await vectorSearch(ctx, 'q', 5, [1, 0])
+    expect(hits).toHaveLength(1)
+    expect(hits[0].blockId).toBe('b1')
   })
 })

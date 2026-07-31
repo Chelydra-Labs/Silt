@@ -1,11 +1,9 @@
 // Agent tool #597 — search_notes.
 //
-// Hybrid retrieval exposed to the agent. The retrieval pipeline is shared with
-// silt-ai-qa (#597 extract); the agent injects its own vector search. The agent
-// does not maintain a vector index today, so it relies on FTS5 recall refined
-// by embedding-based rerank (ctx.ai.embed) — no index maintenance, still
-// semantically ranked. Results are formatted as readable text the model can
-// cite: block id, location, snippet, score.
+// Hybrid retrieval exposed to the agent. Primary channel is FTS5 (via shared
+// hybridRetrieve). When FTS returns nothing, a semantic fallback ranks recent
+// + keyword-recalled candidates by cosine similarity (same path as
+// get_related_notes) so a single empty FTS channel cannot zero the tool.
 
 import type { PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
@@ -20,6 +18,7 @@ import type {
 } from '../../../shared/retrieval/hybrid'
 import type { ToolResult } from '../tool-registry'
 import { breadcrumb, clampInt } from './_util'
+import { embedOne, gatherCandidates, rankCandidates } from './_embedding'
 
 export const searchNotesToolDef = {
   name: 'search_notes',
@@ -63,15 +62,11 @@ interface SearchFilters {
   type?: string
 }
 
-/**
- * The agent has no vector index, so its vector search contributes nothing and
- * hybrid retrieval falls open to FTS5. Returning [] (not throwing) keeps the
- * pipeline on its FTS-only path; rerank (via ctx.ai.embed) still refines the
- * keyword hits. If a future agent maintains its own index, swap this for a real
- * KNN implementation bound to ctx.pluginDb.
- */
-const agentVectorSearch: VectorSearchFn = (): Promise<RankedHit[]> =>
+/** No agent vec0 index — hybrid primary path is pure FTS (+ embed rerank). */
+const emptyVectorSearch: VectorSearchFn = (): Promise<RankedHit[]> =>
   Promise.resolve([])
+
+const SEMANTIC_MIN_SCORE = 0.5
 
 export async function handleSearchNotes(
   ctx: PluginContext,
@@ -84,14 +79,10 @@ export async function handleSearchNotes(
   const topK = clampInt(args.top_k, 10, 1, 50)
   const filters = normalizeFilters(args.filters)
 
-  // Rerank on (embedding) so the model sees semantically ranked hits even
-  // without a vector index. Generous char budget: the tool formats its own
-  // output, so do not let the RAG trim stage drop results prematurely.
-  // Filters run BEFORE rerank so out-of-scope text is never embedded and
-  // cannot crowd in-scope hits out of top_k.
+  let degradedNote = ''
   const opts: RetrieveOptions = {
     top_k: topK,
-    hybrid_weight: 0, // no agent vector index → pure FTS recall
+    hybrid_weight: 0, // primary: pure FTS recall
     min_score: 0,
     max_context_chars: 100_000,
     rerank_enabled: true,
@@ -100,6 +91,7 @@ export async function handleSearchNotes(
         ? async (passages) => filterPassages(ctx, passages, filters)
         : undefined,
     onDegraded: (info) => {
+      degradedNote = `Retrieval degraded (${info.side}): ${info.message}`
       void ctx.ai.auditEvent?.({
         kind: 'search_degraded',
         tool: 'search_notes',
@@ -109,12 +101,33 @@ export async function handleSearchNotes(
     }
   }
 
-  let passages
+  let passages: RetrievedPassage[]
   try {
-    passages = await hybridRetrieve(ctx, query, opts, agentVectorSearch)
+    passages = await hybridRetrieve(ctx, query, opts, emptyVectorSearch)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return { content: '', error: `search failed: ${msg}` }
+  }
+
+  // Semantic fallback when FTS (and rerank) produced nothing.
+  if (passages.length === 0) {
+    try {
+      passages = await semanticFallback(ctx, query, topK, filters)
+      if (passages.length > 0) {
+        degradedNote =
+          'Keyword search returned no matches; results are from semantic fallback.'
+        void ctx.ai.auditEvent?.({
+          kind: 'search_degraded',
+          tool: 'search_notes',
+          side: 'fts',
+          status: 'degraded',
+          message: 'fts_empty_semantic_fallback'
+        })
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { content: '', error: `search failed: ${msg}` }
+    }
   }
 
   if (passages.length === 0) {
@@ -131,8 +144,11 @@ export async function handleSearchNotes(
       `    ${snippet.replace(/\n/g, '\n    ')}`
     ].join('\n')
   })
+  const header = degradedNote
+    ? `${degradedNote}\n\n${passages.length} result(s):\n\n`
+    : `${passages.length} result(s):\n\n`
   return {
-    content: `${passages.length} result(s):\n\n${lines.join('\n\n')}`,
+    content: `${header}${lines.join('\n\n')}`,
     evidence: passages.map((p) => ({
       citationIndex: p.citeIndex,
       blockId: p.blockId,
@@ -144,6 +160,51 @@ export async function handleSearchNotes(
       title: breadcrumb(p.notebook, p.section, p.page)
     }))
   }
+}
+
+/**
+ * Rank recent + FTS-keyword candidates by cosine similarity to the query.
+ * Used only when the primary FTS channel returns no passages.
+ */
+async function semanticFallback(
+  ctx: PluginContext,
+  query: string,
+  topK: number,
+  filters: SearchFilters
+): Promise<RetrievedPassage[]> {
+  const queryVec = await embedOne(ctx, query, 'RETRIEVAL_QUERY')
+  if (queryVec.length === 0) return []
+
+  const candidates = await gatherCandidates(ctx, new Set(), query)
+  let scoped = candidates
+  if (filters.notebook) {
+    scoped = scoped.filter((c) => c.notebook === filters.notebook)
+  }
+  if (filters.section) {
+    scoped = scoped.filter((c) => c.section === filters.section)
+  }
+
+  const ranked = await rankCandidates(ctx, queryVec, scoped, {
+    minScore: SEMANTIC_MIN_SCORE,
+    topK
+  })
+
+  let passages: RetrievedPassage[] = ranked.map((r, i) => ({
+    blockId: r.block.id,
+    notebook: r.block.notebook,
+    section: r.block.section,
+    page: r.block.page,
+    lineNumber: 0,
+    text: r.block.clean_content.trim(),
+    score: r.score,
+    citeIndex: i + 1
+  }))
+
+  if (filters.type && passages.length > 0) {
+    passages = await filterPassages(ctx, passages, { type: filters.type })
+    passages = passages.map((p, i) => ({ ...p, citeIndex: i + 1 }))
+  }
+  return passages
 }
 
 function normalizeFilters(raw: unknown): SearchFilters {
