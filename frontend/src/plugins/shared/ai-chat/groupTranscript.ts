@@ -1,0 +1,72 @@
+import type { AIChatEntry, ToolCallEntry, ToolResultEntry } from './types'
+
+export type ToolActivityItem = ToolCallEntry | ToolResultEntry
+
+export type TranscriptSegment =
+  | { kind: 'entry'; entry: AIChatEntry }
+  | {
+      kind: 'tool-activity'
+      id: string
+      items: ToolActivityItem[]
+      callCount: number
+      resultCount: number
+    }
+
+function isToolActivity(entry: AIChatEntry): entry is ToolActivityItem {
+  return entry.kind === 'tool-call' || entry.kind === 'tool-result'
+}
+
+/**
+ * Collapse adjacent tool-call / tool-result entries into one activity group
+ * for transcript presentation. Other entry kinds stay as single segments.
+ * Controller transcript shape is unchanged (#845).
+ */
+export function groupTranscript(
+  transcript: AIChatEntry[]
+): TranscriptSegment[] {
+  const segments: TranscriptSegment[] = []
+  let i = 0
+  while (i < transcript.length) {
+    const entry = transcript[i]
+    if (!isToolActivity(entry)) {
+      segments.push({ kind: 'entry', entry })
+      i++
+      continue
+    }
+    const items: ToolActivityItem[] = []
+    const startId = entry.id
+    while (i < transcript.length && isToolActivity(transcript[i])) {
+      items.push(transcript[i] as ToolActivityItem)
+      i++
+    }
+    let callCount = 0
+    let resultCount = 0
+    for (const item of items) {
+      if (item.kind === 'tool-call') callCount++
+      else resultCount++
+    }
+    segments.push({
+      kind: 'tool-activity',
+      id: `tool-activity-${startId}`,
+      items,
+      callCount,
+      resultCount
+    })
+  }
+  return segments
+}
+
+export function toolActivitySummaryLabel(
+  callCount: number,
+  resultCount: number
+): string {
+  const parts: string[] = []
+  if (callCount > 0) {
+    parts.push(`${callCount} tool call${callCount === 1 ? '' : 's'}`)
+  }
+  if (resultCount > 0) {
+    parts.push(`${resultCount} result${resultCount === 1 ? '' : 's'}`)
+  }
+  if (parts.length === 0) return 'Tool activity'
+  return `Tool activity · ${parts.join(', ')}`
+}

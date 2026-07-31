@@ -108,15 +108,17 @@ describe('ChatShell', () => {
 
   it('renders every result kind and navigates evidence', async () => {
     const value = props(everyEntry())
-    const { getByText, getAllByText, getByRole } = render(ChatShell, {
+    const { getByText, getByRole } = render(ChatShell, {
       props: value
     })
 
     expect(getByText('Find my launch plan.')).toBeInTheDocument()
     expect(getByText('I found it')).toBeInTheDocument()
     expect(getByText('Ship in August')).toBeInTheDocument()
-    expect(getAllByText('search_notes', { selector: 'strong' })).toHaveLength(2)
-    expect(getByText('Truncated')).toBeInTheDocument()
+    // Tool call/result collapse into one activity disclosure (#845).
+    expect(
+      getByRole('button', { name: /Tool activity · 1 tool call, 1 result/i })
+    ).toBeInTheDocument()
     expect(getByText('Draft launch note')).toBeInTheDocument()
     expect(getByText(/Delete two duplicate blocks/)).toBeInTheDocument()
     expect(getByText('Running search_notes…')).toBeInTheDocument()
@@ -128,6 +130,86 @@ describe('ChatShell', () => {
       blockId: 'block-1',
       notebook: 'Work'
     })
+  })
+
+  it('consolidates tool activity behind one collapsed disclosure (#845)', async () => {
+    const transcript = [
+      textEntry({ id: 'u', role: 'user', content: 'Search' }),
+      toolCallEntry({
+        id: 'c1',
+        role: 'assistant',
+        toolCallId: 't1',
+        toolName: 'search_notes',
+        args: { q: 'a' }
+      }),
+      toolResultEntry({
+        id: 'r1',
+        role: 'system',
+        toolCallId: 't1',
+        toolName: 'search_notes',
+        output: 'hit',
+        truncated: true
+      }),
+      textEntry({ id: 'a', role: 'assistant', content: 'Done.' })
+    ]
+    const { getByRole, getByText, getAllByText, queryAllByText } = render(
+      ChatShell,
+      {
+        props: props(transcript)
+      }
+    )
+    expect(getByText('Done.')).toBeInTheDocument()
+    const disclosure = getByRole('button', {
+      name: /Tool activity · 1 tool call, 1 result/i
+    })
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false')
+    // Nested tool names stay collapsed until the group opens.
+    expect(queryAllByText('search_notes', { selector: 'strong' })).toHaveLength(
+      0
+    )
+    await fireEvent.click(disclosure)
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true')
+    expect(getAllByText('search_notes', { selector: 'strong' })).toHaveLength(2)
+    expect(getByText('Truncated')).toBeInTheDocument()
+    await fireEvent.click(disclosure)
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('hides tool cards while busy and shows no empty activity without tools', () => {
+    const withToolsBusy = props(
+      [
+        toolCallEntry({
+          id: 'c1',
+          role: 'assistant',
+          toolCallId: 't1',
+          toolName: 'search_notes',
+          args: {}
+        }),
+        statusEntry({
+          id: 's',
+          role: 'system',
+          status: 'running_tool',
+          message: 'Running search_notes…'
+        })
+      ],
+      true
+    )
+    const busyView = render(ChatShell, { props: withToolsBusy })
+    expect(busyView.getByText('Running search_notes…')).toBeInTheDocument()
+    expect(
+      busyView.queryByRole('button', { name: /Tool activity/i })
+    ).not.toBeInTheDocument()
+    busyView.unmount()
+
+    const noTools = render(ChatShell, {
+      props: props([
+        textEntry({ id: 'a', role: 'assistant', content: 'Hello only' })
+      ])
+    })
+    expect(noTools.getByText('Hello only')).toBeInTheDocument()
+    expect(
+      noTools.queryByRole('button', { name: /Tool activity/i })
+    ).not.toBeInTheDocument()
   })
 
   it('exposes an additions-only busy log and a labelled composer', () => {
