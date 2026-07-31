@@ -501,7 +501,7 @@
   {#if viewMode === 'edit' && findBarState.open}
     <FindBar editor={editorInstance!} onClose={() => findBarState.close()} />
   {/if}
-  {#if pageLocator || (viewMode === 'edit' && showFormatToolbar)}
+  {#if showFormatToolbar && (pageLocator || viewMode === 'edit')}
     <EditorUtilityBar
       editor={editorInstance}
       {activeMarks}

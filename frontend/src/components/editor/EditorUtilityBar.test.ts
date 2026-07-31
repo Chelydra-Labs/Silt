@@ -108,4 +108,39 @@ describe('EditorUtilityBar (#202 — simplified)', () => {
       screen.queryByRole('button', { name: 'Open tasks on this page' })
     ).toBeNull()
   })
+
+  it('renders FormatToolbar when showFormatting is true', () => {
+    render(EditorUtilityBar, {
+      props: {
+        editor: null,
+        activeMarks: new Set<string>(),
+        showFormatting: true
+      }
+    })
+    expect(
+      document.querySelector('[data-testid="format-toolbar-stub"]')
+    ).toBeTruthy()
+  })
+
+  it('omits FormatToolbar when showFormatting is false but keeps Page Tasks', () => {
+    render(EditorUtilityBar, {
+      props: {
+        editor: null,
+        activeMarks: new Set<string>(),
+        showFormatting: false,
+        pageLocator: {
+          source: 'vault',
+          notebook: 'NB',
+          section: '',
+          page: 'PG'
+        }
+      }
+    })
+    expect(
+      document.querySelector('[data-testid="format-toolbar-stub"]')
+    ).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Open tasks on this page' })
+    ).toBeInTheDocument()
+  })
 })

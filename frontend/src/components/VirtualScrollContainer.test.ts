@@ -142,10 +142,10 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
   })
 
-  it('keeps page actions available when the formatting toolbar is disabled', () => {
+  it('hides the entire utility bar (including Page Tasks) when the formatting toolbar is disabled', () => {
     mocks.settings.config.ui.show_format_toolbar = false
     render(VirtualScrollContainer, { props: baseProps() })
-    expect(screen.getByTestId('editor-utility-bar-stub')).toBeInTheDocument()
+    expect(screen.queryByTestId('editor-utility-bar-stub')).toBeNull()
   })
 
   it('does not add page chrome for standalone task content', () => {
