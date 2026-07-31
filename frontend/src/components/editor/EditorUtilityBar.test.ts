@@ -144,9 +144,7 @@ describe('EditorUtilityBar (#202 — simplified)', () => {
     ).toBeInTheDocument()
   })
 
-  it('renders page zoom controls with aria-labels (#843)', async () => {
-    const { noteZoom } = await import('../../lib/noteZoom.svelte')
-    noteZoom.reset()
+  it('does not host page zoom controls (they live in the bottom status pill)', () => {
     render(EditorUtilityBar, {
       props: {
         editor: null,
@@ -154,23 +152,7 @@ describe('EditorUtilityBar (#202 — simplified)', () => {
         showFormatting: false
       }
     })
-    expect(screen.getByRole('group', { name: 'Page zoom' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Zoom in' })).toBeInTheDocument()
-    const percent = screen.getByRole('button', {
-      name: 'Zoom 100%. Reset to 100%'
-    })
-    expect(percent).toHaveTextContent('100%')
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
-    expect(
-      screen.getByRole('button', { name: 'Zoom 110%. Reset to 100%' })
-    ).toHaveTextContent('110%')
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Zoom 110%. Reset to 100%' })
-    )
-    expect(
-      screen.getByRole('button', { name: 'Zoom 100%. Reset to 100%' })
-    ).toHaveTextContent('100%')
+    expect(screen.queryByRole('group', { name: 'Page zoom' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Zoom in' })).toBeNull()
   })
 })
