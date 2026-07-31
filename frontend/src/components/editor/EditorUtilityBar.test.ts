@@ -143,4 +143,26 @@ describe('EditorUtilityBar (#202 — simplified)', () => {
       screen.getByRole('button', { name: 'Open tasks on this page' })
     ).toBeInTheDocument()
   })
+
+  it('renders page zoom controls with aria-labels (#843)', async () => {
+    const { noteZoom } = await import('../../lib/noteZoom.svelte')
+    noteZoom.reset()
+    render(EditorUtilityBar, {
+      props: {
+        editor: null,
+        activeMarks: new Set<string>(),
+        showFormatting: false
+      }
+    })
+    expect(screen.getByRole('group', { name: 'Page zoom' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Zoom in' })).toBeInTheDocument()
+    const percent = screen.getByRole('button', { name: 'Reset zoom to 100%' })
+    expect(percent).toHaveTextContent('100%')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    expect(percent).toHaveTextContent('110%')
+    await fireEvent.click(percent)
+    expect(percent).toHaveTextContent('100%')
+  })
 })

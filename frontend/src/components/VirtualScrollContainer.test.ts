@@ -142,10 +142,16 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(screen.getByTestId('markdown-source-stub')).toBeInTheDocument()
   })
 
-  it('hides the entire utility bar (including Page Tasks) when the formatting toolbar is disabled', () => {
+  it('keeps the utility bar (zoom chrome) when the formatting toolbar is disabled (#843)', () => {
     mocks.settings.config.ui.show_format_toolbar = false
     render(VirtualScrollContainer, { props: baseProps() })
-    expect(screen.queryByTestId('editor-utility-bar-stub')).toBeNull()
+    expect(screen.getByTestId('editor-utility-bar-stub')).toBeInTheDocument()
+  })
+
+  it('applies session note zoom on the content wrapper only (#843)', () => {
+    render(VirtualScrollContainer, { props: baseProps() })
+    const zoomRoot = screen.getByTestId('note-page-zoom')
+    expect(zoomRoot).toHaveStyle({ zoom: '1' })
   })
 
   it('does not add page chrome for standalone task content', () => {

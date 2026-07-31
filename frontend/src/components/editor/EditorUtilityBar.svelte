@@ -7,10 +7,14 @@
   import FormatToolbar from './FormatToolbar.svelte'
   import { settings } from '../../settings/store.svelte'
   import { isSystemDark } from '../../lib/systemTheme.svelte'
+  import {
+    noteZoom,
+    NOTE_ZOOM_MAX,
+    NOTE_ZOOM_MIN
+  } from '../../lib/noteZoom.svelte'
 
   // EditorUtilityBar — extracted from VirtualScrollContainer (#202).
-  // Now simply acts as a container for FormatToolbar since action controls
-  // (View Mode, Zen Mode, Focus Mode) have been relocated to the TabStrip.
+  // FormatToolbar + page actions + note page zoom (#843).
 
   interface Props {
     editor: Editor | null
@@ -68,6 +72,43 @@
       <span>Page tasks</span>
     </button>
   {/if}
+
+  <div
+    class="zoom-cluster"
+    class:push-end={!pageLocator}
+    role="group"
+    aria-label="Page zoom"
+  >
+    <button
+      type="button"
+      class="zoom-btn"
+      onclick={() => noteZoom.zoomOut()}
+      disabled={noteZoom.factor <= NOTE_ZOOM_MIN}
+      aria-label="Zoom out"
+      title="Zoom out"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">zoom_out</span>
+    </button>
+    <button
+      type="button"
+      class="zoom-percent font-label-sm text-type-sm"
+      onclick={() => noteZoom.reset()}
+      aria-label="Reset zoom to 100%"
+      title="Reset zoom"
+    >
+      {noteZoom.percent}%
+    </button>
+    <button
+      type="button"
+      class="zoom-btn"
+      onclick={() => noteZoom.zoomIn()}
+      disabled={noteZoom.factor >= NOTE_ZOOM_MAX}
+      aria-label="Zoom in"
+      title="Zoom in"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">zoom_in</span>
+    </button>
+  </div>
 </div>
 
 <style>
@@ -137,6 +178,92 @@
 
   .page-action .material-symbols-outlined {
     font-size: 18px;
+  }
+
+  .zoom-cluster {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    flex: 0 0 auto;
+    margin-left: 8px;
+  }
+
+  /* No format toolbar / page tasks: park zoom on the trailing edge. */
+  .zoom-cluster.push-end {
+    margin-left: auto;
+  }
+
+  /* When page tasks already used margin-left:auto, keep zoom after it. */
+  .page-action + .zoom-cluster,
+  .page-action-divider + .page-action + .zoom-cluster {
+    margin-left: 8px;
+  }
+
+  .zoom-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition:
+      color 120ms ease,
+      background 120ms ease,
+      border-color 120ms ease;
+  }
+
+  .zoom-btn:hover:not(:disabled) {
+    color: var(--color-text-primary);
+    background: var(--color-hover);
+    border-color: color-mix(
+      in srgb,
+      var(--color-accent-primary-start) 36%,
+      var(--color-surface-panel-border)
+    );
+  }
+
+  .zoom-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  .zoom-btn:focus-visible {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: 2px;
+  }
+
+  .zoom-btn .material-symbols-outlined {
+    font-size: 18px;
+  }
+
+  .zoom-percent {
+    min-width: 3.25rem;
+    min-height: 28px;
+    padding: 3px 4px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--color-text-muted);
+    text-align: center;
+    cursor: pointer;
+    transition:
+      color 120ms ease,
+      background 120ms ease;
+  }
+
+  .zoom-percent:hover {
+    color: var(--color-text-primary);
+    background: var(--color-hover);
+  }
+
+  .zoom-percent:focus-visible {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: 2px;
   }
 
   @container editor-utility-bar (max-width: 680px) {

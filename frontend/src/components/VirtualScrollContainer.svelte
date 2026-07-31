@@ -25,6 +25,7 @@
     toggleFormatToolbar
   } from '../settings/store.svelte'
   import { shortcutBinding } from '../settings/shortcutActions'
+  import { noteZoom } from '../lib/noteZoom.svelte'
 
   interface Props {
     /** Canonical content root (`vault` or `linked:<id>`). */
@@ -87,6 +88,9 @@
   let showFormatToolbar = $derived(
     settings.config?.ui?.show_format_toolbar !== false
   )
+  // Note chrome (zoom + optional format/page tasks) for real notebooks only —
+  // not the standalone `.silt` tasks surface.
+  let showEditorUtilityBar = $derived(notebook !== '.silt')
   // The view-mode hotkey is per-vault remappable; read it live so the toggle's
   // tooltip + aria-keyshortcuts never go stale after a remap (the binding in
   // config.yaml is already in display form, e.g. "Ctrl+Shift+V").
@@ -126,6 +130,21 @@
         void loadPage(true)
       })
     }
+  })
+
+  // Ctrl/Meta + wheel zooms note content only (#843). Non-passive so we can
+  // preventDefault and stop the browser from zooming the whole webview.
+  $effect(() => {
+    const el = containerEl
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      e.preventDefault()
+      if (e.deltaY < 0) noteZoom.zoomIn()
+      else if (e.deltaY > 0) noteZoom.zoomOut()
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
   })
 
   $effect(() => {
@@ -501,7 +520,7 @@
   {#if viewMode === 'edit' && findBarState.open}
     <FindBar editor={editorInstance!} onClose={() => findBarState.close()} />
   {/if}
-  {#if showFormatToolbar && (pageLocator || viewMode === 'edit')}
+  {#if showEditorUtilityBar}
     <EditorUtilityBar
       editor={editorInstance}
       {activeMarks}
@@ -522,7 +541,12 @@
       bind:this={containerEl}
       class="silt-texture-surface flex-1 overflow-y-auto px-12 py-10 custom-scrollbar bg-surface-editor min-h-0"
     >
-      <div class="relative z-[1] flex flex-col">
+      <!-- Page zoom scales title + editor/source only — not utility bar/find/chrome (#843). -->
+      <div
+        class="relative z-[1] flex flex-col note-page-zoom"
+        style="zoom: {noteZoom.factor}"
+        data-testid="note-page-zoom"
+      >
         <header class="mb-8">
           <h1
             bind:this={titleEl}
@@ -620,8 +644,8 @@
   <!-- Floating Editor Actions Bar -->
   <div
     class="absolute right-6 z-40 flex items-center gap-1 p-1 bg-surface-popover/60 backdrop-blur-md border border-surface-popover-border/50 rounded-full shadow-lg transition-all duration-300 opacity-60 hover:opacity-100 hover:scale-105"
-    class:top-4={!(viewMode === 'edit' && showFormatToolbar)}
-    class:top-14={viewMode === 'edit' && showFormatToolbar}
+    class:top-4={!showEditorUtilityBar}
+    class:top-14={showEditorUtilityBar}
   >
     <!-- Focus Mode Toggle -->
     <button
