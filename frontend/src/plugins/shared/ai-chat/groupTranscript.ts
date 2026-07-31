@@ -17,6 +17,30 @@ function isToolActivity(entry: AIChatEntry): entry is ToolActivityItem {
 }
 
 /**
+ * While a run is busy, hide tool-call/result entries that belong to the
+ * current turn only (after the last user message). Prior completed tool
+ * activity stays visible in multi-turn chats (#845).
+ */
+export function filterTranscriptForBusyDisplay(
+  transcript: AIChatEntry[],
+  busy: boolean
+): AIChatEntry[] {
+  if (!busy) return transcript
+  let lastUserIdx = -1
+  for (let i = transcript.length - 1; i >= 0; i--) {
+    if (transcript[i].kind === 'text' && transcript[i].role === 'user') {
+      lastUserIdx = i
+      break
+    }
+  }
+  return transcript.filter((e, i) => {
+    if (e.kind !== 'tool-call' && e.kind !== 'tool-result') return true
+    if (lastUserIdx < 0) return false
+    return i <= lastUserIdx
+  })
+}
+
+/**
  * Collapse adjacent tool-call / tool-result entries into one activity group
  * for transcript presentation. Other entry kinds stay as single segments.
  * Controller transcript shape is unchanged (#845).

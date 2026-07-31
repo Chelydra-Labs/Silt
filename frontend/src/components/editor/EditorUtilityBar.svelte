@@ -85,7 +85,7 @@
       onclick={() => noteZoom.zoomOut()}
       disabled={noteZoom.factor <= NOTE_ZOOM_MIN}
       aria-label="Zoom out"
-      title="Zoom out"
+      title="Zoom out (Ctrl+scroll)"
     >
       <span class="material-symbols-outlined" aria-hidden="true">zoom_out</span>
     </button>
@@ -94,7 +94,7 @@
       class="zoom-percent font-label-sm text-type-sm"
       onclick={() => noteZoom.reset()}
       aria-label="Reset zoom to 100%"
-      title="Reset zoom"
+      title="Reset zoom (Ctrl+scroll to zoom)"
     >
       {noteZoom.percent}%
     </button>
@@ -104,7 +104,7 @@
       onclick={() => noteZoom.zoomIn()}
       disabled={noteZoom.factor >= NOTE_ZOOM_MAX}
       aria-label="Zoom in"
-      title="Zoom in"
+      title="Zoom in (Ctrl+scroll)"
     >
       <span class="material-symbols-outlined" aria-hidden="true">zoom_in</span>
     </button>

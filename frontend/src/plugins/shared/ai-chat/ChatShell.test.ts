@@ -175,9 +175,25 @@ describe('ChatShell', () => {
     expect(disclosure).toHaveAttribute('aria-expanded', 'false')
   })
 
-  it('hides tool cards while busy and shows no empty activity without tools', () => {
+  it('hides current-turn tool cards while busy and keeps prior activity', () => {
     const withToolsBusy = props(
       [
+        textEntry({ id: 'u0', role: 'user', content: 'earlier' }),
+        toolCallEntry({
+          id: 'c0',
+          role: 'assistant',
+          toolCallId: 't0',
+          toolName: 'prior_tool',
+          args: {}
+        }),
+        toolResultEntry({
+          id: 'r0',
+          role: 'system',
+          toolCallId: 't0',
+          toolName: 'prior_tool',
+          output: 'old'
+        }),
+        textEntry({ id: 'u1', role: 'user', content: 'now' }),
         toolCallEntry({
           id: 'c1',
           role: 'assistant',
@@ -197,8 +213,11 @@ describe('ChatShell', () => {
     const busyView = render(ChatShell, { props: withToolsBusy })
     expect(busyView.getByText('Running search_notes…')).toBeInTheDocument()
     expect(
-      busyView.queryByRole('button', { name: /Tool activity/i })
-    ).not.toBeInTheDocument()
+      busyView.getByRole('button', {
+        name: /Tool activity · 1 tool call, 1 result/i
+      })
+    ).toBeInTheDocument()
+    expect(busyView.queryByText('search_notes')).not.toBeInTheDocument()
     busyView.unmount()
 
     const noTools = render(ChatShell, {

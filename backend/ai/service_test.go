@@ -575,7 +575,7 @@ func TestComplete_DoesNotRetryClientError(t *testing.T) {
 func TestComplete_RetryAfterHonored(t *testing.T) {
 	// A 429 with Retry-After must wait at least that long (capped) before the
 	// next attempt. Use a single non-zero backoff slot so the schedule is
-	// Retry-After-dominated rather than the default 500ms/1.5s ladder.
+	// Retry-After-dominated rather than the default ladder.
 	saved := retryBackoff
 	retryBackoff = []time.Duration{10 * time.Millisecond}
 	t.Cleanup(func() { retryBackoff = saved })
@@ -627,6 +627,66 @@ func TestComplete_RetryAfterHonored(t *testing.T) {
 	gap := time.Duration(secondAt.Load() - firstAt.Load())
 	if gap < 950*time.Millisecond {
 		t.Errorf("inter-attempt gap %v, want >= ~1s", gap)
+	}
+}
+
+// TestComplete_BodyRetryDelayHonoredWithoutHeader: Google-style 429 bodies
+// often carry RetryInfo.retryDelay without HTTP Retry-After (#846).
+func TestComplete_BodyRetryDelayHonoredWithoutHeader(t *testing.T) {
+	saved := retryBackoff
+	retryBackoff = []time.Duration{10 * time.Millisecond}
+	t.Cleanup(func() { retryBackoff = saved })
+
+	body429 := []byte(`{
+		"error": {
+			"code": 429,
+			"message": "Resource exhausted",
+			"status": "RESOURCE_EXHAUSTED",
+			"details": [{
+				"@type": "type.googleapis.com/google.rpc.RetryInfo",
+				"retryDelay": "1s"
+			}]
+		}
+	}`)
+	var hits atomic.Int32
+	var firstAt atomic.Int64
+	var secondAt atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		if n == 1 {
+			firstAt.Store(time.Now().UnixNano())
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write(body429)
+			return
+		}
+		secondAt.Store(time.Now().UnixNano())
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "m",
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	res, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{BaseURL: srv.URL, Model: "m"},
+		Messages: []ChatMessage{{Role: "user", Content: "x"}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if res.Content != "ok" {
+		t.Errorf("content = %q, want ok", res.Content)
+	}
+	if hits.Load() != 2 {
+		t.Errorf("hits = %d, want 2", hits.Load())
+	}
+	gap := time.Duration(secondAt.Load() - firstAt.Load())
+	if gap < 950*time.Millisecond {
+		t.Errorf("inter-attempt gap %v, want >= ~1s (body retryDelay floor)", gap)
 	}
 }
 

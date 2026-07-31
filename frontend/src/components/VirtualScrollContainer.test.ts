@@ -148,10 +148,24 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(screen.getByTestId('editor-utility-bar-stub')).toBeInTheDocument()
   })
 
-  it('applies session note zoom on the content wrapper only (#843)', () => {
+  it('applies session note zoom on the content wrapper only (#843)', async () => {
+    const { noteZoom } = await import('../lib/noteZoom.svelte')
+    noteZoom.reset()
     render(VirtualScrollContainer, { props: baseProps() })
     const zoomRoot = screen.getByTestId('note-page-zoom')
     expect(zoomRoot).toHaveStyle({ zoom: '1' })
+    noteZoom.zoomIn()
+    await waitFor(() => {
+      expect(screen.getByTestId('note-page-zoom')).toHaveStyle({ zoom: '1.1' })
+    })
+    // Ctrl+wheel on the scroll surface steps zoom (#843).
+    const surface = zoomRoot.parentElement
+    expect(surface).toBeTruthy()
+    await fireEvent.wheel(surface!, { deltaY: 100, ctrlKey: true })
+    await waitFor(() => {
+      expect(screen.getByTestId('note-page-zoom')).toHaveStyle({ zoom: '1' })
+    })
+    noteZoom.reset()
   })
 
   it('does not add page chrome for standalone task content', () => {

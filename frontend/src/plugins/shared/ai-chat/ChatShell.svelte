@@ -10,7 +10,11 @@
   } from './types'
   import { renderChatMarkdown } from './renderChatMarkdown'
   import { isSafeLinkHref } from '../../../lib/editor/converters/validate'
-  import { groupTranscript, toolActivitySummaryLabel } from './groupTranscript'
+  import {
+    filterTranscriptForBusyDisplay,
+    groupTranscript,
+    toolActivitySummaryLabel
+  } from './groupTranscript'
 
   interface Props {
     title?: string
@@ -66,14 +70,10 @@
   )
   const pendingConfirmationId = $derived(pendingConfirmation?.id ?? null)
   const composerDisabled = $derived(!providerReady || !!pendingConfirmation)
-  // While a run is in progress, hide completed tool cards so only the live
-  // status indicator competes with the conversation (#845).
+  // While a run is in progress, hide only the current turn's tool cards so
+  // prior multi-turn activity disclosures stay visible (#845).
   const displayTranscript = $derived(
-    busy
-      ? transcript.filter(
-          (e) => e.kind !== 'tool-call' && e.kind !== 'tool-result'
-        )
-      : transcript
+    filterTranscriptForBusyDisplay(transcript, busy)
   )
   const displaySegments = $derived(groupTranscript(displayTranscript))
 
@@ -335,7 +335,6 @@
               aria-hidden="true">construction</span
             >
             <span class="utility-copy">
-              <span class="entry-label">Activity</span>
               <strong
                 >{toolActivitySummaryLabel(
                   group.callCount,
