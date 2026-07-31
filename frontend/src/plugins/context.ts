@@ -2,6 +2,7 @@ import type { PluginContext, SqliteQueryResult, TaskStatus } from './sdk'
 import { localToday } from './sdk'
 import { captureUiLocation } from './ui-location'
 import { stripReasoningContent } from './stripReasoning'
+import { buildFTSQuery, PLUGIN_FULL_TEXT_SEARCH_SQL } from './ftsQuery'
 import { asString } from '../lib/asString'
 import { AIErrorKind, EventName } from '../generated/enums'
 import {
@@ -398,13 +399,16 @@ export function makePluginContext(
          ORDER BY t.due_date ASC`,
         [start, end, start, end]
       ),
-    fullTextSearch: (query) =>
-      ctxSqliteQuery(
-        `SELECT b.id, b.notebook, b.section, b.page, b.clean_content, snippet(blocks_fts, -1, '<mark>', '</mark>', '…', 12) as snippet
-         FROM blocks_fts f JOIN blocks b ON b.id = f.rowid
-         WHERE blocks_fts MATCH ? ORDER BY rank LIMIT 50`,
-        [query]
-      ),
+    fullTextSearch: (query) => {
+      // Join on blocks.rowid (integer), not b.id (TEXT UUID) — matches
+      // backend/db/search.go and external-content FTS5 content_rowid='rowid'.
+      // Sanitize MATCH so hyphens are not FTS5 NOT operators (buildFTSQuery).
+      const match = buildFTSQuery(query)
+      if (!match) {
+        return Promise.resolve({ rows: [], truncated: false })
+      }
+      return ctxSqliteQuery(PLUGIN_FULL_TEXT_SEARCH_SQL, [match])
+    },
     getBacklinks: (id) =>
       ctxSqliteQuery(
         `SELECT b.id, b.notebook, b.section, b.page, b.clean_content
