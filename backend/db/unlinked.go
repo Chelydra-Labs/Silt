@@ -130,10 +130,7 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 	}
 	titleRef := ResolvePageLinkAgainst(title, pages)
 
-	afterRowid, err := resolveUnlinkedScanCursor(db, scanCursor)
-	if err != nil {
-		return UnlinkedMentionsResult{}, err
-	}
+	afterRowid := resolveUnlinkedScanCursor(scanCursor)
 	candidates, scanTruncated, lastRowid, lastID, err := dm.scanUnlinkedCandidateBlocks(db, title, source, notebook, section, page, afterRowid)
 	if err != nil {
 		return UnlinkedMentionsResult{}, err
@@ -363,6 +360,14 @@ func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source
 
 // encodeUnlinkedScanCursor builds the opaque next-batch keyset from the last
 // examined FTS rowid (immutable exclusive bound) plus block id (diagnostic).
+//
+// WHY store scan-time rowid (not live UUID→rowid): re-resolving the anchor to
+// its current rowid skips unread matches when that block is re-indexed to a
+// higher rowid. Implicit SQLite rowids on `blocks` are monotonic in practice
+// for this workload (no AUTOINCREMENT; reuse only if the highest rowid is
+// deleted then re-inserted, or on overflow). Rare reuse is bounded by the
+// truncated surface and client-side block-id merge/dedup — do not "fix" by
+// re-resolving to a live rowid.
 func encodeUnlinkedScanCursor(lastRowid int64, lastBlockID string) string {
 	if lastRowid <= 0 {
 		return ""
@@ -376,25 +381,18 @@ func encodeUnlinkedScanCursor(lastRowid int64, lastBlockID string) string {
 }
 
 // resolveUnlinkedScanCursor maps an opaque scan_cursor to an exclusive lower-
-// bound rowid for the next FTS probe.
+// bound rowid for the next FTS probe. Invalid/legacy tokens soft-reset to 0.
 //
-// u3:<rowid>[:<block-id>] (current): use the stored rowid as the immutable
-// exclusive bound from scan time. Never re-resolve the block id to a live
-// rowid — if the anchor is re-indexed to a higher rowid, a live lookup would
-// skip unread matches still sitting between the old and new positions.
-//
-// u2:<block-id> (legacy): soft-reset to 0 (client merge/dedup handles re-walk).
-// Live UUID→rowid was incorrect under anchor re-index.
-//
-// u1:<rowid> (legacy): accept raw rowid; empty/invalid tokens soft-reset to 0.
-func resolveUnlinkedScanCursor(db *sql.DB, scanCursor string) (int64, error) {
-	_ = db // reserved for future generation/snapshot checks
+// u3:<rowid>[:<block-id>] (current): stored scan-time rowid (immutable bound).
+// u2:<block-id> (legacy): soft-reset (live UUID→rowid was a skip hazard).
+// u1:<rowid> (legacy): accept raw rowid.
+func resolveUnlinkedScanCursor(scanCursor string) int64 {
 	if scanCursor == "" {
-		return 0, nil
+		return 0
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(scanCursor)
 	if err != nil {
-		return 0, nil
+		return 0
 	}
 	s := string(raw)
 	switch {
@@ -406,20 +404,19 @@ func resolveUnlinkedScanCursor(db *sql.DB, scanCursor string) (int64, error) {
 		}
 		n, err := strconv.ParseInt(rowPart, 10, 64)
 		if err != nil || n < 0 {
-			return 0, nil
+			return 0
 		}
-		return n, nil
+		return n
 	case strings.HasPrefix(s, scanCursorPrefixV2):
-		// Legacy UUID cursor: soft-reset rather than live rowid (skip hazard).
-		return 0, nil
+		return 0
 	case strings.HasPrefix(s, scanCursorPrefixV1):
 		n, err := strconv.ParseInt(s[len(scanCursorPrefixV1):], 10, 64)
 		if err != nil || n < 0 {
-			return 0, nil
+			return 0
 		}
-		return n, nil
+		return n
 	default:
-		return 0, nil
+		return 0
 	}
 }
 

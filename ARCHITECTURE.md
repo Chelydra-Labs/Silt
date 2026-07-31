@@ -584,8 +584,10 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `truncated: true` and `scan_cursor` (opaque keyset: exclusive lower-bound
   **rowid observed at scan time**, plus diagnostic block id — never re-resolved
   to a live UUID rowid, which would skip unread matches if the anchor is
-  re-indexed to a higher rowid; legacy UUID cursors soft-reset) so the client
-  can request the next batch explicitly. Page-level
+  re-indexed to a higher rowid; legacy UUID cursors soft-reset). Implicit
+  `blocks` rowids are monotonic in practice for this workload; rare SQLite
+  rowid reuse is bounded by the truncated surface and client block-id
+  merge/dedup — do not reintroduce live rowid lookup. Page-level
   `has_more` / `cursor` only page residual source pages **within the current
   batch** — orthogonal to `truncated` / `scan_cursor`. Residual presentation
   is path-sorted in Go; scan order only defines the batch window. Further

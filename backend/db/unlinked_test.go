@@ -1011,45 +1011,34 @@ func TestUnlinked_EncodeDecodeScanCursor(t *testing.T) {
 		t.Fatal("empty scan cursor for positive rowid")
 	}
 
-	got, err := resolveUnlinkedScanCursor(db, enc)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
+	got := resolveUnlinkedScanCursor(enc)
 	if got != wantRowid {
 		t.Errorf("resolve u3: got rowid %d want %d", got, wantRowid)
 	}
 
 	// u3 without id still works.
 	encRowOnly := encodeUnlinkedScanCursor(wantRowid, "")
-	got, err = resolveUnlinkedScanCursor(db, encRowOnly)
-	if err != nil || got != wantRowid {
-		t.Errorf("u3 row-only: got %d err %v want %d", got, err, wantRowid)
+	if got := resolveUnlinkedScanCursor(encRowOnly); got != wantRowid {
+		t.Errorf("u3 row-only: got %d want %d", got, wantRowid)
 	}
 
 	// Legacy u2:uuid soft-resets (live UUID→rowid was a skip hazard).
 	legacyU2 := base64.RawURLEncoding.EncodeToString([]byte(scanCursorPrefixV2 + uuidV))
-	got, err = resolveUnlinkedScanCursor(db, legacyU2)
-	if err != nil || got != 0 {
-		t.Errorf("legacy u2 should soft-reset to 0, got %d err %v", got, err)
+	if got := resolveUnlinkedScanCursor(legacyU2); got != 0 {
+		t.Errorf("legacy u2 should soft-reset to 0, got %d", got)
 	}
 
 	// Legacy u1:rowid still accepted.
 	legacy := base64.RawURLEncoding.EncodeToString([]byte(scanCursorPrefixV1 + "42"))
-	got, err = resolveUnlinkedScanCursor(db, legacy)
-	if err != nil {
-		t.Fatalf("legacy: %v", err)
-	}
-	if got != 42 {
+	if got := resolveUnlinkedScanCursor(legacy); got != 42 {
 		t.Errorf("legacy u1: got %d want 42", got)
 	}
 
-	got, err = resolveUnlinkedScanCursor(db, "")
-	if err != nil || got != 0 {
-		t.Errorf("empty → 0, got %d err %v", got, err)
+	if got := resolveUnlinkedScanCursor(""); got != 0 {
+		t.Errorf("empty → 0, got %d", got)
 	}
-	got, err = resolveUnlinkedScanCursor(db, "!!!")
-	if err != nil || got != 0 {
-		t.Errorf("garbage → 0, got %d err %v", got, err)
+	if got := resolveUnlinkedScanCursor("!!!"); got != 0 {
+		t.Errorf("garbage → 0, got %d", got)
 	}
 	if encodeUnlinkedScanCursor(0, uuidV) != "" {
 		t.Error("non-positive rowid should not encode")
