@@ -38,9 +38,30 @@ func (dm *DatabaseManager) ListDistinctPages() ([]PageLoc, error) {
 	return listDistinctPages(db)
 }
 
+// ListPagesByLeaf returns distinct locations whose leaf page name equals leaf.
+func (dm *DatabaseManager) ListPagesByLeaf(leaf string) ([]PageLoc, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
+	return listPagesByLeaf(db, leaf)
+}
+
+// PageExistsExact reports whether the concrete path exists in the blocks index.
+func (dm *DatabaseManager) PageExistsExact(source, notebook, section, page string) (bool, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return false, ErrDBClosed
+	}
+	defer release()
+	return pageExistsExact(db, source, notebook, section, page)
+}
+
 // listDistinctPages is the no-handle-reentry internal helper. Callers that
 // already hold a handle lease MUST call this instead of ListDistinctPages.
 func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
+	listDistinctPagesCalls++
 	rows, err := db.Query(`
 		SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
 		FROM blocks
@@ -58,6 +79,56 @@ func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// listDistinctPagesCalls counts full-inventory scans (tests for #839).
+var listDistinctPagesCalls int
+
+// listPagesByLeaf returns distinct page locations whose leaf page name equals
+// leaf (exact match, same case rules as stored paths / ResolvePageLinkAgainst).
+// Used by unlinked ambiguity so large vaults do not load the full inventory.
+func listPagesByLeaf(db *sql.DB, leaf string) ([]PageLoc, error) {
+	leaf = strings.TrimSpace(leaf)
+	if leaf == "" {
+		return nil, nil
+	}
+	rows, err := db.Query(`
+		SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
+		FROM blocks
+		WHERE page = ?
+		ORDER BY notebook, section, page`, leaf)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PageLoc
+	for rows.Next() {
+		var p PageLoc
+		if err := rows.Scan(&p.Source, &p.Notebook, &p.Section, &p.Page); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// pageExistsExact reports whether a concrete path is present in the blocks index.
+func pageExistsExact(db *sql.DB, source, notebook, section, page string) (bool, error) {
+	if source == "" {
+		source = "vault"
+	}
+	var n int
+	err := db.QueryRow(`
+		SELECT 1 FROM blocks
+		WHERE COALESCE(source, 'vault') = ? AND notebook = ? AND section = ? AND page = ?
+		LIMIT 1`, source, notebook, section, page).Scan(&n)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ListAllPageLinks returns every row in the page_links reverse index. Used by

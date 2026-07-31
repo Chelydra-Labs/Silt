@@ -68,6 +68,10 @@ const unlinkedScanCap = 500
 // bounded, never O(all vault matches).
 const unlinkedScanFillRounds = 4
 
+// unlinkedAmbiguousCandidateCap bounds Candidates embedded on each residual
+// row when a leaf title collides across many pages (#839).
+const unlinkedAmbiguousCandidateCap = 32
+
 // scanCursorPrefixV3 versions the opaque FTS batch keyset as the exclusive
 // lower-bound rowid observed at scan time (immutable bound). A trailing block
 // id is stored for diagnostics only — never re-resolved to a live rowid (that
@@ -122,18 +126,36 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 	}
 	defer release()
 
-	// Ambiguity of the leaf title across the whole page inventory (all sources).
-	// Promote uses the same check to reject ambiguous targets.
-	pages, err := listDistinctPages(db)
+	// Leaf-bounded ambiguity (#839): only pages sharing this leaf name, not
+	// the full vault inventory. Cap candidates for IPC/UI.
+	titleRef, err := resolveUnlinkedTitleAmbiguity(db, title, notebook, section)
 	if err != nil {
-		return UnlinkedMentionsResult{}, fmt.Errorf("unlinked mentions: list pages: %w", err)
+		return UnlinkedMentionsResult{}, fmt.Errorf("unlinked mentions: resolve title: %w", err)
 	}
-	titleRef := ResolvePageLinkAgainst(title, pages)
 
-	afterRowid := resolveUnlinkedScanCursor(scanCursor)
-	candidates, scanTruncated, lastRowid, lastID, err := dm.scanUnlinkedCandidateBlocks(db, title, source, notebook, section, page, afterRowid)
-	if err != nil {
-		return UnlinkedMentionsResult{}, err
+	cacheKey := dm.unlinkedScanCacheKeyNow(source, notebook, section, title, scanCursor)
+	var candidates []unlinkedBlock
+	var scanTruncated bool
+	var lastRowid int64
+	var lastID string
+	if ent, ok := dm.unlinkedScanCacheGet(cacheKey); ok {
+		candidates = ent.blocks
+		scanTruncated = ent.truncated
+		lastRowid = ent.lastRowid
+		lastID = ent.lastID
+	} else {
+		afterRowid := resolveUnlinkedScanCursor(scanCursor)
+		var scanErr error
+		candidates, scanTruncated, lastRowid, lastID, scanErr = dm.scanUnlinkedCandidateBlocks(db, title, source, notebook, section, page, afterRowid)
+		if scanErr != nil {
+			return UnlinkedMentionsResult{}, scanErr
+		}
+		dm.unlinkedScanCachePut(cacheKey, unlinkedScanCacheEntry{
+			blocks:    candidates,
+			truncated: scanTruncated,
+			lastRowid: lastRowid,
+			lastID:    lastID,
+		})
 	}
 
 	// Dedupe by source page. Include a block only when clean_content has a
@@ -236,6 +258,43 @@ type unlinkedBlock struct {
 	id, source, notebook, section, page, clean string
 }
 
+// resolveUnlinkedTitleAmbiguity resolves the active page leaf against only
+// pages that share that leaf name (indexed page= lookup), then caps Candidates
+// for the residual wire shape. Active notebook/section are preferred in sort
+// order so promote chips surface nearby paths first.
+func resolveUnlinkedTitleAmbiguity(db *sql.DB, title, activeNotebook, activeSection string) (parser.PageReference, error) {
+	pages, err := listPagesByLeaf(db, title)
+	if err != nil {
+		return parser.PageReference{}, err
+	}
+	ref := ResolvePageLinkAgainst(title, pages)
+	if !ref.Ambiguous || len(ref.Candidates) == 0 {
+		return ref, nil
+	}
+	sort.SliceStable(ref.Candidates, func(i, j int) bool {
+		a, b := ref.Candidates[i], ref.Candidates[j]
+		aNear := a.Notebook == activeNotebook && a.Section == activeSection
+		bNear := b.Notebook == activeNotebook && b.Section == activeSection
+		if aNear != bNear {
+			return aNear
+		}
+		if a.Source != b.Source {
+			return a.Source < b.Source
+		}
+		if a.Notebook != b.Notebook {
+			return a.Notebook < b.Notebook
+		}
+		if a.Section != b.Section {
+			return a.Section < b.Section
+		}
+		return a.Page < b.Page
+	})
+	if len(ref.Candidates) > unlinkedAmbiguousCandidateCap {
+		ref.Candidates = ref.Candidates[:unlinkedAmbiguousCandidateCap]
+	}
+	return ref, nil
+}
+
 // scanUnlinkedCandidateBlocks runs a bounded FTS5 phrase window over
 // clean_content and returns candidate blocks (post CODE/self filter) plus
 // whether more FTS matches exist beyond the window and the last examined
@@ -256,6 +315,7 @@ type unlinkedBlock struct {
 //
 // afterRowid is an exclusive lower bound (0 = from the start).
 func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source, notebook, section, page string, afterRowid int64) ([]unlinkedBlock, bool, int64, string, error) {
+	unlinkedScanCalls++
 	phrase := buildUnlinkedFTSPhrase(title)
 	if phrase == "" {
 		return nil, false, 0, "", nil

@@ -74,42 +74,54 @@ func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSectio
 		return fmt.Errorf("cannot promote an empty page title")
 	}
 
+	targetSource := a.resolveSourceByName(targetNotebook)
+	loc := db.PageLoc{Source: targetSource, Notebook: targetNotebook, Section: targetSection, Page: title}
+
+	var chosen db.PageLoc
 	var pages []db.PageLoc
 	err := a.coordinator.WithDBReadResult(func() error {
+		// Prefer exact path existence (chip promote) without full inventory.
+		ok, err := a.db.PageExistsExact(loc.Source, loc.Notebook, loc.Section, loc.Page)
+		if err != nil {
+			return fmt.Errorf("promote unlinked mention: page exists: %w", err)
+		}
+		if ok {
+			chosen = loc
+		} else {
+			// Explicit path missing — leaf resolution against same-leaf pages only.
+			leafPages, err := a.db.ListPagesByLeaf(title)
+			if err != nil {
+				return fmt.Errorf("promote unlinked mention: list leaf pages: %w", err)
+			}
+			ref := db.ResolvePageLinkAgainst(title, leafPages)
+			if ref.Ambiguous {
+				cands := make([]string, 0, len(ref.Candidates))
+				for _, c := range ref.Candidates {
+					cands = append(cands, c.Notebook+"/"+c.Section+"/"+c.Page)
+				}
+				return NewIPCError(CodeAmbiguousTarget,
+					fmt.Sprintf("page title %q is ambiguous (matches: %s)", title, strings.Join(cands, ", ")))
+			}
+			if !ref.Exists {
+				return fmt.Errorf("page %q not found in inventory", title)
+			}
+			chosen = db.PageLoc{
+				Source:   ref.Source,
+				Notebook: ref.Notebook,
+				Section:  ref.Section,
+				Page:     ref.Page,
+			}
+		}
+		// ShortestUniquePath needs the full inventory for uniqueness.
 		got, err := a.db.ListDistinctPages()
 		if err != nil {
-			return err
+			return fmt.Errorf("promote unlinked mention: list pages: %w", err)
 		}
 		pages = got
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("promote unlinked mention: list pages: %w", err)
-	}
-
-	targetSource := a.resolveSourceByName(targetNotebook)
-	loc := db.PageLoc{Source: targetSource, Notebook: targetNotebook, Section: targetSection, Page: title}
-	chosen, ok := findExactPageLoc(pages, loc)
-	if !ok {
-		// Explicit path missing — fall back to leaf resolution (unique only).
-		ref := db.ResolvePageLinkAgainst(title, pages)
-		if ref.Ambiguous {
-			cands := make([]string, 0, len(ref.Candidates))
-			for _, c := range ref.Candidates {
-				cands = append(cands, c.Notebook+"/"+c.Section+"/"+c.Page)
-			}
-			return NewIPCError(CodeAmbiguousTarget,
-				fmt.Sprintf("page title %q is ambiguous (matches: %s)", title, strings.Join(cands, ", ")))
-		}
-		if !ref.Exists {
-			return fmt.Errorf("page %q not found in inventory", title)
-		}
-		chosen = db.PageLoc{
-			Source:   ref.Source,
-			Notebook: ref.Notebook,
-			Section:  ref.Section,
-			Page:     ref.Page,
-		}
+		return err
 	}
 	shortest := db.ShortestUniquePath(chosen, pages)
 
@@ -121,19 +133,6 @@ func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSectio
 		}
 		return newText, nil
 	})
-}
-
-// findExactPageLoc returns the inventory page matching source+notebook+section+page.
-func findExactPageLoc(pages []db.PageLoc, want db.PageLoc) (db.PageLoc, bool) {
-	for _, p := range pages {
-		if p.Source == want.Source &&
-			p.Notebook == want.Notebook &&
-			p.Section == want.Section &&
-			p.Page == want.Page {
-			return p, true
-		}
-	}
-	return db.PageLoc{}, false
 }
 
 // wrapFirstUnlinkedOccurrence wraps the first residual plain title match in

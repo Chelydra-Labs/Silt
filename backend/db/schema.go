@@ -375,6 +375,8 @@ func (dm *DatabaseManager) initSchema() error {
 		// this does not rebuild on every launch.
 		"DROP INDEX IF EXISTS idx_blocks_file;",
 		"CREATE INDEX IF NOT EXISTS idx_blocks_src_file ON blocks(source, notebook, section, page, file_date);",
+		// Leaf-title lookup for unlinked ambiguity (#839): DISTINCT pages WHERE page=?.
+		"CREATE INDEX IF NOT EXISTS idx_blocks_page ON blocks(page);",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_tags_lookup ON tags(level_0, level_1, level_2);",
 		// QueryBlocksByTag and the tag filter in QueryTasksWithFilters both

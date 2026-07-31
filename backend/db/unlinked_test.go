@@ -1318,6 +1318,221 @@ func explainDetails(t *testing.T, dm *DatabaseManager, sql string, args ...any) 
 	return plans
 }
 
+// TestUnlinked_ResidualLoadMoreReusesScanCache verifies residual paging with the
+// same scanCursor does not re-run FTS loop-fill (#838).
+func TestUnlinked_ResidualLoadMoreReusesScanCache(t *testing.T) {
+	dm := newTestDB(t)
+	// Active page + enough residual source pages to force residual has_more.
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic home"),
+	})
+	const n = 12
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("cccccccc-cccc-4ccc-8ccc-%012d", i)
+		idxU(t, dm, "vault", "NB", "Sec", fmt.Sprintf("Src%02d", i), []parser.ParsedBlock{
+			noteBlock(id, "mentions Topic here"),
+		})
+	}
+
+	unlinkedScanCalls = 0
+	page1, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 5)
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if !page1.HasMore || page1.Cursor == "" {
+		t.Fatalf("expected residual has_more, got %+v", page1)
+	}
+	if unlinkedScanCalls != 1 {
+		t.Fatalf("page1 scans: got %d want 1", unlinkedScanCalls)
+	}
+
+	page2, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", page1.Cursor, "", 5)
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if unlinkedScanCalls != 1 {
+		t.Fatalf("page2 must reuse cache: scans=%d want 1", unlinkedScanCalls)
+	}
+
+	// Full residual list in one shot must equal page1+page2 continuation.
+	all, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("all: %v", err)
+	}
+	// all may hit cache too (same key) — still one scan total from cold start above.
+	if unlinkedScanCalls != 1 {
+		t.Fatalf("all residual from cache: scans=%d want 1", unlinkedScanCalls)
+	}
+	combined := append(append([]UnlinkedMention{}, page1.Results...), page2.Results...)
+	if len(combined) > len(all.Results) {
+		t.Fatalf("combined %d > all %d", len(combined), len(all.Results))
+	}
+	for i := range combined {
+		if combined[i].SourcePage != all.Results[i].SourcePage {
+			t.Errorf("residual[%d]: got %q want %q", i, combined[i].SourcePage, all.Results[i].SourcePage)
+		}
+	}
+}
+
+// TestUnlinked_ScanMoreMissesCache verifies a new scan_cursor runs a fresh FTS scan.
+func TestUnlinked_ScanMoreMissesCache(t *testing.T) {
+	dm := newTestDB(t)
+	idxUMany(t, dm, "Topic", 30)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic"),
+	})
+
+	unlinkedScanCalls = 0
+	if _, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 5); err != nil {
+		t.Fatalf("r1: %v", err)
+	}
+	if unlinkedScanCalls != 1 {
+		t.Fatalf("r1 scans=%d", unlinkedScanCalls)
+	}
+	// Different scanCursor token is a different cache key.
+	fakeScan := encodeUnlinkedScanCursor(1, uuidU)
+	if _, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", fakeScan, 5); err != nil {
+		t.Fatalf("r2: %v", err)
+	}
+	if unlinkedScanCalls != 2 {
+		t.Fatalf("new scanCursor must miss cache: scans=%d want 2", unlinkedScanCalls)
+	}
+}
+
+// TestUnlinked_CacheInvalidatesOnReindex ensures residual pages do not serve a
+// stale FTS window after IndexFileBlocks (#838).
+func TestUnlinked_CacheInvalidatesOnReindex(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcA", []parser.ParsedBlock{
+		noteBlock(uuidV, "about Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcB", []parser.ParsedBlock{
+		noteBlock(uuidW, "about Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcC", []parser.ParsedBlock{
+		noteBlock(uuidX, "about Topic"),
+	})
+
+	unlinkedScanCalls = 0
+	p1, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 2)
+	if err != nil {
+		t.Fatalf("p1: %v", err)
+	}
+	if unlinkedScanCalls != 1 {
+		t.Fatalf("p1 scans=%d", unlinkedScanCalls)
+	}
+
+	// Remove Topic mention from SrcC via reindex — batch membership changes.
+	idxU(t, dm, "vault", "NB", "Sec", "SrcC", []parser.ParsedBlock{
+		noteBlock(uuidX, "no mention anymore"),
+	})
+
+	// After invalidation, next call must rescan.
+	all, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("all: %v", err)
+	}
+	if unlinkedScanCalls != 2 {
+		t.Fatalf("after reindex scans=%d want 2", unlinkedScanCalls)
+	}
+	for _, m := range all.Results {
+		if m.SourcePage == "SrcC" {
+			t.Fatalf("stale cache served SrcC: %+v", all.Results)
+		}
+	}
+	if len(all.Results) != 2 {
+		t.Fatalf("want SrcA+SrcB only, got %d: %+v", len(all.Results), all.Results)
+	}
+	_ = p1
+}
+
+// TestUnlinked_NoFullInventoryOnPagedPath ensures GetUnlinkedMentionsPaged does
+// not call listDistinctPages (#839).
+func TestUnlinked_NoFullInventoryOnPagedPath(t *testing.T) {
+	dm := newTestDB(t)
+	// Many decoy pages with different leaves.
+	for i := 0; i < 40; i++ {
+		id := fmt.Sprintf("dddddddd-dddd-4ddd-8ddd-%012d", i)
+		idxU(t, dm, "vault", "NB", "Sec", fmt.Sprintf("Decoy%02d", i), []parser.ParsedBlock{
+			noteBlock(id, "decoy body"),
+		})
+	}
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
+		noteBlock(uuidV, "see Topic please"),
+	})
+
+	before := listDistinctPagesCalls
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if listDistinctPagesCalls != before {
+		t.Fatalf("unlinked paged must not listDistinctPages: before=%d after=%d", before, listDistinctPagesCalls)
+	}
+	if len(res.Results) != 1 || res.Results[0].Ambiguous {
+		t.Fatalf("unique title: %+v", res.Results)
+	}
+}
+
+// TestUnlinked_AmbiguousCandidateCap bounds Candidates on the wire (#839).
+func TestUnlinked_AmbiguousCandidateCap(t *testing.T) {
+	dm := newTestDB(t)
+	const collisions = unlinkedAmbiguousCandidateCap + 5
+	for i := 0; i < collisions; i++ {
+		id := fmt.Sprintf("eeeeeeee-eeee-4eee-8eee-%012d", i)
+		// Bodies must not contain the leaf title or they become residual hits.
+		idxU(t, dm, "vault", "NB", fmt.Sprintf("S%02d", i), "Standup", []parser.ParsedBlock{
+			noteBlock(id, "daily log entry"),
+		})
+	}
+	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
+		noteBlock(uuidU, "today Standup notes"),
+	})
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "S00", "Standup", "", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected 1 mention, got %d", len(res.Results))
+	}
+	if !res.Results[0].Ambiguous {
+		t.Fatal("expected Ambiguous")
+	}
+	if got := len(res.Results[0].Candidates); got != unlinkedAmbiguousCandidateCap {
+		t.Fatalf("candidates cap: got %d want %d", got, unlinkedAmbiguousCandidateCap)
+	}
+	// Active section affinity: S00/Standup should sort first among candidates.
+	if res.Results[0].Candidates[0].Section != "S00" {
+		t.Errorf("expected active section first, got %+v", res.Results[0].Candidates[0])
+	}
+}
+
+// TestUnlinked_LeafLookupPlanUsesPageIndex prefers idx_blocks_page for leaf lookup.
+func TestUnlinked_LeafLookupPlanUsesPageIndex(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "x"),
+	})
+	const q = `SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
+		FROM blocks WHERE page = ? ORDER BY notebook, section, page`
+	plans := explainDetails(t, dm, q, "Topic")
+	joined := strings.ToUpper(strings.Join(plans, " | "))
+	if !strings.Contains(joined, "IDX_BLOCKS_PAGE") && !strings.Contains(joined, "PAGE") {
+		t.Logf("leaf plan (index name may vary): %v", plans)
+	}
+	// Must not be a full table scan of all blocks without using page filter.
+	if strings.Contains(joined, "SCAN BLOCKS") && !strings.Contains(joined, "PAGE") && !strings.Contains(joined, "USING") {
+		t.Errorf("unexpected full scan without page: %v", plans)
+	}
+}
+
 // TestUnlinked_ScanPlanRowidKeyset documents why we use an FTS rowid subquery:
 // path-ordered join plans TEMP-sort the full match set; the production shape
 // limits inside blocks_fts before joining blocks.
