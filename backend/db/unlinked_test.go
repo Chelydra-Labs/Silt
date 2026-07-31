@@ -1334,7 +1334,7 @@ func TestUnlinked_ResidualLoadMoreReusesScanCache(t *testing.T) {
 		})
 	}
 
-	unlinkedScanCalls = 0
+	unlinkedScanCalls.Store(0)
 	page1, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 5)
 	if err != nil {
 		t.Fatalf("page1: %v", err)
@@ -1342,16 +1342,16 @@ func TestUnlinked_ResidualLoadMoreReusesScanCache(t *testing.T) {
 	if !page1.HasMore || page1.Cursor == "" {
 		t.Fatalf("expected residual has_more, got %+v", page1)
 	}
-	if unlinkedScanCalls != 1 {
-		t.Fatalf("page1 scans: got %d want 1", unlinkedScanCalls)
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("page1 scans: got %d want 1", unlinkedScanCalls.Load())
 	}
 
 	page2, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", page1.Cursor, "", 5)
 	if err != nil {
 		t.Fatalf("page2: %v", err)
 	}
-	if unlinkedScanCalls != 1 {
-		t.Fatalf("page2 must reuse cache: scans=%d want 1", unlinkedScanCalls)
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("page2 must reuse cache: scans=%d want 1", unlinkedScanCalls.Load())
 	}
 
 	// Full residual list in one shot must equal page1+page2 continuation.
@@ -1360,8 +1360,8 @@ func TestUnlinked_ResidualLoadMoreReusesScanCache(t *testing.T) {
 		t.Fatalf("all: %v", err)
 	}
 	// all may hit cache too (same key) — still one scan total from cold start above.
-	if unlinkedScanCalls != 1 {
-		t.Fatalf("all residual from cache: scans=%d want 1", unlinkedScanCalls)
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("all residual from cache: scans=%d want 1", unlinkedScanCalls.Load())
 	}
 	combined := append(append([]UnlinkedMention{}, page1.Results...), page2.Results...)
 	if len(combined) > len(all.Results) {
@@ -1382,20 +1382,20 @@ func TestUnlinked_ScanMoreMissesCache(t *testing.T) {
 		noteBlock(uuidU, "Topic"),
 	})
 
-	unlinkedScanCalls = 0
+	unlinkedScanCalls.Store(0)
 	if _, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 5); err != nil {
 		t.Fatalf("r1: %v", err)
 	}
-	if unlinkedScanCalls != 1 {
-		t.Fatalf("r1 scans=%d", unlinkedScanCalls)
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("r1 scans=%d", unlinkedScanCalls.Load())
 	}
 	// Different scanCursor token is a different cache key.
 	fakeScan := encodeUnlinkedScanCursor(1, uuidU)
 	if _, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", fakeScan, 5); err != nil {
 		t.Fatalf("r2: %v", err)
 	}
-	if unlinkedScanCalls != 2 {
-		t.Fatalf("new scanCursor must miss cache: scans=%d want 2", unlinkedScanCalls)
+	if unlinkedScanCalls.Load() != 2 {
+		t.Fatalf("new scanCursor must miss cache: scans=%d want 2", unlinkedScanCalls.Load())
 	}
 }
 
@@ -1413,7 +1413,7 @@ func TestUnlinked_CacheInvalidatesOnClearFileBlocks(t *testing.T) {
 		noteBlock(uuidW, "about Topic"),
 	})
 
-	unlinkedScanCalls = 0
+	unlinkedScanCalls.Store(0)
 	p1, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
 	if err != nil {
 		t.Fatalf("p1: %v", err)
@@ -1421,8 +1421,8 @@ func TestUnlinked_CacheInvalidatesOnClearFileBlocks(t *testing.T) {
 	if len(p1.Results) != 2 {
 		t.Fatalf("want 2 mentions, got %d", len(p1.Results))
 	}
-	if unlinkedScanCalls != 1 {
-		t.Fatalf("p1 scans=%d", unlinkedScanCalls)
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("p1 scans=%d", unlinkedScanCalls.Load())
 	}
 
 	if err := dm.ClearFileBlocks(nil, "vault", "NB", "Sec", "SrcB"); err != nil {
@@ -1433,8 +1433,8 @@ func TestUnlinked_CacheInvalidatesOnClearFileBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("all: %v", err)
 	}
-	if unlinkedScanCalls != 2 {
-		t.Fatalf("after ClearFileBlocks scans=%d want 2", unlinkedScanCalls)
+	if unlinkedScanCalls.Load() != 2 {
+		t.Fatalf("after ClearFileBlocks scans=%d want 2", unlinkedScanCalls.Load())
 	}
 	for _, m := range all.Results {
 		if m.SourcePage == "SrcB" {
@@ -1480,7 +1480,45 @@ func TestUnlinked_LeafLookupCaseInsensitive(t *testing.T) {
 		t.Fatalf("ListPagesByLeaf: %v", err)
 	}
 	if len(pages) < 2 {
-		t.Fatalf("NOCASE leaf lookup: got %d want >=2: %+v", len(pages), pages)
+		t.Fatalf("ASCII leaf lookup: got %d want >=2: %+v", len(pages), pages)
+	}
+}
+
+// TestUnlinked_LeafLookupUnicodeCaseFold covers non-ASCII case pairs that
+// SQLite lower() cannot fold (Café vs CAFÉ) — must match EqualFold.
+func TestUnlinked_LeafLookupUnicodeCaseFold(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Café", []parser.ParsedBlock{
+		noteBlock(uuidU, "home"),
+	})
+	idxU(t, dm, "vault", "NB", "Other", "CAFÉ", []parser.ParsedBlock{
+		noteBlock(uuidV, "other"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
+		// FTS/plain residual uses the active title string as stored on the open page.
+		noteBlock(uuidW, "visit Café soon"),
+	})
+
+	pages, err := dm.ListPagesByLeaf("café")
+	if err != nil {
+		t.Fatalf("ListPagesByLeaf: %v", err)
+	}
+	if len(pages) != 2 {
+		t.Fatalf("Unicode EqualFold leaf: got %d want 2: %+v", len(pages), pages)
+	}
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Café", "", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected 1 mention, got %d: %+v", len(res.Results), res.Results)
+	}
+	if !res.Results[0].Ambiguous {
+		t.Fatal("Café/CAFÉ must be Ambiguous under EqualFold")
+	}
+	if got := len(res.Results[0].Candidates); got < 2 {
+		t.Fatalf("candidates: got %d want >=2: %+v", got, res.Results[0].Candidates)
 	}
 }
 
@@ -1501,13 +1539,13 @@ func TestUnlinked_CacheInvalidatesOnReindex(t *testing.T) {
 		noteBlock(uuidX, "about Topic"),
 	})
 
-	unlinkedScanCalls = 0
+	unlinkedScanCalls.Store(0)
 	p1, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 2)
 	if err != nil {
 		t.Fatalf("p1: %v", err)
 	}
-	if unlinkedScanCalls != 1 {
-		t.Fatalf("p1 scans=%d", unlinkedScanCalls)
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("p1 scans=%d", unlinkedScanCalls.Load())
 	}
 
 	// Remove Topic mention from SrcC via reindex — batch membership changes.
@@ -1520,8 +1558,8 @@ func TestUnlinked_CacheInvalidatesOnReindex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("all: %v", err)
 	}
-	if unlinkedScanCalls != 2 {
-		t.Fatalf("after reindex scans=%d want 2", unlinkedScanCalls)
+	if unlinkedScanCalls.Load() != 2 {
+		t.Fatalf("after reindex scans=%d want 2", unlinkedScanCalls.Load())
 	}
 	for _, m := range all.Results {
 		if m.SourcePage == "SrcC" {
@@ -1552,13 +1590,13 @@ func TestUnlinked_NoFullInventoryOnPagedPath(t *testing.T) {
 		noteBlock(uuidV, "see Topic please"),
 	})
 
-	before := listDistinctPagesCalls
+	before := listDistinctPagesCalls.Load()
 	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
-	if listDistinctPagesCalls != before {
-		t.Fatalf("unlinked paged must not listDistinctPages: before=%d after=%d", before, listDistinctPagesCalls)
+	if listDistinctPagesCalls.Load() != before {
+		t.Fatalf("unlinked paged must not listDistinctPages: before=%d after=%d", before, listDistinctPagesCalls.Load())
 	}
 	if len(res.Results) != 1 || res.Results[0].Ambiguous {
 		t.Fatalf("unique title: %+v", res.Results)

@@ -352,7 +352,7 @@ func copyPagePaths(in []parser.PagePath) []parser.PagePath {
 //
 // afterRowid is an exclusive lower bound (0 = from the start).
 func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source, notebook, section, page string, afterRowid int64) ([]unlinkedBlock, bool, int64, string, error) {
-	unlinkedScanCalls++
+	unlinkedScanCalls.Add(1)
 	phrase := buildUnlinkedFTSPhrase(title)
 	if phrase == "" {
 		return nil, false, 0, "", nil

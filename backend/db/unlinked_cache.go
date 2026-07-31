@@ -1,6 +1,9 @@
 package db
 
-import "time"
+import (
+	"sync/atomic"
+	"time"
+)
 
 // unlinkedScanCacheMaxEntries bounds process-local FTS window cache size.
 // The backlinks panel typically holds one active title; a small cap covers
@@ -11,9 +14,9 @@ const unlinkedScanCacheMaxEntries = 16
 // Primary freshness is unlinkedScanCacheGen (bumped on blocks mutation).
 const unlinkedScanCacheTTL = 30 * time.Second
 
-// unlinkedScanCalls counts scanUnlinkedCandidateBlocks invocations (tests).
-// Not atomic: tests run serially against a single dm.
-var unlinkedScanCalls int
+// unlinkedScanCalls counts scanUnlinkedCandidateBlocks invocations (tests +
+// concurrent production readers via WithDBReadResult).
+var unlinkedScanCalls atomic.Uint64
 
 type unlinkedScanCacheKey struct {
 	gen                                  uint64

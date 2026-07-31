@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"strings"
+	"sync/atomic"
+	"unicode"
 
 	"silt/backend/parser"
 )
@@ -58,14 +60,28 @@ func (dm *DatabaseManager) PageExistsExact(source, notebook, section, page strin
 	return pageExistsExact(db, source, notebook, section, page)
 }
 
+// listDistinctPagesCalls counts full-inventory scans (tests for #839).
+// atomic: production concurrent readers may hit ListDistinctPages.
+var listDistinctPagesCalls atomic.Uint64
+
 // listDistinctPages is the no-handle-reentry internal helper. Callers that
 // already hold a handle lease MUST call this instead of ListDistinctPages.
 func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
-	listDistinctPagesCalls++
-	rows, err := db.Query(`
+	listDistinctPagesCalls.Add(1)
+	return scanDistinctPages(db, `` /* no WHERE */, nil)
+}
+
+// scanDistinctPages runs SELECT DISTINCT page locs with an optional WHERE
+// clause (and bind args). empty whereSQL means full inventory.
+func scanDistinctPages(db *sql.DB, whereSQL string, args []any) ([]PageLoc, error) {
+	q := `
 		SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
-		FROM blocks
-		ORDER BY notebook, section, page`)
+		FROM blocks`
+	if whereSQL != "" {
+		q += " WHERE " + whereSQL
+	}
+	q += " ORDER BY notebook, section, page"
+	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -81,36 +97,43 @@ func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
 	return out, rows.Err()
 }
 
-// listDistinctPagesCalls counts full-inventory scans (tests for #839).
-var listDistinctPagesCalls int
+// leafIsASCII reports whether s contains only ASCII runes. SQLite lower() is
+// ASCII-only; Unicode case folding must use Go strings.EqualFold.
+func leafIsASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
+}
 
 // listPagesByLeaf returns distinct page locations whose leaf page name matches
-// leaf case-insensitively (same EqualFold semantics as PageMatchesTarget /
-// ResolvePageLinkAgainst). Used by unlinked ambiguity so large vaults do not
-// load the full inventory. Index: idx_blocks_page_lower.
+// leaf with the same case-folding rules as PageMatchesTarget (EqualFold).
+// ASCII leaves use indexed lower(page) (idx_blocks_page_lower). Non-ASCII
+// leaves filter the page inventory in Go — SQLite lower() would miss pairs
+// like Café/CAFÉ.
 func listPagesByLeaf(db *sql.DB, leaf string) ([]PageLoc, error) {
 	leaf = strings.TrimSpace(leaf)
 	if leaf == "" {
 		return nil, nil
 	}
-	rows, err := db.Query(`
-		SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
-		FROM blocks
-		WHERE lower(page) = lower(?)
-		ORDER BY notebook, section, page`, leaf)
+	if leafIsASCII(leaf) {
+		return scanDistinctPages(db, `lower(page) = lower(?)`, []any{leaf})
+	}
+	// Non-ASCII: full distinct page set, then EqualFold on the leaf only.
+	// Rare path (accented/CJK titles); correctness over SQL lower().
+	all, err := scanDistinctPages(db, ``, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []PageLoc
-	for rows.Next() {
-		var p PageLoc
-		if err := rows.Scan(&p.Source, &p.Notebook, &p.Section, &p.Page); err != nil {
-			return nil, err
+	for _, p := range all {
+		if strings.EqualFold(p.Page, leaf) {
+			out = append(out, p)
 		}
-		out = append(out, p)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // pageExistsExact reports whether a concrete path is present in the blocks index.
