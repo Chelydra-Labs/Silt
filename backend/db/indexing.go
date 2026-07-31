@@ -534,6 +534,11 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section
 	}
 	defer release()
 	_, err = db.Exec(query, source, notebook, section, page)
+	if err == nil {
+		// Watcher remove/rename and app delete paths use tx==nil; residual FTS
+		// windows must not keep deleted source pages until TTL expiry.
+		dm.invalidateUnlinkedScanCache()
+	}
 	return err
 }
 

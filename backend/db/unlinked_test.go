@@ -1399,6 +1399,91 @@ func TestUnlinked_ScanMoreMissesCache(t *testing.T) {
 	}
 }
 
+// TestUnlinked_CacheInvalidatesOnClearFileBlocks ensures watcher-style
+// ClearFileBlocks(nil, ...) busts the residual FTS window cache.
+func TestUnlinked_CacheInvalidatesOnClearFileBlocks(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcA", []parser.ParsedBlock{
+		noteBlock(uuidV, "about Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcB", []parser.ParsedBlock{
+		noteBlock(uuidW, "about Topic"),
+	})
+
+	unlinkedScanCalls = 0
+	p1, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("p1: %v", err)
+	}
+	if len(p1.Results) != 2 {
+		t.Fatalf("want 2 mentions, got %d", len(p1.Results))
+	}
+	if unlinkedScanCalls != 1 {
+		t.Fatalf("p1 scans=%d", unlinkedScanCalls)
+	}
+
+	if err := dm.ClearFileBlocks(nil, "vault", "NB", "Sec", "SrcB"); err != nil {
+		t.Fatalf("ClearFileBlocks: %v", err)
+	}
+
+	all, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("all: %v", err)
+	}
+	if unlinkedScanCalls != 2 {
+		t.Fatalf("after ClearFileBlocks scans=%d want 2", unlinkedScanCalls)
+	}
+	for _, m := range all.Results {
+		if m.SourcePage == "SrcB" {
+			t.Fatalf("stale cache served deleted SrcB: %+v", all.Results)
+		}
+	}
+	if len(all.Results) != 1 || all.Results[0].SourcePage != "SrcA" {
+		t.Fatalf("want only SrcA, got %+v", all.Results)
+	}
+}
+
+// TestUnlinked_LeafLookupCaseInsensitive matches PageMatchesTarget EqualFold.
+func TestUnlinked_LeafLookupCaseInsensitive(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Onboarding", []parser.ParsedBlock{
+		noteBlock(uuidU, "home"),
+	})
+	// Second leaf differs only by case — both must surface as ambiguous for "onboarding".
+	idxU(t, dm, "vault", "NB", "Other", "onboarding", []parser.ParsedBlock{
+		noteBlock(uuidV, "other home"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
+		noteBlock(uuidW, "see Onboarding please"),
+	})
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected 1 mention, got %d", len(res.Results))
+	}
+	if !res.Results[0].Ambiguous {
+		t.Fatal("case-only leaf collision must be Ambiguous")
+	}
+	if len(res.Results[0].Candidates) < 2 {
+		t.Fatalf("expected both case variants in candidates, got %+v", res.Results[0].Candidates)
+	}
+
+	// Leaf API with differently-cased query still finds stored pages.
+	pages, err := dm.ListPagesByLeaf("ONBOARDING")
+	if err != nil {
+		t.Fatalf("ListPagesByLeaf: %v", err)
+	}
+	if len(pages) < 2 {
+		t.Fatalf("NOCASE leaf lookup: got %d want >=2: %+v", len(pages), pages)
+	}
+}
+
 // TestUnlinked_CacheInvalidatesOnReindex ensures residual pages do not serve a
 // stale FTS window after IndexFileBlocks (#838).
 func TestUnlinked_CacheInvalidatesOnReindex(t *testing.T) {
@@ -1520,20 +1605,19 @@ func TestUnlinked_AmbiguousCandidateCap(t *testing.T) {
 	}
 }
 
-// TestUnlinked_LeafLookupPlanUsesPageIndex prefers idx_blocks_page for leaf lookup.
+// TestUnlinked_LeafLookupPlanUsesPageIndex prefers idx_blocks_page_lower.
 func TestUnlinked_LeafLookupPlanUsesPageIndex(t *testing.T) {
 	dm := newTestDB(t)
 	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
 		noteBlock(uuidU, "x"),
 	})
 	const q = `SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
-		FROM blocks WHERE page = ? ORDER BY notebook, section, page`
+		FROM blocks WHERE lower(page) = lower(?) ORDER BY notebook, section, page`
 	plans := explainDetails(t, dm, q, "Topic")
 	joined := strings.ToUpper(strings.Join(plans, " | "))
-	if !strings.Contains(joined, "IDX_BLOCKS_PAGE") && !strings.Contains(joined, "PAGE") {
+	if !strings.Contains(joined, "IDX_BLOCKS_PAGE_LOWER") && !strings.Contains(joined, "PAGE") {
 		t.Logf("leaf plan (index name may vary): %v", plans)
 	}
-	// Must not be a full table scan of all blocks without using page filter.
 	if strings.Contains(joined, "SCAN BLOCKS") && !strings.Contains(joined, "PAGE") && !strings.Contains(joined, "USING") {
 		t.Errorf("unexpected full scan without page: %v", plans)
 	}

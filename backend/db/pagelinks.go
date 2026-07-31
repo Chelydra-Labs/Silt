@@ -84,9 +84,10 @@ func listDistinctPages(db *sql.DB) ([]PageLoc, error) {
 // listDistinctPagesCalls counts full-inventory scans (tests for #839).
 var listDistinctPagesCalls int
 
-// listPagesByLeaf returns distinct page locations whose leaf page name equals
-// leaf (exact match, same case rules as stored paths / ResolvePageLinkAgainst).
-// Used by unlinked ambiguity so large vaults do not load the full inventory.
+// listPagesByLeaf returns distinct page locations whose leaf page name matches
+// leaf case-insensitively (same EqualFold semantics as PageMatchesTarget /
+// ResolvePageLinkAgainst). Used by unlinked ambiguity so large vaults do not
+// load the full inventory. Index: idx_blocks_page_lower.
 func listPagesByLeaf(db *sql.DB, leaf string) ([]PageLoc, error) {
 	leaf = strings.TrimSpace(leaf)
 	if leaf == "" {
@@ -95,7 +96,7 @@ func listPagesByLeaf(db *sql.DB, leaf string) ([]PageLoc, error) {
 	rows, err := db.Query(`
 		SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
 		FROM blocks
-		WHERE page = ?
+		WHERE lower(page) = lower(?)
 		ORDER BY notebook, section, page`, leaf)
 	if err != nil {
 		return nil, err
