@@ -659,100 +659,102 @@
     {/if}
   </div>
 
-  <!-- Floating Editor Actions — tray expands left of a stable peek so hover
-       on ⋯ does not lose the hit target (right edge is fixed). -->
+  <!-- Top-right: flyout only on the ⋯ cluster — calendar is outside so it
+       does not open the tray. -->
   <div
-    class="editor-float-actions"
+    class="editor-float-row"
     class:top-4={!showEditorUtilityBar}
     class:top-14={showEditorUtilityBar}
-    class:editor-float-actions--pinned={editorActionsPinned}
     data-testid="editor-float-actions"
-    role="toolbar"
-    aria-label="Editor actions"
   >
-    <!-- Tray first (grows left). Peek stays under the cursor on hover. -->
-    <div class="editor-float-actions__tray">
-      <!-- Focus Mode Toggle -->
-      <button
-        type="button"
-        onclick={toggleFocusMode}
-        class="editor-float-actions__btn"
-        class:editor-float-actions__btn--on={settings.config?.editor
-          ?.focus_mode === true}
-        title={settings.config?.editor?.focus_mode === true
-          ? `Exit Focus Mode${focusModeHotkey ? ` (${focusModeHotkey})` : ''}`
-          : `Enter Focus Mode${focusModeHotkey ? ` (${focusModeHotkey})` : ''}`}
-        aria-label="Toggle Focus Mode"
-      >
-        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
-          >center_focus_strong</span
-        >
-      </button>
-
-      <!-- Format Toolbar Toggle -->
-      <button
-        type="button"
-        onclick={toggleFormatToolbar}
-        class="editor-float-actions__btn"
-        class:editor-float-actions__btn--on={showFormatToolbar}
-        title={showFormatToolbar
-          ? `Hide Formatting Toolbar${formatToolbarHotkey ? ` (${formatToolbarHotkey})` : ''}`
-          : `Show Formatting Toolbar${formatToolbarHotkey ? ` (${formatToolbarHotkey})` : ''}`}
-        aria-label="Toggle Formatting Toolbar"
-      >
-        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
-          >text_format</span
-        >
-      </button>
-
-      {#if viewMode === 'edit'}
+    <div
+      class="editor-float-actions"
+      class:editor-float-actions--pinned={editorActionsPinned}
+      role="toolbar"
+      aria-label="Editor actions"
+    >
+      <!-- Tray grows left of the ⋯ peek. -->
+      <div class="editor-float-actions__tray">
         <button
           type="button"
-          onclick={() => {
-            outlineOpen = !outlineOpen
-          }}
+          onclick={toggleFocusMode}
           class="editor-float-actions__btn"
-          class:editor-float-actions__btn--on={outlineOpen}
-          title={outlineOpen ? 'Hide outline' : 'Show outline'}
-          aria-label="Toggle document outline"
-          aria-pressed={outlineOpen}
+          class:editor-float-actions__btn--on={settings.config?.editor
+            ?.focus_mode === true}
+          title={settings.config?.editor?.focus_mode === true
+            ? `Exit Focus Mode${focusModeHotkey ? ` (${focusModeHotkey})` : ''}`
+            : `Enter Focus Mode${focusModeHotkey ? ` (${focusModeHotkey})` : ''}`}
+          aria-label="Toggle Focus Mode"
         >
           <span
             class="material-symbols-outlined text-icon-lg"
-            aria-hidden="true">list</span
+            aria-hidden="true">center_focus_strong</span
           >
         </button>
-      {/if}
 
-      <div class="editor-float-actions__sep" aria-hidden="true"></div>
+        <button
+          type="button"
+          onclick={toggleFormatToolbar}
+          class="editor-float-actions__btn"
+          class:editor-float-actions__btn--on={showFormatToolbar}
+          title={showFormatToolbar
+            ? `Hide Formatting Toolbar${formatToolbarHotkey ? ` (${formatToolbarHotkey})` : ''}`
+            : `Show Formatting Toolbar${formatToolbarHotkey ? ` (${formatToolbarHotkey})` : ''}`}
+          aria-label="Toggle Formatting Toolbar"
+        >
+          <span
+            class="material-symbols-outlined text-icon-lg"
+            aria-hidden="true">text_format</span
+          >
+        </button>
 
-      <!-- View Mode Toggle — stable accessible name + aria-pressed; title
-           carries the contextual action + live (remappable) hotkey. -->
-      <button
-        type="button"
-        onclick={() => onToggleViewMode?.()}
-        class="editor-float-actions__btn"
-        title={viewMode === 'edit'
-          ? `View Markdown Source (${viewModeHotkey})`
-          : `View Rich Text (${viewModeHotkey})`}
-        aria-label="Toggle source view"
-        aria-pressed={viewMode === 'source'}
-        aria-keyshortcuts={viewModeHotkey}
-      >
-        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true">
-          {viewMode === 'edit' ? 'code' : 'menu_book'}
-        </span>
-      </button>
+        {#if viewMode === 'edit'}
+          <button
+            type="button"
+            onclick={() => {
+              outlineOpen = !outlineOpen
+            }}
+            class="editor-float-actions__btn"
+            class:editor-float-actions__btn--on={outlineOpen}
+            title={outlineOpen ? 'Hide outline' : 'Show outline'}
+            aria-label="Toggle document outline"
+            aria-pressed={outlineOpen}
+          >
+            <span
+              class="material-symbols-outlined text-icon-lg"
+              aria-hidden="true">list</span
+            >
+          </button>
+        {/if}
 
-      <div class="editor-float-actions__sep" aria-hidden="true"></div>
+        <div class="editor-float-actions__sep" aria-hidden="true"></div>
+
+        <button
+          type="button"
+          onclick={() => onToggleViewMode?.()}
+          class="editor-float-actions__btn"
+          title={viewMode === 'edit'
+            ? `View Markdown Source (${viewModeHotkey})`
+            : `View Rich Text (${viewModeHotkey})`}
+          aria-label="Toggle source view"
+          aria-pressed={viewMode === 'source'}
+          aria-keyshortcuts={viewModeHotkey}
+        >
+          <span
+            class="material-symbols-outlined text-icon-lg"
+            aria-hidden="true"
+          >
+            {viewMode === 'edit' ? 'code' : 'menu_book'}
+          </span>
+        </button>
+      </div>
+
+      <span class="editor-float-actions__peek" aria-hidden="true">
+        <span class="material-symbols-outlined text-icon-lg">more_horiz</span>
+      </span>
     </div>
 
-    <span class="editor-float-actions__peek" aria-hidden="true">
-      <span class="material-symbols-outlined text-icon-lg">more_horiz</span>
-    </span>
-
-    <!-- Date Glance stays outside the collapsing tray so the chip keeps a real
-         layout box for placement (hotkey path uses the registered anchor). -->
+    <!-- Outside the hover group — does not open the actions tray. -->
     <DateGlanceChip active={_isActive} />
   </div>
 
@@ -763,17 +765,15 @@
       {saveError ?? ''}
     </div>
   {/if}
-  <!-- Bottom status: word count always visible when enabled; only zoom
-       (and save error) collapse. Outside .note-page-zoom so chrome does not scale. -->
+  <!-- Bottom status: word count always on when enabled. Zoom flyout only from
+       the % control (not word count). Outside .note-page-zoom. -->
   {#if viewMode === 'edit' && showEditorUtilityBar}
     <div
       class="editor-status-pill"
-      class:editor-status-pill--pinned={editorStatusPinned}
       data-testid="editor-status-pill"
       aria-label="Editor status"
     >
       {#if saveError}
-        <!-- Fail-loud — always visible (announced via the live region above). -->
         <div class="editor-status-pill__error">
           <span class="editor-status-pill__error-dot" aria-hidden="true"></span>
           <span class="editor-status-pill__error-label">Save failed</span>
@@ -781,50 +781,46 @@
         <div class="editor-status-pill__sep" aria-hidden="true"></div>
       {/if}
 
-      <!-- Zoom tray expands left of a stable peek (same hit-target fix as top). -->
-      <div class="editor-status-pill__zoom-wrap">
-        <div
-          class="editor-status-pill__zoom"
-          role="group"
-          aria-label="Page zoom"
+      <!-- Hover/focus only on this wrap opens zoom − / +. % always visible. -->
+      <div
+        class="editor-status-pill__zoom-wrap"
+        class:editor-status-pill__zoom-wrap--pinned={editorStatusPinned}
+        role="group"
+        aria-label="Page zoom"
+      >
+        <button
+          type="button"
+          class="editor-status-pill__zoom-btn editor-status-pill__zoom-extra"
+          onclick={() => noteZoom.zoomOut()}
+          disabled={noteZoom.factor <= NOTE_ZOOM_MIN}
+          aria-label="Zoom out"
+          title="Zoom out (Ctrl+scroll)"
         >
-          <button
-            type="button"
-            class="editor-status-pill__zoom-btn"
-            onclick={() => noteZoom.zoomOut()}
-            disabled={noteZoom.factor <= NOTE_ZOOM_MIN}
-            aria-label="Zoom out"
-            title="Zoom out (Ctrl+scroll)"
+          <span class="material-symbols-outlined" aria-hidden="true"
+            >zoom_out</span
           >
-            <span class="material-symbols-outlined" aria-hidden="true"
-              >zoom_out</span
-            >
-          </button>
-          <button
-            type="button"
-            class="editor-status-pill__zoom-pct font-label-sm"
-            onclick={() => noteZoom.reset()}
-            aria-label={`Zoom ${noteZoom.percent}%. Reset to 100%`}
-            title="Reset zoom (Ctrl+scroll to zoom)"
+        </button>
+        <button
+          type="button"
+          class="editor-status-pill__zoom-pct font-label-sm"
+          onclick={() => noteZoom.reset()}
+          aria-label={`Zoom ${noteZoom.percent}%. Reset to 100%`}
+          title="Zoom (Ctrl+scroll). Click to reset to 100%"
+        >
+          {noteZoom.percent}%
+        </button>
+        <button
+          type="button"
+          class="editor-status-pill__zoom-btn editor-status-pill__zoom-extra"
+          onclick={() => noteZoom.zoomIn()}
+          disabled={noteZoom.factor >= NOTE_ZOOM_MAX}
+          aria-label="Zoom in"
+          title="Zoom in (Ctrl+scroll)"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true"
+            >zoom_in</span
           >
-            {noteZoom.percent}%
-          </button>
-          <button
-            type="button"
-            class="editor-status-pill__zoom-btn"
-            onclick={() => noteZoom.zoomIn()}
-            disabled={noteZoom.factor >= NOTE_ZOOM_MAX}
-            aria-label="Zoom in"
-            title="Zoom in (Ctrl+scroll)"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true"
-              >zoom_in</span
-            >
-          </button>
-        </div>
-        <span class="editor-status-pill__peek" aria-hidden="true">
-          <span class="material-symbols-outlined text-icon-lg">zoom_in</span>
-        </span>
+        </button>
       </div>
 
       {#if showWordCount}
@@ -858,12 +854,25 @@
     opacity: 0.4;
   }
 
-  /* --- Top-right editor actions: calm when idle, full tray on approach ---
-     Order is tray | peek | date. Tray expands left; peek stays under cursor. */
-  .editor-float-actions {
+  /* --- Top-right: row positions cluster + calendar; only ⋯ cluster expands --- */
+  .editor-float-row {
     position: absolute;
     right: 1.5rem;
     z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .editor-float-row.top-4 {
+    top: 1rem;
+  }
+
+  .editor-float-row.top-14 {
+    top: 3.5rem;
+  }
+
+  .editor-float-actions {
     display: flex;
     align-items: center;
     gap: 0.1rem;
@@ -886,14 +895,6 @@
     opacity: 0.42;
   }
 
-  .editor-float-actions.top-4 {
-    top: 1rem;
-  }
-
-  .editor-float-actions.top-14 {
-    top: 3.5rem;
-  }
-
   .editor-float-actions__peek {
     display: flex;
     align-items: center;
@@ -914,7 +915,6 @@
     max-width: 0;
     opacity: 0;
     overflow: hidden;
-    /* Keep controls in tab order while collapsed; focus-within expands tray. */
     transition:
       max-width 200ms ease,
       opacity 140ms ease;
@@ -937,8 +937,6 @@
     box-shadow: 0 6px 22px color-mix(in srgb, black 12%, transparent);
   }
 
-  /* Hide peek only after open — delayed so the hit target does not vanish
-     under the cursor before the tray has width. */
   .editor-float-actions:hover .editor-float-actions__peek,
   .editor-float-actions:focus-within .editor-float-actions__peek,
   .editor-float-actions--pinned .editor-float-actions__peek {
@@ -997,7 +995,7 @@
     flex-shrink: 0;
   }
 
-  /* --- Bottom status: word count always on; only zoom collapses --- */
+  /* --- Bottom: word count always visible; zoom flyout only from % wrap --- */
   .editor-status-pill {
     position: absolute;
     bottom: 1.5rem;
@@ -1006,7 +1004,7 @@
     display: flex;
     align-items: center;
     gap: 0.35rem;
-    padding: 0.3rem 0.55rem 0.3rem 0.35rem;
+    padding: 0.3rem 0.55rem 0.3rem 0.4rem;
     border-radius: 9999px;
     background: color-mix(
       in srgb,
@@ -1022,81 +1020,43 @@
     font-weight: 500;
     letter-spacing: 0.01em;
     user-select: none;
-    opacity: 0.72;
-    transition:
-      background 160ms ease,
-      border-color 160ms ease,
-      box-shadow 160ms ease,
-      opacity 160ms ease;
+    opacity: 0.78;
   }
 
-  .editor-status-pill:hover,
-  .editor-status-pill:focus-within,
-  .editor-status-pill--pinned {
-    opacity: 1;
-    background: color-mix(
-      in srgb,
-      var(--color-surface-popover) 88%,
-      transparent
-    );
-    border-color: color-mix(
-      in srgb,
-      var(--color-surface-popover-border) 70%,
-      transparent
-    );
-    box-shadow: 0 6px 20px color-mix(in srgb, black 12%, transparent);
-  }
-
-  /* Zoom cluster: tray | peek — tray grows left of stable peek. */
   .editor-status-pill__zoom-wrap {
     display: flex;
     align-items: center;
     flex-shrink: 0;
+    border-radius: 9999px;
+    transition: background 120ms ease;
   }
 
-  .editor-status-pill__peek {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.55rem;
-    height: 1.55rem;
-    color: var(--color-text-muted);
-    flex-shrink: 0;
-    transition:
-      width 140ms ease,
-      opacity 120ms ease;
+  .editor-status-pill__zoom-wrap:hover,
+  .editor-status-pill__zoom-wrap:focus-within,
+  .editor-status-pill__zoom-wrap--pinned {
+    background: color-mix(in srgb, var(--color-hover) 55%, transparent);
   }
 
-  .editor-status-pill__zoom {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.05rem;
-    flex-shrink: 0;
+  /* − / + only appear when the zoom wrap (not word count) is hovered. */
+  .editor-status-pill__zoom-extra {
     max-width: 0;
     opacity: 0;
     overflow: hidden;
-    transition:
-      max-width 200ms ease,
-      opacity 140ms ease;
-  }
-
-  .editor-status-pill:hover .editor-status-pill__zoom,
-  .editor-status-pill:focus-within .editor-status-pill__zoom,
-  .editor-status-pill--pinned .editor-status-pill__zoom {
-    max-width: 8rem;
-    opacity: 1;
-  }
-
-  .editor-status-pill:hover .editor-status-pill__peek,
-  .editor-status-pill:focus-within .editor-status-pill__peek,
-  .editor-status-pill--pinned .editor-status-pill__peek {
-    width: 0;
-    opacity: 0;
-    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    border: none;
     pointer-events: none;
     transition:
-      width 120ms ease 80ms,
-      opacity 80ms ease 60ms;
+      max-width 180ms ease,
+      opacity 120ms ease;
+  }
+
+  .editor-status-pill__zoom-wrap:hover .editor-status-pill__zoom-extra,
+  .editor-status-pill__zoom-wrap:focus-within .editor-status-pill__zoom-extra,
+  .editor-status-pill__zoom-wrap--pinned .editor-status-pill__zoom-extra {
+    max-width: 1.75rem;
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .editor-status-pill__sep {

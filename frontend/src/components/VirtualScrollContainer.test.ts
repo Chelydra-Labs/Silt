@@ -184,26 +184,26 @@ describe('VirtualScrollContainer editor chrome', () => {
 
     const pill = screen.getByTestId('editor-status-pill')
     expect(pill).toBeInTheDocument()
-    // Pill must not live under the scaled content wrapper.
     expect(pill.closest('[data-testid="note-page-zoom"]')).toBeNull()
-    // Idle = zoom collapsed behind peek; not pinned at 100%.
-    expect(pill).not.toHaveClass('editor-status-pill--pinned')
-    expect(pill.querySelector('.editor-status-pill__peek')).toBeInTheDocument()
-    expect(pill.querySelector('.editor-status-pill__zoom')).toBeInTheDocument()
 
-    // Zoom controls stay in the DOM for keyboard tab order / focus-within.
-    expect(screen.getByRole('group', { name: 'Page zoom' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Zoom in' })).toBeInTheDocument()
+    const zoomWrap = pill.querySelector('.editor-status-pill__zoom-wrap')
+    expect(zoomWrap).toBeInTheDocument()
+    expect(zoomWrap).not.toHaveClass('editor-status-pill__zoom-wrap--pinned')
+    // Current % is always visible as the collapsed affordance.
     expect(
       screen.getByRole('button', { name: 'Zoom 100%. Reset to 100%' })
     ).toHaveTextContent('100%')
+    expect(screen.getByRole('group', { name: 'Page zoom' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Zoom in' })).toBeInTheDocument()
 
     await fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
     await waitFor(() => {
-      expect(screen.getByTestId('editor-status-pill')).toHaveClass(
-        'editor-status-pill--pinned'
-      )
+      expect(
+        screen
+          .getByTestId('editor-status-pill')
+          .querySelector('.editor-status-pill__zoom-wrap')
+      ).toHaveClass('editor-status-pill__zoom-wrap--pinned')
       expect(
         screen.getByRole('button', { name: 'Zoom 110%. Reset to 100%' })
       ).toHaveTextContent('110%')
@@ -212,9 +212,11 @@ describe('VirtualScrollContainer editor chrome', () => {
       screen.getByRole('button', { name: 'Zoom 110%. Reset to 100%' })
     )
     await waitFor(() => {
-      expect(screen.getByTestId('editor-status-pill')).not.toHaveClass(
-        'editor-status-pill--pinned'
-      )
+      expect(
+        screen
+          .getByTestId('editor-status-pill')
+          .querySelector('.editor-status-pill__zoom-wrap')
+      ).not.toHaveClass('editor-status-pill__zoom-wrap--pinned')
       expect(
         screen.getByRole('button', { name: 'Zoom 100%. Reset to 100%' })
       ).toHaveTextContent('100%')
@@ -222,16 +224,15 @@ describe('VirtualScrollContainer editor chrome', () => {
     noteZoom.reset()
   })
 
-  it('always shows word count when enabled (zoom may still collapse)', () => {
+  it('always shows word count when enabled (outside zoom flyout)', () => {
     mocks.settings.config.editor.show_word_count = true
     render(VirtualScrollContainer, { props: baseProps() })
     const pill = screen.getByTestId('editor-status-pill')
     expect(pill).toHaveTextContent('0 words')
     expect(pill.querySelector('.editor-status-pill__words')).toBeInTheDocument()
-    // Word count is a sibling of the zoom wrap, not inside collapsing zoom.
     expect(
       pill
-        .querySelector('.editor-status-pill__zoom')
+        .querySelector('.editor-status-pill__zoom-wrap')
         ?.contains(pill.querySelector('.editor-status-pill__words')!)
     ).toBe(false)
   })
@@ -265,33 +266,34 @@ describe('VirtualScrollContainer editor chrome', () => {
     noteZoom.reset()
   })
 
-  it('collapses top-right actions by default; date glance stays reachable', () => {
+  it('collapses top-right actions by default; date glance stays outside flyout', () => {
     render(VirtualScrollContainer, { props: baseProps() })
-    const cluster = screen.getByTestId('editor-float-actions')
-    // Idle = not pinned. Expansion is CSS :hover/:focus-within (not
-    // simulable via getComputedStyle in jsdom); pin class is the JS signal.
+    const row = screen.getByTestId('editor-float-actions')
+    const cluster = row.querySelector('.editor-float-actions')
+    expect(cluster).toBeTruthy()
     expect(cluster).not.toHaveClass('editor-float-actions--pinned')
     expect(
-      cluster.querySelector('.editor-float-actions__peek')
+      cluster!.querySelector('.editor-float-actions__peek')
     ).toBeInTheDocument()
     expect(
-      cluster.querySelector('.editor-float-actions__tray')
+      cluster!.querySelector('.editor-float-actions__tray')
     ).toBeInTheDocument()
-    // Controls remain in the DOM for keyboard tab order.
     expect(actionButton('Toggle Focus Mode')).toBeInTheDocument()
-    // Date glance is outside the collapsing tray so it stays reachable.
-    expect(
-      screen.getByRole('button', { name: 'Pick a date' })
-    ).toBeInTheDocument()
+    const dateBtn = screen.getByRole('button', { name: 'Pick a date' })
+    expect(dateBtn).toBeInTheDocument()
+    // Calendar is a sibling of the ⋯ cluster — hovering it must not open tray.
+    expect(cluster!.contains(dateBtn)).toBe(false)
   })
 
   it('pins the action tray open in source view', () => {
     render(VirtualScrollContainer, {
       props: { ...baseProps(), viewMode: 'source' }
     })
-    expect(screen.getByTestId('editor-float-actions')).toHaveClass(
-      'editor-float-actions--pinned'
-    )
+    expect(
+      screen
+        .getByTestId('editor-float-actions')
+        .querySelector('.editor-float-actions')
+    ).toHaveClass('editor-float-actions--pinned')
     expect(
       screen.getByRole('button', { name: 'Toggle source view' })
     ).toBeInTheDocument()
