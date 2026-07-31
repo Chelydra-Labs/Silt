@@ -27,6 +27,7 @@
   import { shortcutBinding } from '../settings/shortcutActions'
   import {
     noteZoom,
+    NOTE_ZOOM_DEFAULT,
     NOTE_ZOOM_MAX,
     NOTE_ZOOM_MIN
   } from '../lib/noteZoom.svelte'
@@ -133,6 +134,11 @@
     settings.config?.editor?.focus_mode === true ||
       outlineOpen ||
       viewMode === 'source'
+  )
+  // Bottom status pill stays open for save failures (fail-loud) or non-default
+  // zoom so the user can see/reset without hunting a collapsed control.
+  let editorStatusPinned = $derived(
+    !!saveError || noteZoom.factor !== NOTE_ZOOM_DEFAULT
   )
 
   $effect(() => {
@@ -653,8 +659,8 @@
     {/if}
   </div>
 
-  <!-- Floating Editor Actions — collapsed by default; expands on hover /
-       focus-within, or stays open while a control is engaged. -->
+  <!-- Floating Editor Actions — tray expands left of a stable peek so hover
+       on ⋯ does not lose the hit target (right edge is fixed). -->
   <div
     class="editor-float-actions"
     class:top-4={!showEditorUtilityBar}
@@ -664,10 +670,7 @@
     role="toolbar"
     aria-label="Editor actions"
   >
-    <span class="editor-float-actions__peek" aria-hidden="true">
-      <span class="material-symbols-outlined text-icon-lg">more_horiz</span>
-    </span>
-
+    <!-- Tray first (grows left). Peek stays under the cursor on hover. -->
     <div class="editor-float-actions__tray">
       <!-- Focus Mode Toggle -->
       <button
@@ -740,14 +743,16 @@
           {viewMode === 'edit' ? 'code' : 'menu_book'}
         </span>
       </button>
+
+      <div class="editor-float-actions__sep" aria-hidden="true"></div>
     </div>
+
+    <span class="editor-float-actions__peek" aria-hidden="true">
+      <span class="material-symbols-outlined text-icon-lg">more_horiz</span>
+    </span>
 
     <!-- Date Glance stays outside the collapsing tray so the chip keeps a real
          layout box for placement (hotkey path uses the registered anchor). -->
-    <div
-      class="editor-float-actions__sep editor-float-actions__sep--edge"
-      aria-hidden="true"
-    ></div>
     <DateGlanceChip active={_isActive} />
   </div>
 
@@ -758,16 +763,17 @@
       {saveError ?? ''}
     </div>
   {/if}
-  <!-- Bottom status pill: zoom (always for real notebooks) + optional word
-       count + save error. Outside .note-page-zoom so chrome does not scale. -->
+  <!-- Bottom status: word count always visible when enabled; only zoom
+       (and save error) collapse. Outside .note-page-zoom so chrome does not scale. -->
   {#if viewMode === 'edit' && showEditorUtilityBar}
     <div
       class="editor-status-pill"
+      class:editor-status-pill--pinned={editorStatusPinned}
       data-testid="editor-status-pill"
       aria-label="Editor status"
     >
       {#if saveError}
-        <!-- Fail-loud visual indicator (announced via the live region above). -->
+        <!-- Fail-loud — always visible (announced via the live region above). -->
         <div class="editor-status-pill__error">
           <span class="editor-status-pill__error-dot" aria-hidden="true"></span>
           <span class="editor-status-pill__error-label">Save failed</span>
@@ -775,40 +781,50 @@
         <div class="editor-status-pill__sep" aria-hidden="true"></div>
       {/if}
 
-      <div class="editor-status-pill__zoom" role="group" aria-label="Page zoom">
-        <button
-          type="button"
-          class="editor-status-pill__zoom-btn"
-          onclick={() => noteZoom.zoomOut()}
-          disabled={noteZoom.factor <= NOTE_ZOOM_MIN}
-          aria-label="Zoom out"
-          title="Zoom out (Ctrl+scroll)"
+      <!-- Zoom tray expands left of a stable peek (same hit-target fix as top). -->
+      <div class="editor-status-pill__zoom-wrap">
+        <div
+          class="editor-status-pill__zoom"
+          role="group"
+          aria-label="Page zoom"
         >
-          <span class="material-symbols-outlined" aria-hidden="true"
-            >zoom_out</span
+          <button
+            type="button"
+            class="editor-status-pill__zoom-btn"
+            onclick={() => noteZoom.zoomOut()}
+            disabled={noteZoom.factor <= NOTE_ZOOM_MIN}
+            aria-label="Zoom out"
+            title="Zoom out (Ctrl+scroll)"
           >
-        </button>
-        <button
-          type="button"
-          class="editor-status-pill__zoom-pct font-label-sm"
-          onclick={() => noteZoom.reset()}
-          aria-label={`Zoom ${noteZoom.percent}%. Reset to 100%`}
-          title="Reset zoom (Ctrl+scroll to zoom)"
-        >
-          {noteZoom.percent}%
-        </button>
-        <button
-          type="button"
-          class="editor-status-pill__zoom-btn"
-          onclick={() => noteZoom.zoomIn()}
-          disabled={noteZoom.factor >= NOTE_ZOOM_MAX}
-          aria-label="Zoom in"
-          title="Zoom in (Ctrl+scroll)"
-        >
-          <span class="material-symbols-outlined" aria-hidden="true"
-            >zoom_in</span
+            <span class="material-symbols-outlined" aria-hidden="true"
+              >zoom_out</span
+            >
+          </button>
+          <button
+            type="button"
+            class="editor-status-pill__zoom-pct font-label-sm"
+            onclick={() => noteZoom.reset()}
+            aria-label={`Zoom ${noteZoom.percent}%. Reset to 100%`}
+            title="Reset zoom (Ctrl+scroll to zoom)"
           >
-        </button>
+            {noteZoom.percent}%
+          </button>
+          <button
+            type="button"
+            class="editor-status-pill__zoom-btn"
+            onclick={() => noteZoom.zoomIn()}
+            disabled={noteZoom.factor >= NOTE_ZOOM_MAX}
+            aria-label="Zoom in"
+            title="Zoom in (Ctrl+scroll)"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true"
+              >zoom_in</span
+            >
+          </button>
+        </div>
+        <span class="editor-status-pill__peek" aria-hidden="true">
+          <span class="material-symbols-outlined text-icon-lg">zoom_in</span>
+        </span>
       </div>
 
       {#if showWordCount}
@@ -842,7 +858,8 @@
     opacity: 0.4;
   }
 
-  /* --- Top-right editor actions: calm when idle, full tray on approach --- */
+  /* --- Top-right editor actions: calm when idle, full tray on approach ---
+     Order is tray | peek | date. Tray expands left; peek stays under cursor. */
   .editor-float-actions {
     position: absolute;
     right: 1.5rem;
@@ -885,7 +902,9 @@
     height: 1.75rem;
     color: var(--color-text-muted);
     flex-shrink: 0;
-    transition: opacity 120ms ease;
+    transition:
+      width 140ms ease,
+      opacity 120ms ease;
   }
 
   .editor-float-actions__tray {
@@ -898,8 +917,7 @@
     /* Keep controls in tab order while collapsed; focus-within expands tray. */
     transition:
       max-width 200ms ease,
-      opacity 140ms ease,
-      padding 160ms ease;
+      opacity 140ms ease;
   }
 
   .editor-float-actions:hover,
@@ -919,14 +937,18 @@
     box-shadow: 0 6px 22px color-mix(in srgb, black 12%, transparent);
   }
 
+  /* Hide peek only after open — delayed so the hit target does not vanish
+     under the cursor before the tray has width. */
   .editor-float-actions:hover .editor-float-actions__peek,
   .editor-float-actions:focus-within .editor-float-actions__peek,
   .editor-float-actions--pinned .editor-float-actions__peek {
     width: 0;
-    height: 0;
     opacity: 0;
     overflow: hidden;
     pointer-events: none;
+    transition:
+      width 120ms ease 80ms,
+      opacity 80ms ease 60ms;
   }
 
   .editor-float-actions:hover .editor-float-actions__tray,
@@ -975,27 +997,7 @@
     flex-shrink: 0;
   }
 
-  /* Edge separator only when the tray is open (peek hidden). */
-  .editor-float-actions__sep--edge {
-    width: 0;
-    margin-inline: 0;
-    opacity: 0;
-    overflow: hidden;
-    transition:
-      width 160ms ease,
-      margin 160ms ease,
-      opacity 120ms ease;
-  }
-
-  .editor-float-actions:hover .editor-float-actions__sep--edge,
-  .editor-float-actions:focus-within .editor-float-actions__sep--edge,
-  .editor-float-actions--pinned .editor-float-actions__sep--edge {
-    width: 1px;
-    margin-inline: 0.15rem;
-    opacity: 1;
-  }
-
-  /* --- Bottom status pill: zoom + optional word count / save error --- */
+  /* --- Bottom status: word count always on; only zoom collapses --- */
   .editor-status-pill {
     position: absolute;
     bottom: 1.5rem;
@@ -1003,12 +1005,12 @@
     z-index: 40;
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.3rem 0.55rem;
+    gap: 0.35rem;
+    padding: 0.3rem 0.55rem 0.3rem 0.35rem;
     border-radius: 9999px;
     background: color-mix(
       in srgb,
-      var(--color-surface-popover) 82%,
+      var(--color-surface-popover) 78%,
       transparent
     );
     backdrop-filter: blur(10px);
@@ -1020,13 +1022,81 @@
     font-weight: 500;
     letter-spacing: 0.01em;
     user-select: none;
-    opacity: 0.78;
-    transition: opacity 160ms ease;
+    opacity: 0.72;
+    transition:
+      background 160ms ease,
+      border-color 160ms ease,
+      box-shadow 160ms ease,
+      opacity 160ms ease;
   }
 
   .editor-status-pill:hover,
-  .editor-status-pill:focus-within {
+  .editor-status-pill:focus-within,
+  .editor-status-pill--pinned {
     opacity: 1;
+    background: color-mix(
+      in srgb,
+      var(--color-surface-popover) 88%,
+      transparent
+    );
+    border-color: color-mix(
+      in srgb,
+      var(--color-surface-popover-border) 70%,
+      transparent
+    );
+    box-shadow: 0 6px 20px color-mix(in srgb, black 12%, transparent);
+  }
+
+  /* Zoom cluster: tray | peek — tray grows left of stable peek. */
+  .editor-status-pill__zoom-wrap {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .editor-status-pill__peek {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.55rem;
+    height: 1.55rem;
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+    transition:
+      width 140ms ease,
+      opacity 120ms ease;
+  }
+
+  .editor-status-pill__zoom {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.05rem;
+    flex-shrink: 0;
+    max-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition:
+      max-width 200ms ease,
+      opacity 140ms ease;
+  }
+
+  .editor-status-pill:hover .editor-status-pill__zoom,
+  .editor-status-pill:focus-within .editor-status-pill__zoom,
+  .editor-status-pill--pinned .editor-status-pill__zoom {
+    max-width: 8rem;
+    opacity: 1;
+  }
+
+  .editor-status-pill:hover .editor-status-pill__peek,
+  .editor-status-pill:focus-within .editor-status-pill__peek,
+  .editor-status-pill--pinned .editor-status-pill__peek {
+    width: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+    transition:
+      width 120ms ease 80ms,
+      opacity 80ms ease 60ms;
   }
 
   .editor-status-pill__sep {
@@ -1049,18 +1119,13 @@
     border-radius: 9999px;
     background: var(--color-status-danger);
     animation: editor-status-pulse 1.4s ease-in-out infinite;
+    flex-shrink: 0;
   }
 
   .editor-status-pill__error-label {
     color: var(--color-status-danger);
     font-weight: 600;
     white-space: nowrap;
-  }
-
-  .editor-status-pill__zoom {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.05rem;
   }
 
   .editor-status-pill__zoom-btn {

@@ -186,7 +186,12 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(pill).toBeInTheDocument()
     // Pill must not live under the scaled content wrapper.
     expect(pill.closest('[data-testid="note-page-zoom"]')).toBeNull()
+    // Idle = zoom collapsed behind peek; not pinned at 100%.
+    expect(pill).not.toHaveClass('editor-status-pill--pinned')
+    expect(pill.querySelector('.editor-status-pill__peek')).toBeInTheDocument()
+    expect(pill.querySelector('.editor-status-pill__zoom')).toBeInTheDocument()
 
+    // Zoom controls stay in the DOM for keyboard tab order / focus-within.
     expect(screen.getByRole('group', { name: 'Page zoom' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Zoom in' })).toBeInTheDocument()
@@ -196,6 +201,9 @@ describe('VirtualScrollContainer editor chrome', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
     await waitFor(() => {
+      expect(screen.getByTestId('editor-status-pill')).toHaveClass(
+        'editor-status-pill--pinned'
+      )
       expect(
         screen.getByRole('button', { name: 'Zoom 110%. Reset to 100%' })
       ).toHaveTextContent('110%')
@@ -204,6 +212,9 @@ describe('VirtualScrollContainer editor chrome', () => {
       screen.getByRole('button', { name: 'Zoom 110%. Reset to 100%' })
     )
     await waitFor(() => {
+      expect(screen.getByTestId('editor-status-pill')).not.toHaveClass(
+        'editor-status-pill--pinned'
+      )
       expect(
         screen.getByRole('button', { name: 'Zoom 100%. Reset to 100%' })
       ).toHaveTextContent('100%')
@@ -211,12 +222,18 @@ describe('VirtualScrollContainer editor chrome', () => {
     noteZoom.reset()
   })
 
-  it('shows 0 words in the status pill when word count is enabled', () => {
+  it('always shows word count when enabled (zoom may still collapse)', () => {
     mocks.settings.config.editor.show_word_count = true
     render(VirtualScrollContainer, { props: baseProps() })
-    expect(screen.getByTestId('editor-status-pill')).toHaveTextContent(
-      '0 words'
-    )
+    const pill = screen.getByTestId('editor-status-pill')
+    expect(pill).toHaveTextContent('0 words')
+    expect(pill.querySelector('.editor-status-pill__words')).toBeInTheDocument()
+    // Word count is a sibling of the zoom wrap, not inside collapsing zoom.
+    expect(
+      pill
+        .querySelector('.editor-status-pill__zoom')
+        ?.contains(pill.querySelector('.editor-status-pill__words')!)
+    ).toBe(false)
   })
 
   it('hides word count text when the preference is off (zoom still shown)', () => {
