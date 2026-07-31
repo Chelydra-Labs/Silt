@@ -157,12 +157,20 @@ describe('EditorUtilityBar (#202 — simplified)', () => {
     expect(screen.getByRole('group', { name: 'Page zoom' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Zoom in' })).toBeInTheDocument()
-    const percent = screen.getByRole('button', { name: 'Reset zoom to 100%' })
+    const percent = screen.getByRole('button', {
+      name: 'Zoom 100%. Reset to 100%'
+    })
     expect(percent).toHaveTextContent('100%')
 
     await fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
-    expect(percent).toHaveTextContent('110%')
-    await fireEvent.click(percent)
-    expect(percent).toHaveTextContent('100%')
+    expect(
+      screen.getByRole('button', { name: 'Zoom 110%. Reset to 100%' })
+    ).toHaveTextContent('110%')
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Zoom 110%. Reset to 100%' })
+    )
+    expect(
+      screen.getByRole('button', { name: 'Zoom 100%. Reset to 100%' })
+    ).toHaveTextContent('100%')
   })
 })

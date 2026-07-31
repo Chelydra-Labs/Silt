@@ -93,7 +93,7 @@
       type="button"
       class="zoom-percent font-label-sm text-type-sm"
       onclick={() => noteZoom.reset()}
-      aria-label="Reset zoom to 100%"
+      aria-label={`Zoom ${noteZoom.percent}%. Reset to 100%`}
       title="Reset zoom (Ctrl+scroll to zoom)"
     >
       {noteZoom.percent}%

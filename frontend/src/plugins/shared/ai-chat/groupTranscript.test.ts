@@ -4,7 +4,12 @@ import {
   groupTranscript,
   toolActivitySummaryLabel
 } from './groupTranscript'
-import { textEntry, toolCallEntry, toolResultEntry } from './types'
+import {
+  evidenceEntry,
+  textEntry,
+  toolCallEntry,
+  toolResultEntry
+} from './types'
 
 describe('groupTranscript', () => {
   it('groups adjacent tool entries and leaves text alone', () => {
@@ -39,6 +44,53 @@ describe('groupTranscript', () => {
 
   it('returns empty for empty transcript', () => {
     expect(groupTranscript([])).toEqual([])
+  })
+
+  it('keeps one activity group when evidence sits between call and result', () => {
+    const transcript = [
+      textEntry({ id: 'u', role: 'user', content: 'search' }),
+      toolCallEntry({
+        id: 'c1',
+        role: 'assistant',
+        toolCallId: 't1',
+        toolName: 'search_notes',
+        args: { q: 'x' }
+      }),
+      evidenceEntry({
+        id: 'e1',
+        role: 'assistant',
+        citationIndex: 1,
+        title: 'Hit',
+        target: { blockId: 'b1' }
+      }),
+      toolResultEntry({
+        id: 'r1',
+        role: 'system',
+        toolCallId: 't1',
+        toolName: 'search_notes',
+        output: 'ok'
+      }),
+      textEntry({ id: 'a', role: 'assistant', content: 'done' })
+    ]
+    const segs = groupTranscript(transcript)
+    expect(segs.map((s) => s.kind)).toEqual([
+      'entry',
+      'tool-activity',
+      'entry',
+      'entry'
+    ])
+    expect(segs[1]).toMatchObject({
+      kind: 'tool-activity',
+      callCount: 1,
+      resultCount: 1
+    })
+    if (segs[1].kind === 'tool-activity') {
+      expect(segs[1].items.map((i) => i.id)).toEqual(['c1', 'r1'])
+    }
+    expect(segs[2]).toMatchObject({ kind: 'entry' })
+    if (segs[2].kind === 'entry') {
+      expect(segs[2].entry.kind).toBe('evidence')
+    }
   })
 })
 

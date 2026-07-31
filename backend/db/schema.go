@@ -379,9 +379,8 @@ func (dm *DatabaseManager) initSchema() error {
 		// this does not rebuild on every launch.
 		"DROP INDEX IF EXISTS idx_blocks_file;",
 		"CREATE INDEX IF NOT EXISTS idx_blocks_src_file ON blocks(source, notebook, section, page, file_date);",
-		// Leaf-title lookup for unlinked ambiguity (#839): ASCII lower(page)
-		// retained for other callers; leaf ambiguity uses page_fold (#844).
-		"CREATE INDEX IF NOT EXISTS idx_blocks_page_lower ON blocks(lower(page));",
+		// Leaf lookup uses page_fold only (#844); drop obsolete ASCII lower index.
+		"DROP INDEX IF EXISTS idx_blocks_page_lower;",
 		// Unicode simple-fold leaf key (#844): O(index) EqualFold-class lookup.
 		"CREATE INDEX IF NOT EXISTS idx_blocks_page_fold ON blocks(page_fold);",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;",
@@ -542,35 +541,46 @@ func backfillPageFold(db *sql.DB) error {
 	}
 	defer tx.Rollback()
 
-	// Distinct page strings — fold once per unique title, then bulk-update rows.
-	rows, err := tx.Query("SELECT DISTINCT page FROM blocks")
+	// One table scan: update each row by rowid. Caching fold by page avoids
+	// recomputing pageFoldKey for repeated titles without N× full-table UPDATEs.
+	rows, err := tx.Query("SELECT rowid, page FROM blocks")
 	if err != nil {
-		return fmt.Errorf("scan distinct pages for page_fold backfill: %w", err)
+		return fmt.Errorf("scan blocks for page_fold backfill: %w", err)
 	}
-	type pageFold struct{ page, fold string }
-	var pairs []pageFold
+	type rowFold struct {
+		rowid int64
+		fold  string
+	}
+	foldCache := make(map[string]string)
+	var updates []rowFold
 	for rows.Next() {
+		var rowid int64
 		var page string
-		if err := rows.Scan(&page); err != nil {
+		if err := rows.Scan(&rowid, &page); err != nil {
 			rows.Close()
-			return fmt.Errorf("scan page during page_fold backfill: %w", err)
+			return fmt.Errorf("scan row during page_fold backfill: %w", err)
 		}
-		pairs = append(pairs, pageFold{page: page, fold: pageFoldKey(page)})
+		fold, ok := foldCache[page]
+		if !ok {
+			fold = pageFoldKey(page)
+			foldCache[page] = fold
+		}
+		updates = append(updates, rowFold{rowid: rowid, fold: fold})
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return fmt.Errorf("iterate pages during page_fold backfill: %w", err)
+		return fmt.Errorf("iterate blocks during page_fold backfill: %w", err)
 	}
 	rows.Close()
 
-	stmt, err := tx.Prepare("UPDATE blocks SET page_fold = ? WHERE page = ?")
+	stmt, err := tx.Prepare("UPDATE blocks SET page_fold = ? WHERE rowid = ?")
 	if err != nil {
 		return fmt.Errorf("prepare page_fold update: %w", err)
 	}
-	for _, p := range pairs {
-		if _, err := stmt.Exec(p.fold, p.page); err != nil {
+	for _, u := range updates {
+		if _, err := stmt.Exec(u.fold, u.rowid); err != nil {
 			stmt.Close()
-			return fmt.Errorf("page_fold update for %q: %w", p.page, err)
+			return fmt.Errorf("page_fold update rowid %d: %w", u.rowid, err)
 		}
 	}
 	stmt.Close()

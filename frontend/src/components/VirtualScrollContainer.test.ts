@@ -176,6 +176,17 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(screen.queryByTestId('editor-utility-bar-stub')).toBeNull()
   })
 
+  it('does not apply note zoom on standalone .silt tasks (#843)', async () => {
+    const { noteZoom } = await import('../lib/noteZoom.svelte')
+    noteZoom.setFactor(1.5)
+    render(VirtualScrollContainer, {
+      props: { ...baseProps(), notebook: '.silt', page: 'tasks' }
+    })
+    const zoomRoot = screen.getByTestId('note-page-zoom')
+    expect(zoomRoot.getAttribute('style') ?? '').not.toMatch(/zoom/)
+    noteZoom.reset()
+  })
+
   it('renders the floating toggle buttons and dispatches their handlers', async () => {
     render(VirtualScrollContainer, { props: baseProps() })
     await fireEvent.click(

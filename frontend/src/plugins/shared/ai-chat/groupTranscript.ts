@@ -1,4 +1,9 @@
-import type { AIChatEntry, ToolCallEntry, ToolResultEntry } from './types'
+import type {
+  AIChatEntry,
+  EvidenceEntry,
+  ToolCallEntry,
+  ToolResultEntry
+} from './types'
 
 export type ToolActivityItem = ToolCallEntry | ToolResultEntry
 
@@ -14,6 +19,11 @@ export type TranscriptSegment =
 
 function isToolActivity(entry: AIChatEntry): entry is ToolActivityItem {
   return entry.kind === 'tool-call' || entry.kind === 'tool-result'
+}
+
+/** Evidence may sit between a tool call and its result (search_notes path). */
+function isToolRunTransparent(entry: AIChatEntry): entry is EvidenceEntry {
+  return entry.kind === 'evidence'
 }
 
 /**
@@ -41,9 +51,10 @@ export function filterTranscriptForBusyDisplay(
 }
 
 /**
- * Collapse adjacent tool-call / tool-result entries into one activity group
- * for transcript presentation. Other entry kinds stay as single segments.
- * Controller transcript shape is unchanged (#845).
+ * Collapse tool-call / tool-result entries into activity groups for display.
+ * Evidence between a call and result (production search path) does not split
+ * the group; evidence is emitted as its own segments after the group so source
+ * cards stay visible. Controller transcript shape is unchanged (#845).
  */
 export function groupTranscript(
   transcript: AIChatEntry[]
@@ -52,30 +63,57 @@ export function groupTranscript(
   let i = 0
   while (i < transcript.length) {
     const entry = transcript[i]
-    if (!isToolActivity(entry)) {
+    if (!isToolActivity(entry) && !isToolRunTransparent(entry)) {
       segments.push({ kind: 'entry', entry })
       i++
       continue
     }
-    const items: ToolActivityItem[] = []
-    const startId = entry.id
-    while (i < transcript.length && isToolActivity(transcript[i])) {
-      items.push(transcript[i] as ToolActivityItem)
+    if (isToolRunTransparent(entry)) {
+      // Evidence outside a tool run (or before any tool) stays a normal card.
+      segments.push({ kind: 'entry', entry })
       i++
+      continue
     }
+
+    // Collect tools through a run that may interleave evidence.
+    const items: ToolActivityItem[] = []
+    const evidenceInRun: EvidenceEntry[] = []
+    const startId = entry.id
+    let j = i
+    while (j < transcript.length) {
+      const e = transcript[j]
+      if (isToolActivity(e)) {
+        items.push(e)
+        j++
+        continue
+      }
+      if (isToolRunTransparent(e)) {
+        evidenceInRun.push(e)
+        j++
+        continue
+      }
+      break
+    }
+
     let callCount = 0
     let resultCount = 0
     for (const item of items) {
       if (item.kind === 'tool-call') callCount++
       else resultCount++
     }
-    segments.push({
-      kind: 'tool-activity',
-      id: `tool-activity-${startId}`,
-      items,
-      callCount,
-      resultCount
-    })
+    if (items.length > 0) {
+      segments.push({
+        kind: 'tool-activity',
+        id: `tool-activity-${startId}`,
+        items,
+        callCount,
+        resultCount
+      })
+    }
+    for (const ev of evidenceInRun) {
+      segments.push({ kind: 'entry', entry: ev })
+    }
+    i = j
   }
   return segments
 }

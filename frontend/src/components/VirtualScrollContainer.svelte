@@ -132,11 +132,12 @@
     }
   })
 
-  // Ctrl/Meta + wheel zooms note content only (#843). Non-passive so we can
-  // preventDefault and stop the browser from zooming the whole webview.
+  // Ctrl/Meta + wheel zooms note content only (#843). Gated to real notebooks
+  // (same as utility-bar chrome) so `.silt` tasks cannot inherit orphan zoom.
+  // Non-passive so we can preventDefault and stop webview page zoom.
   $effect(() => {
     const el = containerEl
-    if (!el) return
+    if (!el || !showEditorUtilityBar) return
     const onWheel = (e: WheelEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return
       e.preventDefault()
@@ -544,7 +545,7 @@
       <!-- Page zoom scales title + editor/source only — not utility bar/find/chrome (#843). -->
       <div
         class="relative z-[1] flex flex-col note-page-zoom"
-        style="zoom: {noteZoom.factor}"
+        style={showEditorUtilityBar ? `zoom: ${noteZoom.factor}` : undefined}
         data-testid="note-page-zoom"
       >
         <header class="mb-8">
