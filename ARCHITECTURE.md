@@ -608,11 +608,12 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   blocks stay out. Each matched block carries a contextual `source_snippets`
   excerpt (120-rune window centered on the residual plain span).
   **Leaf ambiguity** for the active title uses an indexed
-  `lower(page) = lower(?)` lookup (`idx_blocks_page_lower`) for ASCII leaves,
-  merged with EqualFold matches against cached non-ASCII leaves so Unicode
-  folds of ASCII letters (e.g. K vs U+212A Kelvin) cannot look uniquely
-  resolved. Non-ASCII leaves filter distinct page paths in Go with
-  `strings.EqualFold` (SQLite `lower()` is ASCII-only). When multiple
+  `page_fold = ?` lookup (`idx_blocks_page_fold`). `page_fold` is a persisted
+  Unicode simple-fold key (each rune mapped to the minimum code point in its
+  `unicode.SimpleFold` cycle) written on index and backfilled on open, matching
+  `strings.EqualFold` equivalence classes — including non-ASCII titles (Café/
+  CAFÉ) and Unicode folds of ASCII letters (K vs U+212A Kelvin) — without a
+  full page-inventory scan. When multiple
   locations share the leaf, `ambiguous` is true and `candidates` are
   stable-sorted (active notebook/section first) and **capped**
   (`unlinkedAmbiguousCandidateCap`) on each residual row, with
@@ -1331,10 +1332,12 @@ via `crypto.subtle.digest` before Blob import. A tampered `index.js` is refused.
   `backend/ai`. Provider config + resolved API key are snapshotted under
   vaultMu+configMu, locks RELEASED, then HTTP runs so a long completion cannot
   hold the vault lock. Keys resolve keyring-first (#218); plugins never receive
-  credentials. Transport uses per-attempt timeouts plus an overall retry
-  envelope, Retry-After, and jitter (#628). Calls and structured agent events
-  are audit-logged (`auditAI` / `PluginAIAuditEvent`, in-memory + `ai.log`) and
-  surfaced in Settings → AI → Recent AI activity.
+   credentials. Transport uses per-attempt timeouts plus an overall retry
+   envelope, HTTP Retry-After and provider body retry delays (e.g. Google
+   RetryInfo.retryDelay), and jitter; stream connect retries pre-byte only.
+   Rate-limit UI copy may include provider detail when present. Calls and
+   structured agent events are audit-logged (`auditAI` / `PluginAIAuditEvent`,
+   in-memory + `ai.log`) and surfaced in Settings → AI → Recent AI activity.
 - Editor extension points: slash-command registry; generic embedBlock
   node (round-trips through <!-- silt-embed: {json} --> markers).
 - Rendered UI surfaces: sandboxed <iframe srcdoc> + postMessage bridge;

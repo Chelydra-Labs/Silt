@@ -1697,9 +1697,8 @@ func TestUnlinked_CacheInvalidatesOnReindex(t *testing.T) {
 	_ = p1
 }
 
-// TestUnlinked_NoFullInventoryOnPagedPath ensures ASCII unique titles do not
-// pay a full page-inventory DISTINCT on every residual request after the
-// one-time non-ASCII leaf cache warm (#839).
+// TestUnlinked_NoFullInventoryOnPagedPath ensures leaf lookup (ASCII and
+// non-ASCII) does not pay a full page-inventory DISTINCT (#844 page_fold).
 func TestUnlinked_NoFullInventoryOnPagedPath(t *testing.T) {
 	dm := newTestDB(t)
 	// Many decoy pages with different leaves.
@@ -1715,88 +1714,56 @@ func TestUnlinked_NoFullInventoryOnPagedPath(t *testing.T) {
 	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
 		noteBlock(uuidV, "see Topic please"),
 	})
+	idxU(t, dm, "vault", "NB", "Sec", "Café", []parser.ParsedBlock{
+		noteBlock(uuidW, "home"),
+	})
+	idxU(t, dm, "vault", "NB", "Other", "CAFÉ", []parser.ParsedBlock{
+		noteBlock(uuidX, "other"),
+	})
 
-	// First call may warm non-ASCII leaf cache via one full DISTINCT.
-	if _, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50); err != nil {
-		t.Fatalf("warm: %v", err)
-	}
 	before := fullPageInventoryScans.Load()
 	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
 	if err != nil {
 		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
 	}
+	pages, err := dm.ListPagesByLeaf("café")
+	if err != nil {
+		t.Fatalf("ListPagesByLeaf: %v", err)
+	}
 	if fullPageInventoryScans.Load() != before {
-		t.Fatalf("steady-state ASCII unlinked must not full-scan inventory: before=%d after=%d",
+		t.Fatalf("page_fold leaf lookup must not full-scan inventory: before=%d after=%d",
 			before, fullPageInventoryScans.Load())
 	}
 	if len(res.Results) != 1 || res.Results[0].Ambiguous {
 		t.Fatalf("unique title: %+v", res.Results)
 	}
+	if len(pages) != 2 {
+		t.Fatalf("Unicode leaf via page_fold: got %d want 2: %+v", len(pages), pages)
+	}
 }
 
-// TestUnlinked_NonASCIILeafCacheRejectsStaleRebuild ensures a rebuild that
-// started before invalidateUnlinkedScanCache does not publish over a newer gen
-// (mirrors unlinkedScanCachePut generation gate).
-func TestUnlinked_NonASCIILeafCacheRejectsStaleRebuild(t *testing.T) {
-	dm := newTestDB(t)
-	const okKelvin = "O\u212A"
-	idxU(t, dm, "vault", "NB", "Sec", "OK", []parser.ParsedBlock{
-		noteBlock(uuidU, "home"),
-	})
-	idxU(t, dm, "vault", "NB", "Other", okKelvin, []parser.ParsedBlock{
-		noteBlock(uuidV, "kelvin"),
-	})
-
-	// Warm non-ASCII cache (includes OK).
-	pages, err := dm.ListPagesByLeaf("OK")
-	if err != nil || len(pages) != 2 {
-		t.Fatalf("warm ListPagesByLeaf: err=%v pages=%+v", err, pages)
+// TestPageFoldKey_EqualFoldClasses documents pageFoldKey vs EqualFold.
+func TestPageFoldKey_EqualFoldClasses(t *testing.T) {
+	pairs := [][2]string{
+		{"Café", "CAFÉ"},
+		{"OK", "O\u212A"},
+		{"Onboarding", "ONBOARDING"},
 	}
-
-	// Simulate the race window: reader captured buildGen, then invalidate
-	// bumped gen and cleared OK. A finishing stale store must not stick.
-	dm.unlinkedScanCacheMu.Lock()
-	staleGen := dm.unlinkedScanCacheGen
-	dm.unlinkedScanCacheMu.Unlock()
-
-	dm.invalidateUnlinkedScanCache()
-
-	dm.unlinkedScanCacheMu.Lock()
-	curGen := dm.unlinkedScanCacheGen
-	if staleGen == curGen {
-		dm.unlinkedScanCacheMu.Unlock()
-		t.Fatal("invalidate must bump generation")
+	for _, p := range pairs {
+		if !strings.EqualFold(p[0], p[1]) {
+			t.Fatalf("precondition EqualFold(%q,%q)", p[0], p[1])
+		}
+		if pageFoldKey(p[0]) != pageFoldKey(p[1]) {
+			t.Fatalf("pageFoldKey mismatch: %q -> %q, %q -> %q",
+				p[0], pageFoldKey(p[0]), p[1], pageFoldKey(p[1]))
+		}
 	}
-	// Production gate (cachedNonASCIILeaves): only store when buildGen matches.
-	staleSnap := []PageLoc{{Source: "vault", Notebook: "NB", Section: "Sec", Page: "OK"}}
-	if staleGen == dm.unlinkedScanCacheGen && !dm.nonASCIILeavesOK {
-		dm.nonASCIILeaves = staleSnap
-		dm.nonASCIILeavesOK = true
+	// SimpleFold only: ß and "ss" must not share a key (not full case fold).
+	if strings.EqualFold("ß", "ss") {
+		t.Fatal("precondition: EqualFold must not treat ß and ss as equal")
 	}
-	if dm.nonASCIILeavesOK {
-		dm.unlinkedScanCacheMu.Unlock()
-		t.Fatal("stale rebuild must not set nonASCIILeavesOK after gen bump")
-	}
-	dm.unlinkedScanCacheMu.Unlock()
-
-	// Delete Kelvin page then rebuild — cache must not resurrect stale OK-only miss.
-	if err := dm.ClearFileBlocks(nil, "vault", "NB", "Other", okKelvin); err != nil {
-		t.Fatalf("ClearFileBlocks: %v", err)
-	}
-	pages2, err := dm.ListPagesByLeaf("OK")
-	if err != nil {
-		t.Fatalf("ListPagesByLeaf after delete: %v", err)
-	}
-	if len(pages2) != 1 || pages2[0].Page != "OK" {
-		t.Fatalf("after deleting OK want only OK, got %+v", pages2)
-	}
-	// Second call uses cache — still unique.
-	pages3, err := dm.ListPagesByLeaf("OK")
-	if err != nil {
-		t.Fatalf("cached ListPagesByLeaf: %v", err)
-	}
-	if len(pages3) != 1 {
-		t.Fatalf("cached after delete want 1, got %+v", pages3)
+	if pageFoldKey("ß") == pageFoldKey("ss") {
+		t.Fatalf("pageFoldKey must not collapse ß and ss: both %q", pageFoldKey("ß"))
 	}
 }
 
@@ -1840,21 +1807,21 @@ func TestUnlinked_AmbiguousCandidateCap(t *testing.T) {
 	}
 }
 
-// TestUnlinked_LeafLookupPlanUsesPageIndex prefers idx_blocks_page_lower.
+// TestUnlinked_LeafLookupPlanUsesPageIndex prefers idx_blocks_page_fold.
 func TestUnlinked_LeafLookupPlanUsesPageIndex(t *testing.T) {
 	dm := newTestDB(t)
 	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
 		noteBlock(uuidU, "x"),
 	})
 	const q = `SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
-		FROM blocks WHERE lower(page) = lower(?) ORDER BY notebook, section, page`
-	plans := explainDetails(t, dm, q, "Topic")
+		FROM blocks WHERE page_fold = ? ORDER BY notebook, section, page`
+	plans := explainDetails(t, dm, q, pageFoldKey("Topic"))
 	joined := strings.ToUpper(strings.Join(plans, " | "))
-	if !strings.Contains(joined, "IDX_BLOCKS_PAGE_LOWER") && !strings.Contains(joined, "PAGE") {
+	if !strings.Contains(joined, "IDX_BLOCKS_PAGE_FOLD") && !strings.Contains(joined, "PAGE_FOLD") {
 		t.Logf("leaf plan (index name may vary): %v", plans)
 	}
 	if strings.Contains(joined, "SCAN BLOCKS") && !strings.Contains(joined, "PAGE") && !strings.Contains(joined, "USING") {
-		t.Errorf("unexpected full scan without page: %v", plans)
+		t.Errorf("unexpected full scan without page_fold: %v", plans)
 	}
 }
 

@@ -84,11 +84,12 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create blocks table: %w", err)
 	}
 
-	// Migration: add the `source` discriminator to pre-existing blocks tables
-	// (a vault created before #100). Idempotent via the try-ignore pattern used
-	// for the tasks columns above; existing rows inherit the 'vault' default.
+	// Migration: add columns to pre-existing blocks tables. Idempotent via the
+	// try-ignore pattern; duplicate column name is a no-op on warm reopen.
 	for _, col := range []struct{ name, defn string }{
 		{"source", "TEXT NOT NULL DEFAULT 'vault'"},
+		// Unicode simple-fold key for O(index) leaf ambiguity (#844).
+		{"page_fold", "TEXT"},
 	} {
 		alter := fmt.Sprintf("ALTER TABLE blocks ADD COLUMN %s %s", col.name, col.defn)
 		if _, err := db.Exec(alter); err != nil {
@@ -366,6 +367,9 @@ func (dm *DatabaseManager) initSchema() error {
 	if err := backfillBlockReferences(db); err != nil {
 		return fmt.Errorf("failed to backfill block_references: %w", err)
 	}
+	if err := backfillPageFold(db); err != nil {
+		return fmt.Errorf("failed to backfill page_fold: %w", err)
+	}
 
 	// Create covered indexes
 	indexes := []string{
@@ -375,9 +379,11 @@ func (dm *DatabaseManager) initSchema() error {
 		// this does not rebuild on every launch.
 		"DROP INDEX IF EXISTS idx_blocks_file;",
 		"CREATE INDEX IF NOT EXISTS idx_blocks_src_file ON blocks(source, notebook, section, page, file_date);",
-		// Leaf-title lookup for unlinked ambiguity (#839): case-insensitive
-		// DISTINCT pages WHERE lower(page)=lower(?) (matches PageMatchesTarget).
+		// Leaf-title lookup for unlinked ambiguity (#839): ASCII lower(page)
+		// retained for other callers; leaf ambiguity uses page_fold (#844).
 		"CREATE INDEX IF NOT EXISTS idx_blocks_page_lower ON blocks(lower(page));",
+		// Unicode simple-fold leaf key (#844): O(index) EqualFold-class lookup.
+		"CREATE INDEX IF NOT EXISTS idx_blocks_page_fold ON blocks(page_fold);",
 		"CREATE INDEX IF NOT EXISTS idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;",
 		"CREATE INDEX IF NOT EXISTS idx_tags_lookup ON tags(level_0, level_1, level_2);",
 		// QueryBlocksByTag and the tag filter in QueryTasksWithFilters both
@@ -511,6 +517,69 @@ func backfillBlockReferences(db *sql.DB) error {
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit backfill tx: %w", err)
+	}
+	return nil
+}
+
+// pageFoldBackfillMarker records a completed warm-upgrade fill of blocks.page_fold (#844).
+const pageFoldBackfillMarker = "page_fold_backfill"
+
+// backfillPageFold sets page_fold = pageFoldKey(page) on every blocks row in one
+// restart-safe transaction. Idempotent via schema_migrations.
+func backfillPageFold(db *sql.DB) error {
+	var appliedAt int64
+	err := db.QueryRow("SELECT applied_at FROM schema_migrations WHERE name = ?", pageFoldBackfillMarker).Scan(&appliedAt)
+	if err == nil {
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("probe %s marker: %w", pageFoldBackfillMarker, err)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin page_fold backfill tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Distinct page strings — fold once per unique title, then bulk-update rows.
+	rows, err := tx.Query("SELECT DISTINCT page FROM blocks")
+	if err != nil {
+		return fmt.Errorf("scan distinct pages for page_fold backfill: %w", err)
+	}
+	type pageFold struct{ page, fold string }
+	var pairs []pageFold
+	for rows.Next() {
+		var page string
+		if err := rows.Scan(&page); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan page during page_fold backfill: %w", err)
+		}
+		pairs = append(pairs, pageFold{page: page, fold: pageFoldKey(page)})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate pages during page_fold backfill: %w", err)
+	}
+	rows.Close()
+
+	stmt, err := tx.Prepare("UPDATE blocks SET page_fold = ? WHERE page = ?")
+	if err != nil {
+		return fmt.Errorf("prepare page_fold update: %w", err)
+	}
+	for _, p := range pairs {
+		if _, err := stmt.Exec(p.fold, p.page); err != nil {
+			stmt.Close()
+			return fmt.Errorf("page_fold update for %q: %w", p.page, err)
+		}
+	}
+	stmt.Close()
+
+	if _, err := tx.Exec("INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)", pageFoldBackfillMarker, time.Now().UnixNano()); err != nil {
+		return fmt.Errorf("record %s marker: %w", pageFoldBackfillMarker, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit page_fold backfill tx: %w", err)
 	}
 	return nil
 }

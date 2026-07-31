@@ -197,7 +197,7 @@ type blockIndexStmts struct {
 func prepareBlockIndexStmts(tx *sql.Tx) (*blockIndexStmts, error) {
 	s := &blockIndexStmts{}
 	var err error
-	if s.block, err = tx.Prepare("INSERT INTO blocks (id, parent_id, source, notebook, section, page, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"); err != nil {
+	if s.block, err = tx.Prepare("INSERT INTO blocks (id, parent_id, source, notebook, section, page, page_fold, file_date, depth, type, raw_content, clean_content, line_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"); err != nil {
 		return nil, err
 	}
 	if s.task, err = tx.Prepare("INSERT INTO tasks (block_id, status, owner, start_date, due_date, priority, pinned, progress, recur, comments_count, links_count, created_at, completed_at, manual_order, modified_at, estimate_minutes, subtask_total, subtask_done) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"); err != nil {
@@ -296,7 +296,7 @@ func (s *blockIndexStmts) indexBlocks(source, notebook, section, page string, bl
 		if fileDate == "" {
 			fileDate = time.Now().Format("2006-01-02")
 		}
-		if _, err := s.block.Exec(block.ID, parentID, source, notebook, section, page, fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber); err != nil {
+		if _, err := s.block.Exec(block.ID, parentID, source, notebook, section, page, pageFoldKey(page), fileDate, block.Depth, string(block.Type), block.RawText, block.CleanText, block.LineNumber); err != nil {
 			return fmt.Errorf("failed to insert block %s: %w", block.ID, err)
 		}
 

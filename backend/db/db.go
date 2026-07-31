@@ -64,11 +64,6 @@ type DatabaseManager struct {
 	unlinkedScanCacheMu  sync.Mutex
 	unlinkedScanCacheGen uint64
 	unlinkedScanCache    map[unlinkedScanCacheKey]unlinkedScanCacheEntry
-	// nonASCIILeaves caches distinct page locs whose leaf is non-ASCII so
-	// ASCII indexed leaf lookup can still EqualFold-merge Unicode folds
-	// (e.g. K vs K) without a full inventory scan on every request.
-	nonASCIILeaves   []PageLoc
-	nonASCIILeavesOK bool
 }
 
 // FileStat records the last-seen filesystem attributes of an indexed file, used
