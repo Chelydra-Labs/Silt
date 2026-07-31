@@ -128,13 +128,38 @@
   let showWordCount = $derived(
     settings.config?.editor?.show_word_count === true
   )
+  // Sticky open from click/tap (touch) or when a non-default mode is active.
+  let editorActionsManualOpen = $state(false)
+  let editorActionsHandleEl: HTMLButtonElement | null = $state(null)
   // Keep the top-right action tray open when a control is already engaged so
   // the user can reverse it without hunting for a collapsed affordance.
-  let editorActionsPinned = $derived(
+  // Mode pin: non-default modes that need the tray reachable without hover.
+  // Format toolbar default-on is NOT a pin (would keep the tray always open).
+  let editorActionsModePinned = $derived(
     settings.config?.editor?.focus_mode === true ||
       outlineOpen ||
       viewMode === 'source'
   )
+  let editorActionsPinned = $derived(
+    editorActionsManualOpen || editorActionsModePinned
+  )
+  let editorActionsExpanded = $derived(editorActionsPinned)
+  // Collapsed active hint: any engaged option including format toolbar on.
+  let editorActionsActiveHint = $derived(
+    editorActionsModePinned || showFormatToolbar
+  )
+
+  function toggleEditorActions() {
+    editorActionsManualOpen = !editorActionsManualOpen
+  }
+
+  function onEditorActionsKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape') return
+    if (!editorActionsManualOpen) return
+    e.stopPropagation()
+    editorActionsManualOpen = false
+    editorActionsHandleEl?.focus()
+  }
   // Bottom status pill stays open for save failures (fail-loud) or non-default
   // zoom so the user can see/reset without hunting a collapsed control.
   let editorStatusPinned = $derived(
@@ -670,11 +695,14 @@
     <div
       class="editor-float-actions"
       class:editor-float-actions--pinned={editorActionsPinned}
+      class:editor-float-actions--active-hint={editorActionsActiveHint}
       role="toolbar"
+      tabindex="-1"
       aria-label="Editor actions"
+      onkeydown={onEditorActionsKeydown}
     >
-      <!-- Tray grows left of the ⋯ peek. -->
-      <div class="editor-float-actions__tray">
+      <!-- Tray grows left of the Editor options handle. -->
+      <div class="editor-float-actions__tray" id="editor-float-actions-tray">
         <button
           type="button"
           onclick={toggleFocusMode}
@@ -749,9 +777,24 @@
         </button>
       </div>
 
-      <span class="editor-float-actions__peek" aria-hidden="true">
-        <span class="material-symbols-outlined text-icon-lg">more_horiz</span>
-      </span>
+      <button
+        type="button"
+        class="editor-float-actions__peek"
+        bind:this={editorActionsHandleEl}
+        onclick={toggleEditorActions}
+        aria-label="Editor options"
+        aria-expanded={editorActionsExpanded}
+        aria-controls="editor-float-actions-tray"
+        title="Editor options"
+      >
+        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+          >more_horiz</span
+        >
+        {#if editorActionsActiveHint}
+          <span class="editor-float-actions__active-dot" aria-hidden="true"
+          ></span>
+        {/if}
+      </button>
     </div>
 
     <!-- Outside the hover group — does not open the actions tray. -->
@@ -896,16 +939,35 @@
   }
 
   .editor-float-actions__peek {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     width: 1.75rem;
     height: 1.75rem;
+    padding: 0;
+    border: none;
+    border-radius: 9999px;
+    background: transparent;
     color: var(--color-text-muted);
     flex-shrink: 0;
+    cursor: pointer;
     transition:
       width 140ms ease,
       opacity 120ms ease;
+  }
+  .editor-float-actions__peek:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .editor-float-actions__active-dot {
+    position: absolute;
+    top: 0.2rem;
+    right: 0.2rem;
+    width: 0.35rem;
+    height: 0.35rem;
+    border-radius: 9999px;
+    background: var(--color-accent-primary-start);
   }
 
   .editor-float-actions__tray {
@@ -954,6 +1016,14 @@
   .editor-float-actions--pinned .editor-float-actions__tray {
     max-width: 18rem;
     opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .editor-float-actions,
+    .editor-float-actions__peek,
+    .editor-float-actions__tray {
+      transition: none;
+    }
   }
 
   .editor-float-actions__btn {

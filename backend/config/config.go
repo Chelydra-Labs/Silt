@@ -188,6 +188,9 @@ type UIConfig struct {
 	// autocomplete picker. Order-preserving (most-recent-first); nil is
 	// normalized to an empty slice. Cap is MaxRecentTags.
 	RecentTags []string `yaml:"recent_tags,omitempty" json:"recent_tags,omitempty"`
+	// NoteZoom is the per-vault note content zoom factor (0.7–2.0, step 0.1).
+	// Independent of editor.font_size_px. nil normalizes to 1.0 (#849).
+	NoteZoom *float64 `yaml:"note_zoom,omitempty" json:"note_zoom,omitempty"`
 }
 
 // NavigationSectionRef is the canonical identity of a section in a vault.

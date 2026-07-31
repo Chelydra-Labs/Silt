@@ -55,6 +55,10 @@ export async function loadConfig(): Promise<boolean> {
     const raw = await GetSystemConfig()
     settings.config = JSON.parse(JSON.stringify(raw))
     settings.dirty = false
+    // Hydrate session note zoom from vault UI config (#849).
+    const { noteZoom } = await import('../lib/noteZoom.svelte')
+    const ui = settings.config?.ui as { note_zoom?: number | null } | undefined
+    noteZoom.hydrateFromConfig(ui?.note_zoom)
     // Surface a startup config-load error that was emitted before this
     // frontend subscribed to config:error (one-shot: retrieved then cleared
     // on the Go side, so a broken config.yaml isn't silently masked).
@@ -193,6 +197,12 @@ export function initConfigHotReload(): void {
     settings.error = ''
     if (settings.dirty) {
       settings.pendingExternal = true
+    } else {
+      // Keep note zoom in sync with external config edits (#849).
+      void import('../lib/noteZoom.svelte').then(({ noteZoom }) => {
+        const ui = cfg?.ui as { note_zoom?: number | null } | undefined
+        noteZoom.hydrateFromConfig(ui?.note_zoom)
+      })
     }
   })
   _offConfigError = Events.On(EventName.EventConfigError, (ev) => {
