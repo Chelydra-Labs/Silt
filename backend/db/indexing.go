@@ -534,6 +534,11 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section
 	}
 	defer release()
 	_, err = db.Exec(query, source, notebook, section, page)
+	if err == nil {
+		// Watcher remove/rename and app delete paths use tx==nil; residual FTS
+		// windows must not keep deleted source pages until TTL expiry.
+		dm.invalidateUnlinkedScanCache()
+	}
 	return err
 }
 
@@ -554,6 +559,9 @@ func (dm *DatabaseManager) DeleteBlockFromPage(blockID, source, notebook, sectio
 	_, err = db.Exec(
 		"DELETE FROM blocks WHERE id = ? AND source = ? AND notebook = ? AND section = ? AND page = ?",
 		blockID, source, notebook, section, page)
+	if err == nil {
+		dm.invalidateUnlinkedScanCache()
+	}
 	return err
 }
 
@@ -666,7 +674,11 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	}
 
 	if len(blocks) == 0 {
-		return tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		dm.invalidateUnlinkedScanCache()
+		return nil
 	}
 
 	stmts, err := prepareBlockIndexStmts(tx)
@@ -687,7 +699,12 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 		return err
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// Residual unlinked FTS windows must not survive block membership changes.
+	dm.invalidateUnlinkedScanCache()
+	return nil
 }
 
 // IndexScanResults inserts multiple scan results into the database in a single
@@ -802,6 +819,8 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	if err := tx.Commit(); err != nil {
 		return 0, skipped, fmt.Errorf("failed to commit transaction: %w", err)
 	}
+	// Batch commit may have cleared/inserted blocks even when indexedCount is 0.
+	dm.invalidateUnlinkedScanCache()
 
 	return indexedCount, skipped, nil
 }
@@ -819,5 +838,8 @@ func (dm *DatabaseManager) ClearSourceBlocks(source string) error {
 		return nil
 	}
 	_, err = db.Exec("DELETE FROM blocks WHERE source = ?", source)
+	if err == nil {
+		dm.invalidateUnlinkedScanCache()
+	}
 	return err
 }

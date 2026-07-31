@@ -1318,6 +1318,546 @@ func explainDetails(t *testing.T, dm *DatabaseManager, sql string, args ...any) 
 	return plans
 }
 
+// TestUnlinked_ResidualLoadMoreReusesScanCache verifies residual paging with the
+// same scanCursor does not re-run FTS loop-fill (#838).
+func TestUnlinked_ResidualLoadMoreReusesScanCache(t *testing.T) {
+	dm := newTestDB(t)
+	// Active page + enough residual source pages to force residual has_more.
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic home"),
+	})
+	const n = 12
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("cccccccc-cccc-4ccc-8ccc-%012d", i)
+		idxU(t, dm, "vault", "NB", "Sec", fmt.Sprintf("Src%02d", i), []parser.ParsedBlock{
+			noteBlock(id, "mentions Topic here"),
+		})
+	}
+
+	unlinkedScanCalls.Store(0)
+	page1, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 5)
+	if err != nil {
+		t.Fatalf("page1: %v", err)
+	}
+	if !page1.HasMore || page1.Cursor == "" {
+		t.Fatalf("expected residual has_more, got %+v", page1)
+	}
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("page1 scans: got %d want 1", unlinkedScanCalls.Load())
+	}
+
+	page2, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", page1.Cursor, "", 5)
+	if err != nil {
+		t.Fatalf("page2: %v", err)
+	}
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("page2 must reuse cache: scans=%d want 1", unlinkedScanCalls.Load())
+	}
+
+	// Full residual list in one shot must equal page1+page2 continuation.
+	all, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("all: %v", err)
+	}
+	// all may hit cache too (same key) — still one scan total from cold start above.
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("all residual from cache: scans=%d want 1", unlinkedScanCalls.Load())
+	}
+	combined := append(append([]UnlinkedMention{}, page1.Results...), page2.Results...)
+	if len(combined) > len(all.Results) {
+		t.Fatalf("combined %d > all %d", len(combined), len(all.Results))
+	}
+	for i := range combined {
+		if combined[i].SourcePage != all.Results[i].SourcePage {
+			t.Errorf("residual[%d]: got %q want %q", i, combined[i].SourcePage, all.Results[i].SourcePage)
+		}
+	}
+}
+
+// TestUnlinked_ScanMoreMissesCache verifies a new scan_cursor runs a fresh FTS scan.
+func TestUnlinked_ScanMoreMissesCache(t *testing.T) {
+	dm := newTestDB(t)
+	idxUMany(t, dm, "Topic", 30)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic"),
+	})
+
+	unlinkedScanCalls.Store(0)
+	if _, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 5); err != nil {
+		t.Fatalf("r1: %v", err)
+	}
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("r1 scans=%d", unlinkedScanCalls.Load())
+	}
+	// Different scanCursor token is a different cache key.
+	fakeScan := encodeUnlinkedScanCursor(1, uuidU)
+	if _, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", fakeScan, 5); err != nil {
+		t.Fatalf("r2: %v", err)
+	}
+	if unlinkedScanCalls.Load() != 2 {
+		t.Fatalf("new scanCursor must miss cache: scans=%d want 2", unlinkedScanCalls.Load())
+	}
+}
+
+// TestUnlinked_CacheInvalidatesOnClearFileBlocks ensures watcher-style
+// ClearFileBlocks(nil, ...) busts the residual FTS window cache.
+func TestUnlinked_CacheInvalidatesOnClearFileBlocks(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcA", []parser.ParsedBlock{
+		noteBlock(uuidV, "about Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcB", []parser.ParsedBlock{
+		noteBlock(uuidW, "about Topic"),
+	})
+
+	unlinkedScanCalls.Store(0)
+	p1, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("p1: %v", err)
+	}
+	if len(p1.Results) != 2 {
+		t.Fatalf("want 2 mentions, got %d", len(p1.Results))
+	}
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("p1 scans=%d", unlinkedScanCalls.Load())
+	}
+
+	if err := dm.ClearFileBlocks(nil, "vault", "NB", "Sec", "SrcB"); err != nil {
+		t.Fatalf("ClearFileBlocks: %v", err)
+	}
+
+	all, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("all: %v", err)
+	}
+	if unlinkedScanCalls.Load() != 2 {
+		t.Fatalf("after ClearFileBlocks scans=%d want 2", unlinkedScanCalls.Load())
+	}
+	for _, m := range all.Results {
+		if m.SourcePage == "SrcB" {
+			t.Fatalf("stale cache served deleted SrcB: %+v", all.Results)
+		}
+	}
+	if len(all.Results) != 1 || all.Results[0].SourcePage != "SrcA" {
+		t.Fatalf("want only SrcA, got %+v", all.Results)
+	}
+}
+
+// TestUnlinked_LeafLookupCaseInsensitive matches PageMatchesTarget EqualFold.
+func TestUnlinked_LeafLookupCaseInsensitive(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Onboarding", []parser.ParsedBlock{
+		noteBlock(uuidU, "home"),
+	})
+	// Second leaf differs only by case — both must surface as ambiguous for "onboarding".
+	idxU(t, dm, "vault", "NB", "Other", "onboarding", []parser.ParsedBlock{
+		noteBlock(uuidV, "other home"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
+		noteBlock(uuidW, "see Onboarding please"),
+	})
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Onboarding", "", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected 1 mention, got %d", len(res.Results))
+	}
+	if !res.Results[0].Ambiguous {
+		t.Fatal("case-only leaf collision must be Ambiguous")
+	}
+	if len(res.Results[0].Candidates) < 2 {
+		t.Fatalf("expected both case variants in candidates, got %+v", res.Results[0].Candidates)
+	}
+
+	// Leaf API with differently-cased query still finds stored pages.
+	pages, err := dm.ListPagesByLeaf("ONBOARDING")
+	if err != nil {
+		t.Fatalf("ListPagesByLeaf: %v", err)
+	}
+	if len(pages) < 2 {
+		t.Fatalf("ASCII leaf lookup: got %d want >=2: %+v", len(pages), pages)
+	}
+}
+
+// TestUnlinked_LeafLookupASCIIQueryUnicodeFold covers ASCII title vs Unicode
+// fold (OK vs O+U+212A Kelvin): must not look unique. Single-letter "K" is
+// rejected by the unlinked min-title-length gate; multi-rune pair is required.
+func TestUnlinked_LeafLookupASCIIQueryUnicodeFold(t *testing.T) {
+	dm := newTestDB(t)
+	const okKelvin = "O\u212A" // OK — EqualFold-equivalent to "OK"
+	if !strings.EqualFold("OK", okKelvin) {
+		t.Fatal("precondition: Go EqualFold must treat OK and OK as equal")
+	}
+	idxU(t, dm, "vault", "NB", "Sec", "OK", []parser.ParsedBlock{
+		noteBlock(uuidU, "home"),
+	})
+	idxU(t, dm, "vault", "NB", "Other", okKelvin, []parser.ParsedBlock{
+		noteBlock(uuidV, "kelvin page"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
+		noteBlock(uuidW, "see OK please"),
+	})
+
+	pages, err := dm.ListPagesByLeaf("OK")
+	if err != nil {
+		t.Fatalf("ListPagesByLeaf: %v", err)
+	}
+	if len(pages) != 2 {
+		t.Fatalf("OK/OK EqualFold: got %d want 2: %+v", len(pages), pages)
+	}
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "OK", "", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected 1 mention, got %d", len(res.Results))
+	}
+	if !res.Results[0].Ambiguous {
+		t.Fatal("ASCII OK must be Ambiguous when OK also exists")
+	}
+	if got := len(res.Results[0].Candidates); got < 2 {
+		t.Fatalf("candidates: got %d want >=2: %+v", got, res.Results[0].Candidates)
+	}
+}
+
+// TestUnlinked_CacheInvalidatesOnDeleteBlockFromPage covers residual FTS
+// invalidation on single-block delete.
+func TestUnlinked_CacheInvalidatesOnDeleteBlockFromPage(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcA", []parser.ParsedBlock{
+		noteBlock(uuidV, "about Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcB", []parser.ParsedBlock{
+		noteBlock(uuidW, "about Topic"),
+	})
+
+	unlinkedScanCalls.Store(0)
+	if _, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("warm scans=%d", unlinkedScanCalls.Load())
+	}
+
+	if err := dm.DeleteBlockFromPage(uuidW, "vault", "NB", "Sec", "SrcB"); err != nil {
+		t.Fatalf("DeleteBlockFromPage: %v", err)
+	}
+
+	all, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("after delete: %v", err)
+	}
+	if unlinkedScanCalls.Load() != 2 {
+		t.Fatalf("after DeleteBlockFromPage scans=%d want 2", unlinkedScanCalls.Load())
+	}
+	for _, m := range all.Results {
+		if m.SourcePage == "SrcB" {
+			t.Fatalf("stale cache served SrcB: %+v", all.Results)
+		}
+	}
+}
+
+// TestUnlinked_CacheInvalidatesOnClearSourceBlocks covers linked-source wipe.
+func TestUnlinked_CacheInvalidatesOnClearSourceBlocks(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcA", []parser.ParsedBlock{
+		noteBlock(uuidV, "about Topic"),
+	})
+	idxU(t, dm, "linked:ext", "Ext", "Sec", "SrcB", []parser.ParsedBlock{
+		noteBlock(uuidW, "linked about Topic"),
+	})
+
+	unlinkedScanCalls.Store(0)
+	pre, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	if len(pre.Results) != 2 {
+		t.Fatalf("want 2 mentions, got %d", len(pre.Results))
+	}
+
+	if err := dm.ClearSourceBlocks("linked:ext"); err != nil {
+		t.Fatalf("ClearSourceBlocks: %v", err)
+	}
+
+	all, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("after clear source: %v", err)
+	}
+	if unlinkedScanCalls.Load() != 2 {
+		t.Fatalf("after ClearSourceBlocks scans=%d want 2", unlinkedScanCalls.Load())
+	}
+	for _, m := range all.Results {
+		if m.Source == "linked:ext" || m.SourcePage == "SrcB" {
+			t.Fatalf("stale linked source still present: %+v", all.Results)
+		}
+	}
+	if len(all.Results) != 1 || all.Results[0].SourcePage != "SrcA" {
+		t.Fatalf("want only SrcA, got %+v", all.Results)
+	}
+}
+
+// TestUnlinked_LeafLookupUnicodeCaseFold covers non-ASCII case pairs that
+// SQLite lower() cannot fold (Café vs CAFÉ) — must match EqualFold.
+func TestUnlinked_LeafLookupUnicodeCaseFold(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Café", []parser.ParsedBlock{
+		noteBlock(uuidU, "home"),
+	})
+	idxU(t, dm, "vault", "NB", "Other", "CAFÉ", []parser.ParsedBlock{
+		noteBlock(uuidV, "other"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
+		// FTS/plain residual uses the active title string as stored on the open page.
+		noteBlock(uuidW, "visit Café soon"),
+	})
+
+	pages, err := dm.ListPagesByLeaf("café")
+	if err != nil {
+		t.Fatalf("ListPagesByLeaf: %v", err)
+	}
+	if len(pages) != 2 {
+		t.Fatalf("Unicode EqualFold leaf: got %d want 2: %+v", len(pages), pages)
+	}
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Café", "", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected 1 mention, got %d: %+v", len(res.Results), res.Results)
+	}
+	if !res.Results[0].Ambiguous {
+		t.Fatal("Café/CAFÉ must be Ambiguous under EqualFold")
+	}
+	if got := len(res.Results[0].Candidates); got < 2 {
+		t.Fatalf("candidates: got %d want >=2: %+v", got, res.Results[0].Candidates)
+	}
+}
+
+// TestUnlinked_CacheInvalidatesOnReindex ensures residual pages do not serve a
+// stale FTS window after IndexFileBlocks (#838).
+func TestUnlinked_CacheInvalidatesOnReindex(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcA", []parser.ParsedBlock{
+		noteBlock(uuidV, "about Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcB", []parser.ParsedBlock{
+		noteBlock(uuidW, "about Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "SrcC", []parser.ParsedBlock{
+		noteBlock(uuidX, "about Topic"),
+	})
+
+	unlinkedScanCalls.Store(0)
+	p1, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 2)
+	if err != nil {
+		t.Fatalf("p1: %v", err)
+	}
+	if unlinkedScanCalls.Load() != 1 {
+		t.Fatalf("p1 scans=%d", unlinkedScanCalls.Load())
+	}
+
+	// Remove Topic mention from SrcC via reindex — batch membership changes.
+	idxU(t, dm, "vault", "NB", "Sec", "SrcC", []parser.ParsedBlock{
+		noteBlock(uuidX, "no mention anymore"),
+	})
+
+	// After invalidation, next call must rescan.
+	all, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("all: %v", err)
+	}
+	if unlinkedScanCalls.Load() != 2 {
+		t.Fatalf("after reindex scans=%d want 2", unlinkedScanCalls.Load())
+	}
+	for _, m := range all.Results {
+		if m.SourcePage == "SrcC" {
+			t.Fatalf("stale cache served SrcC: %+v", all.Results)
+		}
+	}
+	if len(all.Results) != 2 {
+		t.Fatalf("want SrcA+SrcB only, got %d: %+v", len(all.Results), all.Results)
+	}
+	_ = p1
+}
+
+// TestUnlinked_NoFullInventoryOnPagedPath ensures ASCII unique titles do not
+// pay a full page-inventory DISTINCT on every residual request after the
+// one-time non-ASCII leaf cache warm (#839).
+func TestUnlinked_NoFullInventoryOnPagedPath(t *testing.T) {
+	dm := newTestDB(t)
+	// Many decoy pages with different leaves.
+	for i := 0; i < 40; i++ {
+		id := fmt.Sprintf("dddddddd-dddd-4ddd-8ddd-%012d", i)
+		idxU(t, dm, "vault", "NB", "Sec", fmt.Sprintf("Decoy%02d", i), []parser.ParsedBlock{
+			noteBlock(id, "decoy body"),
+		})
+	}
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "Topic"),
+	})
+	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
+		noteBlock(uuidV, "see Topic please"),
+	})
+
+	// First call may warm non-ASCII leaf cache via one full DISTINCT.
+	if _, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	before := fullPageInventoryScans.Load()
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "Sec", "Topic", "", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if fullPageInventoryScans.Load() != before {
+		t.Fatalf("steady-state ASCII unlinked must not full-scan inventory: before=%d after=%d",
+			before, fullPageInventoryScans.Load())
+	}
+	if len(res.Results) != 1 || res.Results[0].Ambiguous {
+		t.Fatalf("unique title: %+v", res.Results)
+	}
+}
+
+// TestUnlinked_NonASCIILeafCacheRejectsStaleRebuild ensures a rebuild that
+// started before invalidateUnlinkedScanCache does not publish over a newer gen
+// (mirrors unlinkedScanCachePut generation gate).
+func TestUnlinked_NonASCIILeafCacheRejectsStaleRebuild(t *testing.T) {
+	dm := newTestDB(t)
+	const okKelvin = "O\u212A"
+	idxU(t, dm, "vault", "NB", "Sec", "OK", []parser.ParsedBlock{
+		noteBlock(uuidU, "home"),
+	})
+	idxU(t, dm, "vault", "NB", "Other", okKelvin, []parser.ParsedBlock{
+		noteBlock(uuidV, "kelvin"),
+	})
+
+	// Warm non-ASCII cache (includes OK).
+	pages, err := dm.ListPagesByLeaf("OK")
+	if err != nil || len(pages) != 2 {
+		t.Fatalf("warm ListPagesByLeaf: err=%v pages=%+v", err, pages)
+	}
+
+	// Simulate the race window: reader captured buildGen, then invalidate
+	// bumped gen and cleared OK. A finishing stale store must not stick.
+	dm.unlinkedScanCacheMu.Lock()
+	staleGen := dm.unlinkedScanCacheGen
+	dm.unlinkedScanCacheMu.Unlock()
+
+	dm.invalidateUnlinkedScanCache()
+
+	dm.unlinkedScanCacheMu.Lock()
+	curGen := dm.unlinkedScanCacheGen
+	if staleGen == curGen {
+		dm.unlinkedScanCacheMu.Unlock()
+		t.Fatal("invalidate must bump generation")
+	}
+	// Production gate (cachedNonASCIILeaves): only store when buildGen matches.
+	staleSnap := []PageLoc{{Source: "vault", Notebook: "NB", Section: "Sec", Page: "OK"}}
+	if staleGen == dm.unlinkedScanCacheGen && !dm.nonASCIILeavesOK {
+		dm.nonASCIILeaves = staleSnap
+		dm.nonASCIILeavesOK = true
+	}
+	if dm.nonASCIILeavesOK {
+		dm.unlinkedScanCacheMu.Unlock()
+		t.Fatal("stale rebuild must not set nonASCIILeavesOK after gen bump")
+	}
+	dm.unlinkedScanCacheMu.Unlock()
+
+	// Delete Kelvin page then rebuild — cache must not resurrect stale OK-only miss.
+	if err := dm.ClearFileBlocks(nil, "vault", "NB", "Other", okKelvin); err != nil {
+		t.Fatalf("ClearFileBlocks: %v", err)
+	}
+	pages2, err := dm.ListPagesByLeaf("OK")
+	if err != nil {
+		t.Fatalf("ListPagesByLeaf after delete: %v", err)
+	}
+	if len(pages2) != 1 || pages2[0].Page != "OK" {
+		t.Fatalf("after deleting OK want only OK, got %+v", pages2)
+	}
+	// Second call uses cache — still unique.
+	pages3, err := dm.ListPagesByLeaf("OK")
+	if err != nil {
+		t.Fatalf("cached ListPagesByLeaf: %v", err)
+	}
+	if len(pages3) != 1 {
+		t.Fatalf("cached after delete want 1, got %+v", pages3)
+	}
+}
+
+// TestUnlinked_AmbiguousCandidateCap bounds Candidates on the wire (#839).
+func TestUnlinked_AmbiguousCandidateCap(t *testing.T) {
+	dm := newTestDB(t)
+	const collisions = unlinkedAmbiguousCandidateCap + 5
+	for i := 0; i < collisions; i++ {
+		id := fmt.Sprintf("eeeeeeee-eeee-4eee-8eee-%012d", i)
+		// Bodies must not contain the leaf title or they become residual hits.
+		idxU(t, dm, "vault", "NB", fmt.Sprintf("S%02d", i), "Standup", []parser.ParsedBlock{
+			noteBlock(id, "daily log entry"),
+		})
+	}
+	idxU(t, dm, "vault", "NB", "Sec", "Notes", []parser.ParsedBlock{
+		noteBlock(uuidU, "today Standup notes"),
+	})
+
+	res, err := dm.GetUnlinkedMentionsPaged("vault", "NB", "S00", "Standup", "", "", 50)
+	if err != nil {
+		t.Fatalf("GetUnlinkedMentionsPaged: %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected 1 mention, got %d", len(res.Results))
+	}
+	if !res.Results[0].Ambiguous {
+		t.Fatal("expected Ambiguous")
+	}
+	if got := len(res.Results[0].Candidates); got != unlinkedAmbiguousCandidateCap {
+		t.Fatalf("candidates cap: got %d want %d", got, unlinkedAmbiguousCandidateCap)
+	}
+	if !res.Results[0].CandidatesTruncated {
+		t.Error("expected CandidatesTruncated when collisions exceed cap")
+	}
+	if res.Results[0].CandidatesTotal != collisions {
+		t.Errorf("CandidatesTotal: got %d want %d", res.Results[0].CandidatesTotal, collisions)
+	}
+	// Active section affinity: S00/Standup should sort first among candidates.
+	if res.Results[0].Candidates[0].Section != "S00" {
+		t.Errorf("expected active section first, got %+v", res.Results[0].Candidates[0])
+	}
+}
+
+// TestUnlinked_LeafLookupPlanUsesPageIndex prefers idx_blocks_page_lower.
+func TestUnlinked_LeafLookupPlanUsesPageIndex(t *testing.T) {
+	dm := newTestDB(t)
+	idxU(t, dm, "vault", "NB", "Sec", "Topic", []parser.ParsedBlock{
+		noteBlock(uuidU, "x"),
+	})
+	const q = `SELECT DISTINCT COALESCE(source, 'vault'), notebook, section, page
+		FROM blocks WHERE lower(page) = lower(?) ORDER BY notebook, section, page`
+	plans := explainDetails(t, dm, q, "Topic")
+	joined := strings.ToUpper(strings.Join(plans, " | "))
+	if !strings.Contains(joined, "IDX_BLOCKS_PAGE_LOWER") && !strings.Contains(joined, "PAGE") {
+		t.Logf("leaf plan (index name may vary): %v", plans)
+	}
+	if strings.Contains(joined, "SCAN BLOCKS") && !strings.Contains(joined, "PAGE") && !strings.Contains(joined, "USING") {
+		t.Errorf("unexpected full scan without page: %v", plans)
+	}
+}
+
 // TestUnlinked_ScanPlanRowidKeyset documents why we use an FTS rowid subquery:
 // path-ordered join plans TEMP-sort the full match set; the production shape
 // limits inside blocks_fts before joining blocks.

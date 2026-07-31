@@ -45,6 +45,10 @@
     title: string
     ambiguous: boolean
     candidates?: PagePath[]
+    /** True when more leaf collisions exist than candidates[] (capped server-side). */
+    candidatesTruncated?: boolean
+    /** Full leaf-collision count before the wire cap (0 when not ambiguous). */
+    candidatesTotal?: number
   }
 
   /** True when ch is a Unicode letter, number, or underscore (word char). */
@@ -229,7 +233,14 @@
       ambiguous: asBool(row.ambiguous),
       candidates: Array.isArray(candidatesRaw)
         ? candidatesRaw.map(mapPagePath)
-        : undefined
+        : undefined,
+      candidatesTruncated: asBool(
+        pick(row, 'candidatesTruncated', 'candidates_truncated')
+      ),
+      candidatesTotal: asInt(
+        pick(row, 'candidatesTotal', 'candidates_total'),
+        0
+      )
     }
   }
 
@@ -1211,11 +1222,17 @@
                           {#if mention.ambiguous}
                             <span
                               class="flex-shrink-0 rounded-full border border-status-warn/40 bg-status-warn/10 px-1.5 py-0.5 text-type-3xs uppercase tracking-wider text-status-warn font-label-sm-bold"
-                              title={mention.candidates
-                                ?.map(
-                                  (c) => `${c.notebook}/${c.section}/${c.page}`
-                                )
-                                .join(', ')}>Ambiguous</span
+                              title={mention.candidatesTruncated &&
+                              (mention.candidatesTotal ?? 0) >
+                                (mention.candidates?.length ?? 0)
+                                ? `${mention.candidatesTotal} matching paths (showing ${mention.candidates?.length ?? 0})`
+                                : (mention.candidates
+                                    ?.map(
+                                      (c) =>
+                                        `${c.notebook}/${c.section}/${c.page}`
+                                    )
+                                    .join(', ') ?? 'Ambiguous title')}
+                              >Ambiguous</span
                             >
                           {/if}
                         </span>
@@ -1281,6 +1298,17 @@
                                     : candidatePathLabel(cand)}
                                 </button>
                               {/each}
+                              {#if mention.candidatesTruncated && (mention.candidatesTotal ?? 0) > (mention.candidates?.length ?? 0)}
+                                {@const moreCount =
+                                  (mention.candidatesTotal ?? 0) -
+                                  (mention.candidates?.length ?? 0)}
+                                <span
+                                  class="max-w-full truncate rounded-full border border-status-warn/30 bg-status-warn/5 px-2 py-0.5 text-type-3xs text-status-warn"
+                                  title={`${mention.candidatesTotal} paths share this title; showing ${mention.candidates?.length ?? 0}. Open the target page or rename to disambiguate.`}
+                                  aria-label={`${moreCount} more matching paths not shown`}
+                                  >+{moreCount} more</span
+                                >
+                              {/if}
                             </div>
                           {:else}
                             <button

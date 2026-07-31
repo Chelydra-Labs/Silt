@@ -30,11 +30,18 @@ type UnlinkedMention struct {
 	SourceBlockIDs []string `json:"source_block_ids"`
 	// SourceSnippets is parallel to SourceBlockIDs: a 120-rune contextual
 	// excerpt of clean_content centered on the residual plain title span.
-	SourceSnippets []string          `json:"source_snippets"`
-	MatchCount     int               `json:"match_count"`
-	Title          string            `json:"title"`
-	Ambiguous      bool              `json:"ambiguous"`
-	Candidates     []parser.PagePath `json:"candidates"`
+	SourceSnippets []string `json:"source_snippets"`
+	MatchCount     int      `json:"match_count"`
+	Title          string   `json:"title"`
+	Ambiguous      bool     `json:"ambiguous"`
+	// Candidates is a capped, stable-sorted promote-target list when Ambiguous.
+	Candidates []parser.PagePath `json:"candidates"`
+	// CandidatesTruncated is true when more leaf collisions exist than were
+	// returned in Candidates (UI can show "and N more").
+	CandidatesTruncated bool `json:"candidates_truncated"`
+	// CandidatesTotal is the full leaf-collision count before the wire cap
+	// (0 when not ambiguous).
+	CandidatesTotal int `json:"candidates_total"`
 }
 
 // UnlinkedMentionsResult is the cursor-paged envelope returned by
@@ -67,6 +74,10 @@ const unlinkedScanCap = 500
 // LIMIT unlinkedScanCap+1, so worst-case FTS rows examined ≈ rounds×cap — still
 // bounded, never O(all vault matches).
 const unlinkedScanFillRounds = 4
+
+// unlinkedAmbiguousCandidateCap bounds Candidates embedded on each residual
+// row when a leaf title collides across many pages (#839).
+const unlinkedAmbiguousCandidateCap = 32
 
 // scanCursorPrefixV3 versions the opaque FTS batch keyset as the exclusive
 // lower-bound rowid observed at scan time (immutable bound). A trailing block
@@ -122,18 +133,36 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 	}
 	defer release()
 
-	// Ambiguity of the leaf title across the whole page inventory (all sources).
-	// Promote uses the same check to reject ambiguous targets.
-	pages, err := listDistinctPages(db)
+	// Leaf-bounded ambiguity (#839): only pages sharing this leaf name, not
+	// the full vault inventory. Cap candidates for IPC/UI.
+	titleAmb, err := dm.resolveUnlinkedTitleAmbiguity(db, title, notebook, section)
 	if err != nil {
-		return UnlinkedMentionsResult{}, fmt.Errorf("unlinked mentions: list pages: %w", err)
+		return UnlinkedMentionsResult{}, fmt.Errorf("unlinked mentions: resolve title: %w", err)
 	}
-	titleRef := ResolvePageLinkAgainst(title, pages)
 
-	afterRowid := resolveUnlinkedScanCursor(scanCursor)
-	candidates, scanTruncated, lastRowid, lastID, err := dm.scanUnlinkedCandidateBlocks(db, title, source, notebook, section, page, afterRowid)
-	if err != nil {
-		return UnlinkedMentionsResult{}, err
+	cacheKey := dm.unlinkedScanCacheKeyNow(source, notebook, section, title, scanCursor)
+	var candidates []unlinkedBlock
+	var scanTruncated bool
+	var lastRowid int64
+	var lastID string
+	if ent, ok := dm.unlinkedScanCacheGet(cacheKey); ok {
+		candidates = ent.blocks
+		scanTruncated = ent.truncated
+		lastRowid = ent.lastRowid
+		lastID = ent.lastID
+	} else {
+		afterRowid := resolveUnlinkedScanCursor(scanCursor)
+		var scanErr error
+		candidates, scanTruncated, lastRowid, lastID, scanErr = dm.scanUnlinkedCandidateBlocks(db, title, source, notebook, section, page, afterRowid)
+		if scanErr != nil {
+			return UnlinkedMentionsResult{}, scanErr
+		}
+		dm.unlinkedScanCachePut(cacheKey, unlinkedScanCacheEntry{
+			blocks:    candidates,
+			truncated: scanTruncated,
+			lastRowid: lastRowid,
+			lastID:    lastID,
+		})
 	}
 
 	// Dedupe by source page. Include a block only when clean_content has a
@@ -158,13 +187,15 @@ func (dm *DatabaseManager) GetUnlinkedMentionsPaged(source, notebook, section, p
 		m := byKey[k]
 		if m == nil {
 			m = &UnlinkedMention{
-				Source:         c.source,
-				SourceNotebook: c.notebook,
-				SourceSection:  c.section,
-				SourcePage:     c.page,
-				Title:          title,
-				Ambiguous:      titleRef.Ambiguous,
-				Candidates:     titleRef.Candidates,
+				Source:              c.source,
+				SourceNotebook:      c.notebook,
+				SourceSection:       c.section,
+				SourcePage:          c.page,
+				Title:               title,
+				Ambiguous:           titleAmb.ambiguous,
+				Candidates:          copyPagePaths(titleAmb.candidates),
+				CandidatesTruncated: titleAmb.truncated,
+				CandidatesTotal:     titleAmb.total,
 			}
 			byKey[k] = m
 			order = append(order, k)
@@ -236,6 +267,71 @@ type unlinkedBlock struct {
 	id, source, notebook, section, page, clean string
 }
 
+// unlinkedTitleAmbiguity is the leaf-resolve result for residual rows.
+type unlinkedTitleAmbiguity struct {
+	ambiguous  bool
+	candidates []parser.PagePath
+	truncated  bool
+	total      int
+}
+
+// resolveUnlinkedTitleAmbiguity resolves the active page leaf against only
+// pages that share that leaf name (EqualFold leaf lookup), then caps Candidates
+// for the residual wire shape. Active notebook/section are preferred in sort
+// order so promote chips surface nearby paths first.
+func (dm *DatabaseManager) resolveUnlinkedTitleAmbiguity(db *sql.DB, title, activeNotebook, activeSection string) (unlinkedTitleAmbiguity, error) {
+	pages, err := dm.listPagesByLeaf(db, title)
+	if err != nil {
+		return unlinkedTitleAmbiguity{}, err
+	}
+	ref := ResolvePageLinkAgainst(title, pages)
+	if !ref.Ambiguous || len(ref.Candidates) == 0 {
+		return unlinkedTitleAmbiguity{ambiguous: ref.Ambiguous, candidates: ref.Candidates}, nil
+	}
+	sort.SliceStable(ref.Candidates, func(i, j int) bool {
+		a, b := ref.Candidates[i], ref.Candidates[j]
+		aNear := a.Notebook == activeNotebook && a.Section == activeSection
+		bNear := b.Notebook == activeNotebook && b.Section == activeSection
+		if aNear != bNear {
+			return aNear
+		}
+		if a.Source != b.Source {
+			return a.Source < b.Source
+		}
+		if a.Notebook != b.Notebook {
+			return a.Notebook < b.Notebook
+		}
+		if a.Section != b.Section {
+			return a.Section < b.Section
+		}
+		return a.Page < b.Page
+	})
+	total := len(ref.Candidates)
+	truncated := total > unlinkedAmbiguousCandidateCap
+	cands := ref.Candidates
+	if truncated {
+		cands = append([]parser.PagePath(nil), ref.Candidates[:unlinkedAmbiguousCandidateCap]...)
+	} else {
+		cands = append([]parser.PagePath(nil), ref.Candidates...)
+	}
+	return unlinkedTitleAmbiguity{
+		ambiguous:  true,
+		candidates: cands,
+		truncated:  truncated,
+		total:      total,
+	}, nil
+}
+
+// copyPagePaths returns a shallow copy so residual rows do not share a slice header.
+func copyPagePaths(in []parser.PagePath) []parser.PagePath {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]parser.PagePath, len(in))
+	copy(out, in)
+	return out
+}
+
 // scanUnlinkedCandidateBlocks runs a bounded FTS5 phrase window over
 // clean_content and returns candidate blocks (post CODE/self filter) plus
 // whether more FTS matches exist beyond the window and the last examined
@@ -256,6 +352,7 @@ type unlinkedBlock struct {
 //
 // afterRowid is an exclusive lower bound (0 = from the start).
 func (dm *DatabaseManager) scanUnlinkedCandidateBlocks(db *sql.DB, title, source, notebook, section, page string, afterRowid int64) ([]unlinkedBlock, bool, int64, string, error) {
+	unlinkedScanCalls.Add(1)
 	phrase := buildUnlinkedFTSPhrase(title)
 	if phrase == "" {
 		return nil, false, 0, "", nil

@@ -57,6 +57,18 @@ type DatabaseManager struct {
 	db       atomic.Pointer[sql.DB]
 	path     string   // "" for the in-memory shared-cache DB; otherwise the on-disk file path
 	warnings []string // soft caveats from initSchema (e.g. WAL fell back to TRUNCATE)
+
+	// unlinkedScanCache holds short-lived FTS candidate windows so residual
+	// Load more does not re-pay loop-fill. Generation bumps on any blocks
+	// mutation / Close so stale windows miss without sweeping under readers.
+	unlinkedScanCacheMu  sync.Mutex
+	unlinkedScanCacheGen uint64
+	unlinkedScanCache    map[unlinkedScanCacheKey]unlinkedScanCacheEntry
+	// nonASCIILeaves caches distinct page locs whose leaf is non-ASCII so
+	// ASCII indexed leaf lookup can still EqualFold-merge Unicode folds
+	// (e.g. K vs K) without a full inventory scan on every request.
+	nonASCIILeaves   []PageLoc
+	nonASCIILeavesOK bool
 }
 
 // FileStat records the last-seen filesystem attributes of an indexed file, used
@@ -185,6 +197,7 @@ func (dm *DatabaseManager) Close() error {
 	// to nil so new callers see ErrDBClosed / nil SQLDB (#517).
 	dm.dbMu.Lock()
 	defer dm.dbMu.Unlock()
+	dm.invalidateUnlinkedScanCache()
 	db := dm.db.Swap(nil)
 	if db == nil {
 		return nil // already closed (idempotent)

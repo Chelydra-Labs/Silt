@@ -573,9 +573,9 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `docs/decisions/0006-backlinks-query-strategy.md`.   `GetUnlinkedMentionsPaged`
   surfaces residual plain-text mentions of the current page title — an FTS5
   phrase query (`clean_content : "title"`) rides the existing `blocks_fts`
-  index. Each call fetches a **rowid-keyset window**: nested
+  index. Each **FTS window** is a **rowid-keyset** probe: nested
   `SELECT rowid FROM blocks_fts … ORDER BY rowid LIMIT unlinkedScanCap+1`
-  probes bound MATCH work before joining `blocks` (path-ordered join plans
+  bounds MATCH work before joining `blocks` (path-ordered join plans
   TEMP-sort the full match set; the FTS subquery does not). CODE and self-page
   rows are dropped in Go after each probe; the scanner **loop-fills** up to a
   small round cap (`unlinkedScanFillRounds`) until it has `unlinkedScanCap`
@@ -593,19 +593,38 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   is path-sorted in Go; scan order only defines the batch window. Further
   batches are user-gated (**Scan more**); the UI blocks Scan more while residual
   Load more remains for the current batch so unread residual pages are not dropped.
-  A Go-side word-boundary regex confirms each hit, then
+  **Residual Load more** reuses a short-lived process-local **candidate-window
+  cache** on `DatabaseManager` keyed by `(source, notebook, section, title,
+  scan_cursor input)` plus a generation counter: the FTS loop-fill runs once
+  per window; residual plain-match + path-sort + residual keyset paging run on
+  the cached keepers. Cache entries miss when generation bumps (any successful
+  `IndexFileBlocks` / `IndexScanResults` / block delete / `ClearSourceBlocks` /
+  `Close`) or after a short TTL — so re-index never serves a stale batch.
+  Distinct `scan_cursor` values are distinct keys (**Scan more** always scans
+  fresh). A Go-side word-boundary regex confirms each hit, then
   `FirstPlainTitleOccurrence` keeps only title spans that do not overlap a
   `[[…]]` wiki-link (same rule as promote). Blocks that already link the page
   once still surface when residual plain text remains; fully-linked-only
   blocks stay out. Each matched block carries a contextual `source_snippets`
   excerpt (120-rune window centered on the residual plain span).
-  `PromoteUnlinkedMention` takes an explicit `(notebook, section, page)`
-  target: when that path exists in the page inventory it is authoritative (so
-  ambiguous leaf titles can be resolved via a UI chip); otherwise it falls
-  back to leaf-name resolution and rejects true ambiguity with
-  `ambiguous_target`. The first residual plain occurrence in the source block
-  is rewritten to a `[[shortest]]` page link — migrating it into the
-  backlinks leg when no further plain hits remain.
+  **Leaf ambiguity** for the active title uses an indexed
+  `lower(page) = lower(?)` lookup (`idx_blocks_page_lower`) for ASCII leaves,
+  merged with EqualFold matches against cached non-ASCII leaves so Unicode
+  folds of ASCII letters (e.g. K vs U+212A Kelvin) cannot look uniquely
+  resolved. Non-ASCII leaves filter distinct page paths in Go with
+  `strings.EqualFold` (SQLite `lower()` is ASCII-only). When multiple
+  locations share the leaf, `ambiguous` is true and `candidates` are
+  stable-sorted (active notebook/section first) and **capped**
+  (`unlinkedAmbiguousCandidateCap`) on each residual row, with
+  `candidates_truncated` / `candidates_total` when the full collision set
+  exceeds the cap. Unique leaves stay
+  O(leaf matches). `PromoteUnlinkedMention` takes an explicit
+  `(notebook, section, page)` target: exact path existence is authoritative
+  (UI chip); otherwise leaf resolution against same-leaf pages rejects true
+  ambiguity with `ambiguous_target`. `ShortestUniquePath` still uses the full
+  inventory on promote (rare write path). The first residual plain occurrence
+  in the source block is rewritten to a `[[shortest]]` page link — migrating
+  it into the backlinks leg when no further plain hits remain.
 - **AI providers** (#216, #218, #479, #632) — `GetAIProviderConfig` (key-scrubbed
   read; emits `has_key` flags + `features`, never the raw secret),
   `UpdateAIProviderConfig` (provider type / base URL / model / tuning — never
@@ -1011,7 +1030,12 @@ source page, the row migrates out of the unlinked leg and the new link
 reappears among the backlinks groups. Mentions whose title resolves to more
 than one page (ambiguous basename) are flagged and render candidate paths as
 clickable chips — each chip promotes to that explicit target in one click,
-  never auto-promoted without a choice. When the API reports `truncated`, the
+  never auto-promoted without a choice. Server-side leaf lookup caps the chip
+  list (`candidates` + `candidates_truncated` / `candidates_total`); the UI
+  shows a “+N more” affordance when collisions exceed the cap so truncation is
+  never silent. Residual **Load more** may reuse a short-lived server FTS
+  candidate-window cache (§4.3); **Scan more** still advances the next window.
+  When the API reports `truncated`, the
   section surfaces an accessible incompleteness notice (header subtitle and
   expanded status strip) so common-title caps are never silent. **Load more**
   advances the residual page cursor within the current FTS batch; **Scan more

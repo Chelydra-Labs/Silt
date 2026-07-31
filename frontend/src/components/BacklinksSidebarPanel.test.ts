@@ -642,6 +642,51 @@ describe('BacklinksSidebarPanel', () => {
     )
   })
 
+  it('shows +N more when ambiguous candidates are truncated', async () => {
+    mocks.getUnlinkedMentionsPaged.mockResolvedValue({
+      results: [
+        {
+          source: 'vault',
+          source_notebook: 'Work',
+          source_section: 'Journal',
+          source_page: 'Notes',
+          source_block_ids: ['block-7'],
+          source_snippets: ['Standup notes from today'],
+          match_count: 1,
+          title: 'Standup',
+          ambiguous: true,
+          candidates_truncated: true,
+          candidates_total: 40,
+          candidates: [
+            {
+              source: 'vault',
+              notebook: 'Work',
+              section: 'Journal',
+              page: 'Standup'
+            },
+            {
+              source: 'vault',
+              notebook: 'Work',
+              section: 'Log',
+              page: 'Standup'
+            }
+          ]
+        }
+      ],
+      cursor: '',
+      has_more: false
+    })
+    renderPanel()
+    await screen.findByText('1 page mentions this title')
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    expect(
+      await screen.findByLabelText('38 more matching paths not shown')
+    ).toBeInTheDocument()
+    expect(screen.getByText('+38 more')).toBeInTheDocument()
+  })
+
   it('retries unlinked load via Try again after a fetch error', async () => {
     mocks.getUnlinkedMentionsPaged
       .mockRejectedValueOnce(new Error('index unavailable'))
