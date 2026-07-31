@@ -185,6 +185,34 @@ func TestPromoteUnlinkedMention_ExplicitPathDisambiguates(t *testing.T) {
 	}
 }
 
+// TestPromoteUnlinkedMention_PaddedExplicitPath: whitespace around notebook/
+// section/page must still resolve the exact inventory path (candidate chips
+// or IPC padding must not fall through to ambiguous_target).
+func TestPromoteUnlinkedMention_PaddedExplicitPath(t *testing.T) {
+	app := newTestApp(t)
+	const srcBlock = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	writeNotePageWithMention(t, app, "Work", "Journal", "Standup", "2026-06-13",
+		"uuuuuuuu-uuuu-4uuu-8uuu-uuuuuuuuuuuu", "journal entry")
+	writeNotePageWithMention(t, app, "Work", "Log", "Standup", "2026-06-13",
+		"vvvvvvvv-vvvv-4vvv-8vvv-vvvvvvvvvvvv", "log entry")
+	writeNotePageWithMention(t, app, "Work", "Sec", "Notes", "2026-06-13",
+		srcBlock, "Standup today")
+
+	if err := app.PromoteUnlinkedMention(srcBlock, "  Work  ", "  Journal  ", "  Standup  "); err != nil {
+		t.Fatalf("padded explicit-path promote: %v", err)
+	}
+
+	var clean string
+	_ = app.db.SQLDB().QueryRow("SELECT clean_content FROM blocks WHERE id = ?", srcBlock).Scan(&clean)
+	if !strings.Contains(clean, "[[") || !strings.Contains(clean, "Standup]]") {
+		t.Errorf("expected wiki-link wrap after padded path promote: %q", clean)
+	}
+	bl, _ := app.db.GetBacklinks("vault", "Work", "Journal", "Standup")
+	if len(bl) != 1 || bl[0].Kind != "page" {
+		t.Errorf("Journal/Standup backlink after padded promote: got %+v", bl)
+	}
+}
+
 // TestPromoteUnlinkedMention_AmbiguousRejected verifies that without a matching
 // explicit path, an ambiguous leaf title is still rejected with CodeAmbiguousTarget.
 func TestPromoteUnlinkedMention_AmbiguousRejected(t *testing.T) {

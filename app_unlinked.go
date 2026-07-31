@@ -64,6 +64,10 @@ func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSectio
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	// Normalize the explicit path before source resolve and exact PageLoc match
+	// so padded candidate-chip values still hit inventory (avoid false ambiguous).
+	targetNotebook = strings.TrimSpace(targetNotebook)
+	targetSection = strings.TrimSpace(targetSection)
 	title := strings.TrimSpace(targetPage)
 	if title == "" {
 		// Plain error — not CodeAmbiguousTarget (that maps to "pick a candidate").
