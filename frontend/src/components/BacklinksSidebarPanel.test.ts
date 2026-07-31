@@ -1357,6 +1357,69 @@ describe('BacklinksSidebarPanel', () => {
     expect(document.activeElement).toBe(toggle)
   })
 
+  it('Load more after final Scan clears one-shot scan status so count returns', async () => {
+    const batch1 = unlinkedMentionWire({
+      source_page: 'Scan page',
+      source_block_ids: ['b1']
+    })
+    const batch2a = unlinkedMentionWire({
+      source_page: 'Residual A',
+      source_block_ids: ['b2a']
+    })
+    const batch2b = unlinkedMentionWire({
+      source_page: 'Residual B',
+      source_block_ids: ['b2b']
+    })
+    mocks.getUnlinkedMentionsPaged
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch1],
+          truncated: true,
+          scanCursor: 'scan-final'
+        })
+      )
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch2a],
+          cursor: 'res-next',
+          hasMore: true,
+          truncated: false,
+          scanCursor: ''
+        })
+      )
+      .mockResolvedValueOnce(
+        unlinkedWire({
+          results: [batch2b],
+          cursor: '',
+          hasMore: false,
+          truncated: false,
+          scanCursor: ''
+        })
+      )
+    renderPanel()
+    await screen.findByText(/may be incomplete/)
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Unlinked mentions/ })
+    )
+    await fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Scan more unlinked mention candidates'
+      })
+    )
+    await waitFor(() => {
+      expect(screen.getByText(/Scan complete/)).toBeInTheDocument()
+    })
+    // Residual Load more must clear the one-shot status so the live count shows.
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Load more unlinked mentions' })
+    )
+    await waitFor(() => {
+      expect(screen.queryByText(/Scan complete/)).not.toBeInTheDocument()
+    })
+    expect(screen.getByText(/pages mention this title/)).toBeInTheDocument()
+    expect(screen.getByText('Residual B')).toBeInTheDocument()
+  })
+
   it('Scan more merges additional blocks when the same page reappears', async () => {
     const batch1 = unlinkedMentionWire({
       source_page: 'Shared page',

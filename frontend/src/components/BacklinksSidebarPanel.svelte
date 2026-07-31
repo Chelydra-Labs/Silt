@@ -607,6 +607,8 @@
     unlinkedLoadingMore = true
     unlinkedError = ''
     unlinkedErrorAction = 'more'
+    // One-shot final-scan status must not pin the subtitle during residual paging.
+    unlinkedScanStatus = ''
     try {
       const page = await getUnlinkedPage(
         activeNotebook,
