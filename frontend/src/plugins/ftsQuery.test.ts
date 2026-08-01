@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildFTSQuery, PLUGIN_FULL_TEXT_SEARCH_SQL } from './ftsQuery'
+import {
+  buildFTSOrQuery,
+  buildFTSQuery,
+  PLUGIN_FULL_TEXT_SEARCH_SQL,
+  sanitizeFTSToken
+} from './ftsQuery'
 
 describe('buildFTSQuery', () => {
   it('strips hyphens so FTS5 does not treat them as NOT', () => {
@@ -22,6 +27,44 @@ describe('buildFTSQuery', () => {
 
   it('keeps unicode letters', () => {
     expect(buildFTSQuery('Café notes')).toBe('Café* notes*')
+  })
+
+  it('would collapse intentional OR into AND if used on keyword unions', () => {
+    // Documents the gatherCandidates regression: free-text sanitization must
+    // not be applied to pre-built OR expressions.
+    expect(buildFTSQuery('database OR durability')).toBe(
+      'database* OR* durability*'
+    )
+  })
+})
+
+describe('buildFTSOrQuery', () => {
+  it('joins sanitized prefixes with FTS5 OR', () => {
+    expect(buildFTSOrQuery(['database', 'durability'])).toBe(
+      'database* OR durability*'
+    )
+  })
+
+  it('strips hyphens per term and drops unusable tokens', () => {
+    expect(buildFTSOrQuery(['long-term', 'a', '---', 'notes'])).toBe(
+      'longterm* OR notes*'
+    )
+  })
+
+  it('dedupes identical sanitized terms', () => {
+    expect(buildFTSOrQuery(['Note', 'note', 'NOTE'])).toBe('Note*')
+  })
+
+  it('returns empty when no terms survive', () => {
+    expect(buildFTSOrQuery([])).toBe('')
+    expect(buildFTSOrQuery(['a', '-'])).toBe('')
+  })
+})
+
+describe('sanitizeFTSToken', () => {
+  it('returns empty for short or punctuation-only input', () => {
+    expect(sanitizeFTSToken('a')).toBe('')
+    expect(sanitizeFTSToken('--')).toBe('')
   })
 })
 
