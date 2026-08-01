@@ -83,20 +83,16 @@ describe('dropPageIndex', () => {
     } as unknown as PluginContext
 
     await dropPageIndex(ctx, 'Work', 'Notes', 'Gone')
-    expect(exec).toHaveBeenCalledWith(`DELETE FROM chunks WHERE chunk_id = ?`, [
-      'c1'
-    ])
-    expect(exec).toHaveBeenCalledWith(`DELETE FROM chunks WHERE chunk_id = ?`, [
-      'c2'
-    ])
+    // Batched: one chunks DELETE + one embeddings DELETE (not 2N).
+    expect(exec).toHaveBeenCalledTimes(2)
+    expect(exec).toHaveBeenCalledWith(
+      `DELETE FROM chunks WHERE chunk_id IN (?,?)`,
+      ['c1', 'c2']
+    )
     // Embeddings delete is unconditional (not gated on embedTableReady).
     expect(exec).toHaveBeenCalledWith(
-      `DELETE FROM embeddings WHERE chunk_id = ?`,
-      ['c1']
-    )
-    expect(exec).toHaveBeenCalledWith(
-      `DELETE FROM embeddings WHERE chunk_id = ?`,
-      ['c2']
+      `DELETE FROM embeddings WHERE chunk_id IN (?,?)`,
+      ['c1', 'c2']
     )
   })
 
@@ -123,9 +119,22 @@ describe('dropPageIndex', () => {
 
     await dropPageIndex(ctx, 'N', 'S', 'P')
     expect(exec).toHaveBeenCalledWith(
-      `DELETE FROM embeddings WHERE chunk_id = ?`,
+      `DELETE FROM embeddings WHERE chunk_id IN (?)`,
       ['orphan']
     )
+  })
+
+  it('is a no-op when the page has no chunk rows', async () => {
+    const exec = vi.fn(async () => {})
+    const ctx = {
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async () => ({ rows: [] })),
+        exec
+      }
+    } as unknown as PluginContext
+    await dropPageIndex(ctx, 'N', 'S', 'P')
+    expect(exec).not.toHaveBeenCalled()
   })
 })
 

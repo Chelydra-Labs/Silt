@@ -251,16 +251,24 @@ export async function dropPageIndex(
       WHERE notebook = ? AND section = ? AND page = ?`,
     [notebook, section, page]
   )
-  for (const r of existing) {
-    const id = String(r.chunk_id)
-    await ctx.pluginDb.exec(`DELETE FROM chunks WHERE chunk_id = ?`, [id])
-    // Always attempt vec0 delete — embedTableReady may be false after restart
-    // before the first KNN query, but the table can still hold orphan rows.
-    try {
-      await ctx.pluginDb.exec(`DELETE FROM embeddings WHERE chunk_id = ?`, [id])
-    } catch {
-      /* table missing or vec0 not ready — chunks already dropped */
-    }
+  if (existing.length === 0) return
+  const ids = existing.map((r) => String(r.chunk_id))
+  const placeholders = ids.map(() => '?').join(',')
+  // Two batched deletes (not 2N per-chunk round-trips) — critical on vault-open
+  // orphan heal when many pages each have multiple chunks.
+  await ctx.pluginDb.exec(
+    `DELETE FROM chunks WHERE chunk_id IN (${placeholders})`,
+    ids
+  )
+  // Always attempt vec0 delete — embedTableReady may be false after restart
+  // before the first KNN query, but the table can still hold orphan rows.
+  try {
+    await ctx.pluginDb.exec(
+      `DELETE FROM embeddings WHERE chunk_id IN (${placeholders})`,
+      ids
+    )
+  } catch {
+    /* table missing or vec0 not ready — chunks already dropped */
   }
 }
 
