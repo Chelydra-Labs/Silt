@@ -74,6 +74,12 @@ export const noteZoom = {
    * Call once settings.config is available.
    */
   hydrateFromConfig(raw: unknown) {
+    // Drop any in-flight wheel/GUI persist so a stale timer cannot overwrite
+    // the value we just loaded from vault config.
+    if (persistTimer) {
+      clearTimeout(persistTimer)
+      persistTimer = null
+    }
     const n =
       typeof raw === 'number' && Number.isFinite(raw)
         ? clampNoteZoom(raw)

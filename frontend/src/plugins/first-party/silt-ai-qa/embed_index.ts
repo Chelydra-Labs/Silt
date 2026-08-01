@@ -254,14 +254,12 @@ export async function dropPageIndex(
   for (const r of existing) {
     const id = String(r.chunk_id)
     await ctx.pluginDb.exec(`DELETE FROM chunks WHERE chunk_id = ?`, [id])
-    if (embedTableReady) {
-      try {
-        await ctx.pluginDb.exec(`DELETE FROM embeddings WHERE chunk_id = ?`, [
-          id
-        ])
-      } catch {
-        /* ignore */
-      }
+    // Always attempt vec0 delete — embedTableReady may be false after restart
+    // before the first KNN query, but the table can still hold orphan rows.
+    try {
+      await ctx.pluginDb.exec(`DELETE FROM embeddings WHERE chunk_id = ?`, [id])
+    } catch {
+      /* table missing or vec0 not ready — chunks already dropped */
     }
   }
 }

@@ -305,6 +305,8 @@ export function createQAController() {
   const READY_RETRY_MAX = 6
   /** Cap missing-page backfill on vault open so open stays snappy. */
   const RECONCILE_MISSING_CAP = 40
+  /** Cap orphan page checks so vault open stays O(1) vs full index size. */
+  const RECONCILE_ORPHAN_CAP = 200
 
   function pageKey(notebook: string, section: string, page: string): string {
     return `${notebook}\0${section}\0${page}`
@@ -317,11 +319,13 @@ export function createQAController() {
   /**
    * Drop orphan chunk rows (pages gone from the note store) and schedule a
    * bounded set of missing pages for incremental index (#850 IDX-10).
+   * Orphan scan is capped; remaining orphans heal on later page events or rebuild.
    */
   async function reconcileIndex(ctx: PluginContext) {
     await migrateIndexForReconcile(ctx)
     const { rows: chunkPages } = await ctx.pluginDb.query(
-      `SELECT DISTINCT notebook, section, page FROM chunks`
+      `SELECT DISTINCT notebook, section, page FROM chunks LIMIT ?`,
+      [RECONCILE_ORPHAN_CAP]
     )
     for (const r of chunkPages) {
       if (disposed) return

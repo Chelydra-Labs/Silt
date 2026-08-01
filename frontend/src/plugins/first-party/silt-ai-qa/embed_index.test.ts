@@ -89,6 +89,43 @@ describe('dropPageIndex', () => {
     expect(exec).toHaveBeenCalledWith(`DELETE FROM chunks WHERE chunk_id = ?`, [
       'c2'
     ])
+    // Embeddings delete is unconditional (not gated on embedTableReady).
+    expect(exec).toHaveBeenCalledWith(
+      `DELETE FROM embeddings WHERE chunk_id = ?`,
+      ['c1']
+    )
+    expect(exec).toHaveBeenCalledWith(
+      `DELETE FROM embeddings WHERE chunk_id = ?`,
+      ['c2']
+    )
+  })
+
+  it('still deletes embeddings when embedTableReady is false after restart', async () => {
+    resetIndexState()
+    const exec = vi.fn(async (sql: string) => {
+      if (sql.includes('embeddings')) {
+        // Simulate vec0 present even though in-memory flag is cold.
+        return
+      }
+    })
+    const ctx = {
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('chunk_id FROM chunks')) {
+            return { rows: [{ chunk_id: 'orphan' }] }
+          }
+          return { rows: [] }
+        }),
+        exec
+      }
+    } as unknown as PluginContext
+
+    await dropPageIndex(ctx, 'N', 'S', 'P')
+    expect(exec).toHaveBeenCalledWith(
+      `DELETE FROM embeddings WHERE chunk_id = ?`,
+      ['orphan']
+    )
   })
 })
 
