@@ -374,8 +374,11 @@ export const BlockIndentOnDrop = Extension.create({
             // 7. Build ONE transaction: delete the source, map the insert
             //    position through the delete, re-validate top-level-ness
             //    on the POST-delete doc, then insert + set depth.
-            const tr = state.tr
-            tr.delete(oldPos, oldPos + draggedNode.nodeSize)
+            // Capture renumber returns (same contract as keymaps.ts) so a
+            // future helper that returns a fresh Transaction cannot silently
+            // drop drag renumber steps.
+            let tr = state.tr
+            tr = tr.delete(oldPos, oldPos + draggedNode.nodeSize)
             const mappedInsert = tr.mapping.map(insertAt)
             // The mapped insert position must still resolve to a top-level
             // child slot. A drop that resolves to a position inside a
@@ -386,7 +389,7 @@ export const BlockIndentOnDrop = Extension.create({
             } catch {
               return false
             }
-            tr.insert(mappedInsert, draggedNode)
+            tr = tr.insert(mappedInsert, draggedNode)
             // setNodeAttribute targets the node starting AT mappedInsert,
             // which post-insert is the just-inserted dragged node (insert
             // does not shift positions ≤ mappedInsert). Verified depth attr
@@ -408,16 +411,26 @@ export const BlockIndentOnDrop = Extension.create({
                 newDepth,
                 ordered.punc
               )
-              tr.setNodeMarkup(mappedInsert, undefined, {
+              tr = tr.setNodeMarkup(mappedInsert, undefined, {
                 ...draggedNode.attrs,
                 depth: newDepth,
                 bullet: formatOrderedBullet(1, destPunc)
               })
-              renumberOrderedRunContaining(tr, mappedInsert, newDepth, destPunc)
-              renumberVacatedOrderedRun(tr, vacatedNear, oldDepth, ordered.punc)
+              tr = renumberOrderedRunContaining(
+                tr,
+                mappedInsert,
+                newDepth,
+                destPunc
+              )
+              tr = renumberVacatedOrderedRun(
+                tr,
+                vacatedNear,
+                oldDepth,
+                ordered.punc
+              )
             } else if (ordered) {
               // Same-depth reorder: fix destination sequence + any split source.
-              renumberAfterOrderedBlockMove(
+              tr = renumberAfterOrderedBlockMove(
                 tr,
                 mappedInsert,
                 vacatedNear,
@@ -425,7 +438,7 @@ export const BlockIndentOnDrop = Extension.create({
                 ordered.punc
               )
             } else if (oldDepth !== newDepth) {
-              tr.setNodeAttribute(mappedInsert, 'depth', newDepth)
+              tr = tr.setNodeAttribute(mappedInsert, 'depth', newDepth)
             }
 
             // 8. Land a NodeSelection on the moved block so the caret/focus
