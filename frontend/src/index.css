@@ -1262,7 +1262,8 @@ body {
    to ~50% so the wash reads as soft emphasis that does not wash out the text on
    top of it (#858) — it is a background only; `color: inherit` keeps the text
    unchanged. An inline background-color style on a colored highlight overrides
-   this rule. */
+   this rule at full opacity by design: a user-chosen color should render as
+   picked, while the default ==highlight== is the subtle themed tint. */
 .ProseMirror mark {
   background-color: color-mix(
     in oklch,
