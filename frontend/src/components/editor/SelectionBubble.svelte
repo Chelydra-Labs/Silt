@@ -5,6 +5,11 @@
     clampToViewport,
     flipOrClamp
   } from '../../lib/editor/popoverPositioning'
+  import {
+    toggleUnorderedList,
+    toggleOrderedList,
+    selectionIsListKind
+  } from '../../lib/editor/keymaps'
 
   // Compact floating format toolbar for non-empty text selection (#689 / #168).
   // Primary marks stay direct; lower-frequency marks live under More. Existing
@@ -78,8 +83,11 @@
   let linkMenuOpen = $state(false)
   let copyStatus = $state('')
 
-  // Primary + More trigger participate in the top-level roving set.
-  const TOP_COUNT = PRIMARY.length + 1 // + More button
+  // Primary marks + bullet list + ordered list + More participate in roving.
+  const LIST_BULLET_IDX = PRIMARY.length
+  const LIST_ORDERED_IDX = PRIMARY.length + 1
+  const MORE_IDX = PRIMARY.length + 2
+  const TOP_COUNT = MORE_IDX + 1
 
   let visible = $derived(show && !dismissed && selectionCoords !== null)
 
@@ -122,6 +130,29 @@
     linkMenuOpen = false
     moreOpen = false
     toggleMark(btn.mark)
+  }
+
+  function listActive(kind: 'unordered' | 'ordered'): boolean {
+    if (!editor || editor.isDestroyed) return false
+    try {
+      return selectionIsListKind(editor, kind)
+    } catch {
+      return false
+    }
+  }
+
+  function handleBulletList(): void {
+    if (!editor || editor.isDestroyed) return
+    linkMenuOpen = false
+    moreOpen = false
+    toggleUnorderedList(editor)
+  }
+
+  function handleOrderedList(): void {
+    if (!editor || editor.isDestroyed) return
+    linkMenuOpen = false
+    moreOpen = false
+    toggleOrderedList(editor)
   }
 
   function handleLinkAction(action: LinkAction): void {
@@ -321,6 +352,10 @@
       e.preventDefault()
       if (focusIdx < PRIMARY.length) {
         handlePrimary(PRIMARY[focusIdx])
+      } else if (focusIdx === LIST_BULLET_IDX) {
+        handleBulletList()
+      } else if (focusIdx === LIST_ORDERED_IDX) {
+        handleOrderedList()
       } else {
         moreOpen = !moreOpen
         linkMenuOpen = false
@@ -441,14 +476,49 @@
     <button
       type="button"
       class="bubble-btn"
+      class:active={listActive('unordered')}
+      data-bubble-tb
+      aria-pressed={listActive('unordered')}
+      aria-label="Bullet list"
+      tabindex={focusIdx === LIST_BULLET_IDX ? 0 : -1}
+      onclick={() => {
+        focusIdx = LIST_BULLET_IDX
+        handleBulletList()
+      }}
+    >
+      <span class="material-symbols-outlined" aria-hidden="true"
+        >format_list_bulleted</span
+      >
+    </button>
+    <button
+      type="button"
+      class="bubble-btn"
+      class:active={listActive('ordered')}
+      data-bubble-tb
+      aria-pressed={listActive('ordered')}
+      aria-label="Numbered list"
+      tabindex={focusIdx === LIST_ORDERED_IDX ? 0 : -1}
+      onclick={() => {
+        focusIdx = LIST_ORDERED_IDX
+        handleOrderedList()
+      }}
+    >
+      <span class="material-symbols-outlined" aria-hidden="true"
+        >format_list_numbered</span
+      >
+    </button>
+
+    <button
+      type="button"
+      class="bubble-btn"
       class:active={moreOpen}
       data-bubble-tb
       aria-label="More formatting"
       aria-haspopup="menu"
       aria-expanded={moreOpen}
-      tabindex={focusIdx === PRIMARY.length ? 0 : -1}
+      tabindex={focusIdx === MORE_IDX ? 0 : -1}
       onclick={() => {
-        focusIdx = PRIMARY.length
+        focusIdx = MORE_IDX
         moreOpen = !moreOpen
         linkMenuOpen = false
       }}

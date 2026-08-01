@@ -13,9 +13,13 @@ vi.mock('../../lib/editor/popoverPositioning', () => ({
   clampToViewport: vi.fn((r) => ({ left: r.x, top: r.y }))
 }))
 
-vi.mock('@wailsio/runtime', () => ({
-  Browser: { OpenURL: mocks.openURL }
-}))
+vi.mock('@wailsio/runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@wailsio/runtime')>()
+  return {
+    ...actual,
+    Browser: { ...actual.Browser, OpenURL: mocks.openURL }
+  }
+})
 
 const coords = { left: 100, top: 100, bottom: 120 }
 
@@ -90,7 +94,7 @@ describe('SelectionBubble', () => {
     expect(container.querySelector('.selection-bubble')).toBeTruthy()
   })
 
-  it('exposes primary Bold, Italic, Underline, Link, Inline code and a More control', () => {
+  it('exposes primary marks, list toggles, and a More control', () => {
     const { getByLabelText, queryByLabelText } = render(SelectionBubble, {
       props: {
         editor: null,
@@ -104,7 +108,9 @@ describe('SelectionBubble', () => {
       'Italic',
       'Underline',
       'Link',
-      'Inline code'
+      'Inline code',
+      'Bullet list',
+      'Numbered list'
     ]) {
       expect(getByLabelText(label)).toBeTruthy()
     }
