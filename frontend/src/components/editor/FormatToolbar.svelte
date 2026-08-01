@@ -383,16 +383,17 @@
     rovingIdx = i
   }
 
-  // Indices for primary data-tb controls after Heading (0).
-  // 0: heading, 1: bullet list, 2: ordered list, 3..6: primary marks, 7: link,
-  // 8: more, 9: align, 10: insert, then colors, then clear.
+  // Roving indices follow paragraph-toolbar convention (Zendesk/CKEditor/Word):
+  // block style → inline marks → more → lists + align (paragraph) → insert → color.
+  // 0: heading, 1..4: primary marks, 5: link, 6: more,
+  // 7: bullet list, 8: ordered list, 9: align, 10: insert, then colors, clear.
   const HEADING_IDX = 0
-  const BULLET_LIST_IDX = 1
-  const ORDERED_LIST_IDX = 2
-  const PRIMARY_START = 3
+  const PRIMARY_START = 1
   const LINK_IDX = PRIMARY_START + PRIMARY_MARKS.length
   const MORE_IDX = LINK_IDX + 1
-  const ALIGN_IDX = MORE_IDX + 1
+  const BULLET_LIST_IDX = MORE_IDX + 1
+  const ORDERED_LIST_IDX = BULLET_LIST_IDX + 1
+  const ALIGN_IDX = ORDERED_LIST_IDX + 1
   const INSERT_IDX = ALIGN_IDX + 1
   const COLOR_START = INSERT_IDX + 1
   let clearIdx = $derived(COLOR_START + (colorEnabled ? 2 : 0))
@@ -465,53 +466,6 @@
     onToolbarFocus={() => onTbFocus(HEADING_IDX)}
     onMenuOpenChange={(open) => (headingOpen = open)}
   />
-
-  <span class="toolbar-divider" aria-hidden="true"></span>
-
-  <div class="toolbar-group" role="group" aria-label="Lists">
-    <button
-      type="button"
-      class="toolbar-btn"
-      class:active={listActive('unordered')}
-      aria-pressed={listActive('unordered')}
-      aria-label="Bullet list"
-      aria-keyshortcuts={hk('toggle_bullet_list') || undefined}
-      data-tb
-      data-primary
-      disabled={!canToggleList()}
-      tabindex={rovingIdx === BULLET_LIST_IDX ? 0 : -1}
-      onclick={handleBulletList}
-      onfocus={() => onTbFocus(BULLET_LIST_IDX)}
-      title={hk('toggle_bullet_list')
-        ? `Bullet list (${hk('toggle_bullet_list')})`
-        : 'Bullet list'}
-    >
-      <span class="material-symbols-outlined" aria-hidden="true"
-        >format_list_bulleted</span
-      >
-    </button>
-    <button
-      type="button"
-      class="toolbar-btn"
-      class:active={listActive('ordered')}
-      aria-pressed={listActive('ordered')}
-      aria-label="Numbered list"
-      aria-keyshortcuts={hk('toggle_ordered_list') || undefined}
-      data-tb
-      data-primary
-      disabled={!canToggleList()}
-      tabindex={rovingIdx === ORDERED_LIST_IDX ? 0 : -1}
-      onclick={handleOrderedList}
-      onfocus={() => onTbFocus(ORDERED_LIST_IDX)}
-      title={hk('toggle_ordered_list')
-        ? `Numbered list (${hk('toggle_ordered_list')})`
-        : 'Numbered list'}
-    >
-      <span class="material-symbols-outlined" aria-hidden="true"
-        >format_list_numbered</span
-      >
-    </button>
-  </div>
 
   <span class="toolbar-divider" aria-hidden="true"></span>
 
@@ -642,6 +596,54 @@
         </div>
       {/if}
     </div>
+  </div>
+
+  <span class="toolbar-divider" aria-hidden="true"></span>
+
+  <!-- Paragraph structure: lists + alignment (Word/CKEditor/Zendesk convention). -->
+  <div class="toolbar-group" role="group" aria-label="Paragraph">
+    <button
+      type="button"
+      class="toolbar-btn"
+      class:active={listActive('unordered')}
+      aria-pressed={listActive('unordered')}
+      aria-label="Bullet list"
+      aria-keyshortcuts={hk('toggle_bullet_list') || undefined}
+      data-tb
+      data-primary
+      disabled={!canToggleList()}
+      tabindex={rovingIdx === BULLET_LIST_IDX ? 0 : -1}
+      onclick={handleBulletList}
+      onfocus={() => onTbFocus(BULLET_LIST_IDX)}
+      title={hk('toggle_bullet_list')
+        ? `Bullet list (${hk('toggle_bullet_list')})`
+        : 'Bullet list'}
+    >
+      <span class="material-symbols-outlined" aria-hidden="true"
+        >format_list_bulleted</span
+      >
+    </button>
+    <button
+      type="button"
+      class="toolbar-btn"
+      class:active={listActive('ordered')}
+      aria-pressed={listActive('ordered')}
+      aria-label="Numbered list"
+      aria-keyshortcuts={hk('toggle_ordered_list') || undefined}
+      data-tb
+      data-primary
+      disabled={!canToggleList()}
+      tabindex={rovingIdx === ORDERED_LIST_IDX ? 0 : -1}
+      onclick={handleOrderedList}
+      onfocus={() => onTbFocus(ORDERED_LIST_IDX)}
+      title={hk('toggle_ordered_list')
+        ? `Numbered list (${hk('toggle_ordered_list')})`
+        : 'Numbered list'}
+    >
+      <span class="material-symbols-outlined" aria-hidden="true"
+        >format_list_numbered</span
+      >
+    </button>
 
     <div class="menu-wrap" bind:this={alignWrap}>
       <button
@@ -690,7 +692,11 @@
         </div>
       {/if}
     </div>
+  </div>
 
+  <span class="toolbar-divider" aria-hidden="true"></span>
+
+  <div class="toolbar-group" role="group" aria-label="Insert content">
     <div class="menu-wrap" bind:this={insertWrap}>
       <button
         type="button"
