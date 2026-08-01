@@ -103,7 +103,7 @@ const MARK_PATTERNS: MarkPattern[] = [
     extractAttrs: (m) => ({ color: m[1].trim() })
   },
   {
-    type: 'backgroundColor',
+    type: 'highlight',
     regex:
       /<span style="background-color:\s*([^;"]+?)\s*;?"[^>]*>(.+?)<\/span>/y,
     innerGroup: 2,

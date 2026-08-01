@@ -89,8 +89,12 @@ function markOpen(mark: MarkRef): string {
       return '*'
     case 'strike':
       return '~~'
-    case 'highlight':
-      return '=='
+    case 'highlight': {
+      const color = mark.attrs?.color
+      return color
+        ? `<span style="background-color: ${asString(color)}">`
+        : '=='
+    }
     case 'code':
       return '`'
     case 'underline':
@@ -102,10 +106,6 @@ function markOpen(mark: MarkRef): string {
     case 'textColor': {
       const color = mark.attrs?.color
       return color ? `<span style="color: ${asString(color)}">` : ''
-    }
-    case 'backgroundColor': {
-      const color = mark.attrs?.color
-      return color ? `<span style="background-color: ${asString(color)}">` : ''
     }
     case 'link':
       return '['
@@ -122,8 +122,10 @@ function markClose(mark: MarkRef): string {
       return '*'
     case 'strike':
       return '~~'
-    case 'highlight':
-      return '=='
+    case 'highlight': {
+      const color = mark.attrs?.color
+      return color ? '</span>' : '=='
+    }
     case 'code':
       return '`'
     case 'underline':
@@ -133,7 +135,6 @@ function markClose(mark: MarkRef): string {
     case 'superscript':
       return '</sup>'
     case 'textColor':
-    case 'backgroundColor':
       return '</span>'
     case 'link': {
       const href = mark.attrs?.href as string

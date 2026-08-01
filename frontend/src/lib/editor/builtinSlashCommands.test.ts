@@ -89,7 +89,7 @@ describe('classifySlashCommand', () => {
     })
     expect(classifySlashCommand('background-color')).toEqual({
       kind: 'color',
-      markType: 'backgroundColor'
+      markType: 'highlight'
     })
   })
 

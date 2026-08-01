@@ -52,7 +52,7 @@ export interface SlashMenuOptions {
   /** `/tableCustom` — open the custom table-size picker at the anchor. */
   onOpenTableSizePicker: (anchor: SlashTableSizeAnchor) => void
   /** `/color` — open the text/background color picker. */
-  onOpenColorPicker: (markType: 'textColor' | 'backgroundColor') => void
+  onOpenColorPicker: (markType: 'textColor' | 'highlight') => void
   /** `/embed` — open the block picker to insert an embed portal. */
   onShowEmbedPicker: () => void
   /** `/template` — open the template picker. */

@@ -1257,6 +1257,19 @@ body {
   background: var(--color-editor-selection);
 }
 
+/* Inline highlight mark (==text==). The token is authored per theme/mode as a
+   subtle tint; consuming it here replaces the browser's default solid-yellow
+   <mark>, which overwhelmed highlighted prose (#858). An inline
+   background-color style on a colored highlight overrides this rule. */
+.ProseMirror mark {
+  background-color: var(--color-editor-highlight);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 /* Maps standard Material icon elements to the self-hosted @font-face rules (#237, F2) */
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined';

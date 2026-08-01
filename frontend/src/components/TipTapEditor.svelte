@@ -166,8 +166,7 @@
     'subscript',
     'superscript',
     'link',
-    'textColor',
-    'backgroundColor'
+    'textColor'
   ]
 
   // Selection bubble state (#168): tracks whether the selection is non-

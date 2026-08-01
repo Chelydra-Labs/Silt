@@ -126,7 +126,11 @@ describe('themeable error + editor tokens (#386, #390)', () => {
   })
 
   it('index.css consumes the editor tokens via var()', () => {
-    for (const token of ['--color-editor-caret', '--color-editor-selection']) {
+    for (const token of [
+      '--color-editor-caret',
+      '--color-editor-selection',
+      '--color-editor-highlight'
+    ]) {
       expect(
         indexText,
         `${token} must be consumed via var() so the editor canvas is themed`

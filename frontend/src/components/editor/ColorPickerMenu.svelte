@@ -9,7 +9,7 @@
 
   interface Props {
     editor: Editor | null
-    markType: 'textColor' | 'backgroundColor'
+    markType: 'textColor' | 'highlight'
     isDark: boolean
     /** Roving tabindex from the parent format toolbar (#690). */
     toolbarTabIndex?: number

@@ -517,7 +517,7 @@
         <div class="bubble-color">
           <ColorPickerMenu
             {editor}
-            markType="backgroundColor"
+            markType="highlight"
             {isDark}
             toolbarTabIndex={focusIdx === BG_COLOR_IDX ? 0 : -1}
             onToolbarFocus={() => (focusIdx = BG_COLOR_IDX)}

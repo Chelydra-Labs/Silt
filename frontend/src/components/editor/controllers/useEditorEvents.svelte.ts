@@ -34,7 +34,7 @@ export interface EditorEventsDeps {
   /** Opens the inline link URL input near the selection (insert/edit). */
   openLinkInput: (prefill?: string) => void
   /** Opens the color picker popover anchored at the selection. */
-  openColorPickerPopover: (markType: 'textColor' | 'backgroundColor') => void
+  openColorPickerPopover: (markType: 'textColor' | 'highlight') => void
   /** Replaces the math popover state (null closes it). */
   setMathPopover: (popover: MathPopover | null) => void
 }
@@ -69,8 +69,7 @@ export function createEditorEvents(deps: EditorEventsDeps) {
     if (align && editorInstance) setBlockAlign(editorInstance, align)
   }
   function onOpenColorPicker(e: Event): void {
-    const markType = (e as CustomEvent).detail as
-      'textColor' | 'backgroundColor'
+    const markType = (e as CustomEvent).detail as 'textColor' | 'highlight'
     if (markType) openColorPickerPopover(markType)
   }
   function onEditMath(e: Event): void {

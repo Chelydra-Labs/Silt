@@ -757,7 +757,7 @@
       />
       <ColorPickerMenu
         {editor}
-        markType="backgroundColor"
+        markType="highlight"
         {isDark}
         toolbarTabIndex={rovingIdx === COLOR_START + 1 ? 0 : -1}
         onToolbarFocus={() => onTbFocus(COLOR_START + 1)}

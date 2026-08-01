@@ -62,7 +62,7 @@ export function createPopoversController(deps: PopoversDeps) {
   // Color picker popover (#170). Shows ColorPickerMenu as a floating element
   // near the selection, replacing the window.prompt slash-command path.
   let showColorPicker = $state(false)
-  let colorPickerMarkType = $state<'textColor' | 'backgroundColor'>('textColor')
+  let colorPickerMarkType = $state<'textColor' | 'highlight'>('textColor')
   let colorPickerCoords = $state<{ left: number; top: number } | null>(null)
 
   // Custom-table size picker (#172) — an in-app popover replacing window.prompt.
@@ -178,9 +178,7 @@ export function createPopoversController(deps: PopoversDeps) {
   }
 
   // --- Color picker popover (#170) -----------------------------------------
-  function openColorPickerPopover(
-    markType: 'textColor' | 'backgroundColor'
-  ): void {
+  function openColorPickerPopover(markType: 'textColor' | 'highlight'): void {
     const editorInstance = getEditor()
     if (!editorInstance || editorInstance.isDestroyed) return
     try {
