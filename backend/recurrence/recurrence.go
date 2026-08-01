@@ -2,8 +2,8 @@
 // by the [recur::] Dataview token on task lines (#296).
 //
 // The grammar is deliberately small and human-readable, matching the v1
-// interval vocabulary agreed in PLAN.md (informed by Todoist / Things /
-// Obsidian Tasks UX research):
+// interval vocabulary agreed in PLAN.md (informed by common
+// task-app recurrence UX):
 //
 //	every day
 //	every weekday          (Mon–Fri)
@@ -15,8 +15,8 @@
 // returns the next due date strictly after the base, advancing in whole
 // interval steps. If the computed date is still in the past (a task left
 // overdue), the resolver skips the missed instances and lands on the next
-// future occurrence rather than backfilling — the Todoist default that
-// avoids "catch-up hell" (see PLAN.md §1 design decisions).
+// future occurrence rather than backfilling — skip-missed semantics that
+// avoid "catch-up hell" (see PLAN.md §1 design decisions).
 //
 // The package is pure (no I/O, no app state) so it is trivially unit-testable
 // and can be called from the UpdateBlockState DONE hook without introducing a
@@ -203,7 +203,7 @@ func (r Rule) NextInstance(from time.Time) time.Time {
 // NextFutureInstance returns the next due date that is strictly after `now`,
 // advancing in whole interval steps from `base`. If base + one interval is
 // already in the future, that is returned directly. Otherwise the resolver
-// skips missed instances (Todoist "skip-missed" model) until it lands on a
+// skips missed instances (skip-missed semantics) until it lands on a
 // future date, bounded by maxSkipIterations to prevent a pathological loop.
 //
 // Each step re-derives from the original base (not the previous result) so

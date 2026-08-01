@@ -117,7 +117,7 @@
   }
 
   function focusInput(): void {
-    // Select-all on (re)open so re-typing replaces the previous query (VS Code).
+    // Select-all on (re)open so re-typing replaces the previous query.
     inputEl?.focus()
     inputEl?.select()
   }

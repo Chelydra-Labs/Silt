@@ -390,7 +390,7 @@
       onNavigate: suggests.pageLink.navigate,
       onSelectActive: suggests.pageLink.selectActive
     }),
-    // Notion-style indent-on-drop + drop-zone indicator (#330, #181
+    // Indent-on-drop + drop-zone indicator (#330, #181
     // follow-up). Watches ProseMirror's handleDrop: when a top-level block
     // is dragged, snaps the dropped block's depth to the horizontal drop
     // position and shows a depth-guide indicator during dragover. Returns

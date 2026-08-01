@@ -12,7 +12,7 @@ import {
   renumberAfterOrderedBlockMove
 } from './orderedList'
 
-// Notion-style indent-on-drop for the Silt block drag handle (#330, #181
+// Indent-on-drop for the Silt block drag handle (#330, #181
 // follow-up; drag-init moved to SiltInlineDragHandle in #339). Native
 // ProseMirror drop already reorders whole top-level blocks; this extension
 // adds (a) a horizontal-position-driven depth change on drop and (b) a
@@ -51,7 +51,7 @@ export const MAX_DEPTH = 6
  * edge, the pixels per indent level, and the max allowed depth, return the
  * snapped indent level in `[0, maxDepth]`.
  *
- * Snaps to the nearest indent step (Notion-style grid): drop further right
+ * Snaps to the nearest indent step (a fixed-pixel grid): drop further right
  * → deeper indent. `clientX <= contentLeft` → 0. `clientX` beyond
  * `maxDepth * step` → `maxDepth`.
  *

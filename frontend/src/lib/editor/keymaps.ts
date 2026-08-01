@@ -1011,7 +1011,7 @@ export const SiltBlockKeymaps = Extension.create({
         // append an empty note below (avoids demoting trailing task text).
         const isNote = info.node.type.name === 'noteBlock'
 
-        // Empty list/quote item + Enter exits the container (Word/Docs/Notion
+        // Empty list/quote item + Enter exits the container (the common list-exit
         // convention; mirrors Backspace bullet/quote clear). Nested depth is
         // left alone — unindent is Tab/Backspace, not Enter.
         // Only when the selection is collapsed: a cross-block selection must

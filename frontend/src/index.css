@@ -965,7 +965,7 @@ body {
   background: var(--color-accent-primary-start);
   width: 2px;
 }
-/* Inline drag handle (#339). The Notion-style grip rendered inside every
+/* Inline drag handle (#339). The block drag grip rendered inside every
    block-level NodeView (Note / Task / Header / Embed). SiltInlineDragHandle
    listens for dragstart on `[data-drag-handle]` and populates `view.dragging`
    so BlockIndentOnDrop (#330) and native reorder both work. Cursor is grab

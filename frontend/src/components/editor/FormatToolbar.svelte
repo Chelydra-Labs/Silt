@@ -385,7 +385,7 @@
     rovingIdx = i
   }
 
-  // Roving indices follow paragraph-toolbar convention (Zendesk/CKEditor/Word):
+  // Roving indices follow the paragraph-toolbar convention:
   // block style → inline marks → more → lists + align (paragraph) → insert → color.
   // 0: heading, 1..4: primary marks, 5: link, 6: more,
   // 7: bullet list, 8: ordered list, 9: align, 10: insert, then colors, clear.
@@ -602,7 +602,7 @@
 
   <span class="toolbar-divider" aria-hidden="true"></span>
 
-  <!-- Paragraph structure: lists + alignment (Word/CKEditor/Zendesk convention). -->
+  <!-- Paragraph structure: lists + alignment (paragraph-toolbar convention). -->
   <div class="toolbar-group" role="group" aria-label="Paragraph">
     <button
       type="button"
