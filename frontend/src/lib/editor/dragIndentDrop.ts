@@ -3,11 +3,7 @@ import type { EditorView } from '@tiptap/pm/view'
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { dropPoint } from '@tiptap/pm/transform'
-import {
-  parseOrderedBullet,
-  formatOrderedBullet,
-  fixupOrderedAfterDepthChange
-} from './orderedList'
+import { applyDepthChangeOnTransaction } from './orderedList'
 
 // Notion-style indent-on-drop for the Silt block drag handle (#330, #181
 // follow-up; drag-init moved to SiltInlineDragHandle in #339). Native
@@ -389,28 +385,10 @@ export const BlockIndentOnDrop = Extension.create({
             // does not shift positions ≤ mappedInsert). Verified depth attr
             // exists on this node type at step 2.
             const oldDepth = (draggedNode.attrs.depth as number) || 0
-            const ordered =
-              draggedNode.type.name === 'noteBlock'
-                ? parseOrderedBullet(String(draggedNode.attrs.bullet || ''))
-                : null
-            if (ordered && oldDepth !== newDepth) {
-              // Ordered indent-on-drop: restart nested at 1 and renumber runs (#837).
-              tr.setNodeMarkup(mappedInsert, undefined, {
-                ...draggedNode.attrs,
-                depth: newDepth,
-                bullet: formatOrderedBullet(1, ordered.punc)
-              })
-              const fixed = fixupOrderedAfterDepthChange(
-                tr,
-                mappedInsert,
-                oldDepth,
-                newDepth,
-                ordered.punc
-              )
-              // fixup returns the same tr reference after mutations.
-              void fixed
-            } else {
-              tr.setNodeAttribute(mappedInsert, 'depth', newDepth)
+            if (oldDepth !== newDepth) {
+              // Same path as Tab/Shift-Tab: destination-run punc adoption +
+              // vacated/destination renumber (#837).
+              applyDepthChangeOnTransaction(tr, mappedInsert, newDepth)
             }
 
             // 8. Land a NodeSelection on the moved block so the caret/focus

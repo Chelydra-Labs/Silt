@@ -180,6 +180,29 @@ export function fixupOrderedAfterDepthChange(
 }
 
 /**
+ * After a block leaves an ordered run (toggle-off, depth change with punc
+ * switch), renumber remaining same-depth peers on both sides of `nearPos`.
+ * Toggle-off of a mid-run item leaves a plain gap that splits the old run,
+ * so previous and next peers must each be renumbered independently.
+ */
+export function renumberVacatedOrderedRun(
+  tr: Transaction,
+  nearPos: number,
+  depth: number,
+  punc: string
+): Transaction {
+  const prev = findOrderedPeerToward(tr.doc, nearPos, depth, punc, 'prev')
+  const next = findOrderedPeerToward(tr.doc, nearPos, depth, punc, 'next')
+  if (prev != null) {
+    tr = renumberOrderedRunContaining(tr, prev, depth, punc)
+  }
+  if (next != null) {
+    tr = renumberOrderedRunContaining(tr, next, depth, punc)
+  }
+  return tr
+}
+
+/**
  * Find an ordered noteBlock at `depth` with `punc` near `fromPos` (previous
  * then next), skipping deeper nested notes. Used to locate the vacated run
  * after a node left that depth.
@@ -190,37 +213,52 @@ function findNearbyOrderedPeer(
   depth: number,
   punc: string
 ): number | null {
+  return (
+    findOrderedPeerToward(doc, fromPos, depth, punc, 'prev') ??
+    findOrderedPeerToward(doc, fromPos, depth, punc, 'next')
+  )
+}
+
+/** Nearest same-depth ordered peer with `punc` in one direction from `fromPos`. */
+function findOrderedPeerToward(
+  doc: ProseMirrorNode,
+  fromPos: number,
+  depth: number,
+  punc: string,
+  dir: 'prev' | 'next'
+): number | null {
   const node = doc.nodeAt(fromPos)
   if (!node) return null
 
-  // Walk backward
-  let pos = fromPos
-  while (pos > 0) {
-    let before: ProseMirrorNode
-    let beforePos: number
-    try {
-      const $pos = doc.resolve(pos)
-      const prev = $pos.nodeBefore
-      if (!prev) break
-      before = prev
-      beforePos = pos - prev.nodeSize
-    } catch {
+  if (dir === 'prev') {
+    let pos = fromPos
+    while (pos > 0) {
+      let before: ProseMirrorNode
+      let beforePos: number
+      try {
+        const $pos = doc.resolve(pos)
+        const prev = $pos.nodeBefore
+        if (!prev) break
+        before = prev
+        beforePos = pos - prev.nodeSize
+      } catch {
+        break
+      }
+      if (before.type.name !== 'noteBlock') break
+      const bd = (before.attrs.depth as number) || 0
+      if (bd > depth) {
+        pos = beforePos
+        continue
+      }
+      if (bd < depth) break
+      const parsed = parseOrderedBullet(String(before.attrs.bullet || ''))
+      if (parsed && parsed.punc === punc) return beforePos
       break
     }
-    if (before.type.name !== 'noteBlock') break
-    const bd = (before.attrs.depth as number) || 0
-    if (bd > depth) {
-      pos = beforePos
-      continue
-    }
-    if (bd < depth) break
-    const parsed = parseOrderedBullet(String(before.attrs.bullet || ''))
-    if (parsed && parsed.punc === punc) return beforePos
-    break
+    return null
   }
 
-  // Walk forward from after the node at fromPos
-  pos = fromPos + node.nodeSize
+  let pos = fromPos + node.nodeSize
   while (pos < doc.content.size) {
     const next = doc.nodeAt(pos)
     if (!next || next.type.name !== 'noteBlock') break
@@ -351,15 +389,7 @@ export function applyDepthChangeOnTransaction(
     destPunc
   )
   if (destPunc !== parsed.punc) {
-    const oldPeer = findNearbyOrderedPeer(
-      next.doc,
-      nodePos,
-      oldDepth,
-      parsed.punc
-    )
-    if (oldPeer != null) {
-      next = renumberOrderedRunContaining(next, oldPeer, oldDepth, parsed.punc)
-    }
+    next = renumberVacatedOrderedRun(next, nodePos, oldDepth, parsed.punc)
   }
   return next
 }

@@ -833,6 +833,40 @@ describe('toolbar list toggles (#840)', () => {
     editor.destroy()
   })
 
+  it('toggle-off mid ordered item renumbers following peers', () => {
+    // 1. 2. 3. → turn off only 2. → 1. · plain · 1. (trailing run restarts)
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    // Select only the middle block.
+    let mid = 0
+    mid += editor.state.doc.child(0).nodeSize
+    editor.commands.setTextSelection(mid + 1)
+    expect(toggleOrderedList(editor)).toBe(true)
+    expect(
+      [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['1. ', '', '1. '])
+    editor.destroy()
+  })
+
   it('converts unordered to ordered and clears quote', () => {
     const editor = makeEditorWithKeymaps()
     editor.commands.setContent({

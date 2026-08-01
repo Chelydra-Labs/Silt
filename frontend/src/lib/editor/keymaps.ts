@@ -10,6 +10,7 @@ import {
   parseOrderedBullet,
   renumberFollowingOrdered,
   renumberOrderedRunContaining,
+  renumberVacatedOrderedRun,
   applyDepthChangeOnTransaction,
   formatOrderedBullet
 } from './orderedList'
@@ -500,6 +501,22 @@ export function toggleList(editor: Editor, kind: ListKind): boolean {
   let tr = editor.state.tr
   // Apply in reverse document order so positions stay valid.
   const orderedPos = [...positions].sort((a, b) => b - a)
+  // Ordered toggle-off: capture vacated (depth, punc) before clearing so
+  // remaining peers can renumber (e.g. 1. 2. 3. → off mid → 1. · 1.).
+  const vacatedOrdered: { pos: number; depth: number; punc: string }[] = []
+  if (kind === 'ordered' && turnOff) {
+    for (const pos of orderedPos) {
+      const node = tr.doc.nodeAt(pos)
+      if (!node || node.type.name !== 'noteBlock') continue
+      const parsed = parseOrderedBullet(String(node.attrs.bullet || ''))
+      if (!parsed) continue
+      vacatedOrdered.push({
+        pos,
+        depth: (node.attrs.depth as number) || 0,
+        punc: parsed.punc
+      })
+    }
+  }
   for (const pos of orderedPos) {
     const node = tr.doc.nodeAt(pos)
     if (!node || node.type.name !== 'noteBlock') continue
@@ -525,7 +542,13 @@ export function toggleList(editor: Editor, kind: ListKind): boolean {
     }
   }
 
-  if (kind === 'ordered' && !turnOff) {
+  if (kind === 'ordered' && turnOff) {
+    // Attr-only clears keep positions stable; renumber is idempotent across
+    // multi-block offs that touch the same run.
+    for (const { pos, depth, punc } of vacatedOrdered) {
+      tr = renumberVacatedOrderedRun(tr, pos, depth, punc)
+    }
+  } else if (kind === 'ordered' && !turnOff) {
     // Renumber each affected depth run. Calling containing-renumber per
     // selected pos is cheap and correct across disconnected runs.
     const forward = [...positions].sort((a, b) => a - b)
