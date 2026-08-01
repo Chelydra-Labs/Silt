@@ -243,15 +243,17 @@ describe('search_notes', () => {
     expect(auditEvent).toHaveBeenCalled()
   })
 
-  it('degrades to no-results when semantic fallback embed fails', async () => {
-    // embedOne swallows provider errors → empty vector → fallback returns [].
+  it('degrades with audit when semantic fallback embed fails', async () => {
+    // embedOne swallows provider errors → empty vector → semanticFallback
+    // throws so the outer path can emit search_degraded (not silent no-results).
+    const auditEvent = vi.fn()
     const ctx = {
       fullTextSearch: vi.fn(async () => ({ rows: [], truncated: false })),
       ai: {
         embed: vi.fn(async () => {
           throw new Error('embed provider down')
         }),
-        auditEvent: vi.fn()
+        auditEvent
       },
       sqliteQuery: vi.fn(async () => ({ rows: [], truncated: false })),
       pluginDb: {
@@ -264,6 +266,15 @@ describe('search_notes', () => {
     const res = await handleSearchNotes(ctx, { query: 'database durability' })
     expect(res.error).toBeUndefined()
     expect(res.content).toMatch(/no matching notes/i)
+    expect(res.content).toMatch(/semantic fallback unavailable/i)
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'search_degraded',
+        tool: 'search_notes',
+        side: 'vector',
+        status: 'degraded'
+      })
+    )
   })
 
   it('degrades to no-results when semantic fallback throws', async () => {

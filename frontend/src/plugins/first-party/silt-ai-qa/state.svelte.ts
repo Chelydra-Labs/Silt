@@ -319,48 +319,55 @@ export function createQAController() {
   /**
    * Drop orphan chunk rows (pages gone from the note store) and schedule a
    * bounded set of missing pages for incremental index (#850 IDX-10).
-   * Orphan scan is capped; remaining orphans heal on later page events or rebuild.
+   *
+   * Two set queries (plugin chunks + core blocks) then in-memory diff — avoids
+   * N sequential core IPC COUNT calls. Drop/schedule work remains capped;
+   * remaining orphans/missing heal on later page events or rebuild.
    */
   async function reconcileIndex(ctx: PluginContext) {
     await migrateIndexForReconcile(ctx)
-    // ORDER BY keeps the capped sample stable across restarts so healing
-    // progresses instead of re-sampling an arbitrary subset each open.
+    // Full distinct page sets (ORDER BY for stable capped processing).
+    // pluginDb and core sqlite are separate DBs — no cross-join.
     const { rows: chunkPages } = await ctx.pluginDb.query(
       `SELECT DISTINCT notebook, section, page FROM chunks
-        ORDER BY notebook, section, page LIMIT ?`,
-      [RECONCILE_ORPHAN_CAP]
+        ORDER BY notebook, section, page`
     )
-    for (const r of chunkPages) {
-      if (disposed) return
+    const { rows: blockPages } = await ctx.sqliteQuery(
+      `SELECT DISTINCT notebook, section, page FROM blocks
+        WHERE clean_content IS NOT NULL AND trim(clean_content) != ''
+        ORDER BY notebook, section, page`
+    )
+
+    // Plain objects (not Set) — avoids svelte/prefer-svelte-reactivity in .svelte.ts.
+    const live: Record<string, true> = Object.create(null)
+    for (const r of blockPages) {
       const notebook = asString(r.notebook)
       const section = asString(r.section)
       const page = asString(r.page)
       if (!notebook || !page) continue
-      const { rows } = await ctx.sqliteQuery(
-        `SELECT COUNT(*) AS n FROM blocks
-          WHERE notebook = ? AND section = ? AND page = ?`,
-        [notebook, section, page]
-      )
-      if (Number(rows[0]?.n ?? 0) === 0) {
-        await dropPageIndex(ctx, notebook, section, page)
-      }
+      live[pageKey(notebook, section, page)] = true
     }
-
-    // Missing pages: present in core blocks but not in chunks.
-    const { rows: blockPages } = await ctx.sqliteQuery(
-      `SELECT DISTINCT notebook, section, page FROM blocks
-        WHERE clean_content IS NOT NULL AND trim(clean_content) != ''
-        ORDER BY notebook, section, page
-        LIMIT ?`,
-      [RECONCILE_MISSING_CAP * 4]
-    )
-    // Plain object (not Set) — avoids svelte/prefer-svelte-reactivity in .svelte.ts.
     const indexed: Record<string, true> = Object.create(null)
     for (const r of chunkPages) {
-      indexed[
-        `${asString(r.notebook)}\0${asString(r.section)}\0${asString(r.page)}`
-      ] = true
+      const notebook = asString(r.notebook)
+      const section = asString(r.section)
+      const page = asString(r.page)
+      if (!notebook || !page) continue
+      indexed[pageKey(notebook, section, page)] = true
     }
+
+    let orphansDropped = 0
+    for (const r of chunkPages) {
+      if (disposed || orphansDropped >= RECONCILE_ORPHAN_CAP) break
+      const notebook = asString(r.notebook)
+      const section = asString(r.section)
+      const page = asString(r.page)
+      if (!notebook || !page) continue
+      if (live[pageKey(notebook, section, page)]) continue
+      await dropPageIndex(ctx, notebook, section, page)
+      orphansDropped++
+    }
+
     let scheduled = 0
     for (const r of blockPages) {
       if (disposed || scheduled >= RECONCILE_MISSING_CAP) break

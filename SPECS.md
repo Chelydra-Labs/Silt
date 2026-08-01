@@ -1313,6 +1313,9 @@ ui:
   active_tab: null     # {notebook, section, page, view_mode?} or null
   # One-time tip dismissals.
   dismissed_tips: []
+  # Note content zoom factor (independent of editor.font_size_px / app chrome).
+  # Default 1.0; range 0.7–2.0; snapped to 0.1 steps. Atomic SetNoteZoom IPC.
+  note_zoom: 1.0
   # Inline formatting toggles.
   formatting:
     typography_enabled: true   # smart quotes, em-dashes

@@ -148,7 +148,17 @@
   let editorActionsActiveHint = $derived(editorActionsModePinned)
 
   function toggleEditorActions() {
-    editorActionsManualOpen = !editorActionsManualOpen
+    const opening = !editorActionsManualOpen
+    editorActionsManualOpen = opening
+    // On open, move focus into the tray so keyboard users land on a control
+    // and the peek handle is not the only focused (and previously hidden) target.
+    if (opening) {
+      queueMicrotask(() => {
+        const tray = document.getElementById('editor-float-actions-tray')
+        const first = tray?.querySelector<HTMLElement>('button:not([disabled])')
+        first?.focus()
+      })
+    }
   }
 
   function onEditorActionsKeydown(e: KeyboardEvent) {
@@ -997,9 +1007,13 @@
     box-shadow: 0 6px 22px color-mix(in srgb, black 12%, transparent);
   }
 
-  .editor-float-actions:hover .editor-float-actions__peek,
-  .editor-float-actions:focus-within .editor-float-actions__peek,
-  .editor-float-actions--pinned .editor-float-actions__peek {
+  /* Hover/focus-within expand may collapse the peek; pinned (manual click or
+     mode) keeps it interactive so pointer/touch can toggle closed and focus
+     remains on a visible control. */
+  .editor-float-actions:hover:not(.editor-float-actions--pinned)
+    .editor-float-actions__peek,
+  .editor-float-actions:focus-within:not(.editor-float-actions--pinned)
+    .editor-float-actions__peek {
     width: 0;
     opacity: 0;
     overflow: hidden;

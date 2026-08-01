@@ -188,8 +188,13 @@ async function semanticFallback(
   topK: number,
   filters: SearchFilters
 ): Promise<RetrievedPassage[]> {
+  // Non-empty query already validated by the caller. Empty vector means the
+  // embedding provider failed or returned unusable data — surface that so the
+  // outer catch can emit search_degraded instead of a silent no-results.
   const queryVec = await embedOne(ctx, query, 'RETRIEVAL_QUERY')
-  if (queryVec.length === 0) return []
+  if (queryVec.length === 0) {
+    throw new Error('embedding provider unavailable or returned empty vector')
+  }
 
   const candidates = await gatherCandidates(ctx, new Set(), query)
   let scoped = candidates

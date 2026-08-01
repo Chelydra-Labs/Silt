@@ -294,6 +294,8 @@ describe('VirtualScrollContainer editor chrome', () => {
         .getByTestId('editor-float-actions')
         .querySelector('.editor-float-actions')
     ).toHaveClass('editor-float-actions--pinned')
+    // Peek stays interactive while pinned so pointer/touch can close.
+    expect(handle).toBeVisible()
     await fireEvent.keyDown(
       screen
         .getByTestId('editor-float-actions')
@@ -301,6 +303,20 @@ describe('VirtualScrollContainer editor chrome', () => {
       { key: 'Escape' }
     )
     expect(handle).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('closes editor options on a second click of the peek handle', async () => {
+    render(VirtualScrollContainer, { props: baseProps() })
+    const handle = screen.getByRole('button', { name: 'Editor options' })
+    await fireEvent.click(handle)
+    expect(handle).toHaveAttribute('aria-expanded', 'true')
+    await fireEvent.click(handle)
+    expect(handle).toHaveAttribute('aria-expanded', 'false')
+    expect(
+      screen
+        .getByTestId('editor-float-actions')
+        .querySelector('.editor-float-actions')
+    ).not.toHaveClass('editor-float-actions--pinned')
   })
 
   it('pins the action tray open in source view', () => {
