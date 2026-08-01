@@ -21,7 +21,14 @@
 //   The editor-created default is '' (blank prose) — explicit actions (input
 //   rules, Enter-inheritance, slash-Note) set a bullet when the user wants one.
 
-import { Node, Mark, mergeAttributes, InputRule } from '@tiptap/core'
+import {
+  Node,
+  Mark,
+  mergeAttributes,
+  InputRule,
+  markInputRule,
+  markPasteRule
+} from '@tiptap/core'
 import { newlineInCode } from '@tiptap/pm/commands'
 import { TextSelection } from '@tiptap/pm/state'
 import {
@@ -72,6 +79,27 @@ export const Highlight = Mark.create({
   },
   renderHTML({ HTMLAttributes }) {
     return ['mark', mergeAttributes(HTMLAttributes), 0]
+  },
+  // Restore the ==text== input/paste rules that the former TipTap Highlight
+  // extension provided (lost when the mark was inlined in #858). Typing or
+  // pasting `==text==` wraps the inner text in a default highlight mark
+  // (color: null → the themed tint); toolbar, Mod+Shift+H, and on-disk load
+  // paths are unaffected. Verbatim from @tiptap/extension-highlight 3.29.2.
+  addInputRules() {
+    return [
+      markInputRule({
+        find: /(?:^|\s)(==(?!\s+==)((?:[^=]+))==(?!\s+==))$/,
+        type: this.type
+      })
+    ]
+  },
+  addPasteRules() {
+    return [
+      markPasteRule({
+        find: /(?:^|\s)(==(?!\s+==)((?:[^=]+))==(?!\s+==))/g,
+        type: this.type
+      })
+    ]
   }
 })
 
