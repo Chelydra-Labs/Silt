@@ -474,9 +474,11 @@ export async function vectorSearch(
   if (!vec) return []
 
   const floor = Math.min(1, Math.max(0, minCosineSimilarity))
-  // Cosine distance: lower is closer. Fetch a wider K then filter so the floor
-  // does not leave top_k under-filled solely because distant neighbors ranked in.
-  const fetchK = Math.max(topK * 3, topK)
+  // Cosine distance: lower is closer. Over-fetch then filter by floor so a
+  // noisy neighborhood does not under-fill top_k. 10× is a cheap heuristic
+  // (vec0 still ranks by distance); not a guarantee of full top_k when the
+  // whole index is below the floor.
+  const fetchK = Math.max(topK * 10, topK)
   const maxDistance = 1 - floor
 
   const { rows } = await ctx.pluginDb.query(

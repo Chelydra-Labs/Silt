@@ -112,6 +112,8 @@ export async function handleSearchNotes(
   }
 
   // Semantic fallback when FTS (and rerank) produced nothing.
+  // Embed/provider failures degrade to no-results (not a tool error) so the
+  // agent loop can continue — FTS already returned empty.
   if (passages.length === 0) {
     try {
       passages = await semanticFallback(ctx, query, topK, filters)
@@ -128,12 +130,24 @@ export async function handleSearchNotes(
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      return { content: '', error: `search failed: ${msg}` }
+      degradedNote = `Semantic fallback unavailable: ${msg}`
+      void ctx.ai.auditEvent?.({
+        kind: 'search_degraded',
+        tool: 'search_notes',
+        side: 'vector',
+        status: 'degraded',
+        message: msg
+      })
+      passages = []
     }
   }
 
   if (passages.length === 0) {
-    return { content: 'No matching notes found.' }
+    return {
+      content: degradedNote
+        ? `${degradedNote}\n\nNo matching notes found.`
+        : 'No matching notes found.'
+    }
   }
 
   const lines = passages.map((p) => {

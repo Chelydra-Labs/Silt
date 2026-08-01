@@ -225,4 +225,48 @@ describe('vectorSearch similarity floor', () => {
     expect(hits).toHaveLength(1)
     expect(hits[0].blockId).toBe('b1')
   })
+
+  it('over-fetches k so the floor can still fill topK', async () => {
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('index_meta') && sql.includes('SELECT')) {
+        return { rows: [{ value: '2' }] }
+      }
+      if (sql.includes('embeddings')) {
+        // Second param is k — must be topK * 10.
+        expect(params?.[1]).toBe(50)
+        return {
+          rows: Array.from({ length: 50 }, (_, i) => ({
+            chunk_id: `c${i}`,
+            block_id: `b${i}`,
+            notebook: 'N',
+            section: 'S',
+            page: 'P',
+            line_number: i,
+            text: `t${i}`,
+            // First 40 below floor, last 10 above.
+            distance: i < 40 ? 0.9 : 0.1
+          }))
+        }
+      }
+      return { rows: [] }
+    })
+    const ctx = {
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query,
+        exec: vi.fn(async () => {})
+      },
+      ai: {
+        embed: vi.fn(async () => ({
+          embeddings: [[1, 0]],
+          model: 'm',
+          dimensions: 2
+        }))
+      }
+    } as unknown as PluginContext
+
+    const hits = await vectorSearch(ctx, 'q', 5, [1, 0])
+    expect(hits).toHaveLength(5)
+    expect(hits.every((h) => (h.score ?? 1) <= 0.5)).toBe(true)
+  })
 })

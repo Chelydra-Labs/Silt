@@ -243,6 +243,66 @@ describe('search_notes', () => {
     expect(auditEvent).toHaveBeenCalled()
   })
 
+  it('degrades to no-results when semantic fallback embed fails', async () => {
+    // embedOne swallows provider errors → empty vector → fallback returns [].
+    const ctx = {
+      fullTextSearch: vi.fn(async () => ({ rows: [], truncated: false })),
+      ai: {
+        embed: vi.fn(async () => {
+          throw new Error('embed provider down')
+        }),
+        auditEvent: vi.fn()
+      },
+      sqliteQuery: vi.fn(async () => ({ rows: [], truncated: false })),
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async () => ({ rows: [] })),
+        exec: vi.fn(async () => {})
+      }
+    } as unknown as PluginContext
+
+    const res = await handleSearchNotes(ctx, { query: 'database durability' })
+    expect(res.error).toBeUndefined()
+    expect(res.content).toMatch(/no matching notes/i)
+  })
+
+  it('degrades to no-results when semantic fallback throws', async () => {
+    const auditEvent = vi.fn()
+    const ctx = {
+      fullTextSearch: vi.fn(async () => ({ rows: [], truncated: false })),
+      ai: {
+        embed: vi.fn(async () => ({
+          embeddings: [[1, 0]],
+          model: 'm',
+          dimensions: 2
+        })),
+        auditEvent
+      },
+      // gatherCandidates recent-pool query throws → fallback catch path.
+      sqliteQuery: vi.fn(async () => {
+        throw new Error('sqlite unavailable')
+      }),
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async () => ({ rows: [] })),
+        exec: vi.fn(async () => {})
+      }
+    } as unknown as PluginContext
+
+    const res = await handleSearchNotes(ctx, { query: 'database durability' })
+    expect(res.error).toBeUndefined()
+    expect(res.content).toMatch(/no matching notes/i)
+    expect(res.content).toMatch(/semantic fallback unavailable/i)
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'search_degraded',
+        tool: 'search_notes',
+        side: 'vector',
+        status: 'degraded'
+      })
+    )
+  })
+
   it('dispatches via the tool registry', async () => {
     registerTool({ ...searchNotesToolDef, handler: handleSearchNotes })
     const ctx = makeCtx({

@@ -323,8 +323,11 @@ export function createQAController() {
    */
   async function reconcileIndex(ctx: PluginContext) {
     await migrateIndexForReconcile(ctx)
+    // ORDER BY keeps the capped sample stable across restarts so healing
+    // progresses instead of re-sampling an arbitrary subset each open.
     const { rows: chunkPages } = await ctx.pluginDb.query(
-      `SELECT DISTINCT notebook, section, page FROM chunks LIMIT ?`,
+      `SELECT DISTINCT notebook, section, page FROM chunks
+        ORDER BY notebook, section, page LIMIT ?`,
       [RECONCILE_ORPHAN_CAP]
     )
     for (const r of chunkPages) {
@@ -347,6 +350,7 @@ export function createQAController() {
     const { rows: blockPages } = await ctx.sqliteQuery(
       `SELECT DISTINCT notebook, section, page FROM blocks
         WHERE clean_content IS NOT NULL AND trim(clean_content) != ''
+        ORDER BY notebook, section, page
         LIMIT ?`,
       [RECONCILE_MISSING_CAP * 4]
     )
