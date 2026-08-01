@@ -35,4 +35,25 @@ describe('ColorPickerMenu', () => {
 
     expect(queryAllByRole('menuitem')).toHaveLength(0)
   })
+
+  it('renders a hover tooltip (title) on the trigger for both mark types', () => {
+    // Every other toolbar button exposes a title tooltip; the color triggers
+    // must too (#856-adjacent a11y/UX gap). The title mirrors the aria-label.
+    // Scope to each render's container so two renders in one test don't both
+    // match a global button query.
+    const cases = [
+      { markType: 'textColor', label: 'Text color' },
+      { markType: 'highlight', label: 'Background color' }
+    ] as const
+    for (const { markType, label } of cases) {
+      const editor = makeMockEditor()
+      const { container } = render(ColorPickerMenu, {
+        props: { editor: editor as never, markType, isDark: false }
+      })
+      const trigger = container.querySelector('button')
+      expect(trigger).not.toBeNull()
+      expect(trigger?.getAttribute('title')).toBe(label)
+      expect(trigger?.getAttribute('aria-label')).toBe(label)
+    }
+  })
 })

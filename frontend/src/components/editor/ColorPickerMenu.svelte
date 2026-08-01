@@ -105,6 +105,7 @@
     aria-expanded={menuOpen}
     aria-haspopup="menu"
     aria-label={triggerLabel}
+    title={triggerLabel}
     data-tb
     tabindex={toolbarTabIndex}
     onclick={() => (menuOpen = !menuOpen)}
