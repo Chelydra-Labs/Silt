@@ -264,8 +264,8 @@ The **"readability exception"** theme: a twilight-blue app skeleton
 Text in the sidebar is light; text on the page is dark. Typography pairs Inter
 (body — neutral, highly readable), Hanken Grotesk (headline), and JetBrains
 Mono (mono). Intent: the theme for users who want dark navigation (low glare,
-clear structure) with a bright reading/writing surface — the pattern Notion,
-Readwise, and several code editors use for sustained reading sessions.
+clear structure) with a bright reading/writing surface — the
+dark-chrome-plus-bright-canvas convention for sustained reading sessions.
 
 - Dark: `surfaces.app.bg #131a26` (twilight blue-black); `surfaces.app.text #eaeef5` (cool off-white); `accent.primary #f59e0b → #d97706` (warm amber); `accent.secondary #818cf8 → #6366f1` (indigo). Single-surface dark mode matching the twilight-blue palette of the light mode skeleton.
 - Light (dual-surface): page `surfaces.app.bg #faf8f5` (warm off-white — the paper), `surfaces.app.text #1c1917` (warm near-black — ink on paper); the `sidebar`, `titlebar`, and `activitybar` zones are authored dark — `surfaces.sidebar.bg #1c2842` (twilight blue — the pre-dawn sky with matching dark titlebar and activitybar), `surfaces.sidebar.border #2c3c5e` (anchor blue), `surfaces.sidebar.text #eaeef5` (cool off-white). Shared accents: `accent.primary #cc7408 → #92400e` (amber — tuned to clear AA non-text on both sidebar and page), `accent.secondary #6366f1 → #4f46e5` (indigo — brightened from #4338ca for sidebar-surface visibility).

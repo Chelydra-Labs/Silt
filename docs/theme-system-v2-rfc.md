@@ -57,7 +57,7 @@ re-opened by downstream work.
 | D2 | **OKLCH derivation:** eager, in Go (`derivation.go`). | Keeps the CI contrast gate and the editor seeing deterministic, testable values. CSS `oklch(from … calc())` relative-color syntax is supported in the Wails webview, but eager derivation keeps the gate/editor/CI agreement exact. Hex-authored themes still derive the same way (parsed to OKLCH internally). |
 | D3 | **Frontend color library:** `culori`. | ~10 kB gzipped tree-shaken; full OKLCH + `contrastWCAG21`; function-oriented (tree-shakes well). Over `colorjs.io` (OOP-leaning) and `better-color-tools` (no contrast). |
 | D4 | **`schema_version`:** `"2.0.0"`, hard-enforced. Unsupported versions rejected with a descriptive error. **No v1→v2 migration** (single-user project; first-party themes are re-authored natively). | See ADR `docs/decisions/0002-theme-schema-v2-no-migration.md`. |
-| D5 | **Surface zones:** 9 — `app, sidebar, editor, panel, modal, popover, card, titlebar, activitybar`. `toast` reuses `popover`. | Matches the recon (VS Code flat + Obsidian defaulting) without VS Code's ~600-token sprawl. |
+| D5 | **Surface zones:** 9 — `app, sidebar, editor, panel, modal, popover, card, titlebar, activitybar`. `toast` reuses `popover`. | Matches the recon (flat surface-zone conventions) without a sprawling ~600-token set. |
 | D6 | **Inheritance:** strict tree (linear fallback via `var()` chains): `popover→modal→panel→app`, `editor→app`, `sidebar→app`, `card→panel`, `titlebar→app`, `activitybar→app`. | Chosen over a DAG for predictability under user customization: a zone an author omits falls back to its parent; an author who sets it gets exactly what they wrote. |
 | D7 | **Per-zone fields:** `bg`, `border`, `text` only. Hover/active stay zone-agnostic semantic interaction tokens. | Interaction state is the same gesture everywhere; only the canvas differs. |
 | D8 | **Editor tokens:** top-level `editor` block on `Mode`, not nested under the `editor` surface zone. | Caret/selection/link/highlight are interaction elements, not surfaces. |
@@ -349,7 +349,7 @@ UI ships in Phase 1.
   re-authored natively (D4, ADR 0002).
 - **Theme marketplace / sharing infrastructure.** Deferred.
 - **OS-aware auto-switching beyond `prefers-color-scheme`.** Deferred.
-- **Per-page cover images** (Notion-style). Themes are user-global per the
+- **Per-page cover images.** Themes are user-global per the
   existing `settings.json` decision.
 - **Syntax-highlighting tokens.** Silt is a notes app, not a code editor.
 - **APCA.** WCAG AA is the v2 standard (D12); APCA is a possible follow-up.

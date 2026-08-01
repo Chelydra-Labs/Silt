@@ -1033,13 +1033,19 @@ NOTE and HEADER blocks support `left` (default), `center`, `right`, `justify`.
 Alignment is persisted as a trailing HTML comment: `text <!-- silt-align: center -->`.
 TASK blocks do not support alignment.
 
-### Text/background color
+### Text color and highlight
 
-Text color: `<span style="color: #hex">text</span>`
-Background color: `<span style="background-color: #hex">text</span>`
+Text color (foreground): `<span style="color: #hex">text</span>` — its own mark.
 
-Both are inline marks that nest with other marks. A 12-color theme-aware
-palette is available via the format toolbar.
+Highlight (background) is one mark with two forms:
+- Default `==text==` — the themed highlight tint (no color attribute).
+- Colored `<span style="background-color: #hex">text</span>` — the same mark with a color set.
+
+Default and colored highlight are mutually exclusive on a given span (one mark;
+the color attribute is either null or a hex value). Both round-trip verbatim
+through `clean_text`; the Go parser preserves `==` and the HTML span unchanged.
+A 12-color theme-aware palette is available via the format toolbar; the default
+tint is also applied by the Highlight toolbar button and `Mod+Shift+H`.
 
 ### Heading levels
 
@@ -1105,8 +1111,8 @@ in the same transaction (outside a task, the mention is just a reference and
 no owner token is written).
 
 **Block drag handle.** A drag grip reorders top-level blocks by
-direct manipulation; dropping further to the right indents the block deeper
-(Notion-style), and a drop-zone indicator previews the target depth.
+direct manipulation; dropping further to the right indents the block deeper,
+and a drop-zone indicator previews the target depth.
 `Alt+ArrowUp/Down` moves the active block by keyboard. `Delete` at the end of
 a block and `Backspace` at the start merge the adjacent same-type same-parent
 sibling into one block (survivor keeps its UUID); cross-type, cross-parent,
@@ -1206,14 +1212,14 @@ parsing:
   default_task_priority: 3
 
 # Key-Binding Map. Defaults are convention-anchored (see "Keyboard Shortcuts"
-# in ARCHITECTURE.md): Google Docs wins ties over MS Office; Office/Docs win
-# over code editors for shared actions; VS Code/Sublime/Notepad++ fill gaps
-# where Office/Docs have no opinion. Windows/Linux only (Ctrl everywhere).
+# in ARCHITECTURE.md): ties anchor to document-processor conventions, with
+# code-editor conventions filling gaps where document processors have no
+# opinion. Windows/Linux only (Ctrl everywhere).
 # Spellcheck deliberately has NO hotkey (wavy underline + right-click + a
 # toolbar button). Paste is not listed: Ctrl+V = rich, Ctrl+Shift+V = plain.
 hotkeys:
   # open_search → Ctrl+Shift+F (the cross-file search convention;
-  # Office/Docs are single-document). Frees Ctrl+P for future Print.
+  # single-document editors have no equivalent). Frees Ctrl+P for future Print.
   open_search: "Ctrl+Shift+F"
   # open_command_palette → Alt+Q (the "search the app" convention).
   open_command_palette: "Alt+Q"

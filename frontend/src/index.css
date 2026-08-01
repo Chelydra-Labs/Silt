@@ -965,7 +965,7 @@ body {
   background: var(--color-accent-primary-start);
   width: 2px;
 }
-/* Inline drag handle (#339). The Notion-style grip rendered inside every
+/* Inline drag handle (#339). The block drag grip rendered inside every
    block-level NodeView (Note / Task / Header / Embed). SiltInlineDragHandle
    listens for dragstart on `[data-drag-handle]` and populates `view.dragging`
    so BlockIndentOnDrop (#330) and native reorder both work. Cursor is grab
@@ -1255,6 +1255,26 @@ body {
 /* Selection highlight uses the themeable editor-selection token (#390). */
 .ProseMirror ::selection {
   background: var(--color-editor-selection);
+}
+
+/* Inline highlight mark (==text==). Consuming the per-theme highlight token
+   here replaces the browser's default solid-yellow <mark>. The token is mixed
+   to ~50% so the wash reads as soft emphasis that does not wash out the text on
+   top of it (#858) — it is a background only; `color: inherit` keeps the text
+   unchanged. An inline background-color style on a colored highlight overrides
+   this rule at full opacity by design: a user-chosen color should render as
+   picked, while the default ==highlight== is the subtle themed tint. */
+.ProseMirror mark {
+  background-color: color-mix(
+    in oklch,
+    var(--color-editor-highlight) 50%,
+    transparent
+  );
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 /* Maps standard Material icon elements to the self-hosted @font-face rules (#237, F2) */

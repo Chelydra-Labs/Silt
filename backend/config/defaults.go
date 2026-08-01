@@ -39,11 +39,11 @@ func Defaults() SystemConfig {
 		Hotkeys: map[string]string{
 			// Sprint 17 hotkey realignment (convention-anchored; see SPECS.md
 			// "Keyboard Shortcuts"). Windows/Linux only.
-			// open_search: cross-vault global search → Ctrl+Shift+F (the VS
-			// Code / Sublime / Notepad++ "find in files" convention; Office/Docs
+			// open_search: cross-vault global search → Ctrl+Shift+F (the
+			// cross-file "find in files" convention; single-document editors
 			// have no cross-file search). Frees Ctrl+P for future Print.
 			"open_search": "Ctrl+Shift+F",
-			// open_command_palette → Alt+Q (Office "Tell Me" / search-the-app
+			// open_command_palette → Alt+Q (the search-the-app
 			// convention). Frees Ctrl+/ for other use.
 			"open_command_palette": "Alt+Q",
 			"toggle_sidebar":       "Ctrl+B",
@@ -51,8 +51,8 @@ func Defaults() SystemConfig {
 			// cycle_view_layout → Ctrl+Alt+V. Alt+Tab is the OS window-switcher
 			// on Windows/Linux (captured before the app sees it) and never fired.
 			"cycle_view_layout": "Ctrl+Alt+V",
-			// open_settings → Ctrl+, (the universal settings convention; VS Code
-			// and most editors). #511 opens settings as a workspace tab. Note this
+			// open_settings → Ctrl+, (the universal settings convention.
+			// #511 opens settings as a workspace tab. Note this
 			// freed Ctrl+, from format_subscript, which moved to Ctrl+Shift+, below.
 			"open_settings":        "Ctrl+,",
 			"new_page":             "Ctrl+N",
@@ -124,14 +124,14 @@ func Defaults() SystemConfig {
 			// View mode toggle (#171). Standard source/view toggle binding.
 			"toggle_view_mode": "Ctrl+Shift+V",
 			// Formatting toolbar toggle and focus mode toggle (#168 Phase 3).
-			// toggle_format_toolbar → Ctrl+F1 (Office "toggle ribbon" convention);
+			// toggle_format_toolbar → Ctrl+F1 (the toggle-ribbon convention);
 			// frees Ctrl+Shift+F for global search (open_search above).
 			"toggle_format_toolbar": "Ctrl+F1",
 			"toggle_focus_mode":     "Ctrl+Shift+D",
 			// Sprint 17 — Search, Find/Replace & Writing Aids.
 			// find_in_page (Ctrl+F) and replace (Ctrl+H) are the universal
-			// in-editor find/replace bindings (VS Code/Docs/Office). global_replace
-			// (Ctrl+Shift+G) escalates replace to cross-vault (VS Code "replace in
+			// in-editor find/replace bindings. global_replace
+			// (Ctrl+Shift+G) escalates replace to a cross-vault "replace in
 			// files"). toggle_typewriter_mode (Ctrl+Shift+Y) pairs with
 			// toggle_focus_mode (Ctrl+Shift+D) as the writing-mode toggles.
 			// Spellcheck deliberately has NO hotkey — it's wavy-underline +

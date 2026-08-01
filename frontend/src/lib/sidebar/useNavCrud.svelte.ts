@@ -332,7 +332,7 @@ export function useNavCrud(deps: UseNavCrudDeps) {
   }
 
   // --- Inline page creation (#83) ---
-  // OneNote model: create "Untitled" immediately and navigate; the editor's
+  // Inline rename model: create "Untitled" immediately and navigate; the editor's
   // title field auto-focuses so the user can type the real name inline.
   async function handleCreatePageInline(sectionName: string) {
     creating = true

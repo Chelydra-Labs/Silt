@@ -311,7 +311,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) (string, error) 
 // just-completed block (#296). It parses the [recur::] rule, anchors on the
 // block's DueDate (falling back to today when the due date is absent), and
 // advances to the next strictly-future occurrence using skip-missed semantics
-// (PLAN.md §1 — the Todoist default, avoiding catch-up hell). The returned
+// (PLAN.md §1 — skip-missed, avoiding catch-up hell). The returned
 // block is a fresh TODO copy with a new UUID and the advanced due date; it
 // carries the same recurrence rule so the cycle continues. A malformed rule
 // or unparseable due date returns ok=false so the caller can no-op + log

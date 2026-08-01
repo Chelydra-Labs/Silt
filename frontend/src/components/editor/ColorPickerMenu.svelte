@@ -9,7 +9,7 @@
 
   interface Props {
     editor: Editor | null
-    markType: 'textColor' | 'backgroundColor'
+    markType: 'textColor' | 'highlight'
     isDark: boolean
     /** Roving tabindex from the parent format toolbar (#690). */
     toolbarTabIndex?: number
@@ -105,6 +105,7 @@
     aria-expanded={menuOpen}
     aria-haspopup="menu"
     aria-label={triggerLabel}
+    title={triggerLabel}
     data-tb
     tabindex={toolbarTabIndex}
     onclick={() => (menuOpen = !menuOpen)}

@@ -38,7 +38,7 @@ export type SlashIntent =
   | { kind: 'details' }
   | { kind: 'table'; rows: number; cols: number }
   | { kind: 'tableCustom' }
-  | { kind: 'color'; markType: 'textColor' | 'backgroundColor' }
+  | { kind: 'color'; markType: 'textColor' | 'highlight' }
   | { kind: 'today' }
   | { kind: 'calendar' }
   | { kind: 'shortcuts' }
@@ -92,7 +92,7 @@ export function classifySlashCommand(commandId: string): SlashIntent | null {
     case 'text-color':
       return { kind: 'color', markType: 'textColor' }
     case 'background-color':
-      return { kind: 'color', markType: 'backgroundColor' }
+      return { kind: 'color', markType: 'highlight' }
     case 'today':
       return { kind: 'today' }
     case 'calendar':

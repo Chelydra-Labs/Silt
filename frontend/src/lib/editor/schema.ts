@@ -21,10 +21,16 @@
 //   The editor-created default is '' (blank prose) — explicit actions (input
 //   rules, Enter-inheritance, slash-Note) set a bullet when the user wants one.
 
-import { Node, Mark, mergeAttributes, InputRule } from '@tiptap/core'
+import {
+  Node,
+  Mark,
+  mergeAttributes,
+  InputRule,
+  markInputRule,
+  markPasteRule
+} from '@tiptap/core'
 import { newlineInCode } from '@tiptap/pm/commands'
 import { TextSelection } from '@tiptap/pm/state'
-import Highlight from '@tiptap/extension-highlight'
 import {
   Details,
   DetailsContent,
@@ -37,19 +43,70 @@ import { TableHeader } from '@tiptap/extension-table-header'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
 
-// ---- Inline mark extensions ----------------------------------------------
-// TipTap 3.x StarterKit includes Bold, Italic, Strike, Code, Link, and
-// Underline marks by default. These three (Highlight, Subscript, Superscript)
-// are NOT in StarterKit and must be added explicitly. They are composed into
-// the editor's extension array alongside StarterKit.
-//
-// On-disk serialization:
-//   highlight   → ==text==
-//   subscript   → <sub>text</sub>
-//   superscript → <sup>text</sup>
-// All three round-trip through clean_text (the Go parser preserves HTML/tags
-// and ==...== verbatim — clean_text is opaque to Go). The converter
-// (converters.ts) handles parse/serialize for all 9 marks symmetrically.
+// ---- Highlight mark (==text== / background color) ------------------------
+// Inline highlight. The default (no color) renders a <mark> element whose
+// background comes from the `.ProseMirror mark` rule consuming the per-theme
+// --color-editor-highlight tint; an explicit color renders the same <mark>
+// with an inline `background-color` style that overrides the token. Serialized
+// on-disk as `==text==` (default) or
+// `<span style="background-color: #hex">text</span>` (explicit color), both of
+// which the Go parser preserves verbatim in clean_text. Consolidates the former
+// separate Highlight (==text==) and BackgroundColor marks into one (#858).
+export const Highlight = Mark.create({
+  name: 'highlight',
+  inclusive: true,
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        parseHTML: (el) => el.style.backgroundColor?.trim() || null,
+        renderHTML: (attrs) =>
+          attrs.color ? { style: `background-color: ${attrs.color}` } : {}
+      }
+    }
+  },
+  parseHTML() {
+    return [
+      { tag: 'mark' },
+      {
+        tag: 'span[style]',
+        getAttrs: (el) => {
+          const bg = el.style.backgroundColor
+          return bg ? { color: bg.trim() } : false
+        }
+      }
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['mark', mergeAttributes(HTMLAttributes), 0]
+  },
+  // Restore the ==text== input/paste rules that the former TipTap Highlight
+  // extension provided (lost when the mark was inlined in #858). Typing or
+  // pasting `==text==` wraps the inner text in a default highlight mark
+  // (color: null → the themed tint); toolbar, Mod+Shift+H, and on-disk load
+  // paths are unaffected. Verbatim from @tiptap/extension-highlight 3.29.2.
+  addInputRules() {
+    return [
+      markInputRule({
+        find: /(?:^|\s)(==(?!\s+==)((?:[^=]+))==(?!\s+==))$/,
+        type: this.type
+      })
+    ]
+  },
+  addPasteRules() {
+    return [
+      markPasteRule({
+        find: /(?:^|\s)(==(?!\s+==)((?:[^=]+))==(?!\s+==))/g,
+        type: this.type
+      })
+    ]
+  }
+})
+
+// Subscript/Superscript are NOT in StarterKit and are added alongside the
+// custom Highlight mark above. All three round-trip through clean_text (the Go
+// parser preserves HTML/tags and ==...== verbatim — clean_text is opaque to
+// Go); the converter (converters.ts) handles parse/serialize symmetrically.
 export const SiltInlineMarkExtensions = [Highlight, Subscript, Superscript]
 
 // ---- TextColor mark (#170) -----------------------------------------------
@@ -85,40 +142,10 @@ export const TextColor = Mark.create({
   }
 })
 
-// ---- BackgroundColor mark (#170) ------------------------------------------
-// Inline background (highlighter) color. Serialized on-disk as
-// `<span style="background-color: #hex">text</span>`. Separate from the
-// Highlight mark (==text==, which uses the theme accent color).
-export const BackgroundColor = Mark.create({
-  name: 'backgroundColor',
-  inclusive: true,
-  addAttributes() {
-    return {
-      color: {
-        default: null,
-        parseHTML: (el) => el.style.backgroundColor?.trim() || null,
-        renderHTML: (attrs) =>
-          attrs.color ? { style: `background-color: ${attrs.color}` } : {}
-      }
-    }
-  },
-  parseHTML() {
-    return [
-      {
-        tag: 'span[style]',
-        getAttrs: (el) => {
-          const bg = el.style.backgroundColor
-          return bg ? { color: bg.trim() } : false
-        }
-      }
-    ]
-  },
-  renderHTML({ HTMLAttributes }) {
-    return ['span', mergeAttributes(HTMLAttributes), 0]
-  }
-})
-
-export const SiltColorMarkExtensions = [TextColor, BackgroundColor]
+// Color marks: TextColor (foreground) is its own mark; background highlighting
+// is the Highlight mark above (consolidated, #858). Both are HTML spans the Go
+// parser preserves verbatim in clean_text.
+export const SiltColorMarkExtensions = [TextColor]
 
 // ---- TaskBlock -----------------------------------------------------------
 // Renders on-disk as:

@@ -197,7 +197,7 @@ placeholders:                               # optional; drives the picker form
   3. Select a template — the right pane shows a **rendered** live preview (headings, lists, callouts) with today's date/time. Unresolved `{{placeholders}}` appear as chips; the preview updates as you fill the form.
   4. Fill in any placeholders (user-declared fields appear below the preview).
   5. The **page name** field is pre-filled with `Page YYYY-MM-DD` and focused — you can edit it before confirming, or just press **Enter** to use the default.
-  6. Click **Create Page**. The new page is created with the rendered Markdown, opens in the editor, and the inline title at the top of the page is focused and selected so you can immediately overwrite the name (the file is renamed on debounce via `RenamePage`, the OneNote model).
+  6. Click **Create Page**. The new page is created with the rendered Markdown, opens in the editor, and the inline title at the top of the page is focused and selected so you can immediately overwrite the name (the file is renamed on debounce via `RenamePage`).
 
 ### Insert at cursor
 

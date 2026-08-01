@@ -448,6 +448,7 @@
           data-bubble-tb
           aria-pressed={activeMarks.has(btn.mark)}
           aria-label={btn.label}
+          title={btn.label}
           aria-haspopup={btn.id === 'link' ? 'menu' : undefined}
           aria-expanded={btn.id === 'link' ? linkMenuOpen : undefined}
           tabindex={i === focusIdx ? 0 : -1}
@@ -471,6 +472,7 @@
         data-bubble-tb
         aria-pressed={listActive('unordered')}
         aria-label="Bullet list"
+        title="Bullet list"
         tabindex={focusIdx === LIST_BULLET_IDX ? 0 : -1}
         onclick={() => {
           focusIdx = LIST_BULLET_IDX
@@ -488,6 +490,7 @@
         data-bubble-tb
         aria-pressed={listActive('ordered')}
         aria-label="Numbered list"
+        title="Numbered list"
         tabindex={focusIdx === LIST_ORDERED_IDX ? 0 : -1}
         onclick={() => {
           focusIdx = LIST_ORDERED_IDX
@@ -517,7 +520,7 @@
         <div class="bubble-color">
           <ColorPickerMenu
             {editor}
-            markType="backgroundColor"
+            markType="highlight"
             {isDark}
             toolbarTabIndex={focusIdx === BG_COLOR_IDX ? 0 : -1}
             onToolbarFocus={() => (focusIdx = BG_COLOR_IDX)}
