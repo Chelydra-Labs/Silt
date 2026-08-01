@@ -12,9 +12,10 @@ import {
   type RetrieveOptions,
   type VectorSearchFn
 } from '../../../shared/retrieval/retrieve'
-import type {
-  RankedHit,
-  RetrievedPassage
+import {
+  trimToBudget,
+  type RankedHit,
+  type RetrievedPassage
 } from '../../../shared/retrieval/hybrid'
 import type { ToolResult } from '../tool-registry'
 import { breadcrumb, clampInt } from './_util'
@@ -67,6 +68,10 @@ const emptyVectorSearch: VectorSearchFn = (): Promise<RankedHit[]> =>
   Promise.resolve([])
 
 const SEMANTIC_MIN_SCORE = 0.5
+/** Shared tool→model context budget (primary FTS path + semantic fallback). */
+const MAX_CONTEXT_CHARS = 32_000
+/** Per-passage cap on fallback text so one long note cannot blow the budget. */
+const FALLBACK_PASSAGE_CHARS = 500
 
 export async function handleSearchNotes(
   ctx: PluginContext,
@@ -86,7 +91,7 @@ export async function handleSearchNotes(
     min_score: 0,
     // Bound tool→model context: agent multi-turn history grows fast; 100k was
     // a quiet chat-token burner. Align with a generous QA-scale budget.
-    max_context_chars: 32_000,
+    max_context_chars: MAX_CONTEXT_CHARS,
     rerank_enabled: true,
     filterPassages:
       filters.notebook || filters.section || filters.type
@@ -210,22 +215,30 @@ async function semanticFallback(
     topK
   })
 
-  let passages: RetrievedPassage[] = ranked.map((r, i) => ({
-    blockId: r.block.id,
-    notebook: r.block.notebook,
-    section: r.block.section,
-    page: r.block.page,
-    lineNumber: 0,
-    text: r.block.clean_content.trim(),
-    score: r.score,
-    citeIndex: i + 1
-  }))
+  let passages: RetrievedPassage[] = ranked.map((r, i) => {
+    const full = r.block.clean_content.trim()
+    const text =
+      full.length > FALLBACK_PASSAGE_CHARS
+        ? `${full.slice(0, FALLBACK_PASSAGE_CHARS)}…`
+        : full
+    return {
+      blockId: r.block.id,
+      notebook: r.block.notebook,
+      section: r.block.section,
+      page: r.block.page,
+      lineNumber: 0,
+      text,
+      score: r.score,
+      citeIndex: i + 1
+    }
+  })
 
   if (filters.type && passages.length > 0) {
     passages = await filterPassages(ctx, passages, { type: filters.type })
     passages = passages.map((p, i) => ({ ...p, citeIndex: i + 1 }))
   }
-  return passages
+  // Same char budget as hybridRetrieve — drop lowest-score hits if needed.
+  return trimToBudget(passages, MAX_CONTEXT_CHARS)
 }
 
 function normalizeFilters(raw: unknown): SearchFilters {

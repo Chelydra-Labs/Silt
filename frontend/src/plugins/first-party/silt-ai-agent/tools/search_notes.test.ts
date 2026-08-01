@@ -243,6 +243,48 @@ describe('search_notes', () => {
     expect(auditEvent).toHaveBeenCalled()
   })
 
+  it('caps semantic-fallback passage text so long notes stay in budget', async () => {
+    const longBody = `${'database durability word '.repeat(80)}END`
+    expect(longBody.length).toBeGreaterThan(500)
+    const embed = mockEmbed([1, 0], [[0.99, 0.01]])
+    const ctx = {
+      fullTextSearch: vi.fn(async () => ({ rows: [], truncated: false })),
+      ai: { embed, auditEvent: vi.fn() },
+      sqliteQuery: vi.fn(async (sql: string) => {
+        if (
+          sql.includes('FROM blocks') &&
+          sql.includes('ORDER BY line_number')
+        ) {
+          return {
+            rows: [
+              {
+                id: 'long1',
+                clean_content: longBody,
+                notebook: 'Work',
+                section: 'Notes',
+                page: 'Long'
+              }
+            ],
+            truncated: false
+          }
+        }
+        return { rows: [], truncated: false }
+      }),
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async () => ({ rows: [] })),
+        exec: vi.fn(async () => {})
+      }
+    } as unknown as PluginContext
+
+    const res = await handleSearchNotes(ctx, { query: 'database durability' })
+    expect(res.error).toBeUndefined()
+    expect(res.content).toContain('long1')
+    // Full body must not appear; per-passage fallback cap is 500 chars.
+    expect(res.content).not.toContain('END')
+    expect(res.content).toMatch(/…/)
+  })
+
   it('degrades with audit when semantic fallback embed fails', async () => {
     // embedOne swallows provider errors → empty vector → semanticFallback
     // throws so the outer path can emit search_degraded (not silent no-results).
