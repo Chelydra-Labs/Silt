@@ -1257,12 +1257,18 @@ body {
   background: var(--color-editor-selection);
 }
 
-/* Inline highlight mark (==text==). The token is authored per theme/mode as a
-   subtle tint; consuming it here replaces the browser's default solid-yellow
-   <mark>, which overwhelmed highlighted prose (#858). An inline
-   background-color style on a colored highlight overrides this rule. */
+/* Inline highlight mark (==text==). Consuming the per-theme highlight token
+   here replaces the browser's default solid-yellow <mark>. The token is mixed
+   to ~50% so the wash reads as soft emphasis that does not wash out the text on
+   top of it (#858) — it is a background only; `color: inherit` keeps the text
+   unchanged. An inline background-color style on a colored highlight overrides
+   this rule. */
 .ProseMirror mark {
-  background-color: var(--color-editor-highlight);
+  background-color: color-mix(
+    in oklch,
+    var(--color-editor-highlight) 50%,
+    transparent
+  );
   color: inherit;
   border-radius: 3px;
   padding: 0 2px;
