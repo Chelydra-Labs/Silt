@@ -13,9 +13,13 @@ vi.mock('../../lib/editor/popoverPositioning', () => ({
   clampToViewport: vi.fn((r) => ({ left: r.x, top: r.y }))
 }))
 
-vi.mock('@wailsio/runtime', () => ({
-  Browser: { OpenURL: mocks.openURL }
-}))
+vi.mock('@wailsio/runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@wailsio/runtime')>()
+  return {
+    ...actual,
+    Browser: { ...actual.Browser, OpenURL: mocks.openURL }
+  }
+})
 
 const coords = { left: 100, top: 100, bottom: 120 }
 
@@ -90,42 +94,50 @@ describe('SelectionBubble', () => {
     expect(container.querySelector('.selection-bubble')).toBeTruthy()
   })
 
-  it('exposes primary Bold, Italic, Underline, Link, Inline code and a More control', () => {
-    const { getByLabelText, queryByLabelText } = render(SelectionBubble, {
-      props: {
-        editor: null,
-        activeMarks: new Set<string>(),
-        selectionEmpty: false,
-        selectionCoords: coords
+  it('exposes all marks, lists, and colors in a two-row bar (no More menu)', () => {
+    const { getByLabelText, queryByLabelText, container } = render(
+      SelectionBubble,
+      {
+        props: {
+          editor: null,
+          activeMarks: new Set<string>(),
+          selectionEmpty: false,
+          selectionCoords: coords,
+          colorEnabled: true
+        }
       }
-    })
+    )
     for (const label of [
       'Bold',
       'Italic',
       'Underline',
+      'Strikethrough',
       'Link',
-      'Inline code'
+      'Inline code',
+      'Bullet list',
+      'Numbered list',
+      'Text color',
+      'Background color'
     ]) {
       expect(getByLabelText(label)).toBeTruthy()
     }
-    expect(getByLabelText('More formatting')).toBeTruthy()
-    // Lower-frequency marks are not top-level.
-    expect(queryByLabelText('Strikethrough')).toBeNull()
-    expect(queryByLabelText('Highlight')).toBeNull()
+    expect(queryByLabelText('More formatting')).toBeNull()
+    expect(container.querySelectorAll('.bubble-row').length).toBe(2)
   })
 
-  it('reveals lower-frequency marks under More', async () => {
-    const { getByLabelText } = render(SelectionBubble, {
+  it('hides color pickers when colorEnabled is false', () => {
+    const { queryByLabelText } = render(SelectionBubble, {
       props: {
         editor: null,
         activeMarks: new Set<string>(),
         selectionEmpty: false,
-        selectionCoords: coords
+        selectionCoords: coords,
+        colorEnabled: false
       }
     })
-    await fireEvent.click(getByLabelText('More formatting'))
-    expect(getByLabelText('Strikethrough')).toBeTruthy()
-    expect(getByLabelText('Highlight')).toBeTruthy()
+    expect(queryByLabelText('Text color')).toBeNull()
+    expect(queryByLabelText('Background color')).toBeNull()
+    expect(queryByLabelText('Bold')).toBeTruthy()
   })
 
   it('uses toolbar + aria-pressed toggle semantics', () => {
@@ -156,11 +168,11 @@ describe('SelectionBubble', () => {
     expect(getByLabelText('Bold').classList.contains('bubble-btn')).toBe(true)
     expect(getByLabelText('Link').classList.contains('bubble-btn')).toBe(true)
     expect(
-      getByLabelText('More formatting').classList.contains('bubble-btn')
+      getByLabelText('Strikethrough').classList.contains('bubble-btn')
     ).toBe(true)
   })
 
-  it('positions via flipOrClamp so the bubble stays in viewport', async () => {
+  it('positions via flipOrClamp above the selection so text stays visible', async () => {
     const { container } = render(SelectionBubble, {
       props: {
         editor: null,
@@ -171,12 +183,15 @@ describe('SelectionBubble', () => {
     })
     await tick()
     expect(mocks.flipOrClamp).toHaveBeenCalled()
+    const call = mocks.flipOrClamp.mock.calls.at(-1)
+    expect(call?.[3]).toEqual({ placement: 'above' })
     const bubble = container.querySelector('.selection-bubble') as HTMLElement
     expect(bubble.style.left).toBe('80px')
     expect(bubble.style.top).toBe('60px')
   })
 
-  it('dismisses on scroll (#594)', async () => {
+  it('hides on scroll then re-shows after settle while selection remains', async () => {
+    vi.useFakeTimers()
     const { container } = render(SelectionBubble, {
       props: {
         editor: null,
@@ -190,9 +205,13 @@ describe('SelectionBubble', () => {
     document.dispatchEvent(new Event('scroll', { bubbles: true }))
     await tick()
     expect(container.querySelector('.selection-bubble')).toBeNull()
+    await vi.advanceTimersByTimeAsync(200)
+    await tick()
+    expect(container.querySelector('.selection-bubble')).toBeTruthy()
+    vi.useRealTimers()
   })
 
-  it('dismisses on resize', async () => {
+  it('dismisses on resize until selection changes', async () => {
     const { container } = render(SelectionBubble, {
       props: {
         editor: null,
@@ -356,24 +375,27 @@ describe('SelectionBubble', () => {
     expect(editor._run).toHaveBeenCalled()
   })
 
-  it('Esc closes the More menu before returning to the editor', async () => {
-    const editor = makeEditor()
+  it('Esc closes the link submenu before returning to the editor', async () => {
+    const editor = makeEditor({
+      linkActive: true,
+      href: 'https://example.com'
+    })
     const { getByLabelText, getByRole, queryByLabelText } = render(
       SelectionBubble,
       {
         props: {
           editor: editor as never,
-          activeMarks: new Set<string>(),
+          activeMarks: new Set<string>(['link']),
           selectionEmpty: false,
           selectionCoords: coords
         }
       }
     )
-    await fireEvent.click(getByLabelText('More formatting'))
-    expect(getByLabelText('Highlight')).toBeTruthy()
+    await fireEvent.click(getByLabelText('Link'))
+    expect(getByLabelText('Edit link')).toBeTruthy()
     const toolbar = getByRole('toolbar', { name: 'Format selection' })
     await fireEvent.keyDown(toolbar, { key: 'Escape' })
-    expect(queryByLabelText('Highlight')).toBeNull()
+    expect(queryByLabelText('Edit link')).toBeNull()
     expect(editor._run).not.toHaveBeenCalled()
   })
 })

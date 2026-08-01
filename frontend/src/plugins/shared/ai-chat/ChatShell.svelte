@@ -731,6 +731,11 @@
     padding: 1rem;
     scroll-behavior: smooth;
   }
+  /* Hold each message at its natural height so the transcript scrolls
+     instead of compressing items to fit the viewport. */
+  .transcript > * {
+    flex-shrink: 0;
+  }
   .empty-state {
     width: min(24rem, 90%);
     margin: auto;

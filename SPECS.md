@@ -1120,6 +1120,12 @@ sub-editor). Soft breaks are stored as HTML `<br>` inside that block’s single
 newlines (which the prose renderer collapses). On a main-outline task row,
 `Shift+Enter` opens the task sub-editor instead.
 
+**Ordered lists.** Ordered note markers on disk stay GFM-simple (`1. ` / `1) `
+with a trailing space) at every indent depth; nested items restart at `1` and
+same-depth peers renumber on Enter, indent, and unindent. The editor may show
+hierarchical outline labels in the UI (e.g. `1.1)`) computed from depth — those
+labels are display-only and are never written to markdown.
+
 ### Block types
 
 Silt round-trips the standard markdown block-level vocabulary. Each block type

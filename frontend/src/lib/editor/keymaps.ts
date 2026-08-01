@@ -1,16 +1,22 @@
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import {
-  Plugin,
-  PluginKey,
-  TextSelection,
-  type Transaction
-} from '@tiptap/pm/state'
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import { keydownHandler } from '@tiptap/pm/keymap'
 import { freshId } from './uniqueIdPlugin'
 import { resolveShortcut } from '../../settings/hotkeys'
 import { settings } from '../../settings/store.svelte'
+import {
+  parseOrderedBullet,
+  renumberFollowingOrdered,
+  renumberOrderedRunContaining,
+  renumberVacatedOrderedRun,
+  renumberAfterOrderedBlockMove,
+  applyDepthChangeOnTransaction,
+  formatOrderedBullet
+} from './orderedList'
+
+const UNORDERED_BULLETS = new Set(['- ', '* ', '+ '])
 
 const siltConfigKeymapsKey = new PluginKey('siltConfigDrivenKeymaps')
 
@@ -82,66 +88,11 @@ function getNextBullet(currentBullet: string): string {
   if (['- ', '* ', '+ '].includes(currentBullet)) {
     return currentBullet
   }
-  const match = currentBullet.match(/^(\d+)([.)]\s)$/)
-  if (match) {
-    const nextNum = parseInt(match[1], 10) + 1
-    const punc = match[2]
-    return `${nextNum}${punc}`
+  const parsed = parseOrderedBullet(currentBullet)
+  if (parsed) {
+    return `${parsed.n + 1}${parsed.punc}`
   }
   return currentBullet
-}
-
-/** Parse `1. ` / `2) ` ordered markers; null for unordered/plain. */
-function parseOrderedBullet(
-  bullet: string
-): { n: number; punc: string } | null {
-  const match = (bullet || '').match(/^(\d+)([.)]\s)$/)
-  if (!match) return null
-  return { n: parseInt(match[1], 10), punc: match[2] }
-}
-
-/**
- * After inserting an ordered noteBlock, renumber every following contiguous
- * same-depth ordered note with the same punctuation so mid-list Enter does
- * not leave duplicate numbers (2 → new 3, old 3 stays 3).
- *
- * Walks document order after `fromPos`. Deeper nested notes (attrs.depth >
- * depth) are skipped so a child under item 2 does not stop renumber of later
- * same-depth parents. Stops at a shallower block, non-note, or bullet-style break.
- */
-function renumberFollowingOrdered(
-  tr: Transaction,
-  fromPos: number,
-  startNum: number,
-  punc: string,
-  depth: number
-): Transaction {
-  const startNode = tr.doc.nodeAt(fromPos)
-  if (!startNode) return tr
-  let pos = fromPos + startNode.nodeSize
-  let expected = startNum + 1
-  while (pos < tr.doc.content.size) {
-    const node = tr.doc.nodeAt(pos)
-    if (!node || node.type.name !== 'noteBlock') break
-    const nodeDepth = (node.attrs.depth as number) || 0
-    if (nodeDepth > depth) {
-      // Nested under a prior sibling — skip, keep scanning for same-depth peers.
-      pos += node.nodeSize
-      continue
-    }
-    if (nodeDepth < depth) break
-    const parsed = parseOrderedBullet(String(node.attrs.bullet || ''))
-    if (!parsed || parsed.punc !== punc) break
-    const want = `${expected}${punc}`
-    if (String(node.attrs.bullet || '') !== want) {
-      tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, bullet: want })
-    }
-    expected++
-    const after = tr.doc.nodeAt(pos)
-    if (!after) break
-    pos += after.nodeSize
-  }
-  return tr
 }
 
 // Convert the current block to a new type (#169). Provides the correct attrs
@@ -221,13 +172,17 @@ function isBlockEmpty(node: ProseMirrorNode): boolean {
   return !hasAtom
 }
 
+/**
+ * Set block depth and, for ordered noteBlocks, renumber vacated/destination
+ * same-depth runs so indent/unindent keep sequential markers (#837).
+ */
 function setBlockDepth(
   editor: Editor,
   nodePos: number,
   newDepth: number
 ): void {
-  const tr = editor.state.tr.setNodeAttribute(nodePos, 'depth', newDepth)
-  editor.view.dispatch(tr)
+  const tr = applyDepthChangeOnTransaction(editor.state.tr, nodePos, newDepth)
+  if (tr.docChanged) editor.view.dispatch(tr)
 }
 
 /**
@@ -237,6 +192,8 @@ function setBlockDepth(
  * Returns true when the chord was consumed (including no-op at max depth /
  * first child) so Tab does not move browser focus. Returns false outside depth
  * blocks so table cell nav etc. can run.
+ *
+ * Ordered noteBlocks restart at `1` under the parent and renumber peers (#837).
  */
 export function indentActiveBlock(editor: Editor): boolean {
   const info = currentBlockInfo(editor)
@@ -255,7 +212,10 @@ export function indentActiveBlock(editor: Editor): boolean {
   return true
 }
 
-/** Unindent the active depth-bearing block by one level (floor 0). */
+/**
+ * Unindent the active depth-bearing block by one level (floor 0).
+ * Ordered noteBlocks rejoin the parent-level sequence without gaps (#837).
+ */
 export function unindentActiveBlock(editor: Editor): boolean {
   const info = currentBlockInfo(editor)
   if (!info) return false
@@ -413,16 +373,35 @@ export function moveActiveBlock(editor: Editor, direction: 1 | -1): boolean {
   if (swap < 0 || swap >= doc.childCount) return false
   const node = doc.child(idx)
   const size = node.nodeSize
+  const ordered =
+    node.type.name === 'noteBlock'
+      ? parseOrderedBullet(String(node.attrs.bullet || ''))
+      : null
+  const nodeDepth = (node.attrs.depth as number) || 0
   let newTr = tr.delete(posIdx, posIdx + size)
+  let insertPos: number
   if (direction === -1) {
     // Up: the previous block's start is unaffected by deleting the block after it.
     let posPrev = 0
     for (let i = 0; i < swap; i++) posPrev += doc.child(i).nodeSize
+    insertPos = posPrev
     newTr = newTr.insert(posPrev, node)
   } else {
     // Down: after the deletion the next block sits at posIdx; insert after it.
     const nextSize = doc.child(swap).nodeSize
+    insertPos = posIdx + nextSize
     newTr = newTr.insert(posIdx + nextSize, node)
+  }
+  if (ordered) {
+    // Same-depth reorder: fix destination sequence + vacated source hole.
+    const vacatedNear = newTr.mapping.map(posIdx)
+    newTr = renumberAfterOrderedBlockMove(
+      newTr,
+      insertPos,
+      vacatedNear,
+      nodeDepth,
+      ordered.punc
+    )
   }
   editor.view.dispatch(newTr)
   focusBlockAt(editor, swap)
@@ -466,6 +445,155 @@ export function toggleBlockQuote(editor: Editor): boolean {
   })
   editor.view.dispatch(tr)
   return true
+}
+
+function isUnorderedBullet(bullet: string): boolean {
+  return UNORDERED_BULLETS.has(bullet || '')
+}
+
+function isOrderedBullet(bullet: string): boolean {
+  return parseOrderedBullet(bullet || '') != null
+}
+
+/**
+ * Collect top-level positions of every noteBlock intersecting the selection
+ * (or the active noteBlock when the selection is empty/caret).
+ */
+function selectedNoteBlockPositions(editor: Editor): number[] {
+  const { from, to, empty } = editor.state.selection
+  const positions: number[] = []
+  if (empty) {
+    const active = findActiveBlock(editor)
+    if (!active || active.node.type.name !== 'noteBlock') return []
+    positions.push(editor.state.selection.$from.before(active.depth))
+    return positions
+  }
+  editor.state.doc.nodesBetween(from, to, (node, pos) => {
+    if (node.type.name === 'noteBlock') {
+      positions.push(pos)
+      return false // do not descend into noteBlock inline content
+    }
+    return true
+  })
+  return positions
+}
+
+export type ListKind = 'unordered' | 'ordered'
+
+/** True when every selected noteBlock is already the given list kind. */
+export function selectionIsListKind(editor: Editor, kind: ListKind): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const positions = selectedNoteBlockPositions(editor)
+  if (positions.length === 0) return false
+  return positions.every((pos) => {
+    const node = editor.state.doc.nodeAt(pos)
+    if (!node) return false
+    const bullet = String(node.attrs.bullet || '')
+    return kind === 'unordered'
+      ? isUnorderedBullet(bullet)
+      : isOrderedBullet(bullet)
+  })
+}
+
+/**
+ * Toggle unordered (`- `) or ordered (`1. `) list markers on selected
+ * noteBlocks (#840). Multi-block selections convert each note line.
+ *
+ * Semantics:
+ * - All selected notes already that kind → clear bullets (toggle off).
+ * - Otherwise → set target kind (ordered numbered sequentially per depth run).
+ * - Quote is cleared when applying a list (mutual exclusion with bullet).
+ */
+export function toggleList(editor: Editor, kind: ListKind): boolean {
+  if (!editor || editor.isDestroyed) return false
+  const positions = selectedNoteBlockPositions(editor)
+  if (positions.length === 0) return false
+
+  const turnOff = positions.every((pos) => {
+    const node = editor.state.doc.nodeAt(pos)
+    if (!node) return false
+    const bullet = String(node.attrs.bullet || '')
+    return kind === 'unordered'
+      ? isUnorderedBullet(bullet)
+      : isOrderedBullet(bullet)
+  })
+
+  let tr = editor.state.tr
+  // Apply in reverse document order so positions stay valid.
+  const orderedPos = [...positions].sort((a, b) => b - a)
+  // Ordered toggle-off: capture vacated (depth, punc) before clearing so
+  // remaining peers can renumber (e.g. 1. 2. 3. → off mid → 1. · 1.).
+  const vacatedOrdered: { pos: number; depth: number; punc: string }[] = []
+  if (kind === 'ordered' && turnOff) {
+    for (const pos of orderedPos) {
+      const node = tr.doc.nodeAt(pos)
+      if (!node || node.type.name !== 'noteBlock') continue
+      const parsed = parseOrderedBullet(String(node.attrs.bullet || ''))
+      if (!parsed) continue
+      vacatedOrdered.push({
+        pos,
+        depth: (node.attrs.depth as number) || 0,
+        punc: parsed.punc
+      })
+    }
+  }
+  for (const pos of orderedPos) {
+    const node = tr.doc.nodeAt(pos)
+    if (!node || node.type.name !== 'noteBlock') continue
+    if (turnOff) {
+      tr = tr.setNodeMarkup(pos, undefined, {
+        ...node.attrs,
+        bullet: '',
+        quote: node.attrs.quote || ''
+      })
+    } else if (kind === 'unordered') {
+      tr = tr.setNodeMarkup(pos, undefined, {
+        ...node.attrs,
+        bullet: '- ',
+        quote: ''
+      })
+    } else {
+      // Ordered: seed 1. then renumber runs after all seeds applied.
+      tr = tr.setNodeMarkup(pos, undefined, {
+        ...node.attrs,
+        bullet: formatOrderedBullet(1, '. '),
+        quote: ''
+      })
+    }
+  }
+
+  if (kind === 'ordered' && turnOff) {
+    // Attr-only clears keep positions stable; renumber is idempotent across
+    // multi-block offs that touch the same run.
+    for (const { pos, depth, punc } of vacatedOrdered) {
+      tr = renumberVacatedOrderedRun(tr, pos, depth, punc)
+    }
+  } else if (kind === 'ordered' && !turnOff) {
+    // Renumber each affected depth run. Calling containing-renumber per
+    // selected pos is cheap and correct across disconnected runs.
+    const forward = [...positions].sort((a, b) => a - b)
+    for (const pos of forward) {
+      const node = tr.doc.nodeAt(pos)
+      if (!node) continue
+      const depth = (node.attrs.depth as number) || 0
+      const parsed = parseOrderedBullet(String(node.attrs.bullet || ''))
+      if (!parsed) continue
+      tr = renumberOrderedRunContaining(tr, pos, depth, parsed.punc)
+    }
+  }
+
+  if (tr.docChanged) {
+    editor.view.dispatch(tr)
+  }
+  return true
+}
+
+export function toggleUnorderedList(editor: Editor): boolean {
+  return toggleList(editor, 'unordered')
+}
+
+export function toggleOrderedList(editor: Editor): boolean {
+  return toggleList(editor, 'ordered')
 }
 
 // Insert a callout block at the current selection (#180/#308). The callout
@@ -760,6 +888,12 @@ function buildConfigDrivenShortcuts(
   // Blockquote toggle (#188).
   map[pm('toggle_quote', 'Mod-Shift-9')] = () => toggleBlockQuote(editor)
 
+  // List toggles (#840).
+  map[pm('toggle_bullet_list', 'Mod-Shift-8')] = () =>
+    toggleUnorderedList(editor)
+  map[pm('toggle_ordered_list', 'Mod-Shift-7')] = () =>
+    toggleOrderedList(editor)
+
   // Foldable details toggle (#183).
   map[pm('toggle_details', 'Mod-Shift-.')] = () => toggleDetails(editor)
 
@@ -891,9 +1025,21 @@ export const SiltBlockKeymaps = Extension.create({
           const bullet = (info.node.attrs.bullet as string) || ''
           const quote = (info.node.attrs.quote as string) || ''
           if (bullet) {
-            this.editor.view.dispatch(
-              this.editor.state.tr.setNodeAttribute(info.pos, 'bullet', '')
+            const parsed = parseOrderedBullet(bullet)
+            let tr = this.editor.state.tr.setNodeAttribute(
+              info.pos,
+              'bullet',
+              ''
             )
+            if (parsed) {
+              tr = renumberVacatedOrderedRun(
+                tr,
+                info.pos,
+                info.depth,
+                parsed.punc
+              )
+            }
+            this.editor.view.dispatch(tr)
             return true
           }
           if (quote) {
@@ -999,11 +1145,17 @@ export const SiltBlockKeymaps = Extension.create({
           info.node.attrs.bullet &&
           info.node.attrs.bullet !== ''
         ) {
-          const tr = this.editor.state.tr.setNodeAttribute(
-            info.pos,
-            'bullet',
-            ''
-          )
+          const bullet = String(info.node.attrs.bullet || '')
+          const parsed = parseOrderedBullet(bullet)
+          let tr = this.editor.state.tr.setNodeAttribute(info.pos, 'bullet', '')
+          if (parsed) {
+            tr = renumberVacatedOrderedRun(
+              tr,
+              info.pos,
+              info.depth,
+              parsed.punc
+            )
+          }
           this.editor.view.dispatch(tr)
           return true
         }

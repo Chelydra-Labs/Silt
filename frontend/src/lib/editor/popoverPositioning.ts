@@ -80,27 +80,37 @@ export interface AnchorRect {
   left: number
 }
 
+export type FlipPlacement = 'below' | 'above'
+
 /**
- * Position a popover relative to an anchor, flipping above the anchor when it
- * would otherwise overflow the bottom of the viewport. Vertical flip is the
- * common overflow case (a palette opening at the last visible line); the
- * horizontal axis only clamps. Used by the slash palette and the table picker
- * so they share one tested decision instead of two inline copies.
+ * Position a popover relative to an anchor. Default placement is below the
+ * anchor (slash palette / table picker). Pass `placement: 'above'` for
+ * selection bubbles so the toolbar does not cover selected text — flips below
+ * only when there is no room above.
  *
  * Pure: reads viewport + anchor + popover size from the args (jsdom-testable).
  */
 export function flipOrClamp(
   anchor: AnchorRect,
   popover: { width: number; height: number },
-  viewport: Viewport
+  viewport: Viewport,
+  opts?: { placement?: FlipPlacement }
 ): { left: number; top: number } {
+  const placement = opts?.placement ?? 'below'
   const opensAbove = anchor.top - popover.height - POPOVER_MARGIN
-  // Flip up when there is no room below but there IS room above; otherwise
-  // fall through to a plain clamp so the popover never overlaps the anchor.
-  const preferAbove =
-    anchor.bottom + popover.height > viewport.height - POPOVER_MARGIN &&
-    opensAbove >= POPOVER_MARGIN
-  const top = preferAbove ? opensAbove : anchor.bottom
+  const opensBelow = anchor.bottom + POPOVER_MARGIN
+  const roomBelow =
+    anchor.bottom + popover.height <= viewport.height - POPOVER_MARGIN
+  const roomAbove = opensAbove >= POPOVER_MARGIN
+
+  let top: number
+  if (placement === 'above') {
+    // Prefer above; flip below only when above would clip.
+    top = roomAbove ? opensAbove : opensBelow
+  } else {
+    // Prefer below; flip above when below would clip and above fits.
+    top = !roomBelow && roomAbove ? opensAbove : opensBelow
+  }
   return clampToViewport(
     { x: anchor.left, y: top, width: popover.width, height: popover.height },
     viewport

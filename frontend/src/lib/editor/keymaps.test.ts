@@ -16,7 +16,10 @@ import {
   moveActiveBlock,
   findActiveBlock,
   indentActiveBlock,
-  unindentActiveBlock
+  unindentActiveBlock,
+  toggleUnorderedList,
+  toggleOrderedList,
+  selectionIsListKind
 } from './keymaps'
 import type { DocJSON } from './types'
 import { settings } from '../../settings/store.svelte'
@@ -272,6 +275,37 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
 
     expect(editor.state.doc.childCount).toBe(1)
     expect(editor.state.doc.child(0).attrs.bullet).toBe('')
+    editor.destroy()
+  })
+
+  it('Enter clearing mid-run empty ordered renumbers following peers', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' }
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    // Focus empty middle block.
+    const mid = editor.state.doc.child(0).nodeSize
+    editor.commands.setTextSelection(mid + 1)
+    pressEnter(editor)
+    expect(
+      [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['1. ', '', '1. '])
     editor.destroy()
   })
 
@@ -764,6 +798,322 @@ describe('Shift-Enter soft line break (#828)', () => {
   })
 })
 
+describe('toolbar list toggles (#840)', () => {
+  function focusBlock(editor: Editor, index: number): void {
+    let pos = 0
+    for (let i = 0; i < index; i++) pos += editor.state.doc.child(i).nodeSize
+    editor.commands.setTextSelection(pos + 1)
+  }
+
+  it('toggles unordered list on a plain note', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'hello' }]
+        }
+      ]
+    })
+    focusBlock(editor, 0)
+    expect(toggleUnorderedList(editor)).toBe(true)
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('- ')
+    expect(selectionIsListKind(editor, 'unordered')).toBe(true)
+    expect(toggleUnorderedList(editor)).toBe(true)
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('')
+    editor.destroy()
+  })
+
+  it('toggles ordered list and numbers multi-block selection', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    const from = 1
+    const to = editor.state.doc.content.size - 1
+    editor.commands.setTextSelection({ from, to })
+    expect(toggleOrderedList(editor)).toBe(true)
+    expect(
+      [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['1. ', '2. ', '3. '])
+    expect(selectionIsListKind(editor, 'ordered')).toBe(true)
+    // Toggle off
+    expect(toggleOrderedList(editor)).toBe(true)
+    expect(
+      [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['', '', ''])
+    editor.destroy()
+  })
+
+  it('toggle-off mid ordered item renumbers following peers', () => {
+    // 1. 2. 3. → turn off only 2. → 1. · plain · 1. (trailing run restarts)
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    // Select only the middle block.
+    let mid = 0
+    mid += editor.state.doc.child(0).nodeSize
+    editor.commands.setTextSelection(mid + 1)
+    expect(toggleOrderedList(editor)).toBe(true)
+    expect(
+      [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['1. ', '', '1. '])
+    editor.destroy()
+  })
+
+  it('converts unordered to ordered and clears quote', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '- ', quote: '' },
+          content: [{ type: 'text', text: 'item' }]
+        }
+      ]
+    })
+    focusBlock(editor, 0)
+    expect(toggleOrderedList(editor)).toBe(true)
+    expect(editor.state.doc.child(0).attrs.bullet).toBe('1. ')
+    expect(editor.state.doc.child(0).attrs.quote).toBe('')
+    editor.destroy()
+  })
+})
+
+describe('ordered list indent/unindent renumber (#837)', () => {
+  function focusBlock(editor: Editor, index: number): void {
+    let pos = 0
+    for (let i = 0; i < index; i++) pos += editor.state.doc.child(i).nodeSize
+    editor.commands.setTextSelection(pos + 1)
+  }
+
+  function snapshot(editor: Editor) {
+    return Array.from({ length: editor.state.doc.childCount }, (_, i) => ({
+      bullet: editor.state.doc.child(i).attrs.bullet as string,
+      depth: editor.state.doc.child(i).attrs.depth as number,
+      text: editor.state.doc.child(i).textContent
+    }))
+  }
+
+  it('indents mid-list ordered item: nested restarts at 1, parent peers renumber', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1) ' },
+          content: [{ type: 'text', text: 'one' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2) ' },
+          content: [{ type: 'text', text: 'two' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3) ' },
+          content: [{ type: 'text', text: 'three' }]
+        }
+      ]
+    })
+    focusBlock(editor, 1)
+    expect(indentActiveBlock(editor)).toBe(true)
+    expect(snapshot(editor)).toEqual([
+      { bullet: '1) ', depth: 0, text: 'one' },
+      { bullet: '1) ', depth: 1, text: 'two' },
+      { bullet: '2) ', depth: 0, text: 'three' }
+    ])
+    editor.destroy()
+  })
+
+  it('unindent restores parent-level sequential numbering without gaps', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'one' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 1, bullet: '1. ' },
+          content: [{ type: 'text', text: 'nested' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'three' }]
+        }
+      ]
+    })
+    focusBlock(editor, 1)
+    expect(unindentActiveBlock(editor)).toBe(true)
+    expect(snapshot(editor)).toEqual([
+      { bullet: '1. ', depth: 0, text: 'one' },
+      { bullet: '2. ', depth: 0, text: 'nested' },
+      { bullet: '3. ', depth: 0, text: 'three' }
+    ])
+    editor.destroy()
+  })
+
+  it('preserves ) vs . punctuation on indent', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'b' }]
+        }
+      ]
+    })
+    focusBlock(editor, 1)
+    expect(indentActiveBlock(editor)).toBe(true)
+    expect(editor.state.doc.child(1).attrs.bullet).toBe('1. ')
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+
+  it('indent of unordered bullet does not invent ordered markers', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '- ' },
+          content: [{ type: 'text', text: 'parent' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '- ' },
+          content: [{ type: 'text', text: 'child' }]
+        }
+      ]
+    })
+    focusBlock(editor, 1)
+    expect(indentActiveBlock(editor)).toBe(true)
+    expect(editor.state.doc.child(1).attrs.bullet).toBe('- ')
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+
+  it('Backspace at start of empty nested ordered note clears the marker first', () => {
+    // List-exit contract: marker clear precedes unindent. Ordered renumber on
+    // depth change is covered by unindentActiveBlock / Shift-Tab cases above.
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1) ' },
+          content: [{ type: 'text', text: 'one' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 1, bullet: '1) ' },
+          content: [{ type: 'text', text: 'x' }]
+        }
+      ]
+    })
+    // Empty the nested block via replace so content.size is 0, then Backspace.
+    const nestedPos = editor.state.doc.child(0).nodeSize
+    const nested = editor.state.doc.child(1)
+    const tr = editor.state.tr.replaceWith(
+      nestedPos + 1,
+      nestedPos + nested.content.size + 1,
+      []
+    )
+    editor.view.dispatch(tr)
+    focusBlock(editor, 1)
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(1).attrs.bullet).toBe('')
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+
+  it('unindent into a ) run adopts destination punctuation', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1) ' },
+          content: [{ type: 'text', text: 'one' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 1, bullet: '1. ' },
+          content: [{ type: 'text', text: 'nested-dot' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '2) ' },
+          content: [{ type: 'text', text: 'three' }]
+        }
+      ]
+    })
+    focusBlock(editor, 1)
+    expect(unindentActiveBlock(editor)).toBe(true)
+    expect(snapshot(editor)).toEqual([
+      { bullet: '1) ', depth: 0, text: 'one' },
+      { bullet: '2) ', depth: 0, text: 'nested-dot' },
+      { bullet: '3) ', depth: 0, text: 'three' }
+    ])
+    editor.destroy()
+  })
+})
+
 describe('Tab / Shift-Tab depth indent (outliner)', () => {
   function twoDepthBlocks(kind: 'plain' | 'bullet' | 'task'): DocJSON {
     const mk = (
@@ -1032,6 +1382,38 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
     editor.commands.setTextSelection(4)
     expect(moveActiveBlock(editor, 1)).toBe(false)
     expect(textsOf(editor)).toEqual(['a', 'b'])
+    editor.destroy()
+  })
+
+  it('renumbers ordered markers after same-depth Alt-Arrow move', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    // Move first block down past second → b, a, c then renumber 1. 2. 3.
+    editor.commands.setTextSelection(1)
+    expect(moveActiveBlock(editor, 1)).toBe(true)
+    expect(textsOf(editor)).toEqual(['b', 'a', 'c'])
+    expect(
+      [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['1. ', '2. ', '3. '])
     editor.destroy()
   })
 })

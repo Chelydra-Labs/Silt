@@ -5,30 +5,45 @@
     clampToViewport,
     flipOrClamp
   } from '../../lib/editor/popoverPositioning'
+  import {
+    toggleUnorderedList,
+    toggleOrderedList,
+    selectionIsListKind
+  } from '../../lib/editor/keymaps'
+  import ColorPickerMenu from './ColorPickerMenu.svelte'
 
-  // Compact floating format toolbar for non-empty text selection (#689 / #168).
-  // Primary marks stay direct; lower-frequency marks live under More. Existing
-  // links open an edit menu instead of unsetting on first click. Placement uses
-  // shared flip/clamp helpers and dismisses on scroll/resize (#594). No auto-
-  // focus on show so mouse/Shift+Arrow selection stays in the editor (#643).
+  // Floating format toolbar for non-empty text selection (#689 / #168).
+  // Two compact rows expose all common actions (no overflow menu): marks +
+  // link/code on row 1; lists + colors on row 2. Link opens an edit menu when
+  // already active. Placement prefers above the selection (#594 polish).
 
   interface Props {
     editor: Editor | null
     activeMarks: Set<string>
     selectionEmpty: boolean
     selectionCoords: { left: number; top: number; bottom: number } | null
+    isDark?: boolean
+    colorEnabled?: boolean
   }
 
-  let { editor, activeMarks, selectionEmpty, selectionCoords }: Props = $props()
+  let {
+    editor,
+    activeMarks,
+    selectionEmpty,
+    selectionCoords,
+    isDark = true,
+    colorEnabled = true
+  }: Props = $props()
 
-  type PrimaryBtn = {
+  type MarkBtn = {
     id: string
     icon: string
     label: string
     mark: string
   }
 
-  const PRIMARY: PrimaryBtn[] = [
+  // Row 1 — inline marks (strike promoted out of the old More menu).
+  const MARK_BUTTONS: MarkBtn[] = [
     { id: 'bold', icon: 'format_bold', label: 'Bold', mark: 'bold' },
     { id: 'italic', icon: 'format_italic', label: 'Italic', mark: 'italic' },
     {
@@ -37,23 +52,14 @@
       label: 'Underline',
       mark: 'underline'
     },
-    { id: 'link', icon: 'link', label: 'Link', mark: 'link' },
-    { id: 'code', icon: 'code', label: 'Inline code', mark: 'code' }
-  ]
-
-  const MORE_MARKS: PrimaryBtn[] = [
     {
       id: 'strike',
       icon: 'format_strikethrough',
       label: 'Strikethrough',
       mark: 'strike'
     },
-    {
-      id: 'highlight',
-      icon: 'highlight',
-      label: 'Highlight',
-      mark: 'highlight'
-    }
+    { id: 'link', icon: 'link', label: 'Link', mark: 'link' },
+    { id: 'code', icon: 'code', label: 'Inline code', mark: 'code' }
   ]
 
   type LinkAction = {
@@ -74,16 +80,19 @@
   let menuEl = $state<HTMLDivElement | null>(null)
   let pos = $state({ left: -9999, top: -9999 })
   let dismissed = $state(false)
-  let moreOpen = $state(false)
   let linkMenuOpen = $state(false)
+  let colorMenuOpen = $state(false)
   let copyStatus = $state('')
 
-  // Primary + More trigger participate in the top-level roving set.
-  const TOP_COUNT = PRIMARY.length + 1 // + More button
+  // Indices: marks (0..5), bullet, ordered, [text color], [bg color]
+  const LIST_BULLET_IDX = MARK_BUTTONS.length
+  const LIST_ORDERED_IDX = MARK_BUTTONS.length + 1
+  const TEXT_COLOR_IDX = MARK_BUTTONS.length + 2
+  const BG_COLOR_IDX = MARK_BUTTONS.length + 3
+  let topCount = $derived(MARK_BUTTONS.length + 2 + (colorEnabled ? 2 : 0))
 
   let visible = $derived(show && !dismissed && selectionCoords !== null)
 
-  // Cache once per reactive tick — template + handlers must not re-query ProseMirror.
   let currentHref = $derived.by(() => {
     if (!editor) return ''
     try {
@@ -107,12 +116,11 @@
     )
   }
 
-  function handlePrimary(btn: PrimaryBtn): void {
+  function handleMark(btn: MarkBtn): void {
     if (!editor) return
     if (btn.id === 'link') {
       if (editor.isActive('link')) {
         linkMenuOpen = !linkMenuOpen
-        moreOpen = false
         return
       }
       linkMenuOpen = false
@@ -120,8 +128,28 @@
       return
     }
     linkMenuOpen = false
-    moreOpen = false
     toggleMark(btn.mark)
+  }
+
+  function listActive(kind: 'unordered' | 'ordered'): boolean {
+    if (!editor || editor.isDestroyed) return false
+    try {
+      return selectionIsListKind(editor, kind)
+    } catch {
+      return false
+    }
+  }
+
+  function handleBulletList(): void {
+    if (!editor || editor.isDestroyed) return
+    linkMenuOpen = false
+    toggleUnorderedList(editor)
+  }
+
+  function handleOrderedList(): void {
+    if (!editor || editor.isDestroyed) return
+    linkMenuOpen = false
+    toggleOrderedList(editor)
   }
 
   function handleLinkAction(action: LinkAction): void {
@@ -133,7 +161,6 @@
       return
     }
     if (action.id === 'open') {
-      // Only http(s) — note content is user-controlled; reject file:/javascript: etc.
       if (href && /^https?:\/\//i.test(href)) {
         void Browser.OpenURL(href)
       } else if (href) {
@@ -162,48 +189,28 @@
     }
   }
 
+  function rovingButtons(): HTMLElement[] {
+    if (!menuEl) return []
+    return Array.from(
+      menuEl.querySelectorAll<HTMLElement>(
+        '[data-bubble-tb], .selection-bubble .color-trigger'
+      )
+    )
+  }
+
   function focusTop(idx: number): void {
-    const n = TOP_COUNT
+    const btns = rovingButtons()
+    const n = btns.length || topCount
     const next = ((idx % n) + n) % n
     focusIdx = next
     queueMicrotask(() => {
-      const btn =
-        menuEl?.querySelectorAll<HTMLElement>('[data-bubble-tb]')[next]
-      btn?.focus()
+      rovingButtons()[next]?.focus()
     })
   }
 
   let submenuFocus = $state(0)
-  let moreMenuEl: HTMLElement | null = $state(null)
   let linkMenuEl: HTMLElement | null = $state(null)
-  let moreMenuPos = $state<{ left: number; top: number } | null>(null)
   let linkMenuPos = $state<{ left: number; top: number } | null>(null)
-
-  function positionSubmenu(
-    el: HTMLElement | null
-  ): { left: number; top: number } | null {
-    if (!el || !menuEl) return null
-    const bubble = menuEl.getBoundingClientRect()
-    const width = el.offsetWidth || 160
-    const height = el.offsetHeight || 120
-    // Prefer below the bubble; flip above when near the bottom edge.
-    return flipOrClamp(
-      { top: bubble.top, bottom: bubble.bottom, left: bubble.left },
-      { width, height },
-      { width: window.innerWidth, height: window.innerHeight }
-    )
-  }
-
-  $effect(() => {
-    if (!moreOpen) {
-      moreMenuPos = null
-      return
-    }
-    void moreMenuEl
-    queueMicrotask(() => {
-      moreMenuPos = positionSubmenu(moreMenuEl)
-    })
-  })
 
   $effect(() => {
     if (!linkMenuOpen) {
@@ -212,7 +219,6 @@
     }
     void linkMenuEl
     queueMicrotask(() => {
-      // Prefer right-align near the link control (end of primary strip).
       const el = linkMenuEl
       const host = menuEl
       if (!el || !host) {
@@ -228,7 +234,6 @@
         { width, height },
         { width: window.innerWidth, height: window.innerHeight }
       )
-      // Horizontal clamp only if flipOrClamp left is off; keep preferred when possible.
       linkMenuPos = clampToViewport(
         {
           x: preferredLeft,
@@ -256,6 +261,23 @@
     items[next]?.focus()
   }
 
+  function activateFocused(): void {
+    if (focusIdx < MARK_BUTTONS.length) {
+      handleMark(MARK_BUTTONS[focusIdx])
+      return
+    }
+    if (focusIdx === LIST_BULLET_IDX) {
+      handleBulletList()
+      return
+    }
+    if (focusIdx === LIST_ORDERED_IDX) {
+      handleOrderedList()
+      return
+    }
+    // Color triggers: activate via click on the focused element.
+    rovingButtons()[focusIdx]?.click()
+  }
+
   function handleKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       e.preventDefault()
@@ -265,16 +287,15 @@
         submenuFocus = 0
         return
       }
-      if (moreOpen) {
-        moreOpen = false
-        submenuFocus = 0
+      if (colorMenuOpen) {
+        // ColorPickerMenu owns Escape for its panel; still clear our flag.
+        colorMenuOpen = false
         return
       }
       editor?.chain().focus().run()
       return
     }
-    // Arrow roving inside More / link submenus (#689 harden).
-    if (linkMenuOpen || moreOpen) {
+    if (linkMenuOpen) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
         e.preventDefault()
         focusSubmenu(submenuFocus + 1)
@@ -297,6 +318,7 @@
       }
       return
     }
+    if (colorMenuOpen) return
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
       e.preventDefault()
       focusTop(focusIdx + 1)
@@ -314,30 +336,20 @@
     }
     if (e.key === 'End') {
       e.preventDefault()
-      focusTop(TOP_COUNT - 1)
+      focusTop(topCount - 1)
       return
     }
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
-      if (focusIdx < PRIMARY.length) {
-        handlePrimary(PRIMARY[focusIdx])
-      } else {
-        moreOpen = !moreOpen
-        linkMenuOpen = false
-        if (moreOpen) {
-          submenuFocus = 0
-          queueMicrotask(() => focusSubmenu(0))
-        }
-      }
+      activateFocused()
     }
   }
 
   function updatePosition(): void {
     if (!selectionCoords || !visible) return
     const el = menuEl
-    const width = el?.offsetWidth || 200
-    const height = el?.offsetHeight || 40
-    // Prefer above the selection so the bubble does not cover selected text.
+    const width = el?.offsetWidth || 220
+    const height = el?.offsetHeight || 80
     pos = flipOrClamp(
       {
         top: selectionCoords.top,
@@ -345,7 +357,8 @@
         left: selectionCoords.left - width / 2
       },
       { width, height },
-      { width: window.innerWidth, height: window.innerHeight }
+      { width: window.innerWidth, height: window.innerHeight },
+      { placement: 'above' }
     )
   }
 
@@ -353,8 +366,8 @@
     if (show) {
       focusIdx = 0
       dismissed = false
-      moreOpen = false
       linkMenuOpen = false
+      colorMenuOpen = false
     }
   })
 
@@ -362,39 +375,50 @@
     if (!visible) return
     void selectionCoords
     void menuEl
+    void colorEnabled
     updatePosition()
   })
 
-  // Dismiss when the anchor becomes invalid through scroll/resize (#594 / #689).
   $effect(() => {
     if (!show) return
-    const dismiss = (): void => {
+    let scrollReShowTimer: ReturnType<typeof setTimeout> | undefined
+    const hideTemporarily = (): void => {
       dismissed = true
-      moreOpen = false
       linkMenuOpen = false
+      colorMenuOpen = false
     }
-    document.addEventListener('scroll', dismiss, {
+    // Scroll: hide while scrolling, re-show after settle if selection remains.
+    const onScroll = (): void => {
+      hideTemporarily()
+      if (scrollReShowTimer) clearTimeout(scrollReShowTimer)
+      scrollReShowTimer = setTimeout(() => {
+        if (show) dismissed = false
+      }, 160)
+    }
+    // Resize: permanent dismiss until selection changes (coords go stale).
+    const onResize = (): void => {
+      hideTemporarily()
+    }
+    document.addEventListener('scroll', onScroll, {
       capture: true,
       passive: true
     })
-    window.addEventListener('resize', dismiss, { passive: true })
+    window.addEventListener('resize', onResize, { passive: true })
     return () => {
-      document.removeEventListener('scroll', dismiss, { capture: true })
-      window.removeEventListener('resize', dismiss)
+      if (scrollReShowTimer) clearTimeout(scrollReShowTimer)
+      document.removeEventListener('scroll', onScroll, { capture: true })
+      window.removeEventListener('resize', onResize)
     }
   })
 
-  // Close submenus on outside click (match FormatToolbar / HeadingLevelMenu).
   $effect(() => {
-    if (!visible || (!moreOpen && !linkMenuOpen)) return
+    if (!visible || !linkMenuOpen) return
     const onDocClick = (e: MouseEvent): void => {
       const t = e.target as Node | null
       if (menuEl && t && !menuEl.contains(t)) {
-        moreOpen = false
         linkMenuOpen = false
       }
     }
-    // Next tick so the opening click does not immediately close.
     const id = window.setTimeout(() => {
       document.addEventListener('click', onDocClick, true)
     }, 0)
@@ -412,89 +436,103 @@
     role="toolbar"
     tabindex="-1"
     aria-label="Format selection"
-    aria-orientation="horizontal"
     style="left: {pos.left}px; top: {pos.top}px"
     onkeydown={handleKeydown}
   >
-    {#each PRIMARY as btn, i (btn.id)}
+    <div class="bubble-row" role="group" aria-label="Text style">
+      {#each MARK_BUTTONS as btn, i (btn.id)}
+        <button
+          type="button"
+          class="bubble-btn"
+          class:active={activeMarks.has(btn.mark)}
+          data-bubble-tb
+          aria-pressed={activeMarks.has(btn.mark)}
+          aria-label={btn.label}
+          aria-haspopup={btn.id === 'link' ? 'menu' : undefined}
+          aria-expanded={btn.id === 'link' ? linkMenuOpen : undefined}
+          tabindex={i === focusIdx ? 0 : -1}
+          onclick={() => {
+            focusIdx = i
+            handleMark(btn)
+          }}
+        >
+          <span class="material-symbols-outlined" aria-hidden="true"
+            >{btn.icon}</span
+          >
+        </button>
+      {/each}
+    </div>
+
+    <div class="bubble-row" role="group" aria-label="Paragraph and color">
       <button
         type="button"
         class="bubble-btn"
-        class:active={activeMarks.has(btn.mark)}
+        class:active={listActive('unordered')}
         data-bubble-tb
-        aria-pressed={activeMarks.has(btn.mark)}
-        aria-label={btn.label}
-        aria-haspopup={btn.id === 'link' ? 'menu' : undefined}
-        aria-expanded={btn.id === 'link' ? linkMenuOpen : undefined}
-        tabindex={i === focusIdx ? 0 : -1}
+        aria-pressed={listActive('unordered')}
+        aria-label="Bullet list"
+        tabindex={focusIdx === LIST_BULLET_IDX ? 0 : -1}
         onclick={() => {
-          focusIdx = i
-          handlePrimary(btn)
+          focusIdx = LIST_BULLET_IDX
+          handleBulletList()
         }}
       >
         <span class="material-symbols-outlined" aria-hidden="true"
-          >{btn.icon}</span
+          >format_list_bulleted</span
         >
       </button>
-    {/each}
-
-    <button
-      type="button"
-      class="bubble-btn"
-      class:active={moreOpen}
-      data-bubble-tb
-      aria-label="More formatting"
-      aria-haspopup="menu"
-      aria-expanded={moreOpen}
-      tabindex={focusIdx === PRIMARY.length ? 0 : -1}
-      onclick={() => {
-        focusIdx = PRIMARY.length
-        moreOpen = !moreOpen
-        linkMenuOpen = false
-      }}
-    >
-      <span class="material-symbols-outlined" aria-hidden="true"
-        >more_horiz</span
+      <button
+        type="button"
+        class="bubble-btn"
+        class:active={listActive('ordered')}
+        data-bubble-tb
+        aria-pressed={listActive('ordered')}
+        aria-label="Numbered list"
+        tabindex={focusIdx === LIST_ORDERED_IDX ? 0 : -1}
+        onclick={() => {
+          focusIdx = LIST_ORDERED_IDX
+          handleOrderedList()
+        }}
       >
-    </button>
+        <span class="material-symbols-outlined" aria-hidden="true"
+          >format_list_numbered</span
+        >
+      </button>
 
-    {#if moreOpen}
-      <div
-        class="bubble-submenu"
-        class:bubble-submenu-fixed={!!moreMenuPos}
-        bind:this={moreMenuEl}
-        role="menu"
-        aria-label="More formatting"
-        style={moreMenuPos
-          ? `left:${moreMenuPos.left}px;top:${moreMenuPos.top}px`
-          : undefined}
-      >
-        {#each MORE_MARKS as btn (btn.id)}
-          <button
-            type="button"
-            class="bubble-menu-item"
-            class:active={activeMarks.has(btn.mark)}
-            role="menuitemcheckbox"
-            aria-checked={activeMarks.has(btn.mark)}
-            aria-label={btn.label}
-            onclick={() => {
-              toggleMark(btn.mark)
-              moreOpen = false
+      {#if colorEnabled}
+        <span class="bubble-sep" aria-hidden="true"></span>
+        <div class="bubble-color">
+          <ColorPickerMenu
+            {editor}
+            markType="textColor"
+            {isDark}
+            toolbarTabIndex={focusIdx === TEXT_COLOR_IDX ? 0 : -1}
+            onToolbarFocus={() => (focusIdx = TEXT_COLOR_IDX)}
+            onMenuOpenChange={(open) => {
+              colorMenuOpen = open
+              if (open) linkMenuOpen = false
             }}
-          >
-            <span class="material-symbols-outlined" aria-hidden="true"
-              >{btn.icon}</span
-            >
-            <span>{btn.label}</span>
-          </button>
-        {/each}
-      </div>
-    {/if}
+          />
+        </div>
+        <div class="bubble-color">
+          <ColorPickerMenu
+            {editor}
+            markType="backgroundColor"
+            {isDark}
+            toolbarTabIndex={focusIdx === BG_COLOR_IDX ? 0 : -1}
+            onToolbarFocus={() => (focusIdx = BG_COLOR_IDX)}
+            onMenuOpenChange={(open) => {
+              colorMenuOpen = open
+              if (open) linkMenuOpen = false
+            }}
+          />
+        </div>
+      {/if}
+    </div>
 
     {#if linkMenuOpen}
       <div
-        class="bubble-submenu bubble-link-menu"
-        class:bubble-submenu-fixed={!!linkMenuPos}
+        class="bubble-submenu bubble-link-menu bubble-submenu-fixed"
         bind:this={linkMenuEl}
         role="menu"
         aria-label="Link actions"
@@ -536,13 +574,66 @@
     position: fixed;
     z-index: 100;
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
     gap: 2px;
     padding: 4px;
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--color-surface-popover);
     border: 1px solid var(--color-surface-popover-border);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    animation: silt-bubble-in 140ms ease-out;
+  }
+
+  .bubble-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .bubble-sep {
+    width: 1px;
+    height: 20px;
+    margin: 0 2px;
+    background: var(--color-surface-popover-border);
+    flex-shrink: 0;
+  }
+
+  .bubble-color {
+    display: inline-flex;
+  }
+
+  /* Match bubble hit targets for embedded color triggers. */
+  .bubble-color :global(.color-trigger) {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    border-radius: 6px;
+  }
+
+  .bubble-color :global(.color-menu) {
+    /* Open upward when possible so the panel does not cover the selection. */
+    top: auto;
+    bottom: calc(100% + 4px);
+    z-index: 60;
+  }
+
+  @keyframes silt-bubble-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .selection-bubble {
+      animation: none;
+    }
   }
 
   .bubble-btn {
@@ -610,17 +701,11 @@
     gap: 1px;
   }
 
-  /* Measured placement uses fixed coords so flip/clamp can keep menus on-screen. */
   .bubble-submenu-fixed {
     position: fixed;
     top: auto;
     left: auto;
     right: auto;
-  }
-
-  .bubble-link-menu:not(.bubble-submenu-fixed) {
-    left: auto;
-    right: 0;
   }
 
   .bubble-link-href {
@@ -658,10 +743,6 @@
       transparent
     );
     outline: none;
-  }
-
-  .bubble-menu-item.active {
-    color: var(--color-accent-primary-glow);
   }
 
   .bubble-menu-item.danger {

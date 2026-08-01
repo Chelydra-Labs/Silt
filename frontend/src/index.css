@@ -212,6 +212,8 @@
   --editor-mono-font-family: 'JetBrains Mono', monospace;
   --editor-font-size: 14px;
   --editor-line-height: 1.6;
+  /* Readable measure for note body + title column (#841). */
+  --editor-measure: 70ch;
 }
 
 html,
@@ -569,11 +571,13 @@ body {
   transform: translateY(0);
 }
 
-/* TipTap / ProseMirror Editor Styles */
+/* TipTap / ProseMirror Editor Styles (#841 rhythm).
+   Prefer theme --line-height-normal when present; fall back to the
+   settings-injected --editor-line-height, then a comfortable default. */
 .ProseMirror {
   font-family: var(--editor-font-family);
   font-size: var(--editor-font-size);
-  line-height: var(--editor-line-height);
+  line-height: var(--line-height-normal, var(--editor-line-height, 1.58));
   color: var(--color-text-primary);
   caret-color: var(--color-editor-caret);
   outline: none;
@@ -585,14 +589,52 @@ body {
 }
 
 /* Block node containers — each Silt block renders as a top-level div inside
-   the ProseMirror doc. Indentation is driven by the data-depth attribute. */
+   the ProseMirror doc. Indentation is driven by the data-depth attribute.
+   Vertical rhythm: ~1.0em between plain prose blocks (#841). */
 .ProseMirror > div[data-type] {
   position: relative;
-  padding: 4px 0;
-  min-height: 28px;
+  padding: 0.5em 0;
+  min-height: 1.75em;
   display: flex;
   align-items: flex-start;
   gap: 8px;
+}
+
+/* List items (noteBlocks with a bullet marker): tighter sibling gaps and
+   comfortable internal line-height. Maps issue #841 li+li / list density
+   onto the flat noteBlock model (no PM ul/ol/li). */
+.ProseMirror .node-noteBlock.silt-list-item,
+.ProseMirror .node-noteBlock[data-bullet] {
+  padding-top: 0.2em;
+  padding-bottom: 0.2em;
+  line-height: 1.5;
+}
+
+.ProseMirror .node-noteBlock.silt-list-item + .node-noteBlock.silt-list-item,
+.ProseMirror .node-noteBlock[data-bullet] + .node-noteBlock[data-bullet] {
+  margin-top: 0;
+  padding-top: 0.2em;
+}
+
+/* Soft outer spacing when a list run starts/ends against plain prose. */
+.ProseMirror
+  .node-noteBlock:not([data-bullet]):not(.silt-list-item)
+  + .node-noteBlock[data-bullet],
+.ProseMirror
+  .node-noteBlock:not([data-bullet]):not(.silt-list-item)
+  + .node-noteBlock.silt-list-item {
+  margin-top: 0.3em;
+  padding-top: 0.4em;
+}
+
+.ProseMirror
+  .node-noteBlock[data-bullet]
+  + .node-noteBlock:not([data-bullet]):not(.silt-list-item),
+.ProseMirror
+  .node-noteBlock.silt-list-item
+  + .node-noteBlock:not([data-bullet]):not(.silt-list-item) {
+  margin-top: 0.3em;
+  padding-top: 0.5em;
 }
 
 /* Indentation: each depth level adds left padding via the indent unit. */

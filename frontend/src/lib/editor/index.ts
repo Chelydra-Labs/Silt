@@ -46,6 +46,10 @@ export {
   convertToBlock,
   setBlockAlign,
   toggleBlockQuote,
+  toggleUnorderedList,
+  toggleOrderedList,
+  toggleList,
+  selectionIsListKind,
   insertCallout,
   insertCodeBlock,
   insertDetails,
@@ -58,6 +62,13 @@ export {
   unindentActiveBlock,
   BLOCK_TYPES
 } from './keymaps'
+export type { ListKind } from './keymaps'
+export {
+  parseOrderedBullet,
+  formatOrderedOutlineLabel,
+  renumberFollowingOrdered,
+  applyDepthChangeOnTransaction
+} from './orderedList'
 export {
   TaskMetaSuggest,
   applyMetaSuggestion,
