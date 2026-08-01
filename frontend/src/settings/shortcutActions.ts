@@ -65,6 +65,18 @@ export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
     group: 'Editor',
     defaultBinding: 'Shift+Tab'
   },
+  {
+    id: 'toggle_bullet_list',
+    label: 'Toggle bullet list',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+Shift+8'
+  },
+  {
+    id: 'toggle_ordered_list',
+    label: 'Toggle numbered list',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+Shift+7'
+  },
   { id: 'toggle_view_mode', label: 'Toggle source view', group: 'Editor' },
   {
     id: 'toggle_format_toolbar',
@@ -131,7 +143,7 @@ export function effectiveHotkeys(
 
 function inferredGroup(id: string): ShortcutGroup {
   if (
-    /^(format_|set_|align_|table_|indent_|unindent_|toggle_quote|toggle_details)/.test(
+    /^(format_|set_|align_|table_|indent_|unindent_|toggle_quote|toggle_details|toggle_bullet_list|toggle_ordered_list)/.test(
       id
     )
   )

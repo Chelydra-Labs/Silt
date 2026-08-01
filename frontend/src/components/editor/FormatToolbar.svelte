@@ -4,6 +4,9 @@
   import ColorPickerMenu from './ColorPickerMenu.svelte'
   import {
     toggleBlockQuote,
+    toggleUnorderedList,
+    toggleOrderedList,
+    selectionIsListKind,
     insertCallout,
     insertCodeBlock,
     insertDetails,
@@ -381,16 +384,71 @@
   }
 
   // Indices for primary data-tb controls after Heading (0).
-  // 0: heading, 1..4: primary marks, 5: link, 6: more, 7: align, 8: insert,
-  // then colors (0–2), then clear.
+  // 0: heading, 1: bullet list, 2: ordered list, 3..6: primary marks, 7: link,
+  // 8: more, 9: align, 10: insert, then colors, then clear.
   const HEADING_IDX = 0
-  const PRIMARY_START = 1
+  const BULLET_LIST_IDX = 1
+  const ORDERED_LIST_IDX = 2
+  const PRIMARY_START = 3
   const LINK_IDX = PRIMARY_START + PRIMARY_MARKS.length
   const MORE_IDX = LINK_IDX + 1
   const ALIGN_IDX = MORE_IDX + 1
   const INSERT_IDX = ALIGN_IDX + 1
   const COLOR_START = INSERT_IDX + 1
   let clearIdx = $derived(COLOR_START + (colorEnabled ? 2 : 0))
+
+  function canToggleList(): boolean {
+    void selTick
+    if (!editor || editor.isDestroyed) return false
+    try {
+      if (
+        selectionIsListKind(editor, 'unordered') ||
+        selectionIsListKind(editor, 'ordered')
+      ) {
+        return true
+      }
+      // Enable when caret/selection intersects at least one noteBlock.
+      const { from, to, empty } = editor.state.selection
+      if (empty) {
+        const pos = editor.state.selection.$from
+        for (let d = pos.depth; d >= 1; d--) {
+          if (pos.node(d).type.name === 'noteBlock') return true
+        }
+        return false
+      }
+      let found = false
+      editor.state.doc.nodesBetween(from, to, (node) => {
+        if (node.type.name === 'noteBlock') {
+          found = true
+          return false
+        }
+        return true
+      })
+      return found
+    } catch {
+      return false
+    }
+  }
+
+  function listActive(kind: 'unordered' | 'ordered'): boolean {
+    void selTick
+    if (!editor) return false
+    try {
+      return selectionIsListKind(editor, kind)
+    } catch {
+      return false
+    }
+  }
+
+  function handleBulletList(): void {
+    if (!editor || !canToggleList()) return
+    toggleUnorderedList(editor)
+  }
+
+  function handleOrderedList(): void {
+    if (!editor || !canToggleList()) return
+    toggleOrderedList(editor)
+  }
 </script>
 
 <div
@@ -407,6 +465,53 @@
     onToolbarFocus={() => onTbFocus(HEADING_IDX)}
     onMenuOpenChange={(open) => (headingOpen = open)}
   />
+
+  <span class="toolbar-divider" aria-hidden="true"></span>
+
+  <div class="toolbar-group" role="group" aria-label="Lists">
+    <button
+      type="button"
+      class="toolbar-btn"
+      class:active={listActive('unordered')}
+      aria-pressed={listActive('unordered')}
+      aria-label="Bullet list"
+      aria-keyshortcuts={hk('toggle_bullet_list') || undefined}
+      data-tb
+      data-primary
+      disabled={!canToggleList()}
+      tabindex={rovingIdx === BULLET_LIST_IDX ? 0 : -1}
+      onclick={handleBulletList}
+      onfocus={() => onTbFocus(BULLET_LIST_IDX)}
+      title={hk('toggle_bullet_list')
+        ? `Bullet list (${hk('toggle_bullet_list')})`
+        : 'Bullet list'}
+    >
+      <span class="material-symbols-outlined" aria-hidden="true"
+        >format_list_bulleted</span
+      >
+    </button>
+    <button
+      type="button"
+      class="toolbar-btn"
+      class:active={listActive('ordered')}
+      aria-pressed={listActive('ordered')}
+      aria-label="Numbered list"
+      aria-keyshortcuts={hk('toggle_ordered_list') || undefined}
+      data-tb
+      data-primary
+      disabled={!canToggleList()}
+      tabindex={rovingIdx === ORDERED_LIST_IDX ? 0 : -1}
+      onclick={handleOrderedList}
+      onfocus={() => onTbFocus(ORDERED_LIST_IDX)}
+      title={hk('toggle_ordered_list')
+        ? `Numbered list (${hk('toggle_ordered_list')})`
+        : 'Numbered list'}
+    >
+      <span class="material-symbols-outlined" aria-hidden="true"
+        >format_list_numbered</span
+      >
+    </button>
+  </div>
 
   <span class="toolbar-divider" aria-hidden="true"></span>
 

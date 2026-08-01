@@ -4,14 +4,22 @@ import { tick } from 'svelte'
 import FormatToolbar from './FormatToolbar.svelte'
 
 // Mock editor with the minimal interface FormatToolbar uses.
-function makeMockEditor(opts: { empty?: boolean; canMark?: boolean } = {}) {
+function makeMockEditor(
+  opts: {
+    empty?: boolean
+    canMark?: boolean
+    bullet?: string
+  } = {}
+) {
   const marks = new Set<string>()
   const mockNode = {
     type: { name: 'noteBlock' },
-    attrs: { depth: 0, align: 'left' }
+    attrs: { depth: 0, align: 'left', bullet: opts.bullet ?? '' }
   }
   const canMark = opts.canMark !== false
+  const empty = opts.empty ?? false
   return {
+    isDestroyed: false,
     isActive: vi.fn((mark: string) => marks.has(mark)),
     can: () => ({
       toggleMark: (m: string) => canMark && m !== '__never__'
@@ -31,13 +39,40 @@ function makeMockEditor(opts: { empty?: boolean; canMark?: boolean } = {}) {
     }),
     state: {
       selection: {
-        empty: opts.empty ?? false,
-        $from: { depth: 1, node: () => mockNode }
+        empty,
+        from: 1,
+        to: empty ? 1 : 5,
+        $from: {
+          depth: 1,
+          node: (d?: number) => (d === undefined || d >= 1 ? mockNode : null),
+          before: () => 0
+        }
+      },
+      doc: {
+        nodeAt: (pos: number) => (pos === 0 ? mockNode : null),
+        nodesBetween: (
+          _from: number,
+          _to: number,
+          f: (node: typeof mockNode, pos: number) => boolean | void
+        ) => {
+          f(mockNode, 0)
+        }
+      },
+      tr: {
+        setNodeMarkup: vi.fn(function (this: { docChanged?: boolean }) {
+          this.docChanged = true
+          return this
+        }),
+        docChanged: false,
+        doc: {
+          nodeAt: (pos: number) => (pos === 0 ? mockNode : null)
+        }
       }
     },
     view: {
       dom: document.createElement('div'),
-      coordsAtPos: () => ({ left: 10, top: 10, bottom: 20 })
+      coordsAtPos: () => ({ left: 10, top: 10, bottom: 20 }),
+      dispatch: vi.fn()
     },
     _marks: marks
   }
@@ -54,12 +89,14 @@ describe('FormatToolbar', () => {
     vi.restoreAllMocks()
   })
 
-  it('keeps block style, Bold, Italic, Underline, Link, and Inline code directly available', () => {
+  it('keeps block style, lists, Bold, Italic, Underline, Link, and Inline code directly available', () => {
     const editor = makeMockEditor()
     const { getByLabelText } = render(FormatToolbar, {
       props: { editor: editor as never, ...baseProps }
     })
     expect(getByLabelText('Block type')).toBeTruthy()
+    expect(getByLabelText('Bullet list')).toBeTruthy()
+    expect(getByLabelText('Numbered list')).toBeTruthy()
     expect(getByLabelText('Bold')).toBeTruthy()
     expect(getByLabelText('Italic')).toBeTruthy()
     expect(getByLabelText('Underline')).toBeTruthy()
@@ -67,9 +104,25 @@ describe('FormatToolbar', () => {
     expect(getByLabelText('Inline code')).toBeTruthy()
     // Direct primary buttons carry data-primary.
     expect(getByLabelText('Bold').hasAttribute('data-primary')).toBe(true)
+    expect(getByLabelText('Bullet list').hasAttribute('data-primary')).toBe(
+      true
+    )
     expect(getByLabelText('Inline code').hasAttribute('data-primary')).toBe(
       true
     )
+  })
+
+  it('enables list controls when caret is in a noteBlock', () => {
+    const editor = makeMockEditor({ empty: true })
+    const { getByLabelText } = render(FormatToolbar, {
+      props: { editor: editor as never, ...baseProps }
+    })
+    expect((getByLabelText('Bullet list') as HTMLButtonElement).disabled).toBe(
+      false
+    )
+    expect(
+      (getByLabelText('Numbered list') as HTMLButtonElement).disabled
+    ).toBe(false)
   })
 
   it('places advanced marks under the More formatting menu', async () => {
