@@ -979,6 +979,74 @@ describe('ordered list indent/unindent renumber (#837)', () => {
     expect(editor.state.doc.child(1).attrs.depth).toBe(1)
     editor.destroy()
   })
+
+  it('Backspace at start of empty nested ordered note clears the marker first', () => {
+    // List-exit contract: marker clear precedes unindent. Ordered renumber on
+    // depth change is covered by unindentActiveBlock / Shift-Tab cases above.
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1) ' },
+          content: [{ type: 'text', text: 'one' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 1, bullet: '1) ' },
+          content: [{ type: 'text', text: 'x' }]
+        }
+      ]
+    })
+    // Empty the nested block via replace so content.size is 0, then Backspace.
+    const nestedPos = editor.state.doc.child(0).nodeSize
+    const nested = editor.state.doc.child(1)
+    const tr = editor.state.tr.replaceWith(
+      nestedPos + 1,
+      nestedPos + nested.content.size + 1,
+      []
+    )
+    editor.view.dispatch(tr)
+    focusBlock(editor, 1)
+    expect(pressKey(editor, 'Backspace')).toBe(true)
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(1).attrs.bullet).toBe('')
+    expect(editor.state.doc.child(1).attrs.depth).toBe(1)
+    editor.destroy()
+  })
+
+  it('unindent into a ) run adopts destination punctuation', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1) ' },
+          content: [{ type: 'text', text: 'one' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 1, bullet: '1. ' },
+          content: [{ type: 'text', text: 'nested-dot' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '2) ' },
+          content: [{ type: 'text', text: 'three' }]
+        }
+      ]
+    })
+    focusBlock(editor, 1)
+    expect(unindentActiveBlock(editor)).toBe(true)
+    expect(snapshot(editor)).toEqual([
+      { bullet: '1) ', depth: 0, text: 'one' },
+      { bullet: '2) ', depth: 0, text: 'nested-dot' },
+      { bullet: '3) ', depth: 0, text: 'three' }
+    ])
+    editor.destroy()
+  })
 })
 
 describe('Tab / Shift-Tab depth indent (outliner)', () => {

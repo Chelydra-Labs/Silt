@@ -11,6 +11,7 @@
   import { registerEditor } from '../lib/editor/editorRegistry.svelte'
   import { FocusLockManager } from '../lib/editor/useFocusLock'
   import { BlockIndentOnDrop } from '../lib/editor/dragIndentDrop'
+  import { gateBubbleCoords } from '../lib/editor/selectionBubbleGate'
   import { SiltInlineDragHandle } from '../lib/editor/siltInlineDragHandle'
   import { PlainPaste } from '../lib/editor/plainPaste'
   import { Search } from '../lib/editor/search/searchExtension'
@@ -221,14 +222,13 @@
   function publishSelectionCoords(
     coords: { left: number; top: number; bottom: number } | null
   ): void {
-    if (selectionPointerDown) {
-      // Hold coords until pointer-up so the bubble does not flicker mid-drag.
-      pendingSelectionCoords = coords
-      selectionCoords = null
-      return
-    }
-    pendingSelectionCoords = null
-    selectionCoords = coords
+    const gated = gateBubbleCoords(
+      selectionPointerDown,
+      pendingSelectionCoords,
+      coords
+    )
+    pendingSelectionCoords = gated.pending
+    selectionCoords = gated.published
   }
 
   // Track OS dark/light preference reactively so isDark updates when the
@@ -1431,25 +1431,17 @@
     }
   }
 
-  /* Readable measure (~70ch) centered in the pane (#841). */
+  /* Readable measure centered in the pane (#841). Rhythm/list density live
+     in index.css under .ProseMirror so all editor surfaces share one source. */
   .tiptap-editor-host {
     width: 100%;
-    max-width: 70ch;
+    max-width: var(--editor-measure, 70ch);
     margin-inline: auto;
   }
 
-  /* The ProseMirror editable surface. Global styles (typography vars, guide
-     rails, indentation, node rendering) live in index.css under .ProseMirror
-     and [data-type] selectors so they apply to all editor instances. */
   .tiptap-editor-host :global(.ProseMirror) {
     min-height: 22px;
     outline: none;
-    line-height: var(--line-height-normal, var(--editor-line-height, 1.58));
-  }
-
-  .tiptap-editor-host :global(.silt-list-item),
-  .tiptap-editor-host :global(.node-noteBlock[data-bullet]) {
-    line-height: 1.5;
   }
 
   /* Focus mode (#168 Phase 3): dim all top-level blocks except the one with

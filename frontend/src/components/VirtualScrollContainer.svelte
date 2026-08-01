@@ -619,7 +619,10 @@
           </p>
         </header>
 
-        <div class="w-full flex-1 flex flex-col gap-4" style="max-width: 70ch;">
+        <div
+          class="w-full flex-1 flex flex-col gap-4"
+          style="max-width: var(--editor-measure, 70ch);"
+        >
           {#if loadError}
             <div
               class="text-error py-8 text-center font-body-md border border-error-border bg-error-bg rounded-lg flex flex-col items-center gap-3"

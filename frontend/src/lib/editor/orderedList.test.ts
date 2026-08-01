@@ -128,4 +128,35 @@ describe('applyDepthChangeOnTransaction', () => {
     expect(editor.state.doc.child(2).attrs.bullet).toBe('2. ')
     editor.destroy()
   })
+
+  it('adopts destination-run punctuation when unindenting into a ) list', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1) ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 1, bullet: '1. ' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '2) ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    const mid = editor.state.doc.child(0).nodeSize
+    const tr = applyDepthChangeOnTransaction(editor.state.tr, mid, 0)
+    editor.view.dispatch(tr)
+    expect(
+      [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['1) ', '2) ', '3) '])
+    editor.destroy()
+  })
 })

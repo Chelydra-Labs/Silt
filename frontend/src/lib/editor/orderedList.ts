@@ -238,8 +238,77 @@ function findNearbyOrderedPeer(
 }
 
 /**
+ * Prefer punctuation from an existing same-depth ordered peer at `depth`
+ * near `fromPos` so indent/unindent into a run does not leave mixed `.`/`)`
+ * markers that stop renumber mid-run (#837 harden).
+ */
+export function resolveOrderedPuncAtDepth(
+  doc: ProseMirrorNode,
+  fromPos: number,
+  depth: number,
+  fallbackPunc: string
+): string {
+  const peer = findNearbyOrderedPeerAnyPunc(doc, fromPos, depth)
+  if (peer == null) return fallbackPunc
+  const node = doc.nodeAt(peer)
+  if (!node) return fallbackPunc
+  const parsed = parseOrderedBullet(String(node.attrs.bullet || ''))
+  return parsed?.punc ?? fallbackPunc
+}
+
+/** Like findNearbyOrderedPeer but accepts any ordered punctuation. */
+function findNearbyOrderedPeerAnyPunc(
+  doc: ProseMirrorNode,
+  fromPos: number,
+  depth: number
+): number | null {
+  const node = doc.nodeAt(fromPos)
+  if (!node) return null
+
+  let pos = fromPos
+  while (pos > 0) {
+    let before: ProseMirrorNode
+    let beforePos: number
+    try {
+      const $pos = doc.resolve(pos)
+      const prev = $pos.nodeBefore
+      if (!prev) break
+      before = prev
+      beforePos = pos - prev.nodeSize
+    } catch {
+      break
+    }
+    if (before.type.name !== 'noteBlock') break
+    const bd = (before.attrs.depth as number) || 0
+    if (bd > depth) {
+      pos = beforePos
+      continue
+    }
+    if (bd < depth) break
+    if (parseOrderedBullet(String(before.attrs.bullet || ''))) return beforePos
+    break
+  }
+
+  pos = fromPos + node.nodeSize
+  while (pos < doc.content.size) {
+    const next = doc.nodeAt(pos)
+    if (!next || next.type.name !== 'noteBlock') break
+    const nd = (next.attrs.depth as number) || 0
+    if (nd > depth) {
+      pos += next.nodeSize
+      continue
+    }
+    if (nd < depth) break
+    if (parseOrderedBullet(String(next.attrs.bullet || ''))) return pos
+    break
+  }
+  return null
+}
+
+/**
  * Apply depth change for a block on `tr`. For ordered noteBlocks, restarts
  * nested markers at 1 and renumbers affected same-depth runs (#837).
+ * Joining a destination run adopts that run's punctuation style.
  */
 export function applyDepthChangeOnTransaction(
   tr: Transaction,
@@ -260,20 +329,39 @@ export function applyDepthChangeOnTransaction(
     return tr.setNodeAttribute(nodePos, 'depth', newDepth)
   }
 
+  const destPunc = resolveOrderedPuncAtDepth(
+    tr.doc,
+    nodePos,
+    newDepth,
+    parsed.punc
+  )
   // Temporary bullet; full run renumber assigns the real sequence.
-  const tempBullet = formatOrderedBullet(1, parsed.punc)
+  const tempBullet = formatOrderedBullet(1, destPunc)
   tr = tr.setNodeMarkup(nodePos, undefined, {
     ...node.attrs,
     depth: newDepth,
     bullet: tempBullet
   })
-  return fixupOrderedAfterDepthChange(
+  // Vacated run still uses the item's original punctuation.
+  let next = fixupOrderedAfterDepthChange(
     tr,
     nodePos,
     oldDepth,
     newDepth,
-    parsed.punc
+    destPunc
   )
+  if (destPunc !== parsed.punc) {
+    const oldPeer = findNearbyOrderedPeer(
+      next.doc,
+      nodePos,
+      oldDepth,
+      parsed.punc
+    )
+    if (oldPeer != null) {
+      next = renumberOrderedRunContaining(next, oldPeer, oldDepth, parsed.punc)
+    }
+  }
+  return next
 }
 
 /**

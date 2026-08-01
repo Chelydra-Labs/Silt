@@ -9,11 +9,13 @@ function makeMockEditor(
     empty?: boolean
     canMark?: boolean
     bullet?: string
+    blockType?: string
   } = {}
 ) {
   const marks = new Set<string>()
+  const blockName = opts.blockType ?? 'noteBlock'
   const mockNode = {
-    type: { name: 'noteBlock' },
+    type: { name: blockName },
     attrs: { depth: 0, align: 'left', bullet: opts.bullet ?? '' }
   }
   const canMark = opts.canMark !== false
@@ -123,6 +125,47 @@ describe('FormatToolbar', () => {
     expect(
       (getByLabelText('Numbered list') as HTMLButtonElement).disabled
     ).toBe(false)
+  })
+
+  it('disables list controls when caret is not in a noteBlock', () => {
+    const editor = makeMockEditor({ empty: true, blockType: 'headerBlock' })
+    editor.state.doc.nodeAt = () => null
+    editor.state.doc.nodesBetween = () => {}
+    const { getByLabelText } = render(FormatToolbar, {
+      props: { editor: editor as never, ...baseProps }
+    })
+    expect((getByLabelText('Bullet list') as HTMLButtonElement).disabled).toBe(
+      true
+    )
+    expect(
+      (getByLabelText('Numbered list') as HTMLButtonElement).disabled
+    ).toBe(true)
+  })
+
+  it('marks list buttons pressed when selection is already a list', async () => {
+    const editor = makeMockEditor({ empty: true, bullet: '- ' })
+    const { getByLabelText } = render(FormatToolbar, {
+      props: { editor: editor as never, ...baseProps }
+    })
+    await tick()
+    expect(getByLabelText('Bullet list').getAttribute('aria-pressed')).toBe(
+      'true'
+    )
+    expect(getByLabelText('Numbered list').getAttribute('aria-pressed')).toBe(
+      'false'
+    )
+  })
+
+  it('keeps list controls in the Paragraph group with Alignment', () => {
+    const editor = makeMockEditor()
+    const { getByLabelText, container } = render(FormatToolbar, {
+      props: { editor: editor as never, ...baseProps }
+    })
+    const paragraph = container.querySelector('[aria-label="Paragraph"]')
+    expect(paragraph).toBeTruthy()
+    expect(paragraph?.contains(getByLabelText('Bullet list'))).toBe(true)
+    expect(paragraph?.contains(getByLabelText('Numbered list'))).toBe(true)
+    expect(paragraph?.contains(getByLabelText('Alignment'))).toBe(true)
   })
 
   it('places advanced marks under the More formatting menu', async () => {

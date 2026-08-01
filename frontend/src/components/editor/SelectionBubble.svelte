@@ -381,19 +381,33 @@
 
   $effect(() => {
     if (!show) return
-    const dismiss = (): void => {
+    let scrollReShowTimer: ReturnType<typeof setTimeout> | undefined
+    const hideTemporarily = (): void => {
       dismissed = true
       linkMenuOpen = false
       colorMenuOpen = false
     }
-    document.addEventListener('scroll', dismiss, {
+    // Scroll: hide while scrolling, re-show after settle if selection remains.
+    const onScroll = (): void => {
+      hideTemporarily()
+      if (scrollReShowTimer) clearTimeout(scrollReShowTimer)
+      scrollReShowTimer = setTimeout(() => {
+        if (show) dismissed = false
+      }, 160)
+    }
+    // Resize: permanent dismiss until selection changes (coords go stale).
+    const onResize = (): void => {
+      hideTemporarily()
+    }
+    document.addEventListener('scroll', onScroll, {
       capture: true,
       passive: true
     })
-    window.addEventListener('resize', dismiss, { passive: true })
+    window.addEventListener('resize', onResize, { passive: true })
     return () => {
-      document.removeEventListener('scroll', dismiss, { capture: true })
-      window.removeEventListener('resize', dismiss)
+      if (scrollReShowTimer) clearTimeout(scrollReShowTimer)
+      document.removeEventListener('scroll', onScroll, { capture: true })
+      window.removeEventListener('resize', onResize)
     }
   })
 
@@ -422,7 +436,6 @@
     role="toolbar"
     tabindex="-1"
     aria-label="Format selection"
-    aria-orientation="horizontal"
     style="left: {pos.left}px; top: {pos.top}px"
     onkeydown={handleKeydown}
   >

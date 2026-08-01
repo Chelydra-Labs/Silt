@@ -212,6 +212,8 @@
   --editor-mono-font-family: 'JetBrains Mono', monospace;
   --editor-font-size: 14px;
   --editor-line-height: 1.6;
+  /* Readable measure for note body + title column (#841). */
+  --editor-measure: 70ch;
 }
 
 html,

@@ -190,7 +190,8 @@ describe('SelectionBubble', () => {
     expect(bubble.style.top).toBe('60px')
   })
 
-  it('dismisses on scroll (#594)', async () => {
+  it('hides on scroll then re-shows after settle while selection remains', async () => {
+    vi.useFakeTimers()
     const { container } = render(SelectionBubble, {
       props: {
         editor: null,
@@ -204,9 +205,13 @@ describe('SelectionBubble', () => {
     document.dispatchEvent(new Event('scroll', { bubbles: true }))
     await tick()
     expect(container.querySelector('.selection-bubble')).toBeNull()
+    await vi.advanceTimersByTimeAsync(200)
+    await tick()
+    expect(container.querySelector('.selection-bubble')).toBeTruthy()
+    vi.useRealTimers()
   })
 
-  it('dismisses on resize', async () => {
+  it('dismisses on resize until selection changes', async () => {
     const { container } = render(SelectionBubble, {
       props: {
         editor: null,
