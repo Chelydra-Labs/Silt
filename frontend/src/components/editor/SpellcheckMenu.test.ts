@@ -156,4 +156,15 @@ describe('SpellcheckMenu keyboard focus', () => {
     expect(onClose).toHaveBeenCalledOnce()
     expect(editor.commands.focus).toHaveBeenCalledOnce()
   })
+
+  it('portals the menu layer to document.body (escapes note zoom)', async () => {
+    const { container, getByRole } = setup()
+    const menu = getByRole('menu', { name: 'Spelling suggestions' })
+    // Layer must live under body, not under the render container (which sits
+    // inside .note-page-zoom in production and would scale fixed coords).
+    expect(document.body.contains(menu)).toBe(true)
+    expect(container.contains(menu)).toBe(false)
+    expect(menu.style.left).toBe('20px')
+    expect(menu.style.top).toBe('30px')
+  })
 })

@@ -147,11 +147,16 @@ vi.mock('../lib/editor/spellcheck/dictionary', () => ({
   parseWordListText: vi.fn(() => [])
 }))
 
+/** Menus portal to document.body (escape note zoom); query there. */
+function menuRoot(): HTMLElement {
+  return document.body
+}
+
 async function openContextMenu(container: HTMLElement): Promise<void> {
   const host = container.querySelector('.tiptap-editor-host') as HTMLElement
   await fireEvent.contextMenu(host)
   await waitFor(() => {
-    expect(container.querySelector('[role="menu"]')).toBeTruthy()
+    expect(menuRoot().querySelector('[role="menu"]')).toBeTruthy()
   })
 }
 
@@ -178,7 +183,7 @@ describe('TipTapEditor context menu', () => {
 
     await openContextMenu(container)
 
-    const text = container.textContent
+    const text = menuRoot().textContent
     for (const label of [
       'Cut',
       'Copy',
@@ -230,9 +235,9 @@ describe('TipTapEditor context menu', () => {
     })
 
     await waitFor(() => {
-      expect(container.querySelector('.spell-menu')).toBeTruthy()
+      expect(menuRoot().querySelector('.spell-menu')).toBeTruthy()
     })
-    expect(container.querySelector('.context-menu-card')).toBeNull()
+    expect(menuRoot().querySelector('.context-menu-card')).toBeNull()
 
     unmount()
   })
@@ -255,7 +260,7 @@ describe('TipTapEditor context menu', () => {
 
     await openContextMenu(container)
 
-    const text = container.textContent
+    const text = menuRoot().textContent
     expect(text).toContain('Duplicate Block')
     expect(text).toContain('Delete Block')
     expect(text).toContain('Copy Block Reference')
@@ -281,12 +286,12 @@ describe('TipTapEditor context menu', () => {
     })
 
     await openContextMenu(container)
-    expect(container.querySelector('[role="menu"]')).toBeTruthy()
+    expect(menuRoot().querySelector('[role="menu"]')).toBeTruthy()
 
     await fireEvent.keyDown(window, { key: 'Escape' })
 
     await waitFor(() => {
-      expect(container.querySelector('[role="menu"]')).toBeNull()
+      expect(menuRoot().querySelector('[role="menu"]')).toBeNull()
     })
 
     unmount()
@@ -311,10 +316,10 @@ describe('TipTapEditor context menu', () => {
 
     await openContextMenu(container)
 
-    const menuItems = container.querySelectorAll('[role="menuitem"]')
+    const menuItems = menuRoot().querySelectorAll('[role="menuitem"]')
     // 6 standard + 4 block-scoped = 10 (Inspect only when Dev Mode on)
     expect(menuItems.length).toBe(10)
-    expect(container.textContent).not.toContain('Inspect')
+    expect(menuRoot().textContent).not.toContain('Inspect')
 
     unmount()
   })
@@ -338,8 +343,8 @@ describe('TipTapEditor context menu', () => {
 
     await openContextMenu(container)
 
-    expect(container.textContent).toContain('Inspect')
-    const menuItems = container.querySelectorAll('[role="menuitem"]')
+    expect(menuRoot().textContent).toContain('Inspect')
+    const menuItems = menuRoot().querySelectorAll('[role="menuitem"]')
     // 10 base + Inspect
     expect(menuItems.length).toBe(11)
 
@@ -365,7 +370,7 @@ describe('TipTapEditor context menu', () => {
     })
 
     await openContextMenu(container)
-    expect(container.textContent).not.toContain('Inspect')
+    expect(menuRoot().textContent).not.toContain('Inspect')
 
     unmount()
     settingsMock.config = null
@@ -391,7 +396,7 @@ describe('TipTapEditor context menu', () => {
 
     // After open, the first enabled item should be focused via the
     // requestAnimationFrame effect. Wait for it.
-    const menu = container.querySelector('[role="menu"]') as HTMLElement
+    const menu = menuRoot().querySelector('[role="menu"]') as HTMLElement
     await waitFor(() => {
       expect(document.activeElement).toBe(
         menu.querySelector('button:not([disabled])')
@@ -436,7 +441,7 @@ describe('TipTapEditor context menu', () => {
     await openContextMenu(container)
 
     const deleteBtn = Array.from(
-      container.querySelectorAll('[role="menuitem"]')
+      menuRoot().querySelectorAll('[role="menuitem"]')
     ).find((btn) =>
       btn.textContent?.includes('Delete Block')
     ) as HTMLButtonElement
@@ -464,13 +469,13 @@ describe('TipTapEditor context menu', () => {
 
     await openContextMenu(container)
 
-    expect(container.textContent).toContain('Edit task in modal…')
+    expect(menuRoot().textContent).toContain('Edit task in modal…')
 
     const handler = vi.fn()
     window.addEventListener('silt:open-task-editor', handler)
 
     const item = Array.from(
-      container.querySelectorAll('[role="menuitem"]')
+      menuRoot().querySelectorAll('[role="menuitem"]')
     ).find((btn) =>
       btn.textContent?.includes('Edit task in modal')
     ) as HTMLElement
@@ -501,7 +506,7 @@ describe('TipTapEditor context menu', () => {
 
     await openContextMenu(container)
 
-    expect(container.textContent).not.toContain('Edit task in modal')
+    expect(menuRoot().textContent).not.toContain('Edit task in modal')
 
     unmount()
   })
