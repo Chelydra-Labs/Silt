@@ -598,7 +598,8 @@
         style={showEditorUtilityBar ? `zoom: ${noteZoom.factor}` : undefined}
         data-testid="note-page-zoom"
       >
-        <header class="mb-8">
+        <!-- Title↔date 6px; date↔editor 24px; shared ~70ch measure (#841). -->
+        <header class="mb-6" style="margin-bottom: 24px;">
           <h1
             bind:this={titleEl}
             contenteditable="true"
@@ -607,8 +608,8 @@
             onkeydown={handleTitleKeydown}
             onblur={handleTitleBlur}
             onfocus={() => (titleFocused = true)}
-            class="font-headline-lg text-headline-lg text-text-primary tracking-tight mb-1 outline-none rounded-sm transition-colors"
-            style="border-bottom: 1px solid transparent; padding-bottom: 1px;"
+            class="font-headline-lg text-headline-lg text-text-primary tracking-tight outline-none rounded-sm transition-colors"
+            style="border-bottom: 1px solid transparent; padding-bottom: 1px; margin-bottom: 6px;"
             aria-label="Page title"
           >
             {displayTitle}
@@ -618,7 +619,7 @@
           </p>
         </header>
 
-        <div class="max-w-4xl w-full flex-1 flex flex-col gap-4">
+        <div class="w-full flex-1 flex flex-col gap-4" style="max-width: 70ch;">
           {#if loadError}
             <div
               class="text-error py-8 text-center font-body-md border border-error-border bg-error-bg rounded-lg flex flex-col items-center gap-3"

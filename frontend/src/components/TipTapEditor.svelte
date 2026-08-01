@@ -1363,8 +1363,11 @@
     }
   }
 
+  /* Readable measure (~70ch) centered in the pane (#841). */
   .tiptap-editor-host {
     width: 100%;
+    max-width: 70ch;
+    margin-inline: auto;
   }
 
   /* The ProseMirror editable surface. Global styles (typography vars, guide
@@ -1373,6 +1376,12 @@
   .tiptap-editor-host :global(.ProseMirror) {
     min-height: 22px;
     outline: none;
+    line-height: var(--line-height-normal, var(--editor-line-height, 1.58));
+  }
+
+  .tiptap-editor-host :global(.silt-list-item),
+  .tiptap-editor-host :global(.node-noteBlock[data-bullet]) {
+    line-height: 1.5;
   }
 
   /* Focus mode (#168 Phase 3): dim all top-level blocks except the one with
