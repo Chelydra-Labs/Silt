@@ -1033,13 +1033,19 @@ NOTE and HEADER blocks support `left` (default), `center`, `right`, `justify`.
 Alignment is persisted as a trailing HTML comment: `text <!-- silt-align: center -->`.
 TASK blocks do not support alignment.
 
-### Text/background color
+### Text color and highlight
 
-Text color: `<span style="color: #hex">text</span>`
-Background color: `<span style="background-color: #hex">text</span>`
+Text color (foreground): `<span style="color: #hex">text</span>` — its own mark.
 
-Both are inline marks that nest with other marks. A 12-color theme-aware
-palette is available via the format toolbar.
+Highlight (background) is one mark with two forms:
+- Default `==text==` — the themed highlight tint (no color attribute).
+- Colored `<span style="background-color: #hex">text</span>` — the same mark with a color set.
+
+Default and colored highlight are mutually exclusive on a given span (one mark;
+the color attribute is either null or a hex value). Both round-trip verbatim
+through `clean_text`; the Go parser preserves `==` and the HTML span unchanged.
+A 12-color theme-aware palette is available via the format toolbar; the default
+tint is also applied by the Highlight toolbar button and `Mod+Shift+H`.
 
 ### Heading levels
 
