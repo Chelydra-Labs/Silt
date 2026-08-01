@@ -13,7 +13,8 @@ import {
   parseOrderedBullet,
   formatOrderedOutlineLabel,
   applyDepthChangeOnTransaction,
-  renumberAfterOrderedBlockMove
+  renumberAfterOrderedBlockMove,
+  applyDropDepthFixup
 } from './orderedList'
 
 function makeEditor(): Editor {
@@ -254,6 +255,204 @@ describe('renumberAfterOrderedBlockMove', () => {
       { t: 'gap', b: '' },
       { t: 'b', b: '1. ' },
       { t: 'c', b: '2. ' }
+    ])
+    editor.destroy()
+  })
+})
+
+describe('applyDropDepthFixup', () => {
+  // Each test mirrors dragIndentDrop.ts's drop transaction (delete the source,
+  // re-insert at the destination, map positions through both) then invokes the
+  // pure helper directly — no HTML5 drag/drop, no IPC mocks (#859).
+
+  it('restarts nested marker at 1 and renumbers the vacated run on indent-on-drop', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    // Drag n2 and drop it indented (depth 1) right after n1.
+    const n1Size = editor.state.doc.child(0).nodeSize
+    const n2 = editor.state.doc.child(1)
+    const n2Size = n2.nodeSize
+    const n2Pos = n1Size
+    let tr = editor.state.tr.delete(n2Pos, n2Pos + n2Size)
+    const mappedInsert = n1Size
+    tr = tr.insert(mappedInsert, n2)
+    const vacatedNear = tr.mapping.map(n2Pos)
+    tr = applyDropDepthFixup(
+      tr,
+      n2.attrs,
+      parseOrderedBullet(String(n2.attrs.bullet)),
+      mappedInsert,
+      vacatedNear,
+      1
+    )
+    editor.view.dispatch(tr)
+    expect(
+      [0, 1, 2].map((i) => ({
+        t: editor.state.doc.child(i).textContent,
+        d: editor.state.doc.child(i).attrs.depth,
+        b: editor.state.doc.child(i).attrs.bullet
+      }))
+    ).toEqual([
+      { t: 'a', d: 0, b: '1. ' },
+      { t: 'b', d: 1, b: '1. ' },
+      { t: 'c', d: 0, b: '2. ' }
+    ])
+    editor.destroy()
+  })
+
+  it('renumbers the destination run on unindent-on-drop', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 1, bullet: '1. ' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    // Drag n2 (depth 1) and drop it shallower (depth 0) after n1.
+    const n1Size = editor.state.doc.child(0).nodeSize
+    const n2 = editor.state.doc.child(1)
+    const n2Size = n2.nodeSize
+    const n2Pos = n1Size
+    let tr = editor.state.tr.delete(n2Pos, n2Pos + n2Size)
+    const mappedInsert = n1Size
+    tr = tr.insert(mappedInsert, n2)
+    const vacatedNear = tr.mapping.map(n2Pos)
+    tr = applyDropDepthFixup(
+      tr,
+      n2.attrs,
+      parseOrderedBullet(String(n2.attrs.bullet)),
+      mappedInsert,
+      vacatedNear,
+      0
+    )
+    editor.view.dispatch(tr)
+    expect(
+      [0, 1, 2].map((i) => ({
+        d: editor.state.doc.child(i).attrs.depth,
+        b: editor.state.doc.child(i).attrs.bullet
+      }))
+    ).toEqual([
+      { d: 0, b: '1. ' },
+      { d: 0, b: '2. ' },
+      { d: 0, b: '3. ' }
+    ])
+    editor.destroy()
+  })
+
+  it('renumbers a same-depth reorder (move first after last)', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    const first = editor.state.doc.child(0)
+    const firstSize = first.nodeSize
+    let tr = editor.state.tr.delete(0, firstSize)
+    const insertAt = tr.doc.content.size
+    tr = tr.insert(insertAt, first)
+    const vacatedNear = tr.mapping.map(0)
+    tr = applyDropDepthFixup(
+      tr,
+      first.attrs,
+      parseOrderedBullet(String(first.attrs.bullet)),
+      insertAt,
+      vacatedNear,
+      0
+    )
+    editor.view.dispatch(tr)
+    expect(
+      [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['1. ', '2. ', '3. '])
+    expect([0, 1, 2].map((i) => editor.state.doc.child(i).textContent)).toEqual(
+      ['b', 'c', 'a']
+    )
+    editor.destroy()
+  })
+
+  it('only sets depth for a non-ordered block on drop', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'b' }]
+        }
+      ]
+    })
+    // Drag n1 and drop it after n2 at depth 1 (no bullet → non-ordered).
+    const n1 = editor.state.doc.child(0)
+    const n1Size = n1.nodeSize
+    let tr = editor.state.tr.delete(0, n1Size)
+    const insertAt = tr.doc.content.size
+    tr = tr.insert(insertAt, n1)
+    const vacatedNear = tr.mapping.map(0)
+    tr = applyDropDepthFixup(tr, n1.attrs, null, insertAt, vacatedNear, 1)
+    editor.view.dispatch(tr)
+    expect(
+      [0, 1].map((i) => ({
+        t: editor.state.doc.child(i).textContent,
+        d: editor.state.doc.child(i).attrs.depth,
+        b: editor.state.doc.child(i).attrs.bullet
+      }))
+    ).toEqual([
+      { t: 'b', d: 0, b: '' },
+      { t: 'a', d: 1, b: '' }
     ])
     editor.destroy()
   })

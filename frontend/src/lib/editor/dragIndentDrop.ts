@@ -3,14 +3,7 @@ import type { EditorView } from '@tiptap/pm/view'
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { dropPoint } from '@tiptap/pm/transform'
-import {
-  parseOrderedBullet,
-  formatOrderedBullet,
-  resolveOrderedPuncAtDepth,
-  renumberOrderedRunContaining,
-  renumberVacatedOrderedRun,
-  renumberAfterOrderedBlockMove
-} from './orderedList'
+import { parseOrderedBullet, applyDropDepthFixup } from './orderedList'
 
 // Indent-on-drop for the Silt block drag handle (#330, #181
 // follow-up; drag-init moved to SiltInlineDragHandle in #339). Native
@@ -394,52 +387,24 @@ export const BlockIndentOnDrop = Extension.create({
             // which post-insert is the just-inserted dragged node (insert
             // does not shift positions ≤ mappedInsert). Verified depth attr
             // exists on this node type at step 2.
-            const oldDepth = (draggedNode.attrs.depth as number) || 0
             const ordered =
               draggedNode.type.name === 'noteBlock'
                 ? parseOrderedBullet(String(draggedNode.attrs.bullet || ''))
                 : null
             // Source hole after delete+insert (may be far from destination).
             const vacatedNear = tr.mapping.map(oldPos)
-            if (ordered && oldDepth !== newDepth) {
-              // Depth change: adopt destination punc, renumber dest + source
-              // vacated run near the original hole (not near dest — far moves
-              // leave the old run elsewhere).
-              const destPunc = resolveOrderedPuncAtDepth(
-                tr.doc,
-                mappedInsert,
-                newDepth,
-                ordered.punc
-              )
-              tr = tr.setNodeMarkup(mappedInsert, undefined, {
-                ...draggedNode.attrs,
-                depth: newDepth,
-                bullet: formatOrderedBullet(1, destPunc)
-              })
-              tr = renumberOrderedRunContaining(
-                tr,
-                mappedInsert,
-                newDepth,
-                destPunc
-              )
-              tr = renumberVacatedOrderedRun(
-                tr,
-                vacatedNear,
-                oldDepth,
-                ordered.punc
-              )
-            } else if (ordered) {
-              // Same-depth reorder: fix destination sequence + any split source.
-              tr = renumberAfterOrderedBlockMove(
-                tr,
-                mappedInsert,
-                vacatedNear,
-                oldDepth,
-                ordered.punc
-              )
-            } else if (oldDepth !== newDepth) {
-              tr = tr.setNodeAttribute(mappedInsert, 'depth', newDepth)
-            }
+            // Apply the depth change + ordered renumber via a pure helper so
+            // the drop's ordered fixup is jsdom-testable without driving the
+            // HTML5 drag/drop pipeline (#859). Mirrors the keymaps.ts Tab path
+            // but renumbers near the original source hole (`vacatedNear`).
+            tr = applyDropDepthFixup(
+              tr,
+              draggedNode.attrs,
+              ordered,
+              mappedInsert,
+              vacatedNear,
+              newDepth
+            )
 
             // 8. Land a NodeSelection on the moved block so the caret/focus
             //    land on it in its new home (mirrors PM's native drop

@@ -219,6 +219,60 @@ export function renumberAfterOrderedBlockMove(
 }
 
 /**
+ * Apply the depth change + ordered-list renumber after a block has been
+ * moved by drag-drop (delete+insert already applied on `tr`). Encapsulates
+ * the drop's ordered fixup so it is jsdom-testable without driving the HTML5
+ * drag/drop pipeline (#859).
+ *
+ * Mirrors the Tab-indent path's `applyDepthChangeOnTransaction`, but the drop
+ * must additionally renumber the vacated source run near the ORIGINAL hole
+ * (`vacatedNear`, which may be far from the destination) and handle same-depth
+ * reorder, so the two helpers are deliberately distinct.
+ *
+ * - Ordered + depth change: adopt the destination run's punctuation, restart
+ *   the moved marker at 1, renumber the destination run, and renumber the
+ *   vacated source run at the old depth/punctuation.
+ * - Ordered, same depth: renumber destination + vacated source (pure reorder).
+ * - Non-ordered depth change: set the depth attr only.
+ */
+export function applyDropDepthFixup(
+  tr: Transaction,
+  draggedAttrs: Record<string, unknown>,
+  ordered: { n: number; punc: string } | null,
+  mappedInsert: number,
+  vacatedNear: number,
+  newDepth: number
+): Transaction {
+  const oldDepth = (draggedAttrs.depth as number) || 0
+  if (ordered && oldDepth !== newDepth) {
+    const destPunc = resolveOrderedPuncAtDepth(
+      tr.doc,
+      mappedInsert,
+      newDepth,
+      ordered.punc
+    )
+    tr = tr.setNodeMarkup(mappedInsert, undefined, {
+      ...draggedAttrs,
+      depth: newDepth,
+      bullet: formatOrderedBullet(1, destPunc)
+    })
+    tr = renumberOrderedRunContaining(tr, mappedInsert, newDepth, destPunc)
+    tr = renumberVacatedOrderedRun(tr, vacatedNear, oldDepth, ordered.punc)
+  } else if (ordered) {
+    tr = renumberAfterOrderedBlockMove(
+      tr,
+      mappedInsert,
+      vacatedNear,
+      oldDepth,
+      ordered.punc
+    )
+  } else if (oldDepth !== newDepth) {
+    tr = tr.setNodeAttribute(mappedInsert, 'depth', newDepth)
+  }
+  return tr
+}
+
+/**
  * Find an ordered noteBlock at `depth` with `punc` near `fromPos` (previous
  * then next), skipping deeper nested notes. Used to locate the vacated run
  * after a node left that depth.
