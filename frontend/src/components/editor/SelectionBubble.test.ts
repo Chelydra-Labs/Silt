@@ -94,44 +94,50 @@ describe('SelectionBubble', () => {
     expect(container.querySelector('.selection-bubble')).toBeTruthy()
   })
 
-  it('exposes primary marks, list toggles, and a More control', () => {
-    const { getByLabelText, queryByLabelText } = render(SelectionBubble, {
-      props: {
-        editor: null,
-        activeMarks: new Set<string>(),
-        selectionEmpty: false,
-        selectionCoords: coords
+  it('exposes all marks, lists, and colors in a two-row bar (no More menu)', () => {
+    const { getByLabelText, queryByLabelText, container } = render(
+      SelectionBubble,
+      {
+        props: {
+          editor: null,
+          activeMarks: new Set<string>(),
+          selectionEmpty: false,
+          selectionCoords: coords,
+          colorEnabled: true
+        }
       }
-    })
+    )
     for (const label of [
       'Bold',
       'Italic',
       'Underline',
+      'Strikethrough',
       'Link',
       'Inline code',
       'Bullet list',
-      'Numbered list'
+      'Numbered list',
+      'Text color',
+      'Background color'
     ]) {
       expect(getByLabelText(label)).toBeTruthy()
     }
-    expect(getByLabelText('More formatting')).toBeTruthy()
-    // Lower-frequency marks are not top-level.
-    expect(queryByLabelText('Strikethrough')).toBeNull()
-    expect(queryByLabelText('Highlight')).toBeNull()
+    expect(queryByLabelText('More formatting')).toBeNull()
+    expect(container.querySelectorAll('.bubble-row').length).toBe(2)
   })
 
-  it('reveals lower-frequency marks under More', async () => {
-    const { getByLabelText } = render(SelectionBubble, {
+  it('hides color pickers when colorEnabled is false', () => {
+    const { queryByLabelText } = render(SelectionBubble, {
       props: {
         editor: null,
         activeMarks: new Set<string>(),
         selectionEmpty: false,
-        selectionCoords: coords
+        selectionCoords: coords,
+        colorEnabled: false
       }
     })
-    await fireEvent.click(getByLabelText('More formatting'))
-    expect(getByLabelText('Strikethrough')).toBeTruthy()
-    expect(getByLabelText('Highlight')).toBeTruthy()
+    expect(queryByLabelText('Text color')).toBeNull()
+    expect(queryByLabelText('Background color')).toBeNull()
+    expect(queryByLabelText('Bold')).toBeTruthy()
   })
 
   it('uses toolbar + aria-pressed toggle semantics', () => {
@@ -162,7 +168,7 @@ describe('SelectionBubble', () => {
     expect(getByLabelText('Bold').classList.contains('bubble-btn')).toBe(true)
     expect(getByLabelText('Link').classList.contains('bubble-btn')).toBe(true)
     expect(
-      getByLabelText('More formatting').classList.contains('bubble-btn')
+      getByLabelText('Strikethrough').classList.contains('bubble-btn')
     ).toBe(true)
   })
 
@@ -364,24 +370,27 @@ describe('SelectionBubble', () => {
     expect(editor._run).toHaveBeenCalled()
   })
 
-  it('Esc closes the More menu before returning to the editor', async () => {
-    const editor = makeEditor()
+  it('Esc closes the link submenu before returning to the editor', async () => {
+    const editor = makeEditor({
+      linkActive: true,
+      href: 'https://example.com'
+    })
     const { getByLabelText, getByRole, queryByLabelText } = render(
       SelectionBubble,
       {
         props: {
           editor: editor as never,
-          activeMarks: new Set<string>(),
+          activeMarks: new Set<string>(['link']),
           selectionEmpty: false,
           selectionCoords: coords
         }
       }
     )
-    await fireEvent.click(getByLabelText('More formatting'))
-    expect(getByLabelText('Highlight')).toBeTruthy()
+    await fireEvent.click(getByLabelText('Link'))
+    expect(getByLabelText('Edit link')).toBeTruthy()
     const toolbar = getByRole('toolbar', { name: 'Format selection' })
     await fireEvent.keyDown(toolbar, { key: 'Escape' })
-    expect(queryByLabelText('Highlight')).toBeNull()
+    expect(queryByLabelText('Edit link')).toBeNull()
     expect(editor._run).not.toHaveBeenCalled()
   })
 })

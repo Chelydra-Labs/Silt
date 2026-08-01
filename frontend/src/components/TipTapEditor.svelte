@@ -905,6 +905,8 @@
       {activeMarks}
       {selectionEmpty}
       {selectionCoords}
+      {isDark}
+      colorEnabled={settings.config?.ui?.formatting?.color_enabled !== false}
     />
     {#if spellcheckMenu.spellMenu && editorInstance}
       <SpellcheckMenu
