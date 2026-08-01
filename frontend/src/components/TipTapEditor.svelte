@@ -610,6 +610,7 @@
   // Dismiss the selection-anchored popovers (link / color / math) on ancestor
   // scroll / window resize (#594). Lives in the popover controller; the scroll
   // /resize handlers below delegate to it.
+  let selectionScrollReShowTimer: ReturnType<typeof setTimeout> | undefined
   function onEditorScroll(): void {
     selectionCoords = null
     pendingSelectionCoords = null
@@ -617,6 +618,15 @@
     // so it never floats at stale coordinates (#590).
     if (slash.showSlashMenu) slash.dismiss()
     popovers.dismissFloatingPopovers()
+    // Hide while scrolling; re-publish fresh viewport coords after settle so
+    // SelectionBubble can re-show (coordsAtPos is viewport-relative).
+    if (selectionScrollReShowTimer) clearTimeout(selectionScrollReShowTimer)
+    selectionScrollReShowTimer = setTimeout(() => {
+      selectionScrollReShowTimer = undefined
+      const ed = editorInstance
+      if (!ed || ed.isDestroyed || selectionPointerDown) return
+      publishSelectionCoords(readSelectionCoords(ed))
+    }, 160)
   }
   function onWindowResize(): void {
     // A resize can push an open palette/popover off-screen; dismiss rather
@@ -662,9 +672,20 @@
     const fresh = readSelectionCoords(ed)
     publishSelectionCoords(fresh ?? pendingSelectionCoords)
   }
+  // Blur / tab-away mid-drag must not leave the gate stuck suppressing the bubble.
+  function onSelectionPointerReset(): void {
+    if (!selectionPointerDown) return
+    selectionPointerDown = false
+    pendingSelectionCoords = null
+  }
+  function onVisibilityChange(): void {
+    if (document.visibilityState === 'hidden') onSelectionPointerReset()
+  }
 
   window.addEventListener('scroll', onEditorScroll, true)
   window.addEventListener('resize', onWindowResize)
+  window.addEventListener('blur', onSelectionPointerReset)
+  document.addEventListener('visibilitychange', onVisibilityChange)
   document.addEventListener('click', onDocumentClick)
   document.addEventListener('pointerdown', onSelectionPointerDown, true)
   document.addEventListener('pointerup', onSelectionPointerUp, true)
@@ -687,8 +708,11 @@
     void flushPendingSave().then(() => releaseFocus())
     events.detach()
     spellcheckMenu.dispose()
+    if (selectionScrollReShowTimer) clearTimeout(selectionScrollReShowTimer)
     window.removeEventListener('scroll', onEditorScroll, true)
     window.removeEventListener('resize', onWindowResize)
+    window.removeEventListener('blur', onSelectionPointerReset)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
     document.removeEventListener('click', onDocumentClick)
     document.removeEventListener('pointerdown', onSelectionPointerDown, true)
     document.removeEventListener('pointerup', onSelectionPointerUp, true)

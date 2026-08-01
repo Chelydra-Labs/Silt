@@ -683,17 +683,20 @@ describe('VirtualScrollContainer heading/block scroll (#545)', () => {
 
   // The module-level vi.mock for bindings is already hoisted above. We
   // re-import FetchPageBlocks inside the test to override its return value.
+  function mountScrollTarget(container: HTMLElement): void {
+    // Scope is containerEl (.silt-texture-surface), not document — inject
+    // inside the page root so tryScrollToTarget can find it.
+    const root = container.querySelector('.silt-texture-surface') ?? container
+    const el = document.createElement('div')
+    el.setAttribute('data-id', 'hdr-1111-2222-3333-4444')
+    el.id = 'scroll-target'
+    root.appendChild(el)
+  }
+
   beforeEach(() => {
     scrollIntoViewMock = vi.fn()
     Element.prototype.scrollIntoView =
       scrollIntoViewMock as unknown as typeof Element.prototype.scrollIntoView
-    // Inject a DOM element matching the header block's data-id so
-    // querySelector('[data-id="..."]') finds it (the TipTapEditor stub
-    // doesn't render real block DOM).
-    const el = document.createElement('div')
-    el.setAttribute('data-id', 'hdr-1111-2222-3333-4444')
-    el.id = 'scroll-target'
-    document.body.appendChild(el)
   })
   afterEach(() => {
     document.getElementById('scroll-target')?.remove()
@@ -704,13 +707,14 @@ describe('VirtualScrollContainer heading/block scroll (#545)', () => {
     const { FetchPageBlocks } = await import('$silt-app')
     vi.mocked(FetchPageBlocks).mockResolvedValue([headerBlock] as never)
 
-    render(VirtualScrollContainer, {
+    const { container } = render(VirtualScrollContainer, {
       props: {
         ...baseProps(),
         targetHeading: 'Goals',
         targetKey: 'heading:Goals:1'
       }
     })
+    mountScrollTarget(container)
     // Wait for blocks to load and the retry effect to fire.
     await waitFor(() => {
       expect(scrollIntoViewMock).toHaveBeenCalled()
@@ -739,13 +743,14 @@ describe('VirtualScrollContainer heading/block scroll (#545)', () => {
     const { FetchPageBlocks } = await import('$silt-app')
     vi.mocked(FetchPageBlocks).mockResolvedValue([headerBlock] as never)
 
-    render(VirtualScrollContainer, {
+    const { container } = render(VirtualScrollContainer, {
       props: {
         ...baseProps(),
         targetBlockId: 'hdr-1111-2222-3333-4444',
         targetKey: 'date:hdr:1'
       }
     })
+    mountScrollTarget(container)
     await waitFor(() => {
       expect(scrollIntoViewMock).toHaveBeenCalled()
     })

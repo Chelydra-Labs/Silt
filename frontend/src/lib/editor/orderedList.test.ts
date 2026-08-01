@@ -12,7 +12,8 @@ import { EmbedNode, BlockReferenceNode } from './schema'
 import {
   parseOrderedBullet,
   formatOrderedOutlineLabel,
-  applyDepthChangeOnTransaction
+  applyDepthChangeOnTransaction,
+  renumberAfterOrderedBlockMove
 } from './orderedList'
 
 function makeEditor(): Editor {
@@ -157,6 +158,103 @@ describe('applyDepthChangeOnTransaction', () => {
     expect(
       [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.bullet)
     ).toEqual(['1) ', '2) ', '3) '])
+    editor.destroy()
+  })
+})
+
+describe('renumberAfterOrderedBlockMove', () => {
+  it('renumbers same-depth reorder 1. 2. 3. → move first after last', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    const first = editor.state.doc.child(0)
+    const firstSize = first.nodeSize
+    let tr = editor.state.tr.delete(0, firstSize)
+    const insertAt = tr.doc.content.size
+    tr = tr.insert(insertAt, first)
+    const vacatedNear = tr.mapping.map(0)
+    tr = renumberAfterOrderedBlockMove(tr, insertAt, vacatedNear, 0, '. ')
+    editor.view.dispatch(tr)
+    expect(
+      [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['1. ', '2. ', '3. '])
+    expect([0, 1, 2].map((i) => editor.state.doc.child(i).textContent)).toEqual(
+      ['b', 'c', 'a']
+    )
+    editor.destroy()
+  })
+
+  it('renumbers vacated source when moving ordered across a plain gap', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'plain', depth: 0, bullet: '' },
+          content: [{ type: 'text', text: 'gap' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    // Move n2 (2.) after plain into the second run.
+    const n1Size = editor.state.doc.child(0).nodeSize
+    const n2 = editor.state.doc.child(1)
+    const n2Size = n2.nodeSize
+    const n2Pos = n1Size
+    let tr = editor.state.tr.delete(n2Pos, n2Pos + n2Size)
+    // After delete: n1, plain, n3 — insert after plain (before n3).
+    const plainPos = tr.doc.child(0).nodeSize
+    const plainSize = tr.doc.child(1).nodeSize
+    const insertAt = plainPos + plainSize
+    tr = tr.insert(insertAt, n2)
+    const vacatedNear = tr.mapping.map(n2Pos)
+    tr = renumberAfterOrderedBlockMove(tr, insertAt, vacatedNear, 0, '. ')
+    editor.view.dispatch(tr)
+    // n1 alone → 1.; moved+n3 → 1. 2.
+    expect(
+      [0, 1, 2, 3].map((i) => ({
+        t: editor.state.doc.child(i).textContent,
+        b: editor.state.doc.child(i).attrs.bullet
+      }))
+    ).toEqual([
+      { t: 'a', b: '1. ' },
+      { t: 'gap', b: '' },
+      { t: 'b', b: '1. ' },
+      { t: 'c', b: '2. ' }
+    ])
     editor.destroy()
   })
 })

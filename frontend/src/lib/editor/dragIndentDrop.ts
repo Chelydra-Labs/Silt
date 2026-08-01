@@ -3,7 +3,14 @@ import type { EditorView } from '@tiptap/pm/view'
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { dropPoint } from '@tiptap/pm/transform'
-import { applyDepthChangeOnTransaction } from './orderedList'
+import {
+  parseOrderedBullet,
+  formatOrderedBullet,
+  resolveOrderedPuncAtDepth,
+  renumberOrderedRunContaining,
+  renumberVacatedOrderedRun,
+  renumberAfterOrderedBlockMove
+} from './orderedList'
 
 // Notion-style indent-on-drop for the Silt block drag handle (#330, #181
 // follow-up; drag-init moved to SiltInlineDragHandle in #339). Native
@@ -385,10 +392,40 @@ export const BlockIndentOnDrop = Extension.create({
             // does not shift positions ≤ mappedInsert). Verified depth attr
             // exists on this node type at step 2.
             const oldDepth = (draggedNode.attrs.depth as number) || 0
-            if (oldDepth !== newDepth) {
-              // Same path as Tab/Shift-Tab: destination-run punc adoption +
-              // vacated/destination renumber (#837).
-              applyDepthChangeOnTransaction(tr, mappedInsert, newDepth)
+            const ordered =
+              draggedNode.type.name === 'noteBlock'
+                ? parseOrderedBullet(String(draggedNode.attrs.bullet || ''))
+                : null
+            // Source hole after delete+insert (may be far from destination).
+            const vacatedNear = tr.mapping.map(oldPos)
+            if (ordered && oldDepth !== newDepth) {
+              // Depth change: adopt destination punc, renumber dest + source
+              // vacated run near the original hole (not near dest — far moves
+              // leave the old run elsewhere).
+              const destPunc = resolveOrderedPuncAtDepth(
+                tr.doc,
+                mappedInsert,
+                newDepth,
+                ordered.punc
+              )
+              tr.setNodeMarkup(mappedInsert, undefined, {
+                ...draggedNode.attrs,
+                depth: newDepth,
+                bullet: formatOrderedBullet(1, destPunc)
+              })
+              renumberOrderedRunContaining(tr, mappedInsert, newDepth, destPunc)
+              renumberVacatedOrderedRun(tr, vacatedNear, oldDepth, ordered.punc)
+            } else if (ordered) {
+              // Same-depth reorder: fix destination sequence + any split source.
+              renumberAfterOrderedBlockMove(
+                tr,
+                mappedInsert,
+                vacatedNear,
+                oldDepth,
+                ordered.punc
+              )
+            } else if (oldDepth !== newDepth) {
+              tr.setNodeAttribute(mappedInsert, 'depth', newDepth)
             }
 
             // 8. Land a NodeSelection on the moved block so the caret/focus

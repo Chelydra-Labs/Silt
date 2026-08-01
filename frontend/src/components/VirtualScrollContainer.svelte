@@ -277,8 +277,11 @@
       handledTargetKey = key
       return false
     }
+    // Scope to this page's scroll root so a hidden sibling tab with the same
+    // data-id cannot steal the query and no-op scrollIntoView.
+    const root = containerEl
     if (targetBlockId) {
-      const el = document.querySelector(`[data-id="${targetBlockId}"]`)
+      const el = root?.querySelector(`[data-id="${CSS.escape(targetBlockId)}"]`)
       if (el instanceof HTMLElement) {
         el.scrollIntoView({ block: 'center', behavior: 'smooth' })
         handledTargetKey = key
@@ -305,7 +308,7 @@
             b.clean_text?.replace(/^#+\s*/, '') === targetHeading)
       )
       if (header?.id) {
-        const el = document.querySelector(`[data-id="${header.id}"]`)
+        const el = root?.querySelector(`[data-id="${CSS.escape(header.id)}"]`)
         if (el instanceof HTMLElement) {
           el.scrollIntoView({ block: 'center', behavior: 'smooth' })
           handledTargetKey = key

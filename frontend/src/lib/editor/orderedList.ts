@@ -203,6 +203,22 @@ export function renumberVacatedOrderedRun(
 }
 
 /**
+ * After an ordered noteBlock was moved (delete+insert already applied on `tr`),
+ * renumber the destination run and any vacated peers near the source hole.
+ * Used by drag reorder and Alt-Arrow move so same-depth moves stay sequential.
+ */
+export function renumberAfterOrderedBlockMove(
+  tr: Transaction,
+  destPos: number,
+  vacatedNearPos: number,
+  depth: number,
+  punc: string
+): Transaction {
+  tr = renumberOrderedRunContaining(tr, destPos, depth, punc)
+  return renumberVacatedOrderedRun(tr, vacatedNearPos, depth, punc)
+}
+
+/**
  * Find an ordered noteBlock at `depth` with `punc` near `fromPos` (previous
  * then next), skipping deeper nested notes. Used to locate the vacated run
  * after a node left that depth.

@@ -374,6 +374,24 @@ describe('FormatToolbar', () => {
     expect(document.activeElement).toBe(buttons[1])
   })
 
+  it('ArrowDown roves focus inside an open overflow .toolbar-menu', async () => {
+    const editor = makeMockEditor()
+    const { getByLabelText, getByRole } = render(FormatToolbar, {
+      props: { editor: editor as never, ...baseProps }
+    })
+    await fireEvent.click(getByLabelText('More formatting'))
+    await tick()
+    const menu = getByRole('menu', { name: 'More formatting' })
+    // menuitemcheckbox / menuitem / menuitemradio all participate in roving.
+    const items = menu.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')
+    expect(items.length).toBeGreaterThan(1)
+    items[0].focus()
+    const toolbar = getByRole('toolbar')
+    await fireEvent.keyDown(toolbar, { key: 'ArrowDown' })
+    await tick()
+    expect(document.activeElement).toBe(items[1])
+  })
+
   it('does not force horizontal overflow classes on the toolbar root', () => {
     const editor = makeMockEditor()
     const { getByRole } = render(FormatToolbar, {

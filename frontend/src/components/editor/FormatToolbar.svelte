@@ -289,13 +289,15 @@
     if (!toolbarEl) return []
     // Prefer the visible overflow panel under More/Align/Insert.
     const panel =
-      toolbarEl.querySelector<HTMLElement>('.menu-panel:not([hidden])') ||
-      Array.from(toolbarEl.querySelectorAll<HTMLElement>('.menu-panel')).find(
+      toolbarEl.querySelector<HTMLElement>('.toolbar-menu:not([hidden])') ||
+      Array.from(toolbarEl.querySelectorAll<HTMLElement>('.toolbar-menu')).find(
         (el) => el.offsetParent !== null
       )
     if (!panel) return []
     return Array.from(
-      panel.querySelectorAll<HTMLButtonElement>('button.menu-item, button')
+      panel.querySelectorAll<HTMLButtonElement>(
+        '[role^="menuitem"], button.menu-item, button'
+      )
     ).filter((b) => !b.disabled)
   }
 

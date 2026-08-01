@@ -11,6 +11,7 @@ import {
   renumberFollowingOrdered,
   renumberOrderedRunContaining,
   renumberVacatedOrderedRun,
+  renumberAfterOrderedBlockMove,
   applyDepthChangeOnTransaction,
   formatOrderedBullet
 } from './orderedList'
@@ -372,16 +373,35 @@ export function moveActiveBlock(editor: Editor, direction: 1 | -1): boolean {
   if (swap < 0 || swap >= doc.childCount) return false
   const node = doc.child(idx)
   const size = node.nodeSize
+  const ordered =
+    node.type.name === 'noteBlock'
+      ? parseOrderedBullet(String(node.attrs.bullet || ''))
+      : null
+  const nodeDepth = (node.attrs.depth as number) || 0
   let newTr = tr.delete(posIdx, posIdx + size)
+  let insertPos: number
   if (direction === -1) {
     // Up: the previous block's start is unaffected by deleting the block after it.
     let posPrev = 0
     for (let i = 0; i < swap; i++) posPrev += doc.child(i).nodeSize
+    insertPos = posPrev
     newTr = newTr.insert(posPrev, node)
   } else {
     // Down: after the deletion the next block sits at posIdx; insert after it.
     const nextSize = doc.child(swap).nodeSize
+    insertPos = posIdx + nextSize
     newTr = newTr.insert(posIdx + nextSize, node)
+  }
+  if (ordered) {
+    // Same-depth reorder: fix destination sequence + vacated source hole.
+    const vacatedNear = newTr.mapping.map(posIdx)
+    newTr = renumberAfterOrderedBlockMove(
+      newTr,
+      insertPos,
+      vacatedNear,
+      nodeDepth,
+      ordered.punc
+    )
   }
   editor.view.dispatch(newTr)
   focusBlockAt(editor, swap)
@@ -1005,9 +1025,21 @@ export const SiltBlockKeymaps = Extension.create({
           const bullet = (info.node.attrs.bullet as string) || ''
           const quote = (info.node.attrs.quote as string) || ''
           if (bullet) {
-            this.editor.view.dispatch(
-              this.editor.state.tr.setNodeAttribute(info.pos, 'bullet', '')
+            const parsed = parseOrderedBullet(bullet)
+            let tr = this.editor.state.tr.setNodeAttribute(
+              info.pos,
+              'bullet',
+              ''
             )
+            if (parsed) {
+              tr = renumberVacatedOrderedRun(
+                tr,
+                info.pos,
+                info.depth,
+                parsed.punc
+              )
+            }
+            this.editor.view.dispatch(tr)
             return true
           }
           if (quote) {
@@ -1113,11 +1145,17 @@ export const SiltBlockKeymaps = Extension.create({
           info.node.attrs.bullet &&
           info.node.attrs.bullet !== ''
         ) {
-          const tr = this.editor.state.tr.setNodeAttribute(
-            info.pos,
-            'bullet',
-            ''
-          )
+          const bullet = String(info.node.attrs.bullet || '')
+          const parsed = parseOrderedBullet(bullet)
+          let tr = this.editor.state.tr.setNodeAttribute(info.pos, 'bullet', '')
+          if (parsed) {
+            tr = renumberVacatedOrderedRun(
+              tr,
+              info.pos,
+              info.depth,
+              parsed.punc
+            )
+          }
           this.editor.view.dispatch(tr)
           return true
         }

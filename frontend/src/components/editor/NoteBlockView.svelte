@@ -15,9 +15,25 @@
   let quote = $derived(node.attrs.quote || '')
   let depth = $derived(node.attrs.depth || 0)
 
+  // Outline labels depend on sibling run position, not only this node's bullet.
+  // TipTap does not re-prop sibling NodeViews when another block renumbers, so
+  // bump an epoch on every transaction to recompute display labels (#837).
+  let docEpoch = $state(0)
+  $effect(() => {
+    if (!editor || editor.isDestroyed) return
+    const bump = (): void => {
+      docEpoch++
+    }
+    editor.on('transaction', bump)
+    return () => {
+      editor.off('transaction', bump)
+    }
+  })
+
   // Hierarchical outline label for ordered items (1.1, 1.2.3) — display only;
   // on-disk bullet stays GFM-simple (#837).
   let markerLabel = $derived.by(() => {
+    void docEpoch
     const b = bullet || ''
     if (!parseOrderedBullet(b)) return b.trim()
     try {

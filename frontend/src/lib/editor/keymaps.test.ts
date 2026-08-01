@@ -278,6 +278,37 @@ describe('Enter handler — new block bullet after non-note blocks (#258)', () =
     editor.destroy()
   })
 
+  it('Enter clearing mid-run empty ordered renumbers following peers', () => {
+    const editor = makeEditorWithKeymaps()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' }
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    // Focus empty middle block.
+    const mid = editor.state.doc.child(0).nodeSize
+    editor.commands.setTextSelection(mid + 1)
+    pressEnter(editor)
+    expect(
+      [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['1. ', '', '1. '])
+    editor.destroy()
+  })
+
   it('Enter on empty quoted note clears the quote (exits the quote)', () => {
     const editor = makeEditorWithKeymaps()
     const doc: DocJSON = {
@@ -1351,6 +1382,38 @@ describe('moveActiveBlock — drag-handle keyboard complement (#181)', () => {
     editor.commands.setTextSelection(4)
     expect(moveActiveBlock(editor, 1)).toBe(false)
     expect(textsOf(editor)).toEqual(['a', 'b'])
+    editor.destroy()
+  })
+
+  it('renumbers ordered markers after same-depth Alt-Arrow move', () => {
+    const editor = makeEditor()
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n1', depth: 0, bullet: '1. ' },
+          content: [{ type: 'text', text: 'a' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n2', depth: 0, bullet: '2. ' },
+          content: [{ type: 'text', text: 'b' }]
+        },
+        {
+          type: 'noteBlock',
+          attrs: { id: 'n3', depth: 0, bullet: '3. ' },
+          content: [{ type: 'text', text: 'c' }]
+        }
+      ]
+    })
+    // Move first block down past second → b, a, c then renumber 1. 2. 3.
+    editor.commands.setTextSelection(1)
+    expect(moveActiveBlock(editor, 1)).toBe(true)
+    expect(textsOf(editor)).toEqual(['b', 'a', 'c'])
+    expect(
+      [0, 1, 2].map((i) => editor.state.doc.child(i).attrs.bullet)
+    ).toEqual(['1. ', '2. ', '3. '])
     editor.destroy()
   })
 })
