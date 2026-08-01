@@ -8,6 +8,7 @@
   import { requestSpellcheckRecheck } from '../../lib/editor/spellcheck/SpellcheckExtension'
   import { customDictionary } from '../../lib/editor/spellcheck/customDictionary.svelte'
   import { findScrollableAncestor } from '../../lib/editor/popoverPositioning'
+  import { portal } from '../../lib/portal'
 
   let {
     editor,
@@ -134,9 +135,10 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<!-- Full-viewport layer so click/right-click outside the card dismisses
-     (same pattern as ContextMenu). -->
-<div class="spell-menu-layer">
+<!-- Portaled to body so position:fixed uses viewport coords. Note zoom
+     (CSS zoom on .note-page-zoom) creates a containing block that would
+     otherwise scale clientX/Y anchors off-screen. -->
+<div class="spell-menu-layer" use:portal>
   <button
     type="button"
     tabindex="-1"

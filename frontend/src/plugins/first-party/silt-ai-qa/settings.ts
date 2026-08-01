@@ -4,7 +4,6 @@ import type { QASettings } from './types'
 
 export const DEFAULT_SETTINGS: QASettings = {
   notebook_scope: [],
-  auto_reembed: true,
   hybrid_weight: 0.6,
   top_k: 10,
   min_score: 0,
@@ -19,12 +18,12 @@ export function resolveSettings(
 ): QASettings {
   if (!raw) return { ...DEFAULT_SETTINGS }
   const out: QASettings = { ...DEFAULT_SETTINGS }
+  // Legacy auto_reembed is ignored — indexing is always on (#850).
   if (Array.isArray(raw.notebook_scope)) {
     out.notebook_scope = raw.notebook_scope.filter(
       (s): s is string => typeof s === 'string' && s.length > 0
     )
   }
-  if (typeof raw.auto_reembed === 'boolean') out.auto_reembed = raw.auto_reembed
   if (
     typeof raw.hybrid_weight === 'number' &&
     raw.hybrid_weight >= 0 &&

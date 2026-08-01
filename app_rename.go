@@ -884,6 +884,8 @@ func (a *App) DeletePage(notebook, section, page string) error {
 	if runErr != nil {
 		return runErr
 	}
+	// Notify plugins (AI vector index) so orphan embeddings are dropped (#850).
+	a.emitBlockChanged("", safeNotebook, safeSection, safePage, "")
 	return a.reconcileNavigationPage(safeNotebook, safeSection, safePage, safePage, true)
 }
 
@@ -993,6 +995,10 @@ func (a *App) DeleteSection(notebook, section string) error {
 		if runErr != nil {
 			return runErr
 		}
+		// Notify plugins per deleted page so vector rows are dropped (#850).
+		for _, pg := range pages {
+			a.emitBlockChanged("", safeNotebook, pg.section, pg.page, "")
+		}
 		return a.reconcileNavigationSection(safeNotebook, safeSection, "", true)
 	}
 	return fmt.Errorf("DeleteSection: tree lock did not stabilize after concurrent creates")
@@ -1035,6 +1041,7 @@ func (a *App) DeleteNotebook(notebook string) error {
 	// Retry if a .md appears under nbPath after the pre-lock walk (TOCTOU).
 	for attempt := 0; attempt < 8; attempt++ {
 		var needRetry []string
+		var pages []pageInfo
 		runErr = nil
 		// Lock every page under the notebook before trashing the tree (#691).
 		a.coordinator.LockPathsWrite(lockPaths, func() {
@@ -1049,7 +1056,7 @@ func (a *App) DeleteNotebook(notebook string) error {
 			}
 			// Walk the subtree BEFORE trashing to collect file paths and their
 			// (section, page) for per-page index cleanup via the typed API.
-			var pages []pageInfo
+			pages = nil
 			_ = filepath.WalkDir(nbPath, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
 					return nil
@@ -1088,6 +1095,10 @@ func (a *App) DeleteNotebook(notebook string) error {
 		}
 		if runErr != nil {
 			return runErr
+		}
+		// Notify plugins per deleted page so vector rows are dropped (#850).
+		for _, pg := range pages {
+			a.emitBlockChanged("", safeNotebook, pg.section, pg.page, "")
 		}
 		return a.reconcileNavigationNotebook(safeNotebook, "", true)
 	}

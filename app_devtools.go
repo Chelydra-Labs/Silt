@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"silt/backend/config"
 )
 
 // DevTools / editor UI-preference bindings. The atomic flag setters here
@@ -28,6 +30,22 @@ func (a *App) SetShowFormatToolbar(value bool) error {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	a.cfg.UI.ShowFormatToolbar = &value
+	return a.saveConfigTracked(a.cfg)
+}
+
+// SetNoteZoom atomically writes the per-vault note content zoom factor (#849).
+// Same rationale as SetShowFormatToolbar — wheel/GUI must not clobber an
+// unsaved settings draft. Value is clamped to [0.7, 2.0] on 0.1 steps.
+func (a *App) SetNoteZoom(value float64) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	// Clamp via the same normalize helper used on load.
+	a.cfg.UI.NoteZoom = config.NormalizeNoteZoomForSet(value)
 	return a.saveConfigTracked(a.cfg)
 }
 

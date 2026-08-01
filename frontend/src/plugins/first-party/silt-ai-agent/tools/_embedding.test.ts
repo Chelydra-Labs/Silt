@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { PluginContext } from '../../../sdk'
-import { embedOne, hashOf, rankCandidates } from './_embedding'
+import { PLUGIN_FULL_TEXT_SEARCH_SQL } from '../../../ftsQuery'
+import {
+  embedOne,
+  extractKeywords,
+  gatherCandidates,
+  hashOf,
+  rankCandidates
+} from './_embedding'
 
 const candidate = {
   id: 'candidate',
@@ -78,5 +85,50 @@ describe('embedding cache identity', () => {
     const query = await embedOne(ctx, 'source', 'RETRIEVAL_QUERY')
     await rankCandidates(ctx, query, [candidate], { minScore: 0 })
     expect(embed).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('gatherCandidates FTS OR recall', () => {
+  it('issues an OR MATCH via sqliteQuery, not fullTextSearch sanitization', async () => {
+    const source = 'database durability'
+    const expectedMatch = 'database* OR durability*'
+    expect(extractKeywords(source)).toEqual(['database', 'durability'])
+
+    const sqliteQuery = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('ORDER BY line_number')) {
+        return { rows: [], truncated: false }
+      }
+      if (sql === PLUGIN_FULL_TEXT_SEARCH_SQL) {
+        expect(params?.[0]).toBe(expectedMatch)
+        return {
+          rows: [
+            {
+              id: 'fts1',
+              clean_content: 'Postgres durability notes',
+              notebook: 'Work',
+              section: 'Notes',
+              page: 'DB'
+            }
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    const fullTextSearch = vi.fn(async () => ({
+      rows: [],
+      truncated: false
+    }))
+    const ctx = {
+      sqliteQuery,
+      fullTextSearch
+    } as unknown as PluginContext
+
+    const got = await gatherCandidates(ctx, new Set(), source)
+    expect(got.map((c) => c.id)).toContain('fts1')
+    expect(fullTextSearch).not.toHaveBeenCalled()
+    expect(sqliteQuery).toHaveBeenCalledWith(PLUGIN_FULL_TEXT_SEARCH_SQL, [
+      expectedMatch
+    ])
   })
 })

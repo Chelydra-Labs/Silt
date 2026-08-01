@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -165,6 +166,8 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.UI.ShowFormatToolbar == nil {
 		cfg.UI.ShowFormatToolbar = boolPtr(true)
 	}
+	// NoteZoom: nil → 1.0; clamp to [0.7, 2.0] on 0.1 steps (#849).
+	cfg.UI.NoteZoom = normalizeNoteZoom(cfg.UI.NoteZoom)
 	// ShowTabDirtyIndicators: nil → true (#167). Same *bool semantics.
 	if cfg.UI.ShowTabDirtyIndicators == nil {
 		cfg.UI.ShowTabDirtyIndicators = boolPtr(true)
@@ -563,4 +566,29 @@ func stripFirstPartyAIFromDisabled(disabled []string) []string {
 		out = append(out, id)
 	}
 	return out
+}
+
+// normalizeNoteZoom clamps to [0.7, 2.0] on 0.1 steps; nil → 1.0 (#849).
+func normalizeNoteZoom(v *float64) *float64 {
+	if v == nil {
+		d := 1.0
+		return &d
+	}
+	return NormalizeNoteZoomForSet(*v)
+}
+
+// NormalizeNoteZoomForSet clamps a raw zoom value for atomic SetNoteZoom (#849).
+func NormalizeNoteZoomForSet(v float64) *float64 {
+	const minZ, maxZ = 0.7, 2.0
+	// Snap via integer tenths (matches frontend clampNoteZoom).
+	tenths := int(math.Round(v * 10))
+	minT, maxT := int(minZ*10), int(maxZ*10)
+	if tenths < minT {
+		tenths = minT
+	}
+	if tenths > maxT {
+		tenths = maxT
+	}
+	out := float64(tenths) / 10
+	return &out
 }

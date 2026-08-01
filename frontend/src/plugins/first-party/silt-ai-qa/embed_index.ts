@@ -236,6 +236,43 @@ export async function rebuildIndex(
 }
 
 /**
+ * Drop all vector chunks for a page (delete / external remove). Safe when the
+ * page already has no rows.
+ */
+export async function dropPageIndex(
+  ctx: PluginContext,
+  notebook: string,
+  section: string,
+  page: string
+): Promise<void> {
+  await migrateIndex(ctx)
+  const { rows: existing } = await ctx.pluginDb.query(
+    `SELECT chunk_id FROM chunks
+      WHERE notebook = ? AND section = ? AND page = ?`,
+    [notebook, section, page]
+  )
+  if (existing.length === 0) return
+  const ids = existing.map((r) => String(r.chunk_id))
+  const placeholders = ids.map(() => '?').join(',')
+  // Two batched deletes (not 2N per-chunk round-trips) — critical on vault-open
+  // orphan heal when many pages each have multiple chunks.
+  await ctx.pluginDb.exec(
+    `DELETE FROM chunks WHERE chunk_id IN (${placeholders})`,
+    ids
+  )
+  // Always attempt vec0 delete — embedTableReady may be false after restart
+  // before the first KNN query, but the table can still hold orphan rows.
+  try {
+    await ctx.pluginDb.exec(
+      `DELETE FROM embeddings WHERE chunk_id IN (${placeholders})`,
+      ids
+    )
+  } catch {
+    /* table missing or vec0 not ready — chunks already dropped */
+  }
+}
+
+/**
  * Incremental: re-index one page's blocks (hash-diff).
  */
 export async function indexPage(
@@ -413,12 +450,20 @@ async function indexChunks(
   })
 }
 
-/** KNN vector search for a query string. */
+/**
+ * Default minimum cosine similarity for QA vector hits (mirrors
+ * get_related_notes min_score). vec0 distance_metric=cosine stores distance
+ * ≈ 1 − similarity, so we keep rows with distance ≤ 1 − floor.
+ */
+export const DEFAULT_MIN_COSINE_SIMILARITY = 0.5
+
+/** KNN vector search for a query string. Drops hits below the similarity floor. */
 export async function vectorSearch(
   ctx: PluginContext,
   query: string,
   topK: number,
-  queryVec?: number[]
+  queryVec?: number[],
+  minCosineSimilarity: number = DEFAULT_MIN_COSINE_SIMILARITY
 ): Promise<RankedHit[]> {
   await migrateIndex(ctx)
   const dimsStr = await metaGet(ctx, 'dimensions')
@@ -436,6 +481,14 @@ export async function vectorSearch(
     ).embeddings[0]
   if (!vec) return []
 
+  const floor = Math.min(1, Math.max(0, minCosineSimilarity))
+  // Cosine distance: lower is closer. Over-fetch then filter by floor so a
+  // noisy neighborhood does not under-fill top_k. 10× is a cheap heuristic
+  // (vec0 still ranks by distance); not a guarantee of full top_k when the
+  // whole index is below the floor.
+  const fetchK = Math.max(topK * 10, topK)
+  const maxDistance = 1 - floor
+
   const { rows } = await ctx.pluginDb.query(
     `SELECT e.chunk_id AS chunk_id, e.distance AS distance,
             c.block_id AS block_id, c.notebook AS notebook,
@@ -446,18 +499,21 @@ export async function vectorSearch(
       WHERE e.embedding MATCH vec_f32(?)
         AND k = ?
       ORDER BY e.distance`,
-    [vecLiteral(vec), topK]
+    [vecLiteral(vec), fetchK]
   )
 
-  return rows.map((r) => ({
-    blockId: asString(r.block_id ?? r.chunk_id),
-    notebook: asString(r.notebook),
-    section: asString(r.section),
-    page: asString(r.page),
-    lineNumber: Number(r.line_number ?? 0),
-    text: asString(r.text),
-    score: Number(r.distance ?? 0)
-  }))
+  return rows
+    .map((r) => ({
+      blockId: asString(r.block_id ?? r.chunk_id),
+      notebook: asString(r.notebook),
+      section: asString(r.section),
+      page: asString(r.page),
+      lineNumber: Number(r.line_number ?? 0),
+      text: asString(r.text),
+      score: Number(r.distance ?? 0)
+    }))
+    .filter((h) => Number.isFinite(h.score) && h.score <= maxDistance)
+    .slice(0, topK)
 }
 
 export async function getIndexInfo(

@@ -235,13 +235,11 @@ async function renderCalendar(opts: { ctx?: PluginContext } = {}) {
 }
 
 function ymdForCell(dateNum: number): string {
-  // The cursor anchors on the real "today" (July 6 2026 in this env), so the
-  // visible month is July 2026. Cells use local-date arithmetic → Y-M-D where
-  // M and the year come from the env's clock.
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = d.getMonth()
-  const target = new Date(y, m, dateNum)
+  // Cursor is seeded from ctx.today (TODAY), not wall-clock — so the visible
+  // month is always July 2026 in this suite. Do not use new Date() here or
+  // the helper drifts after month-end and CI fails outside July.
+  const [y, m] = TODAY.split('-').map(Number)
+  const target = new Date(y, m - 1, dateNum)
   return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(
     2,
     '0'

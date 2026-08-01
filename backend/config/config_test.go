@@ -1775,3 +1775,25 @@ func TestNormalizeRecentTags_FiltersInvalidEntries(t *testing.T) {
 		t.Errorf("filtered recent_tags:\n got  %v\n want %v", cfg.UI.RecentTags, want)
 	}
 }
+
+func TestNormalize_NoteZoom(t *testing.T) {
+	cfg := normalize(SystemConfig{})
+	if cfg.UI.NoteZoom == nil || *cfg.UI.NoteZoom != 1.0 {
+		t.Fatalf("nil note_zoom → 1.0, got %v", cfg.UI.NoteZoom)
+	}
+	hi := 9.0
+	cfg = normalize(SystemConfig{UI: UIConfig{NoteZoom: &hi}})
+	if cfg.UI.NoteZoom == nil || *cfg.UI.NoteZoom != 2.0 {
+		t.Fatalf("clamp high → 2.0, got %v", cfg.UI.NoteZoom)
+	}
+	lo := 0.1
+	cfg = normalize(SystemConfig{UI: UIConfig{NoteZoom: &lo}})
+	if cfg.UI.NoteZoom == nil || *cfg.UI.NoteZoom != 0.7 {
+		t.Fatalf("clamp low → 0.7, got %v", cfg.UI.NoteZoom)
+	}
+	mid := 1.24
+	cfg = normalize(SystemConfig{UI: UIConfig{NoteZoom: &mid}})
+	if cfg.UI.NoteZoom == nil || *cfg.UI.NoteZoom != 1.2 {
+		t.Fatalf("snap 1.24 → 1.2, got %v", cfg.UI.NoteZoom)
+	}
+}

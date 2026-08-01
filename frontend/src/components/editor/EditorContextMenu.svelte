@@ -23,6 +23,7 @@
     duplicateBlock,
     deleteBlock
   } from '../../lib/editor/clipboard'
+  import { portal } from '../../lib/portal'
 
   /** Resolved menu payload (position + active block) the host passes in. */
   export interface EditorContextMenuPayload {
@@ -201,7 +202,8 @@
   }
 </script>
 
-<div class="fixed inset-0 z-[180]">
+<!-- Portaled to body so position:fixed uses viewport coords under note zoom. -->
+<div class="fixed inset-0 z-[180]" use:portal>
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div

@@ -4,16 +4,19 @@ import { clearTools, dispatchTool, registerTool } from '../tool-registry'
 import { searchNotesToolDef, handleSearchNotes } from './search_notes'
 
 function mockEmbed(queryVec: number[], passageVecs: number[][]) {
-  let queryDone = false
   let passageIdx = 0
   return vi.fn(async (req: { texts: string[]; taskType?: string }) => {
-    if (req.taskType === 'RETRIEVAL_QUERY' && !queryDone) {
-      queryDone = true
-      return { embeddings: [queryVec], model: 'm', dimensions: 2 }
+    // Query embeds may run more than once (hybrid rerank + semantic fallback).
+    if (req.taskType === 'RETRIEVAL_QUERY') {
+      return {
+        embeddings: req.texts.map(() => queryVec),
+        model: 'm',
+        dimensions: 2
+      }
     }
     // RETRIEVAL_DOCUMENT batches.
     const out = req.texts.map(() => {
-      const v = passageVecs[passageIdx] ?? [0, 0]
+      const v = passageVecs[passageIdx] ?? queryVec
       passageIdx++
       return v
     })
@@ -197,6 +200,160 @@ describe('search_notes', () => {
     const ctx = makeCtx({ ftsRows: [], embed: mockEmbed([1, 0], []) })
     const res = await handleSearchNotes(ctx, { query: 'nothing' })
     expect(res.content).toMatch(/no matching notes/i)
+  })
+
+  it('falls back to semantic ranking when FTS is empty', async () => {
+    const auditEvent = vi.fn()
+    const embed = mockEmbed([1, 0], [[0.95, 0.05]])
+    const ctx = {
+      fullTextSearch: vi.fn(async () => ({ rows: [], truncated: false })),
+      ai: { embed, auditEvent },
+      sqliteQuery: vi.fn(async (sql: string) => {
+        if (
+          sql.includes('FROM blocks') &&
+          sql.includes('ORDER BY line_number')
+        ) {
+          return {
+            rows: [
+              {
+                id: 'sem1',
+                clean_content:
+                  'semantically related vault content about databases',
+                notebook: 'Work',
+                section: 'Notes',
+                page: 'DB'
+              }
+            ],
+            truncated: false
+          }
+        }
+        return { rows: [], truncated: false }
+      }),
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async () => ({ rows: [] })),
+        exec: vi.fn(async () => {})
+      }
+    } as unknown as PluginContext
+
+    const res = await handleSearchNotes(ctx, { query: 'database durability' })
+    expect(res.error).toBeUndefined()
+    expect(res.content).toContain('sem1')
+    expect(res.content).toMatch(/semantic fallback/i)
+    expect(auditEvent).toHaveBeenCalled()
+  })
+
+  it('caps semantic-fallback passage text so long notes stay in budget', async () => {
+    const longBody = `${'database durability word '.repeat(80)}END`
+    expect(longBody.length).toBeGreaterThan(500)
+    const embed = mockEmbed([1, 0], [[0.99, 0.01]])
+    const ctx = {
+      fullTextSearch: vi.fn(async () => ({ rows: [], truncated: false })),
+      ai: { embed, auditEvent: vi.fn() },
+      sqliteQuery: vi.fn(async (sql: string) => {
+        if (
+          sql.includes('FROM blocks') &&
+          sql.includes('ORDER BY line_number')
+        ) {
+          return {
+            rows: [
+              {
+                id: 'long1',
+                clean_content: longBody,
+                notebook: 'Work',
+                section: 'Notes',
+                page: 'Long'
+              }
+            ],
+            truncated: false
+          }
+        }
+        return { rows: [], truncated: false }
+      }),
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async () => ({ rows: [] })),
+        exec: vi.fn(async () => {})
+      }
+    } as unknown as PluginContext
+
+    const res = await handleSearchNotes(ctx, { query: 'database durability' })
+    expect(res.error).toBeUndefined()
+    expect(res.content).toContain('long1')
+    // Full body must not appear; per-passage fallback cap is 500 chars.
+    expect(res.content).not.toContain('END')
+    expect(res.content).toMatch(/…/)
+  })
+
+  it('degrades with audit when semantic fallback embed fails', async () => {
+    // embedOne swallows provider errors → empty vector → semanticFallback
+    // throws so the outer path can emit search_degraded (not silent no-results).
+    const auditEvent = vi.fn()
+    const ctx = {
+      fullTextSearch: vi.fn(async () => ({ rows: [], truncated: false })),
+      ai: {
+        embed: vi.fn(async () => {
+          throw new Error('embed provider down')
+        }),
+        auditEvent
+      },
+      sqliteQuery: vi.fn(async () => ({ rows: [], truncated: false })),
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async () => ({ rows: [] })),
+        exec: vi.fn(async () => {})
+      }
+    } as unknown as PluginContext
+
+    const res = await handleSearchNotes(ctx, { query: 'database durability' })
+    expect(res.error).toBeUndefined()
+    expect(res.content).toMatch(/no matching notes/i)
+    expect(res.content).toMatch(/semantic fallback unavailable/i)
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'search_degraded',
+        tool: 'search_notes',
+        side: 'vector',
+        status: 'degraded'
+      })
+    )
+  })
+
+  it('degrades to no-results when semantic fallback throws', async () => {
+    const auditEvent = vi.fn()
+    const ctx = {
+      fullTextSearch: vi.fn(async () => ({ rows: [], truncated: false })),
+      ai: {
+        embed: vi.fn(async () => ({
+          embeddings: [[1, 0]],
+          model: 'm',
+          dimensions: 2
+        })),
+        auditEvent
+      },
+      // gatherCandidates recent-pool query throws → fallback catch path.
+      sqliteQuery: vi.fn(async () => {
+        throw new Error('sqlite unavailable')
+      }),
+      pluginDb: {
+        migrate: vi.fn(async () => {}),
+        query: vi.fn(async () => ({ rows: [] })),
+        exec: vi.fn(async () => {})
+      }
+    } as unknown as PluginContext
+
+    const res = await handleSearchNotes(ctx, { query: 'database durability' })
+    expect(res.error).toBeUndefined()
+    expect(res.content).toMatch(/no matching notes/i)
+    expect(res.content).toMatch(/semantic fallback unavailable/i)
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'search_degraded',
+        tool: 'search_notes',
+        side: 'vector',
+        status: 'degraded'
+      })
+    )
   })
 
   it('dispatches via the tool registry', async () => {

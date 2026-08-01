@@ -14,9 +14,10 @@
 
 import type { PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
+import { buildFTSOrQuery, PLUGIN_FULL_TEXT_SEARCH_SQL } from '../../../ftsQuery'
 
 /** Candidate pool cap. Bounds per-call embedding cost when the cache is cold. */
-export const CANDIDATE_LIMIT = 200
+export const CANDIDATE_LIMIT = 100
 
 /** Cache table for on-demand embeddings (lazy-created on first miss). */
 export const CACHE_DDL =
@@ -202,8 +203,11 @@ export async function gatherCandidates(
   for (const c of recent) byId.set(c.id, c)
 
   const keywords = extractKeywords(sourceText)
-  if (keywords.length > 0) {
-    const ftsRows = await safeFts(ctx, keywords.join(' OR '))
+  // OR-union of sanitized prefixes — must not go through fullTextSearch /
+  // buildFTSQuery, which would treat "OR" as a literal AND-term.
+  const ftsMatch = buildFTSOrQuery(keywords)
+  if (ftsMatch) {
+    const ftsRows = await safeFtsMatch(ctx, ftsMatch)
     for (const r of ftsRows) {
       const id = asString(r.id)
       if (!id || excludeIds.has(id) || byId.has(id)) continue
@@ -312,13 +316,18 @@ async function fetchCandidateRows(
  * FTS recall with a soft failure mode: any MATCH syntax issue or empty index
  * yields an empty list rather than aborting the whole tool. The recent-blocks
  * pool is still useful on its own.
+ *
+ * `match` must already be a safe FTS5 expression (e.g. from buildFTSOrQuery).
+ * Queries the shared PLUGIN_FULL_TEXT_SEARCH_SQL directly so free-text
+ * sanitization in fullTextSearch cannot rewrite intentional OR operators.
  */
-async function safeFts(
+async function safeFtsMatch(
   ctx: PluginContext,
-  query: string
+  match: string
 ): Promise<Record<string, unknown>[]> {
+  if (!match) return []
   try {
-    const res = await ctx.fullTextSearch(query)
+    const res = await ctx.sqliteQuery(PLUGIN_FULL_TEXT_SEARCH_SQL, [match])
     return res.rows
   } catch {
     return []

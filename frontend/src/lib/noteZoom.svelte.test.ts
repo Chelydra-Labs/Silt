@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   clampNoteZoom,
   noteZoom,
@@ -10,7 +10,12 @@ import {
 
 describe('noteZoom (#843)', () => {
   beforeEach(() => {
-    noteZoom.reset()
+    vi.useFakeTimers()
+    // hydrate so schedulePersist is armed without writing (no config mock).
+    noteZoom.hydrateFromConfig(NOTE_ZOOM_DEFAULT)
+  })
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('defaults to 1 (100%)', () => {
@@ -44,5 +49,15 @@ describe('noteZoom (#843)', () => {
     noteZoom.setFactor(1.5)
     noteZoom.reset()
     expect(noteZoom.factor).toBe(NOTE_ZOOM_DEFAULT)
+  })
+
+  it('hydrateFromConfig clears a pending persist timer', () => {
+    noteZoom.setFactor(1.5)
+    // Pending 200ms persist armed — hydrate should cancel it.
+    noteZoom.hydrateFromConfig(1.2)
+    expect(noteZoom.factor).toBe(1.2)
+    // Advancing past debounce must not throw or change factor again.
+    vi.advanceTimersByTime(300)
+    expect(noteZoom.factor).toBe(1.2)
   })
 })

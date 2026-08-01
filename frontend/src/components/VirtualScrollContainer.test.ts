@@ -272,9 +272,8 @@ describe('VirtualScrollContainer editor chrome', () => {
     const cluster = row.querySelector('.editor-float-actions')
     expect(cluster).toBeTruthy()
     expect(cluster).not.toHaveClass('editor-float-actions--pinned')
-    expect(
-      cluster!.querySelector('.editor-float-actions__peek')
-    ).toBeInTheDocument()
+    const handle = screen.getByRole('button', { name: 'Editor options' })
+    expect(handle).toHaveAttribute('aria-expanded', 'false')
     expect(
       cluster!.querySelector('.editor-float-actions__tray')
     ).toBeInTheDocument()
@@ -283,6 +282,41 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(dateBtn).toBeInTheDocument()
     // Calendar is a sibling of the ⋯ cluster — hovering it must not open tray.
     expect(cluster!.contains(dateBtn)).toBe(false)
+  })
+
+  it('toggles editor options open on click and closes on Escape', async () => {
+    render(VirtualScrollContainer, { props: baseProps() })
+    const handle = screen.getByRole('button', { name: 'Editor options' })
+    await fireEvent.click(handle)
+    expect(handle).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      screen
+        .getByTestId('editor-float-actions')
+        .querySelector('.editor-float-actions')
+    ).toHaveClass('editor-float-actions--pinned')
+    // Peek stays interactive while pinned so pointer/touch can close.
+    expect(handle).toBeVisible()
+    await fireEvent.keyDown(
+      screen
+        .getByTestId('editor-float-actions')
+        .querySelector('.editor-float-actions')!,
+      { key: 'Escape' }
+    )
+    expect(handle).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('closes editor options on a second click of the peek handle', async () => {
+    render(VirtualScrollContainer, { props: baseProps() })
+    const handle = screen.getByRole('button', { name: 'Editor options' })
+    await fireEvent.click(handle)
+    expect(handle).toHaveAttribute('aria-expanded', 'true')
+    await fireEvent.click(handle)
+    expect(handle).toHaveAttribute('aria-expanded', 'false')
+    expect(
+      screen
+        .getByTestId('editor-float-actions')
+        .querySelector('.editor-float-actions')
+    ).not.toHaveClass('editor-float-actions--pinned')
   })
 
   it('pins the action tray open in source view', () => {

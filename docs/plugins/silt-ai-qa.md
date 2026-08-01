@@ -59,7 +59,7 @@ standard Search surface remains separate, and **Escape** closes the AI drawer.
 | Empty / weak answers | Rebuild index; raise hybrid weight toward semantic; check notebook scope |
 | Dimension / model change | Rebuild index (vec0 dimensions are fixed per model); model changes auto-trigger rebuild on open |
 | Streaming fails (native Google/Anthropic) | Use OpenAI-compatible or local chat for streaming; non-stream fallback still works |
-| Index slow on large vaults | Narrow notebook scope; leave auto re-embed on for incremental updates |
+| Index slow on large vaults | Narrow notebook scope; indexing is always-on and incremental (page edits, deletes, and external file changes debounce into the vector index — no auto-re-embed toggle) |
 
 ## Related
 

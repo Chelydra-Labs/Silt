@@ -1,6 +1,6 @@
 {
   "schema": "current-approved-v3",
-  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json",
+  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update ./cmd/inventory/current-approved-v3.json",
   "description": "Approved Wails v3 IPC surface snapshot. The CI parity gate fails on any missing/extra/changed *App method signature versus this file. Other sections (events, frontend imports) are tracked for review visibility and refreshed whenever the fixture is regenerated.",
   "inventory": {
     "methods": [
@@ -885,6 +885,10 @@
         "signature": "SetNavigationSectionExpanded(notebook, sectionPath string, expanded bool) error"
       },
       {
+        "name": "SetNoteZoom",
+        "signature": "SetNoteZoom(value float64) error"
+      },
+      {
         "name": "SetOpenDevtoolsOnStartup",
         "signature": "SetOpenDevtoolsOnStartup(value bool) error"
       },
@@ -1114,6 +1118,7 @@
       "frontend/src/lib/editor/useAutosave.ts",
       "frontend/src/lib/editor/useFocusLock.test.ts",
       "frontend/src/lib/editor/useFocusLock.ts",
+      "frontend/src/lib/noteZoom.svelte.ts",
       "frontend/src/lib/pageActions.test.ts",
       "frontend/src/lib/pageActions.ts",
       "frontend/src/lib/sidebar/navOrder.test.ts",

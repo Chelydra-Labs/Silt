@@ -117,10 +117,9 @@
         title="Show backlinks"
         onclick={onOpenBacklinks}
       >
-        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
           >hub</span
         >
-        <span>Backlinks</span>
       </button>
     {/if}
   </nav>
@@ -161,8 +160,9 @@
     flex: 0 0 auto;
   }
   .backlinks {
-    margin-left: auto;
+    margin-left: 0.15rem;
     flex: 0 0 auto;
+    padding: 0.15rem;
   }
   .backlinks.active {
     color: var(--color-accent-primary-start);

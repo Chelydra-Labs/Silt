@@ -86,6 +86,12 @@ type DirectoryWatcher struct {
 	// from the watcher goroutine.
 	reMintWarningHandlerMu sync.RWMutex
 	reMintWarningHandler   func(ReMintWarning)
+
+	// pageChangedHandler notifies the App after an external fsnotify reindex
+	// or clear so plugins (e.g. silt-ai-qa vector index) can stay in sync.
+	// Optional. Called from the watcher goroutine with notebook/section/page.
+	pageChangedHandlerMu sync.RWMutex
+	pageChangedHandler   func(notebook, section, page string)
 }
 
 // ReMintWarning is the payload handed to the reMintWarningHandler when the
@@ -410,6 +416,27 @@ func (dw *DirectoryWatcher) SetLinkedConfigHandler(fn func(source string)) {
 	dw.linkedConfigHandlerMu.Lock()
 	dw.linkedConfigHandler = fn
 	dw.linkedConfigHandlerMu.Unlock()
+}
+
+// SetPageChangedHandler registers a callback invoked after the watcher
+// reindexes or clears a note page from an external filesystem event. The App
+// uses this to emit block:changed so plugin indexes stay consistent (#850).
+func (dw *DirectoryWatcher) SetPageChangedHandler(fn func(notebook, section, page string)) {
+	dw.pageChangedHandlerMu.Lock()
+	dw.pageChangedHandler = fn
+	dw.pageChangedHandlerMu.Unlock()
+}
+
+func (dw *DirectoryWatcher) notifyPageChanged(notebook, section, page string) {
+	if notebook == "" || page == "" {
+		return
+	}
+	dw.pageChangedHandlerMu.RLock()
+	handler := dw.pageChangedHandler
+	dw.pageChangedHandlerMu.RUnlock()
+	if handler != nil {
+		handler(notebook, section, page)
+	}
 }
 
 // SetReMintWarningHandler registers a callback invoked when the watcher's
@@ -744,11 +771,13 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 			}
 		}
 
+		indexedOK := false
 		dw.coordinator.WithDBWrite(func() {
 			if err := dw.dm.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...); err != nil {
 				log.Printf("reindexFile: IndexFileBlocks failed for %s: %v", path, err)
 				return
 			}
+			indexedOK = true
 			// Keep the files table warm during the session: a successful
 			// reindex records the file's current mtime/size so the next
 			// *startup* scan can skip it (#29).
@@ -758,6 +787,9 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 				}
 			}
 		})
+		if indexedOK {
+			dw.notifyPageChanged(meta.Notebook, meta.Section, meta.Page)
+		}
 	})
 }
 
@@ -778,5 +810,6 @@ func (dw *DirectoryWatcher) clearIndexForFile(path string) []string {
 		// new occupant of that path.
 		_ = dw.dm.ForgetFile(path)
 	})
+	dw.notifyPageChanged(notebook, section, page)
 	return ids
 }

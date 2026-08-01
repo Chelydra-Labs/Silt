@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -1087,6 +1088,63 @@ func TestDeletePage_MovesToTrash(t *testing.T) {
 	}
 	if len(entries) == 0 {
 		t.Fatalf("trash should contain at least one timestamped folder")
+	}
+}
+
+// TestDeletePage_EmitsBlockChanged ensures plugin indexes (AI vectors) learn
+// about UI deletes via block:changed (#850).
+func TestDeletePage_EmitsBlockChanged(t *testing.T) {
+	app := newTestApp(t)
+	if _, err := app.CreatePage("TestNB", "", "Doomed", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage: %v", err)
+	}
+	var got []parser.BlockChangedEvent
+	app.eventEmit = func(name string, data ...any) {
+		if name != string(EventBlockChanged) || len(data) == 0 {
+			return
+		}
+		if ev, ok := data[0].(parser.BlockChangedEvent); ok {
+			got = append(got, ev)
+		}
+	}
+	if err := app.DeletePage("TestNB", "", "Doomed"); err != nil {
+		t.Fatalf("DeletePage: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 block:changed, got %d", len(got))
+	}
+	if got[0].Notebook != "TestNB" || got[0].Page != "Doomed" {
+		t.Fatalf("unexpected event: %+v", got[0])
+	}
+}
+
+// TestDeleteSection_EmitsBlockChangedPerPage covers multi-page delete emit (#850).
+func TestDeleteSection_EmitsBlockChangedPerPage(t *testing.T) {
+	app := newTestApp(t)
+	if _, err := app.CreatePage("TestNB", "DoomSec", "P1", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage P1: %v", err)
+	}
+	if _, err := app.CreatePage("TestNB", "DoomSec", "P2", "2026-01-01"); err != nil {
+		t.Fatalf("CreatePage P2: %v", err)
+	}
+	var pages []string
+	app.eventEmit = func(name string, data ...any) {
+		if name != string(EventBlockChanged) || len(data) == 0 {
+			return
+		}
+		if ev, ok := data[0].(parser.BlockChangedEvent); ok {
+			pages = append(pages, ev.Page)
+		}
+	}
+	if err := app.DeleteSection("TestNB", "DoomSec"); err != nil {
+		t.Fatalf("DeleteSection: %v", err)
+	}
+	if len(pages) != 2 {
+		t.Fatalf("expected 2 page emits, got %v", pages)
+	}
+	sort.Strings(pages)
+	if pages[0] != "P1" || pages[1] != "P2" {
+		t.Fatalf("unexpected pages: %v", pages)
 	}
 }
 

@@ -15,12 +15,12 @@ describe('resolveSettings', () => {
       hybrid_weight: 0.8,
       top_k: 12,
       notebook_scope: ['Work', ''],
-      auto_reembed: false
+      auto_reembed: false // legacy key ignored (#850)
     })
     expect(s.hybrid_weight).toBe(0.8)
     expect(s.top_k).toBe(12)
     expect(s.notebook_scope).toEqual(['Work'])
-    expect(s.auto_reembed).toBe(false)
+    expect(s).not.toHaveProperty('auto_reembed')
   })
 
   it('ignores out-of-range hybrid weight', () => {
