@@ -166,7 +166,7 @@ describe('SelectionBubble', () => {
     ).toBe(true)
   })
 
-  it('positions via flipOrClamp so the bubble stays in viewport', async () => {
+  it('positions via flipOrClamp above the selection so text stays visible', async () => {
     const { container } = render(SelectionBubble, {
       props: {
         editor: null,
@@ -177,6 +177,8 @@ describe('SelectionBubble', () => {
     })
     await tick()
     expect(mocks.flipOrClamp).toHaveBeenCalled()
+    const call = mocks.flipOrClamp.mock.calls.at(-1)
+    expect(call?.[3]).toEqual({ placement: 'above' })
     const bubble = container.querySelector('.selection-bubble') as HTMLElement
     expect(bubble.style.left).toBe('80px')
     expect(bubble.style.top).toBe('60px')

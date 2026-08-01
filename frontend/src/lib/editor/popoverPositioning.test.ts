@@ -110,8 +110,32 @@ describe('flipOrClamp', () => {
       { width: 256, height: 300 },
       { width: 1000, height: 800 }
     )
-    expect(result.top).toBe(120) // anchor.bottom
+    // below placement: anchor.bottom + POPOVER_MARGIN
+    expect(result.top).toBe(120 + POPOVER_MARGIN)
     expect(result.left).toBe(200)
+  })
+
+  it('prefers above the anchor when placement is above', () => {
+    const result = flipOrClamp(
+      { top: 200, bottom: 220, left: 200 },
+      { width: 256, height: 40 },
+      { width: 1000, height: 800 },
+      { placement: 'above' }
+    )
+    // 200 - 40 - 8 = 152
+    expect(result.top).toBe(200 - 40 - POPOVER_MARGIN)
+    expect(result.left).toBe(200)
+  })
+
+  it('flips below when placement is above but there is no room above', () => {
+    const result = flipOrClamp(
+      { top: 20, bottom: 40, left: 200 },
+      { width: 256, height: 40 },
+      { width: 1000, height: 800 },
+      { placement: 'above' }
+    )
+    // opensAbove = 20 - 40 - 8 < margin → flip below
+    expect(result.top).toBe(40 + POPOVER_MARGIN)
   })
 
   it('flips above the anchor when there is no room below', () => {

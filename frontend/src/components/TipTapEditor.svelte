@@ -171,6 +171,8 @@
 
   // Selection bubble state (#168): tracks whether the selection is non-
   // collapsed and the screen coords for positioning the floating bubble.
+  // Coords are withheld while the pointer is down so the bubble does not
+  // chase a drag-select; keyboard (Shift+Arrow) still shows immediately.
   let selectionEmpty = $state(true)
   let isLastBlock = $state(false)
   let cursorInTable = $state(false)
@@ -179,6 +181,55 @@
     top: number
     bottom: number
   } | null>(null)
+  let selectionPointerDown = false
+  let pendingSelectionCoords: {
+    left: number
+    top: number
+    bottom: number
+  } | null = null
+
+  function readSelectionCoords(editor: {
+    isDestroyed: boolean
+    state: { selection: { empty: boolean; from: number; to: number } }
+    view: {
+      coordsAtPos: (pos: number) => {
+        left: number
+        top: number
+        bottom: number
+      }
+    }
+  }): {
+    left: number
+    top: number
+    bottom: number
+  } | null {
+    const { selection } = editor.state
+    if (selection.empty || editor.isDestroyed) return null
+    try {
+      const start = editor.view.coordsAtPos(selection.from)
+      const end = editor.view.coordsAtPos(selection.to)
+      return {
+        left: (start.left + end.left) / 2,
+        top: Math.min(start.top, end.top),
+        bottom: Math.max(start.bottom, end.bottom)
+      }
+    } catch {
+      return null
+    }
+  }
+
+  function publishSelectionCoords(
+    coords: { left: number; top: number; bottom: number } | null
+  ): void {
+    if (selectionPointerDown) {
+      // Hold coords until pointer-up so the bubble does not flicker mid-drag.
+      pendingSelectionCoords = coords
+      selectionCoords = null
+      return
+    }
+    pendingSelectionCoords = null
+    selectionCoords = coords
+  }
 
   // Track OS dark/light preference reactively so isDark updates when the
   // OS theme changes under mode === 'system' (#168 color palette).
@@ -413,21 +464,7 @@
       // table cell (the selection resolves to a tableCell/tableHeader node).
       cursorInTable =
         editor.isActive('tableCell') || editor.isActive('tableHeader')
-      if (!selection.empty && !editor.isDestroyed) {
-        try {
-          const start = editor.view.coordsAtPos(selection.from)
-          const end = editor.view.coordsAtPos(selection.to)
-          selectionCoords = {
-            left: (start.left + end.left) / 2,
-            top: Math.min(start.top, end.top),
-            bottom: Math.max(start.bottom, end.bottom)
-          }
-        } catch {
-          selectionCoords = null
-        }
-      } else {
-        selectionCoords = null
-      }
+      publishSelectionCoords(readSelectionCoords(editor))
       // Emit selection:changed on the plugin event bus (#106/#110).
       const selFrom = selection.$from
       // Attempt to read the block id at the selection anchor.
@@ -575,6 +612,7 @@
   // /resize handlers below delegate to it.
   function onEditorScroll(): void {
     selectionCoords = null
+    pendingSelectionCoords = null
     // Dismiss the slash palette on scroll (parity with the selection bubble)
     // so it never floats at stale coordinates (#590).
     if (slash.showSlashMenu) slash.dismiss()
@@ -600,12 +638,37 @@
     )
       return
     selectionCoords = null
+    pendingSelectionCoords = null
     slash.dismiss()
+  }
+
+  // Pointer-up gate for the selection bubble: hide while drag-selecting,
+  // publish coords on release. Keyboard selection is unaffected.
+  function onSelectionPointerDown(e: PointerEvent): void {
+    if (e.button !== 0 && e.pointerType === 'mouse') return
+    const target = e.target as HTMLElement | null
+    if (!target?.closest?.('.ProseMirror')) return
+    selectionPointerDown = true
+  }
+  function onSelectionPointerUp(): void {
+    if (!selectionPointerDown) return
+    selectionPointerDown = false
+    const ed = editorInstance
+    if (!ed || ed.isDestroyed) {
+      pendingSelectionCoords = null
+      return
+    }
+    // Prefer a fresh read so coords match the final selection range.
+    const fresh = readSelectionCoords(ed)
+    publishSelectionCoords(fresh ?? pendingSelectionCoords)
   }
 
   window.addEventListener('scroll', onEditorScroll, true)
   window.addEventListener('resize', onWindowResize)
   document.addEventListener('click', onDocumentClick)
+  document.addEventListener('pointerdown', onSelectionPointerDown, true)
+  document.addEventListener('pointerup', onSelectionPointerUp, true)
+  document.addEventListener('pointercancel', onSelectionPointerUp, true)
 
   onDestroy(() => {
     stopHeartbeat()
@@ -627,6 +690,9 @@
     window.removeEventListener('scroll', onEditorScroll, true)
     window.removeEventListener('resize', onWindowResize)
     document.removeEventListener('click', onDocumentClick)
+    document.removeEventListener('pointerdown', onSelectionPointerDown, true)
+    document.removeEventListener('pointerup', onSelectionPointerUp, true)
+    document.removeEventListener('pointercancel', onSelectionPointerUp, true)
   })
 
   // --- External content sync ------------------------------------------------
