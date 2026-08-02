@@ -7,9 +7,10 @@
   // editor is flex-1 so it shrinks and the reading context is preserved.
   import { tick } from 'svelte'
   import { fly } from 'svelte/transition'
-  import { SetPageType } from '../../bindings/silt/app.js'
+  import { ClearPageProperty, SetPageType } from '../../bindings/silt/app.js'
   import { coerceIPCError } from '../lib/ipcError'
   import PropertyField from './PropertyField.svelte'
+  import TurnIntoDialog from './TurnIntoDialog.svelte'
   import type {
     PageLocator,
     PagePropertyValue,
@@ -72,8 +73,13 @@
     onChanged()
   }
 
-  async function handleChooseType(name: string): Promise<void> {
-    menuOpen = false
+  // Turn-into orchestration. A TYPED page switching to a different type (or
+  // being cleared) previews the conversion via TurnIntoDialog so the user can
+  // see how existing values fare + opt in to clearing orphans. Untyped → typed
+  // has nothing to map, so it assigns directly.
+  let turnInto = $state<{ newId: string; newLabel: string } | null>(null)
+
+  async function commitType(name: string): Promise<void> {
     try {
       const result = (await SetPageType(
         locator.notebook,
@@ -90,6 +96,54 @@
       liveError = message
       onError(message)
     }
+  }
+
+  function handleChooseType(name: string): void {
+    menuOpen = false
+    // Same-type re-pick is a no-op.
+    if (info.isSet && name === info.type.id) return
+    if (!info.isSet) {
+      void commitType(name)
+      return
+    }
+    const newType = types.find((t) => t.id === name)
+    turnInto = {
+      newId: name,
+      newLabel: name === '' ? 'No type' : newType?.name || name
+    }
+  }
+
+  async function confirmTurnInto(
+    orphanNames: string[],
+    clearOrphaned: boolean
+  ): Promise<void> {
+    const newId = turnInto?.newId ?? ''
+    turnInto = null
+    try {
+      // Clear orphans BEFORE the switch: ClearPageProperty resolves the CURRENT
+      // (old) schema, so it would reject an orphaned name once the new type
+      // is in place. Clearing first removes the keys while they're still known.
+      if (clearOrphaned) {
+        for (const p of orphanNames) {
+          await ClearPageProperty(
+            locator.notebook,
+            locator.section,
+            locator.page,
+            p
+          )
+        }
+      }
+      await commitType(newId)
+    } catch (e) {
+      const message = coerceIPCError(e).message
+      liveError = message
+      onError(message)
+      onChanged()
+    }
+  }
+
+  function cancelTurnInto(): void {
+    turnInto = null
   }
 
   // Focus management (non-blocking): move focus into the panel on open, restore
@@ -290,6 +344,7 @@
             {locator}
             min={schema?.min ?? null}
             max={schema?.max ?? null}
+            target={schema?.target ?? ''}
             mismatched={mismatched.includes(v.name)}
             onError={handleFieldError}
             onChanged={handleChanged}
@@ -298,6 +353,18 @@
       {/if}
     </div>
   </div>
+{/if}
+
+{#if turnInto}
+  <TurnIntoDialog
+    open={true}
+    {locator}
+    oldTypeId={info.type.id}
+    newTypeId={turnInto.newId}
+    newTypeLabel={turnInto.newLabel}
+    onConfirm={confirmTurnInto}
+    onCancel={cancelTurnInto}
+  />
 {/if}
 
 <style>

@@ -8,6 +8,7 @@
   import { untrack } from 'svelte'
   import { SetPageProperty } from '../../bindings/silt/app.js'
   import { optimisticField } from './optimisticField.svelte'
+  import PageLinkField from './PageLinkField.svelte'
   import type { PageLocator, PagePropertyValue } from './types'
 
   interface Props {
@@ -15,6 +16,8 @@
     locator: PageLocator
     min?: number | null
     max?: number | null
+    /** Declared relation target type (page/pages only). */
+    target?: string
     mismatched?: boolean
     onError: (message: string) => void
     onChanged: () => void
@@ -25,6 +28,7 @@
     locator,
     min = null,
     max = null,
+    target = '',
     mismatched = false,
     onError,
     onChanged
@@ -108,6 +112,17 @@
   )
   let checked = $derived(wire === true)
   let multiValue = $derived(Array.isArray(wire) ? wire : [])
+  // Relation fields take only string (page) or string[] (pages); narrow the
+  // optimistic union so PageLinkField gets a well-typed value.
+  let relationWire = $derived(
+    value.type === 'pages'
+      ? Array.isArray(wire)
+        ? wire
+        : []
+      : typeof wire === 'string'
+        ? wire
+        : ''
+  )
 
   let fieldId = $derived(`prop-${value.name}`)
   let hasOptions = $derived(!!value.options && value.options.length > 0)
@@ -156,17 +171,18 @@
   {/if}
 
   <div class="control">
-    {#if value.type === 'text' || value.type === 'page'}
-      <input
-        id={fieldId}
-        type="text"
-        class="input"
-        value={textValue}
-        onchange={commitText}
+    {#if value.type === 'page' || value.type === 'pages'}
+      <PageLinkField
+        value={relationWire}
+        multi={value.type === 'pages'}
+        {target}
+        label={value.label || value.name}
+        {fieldId}
         disabled={isPending}
-        aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
+        {mismatched}
+        onCommit={(next) => void field.commit(next)}
       />
-    {:else if value.type === 'pages'}
+    {:else if value.type === 'text'}
       <input
         id={fieldId}
         type="text"
@@ -174,7 +190,6 @@
         value={textValue}
         onchange={commitText}
         disabled={isPending}
-        placeholder="page path, another page"
         aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
       />
     {:else if value.type === 'number'}
