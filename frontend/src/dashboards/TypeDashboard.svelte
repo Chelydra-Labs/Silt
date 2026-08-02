@@ -12,6 +12,7 @@
   import type { TypeDef } from '../properties/types'
   import TypeDashboardFilters from './TypeDashboardFilters.svelte'
   import TypeDashboardTable from './TypeDashboardTable.svelte'
+  import TypeDashboardBoard from './TypeDashboardBoard.svelte'
   import {
     PAGE_COLUMN_KEY,
     binByProperty,
@@ -53,6 +54,9 @@
   let filter = $state<FilterState>({})
   let sort = $state<SortState>({ property: PAGE_COLUMN_KEY, desc: false })
   let groupBy = $state('')
+  // View mode is local-only (not persisted) — the dashboard's primary mode
+  // is the dense table; board is a glance surface for grouped browsing.
+  let viewMode = $state<'list' | 'board'>('list')
 
   // Collapsed group keys survive a re-bin (SvelteSet so toggles are reactive).
   let collapsed = new SvelteSet<string>()
@@ -156,6 +160,51 @@
   })
 
   let resultCount = $derived(rows.length)
+
+  // Distinguishes "no pages of this type exist" from "filters excluded all
+  // pages" so the empty state can offer a Clear-filters affordance in the
+  // latter case. A present key is itself the filter — the IPC treats
+  // filter[name]='' as "select rows where the property is unset", so the
+  // empty string is a real filter value, not the absence of one.
+  let hasFilters = $derived(Object.keys(filter).length > 0)
+  let activeFilterCount = $derived(Object.keys(filter).length)
+
+  function clearFilters(): void {
+    filter = {}
+  }
+
+  // View-mode radiogroup: ArrowLeft/Right move between options (wrapping),
+  // Home/End jump to boundaries. Roving tabindex — the active option is the
+  // tab stop, others are removed from the tab order.
+  const VIEW_MODES = [
+    { value: 'list', label: 'List', icon: 'table_rows' },
+    { value: 'board', label: 'Board', icon: 'view_kanban' }
+  ] as const
+
+  function chooseMode(mode: 'list' | 'board'): void {
+    viewMode = mode
+  }
+
+  function onModeKeydown(e: KeyboardEvent): void {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return
+    e.preventDefault()
+    // currentTarget resets to null once the handler returns, so capture the
+    // radiogroup element synchronously before scheduling the focus move.
+    const group = e.currentTarget as HTMLElement
+    const order = VIEW_MODES.map((m) => m.value)
+    let next: 'list' | 'board'
+    if (e.key === 'Home') next = order[0]
+    else if (e.key === 'End') next = order[order.length - 1]
+    else {
+      const dir = e.key === 'ArrowLeft' ? -1 : 1
+      const idx = order.indexOf(viewMode)
+      next = order[(idx + dir + order.length) % order.length]
+    }
+    chooseMode(next)
+    queueMicrotask(() => {
+      group.querySelector<HTMLElement>(`[data-mode="${next}"]`)?.focus()
+    })
+  }
 </script>
 
 <section class="dashboard" aria-labelledby="dashboard-title">
@@ -218,25 +267,87 @@
     {:else if loading}
       <div class="state" role="status" aria-live="polite">Loading…</div>
     {:else if rows.length === 0}
-      <div class="state empty">
-        <span class="material-symbols-outlined text-icon-2xl" aria-hidden="true"
-          >inbox</span
-        >
-        <h2 class="state-title">No pages of this type</h2>
-        <p class="state-body">Assign this type to a page to see it here.</p>
-      </div>
+      {#if hasFilters}
+        <div class="state empty">
+          <span
+            class="material-symbols-outlined text-icon-2xl"
+            aria-hidden="true">filter_alt_off</span
+          >
+          <h2 class="state-title">No matches</h2>
+          <p class="state-body">
+            No pages match your
+            {activeFilterCount === 1 ? 'filter' : 'filters'}. Try adjusting or
+            clearing them.
+          </p>
+          <button type="button" class="clear-btn" onclick={clearFilters}>
+            <span
+              class="material-symbols-outlined text-icon-sm"
+              aria-hidden="true">close</span
+            >
+            Clear {activeFilterCount === 1 ? 'filter' : 'filters'}
+          </button>
+        </div>
+      {:else}
+        <div class="state empty">
+          <span
+            class="material-symbols-outlined text-icon-2xl"
+            aria-hidden="true">inbox</span
+          >
+          <h2 class="state-title">No pages of this type</h2>
+          <p class="state-body">Assign this type to a page to see it here.</p>
+        </div>
+      {/if}
     {:else}
-      <TypeDashboardTable
-        {columns}
-        {sections}
-        grouped={groupBy !== ''}
-        {sort}
-        heroField={currentType?.heroField ?? ''}
-        {collapsed}
-        {onSort}
-        onToggleGroup={toggleGroup}
-        {onOpenPage}
-      />
+      <div class="view-shell">
+        <div
+          class="view-toggle"
+          role="radiogroup"
+          aria-label="Dashboard view mode"
+          tabindex="-1"
+          onkeydown={onModeKeydown}
+        >
+          {#each VIEW_MODES as m (m.value)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={viewMode === m.value}
+              aria-label="{m.label} view"
+              tabindex={viewMode === m.value ? 0 : -1}
+              data-mode={m.value}
+              class="view-toggle-btn"
+              class:active={viewMode === m.value}
+              onclick={() => chooseMode(m.value)}
+            >
+              <span
+                class="material-symbols-outlined text-icon-sm"
+                aria-hidden="true">{m.icon}</span
+              >
+              <span aria-hidden="true">{m.label}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+      {#if viewMode === 'board'}
+        <TypeDashboardBoard
+          {columns}
+          {sections}
+          grouped={groupBy !== ''}
+          heroField={currentType?.heroField ?? ''}
+          {onOpenPage}
+        />
+      {:else}
+        <TypeDashboardTable
+          {columns}
+          {sections}
+          grouped={groupBy !== ''}
+          {sort}
+          heroField={currentType?.heroField ?? ''}
+          {collapsed}
+          {onSort}
+          onToggleGroup={toggleGroup}
+          {onOpenPage}
+        />
+      {/if}
     {/if}
   {/if}
 </section>
@@ -324,6 +435,75 @@
     font-size: var(--text-type-sm);
     margin: 0;
     max-width: 28rem;
+  }
+  .clear-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-top: 0.6rem;
+    padding: 0.3rem 0.65rem;
+    border: 1px solid var(--color-accent-primary-start);
+    background: var(--color-accent-primary-glow);
+    color: var(--color-accent-primary-start);
+    border-radius: 0.375rem;
+    font-size: var(--text-type-sm);
+    font-family: var(--font-body, sans-serif);
+    cursor: pointer;
+  }
+  .clear-btn:hover {
+    background: var(--color-hover);
+  }
+  .clear-btn:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .view-shell {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0.4rem 1rem;
+    border-bottom: 1px solid var(--color-surface-panel-border);
+  }
+  .view-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem;
+    background: var(--color-surface-panel);
+    border: 1px solid var(--color-surface-panel-border);
+    border-radius: 0.5rem;
+  }
+  .view-toggle:focus-within {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .view-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-family: var(--font-body, sans-serif);
+    font-size: var(--text-type-sm);
+    padding: 0.2rem 0.55rem;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    transition:
+      background 120ms var(--transition-standard),
+      color 120ms var(--transition-standard);
+  }
+  .view-toggle-btn:hover {
+    background: var(--color-hover);
+    color: var(--color-text-primary);
+  }
+  .view-toggle-btn.active {
+    background: var(--color-accent-primary-start);
+    color: var(--color-text-on-accent);
+  }
+  .view-toggle-btn:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
   }
   code {
     font-family: var(--font-mono, monospace);

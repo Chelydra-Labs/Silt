@@ -132,3 +132,44 @@ func (a *App) ReloadTypes() error {
 	a.emit(EventTypesChanged, struct{}{})
 	return nil
 }
+
+// PluginListTypes is the read-only SDK wrapper for ListTypes. Type schemas are
+// treated like template definitions — visible to every loaded plugin without a
+// capability grant (a plugin building a typed view needs the schema to
+// interpret frontmatter it already sees via read-files). Session-token verified
+// so an SDK-less caller cannot probe the type roster by impersonating another
+// plugin.
+func (a *App) PluginListTypes(pluginID, sessionToken string) (*types.ListTypesResult, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return nil, err
+	}
+	return a.ListTypes()
+}
+
+// PluginGetType is the read-only SDK wrapper for GetType. Same grant posture as
+// PluginListTypes (schema read is non-privileged). Session-token verified.
+func (a *App) PluginGetType(pluginID, sessionToken, id string) (types.TypeDef, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return types.TypeDef{}, err
+	}
+	return a.GetType(id)
+}
+
+// PluginSaveType is the SDK wrapper for SaveType, gated under CapContentMutate
+// because editing a type schema rewrites a vault asset (a .system/types/*.yaml
+// file) and reshapes every typed page's projection. Mirrors the existing
+// wrapPluginMutate gating the task setters use. Session-token verified.
+func (a *App) PluginSaveType(pluginID, sessionToken string, td types.TypeDef) (bool, error) {
+	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
+		return a.SaveType(td)
+	})
+}
+
+// PluginDeleteType is the SDK wrapper for DeleteType, gated under
+// CapContentMutate (same rationale as PluginSaveType — removing a vault asset).
+// Session-token verified.
+func (a *App) PluginDeleteType(pluginID, sessionToken, id string) (bool, error) {
+	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
+		return a.DeleteType(id)
+	})
+}

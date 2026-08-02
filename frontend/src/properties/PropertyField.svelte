@@ -6,7 +6,11 @@
   // derived string/array off the optimistic field, so a rejected edit snaps
   // back to the last accepted value.
   import { untrack } from 'svelte'
-  import { SetPageProperty } from '../../bindings/silt/app.js'
+  import {
+    ClearPageProperty,
+    SetPageProperty
+  } from '../../bindings/silt/app.js'
+  import { coerceIPCError } from '../lib/ipcError'
   import { optimisticField } from './optimisticField.svelte'
   import PageLinkField from './PageLinkField.svelte'
   import type { PageLocator, PagePropertyValue } from './types'
@@ -135,7 +139,12 @@
   function commitNumber(e: Event): void {
     const target = e.currentTarget as HTMLInputElement
     const raw = target.value
-    if (raw === '') return
+    // An empty number input clears the frontmatter key (ClearPageProperty)
+    // rather than writing an empty string, so the property becomes unset.
+    if (raw === '') {
+      void clearField()
+      return
+    }
     const n = Number(raw)
     void field.commit(Number.isFinite(n) ? n : raw)
   }
@@ -155,14 +164,54 @@
     void field.commit(Array.from(set))
   }
 
-  let isPending = $derived(field.pending)
+  let clearPending = $state(false)
+  // Optimistic clear: snapshot → set the field to its empty form → await
+  // ClearPageProperty (which removes the frontmatter key) → revert + report on
+  // failure. Mirrors the optimisticField commit skeleton but with the clear IPC.
+  async function clearField(): Promise<void> {
+    if (clearPending) return
+    const prev = wire
+    field.value = toWire(undefined)
+    clearPending = true
+    onError('')
+    try {
+      await ClearPageProperty(
+        locator.notebook,
+        locator.section,
+        locator.page,
+        value.name
+      )
+      onChanged()
+    } catch (e) {
+      field.value = prev
+      onError(coerceIPCError(e).message)
+    } finally {
+      clearPending = false
+    }
+  }
+
+  let isPending = $derived(field.pending || clearPending)
+  let canClear = $derived(value.isSet && !isPending)
 </script>
 
 <div class="field" class:mismatched>
-  <label for={fieldId} class="label">
-    {value.label || value.name}
-    {#if value.required}<span class="req" aria-hidden="true">*</span>{/if}
-  </label>
+  <div class="label-row">
+    <label for={fieldId} class="label">
+      {value.label || value.name}
+      {#if value.required}<span class="req" aria-hidden="true">*</span>{/if}
+    </label>
+    {#if canClear}
+      <button
+        type="button"
+        class="clear-btn"
+        aria-label="Clear {value.label || value.name}"
+        title="Clear"
+        onclick={clearField}
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">close</span>
+      </button>
+    {/if}
+  </div>
 
   {#if mismatched}
     <p class="warn" id={`${fieldId}-warn`}>
@@ -299,6 +348,44 @@
     flex-direction: column;
     gap: 0.2rem;
     min-width: 0;
+  }
+  .label-row {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  .label-row .label {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .clear-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-muted);
+    padding: 0.05rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    opacity: 0.4;
+    transition:
+      opacity 120ms var(--transition-standard),
+      color 120ms var(--transition-standard);
+  }
+  .clear-btn .material-symbols-outlined {
+    font-size: var(--text-icon-sm);
+  }
+  .field:hover .clear-btn,
+  .clear-btn:focus-visible {
+    opacity: 1;
+  }
+  .clear-btn:hover {
+    color: var(--color-status-danger);
+  }
+  .clear-btn:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
   }
   .label {
     font-size: var(--text-type-xs);

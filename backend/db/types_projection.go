@@ -124,6 +124,47 @@ func (dm *DatabaseManager) ClearSourceProjection(source string) error {
 	return nil
 }
 
+// TypedPageLocator is one (source, notebook, section, page, type_name) tuple
+// from page_types — enough to re-locate a page's file and clear its projection
+// before re-projecting it. Returned by GetAllTypedPageLocators so the App layer
+// can re-project every typed page when the type schema changes.
+type TypedPageLocator struct {
+	Source   string `json:"source"`
+	Notebook string `json:"notebook"`
+	Section  string `json:"section"`
+	Page     string `json:"page"`
+	TypeName string `json:"type_name"`
+}
+
+// GetAllTypedPageLocators returns every distinct (source, notebook, section,
+// page, type_name) tuple currently in page_types. Used by the types watcher's
+// re-projection pass so a schema edit reaches pages that have not been touched
+// since (the projection would otherwise drift until each page is independently
+// re-indexed). Read-only; does not surface property values.
+func (dm *DatabaseManager) GetAllTypedPageLocators() ([]TypedPageLocator, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
+	rows, err := db.Query(
+		"SELECT source, notebook, section, page, type_name FROM page_types ORDER BY source, notebook, section, page",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query page_types: %w", err)
+	}
+	defer rows.Close()
+	var out []TypedPageLocator
+	for rows.Next() {
+		var loc TypedPageLocator
+		if err := rows.Scan(&loc.Source, &loc.Notebook, &loc.Section, &loc.Page, &loc.TypeName); err != nil {
+			return nil, err
+		}
+		out = append(out, loc)
+	}
+	return out, rows.Err()
+}
+
 // GetPageProjection returns the projection row for a single page (its type plus
 // set property values), or (nil, nil) when the page has no projection (it is
 // untyped or not indexed). Used by the properties UI and dashboard lookups.

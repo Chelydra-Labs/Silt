@@ -183,6 +183,8 @@ func TestCoerceValue(t *testing.T) {
 		{"number->text", PropertyDef{Type: PropText, Min: &min}, float64(42), "42", true},
 		{"text stays", PropertyDef{Type: PropText}, "hi", "hi", true},
 		{"select scalar->multi", PropertyDef{Type: PropMultiSelect}, "x", []string{"x"}, true},
+		{"multi comma-split", PropertyDef{Type: PropPages}, "Alice, Bob , ,Carol", []string{"Alice", "Bob", "Carol"}, true},
+		{"multi empty rejected", PropertyDef{Type: PropMultiSelect}, "  , ", nil, false},
 		{"multi stays", PropertyDef{Type: PropPages}, []any{"a"}, []string{"a"}, true},
 		{"nil passthrough", PropertyDef{Type: PropText}, nil, nil, true},
 	}

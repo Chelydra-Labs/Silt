@@ -226,7 +226,10 @@
 </script>
 
 {#if open}
-  <div class="backdrop" data-focus-trap>
+  <div
+    class="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
+    data-focus-trap
+  >
     <button
       type="button"
       tabindex="-1"
@@ -318,16 +321,6 @@
 {/if}
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 200;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(2px);
-  }
   .backdrop-click {
     position: absolute;
     inset: 0;

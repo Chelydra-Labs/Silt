@@ -337,6 +337,70 @@ func TestMCPBridge_SetPageProperty_CoercesNumberValue(t *testing.T) {
 	}
 }
 
+// TestMCPBridge_SetPageProperty_MultiValueCommaSplit verifies the bridge
+// accepts a comma-separated string for a multiselect property and persists
+// every element. Without the comma-split in CoerceValue, a single tool call
+// could only write one value.
+func TestMCPBridge_SetPageProperty_MultiValueCommaSplit(t *testing.T) {
+	app := newTestApp(t)
+	bridge := newMetaBridge(app)
+
+	// Self-contained schema with a multiselect; not reusing writeBookPageForMCP
+	// so the shared helper's property count assertion in another test is
+	// unaffected.
+	if err := app.SaveType(types.TypeDef{
+		ID:   "movie",
+		Name: "Movie",
+		Properties: []types.PropertyDef{
+			{Name: "title", Type: types.PropText},
+			{Name: "genres", Type: types.PropMultiSelect, Options: []string{"sci-fi", "fantasy", "drama"}},
+		},
+	}); err != nil {
+		t.Fatalf("SaveType(movie): %v", err)
+	}
+	content := "---\n" +
+		"notebook: \"Films\"\nsection: \"\"\npage: \"Dune2021\"\n" +
+		"date: \"2026-08-01\"\ntags: []\ntype: \"movie\"\n" +
+		"title: \"Dune\"\n---\n# Dune\n"
+	writeFile(t, filepath.Join(app.vaultPath, "Films", "Dune2021.md"), content)
+
+	// Whitespace around commas is trimmed; empty segments are dropped.
+	if err := bridge.SetPageProperty(context.Background(), "Films", "", "Dune2021", "genres", "sci-fi,  fantasy ,"); err != nil {
+		t.Fatalf("expected comma-split write to succeed, got: %v", err)
+	}
+
+	res, err := bridge.GetPageMetadata(context.Background(), "Films", "", "Dune2021")
+	if err != nil {
+		t.Fatalf("GetPageMetadata: %v", err)
+	}
+	for _, p := range res.Properties {
+		if p.Name != "genres" {
+			continue
+		}
+		if !p.IsSet {
+			t.Fatal("genres IsSet = false, want true")
+		}
+		got, ok := p.Value.([]any)
+		if !ok {
+			t.Fatalf("genres Value = %v (%T), want []any", p.Value, p.Value)
+		}
+		if len(got) != 2 || got[0] != "sci-fi" || got[1] != "fantasy" {
+			t.Errorf("genres Value = %v, want [sci-fi fantasy]", got)
+		}
+	}
+
+	// An all-empty input is rejected before any I/O.
+	before, _ := os.ReadFile(filepath.Join(app.vaultPath, "Films", "Dune2021.md"))
+	if err := bridge.SetPageProperty(context.Background(), "Films", "", "Dune2021", "genres", "  , "); err == nil {
+		t.Fatal("expected error for all-empty multi-value input")
+	}
+	after, _ := os.ReadFile(filepath.Join(app.vaultPath, "Films", "Dune2021.md"))
+	if string(after) != string(before) {
+		t.Errorf("file mutated despite empty multi-value rejection.\nbefore:\n%s\nafter:\n%s",
+			string(before), string(after))
+	}
+}
+
 // TestMCPBridge_SetPageType_AssignsAndClears exercises the type-assign + clear
 // path through the bridge, including the validation-before-write contract for
 // the assign path (existing values that fail the new schema are flagged but
@@ -347,9 +411,13 @@ func TestMCPBridge_SetPageType_AssignsAndClears(t *testing.T) {
 	filePath, _ := writeBookPageForMCP(t, app)
 
 	// Assigning the same type succeeds and the file is untouched except for
-	// the type line (which already matches).
-	if err := bridge.SetPageType(context.Background(), "Books", "", "Dune", "book"); err != nil {
+	// the type line (which already matches). No values are flagged.
+	flagged, err := bridge.SetPageType(context.Background(), "Books", "", "Dune", "book")
+	if err != nil {
 		t.Fatalf("SetPageType(book): %v", err)
+	}
+	if len(flagged) != 0 {
+		t.Errorf("flagged = %v, want empty for same-type assign", flagged)
 	}
 	res, _ := bridge.GetPageMetadata(context.Background(), "Books", "", "Dune")
 	if res.Type != "book" {
@@ -357,7 +425,7 @@ func TestMCPBridge_SetPageType_AssignsAndClears(t *testing.T) {
 	}
 
 	// Clearing: empty type id removes the type line; file still readable.
-	if err := bridge.SetPageType(context.Background(), "Books", "", "Dune", ""); err != nil {
+	if _, err := bridge.SetPageType(context.Background(), "Books", "", "Dune", ""); err != nil {
 		t.Fatalf("SetPageType(''): %v", err)
 	}
 	res2, _ := bridge.GetPageMetadata(context.Background(), "Books", "", "Dune")
@@ -374,12 +442,51 @@ func TestMCPBridge_SetPageType_AssignsAndClears(t *testing.T) {
 
 	// Unknown type → rejected, file untouched.
 	before, _ := os.ReadFile(filePath)
-	if err := bridge.SetPageType(context.Background(), "Books", "", "Dune", "no-such-type"); err == nil {
+	if _, err := bridge.SetPageType(context.Background(), "Books", "", "Dune", "no-such-type"); err == nil {
 		t.Fatal("expected error for unknown type")
 	}
 	after, _ := os.ReadFile(filePath)
 	if string(after) != string(before) {
 		t.Errorf("file mutated despite unknown type rejection.\nbefore:\n%s\nafter:\n%s",
 			string(before), string(after))
+	}
+}
+
+// TestMCPBridge_SetPageType_KeepAndFlag verifies the bridge surfaces the
+// keep-and-flag list: switching to a new schema whose declared properties
+// clash with the page's existing values returns those names (the values stay
+// on disk unchanged). Drives the path the set_page_type tool surfaces as
+// `flagged` in its success response.
+func TestMCPBridge_SetPageType_KeepAndFlag(t *testing.T) {
+	app := newTestApp(t)
+	bridge := newMetaBridge(app)
+	_, _ = writeBookPageForMCP(t, app)
+
+	// meeting declares `status` as a number; the book page has status
+	// "available" (a string), so status gets flagged. The other book
+	// properties (title) are not meeting properties, so they are not checked.
+	if err := app.SaveType(types.TypeDef{
+		ID:   "meeting",
+		Name: "Meeting",
+		Properties: []types.PropertyDef{
+			{Name: "attendees", Type: types.PropText},
+			{Name: "status", Type: types.PropNumber},
+		},
+	}); err != nil {
+		t.Fatalf("SaveType(meeting): %v", err)
+	}
+
+	flagged, err := bridge.SetPageType(context.Background(), "Books", "", "Dune", "meeting")
+	if err != nil {
+		t.Fatalf("SetPageType(meeting): %v", err)
+	}
+	if len(flagged) != 1 || flagged[0] != "status" {
+		t.Errorf("flagged = %v, want [status]", flagged)
+	}
+
+	// The type id was still written; only the value-shape mismatch was flagged.
+	res, _ := bridge.GetPageMetadata(context.Background(), "Books", "", "Dune")
+	if res.Type != "meeting" {
+		t.Errorf("Type = %q want meeting", res.Type)
 	}
 }

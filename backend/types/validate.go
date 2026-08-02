@@ -302,8 +302,20 @@ func CoerceValue(def PropertyDef, value any) (any, error) {
 			return strs, nil
 		}
 		if s, ok := value.(string); ok {
-			// A single value moving into a multi field becomes a one-element list.
-			return []string{s}, nil
+			// Comma-split so a single MCP tool call can write a multi-value
+			// property ("Alice, Bob" → ["Alice","Bob"]). Empty/whitespace
+			// segments are dropped; an all-empty input is rejected so callers
+			// get a clear error rather than persisting an empty list.
+			result := make([]string, 0, 1)
+			for p := range strings.SplitSeq(s, ",") {
+				if t := strings.TrimSpace(p); t != "" {
+					result = append(result, t)
+				}
+			}
+			if len(result) == 0 {
+				return nil, fmt.Errorf("cannot coerce %q to a non-empty list", s)
+			}
+			return result, nil
 		}
 		return nil, fmt.Errorf("cannot coerce %v (%T) to a list", value, value)
 	}

@@ -3,6 +3,8 @@ package vault
 import (
 	"os"
 	"path/filepath"
+
+	"silt/backend/parser"
 )
 
 // exampleTypes seeds a fresh vault with two example note types (Book, Meeting)
@@ -64,7 +66,7 @@ func seedExampleTypes(vaultPath string) error {
 		if _, err := os.Stat(path); err == nil {
 			continue // keep the user's existing file
 		}
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		if err := parser.WriteFileAtomic(path, []byte(content)); err != nil {
 			return err
 		}
 	}

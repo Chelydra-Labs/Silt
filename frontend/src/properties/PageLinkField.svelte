@@ -5,7 +5,7 @@
   // pages of the declared `target` type (QueryPagesByType). The component is
   // value-controlled: it never calls IPC itself — every change routes through
   // onCommit, so PropertyField's optimistic field owns the snapshot/revert.
-  import { tick } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { ListNavigation, QueryPagesByType } from '../../bindings/silt/app.js'
   import { flattenNavigation } from '../lib/navigationCatalog'
   import { indexNav, resolveRef, toRef, type NavIndex } from './pageRef'
@@ -80,6 +80,13 @@
       loading = false
     }
   }
+
+  // Load on mount so dangling chips (refs to deleted pages) render with the
+  // correct visual state immediately, before the user ever focuses the field.
+  // `loaded` guards the focus path from re-fetching.
+  onMount(() => {
+    void ensureLoaded()
+  })
 
   // Filtered, capped results for the open dropdown.
   let results = $derived.by<NavigationCatalogItem[]>(() => {
@@ -169,7 +176,10 @@
         select(results[activeIndex])
       }
     } else if (e.key === 'Escape') {
+      // stopPropagation so the panel's window-level Esc handler doesn't also
+      // fire and dismiss the whole panel — the open dropdown consumes Esc.
       e.preventDefault()
+      e.stopPropagation()
       closeDropdown()
     }
   }

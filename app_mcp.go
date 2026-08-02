@@ -166,14 +166,14 @@ func (b mcpBridge) SetPageProperty(ctx context.Context, notebook, section, page,
 	return b.app.SetPageProperty(notebook, section, page, property, coerced)
 }
 
-// SetPageType assigns (empty typeName clears) the page's note type. The App
-// validates existing frontmatter against the new schema before writing; the
-// mismatched list is dropped here (the bridge signature only returns error) —
-// clients can call get_page_metadata afterwards to see what survived.
-func (b mcpBridge) SetPageType(ctx context.Context, notebook, section, page, typeName string) error {
+// SetPageType assigns (empty typeName clears) the page's note type. The returned
+// []string is the keep-and-flag list: property names whose current values do
+// not fit the new schema. The App validates existing frontmatter against the
+// new schema before writing; the values are kept on disk regardless (no drop,
+// no coerce), so a non-empty list is informational, not a write failure.
+func (b mcpBridge) SetPageType(ctx context.Context, notebook, section, page, typeName string) ([]string, error) {
 	_ = ctx
-	_, err := b.app.SetPageType(notebook, section, page, typeName)
-	return err
+	return b.app.SetPageType(notebook, section, page, typeName)
 }
 
 // ensureMCPHost returns the MCP host, constructing it once if missing

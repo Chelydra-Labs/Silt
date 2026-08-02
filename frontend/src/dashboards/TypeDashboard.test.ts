@@ -233,4 +233,112 @@ describe('TypeDashboard', () => {
     )
     expect(onBack).toHaveBeenCalledOnce()
   })
+
+  it('shows "No matches" with a Clear-filters button when filters exclude all rows', async () => {
+    // First query (mount, no filter) returns rows so the table renders; the
+    // second query (after a filter is applied) returns [] to simulate the
+    // "filters excluded everything" branch.
+    appMocks.QueryPagesByType.mockResolvedValueOnce(BOOK_ROWS)
+    appMocks.QueryPagesByType.mockResolvedValueOnce([])
+    await mount()
+
+    // Apply a status filter — debounced reload fires with filter={status:'read'}.
+    const statusButton = screen.getByRole('button', { name: 'Filter Status' })
+    await fireEvent.click(statusButton)
+    const statusListbox = screen.getByRole('listbox', { name: 'Filter Status' })
+    await fireEvent.click(within(statusListbox).getByText('read'))
+    await waitFor(() => {
+      expect(screen.getByText('No matches')).toBeInTheDocument()
+    })
+    // Clear-filters button is present.
+    const clearBtn = screen.getByRole('button', { name: /Clear filter/ })
+    expect(clearBtn).toBeInTheDocument()
+    // Clicking it resets the filter and the rows re-appear (next mock returns rows).
+    appMocks.QueryPagesByType.mockResolvedValue(BOOK_ROWS)
+    await fireEvent.click(clearBtn)
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: 'Open page Dune' })
+      ).toBeInTheDocument()
+    })
+  })
+
+  describe('board view', () => {
+    it('switching to Board renders a card per page with the page name + hero', async () => {
+      await mount()
+      // Toggle to Board via the view-mode radiogroup.
+      await fireEvent.click(screen.getByRole('radio', { name: 'Board view' }))
+      // The cards keep the same aria-labels (page name + hero) the table rows
+      // surfaced; assert both are visible in the board.
+      expect(screen.getByRole('button', { name: /^Dune/ })).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: /^Neuromancer/ })
+      ).toBeInTheDocument()
+    })
+
+    it('clicking a board card calls onOpenPage with the locator', async () => {
+      const { onOpenPage } = await mount()
+      await fireEvent.click(screen.getByRole('radio', { name: 'Board view' }))
+      await fireEvent.click(screen.getByRole('button', { name: /^Dune/ }))
+      expect(onOpenPage).toHaveBeenCalledWith({
+        source: 'vault',
+        notebook: 'Work',
+        section: 'Reading',
+        page: 'Dune'
+      })
+    })
+
+    it('Enter on a focused board card opens the page', async () => {
+      const { onOpenPage } = await mount()
+      await fireEvent.click(screen.getByRole('radio', { name: 'Board view' }))
+      const card = screen.getByRole('button', { name: /^Dune/ })
+      card.focus()
+      await fireEvent.keyDown(card, { key: 'Enter' })
+      expect(onOpenPage).toHaveBeenCalledWith({
+        source: 'vault',
+        notebook: 'Work',
+        section: 'Reading',
+        page: 'Dune'
+      })
+    })
+
+    it('renders one column per group value, each with its count', async () => {
+      await mount()
+      // Group by Status so the two distinct values produce two columns.
+      await fireEvent.click(screen.getByRole('button', { name: /Group:/ }))
+      const groupListbox = screen.getByRole('listbox', { name: 'Group by' })
+      await fireEvent.click(within(groupListbox).getByText('Status'))
+      await tick()
+      await fireEvent.click(screen.getByRole('radio', { name: 'Board view' }))
+
+      // Each column is a role=group labelled "label (count)".
+      const readCol = screen.getByRole('group', { name: /^read \(\d+\)/ })
+      const readingCol = screen.getByRole('group', { name: /^reading \(\d+\)/ })
+      expect(readCol).toBeInTheDocument()
+      expect(readingCol).toBeInTheDocument()
+      // The "read" column contains Dune (page-name span); the "reading"
+      // column contains Neuromancer. Both spans (name + hero) render the
+      // same text for these rows, so use getAllByText and assert presence.
+      expect(within(readCol).getAllByText('Dune').length).toBeGreaterThan(0)
+      expect(
+        within(readingCol).getAllByText('Neuromancer').length
+      ).toBeGreaterThan(0)
+    })
+
+    it('view-mode radiogroup supports arrow-key navigation', async () => {
+      await mount()
+      const listRadio = screen.getByRole('radio', { name: 'List view' })
+      const boardRadio = screen.getByRole('radio', { name: 'Board view' })
+      // List is active on mount.
+      expect(listRadio).toHaveAttribute('aria-checked', 'true')
+      // Click Board to make it the active mode, then ArrowLeft wraps to List.
+      await fireEvent.click(boardRadio)
+      expect(boardRadio).toHaveAttribute('aria-checked', 'true')
+      boardRadio.focus()
+      await fireEvent.keyDown(boardRadio, { key: 'ArrowLeft' })
+      await tick()
+      expect(listRadio).toHaveAttribute('aria-checked', 'true')
+      expect(boardRadio).toHaveAttribute('aria-checked', 'false')
+    })
+  })
 })

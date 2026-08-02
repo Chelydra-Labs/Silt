@@ -15,12 +15,13 @@ import (
 // shared fakeBridge so unrelated Bridge methods stay satisfied.
 type stubBridge struct {
 	*fakeBridge
-	metaResult PageMetadataResult
-	metaErr    error
-	propErr    error
-	typeErr    error
-	gotProp    setPropCall
-	gotType    setTypeCall
+	metaResult  PageMetadataResult
+	metaErr     error
+	propErr     error
+	typeErr     error
+	typeFlagged []string
+	gotProp     setPropCall
+	gotType     setTypeCall
 }
 
 func (s *stubBridge) GetPageMetadata(ctx context.Context, notebook, section, page string) (PageMetadataResult, error) {
@@ -37,10 +38,10 @@ func (s *stubBridge) SetPageProperty(ctx context.Context, notebook, section, pag
 	return s.propErr
 }
 
-func (s *stubBridge) SetPageType(ctx context.Context, notebook, section, page, typeName string) error {
+func (s *stubBridge) SetPageType(ctx context.Context, notebook, section, page, typeName string) ([]string, error) {
 	_ = ctx
 	s.gotType = setTypeCall{notebook, section, page, typeName}
-	return s.typeErr
+	return s.typeFlagged, s.typeErr
 }
 
 // connectStubTools mirrors connectTools but lets a test pass a pre-built stub.
@@ -218,11 +219,13 @@ func TestTool_SetPageProperty_Success(t *testing.T) {
 	}
 }
 
-// TestTool_SetPageProperty_BridgeErrorBecomesToolError is the wire-level half
-// of the safety contract: when the bridge returns a validation error, the tool
-// surfaces it as an MCP error result. The file-untouched half of the contract
-// is exercised end-to-end in app_mcp_types_test.go (real App + real file).
-func TestTool_SetPageProperty_BridgeErrorBecomesToolError(t *testing.T) {
+// TestTool_SetPageProperty_BridgeErrorBecomesStructuredError is the wire-level
+// half of the safety contract: when the bridge returns a validation error, the
+// tool surfaces it as a structured MCP error result whose StructuredContent is
+// a machine-readable {ok:false, errors:[{property,message}]} body. Clients
+// branch on .property instead of parsing text. The file-untouched half of the
+// contract is exercised end-to-end in app_mcp_types_test.go (real App + file).
+func TestTool_SetPageProperty_BridgeErrorBecomesStructuredError(t *testing.T) {
 	bridge := &stubBridge{
 		fakeBridge: &fakeBridge{path: t.TempDir()},
 		propErr:    errors.New(`"bogus" is not one of the allowed options [available read]`),
@@ -242,8 +245,20 @@ func TestTool_SetPageProperty_BridgeErrorBecomesToolError(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("expected isError for validation failure")
 	}
-	if !strings.Contains(toolText(t, res), "not one of the allowed options") {
-		t.Fatalf("expected validation error text, got %q", toolText(t, res))
+	body := structuredBody(t, res)
+	if body["ok"] != false {
+		t.Errorf("structured ok = %v, want false", body["ok"])
+	}
+	errs, _ := body["errors"].([]any)
+	if len(errs) != 1 {
+		t.Fatalf("structured errors = %v, want 1 entry", errs)
+	}
+	first, _ := errs[0].(map[string]any)
+	if first["property"] != "status" {
+		t.Errorf("error property = %v, want status", first["property"])
+	}
+	if !strings.Contains(first["message"].(string), "not one of the allowed options") {
+		t.Errorf("error message = %v, want it to mention the validation failure", first["message"])
 	}
 }
 
@@ -291,6 +306,48 @@ func TestTool_SetPageType_Success(t *testing.T) {
 	if bridge.gotType != want {
 		t.Fatalf("bridge args = %+v want %+v", bridge.gotType, want)
 	}
+	// Plain assign with no flagged values omits the `flagged` key entirely.
+	body := structuredBody(t, res)
+	if body["ok"] != true {
+		t.Errorf("structured ok = %v, want true", body["ok"])
+	}
+	if _, present := body["flagged"]; present {
+		t.Errorf("structured response included flagged on a clean assign: %+v", body)
+	}
+}
+
+// TestTool_SetPageType_FlaggedSurfaced verifies that when the bridge returns a
+// non-empty keep-and-flag list (existing values that do not fit the new schema),
+// the tool surfaces it as `flagged` in the success response — clients use this
+// to warn the user that some values need attention even though the write
+// succeeded.
+func TestTool_SetPageType_FlaggedSurfaced(t *testing.T) {
+	bridge := &stubBridge{
+		fakeBridge:  &fakeBridge{path: t.TempDir()},
+		typeFlagged: []string{"status"},
+	}
+	cs, _ := connectStubTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "set_page_type",
+		Arguments: map[string]any{
+			"notebook": "Work", "section": "", "page": "M", "type": "meeting",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("flagged-values is a success, not an error: %s", toolText(t, res))
+	}
+	body := structuredBody(t, res)
+	if body["ok"] != true {
+		t.Errorf("structured ok = %v, want true (flagged is not an error)", body["ok"])
+	}
+	flagged, _ := body["flagged"].([]any)
+	if len(flagged) != 1 || flagged[0] != "status" {
+		t.Errorf("flagged = %v, want [status]", flagged)
+	}
 }
 
 func TestTool_SetPageType_EmptyTypeClears(t *testing.T) {
@@ -316,7 +373,7 @@ func TestTool_SetPageType_EmptyTypeClears(t *testing.T) {
 	}
 }
 
-func TestTool_SetPageType_BridgeErrorBecomesToolError(t *testing.T) {
+func TestTool_SetPageType_BridgeErrorBecomesStructuredError(t *testing.T) {
 	bridge := &stubBridge{
 		fakeBridge: &fakeBridge{path: t.TempDir()},
 		typeErr:    errors.New(`unknown type "no-such"`),
@@ -335,9 +392,44 @@ func TestTool_SetPageType_BridgeErrorBecomesToolError(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("expected isError for unknown type")
 	}
-	if !strings.Contains(toolText(t, res), "unknown type") {
-		t.Fatalf("expected unknown-type error text, got %q", toolText(t, res))
+	body := structuredBody(t, res)
+	if body["ok"] != false {
+		t.Errorf("structured ok = %v, want false", body["ok"])
 	}
+	errs, _ := body["errors"].([]any)
+	first, _ := errs[0].(map[string]any)
+	// set_page_type targets the type field as a whole, so the structured
+	// property is the "*" sentinel rather than a named property.
+	if first["property"] != "*" {
+		t.Errorf("error property = %v, want *", first["property"])
+	}
+	if !strings.Contains(first["message"].(string), "unknown type") {
+		t.Errorf("error message = %v, want it to mention unknown type", first["message"])
+	}
+}
+
+// structuredBody extracts the StructuredContent map from a CallToolResult.
+// Both success and validation-error results populate StructuredContent, so the
+// tool tests branch on its shape rather than parsing the TextContent body.
+func structuredBody(t *testing.T, res *mcpsdk.CallToolResult) map[string]any {
+	t.Helper()
+	if res == nil || res.StructuredContent == nil {
+		t.Fatalf("no StructuredContent on result: %+v", res)
+	}
+	// The SDK marshals StructuredContent to JSON on the way out and back on
+	// the way in, so the client-side type is json.RawMessage -> decoded map.
+	switch v := res.StructuredContent.(type) {
+	case map[string]any:
+		return v
+	case json.RawMessage:
+		var m map[string]any
+		if err := json.Unmarshal(v, &m); err != nil {
+			t.Fatalf("unmarshal StructuredContent: %v", err)
+		}
+		return m
+	}
+	t.Fatalf("unexpected StructuredContent type %T: %+v", res.StructuredContent, res.StructuredContent)
+	return nil
 }
 
 func auditHas(aud *MemoryAuditor, tool, outcome string) bool {

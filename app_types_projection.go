@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -135,7 +137,11 @@ func propertySortKey(pt types.PropertyType, raw any) string {
 	case types.PropNumber:
 		if f, ok := toFloat(raw); ok {
 			// Fixed-width zero-padding (sign-aware) so lexicographic order
-			// matches numeric order across typical dashboard ranges.
+			// matches numeric order across typical dashboard ranges. The 20-
+			// digit integer width supports values up to ~10^14, which covers
+			// realistic note-property magnitudes (ratings, counts, priorities,
+			// small statistics); anything larger collides onto the same sort
+			// key and is undefined within that bucket.
 			return fmt.Sprintf("%020.6f", f)
 		}
 		return formatPropertyValue(raw)
@@ -212,4 +218,62 @@ func toStringSlice(v any) ([]string, bool) {
 		return out, true
 	}
 	return nil, false
+}
+
+// reprojectAllTypedPages re-derives every typed page's projection from its
+// frontmatter against the freshly-loaded type schema. Called from the type
+// watcher's onChange handler so a schema edit (e.g. adding a property to
+// book.yaml) reaches pages that have already been indexed — without it the
+// dashboard would drift until each page is independently re-touched.
+//
+// The caller MUST hold vaultMu.Lock(): this is a lifecycle event (the watcher
+// goroutine hands off to the App), and projectPageType / ClearPageProjection /
+// resolveNotebookDir touch fields (a.db, a.vaultPath) guarded by vaultMu.
+func (a *App) reprojectAllTypedPages() {
+	if a.db == nil {
+		return
+	}
+	locators, err := a.db.GetAllTypedPageLocators()
+	if err != nil {
+		log.Printf("types: GetAllTypedPageLocators failed during re-projection: %v", err)
+		return
+	}
+	for _, loc := range locators {
+		// Resolve the page's on-disk file the same way readPageFileForTypes
+		// does, then re-parse just the frontmatter. A missing/unreadable file
+		// (page deleted, external edit mid-scan) is skipped: the regular
+		// watcher path will reconcile it on the next file event.
+		safeNotebook := sanitizePathSegment(loc.Notebook)
+		safeSection := sanitizePathSegment(loc.Section)
+		safePage := sanitizePathSegment(loc.Page)
+		if safeNotebook == "" || safePage == "" {
+			continue
+		}
+		notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
+		if err != nil {
+			continue
+		}
+		filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
+		if !isPathWithinRoot(filePath, notebookDir) {
+			continue
+		}
+		contentBytes, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+		// Re-parse so meta.Type + meta.Frontmatter reflect the current disk
+		// state; the schema cache has already been invalidated upstream.
+		_, meta, _, _, perr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
+		if perr != nil {
+			continue
+		}
+		if meta.Type == "" {
+			// Page lost its type externally; drop the stale projection row.
+			if err := a.db.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); err != nil {
+				log.Printf("types: ClearPageProjection(%s/%s/%s/%s) during re-projection failed: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, err)
+			}
+			continue
+		}
+		a.projectPageType(loc.Source, meta)
+	}
 }

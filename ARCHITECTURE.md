@@ -733,6 +733,24 @@ transcript (text, evidence, tool calls/results, proposals, confirmations,
 structured status). The agent loop is the default orchestrator; retrieval and
 writing attach as capabilities when their flags are on.
 
+- **Typed notes** — schema-driven note types live in `<vault>/.system/types/*.yaml`
+  and a page declares its type via YAML frontmatter `type:`. The SQLite
+  projection (`page_types` / `page_properties`) is reproducible working memory
+  rebuilt from frontmatter + the type schema; the type watcher hot-reloads the
+  schema and re-projects every typed page so the dashboards do not drift on a
+  schema edit. **Type CRUD**: `ListTypes` / `GetType` / `SaveType` / `DeleteType`
+  (atomic write to `.system/types/<id>.yaml`, watcher self-write suppressed),
+  plus `ResolveTypeID` (frontmatter ref → canonical id) and `ReloadTypes`
+  (manual cache flush; both emit `types:changed`). **Per-page type ops**:
+  `GetPageType` (resolved schema + raw chip on unknown refs), `GetPageProperties`
+  (full schema form with `IsSet` flags), `SetPageType` (keep-and-flag on schema
+  mismatch), `SetPageProperty` / `ClearPageProperty` (surgical single-field
+  rewrite, validated twice — once at entry and again inside the file lock to
+  close the schema-hot-reload race). **Dashboard query**: `QueryPagesByType`
+  (all pages of a type + their set properties, source-scoped). **Plugin SDK**:
+  `PluginListTypes` / `PluginGetType` (read-only, no grant), `PluginSaveType` /
+  `PluginDeleteType` (gated under `CapContentMutate`).
+
 Signatures and per-binding doc-comments live in `app.go` and the `app_*.go`
 files; this list is the contract surface, not the source.
 

@@ -35,8 +35,11 @@ type Bridge interface {
 	SetPageProperty(ctx context.Context, notebook, section, page, property, value string) error
 	// SetPageType assigns or clears (empty typeName) the page's note type. The
 	// App layer validates existing frontmatter against the new schema before
-	// writing; on validation failure the file is untouched.
-	SetPageType(ctx context.Context, notebook, section, page, typeName string) error
+	// writing; on validation failure the file is untouched. The returned
+	// []string is the keep-and-flag list: property names whose current values
+	// do not fit the new schema (kept verbatim on disk). Empty on a clear or
+	// when every value validates.
+	SetPageType(ctx context.Context, notebook, section, page, typeName string) ([]string, error)
 	VaultPath() string
 }
 

@@ -28,6 +28,8 @@
     types: TypeDef[]
     typesLoading: boolean
     locator: PageLocator
+    /** Monotonic slash-command signal — when it bumps, open the type menu. */
+    typeMenuRequest?: number
     onClose: () => void
     /** After a successful type switch / property commit (re-fetches values). */
     onChanged: () => void
@@ -46,6 +48,7 @@
     types,
     typesLoading,
     locator,
+    typeMenuRequest = 0,
     onClose,
     onChanged,
     onMismatched,
@@ -165,6 +168,14 @@
   let menuOpen = $state(false)
   let menuButtonRef = $state<HTMLButtonElement | null>(null)
 
+  function openMenu(): void {
+    menuOpen = true
+    void tick().then(() => {
+      const first = panelRef?.querySelector<HTMLElement>('[role="menuitem"]')
+      first?.focus()
+    })
+  }
+
   function toggleMenu(): void {
     menuOpen = !menuOpen
     if (menuOpen) {
@@ -179,6 +190,15 @@
     menuOpen = false
     menuButtonRef?.focus()
   }
+
+  // Slash-command bridge: when the host bumps typeMenuRequest (and the panel is
+  // open), open the type menu. The initial 0 value is treated as "no request"
+  // so this doesn't fire on first mount.
+  $effect(() => {
+    void typeMenuRequest
+    if (!open || typeMenuRequest === 0) return
+    openMenu()
+  })
 
   // Lookup table for min/max (the value envelope omits them). Keyed by property
   // name from the resolved type schema so the number input can enforce bounds.

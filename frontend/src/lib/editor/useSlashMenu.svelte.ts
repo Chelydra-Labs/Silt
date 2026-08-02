@@ -255,6 +255,12 @@ export function createSlashMenu(opts: SlashMenuOptions) {
         // UniqueBlockIds extension mints fresh UUIDs for the inserted nodes).
         opts.onShowTemplatePicker()
         break
+      case 'type':
+        // Page-level type assignment is owned by the properties panel, not the
+        // editor. Signal the host shell via a window event; the slash trigger
+        // text is already deleted above so the editor stays clean either way.
+        window.dispatchEvent(new CustomEvent('silt:assign-page-type'))
+        break
       case 'format':
         // Inline formatting slash commands (#168). Each toggles its mark;
         // the value is also a valid stored mark at a collapsed cursor, so the

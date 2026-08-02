@@ -687,3 +687,64 @@ func TestSetPageProperty_RelationNoTarget_AnyPageAccepted(t *testing.T) {
 		t.Errorf("file mutated despite a validation error.\nbefore:\n%s\nafter:\n%s", string(beforeBytes), string(afterBytes))
 	}
 }
+
+// TestSetPageProperty_RevalidatesAfterSchemaReload pins the schema/write race
+// fix: a value validated at the entry point must be re-validated inside the
+// file lock so a hot-reloaded schema that narrows the rules between the two
+// points still rejects the value, and the file stays byte-identical.
+func TestSetPageProperty_RevalidatesAfterSchemaReload(t *testing.T) {
+	app := newTestApp(t)
+	filePath, before := writeBookPage(t, app)
+	beforeBytes, _ := os.ReadFile(filePath)
+
+	// Narrow `status` to a single option the test page's value does NOT satisfy.
+	// The page currently has status: "available"; with the schema narrowed to
+	// [read] only, the entry-point validation should already reject an attempt
+	// to STAY at "available". This pins the guarantee that schema edits are
+	// visible by the time SetPageProperty validates, and the file is untouched
+	// when validation (entry-point OR in-lock re-validation) fails.
+	narrowed := bookTypeSchema()
+	for i := range narrowed.Properties {
+		if narrowed.Properties[i].Name == "status" {
+			narrowed.Properties[i].Options = []string{"read"}
+		}
+	}
+	if err := app.SaveType(narrowed); err != nil {
+		t.Fatalf("SaveType(narrowed): %v", err)
+	}
+
+	if err := app.SetPageProperty("Books", "", "Dune", "status", "available"); err == nil {
+		t.Fatal("SetPageProperty with a now-invalid select value should error")
+	}
+	afterBytes, _ := os.ReadFile(filePath)
+	if string(afterBytes) != string(beforeBytes) {
+		t.Errorf("file mutated despite validation rejection.\nbefore:\n%s\nafter:\n%s", before, string(afterBytes))
+	}
+}
+
+// TestSetPageProperty_RevalidatesAfterSchemaReload_PropertyRemoved pins the
+// parallel case: a property removed from the schema between calls must cause
+// the next SetPageProperty to fail cleanly, with the file untouched.
+func TestSetPageProperty_RevalidatesAfterSchemaReload_PropertyRemoved(t *testing.T) {
+	app := newTestApp(t)
+	filePath, before := writeBookPage(t, app)
+	beforeBytes, _ := os.ReadFile(filePath)
+
+	slim := types.TypeDef{
+		ID:   "book",
+		Name: "Book",
+		Properties: []types.PropertyDef{
+			{Name: "title", Type: types.PropText},
+		},
+	}
+	if err := app.SaveType(slim); err != nil {
+		t.Fatalf("SaveType(slim): %v", err)
+	}
+	if err := app.SetPageProperty("Books", "", "Dune", "rating", 5); err == nil {
+		t.Fatal("SetPageProperty(rating) should error after the property was removed from the schema")
+	}
+	afterBytes, _ := os.ReadFile(filePath)
+	if string(afterBytes) != string(beforeBytes) {
+		t.Errorf("file mutated despite the property being removed.\nbefore:\n%s\nafter:\n%s", before, string(afterBytes))
+	}
+}

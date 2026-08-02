@@ -489,6 +489,16 @@
     startup.attach()
     const disposePageType = pageType.attach()
 
+    // /type slash command → open the properties panel + its type menu. The
+    // panel's existing type-menu logic does the untyped-vs-typed branching
+    // (direct assign vs Turn-into dialog), so this just opens both surfaces.
+    const onAssignType = (): void => {
+      if (!activeNotebook || !activePage) return
+      pageType.open()
+      pageType.requestTypeMenu()
+    }
+    window.addEventListener('silt:assign-page-type', onAssignType)
+
     return () => {
       hotkeyDispatch.detach()
       startup.dispose()
@@ -497,6 +507,7 @@
       disposeTemplates()
       disposeUpdateStore()
       disposePageType()
+      window.removeEventListener('silt:assign-page-type', onAssignType)
       // Flush any pending tab-state persistence so the user's last
       // change survives a component unmount / app close (#142 hardening).
       tabManager.flushPendingPersist()
@@ -1025,6 +1036,7 @@
                 error={pageType.error}
                 types={pageType.types}
                 typesLoading={pageType.typesLoading}
+                typeMenuRequest={pageType.typeMenuRequest}
                 locator={{
                   notebook: activeNotebook,
                   section: activeSection,

@@ -671,6 +671,8 @@ func (dm *DatabaseManager) PageExists(source, notebook, section, page string) (b
 // case of a page referenced by name rather than full path. ok is false when no
 // page with that leaf is indexed. LIMIT 1 keeps v1 deterministic: a leaf-name
 // collision across notebooks is ambiguous, and the first indexed page wins.
+// ORDER BY notebook, section makes the winner deterministic rather than
+// dependent on row insertion order.
 func (dm *DatabaseManager) FindPageByLeaf(source, page string) (notebook, section string, ok bool, err error) {
 	db, release, err := dm.handle()
 	if err != nil {
@@ -681,7 +683,7 @@ func (dm *DatabaseManager) FindPageByLeaf(source, page string) (notebook, sectio
 		source = "vault"
 	}
 	err = db.QueryRow(
-		"SELECT notebook, section FROM blocks WHERE source = ? AND page = ? LIMIT 1",
+		"SELECT notebook, section FROM blocks WHERE source = ? AND page = ? ORDER BY notebook, section LIMIT 1",
 		source, page,
 	).Scan(&notebook, &section)
 	if err == sql.ErrNoRows {

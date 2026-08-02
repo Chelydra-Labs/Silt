@@ -577,8 +577,16 @@
         "signature": "PluginDeletePage(pluginID, sessionToken, notebook, section, page string) error"
       },
       {
+        "name": "PluginDeleteType",
+        "signature": "PluginDeleteType(pluginID, sessionToken, id string) (bool, error)"
+      },
+      {
         "name": "PluginFetch",
         "signature": "PluginFetch(pluginID, sessionToken string, input PluginFetchInput) (PluginFetchResult, error)"
+      },
+      {
+        "name": "PluginGetType",
+        "signature": "PluginGetType(pluginID, sessionToken, id string) (types.TypeDef, error)"
       },
       {
         "name": "PluginListDir",
@@ -587,6 +595,10 @@
       {
         "name": "PluginListNavigation",
         "signature": "PluginListNavigation(pluginID, sessionToken string) (parser.NavigationTree, error)"
+      },
+      {
+        "name": "PluginListTypes",
+        "signature": "PluginListTypes(pluginID, sessionToken string) (*types.ListTypesResult, error)"
       },
       {
         "name": "PluginMoveBlock",
@@ -647,6 +659,10 @@
       {
         "name": "PluginSaveSubtreeBlocks",
         "signature": "PluginSaveSubtreeBlocks(pluginID, sessionToken, blockID string, children []parser.ParsedBlock) (bool, error)"
+      },
+      {
+        "name": "PluginSaveType",
+        "signature": "PluginSaveType(pluginID, sessionToken string, td types.TypeDef) (bool, error)"
       },
       {
         "name": "PluginScratchDir",
@@ -1153,6 +1169,8 @@
       "frontend/src/components/settings/plugins/PluginInstallFlow.test.ts",
       "frontend/src/components/settings/spellcheck/SpellcheckPackManager.svelte",
       "frontend/src/components/settings/spellcheck/SpellcheckPackManager.test.ts",
+      "frontend/src/dashboards/TypeDashboard.svelte",
+      "frontend/src/dashboards/TypeDashboard.test.ts",
       "frontend/src/lib/devModeInspect.test.ts",
       "frontend/src/lib/devModeInspect.ts",
       "frontend/src/lib/editor/blockDepthDom.test.ts",
@@ -1193,9 +1211,13 @@
       "frontend/src/plugins/loader.test.ts",
       "frontend/src/plugins/loader.ts",
       "frontend/src/plugins/loader.vault-close.test.ts",
+      "frontend/src/properties/PageLinkField.svelte",
+      "frontend/src/properties/PageLinkField.test.ts",
       "frontend/src/properties/PropertiesPanel.svelte",
       "frontend/src/properties/PropertiesPanel.test.ts",
       "frontend/src/properties/PropertyField.svelte",
+      "frontend/src/properties/TurnIntoDialog.svelte",
+      "frontend/src/properties/TurnIntoDialog.test.ts",
       "frontend/src/properties/pageTypeState.svelte.ts",
       "frontend/src/properties/pageTypeState.test.ts",
       "frontend/src/settings/store.svelte.test.ts",
@@ -1330,6 +1352,6 @@
       "vault:moved",
       "vault:watch-coverage"
     ],
-    "plugin_method_count": 53
+    "plugin_method_count": 57
   }
 }

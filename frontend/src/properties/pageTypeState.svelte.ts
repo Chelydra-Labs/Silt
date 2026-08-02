@@ -46,6 +46,8 @@ export interface PageTypeController {
   readonly typesLoading: boolean
   readonly panelOpen: boolean
   readonly heroValue: string
+  /** Monotonic request counter the panel watches (slash-command-driven). */
+  readonly typeMenuRequest: number
   refresh: () => Promise<void>
   open: () => void
   close: () => void
@@ -53,6 +55,11 @@ export interface PageTypeController {
   /** Keep-and-flag warnings from a type switch (surfaces them on the fields). */
   setMismatched: (names: string[]) => void
   setError: (message: string) => void
+  /**
+   * Monotonic counter the host bumps to request the panel open its type menu
+   * (used by the /type slash command). The panel watches it via a prop.
+   */
+  requestTypeMenu: () => void
   /** Subscribe to `types:changed`; returns a disposer for onMount cleanup. */
   attach: () => () => void
 }
@@ -68,6 +75,10 @@ export function createPageTypeController(
   let types = $state<TypeDef[]>([])
   let typesLoading = $state(false)
   let panelOpen = $state(false)
+  // Monotonic counter the host bumps to request the panel's type menu (the
+  // /type slash command). 0 = "no request yet" so the panel's watcher skips
+  // its initial run.
+  let typeMenuRequest = $state(0)
 
   // Track the locator that the in-flight refresh targeted so a stale response
   // (the user navigated mid-fetch) is discarded rather than painted over a new
@@ -129,6 +140,10 @@ export function createPageTypeController(
     panelOpen = !panelOpen
   }
 
+  function requestTypeMenu(): void {
+    typeMenuRequest++
+  }
+
   function setMismatched(names: string[]): void {
     mismatched = names
   }
@@ -184,6 +199,9 @@ export function createPageTypeController(
     get panelOpen() {
       return panelOpen
     },
+    get typeMenuRequest() {
+      return typeMenuRequest
+    },
     get heroValue() {
       const heroName = info.type?.heroField
       if (!heroName) return ''
@@ -195,6 +213,7 @@ export function createPageTypeController(
     open,
     close,
     toggle,
+    requestTypeMenu,
     setMismatched,
     setError,
     attach

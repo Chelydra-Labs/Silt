@@ -64,6 +64,27 @@ func toolJSON(v any) (*mcp.CallToolResult, any, error) {
 	}, v, nil
 }
 
+// toolValidationErr returns an MCP error result whose StructuredContent carries
+// a machine-readable {ok:false, errors:[{property,message}]} body. Clients can
+// branch on the offending property programmatically instead of pattern-matching
+// on text. The same JSON is also serialized as TextContent so legacy text-only
+// clients still see the message. Used only for schema-validation failures;
+// authorization denials and protocol errors stay plain-text via toolErr.
+func toolValidationErr(property, message string) (*mcp.CallToolResult, any, error) {
+	body := map[string]any{
+		"ok": false,
+		"errors": []map[string]string{
+			{"property": property, "message": message},
+		},
+	}
+	b, _ := json.Marshal(body)
+	return &mcp.CallToolResult{
+		IsError:           true,
+		Content:           []mcp.Content{&mcp.TextContent{Text: string(b)}},
+		StructuredContent: body,
+	}, body, nil
+}
+
 // registerTools attaches the initial tool surface to s.
 func registerTools(s *mcp.Server, env *toolEnv) {
 	type searchIn struct {
@@ -384,7 +405,7 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "set_page_property",
-		Description: "Set a single typed property. Schema-validated write — invalid values are rejected before any file I/O. Requires write grant.",
+		Description: "Set a single typed property. Schema-validated write — invalid values are rejected before any file I/O. For multiselect/pages properties, pass a comma-separated list (e.g. \"Alice, Bob\"). Requires write grant.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setPagePropertyIn) (*mcp.CallToolResult, any, error) {
 		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "property": in.Property}
 		if !env.writeOK() {
@@ -397,9 +418,10 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		}
 		if err := env.bridge.SetPageProperty(ctx, in.Notebook, in.Section, in.Page, in.Property, in.Value); err != nil {
 			// Validation rejected the value before any file I/O — the file is
-			// byte-identical to its pre-call state.
+			// byte-identical to its pre-call state. Return a structured body so
+			// clients can branch on the offending property without parsing text.
 			env.record("set_page_property", "error", err.Error(), args)
-			return toolErr(err.Error())
+			return toolValidationErr(in.Property, err.Error())
 		}
 		env.record("set_page_property", "ok", "", args)
 		return toolJSON(map[string]any{"ok": true})
@@ -413,7 +435,7 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "set_page_type",
-		Description: "Assign or clear (empty type) a page's note type. Schema-validated write — existing values are validated against the new schema before any file I/O. Requires write grant.",
+		Description: "Assign or clear (empty type) a page's note type. Schema-validated write — existing values are validated against the new schema before any file I/O. Values that do not fit the new schema are kept on disk and surfaced in the response as 'flagged'. Requires write grant.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setPageTypeIn) (*mcp.CallToolResult, any, error) {
 		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "type": in.Type}
 		if !env.writeOK() {
@@ -424,11 +446,18 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 			env.record("set_page_type", "error", "no vault", args)
 			return toolErr("no vault open")
 		}
-		if err := env.bridge.SetPageType(ctx, in.Notebook, in.Section, in.Page, in.Type); err != nil {
+		flagged, err := env.bridge.SetPageType(ctx, in.Notebook, in.Section, in.Page, in.Type)
+		if err != nil {
+			// "*" is the conventional sentinel for "the type field itself"
+			// since set_page_type does not target a single named property.
 			env.record("set_page_type", "error", err.Error(), args)
-			return toolErr(err.Error())
+			return toolValidationErr("*", err.Error())
 		}
 		env.record("set_page_type", "ok", "", args)
-		return toolJSON(map[string]any{"ok": true})
+		result := map[string]any{"ok": true}
+		if len(flagged) > 0 {
+			result["flagged"] = flagged
+		}
+		return toolJSON(result)
 	})
 }

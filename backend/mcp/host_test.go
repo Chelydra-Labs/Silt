@@ -31,14 +31,15 @@ type fakeBridge struct {
 	// Typed-notes surface (Phase 7): canned metadata + injectable errors +
 	// call counters so tool tests can assert grant/deny/error paths without a
 	// real App behind the bridge.
-	meta        map[string]PageMetadataResult
-	metaErr     error
-	setPropN    int
-	setPropErr  error
-	setPropLast setPropCall
-	setTypeN    int
-	setTypeErr  error
-	setTypeLast setTypeCall
+	meta           map[string]PageMetadataResult
+	metaErr        error
+	setPropN       int
+	setPropErr     error
+	setPropLast    setPropCall
+	setTypeN       int
+	setTypeErr     error
+	setTypeLast    setTypeCall
+	setTypeFlagged []string
 }
 
 // setPropCall / setTypeCall capture the last (notebook, section, page, ...)
@@ -135,11 +136,11 @@ func (f *fakeBridge) SetPageProperty(ctx context.Context, notebook, section, pag
 	return f.setPropErr
 }
 
-func (f *fakeBridge) SetPageType(ctx context.Context, notebook, section, page, typeName string) error {
+func (f *fakeBridge) SetPageType(ctx context.Context, notebook, section, page, typeName string) ([]string, error) {
 	_ = ctx
 	f.setTypeN++
 	f.setTypeLast = setTypeCall{notebook, section, page, typeName}
-	return f.setTypeErr
+	return f.setTypeFlagged, f.setTypeErr
 }
 
 func freePort(t *testing.T) int {
