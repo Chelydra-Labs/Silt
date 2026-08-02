@@ -20,6 +20,7 @@ import (
 	"silt/backend/monitor"
 	"silt/backend/spellcheck"
 	"silt/backend/templates"
+	"silt/backend/types"
 	"silt/backend/vault"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -145,6 +146,12 @@ type App struct {
 	// Started in initializeVaultServices, stopped in teardownVaultServices
 	// (mirrors configWatcher).
 	templateWatcher *templates.TemplateWatcher
+
+	// typeWatcher hot-reloads <vault>/.system/types/ so typed pages and the
+	// type manager stay live when a user adds/edits/deletes a type externally
+	// (mirrors templateWatcher). Started in initializeVaultServices, stopped
+	// in teardownVaultServices.
+	typeWatcher *types.TypeWatcher
 
 	// linkedConfigs is an mtime-aware cache of each linked notebook's
 	// co-located <root>/.system/config.yaml (#133). Keyed by source

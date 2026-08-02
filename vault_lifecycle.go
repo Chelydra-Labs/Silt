@@ -37,6 +37,10 @@ func (a *App) teardownVaultServices() {
 		_ = a.templateWatcher.Close()
 		a.templateWatcher = nil
 	}
+	if a.typeWatcher != nil {
+		_ = a.typeWatcher.Close()
+		a.typeWatcher = nil
+	}
 	if a.configWatcher != nil {
 		_ = a.configWatcher.Close()
 		a.configWatcher = nil

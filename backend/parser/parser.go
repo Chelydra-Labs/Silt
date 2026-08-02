@@ -862,6 +862,12 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 				if len(parsedMeta.Tags) > 0 {
 					meta.Tags = parsedMeta.Tags
 				}
+				// type: is the page's note-type id (typed-notes, #783). The parser
+				// stores the raw frontmatter value; canonical-id resolution happens
+				// at the indexing/UI layer, which has access to the type schema.
+				if parsedMeta.Type != "" {
+					meta.Type = parsedMeta.Type
+				}
 			} else {
 				// Surface the parse failure so the caller can warn the
 				// user. Falling through with path-derived defaults would

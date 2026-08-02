@@ -1,6 +1,6 @@
 {
   "schema": "current-approved-v3",
-  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update ./cmd/inventory/current-approved-v3.json",
+  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json",
   "description": "Approved Wails v3 IPC surface snapshot. The CI parity gate fails on any missing/extra/changed *App method signature versus this file. Other sections (events, frontend imports) are tracked for review visibility and refreshed whenever the fixture is regenerated.",
   "inventory": {
     "methods": [
@@ -143,6 +143,10 @@
       {
         "name": "DeleteSection",
         "signature": "DeleteSection(notebook, section string) error"
+      },
+      {
+        "name": "DeleteType",
+        "signature": "DeleteType(id string) error"
       },
       {
         "name": "DeleteUserTemplate",
@@ -329,6 +333,10 @@
         "signature": "GetTrustedPublishers() ([]string, error)"
       },
       {
+        "name": "GetType",
+        "signature": "GetType(id string) (types.TypeDef, error)"
+      },
+      {
         "name": "GetUnlinkedMentionsPaged",
         "signature": "GetUnlinkedMentionsPaged(notebook, section, page, cursor, scanCursor string, limit int) (db.UnlinkedMentionsResult, error)"
       },
@@ -395,6 +403,10 @@
       {
         "name": "ListThemes",
         "signature": "ListThemes() (*themes.ListThemesResult, error)"
+      },
+      {
+        "name": "ListTypes",
+        "signature": "ListTypes() (*types.ListTypesResult, error)"
       },
       {
         "name": "MarkFrontendReady",
@@ -741,6 +753,10 @@
         "signature": "ReloadTemplates() error"
       },
       {
+        "name": "ReloadTypes",
+        "signature": "ReloadTypes() error"
+      },
+      {
         "name": "RemoveCustomDictionaryWord",
         "signature": "RemoveCustomDictionaryWord(word string) ([]string, error)"
       },
@@ -793,6 +809,10 @@
         "signature": "ResolveQuarantinedLinks() ([]QuarantinedLinkInfo, error)"
       },
       {
+        "name": "ResolveTypeID",
+        "signature": "ResolveTypeID(ref string) (string, error)"
+      },
+      {
         "name": "RevealNotebookInOS",
         "signature": "RevealNotebookInOS(notebook string) error"
       },
@@ -823,6 +843,10 @@
       {
         "name": "SaveSystemConfig",
         "signature": "SaveSystemConfig(cfg config.SystemConfig) error"
+      },
+      {
+        "name": "SaveType",
+        "signature": "SaveType(td types.TypeDef) error"
       },
       {
         "name": "SaveUserTemplate",
@@ -1027,6 +1051,7 @@
       "theme:changed",
       "theme:files-dropped",
       "themes:changed",
+      "types:changed",
       "update:download:progress",
       "vault:archive:progress",
       "vault:closing",

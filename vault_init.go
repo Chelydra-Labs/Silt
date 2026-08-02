@@ -15,6 +15,7 @@ import (
 	"silt/backend/parser"
 	"silt/backend/paths"
 	"silt/backend/templates"
+	"silt/backend/types"
 	"silt/backend/vault"
 )
 
@@ -337,6 +338,26 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		} else {
 			tw.Start()
 			a.templateWatcher = tw
+		}
+	}
+
+	// Start hot-reload of .system/types/ so typed pages and the type manager
+	// stay live when a user adds/edits/deletes a type externally (the same
+	// posture as the template watcher). The onChange callback invalidates the
+	// type cache and emits types:changed; the frontend re-resolves typed pages.
+	// The SQLite re-projection of type/property values is driven by the
+	// per-file indexer (Phase 3) — the watcher only invalidates the schema
+	// cache here so resolution uses the fresh schema.
+	if a.ctx != nil {
+		yw, yErr := types.NewTypeWatcher(a.typesDir(), func() {
+			types.InvalidateTypesCache()
+			a.emit(EventTypesChanged, struct{}{})
+		})
+		if yErr != nil {
+			log.Printf("type watcher disabled: %v", yErr)
+		} else {
+			yw.Start()
+			a.typeWatcher = yw
 		}
 	}
 

@@ -288,6 +288,7 @@ func ScaffoldVault(vaultPath string) error {
 	folders := []string{
 		filepath.Join(vaultPath, ".system"),
 		filepath.Join(vaultPath, ".system", "themes"),
+		filepath.Join(vaultPath, ".system", "types"),
 		filepath.Join(vaultPath, ".system", "plugins"),
 	}
 
@@ -295,6 +296,14 @@ func ScaffoldVault(vaultPath string) error {
 		if err := os.MkdirAll(folder, 0o700); err != nil {
 			return fmt.Errorf("failed to create vault folder %s: %w", folder, err)
 		}
+	}
+
+	// Seed a couple of example note types so a fresh vault demonstrates the
+	// typed-notes feature (#783). Existence-guarded: a re-scaffold of an
+	// existing vault keeps the user's edits, and these are plain files the user
+	// can freely edit or delete under .system/types/.
+	if err := seedExampleTypes(vaultPath); err != nil {
+		return err
 	}
 
 	// 2. Scaffold config.yaml
