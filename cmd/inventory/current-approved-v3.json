@@ -77,6 +77,10 @@
         "signature": "ClearNetworkAudit() error"
       },
       {
+        "name": "ClearPageProperty",
+        "signature": "ClearPageProperty(notebook, section, page, property string) error"
+      },
+      {
         "name": "ClosePluginDB",
         "signature": "ClosePluginDB(pluginID string) error"
       },
@@ -291,6 +295,14 @@
       {
         "name": "GetOpenTabs",
         "signature": "GetOpenTabs() (OpenTabsResult, error)"
+      },
+      {
+        "name": "GetPageProperties",
+        "signature": "GetPageProperties(notebook, section, page string) ([]PagePropertyValue, error)"
+      },
+      {
+        "name": "GetPageType",
+        "signature": "GetPageType(notebook, section, page string) (PageTypeInfo, error)"
       },
       {
         "name": "GetPluginRegistry",
@@ -919,6 +931,14 @@
       {
         "name": "SetOpenTabs",
         "signature": "SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) error"
+      },
+      {
+        "name": "SetPageProperty",
+        "signature": "SetPageProperty(notebook, section, page, property string, value any) error"
+      },
+      {
+        "name": "SetPageType",
+        "signature": "SetPageType(notebook, section, page, typeName string) ([]string, error)"
       },
       {
         "name": "SetShowFormatToolbar",
