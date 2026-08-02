@@ -45,6 +45,7 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     values: [] as PagePropertyValue[],
     mismatched: [] as string[],
     error: '',
+    loading: false,
     types: [],
     typesLoading: false,
     locator,
@@ -322,5 +323,69 @@ describe('PropertiesPanel', () => {
       })
     })
     expect(screen.getByText(/doesn't fit this type/i)).toBeInTheDocument()
+  })
+
+  it('shows a role="status" loading state (and not the empty message) while loading with no values', () => {
+    render(PropertiesPanel, {
+      props: baseProps({
+        info: bookInfo,
+        values: [],
+        loading: true
+      })
+    })
+    // Loading indicator is present and reachable as a status role.
+    const statuses = screen.getAllByRole('status')
+    expect(statuses.some((el) => /Loading/i.test(el.textContent ?? ''))).toBe(
+      true
+    )
+    // The misleading "no properties" empty state is suppressed during loading.
+    expect(screen.queryByText(/This type has no properties/i)).toBeNull()
+  })
+
+  it('shows an "Unrecognized type" message + remove affordance for a bogus type ref', async () => {
+    const unknownInfo: PageTypeInfo = {
+      typeId: '',
+      type: { id: '', name: '' },
+      isSet: false,
+      rawType: 'wat'
+    }
+    render(PropertiesPanel, {
+      props: baseProps({ info: unknownInfo, values: [] })
+    })
+    expect(screen.getByText(/Unrecognized type 'wat'/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/isn't defined in .system\/types/i)
+    ).toBeInTheDocument()
+
+    // Open the type menu and clear the bogus ref via the same Remove control.
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Assign a type/i })
+    )
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: /Remove type/i })
+    )
+    expect(appMocks.SetPageType).toHaveBeenCalledWith(
+      'Work',
+      'Projects',
+      'Plan',
+      ''
+    )
+  })
+
+  it('marks required field controls with aria-required', () => {
+    const values: PagePropertyValue[] = [
+      {
+        name: 'title',
+        label: 'Title',
+        type: 'text',
+        value: '',
+        isSet: false,
+        required: true
+      }
+    ]
+    render(PropertiesPanel, { props: baseProps({ values }) })
+    const input = document.getElementById('prop-title') as HTMLInputElement
+    expect(input).not.toBeNull()
+    expect(input.getAttribute('aria-required')).toBe('true')
   })
 })

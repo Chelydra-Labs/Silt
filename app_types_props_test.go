@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"silt/backend/parser"
@@ -746,5 +747,64 @@ func TestSetPageProperty_RevalidatesAfterSchemaReload_PropertyRemoved(t *testing
 	afterBytes, _ := os.ReadFile(filePath)
 	if string(afterBytes) != string(beforeBytes) {
 		t.Errorf("file mutated despite the property being removed.\nbefore:\n%s\nafter:\n%s", before, string(afterBytes))
+	}
+}
+
+// TestSetPageProperty_PostWriteIndexFailure_SurfacesErrorAndEvent pins the
+// observability fix: when the on-disk write commits but the in-memory re-index
+// fails, the IPC caller MUST see the error (so it can warn) AND the
+// types:projection-error event MUST fire (so the dashboard can surface a
+// stale-warning). The file is still written — the failure is in the projection
+// layer, not the file write. We induce the failure by closing the DB before
+// the call; IndexFileBlocks then returns ErrDBClosed mid-write-chain.
+func TestSetPageProperty_PostWriteIndexFailure_SurfacesErrorAndEvent(t *testing.T) {
+	app := newTestApp(t)
+	filePath, _ := writeBookPage(t, app)
+
+	var (
+		mu     sync.Mutex
+		events []string
+	)
+	app.eventEmit = func(name string, _ ...any) {
+		mu.Lock()
+		events = append(events, name)
+		mu.Unlock()
+	}
+
+	// Close the DB so IndexFileBlocks (run inside writePageFrontmatterEdit
+	// after the file write commits) returns ErrDBClosed. Close is idempotent,
+	// so the t.Cleanup Close is a no-op.
+	if err := app.db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	err := app.SetPageProperty("Books", "", "Dune", "rating", 4)
+	if err == nil {
+		t.Fatal("SetPageProperty should surface the post-write re-index error, got nil")
+	}
+	if !strings.Contains(err.Error(), "re-index after write") {
+		t.Errorf("error = %q, want it to mention the re-index failure", err.Error())
+	}
+
+	// The file write committed BEFORE the re-index, so the value is on disk
+	// even though the index is stale. This is the documented contract: no
+	// rollback on a projection failure.
+	raw, _ := os.ReadFile(filePath)
+	if !strings.Contains(string(raw), "rating: 4") {
+		t.Errorf("file write should have committed before the re-index failure:\n%s", string(raw))
+	}
+
+	// The stale-projection event must have fired so the UI can warn.
+	mu.Lock()
+	sawProjectionError := false
+	for _, n := range events {
+		if n == string(EventTypesProjectionError) {
+			sawProjectionError = true
+			break
+		}
+	}
+	mu.Unlock()
+	if !sawProjectionError {
+		t.Errorf("expected %s event, got %v", EventTypesProjectionError, events)
 	}
 }

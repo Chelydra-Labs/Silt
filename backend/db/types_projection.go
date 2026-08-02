@@ -236,8 +236,11 @@ func (dm *DatabaseManager) QueryPagesByType(typeName string) ([]PageProjectionRo
 
 	// Fetch all property rows for this type in one pass and bucket them by
 	// page coordinates (cheaper than N per-page queries for a large type).
+	// No ORDER BY: the only useful index is (type_name, property, value_sort),
+	// so an SQL sort would be a temp-sort; the per-page Go sort below fully
+	// determines row order anyway.
 	propRows, err := db.Query(
-		"SELECT source, notebook, section, page, property, value_text, value_sort, value_type FROM page_properties WHERE type_name = ? ORDER BY source, notebook, section, page, property",
+		"SELECT source, notebook, section, page, property, value_text, value_sort, value_type FROM page_properties WHERE type_name = ?",
 		typeName,
 	)
 	if err != nil {
@@ -266,8 +269,8 @@ func (dm *DatabaseManager) QueryPagesByType(typeName string) ([]PageProjectionRo
 		}
 		rows[idx].Properties = append(rows[idx].Properties, p)
 	}
-	// Defensive: properties are already ordered by the query, but keep the
-	// contract explicit so a future query change cannot shuffle them.
+	// Properties are sorted per-page by name. This is the sole ordering
+	// authority for the properties slice — the SQL query above is unordered.
 	for i := range rows {
 		sort.Slice(rows[i].Properties, func(a, b int) bool {
 			return rows[i].Properties[a].Property < rows[i].Properties[b].Property

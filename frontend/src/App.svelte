@@ -1034,6 +1034,7 @@
                 values={pageType.values}
                 mismatched={pageType.mismatched}
                 error={pageType.error}
+                loading={pageType.loading}
                 types={pageType.types}
                 typesLoading={pageType.typesLoading}
                 typeMenuRequest={pageType.typeMenuRequest}

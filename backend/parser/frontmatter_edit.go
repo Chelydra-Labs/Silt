@@ -19,6 +19,10 @@ var validFrontmatterKey = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 // value is serialized with yamlInline, which forces every value onto a single
 // line; this keeps the edit unambiguous because there is never a multi-line
 // block to re-parse on the next write.
+//
+// An inline comment on the EDITED key's line (e.g. `rating: 5  # out of ten`)
+// is not preserved across an edit, because the value is re-rendered from its
+// parsed form; comments on all OTHER lines are preserved byte-for-byte.
 func SetFrontmatterField(content, key string, value any) (string, error) {
 	if !validFrontmatterKey.MatchString(key) {
 		return "", fmt.Errorf("invalid frontmatter key %q: must match %s", key, validFrontmatterKey.String())
@@ -26,6 +30,9 @@ func SetFrontmatterField(content, key string, value any) (string, error) {
 
 	fm, body := SplitFrontmatter(content)
 	inner := innerFrontmatterLines(fm)
+	if countTopLevelKeyOccurrences(inner, key) > 1 {
+		return "", fmt.Errorf("frontmatter key %q appears more than once; refusing to edit an ambiguous file", key)
+	}
 	valueYAML := yamlInline(value)
 
 	idx, indent := findKeyLine(inner, key)
@@ -67,6 +74,9 @@ func ClearFrontmatterField(content, key string) (string, error) {
 	}
 
 	inner := innerFrontmatterLines(fm)
+	if countTopLevelKeyOccurrences(inner, key) > 1 {
+		return "", fmt.Errorf("frontmatter key %q appears more than once; refusing to edit an ambiguous file", key)
+	}
 	idx, _ := findKeyLine(inner, key)
 	if idx < 0 {
 		return content, nil
@@ -116,6 +126,24 @@ func findKeyLine(lines []string, key string) (int, string) {
 		}
 	}
 	return -1, ""
+}
+
+// countTopLevelKeyOccurrences counts non-indented lines whose prefix is
+// `key:`. YAML is last-wins on duplicate keys, so findKeyLine (which returns
+// the first match) would edit the wrong copy and the file would read back the
+// untouched last value — silent corruption. Callers refuse such files.
+func countTopLevelKeyOccurrences(lines []string, key string) int {
+	pattern := regexp.MustCompile("^" + regexp.QuoteMeta(key) + ":")
+	n := 0
+	for _, line := range lines {
+		if line == "" || line[0] == ' ' || line[0] == '\t' {
+			continue
+		}
+		if pattern.MatchString(line) {
+			n++
+		}
+	}
+	return n
 }
 
 // isContinuationLine reports whether line belongs to a multi-line block value

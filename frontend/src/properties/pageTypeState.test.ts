@@ -127,4 +127,89 @@ describe('pageType controller', () => {
     ctrl.toggle()
     expect(ctrl.panelOpen).toBe(true)
   })
+
+  it('clears a stale error after a successful refresh follows a failed one', async () => {
+    appMocks.GetPageType.mockResolvedValue({
+      typeId: 'book',
+      type: { id: 'book', name: 'Book' },
+      isSet: true,
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([])
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+
+    // First refresh: GetPageProperties rejects → error banner is shown.
+    appMocks.GetPageProperties.mockRejectedValueOnce(new Error('disk gone'))
+    await ctrl.refresh()
+    await tick()
+    expect(ctrl.error).toBe('disk gone')
+
+    // Second refresh succeeds → the stale error must be cleared.
+    await ctrl.refresh()
+    await tick()
+    expect(ctrl.error).toBe('')
+    expect(ctrl.info.isSet).toBe(true)
+  })
+
+  it('resets info/values at the start of refresh so navigation does not retain the previous page type', async () => {
+    // Seed the controller with a resolved typed page.
+    appMocks.GetPageType.mockResolvedValue({
+      typeId: 'book',
+      type: { id: 'book', name: 'Book' },
+      isSet: true,
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([
+      {
+        name: 'title',
+        label: 'Title',
+        type: 'text',
+        value: 'Dune',
+        isSet: true,
+        required: false
+      }
+    ])
+    let current = { ...locator }
+    const ctrl = createPageTypeController({ getLocator: () => current })
+    await ctrl.refresh()
+    await tick()
+    expect(ctrl.info.isSet).toBe(true)
+    expect(ctrl.values).toHaveLength(1)
+
+    // Navigate to a new page. Block both fetches with controllable resolvers
+    // so we can observe the in-flight state before they settle.
+    let resolveType!: (v: unknown) => void
+    let resolveProps!: (v: unknown) => void
+    appMocks.GetPageType.mockReturnValue(
+      new Promise((r) => {
+        resolveType = r
+      })
+    )
+    appMocks.GetPageProperties.mockReturnValue(
+      new Promise((r) => {
+        resolveProps = r
+      })
+    )
+    current = { notebook: 'Work', section: 'Projects', page: 'Other' }
+    const pending = ctrl.refresh()
+    await tick()
+    // While the new fetch is in flight, the previous page's data is already
+    // gone — navigation shows a clean slate, not the stale chip/fields.
+    expect(ctrl.info.isSet).toBe(false)
+    expect(ctrl.values).toEqual([])
+    expect(ctrl.loading).toBe(true)
+
+    // Resolving with the new page's data replaces (not merges) the old state.
+    resolveType({
+      typeId: 'movie',
+      type: { id: 'movie', name: 'Movie' },
+      isSet: true,
+      rawType: ''
+    })
+    resolveProps([])
+    await pending
+    await tick()
+    expect(ctrl.info.type.id).toBe('movie')
+    expect(ctrl.values).toEqual([])
+  })
 })

@@ -25,6 +25,9 @@
     values: PagePropertyValue[]
     mismatched: string[]
     error: string
+    /** True while the controller's GetPageType/GetPageProperties fetch is in
+     *  flight — used to show a loading state instead of the empty-type message. */
+    loading: boolean
     types: TypeDef[]
     typesLoading: boolean
     locator: PageLocator
@@ -45,6 +48,7 @@
     values,
     mismatched,
     error,
+    loading,
     types,
     typesLoading,
     locator,
@@ -240,6 +244,10 @@
 
   let typeName = $derived(info.isSet ? info.type.name || info.type.id : '')
   let hasType = $derived(info.isSet)
+  // A `type:` ref that didn't resolve to a known type def. The strip renders a
+  // subdued raw chip for this; the panel matches with a distinct message + a
+  // remove affordance to clear the bogus ref.
+  let isUnknownType = $derived(!info.isSet && info.rawType.length > 0)
 </script>
 
 {#if open}
@@ -306,7 +314,7 @@
                 </button>
               {/each}
             {/if}
-            {#if hasType}
+            {#if hasType || isUnknownType}
               <div class="menu-sep" role="separator" aria-hidden="true"></div>
               <button
                 type="button"
@@ -350,7 +358,12 @@
     {/if}
 
     <div class="fields custom-scrollbar">
-      {#if !hasType}
+      {#if loading && values.length === 0}
+        <p class="empty" role="status" aria-live="polite">Loading…</p>
+      {:else if isUnknownType}
+        <p class="empty">Unrecognized type '{info.rawType}'.</p>
+        <p class="empty">This type isn't defined in .system/types.</p>
+      {:else if !hasType}
         <p class="empty">
           This page has no type. Assign one to add typed properties.
         </p>

@@ -41,6 +41,7 @@ func (a *App) projectPageType(source string, meta parser.FileMetadata) {
 		// Untyped page: clear any stale projection so the dashboards drop it.
 		if err := a.db.ClearPageProjection(source, notebook, section, page); err != nil {
 			log.Printf("types: ClearPageProjection(%s/%s/%s/%s) failed: %v", source, notebook, section, page, err)
+			a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
 		}
 		return
 	}
@@ -67,6 +68,7 @@ func (a *App) projectPageType(source string, meta parser.FileMetadata) {
 
 	if err := a.db.IndexPageProjection(source, notebook, section, page, typeID, props); err != nil {
 		log.Printf("types: IndexPageProjection(%s/%s/%s/%s) failed: %v", source, notebook, section, page, err)
+		a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
 	}
 }
 
@@ -271,6 +273,7 @@ func (a *App) reprojectAllTypedPages() {
 			// Page lost its type externally; drop the stale projection row.
 			if err := a.db.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); err != nil {
 				log.Printf("types: ClearPageProjection(%s/%s/%s/%s) during re-projection failed: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, err)
+				a.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
 			}
 			continue
 		}

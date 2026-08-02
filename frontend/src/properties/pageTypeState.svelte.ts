@@ -93,6 +93,13 @@ export function createPageTypeController(
       mismatched = []
       return
     }
+    // Reset the displayed state up front so a page→page navigation shows a
+    // clean slate instead of the previous page's chip/fields while the new
+    // fetch is in flight (or indefinitely if it fails).
+    info = EMPTY_INFO
+    values = []
+    mismatched = []
+    error = ''
     const token = ++refreshToken
     loading = true
     try {
@@ -104,8 +111,11 @@ export function createPageTypeController(
       info = (typeInfo as PageTypeInfo) ?? EMPTY_INFO
       values = (props as PagePropertyValue[]) ?? []
       // A fresh fetch clears stale keep-and-flag warnings — they describe the
-      // last type switch, not the current state.
+      // last type switch, not the current state. Also clears a transient
+      // error from a prior failed fetch so a recovered refresh doesn't leave
+      // a stale banner.
       mismatched = []
+      error = ''
     } catch (e) {
       if (token !== refreshToken) return
       error = coerceIPCError(e).message

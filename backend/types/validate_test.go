@@ -56,7 +56,8 @@ func TestValidateTypeDef(t *testing.T) {
 			{Name: "title", Type: PropText, Required: true},
 			{Name: "rating", Type: PropNumber, Min: &min, Max: &max},
 			{Name: "status", Type: PropSelect, Options: []string{"todo", "done"}},
-			{Name: "tags", Type: PropMultiSelect},
+			{Name: "keywords", Type: PropMultiSelect},
+			{Name: "author", Type: PropPage, Target: "person"},
 		},
 	}
 	if err := ValidateTypeDef(good); err != nil {
@@ -76,6 +77,9 @@ func TestValidateTypeDef(t *testing.T) {
 		{"select no options", &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "s", Type: PropSelect}}}, "requires at least one option"},
 		{"number min>max", &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "n", Type: PropNumber, Min: &max, Max: &min}}}, "greater than max"},
 		{"hero unknown", &TypeDef{Name: "X", HeroField: "nope", Properties: []PropertyDef{{Name: "a", Type: PropText}}}, "references an unknown property"},
+		{"reserved name", &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "type", Type: PropText}}}, "is reserved"},
+		{"bad default", &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "n", Type: PropNumber, Default: "not a number"}}}, "expected a number"},
+		{"bad target", &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "r", Type: PropPage, Target: "Bad Target!"}}}, "must be a valid type id"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -101,6 +105,7 @@ func TestValidateValue(t *testing.T) {
 			{Name: "dt", Type: PropDateTime},
 			{Name: "chk", Type: PropCheckbox},
 			{Name: "sel", Type: PropSelect, Options: []string{"a", "b"}},
+			{Name: "selNoOpt", Type: PropSelect}, // no options — defense-in-depth path
 			{Name: "multi", Type: PropMultiSelect, Options: []string{"x", "y"}},
 			{Name: "multiFree", Type: PropMultiSelect},
 			{Name: "pg", Type: PropPage},
@@ -117,6 +122,8 @@ func TestValidateValue(t *testing.T) {
 		{"txt", "hello", true},
 		{"txt", 42, false},
 		{"txt", nil, true}, // unset, not required
+		{"txt", strings.Repeat("a", maxPropertyValueRunes), true},    // at the cap
+		{"txt", strings.Repeat("a", maxPropertyValueRunes+1), false}, // over the cap
 		// required
 		{"req", nil, false},
 		{"req", "ok", true},
@@ -139,6 +146,7 @@ func TestValidateValue(t *testing.T) {
 		// select
 		{"sel", "a", true},
 		{"sel", "z", false},
+		{"selNoOpt", "x", false}, // select with no options — constructed directly
 		// multiselect
 		{"multi", []any{"x", "y"}, true},
 		{"multi", []any{"x", "z"}, false},
@@ -163,6 +171,39 @@ func TestValidateValue(t *testing.T) {
 				t.Errorf("ValidateValue(%q, %v) = nil; want an error", c.prop, c.val)
 			}
 		})
+	}
+}
+
+func TestValidateTypeDef_ReservedPropertyNames(t *testing.T) {
+	for _, name := range []string{"notebook", "section", "page", "date", "tags", "type"} {
+		t.Run(name, func(t *testing.T) {
+			td := &TypeDef{Name: "X", Properties: []PropertyDef{{Name: name, Type: PropText}}}
+			err := ValidateTypeDef(td)
+			if err == nil {
+				t.Fatalf("reserved name %q should be rejected", name)
+			}
+			if !strings.Contains(err.Error(), "is reserved") {
+				t.Errorf("reserved name %q: error %q should mention 'is reserved'", name, err.Error())
+			}
+		})
+	}
+	// A non-reserved valid name passes.
+	td := &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "author", Type: PropText}}}
+	if err := ValidateTypeDef(td); err != nil {
+		t.Errorf("non-reserved name 'author' should pass, got %v", err)
+	}
+}
+
+func TestValidateValue_MultiSelectRuneCap(t *testing.T) {
+	// Combined runes across elements are capped, not just per-element.
+	td := &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "pgs", Type: PropPages}}}
+	ok := []any{strings.Repeat("a", 100), strings.Repeat("b", 100)}
+	if err := ValidateValue(td, "pgs", ok); err != nil {
+		t.Errorf("combined length under cap should pass, got %v", err)
+	}
+	over := []any{strings.Repeat("a", maxPropertyValueRunes/2+1), strings.Repeat("b", maxPropertyValueRunes/2+1)}
+	if err := ValidateValue(td, "pgs", over); err == nil {
+		t.Error("combined length over cap should fail")
 	}
 }
 

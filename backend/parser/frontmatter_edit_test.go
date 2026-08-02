@@ -229,3 +229,91 @@ func TestSetFrontmatterField_BodyByteExact(t *testing.T) {
 		t.Errorf("title line not updated in result:\n%s", got)
 	}
 }
+
+func TestSetFrontmatterField_DuplicateKey(t *testing.T) {
+	// YAML is last-wins on duplicate keys; editing the first match would read
+	// back the untouched last value. The editor must refuse such a file.
+	input := "---\nrating: 3\nrating: 7\n---\nbody\n"
+
+	t.Run("setRefuses", func(t *testing.T) {
+		got, err := SetFrontmatterField(input, "rating", 5)
+		if err == nil {
+			t.Fatal("expected error for duplicate key, got nil")
+		}
+		if !strings.Contains(err.Error(), "appears more than once") {
+			t.Errorf("error should mention duplicate, got %v", err)
+		}
+		if got != "" {
+			t.Errorf("on error result should be empty, got %q", got)
+		}
+	})
+
+	t.Run("clearRefuses", func(t *testing.T) {
+		got, err := ClearFrontmatterField(input, "rating")
+		if err == nil {
+			t.Fatal("expected error for duplicate key, got nil")
+		}
+		if !strings.Contains(err.Error(), "appears more than once") {
+			t.Errorf("error should mention duplicate, got %v", err)
+		}
+		if got != "" {
+			t.Errorf("on error result should be empty, got %q", got)
+		}
+	})
+}
+
+func TestSetFrontmatterField_BOMPrefixed(t *testing.T) {
+	// A BOM-prefixed file (synced from Obsidian/OneDrive/Dropbox) must be
+	// treated as having frontmatter; before BOM-stripping it was seen as a
+	// bare body and the whole body was wrapped in a fresh fence.
+	input := "\uFEFF---\nrating: 5\n---\nbody\n"
+
+	got, err := SetFrontmatterField(input, "rating", 9)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	fm, body := SplitFrontmatter(got)
+	if fm == "" {
+		t.Fatalf("BOM file lost its frontmatter; got fm=%q body=%q", fm, body)
+	}
+	if !strings.Contains(got, "rating: 9") {
+		t.Errorf("rating not updated\ngot: %q", got)
+	}
+	if body != "body\n" {
+		t.Errorf("body corrupted by BOM handling\ngot body: %q", body)
+	}
+	// Catastrophic failure mode: body double-wrapped in fences. The single
+	// frontmatter block means SplitFrontmatter returns the body cleanly.
+	if strings.Count(body, "---") != 0 {
+		t.Errorf("body should not contain fence lines; got %q", body)
+	}
+}
+
+func TestSetFrontmatterField_EditedKeyInlineCommentDropped(t *testing.T) {
+	// An inline comment on the EDITED line is re-rendered away; comments on
+	// every other line survive byte-for-byte. Documents the one known
+	// byte-exactness exception honestly.
+	input := "---\n" +
+		"# header comment\n" +
+		"rating: 5  # out of ten\n" +
+		"status: todo  # keep me\n" +
+		"---\n" +
+		"body\n"
+
+	got, err := SetFrontmatterField(input, "rating", 7)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(got, "out of ten") {
+		t.Errorf("edited-key inline comment should be dropped\ngot: %q", got)
+	}
+	if !strings.Contains(got, "# header comment") {
+		t.Errorf("header comment should be preserved\ngot: %q", got)
+	}
+	if !strings.Contains(got, "# keep me") {
+		t.Errorf("other-line comment should be preserved\ngot: %q", got)
+	}
+	if !strings.Contains(got, "rating: 7") {
+		t.Errorf("rating not updated\ngot: %q", got)
+	}
+}

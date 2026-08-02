@@ -22,6 +22,8 @@
     fieldId: string
     disabled?: boolean
     mismatched?: boolean
+    /** Forwards aria-required to the combobox input. */
+    required?: boolean
     onCommit: (next: string | string[]) => void
   }
 
@@ -33,6 +35,7 @@
     fieldId,
     disabled = false,
     mismatched = false,
+    required = false,
     onCommit
   }: Props = $props()
 
@@ -249,6 +252,7 @@
       aria-controls={open ? listboxId : undefined}
       aria-activedescendant={activeDescendant}
       aria-label={label}
+      aria-required={required}
       placeholder={multi ? 'Add a page…' : 'Link a page…'}
       value={query}
       {disabled}

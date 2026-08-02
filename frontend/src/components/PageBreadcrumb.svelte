@@ -128,7 +128,7 @@
       </button>
     {/if}
     {#if meta}
-      <span class="meta" aria-hidden="false">{@render meta()}</span>
+      <span class="meta">{@render meta()}</span>
     {/if}
   </nav>
 {/if}

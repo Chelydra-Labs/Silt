@@ -155,10 +155,11 @@
     {#if value.toLowerCase() === 'true'}
       <span
         class="material-symbols-outlined text-icon-sm check"
+        role="img"
         aria-label="Yes">check</span
       >
     {:else if value.toLowerCase() === 'false'}
-      <span class="dash" aria-label="No">—</span>
+      <span class="dash" role="img" aria-label="No">—</span>
     {/if}
   {:else if col.kind === 'select' && value}
     <span class="chip">{value}</span>

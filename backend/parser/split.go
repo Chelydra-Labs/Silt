@@ -9,6 +9,10 @@ import "strings"
 // and body is the full content. Callers pair this with RenderFileContent so
 // every writer extracts frontmatter the same way.
 func SplitFrontmatter(content string) (frontmatter, body string) {
+	// Externally-edited files (Obsidian / OneDrive / Dropbox sync) may carry a
+	// leading UTF-8 BOM; strings.TrimSpace does not strip U+FEFF, so peel it
+	// once here or the opening --- would not be recognized.
+	content = strings.TrimPrefix(content, "\uFEFF")
 	lines := strings.Split(content, "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
 		return "", content

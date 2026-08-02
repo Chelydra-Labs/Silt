@@ -76,13 +76,66 @@ func titleFromID(id string) string {
 	return strings.Join(words, " ")
 }
 
-// loadOne reads and parses a single on-disk type file. Mirrors templates.loadOne.
-func loadOne(path string) (*TypeDef, error) {
+// loadOne reads and parses a single on-disk type file, returning the raw bytes
+// alongside the parsed type so callers (ListTypes) can run diagnostic passes
+// without re-reading the file. Mirrors templates.loadOne.
+func loadOne(path string) (*TypeDef, []byte, error) {
 	raw, err := safeio.ReadFileMax(path, maxTypeFileBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read type %s: %w", filepath.Base(path), err)
+		return nil, nil, fmt.Errorf("failed to read type %s: %w", filepath.Base(path), err)
 	}
-	return ParseTypeBytes(raw, filepath.Base(path))
+	td, err := ParseTypeBytes(raw, filepath.Base(path))
+	if err != nil {
+		return nil, nil, err
+	}
+	return td, raw, nil
+}
+
+// detectUnknownTypeKeys warns about top-level keys (and property-map keys)
+// that yaml.Unmarshal silently ignores. A typo like `propertis:` would
+// otherwise yield an empty-schema type with no diagnostic. Best-effort: a
+// map parse failure here is silent because ParseTypeBytes already accepted
+// the same bytes. KnownFields(true) is deliberately avoided so forward-compat
+// with newer Silt type files (extra keys) does not turn into hard errors.
+func detectUnknownTypeKeys(raw []byte, filename string) []TypeLoadError {
+	var root map[string]any
+	if err := yaml.Unmarshal(raw, &root); err != nil {
+		return nil
+	}
+	knownTypeDef := map[string]bool{
+		"name": true, "description": true, "icon": true,
+		"heroField": true, "properties": true,
+	}
+	knownProp := map[string]bool{
+		"name": true, "label": true, "type": true, "required": true,
+		"options": true, "default": true, "min": true, "max": true,
+		"target": true, "cardinality": true, "description": true,
+	}
+	var msgs []string
+	for k := range root {
+		if !knownTypeDef[k] {
+			msgs = append(msgs, fmt.Sprintf("%s: unknown key %q ignored", filename, k))
+		}
+	}
+	if props, ok := root["properties"].([]any); ok {
+		for i, p := range props {
+			pm, ok := p.(map[string]any)
+			if !ok {
+				continue
+			}
+			for k := range pm {
+				if !knownProp[k] {
+					msgs = append(msgs, fmt.Sprintf("%s: unknown key %q in properties[%d] ignored", filename, k, i))
+				}
+			}
+		}
+	}
+	sort.Strings(msgs)
+	warns := make([]TypeLoadError, len(msgs))
+	for i, m := range msgs {
+		warns[i] = TypeLoadError{File: filename, Message: m}
+	}
+	return warns
 }
 
 // ListTypes enumerates <typesDir>/*.yaml + *.yml, returning every valid type.
@@ -125,7 +178,7 @@ func ListTypes(typesDir string) (*ListTypesResult, error) {
 			continue
 		}
 		full := filepath.Join(typesDir, e.Name())
-		td, loadErr := loadOne(full)
+		td, raw, loadErr := loadOne(full)
 		if loadErr != nil {
 			res.Errors = append(res.Errors, TypeLoadError{
 				File:    e.Name(),
@@ -133,6 +186,7 @@ func ListTypes(typesDir string) (*ListTypesResult, error) {
 			})
 			continue
 		}
+		res.Warnings = append(res.Warnings, detectUnknownTypeKeys(raw, e.Name())...)
 		id := strings.ToLower(td.ID)
 		if seen[id] {
 			continue // first valid definition of an id wins
@@ -161,7 +215,7 @@ func GetType(typesDir, id string) (*TypeDef, error) {
 	if typesDir != "" {
 		for _, ext := range []string{".yaml", ".yml"} {
 			path := filepath.Join(typesDir, id+ext)
-			td, err := loadOne(path)
+			td, _, err := loadOne(path)
 			if err == nil {
 				return td, nil
 			}

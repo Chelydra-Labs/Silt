@@ -137,8 +137,15 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 			writeErr = err
 			return
 		}
+		// Past this point the on-disk write has committed. The remaining steps
+		// (re-parse, re-index, project) refresh in-memory state only — a
+		// failure there means the dashboard is stale until the next scan, not
+		// that the file is wrong. We surface such errors (and emit
+		// types:projection-error) instead of rolling the write back.
 		blocks, meta, _, _, perr := parser.ParseFileContent(newContent, notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
 		if perr != nil {
+			a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
+			writeErr = fmt.Errorf("re-parse after write (file saved; index will refresh on next scan): %w", perr)
 			return
 		}
 		var idxErr error
@@ -147,6 +154,9 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 		})
 		if idxErr != nil {
 			log.Printf("types: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+			a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
+			writeErr = fmt.Errorf("re-index after write (file saved; index will refresh on next scan): %w", idxErr)
+			return
 		}
 		a.projectPageType(source, meta)
 	})
@@ -281,6 +291,12 @@ func (a *App) SetPageProperty(notebook, section, page, property string, value an
 	// needs the live SQLite index, which the index-free types package cannot
 	// reach. A nil value (clearing) skips this; an empty pages list has
 	// nothing to validate.
+	//
+	// TOCTOU: the check runs once at entry, not under the file write lock — a
+	// concurrent target delete between validation and write yields a dangling
+	// relation, by-design inert at query time (mirrors block_references'
+	// source-only FK, ARCHITECTURE §3); target delete never writes back to
+	// the source page.
 	if value != nil && (pdef.Type == types.PropPage || pdef.Type == types.PropPages) {
 		if err := a.validateRelationTargets(source, pdef, value); err != nil {
 			return err

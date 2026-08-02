@@ -130,6 +130,9 @@
 
   let fieldId = $derived(`prop-${value.name}`)
   let hasOptions = $derived(!!value.options && value.options.length > 0)
+  // Drives both the visual `*` and aria-required on the rendered control so
+  // screen readers announce required fields (the marker span is aria-hidden).
+  let isRequired = $derived(!!value.required)
 
   function commitText(e: Event): void {
     const target = e.currentTarget as HTMLInputElement
@@ -229,6 +232,7 @@
         {fieldId}
         disabled={isPending}
         {mismatched}
+        required={isRequired}
         onCommit={(next) => void field.commit(next)}
       />
     {:else if value.type === 'text'}
@@ -239,6 +243,7 @@
         value={textValue}
         onchange={commitText}
         disabled={isPending}
+        aria-required={isRequired}
         aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
       />
     {:else if value.type === 'number'}
@@ -249,6 +254,7 @@
         value={numberValue}
         onchange={commitNumber}
         disabled={isPending}
+        aria-required={isRequired}
         min={min ?? undefined}
         max={max ?? undefined}
         aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
@@ -261,6 +267,7 @@
         value={textValue}
         onchange={commitText}
         disabled={isPending}
+        aria-required={isRequired}
         aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
       />
     {:else if value.type === 'datetime'}
@@ -271,6 +278,7 @@
         value={textValue}
         onchange={commitText}
         disabled={isPending}
+        aria-required={isRequired}
         aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
       />
     {:else if value.type === 'checkbox'}
@@ -279,6 +287,7 @@
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-required={isRequired}
         aria-label={value.label || value.name}
         class="switch"
         class:on={checked}
@@ -294,6 +303,7 @@
         value={textValue}
         onchange={commitSelect}
         disabled={isPending}
+        aria-required={isRequired}
         aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
       >
         <option value="">—</option>
@@ -303,7 +313,11 @@
       </select>
     {:else if value.type === 'multiselect'}
       {#if hasOptions}
-        <div class="chips" role="group" aria-label={value.label || value.name}>
+        <div
+          class="chips"
+          role="group"
+          aria-label={`${value.label || value.name}${isRequired ? ' (required)' : ''}`}
+        >
           {#each value.options ?? [] as opt (opt)}
             <button
               type="button"
@@ -325,6 +339,7 @@
           value={textValue}
           onchange={commitText}
           disabled={isPending}
+          aria-required={isRequired}
           placeholder="value, another value"
           aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
         />
@@ -337,6 +352,7 @@
         value={textValue}
         onchange={commitText}
         disabled={isPending}
+        aria-required={isRequired}
       />
     {/if}
   </div>

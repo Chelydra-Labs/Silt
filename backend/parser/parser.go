@@ -820,6 +820,10 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 		spacesPerTab = 4
 	}
 
+	// Externally-edited files (Obsidian / OneDrive / Dropbox sync) may carry a
+	// leading UTF-8 BOM; strings.TrimSpace does not strip U+FEFF, so peel it
+	// once here or the opening --- would not be recognized.
+	content = strings.TrimPrefix(content, "\uFEFF")
 	lines := strings.Split(content, "\n")
 	var meta FileMetadata
 	meta.Notebook = defaultNotebook

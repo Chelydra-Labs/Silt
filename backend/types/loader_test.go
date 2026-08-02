@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -26,7 +27,7 @@ properties:
     required: true
   - name: author
     type: page
-    target: Person
+    target: person
   - name: status
     type: select
     options: [todo, reading, done]
@@ -56,8 +57,8 @@ func TestParseTypeBytes_Good(t *testing.T) {
 	if len(td.Properties) != 4 {
 		t.Fatalf("got %d properties, want 4", len(td.Properties))
 	}
-	if td.Properties[1].Target != "Person" {
-		t.Errorf("author target = %q, want Person", td.Properties[1].Target)
+	if td.Properties[1].Target != "person" {
+		t.Errorf("author target = %q, want person", td.Properties[1].Target)
 	}
 }
 
@@ -112,6 +113,34 @@ func TestListTypes_MalformedSoftFail(t *testing.T) {
 	}
 	if len(res.Errors) != 1 || res.Errors[0].File != "broken.yaml" {
 		t.Fatalf("expected one error for broken.yaml, got %v", res.Errors)
+	}
+}
+
+func TestListTypes_UnknownKeyWarning(t *testing.T) {
+	// A typo like `propertis:` is silently ignored by yaml.Unmarshal; the
+	// loader should still load the type (with empty properties) AND emit a
+	// warning so the typo is visible.
+	dir := t.TempDir()
+	writeTypeFile(t, dir, "typo.yaml", "name: Typo\npropertis:\n  - name: x\n    type: text\n")
+
+	res, err := ListTypes(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.Types) != 1 {
+		t.Fatalf("type should still load with empty properties; got %d types and errs=%v", len(res.Types), res.Errors)
+	}
+	if len(res.Warnings) == 0 {
+		t.Fatalf("expected a warning for unknown key 'propertis', got none")
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w.Message, "propertis") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings did not mention 'propertis': %v", res.Warnings)
 	}
 }
 

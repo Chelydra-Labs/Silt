@@ -39,6 +39,14 @@ func TestSplitFrontmatter(t *testing.T) {
 			fmWant:   "---\nkey: val\n---\n",
 			bodyWant: "",
 		},
+		{
+			// A leading UTF-8 BOM (Obsidian / OneDrive / Dropbox sync) must
+			// not defeat frontmatter detection.
+			name:     "bom prefixed frontmatter",
+			content:  "\uFEFF---\ntitle: Hello\n---\nbody",
+			fmWant:   "---\ntitle: Hello\n---\n",
+			bodyWant: "body",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

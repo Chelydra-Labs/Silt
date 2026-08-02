@@ -8,6 +8,12 @@ import (
 	"time"
 )
 
+// maxPropertyValueRunes bounds text/page values and the combined runes of a
+// multi-value property. Mirrors the MCP tool's MaxBlockTextRunes ceiling so a
+// plugin-driven runaway value cannot bloat the SQLite index beyond what a
+// single tool call could already write.
+const maxPropertyValueRunes = 32000
+
 var (
 	// typeIDRe bounds a type id to filename-safe [a-z0-9_-]+. The id flows
 	// into filepath.Join(typesDir, id+".yaml") on the write path, so it must
@@ -15,11 +21,24 @@ var (
 	// platform we ship. Mirrors templates.idRe.
 	typeIDRe = regexp.MustCompile(`^[a-z0-9_-]+$`)
 	// propNameRe bounds a property name to ^[a-z][a-z0-9_]*$ so it is a safe
-	// frontmatter key, a safe SQL identifier, and unable to collide with the
-	// reserved system keys (notebook/section/page/date/tags/type) or with
-	// smart-graph syntax (colons, capitals, parentheses). Mirrors the template
-	// placeholder grammar.
+	// frontmatter key, a safe SQL identifier, and free of smart-graph syntax
+	// (colons, capitals, parentheses). Mirrors the template placeholder
+	// grammar. The reserved-key check (notebook/section/page/date/tags/type)
+	// is enforced in ValidateTypeDef, not the regex.
 	propNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
+	// reservedPropertyNames are frontmatter keys Silt owns (page identity, tag
+	// extraction, locator fields). A property sharing one would be
+	// indistinguishable from the system value at read time, so ValidateTypeDef
+	// rejects it. Lowercase since propNameRe already forces lowercase.
+	reservedPropertyNames = map[string]bool{
+		"notebook": true,
+		"section":  true,
+		"page":     true,
+		"date":     true,
+		"tags":     true,
+		"type":     true,
+	}
 )
 
 // IsValidTypeID reports whether id is a safe type id (non-empty, [a-z0-9_-]+).
@@ -90,6 +109,11 @@ func ValidateTypeDef(td *TypeDef) error {
 				Field:   prefix + ".name",
 				Message: fmt.Sprintf("property name %q must be lowercase (^[a-z][a-z0-9_]*$) so it is a safe frontmatter key", p.Name),
 			})
+		case reservedPropertyNames[strings.ToLower(p.Name)]:
+			errs = append(errs, ValidationError{
+				Field:   prefix + ".name",
+				Message: fmt.Sprintf("property name %q is reserved (collides with a system-managed frontmatter key)", p.Name),
+			})
 		case seen[strings.ToLower(p.Name)]:
 			errs = append(errs, ValidationError{
 				Field:   prefix + ".name",
@@ -122,6 +146,26 @@ func ValidateTypeDef(td *TypeDef) error {
 				})
 			}
 		}
+
+		// Reuse ValidateValue on a synthetic single-property TypeDef so the
+		// default's structural checks (type, options, min/max) live in one
+		// place. A non-nil default never trips the Required-missing branch.
+		if p.Default != nil {
+			if err := ValidateValue(&TypeDef{Properties: []PropertyDef{p}}, p.Name, p.Default); err != nil {
+				errs = append(errs, ValidationError{Field: prefix + ".default", Message: err.Error()})
+			}
+		}
+
+		// Target shape check only; target TYPE existence needs the live index,
+		// which this package does not touch. Catches typos and malformed ids.
+		if (p.Type == PropPage || p.Type == PropPages) && p.Target != "" {
+			if !IsValidTypeID(p.Target) {
+				errs = append(errs, ValidationError{
+					Field:   prefix + ".target",
+					Message: fmt.Sprintf("relation target %q must be a valid type id ([a-z0-9_-]+)", p.Target),
+				})
+			}
+		}
 	}
 
 	if td.HeroField != "" {
@@ -151,6 +195,9 @@ func knownTypeList() []string {
 // in the given type. It returns nil for a valid value. A nil value is valid
 // unless the property is Required (nil means "unset").
 //
+// A non-nil but empty value (e.g. "" for text, [] for multiselect) is treated
+// as SET, not unset, so Required only rejects a truly missing (nil) value.
+//
 // Relation target EXISTENCE and target-TYPE checks are intentionally NOT done
 // here: they need the live SQLite index (does the target page exist, and is it
 // of def.Target?). The app layer performs that check after this structural
@@ -177,6 +224,9 @@ func ValidateValue(td *TypeDef, propName string, value any) error {
 		}
 		if def.Type == PropPage && strings.TrimSpace(s) == "" {
 			return ValidationError{Field: propName, Message: "page relation must not be empty"}
+		}
+		if rs := len([]rune(s)); rs > maxPropertyValueRunes {
+			return ValidationError{Field: propName, Message: fmt.Sprintf("value length %d exceeds the %d-rune limit", rs, maxPropertyValueRunes)}
 		}
 		return nil
 
@@ -209,7 +259,13 @@ func ValidateValue(td *TypeDef, propName string, value any) error {
 		if !ok {
 			return ValidationError{Field: propName, Message: fmt.Sprintf("expected a select value (string), got %T", value)}
 		}
-		if len(def.Options) > 0 && !containsString(def.Options, s) {
+		// ValidateTypeDef enforces non-empty options; this guards PropertyDefs
+		// built without going through it (tests, SDK, plugins) so a select
+		// with no options cannot silently match any value.
+		if len(def.Options) == 0 {
+			return ValidationError{Field: propName, Message: "select property has no allowed options"}
+		}
+		if !containsString(def.Options, s) {
 			return ValidationError{Field: propName, Message: fmt.Sprintf("%q is not one of the allowed options %v", s, def.Options)}
 		}
 		return nil
@@ -244,6 +300,14 @@ func ValidateValue(td *TypeDef, propName string, value any) error {
 					return ValidationError{Field: propName, Message: fmt.Sprintf("%q is not one of the allowed options %v", s, def.Options)}
 				}
 			}
+		}
+		// Cap the combined runes across elements to bound the stored value.
+		total := 0
+		for _, s := range strs {
+			total += len([]rune(s))
+		}
+		if total > maxPropertyValueRunes {
+			return ValidationError{Field: propName, Message: fmt.Sprintf("combined value length %d exceeds the %d-rune limit", total, maxPropertyValueRunes)}
 		}
 		return nil
 	}
