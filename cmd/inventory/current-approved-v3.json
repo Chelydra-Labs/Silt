@@ -721,6 +721,10 @@
         "signature": "QueryBlocksByTag(tagPath string) ([]parser.TaskResult, error)"
       },
       {
+        "name": "QueryPagesByType",
+        "signature": "QueryPagesByType(typeName string, filter map[string]string, sortProperty string, sortDesc bool) ([]TypeDashboardRow, error)"
+      },
+      {
         "name": "QueryTagHierarchy",
         "signature": "QueryTagHierarchy() ([]parser.TagNode, error)"
       },
@@ -1189,6 +1193,11 @@
       "frontend/src/plugins/loader.test.ts",
       "frontend/src/plugins/loader.ts",
       "frontend/src/plugins/loader.vault-close.test.ts",
+      "frontend/src/properties/PropertiesPanel.svelte",
+      "frontend/src/properties/PropertiesPanel.test.ts",
+      "frontend/src/properties/PropertyField.svelte",
+      "frontend/src/properties/pageTypeState.svelte.ts",
+      "frontend/src/properties/pageTypeState.test.ts",
       "frontend/src/settings/store.svelte.test.ts",
       "frontend/src/settings/store.svelte.ts",
       "frontend/src/shell/useSettingsDialogs.svelte.test.ts",
@@ -1268,6 +1277,8 @@
       "frontend/src/plugins/loader.vault-close.test.ts",
       "frontend/src/plugins/shared/ai-chat/ChatShell.svelte",
       "frontend/src/plugins/shared/ai-chat/ChatShell.test.ts",
+      "frontend/src/properties/pageTypeState.svelte.ts",
+      "frontend/src/properties/pageTypeState.test.ts",
       "frontend/src/settings/store.svelte.test.ts",
       "frontend/src/settings/store.svelte.ts",
       "frontend/src/shell/useStartupEvents.svelte.test.ts",
@@ -1310,6 +1321,7 @@
       "theme:changed",
       "theme:files-dropped",
       "themes:changed",
+      "types:changed",
       "update:download:progress",
       "vault:archive:progress",
       "vault:closing",
