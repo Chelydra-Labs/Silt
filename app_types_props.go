@@ -204,12 +204,18 @@ func (a *App) GetPageProperties(notebook, section, page string) ([]PagePropertyV
 }
 
 // SetPageProperty writes a single typed property value into the page's
-// frontmatter. The value is structurally validated against the page's type
-// schema BEFORE the file is touched, so an invalid value never persists. The
-// edit is a surgical single-line replacement (parser.SetFrontmatterField), so
-// every other frontmatter line — comments, unrelated keys, exact quoting —
-// survives byte-for-byte. Relation-target existence is intentionally NOT
-// checked here; it needs the live index and is a later phase.
+// frontmatter. The value is validated BEFORE the file is touched, so an
+// invalid value never persists. Validation has two phases:
+//   - structural (types.ValidateValue): the value is the right Go shape for
+//     the property type (a string for text/page, a list for pages, etc).
+//   - relation-target (page/pages only): each referenced page exists in the
+//     index and, when the property declares a Target type, is of that type.
+//
+// The edit is a surgical single-line replacement (parser.SetFrontmatterField),
+// so every other frontmatter line — comments, unrelated keys, exact quoting —
+// survives byte-for-byte. Relation validation mirrors block_references'
+// source-only-FK design: it runs only at WRITE time; a target deleted later
+// stays silently inert (no back-write, no two-way linking).
 func (a *App) SetPageProperty(notebook, section, page, property string, value any) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -237,9 +243,118 @@ func (a *App) SetPageProperty(notebook, section, page, property string, value an
 	if err := types.ValidateValue(td, pdef.Name, value); err != nil {
 		return err
 	}
+	// Relation-target validation (page/pages): confirm each referenced page
+	// exists in the index and — when the property declares a Target type — is
+	// of that type. Lives in the app layer (not types.ValidateValue) because it
+	// needs the live SQLite index, which the index-free types package cannot
+	// reach. A nil value (clearing) skips this; an empty pages list has
+	// nothing to validate.
+	if value != nil && (pdef.Type == types.PropPage || pdef.Type == types.PropPages) {
+		if err := a.validateRelationTargets(source, pdef, value); err != nil {
+			return err
+		}
+	}
 	return a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, func(currentContent string) (string, error) {
 		return parser.SetFrontmatterField(currentContent, pdef.Name, value)
 	})
+}
+
+// validateRelationTargets checks that every page-relation target in value
+// exists in the index and (when the property declares a Target type) is of
+// that type. It runs after types.ValidateValue (which checks the value's
+// shape) and before the frontmatter write, so a dangling or wrong-type
+// relation never lands on disk.
+//
+// Relation targets are page references stored as path/name strings. A
+// path-style ref ("Work/People/Alice") is parsed as notebook=Work,
+// section=People, page=Alice; a bare name ("Alice") is resolved to the first
+// indexed page with that leaf. Existence is scoped to the source of the page
+// being edited. See validateOneRelationTarget for the per-target checks.
+func (a *App) validateRelationTargets(source string, pdef types.PropertyDef, value any) error {
+	var refs []string
+	switch pdef.Type {
+	case types.PropPage:
+		s, _ := value.(string)
+		refs = []string{s}
+	case types.PropPages:
+		refs, _ = toStringSlice(value)
+	default:
+		return nil
+	}
+	// Normalize the declared target type to its canonical id so a Target given
+	// as a display name ("Person") matches a projection stored as the id
+	// ("person"). Falls back to the raw value when resolution fails.
+	wantType := pdef.Target
+	if wantType != "" {
+		if id, err := types.ResolveTypeID(a.typesDir(), wantType); err == nil {
+			wantType = id
+		}
+	}
+	for _, ref := range refs {
+		if err := a.validateOneRelationTarget(source, ref, wantType); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateOneRelationTarget checks a single relation reference against the
+// index: existence first, then (when wantType is non-empty) target-type.
+// wantType is the canonical id of the property's declared Target (empty = any
+// page is accepted). A reference with a "/" is checked at its parsed
+// (notebook, section, page); a bare name is resolved via FindPageByLeaf.
+func (a *App) validateOneRelationTarget(source, ref, wantType string) error {
+	nb, sec, page, exact := parseRelationRef(ref)
+	if exact {
+		ok, err := a.db.PageExists(source, nb, sec, page)
+		if err != nil {
+			return fmt.Errorf("validate relation target %q: %w", ref, err)
+		}
+		if !ok {
+			return fmt.Errorf("relation target %q does not exist", ref)
+		}
+	} else {
+		// Bare page name: resolve to the first indexed page with that leaf.
+		rnb, rsec, ok, err := a.db.FindPageByLeaf(source, page)
+		if err != nil {
+			return fmt.Errorf("validate relation target %q: %w", ref, err)
+		}
+		if !ok {
+			return fmt.Errorf("relation target %q does not exist", ref)
+		}
+		nb, sec = rnb, rsec
+	}
+	if wantType != "" {
+		proj, err := a.db.GetPageProjection(source, nb, sec, page)
+		if err != nil {
+			return fmt.Errorf("validate relation target %q: %w", ref, err)
+		}
+		// proj == nil: the target page is untyped/unindexed-for-projection,
+		// which fails a required-target-type check.
+		if proj == nil || proj.TypeName != wantType {
+			return fmt.Errorf("relation target %q is not of type %q", ref, wantType)
+		}
+	}
+	return nil
+}
+
+// parseRelationRef splits a relation reference into (notebook, section, page).
+// A path-style ref (contains "/") follows the scanner's path model: the first
+// segment is the notebook, the last is the page, and the middle joined by "/"
+// is the section. A bare name (no "/") returns exact=false so the caller
+// resolves it by leaf match anywhere in the index.
+func parseRelationRef(ref string) (notebook, section, page string, exact bool) {
+	ref = strings.TrimSpace(ref)
+	if !strings.Contains(ref, "/") {
+		return "", "", ref, false
+	}
+	parts := strings.Split(ref, "/")
+	page = parts[len(parts)-1]
+	notebook = parts[0]
+	if len(parts) > 2 {
+		section = strings.Join(parts[1:len(parts)-1], "/")
+	}
+	return notebook, section, page, true
 }
 
 // SetPageType assigns (or clears) a page's note type. When assigning, every

@@ -393,3 +393,297 @@ func TestSetPageProperty_IndexesBlocks(t *testing.T) {
 		t.Error("no blocks returned after SetPageProperty re-index")
 	}
 }
+
+// --- Relation-target validation -------------------------------------------
+//
+// Schemas and helpers for the typed-relations backend. A Book (rbook) has:
+//   - author:   a single page relation whose target MUST be a Person
+//   - publisher: a single page relation with NO target (any page accepted)
+//   - related:  a multi (pages) relation whose target MUST be a Person
+//
+// personTypeSchema is the relation target type.
+func personTypeSchema() types.TypeDef {
+	return types.TypeDef{
+		ID:   "person",
+		Name: "Person",
+		Properties: []types.PropertyDef{
+			{Name: "name", Type: types.PropText},
+		},
+	}
+}
+
+// placeTypeSchema is a NON-person type: used to verify the target-type check
+// rejects a page of the wrong type (not just an untyped one).
+func placeTypeSchema() types.TypeDef {
+	return types.TypeDef{
+		ID:   "place",
+		Name: "Place",
+		Properties: []types.PropertyDef{
+			{Name: "name", Type: types.PropText},
+		},
+	}
+}
+
+// relationBookTypeSchema carries the three relation properties exercised below.
+// Its id is "rbook" (not "book") so it cannot clash with bookTypeSchema's id
+// in any test that stages both.
+func relationBookTypeSchema() types.TypeDef {
+	return types.TypeDef{
+		ID:   "rbook",
+		Name: "Book",
+		Properties: []types.PropertyDef{
+			{Name: "author", Type: types.PropPage, Target: "person"},
+			{Name: "publisher", Type: types.PropPage},
+			{Name: "related", Type: types.PropPages, Target: "person"},
+		},
+	}
+}
+
+// writeAndIndexTypedPage writes a typed page to disk, then indexes AND projects
+// it so both the blocks table and the page_types projection reflect it. The
+// relation validator reads existence from blocks and target-type from the
+// projection, so a staged target page must populate both.
+func writeAndIndexTypedPage(t *testing.T, app *App, notebook, section, page, typeID string) string {
+	t.Helper()
+	content := "---\n" +
+		"notebook: \"" + notebook + "\"\n" +
+		"section: \"" + section + "\"\n" +
+		"page: \"" + page + "\"\n" +
+		"date: \"2026-08-01\"\n" +
+		"tags: []\n" +
+		"type: \"" + typeID + "\"\n" +
+		"---\n# " + page + "\n\nBody.\n"
+	// filepath.Join skips empty segments, so section="" lands the file at
+	// <vault>/<notebook>/<page>.md — matching the scanner's section-less model.
+	path := filepath.Join(app.vaultPath, notebook, section, page+".md")
+	writeFile(t, path, content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, notebook, section, page, "2026-08-01", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+	// projectPageType runs after IndexFileBlocks in the real write path; mirror
+	// it here so the type-check validator can read the target's projection.
+	app.projectPageType("vault", meta)
+	return path
+}
+
+// writeRelationBookPage stages the page being edited: typed rbook with no
+// relation properties set. It is written to disk but NOT pre-indexed —
+// SetPageProperty indexes it on a successful write. Returns the path and
+// exact pre-write content for byte-identical "untouched" assertions.
+func writeRelationBookPage(t *testing.T, app *App) (path, content string) {
+	t.Helper()
+	content = "---\n" +
+		"notebook: \"Books\"\n" +
+		"section: \"\"\n" +
+		"page: \"Dune\"\n" +
+		"date: \"2026-08-01\"\n" +
+		"tags: []\n" +
+		"type: \"rbook\"\n" +
+		"---\n# Dune\n\nBody.\n"
+	path = filepath.Join(app.vaultPath, "Books", "Dune.md")
+	writeFile(t, path, content)
+	return path, content
+}
+
+// stageRelationVault saves the relation types and indexes a Person page
+// (People/Alice) and a Place page (Places/Paris), then writes the rbook page
+// under edit. Returns the rbook page's path and pre-write content.
+func stageRelationVault(t *testing.T, app *App, withPlace bool) (bookPath, bookContent string) {
+	t.Helper()
+	schemas := []types.TypeDef{personTypeSchema(), relationBookTypeSchema()}
+	if withPlace {
+		schemas = append([]types.TypeDef{placeTypeSchema()}, schemas...)
+	}
+	for _, td := range schemas {
+		if err := app.SaveType(td); err != nil {
+			t.Fatalf("SaveType(%s): %v", td.ID, err)
+		}
+	}
+	writeAndIndexTypedPage(t, app, "People", "", "Alice", "person")
+	if withPlace {
+		writeAndIndexTypedPage(t, app, "Places", "", "Paris", "place")
+	}
+	bookPath, bookContent = writeRelationBookPage(t, app)
+	return bookPath, bookContent
+}
+
+func TestSetPageProperty_RelationTargetExists_Succeeds(t *testing.T) {
+	app := newTestApp(t)
+	bookPath, _ := stageRelationVault(t, app, false)
+
+	// author targets a Person; People/Alice is an indexed Person page → accepted.
+	if err := app.SetPageProperty("Books", "", "Dune", "author", "People/Alice"); err != nil {
+		t.Fatalf("SetPageProperty(author, People/Alice): %v", err)
+	}
+
+	// The value round-trips through the frontmatter.
+	props, err := app.GetPageProperties("Books", "", "Dune")
+	if err != nil {
+		t.Fatalf("GetPageProperties: %v", err)
+	}
+	for _, p := range props {
+		if p.Name == "author" {
+			if !p.IsSet || p.Value != "People/Alice" {
+				t.Errorf("author = %+v, want IsSet People/Alice", p)
+			}
+		}
+	}
+	// The write landed on disk.
+	raw, _ := os.ReadFile(bookPath)
+	if !strings.Contains(string(raw), "author:") {
+		t.Errorf("author line not written:\n%s", string(raw))
+	}
+}
+
+func TestSetPageProperty_RelationTargetWrongType_FailsUntouched(t *testing.T) {
+	app := newTestApp(t)
+	bookPath, before := stageRelationVault(t, app, true)
+	beforeBytes, _ := os.ReadFile(bookPath)
+
+	// Places/Paris is an indexed Place; author requires a Person → rejected.
+	err := app.SetPageProperty("Books", "", "Dune", "author", "Places/Paris")
+	if err == nil {
+		t.Fatal("SetPageProperty(author, Places/Paris) should error (wrong target type)")
+	}
+	if !strings.Contains(err.Error(), "not of type") {
+		t.Errorf("error = %q, want it to mention \"not of type\"", err.Error())
+	}
+
+	// The file is byte-identical to its pre-write state.
+	afterBytes, _ := os.ReadFile(bookPath)
+	if string(afterBytes) != string(beforeBytes) {
+		t.Errorf("file mutated despite a validation error.\nbefore:\n%s\nafter:\n%s", before, string(afterBytes))
+	}
+}
+
+func TestSetPageProperty_RelationTargetNonexistent_FailsUntouched(t *testing.T) {
+	app := newTestApp(t)
+	bookPath, before := stageRelationVault(t, app, false)
+	beforeBytes, _ := os.ReadFile(bookPath)
+
+	// Work/People/Nobody is a path-style ref to a page that is not indexed.
+	err := app.SetPageProperty("Books", "", "Dune", "author", "Work/People/Nobody")
+	if err == nil {
+		t.Fatal("SetPageProperty(author, Work/People/Nobody) should error (nonexistent target)")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("error = %q, want it to mention \"does not exist\"", err.Error())
+	}
+
+	afterBytes, _ := os.ReadFile(bookPath)
+	if string(afterBytes) != string(beforeBytes) {
+		t.Errorf("file mutated despite a validation error.\nbefore:\n%s\nafter:\n%s", before, string(afterBytes))
+	}
+}
+
+// TestSetPageProperty_RelationTargetBareName_LeafMatch documents the slash-less
+// behavior: a bare page name is resolved to the first indexed page with that
+// leaf anywhere in the source. A leaf that exists (and is the right type) is
+// accepted; a leaf that does not exist is rejected.
+func TestSetPageProperty_RelationTargetBareName_LeafMatch(t *testing.T) {
+	app := newTestApp(t)
+	bookPath, _ := stageRelationVault(t, app, false)
+
+	// "Alice" has no slash → leaf match resolves to People/Alice (a Person).
+	if err := app.SetPageProperty("Books", "", "Dune", "author", "Alice"); err != nil {
+		t.Fatalf("SetPageProperty(author, Alice): %v", err)
+	}
+	props, _ := app.GetPageProperties("Books", "", "Dune")
+	for _, p := range props {
+		if p.Name == "author" && (!p.IsSet || p.Value != "Alice") {
+			t.Errorf("author = %+v, want IsSet Alice", p)
+		}
+	}
+
+	// A bare name with no matching leaf is rejected, and the file is untouched.
+	// Clear author first so the "untouched" baseline does not include it.
+	beforeBytes, _ := os.ReadFile(bookPath)
+	err := app.SetPageProperty("Books", "", "Dune", "author", "Nobody")
+	if err == nil {
+		t.Fatal("SetPageProperty(author, Nobody) should error (no matching leaf)")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("error = %q, want it to mention \"does not exist\"", err.Error())
+	}
+	afterBytes, _ := os.ReadFile(bookPath)
+	if string(afterBytes) != string(beforeBytes) {
+		t.Errorf("file mutated despite a validation error.\nbefore:\n%s\nafter:\n%s", string(beforeBytes), string(afterBytes))
+	}
+}
+
+func TestSetPageProperty_RelationPagesMixedInvalid_FailsUntouched(t *testing.T) {
+	app := newTestApp(t)
+	bookPath, before := stageRelationVault(t, app, true)
+	beforeBytes, _ := os.ReadFile(bookPath)
+
+	// A mix: People/Alice is a valid Person, Places/Paris is a Place (wrong
+	// type). The whole write is rejected; nothing is persisted.
+	err := app.SetPageProperty("Books", "", "Dune", "related", []string{"People/Alice", "Places/Paris"})
+	if err == nil {
+		t.Fatal("SetPageProperty(related, mix) should error (one target is the wrong type)")
+	}
+
+	afterBytes, _ := os.ReadFile(bookPath)
+	if string(afterBytes) != string(beforeBytes) {
+		t.Errorf("file mutated despite a validation error.\nbefore:\n%s\nafter:\n%s", before, string(afterBytes))
+	}
+	if strings.Contains(string(afterBytes), "related:") {
+		t.Errorf("related line was written despite a validation error:\n%s", string(afterBytes))
+	}
+}
+
+func TestSetPageProperty_RelationPagesAllValid_Succeeds(t *testing.T) {
+	app := newTestApp(t)
+	_, _ = stageRelationVault(t, app, false)
+	// Add a second Person so the multi-value has two valid targets.
+	writeAndIndexTypedPage(t, app, "People", "", "Bob", "person")
+
+	if err := app.SetPageProperty("Books", "", "Dune", "related", []string{"People/Alice", "People/Bob"}); err != nil {
+		t.Fatalf("SetPageProperty(related, two people): %v", err)
+	}
+	props, _ := app.GetPageProperties("Books", "", "Dune")
+	for _, p := range props {
+		if p.Name == "related" {
+			if !p.IsSet {
+				t.Error("related IsSet = false, want true")
+			}
+		}
+	}
+}
+
+// TestSetPageProperty_RelationNoTarget_AnyPageAccepted verifies a page property
+// with NO declared Target accepts any existing page (regardless of type), while
+// a nonexistent target is still rejected.
+func TestSetPageProperty_RelationNoTarget_AnyPageAccepted(t *testing.T) {
+	app := newTestApp(t)
+	bookPath, _ := stageRelationVault(t, app, true)
+
+	// publisher has no Target → a Place page is accepted (any existing page).
+	if err := app.SetPageProperty("Books", "", "Dune", "publisher", "Places/Paris"); err != nil {
+		t.Fatalf("SetPageProperty(publisher, Places/Paris): %v", err)
+	}
+	props, _ := app.GetPageProperties("Books", "", "Dune")
+	for _, p := range props {
+		if p.Name == "publisher" && (!p.IsSet || p.Value != "Places/Paris") {
+			t.Errorf("publisher = %+v, want IsSet Places/Paris", p)
+		}
+	}
+
+	// A nonexistent target is still rejected even with no Target declared.
+	beforeBytes, _ := os.ReadFile(bookPath)
+	err := app.SetPageProperty("Books", "", "Dune", "publisher", "Nowhere/X")
+	if err == nil {
+		t.Fatal("SetPageProperty(publisher, Nowhere/X) should error (nonexistent target)")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("error = %q, want it to mention \"does not exist\"", err.Error())
+	}
+	afterBytes, _ := os.ReadFile(bookPath)
+	if string(afterBytes) != string(beforeBytes) {
+		t.Errorf("file mutated despite a validation error.\nbefore:\n%s\nafter:\n%s", string(beforeBytes), string(afterBytes))
+	}
+}

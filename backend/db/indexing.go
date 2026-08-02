@@ -639,6 +639,60 @@ func (dm *DatabaseManager) CountBlocksForPage(source, notebook, section, page st
 	return n, nil
 }
 
+// PageExists reports whether any block is currently indexed for the
+// (source, notebook, section, page) tuple — i.e. the page is in the vault
+// index. Used by the relation-target validator to confirm a `page`/`pages`
+// relation points at a real page before the frontmatter write. Mirrors
+// CountBlocksForPage's WHERE shape under its own handle lease (same style as
+// ClearPageProjection).
+func (dm *DatabaseManager) PageExists(source, notebook, section, page string) (bool, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return false, ErrDBClosed
+	}
+	defer release()
+	if source == "" {
+		source = "vault"
+	}
+	var ok bool
+	err = db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?)",
+		source, notebook, section, page,
+	).Scan(&ok)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+// FindPageByLeaf resolves a bare page name (a relation reference with no path)
+// to the first indexed page carrying that leaf name in the source, returning
+// its (notebook, section). Used by the relation-target validator for the common
+// case of a page referenced by name rather than full path. ok is false when no
+// page with that leaf is indexed. LIMIT 1 keeps v1 deterministic: a leaf-name
+// collision across notebooks is ambiguous, and the first indexed page wins.
+func (dm *DatabaseManager) FindPageByLeaf(source, page string) (notebook, section string, ok bool, err error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return "", "", false, ErrDBClosed
+	}
+	defer release()
+	if source == "" {
+		source = "vault"
+	}
+	err = db.QueryRow(
+		"SELECT notebook, section FROM blocks WHERE source = ? AND page = ? LIMIT 1",
+		source, page,
+	).Scan(&notebook, &section)
+	if err == sql.ErrNoRows {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	return notebook, section, true, nil
+}
+
 // IndexFileBlocks updates the index with one file's blocks in a single
 // transaction (the per-file / watcher / editor-save path).
 //
