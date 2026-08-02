@@ -1,10 +1,10 @@
 {
 	"fixed": {
-		"file_version": "0.2.44"
+		"file_version": "0.4.0"
 	},
 	"info": {
 		"0000": {
-			"ProductVersion": "0.2.44",
+			"ProductVersion": "0.4.0",
 			"CompanyName": "Chelydra Labs",
 			"FileDescription": "Silt",
 			"LegalCopyright": "\u00a9 Chelydra Labs",
