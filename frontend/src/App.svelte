@@ -71,6 +71,7 @@
   import PageTypeStrip from './properties/PageTypeStrip.svelte'
   import PropertiesPanel from './properties/PropertiesPanel.svelte'
   import { createPageTypeController } from './properties/pageTypeState.svelte'
+  import TypeDashboard from './dashboards/TypeDashboard.svelte'
   import { toggleDateGlance } from './lib/dateGlanceState.svelte'
   import { getActiveEditor } from './lib/editor/activeEditor.svelte'
   import {
@@ -281,6 +282,31 @@
     void activePage
     void pageType.refresh()
   })
+
+  // Per-type dashboard view. Reached from the type strip's "View all" action;
+  // exits via its Back button or by opening a page (which returns to notes).
+  let dashboardType = $state('')
+  function openTypeDashboard(typeId: string): void {
+    if (!typeId) return
+    dashboardType = typeId
+    activeView = 'dashboard'
+  }
+  function openDashboardPage(locator: {
+    source: string
+    notebook: string
+    section: string
+    page: string
+  }): void {
+    tabManager.openPage(
+      {
+        notebook: locator.notebook,
+        section: locator.section,
+        page: locator.page
+      },
+      'preview'
+    )
+    activeView = 'notes'
+  }
   let showGlobalReplace = $state(false)
   // Global standalone-task quick-add overlay (#368). Opened by the new_task
   // hotkey (default Ctrl+Shift+N). Creates a task in <vault>/.silt/tasks.md
@@ -926,6 +952,7 @@
                   info={pageType.info}
                   heroValue={pageType.heroValue}
                   onOpen={pageType.open}
+                  onViewAll={() => openTypeDashboard(pageType.info.type.id)}
                 />
               {/snippet}
             </PageBreadcrumb>
@@ -1080,6 +1107,12 @@
             {/if}
           {:else if activeView === 'tags'}
             <TagsExplorer {selectedTag} />
+          {:else if activeView === 'dashboard'}
+            <TypeDashboard
+              typeName={dashboardType}
+              onOpenPage={openDashboardPage}
+              onBack={() => (activeView = 'notes')}
+            />
           {:else if activeView === 'tasks' || activeView === 'calendar' || activeView === 'kanban'}
             <PluginView
               pluginId="silt-tasks"
