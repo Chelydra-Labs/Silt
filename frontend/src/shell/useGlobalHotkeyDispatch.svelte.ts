@@ -54,6 +54,7 @@ export interface GlobalHotkeyDispatchDeps {
   openSettings: () => void
   // Tab actions.
   toggleViewMode: (tabId: string) => void
+  togglePropertiesPanel: () => void
   closeTab: (tabId: string) => void
   cycleTab: (dir: 1 | -1) => void
 }
@@ -154,6 +155,9 @@ export function createGlobalHotkeyDispatch(
         // Flip the active tab's view mode directly — no window-event
         // indirection, the tab manager owns the per-tab state.
         if (deps.getActiveTabId()) deps.toggleViewMode(deps.getActiveTabId())
+        break
+      case 'toggle_properties_panel':
+        deps.togglePropertiesPanel()
         break
       case 'toggle_format_toolbar':
         void toggleFormatToolbar()

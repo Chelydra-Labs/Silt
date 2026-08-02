@@ -1,5 +1,6 @@
 <script lang="ts">
   import { shortestPageReference } from '../lib/pageActions'
+  import type { Snippet } from 'svelte'
 
   interface Props {
     notebook: string
@@ -12,6 +13,9 @@
     onSelectSection: (section: string) => void
     onOpenPage: () => void
     onOpenBacklinks?: () => void
+    /** Right-aligned page-header extras (the typed-notes meta strip). Optional;
+     *  absent renders nothing, so existing callers are unaffected. */
+    meta?: Snippet
   }
 
   let {
@@ -24,7 +28,8 @@
     onSelectNotebook,
     onSelectSection,
     onOpenPage,
-    onOpenBacklinks
+    onOpenBacklinks,
+    meta
   }: Props = $props()
 
   let reference = $state('')
@@ -122,6 +127,9 @@
         >
       </button>
     {/if}
+    {#if meta}
+      <span class="meta" aria-hidden="false">{@render meta()}</span>
+    {/if}
   </nav>
 {/if}
 
@@ -167,6 +175,13 @@
   .backlinks.active {
     color: var(--color-accent-primary-start);
     background: var(--color-hover);
+  }
+  /* Right-aligned page-header extras (the typed-notes meta strip). */
+  .meta {
+    margin-left: auto;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
   }
   @media (max-width: 700px) {
     .section-crumb:not(.nearest) {

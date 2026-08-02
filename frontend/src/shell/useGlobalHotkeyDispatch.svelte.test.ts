@@ -43,6 +43,7 @@ function makeDeps(overrides: Partial<GlobalHotkeyDispatchDeps> = {}): {
     requestNavigationCreation: vi.fn(),
     openSettings: vi.fn(),
     toggleViewMode: vi.fn(),
+    togglePropertiesPanel: vi.fn(),
     closeTab: vi.fn(),
     cycleTab: vi.fn()
   }
@@ -94,6 +95,7 @@ function makeDeps(overrides: Partial<GlobalHotkeyDispatchDeps> = {}): {
     requestNavigationCreation: spies.requestNavigationCreation,
     openSettings: spies.openSettings,
     toggleViewMode: spies.toggleViewMode,
+    togglePropertiesPanel: spies.togglePropertiesPanel,
     closeTab: spies.closeTab,
     cycleTab: spies.cycleTab,
     ...overrides

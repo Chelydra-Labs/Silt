@@ -68,6 +68,9 @@
   } from './plugins/shared/ai-chat/drawer.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import DateGlance from './components/DateGlance.svelte'
+  import PageTypeStrip from './properties/PageTypeStrip.svelte'
+  import PropertiesPanel from './properties/PropertiesPanel.svelte'
+  import { createPageTypeController } from './properties/pageTypeState.svelte'
   import { toggleDateGlance } from './lib/dateGlanceState.svelte'
   import { getActiveEditor } from './lib/editor/activeEditor.svelte'
   import {
@@ -254,6 +257,30 @@
   let activeNotebookMetadata = $derived(
     navigationNotebookMetadata[activeNotebook]
   )
+
+  // Typed-notes controller. Reads the active locator via live closures so it
+  // stays in sync with navigation; App drives re-fetching via the $effect on
+  // the locator + view below. The controller owns the `types:changed`
+  // subscription (attached in onMount) and the panel-open flag.
+  const pageType = createPageTypeController({
+    getLocator: () => ({
+      notebook: activeNotebook,
+      section: activeSection,
+      page: activePage
+    })
+  })
+  // Re-fetch the active page's type + properties whenever the user navigates
+  // (the controller reads the locator via the closure above). Reading the
+  // three locator vars + view inside the effect wires Svelte's dependency
+  // tracking; the panel only applies to note pages.
+  $effect(() => {
+    if (activeView !== 'notes' && activeView !== 'backlinks') return
+    // Touch all three so a section-only or page-only change still re-runs.
+    void activeNotebook
+    void activeSection
+    void activePage
+    void pageType.refresh()
+  })
   let showGlobalReplace = $state(false)
   // Global standalone-task quick-add overlay (#368). Opened by the new_task
   // hotkey (default Ctrl+Shift+N). Creates a task in <vault>/.silt/tasks.md
@@ -336,6 +363,7 @@
     requestNavigationCreation: (kind) => void requestNavigationCreation(kind),
     openSettings: () => openSettings(),
     toggleViewMode: (tabId) => tabManager.handleToggleViewMode(tabId),
+    togglePropertiesPanel: () => pageType.toggle(),
     closeTab: (tabId) => tabManager.handleCloseTab(tabId),
     cycleTab: (dir) => tabManager.handleCycleTab(dir)
   })
@@ -433,6 +461,7 @@
 
     hotkeyDispatch.attach()
     startup.attach()
+    const disposePageType = pageType.attach()
 
     return () => {
       hotkeyDispatch.detach()
@@ -441,6 +470,7 @@
       disposeThemes()
       disposeTemplates()
       disposeUpdateStore()
+      disposePageType()
       // Flush any pending tab-state persistence so the user's last
       // change survives a component unmount / app close (#142 hardening).
       tabManager.flushPendingPersist()
@@ -890,7 +920,15 @@
                   'activate-only'
                 )}
               onOpenBacklinks={showBacklinks}
-            />
+            >
+              {#snippet meta()}
+                <PageTypeStrip
+                  info={pageType.info}
+                  heroValue={pageType.heroValue}
+                  onOpen={pageType.open}
+                />
+              {/snippet}
+            </PageBreadcrumb>
             {#if notesReady}
               <div
                 id="silt-tabpanel"
@@ -952,6 +990,24 @@
                   </div>
                 {/each}
               </div>
+              <PropertiesPanel
+                open={pageType.panelOpen}
+                info={pageType.info}
+                values={pageType.values}
+                mismatched={pageType.mismatched}
+                error={pageType.error}
+                types={pageType.types}
+                typesLoading={pageType.typesLoading}
+                locator={{
+                  notebook: activeNotebook,
+                  section: activeSection,
+                  page: activePage
+                }}
+                onClose={pageType.close}
+                onChanged={pageType.refresh}
+                onMismatched={pageType.setMismatched}
+                onError={pageType.setError}
+              />
             {:else}
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <!-- Dev Mode Inspect only; no native menu on empty chrome (#683). -->

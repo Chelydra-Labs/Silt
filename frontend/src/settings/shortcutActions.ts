@@ -79,6 +79,12 @@ export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
   },
   { id: 'toggle_view_mode', label: 'Toggle source view', group: 'Editor' },
   {
+    id: 'toggle_properties_panel',
+    label: 'Edit page properties',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+;'
+  },
+  {
     id: 'toggle_format_toolbar',
     label: 'Toggle formatting toolbar',
     group: 'Editor'
