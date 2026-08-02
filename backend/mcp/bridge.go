@@ -23,7 +23,50 @@ type Bridge interface {
 	UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock) error
 	// PageExists reports whether the notebook/section/page file is on disk.
 	PageExists(ctx context.Context, notebook, section, page string) (bool, error)
+	// GetPageMetadata returns a page's resolved type, schema-merged properties,
+	// and the raw parsed frontmatter in one snapshot. An untyped page yields an
+	// empty Type (or the raw ref if the schema is unknown) and an empty
+	// Properties slice; Frontmatter still reflects every parsed key.
+	GetPageMetadata(ctx context.Context, notebook, section, page string) (PageMetadataResult, error)
+	// SetPageProperty writes a single typed property value. The App layer
+	// validates (structural + relation-target) BEFORE any file I/O, so an
+	// invalid value leaves the file byte-identical — implementers MUST preserve
+	// that contract (no pre-write side effects).
+	SetPageProperty(ctx context.Context, notebook, section, page, property, value string) error
+	// SetPageType assigns or clears (empty typeName) the page's note type. The
+	// App layer validates existing frontmatter against the new schema before
+	// writing; on validation failure the file is untouched.
+	SetPageType(ctx context.Context, notebook, section, page, typeName string) error
 	VaultPath() string
+}
+
+// PropertyValue mirrors the app layer's PagePropertyValue so the MCP host can
+// return schema-merged property data without importing the main package. Field
+// shape (and JSON tags) match the IPC contract exactly so AI clients see the
+// same form whether they read via IPC or MCP.
+type PropertyValue struct {
+	Name     string   `json:"name"`
+	Label    string   `json:"label"`
+	Type     string   `json:"type"`
+	Value    any      `json:"value"`
+	IsSet    bool     `json:"isSet"`
+	Required bool     `json:"required"`
+	Options  []string `json:"options,omitempty"`
+}
+
+// PageMetadataResult is the read model returned by GetPageMetadata. Type is the
+// canonical id (empty for an untyped page; the raw frontmatter value when the
+// id does not resolve to a known schema, so clients can surface a raw chip).
+// Properties is schema-merged — every declared property appears in declaration
+// order, with IsSet=false for unset ones. Frontmatter is the raw parsed YAML
+// map (all keys, not just schema-declared ones).
+type PageMetadataResult struct {
+	Notebook    string          `json:"notebook"`
+	Section     string          `json:"section"`
+	Page        string          `json:"page"`
+	Type        string          `json:"type"`
+	Properties  []PropertyValue `json:"properties"`
+	Frontmatter map[string]any  `json:"frontmatter"`
 }
 
 // MaxSearchLimit caps search_blocks / search_notes page size.

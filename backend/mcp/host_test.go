@@ -28,6 +28,27 @@ type fakeBridge struct {
 	search  parser.SearchResult
 	writes  int
 	createN int
+	// Typed-notes surface (Phase 7): canned metadata + injectable errors +
+	// call counters so tool tests can assert grant/deny/error paths without a
+	// real App behind the bridge.
+	meta        map[string]PageMetadataResult
+	metaErr     error
+	setPropN    int
+	setPropErr  error
+	setPropLast setPropCall
+	setTypeN    int
+	setTypeErr  error
+	setTypeLast setTypeCall
+}
+
+// setPropCall / setTypeCall capture the last (notebook, section, page, ...)
+// tuple the bridge saw, so a test can assert the tool forwarded the args.
+type setPropCall struct {
+	Notebook, Section, Page, Property, Value string
+}
+
+type setTypeCall struct {
+	Notebook, Section, Page, Type string
 }
 
 func (f *fakeBridge) VaultPath() string { return f.path }
@@ -91,6 +112,34 @@ func (f *fakeBridge) PageExists(ctx context.Context, notebook, section, page str
 	}
 	_, ok := f.pages[notebook+"\x00"+section+"\x00"+page]
 	return ok, nil
+}
+
+func (f *fakeBridge) GetPageMetadata(ctx context.Context, notebook, section, page string) (PageMetadataResult, error) {
+	_ = ctx
+	if f.metaErr != nil {
+		return PageMetadataResult{}, f.metaErr
+	}
+	if f.meta == nil {
+		return PageMetadataResult{Notebook: notebook, Section: section, Page: page}, nil
+	}
+	if r, ok := f.meta[notebook+"\x00"+section+"\x00"+page]; ok {
+		return r, nil
+	}
+	return PageMetadataResult{Notebook: notebook, Section: section, Page: page}, nil
+}
+
+func (f *fakeBridge) SetPageProperty(ctx context.Context, notebook, section, page, property, value string) error {
+	_ = ctx
+	f.setPropN++
+	f.setPropLast = setPropCall{notebook, section, page, property, value}
+	return f.setPropErr
+}
+
+func (f *fakeBridge) SetPageType(ctx context.Context, notebook, section, page, typeName string) error {
+	_ = ctx
+	f.setTypeN++
+	f.setTypeLast = setTypeCall{notebook, section, page, typeName}
+	return f.setTypeErr
 }
 
 func freePort(t *testing.T) int {

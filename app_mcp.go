@@ -10,6 +10,7 @@ import (
 	"silt/backend/db"
 	"silt/backend/mcp"
 	"silt/backend/parser"
+	"silt/backend/types"
 )
 
 // mcpBridge adapts *App to mcp.Bridge so tools call the same content paths
@@ -88,6 +89,91 @@ func (b mcpBridge) PageExists(ctx context.Context, notebook, section, page strin
 		return false, nil
 	}
 	return false, err
+}
+
+// GetPageMetadata returns a page's resolved type, schema-merged properties, and
+// raw parsed frontmatter in a single snapshot. Three App reads are combined
+// here so the MCP client gets a consistent view; each read takes the vault RLock
+// independently (no re-entrant lock).
+func (b mcpBridge) GetPageMetadata(ctx context.Context, notebook, section, page string) (mcp.PageMetadataResult, error) {
+	_ = ctx
+	info, err := b.app.GetPageType(notebook, section, page)
+	if err != nil {
+		return mcp.PageMetadataResult{}, err
+	}
+	props, err := b.app.GetPageProperties(notebook, section, page)
+	if err != nil {
+		return mcp.PageMetadataResult{}, err
+	}
+	rawFM, err := b.app.pageRawFrontmatter(notebook, section, page)
+	if err != nil {
+		return mcp.PageMetadataResult{}, err
+	}
+	out := mcp.PageMetadataResult{
+		Notebook:    notebook,
+		Section:     section,
+		Page:        page,
+		Properties:  make([]mcp.PropertyValue, 0, len(props)),
+		Frontmatter: rawFM,
+	}
+	// A set-but-unknown type ref surfaces as RawType; expose it so clients can
+	// render a raw chip instead of silently seeing an empty type.
+	if info.IsSet {
+		out.Type = info.TypeID
+	} else if info.RawType != "" {
+		out.Type = info.RawType
+	}
+	for _, p := range props {
+		out.Properties = append(out.Properties, mcp.PropertyValue{
+			Name:     p.Name,
+			Label:    p.Label,
+			Type:     p.Type,
+			Value:    p.Value,
+			IsSet:    p.IsSet,
+			Required: p.Required,
+			Options:  p.Options,
+		})
+	}
+	return out, nil
+}
+
+// SetPageProperty writes a single typed property. The MCP tool receives value
+// as a string (the SDK decodes JSON into the tool struct's string field), so it
+// is coerced to the property's Go type before delegating to App.SetPageProperty.
+// The App validates (structural + relation-target) BEFORE any file I/O, so an
+// invalid value leaves the file byte-identical — this method must not write or
+// cache anything before that validation runs.
+func (b mcpBridge) SetPageProperty(ctx context.Context, notebook, section, page, property, value string) error {
+	_ = ctx
+	info, err := b.app.GetPageType(notebook, section, page)
+	if err != nil {
+		return err
+	}
+	// Coerce the string to the property's Go type so number/checkbox/list
+	// properties validate cleanly. Text-like types pass through unchanged. An
+	// unknown property is forwarded to App.SetPageProperty, which returns the
+	// canonical "unknown property" error.
+	var coerced any = value
+	if info.IsSet {
+		if pdef, ok := info.Type.Property(property); ok {
+			c, cerr := types.CoerceValue(pdef, value)
+			if cerr != nil {
+				return cerr
+			}
+			coerced = c
+		}
+	}
+	return b.app.SetPageProperty(notebook, section, page, property, coerced)
+}
+
+// SetPageType assigns (empty typeName clears) the page's note type. The App
+// validates existing frontmatter against the new schema before writing; the
+// mismatched list is dropped here (the bridge signature only returns error) —
+// clients can call get_page_metadata afterwards to see what survived.
+func (b mcpBridge) SetPageType(ctx context.Context, notebook, section, page, typeName string) error {
+	_ = ctx
+	_, err := b.app.SetPageType(notebook, section, page, typeName)
+	return err
 }
 
 // ensureMCPHost returns the MCP host, constructing it once if missing

@@ -141,6 +141,26 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 	return writeErr
 }
 
+// pageRawFrontmatter returns the page's raw parsed YAML frontmatter (all keys,
+// not just schema-declared ones). It is a read-only artifact of
+// parser.ParseFileContent, exposed so the MCP host can return the unfiltered
+// frontmatter alongside the schema-merged property view. Unexported: not an
+// IPC-bound App method, just a helper for the in-package mcpBridge.
+func (a *App) pageRawFrontmatter(notebook, section, page string) (map[string]any, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	a.wg.Add(1)
+	defer a.wg.Done()
+	if a.vaultPath == "" || a.db == nil {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+	_, meta, _, _, err := a.readPageFileForTypes(notebook, section, page)
+	if err != nil {
+		return nil, err
+	}
+	return meta.Frontmatter, nil
+}
+
 // GetPageType returns a page's resolved note type and schema. An untyped page
 // returns IsSet=false. A page whose type ref does not resolve to a known schema
 // returns IsSet=false with RawType set, so the UI can render a raw chip without

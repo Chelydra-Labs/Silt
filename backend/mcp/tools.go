@@ -351,4 +351,84 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		env.record("update_blocks", "ok", "", args)
 		return toolJSON(map[string]any{"ok": true, "count": len(parsed)})
 	})
+
+	type getPageMetadataIn struct {
+		Notebook string `json:"notebook" jsonschema:"notebook name"`
+		Section  string `json:"section" jsonschema:"section path (empty for root)"`
+		Page     string `json:"page" jsonschema:"page name without .md"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_page_metadata",
+		Description: "Get page type, properties (schema-merged), and raw frontmatter. Read-only.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getPageMetadataIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page}
+		if env.bridge == nil {
+			env.record("get_page_metadata", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		res, err := env.bridge.GetPageMetadata(ctx, in.Notebook, in.Section, in.Page)
+		if err != nil {
+			env.record("get_page_metadata", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		env.record("get_page_metadata", "ok", "", args)
+		return toolJSON(res)
+	})
+
+	type setPagePropertyIn struct {
+		Notebook string `json:"notebook" jsonschema:"notebook name"`
+		Section  string `json:"section" jsonschema:"section path (empty for root)"`
+		Page     string `json:"page" jsonschema:"page name without .md"`
+		Property string `json:"property" jsonschema:"property name from the type schema"`
+		Value    string `json:"value" jsonschema:"property value (validated against the type schema before writing)"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "set_page_property",
+		Description: "Set a single typed property. Schema-validated write — invalid values are rejected before any file I/O. Requires write grant.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setPagePropertyIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "property": in.Property}
+		if !env.writeOK() {
+			env.record("set_page_property", "denied", "write not granted", args)
+			return toolErr("write tools are disabled — enable write grant in Silt Settings → AI → Local MCP")
+		}
+		if env.bridge == nil {
+			env.record("set_page_property", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		if err := env.bridge.SetPageProperty(ctx, in.Notebook, in.Section, in.Page, in.Property, in.Value); err != nil {
+			// Validation rejected the value before any file I/O — the file is
+			// byte-identical to its pre-call state.
+			env.record("set_page_property", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		env.record("set_page_property", "ok", "", args)
+		return toolJSON(map[string]any{"ok": true})
+	})
+
+	type setPageTypeIn struct {
+		Notebook string `json:"notebook" jsonschema:"notebook name"`
+		Section  string `json:"section" jsonschema:"section path (empty for root)"`
+		Page     string `json:"page" jsonschema:"page name without .md"`
+		Type     string `json:"type" jsonschema:"type id (from ListTypes) or empty to clear"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "set_page_type",
+		Description: "Assign or clear (empty type) a page's note type. Schema-validated write — existing values are validated against the new schema before any file I/O. Requires write grant.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setPageTypeIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "type": in.Type}
+		if !env.writeOK() {
+			env.record("set_page_type", "denied", "write not granted", args)
+			return toolErr("write tools are disabled — enable write grant in Silt Settings → AI → Local MCP")
+		}
+		if env.bridge == nil {
+			env.record("set_page_type", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		if err := env.bridge.SetPageType(ctx, in.Notebook, in.Section, in.Page, in.Type); err != nil {
+			env.record("set_page_type", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		env.record("set_page_type", "ok", "", args)
+		return toolJSON(map[string]any{"ok": true})
+	})
 }
