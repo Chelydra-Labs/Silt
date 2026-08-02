@@ -87,6 +87,13 @@ func (a *App) SaveType(td types.TypeDef) error {
 		return err
 	}
 	types.InvalidateTypesCache()
+	// Re-project now: the type watcher suppresses fsnotify events for this
+	// method's own atomic write (RegisterSelfWrite above), so its onChange —
+	// the only other caller of reprojectAllTypedPages — never fires for in-app
+	// schema edits, and typed pages' projections would drift until restart.
+	// Safe under the held RLock: reprojectAllTypedPages only reads a.db /
+	// a.vaultPath (handle-based DB locking) and does not re-acquire vaultMu.
+	a.reprojectAllTypedPages()
 	a.emit(EventTypesChanged, struct{}{})
 	log.Printf("types: SaveType → saved %q", td.ID)
 	return nil
@@ -117,6 +124,13 @@ func (a *App) DeleteType(id string) error {
 		return err
 	}
 	types.InvalidateTypesCache()
+	// Re-project now: the type watcher suppresses fsnotify events for this
+	// method's own atomic write (RegisterSelfWrite above), so its onChange —
+	// the only other caller of reprojectAllTypedPages — never fires for in-app
+	// schema edits, and typed pages' projections would drift until restart.
+	// Safe under the held RLock: reprojectAllTypedPages only reads a.db /
+	// a.vaultPath (handle-based DB locking) and does not re-acquire vaultMu.
+	a.reprojectAllTypedPages()
 	a.emit(EventTypesChanged, struct{}{})
 	log.Printf("types: DeleteType → removed %q", id)
 	return nil

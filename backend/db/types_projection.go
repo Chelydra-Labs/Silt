@@ -1,6 +1,8 @@
 package db
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 )
@@ -183,7 +185,14 @@ func (dm *DatabaseManager) GetPageProjection(source, notebook, section, page str
 		source, notebook, section, page,
 	).Scan(&row.Source, &row.Notebook, &row.Section, &row.Page, &row.TypeName)
 	if err != nil {
-		return nil, nil // no row = untyped/unindexed; not an error
+		// Distinguish "no projection row" (untyped/unindexed) from a real DB
+		// error: callers like validateOneRelationTarget would otherwise read a
+		// transient error as proj==nil and reject a valid relation as "wrong
+		// type", hiding the underlying failure.
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil // no row = untyped/unindexed; not an error
+		}
+		return nil, fmt.Errorf("failed to query page_types: %w", err)
 	}
 	rows, err := db.Query(
 		"SELECT property, value_text, value_sort, value_type FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ? ORDER BY property",

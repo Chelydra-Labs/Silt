@@ -750,14 +750,17 @@ func TestSetPageProperty_RevalidatesAfterSchemaReload_PropertyRemoved(t *testing
 	}
 }
 
-// TestSetPageProperty_PostWriteIndexFailure_SurfacesErrorAndEvent pins the
-// observability fix: when the on-disk write commits but the in-memory re-index
-// fails, the IPC caller MUST see the error (so it can warn) AND the
-// types:projection-error event MUST fire (so the dashboard can surface a
-// stale-warning). The file is still written — the failure is in the projection
-// layer, not the file write. We induce the failure by closing the DB before
-// the call; IndexFileBlocks then returns ErrDBClosed mid-write-chain.
-func TestSetPageProperty_PostWriteIndexFailure_SurfacesErrorAndEvent(t *testing.T) {
+// TestSetPageProperty_PostWriteIndexFailure_ReturnsSuccessButSignalsStale pins
+// the contract: when the on-disk write commits but the in-memory re-index
+// fails, SetPageProperty returns nil (the write SUCCEEDED) and the staleness
+// is signaled via the types:projection-error event + log — NOT the error
+// return. The IPC/MCP/frontend uniformly treat a non-nil error as a write
+// rejection (tools.go converts it to toolValidationErr; the panel reverts
+// optimistic state), so a stale-projection error must not leak onto that path.
+// The file is still written — the failure is in the projection layer, not the
+// file write. We induce the failure by closing the DB before the call;
+// IndexFileBlocks then returns ErrDBClosed mid-write-chain.
+func TestSetPageProperty_PostWriteIndexFailure_ReturnsSuccessButSignalsStale(t *testing.T) {
 	app := newTestApp(t)
 	filePath, _ := writeBookPage(t, app)
 
@@ -778,12 +781,11 @@ func TestSetPageProperty_PostWriteIndexFailure_SurfacesErrorAndEvent(t *testing.
 		t.Fatalf("close db: %v", err)
 	}
 
+	// The write SUCCEEDED — the caller must see nil so the IPC/MCP/frontend
+	// do not treat a saved write as a validation rejection.
 	err := app.SetPageProperty("Books", "", "Dune", "rating", 4)
-	if err == nil {
-		t.Fatal("SetPageProperty should surface the post-write re-index error, got nil")
-	}
-	if !strings.Contains(err.Error(), "re-index after write") {
-		t.Errorf("error = %q, want it to mention the re-index failure", err.Error())
+	if err != nil {
+		t.Fatalf("SetPageProperty should return nil after a successful write (staleness signaled via event, not error); got: %v", err)
 	}
 
 	// The file write committed BEFORE the re-index, so the value is on disk
@@ -806,5 +808,152 @@ func TestSetPageProperty_PostWriteIndexFailure_SurfacesErrorAndEvent(t *testing.
 	mu.Unlock()
 	if !sawProjectionError {
 		t.Errorf("expected %s event, got %v", EventTypesProjectionError, events)
+	}
+}
+
+// projectedPropertyNames reads a page's projection (its set page_properties
+// rows) and returns the set of property names it currently carries. Used to
+// prove reprojectAllTypedPages ran — GetPageProperties re-reads disk + live
+// schema and so would hide index staleness.
+func projectedPropertyNames(t *testing.T, app *App, notebook, section, page string) map[string]bool {
+	t.Helper()
+	proj, err := app.db.GetPageProjection("vault", notebook, section, page)
+	if err != nil {
+		t.Fatalf("GetPageProjection: %v", err)
+	}
+	out := map[string]bool{}
+	if proj == nil {
+		return out
+	}
+	for _, p := range proj.Properties {
+		out[p.Property] = true
+	}
+	return out
+}
+
+// TestSaveType_ReprojectsTypedPages pins AC3 for the primary UI workflow: an
+// in-app schema edit (App.SaveType) MUST re-project existing typed pages so the
+// dashboard does not drift until restart. SaveType arms the type watcher's
+// self-write window (RegisterSelfWrite), which suppresses the fsnotify events
+// from its own atomic write — so the watcher's onChange, the only other caller
+// of reprojectAllTypedPages, never fires for in-app edits. SaveType must
+// therefore re-project itself before emitting types:changed.
+func TestSaveType_ReprojectsTypedPages(t *testing.T) {
+	app := newTestApp(t)
+
+	// Stage: book schema with a `rating` (number) property, and a typed Book
+	// page whose frontmatter sets rating: 5. projectPageType is mirrored from
+	// the real write path so the page has a `rating` projection row that a
+	// rename could otherwise leave stale.
+	if err := app.SaveType(bookTypeSchema()); err != nil {
+		t.Fatalf("SaveType(book): %v", err)
+	}
+	content := "---\n" +
+		"notebook: \"Books\"\n" +
+		"section: \"\"\n" +
+		"page: \"Dune\"\n" +
+		"date: \"2026-08-01\"\n" +
+		"tags: []\n" +
+		"type: \"book\"\n" +
+		"title: \"Dune\"\n" +
+		"author: \"Frank Herbert\"\n" +
+		"status: \"available\"\n" +
+		"rating: 5\n" +
+		"---\n# Dune\n\nBody.\n"
+	writeFile(t, filepath.Join(app.vaultPath, "Books", "Dune.md"), content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, "Books", "", "Dune", "2026-08-01", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+	// IndexFileBlocks does not project; the real write path runs projectPageType
+	// after the WithDBWrite closure, so mirror it to seed the projection row.
+	app.projectPageType("vault", meta)
+
+	before := projectedPropertyNames(t, app, "Books", "", "Dune")
+	if !before["rating"] {
+		t.Fatalf("expected a `rating` projection row before SaveType, got %v", before)
+	}
+
+	// Rename `rating` → `score` in the schema and save it in-app. The page's
+	// frontmatter still carries `rating: 5`, so a stale projection would keep
+	// the `rating` row until restart.
+	renamed := types.TypeDef{
+		ID:   "book",
+		Name: "Book",
+		Properties: []types.PropertyDef{
+			{Name: "title", Type: types.PropText},
+			{Name: "author", Type: types.PropText},
+			{Name: "status", Type: types.PropSelect, Options: []string{"available", "read"}},
+			{Name: "score", Type: types.PropNumber},
+		},
+	}
+	if err := app.SaveType(renamed); err != nil {
+		t.Fatalf("SaveType(renamed): %v", err)
+	}
+
+	// reprojectAllTypedPages re-parsed Dune.md against the renamed schema: the
+	// projection's stale `rating` row must be gone. (No `score` row appears
+	// because projection is sparse — only declared properties the page sets get
+	// rows — so absence of `rating` is the load-bearing assertion.)
+	after := projectedPropertyNames(t, app, "Books", "", "Dune")
+	if after["rating"] {
+		t.Errorf("`rating` projection row still present after SaveType renamed it to `score`; reprojectAllTypedPages did not run on in-app save, got %v", after)
+	}
+	// The other set values survive the re-projection untouched.
+	if !after["title"] || !after["author"] || !after["status"] {
+		t.Errorf("expected title/author/status to survive re-projection, got %v", after)
+	}
+}
+
+// TestDeleteType_ReprojectsTypedPages mirrors the save test for the delete path:
+// DeleteType shares the same self-write suppression, so it too must re-project
+// directly. A page whose type is deleted resolves to a sanitized raw name with
+// no declared properties, so its previously-set projection rows must clear
+// without a restart or external file event.
+func TestDeleteType_ReprojectsTypedPages(t *testing.T) {
+	app := newTestApp(t)
+
+	if err := app.SaveType(bookTypeSchema()); err != nil {
+		t.Fatalf("SaveType(book): %v", err)
+	}
+	content := "---\n" +
+		"notebook: \"Books\"\n" +
+		"section: \"\"\n" +
+		"page: \"Dune\"\n" +
+		"date: \"2026-08-01\"\n" +
+		"tags: []\n" +
+		"type: \"book\"\n" +
+		"title: \"Dune\"\n" +
+		"author: \"Frank Herbert\"\n" +
+		"status: \"available\"\n" +
+		"rating: 5\n" +
+		"---\n# Dune\n\nBody.\n"
+	writeFile(t, filepath.Join(app.vaultPath, "Books", "Dune.md"), content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, "Books", "", "Dune", "2026-08-01", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+	app.projectPageType("vault", meta)
+
+	before := projectedPropertyNames(t, app, "Books", "", "Dune")
+	if !before["rating"] {
+		t.Fatalf("expected a `rating` projection row before DeleteType, got %v", before)
+	}
+
+	if err := app.DeleteType("book"); err != nil {
+		t.Fatalf("DeleteType(book): %v", err)
+	}
+
+	// The book type is gone, so re-projection resolves the page to a raw type
+	// name with no declared properties and clears its set-property rows.
+	after := projectedPropertyNames(t, app, "Books", "", "Dune")
+	if len(after) != 0 {
+		t.Errorf("expected projection property rows cleared after DeleteType, got %v", after)
 	}
 }

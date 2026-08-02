@@ -28,8 +28,14 @@ func SetFrontmatterField(content, key string, value any) (string, error) {
 		return "", fmt.Errorf("invalid frontmatter key %q: must match %s", key, validFrontmatterKey.String())
 	}
 
+	// Capture before SplitFrontmatter strips the BOM, then re-prepend on write
+	// so a sync-target file keeps its byte signature. nl preserves the dominant
+	// line ending so a CRLF file does not get mixed to LF on the edited lines.
+	hadBOM := strings.HasPrefix(content, "\uFEFF")
+	nl := detectLineEnding(content)
+
 	fm, body := SplitFrontmatter(content)
-	inner := innerFrontmatterLines(fm)
+	inner := stripTrailingCR(innerFrontmatterLines(fm))
 	if countTopLevelKeyOccurrences(inner, key) > 1 {
 		return "", fmt.Errorf("frontmatter key %q appears more than once; refusing to edit an ambiguous file", key)
 	}
@@ -56,7 +62,11 @@ func SetFrontmatterField(content, key string, value any) (string, error) {
 		lines = append(append([]string{}, inner...), newLine)
 	}
 
-	return "---\n" + strings.Join(lines, "\n") + "\n---\n" + body, nil
+	result := "---" + nl + strings.Join(lines, nl) + nl + "---" + nl + body
+	if hadBOM {
+		result = "\uFEFF" + result
+	}
+	return result, nil
 }
 
 // ClearFrontmatterField removes key (and any indented block-continuation
@@ -68,12 +78,18 @@ func ClearFrontmatterField(content, key string) (string, error) {
 		return "", fmt.Errorf("invalid frontmatter key %q: must match %s", key, validFrontmatterKey.String())
 	}
 
+	// Capture before SplitFrontmatter strips the BOM, then re-prepend on write.
+	// The early-return paths below return content verbatim, so the file's BOM
+	// and line endings only change when a key is actually removed.
+	hadBOM := strings.HasPrefix(content, "\uFEFF")
+	nl := detectLineEnding(content)
+
 	fm, body := SplitFrontmatter(content)
 	if fm == "" {
 		return content, nil
 	}
 
-	inner := innerFrontmatterLines(fm)
+	inner := stripTrailingCR(innerFrontmatterLines(fm))
 	if countTopLevelKeyOccurrences(inner, key) > 1 {
 		return "", fmt.Errorf("frontmatter key %q appears more than once; refusing to edit an ambiguous file", key)
 	}
@@ -88,7 +104,11 @@ func ClearFrontmatterField(content, key string) (string, error) {
 	}
 	lines := append(append([]string{}, inner[:idx]...), inner[end:]...)
 
-	return "---\n" + strings.Join(lines, "\n") + "\n---\n" + body, nil
+	result := "---" + nl + strings.Join(lines, nl) + nl + "---" + nl + body
+	if hadBOM {
+		result = "\uFEFF" + result
+	}
+	return result, nil
 }
 
 // innerFrontmatterLines returns the lines strictly between the --- fences.
@@ -107,6 +127,27 @@ func innerFrontmatterLines(fm string) []string {
 		return nil
 	}
 	return all[1 : len(all)-2]
+}
+
+// detectLineEnding returns the dominant line ending of s. CRLF files come from
+// Windows editors and sync targets (Obsidian/OneDrive/Dropbox); re-emitting
+// the frontmatter with the same ending avoids mixed-ending whole-file diffs.
+func detectLineEnding(s string) string {
+	if strings.Contains(s, "\r\n") {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+// stripTrailingCR removes a trailing "\r" from each line so the join with the
+// detected ending re-emits a clean CRLF (or LF) instead of doubling up
+// ("\r\r\n") or mixing CR-bearing lines with CR-free fences.
+func stripTrailingCR(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = strings.TrimSuffix(l, "\r")
+	}
+	return out
 }
 
 // findKeyLine locates the top-level (non-indented) line whose prefix is

@@ -228,8 +228,9 @@ func toStringSlice(v any) ([]string, bool) {
 // book.yaml) reaches pages that have already been indexed — without it the
 // dashboard would drift until each page is independently re-touched.
 //
-// The caller MUST hold vaultMu.Lock(): this is a lifecycle event (the watcher
-// goroutine hands off to the App), and projectPageType / ClearPageProjection /
+// The caller MUST hold vaultMu (RLock suffices — the body only reads
+// a.db / a.vaultPath; the watcher path at vault_init.go takes Lock as a
+// lifecycle handoff), and projectPageType / ClearPageProjection /
 // resolveNotebookDir touch fields (a.db, a.vaultPath) guarded by vaultMu.
 func (a *App) reprojectAllTypedPages() {
 	if a.db == nil {

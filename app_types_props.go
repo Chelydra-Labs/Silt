@@ -140,12 +140,14 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 		// Past this point the on-disk write has committed. The remaining steps
 		// (re-parse, re-index, project) refresh in-memory state only — a
 		// failure there means the dashboard is stale until the next scan, not
-		// that the file is wrong. We surface such errors (and emit
-		// types:projection-error) instead of rolling the write back.
+		// that the file is wrong. Return success either way: the staleness
+		// belongs on the types:projection-error event + log, not the error
+		// return (which the IPC/MCP/frontend uniformly treat as a write
+		// rejection). No rollback — the file is the source of truth.
 		blocks, meta, _, _, perr := parser.ParseFileContent(newContent, notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
 		if perr != nil {
 			a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
-			writeErr = fmt.Errorf("re-parse after write (file saved; index will refresh on next scan): %w", perr)
+			log.Printf("types: post-write ParseFileContent failed for %s/%s/%s (file saved; index will refresh on next scan): %v", notebook, section, page, perr)
 			return
 		}
 		var idxErr error
@@ -153,9 +155,8 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 			idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
 		})
 		if idxErr != nil {
-			log.Printf("types: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+			log.Printf("types: IndexFileBlocks failed for %s/%s/%s (file saved; index will refresh on next scan): %v", meta.Notebook, meta.Section, meta.Page, idxErr)
 			a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
-			writeErr = fmt.Errorf("re-index after write (file saved; index will refresh on next scan): %w", idxErr)
 			return
 		}
 		a.projectPageType(source, meta)

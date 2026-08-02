@@ -329,6 +329,27 @@ func TestClearFileBlocks_ClearsProjection(t *testing.T) {
 	}
 }
 
+// TestGetPageProjection_RealDBErrorPropagates pins the F4 fix: a real DB error
+// (anything that is not sql.ErrNoRows) must propagate as a non-nil error, not
+// be swallowed as (nil, nil). validateOneRelationTarget relies on this — a
+// swallowed transient error reads as proj==nil and rejects a valid relation
+// write as "wrong type". We bypass dm.handle()'s ErrDBClosed guard by closing
+// the underlying *sql.DB directly, so QueryRow().Scan() itself fails.
+func TestGetPageProjection_RealDBErrorPropagates(t *testing.T) {
+	dm := newTestDB(t)
+	if err := dm.SQLDB().Close(); err != nil {
+		t.Fatalf("close underlying sql.DB: %v", err)
+	}
+
+	row, err := dm.GetPageProjection("vault", "Work", "Sprint", "Board")
+	if err == nil {
+		t.Fatal("GetPageProjection: expected non-nil error after DB failure, got nil")
+	}
+	if row != nil {
+		t.Errorf("expected nil row on error, got %+v", row)
+	}
+}
+
 // projectionSnapshot captures the raw working-memory rows for a type so a
 // reopen-and-rebuild can be compared against it deterministically. This is the
 // cardinal-rule-4 evidence: the index is reproducible from frontmatter + the

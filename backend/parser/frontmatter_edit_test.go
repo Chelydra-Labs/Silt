@@ -265,12 +265,16 @@ func TestSetFrontmatterField_DuplicateKey(t *testing.T) {
 func TestSetFrontmatterField_BOMPrefixed(t *testing.T) {
 	// A BOM-prefixed file (synced from Obsidian/OneDrive/Dropbox) must be
 	// treated as having frontmatter; before BOM-stripping it was seen as a
-	// bare body and the whole body was wrapped in a fresh fence.
+	// bare body and the whole body was wrapped in a fresh fence. The BOM must
+	// also be RE-ADDED on write so the file's byte signature is stable.
 	input := "\uFEFF---\nrating: 5\n---\nbody\n"
 
 	got, err := SetFrontmatterField(input, "rating", 9)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(got, "\uFEFF---\n") {
+		t.Errorf("BOM should be preserved at the very start\ngot: %q", got)
 	}
 	fm, body := SplitFrontmatter(got)
 	if fm == "" {
@@ -287,6 +291,100 @@ func TestSetFrontmatterField_BOMPrefixed(t *testing.T) {
 	if strings.Count(body, "---") != 0 {
 		t.Errorf("body should not contain fence lines; got %q", body)
 	}
+}
+
+func TestSetFrontmatterField_CRLF(t *testing.T) {
+	// A CRLF file (Windows/sync) must stay FULLY CRLF after an edit. The old
+	// hardcoded-LF reconstruction mixed endings: fences + edited line became
+	// LF while unchanged lines kept their \r, producing noisy whole-file diffs.
+	input := "---\r\na: 1\r\nb: 2\r\n---\r\nbody line\r\n"
+	want := "---\r\na: 1\r\nb: 5\r\n---\r\nbody line\r\n"
+
+	got, err := SetFrontmatterField(input, "b", 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("CRLF file should stay fully CRLF\ngot:  %q\nwant: %q", got, want)
+	}
+	// No lone LF (a "\n" not preceded by "\r") anywhere in the result.
+	if bad := loneLFIndex(got); bad >= 0 {
+		t.Errorf("result has a lone LF at byte %d (mixed endings): %q", bad, got)
+	}
+}
+
+func TestSetFrontmatterField_MixedEndingsNormalize(t *testing.T) {
+	// Only SOME lines are CRLF: detectLineEnding picks CRLF (contains "\r\n")
+	// and the whole FRONTMATTER normalizes to CRLF, so no fence line is left
+	// as a lone LF. The body is preserved as-is (its own endings untouched),
+	// per the byte-exactness contract. Documents the dominant-ending choice.
+	input := "---\r\na: 1\nb: 2\r\n---\nbody\n"
+	got, err := SetFrontmatterField(input, "a", 9)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	fm, _ := SplitFrontmatter(got)
+	if fm == "" {
+		t.Fatalf("lost frontmatter; got %q", got)
+	}
+	if bad := loneLFIndex(fm); bad >= 0 {
+		t.Errorf("frontmatter should be fully CRLF; lone LF at %d: fm=%q", bad, fm)
+	}
+	if !strings.Contains(got, "a: 9") {
+		t.Errorf("a not updated\ngot: %q", got)
+	}
+}
+
+func TestClearFrontmatterField_CRLF(t *testing.T) {
+	input := "---\r\na: 1\r\nb: 2\r\n---\r\nbody\r\n"
+	want := "---\r\na: 1\r\n---\r\nbody\r\n"
+
+	got, err := ClearFrontmatterField(input, "b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("CRLF clear should stay fully CRLF\ngot:  %q\nwant: %q", got, want)
+	}
+	if bad := loneLFIndex(got); bad >= 0 {
+		t.Errorf("result has a lone LF at byte %d (mixed endings): %q", bad, got)
+	}
+}
+
+func TestClearFrontmatterField_BOMAndAbsentKeyVerbatim(t *testing.T) {
+	// Absent key and no-frontmatter paths must return content UNCHANGED — no
+	// BOM or line-ending alteration when nothing was actually cleared.
+	t.Run("absentKeyPreservesBOMAndCRLF", func(t *testing.T) {
+		input := "\uFEFF---\r\na: 1\r\n---\r\nbody\r\n"
+		got, err := ClearFrontmatterField(input, "missing")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != input {
+			t.Errorf("absent key should return content verbatim\ngot:  %q\nwant: %q", got, input)
+		}
+	})
+	t.Run("noFrontmatterPreservesBOM", func(t *testing.T) {
+		input := "\uFEFFjust a body\n"
+		got, err := ClearFrontmatterField(input, "title")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != input {
+			t.Errorf("no-frontmatter should return content verbatim\ngot:  %q\nwant: %q", got, input)
+		}
+	})
+}
+
+// loneLFIndex returns the byte index of the first "\n" not preceded by "\r",
+// or -1 when every newline is part of a "\r\n" pair (or there are none).
+func loneLFIndex(s string) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' && (i == 0 || s[i-1] != '\r') {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestSetFrontmatterField_EditedKeyInlineCommentDropped(t *testing.T) {
