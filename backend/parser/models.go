@@ -168,10 +168,17 @@ type FileMetadata struct {
 	Page     string   `yaml:"page"`
 	Date     string   `yaml:"date"` // YYYY-MM-DD
 	Tags     []string `yaml:"tags"`
-	// Type is the page's note-type id (typed-notes feature, #783). Empty for
+	// Type is the page's note-type id (typed-notes feature). Empty for
 	// untyped pages. Purely additive — an absent type field round-trips
 	// unchanged (AC#6), and the indexer projects it only when set.
 	Type string `yaml:"type,omitempty"`
+
+	// Frontmatter is the raw parsed frontmatter (all keys) so the type
+	// projection can extract schema-declared property values without re-reading
+	// the file. nil when there is no frontmatter. Not serialized back: the
+	// parser re-emits frontmatter verbatim via RenderFileContent, so this map is
+	// a read-only parse artifact.
+	Frontmatter map[string]any `yaml:"-"`
 
 	// Warnings carries non-fatal parse diagnostics (for example, a
 	// malformed YAML frontmatter that was treated as "no metadata").

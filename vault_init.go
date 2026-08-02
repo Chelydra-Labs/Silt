@@ -295,6 +295,25 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.watcher = watcher
 	a.vaultPath = vaultPath
 
+	// Project typed-notes type/property values for every file indexed above
+	// (the reproducible cold-start build of the projection; cardinal rule 4 —
+	// delete the index and these rebuild from frontmatter
+	// + the type schema on the next launch. Runs AFTER a.db/a.vaultPath are
+	// assigned (projectPageType uses both); each call opens its own DB lease,
+	// so it stays outside any WithDBWrite closure.
+	for _, res := range changed {
+		if res.Notebook == "" || res.Err != nil {
+			continue
+		}
+		a.projectPageType(res.Source, parser.FileMetadata{
+			Notebook:    res.Notebook,
+			Section:     res.Section,
+			Page:        res.Page,
+			Type:        res.Type,
+			Frontmatter: res.Frontmatter,
+		})
+	}
+
 	// Route co-located per-notebook config edits to the cache invalidator +
 	// linked-config:changed event (#133). The handler is called from the
 	// watcher goroutine; it only touches configMu + the event emitter.

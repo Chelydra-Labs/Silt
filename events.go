@@ -40,7 +40,7 @@ const (
 	// Templates.
 	EventTemplatesChanged EventName = "templates:changed"
 
-	// Note types (typed-notes feature, #783). Emitted by the type watcher on
+	// Note types (typed-notes feature). Emitted by the type watcher on
 	// external schema edits and by SaveType/DeleteType so typed pages + the type
 	// manager stay live.
 	EventTypesChanged EventName = "types:changed"

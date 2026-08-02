@@ -31,6 +31,13 @@ type ScanResult struct {
 	Warnings []string
 	Err      error
 
+	// Type and Frontmatter carry the page's note-type id and raw frontmatter
+	// (typed-notes feature) so the batched startup/linked scan can project typed
+	// properties alongside the per-file path. Type is empty for untyped pages;
+	// Frontmatter is nil when the file has no frontmatter.
+	Type        string
+	Frontmatter map[string]any
+
 	// MTime and Size are the file's modification time and byte size at scan
 	// time. The DB's files table records them so a warm restart can skip
 	// re-parsing any file whose mtime+size match the last successful index
@@ -273,6 +280,8 @@ func parseSingleFile(path string, vaultPath string, spacesPerTab int) ScanResult
 	res.Date = meta.Date
 	res.Blocks = blocks
 	res.Tags = meta.Tags
+	res.Type = meta.Type
+	res.Frontmatter = meta.Frontmatter
 
 	return res
 }

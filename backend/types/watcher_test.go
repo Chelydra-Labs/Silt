@@ -22,9 +22,10 @@ func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
-// TestTypeWatcher_AddModifyDelete drives a real fsnotify instance (per #58's
-// guidance: "drive a real fsnotify instance in tests rather than mocking") and
-// verifies onChange fires on external add/modify/delete of a type file.
+// TestTypeWatcher_AddModifyDelete drives a real fsnotify instance (the
+// recommended approach for fsnotify tests: "drive a real fsnotify instance
+// in tests rather than mocking") and verifies the onChange callback fires
+// on external add/modify/delete of a type file.
 func TestTypeWatcher_AddModifyDelete(t *testing.T) {
 	dir := t.TempDir()
 	typesDir := filepath.Join(dir, "types")

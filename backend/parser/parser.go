@@ -862,11 +862,19 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 				if len(parsedMeta.Tags) > 0 {
 					meta.Tags = parsedMeta.Tags
 				}
-				// type: is the page's note-type id (typed-notes, #783). The parser
+				// type: is the page's note-type id (typed-notes feature). The parser
 				// stores the raw frontmatter value; canonical-id resolution happens
 				// at the indexing/UI layer, which has access to the type schema.
 				if parsedMeta.Type != "" {
 					meta.Type = parsedMeta.Type
+				}
+				// Capture the raw frontmatter map (all keys) so the type projection
+				// can extract schema-declared property values without re-reading the
+				// file. A separate unmarshal tolerates keys the typed FileMetadata
+				// struct does not model (author, status, …).
+				var rawFM map[string]any
+				if err := yaml.Unmarshal([]byte(fmStr), &rawFM); err == nil {
+					meta.Frontmatter = rawFM
 				}
 			} else {
 				// Surface the parse failure so the caller can warn the

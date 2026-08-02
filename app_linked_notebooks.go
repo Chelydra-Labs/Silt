@@ -536,6 +536,22 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 		log.Printf("LinkNotebook(%s): skipped %s", ln.DisplayName, s)
 	}
 
+	// Project typed-notes type/property values for the freshly-linked tree.
+	// a.db/a.vaultPath are set (linking happens post-open); each call
+	// opens its own DB lease, so it stays outside the WithDBWrite above.
+	for _, res := range results {
+		if res.Notebook == "" || res.Err != nil {
+			continue
+		}
+		a.projectPageType(res.Source, parser.FileMetadata{
+			Notebook:    res.Notebook,
+			Section:     res.Section,
+			Page:        res.Page,
+			Type:        res.Type,
+			Frontmatter: res.Frontmatter,
+		})
+	}
+
 	// Post-commit files-table pass: record mtime+size for each successfully
 	// indexed file so a warm restart skips re-parsing it. A file is
 	// considered indexed iff IndexScanResults counted it (Err == nil &&

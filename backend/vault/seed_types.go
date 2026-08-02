@@ -6,7 +6,7 @@ import (
 )
 
 // exampleTypes seeds a fresh vault with two example note types (Book, Meeting)
-// so the typed-notes feature (#783) is discoverable. Each is written only when
+// so the typed-notes feature is discoverable. Each is written only when
 // absent (existence-guarded), so re-scaffolding an existing vault or upgrading
 // an in-use vault never overwrites the user's edits. They are plain YAML the
 // user can edit or delete freely under <vault>/.system/types/.

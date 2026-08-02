@@ -299,7 +299,7 @@ func ScaffoldVault(vaultPath string) error {
 	}
 
 	// Seed a couple of example note types so a fresh vault demonstrates the
-	// typed-notes feature (#783). Existence-guarded: a re-scaffold of an
+	// typed-notes feature. Existence-guarded: a re-scaffold of an
 	// existing vault keeps the user's edits, and these are plain files the user
 	// can freely edit or delete under .system/types/.
 	if err := seedExampleTypes(vaultPath); err != nil {

@@ -342,6 +342,42 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create block_references reverse-lookup index: %w", err)
 	}
 
+	// Typed-notes projection. page_types and page_properties are
+	// working-memory projections of each page's note type and its set property
+	// values, re-derived from frontmatter + the type schema on every index
+	// (cardinal rule #4 — delete the index and relaunch rebuilds them). Sparse:
+	// page_properties holds a row ONLY for properties the page has actually
+	// set, mirroring block_meta. A page with a type but no set properties still
+	// gets a page_types row so the dashboard lists it. Source-scoped so
+	// a linked notebook sharing a display name with a vault notebook cannot
+	// collide. type_name is the canonical lowercased id; value_sort is a
+	// coercion that makes cross-value ordering type-correct (numbers padded,
+	// dates as ISO, text as-is) so the dashboard can sort/group uniformly.
+	createPageProjectionTables := `
+	CREATE TABLE IF NOT EXISTS page_types (
+		source    TEXT NOT NULL,
+		notebook  TEXT NOT NULL,
+		section   TEXT NOT NULL,
+		page      TEXT NOT NULL,
+		type_name TEXT NOT NULL,
+		PRIMARY KEY (source, notebook, section, page)
+	);
+	CREATE TABLE IF NOT EXISTS page_properties (
+		source     TEXT NOT NULL,
+		notebook   TEXT NOT NULL,
+		section    TEXT NOT NULL,
+		page       TEXT NOT NULL,
+		type_name  TEXT NOT NULL,
+		property   TEXT NOT NULL,
+		value_text TEXT,
+		value_sort TEXT,
+		value_type TEXT NOT NULL,
+		PRIMARY KEY (source, notebook, section, page, property)
+	);`
+	if _, err := db.Exec(createPageProjectionTables); err != nil {
+		return fmt.Errorf("failed to create page projection tables: %w", err)
+	}
+
 	// Schema-migrations ledger — narrow, general-purpose marker table for
 	// restart-safe one-shot migrations whose completion cannot be inferred
 	// from `CREATE TABLE IF NOT EXISTS` alone (e.g. backfills over existing
@@ -394,6 +430,10 @@ func (dm *DatabaseManager) initSchema() error {
 		"CREATE INDEX IF NOT EXISTS idx_blocks_clean_lower ON blocks(LOWER(clean_content));",
 		"CREATE INDEX IF NOT EXISTS idx_blocks_notebook_lower ON blocks(LOWER(notebook));",
 		"CREATE INDEX IF NOT EXISTS idx_blocks_section_lower ON blocks(LOWER(section));",
+		// Typed-notes dashboards: list instances of a type, and
+		// filter/sort/group by property value.
+		"CREATE INDEX IF NOT EXISTS idx_page_types_type ON page_types(type_name);",
+		"CREATE INDEX IF NOT EXISTS idx_page_properties_type_prop ON page_properties(type_name, property, value_sort);",
 	}
 
 	for _, idxQuery := range indexes {

@@ -521,25 +521,40 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section
 	if source == "" {
 		source = "vault"
 	}
-	query := "DELETE FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?"
+	// Clear the block rows and the typed-notes projection rows for this page
+	// together: deletes, rename-old-location, and watcher-remove all route
+	// through here, so the projection never lingers for a page whose blocks
+	// are gone. IndexFileBlocks re-adds the projection afterwards via
+	// projectPageType on the App layer.
+	clear := func(exec func(query string, args ...interface{}) (sql.Result, error)) error {
+		for _, q := range []string{
+			"DELETE FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+			"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+			"DELETE FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		} {
+			if _, err := exec(q, source, notebook, section, page); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	// When the caller already holds a transaction (and typically a handle()
-	// lease), use the tx only — re-entering handle() would deadlock on dbMu (#517).
+	// lease), use the tx only — re-entering handle() would deadlock on dbMu.
 	if tx != nil {
-		_, err := tx.Exec(query, source, notebook, section, page)
-		return err
+		return clear(tx.Exec)
 	}
 	db, release, err := dm.handle()
 	if err != nil {
 		return ErrDBClosed
 	}
 	defer release()
-	_, err = db.Exec(query, source, notebook, section, page)
-	if err == nil {
-		// Watcher remove/rename and app delete paths use tx==nil; residual FTS
-		// windows must not keep deleted source pages until TTL expiry.
-		dm.invalidateUnlinkedScanCache()
+	if err := clear(db.Exec); err != nil {
+		return err
 	}
-	return err
+	// Watcher remove/rename and app delete paths use tx==nil; residual FTS
+	// windows must not keep deleted source pages until TTL expiry.
+	dm.invalidateUnlinkedScanCache()
+	return nil
 }
 
 // DeleteBlockFromPage removes a single block by ID, but ONLY if it is at the
@@ -840,6 +855,15 @@ func (dm *DatabaseManager) ClearSourceBlocks(source string) error {
 	_, err = db.Exec("DELETE FROM blocks WHERE source = ?", source)
 	if err == nil {
 		dm.invalidateUnlinkedScanCache()
+		// Also clear the typed-notes projection for this source so an unlinked
+		// notebook's pages do not linger in the type dashboards. Same
+		// handle — re-entering handle() here would deadlock on dbMu.
+		if _, perr := db.Exec("DELETE FROM page_types WHERE source = ?", source); perr != nil {
+			log.Printf("db: clear page_types for source %s: %v", source, perr)
+		}
+		if _, perr := db.Exec("DELETE FROM page_properties WHERE source = ?", source); perr != nil {
+			log.Printf("db: clear page_properties for source %s: %v", source, perr)
+		}
 	}
 	return err
 }
