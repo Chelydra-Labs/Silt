@@ -1036,6 +1036,48 @@ notebook: Engineering:
 	}
 }
 
+func TestParseFileContent_PopulatesRawFrontmatter(t *testing.T) {
+	// The type projection reads schema-declared property values from
+	// meta.Frontmatter without re-reading the file, so a normal frontmatter
+	// must populate the raw map — including keys the typed FileMetadata
+	// struct does not model (author, status). Guards against the previous
+	// silent-empty regression when the second parse was swallowed.
+	doc := `---
+notebook: Engineering
+page: Hooks
+author: "Chris"
+status: draft
+rating: 5
+---
+# Header <!-- id: 22222222-2222-2222-2222-222222222222 -->`
+
+	_, meta, _, _, err := ParseFileContent(doc, "DefaultNB", "DefaultSec", "DefaultPage", "2026-06-01", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if len(meta.Warnings) != 0 {
+		t.Errorf("expected no warnings for well-formed frontmatter, got %v", meta.Warnings)
+	}
+	if meta.Frontmatter == nil {
+		t.Fatalf("Frontmatter map should be populated, got nil")
+	}
+	for k, want := range map[string]any{
+		"author": "Chris",
+		"status": "draft",
+		"rating": 5,
+	} {
+		got, ok := meta.Frontmatter[k]
+		if !ok {
+			t.Errorf("Frontmatter missing key %q (the projection would see it as absent): %v", k, meta.Frontmatter)
+		} else if got != want {
+			t.Errorf("Frontmatter[%q] = %v, want %v", k, got, want)
+		}
+	}
+	if meta.Notebook != "Engineering" {
+		t.Errorf("typed Notebook should still be promoted from the parsed node, got %q", meta.Notebook)
+	}
+}
+
 func TestRenderFileContent_DefaultsBulletForNewBlockNote(t *testing.T) {
 	// Newly created editor blocks arrive with empty RawText. The serializer
 	// must emit a "- " bullet so the outliner round-trips correctly.

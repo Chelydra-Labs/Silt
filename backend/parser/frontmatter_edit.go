@@ -158,13 +158,18 @@ func stripTrailingCR(lines []string) []string {
 	return out
 }
 
-// keyLinePattern matches a top-level `key:` line, tolerating optional double
-// quotes around the key. YAML treats "title" and title as the SAME key (quotes
-// are styling), so a quoted key and an unquoted one can collide as a true
-// duplicate that the bare `^key:` matcher would miss. Matching stays
-// case-sensitive: YAML keys are case-sensitive (Title != title).
+// keyLinePattern matches a top-level `key:` line, tolerating optional single
+// or double quotes around the key and optional whitespace before the colon.
+// YAML treats rating, 'rating', and "rating" as the SAME key (quotes are
+// styling), and `rating :` is valid YAML with whitespace before the colon —
+// both forms occur in frontmatter produced by external editors (Obsidian /
+// sync targets). Without tolerating them, the matcher misses those lines, so
+// findKeyLine returns -1 and SetFrontmatterField appends a duplicate (the old
+// line survives as dead weight; last-wins masks it behaviorally but the file
+// rots), and the duplicate guard (which uses this same pattern) never fires.
+// Matching stays case-sensitive: YAML keys are case-sensitive (Title != title).
 func keyLinePattern(key string) *regexp.Regexp {
-	return regexp.MustCompile("^\"?" + regexp.QuoteMeta(key) + "\"?:")
+	return regexp.MustCompile(`^['"]?` + regexp.QuoteMeta(key) + `['"]?\s*:`)
 }
 
 // findKeyLine locates the top-level (non-indented) line whose prefix is

@@ -452,6 +452,65 @@ func TestSetFrontmatterField_QuotedKey(t *testing.T) {
 	})
 }
 
+func TestSetFrontmatterField_SingleQuotedAndPaddedKey(t *testing.T) {
+	// External editors (Obsidian/sync targets) emit single-quoted keys
+	// ('rating': 5) and sometimes pad the colon (rating : 5) — both are valid
+	// YAML and denote the same key as the bare form. Before the matcher
+	// tolerated these, findKeyLine missed them and SetFrontmatterField took
+	// the "absent key" branch, appending a fresh `rating:` line on every edit
+	// while the original survived as dead weight (YAML last-wins masked it
+	// behaviorally, but the file rotted). The duplicate guard also never
+	// fired because neither form matched.
+	t.Run("singleQuotedKeyUpdatedInPlace", func(t *testing.T) {
+		input := "---\n'rating': 3\n---\nbody\n"
+		// Like the double-quoted case, the edit normalizes the key to bare
+		// form; the original single-quoted line is fully replaced, not
+		// duplicated.
+		want := "---\nrating: 5\n---\nbody\n"
+		got, err := SetFrontmatterField(input, "rating", 5)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != want {
+			t.Errorf("single-quoted key not updated in place\ngot:  %q\nwant: %q", got, want)
+		}
+		if strings.Count(got, "rating:") != 1 {
+			t.Errorf("dead duplicate line appended\ngot: %q", got)
+		}
+	})
+
+	t.Run("paddedColonKeyUpdatedInPlace", func(t *testing.T) {
+		input := "---\nrating : 3\n---\nbody\n"
+		want := "---\nrating: 5\n---\nbody\n"
+		got, err := SetFrontmatterField(input, "rating", 5)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != want {
+			t.Errorf("padded-colon key not updated in place\ngot:  %q\nwant: %q", got, want)
+		}
+		if strings.Count(got, "rating:") != 1 {
+			t.Errorf("dead duplicate line appended\ngot: %q", got)
+		}
+	})
+
+	t.Run("duplicateSingleAndBareRefused", func(t *testing.T) {
+		// 'rating' and rating are the same YAML key; last-wins corruption
+		// means the duplicate guard must catch the pair.
+		input := "---\n'rating': 3\nrating: 7\n---\nbody\n"
+		got, err := SetFrontmatterField(input, "rating", 5)
+		if err == nil {
+			t.Fatal("expected duplicate-key error, got nil")
+		}
+		if !strings.Contains(err.Error(), "appears more than once") {
+			t.Errorf("error should mention duplicate, got %v", err)
+		}
+		if got != "" {
+			t.Errorf("on error result should be empty, got %q", got)
+		}
+	})
+}
+
 func TestSetFrontmatterField_BOMNoFrontmatterSingleBOM(t *testing.T) {
 	// A BOM file with NO frontmatter gets wrapped in a fresh fence. The BOM
 	// must appear EXACTLY ONCE at the very start — the no-frontmatter path

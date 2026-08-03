@@ -852,42 +852,56 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 
 		if hasFrontmatter {
 			fmStr := strings.Join(fmLines, "\n")
-			var parsedMeta FileMetadata
-			if err := yaml.Unmarshal([]byte(fmStr), &parsedMeta); err == nil {
-				if parsedMeta.Notebook != "" {
-					meta.Notebook = parsedMeta.Notebook
-				}
-				if parsedMeta.Section != "" {
-					meta.Section = parsedMeta.Section
-				}
-				if parsedMeta.Page != "" {
-					meta.Page = parsedMeta.Page
-				}
-				if parsedMeta.Date != "" {
-					meta.Date = normalizeDate(parsedMeta.Date)
-				}
-				if len(parsedMeta.Tags) > 0 {
-					meta.Tags = parsedMeta.Tags
-				}
-				// type: is the page's note-type id (typed-notes feature). The parser
-				// stores the raw frontmatter value; canonical-id resolution happens
-				// at the indexing/UI layer, which has access to the type schema.
-				if parsedMeta.Type != "" {
-					meta.Type = parsedMeta.Type
-				}
-				// Capture the raw frontmatter map (all keys) so the type projection
-				// can extract schema-declared property values without re-reading the
-				// file. A separate unmarshal tolerates keys the typed FileMetadata
-				// struct does not model (author, status, …).
-				var rawFM map[string]any
-				if err := yaml.Unmarshal([]byte(fmStr), &rawFM); err == nil {
-					meta.Frontmatter = rawFM
-				}
-			} else {
+			// Parse the frontmatter ONCE into a node tree and Decode it into
+			// both the typed struct (known fields) and a raw map (all keys,
+			// for the type projection). A second yaml.Unmarshal would re-parse
+			// the same bytes — doubling parse cost — and its failure was
+			// swallowed, silently producing an empty Frontmatter.
+			var node yaml.Node
+			if err := yaml.Unmarshal([]byte(fmStr), &node); err != nil {
 				// Surface the parse failure so the caller can warn the
 				// user. Falling through with path-derived defaults would
 				// silently lose the user's authored metadata.
 				meta.Warnings = append(meta.Warnings, "yaml frontmatter parse error: "+err.Error())
+			} else {
+				var parsedMeta FileMetadata
+				if err := node.Decode(&parsedMeta); err != nil {
+					meta.Warnings = append(meta.Warnings, "yaml frontmatter parse error: "+err.Error())
+				} else {
+					if parsedMeta.Notebook != "" {
+						meta.Notebook = parsedMeta.Notebook
+					}
+					if parsedMeta.Section != "" {
+						meta.Section = parsedMeta.Section
+					}
+					if parsedMeta.Page != "" {
+						meta.Page = parsedMeta.Page
+					}
+					if parsedMeta.Date != "" {
+						meta.Date = normalizeDate(parsedMeta.Date)
+					}
+					if len(parsedMeta.Tags) > 0 {
+						meta.Tags = parsedMeta.Tags
+					}
+					// type: is the page's note-type id (typed-notes feature). The parser
+					// stores the raw frontmatter value; canonical-id resolution happens
+					// at the indexing/UI layer, which has access to the type schema.
+					if parsedMeta.Type != "" {
+						meta.Type = parsedMeta.Type
+					}
+					// Decode the same node into a raw map so the type projection
+					// can extract schema-declared property values without re-reading
+					// the file. A map tolerates keys the typed FileMetadata struct
+					// does not model (author, status, …). A decode failure here is
+					// surfaced rather than swallowed so projection never silently
+					// sees an empty Frontmatter.
+					var rawFM map[string]any
+					if err := node.Decode(&rawFM); err != nil {
+						meta.Warnings = append(meta.Warnings, "yaml frontmatter decode error: "+err.Error())
+					} else {
+						meta.Frontmatter = rawFM
+					}
+				}
 			}
 		}
 	}
