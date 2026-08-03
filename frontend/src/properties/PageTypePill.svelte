@@ -3,7 +3,10 @@
   // (breadcrumb) row. One component covers the three page-type states:
   //
   //   • Typed (resolved type) — accent-tinted split-button: body opens the
-  //     bottom properties panel; caret opens "View all {Type}" → dashboard.
+  //     bottom properties panel; caret is a direct "View all {Type}" action
+  //     (→ dashboard). No popover — a one-item caret menu clipped inside the
+  //     breadcrumb row's overflow:hidden in the real webview, so the caret is
+  //     now a single direct action.
   //   • Raw (unrecognized `type:` ref) — subdued chip; click opens the panel.
   //   • Untyped — hover/focus-revealed dashed chip with a [+] Type affordance;
   //     click opens the panel AND arms its type menu (mirrors `/type` slash).
@@ -39,11 +42,6 @@
   )
   // Only a resolvable typed page offers a "View all [Type]" dashboard target.
   let canViewAll = $derived(info.isSet && !!onViewAll)
-  let menuOpen = $state(false)
-
-  function closeMenu(): void {
-    menuOpen = false
-  }
 
   // Untyped mirrors the /type slash command: open the panel AND arm its type
   // menu so the picker is focused on arrival. Typed/raw just open the panel.
@@ -55,16 +53,6 @@
       onOpen()
     }
   }
-
-  // Esc closes the caret menu (defers nothing — the menu is the only popover).
-  $effect(() => {
-    if (!menuOpen) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeMenu()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  })
 </script>
 
 <div class="strip-wrap" class:with-caret={canViewAll}>
@@ -102,44 +90,14 @@
     <button
       type="button"
       class="caret"
-      onclick={() => (menuOpen = !menuOpen)}
-      aria-haspopup="menu"
-      aria-expanded={menuOpen}
-      aria-label="Type actions"
-      title="Type actions"
+      onclick={() => onViewAll?.()}
+      aria-label={`View all ${label}`}
+      title={`View all ${label}`}
     >
       <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
-        >{menuOpen ? 'expand_less' : 'expand_more'}</span
+        >table_view</span
       >
     </button>
-    {#if menuOpen}
-      <div class="menu" role="menu" aria-label="Type actions">
-        <button
-          type="button"
-          role="menuitem"
-          class="menu-item"
-          onclick={() => {
-            closeMenu()
-            onViewAll?.()
-          }}
-        >
-          <span
-            class="material-symbols-outlined text-icon-sm"
-            aria-hidden="true">table_view</span
-          >
-          <span>View all {label}</span>
-        </button>
-      </div>
-    {/if}
-    {#if menuOpen}
-      <button
-        type="button"
-        class="backdrop"
-        aria-hidden="true"
-        tabindex="-1"
-        onclick={closeMenu}
-      ></button>
-    {/if}
   {/if}
 </div>
 
@@ -196,7 +154,6 @@
   .caret:hover {
     background: var(--color-hover);
   }
-  /* Subdued treatment for an unrecognized raw type ref — no accent, no hero. */
   .type-strip.raw {
     border-color: var(--color-surface-panel-border);
     background: transparent;
@@ -232,48 +189,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     opacity: 0.85;
-  }
-  .menu {
-    position: absolute;
-    top: calc(100% + 0.2rem);
-    right: 0;
-    z-index: 50;
-    min-width: 12rem;
-    background: var(--color-surface-popover);
-    border: 1px solid var(--color-surface-popover-border);
-    border-radius: 0.5rem;
-    box-shadow: var(--shadow-lg);
-    padding: 0.25rem;
-  }
-  .menu-item {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    width: 100%;
-    text-align: left;
-    padding: 0.35rem 0.5rem;
-    border: 0;
-    background: transparent;
-    color: var(--color-surface-popover-text);
-    border-radius: 0.3rem;
-    font-size: var(--text-type-sm);
-    cursor: pointer;
-  }
-  .menu-item:hover {
-    background: var(--color-hover);
-  }
-  .menu-item:focus-visible {
-    outline: 2px solid var(--color-border-focus);
-    outline-offset: 1px;
-  }
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-    background: transparent;
-    border: 0;
-    cursor: default;
-    padding: 0;
   }
   /* Keep the hero out of the way on narrow viewports. */
   @media (max-width: 700px) {

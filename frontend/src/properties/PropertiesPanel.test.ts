@@ -77,31 +77,9 @@ describe('PropertiesPanel', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('closes on Escape (deferring to an open type menu first)', async () => {
+  it('closes on Escape', async () => {
     const onClose = vi.fn()
     render(PropertiesPanel, { props: baseProps({ onClose }) })
-    await fireEvent.keyDown(window, { key: 'Escape' })
-    expect(onClose).toHaveBeenCalledTimes(1)
-  })
-
-  it('Escape closes the type menu before closing the panel', async () => {
-    const onClose = vi.fn()
-    render(PropertiesPanel, {
-      props: baseProps({
-        info: untypedInfo,
-        onClose,
-        types: [{ id: 'book', name: 'Book' }]
-      })
-    })
-    await fireEvent.click(
-      screen.getByRole('button', { name: /Assign a type/i })
-    )
-    expect(screen.getByRole('menu')).toBeInTheDocument()
-    // First Esc: menu consumes it; panel stays open.
-    await fireEvent.keyDown(window, { key: 'Escape' })
-    expect(screen.queryByRole('menu')).toBeNull()
-    expect(onClose).not.toHaveBeenCalled()
-    // Second Esc: panel closes.
     await fireEvent.keyDown(window, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
   })
@@ -274,7 +252,7 @@ describe('PropertiesPanel', () => {
     })
   })
 
-  it('lists types in the menu and calls SetPageType on select', async () => {
+  it('lists types in the native <select> and calls SetPageType on change', async () => {
     const onMismatched = vi.fn()
     render(PropertiesPanel, {
       props: baseProps({
@@ -286,13 +264,20 @@ describe('PropertiesPanel', () => {
         onMismatched
       })
     })
-    await fireEvent.click(
-      screen.getByRole('button', { name: /Assign a type/i })
-    )
-    expect(screen.getByRole('menuitem', { name: /Book/ })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /Movie/ })).toBeInTheDocument()
+    // A native <select> (role=combobox) replaces the custom menu — its
+    // browser-rendered dropdown is never clipped by the panel's
+    // overflow:hidden (the robustness win over the old popover).
+    const select = screen.getByRole('combobox', { name: 'Page type' })
+    expect(
+      (select.querySelector('option[value="book"]') as HTMLOptionElement)
+        .textContent
+    ).toBe('Book')
+    expect(
+      (select.querySelector('option[value="movie"]') as HTMLOptionElement)
+        .textContent
+    ).toBe('Movie')
 
-    await fireEvent.click(screen.getByRole('menuitem', { name: /Book/ }))
+    await fireEvent.change(select, { target: { value: 'book' } })
     expect(appMocks.SetPageType).toHaveBeenCalledWith(
       'Work',
       'Projects',
@@ -304,37 +289,62 @@ describe('PropertiesPanel', () => {
     expect(onMismatched).toHaveBeenCalledWith([])
   })
 
-  it('clamps the type menu to the available viewport space and renders every entry when the list is long', async () => {
-    // The menu lives in a bottom-docked panel; without viewport-aware sizing
-    // it opens downward past the viewport edge. jsdom has no real layout (no
-    // pixel positions), so this asserts the structural fix: the menu carries
-    // a measured `max-height` and a long type list still renders every entry
-    // in the DOM (the scroll container is responsible for surfacing them).
-    const longTypes = Array.from({ length: 30 }, (_, i) => ({
-      id: `type-${i}`,
-      name: `Type ${i}`
-    }))
+  it('fires onCreateType when the Create type button is clicked', async () => {
+    const onCreateType = vi.fn()
     render(PropertiesPanel, {
-      props: baseProps({ info: untypedInfo, types: longTypes })
+      props: baseProps({ info: untypedInfo, onCreateType })
+    })
+    await fireEvent.click(screen.getByRole('button', { name: /Create type/i }))
+    expect(onCreateType).toHaveBeenCalledOnce()
+  })
+
+  it('fires onRestoreExamples when the Restore examples button is clicked', async () => {
+    const onRestoreExamples = vi.fn()
+    render(PropertiesPanel, {
+      props: baseProps({ info: untypedInfo, onRestoreExamples })
     })
     await fireEvent.click(
-      screen.getByRole('button', { name: /Assign a type/i })
+      screen.getByRole('button', { name: /Restore examples/i })
     )
+    expect(onRestoreExamples).toHaveBeenCalledOnce()
+  })
 
-    const menu = screen.getByRole('menu')
-    // Every entry is present in the DOM — overflow is handled by the scroll
-    // container, not by truncating the option set.
-    expect(screen.getAllByRole('menuitem').length).toBe(30)
-    expect(screen.getByRole('menuitem', { name: /Type 0/ })).toBeInTheDocument()
+  it('keeps Create type + Restore examples reachable when the roster is empty (select disabled)', () => {
+    render(PropertiesPanel, {
+      props: baseProps({ info: untypedInfo, types: [] })
+    })
+    const select = screen.getByRole('combobox', {
+      name: 'Page type'
+    }) as HTMLSelectElement
+    // Nothing to pick — the select is disabled with a "No types defined"
+    // sentinel so the user understands the empty state, but the two
+    // escape-hatch buttons stay live so they can recover.
+    expect(select.disabled).toBe(true)
+    expect(select.querySelector('option')?.textContent).toMatch(
+      /No types defined/i
+    )
+    expect(screen.getByRole('button', { name: /Create type/i })).toBeEnabled()
     expect(
-      screen.getByRole('menuitem', { name: /Type 29/ })
-    ).toBeInTheDocument()
-    // The shared `flipMenu` action wrote a viewport-aware bound inline (jsdom
-    // can't exercise real layout, but the inline value proves the measurement
-    // ran and that the menu is bounded by available space rather than a fixed
-    // CSS max). The companion `overflow-y: auto` lives in the component's
-    // <style> block and is verified by svelte-check, not jsdom's getComputedStyle.
-    expect(menu.style.maxHeight).toMatch(/^\d+px$/)
+      screen.getByRole('button', { name: /Restore examples/i })
+    ).toBeEnabled()
+  })
+
+  it('focuses the native <select> when typeMenuRequest bumps on open', async () => {
+    // The pill's untyped click (and `/type` slash) bumps typeMenuRequest; the
+    // panel responds by focusing the select (and auto-opening via showPicker
+    // when supported) instead of opening a clipped popover. Pass a non-empty
+    // roster so the select isn't disabled (a disabled select is unfocusable).
+    render(PropertiesPanel, {
+      props: baseProps({
+        info: untypedInfo,
+        types: [{ id: 'book', name: 'Book' }],
+        typeMenuRequest: 1
+      })
+    })
+    const select = screen.getByRole('combobox', { name: 'Page type' })
+    await waitFor(() => {
+      expect(document.activeElement).toBe(select)
+    })
   })
 
   it('surfaces SetPageType mismatched names as field warnings', () => {
@@ -375,7 +385,7 @@ describe('PropertiesPanel', () => {
     expect(screen.queryByText(/This type has no properties/i)).toBeNull()
   })
 
-  it('shows an "Unrecognized type" message + remove affordance for a bogus type ref', async () => {
+  it('shows an "Unrecognized type" message + Remove type button for a bogus type ref', async () => {
     const unknownInfo: PageTypeInfo = {
       typeId: '',
       type: { id: '', name: '' },
@@ -390,13 +400,10 @@ describe('PropertiesPanel', () => {
       screen.getByText(/isn't defined in .system\/types/i)
     ).toBeInTheDocument()
 
-    // Open the type menu and clear the bogus ref via the same Remove control.
-    await fireEvent.click(
-      screen.getByRole('button', { name: /Assign a type/i })
-    )
-    await fireEvent.click(
-      screen.getByRole('menuitem', { name: /Remove type/i })
-    )
+    // The bogus ref can't be cleared via the <select> (info.type.id is
+    // already '' so picking "No type" wouldn't fire a change), so an
+    // explicit Remove-type action shows for the unknown case.
+    await fireEvent.click(screen.getByRole('button', { name: /Remove type/i }))
     expect(appMocks.SetPageType).toHaveBeenCalledWith(
       'Work',
       'Projects',

@@ -2,13 +2,15 @@
   // Bottom-docked properties panel — the editing surface for a typed page.
   // NON-BLOCKING inspector (mirrors TaskEditDrawer's contract): no scrim,
   // `aria-modal="false"`, focus moves to the panel on open + restores to the
-  // trigger on close, Esc closes but defers to an open type menu first. Docks
-  // to the bottom of the editor column (a flex-col sibling of the editor); the
-  // editor is flex-1 so it shrinks and the reading context is preserved.
+  // trigger on close, Esc closes. Type assignment uses a native <select> —
+  // the browser-rendered dropdown is immune to the panel's overflow:hidden
+  // (a custom popover clipped here in the real webview). Create type and
+  // Restore examples live as always-visible buttons beside the select. Docks
+  // to the bottom of the editor column (a flex-col sibling of the editor);
+  // the editor is flex-1 so it shrinks and the reading context is preserved.
   import { tick } from 'svelte'
   import { fly } from 'svelte/transition'
   import { ClearPageProperty, SetPageType } from '../../bindings/silt/app.js'
-  import { flipMenu } from '../lib/flipMenu'
   import { coerceIPCError } from '../lib/ipcError'
   import PropertyField from './PropertyField.svelte'
   import TurnIntoDialog from './TurnIntoDialog.svelte'
@@ -70,6 +72,7 @@
   }: Props = $props()
 
   let panelRef = $state<HTMLDivElement | null>(null)
+  let typeSelectRef = $state<HTMLSelectElement | null>(null)
   let previouslyFocused: HTMLElement | null = null
   let wasOpen = false
 
@@ -116,7 +119,6 @@
   }
 
   function handleChooseType(name: string): void {
-    menuOpen = false
     // Same-type re-pick is a no-op.
     if (info.isSet && name === info.type.id) return
     if (!info.isSet) {
@@ -176,6 +178,13 @@
 
   function cancelTurnInto(): void {
     turnInto = null
+    // The user picked an option then cancelled the conversion preview, so the
+    // <select>'s DOM value still shows the picked type while info is
+    // unchanged. Svelte only re-applies the `value` attribute when its
+    // expression deps change, so reset it imperatively to reflect info.
+    if (typeSelectRef) {
+      typeSelectRef.value = info.isSet ? info.type.id : ''
+    }
   }
 
   // Focus management (non-blocking): move focus into the panel on open, restore
@@ -192,68 +201,40 @@
     }
   })
 
-  // Type-picker menu state. `menuOpen` doubles as the panel-Esc deferral flag
-  // (an open popover consumes Escape first).
-  let menuOpen = $state(false)
-  let menuButtonRef = $state<HTMLButtonElement | null>(null)
-
-  // Viewport-aware flip+clamp lives in the shared `flipMenu` action (attached to
-  // the menu node below), so opening near the viewport floor flips upward and
-  // the dynamic max-height clamps to the winning side. The CSS `max-height` on
-  // `.menu` is the non-JS / pre-measure fallback. `menuFlipped` is reported by
-  // the action and bound to `.menu-top` in markup.
-  let menuFlipped = $state(false)
-  const menuFlip = {
-    getAnchor: () => menuButtonRef,
-    maxHeightPx: 18 * 16,
-    onPlacement: (flipped: boolean): void => {
-      menuFlipped = flipped
-    }
-  }
-
-  function openMenu(): void {
-    menuOpen = true
-    void tick().then(() => {
-      const first = panelRef?.querySelector<HTMLElement>('[role="menuitem"]')
-      first?.focus()
-    })
-  }
-
-  function toggleMenu(): void {
-    menuOpen = !menuOpen
-    if (menuOpen) {
-      void tick().then(() => {
-        const first = panelRef?.querySelector<HTMLElement>('[role="menuitem"]')
-        first?.focus()
-      })
-    }
-  }
-
-  function closeMenu(): void {
-    menuOpen = false
-    menuButtonRef?.focus()
-  }
-
-  // Empty-state escape hatches: open the in-app type editor or restore the
-  // shipped examples. Both close the menu first so the modal/IPC owns focus
-  // and the menu doesn't reopen on the next render.
-  function handleCreateType(): void {
-    menuOpen = false
-    onCreateType?.()
-  }
-
-  function handleRestoreExamples(): void {
-    menuOpen = false
-    onRestoreExamples?.()
-  }
-
-  // Slash-command bridge: when the host bumps typeMenuRequest (and the panel is
-  // open), open the type menu. The initial 0 value is treated as "no request"
-  // so this doesn't fire on first mount.
+  // Slash-command bridge: when the host bumps typeMenuRequest (the untyped
+  // pill's click or a `/type` slash), focus the native <select> so the user
+  // can immediately pick a type. When the browser supports it, also call
+  // showPicker() to auto-open the dropdown — a no-op-safe upgrade; focus
+  // alone is the reliable baseline. The initial 0 value is "no request" so
+  // this doesn't fire on first mount. Double-tick defers past the panel-open
+  // focus effect (which focuses panelRef) so the select ends up focused.
+  // Slash-command bridge: when the host bumps typeMenuRequest (the untyped
+  // pill's click or a `/type` slash), focus the native <select> so the user
+  // can immediately pick a type. When the browser supports it, also call
+  // showPicker() to auto-open the dropdown — a no-op-safe upgrade; focus
+  // alone is the reliable baseline. The initial 0 value is "no request" so
+  // this doesn't fire on first mount. Double-tick defers past the panel-open
+  // focus effect (which focuses panelRef) so the select ends up focused.
+  // When the roster is empty the select is disabled and unskippably
+  // unfocusable — bail so focus stays on the panel (the Create type /
+  // Restore examples buttons are the recovery path there).
   $effect(() => {
     void typeMenuRequest
     if (!open || typeMenuRequest === 0) return
-    openMenu()
+    void tick()
+      .then(() => tick())
+      .then(() => {
+        if (!typeSelectRef || typeSelectRef.disabled) return
+        typeSelectRef.focus()
+        if (typeof HTMLSelectElement.prototype.showPicker === 'function') {
+          try {
+            typeSelectRef.showPicker()
+          } catch {
+            // showPicker throws if the user-activation window expired or the
+            // element isn't ready; the focus above already covers the case.
+          }
+        }
+      })
   })
 
   // Lookup table for min/max (the value envelope omits them). Keyed by property
@@ -269,12 +250,10 @@
 
   function onWindowKeydown(e: KeyboardEvent): void {
     if (!open) return
+    // A native <select> captures Escape at the browser level to close its
+    // dropdown before it can reach the window listener, so there's no
+    // popover-deferral step here — Esc goes straight to closing the panel.
     if (e.key === 'Escape') {
-      if (menuOpen) {
-        e.preventDefault()
-        closeMenu()
-        return
-      }
       e.preventDefault()
       onClose()
     }
@@ -287,19 +266,28 @@
     return () => window.removeEventListener('keydown', onWindowKeydown)
   })
 
-  // Click-outside closes the type menu (not the whole panel).
-  function onPanelPointerDown(e: PointerEvent): void {
-    if (!menuOpen) return
-    const target = e.target as HTMLElement | null
-    if (target && !target.closest('[data-type-menu]')) closeMenu()
-  }
-
-  let typeName = $derived(info.isSet ? info.type.name || info.type.id : '')
   let hasType = $derived(info.isSet)
-  // A `type:` ref that didn't resolve to a known type def. The strip renders a
+  // A `type:` ref that didn't resolve to a known type def. The pill renders a
   // subdued raw chip for this; the panel matches with a distinct message + a
-  // remove affordance to clear the bogus ref.
+  // Remove-type affordance to clear the bogus ref (the <select> can't reach
+  // it: info.type.id is already '' so picking "No type" wouldn't fire a change).
   let isUnknownType = $derived(!info.isSet && info.rawType.length > 0)
+  // The <select>'s first option is a sentinel whose label depends on state:
+  // a placeholder cue for untyped, an explicit "No type" pick for typed/
+  // unknown (the unassign path). Loading and empty-roster states get their
+  // own disabled-placeholder labels.
+  let typePlaceholder = $derived(
+    typesLoading && types.length === 0
+      ? 'Loading…'
+      : types.length === 0
+        ? 'No types defined'
+        : hasType || isUnknownType
+          ? 'No type'
+          : 'Assign a type…'
+  )
+  // Disable when there's nothing to pick — the Create/Restore buttons stay
+  // enabled so the user can recover from an empty roster.
+  let selectDisabled = $derived(typesLoading || types.length === 0)
 </script>
 
 {#if open}
@@ -311,115 +299,74 @@
     aria-modal="false"
     aria-label="Page properties"
     tabindex="-1"
-    onpointerdown={onPanelPointerDown}
   >
     <header class="header">
-      <div class="title-group" data-type-menu>
-        <button
-          type="button"
-          bind:this={menuButtonRef}
-          class="type-button"
-          onclick={toggleMenu}
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-        >
-          {#if hasType && info.type.icon}
-            <span
-              class="material-symbols-outlined text-icon-sm"
-              aria-hidden="true">{info.type.icon}</span
-            >
-          {:else}
-            <span
-              class="material-symbols-outlined text-icon-sm"
-              aria-hidden="true">label</span
-            >
-          {/if}
-          <span>{hasType ? typeName : 'Assign a type'}</span>
-          <span
-            class="material-symbols-outlined text-icon-sm"
-            aria-hidden="true">{menuOpen ? 'expand_less' : 'expand_more'}</span
-          >
-        </button>
-
-        {#if menuOpen}
-          <div
-            use:flipMenu={menuFlip}
-            class="menu"
-            class:menu-top={menuFlipped}
-            role="menu"
+      <div class="title-group">
+        <span class="material-symbols-outlined type-icon" aria-hidden="true">
+          {hasType && info.type.icon ? info.type.icon : 'label'}
+        </span>
+        <!-- Native <select>: the dropdown is rendered by the OS/browser and
+             therefore never clipped by this panel's overflow:hidden (a custom
+             popover failed exactly there in the real webview). appearance:none
+             lets us shape the closed state; the caret is a sibling overlay so
+             the dropdown itself stays browser-native. -->
+        <div class="type-select-wrap">
+          <select
+            bind:this={typeSelectRef}
+            class="type-select"
+            value={hasType ? info.type.id : ''}
+            onchange={(e) => handleChooseType(e.currentTarget.value)}
+            disabled={selectDisabled}
             aria-label="Page type"
           >
-            {#if typesLoading && types.length === 0}
-              <div class="menu-hint" role="status">Loading…</div>
-            {:else if types.length === 0}
-              <!--
-                The dead-end empty state: instead of just announcing "No types
-                defined." and leaving the user stuck, offer the two in-app
-                escapes (the editor and the example restore). Status role stays
-                so screen readers announce the situation; the menu items are
-                the actions.
-              -->
-              <div class="menu-hint" role="status">No types defined.</div>
-              <button
-                type="button"
-                role="menuitem"
-                class="menu-item"
-                onclick={handleCreateType}
+            <option value="">{typePlaceholder}</option>
+            {#each types as t (t.id)}
+              <option value={t.id}>{t.name || t.id}</option>
+            {/each}
+          </select>
+          <span class="material-symbols-outlined type-caret" aria-hidden="true"
+            >expand_more</span
+          >
+        </div>
+        <div class="actions">
+          {#if isUnknownType}
+            <!--
+              The <select> can't clear a bogus raw ref: info.type.id is already
+              '' so picking "No type" wouldn't fire a change. Surface an
+              explicit Remove-type action for the unknown case only — typed
+              pages reach the unassign path via the select's "No type" option.
+            -->
+            <button
+              type="button"
+              class="action danger"
+              onclick={() => handleChooseType('')}
+            >
+              <span
+                class="material-symbols-outlined text-icon-sm"
+                aria-hidden="true">remove_circle_outline</span
               >
-                <span
-                  class="material-symbols-outlined text-icon-sm"
-                  aria-hidden="true">add_circle</span
-                >
-                Create type…
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                class="menu-item"
-                onclick={handleRestoreExamples}
-              >
-                <span
-                  class="material-symbols-outlined text-icon-sm"
-                  aria-hidden="true">restart_alt</span
-                >
-                Restore examples
-              </button>
-            {:else}
-              {#each types as t (t.id)}
-                <button
-                  type="button"
-                  role="menuitem"
-                  class="menu-item"
-                  class:active={hasType && info.type.id === t.id}
-                  onclick={() => handleChooseType(t.id)}
-                >
-                  {#if t.icon}
-                    <span
-                      class="material-symbols-outlined text-icon-sm"
-                      aria-hidden="true">{t.icon}</span
-                    >
-                  {/if}
-                  <span>{t.name || t.id}</span>
-                </button>
-              {/each}
-            {/if}
-            {#if hasType || isUnknownType}
-              <div class="menu-sep" role="separator" aria-hidden="true"></div>
-              <button
-                type="button"
-                role="menuitem"
-                class="menu-item danger"
-                onclick={() => handleChooseType('')}
-              >
-                <span
-                  class="material-symbols-outlined text-icon-sm"
-                  aria-hidden="true">remove_circle_outline</span
-                >
-                Remove type
-              </button>
-            {/if}
-          </div>
-        {/if}
+              Remove type
+            </button>
+          {/if}
+          <button type="button" class="action" onclick={() => onCreateType?.()}>
+            <span
+              class="material-symbols-outlined text-icon-sm"
+              aria-hidden="true">add_circle</span
+            >
+            Create type…
+          </button>
+          <button
+            type="button"
+            class="action"
+            onclick={() => onRestoreExamples?.()}
+          >
+            <span
+              class="material-symbols-outlined text-icon-sm"
+              aria-hidden="true">restart_alt</span
+            >
+            Restore examples
+          </button>
+        </div>
       </div>
 
       <button
@@ -511,14 +458,33 @@
     flex: 0 0 auto;
   }
   .title-group {
-    position: relative;
-    min-width: 0;
-  }
-  .type-button {
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
-    padding: 0.25rem 0.5rem;
+    gap: 0.4rem;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .type-icon {
+    font-size: var(--text-type-md);
+    color: var(--color-text-muted);
+    flex: 0 0 auto;
+  }
+  /* appearance:none lets us shape the closed state; the dropdown itself stays
+     browser-rendered (the robustness win — native dropdowns render outside the
+     panel's overflow:hidden). The caret is a sibling overlay so we don't rely
+     on the UA's built-in arrow. */
+  .type-select-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .type-select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 1.5rem 0.25rem 0.5rem;
     border-radius: 0.375rem;
     border: 1px solid var(--color-surface-panel-border);
     background: var(--color-surface-app);
@@ -527,80 +493,56 @@
     cursor: pointer;
     max-width: 20rem;
   }
-  .type-button:hover {
+  .type-select:hover:not(:disabled) {
     background: var(--color-hover);
   }
-  .type-button:focus-visible {
+  .type-select:focus-visible {
     outline: 2px solid var(--color-border-focus);
     outline-offset: 1px;
   }
-  .type-button > span:nth-child(2) {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .type-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
-  .menu {
+  .type-caret {
     position: absolute;
-    /* Default opens below the trigger. The `flipMenu` action adds `.menu-top`
-       when there's more room above (bottom-docked panel case). */
-    top: calc(100% + 0.2rem);
-    left: 0;
-    z-index: 50;
-    min-width: 14rem;
-    /* Soft cap; the inline `max-height` set by the `flipMenu` action clamps
-       further to the available viewport space. Kept here so a non-JS /
-       pre-measure frame still has a reasonable bound. */
-    max-height: 18rem;
-    overflow-y: auto;
-    background: var(--color-surface-popover);
-    border: 1px solid var(--color-surface-popover-border);
-    border-radius: 0.5rem;
-    box-shadow: var(--shadow-lg);
-    padding: 0.25rem;
-  }
-  .menu-top {
-    /* Anchor the menu above the trigger (measured side with more room). */
-    top: auto;
-    bottom: calc(100% + 0.2rem);
-  }
-  .menu-item {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    width: 100%;
-    text-align: left;
-    padding: 0.35rem 0.5rem;
-    border: 0;
-    background: transparent;
-    color: var(--color-surface-popover-text);
-    border-radius: 0.3rem;
+    right: 0.3rem;
     font-size: var(--text-type-sm);
-    cursor: pointer;
+    color: var(--color-text-muted);
+    pointer-events: none;
   }
-  .menu-item:hover,
-  .menu-item:focus-visible {
-    background: var(--color-hover);
-    outline: none;
+  .actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-wrap: wrap;
   }
-  .menu-item:focus-visible {
-    outline: 2px solid var(--color-border-focus);
-    outline-offset: 1px;
-  }
-  .menu-item.active {
-    color: var(--color-accent-primary-start);
-  }
-  .menu-item.danger {
-    color: var(--color-status-danger);
-  }
-  .menu-hint {
-    padding: 0.4rem 0.5rem;
+  .action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem 0.4rem;
+    border: 1px solid var(--color-surface-panel-border);
+    border-radius: 0.3rem;
+    background: transparent;
     color: var(--color-text-muted);
     font-size: var(--text-type-xs);
+    cursor: pointer;
   }
-  .menu-sep {
-    height: 1px;
-    background: var(--color-surface-popover-border);
-    margin: 0.2rem 0;
+  .action:hover {
+    background: var(--color-hover);
+    color: var(--color-text-primary);
+  }
+  .action:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .action.danger {
+    color: var(--color-status-danger);
+  }
+  .action.danger:hover {
+    color: var(--color-status-danger);
+    background: var(--color-error-bg);
   }
   .close {
     display: inline-flex;

@@ -152,9 +152,12 @@ describe('PageTypePill', () => {
     ).toBeInTheDocument()
   })
 
-  it('exposes "View all {Type}" via the caret for a typed page with onViewAll', async () => {
+  it('caret is a direct "View all {Type}" action (no menu) for a typed page with onViewAll', async () => {
+    // The caret used to open a one-item popover that clipped inside the
+    // breadcrumb row's overflow:hidden. It now fires onViewAll directly —
+    // no menu, no backdrop, no aria-haspopup.
     const onViewAll = vi.fn()
-    render(PageTypePill, {
+    const { container } = render(PageTypePill, {
       props: {
         info: typedInfo,
         heroValue: 'Dune',
@@ -162,14 +165,15 @@ describe('PageTypePill', () => {
         onViewAll
       }
     })
-    const caret = screen.getByRole('button', { name: 'Type actions' })
-    expect(caret).toHaveAttribute('aria-haspopup', 'menu')
-    expect(caret).toHaveAttribute('aria-expanded', 'false')
+    const caret = screen.getByRole('button', { name: 'View all Book' })
+    expect(caret).not.toHaveAttribute('aria-haspopup')
+    expect(caret).not.toHaveAttribute('aria-expanded')
+    expect(caret.tagName).toBe('BUTTON')
     await fireEvent.click(caret)
-    expect(caret).toHaveAttribute('aria-expanded', 'true')
-    const item = screen.getByRole('menuitem', { name: 'View all Book' })
-    await fireEvent.click(item)
     expect(onViewAll).toHaveBeenCalledOnce()
+    // No popover markup in the DOM at all.
+    expect(container.querySelector('[role="menu"]')).toBeNull()
+    expect(container.querySelector('.backdrop')).toBeNull()
   })
 
   it('hides the hero on narrow viewports', () => {
