@@ -1,10 +1,12 @@
 package vault
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
 	"silt/backend/parser"
+	"silt/backend/types"
 )
 
 // exampleTypes seeds a fresh vault with two example note types (Book, Meeting)
@@ -71,4 +73,40 @@ func seedExampleTypes(vaultPath string) error {
 		}
 	}
 	return nil
+}
+
+// exampleTypeFiles is the deterministic order (Book, then Meeting) in which
+// ExampleTypes exposes the seed types, so callers see a stable enumeration
+// regardless of map iteration order.
+var exampleTypeFiles = []string{"book.yaml", "meeting.yaml"}
+
+// exampleTypeDefs parses the seed YAML once at init so RestoreExampleTypes gets
+// ready TypeDefs without re-parsing per call. A parse failure here is a
+// programmer error (the YAML ships in-binary), so it surfaces as an init panic
+// — caught immediately by tests rather than at the first IPC call.
+var exampleTypeDefs = func() []*types.TypeDef {
+	out := make([]*types.TypeDef, 0, len(exampleTypeFiles))
+	for _, name := range exampleTypeFiles {
+		td, err := types.ParseTypeBytes([]byte(exampleTypes[name]), name)
+		if err != nil {
+			panic(fmt.Sprintf("vault: unparsable seed type %s: %v", name, err))
+		}
+		out = append(out, td)
+	}
+	return out
+}()
+
+// ExampleTypes returns the shipped example note types (Book, Meeting) as parsed
+// TypeDefs, for the RestoreExampleTypes IPC. The YAML source is shared with
+// seedExampleTypes so scaffold and restore carry identical schemas; scaffold
+// writes the hand-authored bytes verbatim, restore re-serializes via
+// types.SaveType (canonical form). Returns defensive copies so callers cannot
+// mutate the shared seed defs. Order is fixed (Book, Meeting).
+func ExampleTypes() []*types.TypeDef {
+	out := make([]*types.TypeDef, len(exampleTypeDefs))
+	for i, td := range exampleTypeDefs {
+		cp := *td
+		out[i] = &cp
+	}
+	return out
 }

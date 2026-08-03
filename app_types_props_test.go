@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1166,5 +1167,119 @@ func TestOnExternalPageChanged_ReprojectsAfterWatcherReindex(t *testing.T) {
 	app.onExternalPageChanged(notebook, section, page)
 	if cleared := projectedPropertyNames(t, app, notebook, section, page); len(cleared) != 0 {
 		t.Errorf("projection not cleared after type removed from frontmatter: %v", cleared)
+	}
+}
+
+// captureTypeEmits swaps app.eventEmit to record event names, returning a
+// snapshot function. Restored via t.Cleanup so other tests are unaffected.
+func captureTypeEmits(t *testing.T, app *App) func() []string {
+	t.Helper()
+	var mu sync.Mutex
+	var got []string
+	app.eventEmit = func(name string, _ ...any) {
+		mu.Lock()
+		got = append(got, name)
+		mu.Unlock()
+	}
+	t.Cleanup(func() { app.eventEmit = nil })
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]string, len(got))
+		copy(out, got)
+		return out
+	}
+}
+
+// TestRestoreExampleTypes_CreatesWhenAbsent verifies the empty-state unblock:
+// with no types on disk, RestoreExampleTypes writes the shipped Book + Meeting
+// defs (canonical form via types.SaveType), returns their ids in order, writes
+// both files, and emits types:changed exactly once.
+func TestRestoreExampleTypes_CreatesWhenAbsent(t *testing.T) {
+	app := newTestApp(t)
+	// newTestApp scaffolds the vault, which seeds book + meeting. Remove both
+	// to stage the empty-state dead-end this IPC unblocks.
+	for _, id := range []string{"book", "meeting"} {
+		if err := os.Remove(filepath.Join(app.typesDir(), id+".yaml")); err != nil {
+			t.Fatalf("remove scaffolded %s.yaml: %v", id, err)
+		}
+	}
+	types.InvalidateTypesCache()
+
+	emits := captureTypeEmits(t, app)
+
+	created, err := app.RestoreExampleTypes(context.Background())
+	if err != nil {
+		t.Fatalf("RestoreExampleTypes: %v", err)
+	}
+	// Deterministic order (Book, Meeting) from ExampleTypes.
+	if len(created) != 2 || created[0] != "book" || created[1] != "meeting" {
+		t.Fatalf("created = %v, want [book meeting]", created)
+	}
+	// Both files exist on disk and parse back to the seeded names.
+	for _, id := range created {
+		td, err := types.GetType(app.typesDir(), id)
+		if err != nil {
+			t.Errorf("GetType(%q) after restore: %v", id, err)
+		}
+		if td != nil && td.ID != id {
+			t.Errorf("restored %q has id %q", id, td.ID)
+		}
+	}
+	// Batched: types:changed emitted exactly once (not per-type).
+	got := emits()
+	count := 0
+	for _, n := range got {
+		if n == string(EventTypesChanged) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("types:changed emitted %d times, want exactly 1 (batched): %v", count, got)
+	}
+}
+
+// TestRestoreExampleTypes_IdempotentPreservesEdits verifies the idempotency
+// contract: a type whose id already exists is left untouched (the user's edits
+// survive), and only missing types are created. Meeting is removed so the call
+// has real work to do alongside the skip.
+func TestRestoreExampleTypes_IdempotentPreservesEdits(t *testing.T) {
+	app := newTestApp(t)
+	// newTestApp seeded book + meeting. Rewrite book.yaml with a user edit
+	// (an extra property) so we can assert it is NOT overwritten.
+	bookPath := filepath.Join(app.typesDir(), "book.yaml")
+	userEdited := "# user-edited book\nname: Book\nheroField: title\nproperties:\n" +
+		"  - name: title\n    type: text\n    required: true\n" +
+		"  - name: my_custom_field\n    type: text\n"
+	if err := os.WriteFile(bookPath, []byte(userEdited), 0o644); err != nil {
+		t.Fatalf("write user-edited book: %v", err)
+	}
+	// Remove meeting so the restore has one type to create.
+	if err := os.Remove(filepath.Join(app.typesDir(), "meeting.yaml")); err != nil {
+		t.Fatalf("remove meeting: %v", err)
+	}
+	types.InvalidateTypesCache()
+
+	created, err := app.RestoreExampleTypes(context.Background())
+	if err != nil {
+		t.Fatalf("RestoreExampleTypes: %v", err)
+	}
+	// Only meeting was missing; book was skipped (idempotent).
+	if len(created) != 1 || created[0] != "meeting" {
+		t.Fatalf("created = %v, want [meeting] (book must be skipped)", created)
+	}
+
+	// The user's edit to book survives verbatim — the file was not rewritten.
+	after, _ := os.ReadFile(bookPath)
+	if string(after) != userEdited {
+		t.Errorf("book.yaml was overwritten despite idempotency contract.\nwant:\n%s\ngot:\n%s", userEdited, string(after))
+	}
+	// And book still parses with the user's custom property intact.
+	td, err := types.GetType(app.typesDir(), "book")
+	if err != nil {
+		t.Fatalf("GetType(book): %v", err)
+	}
+	if _, ok := td.Property("my_custom_field"); !ok {
+		t.Errorf("user's my_custom_field dropped from book schema: %+v", td.Properties)
 	}
 }

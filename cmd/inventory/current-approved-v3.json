@@ -845,6 +845,10 @@
         "signature": "ResolveTypeID(ref string) (string, error)"
       },
       {
+        "name": "RestoreExampleTypes",
+        "signature": "RestoreExampleTypes(ctx context.Context) ([]string, error)"
+      },
+      {
         "name": "RevealNotebookInOS",
         "signature": "RevealNotebookInOS(notebook string) error"
       },

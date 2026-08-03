@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"path/filepath"
 
 	"silt/backend/types"
+	"silt/backend/vault"
 )
 
 // typesDir returns the on-disk user-type directory <vault>/.system/types/,
@@ -160,6 +162,64 @@ func (a *App) ReloadTypes() error {
 	a.reprojectAllTypedPages()
 	a.emit(EventTypesChanged, struct{}{})
 	return nil
+}
+
+// RestoreExampleTypes re-seeds the shipped example note types (Book, Meeting)
+// into <vault>/.system/types/ when absent — the quick unblock for a user who has
+// no types and hit the empty-state dead-end. Idempotent: a type whose id already
+// exists is left untouched so the user's edits survive a repeat call. Returns
+// the ids of the types it actually created (empty if all already existed).
+// Mirrors SaveType's write path (validate + atomic write, self-write
+// suppression) but batches emit + re-project across the whole set.
+func (a *App) RestoreExampleTypes(ctx context.Context) ([]string, error) {
+	_ = ctx
+	a.vaultMu.Lock()
+	defer a.vaultMu.Unlock()
+	a.wg.Add(1)
+	defer a.wg.Done()
+	if a.vaultPath == "" {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+	// Existing ids guard the per-type write so a repeat call never overwrites
+	// the user's edits. CachedListTypes is mtime-aware and, under the exclusive
+	// lock, no concurrent writer can be mid-flight.
+	existing := map[string]bool{}
+	if res, err := types.CachedListTypes(a.typesDir()); err == nil {
+		for _, t := range res.Types {
+			existing[t.ID] = true
+		}
+	}
+	// One self-write window covers the whole batch — every write here is Silt's
+	// own and lands within the watcher's suppression window.
+	if a.typeWatcher != nil {
+		a.typeWatcher.RegisterSelfWrite()
+	}
+	var created []string
+	for _, td := range vault.ExampleTypes() {
+		if existing[td.ID] {
+			continue
+		}
+		if a.tracker != nil {
+			a.tracker.RegisterWrite(filepath.Join(a.typesDir(), td.ID+".yaml"))
+		}
+		if err := types.SaveType(a.typesDir(), td); err != nil {
+			if a.typeWatcher != nil {
+				a.typeWatcher.UnregisterSelfWrite()
+			}
+			log.Printf("types: RestoreExampleTypes(%q) failed: %v", td.ID, err)
+			return created, fmt.Errorf("restore example type %q: %w", td.ID, err)
+		}
+		created = append(created, td.ID)
+	}
+	if len(created) > 0 {
+		types.InvalidateTypesCache()
+		// Re-project once for the batch (same rationale as SaveType: the
+		// self-write window suppressed the watcher's onChange).
+		a.reprojectAllTypedPages()
+		a.emit(EventTypesChanged, struct{}{})
+	}
+	log.Printf("types: RestoreExampleTypes → created %d %v", len(created), created)
+	return created, nil
 }
 
 // PluginListTypes is the read-only SDK wrapper for ListTypes. Type schemas are
