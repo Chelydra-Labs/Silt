@@ -14,6 +14,13 @@ export interface OptimisticFieldOptions<T> {
   // Invoked with '' at the start of every commit (clearing any prior banner)
   // and with the friendly message when the write fails.
   onError?: (message: string) => void
+  /**
+   * Re-fetch source-of-truth after a write rejection. A timeout / connection
+   * error can fire after the backend already persisted, so blindly reverting
+   * to `prev` would diverge from the file. Prefer resync; fall back to revert
+   * only when no resync hook is provided.
+   */
+  onResync?: () => void
 }
 
 export function optimisticField<T>(opts: OptimisticFieldOptions<T>) {
@@ -46,8 +53,14 @@ export function optimisticField<T>(opts: OptimisticFieldOptions<T>) {
       opts.onChanged?.()
       return true
     } catch (e) {
-      value = prev
       opts.onError?.(coerceIPCError(e).message)
+      // Don't assume the write never landed (timeout after persist). Resync
+      // from the server when a hook is provided; only blind-revert otherwise.
+      if (opts.onResync) {
+        opts.onResync()
+      } else {
+        value = prev
+      }
       return false
     } finally {
       pending = false
@@ -56,9 +69,10 @@ export function optimisticField<T>(opts: OptimisticFieldOptions<T>) {
         hasQueued = false
         queued = undefined
         // Fire-and-forget: pending is clear, so this runs immediately (or
-        // re-queues if another edit raced in). After a failed write, `prev`
-        // already holds the persisted value, so the replay commits against
-        // the reverted state — the user's latest intent still wins.
+        // re-queues if another edit raced in). After a failed write without
+        // resync, `prev` still holds the last known good; with resync the
+        // in-flight refresh will reset once pending clears. Either way the
+        // user's latest queued intent still wins.
         void commit(replay)
       }
     }

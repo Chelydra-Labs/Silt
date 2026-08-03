@@ -25,6 +25,11 @@
     mismatched?: boolean
     onError: (message: string) => void
     onChanged: () => void
+    /**
+     * Re-fetch after a write rejection without treating it as success (must
+     * NOT clear the error banner). Defaults to onChanged when omitted.
+     */
+    onResync?: () => void
   }
 
   let {
@@ -35,7 +40,8 @@
     target = '',
     mismatched = false,
     onError,
-    onChanged
+    onChanged,
+    onResync
   }: Props = $props()
 
   // Coerce the incoming wire value to the editor's native type so the control
@@ -88,7 +94,10 @@
           next
         ),
       onError: (msg) => onError(msg),
-      onChanged: () => onChanged()
+      onChanged: () => onChanged(),
+      // On write failure, re-fetch so the field reseeds from disk. Prefer the
+      // dedicated onResync prop (keeps the error banner); fall back to onChanged.
+      onResync: () => (onResync ?? onChanged)()
     })
   )
 
@@ -202,8 +211,11 @@
       field.markPersisted(cleared)
       onChanged()
     } catch (e) {
-      field.value = prev
       onError(coerceIPCError(e).message)
+      // Same write-then-error concern as optimisticField: resync from disk
+      // rather than assuming the clear never landed.
+      if (onResync) onResync()
+      else field.value = prev
     } finally {
       clearPending = false
     }

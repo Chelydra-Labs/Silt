@@ -113,27 +113,37 @@ export function createPageTypeController(
     const locatorKey = `${notebook}/${section}/${page}`
     const locatorChanged = locatorKey !== lastLocator
     lastLocator = locatorKey
-    // Reset the displayed state up front so a page→page navigation shows a
-    // clean slate instead of the previous page's chip/fields while the new
-    // fetch is in flight (or indefinitely if it fails). mismatched is cleared
-    // ONLY on a locator change (see lastLocator rationale) — never on a
-    // same-page re-fetch.
-    info = EMPTY_INFO
-    values = []
-    error = ''
+    // Full wipe ONLY on locator change (page→page nav). A same-page refresh
+    // (post-commit onChanged, types:changed, etc.) must keep info/values so
+    // PropertyField instances stay mounted — wiping would flash "Loading…",
+    // steal focus, and discard in-progress edits in sibling fields. The panel
+    // only shows the skeleton when `loading && values.length === 0`.
+    // mismatched clears ONLY on locator change (see lastLocator rationale).
     if (locatorChanged) {
+      info = EMPTY_INFO
+      values = []
       mismatched = []
+      error = ''
+    } else {
+      error = ''
     }
     const token = ++refreshToken
-    loading = true
+    // Skeleton only when there is nothing on screen yet (first load / after wipe).
+    if (values.length === 0) loading = true
     try {
       const [typeInfo, props] = await Promise.all([
         GetPageType(notebook, section, page),
         GetPageProperties(notebook, section, page)
       ])
       if (token !== refreshToken) return
-      info = (typeInfo as PageTypeInfo) ?? EMPTY_INFO
-      values = (props as PagePropertyValue[]) ?? []
+      const nextInfo = (typeInfo as PageTypeInfo) ?? EMPTY_INFO
+      const nextValues = (props as PagePropertyValue[]) ?? []
+      // Schema change (type switch / property set reshape): replace wholesale.
+      // Same schema: still assign the new arrays so values update, but the
+      // panel's keyed {#each values as v (v.name)} keeps matching field
+      // instances mounted — focus and sibling edits survive.
+      info = nextInfo
+      values = nextValues
       // Do NOT clear mismatched here: a same-page fetch (the post-switch
       // refresh) must preserve the warnings commitType just set. They clear
       // on navigation (locatorChanged) or are replaced by the next switch.

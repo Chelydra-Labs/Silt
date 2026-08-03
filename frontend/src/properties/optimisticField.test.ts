@@ -27,7 +27,7 @@ describe('optimisticField', () => {
     expect(field.pending).toBe(false)
   })
 
-  it('reverts to the last-known-persisted value when a write fails', async () => {
+  it('reverts to the last-known-persisted value when a write fails (no onResync)', async () => {
     const write = vi
       .fn<(v: string) => Promise<unknown>>()
       .mockRejectedValueOnce(new Error('boom'))
@@ -38,6 +38,54 @@ describe('optimisticField', () => {
     expect(ok).toBe(false)
     expect(field.value).toBe('start')
     expect(onError).toHaveBeenCalledWith('boom')
+  })
+
+  it('on write failure with onResync, re-fetches instead of blindly reverting to prev', async () => {
+    // A timeout/connection error can fire AFTER the backend persisted. Blind
+    // revert would diverge from the file; onResync (wired to page refresh)
+    // pulls truth so field.reset() reseeds from disk.
+    const write = vi
+      .fn<(v: string) => Promise<unknown>>()
+      .mockRejectedValueOnce(new Error('timeout'))
+    const onError = vi.fn()
+    const onResync = vi.fn()
+    const field = optimisticField({
+      initial: 'start',
+      write,
+      onError,
+      onResync
+    })
+
+    const ok = await field.commit('A')
+    expect(ok).toBe(false)
+    expect(onError).toHaveBeenCalledWith('timeout')
+    expect(onResync).toHaveBeenCalledOnce()
+    // Optimistic value kept until the resync path reseeds via reset() —
+    // not snapped back to prev (which may be stale if the write landed).
+    expect(field.value).toBe('A')
+
+    // Simulate the controller refresh landing the server truth (write landed).
+    field.reset('A')
+    expect(field.value).toBe('A')
+  })
+
+  it('on write failure with onResync, reset from server can correct a write that never landed', async () => {
+    const write = vi
+      .fn<(v: string) => Promise<unknown>>()
+      .mockRejectedValueOnce(new Error('boom'))
+    const onResync = vi.fn()
+    const field = optimisticField({
+      initial: 'start',
+      write,
+      onResync
+    })
+
+    await field.commit('A')
+    expect(field.value).toBe('A')
+    expect(onResync).toHaveBeenCalledOnce()
+    // Server says write never landed — resync reseeds to start.
+    field.reset('start')
+    expect(field.value).toBe('start')
   })
 
   it('queues a fast second edit while a write is in flight and replays it once the write settles', async () => {

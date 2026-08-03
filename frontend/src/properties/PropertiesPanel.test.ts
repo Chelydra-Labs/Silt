@@ -218,8 +218,9 @@ describe('PropertiesPanel', () => {
     )
   })
 
-  it('reverts the field and surfaces an aria-live banner on rejection', async () => {
+  it('surfaces an aria-live banner on rejection and triggers resync (not a blind revert)', async () => {
     appMocks.SetPageProperty.mockRejectedValue(new Error('value out of range'))
+    const onChanged = vi.fn()
     const values: PagePropertyValue[] = [
       {
         name: 'rating',
@@ -233,6 +234,7 @@ describe('PropertiesPanel', () => {
     render(PropertiesPanel, {
       props: baseProps({
         values,
+        onChanged,
         info: {
           typeId: 'book',
           type: {
@@ -247,16 +249,16 @@ describe('PropertiesPanel', () => {
     })
     const input = screen.getByLabelText('Rating') as HTMLInputElement
     await fireEvent.change(input, { target: { value: '99' } })
-    // Rejection surfaces the banner.
+    // Rejection surfaces the banner (onResync must not clear liveError).
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument()
     })
     expect(screen.getByRole('alert').textContent).toMatch(/out of range/i)
-    // The optimistic value reverts to the last accepted value once the rejection settles.
+    // Resync hook fires so the controller can re-fetch disk truth (write may
+    // have landed despite the error). Blind revert to prev is no longer used
+    // when onResync is wired.
     await waitFor(() => {
-      expect((screen.getByLabelText('Rating') as HTMLInputElement).value).toBe(
-        '3'
-      )
+      expect(onChanged).toHaveBeenCalled()
     })
   })
 

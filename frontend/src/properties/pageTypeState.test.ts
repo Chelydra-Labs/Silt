@@ -313,6 +313,91 @@ describe('pageType controller', () => {
     expect(ctrl.mismatched).toEqual([])
   })
 
+  it('same-locator refresh keeps values mounted (no EMPTY wipe) so field focus survives', async () => {
+    // Post-commit onChanged→refresh must NOT flash EMPTY_INFO / values=[] —
+    // that unmounts every PropertyField (panel shows "Loading…" when
+    // loading && values.length === 0) and steals focus from sibling edits.
+    appMocks.GetPageType.mockResolvedValue({
+      typeId: 'book',
+      type: { id: 'book', name: 'Book' },
+      isSet: true,
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([
+      {
+        name: 'title',
+        label: 'Title',
+        type: 'text',
+        value: 'Dune',
+        isSet: true,
+        required: false
+      },
+      {
+        name: 'rating',
+        label: 'Rating',
+        type: 'number',
+        value: 5,
+        isSet: true,
+        required: false
+      }
+    ])
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+    await ctrl.refresh()
+    await tick()
+    expect(ctrl.values).toHaveLength(2)
+    const valuesBefore = ctrl.values
+
+    let resolveType!: (v: unknown) => void
+    let resolveProps!: (v: unknown) => void
+    appMocks.GetPageType.mockReturnValue(
+      new Promise((r) => {
+        resolveType = r
+      })
+    )
+    appMocks.GetPageProperties.mockReturnValue(
+      new Promise((r) => {
+        resolveProps = r
+      })
+    )
+    const pending = ctrl.refresh()
+    await tick()
+    // In-flight same-page refresh: previous values stay put (fields mounted).
+    expect(ctrl.values).toBe(valuesBefore)
+    expect(ctrl.values).toHaveLength(2)
+    expect(ctrl.info.isSet).toBe(true)
+    // No skeleton — panel only shows Loading when values are empty.
+    expect(ctrl.loading).toBe(false)
+
+    resolveType({
+      typeId: 'book',
+      type: { id: 'book', name: 'Book' },
+      isSet: true,
+      rawType: ''
+    })
+    resolveProps([
+      {
+        name: 'title',
+        label: 'Title',
+        type: 'text',
+        value: 'Dune Messiah',
+        isSet: true,
+        required: false
+      },
+      {
+        name: 'rating',
+        label: 'Rating',
+        type: 'number',
+        value: 5,
+        isSet: true,
+        required: false
+      }
+    ])
+    await pending
+    await tick()
+    expect(ctrl.values).toHaveLength(2)
+    expect(ctrl.values[0].value).toBe('Dune Messiah')
+  })
+
   it('discards a stale in-flight refresh when navigating to a page-less view before it resolves', async () => {
     // Seed page A (resolved) so there is real data a stale response could paint.
     appMocks.GetPageType.mockResolvedValue({

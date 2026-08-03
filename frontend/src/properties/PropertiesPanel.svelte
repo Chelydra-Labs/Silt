@@ -405,6 +405,7 @@
             mismatched={mismatched.includes(v.name)}
             onError={handleFieldError}
             onChanged={handleChanged}
+            onResync={onChanged}
           />
         {/each}
       {/if}
