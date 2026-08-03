@@ -1201,6 +1201,101 @@ describe('Sidebar', () => {
     expect(screen.getByPlaceholderText('New page name…')).toBeInTheDocument()
   })
 
+  it('page context "Page properties" dispatches onTypePageTarget with the ref', async () => {
+    // Pins the consolidated affordance: a single always-correct item that
+    // opens the properties panel + arms its type menu. The host (App.svelte)
+    // does the typed/untyped branching after activation, mirroring /type —
+    // so the menu just forwards the page ref and closes.
+    mocks.listNavigation.mockResolvedValue(NAV_TREE)
+    const onTypePageTarget = vi.fn()
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onTypePageTarget,
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const pageBtn = screen.getByText('Daily').closest('button')!
+    await fireEvent.contextMenu(pageBtn)
+    await flush()
+
+    const item = screen.getByRole('menuitem', { name: 'Page properties' })
+    expect(item).toBeInTheDocument()
+    // Same anatomy as siblings (category icon, role=menuitem).
+    expect(
+      item.querySelector('.material-symbols-outlined')?.textContent
+    ).toContain('category')
+
+    await fireEvent.click(item)
+    await flush()
+
+    // Menu closes and the callback fires with the right page ref.
+    expect(screen.queryByRole('menu', { name: 'Actions' })).toBeNull()
+    expect(onTypePageTarget).toHaveBeenCalledTimes(1)
+    expect(onTypePageTarget).toHaveBeenCalledWith({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily'
+    })
+  })
+
+  it('page context "Page properties" is disabled when the notebook is offline', async () => {
+    // contextUnavailable (linked + disconnected) gates the item like its
+    // page-scoped siblings (Reveal, Duplicate). The host would otherwise
+    // fail trying to address a tab for an offline linked notebook.
+    mocks.listNavigation.mockResolvedValue({
+      notebooks: [
+        {
+          name: 'Synced',
+          source: 'linked:x',
+          disconnected: true,
+          sections: [
+            {
+              name: 'Notes',
+              path: 'Notes',
+              pages: [{ name: 'Plan', count: 1 }]
+            }
+          ]
+        }
+      ]
+    })
+    const onTypePageTarget = vi.fn()
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Synced',
+        activeSection: 'Notes',
+        activePage: 'Plan',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onTypePageTarget,
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+
+    const pageBtn = screen.getByText('Plan').closest('button')!
+    await fireEvent.contextMenu(pageBtn)
+    await flush()
+
+    const item = screen.getByRole('menuitem', { name: 'Page properties' })
+    expect(item).toBeDisabled()
+    expect(item).toHaveAttribute('aria-disabled', 'true')
+  })
+
   it('renames a nested section with its canonical next path', async () => {
     mocks.listNavigation.mockResolvedValue({
       notebooks: [

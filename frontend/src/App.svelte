@@ -70,7 +70,7 @@
   } from './plugins/shared/ai-chat/drawer.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import DateGlance from './components/DateGlance.svelte'
-  import PageTypeStrip from './properties/PageTypeStrip.svelte'
+  import PageTypePill from './properties/PageTypePill.svelte'
   import PropertiesPanel from './properties/PropertiesPanel.svelte'
   import { createPageTypeController } from './properties/pageTypeState.svelte'
   import TypeDashboard from './dashboards/TypeDashboard.svelte'
@@ -99,7 +99,10 @@
     type NotebookNavigationMetadata,
     type NavigationCatalogItem
   } from './lib/navigationCatalog'
-  import type { NavigationPreferences } from './lib/sidebar/types'
+  import type {
+    NavigationPageRef,
+    NavigationPreferences
+  } from './lib/sidebar/types'
   import { routeJumpTarget } from './lib/standaloneTasksNav'
 
   let isInitialized = $state(false)
@@ -309,6 +312,34 @@
     }
     tabManager.openPage(target.ref, 'preview')
     activeView = 'notes'
+  }
+  // Sidebar right-click "Page properties" → open the properties panel + arm
+  // its type menu on the chosen page. Same linked-source gate as
+  // openDashboardPage (the tab system has no source field). If the target is
+  // already active, skip the tab churn and just open + arm. Mirrors the /type
+  // slash command's compose pattern (App.svelte:onAssignType).
+  async function handleTypePageTarget(ref: NavigationPageRef): Promise<void> {
+    const source = navigationNotebookMetadata[ref.notebook]?.source ?? 'vault'
+    const target = resolveDashboardOpenTarget({
+      source,
+      notebook: ref.notebook,
+      section: ref.section,
+      page: ref.page
+    })
+    if (target.kind === 'blocked') {
+      pushNotification({ kind: 'info', message: target.reason })
+      return
+    }
+    const isActive =
+      activeNotebook === ref.notebook &&
+      activeSection === ref.section &&
+      activePage === ref.page
+    if (!isActive) {
+      tabManager.openPage(ref, 'pin')
+      await tick()
+    }
+    pageType.open()
+    pageType.requestTypeMenu()
   }
   let showGlobalReplace = $state(false)
   // Global standalone-task quick-add overlay (#368). Opened by the new_task
@@ -893,6 +924,7 @@
             // Double-click / middle-click opens a pinned tab (#142).
             tabManager.openPage({ notebook: nb, section: sec, page: pg }, 'pin')
           }}
+          onTypePageTarget={handleTypePageTarget}
           onSelectView={selectView}
           onNavigationLoaded={(tree) => {
             navigationCatalog = flattenNavigation(tree)
@@ -966,11 +998,12 @@
               onOpenBacklinks={showBacklinks}
             >
               {#snippet meta()}
-                <PageTypeStrip
+                <PageTypePill
                   info={pageType.info}
                   heroValue={pageType.heroValue}
                   onOpen={pageType.open}
                   onViewAll={() => openTypeDashboard(pageType.info.type.id)}
+                  onOpenWithTypeMenu={pageType.requestTypeMenu}
                 />
               {/snippet}
             </PageBreadcrumb>

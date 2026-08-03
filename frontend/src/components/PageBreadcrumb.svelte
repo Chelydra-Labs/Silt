@@ -70,7 +70,7 @@
   <nav
     aria-label={`Page location: ${fullLabel}`}
     title={`${fullLabel}${reference ? ` · ${reference}` : ''}`}
-    class="h-8 flex items-center gap-1 px-3 border-b border-surface-panel-border bg-surface-panel/60 min-w-0 overflow-hidden"
+    class="breadcrumb-row h-8 flex items-center gap-1 px-3 border-b border-surface-panel-border bg-surface-panel/60 min-w-0 overflow-hidden"
   >
     <button
       type="button"

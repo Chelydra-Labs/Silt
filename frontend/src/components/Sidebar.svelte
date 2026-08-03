@@ -11,6 +11,7 @@
   import { useNavCrud } from '../lib/sidebar/useNavCrud.svelte'
   import { useSidebarContextMenu } from '../lib/sidebar/useSidebarContextMenu.svelte'
   import type {
+    NavigationPageRef,
     NavigationPreferences,
     NavigationTree
   } from '../lib/sidebar/types'
@@ -41,6 +42,11 @@
     onSelectSection: (section: string) => void
     onSelectPage: (notebook: string, section: string, page: string) => void
     onPinPage: (notebook: string, section: string, page: string) => void
+    /** Right-click "Page properties" target. Opens the properties panel +
+     *  arms its type menu on the chosen page (mirrors the /type slash and
+     *  the header pill's untyped affordance). Vault pages proceed; linked
+     *  sources surface the same "not supported yet" notice as the dashboard. */
+    onTypePageTarget?: (ref: NavigationPageRef) => void | Promise<void>
     onSelectView: (view: string) => void
     onNavigationLoaded?: (tree: NavigationTree) => void
     onNavigationPreferencesLoaded?: (preferences: NavigationPreferences) => void
@@ -67,6 +73,7 @@
     onSelectSection,
     onSelectPage,
     onPinPage,
+    onTypePageTarget,
     onSelectView,
     onNavigationLoaded,
     onNavigationPreferencesLoaded,
@@ -548,6 +555,24 @@
       {favoriteKeys.has(locatorKey(contextMenuPageRef))
         ? 'Unpin'
         : 'Pin to Quick Access'}
+    </button>
+    <button
+      type="button"
+      onclick={() => {
+        // Capture the ref before closing the menu (closing nulls the derived).
+        // Mirrors handleContextFavorite's capture-then-close pattern.
+        const ref = contextMenuPageRef
+        closeContextMenu()
+        if (ref) void onTypePageTarget?.(ref)
+      }}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >category</span
+      >
+      Page properties
     </button>
   {/if}
   {#if contextMenu?.level === 'section' || contextMenu?.level === 'page'}
