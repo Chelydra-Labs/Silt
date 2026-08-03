@@ -247,8 +247,14 @@ func (a *App) reprojectAllTypedPages() {
 		// (page deleted, external edit mid-scan) is skipped: the regular
 		// watcher path will reconcile it on the next file event.
 		safeNotebook := sanitizePathSegment(loc.Notebook)
-		safeSection := sanitizePathSegment(loc.Section)
+		// validateSectionPath (not sanitizePathSegment) so a multi-segment
+		// section like "Projects/Active" survives — sanitizePathSegment strips
+		// the "/", flattening it to "ProjectsActive" and ENOENT'ing the file.
+		safeSection, sectionErr := validateSectionPath(loc.Section, true)
 		safePage := sanitizePathSegment(loc.Page)
+		if sectionErr != nil {
+			continue
+		}
 		if safeNotebook == "" || safePage == "" {
 			continue
 		}
@@ -280,4 +286,40 @@ func (a *App) reprojectAllTypedPages() {
 		}
 		a.projectPageType(loc.Source, meta)
 	}
+}
+
+// onExternalPageChanged re-projects a page after the monitor watcher reindexes
+// (or clears) it from an external edit. The watcher's IndexFileBlocks drops the
+// typed projection via ClearFileBlocks, but the watcher path — unlike the App's
+// write paths — does not re-project, so without this an Obsidian/sync edit would
+// drop the page from type dashboards until restart. Takes vaultMu.RLock; safe
+// because stopWatchersOutsideLock closes the monitor watcher OUTSIDE the
+// teardown Lock, so this handler can drain mid-close instead of deadlocking.
+func (a *App) onExternalPageChanged(notebook, section, page string) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	a.wg.Add(1)
+	defer a.wg.Done()
+	if a.vaultPath == "" || a.db == nil {
+		return
+	}
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection, sectionErr := validateSectionPath(section, true)
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safePage == "" || sectionErr != nil {
+		return
+	}
+	source := a.resolveSourceByName(safeNotebook)
+	_, meta, _, _, err := a.readPageFileForTypes(notebook, section, page)
+	if err != nil {
+		// File gone/unreadable: drop any lingering projection row (idempotent
+		// with the watcher's ClearFileBlocks, but covers a read failure path).
+		if cerr := a.db.ClearPageProjection(source, safeNotebook, safeSection, safePage); cerr != nil {
+			log.Printf("types: ClearPageProjection on external change (%s/%s/%s/%s) failed: %v", source, safeNotebook, safeSection, safePage, cerr)
+		}
+		return
+	}
+	// projectPageType re-derives type + set properties from the freshly-parsed
+	// frontmatter, or clears the projection when the type was removed.
+	a.projectPageType(source, meta)
 }

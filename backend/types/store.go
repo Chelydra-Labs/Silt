@@ -74,7 +74,8 @@ func SaveType(typesDir string, td *TypeDef) error {
 	if td == nil {
 		return fmt.Errorf("type is nil")
 	}
-	if strings.TrimSpace(td.ID) == "" {
+	explicitID := strings.TrimSpace(td.ID) != ""
+	if !explicitID {
 		td.ID = TypeIDFromName(td.Name)
 	}
 	if !IsValidTypeID(td.ID) {
@@ -87,6 +88,14 @@ func SaveType(typesDir string, td *TypeDef) error {
 		return fmt.Errorf("failed to ensure types dir %s: %w", typesDir, err)
 	}
 	dst := filepath.Join(typesDir, td.ID+".yaml")
+	// Two display names can sanitize to the same id ("My Book!" / "My--Book"
+	// → "my-book"). Reject a derived id that would silently clobber an
+	// unrelated type; an explicit td.ID is an intentional update of that file.
+	if !explicitID {
+		if existing, _, perr := loadOne(dst); perr == nil && existing.Name != td.Name {
+			return fmt.Errorf("type id %q collides with existing type %q; choose a different name", td.ID, existing.Name)
+		}
+	}
 	if err := parser.WriteFileAtomic(dst, SerializeType(td)); err != nil {
 		return fmt.Errorf("failed to write type file: %w", err)
 	}

@@ -6,6 +6,7 @@
   // value-controlled: it never calls IPC itself — every change routes through
   // onCommit, so PropertyField's optimistic field owns the snapshot/revert.
   import { onMount, tick } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
   import { ListNavigation, QueryPagesByType } from '../../bindings/silt/app.js'
   import { flattenNavigation } from '../lib/navigationCatalog'
   import { indexNav, resolveRef, toRef, type NavIndex } from './pageRef'
@@ -68,11 +69,16 @@
           section: string
           page: string
         }> | null
+        // Include `source` so a linked notebook sharing notebook/section/page
+        // names with the vault can't collide — only the matching source's
+        // pages are eligible.
         const wanted = new Set(
-          (rows ?? []).map((r) => `${r.notebook}|${r.section}|${r.page}`)
+          (rows ?? []).map(
+            (r) => `${r.source}|${r.notebook}|${r.section}|${r.page}`
+          )
         )
         items = items.filter((it) =>
-          wanted.has(`${it.notebook}|${it.section}|${it.page}`)
+          wanted.has(`${it.source}|${it.notebook}|${it.section}|${it.page}`)
         )
       }
       idx = indexNav(items)
@@ -99,7 +105,15 @@
       ? idx.refs.filter((it) => it.page.toLowerCase().includes(q))
       : idx.refs
     // Hide already-selected pages in multi mode so the list stays focused.
-    const selected = new Set(multi ? (Array.isArray(value) ? value : []) : [])
+    // Normalize stored refs (resolve bare leaf names to their canonical path)
+    // so an MCP-written bare-name duplicate of an already-linked page is
+    // detected rather than offered again.
+    const rawSelected = multi ? (Array.isArray(value) ? value : []) : []
+    const selected = new SvelteSet<string>()
+    for (const ref of rawSelected) {
+      const hit = resolveRef(ref, idx)
+      selected.add(hit ? toRef(hit.notebook, hit.section, hit.page) : ref)
+    }
     return filtered
       .filter((it) => !selected.has(toRef(it.notebook, it.section, it.page)))
       .slice(0, 10)

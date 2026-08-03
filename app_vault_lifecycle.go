@@ -131,6 +131,10 @@ func (a *App) MoveVault(destPath string, removeOld bool) (vault.MoveVaultResult,
 		}
 		a.vaultClosingWG.Wait()
 
+		// Close the type + monitor watchers BEFORE taking the teardown Lock:
+		// both Close() join their loop goroutines, whose handlers take vaultMu,
+		// so closing them under the teardown Lock deadlocks (MB-1).
+		a.stopWatchersOutsideLock()
 		// Second hold: the teardown→save→reinit cutover. rollbackMove runs
 		// under this lock (it does not acquire it itself — RWMutex is not
 		// reentrant). initializeVaultServices resets closing=false at its top.
@@ -266,6 +270,10 @@ func (a *App) SwitchVault(path string) error {
 		}
 		a.vaultClosingWG.Wait()
 
+		// Close the type + monitor watchers BEFORE taking the teardown Lock:
+		// both Close() join their loop goroutines, whose handlers take vaultMu,
+		// so closing them under the teardown Lock deadlocks (MB-1).
+		a.stopWatchersOutsideLock()
 		a.vaultMu.Lock()
 		defer a.vaultMu.Unlock()
 		a.teardownVaultServices()

@@ -548,7 +548,18 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section
 		return ErrDBClosed
 	}
 	defer release()
-	if err := clear(db.Exec); err != nil {
+	// Wrap the triple delete in one transaction so a mid-failure (blocks
+	// gone but a projection delete errors) cannot orphan the page as a
+	// ghost in dashboards — QueryPagesByType does not JOIN blocks.
+	sqlTx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer sqlTx.Rollback()
+	if err := clear(sqlTx.Exec); err != nil {
+		return err
+	}
+	if err := sqlTx.Commit(); err != nil {
 		return err
 	}
 	// Watcher remove/rename and app delete paths use tx==nil; residual FTS

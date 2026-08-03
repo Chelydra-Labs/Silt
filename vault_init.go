@@ -323,9 +323,13 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// event (safe — no vaultMu/configMu access).
 	watcher.SetReMintWarningHandler(a.onReMintWarning)
 	// External fsnotify reindex/clear → block:changed so plugin indexes (QA
-	// vectors) stay consistent with the note store (#850).
+	// vectors) stay consistent with the note store (#850), AND re-project the
+	// page so the typed dashboards reflect the external edit immediately — the
+	// watcher's IndexFileBlocks drops the projection via ClearFileBlocks but
+	// the watcher path does not re-project on its own.
 	watcher.SetPageChangedHandler(func(notebook, section, page string) {
 		a.emitBlockChanged("", notebook, section, page, "")
+		a.onExternalPageChanged(notebook, section, page)
 	})
 
 	// Start hot-reload of .system/config.yaml. External edits re-parse and

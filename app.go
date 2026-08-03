@@ -356,6 +356,10 @@ func (a *App) ServiceShutdown() error {
 	// down the DB, tracker, and watcher. Without this a fast window
 	// close could race an in-progress file write or MCP Start.
 	a.wg.Wait()
+	// Close the type + monitor watchers BEFORE taking the teardown Lock: both
+	// Close() join their loop goroutines, whose handlers take vaultMu, so
+	// closing them under the teardown Lock deadlocks (MB-1).
+	a.stopWatchersOutsideLock()
 	// Take the write lock for the terminal teardown so any reader that
 	// slipped in between wg.Wait() returning and this point can't
 	// dereference a service mid-close — including a concurrent

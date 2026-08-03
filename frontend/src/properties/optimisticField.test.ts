@@ -108,22 +108,92 @@ describe('optimisticField', () => {
     expect(field.value).toBe('B')
   })
 
-  it('reset() cancels a queued replay (page switch drops the pending edit)', async () => {
+  it('reset() during a pending write preserves the queued edit (mid-write refresh does not drop it)', async () => {
+    const a = makeDeferred()
+    const b = makeDeferred()
+    const write = vi
+      .fn<(v: string) => Promise<unknown>>()
+      .mockReturnValueOnce(a.promise)
+      .mockReturnValueOnce(b.promise)
+
+    const field = optimisticField({ initial: 'start', write })
+    field.commit('A') // pending = true, write A in flight
+    field.commit('B') // queued while A is in flight
+
+    // A types:changed / projection-error refresh races the in-flight write.
+    // The reset must be skipped so the user's latest keystroke survives.
+    field.reset('stale-from-refresh')
+    expect(field.value).toBe('B') // optimistic UI intact, reset was a no-op
+
+    a.resolve()
+    // The replay fires commit(B) once A settles — the edit was not dropped.
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith('B'))
+    expect(write).toHaveBeenCalledTimes(2)
+
+    b.resolve()
+    await vi.waitFor(() => expect(field.pending).toBe(false))
+    expect(field.value).toBe('B')
+  })
+
+  it('reset() when no write is pending re-seeds and cancels a queued replay', async () => {
     const a = makeDeferred()
     const write = vi
       .fn<(v: string) => Promise<unknown>>()
       .mockReturnValueOnce(a.promise)
 
     const field = optimisticField({ initial: 'start', write })
-    field.commit('A')
-    field.commit('B') // queued
-
-    field.reset('external')
-
+    const pA = field.commit('A')
     a.resolve()
-    // Give the would-be replay a chance to (not) fire.
-    await new Promise((r) => setTimeout(r, 0))
-    expect(write).toHaveBeenCalledTimes(1) // B was never written
+    await pA // pending is now false
+
+    // No write in flight: reset re-seeds normally.
+    field.reset('external')
     expect(field.value).toBe('external')
+    expect(field.pending).toBe(false)
+
+    // Give any would-be replay a chance to (not) fire.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(write).toHaveBeenCalledTimes(1)
+  })
+
+  it('markPersisted seeds the revert target so a failed write after a clear reverts to the cleared value', async () => {
+    const write = vi
+      .fn<(v: string) => Promise<unknown>>()
+      .mockResolvedValueOnce(undefined) // commit('A') succeeds
+      .mockRejectedValueOnce(new Error('boom')) // commit('B') fails
+
+    const field = optimisticField({ initial: 'start', write })
+
+    await field.commit('A') // persists 'A'; prev advances to 'A'
+
+    // Simulate the clear-field path: optimistically clear, then mark the
+    // cleared state as persisted (advances the revert snapshot).
+    field.value = ''
+    field.markPersisted('')
+
+    // A subsequent commit fails → reverts to the cleared state, NOT the
+    // pre-clear value 'A' (the resurrected-value bug).
+    const ok = await field.commit('B')
+    expect(ok).toBe(false)
+    expect(field.value).toBe('')
+  })
+
+  it('without markPersisted, a failed write after a clear resurrects the pre-clear value (the bug)', async () => {
+    const write = vi
+      .fn<(v: string) => Promise<unknown>>()
+      .mockResolvedValueOnce(undefined) // commit('A') succeeds
+      .mockRejectedValueOnce(new Error('boom')) // commit('B') fails
+
+    const field = optimisticField({ initial: 'start', write })
+
+    await field.commit('A') // prev = 'A'
+
+    // Clear WITHOUT advancing the snapshot — prev is still 'A'.
+    field.value = ''
+
+    const ok = await field.commit('B')
+    expect(ok).toBe(false)
+    // The pre-clear value is resurrected (this is the bug markPersisted fixes).
+    expect(field.value).toBe('A')
   })
 })

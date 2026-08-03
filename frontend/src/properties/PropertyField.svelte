@@ -136,7 +136,19 @@
 
   function commitText(e: Event): void {
     const target = e.currentTarget as HTMLInputElement
-    void field.commit(target.value)
+    const raw = target.value
+    // Free-text multiselect (tags mode with no chip options): split the
+    // comma-list into the string[] the backend's asStringSlice expects. A
+    // bare string is rejected with "expected a list, got string".
+    if (value.type === 'multiselect' || value.type === 'pages') {
+      const parts = raw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+      void field.commit(parts)
+      return
+    }
+    void field.commit(raw)
   }
 
   function commitNumber(e: Event): void {
@@ -174,7 +186,8 @@
   async function clearField(): Promise<void> {
     if (clearPending) return
     const prev = wire
-    field.value = toWire(undefined)
+    const cleared = toWire(undefined)
+    field.value = cleared
     clearPending = true
     onError('')
     try {
@@ -184,6 +197,9 @@
         locator.page,
         value.name
       )
+      // Advance the field's revert snapshot so a later failed commit reverts
+      // to the cleared state, not the pre-clear value.
+      field.markPersisted(cleared)
       onChanged()
     } catch (e) {
       field.value = prev

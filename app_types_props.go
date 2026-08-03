@@ -45,7 +45,13 @@ type PagePropertyValue struct {
 // a re-entrant RLock (which would deadlock against a waiting writer).
 func (a *App) readPageFileForTypes(notebook, section, page string) (string, parser.FileMetadata, string, string, error) {
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	// validateSectionPath (not sanitizePathSegment) so a multi-segment section
+	// like "Projects/Active" survives — sanitizePathSegment strips the "/",
+	// flattening it to "ProjectsActive" and ENOENT'ing nested-section pages.
+	safeSection, err := validateSectionPath(section, true)
+	if err != nil {
+		return "", parser.FileMetadata{}, "", "", err
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return "", parser.FileMetadata{}, "", "", fmt.Errorf("invalid path metadata")

@@ -64,14 +64,23 @@ export function optimisticField<T>(opts: OptimisticFieldOptions<T>) {
     }
   }
 
-  // External reset (page change / value refresh) without invoking write. Also
-  // cancels any queued replay — the new page shouldn't inherit the prior
-  // page's pending edit.
+  // External reset (page change / value refresh) without invoking write. A
+  // reset fired while a write is pending (a types:changed / projection-error
+  // refresh racing the in-flight write) is skipped so the user's queued edit
+  // is not silently dropped; the next reset, once pending clears, re-seeds.
   function reset(next: T): void {
+    if (pending) return
     hasQueued = false
     queued = undefined
     prev = next
     value = next
+  }
+
+  // Advance the persisted snapshot without invoking write. Used by the
+  // clear-field path (ClearPageProperty) so a later failed commit reverts to
+  // the cleared state, not the pre-clear value.
+  function markPersisted(next: T): void {
+    prev = next
   }
 
   return {
@@ -85,6 +94,7 @@ export function optimisticField<T>(opts: OptimisticFieldOptions<T>) {
       return pending
     },
     commit,
-    reset
+    reset,
+    markPersisted
   }
 }

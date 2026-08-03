@@ -40,6 +40,65 @@ function field(overrides: Partial<PagePropertyValue> = {}): PagePropertyValue {
   }
 }
 
+describe('PropertyField — multiselect free-text commit', () => {
+  it('splits a comma-list into a string[] so the backend receives a list, not a bare string', async () => {
+    render(PropertyField, {
+      props: {
+        // No options → tags-style free-text input (the documented tags mode).
+        value: field({
+          name: 'tags',
+          label: 'Tags',
+          type: 'multiselect',
+          value: [],
+          options: []
+        }),
+        locator,
+        onError: vi.fn(),
+        onChanged: vi.fn()
+      }
+    })
+    const input = document.getElementById('prop-tags') as HTMLInputElement
+    expect(input).not.toBeNull()
+    await fireEvent.change(input, { target: { value: 'a, b' } })
+    // The backend's asStringSlice expects a list — a bare "a, b" string is
+    // rejected with "expected a list, got string".
+    expect(appMocks.SetPageProperty).toHaveBeenCalledWith(
+      'Work',
+      'Projects',
+      'Plan',
+      'tags',
+      ['a', 'b']
+    )
+    expect(appMocks.ClearPageProperty).not.toHaveBeenCalled()
+  })
+
+  it('trims and drops empty segments when splitting a free-text multiselect commit', async () => {
+    render(PropertyField, {
+      props: {
+        value: field({
+          name: 'tags',
+          label: 'Tags',
+          type: 'multiselect',
+          value: [],
+          options: []
+        }),
+        locator,
+        onError: vi.fn(),
+        onChanged: vi.fn()
+      }
+    })
+    const input = document.getElementById('prop-tags') as HTMLInputElement
+    await fireEvent.change(input, { target: { value: '  a  , , b,' } })
+    expect(appMocks.SetPageProperty).toHaveBeenCalledWith(
+      'Work',
+      'Projects',
+      'Plan',
+      'tags',
+      ['a', 'b']
+    )
+  })
+})
+
 describe('PropertyField — per-field clear', () => {
   it('renders a clear button for a set field and calls ClearPageProperty on click', async () => {
     const onChanged = vi.fn()

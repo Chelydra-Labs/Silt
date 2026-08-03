@@ -26,20 +26,9 @@ func (a *App) teardownVaultServices() {
 	// new vault would display the old vault's audit history (#446 hardening).
 	networkAuditLog.reset()
 	aiAuditLog.reset()
-	if a.watcher != nil {
-		// Drop every focus lease before tearing the watcher down so a clean
-		// exit can't strand a file under fsnotify suppression (#38).
-		a.watcher.ReleaseAllFocus()
-		_ = a.watcher.Close()
-		a.watcher = nil
-	}
 	if a.templateWatcher != nil {
 		_ = a.templateWatcher.Close()
 		a.templateWatcher = nil
-	}
-	if a.typeWatcher != nil {
-		_ = a.typeWatcher.Close()
-		a.typeWatcher = nil
 	}
 	if a.configWatcher != nil {
 		_ = a.configWatcher.Close()
@@ -84,6 +73,35 @@ func (a *App) teardownVaultServices() {
 	a.quarantinedLinks = nil
 	a.configMu.Unlock()
 	templates.ResetPluginRegistry()
+}
+
+// stopWatchersOutsideLock closes the type watcher and the monitor watcher
+// WITHOUT holding vaultMu so their loop goroutines can drain an in-flight
+// handler. Both watchers' Close() joins the loop goroutine (wg.Wait), and the
+// type watcher's onChange + the monitor watcher's page-changed handler take
+// vaultMu — closing them while teardown holds vaultMu.Lock would deadlock
+// (handler blocked on the Lock; Close blocked on the handler via wg.Wait). The
+// config/template watcher handlers do not take vaultMu, so they stay in
+// teardown. The fields are nil'd under the lock FIRST so a concurrent
+// SaveType/DeleteType's `if a.typeWatcher != nil` check observes the close
+// atomically with the field clear — no closed-but-non-nil window. Called BEFORE
+// the teardown Lock in every lifecycle teardown path.
+func (a *App) stopWatchersOutsideLock() {
+	a.vaultMu.Lock()
+	tw := a.typeWatcher
+	a.typeWatcher = nil
+	dw := a.watcher
+	a.watcher = nil
+	a.vaultMu.Unlock()
+	if tw != nil {
+		_ = tw.Close()
+	}
+	if dw != nil {
+		// Drop focus leases before closing so a clean exit can't strand a file
+		// under fsnotify suppression (#38).
+		dw.ReleaseAllFocus()
+		_ = dw.Close()
+	}
 }
 
 // CloseVault tears down the active vault's services in the reverse order of
@@ -153,6 +171,10 @@ func (a *App) CloseVault() error {
 	// event is best-effort: if no frontend is mounted (e.g. headless test),
 	// the emit is a no-op (a.emit guards wailsApp == nil internally).
 	a.emit(EventVaultClosing, struct{}{})
+	// Close the type + monitor watchers BEFORE taking the teardown Lock: both
+	// Close() join their loop goroutines, whose handlers take vaultMu, so
+	// closing them under the teardown Lock deadlocks (MB-1).
+	a.stopWatchersOutsideLock()
 	// Hold the write lock across the teardown so concurrent readers can't
 	// dereference a service pointer mid-close.
 	a.vaultMu.Lock()

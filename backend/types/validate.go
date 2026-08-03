@@ -338,7 +338,9 @@ func CoerceValue(def PropertyDef, value any) (any, error) {
 				return f, nil
 			}
 		}
-		return nil, fmt.Errorf("cannot coerce %v (%T) to a number", value, value)
+		// ValidationError (not a plain error) so the MCP layer classifies a
+		// bogus value as a structured rejection rather than a transient IO error.
+		return nil, ValidationError{Field: def.Name, Message: fmt.Sprintf("cannot coerce %v (%T) to a number", value, value)}
 	case PropCheckbox:
 		if b, ok := value.(bool); ok {
 			return b, nil
@@ -351,7 +353,7 @@ func CoerceValue(def PropertyDef, value any) (any, error) {
 				return false, nil
 			}
 		}
-		return nil, fmt.Errorf("cannot coerce %v (%T) to a boolean", value, value)
+		return nil, ValidationError{Field: def.Name, Message: fmt.Sprintf("cannot coerce %v (%T) to a boolean", value, value)}
 	case PropText, PropDate, PropDateTime, PropSelect, PropPage:
 		if s, ok := value.(string); ok {
 			return s, nil
@@ -360,7 +362,7 @@ func CoerceValue(def PropertyDef, value any) (any, error) {
 			// A number moving to a text-like field renders without trailing zeros.
 			return strconv.FormatFloat(f, 'f', -1, 64), nil
 		}
-		return nil, fmt.Errorf("cannot coerce %v (%T) to text", value, value)
+		return nil, ValidationError{Field: def.Name, Message: fmt.Sprintf("cannot coerce %v (%T) to text", value, value)}
 	case PropMultiSelect, PropPages:
 		if strs, ok := asStringSlice(value); ok {
 			return strs, nil
@@ -377,11 +379,11 @@ func CoerceValue(def PropertyDef, value any) (any, error) {
 				}
 			}
 			if len(result) == 0 {
-				return nil, fmt.Errorf("cannot coerce %q to a non-empty list", s)
+				return nil, ValidationError{Field: def.Name, Message: fmt.Sprintf("cannot coerce %q to a non-empty list", s)}
 			}
 			return result, nil
 		}
-		return nil, fmt.Errorf("cannot coerce %v (%T) to a list", value, value)
+		return nil, ValidationError{Field: def.Name, Message: fmt.Sprintf("cannot coerce %v (%T) to a list", value, value)}
 	}
 	return value, nil
 }

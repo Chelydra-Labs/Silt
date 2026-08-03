@@ -1,6 +1,7 @@
 package types
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -249,6 +250,40 @@ func TestCoerceValue(t *testing.T) {
 }
 
 func ptrFloat(v float64) *float64 { return &v }
+
+// TestCoerceValue_IncompatibleReturnsValidationError pins the NB-5 contract:
+// an incompatible value surfaces as a structured ValidationError (carrying the
+// def name) so the MCP layer classifies it as a value rejection, not a
+// transient IO error. The caller (mcpBridge.SetPageProperty) returns the error
+// as-is without type-switching, so this is safe.
+func TestCoerceValue_IncompatibleReturnsValidationError(t *testing.T) {
+	cases := []struct {
+		name string
+		def  PropertyDef
+		in   any
+	}{
+		{"string->number bogus", PropertyDef{Name: "rating", Type: PropNumber}, "abc"},
+		{"string->bool maybe", PropertyDef{Name: "done", Type: PropCheckbox}, "maybe"},
+		{"number->list", PropertyDef{Name: "tags", Type: PropMultiSelect}, float64(5)},
+		{"slice->text", PropertyDef{Name: "title", Type: PropText}, []string{"a"}},
+		{"empty->list", PropertyDef{Name: "tags", Type: PropPages}, "  , "},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := CoerceValue(c.def, c.in)
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			var vErr ValidationError
+			if !errors.As(err, &vErr) {
+				t.Fatalf("expected ValidationError, got %T: %v", err, err)
+			}
+			if vErr.Field != c.def.Name {
+				t.Errorf("Field = %q, want %q", vErr.Field, c.def.Name)
+			}
+		})
+	}
+}
 
 // equalish compares values tolerantly for the coerce tests (float vs number,
 // []string vs []any).

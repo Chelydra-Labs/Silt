@@ -957,3 +957,144 @@ func TestDeleteType_ReprojectsTypedPages(t *testing.T) {
 		t.Errorf("expected projection property rows cleared after DeleteType, got %v", after)
 	}
 }
+
+// TestTypedPages_NestedSectionRoundTrip pins NB-1: readPageFileForTypes and
+// reprojectAllTypedPages used sanitizePathSegment(section), which strips the
+// "/" — so a multi-segment section like "Projects/Active" flattened to
+// "ProjectsActive" and the file ENOENT'd. GetPageType/GetPageProperties/
+// SetPageProperty/reprojectAllTypedPages must all resolve the nested path via
+// validateSectionPath + filepath.Join (the canonical idiom in app_rename.go).
+func TestTypedPages_NestedSectionRoundTrip(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.SaveType(bookTypeSchema()); err != nil {
+		t.Fatalf("SaveType(book): %v", err)
+	}
+	const notebook, section, page = "Books", "Projects/Active", "Dune"
+	content := "---\n" +
+		"notebook: \"Books\"\n" +
+		"section: \"Projects/Active\"\n" +
+		"page: \"Dune\"\n" +
+		"date: \"2026-08-01\"\n" +
+		"tags: []\n" +
+		"type: \"book\"\n" +
+		"title: \"Dune\"\n" +
+		"status: \"available\"\n" +
+		"---\n# Dune\n\nBody.\n"
+	// File lives at <vault>/Books/Projects/Active/Dune.md — the nested section
+	// is real on disk, not a flattened single directory.
+	filePath := filepath.Join(app.vaultPath, "Books", "Projects", "Active", "Dune.md")
+	writeFile(t, filePath, content)
+
+	// GetPageType must resolve the nested-section path (pre-fix: ENOENT).
+	info, err := app.GetPageType(notebook, section, page)
+	if err != nil {
+		t.Fatalf("GetPageType: %v", err)
+	}
+	if !info.IsSet || info.TypeID != "book" {
+		t.Fatalf("GetPageType = %+v, want book", info)
+	}
+
+	// GetPageProperties reads the same nested path.
+	props, err := app.GetPageProperties(notebook, section, page)
+	if err != nil {
+		t.Fatalf("GetPageProperties: %v", err)
+	}
+	foundTitle := false
+	for _, p := range props {
+		if p.Name == "title" && p.IsSet && p.Value == "Dune" {
+			foundTitle = true
+		}
+	}
+	if !foundTitle {
+		t.Errorf("title not set in nested-section properties: %+v", props)
+	}
+
+	// SetPageProperty writes via the nested path; it also re-indexes + projects,
+	// so the projection carries rating.
+	if err := app.SetPageProperty(notebook, section, page, "rating", 5); err != nil {
+		t.Fatalf("SetPageProperty(rating, 5): %v", err)
+	}
+	raw, _ := os.ReadFile(filePath)
+	if !strings.Contains(string(raw), "rating:") {
+		t.Errorf("rating not written to nested-section file:\n%s", string(raw))
+	}
+	// SetPageProperty already indexed the page into page_types, so
+	// reprojectAllTypedPages (SaveType) will reach it. Confirm the projection
+	// carries rating before the rename.
+	before := projectedPropertyNames(t, app, notebook, section, page)
+	if !before["rating"] {
+		t.Fatalf("expected rating projection row before SaveType, got %v", before)
+	}
+
+	// Rename rating→score and SaveType: reprojectAllTypedPages must reach the
+	// nested-section page (pre-fix the path resolution ENOENT'd and it was
+	// silently skipped, leaving the stale rating row).
+	renamed := types.TypeDef{
+		ID:   "book",
+		Name: "Book",
+		Properties: []types.PropertyDef{
+			{Name: "title", Type: types.PropText},
+			{Name: "author", Type: types.PropText},
+			{Name: "status", Type: types.PropSelect, Options: []string{"available", "read"}},
+			{Name: "score", Type: types.PropNumber},
+		},
+	}
+	if err := app.SaveType(renamed); err != nil {
+		t.Fatalf("SaveType(renamed): %v", err)
+	}
+	afterRename := projectedPropertyNames(t, app, notebook, section, page)
+	if afterRename["rating"] {
+		t.Errorf("rating row lingered after SaveType rename — reprojectAllTypedPages did not reach nested-section page: %v", afterRename)
+	}
+}
+
+// TestOnExternalPageChanged_ReprojectsAfterWatcherReindex pins NB-2: the monitor
+// watcher reindexes an externally-changed typed page (IndexFileBlocks →
+// ClearFileBlocks drops page_types/page_properties), but the page-changed handler
+// only emitBlockChanged'd — it did not re-project. So an Obsidian/sync edit would
+// drop the page from type dashboards until restart. The fix calls
+// onExternalPageChanged, which re-projects (or clears when the type is removed).
+func TestOnExternalPageChanged_ReprojectsAfterWatcherReindex(t *testing.T) {
+	app := newTestApp(t)
+	const notebook, section, page = "Books", "", "Dune"
+	filePath, _ := writeBookPage(t, app)
+
+	// SetPageProperty indexes + projects, so the projection carries rating.
+	if err := app.SetPageProperty(notebook, section, page, "rating", 5); err != nil {
+		t.Fatalf("SetPageProperty: %v", err)
+	}
+	before := projectedPropertyNames(t, app, notebook, section, page)
+	if !before["rating"] {
+		t.Fatalf("expected rating projection row before simulated reindex, got %v", before)
+	}
+
+	// Simulate the monitor watcher's reindex, which via IndexFileBlocks →
+	// ClearFileBlocks DROPS the typed projection. This is exactly the state
+	// after an external edit (the NB-2 bug: nothing re-projected).
+	if err := app.db.ClearPageProjection("vault", notebook, section, page); err != nil {
+		t.Fatalf("ClearPageProjection: %v", err)
+	}
+	if dropped := projectedPropertyNames(t, app, notebook, section, page); dropped["rating"] {
+		t.Fatalf("precondition: ClearPageProjection did not drop rating row, got %v", dropped)
+	}
+
+	// The fix: the page-changed handler now calls onExternalPageChanged, which
+	// re-projects from the on-disk frontmatter → rating row reappears with no
+	// restart and no SetPageProperty.
+	app.onExternalPageChanged(notebook, section, page)
+	if after := projectedPropertyNames(t, app, notebook, section, page); !after["rating"] {
+		t.Errorf("rating projection row not re-added by onExternalPageChanged: %v", after)
+	}
+
+	// Simulate an external edit that removes the page's type: the handler must
+	// CLEAR the projection so the page drops off type dashboards immediately.
+	raw, _ := os.ReadFile(filePath)
+	raw = []byte(strings.ReplaceAll(string(raw), "type: \"book\"\n", ""))
+	if err := os.WriteFile(filePath, raw, 0o644); err != nil {
+		t.Fatalf("rewrite file without type: %v", err)
+	}
+	app.onExternalPageChanged(notebook, section, page)
+	if cleared := projectedPropertyNames(t, app, notebook, section, page); len(cleared) != 0 {
+		t.Errorf("projection not cleared after type removed from frontmatter: %v", cleared)
+	}
+}

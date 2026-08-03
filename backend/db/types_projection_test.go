@@ -329,6 +329,52 @@ func TestClearFileBlocks_ClearsProjection(t *testing.T) {
 	}
 }
 
+// TestClearFileBlocks_TxNilClearsAllThreeTables pins the atomicity contract
+// for the watcher/delete path (tx==nil): the three deletes (blocks,
+// page_types, page_properties) are wrapped in a single transaction so a
+// mid-failure cannot leave a page with its blocks gone but its projection
+// rows lingering as a dashboard ghost. A successful clear leaves zero rows
+// of every kind for the page.
+func TestClearFileBlocks_TxNilClearsAllThreeTables(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Seed one row in each of the three tables for the same page coords.
+	blocks := []parser.ParsedBlock{sampleTaskBlock("33333333-3333-3333-3333-333333333333", 1)}
+	if err := dm.IndexFileBlocks("vault", "Notes", "Inbox", "PageA", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+	if err := dm.IndexPageProjection("vault", "Notes", "Inbox", "PageA", "task",
+		[]ProjectedProperty{{Property: "owner", ValueText: "Bob", ValueSort: "Bob", ValueType: "text"}},
+	); err != nil {
+		t.Fatalf("IndexPageProjection: %v", err)
+	}
+	for _, table := range []string{"blocks", "page_types", "page_properties"} {
+		var c int
+		if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM "+table+" WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+			"vault", "Notes", "Inbox", "PageA").Scan(&c); err != nil {
+			t.Fatalf("seed count %s: %v", table, err)
+		}
+		if c == 0 {
+			t.Fatalf("seed failed: %s has 0 rows", table)
+		}
+	}
+
+	if err := dm.ClearFileBlocks(nil, "vault", "Notes", "Inbox", "PageA"); err != nil {
+		t.Fatalf("ClearFileBlocks: %v", err)
+	}
+
+	for _, table := range []string{"blocks", "page_types", "page_properties"} {
+		var c int
+		if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM "+table+" WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+			"vault", "Notes", "Inbox", "PageA").Scan(&c); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if c != 0 {
+			t.Errorf("expected 0 rows in %s after tx==nil clear, got %d", table, c)
+		}
+	}
+}
+
 // TestGetPageProjection_RealDBErrorPropagates pins the F4 fix: a real DB error
 // (anything that is not sql.ErrNoRows) must propagate as a non-nil error, not
 // be swallowed as (nil, nil). validateOneRelationTarget relies on this — a

@@ -37,8 +37,29 @@ const appMocks = vi.hoisted(() => {
       }
     ]
   }
+  // A second tree with a linked notebook sharing notebook/section/page names
+  // with the vault — used to verify source disambiguation (NB-6). Kept separate
+  // from the default tree so the shared tests don't hit duplicate each-keys.
+  const navTreeWithLinkedDupe = {
+    notebooks: [
+      ...navTree.notebooks,
+      {
+        name: 'Work',
+        source: 'linked-repo',
+        sections: [
+          {
+            name: 'People',
+            path: 'People',
+            pages: [{ name: 'Alice', count: 0 }],
+            children: []
+          }
+        ]
+      }
+    ]
+  }
   return createAppIpcMocks({
     navTree,
+    navTreeWithLinkedDupe,
     ListNavigation: vi.fn(),
     QueryPagesByType: vi.fn().mockResolvedValue([])
   })
@@ -241,5 +262,59 @@ describe('PageLinkField — multi (pages)', () => {
     const input = screen.getByRole('combobox')
     await fireEvent.keyDown(input, { key: 'Backspace' })
     expect(onCommit).toHaveBeenCalledWith(['Work/People/Alice'])
+  })
+})
+
+describe('PageLinkField — source disambiguation + ref normalization (NB-6)', () => {
+  it('a target filter narrows by source so a same-named linked page does not collide', async () => {
+    // Swap in a tree where a linked notebook shares notebook/section/page
+    // names with the vault — without source in the match key, both Alices
+    // would leak through the target filter.
+    appMocks.ListNavigation.mockResolvedValue(appMocks.navTreeWithLinkedDupe)
+    // Only the linked-repo's Alice is of the target type.
+    appMocks.QueryPagesByType.mockResolvedValue([
+      {
+        source: 'linked-repo',
+        notebook: 'Work',
+        section: 'People',
+        page: 'Alice'
+      }
+    ])
+    render(PageLinkField, {
+      props: {
+        value: '',
+        multi: false,
+        target: 'person',
+        label: 'Author',
+        fieldId: 'f-author',
+        onCommit: vi.fn()
+      }
+    })
+    await focusInput()
+    // Only the linked-repo Alice is eligible — the vault's Alice (same
+    // notebook/section/page names) is filtered out by source.
+    const options = screen.getAllByRole('option', { name: /Alice/i })
+    expect(options).toHaveLength(1)
+    // Bob is not of the target type, so he must not appear either.
+    expect(screen.queryByRole('option', { name: /Bob/i })).toBeNull()
+  })
+
+  it('an already-selected bare-name ref is excluded from the dropdown (no duplicate add)', async () => {
+    // The stored value is a bare leaf name "Alice" (as MCP might write),
+    // not the full canonical ref "Work/People/Alice".
+    render(PageLinkField, {
+      props: {
+        value: ['Alice'],
+        multi: true,
+        label: 'Authors',
+        fieldId: 'f-authors',
+        onCommit: vi.fn()
+      }
+    })
+    await focusInput()
+    // Alice is already linked (by bare name) — she must not be offered again.
+    expect(screen.queryByRole('option', { name: /Alice/i })).toBeNull()
+    // Other pages still appear.
+    expect(screen.getByRole('option', { name: /Bob/i })).toBeInTheDocument()
   })
 })
