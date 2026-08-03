@@ -126,14 +126,71 @@ describe('TypeDashboard', () => {
     expect(within(listbox).getByText('Book')).toBeInTheDocument()
   })
 
+  it('type picker listbox supports arrow-key navigation with roving tabindex', async () => {
+    appMocks.ListTypes.mockResolvedValue({ types: [BOOK_TYPE, MOVIE_TYPE] })
+    await mount()
+
+    await fireEvent.click(screen.getByRole('button', { name: /^Book/ }))
+    const listbox = screen.getByRole('listbox', { name: 'Select a type' })
+    const options = within(listbox).getAllByRole('option')
+    expect(options).toHaveLength(2)
+
+    // On open, focus moves to the selected option (Book); it carries the
+    // roving tabindex=0, siblings are -1.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(options[0])
+    })
+    expect(options[0]).toHaveAttribute('tabindex', '0')
+    expect(options[1]).toHaveAttribute('tabindex', '-1')
+
+    // ArrowDown moves focus + the roving tab stop to the next option.
+    await fireEvent.keyDown(options[0], { key: 'ArrowDown' })
+    await waitFor(() => {
+      expect(document.activeElement).toBe(options[1])
+    })
+    expect(options[1]).toHaveAttribute('tabindex', '0')
+    expect(options[0]).toHaveAttribute('tabindex', '-1')
+
+    // ArrowUp moves back.
+    await fireEvent.keyDown(options[1], { key: 'ArrowUp' })
+    await waitFor(() => {
+      expect(document.activeElement).toBe(options[0])
+    })
+
+    // Home/End jump to boundaries.
+    await fireEvent.keyDown(options[0], { key: 'End' })
+    await waitFor(() => {
+      expect(document.activeElement).toBe(options[1])
+    })
+    await fireEvent.keyDown(options[1], { key: 'Home' })
+    await waitFor(() => {
+      expect(document.activeElement).toBe(options[0])
+    })
+
+    // Enter activates the focused option (browser synthesizes a click on a
+    // real <button>; jsdom does not, so fire one to mirror the real behavior).
+    await fireEvent.keyDown(options[0], { key: 'ArrowDown' })
+    await waitFor(() => expect(document.activeElement).toBe(options[1]))
+    await fireEvent.click(options[1])
+    // Movie was selected → next query targets the movie type, with the
+    // type-switch filter reset.
+    await waitFor(() => {
+      const last = appMocks.QueryPagesByType.mock.calls.at(-1)!
+      expect(last[0]).toBe('movie')
+      expect(last[1]).toEqual({})
+    })
+  })
+
   it('renders the table with pages from QueryPagesByType', async () => {
     await mount()
     // Both page names render as navigation buttons.
+    // Accessible name now carries hero + notebook + section context (mirrors
+    // the board card); match by prefix so this test isn't brittle to format.
     expect(
-      screen.getByRole('button', { name: 'Open page Dune' })
+      screen.getByRole('button', { name: /Open page Dune/ })
     ).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: 'Open page Neuromancer' })
+      screen.getByRole('button', { name: /Open page Neuromancer/ })
     ).toBeInTheDocument()
   })
 
@@ -210,22 +267,22 @@ describe('TypeDashboard', () => {
 
     // Both pages are visible before collapsing.
     expect(
-      screen.getByRole('button', { name: 'Open page Dune' })
+      screen.getByRole('button', { name: /Open page Dune/ })
     ).toBeInTheDocument()
 
     // Collapse the "read" group → its Dune row disappears; Neuromancer stays.
     await fireEvent.click(readToggle)
     await tick()
-    expect(screen.queryByRole('button', { name: 'Open page Dune' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Open page Dune/ })).toBeNull()
     expect(
-      screen.getByRole('button', { name: 'Open page Neuromancer' })
+      screen.getByRole('button', { name: /Open page Neuromancer/ })
     ).toBeInTheDocument()
   })
 
   it('clicking a page row calls onOpenPage with the locator', async () => {
     const { onOpenPage } = await mount()
     await fireEvent.click(
-      screen.getByRole('button', { name: 'Open page Dune' })
+      screen.getByRole('button', { name: /Open page Dune/ })
     )
     expect(onOpenPage).toHaveBeenCalledWith({
       source: 'vault',
@@ -331,7 +388,7 @@ describe('TypeDashboard', () => {
     await fireEvent.click(clearBtn)
     await waitFor(() => {
       expect(
-        screen.getByRole('button', { name: 'Open page Dune' })
+        screen.getByRole('button', { name: /Open page Dune/ })
       ).toBeInTheDocument()
     })
   })

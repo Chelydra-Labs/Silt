@@ -37,11 +37,89 @@
 
   let openMenu = $state<string | null>(null)
 
-  function toggleMenu(id: string): void {
-    openMenu = openMenu === id ? null : id
-  }
   function close(): void {
     openMenu = null
+  }
+
+  // --- Listbox keyboard model (WAI-ARIA roving tabindex) ------------------
+  // The three dropdowns are role="listbox"; Arrow/Home/End move the active
+  // option, Enter/Space activate via the native button click. Only one menu
+  // is open at a time, so a single activeIdx scoped to whichever menu is
+  // open is sufficient. Mirrors the view-mode radiogroup in TypeDashboard.
+  let activeIdx = $state(0)
+
+  function menuOptionCount(menuId: string): number {
+    if (menuId === 'type') return types.length
+    if (menuId === 'group') return 1 + groupColumns.length
+    const col = filterColumns.find((c) => c.key === menuId)
+    return col ? 2 + (col.options?.length ?? 0) : 0
+  }
+
+  // Where focus should land when a menu opens: the currently-selected option
+  // (the one with aria-selected="true"), or the first if none is selected.
+  function menuInitialIdx(menuId: string): number {
+    if (menuId === 'type') {
+      const i = types.findIndex((t) => t.id === selectedType)
+      return i < 0 ? 0 : i
+    }
+    if (menuId === 'group') {
+      if (groupBy === '') return 0
+      const i = groupColumns.findIndex((c) => c.key === groupBy)
+      return i < 0 ? 0 : i + 1
+    }
+    const col = filterColumns.find((c) => c.key === menuId)
+    if (!col) return 0
+    if (!(menuId in filter)) return 0
+    if (filter[menuId] === '') return 1
+    const i = (col.options ?? []).findIndex((o) => o === filter[menuId])
+    return i < 0 ? 0 : i + 2
+  }
+
+  function toggleMenu(id: string): void {
+    if (openMenu === id) {
+      close()
+      return
+    }
+    openMenu = id
+    activeIdx = menuInitialIdx(id)
+    const targetIdx = activeIdx
+    // The listbox DOM renders on the same flush; focus after it settles so
+    // arrow keys work immediately without an intervening Tab.
+    queueMicrotask(() => {
+      document
+        .querySelector<HTMLElement>(
+          `[data-listbox="${id}"] [data-option-idx="${targetIdx}"]`
+        )
+        ?.focus()
+    })
+  }
+
+  // Roving tabindex: the active option is the tab stop; siblings are removed
+  // from the tab order. Closed menus aren't rendered, so this only matters
+  // for the open one.
+  function optTabindex(menuId: string, idx: number): 0 | -1 {
+    return openMenu === menuId && activeIdx === idx ? 0 : -1
+  }
+
+  function onListboxKeydown(e: KeyboardEvent): void {
+    if (!openMenu) return
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+    e.preventDefault()
+    const count = menuOptionCount(openMenu)
+    if (count === 0) return
+    let next = activeIdx
+    if (e.key === 'Home') next = 0
+    else if (e.key === 'End') next = count - 1
+    else if (e.key === 'ArrowDown') next = Math.min(activeIdx + 1, count - 1)
+    else next = Math.max(activeIdx - 1, 0)
+    if (next === activeIdx) return
+    activeIdx = next
+    const container = e.currentTarget as HTMLElement
+    queueMicrotask(() => {
+      container
+        .querySelector<HTMLElement>(`[data-option-idx="${next}"]`)
+        ?.focus()
+    })
   }
 
   let selectedTypeLabel = $derived(
@@ -128,14 +206,23 @@
       >
     </button>
     {#if openMenu === 'type'}
-      <div class="menu" role="listbox" aria-label="Select a type" tabindex="-1">
-        {#each types as t (t.id)}
+      <div
+        class="menu"
+        role="listbox"
+        aria-label="Select a type"
+        tabindex="-1"
+        data-listbox="type"
+        onkeydown={onListboxKeydown}
+      >
+        {#each types as t, i (t.id)}
           <button
             type="button"
             role="option"
             class="menu-item"
             class:selected={t.id === selectedType}
             aria-selected={t.id === selectedType}
+            data-option-idx={i}
+            tabindex={optTabindex('type', i)}
             onclick={() => {
               onSelectType(t.id)
               close()
@@ -179,13 +266,22 @@
       >
     </button>
     {#if openMenu === 'group'}
-      <div class="menu" role="listbox" aria-label="Group by" tabindex="-1">
+      <div
+        class="menu"
+        role="listbox"
+        aria-label="Group by"
+        tabindex="-1"
+        data-listbox="group"
+        onkeydown={onListboxKeydown}
+      >
         <button
           type="button"
           role="option"
           class="menu-item"
           class:selected={groupBy === ''}
           aria-selected={groupBy === ''}
+          data-option-idx="0"
+          tabindex={optTabindex('group', 0)}
           onclick={() => {
             onGroupByChange('')
             close()
@@ -199,13 +295,15 @@
             >
           {/if}
         </button>
-        {#each groupColumns as col (col.key)}
+        {#each groupColumns as col, i (col.key)}
           <button
             type="button"
             role="option"
             class="menu-item"
             class:selected={groupBy === col.key}
             aria-selected={groupBy === col.key}
+            data-option-idx={i + 1}
+            tabindex={optTabindex('group', i + 1)}
             onclick={() => {
               onGroupByChange(col.key)
               close()
@@ -254,12 +352,16 @@
               role="listbox"
               aria-label="Filter {col.label}"
               tabindex="-1"
+              data-listbox={col.key}
+              onkeydown={onListboxKeydown}
             >
               <button
                 type="button"
                 role="option"
                 class="menu-item"
                 aria-selected={!(col.key in filter)}
+                data-option-idx="0"
+                tabindex={optTabindex(col.key, 0)}
                 onclick={() => {
                   clearFilter(col.key)
                   close()
@@ -272,6 +374,8 @@
                 role="option"
                 class="menu-item"
                 aria-selected={filter[col.key] === ''}
+                data-option-idx="1"
+                tabindex={optTabindex(col.key, 1)}
                 onclick={() => {
                   setFilter(col.key, '')
                   close()
@@ -279,13 +383,15 @@
               >
                 <span class="italic">Unset</span>
               </button>
-              {#each col.options ?? [] as opt (opt)}
+              {#each col.options ?? [] as opt, i (opt)}
                 <button
                   type="button"
                   role="option"
                   class="menu-item"
                   class:selected={filter[col.key] === opt}
                   aria-selected={filter[col.key] === opt}
+                  data-option-idx={i + 2}
+                  tabindex={optTabindex(col.key, i + 2)}
                   onclick={() => {
                     setFilter(col.key, opt)
                     close()

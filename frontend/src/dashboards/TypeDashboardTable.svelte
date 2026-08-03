@@ -57,6 +57,18 @@
     const hit = row.properties.find((p) => p.name === heroField)
     return hit?.valueText ?? ''
   }
+
+  // Page-cell accessible name mirrors the board card's: include the hero,
+  // notebook, and section so screen-reader users get the same disambiguation
+  // as sighted users (who see them rendered in the cell).
+  function pageCellLabel(row: TypeDashboardRow): string {
+    const hero = heroOf(row)
+    let label = `Open page ${row.page}`
+    if (hero) label += `, ${hero}`
+    if (row.notebook) label += `, ${row.notebook}`
+    if (row.section) label += ` › ${row.section}`
+    return label
+  }
 </script>
 
 <div class="table-scroll custom-scrollbar" aria-label="Pages of this type">
@@ -122,7 +134,7 @@
                       section: row.section,
                       page: row.page
                     })}
-                  aria-label="Open page {row.page}"
+                  aria-label={pageCellLabel(row)}
                 >
                   <span class="page-name">{row.page}</span>
                   {#if heroOf(row)}
