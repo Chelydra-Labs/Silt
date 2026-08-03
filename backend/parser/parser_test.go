@@ -939,6 +939,47 @@ func TestParseFileContent_CodeBlockIsManaged(t *testing.T) {
 	}
 }
 
+// TestParseFileContent_BOMPreservedOnRewrite pins MB-1: a BOM-prefixed file
+// (Obsidian/OneDrive/Dropbox sync) that needs block-ID minting must keep its
+// BOM in the rewritten newContent. ParseFileContent strips the BOM up-front so
+// the opening --- is recognized; the rewrite path must re-prepend it or the
+// file silently loses its BOM on save (sync diff / byte-preservation violation).
+func TestParseFileContent_BOMPreservedOnRewrite(t *testing.T) {
+	// Body line has no <!-- id: --> comment → minting fires → modifiedAny true.
+	bomDoc := "\uFEFF---\n" +
+		"notebook: \"NB\"\n" +
+		"---\n" +
+		"- a line that needs an id\n"
+	_, _, newContent, modified, err := ParseFileContent(bomDoc, "NB", "", "P", "2026-06-13", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if !modified {
+		t.Fatal("expected minting to trigger a rewrite (modified=true)")
+	}
+	if !strings.HasPrefix(newContent, "\uFEFF") {
+		t.Errorf("BOM dropped from rewritten newContent (byte-preservation violation):\n%q", newContent)
+	}
+	// The minted id landed in the body (proof the rewrite actually ran).
+	if !strings.Contains(newContent, "<!-- id: ") {
+		t.Errorf("expected a minted id comment in the body:\n%s", newContent)
+	}
+	// The BOM sits before the opening fence, not somewhere inside.
+	if !strings.HasPrefix(newContent, "\uFEFF---\n") {
+		t.Errorf("BOM should precede the opening ---:\n%q", newContent)
+	}
+
+	// A non-BOM file must NOT gain a spurious BOM from the rewrite.
+	noBOMDoc := "---\nnotebook: \"NB\"\n---\n- a line that needs an id\n"
+	_, _, newContent2, _, err := ParseFileContent(noBOMDoc, "NB", "", "P", "2026-06-13", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent (no BOM): %v", err)
+	}
+	if strings.HasPrefix(newContent2, "\uFEFF") {
+		t.Errorf("non-BOM file gained a spurious BOM in the rewrite:\n%q", newContent2)
+	}
+}
+
 func TestParseFileContent_HandlesMultipleFencedCodeBlocks(t *testing.T) {
 	// Verify that nesting-style toggles (back-to-back fenced blocks) don't
 	// accidentally leave us in a stuck "in code block" state.

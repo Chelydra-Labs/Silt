@@ -56,6 +56,19 @@ const BOOK_TYPE = {
   ]
 }
 
+// A second type whose schema lacks Book's `status` property — switching to it
+// with a stale status filter would blank the dashboard.
+const MOVIE_TYPE = {
+  id: 'movie',
+  name: 'Movie',
+  icon: 'film',
+  heroField: 'title',
+  properties: [
+    { name: 'title', label: 'Title', type: 'text' },
+    { name: 'director', label: 'Director', type: 'text' }
+  ]
+}
+
 const appMocks = vi.hoisted(() =>
   createAppIpcMocks({
     ListTypes: vi.fn(),
@@ -64,6 +77,18 @@ const appMocks = vi.hoisted(() =>
 )
 vi.mock('$silt-app', () => appMocks)
 
+// Capture Events.On registrations so the `types:changed` handler can be fired
+// in-test (mirrors pageTypeState.test.ts's approach).
+const eventsHandlers = {} as Record<string, (ev?: { data?: unknown }) => void>
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: vi.fn((name: string, handler: (ev?: { data?: unknown }) => void) => {
+      eventsHandlers[name] = handler
+      return () => {}
+    })
+  }
+}))
+
 import TypeDashboard from './TypeDashboard.svelte'
 
 beforeEach(() => {
@@ -71,6 +96,7 @@ beforeEach(() => {
   appMocks.QueryPagesByType.mockReset()
   appMocks.ListTypes.mockResolvedValue({ types: [BOOK_TYPE] })
   appMocks.QueryPagesByType.mockResolvedValue(BOOK_ROWS)
+  for (const k of Object.keys(eventsHandlers)) delete eventsHandlers[k]
 })
 
 afterEach(cleanup)
@@ -206,6 +232,53 @@ describe('TypeDashboard', () => {
       notebook: 'Work',
       section: 'Reading',
       page: 'Dune'
+    })
+  })
+
+  it('clears the filter when switching types so the new schema starts fresh', async () => {
+    appMocks.ListTypes.mockResolvedValue({ types: [BOOK_TYPE, MOVIE_TYPE] })
+    await mount()
+
+    // Apply a status filter valid only on the Book type.
+    await fireEvent.click(screen.getByRole('button', { name: 'Filter Status' }))
+    const statusListbox = screen.getByRole('listbox', { name: 'Filter Status' })
+    await fireEvent.click(within(statusListbox).getByText('read'))
+    await waitFor(() => {
+      expect(appMocks.QueryPagesByType.mock.calls.at(-1)![1]).toEqual({
+        status: 'read'
+      })
+    })
+
+    // Switch to the Movie type — the stale Book-only status filter must drop.
+    await fireEvent.click(screen.getByRole('button', { name: /^Book/ }))
+    const typeListbox = screen.getByRole('listbox', { name: 'Select a type' })
+    await fireEvent.click(within(typeListbox).getByText('Movie'))
+
+    // The next query for the Movie type carries no stale Book filter.
+    await waitFor(() => {
+      const last = appMocks.QueryPagesByType.mock.calls.at(-1)!
+      expect(last[0]).toBe('movie')
+      expect(last[1]).toEqual({})
+    })
+  })
+
+  it('reloads types and refreshes the query on the types:changed event', async () => {
+    await mount()
+    const listCallsAfterMount = appMocks.ListTypes.mock.calls.length
+    const queryCallsAfterMount = appMocks.QueryPagesByType.mock.calls.length
+
+    // Fire the subscribed `types:changed` handler (a type file was edited
+    // externally while the dashboard is mounted).
+    eventsHandlers['types:changed']?.()
+    await waitFor(() => {
+      expect(appMocks.ListTypes.mock.calls.length).toBeGreaterThan(
+        listCallsAfterMount
+      )
+    })
+    await waitFor(() => {
+      expect(appMocks.QueryPagesByType.mock.calls.length).toBeGreaterThan(
+        queryCallsAfterMount
+      )
     })
   })
 

@@ -6,8 +6,10 @@
   // debounce + grouping shape, minus the plugin context.
   import { SvelteSet } from 'svelte/reactivity'
   import { onMount, onDestroy, untrack } from 'svelte'
+  import { Events } from '@wailsio/runtime'
   import { ListTypes, QueryPagesByType } from '../../bindings/silt/app.js'
   import { coerceIPCError } from '../lib/ipcError'
+  import { EventName } from '../generated/enums'
   import { trailingDebounce } from '../plugins/first-party/silt-tasks/debounce'
   import type { TypeDef } from '../properties/types'
   import TypeDashboardFilters from './TypeDashboardFilters.svelte'
@@ -82,6 +84,17 @@
 
   onMount(() => {
     void loadTypes()
+    // The type set can change while the dashboard is mounted (a type file is
+    // edited/added/deleted externally). Re-fetch the list + refresh the query
+    // so the picker, columns, and rows don't go stale. Mirrors pageTypeState's
+    // types:changed subscription + disposer pattern.
+    const offTypesChanged = Events.On(EventName.EventTypesChanged, () => {
+      void loadTypes()
+      void reload()
+    })
+    return () => {
+      offTypesChanged()
+    }
   })
 
   // --- Query (debounced on filter) -----------------------------------------
@@ -173,6 +186,16 @@
     filter = {}
   }
 
+  // Switching types invalidates the prior type's filter/sort/group-by: the new
+  // type's schema may not have the chosen property, which would otherwise blank
+  // the dashboard with a stale, non-matching filter.
+  function selectType(id: string): void {
+    filter = {}
+    sort = { property: PAGE_COLUMN_KEY, desc: false }
+    groupBy = ''
+    selectedType = id
+  }
+
   // View-mode radiogroup: ArrowLeft/Right move between options (wrapping),
   // Home/End jump to boundaries. Roving tabindex — the active option is the
   // tab stop, others are removed from the tab order.
@@ -257,7 +280,7 @@
       {groupBy}
       {filter}
       totalCount={resultCount}
-      onSelectType={(id) => (selectedType = id)}
+      onSelectType={selectType}
       onGroupByChange={(name) => (groupBy = name)}
       onFilterChange={(f) => (filter = f)}
     />

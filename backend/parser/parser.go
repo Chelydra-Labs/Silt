@@ -822,7 +822,10 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 
 	// Externally-edited files (Obsidian / OneDrive / Dropbox sync) may carry a
 	// leading UTF-8 BOM; strings.TrimSpace does not strip U+FEFF, so peel it
-	// once here or the opening --- would not be recognized.
+	// once here or the opening --- would not be recognized. Capture its
+	// presence so the block-ID rewrite below can re-prepend it — otherwise a
+	// BOM file that needs minting loses its BOM on write (sync diff).
+	hadBOM := strings.HasPrefix(content, "\uFEFF")
 	content = strings.TrimPrefix(content, "\uFEFF")
 	lines := strings.Split(content, "\n")
 	var meta FileMetadata
@@ -1078,6 +1081,12 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 	}
 
 	newContent := strings.Join(outputLines, "\n")
+	// outputLines reconstructs the full file (frontmatter opening --- … body),
+	// so re-prepending the BOM lands it before the opening fence — matching the
+	// input byte-for-byte when the rewrite modified anything.
+	if hadBOM {
+		newContent = "\uFEFF" + newContent
+	}
 	return blocks, meta, newContent, modifiedAny, nil
 }
 

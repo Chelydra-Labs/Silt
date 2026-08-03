@@ -91,6 +91,11 @@ export function createPageTypeController(
   async function refresh(): Promise<void> {
     const { notebook, page } = deps.getLocator()
     if (!notebook || !page) {
+      // Bump the token + clear loading BEFORE wiping state so a response from
+      // the PREVIOUS page (still in flight when the user navigated here) is
+      // discarded by the token check rather than repainting the cleared view.
+      refreshToken++
+      loading = false
       info = EMPTY_INFO
       values = []
       mismatched = []

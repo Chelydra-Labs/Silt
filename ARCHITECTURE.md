@@ -372,7 +372,7 @@ CREATE TABLE page_properties (
     PRIMARY KEY (source, notebook, section, page, property)
 );
 CREATE INDEX idx_page_types_type ON page_types(type_name);
-CREATE INDEX idx_page_props_query ON page_properties(type_name, property, value_sort);
+CREATE INDEX idx_page_properties_type_prop ON page_properties(type_name, property, value_sort);
 
 
 3.1 External / Linked Notebooks

@@ -253,4 +253,77 @@ describe('pageType controller', () => {
     expect(ctrl.info.type.id).toBe('movie')
     expect(ctrl.values).toEqual([])
   })
+
+  it('discards a stale in-flight refresh when navigating to a page-less view before it resolves', async () => {
+    // Seed page A (resolved) so there is real data a stale response could paint.
+    appMocks.GetPageType.mockResolvedValue({
+      typeId: 'book',
+      type: { id: 'book', name: 'Book' },
+      isSet: true,
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([
+      {
+        name: 'title',
+        label: 'Title',
+        type: 'text',
+        value: 'Dune',
+        isSet: true,
+        required: false
+      }
+    ])
+    let current = { ...locator }
+    const ctrl = createPageTypeController({ getLocator: () => current })
+    await ctrl.refresh()
+    await tick()
+    expect(ctrl.info.isSet).toBe(true)
+    expect(ctrl.values).toHaveLength(1)
+
+    // Start a slow refresh for page A (deferred resolvers, still page A).
+    let resolveType!: (v: unknown) => void
+    let resolveProps!: (v: unknown) => void
+    appMocks.GetPageType.mockReturnValue(
+      new Promise((r) => {
+        resolveType = r
+      })
+    )
+    appMocks.GetPageProperties.mockReturnValue(
+      new Promise((r) => {
+        resolveProps = r
+      })
+    )
+    const pending = ctrl.refresh()
+    await tick()
+
+    // Navigate to a page-less view BEFORE A's response resolves. The early
+    // return must invalidate the in-flight token so A cannot repaint later.
+    current = { notebook: '', section: '', page: '' }
+    await ctrl.refresh()
+    await tick()
+    expect(ctrl.info.isSet).toBe(false)
+    expect(ctrl.values).toEqual([])
+    expect(ctrl.loading).toBe(false)
+
+    // A's stale response resolves — it must NOT repaint the cleared state.
+    resolveType({
+      typeId: 'book',
+      type: { id: 'book', name: 'Book' },
+      isSet: true,
+      rawType: ''
+    })
+    resolveProps([
+      {
+        name: 'title',
+        label: 'Title',
+        type: 'text',
+        value: 'Stale',
+        isSet: true,
+        required: false
+      }
+    ])
+    await pending
+    await tick()
+    expect(ctrl.info.isSet).toBe(false)
+    expect(ctrl.values).toEqual([])
+  })
 })

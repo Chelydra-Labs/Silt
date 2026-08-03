@@ -136,13 +136,28 @@ func (a *App) DeleteType(id string) error {
 	return nil
 }
 
-// ReloadTypes forces a re-scan of the types directory + cache flush. Used by
-// the type watcher's onChange callback (external edit detected) and available
-// as a manual refresh. Emits types:changed.
+// ReloadTypes forces a re-scan of the types directory + cache flush, exposed as
+// the manual type-refresh IPC. Re-projects every typed page so the dashboard
+// reflects schema changes that arrived between the watcher's last onChange and
+// this call (e.g. the watcher was briefly disabled, or types were touched while
+// Silt was starting). The watcher's own onChange path re-projects independently
+// (vault_init.go), so this covers the manual-refresh gap. Returns nil when no
+// vault is open (nothing to reload).
 func (a *App) ReloadTypes() error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
 	a.wg.Add(1)
 	defer a.wg.Done()
+	if a.vaultPath == "" {
+		return nil
+	}
 	types.InvalidateTypesCache()
+	// Mirror SaveType/DeleteType: re-project under the held RLock so manual
+	// refresh reaches typed pages immediately (the watcher path is the only
+	// other caller, so without this the dashboard drifts until a page mutation
+	// or restart). Safe under RLock: reprojectAllTypedPages only reads a.db /
+	// a.vaultPath and does not re-acquire vaultMu.
+	a.reprojectAllTypedPages()
 	a.emit(EventTypesChanged, struct{}{})
 	return nil
 }

@@ -958,6 +958,76 @@ func TestDeleteType_ReprojectsTypedPages(t *testing.T) {
 	}
 }
 
+// TestReloadTypes_ReprojectsTypedPages pins the manual-refresh gap (NB-1):
+// ReloadTypes used to only InvalidateTypesCache + emit, so a schema change that
+// arrived on disk without going through App.SaveType/DeleteType (and without the
+// watcher firing) left dashboard projections stale until a page mutation or
+// restart. Now ReloadTypes mirrors SaveType/DeleteType and re-projects under the
+// held RLock.
+func TestReloadTypes_ReprojectsTypedPages(t *testing.T) {
+	app := newTestApp(t)
+
+	if err := app.SaveType(bookTypeSchema()); err != nil {
+		t.Fatalf("SaveType(book): %v", err)
+	}
+	content := "---\n" +
+		"notebook: \"Books\"\n" +
+		"section: \"\"\n" +
+		"page: \"Dune\"\n" +
+		"date: \"2026-08-01\"\n" +
+		"tags: []\n" +
+		"type: \"book\"\n" +
+		"title: \"Dune\"\n" +
+		"author: \"Frank Herbert\"\n" +
+		"status: \"available\"\n" +
+		"rating: 5\n" +
+		"---\n# Dune\n\nBody.\n"
+	writeFile(t, filepath.Join(app.vaultPath, "Books", "Dune.md"), content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, "Books", "", "Dune", "2026-08-01", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+	app.projectPageType("vault", meta)
+
+	before := projectedPropertyNames(t, app, "Books", "", "Dune")
+	if !before["rating"] {
+		t.Fatalf("expected a `rating` projection row before ReloadTypes, got %v", before)
+	}
+
+	// Change the schema on disk directly via types.SaveType (NOT App.SaveType,
+	// which would re-project itself and hide the gap). This mirrors a schema
+	// change that arrived without the watcher firing.
+	renamed := types.TypeDef{
+		ID:   "book",
+		Name: "Book",
+		Properties: []types.PropertyDef{
+			{Name: "title", Type: types.PropText},
+			{Name: "author", Type: types.PropText},
+			{Name: "status", Type: types.PropSelect, Options: []string{"available", "read"}},
+			{Name: "score", Type: types.PropNumber},
+		},
+	}
+	if err := types.SaveType(app.typesDir(), &renamed); err != nil {
+		t.Fatalf("types.SaveType(renamed): %v", err)
+	}
+
+	// ReloadTypes is the only path that can refresh the projection now. Before
+	// the fix it left the stale `rating` row in place.
+	if err := app.ReloadTypes(); err != nil {
+		t.Fatalf("ReloadTypes: %v", err)
+	}
+	after := projectedPropertyNames(t, app, "Books", "", "Dune")
+	if after["rating"] {
+		t.Errorf("`rating` projection row still present after ReloadTypes renamed it to `score`; ReloadTypes did not re-project, got %v", after)
+	}
+	if !after["title"] || !after["author"] || !after["status"] {
+		t.Errorf("expected title/author/status to survive ReloadTypes re-projection, got %v", after)
+	}
+}
+
 // TestTypedPages_NestedSectionRoundTrip pins NB-1: readPageFileForTypes and
 // reprojectAllTypedPages used sanitizePathSegment(section), which strips the
 // "/" — so a multi-segment section like "Projects/Active" flattened to

@@ -4,7 +4,8 @@
   import {
     resolveBreadcrumbSectionSelection,
     adaptSearchNavigation,
-    resolveSourceNavigationTarget
+    resolveSourceNavigationTarget,
+    resolveDashboardOpenTarget
   } from './lib/navigationTargets'
   import type { SourceNavigationRef } from './lib/navigationTargets'
   import {
@@ -297,14 +298,15 @@
     section: string
     page: string
   }): void {
-    tabManager.openPage(
-      {
-        notebook: locator.notebook,
-        section: locator.section,
-        page: locator.page
-      },
-      'preview'
-    )
+    // The tab system identifies pages by notebook/section/path only (no source
+    // field), so a linked-notebook row colliding with a vault page would open
+    // the wrong tab. Gate linked-source rows until tabs carry source.
+    const target = resolveDashboardOpenTarget(locator)
+    if (target.kind === 'blocked') {
+      pushNotification({ kind: 'info', message: target.reason })
+      return
+    }
+    tabManager.openPage(target.ref, 'preview')
     activeView = 'notes'
   }
   let showGlobalReplace = $state(false)
