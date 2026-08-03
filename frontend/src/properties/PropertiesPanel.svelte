@@ -8,6 +8,7 @@
   import { tick } from 'svelte'
   import { fly } from 'svelte/transition'
   import { ClearPageProperty, SetPageType } from '../../bindings/silt/app.js'
+  import { flipMenu } from '../lib/flipMenu'
   import { coerceIPCError } from '../lib/ipcError'
   import PropertyField from './PropertyField.svelte'
   import TurnIntoDialog from './TurnIntoDialog.svelte'
@@ -196,46 +197,23 @@
   let menuOpen = $state(false)
   let menuButtonRef = $state<HTMLButtonElement | null>(null)
 
-  // Viewport-aware placement. This panel docks to the bottom of the window, so
-  // a menu opening downward off the anchor would clip past the viewport edge.
-  // Measuring both sides lets the menu flip upward when there's more room
-  // above, and the dynamic max-height clamps it to whichever side wins so it
-  // never overflows regardless of viewport height or number of entries.
-  let menuPlacement = $state<'bottom' | 'top'>('bottom')
-  let menuMaxHeightPx = $state<number | null>(null)
-
-  // Anchor→menu gap (matches the CSS `top: calc(100% + 0.2rem)` — a hair
-  // under 4px) + a small viewport-edge pad so the menu never kisses the
-  // window border.
-  const MENU_GAP_PX = 4
-  const MENU_VIEWPORT_PAD_PX = 8
-  // Soft cap so the menu doesn't dominate tall viewports; the chosen side's
-  // available space wins when it's smaller than this.
-  const MENU_SOFT_CAP_PX = 18 * 16
-
-  function measureMenu(): void {
-    if (!menuButtonRef) {
-      menuPlacement = 'bottom'
-      menuMaxHeightPx = null
-      return
-    }
-    const rect = menuButtonRef.getBoundingClientRect()
-    const spaceBelow =
-      window.innerHeight - rect.bottom - MENU_GAP_PX - MENU_VIEWPORT_PAD_PX
-    const spaceAbove = rect.top - MENU_GAP_PX - MENU_VIEWPORT_PAD_PX
-    if (spaceBelow >= spaceAbove) {
-      menuPlacement = 'bottom'
-      menuMaxHeightPx = Math.min(MENU_SOFT_CAP_PX, Math.max(0, spaceBelow))
-    } else {
-      menuPlacement = 'top'
-      menuMaxHeightPx = Math.min(MENU_SOFT_CAP_PX, Math.max(0, spaceAbove))
+  // Viewport-aware flip+clamp lives in the shared `flipMenu` action (attached to
+  // the menu node below), so opening near the viewport floor flips upward and
+  // the dynamic max-height clamps to the winning side. The CSS `max-height` on
+  // `.menu` is the non-JS / pre-measure fallback. `menuFlipped` is reported by
+  // the action and bound to `.menu-top` in markup.
+  let menuFlipped = $state(false)
+  const menuFlip = {
+    getAnchor: () => menuButtonRef,
+    maxHeightPx: 18 * 16,
+    onPlacement: (flipped: boolean): void => {
+      menuFlipped = flipped
     }
   }
 
   function openMenu(): void {
     menuOpen = true
     void tick().then(() => {
-      measureMenu()
       const first = panelRef?.querySelector<HTMLElement>('[role="menuitem"]')
       first?.focus()
     })
@@ -245,26 +223,11 @@
     menuOpen = !menuOpen
     if (menuOpen) {
       void tick().then(() => {
-        measureMenu()
         const first = panelRef?.querySelector<HTMLElement>('[role="menuitem"]')
         first?.focus()
       })
     }
   }
-
-  // Re-measure on viewport resize while the menu is open (window shrunk,
-  // editor column resized, etc.). Also pings once on the next frame in case
-  // the panel layout shifted between open and paint.
-  $effect(() => {
-    if (!menuOpen) return
-    const onResize = (): void => measureMenu()
-    window.addEventListener('resize', onResize)
-    const raf = requestAnimationFrame(onResize)
-    return () => {
-      window.removeEventListener('resize', onResize)
-      cancelAnimationFrame(raf)
-    }
-  })
 
   function closeMenu(): void {
     menuOpen = false
@@ -380,11 +343,9 @@
 
         {#if menuOpen}
           <div
+            use:flipMenu={menuFlip}
             class="menu"
-            class:menu-top={menuPlacement === 'top'}
-            style={menuMaxHeightPx != null
-              ? `max-height: ${menuMaxHeightPx}px`
-              : ''}
+            class:menu-top={menuFlipped}
             role="menu"
             aria-label="Page type"
           >
@@ -580,15 +541,15 @@
   }
   .menu {
     position: absolute;
-    /* Default opens below the trigger. `measureMenu()` flips this when there's
-       more room above (bottom-docked panel case). */
+    /* Default opens below the trigger. The `flipMenu` action adds `.menu-top`
+       when there's more room above (bottom-docked panel case). */
     top: calc(100% + 0.2rem);
     left: 0;
     z-index: 50;
     min-width: 14rem;
-    /* Soft cap; the inline `max-height` set by measureMenu() clamps further to
-       the available viewport space. Kept here so a non-JS / pre-measure frame
-       still has a reasonable bound. */
+    /* Soft cap; the inline `max-height` set by the `flipMenu` action clamps
+       further to the available viewport space. Kept here so a non-JS /
+       pre-measure frame still has a reasonable bound. */
     max-height: 18rem;
     overflow-y: auto;
     background: var(--color-surface-popover);

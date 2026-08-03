@@ -329,11 +329,11 @@ describe('PropertiesPanel', () => {
     expect(
       screen.getByRole('menuitem', { name: /Type 29/ })
     ).toBeInTheDocument()
-    // measureMenu() wrote a viewport-aware bound inline (jsdom can't exercise
-    // real layout, but the inline value proves the measurement ran and that
-    // the menu is bounded by available space rather than a fixed CSS max).
-    // The companion `overflow-y: auto` lives in the component's <style> block
-    // and is verified by svelte-check, not jsdom's getComputedStyle.
+    // The shared `flipMenu` action wrote a viewport-aware bound inline (jsdom
+    // can't exercise real layout, but the inline value proves the measurement
+    // ran and that the menu is bounded by available space rather than a fixed
+    // CSS max). The companion `overflow-y: auto` lives in the component's
+    // <style> block and is verified by svelte-check, not jsdom's getComputedStyle.
     expect(menu.style.maxHeight).toMatch(/^\d+px$/)
   })
 

@@ -8,6 +8,7 @@
   import { onMount, tick } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { ListNavigation, QueryPagesByType } from '../../bindings/silt/app.js'
+  import { flipMenu } from '../lib/flipMenu'
   import { flattenNavigation } from '../lib/navigationCatalog'
   import { indexNav, resolveRef, toRef, type NavIndex } from './pageRef'
   import type { NavigationCatalogItem } from '../lib/navigationCatalog'
@@ -47,7 +48,25 @@
   let loading = $state(false)
   let loadError = $state('')
   let inputRef = $state<HTMLInputElement | null>(null)
+  // The `.plf` root is the listbox's containing block (position: relative), so
+  // its rect is the right anchor for the flip+clamp math: its bottom edge is
+  // where the listbox opens (top: calc(100% + …)) and its top is where a
+  // flipped listbox would reach.
+  let rootRef = $state<HTMLDivElement | null>(null)
   let listboxId = $derived(`${fieldId}-listbox`)
+
+  // Viewport-aware flip+clamp lives in the shared `flipMenu` action (attached to
+  // the listbox below). The CSS `max-height: 16rem` on `.listbox` is the
+  // non-JS / pre-measure fallback. `listboxFlipped` is reported by the action
+  // and bound to `.listbox-top` in markup.
+  let listboxFlipped = $state(false)
+  const listboxFlip = {
+    getAnchor: () => rootRef,
+    maxHeightPx: 16 * 16,
+    onPlacement: (flipped: boolean): void => {
+      listboxFlipped = flipped
+    }
+  }
 
   // Current refs as an array regardless of cardinality, for chip rendering.
   let refs = $derived(Array.isArray(value) ? value : value ? [value] : [])
@@ -240,7 +259,7 @@
   }
 </script>
 
-<div class="plf" class:mismatched>
+<div class="plf" class:mismatched bind:this={rootRef}>
   {#if refs.length > 0}
     <div class="chips" aria-label={label}>
       {#each refs as ref (ref)}
@@ -301,7 +320,14 @@
 
   {#if open && idx}
     {#if results.length > 0}
-      <ul class="listbox" id={listboxId} role="listbox" aria-label={label}>
+      <ul
+        use:flipMenu={listboxFlip}
+        class="listbox"
+        class:listbox-top={listboxFlipped}
+        id={listboxId}
+        role="listbox"
+        aria-label={label}
+      >
         {#each results as it, i (it.key)}
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- Combobox options are keyboard-operated through the input (Arrow/
@@ -413,6 +439,9 @@
     top: calc(100% + 0.15rem);
     left: 0;
     right: 0;
+    /* Soft cap; the inline `max-height` set by the `flipMenu` action clamps
+       further to the available viewport space. Kept here so a non-JS /
+       pre-measure frame still has a reasonable bound. */
     max-height: 16rem;
     overflow-y: auto;
     margin: 0;
@@ -422,6 +451,11 @@
     border: 1px solid var(--color-surface-popover-border);
     border-radius: 0.5rem;
     box-shadow: var(--shadow-lg);
+  }
+  .listbox-top {
+    /* Anchor the listbox above the field (measured side with more room). */
+    top: auto;
+    bottom: calc(100% + 0.15rem);
   }
   .option {
     display: flex;
