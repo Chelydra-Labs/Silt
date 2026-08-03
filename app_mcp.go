@@ -92,20 +92,27 @@ func (b mcpBridge) PageExists(ctx context.Context, notebook, section, page strin
 }
 
 // GetPageMetadata returns a page's resolved type, schema-merged properties, and
-// raw parsed frontmatter in a single snapshot. Three App reads are combined
-// here so the MCP client gets a consistent view; each read takes the vault RLock
-// independently (no re-entrant lock).
+// raw parsed frontmatter in a single snapshot. All three views are read under
+// one vaultMu.RLock so a concurrent writer (SetPageProperty/SetPageType) cannot
+// interleave — without the single lock, type could be read at N+1 while
+// properties/frontmatter came from N (a mixed snapshot). Writers take
+// vaultMu.Lock, so holding RLock for the whole read freezes the on-disk state.
 func (b mcpBridge) GetPageMetadata(ctx context.Context, notebook, section, page string) (mcp.PageMetadataResult, error) {
 	_ = ctx
-	info, err := b.app.GetPageType(notebook, section, page)
+	b.app.vaultMu.RLock()
+	defer b.app.vaultMu.RUnlock()
+	b.app.wg.Add(1)
+	defer b.app.wg.Done()
+
+	info, err := b.app.getPageTypeLocked(notebook, section, page)
 	if err != nil {
 		return mcp.PageMetadataResult{}, err
 	}
-	props, err := b.app.GetPageProperties(notebook, section, page)
+	props, err := b.app.getPagePropertiesLocked(notebook, section, page)
 	if err != nil {
 		return mcp.PageMetadataResult{}, err
 	}
-	rawFM, err := b.app.pageRawFrontmatter(notebook, section, page)
+	rawFM, err := b.app.pageRawFrontmatterLocked(notebook, section, page)
 	if err != nil {
 		return mcp.PageMetadataResult{}, err
 	}

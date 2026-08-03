@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"silt/backend/types"
+
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -220,15 +222,16 @@ func TestTool_SetPageProperty_Success(t *testing.T) {
 }
 
 // TestTool_SetPageProperty_BridgeErrorBecomesStructuredError is the wire-level
-// half of the safety contract: when the bridge returns a validation error, the
-// tool surfaces it as a structured MCP error result whose StructuredContent is
-// a machine-readable {ok:false, errors:[{property,message}]} body. Clients
-// branch on .property instead of parsing text. The file-untouched half of the
-// contract is exercised end-to-end in app_mcp_types_test.go (real App + file).
+// half of the safety contract: when the bridge returns a schema-validation
+// error (types.ValidationError), the tool surfaces it as a structured MCP error
+// result whose StructuredContent is a machine-readable {ok:false,
+// errors:[{property,message}]} body. Clients branch on .property instead of
+// parsing text. The file-untouched half of the contract is exercised end-to-end
+// in app_mcp_types_test.go (real App + file).
 func TestTool_SetPageProperty_BridgeErrorBecomesStructuredError(t *testing.T) {
 	bridge := &stubBridge{
 		fakeBridge: &fakeBridge{path: t.TempDir()},
-		propErr:    errors.New(`"bogus" is not one of the allowed options [available read]`),
+		propErr:    types.ValidationError{Field: "status", Message: `"bogus" is not one of the allowed options [available read]`},
 	}
 	cs, _ := connectStubTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
 
@@ -376,7 +379,7 @@ func TestTool_SetPageType_EmptyTypeClears(t *testing.T) {
 func TestTool_SetPageType_BridgeErrorBecomesStructuredError(t *testing.T) {
 	bridge := &stubBridge{
 		fakeBridge: &fakeBridge{path: t.TempDir()},
-		typeErr:    errors.New(`unknown type "no-such"`),
+		typeErr:    types.ValidationError{Field: "*", Message: `unknown type "no-such"`},
 	}
 	cs, _ := connectStubTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
 
@@ -405,6 +408,85 @@ func TestTool_SetPageType_BridgeErrorBecomesStructuredError(t *testing.T) {
 	}
 	if !strings.Contains(first["message"].(string), "unknown type") {
 		t.Errorf("error message = %v, want it to mention unknown type", first["message"])
+	}
+}
+
+// TestTool_SetPageProperty_IOErrorIsPlainToolErr pins the classification fix:
+// a NON-validation bridge error (page missing, vault not loaded, disk/DB
+// failure) must surface as a plain toolErr (text-only), NOT a structured
+// {ok:false, errors:[...]} body — otherwise a never-attempted write would
+// masquerade as a value rejection. The tool-untouched guarantee only holds for
+// real ValidationErrors; everything else is an IO/transient failure.
+func TestTool_SetPageProperty_IOErrorIsPlainToolErr(t *testing.T) {
+	bridge := &stubBridge{
+		fakeBridge: &fakeBridge{path: t.TempDir()},
+		propErr:    errors.New("page file not found: /x/M.md"),
+	}
+	cs, aud := connectStubTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "set_page_property",
+		Arguments: map[string]any{
+			"notebook": "Work", "section": "", "page": "M",
+			"property": "rating", "value": "4",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected isError for IO failure")
+	}
+	// Plain toolErr carries no StructuredContent — that is what distinguishes a
+	// transient/IO failure from a schema-validation rejection on the wire.
+	if res.StructuredContent != nil {
+		t.Errorf("IO error must not carry a structured validation body: %+v", res.StructuredContent)
+	}
+	if !strings.Contains(toolText(t, res), "page file not found") {
+		t.Fatalf("expected IO error text verbatim, got %q", toolText(t, res))
+	}
+	// IO failures audit as "error", validation rejections as "rejected" — the
+	// distinction lets operators tell client mistakes from server problems.
+	if !auditHas(aud, "set_page_property", "error") {
+		t.Fatalf("missing error audit: %+v", aud.Entries)
+	}
+	if auditHas(aud, "set_page_property", "rejected") {
+		t.Fatalf("IO failure must not audit as rejected: %+v", aud.Entries)
+	}
+}
+
+// TestTool_SetPageType_IOErrorIsPlainToolErr mirrors the property test for the
+// type-assign path: a non-validation error stays a plain toolErr.
+func TestTool_SetPageType_IOErrorIsPlainToolErr(t *testing.T) {
+	bridge := &stubBridge{
+		fakeBridge: &fakeBridge{path: t.TempDir()},
+		typeErr:    errors.New("vault not loaded"),
+	}
+	cs, aud := connectStubTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
+
+	res, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "set_page_type",
+		Arguments: map[string]any{
+			"notebook": "Work", "section": "", "page": "M", "type": "meeting",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected isError for IO failure")
+	}
+	if res.StructuredContent != nil {
+		t.Errorf("IO error must not carry a structured validation body: %+v", res.StructuredContent)
+	}
+	if !strings.Contains(toolText(t, res), "vault not loaded") {
+		t.Fatalf("expected IO error text verbatim, got %q", toolText(t, res))
+	}
+	if !auditHas(aud, "set_page_type", "error") {
+		t.Fatalf("missing error audit: %+v", aud.Entries)
+	}
+	if auditHas(aud, "set_page_type", "rejected") {
+		t.Fatalf("IO failure must not audit as rejected: %+v", aud.Entries)
 	}
 }
 

@@ -42,7 +42,7 @@ properties:
   - name: topic
     type: text
     required: true
-  - name: date
+  - name: held_on
     type: date
   - name: owner
     type: text

@@ -177,6 +177,83 @@ func TestMCPBridge_GetPageMetadata_RawTypeForUnknownSchema(t *testing.T) {
 	}
 }
 
+// TestMCPBridge_GetPageMetadata_CoherentAfterSetProperty pins the single-lock
+// snapshot contract on GetPageMetadata: after a write, the three views (type,
+// schema-merged properties, raw frontmatter) must agree — every property the
+// schema merges as IsSet also appears in the raw frontmatter with the same
+// value, and the type id matches. GetPageMetadata reads all three under one
+// vaultMu.RLock via the *Locked helpers, so a concurrent writer cannot yield a
+// mixed N / N+1 snapshot. A full concurrent-race test is not deterministic, so
+// the coherence invariant (the property the load-bearing fix protects) is the
+// assertion.
+func TestMCPBridge_GetPageMetadata_CoherentAfterSetProperty(t *testing.T) {
+	app := newTestApp(t)
+	bridge := newMetaBridge(app)
+	filePath, content := writeBookPageForMCP(t, app)
+	indexPageForMCP(t, app, content, "Books", "", "Dune")
+
+	if err := bridge.SetPageProperty(context.Background(), "Books", "", "Dune", "rating", "4"); err != nil {
+		t.Fatalf("SetPageProperty(rating, 4): %v", err)
+	}
+
+	res, err := bridge.GetPageMetadata(context.Background(), "Books", "", "Dune")
+	if err != nil {
+		t.Fatalf("GetPageMetadata: %v", err)
+	}
+
+	if res.Type != "book" {
+		t.Fatalf("Type = %q want book", res.Type)
+	}
+	// The type id in the result must match the raw frontmatter `type` key — a
+	// mixed snapshot would let them drift.
+	if got, _ := res.Frontmatter["type"].(string); got != "book" {
+		t.Errorf("frontmatter type = %v want book (result/frontmatter disagree)", res.Frontmatter["type"])
+	}
+
+	// Every schema-merged property marked IsSet must also be present in the raw
+	// frontmatter with the same value. This is the coherence invariant: if
+	// properties came from write N+1 and frontmatter from N (the bug the single
+	// lock closes), rating could read IsSet in properties but absent in the raw
+	// frontmatter (or vice versa).
+	var ratingSeen bool
+	for _, p := range res.Properties {
+		if !p.IsSet {
+			continue
+		}
+		raw, present := res.Frontmatter[p.Name]
+		if !present {
+			t.Errorf("property %q IsSet in schema-merged view but absent from raw frontmatter (mixed snapshot)", p.Name)
+			continue
+		}
+		if p.Name == "rating" {
+			ratingSeen = true
+			pf, _ := toFloat(p.Value)
+			rf, _ := toFloat(raw)
+			if pf != 4 || rf != 4 {
+				t.Errorf("rating: property %v / frontmatter %v both want 4", p.Value, raw)
+			}
+			continue
+		}
+		// text/select properties: both sides are strings.
+		sv, _ := p.Value.(string)
+		rv, _ := raw.(string)
+		if sv != rv {
+			t.Errorf("property %q: schema-merged %q disagrees with raw frontmatter %q", p.Name, sv, rv)
+		}
+	}
+
+	if !ratingSeen {
+		t.Fatalf("rating not IsSet after SetPageProperty: %+v", res.Properties)
+	}
+
+	// The disk file reflects the same state (sanity: the read path did not
+	// mutate anything and the write landed).
+	rawFile, _ := os.ReadFile(filePath)
+	if !strings.Contains(string(rawFile), "rating:") {
+		t.Errorf("rating line missing from disk:\n%s", string(rawFile))
+	}
+}
+
 // TestMCPBridge_SetPageProperty_InvalidValueLeavesFileByteIdentical is the
 // bridge-level safety contract: an invalid value must reach the bridge, fail
 // validation INSIDE App.SetPageProperty (which runs the validator before any

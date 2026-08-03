@@ -19,18 +19,30 @@ export interface OptimisticFieldOptions<T> {
 export function optimisticField<T>(opts: OptimisticFieldOptions<T>) {
   let value = $state(opts.initial)
   let pending = $state(false)
-  // Snapshot of the pre-commit value; the revert target. Initialized to
-  // initial only to satisfy the type — reassigned before every read.
+  // Last-known-persisted value — the revert target if a write fails. Advanced
+  // on every successful commit and on external reset.
   let prev: T = opts.initial
+  // Latest edit held while a write is in flight. `hasQueued` is the presence
+  // flag because T may legitimately be any value (incl. undefined/0/'').
+  let queued: T | undefined
+  let hasQueued = false
 
   async function commit(next: T): Promise<boolean> {
-    if (pending) return false
-    prev = value
+    if (pending) {
+      // Don't silently drop a fast second edit during a slow write — queue
+      // the latest intent so the most-recent keystroke wins once the write
+      // settles. Optimistic UI still reflects `next` immediately.
+      queued = next
+      hasQueued = true
+      value = next
+      return false
+    }
     value = next
     pending = true
     opts.onError?.('')
     try {
       await opts.write(next)
+      prev = next
       opts.onChanged?.()
       return true
     } catch (e) {
@@ -39,12 +51,26 @@ export function optimisticField<T>(opts: OptimisticFieldOptions<T>) {
       return false
     } finally {
       pending = false
+      if (hasQueued) {
+        const replay = queued as T
+        hasQueued = false
+        queued = undefined
+        // Fire-and-forget: pending is clear, so this runs immediately (or
+        // re-queues if another edit raced in). After a failed write, `prev`
+        // already holds the persisted value, so the replay commits against
+        // the reverted state — the user's latest intent still wins.
+        void commit(replay)
+      }
     }
   }
 
-  // External reset (when the page changes or the value refreshes) without
-  // invoking write.
+  // External reset (page change / value refresh) without invoking write. Also
+  // cancels any queued replay — the new page shouldn't inherit the prior
+  // page's pending edit.
   function reset(next: T): void {
+    hasQueued = false
+    queued = undefined
+    prev = next
     value = next
   }
 

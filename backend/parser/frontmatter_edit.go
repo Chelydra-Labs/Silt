@@ -28,13 +28,20 @@ func SetFrontmatterField(content, key string, value any) (string, error) {
 		return "", fmt.Errorf("invalid frontmatter key %q: must match %s", key, validFrontmatterKey.String())
 	}
 
-	// Capture before SplitFrontmatter strips the BOM, then re-prepend on write
-	// so a sync-target file keeps its byte signature. nl preserves the dominant
-	// line ending so a CRLF file does not get mixed to LF on the edited lines.
+	// SplitFrontmatter no longer strips the BOM; capture it from the original
+	// content and re-prepend on write so the file's byte signature is stable.
+	// nl preserves the dominant line ending so a CRLF file does not get mixed
+	// to LF on the edited lines.
 	hadBOM := strings.HasPrefix(content, "\uFEFF")
 	nl := detectLineEnding(content)
 
 	fm, body := SplitFrontmatter(content)
+	// In the no-frontmatter path SplitFrontmatter returns body==content, which
+	// still carries the BOM; strip it here since we re-prepend the BOM below
+	// (avoids a double BOM when wrapping a bare body in a fresh fence).
+	if hadBOM {
+		body = strings.TrimPrefix(body, "\uFEFF")
+	}
 	inner := stripTrailingCR(innerFrontmatterLines(fm))
 	if countTopLevelKeyOccurrences(inner, key) > 1 {
 		return "", fmt.Errorf("frontmatter key %q appears more than once; refusing to edit an ambiguous file", key)
@@ -78,9 +85,10 @@ func ClearFrontmatterField(content, key string) (string, error) {
 		return "", fmt.Errorf("invalid frontmatter key %q: must match %s", key, validFrontmatterKey.String())
 	}
 
-	// Capture before SplitFrontmatter strips the BOM, then re-prepend on write.
-	// The early-return paths below return content verbatim, so the file's BOM
-	// and line endings only change when a key is actually removed.
+	// SplitFrontmatter no longer strips the BOM; capture it from the original
+	// content and re-prepend on write. The early-return paths below return
+	// content verbatim, so the file's BOM and line endings only change when a
+	// key is actually removed.
 	hadBOM := strings.HasPrefix(content, "\uFEFF")
 	nl := detectLineEnding(content)
 
@@ -150,6 +158,15 @@ func stripTrailingCR(lines []string) []string {
 	return out
 }
 
+// keyLinePattern matches a top-level `key:` line, tolerating optional double
+// quotes around the key. YAML treats "title" and title as the SAME key (quotes
+// are styling), so a quoted key and an unquoted one can collide as a true
+// duplicate that the bare `^key:` matcher would miss. Matching stays
+// case-sensitive: YAML keys are case-sensitive (Title != title).
+func keyLinePattern(key string) *regexp.Regexp {
+	return regexp.MustCompile("^\"?" + regexp.QuoteMeta(key) + "\"?:")
+}
+
 // findKeyLine locates the top-level (non-indented) line whose prefix is
 // `key:`. Typed-property keys always live at the top of the frontmatter, so
 // indented lines are skipped to avoid matching nested children of a block
@@ -157,7 +174,7 @@ func stripTrailingCR(lines []string) []string {
 // (always empty in practice, but preserved for verbatim reconstruction).
 // Returns -1 when the key is absent.
 func findKeyLine(lines []string, key string) (int, string) {
-	pattern := regexp.MustCompile("^" + regexp.QuoteMeta(key) + ":")
+	pattern := keyLinePattern(key)
 	for i, line := range lines {
 		if line == "" || line[0] == ' ' || line[0] == '\t' {
 			continue
@@ -174,7 +191,7 @@ func findKeyLine(lines []string, key string) (int, string) {
 // the first match) would edit the wrong copy and the file would read back the
 // untouched last value — silent corruption. Callers refuse such files.
 func countTopLevelKeyOccurrences(lines []string, key string) int {
-	pattern := regexp.MustCompile("^" + regexp.QuoteMeta(key) + ":")
+	pattern := keyLinePattern(key)
 	n := 0
 	for _, line := range lines {
 		if line == "" || line[0] == ' ' || line[0] == '\t' {

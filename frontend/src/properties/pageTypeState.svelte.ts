@@ -1,14 +1,15 @@
 // Reactive controller for the typed-notes surfaces (inline strip + bottom
 // panel). Owns the GetPageType/GetPageProperties round-trip, the SetPageType
 // keep-and-flag result, the type-picker listing (ListTypes), the panel-open
-// flag, and the `types:changed` event subscription that re-fetches the active
-// page when the type set changes externally.
+// flag, the `types:changed` subscription that re-fetches the active page when
+// the type set changes externally, and the `types:projection-error`
+// subscription that refreshes + warns when a post-write re-parse fails.
 //
 // Built via the proven createX(deps) factory idiom (mirrors
 // useGlobalHotkeyDispatch): every read of the active locator is a closure the
 // host provides, so the controller has no direct reference to App's $state.
 // App drives reactivity by calling refresh() from a $effect on the locator;
-// the controller owns only the one-time `types:changed` subscription.
+// the controller owns only the one-time event subscriptions.
 import { Events } from '@wailsio/runtime'
 import { EventName } from '../generated/enums'
 import {
@@ -17,6 +18,7 @@ import {
   ListTypes
 } from '../../bindings/silt/app.js'
 import { coerceIPCError } from '../lib/ipcError'
+import { pushNotification } from '../notifications/store.svelte'
 import type {
   ListTypesResult,
   PageLocator,
@@ -60,7 +62,8 @@ export interface PageTypeController {
    * (used by the /type slash command). The panel watches it via a prop.
    */
   requestTypeMenu: () => void
-  /** Subscribe to `types:changed`; returns a disposer for onMount cleanup. */
+  /** Subscribe to `types:changed` + `types:projection-error`; returns a
+   *  disposer for onMount cleanup. */
   attach: () => () => void
 }
 
@@ -167,7 +170,7 @@ export function createPageTypeController(
     // Debounce so a burst of type-file changes coalesces into one reload +
     // refresh (mirrors the templates store's `templates:changed` handler).
     let timer: ReturnType<typeof setTimeout> | null = null
-    const off = Events.On(EventName.EventTypesChanged, () => {
+    const offChanged = Events.On(EventName.EventTypesChanged, () => {
       if (timer !== null) clearTimeout(timer)
       timer = setTimeout(() => {
         timer = null
@@ -175,12 +178,29 @@ export function createPageTypeController(
         void refresh()
       }, 100)
     })
+    // A failed post-write re-parse leaves the type dashboard stale until the
+    // next scan. The write itself succeeded, so this is a polite status, not
+    // an error alarm: refresh the affected surface and surface a transient
+    // toast via the app-wide notification channel.
+    const offProjectionError = Events.On(
+      EventName.EventTypesProjectionError,
+      () => {
+        void loadTypes()
+        void refresh()
+        pushNotification({
+          kind: 'info',
+          message:
+            'A recent edit is being re-indexed. Type dashboards may be briefly stale; refreshing.'
+        })
+      }
+    )
     return () => {
       if (timer !== null) {
         clearTimeout(timer)
         timer = null
       }
-      off()
+      offChanged()
+      offProjectionError()
     }
   }
 

@@ -212,6 +212,12 @@ func GetType(typesDir, id string) (*TypeDef, error) {
 	if id == "" {
 		return nil, fmt.Errorf("%w: %q", ErrTypeNotFound, id)
 	}
+	// Gate the read path the same as the write path: an id with separators or
+	// ".." could escape typesDir via filepath.Join. Returning ErrTypeNotFound
+	// (not a distinct error) avoids leaking a new existence-oracle signal.
+	if !IsValidTypeID(id) {
+		return nil, fmt.Errorf("%w: %q", ErrTypeNotFound, id)
+	}
 	if typesDir != "" {
 		for _, ext := range []string{".yaml", ".yml"} {
 			path := filepath.Join(typesDir, id+ext)

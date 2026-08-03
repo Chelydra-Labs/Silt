@@ -1,6 +1,9 @@
 package parser
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSplitFrontmatter(t *testing.T) {
 	cases := []struct {
@@ -41,10 +44,12 @@ func TestSplitFrontmatter(t *testing.T) {
 		},
 		{
 			// A leading UTF-8 BOM (Obsidian / OneDrive / Dropbox sync) must
-			// not defeat frontmatter detection.
+			// not defeat frontmatter detection, and is PRESERVED in the
+			// returned frontmatter so reassembling writers keep the file's
+			// byte signature.
 			name:     "bom prefixed frontmatter",
 			content:  "\uFEFF---\ntitle: Hello\n---\nbody",
-			fmWant:   "---\ntitle: Hello\n---\n",
+			fmWant:   "\uFEFF---\ntitle: Hello\n---\n",
 			bodyWant: "body",
 		},
 	}
@@ -58,5 +63,18 @@ func TestSplitFrontmatter(t *testing.T) {
 				t.Errorf("body = %q, want %q", body, c.bodyWant)
 			}
 		})
+	}
+}
+
+func TestSplitFrontmatter_BOMRoundTrip(t *testing.T) {
+	// The BOM must round-trip through SplitFrontmatter so reassembling writers
+	// (RenderFileContent: fm+body) keep the file's byte signature stable.
+	original := "\uFEFF---\ntitle: Hello\n---\nbody\n"
+	fm, body := SplitFrontmatter(original)
+	if !strings.HasPrefix(fm, "\uFEFF") {
+		t.Errorf("fm should preserve the BOM, got %q", fm)
+	}
+	if fm+body != original {
+		t.Errorf("round-trip mismatch\ngot:  %q\nwant: %q", fm+body, original)
 	}
 }

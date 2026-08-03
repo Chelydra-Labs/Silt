@@ -415,3 +415,57 @@ func TestSetFrontmatterField_EditedKeyInlineCommentDropped(t *testing.T) {
 		t.Errorf("rating not updated\ngot: %q", got)
 	}
 }
+
+func TestSetFrontmatterField_QuotedKey(t *testing.T) {
+	// YAML treats "rating" and rating as the SAME key (quotes are styling),
+	// so the matcher must accept an optional quote pair — otherwise an edit on
+	// a quoted key would append a duplicate unquoted line (last-wins corruption).
+	t.Run("updatesQuotedKeyInPlace", func(t *testing.T) {
+		input := "---\n\"rating\": 3\n---\nbody\n"
+		// The edited line re-renders unquoted (quotes are not preserved across
+		// an edit, same as inline comments); the key is normalized and the body
+		// is untouched.
+		want := "---\nrating: 5\n---\nbody\n"
+		got, err := SetFrontmatterField(input, "rating", 5)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != want {
+			t.Errorf("quoted key not updated in place\ngot:  %q\nwant: %q", got, want)
+		}
+	})
+
+	t.Run("duplicateQuotedAndUnquotedRefused", func(t *testing.T) {
+		// "rating" and rating are the same YAML key; last-wins would silently
+		// corrupt, so the duplicate guard must see both and refuse the edit.
+		input := "---\n\"rating\": 3\nrating: 7\n---\nbody\n"
+		got, err := SetFrontmatterField(input, "rating", 5)
+		if err == nil {
+			t.Fatal("expected duplicate-key error, got nil")
+		}
+		if !strings.Contains(err.Error(), "appears more than once") {
+			t.Errorf("error should mention duplicate, got %v", err)
+		}
+		if got != "" {
+			t.Errorf("on error result should be empty, got %q", got)
+		}
+	})
+}
+
+func TestSetFrontmatterField_BOMNoFrontmatterSingleBOM(t *testing.T) {
+	// A BOM file with NO frontmatter gets wrapped in a fresh fence. The BOM
+	// must appear EXACTLY ONCE at the very start — the no-frontmatter path
+	// returns body==content (BOM included), so naively re-prepending would
+	// double it. Guards the SplitFrontmatter-preserve + F3 interaction.
+	input := "\uFEFFHello world\n"
+	got, err := SetFrontmatterField(input, "title", "Hi")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Count(got, "\uFEFF") != 1 {
+		t.Errorf("BOM should appear exactly once, got %d in %q", strings.Count(got, "\uFEFF"), got)
+	}
+	if !strings.HasPrefix(got, "\uFEFF---\n") {
+		t.Errorf("result should start with BOM + opening fence\ngot: %q", got)
+	}
+}

@@ -184,6 +184,34 @@ func TestGetType(t *testing.T) {
 	}
 }
 
+func TestGetType_TraversalRejected(t *testing.T) {
+	// typesDir lives under a parent; a canary type file sits OUTSIDE typesDir
+	// where an unsanitized filepath.Join("../parent/canary") would reach it.
+	// IsValidTypeID must reject the traversal id before any filesystem access,
+	// so the canary is never read and the attempt looks like any other miss.
+	root := t.TempDir()
+	typesDir := filepath.Join(root, "types")
+	writeTypeFile(t, typesDir, "book.yaml", bookYAML)
+	writeTypeFile(t, root, "canary.yaml", personYAML) // reachable via "../canary"
+
+	for _, bad := range []string{
+		"../canary",        // parent escape, would hit the canary
+		"../../etc/passwd", // classic absolute escape
+		"..",
+		"bad/id",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			td, err := GetType(typesDir, bad)
+			if !errors.Is(err, ErrTypeNotFound) {
+				t.Errorf("GetType(%q) err = %v; want ErrTypeNotFound", bad, err)
+			}
+			if td != nil {
+				t.Errorf("GetType(%q) returned a type from outside typesDir: %+v", bad, td)
+			}
+		})
+	}
+}
+
 func TestResolveTypeID(t *testing.T) {
 	dir := t.TempDir()
 	writeTypeFile(t, dir, "book.yaml", bookYAML)

@@ -12,8 +12,16 @@ const appMocks = vi.hoisted(() =>
 )
 vi.mock('$silt-app', () => appMocks)
 
-// Capture Events.On registrations so the `types:changed` handler can be fired
-// in-test (mirrors AppearanceTab.test.ts's approach).
+// pushNotification is imported directly by the controller; stub it so the
+// projection-error toast is observable without the real notification store.
+const pushNotification = vi.hoisted(() => vi.fn())
+vi.mock('../notifications/store.svelte', () => ({
+  pushNotification
+}))
+
+// Capture Events.On registrations so the `types:changed` /
+// `types:projection-error` handlers can be fired in-test (mirrors
+// AppearanceTab.test.ts's approach).
 const eventsHandlers = {} as Record<string, (ev?: { data?: unknown }) => void>
 vi.mock('@wailsio/runtime', () => ({
   Events: {
@@ -36,6 +44,7 @@ beforeEach(() => {
     errors: [],
     warnings: []
   })
+  pushNotification.mockReset()
 })
 
 afterEach(() => {
@@ -113,6 +122,38 @@ describe('pageType controller', () => {
 
     expect(appMocks.GetPageType.mock.calls.length).toBeGreaterThan(
       callsAfterFirst
+    )
+    dispose()
+  })
+
+  it('on types:projection-error, refreshes the active page and surfaces a transient warning', async () => {
+    appMocks.GetPageType.mockResolvedValue({
+      isSet: false,
+      type: {},
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([])
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+    const dispose = ctrl.attach()
+    await tick()
+    await ctrl.refresh()
+    await tick()
+    const callsAfterFirst = appMocks.GetPageType.mock.calls.length
+
+    // Fire the subscribed `types:projection-error` handler. There's no
+    // debounce on this path (unlike `types:changed`) — the refresh + toast
+    // fire immediately.
+    eventsHandlers['types:projection-error']?.()
+    await new Promise((r) => setTimeout(r, 0))
+    await tick()
+
+    // (a) refresh triggered: GetPageType was called again.
+    expect(appMocks.GetPageType.mock.calls.length).toBeGreaterThan(
+      callsAfterFirst
+    )
+    // (b) warning surface received a non-error (info/polite) notification.
+    expect(pushNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'info' })
     )
     dispose()
   })

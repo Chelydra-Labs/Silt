@@ -174,6 +174,13 @@ func (a *App) pageRawFrontmatter(notebook, section, page string) (map[string]any
 	defer a.vaultMu.RUnlock()
 	a.wg.Add(1)
 	defer a.wg.Done()
+	return a.pageRawFrontmatterLocked(notebook, section, page)
+}
+
+// pageRawFrontmatterLocked is the lock-held core of pageRawFrontmatter. The
+// caller MUST hold a.vaultMu (at least RLock) and have incremented a.wg. Used
+// by mcpBridge.GetPageMetadata to read all three views under a single RLock.
+func (a *App) pageRawFrontmatterLocked(notebook, section, page string) (map[string]any, error) {
 	if a.vaultPath == "" || a.db == nil {
 		return nil, fmt.Errorf("vault not loaded")
 	}
@@ -193,6 +200,13 @@ func (a *App) GetPageType(notebook, section, page string) (PageTypeInfo, error) 
 	defer a.vaultMu.RUnlock()
 	a.wg.Add(1)
 	defer a.wg.Done()
+	return a.getPageTypeLocked(notebook, section, page)
+}
+
+// getPageTypeLocked is the lock-held core of GetPageType. The caller MUST hold
+// a.vaultMu (at least RLock) and have incremented a.wg. Used by
+// mcpBridge.GetPageMetadata to read all three views under a single RLock.
+func (a *App) getPageTypeLocked(notebook, section, page string) (PageTypeInfo, error) {
 	if a.vaultPath == "" || a.db == nil {
 		return PageTypeInfo{}, fmt.Errorf("vault not loaded")
 	}
@@ -216,6 +230,13 @@ func (a *App) GetPageProperties(notebook, section, page string) ([]PagePropertyV
 	defer a.vaultMu.RUnlock()
 	a.wg.Add(1)
 	defer a.wg.Done()
+	return a.getPagePropertiesLocked(notebook, section, page)
+}
+
+// getPagePropertiesLocked is the lock-held core of GetPageProperties. The
+// caller MUST hold a.vaultMu (at least RLock) and have incremented a.wg. Used
+// by mcpBridge.GetPageMetadata to read all three views under a single RLock.
+func (a *App) getPagePropertiesLocked(notebook, section, page string) ([]PagePropertyValue, error) {
 	if a.vaultPath == "" || a.db == nil {
 		return nil, fmt.Errorf("vault not loaded")
 	}
@@ -365,7 +386,7 @@ func (a *App) validateRelationTargets(source string, pdef types.PropertyDef, val
 		}
 	}
 	for _, ref := range refs {
-		if err := a.validateOneRelationTarget(source, ref, wantType); err != nil {
+		if err := a.validateOneRelationTarget(source, pdef.Name, ref, wantType); err != nil {
 			return err
 		}
 	}
@@ -377,7 +398,12 @@ func (a *App) validateRelationTargets(source string, pdef types.PropertyDef, val
 // wantType is the canonical id of the property's declared Target (empty = any
 // page is accepted). A reference with a "/" is checked at its parsed
 // (notebook, section, page); a bare name is resolved via FindPageByLeaf.
-func (a *App) validateOneRelationTarget(source, ref, wantType string) error {
+//
+// Semantic rejections (target missing, wrong type) return a ValidationError
+// keyed at property so the MCP tool layer classifies them as validation — the
+// value was rejected before any file I/O. DB/transient errors stay plain
+// wrapped errors so they classify as IO failures, not validation.
+func (a *App) validateOneRelationTarget(source, property, ref, wantType string) error {
 	nb, sec, page, exact := parseRelationRef(ref)
 	if exact {
 		ok, err := a.db.PageExists(source, nb, sec, page)
@@ -385,7 +411,7 @@ func (a *App) validateOneRelationTarget(source, ref, wantType string) error {
 			return fmt.Errorf("validate relation target %q: %w", ref, err)
 		}
 		if !ok {
-			return fmt.Errorf("relation target %q does not exist", ref)
+			return types.ValidationError{Field: property, Message: fmt.Sprintf("relation target %q does not exist", ref)}
 		}
 	} else {
 		// Bare page name: resolve to the first indexed page with that leaf.
@@ -394,7 +420,7 @@ func (a *App) validateOneRelationTarget(source, ref, wantType string) error {
 			return fmt.Errorf("validate relation target %q: %w", ref, err)
 		}
 		if !ok {
-			return fmt.Errorf("relation target %q does not exist", ref)
+			return types.ValidationError{Field: property, Message: fmt.Sprintf("relation target %q does not exist", ref)}
 		}
 		nb, sec = rnb, rsec
 	}
@@ -406,7 +432,7 @@ func (a *App) validateOneRelationTarget(source, ref, wantType string) error {
 		// proj == nil: the target page is untyped/unindexed-for-projection,
 		// which fails a required-target-type check.
 		if proj == nil || proj.TypeName != wantType {
-			return fmt.Errorf("relation target %q is not of type %q", ref, wantType)
+			return types.ValidationError{Field: property, Message: fmt.Sprintf("relation target %q is not of type %q", ref, wantType)}
 		}
 	}
 	return nil

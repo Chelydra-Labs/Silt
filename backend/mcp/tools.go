@@ -3,12 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 
 	"silt/backend/db"
 	"silt/backend/parser"
+	"silt/backend/types"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -417,11 +419,20 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 			return toolErr("no vault open")
 		}
 		if err := env.bridge.SetPageProperty(ctx, in.Notebook, in.Section, in.Page, in.Property, in.Value); err != nil {
-			// Validation rejected the value before any file I/O — the file is
-			// byte-identical to its pre-call state. Return a structured body so
-			// clients can branch on the offending property without parsing text.
+			// Classify by error type, not blanket-wrap: only true schema-
+			// validation failures yield the structured {ok:false, errors:[...]}
+			// body so clients can branch on the offending property. Genuine IO
+			// /transient errors (page missing, vault not loaded, disk failure)
+			// stay plain-text via toolErr — otherwise a never-attempted write
+			// would masquerade as a value rejection.
+			var vErr types.ValidationError
+			var vErrs types.ValidationErrors
+			if errors.As(err, &vErr) || errors.As(err, &vErrs) {
+				env.record("set_page_property", "rejected", err.Error(), args)
+				return toolValidationErr(in.Property, err.Error())
+			}
 			env.record("set_page_property", "error", err.Error(), args)
-			return toolValidationErr(in.Property, err.Error())
+			return toolErr(err.Error())
 		}
 		env.record("set_page_property", "ok", "", args)
 		return toolJSON(map[string]any{"ok": true})
@@ -448,10 +459,18 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		}
 		flagged, err := env.bridge.SetPageType(ctx, in.Notebook, in.Section, in.Page, in.Type)
 		if err != nil {
-			// "*" is the conventional sentinel for "the type field itself"
-			// since set_page_type does not target a single named property.
+			// Same classification as set_page_property: structured bodies are
+			// reserved for schema-validation failures. "*" is the conventional
+			// sentinel for "the type field itself" since set_page_type does not
+			// target a single named property.
+			var vErr types.ValidationError
+			var vErrs types.ValidationErrors
+			if errors.As(err, &vErr) || errors.As(err, &vErrs) {
+				env.record("set_page_type", "rejected", err.Error(), args)
+				return toolValidationErr("*", err.Error())
+			}
 			env.record("set_page_type", "error", err.Error(), args)
-			return toolValidationErr("*", err.Error())
+			return toolErr(err.Error())
 		}
 		env.record("set_page_type", "ok", "", args)
 		result := map[string]any{"ok": true}
