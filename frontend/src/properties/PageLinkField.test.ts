@@ -319,15 +319,31 @@ describe('PageLinkField — source disambiguation + ref normalization (NB-6)', (
   })
 })
 
-describe('PageLinkField — viewport-aware listbox (flip + clamp)', () => {
-  it('renders the full capped option set and carries a measured max-height near the viewport floor', async () => {
-    // The listbox is `position: absolute` opening downward off the field; near
-    // the viewport floor it would overflow. jsdom has no real layout (no pixel
-    // positions), so this asserts the structural fix: a long result list still
-    // renders the capped option set in the DOM, and the shared `flipMenu`
-    // action wrote a viewport-aware inline bound (proving the measurement ran
-    // — the companion `overflow-y: auto` + `.listbox-top` live in <style> and
-    // are verified by svelte-check, not jsdom's getComputedStyle).
+describe('PageLinkField — Popover-portaled listbox (escapes overflow)', () => {
+  it('portals the listbox to document.body so it is not clipped by ancestor overflow', async () => {
+    // Mirrors DependencyPicker's Popover body-ancestry test (#376). jsdom
+    // cannot prove no-clip (no real layout), but portal-to-body is the
+    // deterministic structural fix: once the listbox lives under body, no
+    // PropertiesPanel `.fields{overflow-y:auto}` ancestor can clip it.
+    const { container } = render(PageLinkField, {
+      props: {
+        value: '',
+        multi: false,
+        label: 'Author',
+        fieldId: 'f-author',
+        onCommit: vi.fn()
+      }
+    })
+    await focusInput()
+
+    const listbox = screen.getByRole('listbox')
+    expect(document.body.contains(listbox)).toBe(true)
+    expect(container.contains(listbox)).toBe(false)
+    // Capped option set still fully rendered (scroll is the ul's job).
+    expect(screen.getAllByRole('option').length).toBeGreaterThan(0)
+  })
+
+  it('renders the full capped option set for a long result list', async () => {
     const manyPages = Array.from({ length: 14 }, (_, i) => ({
       name: `Page ${i}`,
       count: 0
@@ -359,25 +375,15 @@ describe('PageLinkField — viewport-aware listbox (flip + clamp)', () => {
     })
     await focusInput()
 
-    const listbox = screen.getByRole('listbox')
-    // The component caps the result set at 10; every capped option is present
-    // in the DOM (overflow is the scroll container's job, not truncation).
     const options = screen.getAllByRole('option')
     expect(options).toHaveLength(10)
     expect(options[0]).toHaveTextContent('Page 0')
     expect(options[9]).toHaveTextContent('Page 9')
-    // The shared flipMenu action set a measured inline bound. Asserts the
-    // measurement ran (structural), not a pixel value.
-    expect(listbox.style.maxHeight).toMatch(/^\d+px$/)
   })
 
-  it('preserves keyboard nav + selection after the flip/clamp wiring', async () => {
-    // Regression guard: the shared action only writes to the listbox node's
-    // max-height and reports a placement boolean — it never calls focus() or
-    // touches tabindex, so the combobox's arrow/enter semantics must survive.
-    // (jsdom's fireEvent.focus does not run the real focus algorithm, so
-    // activeElement can't be asserted here; the keyboard round-trip is the
-    // operative proof that the input remains in control.)
+  it('preserves keyboard nav + selection through the Popover-hosted listbox', async () => {
+    // Regression guard: moving the listbox into <Popover> must not break the
+    // combobox's arrow/enter semantics (aria-activedescendant on the input).
     const onCommit = vi.fn()
     render(PageLinkField, {
       props: {
@@ -389,9 +395,8 @@ describe('PageLinkField — viewport-aware listbox (flip + clamp)', () => {
       }
     })
     const input = await focusInput()
-    // The dropdown is open + the action measured the listbox.
     expect(input).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByRole('listbox').style.maxHeight).toMatch(/^\d+px$/)
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
     // Arrow nav still cycles the active option through the input.
     await fireEvent.keyDown(input, { key: 'ArrowDown' })
     expect(input).toHaveAttribute(

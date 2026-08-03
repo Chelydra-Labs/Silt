@@ -118,62 +118,25 @@ async function mount(props: Record<string, unknown> = {}) {
 describe('TypeDashboard', () => {
   it('renders the type picker with types from ListTypes', async () => {
     await mount()
-    // The type picker button shows the selected type's name.
-    expect(screen.getByRole('button', { name: /^Book/ })).toBeInTheDocument()
-    // Open the picker — the option is present.
-    await fireEvent.click(screen.getByRole('button', { name: /^Book/ }))
-    const listbox = screen.getByRole('listbox', { name: 'Select a type' })
-    expect(within(listbox).getByText('Book')).toBeInTheDocument()
+    // Native <select> — selected value is the current type; options list the
+    // types returned by ListTypes.
+    const typeSelect = screen.getByRole('combobox', { name: 'Select a type' })
+    expect(typeSelect).toHaveValue('book')
+    expect(
+      within(typeSelect).getByRole('option', { name: 'Book' })
+    ).toBeInTheDocument()
   })
 
-  it('type picker listbox supports arrow-key navigation with roving tabindex', async () => {
+  it('type picker commits a new type via the native select', async () => {
     appMocks.ListTypes.mockResolvedValue({ types: [BOOK_TYPE, MOVIE_TYPE] })
     await mount()
 
-    await fireEvent.click(screen.getByRole('button', { name: /^Book/ }))
-    const listbox = screen.getByRole('listbox', { name: 'Select a type' })
-    const options = within(listbox).getAllByRole('option')
-    expect(options).toHaveLength(2)
+    const typeSelect = screen.getByRole('combobox', { name: 'Select a type' })
+    expect(within(typeSelect).getAllByRole('option')).toHaveLength(2)
 
-    // On open, focus moves to the selected option (Book); it carries the
-    // roving tabindex=0, siblings are -1.
-    await waitFor(() => {
-      expect(document.activeElement).toBe(options[0])
-    })
-    expect(options[0]).toHaveAttribute('tabindex', '0')
-    expect(options[1]).toHaveAttribute('tabindex', '-1')
-
-    // ArrowDown moves focus + the roving tab stop to the next option.
-    await fireEvent.keyDown(options[0], { key: 'ArrowDown' })
-    await waitFor(() => {
-      expect(document.activeElement).toBe(options[1])
-    })
-    expect(options[1]).toHaveAttribute('tabindex', '0')
-    expect(options[0]).toHaveAttribute('tabindex', '-1')
-
-    // ArrowUp moves back.
-    await fireEvent.keyDown(options[1], { key: 'ArrowUp' })
-    await waitFor(() => {
-      expect(document.activeElement).toBe(options[0])
-    })
-
-    // Home/End jump to boundaries.
-    await fireEvent.keyDown(options[0], { key: 'End' })
-    await waitFor(() => {
-      expect(document.activeElement).toBe(options[1])
-    })
-    await fireEvent.keyDown(options[1], { key: 'Home' })
-    await waitFor(() => {
-      expect(document.activeElement).toBe(options[0])
-    })
-
-    // Enter activates the focused option (browser synthesizes a click on a
-    // real <button>; jsdom does not, so fire one to mirror the real behavior).
-    await fireEvent.keyDown(options[0], { key: 'ArrowDown' })
-    await waitFor(() => expect(document.activeElement).toBe(options[1]))
-    await fireEvent.click(options[1])
-    // Movie was selected → next query targets the movie type, with the
+    // Change to Movie → next query targets the movie type, with the
     // type-switch filter reset.
+    await fireEvent.change(typeSelect, { target: { value: 'movie' } })
     await waitFor(() => {
       const last = appMocks.QueryPagesByType.mock.calls.at(-1)!
       expect(last[0]).toBe('movie')
@@ -232,12 +195,9 @@ describe('TypeDashboard', () => {
   it('passes filter state to QueryPagesByType', async () => {
     await mount()
     const before = appMocks.QueryPagesByType.mock.calls.length
-    // The Status filter is a dropdown (select kind with options).
-    const statusButton = screen.getByRole('button', { name: 'Filter Status' })
-    await fireEvent.click(statusButton)
-    // Pick the "read" option from the open listbox.
-    const statusListbox = screen.getByRole('listbox', { name: 'Filter Status' })
-    await fireEvent.click(within(statusListbox).getByText('read'))
+    // The Status filter is a native <select> (select kind with options).
+    const statusSelect = screen.getByRole('combobox', { name: 'Filter Status' })
+    await fireEvent.change(statusSelect, { target: { value: 'read' } })
     // Debounced reload (180ms) fires with the filter applied.
     await waitFor(() => {
       const last = appMocks.QueryPagesByType.mock.calls.at(-1)!
@@ -248,10 +208,9 @@ describe('TypeDashboard', () => {
 
   it('bins rows into collapsible sections when group-by is set', async () => {
     await mount()
-    // Open the group-by picker.
-    await fireEvent.click(screen.getByRole('button', { name: /Group:/ }))
-    const groupListbox = screen.getByRole('listbox', { name: 'Group by' })
-    await fireEvent.click(within(groupListbox).getByText('Status'))
+    // Native group-by <select>.
+    const groupSelect = screen.getByRole('combobox', { name: 'Group by' })
+    await fireEvent.change(groupSelect, { target: { value: 'status' } })
     await tick()
 
     // Two distinct status values → two group toggle buttons, each labelled
@@ -297,9 +256,8 @@ describe('TypeDashboard', () => {
     await mount()
 
     // Apply a status filter valid only on the Book type.
-    await fireEvent.click(screen.getByRole('button', { name: 'Filter Status' }))
-    const statusListbox = screen.getByRole('listbox', { name: 'Filter Status' })
-    await fireEvent.click(within(statusListbox).getByText('read'))
+    const statusSelect = screen.getByRole('combobox', { name: 'Filter Status' })
+    await fireEvent.change(statusSelect, { target: { value: 'read' } })
     await waitFor(() => {
       expect(appMocks.QueryPagesByType.mock.calls.at(-1)![1]).toEqual({
         status: 'read'
@@ -307,9 +265,8 @@ describe('TypeDashboard', () => {
     })
 
     // Switch to the Movie type — the stale Book-only status filter must drop.
-    await fireEvent.click(screen.getByRole('button', { name: /^Book/ }))
-    const typeListbox = screen.getByRole('listbox', { name: 'Select a type' })
-    await fireEvent.click(within(typeListbox).getByText('Movie'))
+    const typeSelect = screen.getByRole('combobox', { name: 'Select a type' })
+    await fireEvent.change(typeSelect, { target: { value: 'movie' } })
 
     // The next query for the Movie type carries no stale Book filter.
     await waitFor(() => {
@@ -373,10 +330,8 @@ describe('TypeDashboard', () => {
     await mount()
 
     // Apply a status filter — debounced reload fires with filter={status:'read'}.
-    const statusButton = screen.getByRole('button', { name: 'Filter Status' })
-    await fireEvent.click(statusButton)
-    const statusListbox = screen.getByRole('listbox', { name: 'Filter Status' })
-    await fireEvent.click(within(statusListbox).getByText('read'))
+    const statusSelect = screen.getByRole('combobox', { name: 'Filter Status' })
+    await fireEvent.change(statusSelect, { target: { value: 'read' } })
     await waitFor(() => {
       expect(screen.getByText('No matches')).toBeInTheDocument()
     })
@@ -435,9 +390,8 @@ describe('TypeDashboard', () => {
     it('renders one column per group value, each with its count', async () => {
       await mount()
       // Group by Status so the two distinct values produce two columns.
-      await fireEvent.click(screen.getByRole('button', { name: /Group:/ }))
-      const groupListbox = screen.getByRole('listbox', { name: 'Group by' })
-      await fireEvent.click(within(groupListbox).getByText('Status'))
+      const groupSelect = screen.getByRole('combobox', { name: 'Group by' })
+      await fireEvent.change(groupSelect, { target: { value: 'status' } })
       await tick()
       await fireEvent.click(screen.getByRole('radio', { name: 'Board view' }))
 

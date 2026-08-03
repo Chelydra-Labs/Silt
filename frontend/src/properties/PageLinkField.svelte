@@ -5,10 +5,15 @@
   // pages of the declared `target` type (QueryPagesByType). The component is
   // value-controlled: it never calls IPC itself — every change routes through
   // onCommit, so PropertyField's optimistic field owns the snapshot/revert.
+  //
+  // The results listbox is rendered through the shared <Popover> (portal +
+  // position:fixed + measure against the input), mirroring DependencyPicker.
+  // That escapes the PropertiesPanel `.fields{overflow-y:auto}` clip that an
+  // in-tree absolute listbox (and flipMenu) could never beat.
   import { onMount, tick } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
   import { ListNavigation, QueryPagesByType } from '../../bindings/silt/app.js'
-  import { flipMenu } from '../lib/flipMenu'
+  import Popover from '../components/Popover.svelte'
   import { flattenNavigation } from '../lib/navigationCatalog'
   import { indexNav, resolveRef, toRef, type NavIndex } from './pageRef'
   import type { NavigationCatalogItem } from '../lib/navigationCatalog'
@@ -48,25 +53,7 @@
   let loading = $state(false)
   let loadError = $state('')
   let inputRef = $state<HTMLInputElement | null>(null)
-  // The `.plf` root is the listbox's containing block (position: relative), so
-  // its rect is the right anchor for the flip+clamp math: its bottom edge is
-  // where the listbox opens (top: calc(100% + …)) and its top is where a
-  // flipped listbox would reach.
-  let rootRef = $state<HTMLDivElement | null>(null)
   let listboxId = $derived(`${fieldId}-listbox`)
-
-  // Viewport-aware flip+clamp lives in the shared `flipMenu` action (attached to
-  // the listbox below). The CSS `max-height: 16rem` on `.listbox` is the
-  // non-JS / pre-measure fallback. `listboxFlipped` is reported by the action
-  // and bound to `.listbox-top` in markup.
-  let listboxFlipped = $state(false)
-  const listboxFlip = {
-    getAnchor: () => rootRef,
-    maxHeightPx: 16 * 16,
-    onPlacement: (flipped: boolean): void => {
-      listboxFlipped = flipped
-    }
-  }
 
   // Current refs as an array regardless of cardinality, for chip rendering.
   let refs = $derived(Array.isArray(value) ? value : value ? [value] : [])
@@ -146,6 +133,10 @@
       .slice(0, 10)
   })
 
+  // Popover open signal: needs results to show. Empty matches stay as an
+  // inline status under the input (not a floating empty panel).
+  let listboxOpen = $derived(open && !!idx && results.length > 0)
+
   function openDropdown(): void {
     if (disabled) return
     open = true
@@ -222,6 +213,8 @@
     } else if (e.key === 'Escape') {
       // stopPropagation so the panel's window-level Esc handler doesn't also
       // fire and dismiss the whole panel — the open dropdown consumes Esc.
+      // (Popover also binds Esc on window; stopping here covers the common
+      // path where focus is on the input.)
       e.preventDefault()
       e.stopPropagation()
       closeDropdown()
@@ -239,7 +232,7 @@
     return `${fieldId}-opt-${i}`
   }
   let activeDescendant = $derived(
-    open && activeIndex >= 0 ? optionId(activeIndex) : undefined
+    listboxOpen && activeIndex >= 0 ? optionId(activeIndex) : undefined
   )
 
   // Dangling detection: which stored refs no longer resolve.
@@ -259,7 +252,7 @@
   }
 </script>
 
-<div class="plf" class:mismatched bind:this={rootRef}>
+<div class="plf" class:mismatched>
   {#if refs.length > 0}
     <div class="chips" aria-label={label}>
       {#each refs as ref (ref)}
@@ -288,9 +281,9 @@
       type="text"
       class="input"
       role="combobox"
-      aria-expanded={open}
+      aria-expanded={listboxOpen}
       aria-autocomplete="list"
-      aria-controls={open ? listboxId : undefined}
+      aria-controls={listboxOpen ? listboxId : undefined}
       aria-activedescendant={activeDescendant}
       aria-label={label}
       aria-required={required}
@@ -318,16 +311,24 @@
     <p class="err" role="alert">{loadError}</p>
   {/if}
 
-  {#if open && idx}
-    {#if results.length > 0}
-      <ul
-        use:flipMenu={listboxFlip}
-        class="listbox"
-        class:listbox-top={listboxFlipped}
-        id={listboxId}
-        role="listbox"
-        aria-label={label}
-      >
+  {#if open && idx && results.length === 0}
+    <div class="empty-list" role="status">No matching pages</div>
+  {/if}
+
+  <!--
+    Shared <Popover>: portals to document.body + position:fixed measured against
+    the input, so the listbox escapes PropertiesPanel's overflow-y:auto (and the
+    tabpanel overflow chain). Mirrors DependencyPicker's combobox pattern.
+  -->
+  <Popover
+    open={listboxOpen}
+    onClose={closeDropdown}
+    anchor={inputRef}
+    matchWidth
+    class="rounded-lg border border-surface-popover-border bg-surface-popover shadow-lg"
+  >
+    {#snippet content()}
+      <ul class="listbox" id={listboxId} role="listbox" aria-label={label}>
         {#each results as it, i (it.key)}
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- Combobox options are keyboard-operated through the input (Arrow/
@@ -349,10 +350,8 @@
           </li>
         {/each}
       </ul>
-    {:else}
-      <div class="empty-list" role="status">No matching pages</div>
-    {/if}
-  {/if}
+    {/snippet}
+  </Popover>
 </div>
 
 <style>
@@ -433,29 +432,15 @@
     color: var(--color-text-muted);
     font-size: var(--text-type-xs);
   }
+  /* Scroll-only: Popover owns placement (portal + fixed coords). Do NOT put
+     position/top/left/z-index here — those are what clipped against the
+     panel's overflow ancestors when the listbox lived in-tree. */
   .listbox {
-    position: absolute;
-    z-index: 50;
-    top: calc(100% + 0.15rem);
-    left: 0;
-    right: 0;
-    /* Soft cap; the inline `max-height` set by the `flipMenu` action clamps
-       further to the available viewport space. Kept here so a non-JS /
-       pre-measure frame still has a reasonable bound. */
     max-height: 16rem;
     overflow-y: auto;
     margin: 0;
     padding: 0.2rem;
     list-style: none;
-    background: var(--color-surface-popover);
-    border: 1px solid var(--color-surface-popover-border);
-    border-radius: 0.5rem;
-    box-shadow: var(--shadow-lg);
-  }
-  .listbox-top {
-    /* Anchor the listbox above the field (measured side with more room). */
-    top: auto;
-    bottom: calc(100% + 0.15rem);
   }
   .option {
     display: flex;

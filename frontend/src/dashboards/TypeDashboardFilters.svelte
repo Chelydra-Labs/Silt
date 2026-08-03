@@ -1,9 +1,12 @@
 <script lang="ts">
   // Filter bar for the per-type dashboard. A type picker + group-by picker +
   // one control per schema property. Active filters render as removable chips.
-  // The control set mirrors the silt-tasks FilterBar's single-open-popover
-  // pattern: at most one dropdown is open at a time, Esc closes it, and a
-  // full-screen click-away backdrop handles outside clicks.
+  //
+  // All single-value pickers are native <select>s (mirrors the checkbox filter
+  // path and PropertiesPanel's type select). The OS/browser renders the open
+  // list outside the page overflow tree, so nothing here can be clipped by
+  // `.dashboard{overflow:hidden}` or the tabpanel flex chain — the bug class
+  // that custom absolute menus hit in the real webview.
   import type { DashboardColumn, FilterState } from './dashboards'
   import type { TypeDef } from '../properties/types'
 
@@ -35,101 +38,11 @@
   let filterColumns = $derived(columns.filter((c) => c.kind !== 'page-name'))
   let groupColumns = $derived(columns.filter((c) => c.kind !== 'page-name'))
 
-  let openMenu = $state<string | null>(null)
-
-  function close(): void {
-    openMenu = null
-  }
-
-  // --- Listbox keyboard model (WAI-ARIA roving tabindex) ------------------
-  // The three dropdowns are role="listbox"; Arrow/Home/End move the active
-  // option, Enter/Space activate via the native button click. Only one menu
-  // is open at a time, so a single activeIdx scoped to whichever menu is
-  // open is sufficient. Mirrors the view-mode radiogroup in TypeDashboard.
-  let activeIdx = $state(0)
-
-  function menuOptionCount(menuId: string): number {
-    if (menuId === 'type') return types.length
-    if (menuId === 'group') return 1 + groupColumns.length
-    const col = filterColumns.find((c) => c.key === menuId)
-    return col ? 2 + (col.options?.length ?? 0) : 0
-  }
-
-  // Where focus should land when a menu opens: the currently-selected option
-  // (the one with aria-selected="true"), or the first if none is selected.
-  function menuInitialIdx(menuId: string): number {
-    if (menuId === 'type') {
-      const i = types.findIndex((t) => t.id === selectedType)
-      return i < 0 ? 0 : i
-    }
-    if (menuId === 'group') {
-      if (groupBy === '') return 0
-      const i = groupColumns.findIndex((c) => c.key === groupBy)
-      return i < 0 ? 0 : i + 1
-    }
-    const col = filterColumns.find((c) => c.key === menuId)
-    if (!col) return 0
-    if (!(menuId in filter)) return 0
-    if (filter[menuId] === '') return 1
-    const i = (col.options ?? []).findIndex((o) => o === filter[menuId])
-    return i < 0 ? 0 : i + 2
-  }
-
-  function toggleMenu(id: string): void {
-    if (openMenu === id) {
-      close()
-      return
-    }
-    openMenu = id
-    activeIdx = menuInitialIdx(id)
-    const targetIdx = activeIdx
-    // The listbox DOM renders on the same flush; focus after it settles so
-    // arrow keys work immediately without an intervening Tab.
-    queueMicrotask(() => {
-      document
-        .querySelector<HTMLElement>(
-          `[data-listbox="${id}"] [data-option-idx="${targetIdx}"]`
-        )
-        ?.focus()
-    })
-  }
-
-  // Roving tabindex: the active option is the tab stop; siblings are removed
-  // from the tab order. Closed menus aren't rendered, so this only matters
-  // for the open one.
-  function optTabindex(menuId: string, idx: number): 0 | -1 {
-    return openMenu === menuId && activeIdx === idx ? 0 : -1
-  }
-
-  function onListboxKeydown(e: KeyboardEvent): void {
-    if (!openMenu) return
-    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
-    e.preventDefault()
-    const count = menuOptionCount(openMenu)
-    if (count === 0) return
-    let next = activeIdx
-    if (e.key === 'Home') next = 0
-    else if (e.key === 'End') next = count - 1
-    else if (e.key === 'ArrowDown') next = Math.min(activeIdx + 1, count - 1)
-    else next = Math.max(activeIdx - 1, 0)
-    if (next === activeIdx) return
-    activeIdx = next
-    const container = e.currentTarget as HTMLElement
-    queueMicrotask(() => {
-      container
-        .querySelector<HTMLElement>(`[data-option-idx="${next}"]`)
-        ?.focus()
-    })
-  }
-
-  let selectedTypeLabel = $derived(
-    types.find((t) => t.id === selectedType)?.name ?? 'Select a type'
-  )
-  let groupLabel = $derived(
-    groupBy === ''
-      ? 'None'
-      : (columns.find((c) => c.key === groupBy)?.label ?? groupBy)
-  )
+  // Sentinel for the "Unset" option on select/multiselect filters. Empty string
+  // already means "Any" (key missing → clearFilter); Unset must write
+  // filter[name] = '' which is a distinct IPC state. Option values that
+  // collide with this sentinel are vanishingly unlikely on a schema enum.
+  const UNSET_SENTINEL = '__silt_unset__'
 
   // --- Per-property filter mutators ----------------------------------------
   // IPC semantics: filter[name] = '' selects rows where the property is UNSET;
@@ -150,6 +63,19 @@
   function inputFilter(name: string, value: string): void {
     if (value === '') clearFilter(name)
     else setFilter(name, value)
+  }
+
+  // Select/multiselect filter: map the three UI states onto the filter bag.
+  function selectFilter(name: string, value: string): void {
+    if (value === '') clearFilter(name)
+    else if (value === UNSET_SENTINEL) setFilter(name, '')
+    else setFilter(name, value)
+  }
+
+  function selectFilterValue(name: string): string {
+    if (!(name in filter)) return ''
+    if (filter[name] === '') return UNSET_SENTINEL
+    return filter[name]
   }
 
   function clearAll(): void {
@@ -174,152 +100,53 @@
     liveMessage =
       n === 0 ? 'No active filters' : `${n} active filter${n === 1 ? '' : 's'}`
   })
-
-  // Esc closes whichever popover is open.
-  $effect(() => {
-    if (!openMenu) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  })
 </script>
 
 <div class="filter-bar">
-  <!-- Type picker -->
-  <div class="relative">
-    <button
-      type="button"
-      class="chip-button"
-      class:active={openMenu === 'type'}
-      onclick={() => toggleMenu('type')}
-      aria-expanded={openMenu === 'type'}
-      aria-haspopup="listbox"
+  <!-- Type picker — native <select> with a decorative icon (closed state).
+       The open list is text-only (UA-rendered); that's the robustness tradeoff. -->
+  <div class="type-select-wrap">
+    <span class="material-symbols-outlined type-icon" aria-hidden="true"
+      >category</span
     >
-      <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
-        >category</span
-      >
-      <span>{selectedTypeLabel}</span>
-      <span class="material-symbols-outlined text-icon-xs" aria-hidden="true"
-        >expand_more</span
-      >
-    </button>
-    {#if openMenu === 'type'}
-      <div
-        class="menu"
-        role="listbox"
-        aria-label="Select a type"
-        tabindex="-1"
-        data-listbox="type"
-        onkeydown={onListboxKeydown}
-      >
-        {#each types as t, i (t.id)}
-          <button
-            type="button"
-            role="option"
-            class="menu-item"
-            class:selected={t.id === selectedType}
-            aria-selected={t.id === selectedType}
-            data-option-idx={i}
-            tabindex={optTabindex('type', i)}
-            onclick={() => {
-              onSelectType(t.id)
-              close()
-            }}
-          >
-            {#if t.icon}
-              <span
-                class="material-symbols-outlined text-icon-sm"
-                aria-hidden="true">{t.icon}</span
-              >
-            {/if}
-            <span>{t.name || t.id}</span>
-            {#if t.id === selectedType}
-              <span
-                class="material-symbols-outlined text-icon-sm ml-auto"
-                aria-hidden="true">check</span
-              >
-            {/if}
-          </button>
-        {/each}
-      </div>
-    {/if}
+    <select
+      class="type-select"
+      aria-label="Select a type"
+      value={selectedType}
+      onchange={(e) => onSelectType(e.currentTarget.value)}
+    >
+      {#if !selectedType}
+        <option value="">Select a type</option>
+      {/if}
+      {#each types as t (t.id)}
+        <option value={t.id}>{t.name || t.id}</option>
+      {/each}
+    </select>
+    <span class="material-symbols-outlined type-caret" aria-hidden="true"
+      >expand_more</span
+    >
   </div>
 
   <!-- Group-by picker -->
-  <div class="relative">
-    <button
-      type="button"
-      class="chip-button"
-      class:active={openMenu === 'group' || groupBy !== ''}
-      onclick={() => toggleMenu('group')}
-      aria-expanded={openMenu === 'group'}
-      aria-haspopup="listbox"
-    >
+  <div class="group-select-wrap">
+    <label class="group-label" for="dash-group-by">
       <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
         >view_module</span
       >
-      <span>Group: {groupLabel}</span>
-      <span class="material-symbols-outlined text-icon-xs" aria-hidden="true"
-        >expand_more</span
-      >
-    </button>
-    {#if openMenu === 'group'}
-      <div
-        class="menu"
-        role="listbox"
-        aria-label="Group by"
-        tabindex="-1"
-        data-listbox="group"
-        onkeydown={onListboxKeydown}
-      >
-        <button
-          type="button"
-          role="option"
-          class="menu-item"
-          class:selected={groupBy === ''}
-          aria-selected={groupBy === ''}
-          data-option-idx="0"
-          tabindex={optTabindex('group', 0)}
-          onclick={() => {
-            onGroupByChange('')
-            close()
-          }}
-        >
-          <span>None</span>
-          {#if groupBy === ''}
-            <span
-              class="material-symbols-outlined text-icon-sm ml-auto"
-              aria-hidden="true">check</span
-            >
-          {/if}
-        </button>
-        {#each groupColumns as col, i (col.key)}
-          <button
-            type="button"
-            role="option"
-            class="menu-item"
-            class:selected={groupBy === col.key}
-            aria-selected={groupBy === col.key}
-            data-option-idx={i + 1}
-            tabindex={optTabindex('group', i + 1)}
-            onclick={() => {
-              onGroupByChange(col.key)
-              close()
-            }}
-          >
-            <span>{col.label}</span>
-            {#if groupBy === col.key}
-              <span
-                class="material-symbols-outlined text-icon-sm ml-auto"
-                aria-hidden="true">check</span
-              >
-            {/if}
-          </button>
-        {/each}
-      </div>
-    {/if}
+      <span>Group</span>
+    </label>
+    <select
+      id="dash-group-by"
+      class="select-input"
+      aria-label="Group by"
+      value={groupBy}
+      onchange={(e) => onGroupByChange(e.currentTarget.value)}
+    >
+      <option value="">None</option>
+      {#each groupColumns as col (col.key)}
+        <option value={col.key}>{col.label}</option>
+      {/each}
+    </select>
   </div>
 
   <div class="divider" aria-hidden="true"></div>
@@ -329,80 +156,19 @@
     <div class="filter-control">
       <label for={`flt-${col.key}`} class="filter-label">{col.label}</label>
       {#if col.kind === 'select' || col.kind === 'multiselect'}
-        <div class="relative">
-          <button
-            type="button"
-            class="chip-button"
-            class:active={openMenu === col.key || filter[col.key] != null}
-            id={`flt-${col.key}`}
-            onclick={() => toggleMenu(col.key)}
-            aria-expanded={openMenu === col.key}
-            aria-haspopup="listbox"
-            aria-label="Filter {col.label}"
-          >
-            <span>{filter[col.key] ?? 'Any'}</span>
-            <span
-              class="material-symbols-outlined text-icon-xs"
-              aria-hidden="true">expand_more</span
-            >
-          </button>
-          {#if openMenu === col.key}
-            <div
-              class="menu"
-              role="listbox"
-              aria-label="Filter {col.label}"
-              tabindex="-1"
-              data-listbox={col.key}
-              onkeydown={onListboxKeydown}
-            >
-              <button
-                type="button"
-                role="option"
-                class="menu-item"
-                aria-selected={!(col.key in filter)}
-                data-option-idx="0"
-                tabindex={optTabindex(col.key, 0)}
-                onclick={() => {
-                  clearFilter(col.key)
-                  close()
-                }}
-              >
-                <span>Any</span>
-              </button>
-              <button
-                type="button"
-                role="option"
-                class="menu-item"
-                aria-selected={filter[col.key] === ''}
-                data-option-idx="1"
-                tabindex={optTabindex(col.key, 1)}
-                onclick={() => {
-                  setFilter(col.key, '')
-                  close()
-                }}
-              >
-                <span class="italic">Unset</span>
-              </button>
-              {#each col.options ?? [] as opt, i (opt)}
-                <button
-                  type="button"
-                  role="option"
-                  class="menu-item"
-                  class:selected={filter[col.key] === opt}
-                  aria-selected={filter[col.key] === opt}
-                  data-option-idx={i + 2}
-                  tabindex={optTabindex(col.key, i + 2)}
-                  onclick={() => {
-                    setFilter(col.key, opt)
-                    close()
-                  }}
-                >
-                  <span>{opt}</span>
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
+        <select
+          id={`flt-${col.key}`}
+          class="select-input"
+          aria-label="Filter {col.label}"
+          value={selectFilterValue(col.key)}
+          onchange={(e) => selectFilter(col.key, e.currentTarget.value)}
+        >
+          <option value="">Any</option>
+          <option value={UNSET_SENTINEL}>Unset</option>
+          {#each col.options ?? [] as opt (opt)}
+            <option value={opt}>{opt}</option>
+          {/each}
+        </select>
       {:else if col.kind === 'checkbox'}
         <select
           id={`flt-${col.key}`}
@@ -452,18 +218,6 @@
     {totalCount === 1 ? 'page' : 'pages'}
   </div>
 
-  <!-- Active filter chips (quick-remove). Rendered below in the chips row. -->
-
-  {#if openMenu}
-    <button
-      type="button"
-      class="backdrop"
-      aria-hidden="true"
-      tabindex="-1"
-      onclick={close}
-    ></button>
-  {/if}
-
   <div class="sr-only" aria-live="polite">{liveMessage}</div>
 </div>
 
@@ -499,40 +253,58 @@
     position: relative;
     background: var(--color-surface-panel);
   }
-  .relative {
+  .type-select-wrap {
     position: relative;
     display: inline-flex;
-  }
-  .chip-button {
-    display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
-    padding: 0.25rem 0.5rem;
+  }
+  .type-icon {
+    position: absolute;
+    left: 0.4rem;
+    font-size: var(--text-icon-sm);
+    color: var(--color-text-muted);
+    pointer-events: none;
+  }
+  .type-select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding: 0.25rem 1.5rem 0.25rem 1.6rem;
     border-radius: 0.375rem;
     border: 1px solid var(--color-surface-panel-border);
     background: var(--color-surface-app);
-    color: var(--color-text-muted);
+    color: var(--color-text-primary);
     font-size: var(--text-type-sm);
     font-family: var(--font-mono, monospace);
     cursor: pointer;
     max-width: 14rem;
   }
-  .chip-button > span:nth-child(2) {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .chip-button:hover {
+  .type-select:hover {
     background: var(--color-hover);
-    color: var(--color-text-primary);
   }
-  .chip-button.active {
-    border-color: var(--color-accent-primary-start);
-    color: var(--color-text-primary);
-  }
-  .chip-button:focus-visible {
+  .type-select:focus-visible {
     outline: 2px solid var(--color-border-focus);
     outline-offset: 1px;
+  }
+  .type-caret {
+    position: absolute;
+    right: 0.3rem;
+    font-size: var(--text-type-sm);
+    color: var(--color-text-muted);
+    pointer-events: none;
+  }
+  .group-select-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .group-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    color: var(--color-text-muted);
+    font-size: var(--text-type-sm);
+    font-family: var(--font-mono, monospace);
   }
   .filter-control {
     display: flex;
@@ -560,44 +332,6 @@
     outline: 2px solid var(--color-border-focus);
     outline-offset: 1px;
   }
-  .menu {
-    position: absolute;
-    top: calc(100% + 0.2rem);
-    left: 0;
-    z-index: 50;
-    min-width: 12rem;
-    max-height: 16rem;
-    overflow-y: auto;
-    background: var(--color-surface-popover);
-    border: 1px solid var(--color-surface-popover-border);
-    border-radius: 0.5rem;
-    box-shadow: var(--shadow-lg);
-    padding: 0.25rem;
-  }
-  .menu-item {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    width: 100%;
-    text-align: left;
-    padding: 0.35rem 0.5rem;
-    border: 0;
-    background: transparent;
-    color: var(--color-surface-popover-text);
-    border-radius: 0.3rem;
-    font-size: var(--text-type-sm);
-    cursor: pointer;
-  }
-  .menu-item:hover {
-    background: var(--color-hover);
-  }
-  .menu-item:focus-visible {
-    outline: 2px solid var(--color-border-focus);
-    outline-offset: 1px;
-  }
-  .menu-item.selected {
-    color: var(--color-accent-primary-start);
-  }
   .ml-auto {
     margin-left: auto;
   }
@@ -624,15 +358,6 @@
   }
   .clear-all:hover {
     color: var(--color-status-danger);
-  }
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-    background: transparent;
-    border: 0;
-    cursor: default;
-    padding: 0;
   }
   .chips-row {
     display: flex;
@@ -669,9 +394,5 @@
   }
   .ac-value {
     opacity: 0.85;
-  }
-  .italic {
-    font-style: italic;
-    opacity: 0.7;
   }
 </style>
