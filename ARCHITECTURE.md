@@ -745,8 +745,9 @@ writing attach as capabilities when their flags are on.
   `GetPageType` (resolved schema + raw chip on unknown refs), `GetPageProperties`
   (full schema form with `IsSet` flags), `SetPageType` (keep-and-flag on schema
   mismatch), `SetPageProperty` / `ClearPageProperty` (surgical single-field
-  rewrite, validated twice — once at entry and again inside the file lock to
-  close the schema-hot-reload race). **Dashboard query**: `QueryPagesByType`
+  rewrite, structurally validated twice — once at entry and again inside the file lock to
+  narrow — not fully close — the schema-hot-reload race; relation-target
+existence is validated once at entry, since a stale target is inert on TOCTOU). **Dashboard query**: `QueryPagesByType`
   (all pages of a type + their set properties, source-scoped). **Plugin SDK**:
   `PluginListTypes` / `PluginGetType` (read-only, no grant), `PluginSaveType` /
   `PluginDeleteType` (gated under `CapContentMutate`).
