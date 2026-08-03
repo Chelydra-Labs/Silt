@@ -87,9 +87,16 @@ export function createPageTypeController(
   // (the user navigated mid-fetch) is discarded rather than painted over a new
   // page's data.
   let refreshToken = 0
+  // Last locator the controller fetched. keep-and-flag warnings describe a
+  // type switch on a SPECIFIC page; they must survive a re-fetch of that SAME
+  // page (the refresh commitType triggers right after a switch) but clear when
+  // the user navigates away. Gate the clear on a locator change, not on every
+  // fetch — otherwise the synchronous refresh prologue batches away the
+  // mismatched array setMismatched just wrote and the warnings never render.
+  let lastLocator = ''
 
   async function refresh(): Promise<void> {
-    const { notebook, page } = deps.getLocator()
+    const { notebook, section, page } = deps.getLocator()
     if (!notebook || !page) {
       // Bump the token + clear loading BEFORE wiping state so a response from
       // the PREVIOUS page (still in flight when the user navigated here) is
@@ -99,30 +106,37 @@ export function createPageTypeController(
       info = EMPTY_INFO
       values = []
       mismatched = []
+      error = ''
+      lastLocator = ''
       return
     }
+    const locatorKey = `${notebook}/${section}/${page}`
+    const locatorChanged = locatorKey !== lastLocator
+    lastLocator = locatorKey
     // Reset the displayed state up front so a page→page navigation shows a
     // clean slate instead of the previous page's chip/fields while the new
-    // fetch is in flight (or indefinitely if it fails).
+    // fetch is in flight (or indefinitely if it fails). mismatched is cleared
+    // ONLY on a locator change (see lastLocator rationale) — never on a
+    // same-page re-fetch.
     info = EMPTY_INFO
     values = []
-    mismatched = []
     error = ''
+    if (locatorChanged) {
+      mismatched = []
+    }
     const token = ++refreshToken
     loading = true
     try {
       const [typeInfo, props] = await Promise.all([
-        GetPageType(notebook, deps.getLocator().section, page),
-        GetPageProperties(notebook, deps.getLocator().section, page)
+        GetPageType(notebook, section, page),
+        GetPageProperties(notebook, section, page)
       ])
       if (token !== refreshToken) return
       info = (typeInfo as PageTypeInfo) ?? EMPTY_INFO
       values = (props as PagePropertyValue[]) ?? []
-      // A fresh fetch clears stale keep-and-flag warnings — they describe the
-      // last type switch, not the current state. Also clears a transient
-      // error from a prior failed fetch so a recovered refresh doesn't leave
-      // a stale banner.
-      mismatched = []
+      // Do NOT clear mismatched here: a same-page fetch (the post-switch
+      // refresh) must preserve the warnings commitType just set. They clear
+      // on navigation (locatorChanged) or are replaced by the next switch.
       error = ''
     } catch (e) {
       if (token !== refreshToken) return

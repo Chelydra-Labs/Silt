@@ -254,6 +254,65 @@ describe('pageType controller', () => {
     expect(ctrl.values).toEqual([])
   })
 
+  it('preserves mismatched warnings across the post-switch refresh (MB-1 regression)', async () => {
+    // commitType runs onMismatched([...]) then onChanged()→refresh() in the
+    // same synchronous block. Before the fix, refresh's prologue set
+    // mismatched=[] before its first await, so Svelte 5 batched the
+    // setMismatched write and the wipe together — the warnings never
+    // rendered. The fix gates the clear on a LOCATOR change, so a same-page
+    // refresh keeps them.
+    appMocks.GetPageType.mockResolvedValue({
+      typeId: 'book',
+      type: { id: 'book', name: 'Book' },
+      isSet: true,
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([
+      {
+        name: 'rating',
+        label: 'Rating',
+        type: 'number',
+        value: 9,
+        isSet: true,
+        required: false
+      }
+    ])
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+    await ctrl.refresh()
+    await tick()
+    expect(ctrl.mismatched).toEqual([])
+
+    // Mirror commitType's synchronous ordering: setMismatched, THEN refresh()
+    // on the SAME locator.
+    ctrl.setMismatched(['rating'])
+    const pending = ctrl.refresh()
+    // The synchronous prologue has already executed before the first await.
+    // With the bug, mismatched was [] here (the prologue wiped it).
+    expect(ctrl.mismatched).toEqual(['rating'])
+    await pending
+    await tick()
+    // The full fetch must not clear them either.
+    expect(ctrl.mismatched).toEqual(['rating'])
+  })
+
+  it('clears mismatched warnings when the locator changes to a different page', async () => {
+    appMocks.GetPageType.mockResolvedValue({
+      isSet: false,
+      type: {},
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([])
+    let current = { ...locator }
+    const ctrl = createPageTypeController({ getLocator: () => current })
+    ctrl.setMismatched(['rating'])
+    // Navigating to a different page clears the warnings — they describe a
+    // type switch on the previous page.
+    current = { notebook: 'Work', section: 'Projects', page: 'Other' }
+    await ctrl.refresh()
+    await tick()
+    expect(ctrl.mismatched).toEqual([])
+  })
+
   it('discards a stale in-flight refresh when navigating to a page-less view before it resolves', async () => {
     // Seed page A (resolved) so there is real data a stale response could paint.
     appMocks.GetPageType.mockResolvedValue({
