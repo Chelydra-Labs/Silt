@@ -108,6 +108,46 @@ describe('optimisticField', () => {
     expect(field.value).toBe('B')
   })
 
+  it('reverts to the post-A-revert value when the queued replay also fails (double failure)', async () => {
+    const a = makeDeferred()
+    const b = makeDeferred()
+    const write = vi
+      .fn<(v: string) => Promise<unknown>>()
+      .mockReturnValueOnce(
+        a.promise.then(() => {
+          throw new Error('boom-A')
+        })
+      )
+      .mockReturnValueOnce(
+        b.promise.then(() => {
+          throw new Error('boom-B')
+        })
+      )
+    const onError = vi.fn()
+
+    const field = optimisticField({ initial: 'start', write, onError })
+
+    const pA = field.commit('A')
+    field.commit('B') // queued while A is in flight
+
+    a.resolve()
+    await pA
+
+    // A failed → value reverted to 'start' (prev still 'start'), then the
+    // queued B replayed.
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith('B'))
+    expect(field.value).toBe('B')
+    expect(field.pending).toBe(true)
+    expect(onError).toHaveBeenCalledWith('boom-A')
+
+    // B's replay fails too → reverts to prev, which is still the post-A-revert
+    // 'start' (not 'B' — failed writes never advance the snapshot).
+    b.resolve()
+    await vi.waitFor(() => expect(field.pending).toBe(false))
+    expect(field.value).toBe('start')
+    expect(onError).toHaveBeenCalledWith('boom-B')
+  })
+
   it('reset() during a pending write preserves the queued edit (mid-write refresh does not drop it)', async () => {
     const a = makeDeferred()
     const b = makeDeferred()

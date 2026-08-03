@@ -66,6 +66,7 @@ function makeDeps(overrides: Partial<GlobalHotkeyDispatchDeps> = {}): {
       open_template_picker: 'Ctrl+T',
       new_task: 'Ctrl+J',
       toggle_view_mode: 'Ctrl+Shift+V',
+      toggle_properties_panel: 'Ctrl+;',
       toggle_format_toolbar: 'Ctrl+Shift+B',
       toggle_focus_mode: 'Ctrl+Shift+L',
       toggle_typewriter_mode: 'Ctrl+Shift+T',
@@ -96,6 +97,7 @@ function makeDeps(overrides: Partial<GlobalHotkeyDispatchDeps> = {}): {
     openSettings: spies.openSettings,
     toggleViewMode: spies.toggleViewMode,
     togglePropertiesPanel: spies.togglePropertiesPanel,
+    isPropertiesPanelAvailable: () => true,
     closeTab: spies.closeTab,
     cycleTab: spies.cycleTab,
     ...overrides
@@ -171,6 +173,24 @@ describe('useGlobalHotkeyDispatch (#768)', () => {
     dispatch.attach()
     window.dispatchEvent(press('w', { ctrlKey: true }))
     expect(spies.closeTab).not.toHaveBeenCalled()
+  })
+
+  it('toggle_properties_panel fires when the panel is available in the view', () => {
+    const { deps, spies } = makeDeps()
+    dispatch = createGlobalHotkeyDispatch(deps)
+    dispatch.attach()
+    window.dispatchEvent(press(';', { ctrlKey: true }))
+    expect(spies.togglePropertiesPanel).toHaveBeenCalledOnce()
+  })
+
+  it('toggle_properties_panel is suppressed when the panel is not in the view', () => {
+    const { deps, spies } = makeDeps({
+      isPropertiesPanelAvailable: () => false
+    })
+    dispatch = createGlobalHotkeyDispatch(deps)
+    dispatch.attach()
+    window.dispatchEvent(press(';', { ctrlKey: true }))
+    expect(spies.togglePropertiesPanel).not.toHaveBeenCalled()
   })
 
   it('an unmatched chord fires no callback and does not preventDefault', () => {

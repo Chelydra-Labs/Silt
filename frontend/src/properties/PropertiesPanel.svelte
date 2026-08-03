@@ -130,13 +130,28 @@
       // Clear orphans BEFORE the switch: ClearPageProperty resolves the CURRENT
       // (old) schema, so it would reject an orphaned name once the new type
       // is in place. Clearing first removes the keys while they're still known.
-      if (clearOrphaned) {
+      // Sequential on purpose: each call read-modify-writes the SAME markdown
+      // file, so concurrent clears would lose updates. Attempt ALL of them and
+      // collect failures — aborting the switch on the first error would leave
+      // the page half-cleaned with no indication of which clears landed.
+      if (clearOrphaned && orphanNames.length > 0) {
+        const failed: string[] = []
         for (const p of orphanNames) {
-          await ClearPageProperty(
-            locator.notebook,
-            locator.section,
-            locator.page,
-            p
+          try {
+            await ClearPageProperty(
+              locator.notebook,
+              locator.section,
+              locator.page,
+              p
+            )
+          } catch {
+            failed.push(p)
+          }
+        }
+        if (failed.length > 0) {
+          const noun = failed.length === 1 ? 'property' : 'properties'
+          throw new Error(
+            `Failed to clear ${failed.length} ${noun}: ${failed.join(', ')}`
           )
         }
       }
@@ -347,7 +362,7 @@
 
     <!-- aria-live: save failures (assertive) + keep-and-flag notices (polite). -->
     {#if error || liveError}
-      <p class="banner error" role="alert" aria-live="assertive">
+      <p class="banner error" role="alert">
         {error || liveError}
       </p>
     {/if}

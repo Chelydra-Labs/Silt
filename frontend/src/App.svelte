@@ -55,6 +55,7 @@
   import { createSettingsDialogs } from './shell/useSettingsDialogs.svelte'
   import { createGlobalHotkeyDispatch } from './shell/useGlobalHotkeyDispatch.svelte'
   import { createStartupEvents } from './shell/useStartupEvents.svelte'
+  import { ASSIGN_PAGE_TYPE_EVENT } from './shell/pageTypeEvents'
   import { effectiveHotkeys } from './settings/shortcutActions'
   import { findBarState } from './lib/editor/search/findBarState.svelte'
   import { editorKey, getEditor } from './lib/editor/editorRegistry.svelte'
@@ -392,6 +393,10 @@
     openSettings: () => openSettings(),
     toggleViewMode: (tabId) => tabManager.handleToggleViewMode(tabId),
     togglePropertiesPanel: () => pageType.toggle(),
+    // Mirrors the {#if} that mounts <PropertiesPanel> (the editor-tab view);
+    // see useGlobalHotkeyDispatch — toggling anywhere else is a silent no-op.
+    isPropertiesPanelAvailable: () =>
+      activeView === 'notes' || activeView === 'backlinks',
     closeTab: (tabId) => tabManager.handleCloseTab(tabId),
     cycleTab: (dir) => tabManager.handleCycleTab(dir)
   })
@@ -499,7 +504,7 @@
       pageType.open()
       pageType.requestTypeMenu()
     }
-    window.addEventListener('silt:assign-page-type', onAssignType)
+    window.addEventListener(ASSIGN_PAGE_TYPE_EVENT, onAssignType)
 
     return () => {
       hotkeyDispatch.detach()
@@ -509,7 +514,7 @@
       disposeTemplates()
       disposeUpdateStore()
       disposePageType()
-      window.removeEventListener('silt:assign-page-type', onAssignType)
+      window.removeEventListener(ASSIGN_PAGE_TYPE_EVENT, onAssignType)
       // Flush any pending tab-state persistence so the user's last
       // change survives a component unmount / app close (#142 hardening).
       tabManager.flushPendingPersist()

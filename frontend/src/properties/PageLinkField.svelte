@@ -52,9 +52,16 @@
   // Current refs as an array regardless of cardinality, for chip rendering.
   let refs = $derived(Array.isArray(value) ? value : value ? [value] : [])
 
+  // External sync (Obsidian / another tab creating a page) doesn't emit a
+  // navigation-catalog event this component could listen for, so the cache
+  // self-invalidates after a TTL — the next open re-fetches to pick up new
+  // pages without needing a remount.
+  const NAV_CACHE_TTL_MS = 30_000
+
   let loaded = false
+  let loadedAt = 0
   async function ensureLoaded(): Promise<void> {
-    if (loaded) return
+    if (loaded && Date.now() - loadedAt <= NAV_CACHE_TTL_MS) return
     loading = true
     loadError = ''
     try {
@@ -83,6 +90,7 @@
       }
       idx = indexNav(items)
       loaded = true
+      loadedAt = Date.now()
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e)
     } finally {
