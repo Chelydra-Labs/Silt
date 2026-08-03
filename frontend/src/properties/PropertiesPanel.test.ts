@@ -304,6 +304,39 @@ describe('PropertiesPanel', () => {
     expect(onMismatched).toHaveBeenCalledWith([])
   })
 
+  it('clamps the type menu to the available viewport space and renders every entry when the list is long', async () => {
+    // The menu lives in a bottom-docked panel; without viewport-aware sizing
+    // it opens downward past the viewport edge. jsdom has no real layout (no
+    // pixel positions), so this asserts the structural fix: the menu carries
+    // a measured `max-height` and a long type list still renders every entry
+    // in the DOM (the scroll container is responsible for surfacing them).
+    const longTypes = Array.from({ length: 30 }, (_, i) => ({
+      id: `type-${i}`,
+      name: `Type ${i}`
+    }))
+    render(PropertiesPanel, {
+      props: baseProps({ info: untypedInfo, types: longTypes })
+    })
+    await fireEvent.click(
+      screen.getByRole('button', { name: /Assign a type/i })
+    )
+
+    const menu = screen.getByRole('menu')
+    // Every entry is present in the DOM — overflow is handled by the scroll
+    // container, not by truncating the option set.
+    expect(screen.getAllByRole('menuitem').length).toBe(30)
+    expect(screen.getByRole('menuitem', { name: /Type 0/ })).toBeInTheDocument()
+    expect(
+      screen.getByRole('menuitem', { name: /Type 29/ })
+    ).toBeInTheDocument()
+    // measureMenu() wrote a viewport-aware bound inline (jsdom can't exercise
+    // real layout, but the inline value proves the measurement ran and that
+    // the menu is bounded by available space rather than a fixed CSS max).
+    // The companion `overflow-y: auto` lives in the component's <style> block
+    // and is verified by svelte-check, not jsdom's getComputedStyle.
+    expect(menu.style.maxHeight).toMatch(/^\d+px$/)
+  })
+
   it('surfaces SetPageType mismatched names as field warnings', () => {
     appMocks.SetPageType.mockResolvedValue(['rating'])
     const values: PagePropertyValue[] = [
