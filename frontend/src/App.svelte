@@ -8,13 +8,15 @@
     resolveDashboardOpenTarget
   } from './lib/navigationTargets'
   import type { SourceNavigationRef } from './lib/navigationTargets'
+  import { coerceIPCError } from './lib/ipcError'
   import {
     IsVaultInitialized,
     InitializeVault,
     CloseVault,
     GetSidebarWidth,
     SetSidebarWidth,
-    CreateStandaloneTask
+    CreateStandaloneTask,
+    RestoreExampleTypes
   } from '../bindings/silt/app.js'
   import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
@@ -72,6 +74,7 @@
   import DateGlance from './components/DateGlance.svelte'
   import PageTypePill from './properties/PageTypePill.svelte'
   import PropertiesPanel from './properties/PropertiesPanel.svelte'
+  import TypeEditorDialog from './properties/TypeEditorDialog.svelte'
   import { createPageTypeController } from './properties/pageTypeState.svelte'
   import TypeDashboard from './dashboards/TypeDashboard.svelte'
   import { toggleDateGlance } from './lib/dateGlanceState.svelte'
@@ -295,6 +298,45 @@
     if (!typeId) return
     dashboardType = typeId
     activeView = 'dashboard'
+  }
+
+  // In-app type editor modal. Mounted at the shell level so the same dialog
+  // serves the dashboard's "New type" header button, the dashboard's empty
+  // state, and the PropertiesPanel type-menu dead-end — one surface for
+  // "create a type from scratch". SaveType emits types:changed → the panel
+  // and dashboard refresh themselves, so onClose just closes.
+  let typeEditorOpen = $state(false)
+  function openTypeEditor(): void {
+    typeEditorOpen = true
+  }
+
+  // Restore the shipped example types (Book, Meeting). Idempotent server-side:
+  // a type whose id exists is left untouched, so this is safe to repeat. The
+  // returned ids distinguish "newly restored" from "already present" so the
+  // toast reflects what actually happened.
+  async function restoreExampleTypes(): Promise<void> {
+    try {
+      const ids = (await RestoreExampleTypes()) as string[] | null
+      if (ids && ids.length > 0) {
+        const names = ids
+          .map((id) => id.charAt(0).toUpperCase() + id.slice(1))
+          .join(', ')
+        pushNotification({
+          kind: 'success',
+          message: `Restored ${names}.`
+        })
+      } else {
+        pushNotification({
+          kind: 'info',
+          message: 'Example types are already present.'
+        })
+      }
+    } catch (e) {
+      pushNotification({
+        kind: 'error',
+        message: coerceIPCError(e).message
+      })
+    }
   }
   function openDashboardPage(locator: {
     source: string
@@ -1087,6 +1129,8 @@
                 onChanged={pageType.refresh}
                 onMismatched={pageType.setMismatched}
                 onError={pageType.setError}
+                onCreateType={openTypeEditor}
+                onRestoreExamples={restoreExampleTypes}
               />
             {:else}
               <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1165,6 +1209,8 @@
               typeName={dashboardType}
               onOpenPage={openDashboardPage}
               onBack={() => (activeView = 'notes')}
+              onCreateType={openTypeEditor}
+              onRestoreExamples={restoreExampleTypes}
             />
           {:else if activeView === 'tasks' || activeView === 'calendar' || activeView === 'kanban'}
             <PluginView
@@ -1322,6 +1368,11 @@
     open={settingsDialogs.showSettingsMismatch}
     onClose={settingsDialogs.closeSettingsMismatch}
     onConfirm={settingsDialogs.confirmSettingsMismatch}
+  />
+
+  <TypeEditorDialog
+    open={typeEditorOpen}
+    onClose={() => (typeEditorOpen = false)}
   />
 
   <GrantsMigrationDialog

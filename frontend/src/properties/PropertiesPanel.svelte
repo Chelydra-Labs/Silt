@@ -40,6 +40,13 @@
     onMismatched: (names: string[]) => void
     /** Field-level save failures (aria-live banner). */
     onError: (message: string) => void
+    /** Open the in-app type editor (the empty-state escape hatch). Optional —
+     *  defaults to no-op so the panel stays mountable in isolation (tests,
+     *  older call sites). */
+    onCreateType?: () => void
+    /** Restore the shipped example types (Book, Meeting). Optional for the
+     *  same reason as onCreateType. */
+    onRestoreExamples?: () => void
   }
 
   let {
@@ -56,7 +63,9 @@
     onClose,
     onChanged,
     onMismatched,
-    onError
+    onError,
+    onCreateType,
+    onRestoreExamples
   }: Props = $props()
 
   let panelRef = $state<HTMLDivElement | null>(null)
@@ -210,6 +219,19 @@
     menuButtonRef?.focus()
   }
 
+  // Empty-state escape hatches: open the in-app type editor or restore the
+  // shipped examples. Both close the menu first so the modal/IPC owns focus
+  // and the menu doesn't reopen on the next render.
+  function handleCreateType(): void {
+    menuOpen = false
+    onCreateType?.()
+  }
+
+  function handleRestoreExamples(): void {
+    menuOpen = false
+    onRestoreExamples?.()
+  }
+
   // Slash-command bridge: when the host bumps typeMenuRequest (and the panel is
   // open), open the type menu. The initial 0 value is treated as "no request"
   // so this doesn't fire on first mount.
@@ -309,7 +331,38 @@
             {#if typesLoading && types.length === 0}
               <div class="menu-hint" role="status">Loading…</div>
             {:else if types.length === 0}
+              <!--
+                The dead-end empty state: instead of just announcing "No types
+                defined." and leaving the user stuck, offer the two in-app
+                escapes (the editor and the example restore). Status role stays
+                so screen readers announce the situation; the menu items are
+                the actions.
+              -->
               <div class="menu-hint" role="status">No types defined.</div>
+              <button
+                type="button"
+                role="menuitem"
+                class="menu-item"
+                onclick={handleCreateType}
+              >
+                <span
+                  class="material-symbols-outlined text-icon-sm"
+                  aria-hidden="true">add_circle</span
+                >
+                Create type…
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                class="menu-item"
+                onclick={handleRestoreExamples}
+              >
+                <span
+                  class="material-symbols-outlined text-icon-sm"
+                  aria-hidden="true">restart_alt</span
+                >
+                Restore examples
+              </button>
             {:else}
               {#each types as t (t.id)}
                 <button

@@ -38,9 +38,17 @@
     }) => void
     /** Leave the dashboard (return to the editor). */
     onBack: () => void
+    /** Open the in-app type editor (header "New type" + empty-state action).
+     *  Optional so the dashboard stays mountable in isolation (tests). */
+    onCreateType?: () => void
+    /** Restore the shipped example types (Book, Meeting). Optional — the
+     *  dashboard is the type-management surface, so it owns both empty-state
+     *  escapes. */
+    onRestoreExamples?: () => void
   }
 
-  let { typeName, onOpenPage, onBack }: Props = $props()
+  let { typeName, onOpenPage, onBack, onCreateType, onRestoreExamples }: Props =
+    $props()
 
   let types = $state<TypeDef[]>([])
   let typesLoading = $state(true)
@@ -252,6 +260,19 @@
         {/if}
         {currentType?.name ?? 'Type dashboard'}
       </h1>
+      <div class="title-actions">
+        <button
+          type="button"
+          class="new-type-btn"
+          onclick={() => onCreateType?.()}
+        >
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true">add</span
+          >
+          New type
+        </button>
+      </div>
     </div>
     {#if currentType?.description}
       <p class="desc">{currentType.description}</p>
@@ -269,8 +290,32 @@
       >
       <h2 class="state-title">No types defined yet</h2>
       <p class="state-body">
-        Create a type definition in <code>.system/types/</code> to see its pages here.
+        Create a type to see its pages here, or restore the shipped examples.
       </p>
+      <div class="state-actions">
+        <button
+          type="button"
+          class="action-btn primary"
+          onclick={() => onCreateType?.()}
+        >
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true">add_circle</span
+          >
+          Create type
+        </button>
+        <button
+          type="button"
+          class="action-btn"
+          onclick={() => onRestoreExamples?.()}
+        >
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true">restart_alt</span
+          >
+          Restore examples
+        </button>
+      </div>
     </div>
   {:else}
     <TypeDashboardFilters
@@ -393,6 +438,31 @@
     align-items: center;
     gap: 0.5rem;
   }
+  .title-actions {
+    margin-left: auto;
+  }
+  .new-type-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.35rem 0.75rem;
+    border: 1px solid var(--color-accent-primary-start);
+    background: var(--color-accent-primary-glow);
+    color: var(--color-accent-primary-start);
+    border-radius: 0.375rem;
+    font-family: var(--font-body, sans-serif);
+    font-size: var(--text-type-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 120ms var(--transition-standard);
+  }
+  .new-type-btn:hover {
+    background: var(--color-hover);
+  }
+  .new-type-btn:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
   .back {
     display: inline-flex;
     align-items: center;
@@ -458,6 +528,45 @@
     font-size: var(--text-type-sm);
     margin: 0;
     max-width: 28rem;
+  }
+  .state-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 0.8rem;
+  }
+  .action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.35rem 0.75rem;
+    border: 1px solid var(--color-surface-panel-border);
+    background: var(--color-surface-app);
+    color: var(--color-text-primary);
+    border-radius: 0.375rem;
+    font-family: var(--font-body, sans-serif);
+    font-size: var(--text-type-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background 120ms var(--transition-standard),
+      color 120ms var(--transition-standard);
+  }
+  .action-btn:hover {
+    background: var(--color-hover);
+  }
+  .action-btn:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .action-btn.primary {
+    border-color: var(--color-accent-primary-start);
+    background: var(--color-accent-primary-glow);
+    color: var(--color-accent-primary-start);
+  }
+  .action-btn.primary:hover {
+    background: var(--color-hover);
   }
   .clear-btn {
     display: inline-flex;
@@ -527,12 +636,5 @@
   .view-toggle-btn:focus-visible {
     outline: 2px solid var(--color-border-focus);
     outline-offset: 1px;
-  }
-  code {
-    font-family: var(--font-mono, monospace);
-    font-size: var(--text-type-sm);
-    background: var(--color-surface-panel);
-    padding: 0.05rem 0.3rem;
-    border-radius: 0.25rem;
   }
 </style>
