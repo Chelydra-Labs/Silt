@@ -268,6 +268,10 @@ type App struct {
 	// renameHooks is package-local failure injection for rename transaction
 	// tests. Production leaves it nil and uses the real operations.
 	renameHooks *renameHooks
+	// frontmatterWriteAtomic, when non-nil, replaces parser.WriteFileAtomic
+	// inside writePageFrontmatterEdit so tests can inject a mid-write failure
+	// (MB-1 atomicity: turn-into must leave the file untouched on error).
+	frontmatterWriteAtomic func(path string, content []byte) error
 }
 
 // aiStreamSession type lives in app_ai_stream.go (#762). App fields

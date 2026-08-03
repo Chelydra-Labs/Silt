@@ -10,7 +10,7 @@
   // the editor is flex-1 so it shrinks and the reading context is preserved.
   import { tick } from 'svelte'
   import { fly } from 'svelte/transition'
-  import { ClearPageProperty, SetPageType } from '../../bindings/silt/app.js'
+  import { SetPageType, TurnIntoPage } from '../../bindings/silt/app.js'
   import { coerceIPCError } from '../lib/ipcError'
   import PropertyField from './PropertyField.svelte'
   import TurnIntoDialog from './TurnIntoDialog.svelte'
@@ -139,35 +139,23 @@
     const newId = turnInto?.newId ?? ''
     turnInto = null
     try {
-      // Clear orphans BEFORE the switch: ClearPageProperty resolves the CURRENT
-      // (old) schema, so it would reject an orphaned name once the new type
-      // is in place. Clearing first removes the keys while they're still known.
-      // Sequential on purpose: each call read-modify-writes the SAME markdown
-      // file, so concurrent clears would lose updates. Attempt ALL of them and
-      // collect failures — aborting the switch on the first error would leave
-      // the page half-cleaned with no indication of which clears landed.
-      if (clearOrphaned && orphanNames.length > 0) {
-        const failed: string[] = []
-        for (const p of orphanNames) {
-          try {
-            await ClearPageProperty(
-              locator.notebook,
-              locator.section,
-              locator.page,
-              p
-            )
-          } catch {
-            failed.push(p)
-          }
-        }
-        if (failed.length > 0) {
-          const noun = failed.length === 1 ? 'property' : 'properties'
-          throw new Error(
-            `Failed to clear ${failed.length} ${noun}: ${failed.join(', ')}`
-          )
-        }
-      }
-      await commitType(newId)
+      // Atomic turn-into: type rewrite + orphan clears land in ONE file write
+      // (TurnIntoPage). The old clear-loop-then-SetPageType path could delete
+      // orphan values under the OLD type when the final type write failed
+      // (sync-client lock / disk full) — silent data loss. On failure here
+      // the frontmatter is untouched.
+      const orphans = clearOrphaned ? orphanNames : []
+      const result = (await TurnIntoPage(
+        locator.notebook,
+        locator.section,
+        locator.page,
+        newId,
+        orphans
+      )) as string[] | null
+      onMismatched(result ?? [])
+      liveError = ''
+      onError('')
+      onChanged()
     } catch (e) {
       const message = coerceIPCError(e).message
       liveError = message

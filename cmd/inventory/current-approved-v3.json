@@ -1029,6 +1029,10 @@
         "signature": "TestAIConnection(which string) (AIProbeResult, error)"
       },
       {
+        "name": "TurnIntoPage",
+        "signature": "TurnIntoPage(ctx context.Context, notebook, section, page, typeName string, orphanProps []string) ([]string, error)"
+      },
+      {
         "name": "UninstallPlugin",
         "signature": "UninstallPlugin(pluginID string) error"
       },

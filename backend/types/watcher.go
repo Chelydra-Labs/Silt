@@ -15,7 +15,7 @@ import (
 // selfWriteWindow is how long after RegisterSelfWrite the watcher treats type
 // events as self-generated. It must cover a full logical save (atomic temp +
 // rename), which can emit several fsnotify events — the window suppresses all
-// of them. Mirrors templates.selfWriteWindow.
+// of them for the registered path only. Mirrors templates.selfWriteWindow.
 const selfWriteWindow = 500 * time.Millisecond
 
 // reloadDebounce coalesces a burst of fsnotify events into a single reload, so
@@ -36,11 +36,12 @@ const SelfWriteSuppressionTimeout = selfWriteWindow + reloadDebounce + 80*time.M
 // stay live without a restart — the same hot-reload posture as the config,
 // theme, and template engines.
 //
-// Self-loop prevention is a local time-window: the App calls RegisterSelfWrite
-// immediately before SaveType's atomic write, and the watcher ignores type
-// events for the window so Silt's own multi-event save cannot feed back into a
-// reload. If the save fails, UnregisterSelfWrite clears the window so a failed
-// write doesn't leave it open and silently drop a real external edit.
+// Self-loop prevention is path-scoped: the App calls RegisterSelfWrite(path)
+// immediately before SaveType's atomic write, and the watcher ignores events
+// for THAT path only within the window. Events for other type files still fire
+// so a coincident external/sync edit is not dropped. If the save fails,
+// UnregisterSelfWrite clears every armed path so a failed write doesn't leave
+// a window open and silently drop a real external edit.
 //
 // The watcher observes typesDir directly when it exists. When it does not yet
 // exist (no user types saved), it observes the .system parent so the eventual
@@ -55,7 +56,7 @@ type TypeWatcher struct {
 	onChange func() // invoked (from the watcher goroutine) after a settled external change
 
 	selfMu    sync.Mutex
-	selfUntil time.Time // suppress reloads until this time after RegisterSelfWrite
+	selfPaths map[string]time.Time // cleaned path → suppress-until (path-scoped)
 
 	watchingDir bool // whether typesDir has been added to the fsnotify watch
 
@@ -80,6 +81,7 @@ func NewTypeWatcher(typesDir string, onChange func()) (*TypeWatcher, error) {
 		watcher:   fw,
 		onChange:  onChange,
 		stopCh:    make(chan struct{}),
+		selfPaths: make(map[string]time.Time),
 	}
 	// Observe whichever of typesDir / parent currently exists. Both may be
 	// absent on a fresh vault — in that case the watcher starts idle and the
@@ -107,31 +109,56 @@ func (w *TypeWatcher) Start() {
 	go w.loop()
 }
 
-// RegisterSelfWrite records that Silt is about to write a type file itself, so
-// the resulting fsnotify event(s) are treated as self-generated and ignored for
-// selfWriteWindow. Must be called immediately before the write; pair with
-// UnregisterSelfWrite on the write's error path. Mirrors
-// templates.TemplateWatcher.RegisterSelfWrite.
-func (w *TypeWatcher) RegisterSelfWrite() {
+// RegisterSelfWrite records that Silt is about to write the given type file
+// itself, so the resulting fsnotify event(s) for THAT path are treated as
+// self-generated and ignored for selfWriteWindow. Events for other type files
+// still fire (path-scoped — a whole-directory window would drop coincident
+// external/sync edits). path should be the absolute on-disk path of the file
+// being written. Must be called immediately before the write; pair with
+// UnregisterSelfWrite on the write's error path.
+func (w *TypeWatcher) RegisterSelfWrite(path string) {
+	if path == "" {
+		return
+	}
 	w.selfMu.Lock()
-	w.selfUntil = time.Now().Add(selfWriteWindow)
+	if w.selfPaths == nil {
+		w.selfPaths = make(map[string]time.Time)
+	}
+	w.selfPaths[filepath.Clean(path)] = time.Now().Add(selfWriteWindow)
 	w.selfMu.Unlock()
 }
 
-func (w *TypeWatcher) isSelfWrite() bool {
+// isSelfWrite reports whether path is currently under a self-write suppression
+// window. Comparison is case-insensitive so case-insensitive filesystems that
+// report a differently-cased path still match. Expired entries are pruned.
+func (w *TypeWatcher) isSelfWrite(path string) bool {
 	w.selfMu.Lock()
 	defer w.selfMu.Unlock()
-	return time.Now().Before(w.selfUntil)
+	if len(w.selfPaths) == 0 {
+		return false
+	}
+	now := time.Now()
+	clean := filepath.Clean(path)
+	// Prune expired entries while scanning.
+	for p, until := range w.selfPaths {
+		if !now.Before(until) {
+			delete(w.selfPaths, p)
+			continue
+		}
+		if strings.EqualFold(p, clean) {
+			return true
+		}
+	}
+	return false
 }
 
-// UnregisterSelfWrite clears a self-write suppression window opened by
-// RegisterSelfWrite. Call it when a save that armed the window fails, so a
+// UnregisterSelfWrite clears every self-write suppression window opened by
+// RegisterSelfWrite. Call it when a save that armed a window fails, so a
 // failed write does not leave the window open and silently drop a legitimate
-// external edit. No-op if no window is open. Mirrors
-// templates.TemplateWatcher.UnregisterSelfWrite.
+// external edit. No-op if no window is open.
 func (w *TypeWatcher) UnregisterSelfWrite() {
 	w.selfMu.Lock()
-	w.selfUntil = time.Time{}
+	w.selfPaths = make(map[string]time.Time)
 	w.selfMu.Unlock()
 }
 
@@ -181,8 +208,9 @@ func (w *TypeWatcher) loop() {
 			if !w.isTypeFile(ev.Name) {
 				continue
 			}
-			// Ignore events Silt just produced itself.
-			if w.isSelfWrite() {
+			// Ignore events Silt just produced itself for THIS path only —
+			// other type files still fire so coincident external edits land.
+			if w.isSelfWrite(ev.Name) {
 				continue
 			}
 			if ev.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) == 0 {

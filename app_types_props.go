@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -139,7 +140,11 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 			return
 		}
 		a.tracker.RegisterWrite(filePath)
-		if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+		writeFn := parser.WriteFileAtomic
+		if a.frontmatterWriteAtomic != nil {
+			writeFn = a.frontmatterWriteAtomic
+		}
+		if err := writeFn(filePath, []byte(newContent)); err != nil {
 			writeErr = err
 			return
 		}
@@ -522,6 +527,92 @@ func (a *App) SetPageType(notebook, section, page, typeName string) ([]string, e
 
 	writeErr := a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, nil, func(currentContent string) (string, error) {
 		return parser.SetFrontmatterField(currentContent, "type", typeID)
+	})
+	if writeErr != nil {
+		return nil, writeErr
+	}
+	return mismatched, nil
+}
+
+// TurnIntoPage assigns (or clears) a page's note type AND deletes orphan
+// frontmatter keys in a SINGLE atomic write. The multi-step UI path (clear each
+// orphan via ClearPageProperty, then SetPageType) could leave values deleted
+// under the old type when the final type write failed — silent data loss under
+// a sync-client lock / disk-full / AV. This method is the turn-into path's
+// atomic replacement: either type+orphans all land, or the file is untouched.
+// keep-and-flag mismatches match SetPageType. orphanProps may be empty (plain
+// switch with no clears). An empty typeName clears the type.
+func (a *App) TurnIntoPage(ctx context.Context, notebook, section, page, typeName string, orphanProps []string) ([]string, error) {
+	_ = ctx
+	// Mirror SetPageType's RLock posture (vaultMu guards App fields; the file
+	// write is serialized by LockFileWrite inside writePageFrontmatterEdit).
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	a.wg.Add(1)
+	defer a.wg.Done()
+	if a.vaultPath == "" || a.db == nil {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+
+	_, meta, source, filePath, err := a.readPageFileForTypes(notebook, section, page)
+	if err != nil {
+		return nil, err
+	}
+
+	// Resolve the target type (or clear). Unknown type errors before any write.
+	var typeID string
+	var mismatched []string
+	clearType := strings.TrimSpace(typeName) == ""
+	if !clearType {
+		var rerr error
+		typeID, rerr = types.ResolveTypeID(a.typesDir(), typeName)
+		if rerr != nil {
+			return nil, fmt.Errorf("unknown type %q: %w", typeName, rerr)
+		}
+		newTD, gerr := types.GetType(a.typesDir(), typeID)
+		if gerr != nil {
+			return nil, fmt.Errorf("load type %q: %w", typeID, gerr)
+		}
+		// Keep-and-flag: same as SetPageType — values that fail the new schema
+		// stay on disk; their names are returned for the UI to warn.
+		for _, pdef := range newTD.Properties {
+			raw, present := lookupFrontmatter(meta.Frontmatter, pdef.Name)
+			if !present || raw == nil {
+				continue
+			}
+			if verr := types.ValidateValue(newTD, pdef.Name, raw); verr != nil {
+				mismatched = append(mismatched, pdef.Name)
+			}
+		}
+	}
+
+	// One edit pass: type rewrite + every orphan clear. writePageFrontmatterEdit
+	// only touches disk after edit returns, so a failure leaves the file byte-
+	// identical (type NOT switched, orphans NOT cleared).
+	writeErr := a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, nil, func(currentContent string) (string, error) {
+		content := currentContent
+		var e error
+		if clearType {
+			content, e = parser.ClearFrontmatterField(content, "type")
+		} else {
+			content, e = parser.SetFrontmatterField(content, "type", typeID)
+		}
+		if e != nil {
+			return "", e
+		}
+		for _, prop := range orphanProps {
+			prop = strings.TrimSpace(prop)
+			// Never clear the type key via the orphan list — type is handled
+			// above. Empty names are no-ops.
+			if prop == "" || strings.EqualFold(prop, "type") {
+				continue
+			}
+			content, e = parser.ClearFrontmatterField(content, prop)
+			if e != nil {
+				return "", e
+			}
+		}
+		return content, nil
 	})
 	if writeErr != nil {
 		return nil, writeErr

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1281,5 +1282,87 @@ func TestRestoreExampleTypes_IdempotentPreservesEdits(t *testing.T) {
 	}
 	if _, ok := td.Property("my_custom_field"); !ok {
 		t.Errorf("user's my_custom_field dropped from book schema: %+v", td.Properties)
+	}
+}
+
+// TestTurnIntoPage_AtomicSuccess pins the happy path: type rewrite + orphan
+// clears land together. After a successful turn-into, the page is the new type
+// and orphan keys are gone from frontmatter.
+func TestTurnIntoPage_AtomicSuccess(t *testing.T) {
+	app := newTestApp(t)
+	filePath, _ := writeBookPage(t, app)
+	if err := app.SaveType(meetingTypeSchema()); err != nil {
+		t.Fatalf("SaveType(meeting): %v", err)
+	}
+
+	// book page has title/author/status; meeting only declares attendees+status.
+	// Orphans under meeting: title, author (and rating if set).
+	mismatched, err := app.TurnIntoPage(context.Background(), "Books", "", "Dune", "meeting",
+		[]string{"title", "author", "rating"})
+	if err != nil {
+		t.Fatalf("TurnIntoPage: %v", err)
+	}
+	// status="available" fails meeting's number status → keep-and-flag.
+	if len(mismatched) != 1 || mismatched[0] != "status" {
+		t.Errorf("mismatched = %v, want [status]", mismatched)
+	}
+
+	raw, _ := os.ReadFile(filePath)
+	s := string(raw)
+	if !strings.Contains(s, "type: \"meeting\"") {
+		t.Errorf("type not switched to meeting:\n%s", s)
+	}
+	for _, orphan := range []string{"title:", "author:", "rating:"} {
+		if strings.Contains(s, orphan) {
+			t.Errorf("orphan key %q still present after turn-into:\n%s", orphan, s)
+		}
+	}
+	// status kept (keep-and-flag).
+	if !strings.Contains(s, "status:") {
+		t.Errorf("status was dropped (keep-and-flag violated):\n%s", s)
+	}
+}
+
+// TestTurnIntoPage_WriteFailureLeavesFileUntouched is the MB-1 atomicity
+// guarantee: when the atomic write fails after the edit is computed, the
+// on-disk frontmatter must be byte-identical — type NOT switched, orphans NOT
+// cleared. The multi-write UI path could leave values deleted under the old
+// type when SetPageType failed after ClearPageProperty succeeded.
+func TestTurnIntoPage_WriteFailureLeavesFileUntouched(t *testing.T) {
+	app := newTestApp(t)
+	filePath, _ := writeBookPage(t, app)
+	if err := app.SaveType(meetingTypeSchema()); err != nil {
+		t.Fatalf("SaveType(meeting): %v", err)
+	}
+	before, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read before: %v", err)
+	}
+
+	// Inject a write failure after the edit is computed (inside the file lock).
+	app.frontmatterWriteAtomic = func(path string, content []byte) error {
+		return fmt.Errorf("simulated disk full / sync-client lock")
+	}
+	t.Cleanup(func() { app.frontmatterWriteAtomic = nil })
+
+	_, err = app.TurnIntoPage(context.Background(), "Books", "", "Dune", "meeting",
+		[]string{"title", "author"})
+	if err == nil {
+		t.Fatal("TurnIntoPage should surface the write failure")
+	}
+	if !strings.Contains(err.Error(), "simulated disk full") {
+		t.Errorf("error = %q, want it to mention the injected failure", err.Error())
+	}
+
+	after, _ := os.ReadFile(filePath)
+	if string(after) != string(before) {
+		t.Errorf("frontmatter mutated despite write failure (MB-1 data-loss path).\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	// Explicitly: still book, orphans still present.
+	if !strings.Contains(string(after), "type: \"book\"") {
+		t.Error("type was switched despite write failure")
+	}
+	if !strings.Contains(string(after), "title:") || !strings.Contains(string(after), "author:") {
+		t.Error("orphan values were cleared despite write failure")
 	}
 }

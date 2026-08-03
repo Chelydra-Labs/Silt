@@ -4,11 +4,11 @@
   // fares under the new schema before committing. Blocking modal — unlike the
   // properties panel, this is `aria-modal="true"` with a Tab focus trap.
   //
-  // The backend's SetPageType keeps every value as-is and re-validates against
+  // The backend's TurnIntoPage keeps every value as-is and re-validates against
   // the new schema (keep-and-flag); this dialog is an advisory preview of that
-  // outcome, plus an opt-in to clear orphaned properties. Clears run BEFORE the
-  // type switch because ClearPageProperty resolves the CURRENT (old) schema and
-  // would reject an orphaned name once the new type is in place.
+  // outcome, plus an opt-in to clear orphaned properties. Type rewrite + orphan
+  // clears land in one atomic write (TurnIntoPage) so a failed switch cannot
+  // leave values deleted under the old type.
   import { tick } from 'svelte'
   import { GetType, GetPageProperties } from '../../bindings/silt/app.js'
   import { coerceIPCError } from '../lib/ipcError'

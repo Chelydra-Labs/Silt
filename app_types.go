@@ -75,11 +75,14 @@ func (a *App) SaveType(td types.TypeDef) error {
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
+	typePath := filepath.Join(a.typesDir(), td.ID+".yaml")
 	if a.typeWatcher != nil {
-		a.typeWatcher.RegisterSelfWrite()
+		// Path-scoped: only suppress events for this file so a coincident
+		// external edit to another type still reaches onChange.
+		a.typeWatcher.RegisterSelfWrite(typePath)
 	}
 	if a.tracker != nil {
-		a.tracker.RegisterWrite(filepath.Join(a.typesDir(), td.ID+".yaml"))
+		a.tracker.RegisterWrite(typePath)
 	}
 	if err := types.SaveType(a.typesDir(), &td); err != nil {
 		if a.typeWatcher != nil {
@@ -112,11 +115,12 @@ func (a *App) DeleteType(id string) error {
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
+	typePath := filepath.Join(a.typesDir(), id+".yaml")
 	if a.typeWatcher != nil {
-		a.typeWatcher.RegisterSelfWrite()
+		a.typeWatcher.RegisterSelfWrite(typePath)
 	}
 	if a.tracker != nil {
-		a.tracker.RegisterWrite(filepath.Join(a.typesDir(), id+".yaml"))
+		a.tracker.RegisterWrite(typePath)
 	}
 	if err := types.DeleteType(a.typesDir(), id); err != nil {
 		if a.typeWatcher != nil {
@@ -189,18 +193,19 @@ func (a *App) RestoreExampleTypes(ctx context.Context) ([]string, error) {
 			existing[t.ID] = true
 		}
 	}
-	// One self-write window covers the whole batch — every write here is Silt's
-	// own and lands within the watcher's suppression window.
-	if a.typeWatcher != nil {
-		a.typeWatcher.RegisterSelfWrite()
-	}
 	var created []string
 	for _, td := range vault.ExampleTypes() {
 		if existing[td.ID] {
 			continue
 		}
+		typePath := filepath.Join(a.typesDir(), td.ID+".yaml")
+		// Path-scoped per file so a coincident external edit to another type
+		// is not dropped while we restore the examples.
+		if a.typeWatcher != nil {
+			a.typeWatcher.RegisterSelfWrite(typePath)
+		}
 		if a.tracker != nil {
-			a.tracker.RegisterWrite(filepath.Join(a.typesDir(), td.ID+".yaml"))
+			a.tracker.RegisterWrite(typePath)
 		}
 		if err := types.SaveType(a.typesDir(), td); err != nil {
 			if a.typeWatcher != nil {

@@ -11,7 +11,11 @@ import {
 const appMocks = vi.hoisted(() =>
   createAppIpcMocks({
     SetPageProperty: vi.fn().mockResolvedValue(undefined),
-    SetPageType: vi.fn().mockResolvedValue([])
+    SetPageType: vi.fn().mockResolvedValue([]),
+    TurnIntoPage: vi.fn().mockResolvedValue([]),
+    ClearPageProperty: vi.fn().mockResolvedValue(undefined),
+    GetType: vi.fn().mockResolvedValue(null),
+    GetPageProperties: vi.fn().mockResolvedValue([])
   })
 )
 vi.mock('$silt-app', () => appMocks)
@@ -60,6 +64,10 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   appMocks.SetPageProperty.mockReset().mockResolvedValue(undefined)
   appMocks.SetPageType.mockReset().mockResolvedValue([])
+  appMocks.TurnIntoPage.mockReset().mockResolvedValue([])
+  appMocks.ClearPageProperty.mockReset().mockResolvedValue(undefined)
+  appMocks.GetType.mockReset().mockResolvedValue(null)
+  appMocks.GetPageProperties.mockReset().mockResolvedValue([])
 })
 
 afterEach(cleanup)
@@ -278,15 +286,96 @@ describe('PropertiesPanel', () => {
     ).toBe('Movie')
 
     await fireEvent.change(select, { target: { value: 'book' } })
+    // Untyped → typed has nothing to map, so it assigns via SetPageType
+    // directly (no turn-into dialog / TurnIntoPage).
     expect(appMocks.SetPageType).toHaveBeenCalledWith(
       'Work',
       'Projects',
       'Plan',
       'book'
     )
+    expect(appMocks.TurnIntoPage).not.toHaveBeenCalled()
     // No mismatches → empty list forwarded.
     await tick()
     expect(onMismatched).toHaveBeenCalledWith([])
+  })
+
+  it('typed→typed turn-into confirms via atomic TurnIntoPage (not clear-loop + SetPageType)', async () => {
+    // When a typed page switches type, TurnIntoDialog opens; confirming must
+    // call TurnIntoPage once with (typeID, orphans) so type+clears are atomic.
+    // The multi-write clear-then-SetPageType path is the MB-1 data-loss bug.
+    appMocks.GetType.mockImplementation(async (id: string) => {
+      if (id === 'book') return bookInfo.type
+      if (id === 'movie')
+        return {
+          id: 'movie',
+          name: 'Movie',
+          properties: [{ name: 'title', type: 'text' }]
+        }
+      return null
+    })
+    appMocks.GetPageProperties.mockResolvedValue([
+      {
+        name: 'rating',
+        label: 'Rating',
+        type: 'number',
+        value: 5,
+        isSet: true,
+        required: false
+      }
+    ])
+
+    const onChanged = vi.fn()
+    render(PropertiesPanel, {
+      props: baseProps({
+        info: bookInfo,
+        values: [
+          {
+            name: 'rating',
+            label: 'Rating',
+            type: 'number',
+            value: 5,
+            isSet: true,
+            required: false
+          }
+        ],
+        types: [
+          { id: 'book', name: 'Book' },
+          { id: 'movie', name: 'Movie' }
+        ],
+        onChanged
+      })
+    })
+
+    const select = screen.getByRole('combobox', { name: 'Page type' })
+    await fireEvent.change(select, { target: { value: 'movie' } })
+
+    // Dialog should open (blocking turn-into preview).
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: /Turn into/i })).toBeTruthy()
+    })
+
+    // Confirm without clearing orphans → TurnIntoPage(newId, []).
+    const confirm = await screen.findByRole('button', {
+      name: /Confirm|Turn into/i
+    })
+    await fireEvent.click(confirm)
+
+    await waitFor(() => {
+      expect(appMocks.TurnIntoPage).toHaveBeenCalled()
+    })
+    expect(appMocks.ClearPageProperty).not.toHaveBeenCalled()
+    // SetPageType is only for untyped→typed / remove-type direct paths.
+    expect(appMocks.SetPageType).not.toHaveBeenCalled()
+    expect(appMocks.TurnIntoPage).toHaveBeenCalledWith(
+      'Work',
+      'Projects',
+      'Plan',
+      'movie',
+      expect.any(Array)
+    )
+    await tick()
+    expect(onChanged).toHaveBeenCalled()
   })
 
   it('fires onCreateType when the Create type button is clicked', async () => {

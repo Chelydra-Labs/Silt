@@ -89,8 +89,9 @@ func TestTypeWatcher_SelfWriteSuppressed(t *testing.T) {
 	w.Start()
 	defer w.Close()
 
-	w.RegisterSelfWrite()
-	if err := writeFile(filepath.Join(typesDir, "demo.yaml"), validUserType+"\n# self\n"); err != nil {
+	demoPath := filepath.Join(typesDir, "demo.yaml")
+	w.RegisterSelfWrite(demoPath)
+	if err := writeFile(demoPath, validUserType+"\n# self\n"); err != nil {
 		t.Fatalf("self-write: %v", err)
 	}
 	select {
@@ -98,6 +99,42 @@ func TestTypeWatcher_SelfWriteSuppressed(t *testing.T) {
 		t.Error("self-write should be suppressed, but callback fired")
 	case <-time.After(SelfWriteSuppressionTimeout):
 		// Good — no callback within the suppression window.
+	}
+}
+
+// TestTypeWatcher_SelfWritePathScoped pins NB-4: a self-write to type A must
+// NOT suppress an external edit to type B arriving inside the same window.
+// Whole-directory suppression dropped coincident sync/external edits.
+func TestTypeWatcher_SelfWritePathScoped(t *testing.T) {
+	dir := t.TempDir()
+	typesDir := filepath.Join(dir, "types")
+	writeTypeFile(t, typesDir, "a.yaml", validUserType)
+	writeTypeFile(t, typesDir, "b.yaml", validUserType)
+
+	changed := make(chan struct{}, 8)
+	w, err := NewTypeWatcher(typesDir, func() {
+		select {
+		case changed <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("NewTypeWatcher: %v", err)
+	}
+	w.Start()
+	defer w.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	// Arm suppression for A only, then write B externally — B must fire.
+	w.RegisterSelfWrite(filepath.Join(typesDir, "a.yaml"))
+	if err := writeFile(filepath.Join(typesDir, "b.yaml"), validUserType+"\n# external-b\n"); err != nil {
+		t.Fatalf("external write B: %v", err)
+	}
+	select {
+	case <-changed:
+		// expected — B is not under the self-write window
+	case <-time.After(SelfWriteSuppressionTimeout):
+		t.Fatal("external edit to type B was suppressed by a self-write window on type A")
 	}
 }
 
@@ -120,7 +157,7 @@ func TestTypeWatcher_UnregisterSelfWrite_ClearsWindow(t *testing.T) {
 	defer w.Close()
 
 	// Arm then clear (a failed save's cleanup), then an external edit must land.
-	w.RegisterSelfWrite()
+	w.RegisterSelfWrite(filepath.Join(typesDir, "demo.yaml"))
 	w.UnregisterSelfWrite()
 	if err := writeFile(filepath.Join(typesDir, "demo.yaml"), validUserType+"\n# external\n"); err != nil {
 		t.Fatalf("external write: %v", err)
