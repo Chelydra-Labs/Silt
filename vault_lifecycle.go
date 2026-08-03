@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"silt/backend/templates"
+	"silt/backend/types"
 )
 
 // teardownVaultServices closes and nils every vault-scoped service in the
@@ -73,6 +74,11 @@ func (a *App) teardownVaultServices() {
 	a.quarantinedLinks = nil
 	a.configMu.Unlock()
 	templates.ResetPluginRegistry()
+	// Symmetry with the template registry reset: the global types cache
+	// otherwise retains one entry per distinct vault path for process
+	// lifetime, so a reopened vault could read a stale schema until the
+	// dir-mtime check fires.
+	types.InvalidateTypesCache()
 }
 
 // stopWatchersOutsideLock closes the type watcher and the monitor watcher

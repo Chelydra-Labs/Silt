@@ -33,6 +33,13 @@ type TypeLoadError struct {
 // ListTypesResult is returned by ListTypes: every valid type plus any per-file
 // load errors (so the type manager can name the broken file) and forward-compat
 // warnings.
+//
+// Immutability contract: the cache (cache.go) shares ONE *ListTypesResult
+// instance across every caller of CachedListTypes for a given types dir, so
+// callers MUST treat the struct and its slices as read-only. Mutating the
+// returned Types/Errors/Warnings slices would corrupt the cache for every
+// concurrent reader and race under -race. Defensive copies belong in the
+// caller, not in the cache (a shallow copy would not protect element fields).
 type ListTypesResult struct {
 	Types    []TypeDef       `json:"types"`
 	Errors   []TypeLoadError `json:"errors"`

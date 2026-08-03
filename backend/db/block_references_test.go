@@ -606,6 +606,79 @@ func TestBlockReferences_IndexerClearSourceBlocksCascades(t *testing.T) {
 	}
 }
 
+// TestClearSourceBlocks_ClearsTypedProjection pins the transactional cleanup
+// contract for UnlinkNotebook: ClearSourceBlocks must drop not only the source's
+// blocks rows but also its page_types/page_properties projection rows in the
+// SAME transaction, so an unlinked notebook's pages cannot linger as ghosts in
+// the type dashboards (QueryPagesByType does not JOIN blocks). The block_references
+// cascade is covered by TestBlockReferences_IndexerClearSourceBlocksCascades; this
+// test asserts the typed-projection tables specifically.
+func TestClearSourceBlocks_ClearsTypedProjection(t *testing.T) {
+	dm := newTestDB(t)
+
+	// Seed one block for the linked source and project a typed page for it.
+	idx(t, dm, "linked:ext", "Work", "Sprint", "Board", []parser.ParsedBlock{
+		noteBlock(uuidA, "linked content"),
+	})
+	if err := dm.IndexPageProjection("linked:ext", "Work", "Sprint", "Board", "task",
+		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}},
+	); err != nil {
+		t.Fatalf("IndexPageProjection(linked): %v", err)
+	}
+	// A vault-source page of the same type must survive the linked clear.
+	if err := dm.IndexPageProjection("vault", "Work", "Notes", "Daily", "task",
+		[]ProjectedProperty{{Property: "owner", ValueText: "Bob", ValueSort: "Bob", ValueType: "text"}},
+	); err != nil {
+		t.Fatalf("IndexPageProjection(vault): %v", err)
+	}
+
+	// Sanity-check the seed: each of the three tables has the linked row.
+	for _, table := range []string{"blocks", "page_types", "page_properties"} {
+		var c int
+		if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM "+table+" WHERE source = ?", "linked:ext").Scan(&c); err != nil {
+			t.Fatalf("seed count %s: %v", table, err)
+		}
+		if c == 0 {
+			t.Fatalf("seed failed: %s has 0 rows for linked:ext", table)
+		}
+	}
+
+	if err := dm.ClearSourceBlocks("linked:ext"); err != nil {
+		t.Fatalf("ClearSourceBlocks: %v", err)
+	}
+
+	// All three tables must be empty for the cleared source.
+	for _, table := range []string{"blocks", "page_types", "page_properties"} {
+		var c int
+		if err := dm.SQLDB().QueryRow("SELECT COUNT(*) FROM "+table+" WHERE source = ?", "linked:ext").Scan(&c); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if c != 0 {
+			t.Errorf("expected 0 rows in %s for linked:ext after ClearSourceBlocks, got %d", table, c)
+		}
+	}
+
+	// The vault projection survives — only the linked source was cleared.
+	pages, err := dm.QueryPagesByType("task")
+	if err != nil {
+		t.Fatalf("QueryPagesByType: %v", err)
+	}
+	if len(pages) != 1 {
+		t.Fatalf("expected only the vault page to remain, got %d pages", len(pages))
+	}
+	if pages[0].Source != "vault" {
+		t.Errorf("remaining page source = %q, want vault", pages[0].Source)
+	}
+
+	// ClearSourceBlocks("") is a documented no-op (never clears the vault).
+	if err := dm.ClearSourceBlocks(""); err != nil {
+		t.Errorf("ClearSourceBlocks(\"\") should be a no-op: %v", err)
+	}
+	if pages, err := dm.QueryPagesByType("task"); err != nil || len(pages) != 1 {
+		t.Errorf("empty-source clear should not wipe the vault projection: pages=%v err=%v", pages, err)
+	}
+}
+
 // TestBlockReferences_IndexerTargetDeletionKeepsEdge asserts the
 // source-only-FK asymmetry from the indexer side: deleting the target
 // block from `blocks` does NOT cascade through block_references. The edge

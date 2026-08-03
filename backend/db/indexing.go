@@ -919,18 +919,27 @@ func (dm *DatabaseManager) ClearSourceBlocks(source string) error {
 	if source == "" {
 		return nil
 	}
-	_, err = db.Exec("DELETE FROM blocks WHERE source = ?", source)
-	if err == nil {
-		dm.invalidateUnlinkedScanCache()
-		// Also clear the typed-notes projection for this source so an unlinked
-		// notebook's pages do not linger in the type dashboards. Same
-		// handle — re-entering handle() here would deadlock on dbMu.
-		if _, perr := db.Exec("DELETE FROM page_types WHERE source = ?", source); perr != nil {
-			log.Printf("db: clear page_types for source %s: %v", source, perr)
-		}
-		if _, perr := db.Exec("DELETE FROM page_properties WHERE source = ?", source); perr != nil {
-			log.Printf("db: clear page_properties for source %s: %v", source, perr)
+	// Mirror ClearFileBlocks: wrap the blocks + page_types + page_properties
+	// deletes in one transaction so a mid-failure (blocks gone but a
+	// projection delete errors) cannot orphan the source as dashboard ghosts
+	// — QueryPagesByType does not JOIN blocks.
+	sqlTx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer sqlTx.Rollback()
+	for _, q := range []string{
+		"DELETE FROM blocks WHERE source = ?",
+		"DELETE FROM page_types WHERE source = ?",
+		"DELETE FROM page_properties WHERE source = ?",
+	} {
+		if _, err := sqlTx.Exec(q, source); err != nil {
+			return err
 		}
 	}
-	return err
+	if err := sqlTx.Commit(); err != nil {
+		return err
+	}
+	dm.invalidateUnlinkedScanCache()
+	return nil
 }

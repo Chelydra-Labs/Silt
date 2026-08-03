@@ -44,6 +44,9 @@ var globalTypeCache = &typeCache{
 // returns the empty result (fresh vault). A genuine I/O error propagates.
 // Mirrors templates.CachedGetTemplate's freshness gate, adapted to whole-dir
 // granularity.
+//
+// The returned *ListTypesResult is shared across callers — treat it as
+// read-only (see the ListTypesResult immutability contract).
 func CachedListTypes(typesDir string) (*ListTypesResult, error) {
 	if typesDir == "" {
 		return ListTypes(typesDir)
