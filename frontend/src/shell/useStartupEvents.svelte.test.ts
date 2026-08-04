@@ -13,7 +13,8 @@ const mocks = vi.hoisted(() => ({
   eventsOn: vi.fn(),
   MarkFrontendReady: vi.fn().mockResolvedValue(undefined),
   GetStartupEvents: vi.fn().mockResolvedValue([]),
-  ResolveQuarantinedLinks: vi.fn().mockResolvedValue([])
+  ResolveQuarantinedLinks: vi.fn().mockResolvedValue([]),
+  pushNotification: vi.fn()
 }))
 
 vi.mock('@wailsio/runtime', () => ({
@@ -36,6 +37,12 @@ vi.mock('$silt-app', () =>
   })
 )
 
+// pushNotification is imported directly by the controller; stub so incomplete
+// navigate-to-block feedback is observable without the real toast store.
+vi.mock('../notifications/store.svelte', () => ({
+  pushNotification: mocks.pushNotification
+}))
+
 // Avoid pulling the whole EditorUtilityBar component; only its event constant
 // is needed by the controller.
 vi.mock('../components/editor/EditorUtilityBar.svelte', () => ({
@@ -46,6 +53,9 @@ import {
   createStartupEvents,
   type StartupEventsDeps
 } from './useStartupEvents.svelte'
+
+const INCOMPLETE_BLOCK_NAV_TOAST =
+  "Couldn't open that block — the link is missing page information."
 
 interface HandlerBus {
   handlers: Map<string, (...args: unknown[]) => void>
@@ -257,7 +267,7 @@ describe('useStartupEvents (#768)', () => {
   })
 
   // #875: AI citation clicks must deliver a full page locator so handleSearchJump
-  // can openPage. blockId-only detail is the regression that shipped empty chrome.
+  // can openPage. #877: incomplete detail must not jump and must toast.
   it('navigate-to-block with full locator calls handleSearchJump with notebook/section/page/blockId', () => {
     const bus = makeBus()
     wireEventsOn(bus)
@@ -288,9 +298,52 @@ describe('useStartupEvents (#768)', () => {
       'block-1'
     )
     expect(deps.openTasksView).not.toHaveBeenCalled()
+    expect(mocks.pushNotification).not.toHaveBeenCalled()
   })
 
-  it('navigate-to-block with only blockId does not open a resolvable page locator', () => {
+  it('navigate-to-block with empty section (root page) still jumps', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-block', {
+        detail: {
+          notebook: 'Work',
+          section: '',
+          page: 'RootNote',
+          blockId: 'block-root'
+        }
+      })
+    )
+
+    expect(deps.handleSearchJump).toHaveBeenCalledTimes(1)
+    expect(deps.handleSearchJump).toHaveBeenCalledWith(
+      {
+        source: undefined,
+        notebook: 'Work',
+        section: '',
+        page: 'RootNote'
+      },
+      undefined,
+      'block-root'
+    )
+    expect(mocks.pushNotification).not.toHaveBeenCalled()
+  })
+
+  function expectIncompleteBlockNavRejected(deps: StartupEventsDeps): void {
+    expect(deps.handleSearchJump).not.toHaveBeenCalled()
+    expect(deps.openTasksView).not.toHaveBeenCalled()
+    expect(mocks.pushNotification).toHaveBeenCalledWith({
+      kind: 'info',
+      message: INCOMPLETE_BLOCK_NAV_TOAST,
+      autoDismissMs: 5000
+    })
+  }
+
+  it('navigate-to-block with only blockId does not jump and toasts', () => {
     const bus = makeBus()
     wireEventsOn(bus)
     const { deps } = makeDeps()
@@ -303,18 +356,60 @@ describe('useStartupEvents (#768)', () => {
       })
     )
 
-    // Handler still invokes jump with an empty locator — the bug surface that
-    // left App on empty chrome. Callers must supply notebook/section/page.
-    expect(deps.handleSearchJump).toHaveBeenCalledWith(
-      {
-        source: undefined,
-        notebook: undefined,
-        section: '',
-        page: undefined
-      },
-      undefined,
-      'orphan-block'
+    expectIncompleteBlockNavRejected(deps)
+  })
+
+  it('navigate-to-block missing page does not jump and toasts', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-block', {
+        detail: { notebook: 'Work', section: 'Notes', blockId: 'b1' }
+      })
     )
+
+    expectIncompleteBlockNavRejected(deps)
+  })
+
+  it('navigate-to-block missing notebook does not jump and toasts', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-block', {
+        detail: { page: 'Plan', section: 'Notes', blockId: 'b1' }
+      })
+    )
+
+    expectIncompleteBlockNavRejected(deps)
+  })
+
+  it('navigate-to-block with empty-string notebook/page does not jump and toasts', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-block', {
+        detail: {
+          notebook: '',
+          section: 'Notes',
+          page: '',
+          blockId: 'b1'
+        }
+      })
+    )
+
+    expectIncompleteBlockNavRejected(deps)
   })
 
   it('dispose() invokes every captured off function + drops window listeners', () => {

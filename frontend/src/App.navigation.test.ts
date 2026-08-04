@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   adaptSearchNavigation,
   createRecentPageRecorder,
+  hasPageLocator,
   resolveBreadcrumbSectionSelection,
   resolveDashboardOpenTarget,
   resolveSourceNavigationTarget
@@ -177,5 +178,17 @@ describe('App navigation coordination', () => {
     if (linked.kind === 'blocked') {
       expect(linked.reason).toBeTruthy()
     }
+  })
+
+  it('hasPageLocator requires notebook and page; section may be empty', () => {
+    expect(hasPageLocator({ notebook: 'Work', page: 'Plan' })).toBe(true)
+    expect(hasPageLocator({ notebook: 'Work', section: '', page: 'Root' })).toBe(
+      true
+    )
+    expect(hasPageLocator({ notebook: 'Work', page: '' })).toBe(false)
+    expect(hasPageLocator({ notebook: '', page: 'Plan' })).toBe(false)
+    expect(hasPageLocator({ page: 'Plan' })).toBe(false)
+    expect(hasPageLocator({ notebook: 'Work' })).toBe(false)
+    expect(hasPageLocator({})).toBe(false)
   })
 })
