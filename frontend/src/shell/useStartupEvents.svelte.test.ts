@@ -56,6 +56,8 @@ import {
 
 const INCOMPLETE_BLOCK_NAV_TOAST =
   "Couldn't open that block — the link is missing page information."
+const INCOMPLETE_PAGE_NAV_TOAST =
+  "Couldn't open that page — the link is missing page information."
 
 interface HandlerBus {
   handlers: Map<string, (...args: unknown[]) => void>
@@ -410,6 +412,58 @@ describe('useStartupEvents (#768)', () => {
     )
 
     expectIncompleteBlockNavRejected(deps)
+  })
+
+  it('navigate-to-page with full locator calls handleSearchJump', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-page', {
+        detail: {
+          notebook: 'Work',
+          section: 'Notes',
+          page: 'Plan'
+        }
+      })
+    )
+
+    expect(deps.handleSearchJump).toHaveBeenCalledTimes(1)
+    expect(deps.handleSearchJump).toHaveBeenCalledWith(
+      {
+        source: undefined,
+        notebook: 'Work',
+        section: 'Notes',
+        page: 'Plan'
+      },
+      '',
+      ''
+    )
+    expect(mocks.pushNotification).not.toHaveBeenCalled()
+  })
+
+  it('navigate-to-page missing notebook/page does not jump and toasts', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-page', {
+        detail: { notebook: 'Work', section: 'Notes' }
+      })
+    )
+
+    expect(deps.handleSearchJump).not.toHaveBeenCalled()
+    expect(mocks.pushNotification).toHaveBeenCalledWith({
+      kind: 'info',
+      message: INCOMPLETE_PAGE_NAV_TOAST,
+      autoDismissMs: 5000
+    })
   })
 
   it('dispose() invokes every captured off function + drops window listeners', () => {

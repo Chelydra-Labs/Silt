@@ -119,9 +119,10 @@ window.dispatchEvent(new CustomEvent('navigate-to-block', {
 
 **Required fields:** `notebook` and `page` must be non-empty. `section` may be
 `''` for a root-level page. `blockId`, `date`, and `source` are optional
-(contextual). Incomplete detail is ignored: the shell does not open empty
-notebook chrome, logs a warning, and shows a short notification so the user
-is not left without feedback.
+(contextual). The same `notebook` + `page` requirement applies to
+`navigate-to-page`. Incomplete detail on either event is ignored: the shell
+does not open empty notebook chrome, logs a warning, and shows a short
+notification so the user is not left without feedback.
 
 ---
 

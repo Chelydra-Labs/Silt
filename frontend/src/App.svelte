@@ -4,6 +4,7 @@
   import {
     resolveBreadcrumbSectionSelection,
     adaptSearchNavigation,
+    hasPageLocator,
     resolveSourceNavigationTarget,
     resolveDashboardOpenTarget
   } from './lib/navigationTargets'
@@ -648,8 +649,8 @@
   ) {
     const { notebook, section, page } = locator
     // Defense in depth for incomplete locators (#877). Toast lives on the
-    // navigate-to-block bus edge so we only warn here — no second toast.
-    if (!notebook || !page) {
+    // navigate-to-block/page bus edge so we only warn here — no second toast.
+    if (!hasPageLocator(locator)) {
       console.warn('handleSearchJump ignored: missing notebook/page', {
         notebook,
         section,

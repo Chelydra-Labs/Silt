@@ -182,9 +182,9 @@ describe('App navigation coordination', () => {
 
   it('hasPageLocator requires notebook and page; section may be empty', () => {
     expect(hasPageLocator({ notebook: 'Work', page: 'Plan' })).toBe(true)
-    expect(hasPageLocator({ notebook: 'Work', section: '', page: 'Root' })).toBe(
-      true
-    )
+    expect(
+      hasPageLocator({ notebook: 'Work', section: '', page: 'Root' })
+    ).toBe(true)
     expect(hasPageLocator({ notebook: 'Work', page: '' })).toBe(false)
     expect(hasPageLocator({ notebook: '', page: 'Plan' })).toBe(false)
     expect(hasPageLocator({ page: 'Plan' })).toBe(false)
