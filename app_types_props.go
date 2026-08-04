@@ -430,15 +430,17 @@ func (a *App) validateOneRelationTarget(source, property, ref, wantType string) 
 			return types.ValidationError{Field: property, Message: fmt.Sprintf("relation target %q does not exist", ref)}
 		}
 	} else {
-		// Bare page name: resolve to the first indexed page with that leaf.
-		rnb, rsec, ok, err := a.db.FindPageByLeaf(source, page)
+		// Bare page name: resolve via page_fold (case-insensitive leaf match,
+		// same model as wiki-link / unlinked lookup). Use the canonical page
+		// spelling from the index for the subsequent projection lookup.
+		rnb, rsec, rpage, ok, err := a.db.FindPageByLeaf(source, page)
 		if err != nil {
 			return fmt.Errorf("validate relation target %q: %w", ref, err)
 		}
 		if !ok {
 			return types.ValidationError{Field: property, Message: fmt.Sprintf("relation target %q does not exist", ref)}
 		}
-		nb, sec = rnb, rsec
+		nb, sec, page = rnb, rsec, rpage
 	}
 	if wantType != "" {
 		proj, err := a.db.GetPageProjection(source, nb, sec, page)

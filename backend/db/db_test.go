@@ -53,6 +53,44 @@ func sampleNoteBlock(id string, line int) parser.ParsedBlock {
 	}
 }
 
+// TestFindPageByLeaf_CaseInsensitive pins relation bare-name resolution via
+// page_fold: a case-variant leaf returns the canonical page spelling so
+// callers can look up page_types with the exact indexed key.
+func TestFindPageByLeaf_CaseInsensitive(t *testing.T) {
+	dm := newTestDB(t)
+	blocks := []parser.ParsedBlock{
+		sampleNoteBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1),
+	}
+	if err := dm.IndexFileBlocks("vault", "People", "", "Alice", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks: %v", err)
+	}
+
+	nb, sec, page, ok, err := dm.FindPageByLeaf("vault", "alice")
+	if err != nil {
+		t.Fatalf("FindPageByLeaf: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected leaf match for alice → Alice")
+	}
+	if nb != "People" || sec != "" || page != "Alice" {
+		t.Errorf("got %s/%s/%s, want People//Alice", nb, sec, page)
+	}
+
+	// Exact casing still works.
+	_, _, page, ok, err = dm.FindPageByLeaf("vault", "Alice")
+	if err != nil || !ok || page != "Alice" {
+		t.Fatalf("exact leaf: ok=%v page=%q err=%v", ok, page, err)
+	}
+
+	_, _, _, ok, err = dm.FindPageByLeaf("vault", "Nobody")
+	if err != nil {
+		t.Fatalf("missing leaf err: %v", err)
+	}
+	if ok {
+		t.Fatal("expected no match for Nobody")
+	}
+}
+
 func TestIndexFileBlocks_InsertsBlocksTasksAndTags(t *testing.T) {
 	dm := newTestDB(t)
 

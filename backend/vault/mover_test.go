@@ -513,10 +513,16 @@ func TestSourceModifiedAfter(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".system", "index.sqlite-wal"), []byte("wal"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Fresh cutoff after the markdown edit but before a WAL bump.
+	// Settle past the first WAL write before capturing cutoff2 — same NTFS
+	// coarse-mtime guard as the first cutoff above. Without this, a same-
+	// second mtime on an unrelated regular file (or AV touch under load) can
+	// false-positive the exclusion assertion.
+	time.Sleep(1100 * time.Millisecond)
 	cutoff2 := time.Now()
 	time.Sleep(1100 * time.Millisecond)
-	_ = os.WriteFile(filepath.Join(root, ".system", "index.sqlite-wal"), []byte("wal2"), 0644)
+	if err := os.WriteFile(filepath.Join(root, ".system", "index.sqlite-wal"), []byte("wal2"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	modified, err = SourceModifiedAfter(root, cutoff2)
 	if err != nil {
 		t.Fatalf("SourceModifiedAfter index-exclusion: %v", err)

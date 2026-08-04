@@ -618,6 +618,58 @@ func TestSetPageProperty_RelationTargetBareName_LeafMatch(t *testing.T) {
 	}
 }
 
+// TestSetPageProperty_RelationTargetBareName_CaseInsensitive pins the
+// page_fold leaf contract for relations: a bare ref whose casing differs from
+// the indexed page filename still resolves (and still type-checks against the
+// canonical projection row). Hand-typed frontmatter and MCP clients often
+// lowercase names; wiki-link leaf lookup already uses page_fold — relations
+// must match.
+func TestSetPageProperty_RelationTargetBareName_CaseInsensitive(t *testing.T) {
+	app := newTestApp(t)
+	bookPath, _ := stageRelationVault(t, app, false)
+
+	// Indexed page is "Alice"; ref is "alice" — must accept and type-check.
+	if err := app.SetPageProperty("Books", "", "Dune", "author", "alice"); err != nil {
+		t.Fatalf("SetPageProperty(author, alice): %v", err)
+	}
+	props, err := app.GetPageProperties("Books", "", "Dune")
+	if err != nil {
+		t.Fatalf("GetPageProperties: %v", err)
+	}
+	found := false
+	for _, p := range props {
+		if p.Name == "author" {
+			found = true
+			if !p.IsSet || p.Value != "alice" {
+				// Wire value is what the caller wrote; resolution is validation-only.
+				t.Errorf("author = %+v, want IsSet alice", p)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("author property missing from GetPageProperties")
+	}
+	raw, _ := os.ReadFile(bookPath)
+	if !strings.Contains(string(raw), "author:") {
+		t.Errorf("author line not written:\n%s", string(raw))
+	}
+
+	// Mixed-case path-style refs stay exact (path segments are not folded).
+	// "people/alice" is a different path from "People/Alice".
+	beforeBytes, _ := os.ReadFile(bookPath)
+	err = app.SetPageProperty("Books", "", "Dune", "author", "people/alice")
+	if err == nil {
+		t.Fatal("path-style ref should remain case-sensitive; people/alice must not match People/Alice")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("error = %q, want \"does not exist\"", err.Error())
+	}
+	afterBytes, _ := os.ReadFile(bookPath)
+	if string(afterBytes) != string(beforeBytes) {
+		t.Errorf("file mutated on rejected path-style casing mismatch")
+	}
+}
+
 func TestSetPageProperty_RelationPagesMixedInvalid_FailsUntouched(t *testing.T) {
 	app := newTestApp(t)
 	bookPath, before := stageRelationVault(t, app, true)

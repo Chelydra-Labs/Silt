@@ -678,32 +678,34 @@ func (dm *DatabaseManager) PageExists(source, notebook, section, page string) (b
 
 // FindPageByLeaf resolves a bare page name (a relation reference with no path)
 // to the first indexed page carrying that leaf name in the source, returning
-// its (notebook, section). Used by the relation-target validator for the common
-// case of a page referenced by name rather than full path. ok is false when no
-// page with that leaf is indexed. LIMIT 1 keeps v1 deterministic: a leaf-name
-// collision across notebooks is ambiguous, and the first indexed page wins.
-// ORDER BY notebook, section makes the winner deterministic rather than
-// dependent on row insertion order.
-func (dm *DatabaseManager) FindPageByLeaf(source, page string) (notebook, section string, ok bool, err error) {
+// its (notebook, section, canonical page). Matching uses page_fold so a
+// case-variant ref (e.g. "alice" for page "Alice") resolves the same way as
+// wiki-link / unlinked leaf lookup (#844). The canonical page spelling from
+// the index is returned so callers can look up page_types / page_properties
+// with the exact key. ok is false when no page with that leaf is indexed.
+// LIMIT 1 keeps v1 deterministic: a leaf-name collision across notebooks is
+// ambiguous, and the first indexed page wins. ORDER BY notebook, section
+// makes the winner deterministic rather than dependent on row insertion order.
+func (dm *DatabaseManager) FindPageByLeaf(source, page string) (notebook, section, resolvedPage string, ok bool, err error) {
 	db, release, err := dm.handle()
 	if err != nil {
-		return "", "", false, ErrDBClosed
+		return "", "", "", false, ErrDBClosed
 	}
 	defer release()
 	if source == "" {
 		source = "vault"
 	}
 	err = db.QueryRow(
-		"SELECT notebook, section FROM blocks WHERE source = ? AND page = ? ORDER BY notebook, section LIMIT 1",
-		source, page,
-	).Scan(&notebook, &section)
+		"SELECT notebook, section, page FROM blocks WHERE source = ? AND page_fold = ? ORDER BY notebook, section LIMIT 1",
+		source, pageFoldKey(page),
+	).Scan(&notebook, &section, &resolvedPage)
 	if err == sql.ErrNoRows {
-		return "", "", false, nil
+		return "", "", "", false, nil
 	}
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
-	return notebook, section, true, nil
+	return notebook, section, resolvedPage, true, nil
 }
 
 // IndexFileBlocks updates the index with one file's blocks in a single
