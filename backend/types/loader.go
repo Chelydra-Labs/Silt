@@ -57,7 +57,10 @@ func ParseTypeBytes(raw []byte, filename string) (*TypeDef, error) {
 	if err := yaml.Unmarshal(raw, &td); err != nil {
 		return nil, fmt.Errorf("invalid type yaml in %s: %w", filename, err)
 	}
-	td.ID = strings.TrimSuffix(filename, filepath.Ext(filename))
+	// Canonical id is the lowercased filename stem so a hand-created/synced
+	// Meeting.yaml loads as "meeting" — matching TypeIDFromName / SaveType /
+	// DeleteType and avoiding silent write/read divergence across case variants.
+	td.ID = strings.ToLower(strings.TrimSuffix(filename, filepath.Ext(filename)))
 	if td.Name == "" {
 		td.Name = titleFromID(td.ID)
 	}

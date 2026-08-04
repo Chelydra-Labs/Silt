@@ -72,7 +72,11 @@
   }
 </script>
 
-<div class="table-scroll custom-scrollbar" aria-label="Pages of this type">
+<div
+  class="table-scroll custom-scrollbar"
+  role="region"
+  aria-label="Pages of this type"
+>
   <table class="dtable">
     <thead>
       <tr>

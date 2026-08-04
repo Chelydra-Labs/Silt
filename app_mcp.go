@@ -67,7 +67,13 @@ func (b mcpBridge) PageExists(ctx context.Context, notebook, section, page strin
 		return false, fmt.Errorf("no vault open")
 	}
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	// validateSectionPath (not sanitizePathSegment) so nested sections like
+	// "Projects/Active" survive — sanitize strips "/", flattening the path and
+	// false-rejecting nested pages that set_page_property can still open.
+	safeSection, secErr := validateSectionPath(section, true)
+	if secErr != nil {
+		return false, fmt.Errorf("invalid path")
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return false, fmt.Errorf("invalid path")
@@ -88,7 +94,8 @@ func (b mcpBridge) PageExists(ctx context.Context, notebook, section, page strin
 	if os.IsNotExist(err) {
 		return false, nil
 	}
-	return false, err
+	// Never forward absolute OS paths to the MCP client.
+	return false, fmt.Errorf("stat page failed: %s/%s/%s", safeNotebook, safeSection, safePage)
 }
 
 // GetPageMetadata returns a page's resolved type, schema-merged properties, and

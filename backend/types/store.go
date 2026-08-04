@@ -116,9 +116,36 @@ func DeleteType(typesDir, id string) error {
 	if !IsValidTypeID(id) {
 		return fmt.Errorf("invalid type id %q", id)
 	}
-	dst := filepath.Join(typesDir, id+".yaml")
-	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to delete type %q: %w", id, err)
+	// Remove canonical .yaml and any case-variant / .yml siblings so a synced
+	// Meeting.yaml cannot survive DeleteType("meeting") after load lowercasing.
+	removed := false
+	entries, err := os.ReadDir(typesDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to list types dir: %w", err)
 	}
+	want := strings.ToLower(id)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		stem := strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name)))
+		if stem != want {
+			continue
+		}
+		path := filepath.Join(typesDir, name)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to delete type %q: %w", id, err)
+		}
+		removed = true
+	}
+	_ = removed
 	return nil
 }

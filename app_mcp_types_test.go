@@ -567,3 +567,33 @@ func TestMCPBridge_SetPageType_KeepAndFlag(t *testing.T) {
 		t.Errorf("Type = %q want meeting", res.Type)
 	}
 }
+
+// TestMCPBridge_PageExists_NestedSection pins nested section path resolution:
+// sanitizePathSegment would flatten "Projects/Active" → "ProjectsActive" and
+// false-reject a page that set_page_property can still open.
+func TestMCPBridge_PageExists_NestedSection(t *testing.T) {
+	app := newTestApp(t)
+	bridge := newMetaBridge(app)
+	nestedDir := filepath.Join(app.vaultPath, "Books", "Projects", "Active")
+	if err := os.MkdirAll(nestedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(nestedDir, "Dune.md"),
+		"---\nnotebook: Books\nsection: Projects/Active\npage: Dune\n"+
+			"date: 2026-08-01\ntags: []\n---\n# Dune\n")
+
+	ok, err := bridge.PageExists(context.Background(), "Books", "Projects/Active", "Dune")
+	if err != nil {
+		t.Fatalf("PageExists: %v", err)
+	}
+	if !ok {
+		t.Fatal("PageExists should find nested-section page")
+	}
+	ok, err = bridge.PageExists(context.Background(), "Books", "Projects/Active", "Missing")
+	if err != nil {
+		t.Fatalf("PageExists missing: %v", err)
+	}
+	if ok {
+		t.Fatal("PageExists should be false for missing nested page")
+	}
+}

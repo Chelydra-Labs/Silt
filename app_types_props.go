@@ -68,21 +68,25 @@ func (a *App) readPageFileForTypes(notebook, section, page string) (string, pars
 	}
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
+		// Notebook/section/page only — never the absolute vault path. MCP
+		// surfaces this string to the client; the caller already supplied
+		// the logical coordinates and does not need filesystem layout.
 		if os.IsNotExist(err) {
-			// Notebook/section/page only — never the absolute vault path. MCP
-			// surfaces this string to the client; the caller already supplied
-			// the logical coordinates and does not need filesystem layout.
 			return "", parser.FileMetadata{}, "", "", fmt.Errorf(
 				"page file not found: %s/%s/%s", safeNotebook, safeSection, safePage,
 			)
 		}
-		return "", parser.FileMetadata{}, "", "", fmt.Errorf("read page file: %w", err)
+		return "", parser.FileMetadata{}, "", "", fmt.Errorf(
+			"read page file failed: %s/%s/%s", safeNotebook, safeSection, safePage,
+		)
 	}
 	// Parse so meta.Type + meta.Frontmatter (the all-keys map) are populated;
 	// these are read-only parse artifacts used for type/property resolution.
 	_, meta, _, _, perr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
 	if perr != nil {
-		return "", parser.FileMetadata{}, "", "", fmt.Errorf("parse page file: %w", perr)
+		return "", parser.FileMetadata{}, "", "", fmt.Errorf(
+			"parse page file failed: %s/%s/%s", safeNotebook, safeSection, safePage,
+		)
 	}
 	return string(contentBytes), meta, source, filePath, nil
 }
@@ -127,10 +131,11 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 		contentBytes, err := os.ReadFile(filePath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				writeErr = errPageMovedOrDeleted(filePath)
+				// Logical coords only — absolute paths must not reach MCP clients.
+				writeErr = fmt.Errorf("%w: page no longer exists (moved or deleted)", ErrPageMovedOrDeleted)
 				return
 			}
-			writeErr = err
+			writeErr = fmt.Errorf("read page file failed: %s/%s/%s", notebook, section, page)
 			return
 		}
 		if revalidate != nil {

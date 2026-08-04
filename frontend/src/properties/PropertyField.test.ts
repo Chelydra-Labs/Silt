@@ -41,7 +41,7 @@ function field(overrides: Partial<PagePropertyValue> = {}): PagePropertyValue {
 }
 
 describe('PropertyField — multiselect chips a11y', () => {
-  it('associates the label with a labelable fieldset via for/id', () => {
+  it('names the chip group via aria-labelledby (fieldset is not HTML-labelable)', () => {
     render(PropertyField, {
       props: {
         value: field({
@@ -56,13 +56,12 @@ describe('PropertyField — multiselect chips a11y', () => {
         onChanged: vi.fn()
       }
     })
-    const label = screen.getByText('Tags')
-    expect(label.tagName).toBe('LABEL')
-    const fieldId = label.getAttribute('for')
-    expect(fieldId).toBe('prop-tags')
-    const group = document.getElementById(fieldId!)
-    expect(group).not.toBeNull()
-    expect(group?.tagName).toBe('FIELDSET')
+    const group = screen.getByRole('group', { name: 'Tags' })
+    expect(group.id).toBe('prop-tags')
+    expect(group.getAttribute('aria-labelledby')).toBe('prop-tags-label')
+    expect(document.getElementById('prop-tags-label')?.textContent).toMatch(
+      /Tags/
+    )
   })
 })
 
@@ -105,10 +104,10 @@ describe('PropertyField — focused input survives external refresh', () => {
 })
 
 describe('PropertyField — multiselect free-text commit', () => {
-  it('splits a comma-list into a string[] so the backend receives a list, not a bare string', async () => {
+  it('adds a whole token (commas preserved) via the free-text add input', async () => {
     render(PropertyField, {
       props: {
-        // No options → tags-style free-text input (the documented tags mode).
+        // No options → chip list + add input (no join/split round-trip).
         value: field({
           name: 'tags',
           label: 'Tags',
@@ -121,29 +120,29 @@ describe('PropertyField — multiselect free-text commit', () => {
         onChanged: vi.fn()
       }
     })
-    const input = document.getElementById('prop-tags') as HTMLInputElement
+    const input = screen.getByLabelText('Add Tags') as HTMLInputElement
     expect(input).not.toBeNull()
+    // A value containing a comma is one token — not split into two.
+    await fireEvent.input(input, { target: { value: 'a, b' } })
     await fireEvent.change(input, { target: { value: 'a, b' } })
-    // The backend's asStringSlice expects a list — a bare "a, b" string is
-    // rejected with "expected a list, got string".
     expect(appMocks.SetPageProperty).toHaveBeenCalledWith(
       'Work',
       'Projects',
       'Plan',
       'tags',
-      ['a', 'b']
+      ['a, b']
     )
     expect(appMocks.ClearPageProperty).not.toHaveBeenCalled()
   })
 
-  it('trims and drops empty segments when splitting a free-text multiselect commit', async () => {
+  it('appends a free-text token onto existing multiselect values', async () => {
     render(PropertyField, {
       props: {
         value: field({
           name: 'tags',
           label: 'Tags',
           type: 'multiselect',
-          value: [],
+          value: ['existing'],
           options: []
         }),
         locator,
@@ -151,14 +150,15 @@ describe('PropertyField — multiselect free-text commit', () => {
         onChanged: vi.fn()
       }
     })
-    const input = document.getElementById('prop-tags') as HTMLInputElement
-    await fireEvent.change(input, { target: { value: '  a  , , b,' } })
+    const input = screen.getByLabelText('Add Tags') as HTMLInputElement
+    await fireEvent.input(input, { target: { value: '  next  ' } })
+    await fireEvent.change(input, { target: { value: '  next  ' } })
     expect(appMocks.SetPageProperty).toHaveBeenCalledWith(
       'Work',
       'Projects',
       'Plan',
       'tags',
-      ['a', 'b']
+      ['existing', 'next']
     )
   })
 })

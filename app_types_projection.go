@@ -331,10 +331,12 @@ func (a *App) reprojectAllTypedPages() {
 // because stopWatchersOutsideLock closes the monitor watcher OUTSIDE the
 // teardown Lock, so this handler can drain mid-close instead of deadlocking.
 func (a *App) onExternalPageChanged(notebook, section, page string) {
+	// No a.wg.Add here: this runs on the monitor-watcher dispatch goroutine,
+	// which is not itself tracked by a.wg. stopWatchersOutsideLock drains the
+	// watcher before ServiceShutdown's Wait; an Add from an untracked goroutine
+	// can race Wait and panic. Type-watcher onChange follows the same rule.
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
-	a.wg.Add(1)
-	defer a.wg.Done()
 	if a.vaultPath == "" || a.db == nil {
 		return
 	}

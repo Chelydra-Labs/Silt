@@ -67,6 +67,19 @@ func TestSaveType_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestDeleteType_RemovesCaseVariantFilename pins delete of a synced
+// Meeting.yaml when the caller uses the canonical lowercased id.
+func TestDeleteType_RemovesCaseVariantFilename(t *testing.T) {
+	dir := t.TempDir()
+	writeTypeFile(t, dir, "Meeting.yaml", bookYAML)
+	if err := DeleteType(dir, "meeting"); err != nil {
+		t.Fatalf("DeleteType(meeting): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Meeting.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("Meeting.yaml should be removed, stat err=%v", err)
+	}
+}
+
 func TestSaveType_DerivesIDFromName(t *testing.T) {
 	dir := t.TempDir()
 	td := &TypeDef{Name: "Meeting Notes", Properties: []PropertyDef{{Name: "x", Type: PropText}}}

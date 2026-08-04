@@ -204,6 +204,9 @@
     sort = { property: PAGE_COLUMN_KEY, desc: false }
     groupBy = ''
     rows = []
+    // Cover the trailing-debounce window so we never flash the empty state
+    // ("No pages of this type") before reload starts.
+    loading = id !== ''
     selectedType = id
   }
 

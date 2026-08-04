@@ -165,21 +165,40 @@
   // screen readers announce required fields (the marker span is aria-hidden).
   let isRequired = $derived(!!value.required)
 
+  let freeMultiDraft = $state('')
+
   function commitText(e: Event): void {
     const target = e.currentTarget as HTMLInputElement
-    const raw = target.value
-    // Free-text multiselect (tags mode with no chip options): split the
-    // comma-list into the string[] the backend's asStringSlice expects. A
-    // bare string is rejected with "expected a list, got string".
-    if (value.type === 'multiselect' || value.type === 'pages') {
-      const parts = raw
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-      void field.commit(parts)
-      return
+    void field.commit(target.value)
+  }
+
+  function removeMultiValue(opt: string): void {
+    const next = multiValue.filter((v) => v !== opt)
+    void field.commit(next)
+  }
+
+  function commitFreeMultiAdd(e?: Event): void {
+    const raw =
+      e && e.currentTarget instanceof HTMLInputElement
+        ? e.currentTarget.value
+        : freeMultiDraft
+    const part = raw.trim()
+    if (!part) return
+    // Whole token — do not split on commas (values may contain them).
+    if (!multiValue.includes(part)) {
+      void field.commit([...multiValue, part])
     }
-    void field.commit(raw)
+    freeMultiDraft = ''
+    if (e && e.currentTarget instanceof HTMLInputElement) {
+      e.currentTarget.value = ''
+    }
+  }
+
+  function onFreeMultiKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      commitFreeMultiAdd()
+    }
   }
 
   function commitNumber(e: Event): void {
@@ -249,7 +268,7 @@
 
 <div class="field" class:mismatched>
   <div class="label-row">
-    <label for={fieldId} class="label">
+    <label id={`${fieldId}-label`} for={fieldId} class="label">
       {value.label || value.name}
       {#if value.required}<span class="req" aria-hidden="true">*</span>{/if}
     </label>
@@ -375,12 +394,12 @@
       </select>
     {:else if value.type === 'multiselect'}
       {#if hasOptions}
-        <!-- fieldset is labelable so the row <label for> associates correctly
-             (a div role=group is not). -->
-        <fieldset
+        <!-- fieldset is not HTML-labelable; name it via aria-labelledby. -->
+        <div
           id={fieldId}
           class="chips"
-          disabled={isPending}
+          role="group"
+          aria-labelledby={`${fieldId}-label`}
           aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
         >
           {#each value.options ?? [] as opt (opt)}
@@ -395,21 +414,45 @@
               {opt}
             </button>
           {/each}
-        </fieldset>
+        </div>
       {:else}
-        <input
+        <!-- Free-text multiselect: chips for stored values (no join/split
+             round-trip) + an add input so commas inside a value survive. -->
+        <div
           id={fieldId}
-          type="text"
-          class="input"
-          value={textValue}
-          onchange={commitText}
-          onfocus={onFocus}
-          onblur={onBlur}
-          disabled={isPending}
-          aria-required={isRequired}
-          placeholder="value, another value"
+          class="chips free-multi"
+          role="group"
+          aria-labelledby={`${fieldId}-label`}
           aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
-        />
+        >
+          {#each multiValue as opt (opt)}
+            <button
+              type="button"
+              class="chip sel"
+              aria-label="Remove {opt}"
+              onclick={() => removeMultiValue(opt)}
+              disabled={isPending}
+            >
+              {opt}
+              <span class="material-symbols-outlined chip-x" aria-hidden="true"
+                >close</span
+              >
+            </button>
+          {/each}
+          <input
+            type="text"
+            class="input free-multi-input"
+            value={freeMultiDraft}
+            oninput={(e) => (freeMultiDraft = e.currentTarget.value)}
+            onkeydown={onFreeMultiKeydown}
+            onchange={commitFreeMultiAdd}
+            onfocus={onFocus}
+            onblur={onBlur}
+            disabled={isPending}
+            aria-label="Add {value.label || value.name}"
+            placeholder="Add value…"
+          />
+        </div>
       {/if}
     {:else}
       <input
@@ -561,6 +604,18 @@
     background: var(--color-accent-primary-glow);
     border-color: var(--color-accent-primary-start);
     color: var(--color-accent-primary-start);
+  }
+  .chip-x {
+    font-size: 0.85em;
+    margin-left: 0.15rem;
+    vertical-align: -0.1em;
+  }
+  .free-multi {
+    align-items: center;
+  }
+  .free-multi-input {
+    flex: 1 1 6rem;
+    min-width: 5rem;
   }
   .warn {
     font-size: var(--text-type-2xs);

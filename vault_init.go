@@ -259,6 +259,11 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	}
 	for _, p := range pruned {
 		allWarnings = append(allWarnings, fmt.Sprintf("%s: removed from index (file no longer exists)", p))
+		// Drop blocks + typed projection for paths that vanished while the app
+		// was closed. PruneStaleFiles only removes the files-table skip key;
+		// without this, page_types/page_properties (and blocks) linger as
+		// dashboard ghosts and relation targets until a cold index wipe.
+		a.clearIndexedPageForPath(dbMgr, vaultPath, p)
 	}
 
 	// Merge the indexer's per-file skip list into the warning stream.
@@ -425,4 +430,56 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.syncMCPHostLocked()
 
 	return nil
+}
+
+// clearIndexedPageForPath drops blocks + typed projection for a markdown path
+// that disappeared from disk (startup prune). Best-effort: unknown layouts are
+// skipped. Caller holds vaultMu.Lock; uses dbMgr directly (a.db may not be set).
+func (a *App) clearIndexedPageForPath(dbMgr *db.DatabaseManager, vaultPath, absPath string) {
+	if dbMgr == nil || absPath == "" || !strings.HasSuffix(strings.ToLower(absPath), ".md") {
+		return
+	}
+	source, notebook, section, page := "", "", "", ""
+	if rel, err := filepath.Rel(vaultPath, absPath); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) >= 2 {
+			notebook = parts[0]
+			page = strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
+			if len(parts) > 2 {
+				section = strings.Join(parts[1:len(parts)-1], "/")
+			}
+			source = "vault"
+		}
+	}
+	if source == "" {
+		a.configMu.RLock()
+		links := append([]config.LinkedNotebook(nil), a.cfg.LinkedNotebooks...)
+		a.configMu.RUnlock()
+		for _, ln := range links {
+			if ln.RootPath == "" {
+				continue
+			}
+			rel, err := filepath.Rel(ln.RootPath, absPath)
+			if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+				continue
+			}
+			parts := strings.Split(filepath.ToSlash(rel), "/")
+			if len(parts) < 1 {
+				continue
+			}
+			page = strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
+			if len(parts) > 1 {
+				section = strings.Join(parts[:len(parts)-1], "/")
+			}
+			notebook = ln.DisplayName
+			source = ln.Source()
+			break
+		}
+	}
+	if source == "" || notebook == "" || page == "" {
+		return
+	}
+	if err := dbMgr.ClearFileBlocks(nil, source, notebook, section, page); err != nil {
+		log.Printf("initializeVaultServices: ClearFileBlocks pruned %s: %v", absPath, err)
+	}
 }

@@ -54,6 +54,16 @@
   let loadError = $state('')
   let inputRef = $state<HTMLInputElement | null>(null)
   let listboxId = $derived(`${fieldId}-listbox`)
+  // Blur closes after a short delay so mousedown on an option can commit first.
+  // Must be cleared on re-focus / open / destroy or a stale timer closes a
+  // freshly reopened dropdown and wipes the typed query.
+  let blurCloseTimer: ReturnType<typeof setTimeout> | null = null
+  function clearBlurCloseTimer(): void {
+    if (blurCloseTimer != null) {
+      clearTimeout(blurCloseTimer)
+      blurCloseTimer = null
+    }
+  }
 
   // Current refs as an array regardless of cardinality, for chip rendering.
   let refs = $derived(Array.isArray(value) ? value : value ? [value] : [])
@@ -109,6 +119,7 @@
   // `loaded` guards the focus path from re-fetching.
   onMount(() => {
     void ensureLoaded()
+    return () => clearBlurCloseTimer()
   })
 
   // Filtered, capped results for the open dropdown.
@@ -139,12 +150,14 @@
 
   function openDropdown(): void {
     if (disabled) return
+    clearBlurCloseTimer()
     open = true
     activeIndex = results.length > 0 ? 0 : -1
     void ensureLoaded()
   }
 
   function closeDropdown(): void {
+    clearBlurCloseTimer()
     open = false
     activeIndex = -1
     query = ''
@@ -299,7 +312,11 @@
       onkeydown={onKeyDown}
       onblur={() => {
         // Defer so an option click (mousedown-guarded) lands before close.
-        setTimeout(() => closeDropdown(), 120)
+        clearBlurCloseTimer()
+        blurCloseTimer = setTimeout(() => {
+          blurCloseTimer = null
+          closeDropdown()
+        }, 120)
       }}
     />
     {#if loading}

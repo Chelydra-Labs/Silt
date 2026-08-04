@@ -164,6 +164,19 @@ func TestListTypes_EmptyDir(t *testing.T) {
 	}
 }
 
+// TestParseTypeBytes_LowercasesFilenameStem pins load-path id canonicalization:
+// a hand-created Meeting.yaml must load as id "meeting" so SaveType/DeleteType
+// (which use lowercased ids) hit the same file.
+func TestParseTypeBytes_LowercasesFilenameStem(t *testing.T) {
+	td, err := ParseTypeBytes([]byte(bookYAML), "Meeting.yaml")
+	if err != nil {
+		t.Fatalf("ParseTypeBytes: %v", err)
+	}
+	if td.ID != "meeting" {
+		t.Errorf("ID = %q, want meeting", td.ID)
+	}
+}
+
 func TestGetType(t *testing.T) {
 	dir := t.TempDir()
 	writeTypeFile(t, dir, "book.yaml", bookYAML)
