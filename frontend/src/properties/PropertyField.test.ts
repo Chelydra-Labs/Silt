@@ -41,7 +41,7 @@ function field(overrides: Partial<PagePropertyValue> = {}): PagePropertyValue {
 }
 
 describe('PropertyField — multiselect chips a11y', () => {
-  it('associates the label with the chips group via for/id', () => {
+  it('associates the label with a labelable fieldset via for/id', () => {
     render(PropertyField, {
       props: {
         value: field({
@@ -62,7 +62,45 @@ describe('PropertyField — multiselect chips a11y', () => {
     expect(fieldId).toBe('prop-tags')
     const group = document.getElementById(fieldId!)
     expect(group).not.toBeNull()
-    expect(group?.getAttribute('role')).toBe('group')
+    expect(group?.tagName).toBe('FIELDSET')
+  })
+})
+
+describe('PropertyField — focused input survives external refresh', () => {
+  it('does not wipe uncommitted text when the value prop is replaced', async () => {
+    const { rerender } = render(PropertyField, {
+      props: {
+        value: field({
+          name: 'title',
+          label: 'Title',
+          type: 'text',
+          value: 'Dune'
+        }),
+        locator,
+        onError: vi.fn(),
+        onChanged: vi.fn()
+      }
+    })
+    const input = document.getElementById('prop-title') as HTMLInputElement
+    expect(input).not.toBeNull()
+    await fireEvent.focus(input)
+    // Simulate typing without blur/change (uncommitted draft in the DOM).
+    await fireEvent.input(input, { target: { value: 'Dune Messiah' } })
+    expect(input.value).toBe('Dune Messiah')
+    // Controller refresh with the old persisted value (sibling commit / types:changed).
+    await rerender({
+      value: field({
+        name: 'title',
+        label: 'Title',
+        type: 'text',
+        value: 'Dune'
+      }),
+      locator,
+      onError: vi.fn(),
+      onChanged: vi.fn()
+    })
+    await tick()
+    expect(input.value).toBe('Dune Messiah')
   })
 })
 

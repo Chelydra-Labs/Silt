@@ -221,6 +221,13 @@ func (a *App) RestoreExampleTypes(ctx context.Context) ([]string, error) {
 				a.typeWatcher.UnregisterSelfWrite()
 			}
 			log.Printf("types: RestoreExampleTypes(%q) failed: %v", td.ID, err)
+			// Surface any types already written this batch so the picker /
+			// dashboard do not stay stale until an unrelated refresh.
+			if len(created) > 0 {
+				types.InvalidateTypesCache()
+				a.reprojectAllTypedPages()
+				a.emit(EventTypesChanged, struct{}{})
+			}
 			return created, fmt.Errorf("restore example type %q: %w", td.ID, err)
 		}
 		created = append(created, td.ID)

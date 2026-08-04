@@ -513,6 +513,13 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 			Blocks:   blocks,
 			Tags:     meta.Tags,
 			Warnings: meta.Warnings,
+			// Type + Frontmatter must travel with the scan result so the
+			// post-index projectPageType loop can project linked typed pages
+			// (same contract as the vault scanner). Omitting them leaves
+			// dashboards empty for linked notebooks and clears any prior
+			// projection on relink.
+			Type:        meta.Type,
+			Frontmatter: meta.Frontmatter,
 		}
 		if statErr == nil {
 			res.MTime = st.ModTime()

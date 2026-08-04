@@ -174,10 +174,11 @@
           id={`flt-${col.key}`}
           class="select-input"
           aria-label="Filter {col.label}"
-          value={filter[col.key] ?? ''}
-          onchange={(e) => inputFilter(col.key, e.currentTarget.value)}
+          value={selectFilterValue(col.key)}
+          onchange={(e) => selectFilter(col.key, e.currentTarget.value)}
         >
           <option value="">Any</option>
+          <option value={UNSET_SENTINEL}>Unset</option>
           <option value="true">Yes</option>
           <option value="false">No</option>
         </select>

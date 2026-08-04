@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"silt/backend/config"
+	"silt/backend/types"
 )
 
 // These are characterization tests (Feathers) for the linked-notebook subsystem
@@ -103,6 +104,55 @@ func TestLinkNotebook_RejectsDuplicateLinks(t *testing.T) {
 			t.Errorf("duplicate DisplayName link should leave 1 link registered, got %d", got)
 		}
 	})
+}
+
+// TestLinkNotebook_ProjectsTypedPages pins the typed-notes contract for linked
+// notebooks: indexLinkedTree must copy meta.Type + meta.Frontmatter onto the
+// ScanResult so the post-index projectPageType loop populates page_types /
+// page_properties. Without those fields, linked typed pages never appear on
+// dashboards and a relink clears any prior projection.
+func TestLinkNotebook_ProjectsTypedPages(t *testing.T) {
+	app := newTestApp(t)
+	// Unique type id so shared in-memory DB book rows from other tests cannot
+	// leak into (or be polluted by) this assertion.
+	if err := app.SaveType(types.TypeDef{
+		ID:   "linkproj",
+		Name: "LinkProj",
+		Properties: []types.PropertyDef{
+			{Name: "title", Type: types.PropText},
+			{Name: "rating", Type: types.PropNumber},
+		},
+	}); err != nil {
+		t.Fatalf("SaveType(linkproj): %v", err)
+	}
+
+	ext := filepath.Join(t.TempDir(), "LinkedBooks")
+	if err := os.MkdirAll(ext, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(ext, "Dune.md"),
+		"---\nnotebook: LinkedBooks\nsection: \"\"\npage: Dune\ndate: 2026-08-01\ntags: []\n"+
+			"type: linkproj\ntitle: \"Dune\"\nrating: 5\n---\n# Dune\n")
+
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+
+	rows, err := app.QueryPagesByType("linkproj", nil, "", false)
+	if err != nil {
+		t.Fatalf("QueryPagesByType: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Source != ln.Source() || rows[0].Page != "Dune" {
+		t.Fatalf("linked typed page missing from dashboard; got %+v", rows)
+	}
+	propVals := map[string]string{}
+	for _, p := range rows[0].Properties {
+		propVals[p.Name] = p.ValueText
+	}
+	if propVals["title"] != "Dune" || propVals["rating"] != "5" {
+		t.Errorf("projected props = %v, want title=Dune rating=5", propVals)
+	}
 }
 
 // TestLinkNotebook_ForcesDisplayNameAsNotebookColumn pins indexLinkedTree's

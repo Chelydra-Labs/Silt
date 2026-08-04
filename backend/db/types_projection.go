@@ -196,6 +196,9 @@ func (dm *DatabaseManager) GetPageProjection(source, notebook, section, page str
 		}
 		row.Properties = append(row.Properties, p)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return &row, nil
 }
 
@@ -227,6 +230,10 @@ func (dm *DatabaseManager) QueryPagesByType(typeName string) ([]PageProjectionRo
 			return nil, err
 		}
 		coords = append(coords, r)
+	}
+	if err := typeRows.Err(); err != nil {
+		typeRows.Close()
+		return nil, err
 	}
 	typeRows.Close()
 
@@ -264,6 +271,9 @@ func (dm *DatabaseManager) QueryPagesByType(typeName string) ([]PageProjectionRo
 			continue
 		}
 		rows[idx].Properties = append(rows[idx].Properties, p)
+	}
+	if err := propRows.Err(); err != nil {
+		return nil, err
 	}
 	// Properties are sorted per-page by name. This is the sole ordering
 	// authority for the properties slice — the SQL query above is unordered.

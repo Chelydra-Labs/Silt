@@ -102,10 +102,32 @@
   )
 
   // Re-seed when the controller refreshes the value (page switch, external
-  // edit, post-commit re-sync). reset() does NOT invoke write.
+  // edit, post-commit re-sync). reset() does NOT invoke write. Skip while the
+  // control is focused or a write is in flight so a sibling-field commit /
+  // types:changed refresh cannot wipe uncommitted keystrokes.
+  let focused = $state(false)
+  let lastLocatorKey = untrack(
+    () => `${locator.notebook}\0${locator.section}\0${locator.page}`
+  )
   $effect(() => {
-    field.reset(toWire(value.value))
+    const locKey = `${locator.notebook}\0${locator.section}\0${locator.page}`
+    const next = toWire(value.value)
+    if (locKey !== lastLocatorKey) {
+      lastLocatorKey = locKey
+      focused = false
+      field.reset(next)
+      return
+    }
+    if (focused || field.pending) return
+    field.reset(next)
   })
+
+  function onFocus(): void {
+    focused = true
+  }
+  function onBlur(): void {
+    focused = false
+  }
 
   let wire = $derived(field.value)
   // Single-line string rendering for text-like inputs.
@@ -270,6 +292,8 @@
         class="input"
         value={textValue}
         onchange={commitText}
+        onfocus={onFocus}
+        onblur={onBlur}
         disabled={isPending}
         aria-required={isRequired}
         aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
@@ -281,6 +305,8 @@
         class="input"
         value={numberValue}
         onchange={commitNumber}
+        onfocus={onFocus}
+        onblur={onBlur}
         disabled={isPending}
         aria-required={isRequired}
         min={min ?? undefined}
@@ -294,6 +320,8 @@
         class="input"
         value={textValue}
         onchange={commitText}
+        onfocus={onFocus}
+        onblur={onBlur}
         disabled={isPending}
         aria-required={isRequired}
         aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
@@ -305,6 +333,8 @@
         class="input"
         value={textValue}
         onchange={commitText}
+        onfocus={onFocus}
+        onblur={onBlur}
         disabled={isPending}
         aria-required={isRequired}
         aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
@@ -320,6 +350,8 @@
         class="switch"
         class:on={checked}
         onclick={() => void field.commit(!checked)}
+        onfocus={onFocus}
+        onblur={onBlur}
         disabled={isPending}
       >
         <span class="knob" aria-hidden="true"></span>
@@ -330,6 +362,8 @@
         class="input"
         value={textValue}
         onchange={commitSelect}
+        onfocus={onFocus}
+        onblur={onBlur}
         disabled={isPending}
         aria-required={isRequired}
         aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
@@ -341,11 +375,13 @@
       </select>
     {:else if value.type === 'multiselect'}
       {#if hasOptions}
-        <div
+        <!-- fieldset is labelable so the row <label for> associates correctly
+             (a div role=group is not). -->
+        <fieldset
           id={fieldId}
           class="chips"
-          role="group"
-          aria-label={`${value.label || value.name}${isRequired ? ' (required)' : ''}`}
+          disabled={isPending}
+          aria-describedby={mismatched ? `${fieldId}-warn` : undefined}
         >
           {#each value.options ?? [] as opt (opt)}
             <button
@@ -359,7 +395,7 @@
               {opt}
             </button>
           {/each}
-        </div>
+        </fieldset>
       {:else}
         <input
           id={fieldId}
@@ -367,6 +403,8 @@
           class="input"
           value={textValue}
           onchange={commitText}
+          onfocus={onFocus}
+          onblur={onBlur}
           disabled={isPending}
           aria-required={isRequired}
           placeholder="value, another value"
@@ -380,6 +418,8 @@
         class="input"
         value={textValue}
         onchange={commitText}
+        onfocus={onFocus}
+        onblur={onBlur}
         disabled={isPending}
         aria-required={isRequired}
       />
@@ -495,6 +535,10 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.25rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-inline-size: 0;
   }
   .chip {
     border: 1px solid var(--color-surface-panel-border);
