@@ -135,6 +135,33 @@ describe('VirtualScrollContainer editor chrome', () => {
     expect(toggle).toHaveAttribute('aria-keyshortcuts', 'Ctrl+Shift+V')
   })
 
+  it('establishes the source-mode height chain so source-body owns scroll (#861)', () => {
+    // In Source mode the page-zoom wrapper becomes h-full and the editor
+    // measure wrapper becomes min-h-0 — together that propagates the
+    // outer scroll container's bounded height down to MarkdownSourceViewer
+    // (its source-body is the deliberate single scroll owner).
+    const { container } = render(VirtualScrollContainer, {
+      props: { ...baseProps(), viewMode: 'source' }
+    })
+    const zoom = screen.getByTestId('note-page-zoom')
+    expect(zoom.className).toContain('h-full')
+    // The measure wrapper is the flex-col child that hosts the source
+    // viewer; min-h-0 lets it actually shrink to fit the available height.
+    const measureWrapper = container.querySelector(
+      '.silt-texture-surface > [data-testid="note-page-zoom"] > div.w-full.flex-1'
+    ) as HTMLElement | null
+    expect(measureWrapper).toBeTruthy()
+    expect(measureWrapper!.className).toContain('min-h-0')
+  })
+
+  it('does not pin the page-zoom wrapper height in edit mode (#861)', () => {
+    // Edit mode keeps the natural-height chain so the outer container
+    // remains the scroll owner for TipTap content.
+    render(VirtualScrollContainer, { props: baseProps() })
+    const zoom = screen.getByTestId('note-page-zoom')
+    expect(zoom.className).not.toContain('h-full')
+  })
+
   it('mounts TipTapEditor in edit mode but tears it down in source mode (#178)', () => {
     // Edit mode: the full editor (ProseMirror + NodeViews) is mounted.
     const { rerender } = render(VirtualScrollContainer, {
