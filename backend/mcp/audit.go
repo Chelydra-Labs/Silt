@@ -25,7 +25,7 @@ type AuditEntry struct {
 	Client   string         `json:"client,omitempty"`
 	Tool     string         `json:"tool"`
 	Vault    string         `json:"vault"`   // path hash, not full path
-	Outcome  string         `json:"outcome"` // "ok" | "error" | "denied"
+	Outcome  string         `json:"outcome"` // "ok" | "error" | "denied" | "rejected" | "rejected_schema"
 	Error    string         `json:"error,omitempty"`
 	ArgsMeta map[string]any `json:"args,omitempty"`
 }
@@ -86,6 +86,11 @@ func (a *fileAuditor) Record(e AuditEntry) {
 		return
 	}
 	// Tail-rotate when the log exceeds the size cap (same class as plugin audit).
+	// Known limitation: rotation is a non-atomic close→truncate→rewrite under
+	// a.mu, so a crash between Close and reopen forfeits the in-flight entry
+	// (and the tail being rewritten). Acceptable: this log is best-effort
+	// observability, not a durability-critical store, so we intentionally do
+	// not run a background rotator or fsync per entry.
 	if info, err := a.f.Stat(); err == nil && info.Size() > maxMCPAuditLogBytes {
 		_ = a.f.Close()
 		a.f = nil
@@ -187,4 +192,21 @@ func RedactArgs(args map[string]any) map[string]any {
 		}
 	}
 	return out
+}
+
+// decodeRawArgs decodes raw wire arguments (json.RawMessage from the SDK) into
+// a plain map suitable for RedactArgs. Schema failures frequently involve
+// malformed JSON or wrong-typed values; a decode failure yields a presence +
+// byte-length marker rather than the raw bytes — argument content is never
+// persisted, even when the SDK rejected it. Redaction itself happens in
+// AuditEntry recording (RedactArgs), same as handler-level args.
+func decodeRawArgs(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return map[string]any{"args_present": true, "args_bytes": len(raw)}
+	}
+	return m
 }

@@ -211,6 +211,11 @@ func (h *Host) Start(bridge Bridge, cfg Config) error {
 		Version: h.version,
 	}, nil)
 	registerTools(srv, env)
+	// Single server-level receiving middleware: observes tools/call input
+	// rejections before any handler runs and audits them as rejected_schema
+	// (handlers still own ok/error/denied/rejected). Installed exactly once
+	// per Server, before any client connects over HTTP.
+	srv.AddReceivingMiddleware(schemaAuditMiddleware(env))
 
 	h.mu.Lock()
 	h.server = srv
