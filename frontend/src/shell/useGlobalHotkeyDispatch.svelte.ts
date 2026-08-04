@@ -54,6 +54,12 @@ export interface GlobalHotkeyDispatchDeps {
   openSettings: () => void
   // Tab actions.
   toggleViewMode: (tabId: string) => void
+  togglePropertiesPanel: () => void
+  /** Whether the properties panel is mounted in the current view. The panel
+   *  only lives in the editor-tab view, so the toggle must no-op elsewhere —
+   *  otherwise it mutates `panelOpen` with no visible effect and the next time
+   *  the editor opens the panel is in a surprising state. */
+  isPropertiesPanelAvailable: () => boolean
   closeTab: (tabId: string) => void
   cycleTab: (dir: 1 | -1) => void
 }
@@ -154,6 +160,12 @@ export function createGlobalHotkeyDispatch(
         // Flip the active tab's view mode directly — no window-event
         // indirection, the tab manager owns the per-tab state.
         if (deps.getActiveTabId()) deps.toggleViewMode(deps.getActiveTabId())
+        break
+      case 'toggle_properties_panel':
+        // Guarded: the panel is only mounted in the editor-tab view. Toggling
+        // on a dashboard/other view would flip `panelOpen` with no effect and
+        // resurface as a surprise when the user returns to the editor.
+        if (deps.isPropertiesPanelAvailable()) deps.togglePropertiesPanel()
         break
       case 'toggle_format_toolbar':
         void toggleFormatToolbar()

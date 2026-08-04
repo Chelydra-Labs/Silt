@@ -1,0 +1,670 @@
+package parser
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestSetFrontmatterField_PreservesOtherLines(t *testing.T) {
+	input := "---\n" +
+		"# this is a comment\n" +
+		"title: \"My Note\"\n" +
+		"count: 42\n" +
+		"tags:\n" +
+		"  - a\n" +
+		"  - b\n" +
+		"---\n" +
+		"body line\n"
+
+	expected := "---\n" +
+		"# this is a comment\n" +
+		"title: \"New Title\"\n" +
+		"count: 42\n" +
+		"tags:\n" +
+		"  - a\n" +
+		"  - b\n" +
+		"---\n" +
+		"body line\n"
+
+	got, err := SetFrontmatterField(input, "title", "New Title")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != expected {
+		t.Errorf("SetFrontmatterField did not preserve other lines\ngot:\n%s\nwant:\n%s", got, expected)
+	}
+}
+
+func TestSetFrontmatterField_ReplacesBlockSequence(t *testing.T) {
+	input := "---\n" +
+		"tags:\n" +
+		"  - a\n" +
+		"  - b\n" +
+		"title: \"Hello\"\n" +
+		"---\n" +
+		"body\n"
+
+	expected := "---\n" +
+		"tags: [\"a\", \"b\"]\n" +
+		"title: \"Hello\"\n" +
+		"---\n" +
+		"body\n"
+
+	got, err := SetFrontmatterField(input, "tags", []string{"a", "b"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != expected {
+		t.Errorf("block sequence not collapsed to inline\ngot:\n%s\nwant:\n%s", got, expected)
+	}
+	if strings.Contains(got, "  - a") || strings.Contains(got, "  - b") {
+		t.Errorf("orphan block entries left behind:\n%s", got)
+	}
+}
+
+func TestSetFrontmatterField_InsertsMissingKey(t *testing.T) {
+	input := "---\n" +
+		"title: \"Hello\"\n" +
+		"---\n" +
+		"body\n"
+
+	expected := "---\n" +
+		"title: \"Hello\"\n" +
+		"author: \"Chris\"\n" +
+		"---\n" +
+		"body\n"
+
+	got, err := SetFrontmatterField(input, "author", "Chris")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != expected {
+		t.Errorf("missing key not inserted before closing fence\ngot:\n%s\nwant:\n%s", got, expected)
+	}
+}
+
+func TestSetFrontmatterField_NoFrontmatter(t *testing.T) {
+	input := "Hello world\nsecond line\n"
+	expected := "---\n" +
+		"title: \"Hi\"\n" +
+		"---\n" +
+		"Hello world\nsecond line\n"
+
+	got, err := SetFrontmatterField(input, "title", "Hi")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != expected {
+		t.Errorf("frontmatter not created for bare body\ngot:\n%s\nwant:\n%s", got, expected)
+	}
+}
+
+func TestSetFrontmatterField_ValueTypes(t *testing.T) {
+	cases := []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"string", "foo", "key: \"foo\""},
+		{"int", 42, "key: 42"},
+		{"int64", int64(7), "key: 7"},
+		{"float", 3.14, "key: 3.14"},
+		{"floatWhole", 100.0, "key: 100"},
+		{"boolTrue", true, "key: true"},
+		{"boolFalse", false, "key: false"},
+		{"stringList", []string{"a", "b"}, "key: [\"a\", \"b\"]"},
+		{"anyList", []any{"x", "y"}, "key: [\"x\", \"y\"]"},
+		{"nil", nil, "key: "},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			input := "---\nkey: old\n---\nbody\n"
+			got, err := SetFrontmatterField(input, "key", c.value)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			want := "---\n" + c.want + "\n---\nbody\n"
+			if got != want {
+				t.Errorf("value type render mismatch\ngot:  %q\nwant: %q", got, want)
+			}
+		})
+	}
+}
+
+func TestSetFrontmatterField_InvalidKey(t *testing.T) {
+	cases := []string{
+		"bad key", // space
+		"bad:key", // colon
+		"1starts", // leading digit
+		"",        // empty
+		"has.dot", // dot
+	}
+	for _, key := range cases {
+		t.Run(key, func(t *testing.T) {
+			_, err := SetFrontmatterField("---\nkey: v\n---\nbody\n", key, "v")
+			if err == nil {
+				t.Fatalf("expected error for invalid key %q, got nil", key)
+			}
+		})
+	}
+}
+
+func TestClearFrontmatterField_RemovesKey(t *testing.T) {
+	t.Run("presentWithBlock", func(t *testing.T) {
+		input := "---\n" +
+			"title: \"Keep\"\n" +
+			"tags:\n" +
+			"  - a\n" +
+			"  - b\n" +
+			"count: 5\n" +
+			"---\n" +
+			"body\n"
+		expected := "---\n" +
+			"title: \"Keep\"\n" +
+			"count: 5\n" +
+			"---\n" +
+			"body\n"
+		got, err := ClearFrontmatterField(input, "tags")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != expected {
+			t.Errorf("clear did not remove key and its block\ngot:\n%s\nwant:\n%s", got, expected)
+		}
+	})
+
+	t.Run("absentKeyIsIdempotent", func(t *testing.T) {
+		input := "---\ntitle: \"Hello\"\n---\nbody\n"
+		got, err := ClearFrontmatterField(input, "missing")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != input {
+			t.Errorf("clearing absent key changed content\ngot:  %q\nwant: %q", got, input)
+		}
+	})
+
+	t.Run("noFrontmatterIsIdempotent", func(t *testing.T) {
+		input := "just a body\n"
+		got, err := ClearFrontmatterField(input, "title")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != input {
+			t.Errorf("clearing with no frontmatter changed content\ngot:  %q\nwant: %q", got, input)
+		}
+	})
+}
+
+func TestSetFrontmatterField_BodyByteExact(t *testing.T) {
+	// Body contains a horizontal rule (---) and blank lines to prove the edit
+	// only touches the LEADING frontmatter block, not any later --- in the body.
+	input := "---\n" +
+		"title: \"Hello\"\n" +
+		"---\n" +
+		"\n" +
+		"---\n" +
+		"\n" +
+		"some content\n" +
+		"\n" +
+		"---\n"
+
+	origFM, origBody := SplitFrontmatter(input)
+	if origFM == "" {
+		t.Fatalf("test setup: input has no frontmatter")
+	}
+
+	got, err := SetFrontmatterField(input, "title", "World")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	_, newBody := SplitFrontmatter(got)
+	if newBody != origBody {
+		t.Errorf("body not byte-exact after edit\norig: %q\nnew:  %q", origBody, newBody)
+	}
+
+	// And the title line actually changed.
+	if !strings.HasPrefix(got, "---\ntitle: \"World\"\n") {
+		t.Errorf("title line not updated in result:\n%s", got)
+	}
+}
+
+func TestSetFrontmatterField_DuplicateKey(t *testing.T) {
+	// YAML is last-wins on duplicate keys; editing the first match would read
+	// back the untouched last value. The editor must refuse such a file.
+	input := "---\nrating: 3\nrating: 7\n---\nbody\n"
+
+	t.Run("setRefuses", func(t *testing.T) {
+		got, err := SetFrontmatterField(input, "rating", 5)
+		if err == nil {
+			t.Fatal("expected error for duplicate key, got nil")
+		}
+		if !strings.Contains(err.Error(), "appears more than once") {
+			t.Errorf("error should mention duplicate, got %v", err)
+		}
+		if got != "" {
+			t.Errorf("on error result should be empty, got %q", got)
+		}
+	})
+
+	t.Run("clearRefuses", func(t *testing.T) {
+		got, err := ClearFrontmatterField(input, "rating")
+		if err == nil {
+			t.Fatal("expected error for duplicate key, got nil")
+		}
+		if !strings.Contains(err.Error(), "appears more than once") {
+			t.Errorf("error should mention duplicate, got %v", err)
+		}
+		if got != "" {
+			t.Errorf("on error result should be empty, got %q", got)
+		}
+	})
+}
+
+func TestSetFrontmatterField_BOMPrefixed(t *testing.T) {
+	// A BOM-prefixed file (synced from Obsidian/OneDrive/Dropbox) must be
+	// treated as having frontmatter; before BOM-stripping it was seen as a
+	// bare body and the whole body was wrapped in a fresh fence. The BOM must
+	// also be RE-ADDED on write so the file's byte signature is stable.
+	input := "\uFEFF---\nrating: 5\n---\nbody\n"
+
+	got, err := SetFrontmatterField(input, "rating", 9)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(got, "\uFEFF---\n") {
+		t.Errorf("BOM should be preserved at the very start\ngot: %q", got)
+	}
+	fm, body := SplitFrontmatter(got)
+	if fm == "" {
+		t.Fatalf("BOM file lost its frontmatter; got fm=%q body=%q", fm, body)
+	}
+	if !strings.Contains(got, "rating: 9") {
+		t.Errorf("rating not updated\ngot: %q", got)
+	}
+	if body != "body\n" {
+		t.Errorf("body corrupted by BOM handling\ngot body: %q", body)
+	}
+	// Catastrophic failure mode: body double-wrapped in fences. The single
+	// frontmatter block means SplitFrontmatter returns the body cleanly.
+	if strings.Count(body, "---") != 0 {
+		t.Errorf("body should not contain fence lines; got %q", body)
+	}
+}
+
+func TestSetFrontmatterField_CRLF(t *testing.T) {
+	// A CRLF file (Windows/sync) must stay FULLY CRLF after an edit. The old
+	// hardcoded-LF reconstruction mixed endings: fences + edited line became
+	// LF while unchanged lines kept their \r, producing noisy whole-file diffs.
+	input := "---\r\na: 1\r\nb: 2\r\n---\r\nbody line\r\n"
+	want := "---\r\na: 1\r\nb: 5\r\n---\r\nbody line\r\n"
+
+	got, err := SetFrontmatterField(input, "b", 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("CRLF file should stay fully CRLF\ngot:  %q\nwant: %q", got, want)
+	}
+	// No lone LF (a "\n" not preceded by "\r") anywhere in the result.
+	if bad := loneLFIndex(got); bad >= 0 {
+		t.Errorf("result has a lone LF at byte %d (mixed endings): %q", bad, got)
+	}
+}
+
+func TestSetFrontmatterField_MixedEndingsNormalize(t *testing.T) {
+	// Only SOME lines are CRLF: detectLineEnding picks CRLF (contains "\r\n")
+	// and the whole FRONTMATTER normalizes to CRLF, so no fence line is left
+	// as a lone LF. The body is preserved as-is (its own endings untouched),
+	// per the byte-exactness contract. Documents the dominant-ending choice.
+	input := "---\r\na: 1\nb: 2\r\n---\nbody\n"
+	got, err := SetFrontmatterField(input, "a", 9)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	fm, _ := SplitFrontmatter(got)
+	if fm == "" {
+		t.Fatalf("lost frontmatter; got %q", got)
+	}
+	if bad := loneLFIndex(fm); bad >= 0 {
+		t.Errorf("frontmatter should be fully CRLF; lone LF at %d: fm=%q", bad, fm)
+	}
+	if !strings.Contains(got, "a: 9") {
+		t.Errorf("a not updated\ngot: %q", got)
+	}
+}
+
+func TestClearFrontmatterField_CRLF(t *testing.T) {
+	input := "---\r\na: 1\r\nb: 2\r\n---\r\nbody\r\n"
+	want := "---\r\na: 1\r\n---\r\nbody\r\n"
+
+	got, err := ClearFrontmatterField(input, "b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("CRLF clear should stay fully CRLF\ngot:  %q\nwant: %q", got, want)
+	}
+	if bad := loneLFIndex(got); bad >= 0 {
+		t.Errorf("result has a lone LF at byte %d (mixed endings): %q", bad, got)
+	}
+}
+
+func TestClearFrontmatterField_BOMAndAbsentKeyVerbatim(t *testing.T) {
+	// Absent key and no-frontmatter paths must return content UNCHANGED — no
+	// BOM or line-ending alteration when nothing was actually cleared.
+	t.Run("absentKeyPreservesBOMAndCRLF", func(t *testing.T) {
+		input := "\uFEFF---\r\na: 1\r\n---\r\nbody\r\n"
+		got, err := ClearFrontmatterField(input, "missing")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != input {
+			t.Errorf("absent key should return content verbatim\ngot:  %q\nwant: %q", got, input)
+		}
+	})
+	t.Run("noFrontmatterPreservesBOM", func(t *testing.T) {
+		input := "\uFEFFjust a body\n"
+		got, err := ClearFrontmatterField(input, "title")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != input {
+			t.Errorf("no-frontmatter should return content verbatim\ngot:  %q\nwant: %q", got, input)
+		}
+	})
+}
+
+// loneLFIndex returns the byte index of the first "\n" not preceded by "\r",
+// or -1 when every newline is part of a "\r\n" pair (or there are none).
+func loneLFIndex(s string) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' && (i == 0 || s[i-1] != '\r') {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestSetFrontmatterField_EditedKeyInlineCommentDropped(t *testing.T) {
+	// An inline comment on the EDITED line is re-rendered away; comments on
+	// every other line survive byte-for-byte. Documents the one known
+	// byte-exactness exception honestly.
+	input := "---\n" +
+		"# header comment\n" +
+		"rating: 5  # out of ten\n" +
+		"status: todo  # keep me\n" +
+		"---\n" +
+		"body\n"
+
+	got, err := SetFrontmatterField(input, "rating", 7)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(got, "out of ten") {
+		t.Errorf("edited-key inline comment should be dropped\ngot: %q", got)
+	}
+	if !strings.Contains(got, "# header comment") {
+		t.Errorf("header comment should be preserved\ngot: %q", got)
+	}
+	if !strings.Contains(got, "# keep me") {
+		t.Errorf("other-line comment should be preserved\ngot: %q", got)
+	}
+	if !strings.Contains(got, "rating: 7") {
+		t.Errorf("rating not updated\ngot: %q", got)
+	}
+}
+
+func TestSetFrontmatterField_QuotedKey(t *testing.T) {
+	// YAML treats "rating" and rating as the SAME key (quotes are styling),
+	// so the matcher must accept an optional quote pair — otherwise an edit on
+	// a quoted key would append a duplicate unquoted line (last-wins corruption).
+	t.Run("updatesQuotedKeyInPlace", func(t *testing.T) {
+		input := "---\n\"rating\": 3\n---\nbody\n"
+		// The edited line re-renders unquoted (quotes are not preserved across
+		// an edit, same as inline comments); the key is normalized and the body
+		// is untouched.
+		want := "---\nrating: 5\n---\nbody\n"
+		got, err := SetFrontmatterField(input, "rating", 5)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != want {
+			t.Errorf("quoted key not updated in place\ngot:  %q\nwant: %q", got, want)
+		}
+	})
+
+	t.Run("duplicateQuotedAndUnquotedRefused", func(t *testing.T) {
+		// "rating" and rating are the same YAML key; last-wins would silently
+		// corrupt, so the duplicate guard must see both and refuse the edit.
+		input := "---\n\"rating\": 3\nrating: 7\n---\nbody\n"
+		got, err := SetFrontmatterField(input, "rating", 5)
+		if err == nil {
+			t.Fatal("expected duplicate-key error, got nil")
+		}
+		if !strings.Contains(err.Error(), "appears more than once") {
+			t.Errorf("error should mention duplicate, got %v", err)
+		}
+		if got != "" {
+			t.Errorf("on error result should be empty, got %q", got)
+		}
+	})
+}
+
+func TestSetFrontmatterField_SingleQuotedAndPaddedKey(t *testing.T) {
+	// External editors (Obsidian/sync targets) emit single-quoted keys
+	// ('rating': 5) and sometimes pad the colon (rating : 5) — both are valid
+	// YAML and denote the same key as the bare form. Before the matcher
+	// tolerated these, findKeyLine missed them and SetFrontmatterField took
+	// the "absent key" branch, appending a fresh `rating:` line on every edit
+	// while the original survived as dead weight (YAML last-wins masked it
+	// behaviorally, but the file rotted). The duplicate guard also never
+	// fired because neither form matched.
+	t.Run("singleQuotedKeyUpdatedInPlace", func(t *testing.T) {
+		input := "---\n'rating': 3\n---\nbody\n"
+		// Like the double-quoted case, the edit normalizes the key to bare
+		// form; the original single-quoted line is fully replaced, not
+		// duplicated.
+		want := "---\nrating: 5\n---\nbody\n"
+		got, err := SetFrontmatterField(input, "rating", 5)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != want {
+			t.Errorf("single-quoted key not updated in place\ngot:  %q\nwant: %q", got, want)
+		}
+		if strings.Count(got, "rating:") != 1 {
+			t.Errorf("dead duplicate line appended\ngot: %q", got)
+		}
+	})
+
+	t.Run("paddedColonKeyUpdatedInPlace", func(t *testing.T) {
+		input := "---\nrating : 3\n---\nbody\n"
+		want := "---\nrating: 5\n---\nbody\n"
+		got, err := SetFrontmatterField(input, "rating", 5)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != want {
+			t.Errorf("padded-colon key not updated in place\ngot:  %q\nwant: %q", got, want)
+		}
+		if strings.Count(got, "rating:") != 1 {
+			t.Errorf("dead duplicate line appended\ngot: %q", got)
+		}
+	})
+
+	t.Run("duplicateSingleAndBareRefused", func(t *testing.T) {
+		// 'rating' and rating are the same YAML key; last-wins corruption
+		// means the duplicate guard must catch the pair.
+		input := "---\n'rating': 3\nrating: 7\n---\nbody\n"
+		got, err := SetFrontmatterField(input, "rating", 5)
+		if err == nil {
+			t.Fatal("expected duplicate-key error, got nil")
+		}
+		if !strings.Contains(err.Error(), "appears more than once") {
+			t.Errorf("error should mention duplicate, got %v", err)
+		}
+		if got != "" {
+			t.Errorf("on error result should be empty, got %q", got)
+		}
+	})
+}
+
+func TestSetFrontmatterField_BOMNoFrontmatterSingleBOM(t *testing.T) {
+	// A BOM file with NO frontmatter gets wrapped in a fresh fence. The BOM
+	// must appear EXACTLY ONCE at the very start — the no-frontmatter path
+	// returns body==content (BOM included), so naively re-prepending would
+	// double it. Guards the SplitFrontmatter-preserve + F3 interaction.
+	input := "\uFEFFHello world\n"
+	got, err := SetFrontmatterField(input, "title", "Hi")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Count(got, "\uFEFF") != 1 {
+		t.Errorf("BOM should appear exactly once, got %d in %q", strings.Count(got, "\uFEFF"), got)
+	}
+	if !strings.HasPrefix(got, "\uFEFF---\n") {
+		t.Errorf("result should start with BOM + opening fence\ngot: %q", got)
+	}
+}
+
+// TestSetFrontmatterField_MixedCaseKeyRoundTrip pins the read/write contract
+// for hand-typed frontmatter whose key casing differs from the schema form
+// (schema declares `rating`, file has `Rating: 5`). The matcher is case-
+// insensitive so the existing line is rewritten in place (preserving on-disk
+// casing) rather than appending a lowercase duplicate.
+func TestSetFrontmatterField_MixedCaseKeyRoundTrip(t *testing.T) {
+	input := "---\n" +
+		"title: \"Dune\"\n" +
+		"Rating: 5\n" +
+		"---\n" +
+		"body\n"
+
+	got, err := SetFrontmatterField(input, "rating", 6)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "---\n" +
+		"title: \"Dune\"\n" +
+		"Rating: 6\n" +
+		"---\n" +
+		"body\n"
+	if got != want {
+		t.Errorf("mixed-case key not updated in place\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Count(strings.ToLower(got), "rating:") != 1 {
+		t.Errorf("expected exactly one rating key line, got:\n%s", got)
+	}
+
+	// Case-variant pair is the same YAML key under our matcher — refuse.
+	dup := "---\nRating: 5\nrating: 7\n---\nbody\n"
+	if _, err := SetFrontmatterField(dup, "rating", 9); err == nil {
+		t.Fatal("expected duplicate-key error for Rating/rating pair")
+	} else if !strings.Contains(err.Error(), "appears more than once") {
+		t.Errorf("error should mention duplicate, got %v", err)
+	}
+}
+
+// TestSetFrontmatterField_FlowCollectionMultiline pins multi-line flow
+// sequences whose closing ] sits at column 0. Without bracket-depth tracking
+// the closer is left as an orphan and the whole frontmatter becomes invalid
+// YAML (type:/properties silently vanish on next parse).
+func TestSetFrontmatterField_FlowCollectionMultiline(t *testing.T) {
+	input := "---\n" +
+		"tags: [\n" +
+		"  \"a\",\n" +
+		"  \"b\"\n" +
+		"]\n" +
+		"rating: 5\n" +
+		"---\n" +
+		"body\n"
+	got, err := SetFrontmatterField(input, "tags", []string{"x", "y"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "---\n" +
+		"tags: [\"x\", \"y\"]\n" +
+		"rating: 5\n" +
+		"---\n" +
+		"body\n"
+	if got != want {
+		t.Errorf("flow collection not fully collapsed\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Contains(got, "]\nrating") && strings.Count(got, "]") > 1 {
+		// Extra ] would be the orphan closer.
+		if strings.Contains(got, "]\n]") || strings.Contains(got, "y\"]\n]") {
+			t.Errorf("orphan closing bracket left behind:\n%s", got)
+		}
+	}
+	// Must still parse as valid YAML frontmatter.
+	_, meta, _, _, perr := ParseFileContent(got, "N", "", "P", "2026-01-01", 4)
+	if perr != nil {
+		t.Fatalf("result must parse: %v\n%s", perr, got)
+	}
+	if meta.Frontmatter == nil {
+		t.Fatal("Frontmatter empty after flow-collection edit")
+	}
+	if _, ok := meta.Frontmatter["rating"]; !ok {
+		t.Errorf("rating lost after tags edit: %+v", meta.Frontmatter)
+	}
+}
+
+// TestSetFrontmatterField_BlockScalarWithBlankLines pins collapse of a `|`
+// block that contains internal blank lines. Without blank-aware consumption
+// the edit would leave orphan indented lines and corrupt the frontmatter.
+func TestSetFrontmatterField_BlockScalarWithBlankLines(t *testing.T) {
+	input := "---\n" +
+		"notes: |\n" +
+		"  line1\n" +
+		"\n" +
+		"  line2\n" +
+		"title: \"Hi\"\n" +
+		"---\n" +
+		"body\n"
+	got, err := SetFrontmatterField(input, "notes", "flat")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "---\n" +
+		"notes: \"flat\"\n" +
+		"title: \"Hi\"\n" +
+		"---\n" +
+		"body\n"
+	if got != want {
+		t.Errorf("block scalar not fully collapsed\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Contains(got, "line1") || strings.Contains(got, "line2") {
+		t.Errorf("orphan block-scalar body left behind:\n%s", got)
+	}
+}
+
+// TestSetFrontmatterField_PreservesIndentedComments keeps an indented comment
+// that sat under the edited key (and does not treat it as a value continuation
+// that would strand later siblings).
+func TestSetFrontmatterField_PreservesIndentedComments(t *testing.T) {
+	input := "---\n" +
+		"tags:\n" +
+		"  - a\n" +
+		"  # keep me\n" +
+		"  - b\n" +
+		"title: \"Hi\"\n" +
+		"---\n" +
+		"body\n"
+	got, err := SetFrontmatterField(input, "tags", []string{"x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, "# keep me") {
+		t.Errorf("indented comment was dropped:\n%s", got)
+	}
+	if strings.Contains(got, "  - a") || strings.Contains(got, "  - b") {
+		t.Errorf("orphan sequence entries left behind:\n%s", got)
+	}
+	if !strings.Contains(got, `tags: ["x"]`) && !strings.Contains(got, "tags: [\"x\"]") {
+		// yamlInline may quote differently; just require tags updated and title intact.
+		if !strings.Contains(got, "tags:") || !strings.Contains(got, "title: \"Hi\"") {
+			t.Errorf("unexpected result:\n%s", got)
+		}
+	}
+}

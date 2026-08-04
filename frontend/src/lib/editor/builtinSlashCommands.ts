@@ -44,6 +44,7 @@ export type SlashIntent =
   | { kind: 'shortcuts' }
   | { kind: 'embed' }
   | { kind: 'template' }
+  | { kind: 'type' }
   | { kind: 'format'; mark: string }
 
 const ALIGNED: Record<string, 'left' | 'center' | 'right' | 'justify'> = {
@@ -103,6 +104,8 @@ export function classifySlashCommand(commandId: string): SlashIntent | null {
       return { kind: 'embed' }
     case 'template':
       return { kind: 'template' }
+    case 'type':
+      return { kind: 'type' }
     case 'callout':
       return { kind: 'callout', variant: 'note' }
     default:

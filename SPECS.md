@@ -1403,3 +1403,73 @@ ai:
 10.2 Hot Reloading Logic
 
 The Go file-system monitor sets a high-priority watch handler on .system/config.yaml. If settings are modified internally or externally, Go parses the file, updates the system memory state instantly, and triggers a style or action event over the Wails IPC bridge, bypassing the need for a full application reboot.
+
+11. Typed Notes
+
+Typed notes bring structured, schema-driven properties to Silt pages. A page declares a type in YAML frontmatter, inherits that type's property schema from a per-vault YAML file, renders and edits its properties through a dedicated UI, and appears in a per-type dashboard queryable by property. The feature follows the local-first contract: Markdown frontmatter (§3.3) is the source of truth for property values, the type schema is a per-vault YAML asset, and the SQLite projection is reproducible working memory. An ADR records the design rationale (`docs/decisions/0008-typed-notes.md`).
+
+11.1 Type Schema Format
+
+Type schemas live in `<vault>/.system/types/<type>.yaml`, siblings to `.system/templates/` and `.system/themes/`. Each file defines one type:
+
+- `name` (required): the type's display name.
+- `id` (optional): canonical identifier matching `^[a-z0-9_-]+$`; defaults to the filename stem. This id is what frontmatter `type:` stores.
+- `description`, `icon`: optional metadata for the type picker and dashboard.
+- `heroField` (optional): the property name whose value renders in the inline meta strip for glanceability.
+- `properties` (required): a list of property definitions, each with:
+  - `name` (required)
+  - `type` (required): one of the 9-type taxonomy (§11.2)
+  - `required` (optional, default false)
+  - `options` (for select/multiselect): the allowed values
+  - `target` (for page/pages): constrains the relation to pages of this target type
+  - `default` (optional): the default value for new instances
+
+The vault scaffolder seeds `.system/types/` with example types (a Book type and a Meeting type) on first vault init. Users create and edit type files directly or via the UI; a hot-reload watcher picks up external edits.
+
+11.2 Property-Type Taxonomy & Encoding
+
+The closed taxonomy: `text | number | date | datetime | checkbox | select | multiselect | page | pages`.
+
+| Type | Frontmatter encoding | Validation |
+|---|---|---|
+| text | string | non-empty if required |
+| number | JSON number | numeric; min/max if declared |
+| date | `YYYY-MM-DD` | parseable calendar date |
+| datetime | `YYYY-MM-DDTHH:mm:ss` | parseable timestamp |
+| checkbox | `true` / `false` | boolean |
+| select | string (one of `options`) | membership in declared options |
+| multiselect | YAML list of strings | each member in declared options |
+| page | string (target page path) | target exists + matches declared `target` type |
+| pages | YAML list of strings | each target exists + matches declared `target` type |
+
+Schema is the source of truth; frontmatter holds only set values. A property declared in the schema but absent from frontmatter renders as empty in the UI — adding a property to a schema propagates to all instances with zero file churn (virtual propagation). This means the SQLite projection stores rows only for properties that have values (sparse).
+
+11.3 Properties UI
+
+Two surfaces compose the properties experience:
+
+1. Inline meta strip: in the breadcrumb row, shows the type chip and the `heroField` value. Untyped pages stay clean — there is no persistent "+ Type" affordance. The chip body opens the properties panel; a caret opens a menu with a "View all [Type]" action that routes to the per-type dashboard (§11.4).
+
+2. Bottom docked panel (toggle: `Mod+;`): rises on demand, pushing the editor up so reading context is preserved. Renders one field per schema property, type-aware (checkbox as a toggle, select as a dropdown, page/pages as a combobox typeahead). The panel uses a non-blocking focus contract (`aria-modal="false"`) so the user can interact with the editor while the panel is open.
+
+Page/pages relations render as combobox typeaheads with a dropdown of matching pages from the navigation tree, narrowed to the declared target type when set. Dangling targets (pages that have been deleted) render as strikethrough chips — silently inert, with no two-way inverse write (backlinks already derive the reverse relationship).
+
+Type switching: when a typed page switches to a different type, a Turn-into dialog previews the property mapping (carries over / compatible / will be flagged / won't appear / new) and offers optional orphan clearing. Switching from untyped to typed assigns directly (nothing to map).
+
+11.4 Per-Type Dashboard
+
+A full-content-area view showing all pages of a given type in a sortable table with per-property filters and client-side group-by. Columns derive from the type's schema; cells render by value type (checkbox as a check/dash, select as a chip, dates formatted, text as-is). The page-name column always leads, with the hero field as a subtitle. Sortable column headers (click to toggle asc/desc); filter controls per property (dropdown for select/multiselect, text contains for text, tri-state for checkbox, date input for dates); group-by bins rows into collapsible sections. Rows link back to the editor on click.
+
+11.5 MCP Property Read/Write
+
+Typed properties are exposed to AI clients over the Local MCP host via three tools:
+
+- **get_page_metadata** (read, ungated): returns the page's type, schema-merged properties, and raw frontmatter in one snapshot.
+- **set_page_property** (write-gated): validates the value against the type's property schema (twice — at entry and again in the file lock) and relation targets (once at entry) before any file I/O. Invalid values return a structured error and leave the file byte-identical. Structural validation narrows the hot-reload race to a sub-millisecond window between the in-lock revalidation and the atomic write; a stale relation target is inert (points to a page that may have changed, not corruption). Single-key granularity.
+- **set_page_type** (write-gated): schema-aware keep-and-flag — existing values are checked against the new schema; mismatches stay on disk and are returned as `flagged` (the call is not rejected). The `type:` line is written unless the type id is unknown (structured validation error).
+
+This schema-validates-every-write guarantee is the core safety argument for exposing typed-property writes to AI clients. See `docs/LOCAL_MCP.md` for the tool interface.
+
+11.6 Coexistence with Tags (§5.1)
+
+Typed properties and the existing smart-tag namespace system (§5.1) are complementary, not competing. Tags are free-form, user-assigned at any granularity, and queried via the tag typeahead (§5.4). Typed properties are schema-constrained, type-scoped, and queried via the dashboard. A page can carry both: tags for ad-hoc categorization and typed properties for structured fields. The SQLite projection for typed properties (`page_properties`) is separate from the tag index (`tags` table), so the two query paths never interfere.

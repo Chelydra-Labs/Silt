@@ -48,8 +48,9 @@ correctness regression, not a style choice.
 | **Content** | Markdown (`.md`) | Vault root + per-page files | Block bodies, task markers, per-task metadata, block identity (`<!-- id: uuid @ YYYY-MM-DD -->`) | `[/] DOING TASK [Alice] (2026-06-15) #2 !pin [p:50] Implement search <!-- id: 7c2a… @ 2026-06-15 -->` |
 | **Per-vault UI preferences** | YAML | `<vault>/.system/config.yaml` | Per-vault, per-plugin settings: active/disabled plugin list, Tasks hub saved views + display mode/grouping/sort, hotkey bindings, editor font sizes, theme typography overrides, canonical navigation order, expanded section locators, bounded recent pages, favorites (Quick Access pins), and pinned tabs | `ui.expanded_sections: [{notebook: Work, path: Projects}]` |
 | **Per-linked-notebook overrides** | YAML | `<linkedRoot>/.system/config.yaml` | Per-notebook plugin setting overrides for a linked (external) notebook. Read-only to Silt (user-authored); deep-merged over the vault defaults (linked wins per-key). See §3.1. | `plugins.plugin_settings.silt-tasks.default_group_by: status` |
+| **Per-vault schema assets** | YAML | `<vault>/.system/types/*.yaml` | Type schemas: property definitions, hero field, target-type constraints for `page`/`pages` relations. Sibling to `.system/templates/` and `.system/themes/`. User-authored or shipped defaults; durable and portable. See ADR `docs/decisions/0008-typed-notes.md`. | `TypeDef` YAML with `properties: [{name, type, target, ...}]` |
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
-| **Working memory** | SQLite (WAL) | `<DataDir>/silt/indexes/<vault-key>/index.sqlite*` (per-user local DataDir; relocated OUT of the synced vault) | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache |
+| **Working memory** | SQLite (WAL) | `<DataDir>/silt/indexes/<vault-key>/index.sqlite*` (per-user local DataDir; relocated OUT of the synced vault) | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index, typed-notes projection (`page_types`/`page_properties` — page→type membership + property values, re-derived from frontmatter `type:` + the type schema) | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache, `page_types`/`page_properties` projection |
 | **Plugin-owned storage** | SQLite (WAL) | `<vault>/.system/plugins/<id>/data/plugin.db` | Per-plugin private data the plugin owns the schema for: working memory OR durable storage at the plugin's discretion (embeddings, content-hash caches, agent memory). The plugin decides durability semantics; data that must survive uninstall or be portable MUST round-trip through markdown. | A plugin's `vec0` vector index, a content-hash cache table |
 
 **The cardinal rules:**
@@ -344,6 +345,34 @@ CREATE TABLE files (
 CREATE INDEX idx_blocks_src_file ON blocks(source, notebook, section, page, file_date);
 CREATE INDEX idx_tasks_dates ON tasks(start_date, due_date) WHERE start_date IS NOT NULL OR due_date IS NOT NULL;
 CREATE INDEX idx_tags_lookup ON tags(level_0, level_1, level_2);
+
+-- Typed-notes projection (re-derived from frontmatter type: + schema).
+-- page_types: page→type membership. page_properties: one row per SET
+-- property value (sparse, like block_meta). value_sort is a coercion for
+-- cross-type ordering (number→numeric text, date→ISO). Both source-aware.
+-- See ADR docs/decisions/0008-typed-notes.md.
+CREATE TABLE page_types (
+    source     TEXT NOT NULL,
+    notebook   TEXT NOT NULL,
+    section    TEXT NOT NULL,
+    page       TEXT NOT NULL,
+    type_name  TEXT NOT NULL,
+    PRIMARY KEY (source, notebook, section, page)
+);
+CREATE TABLE page_properties (
+    source      TEXT NOT NULL,
+    notebook    TEXT NOT NULL,
+    section     TEXT NOT NULL,
+    page        TEXT NOT NULL,
+    type_name   TEXT NOT NULL,
+    property    TEXT NOT NULL,
+    value_text  TEXT,
+    value_sort  TEXT,
+    value_type  TEXT NOT NULL,
+    PRIMARY KEY (source, notebook, section, page, property)
+);
+CREATE INDEX idx_page_types_type ON page_types(type_name);
+CREATE INDEX idx_page_properties_type_prop ON page_properties(type_name, property, value_sort);
 
 
 3.1 External / Linked Notebooks
@@ -703,6 +732,25 @@ maps legacy `plugins.disabled` AI ids into features. The drawer renders a typed
 transcript (text, evidence, tool calls/results, proposals, confirmations,
 structured status). The agent loop is the default orchestrator; retrieval and
 writing attach as capabilities when their flags are on.
+
+- **Typed notes** — schema-driven note types live in `<vault>/.system/types/*.yaml`
+  and a page declares its type via YAML frontmatter `type:`. The SQLite
+  projection (`page_types` / `page_properties`) is reproducible working memory
+  rebuilt from frontmatter + the type schema; the type watcher hot-reloads the
+  schema and re-projects every typed page so the dashboards do not drift on a
+  schema edit. **Type CRUD**: `ListTypes` / `GetType` / `SaveType` / `DeleteType`
+  (atomic write to `.system/types/<id>.yaml`, watcher self-write suppressed),
+  plus `ResolveTypeID` (frontmatter ref → canonical id) and `ReloadTypes`
+  (manual cache flush; both emit `types:changed`). **Per-page type ops**:
+  `GetPageType` (resolved schema + raw chip on unknown refs), `GetPageProperties`
+  (full schema form with `IsSet` flags), `SetPageType` (keep-and-flag on schema
+  mismatch), `SetPageProperty` / `ClearPageProperty` (surgical single-field
+  rewrite, structurally validated twice — once at entry and again inside the file lock to
+  narrow — not fully close — the schema-hot-reload race; relation-target
+existence is validated once at entry, since a stale target is inert on TOCTOU). **Dashboard query**: `QueryPagesByType`
+  (all pages of a type + their set properties, source-scoped). **Plugin SDK**:
+  `PluginListTypes` / `PluginGetType` (read-only, no grant), `PluginSaveType` /
+  `PluginDeleteType` (gated under `CapContentMutate`).
 
 Signatures and per-binding doc-comments live in `app.go` and the `app_*.go`
 files; this list is the contract surface, not the source.

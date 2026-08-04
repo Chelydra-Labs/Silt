@@ -40,6 +40,15 @@ const (
 	// Templates.
 	EventTemplatesChanged EventName = "templates:changed"
 
+	// Note types (typed-notes feature). Emitted by the type watcher on
+	// external schema edits and by SaveType/DeleteType so typed pages + the type
+	// manager stay live.
+	EventTypesChanged EventName = "types:changed"
+
+	// Emitted when a typed-page projection fails so the UI can surface a
+	// stale-dashboard warning instead of silently drifting.
+	EventTypesProjectionError EventName = "types:projection-error"
+
 	// Themes (singular vs plural is intentional — see the doc comment above).
 	EventThemeChanged      EventName = "theme:changed"
 	EventThemesChanged     EventName = "themes:changed"

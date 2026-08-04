@@ -27,6 +27,7 @@ import { pushNotification } from '../../notifications/store.svelte'
 import { formatDate, resolveDateFormat } from '../dateFormat'
 import { openDateGlanceNearEditor } from '../dateGlanceState.svelte'
 import { openShortcutHelp } from '../shortcutHelpState.svelte'
+import { ASSIGN_PAGE_TYPE_EVENT } from '../../shell/pageTypeEvents'
 
 /** Shape of the LaTeX popover the `/math` branch opens (block mode). */
 export interface SlashMathPopover {
@@ -254,6 +255,12 @@ export function createSlashMenu(opts: SlashMenuOptions) {
         // blocks are inserted at the cursor position (ARCHITECTURE §5.1 — the
         // UniqueBlockIds extension mints fresh UUIDs for the inserted nodes).
         opts.onShowTemplatePicker()
+        break
+      case 'type':
+        // Page-level type assignment is owned by the properties panel, not the
+        // editor. Signal the host shell via a window event; the slash trigger
+        // text is already deleted above so the editor stays clean either way.
+        window.dispatchEvent(new CustomEvent(ASSIGN_PAGE_TYPE_EVENT))
         break
       case 'format':
         // Inline formatting slash commands (#168). Each toggles its mark;

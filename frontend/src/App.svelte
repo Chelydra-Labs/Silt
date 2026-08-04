@@ -4,16 +4,19 @@
   import {
     resolveBreadcrumbSectionSelection,
     adaptSearchNavigation,
-    resolveSourceNavigationTarget
+    resolveSourceNavigationTarget,
+    resolveDashboardOpenTarget
   } from './lib/navigationTargets'
   import type { SourceNavigationRef } from './lib/navigationTargets'
+  import { coerceIPCError } from './lib/ipcError'
   import {
     IsVaultInitialized,
     InitializeVault,
     CloseVault,
     GetSidebarWidth,
     SetSidebarWidth,
-    CreateStandaloneTask
+    CreateStandaloneTask,
+    RestoreExampleTypes
   } from '../bindings/silt/app.js'
   import { fade } from 'svelte/transition'
   import TitleBar from './components/TitleBar.svelte'
@@ -54,6 +57,7 @@
   import { createSettingsDialogs } from './shell/useSettingsDialogs.svelte'
   import { createGlobalHotkeyDispatch } from './shell/useGlobalHotkeyDispatch.svelte'
   import { createStartupEvents } from './shell/useStartupEvents.svelte'
+  import { ASSIGN_PAGE_TYPE_EVENT } from './shell/pageTypeEvents'
   import { effectiveHotkeys } from './settings/shortcutActions'
   import { findBarState } from './lib/editor/search/findBarState.svelte'
   import { editorKey, getEditor } from './lib/editor/editorRegistry.svelte'
@@ -68,6 +72,11 @@
   } from './plugins/shared/ai-chat/drawer.svelte'
   import PluginStatusBar from './components/PluginStatusBar.svelte'
   import DateGlance from './components/DateGlance.svelte'
+  import PageTypePill from './properties/PageTypePill.svelte'
+  import PropertiesPanel from './properties/PropertiesPanel.svelte'
+  import TypeEditorDialog from './properties/TypeEditorDialog.svelte'
+  import { createPageTypeController } from './properties/pageTypeState.svelte'
+  import TypeDashboard from './dashboards/TypeDashboard.svelte'
   import { toggleDateGlance } from './lib/dateGlanceState.svelte'
   import { getActiveEditor } from './lib/editor/activeEditor.svelte'
   import {
@@ -93,7 +102,10 @@
     type NotebookNavigationMetadata,
     type NavigationCatalogItem
   } from './lib/navigationCatalog'
-  import type { NavigationPreferences } from './lib/sidebar/types'
+  import type {
+    NavigationPageRef,
+    NavigationPreferences
+  } from './lib/sidebar/types'
   import { routeJumpTarget } from './lib/standaloneTasksNav'
 
   let isInitialized = $state(false)
@@ -254,6 +266,123 @@
   let activeNotebookMetadata = $derived(
     navigationNotebookMetadata[activeNotebook]
   )
+
+  // Typed-notes controller. Reads the active locator via live closures so it
+  // stays in sync with navigation; App drives re-fetching via the $effect on
+  // the locator + view below. The controller owns the `types:changed`
+  // subscription (attached in onMount) and the panel-open flag.
+  const pageType = createPageTypeController({
+    getLocator: () => ({
+      notebook: activeNotebook,
+      section: activeSection,
+      page: activePage
+    })
+  })
+  // Re-fetch the active page's type + properties whenever the user navigates
+  // (the controller reads the locator via the closure above). Reading the
+  // three locator vars + view inside the effect wires Svelte's dependency
+  // tracking; the panel only applies to note pages.
+  $effect(() => {
+    if (activeView !== 'notes' && activeView !== 'backlinks') return
+    // Touch all three so a section-only or page-only change still re-runs.
+    void activeNotebook
+    void activeSection
+    void activePage
+    void pageType.refresh()
+  })
+
+  // Per-type dashboard view. Reached from the type strip's "View all" action;
+  // exits via its Back button or by opening a page (which returns to notes).
+  let dashboardType = $state('')
+  function openTypeDashboard(typeId: string): void {
+    if (!typeId) return
+    dashboardType = typeId
+    activeView = 'dashboard'
+  }
+
+  // In-app type editor modal. Mounted at the shell level so the same dialog
+  // serves the dashboard's "New type" header button, the dashboard's empty
+  // state, and the PropertiesPanel type-menu dead-end — one surface for
+  // "create a type from scratch". SaveType emits types:changed → the panel
+  // and dashboard refresh themselves, so onClose just closes.
+  let typeEditorOpen = $state(false)
+  function openTypeEditor(): void {
+    typeEditorOpen = true
+  }
+
+  // Restore the shipped example types (Book, Meeting). Idempotent server-side:
+  // a type whose id exists is left untouched, so this is safe to repeat. The
+  // returned ids distinguish "newly restored" from "already present" so the
+  // toast reflects what actually happened.
+  async function restoreExampleTypes(): Promise<void> {
+    try {
+      const ids = (await RestoreExampleTypes()) as string[] | null
+      if (ids && ids.length > 0) {
+        const names = ids
+          .map((id) => id.charAt(0).toUpperCase() + id.slice(1))
+          .join(', ')
+        pushNotification({
+          kind: 'success',
+          message: `Restored ${names}.`
+        })
+      } else {
+        pushNotification({
+          kind: 'info',
+          message: 'Example types are already present.'
+        })
+      }
+    } catch (e) {
+      pushNotification({
+        kind: 'error',
+        message: coerceIPCError(e).message
+      })
+    }
+  }
+  function openDashboardPage(locator: {
+    source: string
+    notebook: string
+    section: string
+    page: string
+  }): void {
+    // The tab system identifies pages by notebook/section/path only (no source
+    // field), so a linked-notebook row colliding with a vault page would open
+    // the wrong tab. Gate linked-source rows until tabs carry source.
+    const target = resolveDashboardOpenTarget(locator)
+    if (target.kind === 'blocked') {
+      pushNotification({ kind: 'info', message: target.reason })
+      return
+    }
+    tabManager.openPage(target.ref, 'preview')
+    activeView = 'notes'
+  }
+  // Sidebar right-click "Page properties" → open the properties panel + arm
+  // its type menu on the chosen page. Same linked-source gate as
+  // openDashboardPage (the tab system has no source field). If the target is
+  // already active, skip the tab churn and just open + arm. Mirrors the /type
+  // slash command's compose pattern (App.svelte:onAssignType).
+  async function handleTypePageTarget(ref: NavigationPageRef): Promise<void> {
+    const source = navigationNotebookMetadata[ref.notebook]?.source ?? 'vault'
+    const target = resolveDashboardOpenTarget({
+      source,
+      notebook: ref.notebook,
+      section: ref.section,
+      page: ref.page
+    })
+    if (target.kind === 'blocked') {
+      pushNotification({ kind: 'info', message: target.reason })
+      return
+    }
+    const isActive =
+      activeNotebook === ref.notebook &&
+      activeSection === ref.section &&
+      activePage === ref.page
+    if (!isActive) {
+      tabManager.openPage(ref, 'pin')
+      await tick()
+    }
+    pageType.open()
+    pageType.requestTypeMenu()
+  }
   let showGlobalReplace = $state(false)
   // Global standalone-task quick-add overlay (#368). Opened by the new_task
   // hotkey (default Ctrl+Shift+N). Creates a task in <vault>/.silt/tasks.md
@@ -336,6 +465,11 @@
     requestNavigationCreation: (kind) => void requestNavigationCreation(kind),
     openSettings: () => openSettings(),
     toggleViewMode: (tabId) => tabManager.handleToggleViewMode(tabId),
+    togglePropertiesPanel: () => pageType.toggle(),
+    // Mirrors the {#if} that mounts <PropertiesPanel> (the editor-tab view);
+    // see useGlobalHotkeyDispatch — toggling anywhere else is a silent no-op.
+    isPropertiesPanelAvailable: () =>
+      activeView === 'notes' || activeView === 'backlinks',
     closeTab: (tabId) => tabManager.handleCloseTab(tabId),
     cycleTab: (dir) => tabManager.handleCycleTab(dir)
   })
@@ -433,6 +567,17 @@
 
     hotkeyDispatch.attach()
     startup.attach()
+    const disposePageType = pageType.attach()
+
+    // /type slash command → open the properties panel + its type menu. The
+    // panel's existing type-menu logic does the untyped-vs-typed branching
+    // (direct assign vs Turn-into dialog), so this just opens both surfaces.
+    const onAssignType = (): void => {
+      if (!activeNotebook || !activePage) return
+      pageType.open()
+      pageType.requestTypeMenu()
+    }
+    window.addEventListener(ASSIGN_PAGE_TYPE_EVENT, onAssignType)
 
     return () => {
       hotkeyDispatch.detach()
@@ -441,6 +586,8 @@
       disposeThemes()
       disposeTemplates()
       disposeUpdateStore()
+      disposePageType()
+      window.removeEventListener(ASSIGN_PAGE_TYPE_EVENT, onAssignType)
       // Flush any pending tab-state persistence so the user's last
       // change survives a component unmount / app close (#142 hardening).
       tabManager.flushPendingPersist()
@@ -819,6 +966,7 @@
             // Double-click / middle-click opens a pinned tab (#142).
             tabManager.openPage({ notebook: nb, section: sec, page: pg }, 'pin')
           }}
+          onTypePageTarget={handleTypePageTarget}
           onSelectView={selectView}
           onNavigationLoaded={(tree) => {
             navigationCatalog = flattenNavigation(tree)
@@ -890,7 +1038,17 @@
                   'activate-only'
                 )}
               onOpenBacklinks={showBacklinks}
-            />
+            >
+              {#snippet meta()}
+                <PageTypePill
+                  info={pageType.info}
+                  heroValue={pageType.heroValue}
+                  onOpen={pageType.open}
+                  onViewAll={() => openTypeDashboard(pageType.info.type.id)}
+                  onOpenWithTypeMenu={pageType.requestTypeMenu}
+                />
+              {/snippet}
+            </PageBreadcrumb>
             {#if notesReady}
               <div
                 id="silt-tabpanel"
@@ -952,6 +1110,28 @@
                   </div>
                 {/each}
               </div>
+              <PropertiesPanel
+                open={pageType.panelOpen}
+                info={pageType.info}
+                values={pageType.values}
+                mismatched={pageType.mismatched}
+                error={pageType.error}
+                loading={pageType.loading}
+                types={pageType.types}
+                typesLoading={pageType.typesLoading}
+                typeMenuRequest={pageType.typeMenuRequest}
+                locator={{
+                  notebook: activeNotebook,
+                  section: activeSection,
+                  page: activePage
+                }}
+                onClose={pageType.close}
+                onChanged={pageType.refresh}
+                onMismatched={pageType.setMismatched}
+                onError={pageType.setError}
+                onCreateType={openTypeEditor}
+                onRestoreExamples={restoreExampleTypes}
+              />
             {:else}
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <!-- Dev Mode Inspect only; no native menu on empty chrome (#683). -->
@@ -1024,6 +1204,14 @@
             {/if}
           {:else if activeView === 'tags'}
             <TagsExplorer {selectedTag} />
+          {:else if activeView === 'dashboard'}
+            <TypeDashboard
+              typeName={dashboardType}
+              onOpenPage={openDashboardPage}
+              onBack={() => (activeView = 'notes')}
+              onCreateType={openTypeEditor}
+              onRestoreExamples={restoreExampleTypes}
+            />
           {:else if activeView === 'tasks' || activeView === 'calendar' || activeView === 'kanban'}
             <PluginView
               pluginId="silt-tasks"
@@ -1180,6 +1368,11 @@
     open={settingsDialogs.showSettingsMismatch}
     onClose={settingsDialogs.closeSettingsMismatch}
     onConfirm={settingsDialogs.confirmSettingsMismatch}
+  />
+
+  <TypeEditorDialog
+    open={typeEditorOpen}
+    onClose={() => (typeEditorOpen = false)}
   />
 
   <GrantsMigrationDialog

@@ -189,6 +189,14 @@ func (a *App) DuplicatePage(notebook, section, page, targetName string) error {
 		if indexErr != nil {
 			runErr = rollbackDuplicateTarget(a, targetPath, source, safeNotebook, safeSection, safeTarget,
 				pageActionError(CodeNavigationDuplicate, "duplicate page could not be indexed; target rolled back", indexErr))
+			return
+		}
+		// IndexFileBlocks no longer clears/rebuilds the typed projection; a
+		// duplicated page keeps the source's type: frontmatter and must be
+		// projected explicitly or it is absent from dashboards until restart.
+		if projErr := a.projectPageType(source, meta); projErr != nil {
+			runErr = rollbackDuplicateTarget(a, targetPath, source, safeNotebook, safeSection, safeTarget,
+				pageActionError(CodeNavigationDuplicate, "duplicate page could not be projected; target rolled back", projErr))
 		}
 	})
 	return runErr

@@ -15,6 +15,7 @@ import (
 	"silt/backend/parser"
 	"silt/backend/paths"
 	"silt/backend/templates"
+	"silt/backend/types"
 	"silt/backend/vault"
 )
 
@@ -258,6 +259,11 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	}
 	for _, p := range pruned {
 		allWarnings = append(allWarnings, fmt.Sprintf("%s: removed from index (file no longer exists)", p))
+		// Drop blocks + typed projection for paths that vanished while the app
+		// was closed. PruneStaleFiles only removes the files-table skip key;
+		// without this, page_types/page_properties (and blocks) linger as
+		// dashboard ghosts and relation targets until a cold index wipe.
+		a.clearIndexedPageForPath(dbMgr, vaultPath, p)
 	}
 
 	// Merge the indexer's per-file skip list into the warning stream.
@@ -294,6 +300,50 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.watcher = watcher
 	a.vaultPath = vaultPath
 
+	// Project typed-notes type/property values. Cold start / changed files
+	// always project (cardinal rule 4 — delete the index and these rebuild
+	// from frontmatter + the type schema). Warm upgrade from a pre-typed-notes
+	// index leaves the files table populated, so IsFileUnchanged skips every
+	// pre-existing page and `changed` is empty — without a one-shot backfill
+	// those hand-authored `type:` pages never appear in dashboards until
+	// touched. page_projection_backfill records that the full scan has been
+	// projected once; subsequent warm opens only project `changed`.
+	// Runs AFTER a.db/a.vaultPath are assigned (projectPageType uses both);
+	// each call opens its own DB lease, so it stays outside any WithDBWrite.
+	toProject := changed
+	backfillDone, berr := dbMgr.SchemaMigrationApplied(db.PageProjectionBackfillMarker)
+	if berr != nil {
+		log.Printf("initializeVaultServices: probe page_projection_backfill: %v", berr)
+	} else if !backfillDone {
+		toProject = results
+	}
+	// Only record the one-shot backfill marker when every page projected
+	// cleanly. projectPageType returns DB errors; swallowing them and still
+	// marking done would leave failed pages invisible until a file touch or
+	// schema edit (AC5 warm path). Re-run is idempotent (delete-then-insert).
+	backfillFailed := false
+	for _, res := range toProject {
+		if res.Notebook == "" || res.Err != nil {
+			continue
+		}
+		if err := a.projectPageType(res.Source, parser.FileMetadata{
+			Notebook:    res.Notebook,
+			Section:     res.Section,
+			Page:        res.Page,
+			Type:        res.Type,
+			Frontmatter: res.Frontmatter,
+		}); err != nil {
+			backfillFailed = true
+		}
+	}
+	if berr == nil && !backfillDone && !backfillFailed {
+		if err := dbMgr.RecordSchemaMigration(db.PageProjectionBackfillMarker); err != nil {
+			log.Printf("initializeVaultServices: record page_projection_backfill: %v", err)
+		}
+	} else if backfillFailed && !backfillDone {
+		log.Printf("initializeVaultServices: page_projection_backfill incomplete; marker not recorded (will retry next open)")
+	}
+
 	// Route co-located per-notebook config edits to the cache invalidator +
 	// linked-config:changed event (#133). The handler is called from the
 	// watcher goroutine; it only touches configMu + the event emitter.
@@ -303,9 +353,13 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// event (safe — no vaultMu/configMu access).
 	watcher.SetReMintWarningHandler(a.onReMintWarning)
 	// External fsnotify reindex/clear → block:changed so plugin indexes (QA
-	// vectors) stay consistent with the note store (#850).
+	// vectors) stay consistent with the note store (#850), AND re-project the
+	// page so the typed dashboards reflect the external edit immediately — the
+	// watcher's IndexFileBlocks drops the projection via ClearFileBlocks but
+	// the watcher path does not re-project on its own.
 	watcher.SetPageChangedHandler(func(notebook, section, page string) {
 		a.emitBlockChanged("", notebook, section, page, "")
+		a.onExternalPageChanged(notebook, section, page)
 	})
 
 	// Start hot-reload of .system/config.yaml. External edits re-parse and
@@ -340,6 +394,30 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		}
 	}
 
+	// Start hot-reload of .system/types/ so typed pages and the type manager
+	// stay live when a user adds/edits/deletes a type externally (the same
+	// posture as the template watcher). The onChange callback invalidates the
+	// type cache, emits types:changed, AND re-projects every typed page so the
+	// dashboard reflects the new schema without waiting for each page to be
+	// re-touched. Re-projection runs under vaultMu.Lock (the watcher hands off
+	// to the App as a lifecycle event); it re-reads each page's frontmatter
+	// against the freshly-loaded schema.
+	if a.ctx != nil {
+		yw, yErr := types.NewTypeWatcher(a.typesDir(), func() {
+			types.InvalidateTypesCache()
+			a.vaultMu.Lock()
+			a.reprojectAllTypedPages()
+			a.vaultMu.Unlock()
+			a.emit(EventTypesChanged, struct{}{})
+		})
+		if yErr != nil {
+			log.Printf("type watcher disabled: %v", yErr)
+		} else {
+			yw.Start()
+			a.typeWatcher = yw
+		}
+	}
+
 	// Seed the in-memory network + AI audit logs from the on-disk per-plugin
 	// log files (network.log / ai.log) so entries survive a restart (#157 /
 	// #446). The writers are started AFTER seeding so they never race the
@@ -361,4 +439,56 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.syncMCPHostLocked()
 
 	return nil
+}
+
+// clearIndexedPageForPath drops blocks + typed projection for a markdown path
+// that disappeared from disk (startup prune). Best-effort: unknown layouts are
+// skipped. Caller holds vaultMu.Lock; uses dbMgr directly (a.db may not be set).
+func (a *App) clearIndexedPageForPath(dbMgr *db.DatabaseManager, vaultPath, absPath string) {
+	if dbMgr == nil || absPath == "" || !strings.HasSuffix(strings.ToLower(absPath), ".md") {
+		return
+	}
+	source, notebook, section, page := "", "", "", ""
+	if rel, err := filepath.Rel(vaultPath, absPath); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) >= 2 {
+			notebook = parts[0]
+			page = strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
+			if len(parts) > 2 {
+				section = strings.Join(parts[1:len(parts)-1], "/")
+			}
+			source = "vault"
+		}
+	}
+	if source == "" {
+		a.configMu.RLock()
+		links := append([]config.LinkedNotebook(nil), a.cfg.LinkedNotebooks...)
+		a.configMu.RUnlock()
+		for _, ln := range links {
+			if ln.RootPath == "" {
+				continue
+			}
+			rel, err := filepath.Rel(ln.RootPath, absPath)
+			if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+				continue
+			}
+			parts := strings.Split(filepath.ToSlash(rel), "/")
+			if len(parts) < 1 {
+				continue
+			}
+			page = strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(parts[len(parts)-1]))
+			if len(parts) > 1 {
+				section = strings.Join(parts[:len(parts)-1], "/")
+			}
+			notebook = ln.DisplayName
+			source = ln.Source()
+			break
+		}
+	}
+	if source == "" || notebook == "" || page == "" {
+		return
+	}
+	if err := dbMgr.ClearFileBlocks(nil, source, notebook, section, page); err != nil {
+		log.Printf("initializeVaultServices: ClearFileBlocks pruned %s: %v", absPath, err)
+	}
 }

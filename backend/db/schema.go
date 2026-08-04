@@ -342,6 +342,42 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create block_references reverse-lookup index: %w", err)
 	}
 
+	// Typed-notes projection. page_types and page_properties are
+	// working-memory projections of each page's note type and its set property
+	// values, re-derived from frontmatter + the type schema on every index
+	// (cardinal rule #4 — delete the index and relaunch rebuilds them). Sparse:
+	// page_properties holds a row ONLY for properties the page has actually
+	// set, mirroring block_meta. A page with a type but no set properties still
+	// gets a page_types row so the dashboard lists it. Source-scoped so
+	// a linked notebook sharing a display name with a vault notebook cannot
+	// collide. type_name is the canonical lowercased id; value_sort is a
+	// coercion that makes cross-value ordering type-correct (numbers padded,
+	// dates as ISO, text as-is) so the dashboard can sort/group uniformly.
+	createPageProjectionTables := `
+	CREATE TABLE IF NOT EXISTS page_types (
+		source    TEXT NOT NULL,
+		notebook  TEXT NOT NULL,
+		section   TEXT NOT NULL,
+		page      TEXT NOT NULL,
+		type_name TEXT NOT NULL,
+		PRIMARY KEY (source, notebook, section, page)
+	);
+	CREATE TABLE IF NOT EXISTS page_properties (
+		source     TEXT NOT NULL,
+		notebook   TEXT NOT NULL,
+		section    TEXT NOT NULL,
+		page       TEXT NOT NULL,
+		type_name  TEXT NOT NULL,
+		property   TEXT NOT NULL,
+		value_text TEXT,
+		value_sort TEXT,
+		value_type TEXT NOT NULL,
+		PRIMARY KEY (source, notebook, section, page, property)
+	);`
+	if _, err := db.Exec(createPageProjectionTables); err != nil {
+		return fmt.Errorf("failed to create page projection tables: %w", err)
+	}
+
 	// Schema-migrations ledger — narrow, general-purpose marker table for
 	// restart-safe one-shot migrations whose completion cannot be inferred
 	// from `CREATE TABLE IF NOT EXISTS` alone (e.g. backfills over existing
@@ -394,6 +430,10 @@ func (dm *DatabaseManager) initSchema() error {
 		"CREATE INDEX IF NOT EXISTS idx_blocks_clean_lower ON blocks(LOWER(clean_content));",
 		"CREATE INDEX IF NOT EXISTS idx_blocks_notebook_lower ON blocks(LOWER(notebook));",
 		"CREATE INDEX IF NOT EXISTS idx_blocks_section_lower ON blocks(LOWER(section));",
+		// Typed-notes dashboards: list instances of a type, and
+		// filter/sort/group by property value.
+		"CREATE INDEX IF NOT EXISTS idx_page_types_type ON page_types(type_name);",
+		"CREATE INDEX IF NOT EXISTS idx_page_properties_type_prop ON page_properties(type_name, property, value_sort);",
 	}
 
 	for _, idxQuery := range indexes {
@@ -844,4 +884,53 @@ func (dm *DatabaseManager) RebuildFTSIndex() error {
 	defer release()
 	_, err = db.Exec("INSERT INTO blocks_fts(blocks_fts) VALUES ('rebuild');")
 	return err
+}
+
+// PageProjectionBackfillMarker is the schema_migrations row that records a
+// completed one-shot warm-upgrade projection of typed pages into
+// page_types/page_properties. Warm startup skips unchanged files via the
+// files-table mtime+size gate, so a 0.3.x → 0.4.0 vault that already carried
+// hand-authored `type:` frontmatter would otherwise never project those pages
+// until each file is touched. The App layer runs the backfill (it needs the
+// type schema + scan frontmatter); the marker lives here so it shares the
+// established ledger with block_references / page_fold backfills.
+const PageProjectionBackfillMarker = "page_projection_backfill"
+
+// SchemaMigrationApplied reports whether schema_migrations already has name.
+// Used by app-layer one-shot backfills that cannot run inside initSchema
+// because they need scan results / type schemas outside the db package.
+func (dm *DatabaseManager) SchemaMigrationApplied(name string) (bool, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return false, ErrDBClosed
+	}
+	defer release()
+	var appliedAt int64
+	err = db.QueryRow(
+		"SELECT applied_at FROM schema_migrations WHERE name = ?", name,
+	).Scan(&appliedAt)
+	if err == nil {
+		return true, nil
+	}
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return false, fmt.Errorf("probe schema_migrations %q: %w", name, err)
+}
+
+// RecordSchemaMigration inserts name into schema_migrations. Idempotent via
+// INSERT OR IGNORE so a concurrent/retry path cannot fail on PK conflict.
+func (dm *DatabaseManager) RecordSchemaMigration(name string) error {
+	db, release, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
+	defer release()
+	if _, err := db.Exec(
+		"INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+		name, time.Now().UnixNano(),
+	); err != nil {
+		return fmt.Errorf("record schema_migrations %q: %w", name, err)
+	}
+	return nil
 }

@@ -513,6 +513,13 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 			Blocks:   blocks,
 			Tags:     meta.Tags,
 			Warnings: meta.Warnings,
+			// Type + Frontmatter must travel with the scan result so the
+			// post-index projectPageType loop can project linked typed pages
+			// (same contract as the vault scanner). Omitting them leaves
+			// dashboards empty for linked notebooks and clears any prior
+			// projection on relink.
+			Type:        meta.Type,
+			Frontmatter: meta.Frontmatter,
 		}
 		if statErr == nil {
 			res.MTime = st.ModTime()
@@ -534,6 +541,22 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 	}
 	for _, s := range skipped {
 		log.Printf("LinkNotebook(%s): skipped %s", ln.DisplayName, s)
+	}
+
+	// Project typed-notes type/property values for the freshly-linked tree.
+	// a.db/a.vaultPath are set (linking happens post-open); each call
+	// opens its own DB lease, so it stays outside the WithDBWrite above.
+	for _, res := range results {
+		if res.Notebook == "" || res.Err != nil {
+			continue
+		}
+		a.projectPageType(res.Source, parser.FileMetadata{
+			Notebook:    res.Notebook,
+			Section:     res.Section,
+			Page:        res.Page,
+			Type:        res.Type,
+			Frontmatter: res.Frontmatter,
+		})
 	}
 
 	// Post-commit files-table pass: record mtime+size for each successfully

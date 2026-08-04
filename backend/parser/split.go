@@ -10,7 +10,15 @@ import "strings"
 // every writer extracts frontmatter the same way.
 func SplitFrontmatter(content string) (frontmatter, body string) {
 	lines := strings.Split(content, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+	if len(lines) == 0 {
+		return "", content
+	}
+	// A leading U+FEFF (Obsidian/OneDrive/Dropbox sync) is detected here but
+	// NOT stripped: it stays in the returned frontmatter so every reassembling
+	// writer (RenderFileContent, frontmatter_edit) preserves it byte-for-byte
+	// rather than silently dropping the file's byte signature.
+	first := strings.TrimPrefix(lines[0], "\uFEFF")
+	if strings.TrimSpace(first) != "---" {
 		return "", content
 	}
 	for i := 1; i < len(lines); i++ {

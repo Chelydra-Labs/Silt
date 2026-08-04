@@ -22,6 +22,7 @@ export type GlobalHotkeyAction =
   | 'open_template_picker'
   | 'new_task'
   | 'toggle_view_mode'
+  | 'toggle_properties_panel'
   | 'toggle_format_toolbar'
   | 'toggle_focus_mode'
   | 'toggle_typewriter_mode'
@@ -101,6 +102,7 @@ export function resolveGlobalHotkey(
     'open_template_picker',
     'new_task',
     'toggle_view_mode',
+    'toggle_properties_panel',
     'toggle_format_toolbar',
     'toggle_focus_mode',
     'toggle_typewriter_mode'

@@ -3,6 +3,7 @@ import {
   adaptSearchNavigation,
   createRecentPageRecorder,
   resolveBreadcrumbSectionSelection,
+  resolveDashboardOpenTarget,
   resolveSourceNavigationTarget
 } from './lib/navigationTargets'
 
@@ -147,5 +148,34 @@ describe('App navigation coordination', () => {
   it('leaves a source-less page-link locator unchanged', () => {
     const link = { notebook: 'Work', section: '', page: 'Inbox' }
     expect(resolveSourceNavigationTarget([], link)).toBe(link)
+  })
+
+  it('opens a vault dashboard row by path but gates a linked-source row', () => {
+    // Vault rows open normally — the tab system can identify them by path.
+    expect(
+      resolveDashboardOpenTarget({
+        source: 'vault',
+        notebook: 'Work',
+        section: 'Plans',
+        page: 'Roadmap'
+      })
+    ).toEqual({
+      kind: 'open',
+      ref: { notebook: 'Work', section: 'Plans', page: 'Roadmap' }
+    })
+
+    // A linked-source row whose path collides with a vault page would open the
+    // wrong tab (tabs carry no source field). Gate it with a clear reason
+    // rather than silently dropping source.
+    const linked = resolveDashboardOpenTarget({
+      source: 'linked:team-drive',
+      notebook: 'Work',
+      section: 'Plans',
+      page: 'Roadmap'
+    })
+    expect(linked.kind).toBe('blocked')
+    if (linked.kind === 'blocked') {
+      expect(linked.reason).toBeTruthy()
+    }
   })
 })

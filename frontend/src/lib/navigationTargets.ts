@@ -134,3 +134,34 @@ export function resolveSourceNavigationTarget<T extends SourceNavigationRef>(
     ) ?? target
   )
 }
+
+/** A dashboard row's locator (carries source, unlike the tab PageRef). */
+export interface DashboardPageLocator {
+  source: string
+  notebook: string
+  section: string
+  page: string
+}
+
+/**
+ * Resolve a dashboard row open against the tab system. The tab identity model
+ * keys on notebook/section/page only — it has no source field — so a
+ * linked-notebook row whose path collides with a vault page would activate the
+ * wrong tab. Until tabs carry source, gate linked-source opens with a clear
+ * message instead of risking the wrong page. Vault rows open by path.
+ */
+export function resolveDashboardOpenTarget(
+  row: DashboardPageLocator
+): { kind: 'open'; ref: RecentPageRef } | { kind: 'blocked'; reason: string } {
+  if (row.source && row.source !== 'vault') {
+    return {
+      kind: 'blocked',
+      reason:
+        'Opening linked-notebook pages from the dashboard is not supported yet.'
+    }
+  }
+  return {
+    kind: 'open',
+    ref: { notebook: row.notebook, section: row.section, page: row.page }
+  }
+}

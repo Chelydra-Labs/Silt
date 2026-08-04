@@ -259,6 +259,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) (string, error) 
 				if idxErr != nil {
 					log.Printf("UpdateBlockState: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
 				}
+				a.projectPageType(loc.Source, remeta)
 			}
 		})
 	}) // LockBlockWrite
@@ -588,6 +589,7 @@ func (a *App) writeBlockText(blockID string, transform func(currentClean string)
 				if idxErr != nil {
 					log.Printf("writeBlockText: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
 				}
+				a.projectPageType(loc.Source, remeta)
 			}
 		})
 	}) // LockBlockWrite
@@ -650,6 +652,7 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 		if idxErr != nil {
 			log.Printf("writePageFileLocked: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
 		}
+		a.projectPageType(source, meta)
 	}
 	return nil
 }
@@ -885,6 +888,7 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 				writeErr = fmt.Errorf("re-index after source save failed: %w", idxErr)
 				return
 			}
+			a.projectPageType(source, meta)
 			result = parsedBlocks
 		})
 	}) // LockBlocksWrite

@@ -181,6 +181,11 @@ func (a *App) reindexFileContent(filePath, source, notebook, section, page strin
 			}
 		}
 	}
+	// Re-project the page's note type from the freshly parsed frontmatter.
+	// Outside WithDBWrite: the DB method acquires its own handle and must not
+	// re-enter the write lock. Runs only after parse, index, stat, and
+	// MarkFileIndexed all succeeded.
+	a.projectPageType(source, meta)
 	return nil
 }
 
@@ -339,6 +344,10 @@ func (a *App) reindexFile(filePath, notebook, section, page string) {
 	if idxErr != nil {
 		log.Printf("reindexFile: index failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
 	}
+	// Re-project the page's note type from the freshly parsed frontmatter.
+	// Outside WithDBWrite: the DB method acquires its own handle and must not
+	// re-enter the write lock.
+	a.projectPageType(reidxSource, meta)
 	// Emit block:changed so live embeds/references refresh.
 	for _, b := range blocks {
 		if b.ID != "" {

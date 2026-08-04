@@ -3,6 +3,7 @@ package parser
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -11,6 +12,11 @@ import (
 // via os.CreateTemp so that two concurrent writers of the same target do
 // not clobber each other's temp files; the rename is what makes the
 // visible swap atomic at the filesystem level.
+//
+// On POSIX, the parent directory is fsync'd after a successful rename so the
+// directory entry itself is durable across power loss (without this, a crash
+// immediately post-rename can resurrect the pre-edit content). Windows/NTFS
+// does not require the directory fsync for rename durability.
 func WriteFileAtomic(path string, content []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -64,6 +70,24 @@ func WriteFileAtomic(path string, content []byte) error {
 			return err
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+
+	// POSIX: fsync the parent dir so the renamed directory entry is durable.
+	// Skip on Windows — NTFS rename is already crash-safe and opening a
+	// directory handle for Sync is not the same contract.
+	if runtime.GOOS != "windows" {
+		dirFile, derr := os.Open(dir)
+		if derr != nil {
+			return derr
+		}
+		syncErr := dirFile.Sync()
+		closeErr := dirFile.Close()
+		if syncErr != nil {
+			return syncErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
 	}
 
 	success = true

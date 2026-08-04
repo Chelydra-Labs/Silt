@@ -75,6 +75,39 @@ or pass `--url`.
 | `list_notebooks` | read | Navigation tree |
 | `create_page` | write grant | Empty page |
 | `update_blocks` | write grant | Identity-preserving page replace |
+| `get_page_metadata` | read | Page type, schema-merged properties, raw frontmatter |
+| `set_page_property` | write grant | Single typed property; schema-validated — invalid values rejected before any file I/O |
+| `set_page_type` | write grant | Assign or clear (empty type) a page's note type; mismatches kept on disk and returned as flagged (no rejection) |
+
+### Typed-properties tools
+
+`get_page_metadata` returns a single snapshot combining three views of a page:
+
+- `type` — the canonical type id (empty for an untyped page; the raw frontmatter
+  value when the id does not resolve to a known schema, so a client can render a
+  raw chip).
+- `properties` — schema-merged: every property declared by the page's type, in
+  declaration order, with `isSet=false` for unset ones. Each entry carries the
+  property's `name`, `label`, `type`, current `value`, `required` flag, and
+  `options` (select/multiselect only).
+- `frontmatter` — the raw parsed YAML map (all keys, not just schema-declared
+  ones).
+
+`set_page_property` writes a single typed property. The value arrives as a
+string and is coerced to the property's Go type (number/checkbox/list) before
+validation, so a numeric property accepts `"4"`. Validation is **structural**
+(right shape for the type) **and relation-target** (page/pages only — the
+referenced page exists and, when the property declares a `target`, is of that
+type). Both checks run **before** any file I/O, so an invalid value leaves the
+page byte-identical — the call returns the validation error and nothing is
+written.
+
+`set_page_type` assigns a new type id, or clears the page's type with an empty
+string. Existing frontmatter values are checked against the new schema
+(keep-and-flag): mismatches stay on disk unchanged and are returned in the
+response as `flagged` — the call is not rejected and nothing is dropped. The
+`type:` line is written unless the type id is unknown. A follow-up
+`get_page_metadata` shows the surviving values.
 
 ## Config (`config.yaml`)
 

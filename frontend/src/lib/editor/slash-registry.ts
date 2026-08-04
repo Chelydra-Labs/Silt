@@ -138,6 +138,16 @@ registerSlashCommand({
   description: 'Show available keyboard shortcuts',
   icon: 'keyboard'
 })
+// Page-level type assignment surfaced through the slash menu. The handler
+// dispatches a window event the host shell routes to the type picker (untyped
+// page) or the Turn-into dialog (typed page). Metadata-only like the other
+// built-ins; the editor dispatches it via handleSlashSelect.
+registerSlashCommand({
+  id: 'type',
+  label: 'Set page type',
+  description: 'Assign or change this page’s type',
+  icon: 'category'
+})
 
 // --- Inline formatting commands (#168) ------------------------------------
 // Metadata-only built-ins; the editor dispatches them by id via

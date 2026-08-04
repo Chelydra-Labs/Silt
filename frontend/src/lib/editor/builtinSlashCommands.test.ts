@@ -93,12 +93,13 @@ describe('classifySlashCommand', () => {
     })
   })
 
-  it('classifies today/embed/template/calendar/shortcuts (no payload — execution computes it)', () => {
+  it('classifies today/embed/template/calendar/shortcuts/type (no payload — execution computes it)', () => {
     expect(classifySlashCommand('today')).toEqual({ kind: 'today' })
     expect(classifySlashCommand('embed')).toEqual({ kind: 'embed' })
     expect(classifySlashCommand('template')).toEqual({ kind: 'template' })
     expect(classifySlashCommand('calendar')).toEqual({ kind: 'calendar' })
     expect(classifySlashCommand('shortcuts')).toEqual({ kind: 'shortcuts' })
+    expect(classifySlashCommand('type')).toEqual({ kind: 'type' })
   })
 
   it('classifies inline-format commands via FORMAT_COMMANDS', () => {

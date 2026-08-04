@@ -517,29 +517,69 @@ func ExtractTags(text string) []string {
 // specific page on a given day, scoped to the notebook's source so a linked
 // notebook sharing a display name with a vault notebook cannot clear the
 // vault's rows (#100).
+//
+// Projection rows (page_types / page_properties) are cleared only on the
+// delete/remove path (tx == nil): deletes, rename-old-location, and
+// watcher-remove. The reindex path (tx != nil, used by IndexFileBlocks /
+// IndexScanResults) must NOT touch the projection — block-only mutations
+// (task meta, dependencies, recurrence, subtree edits) do not change
+// frontmatter type:/properties, and many App callers never re-call
+// projectPageType. Clearing the projection there silently drops typed pages
+// from dashboards for the rest of the session.
 func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section, page string) error {
 	if source == "" {
 		source = "vault"
 	}
-	query := "DELETE FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?"
-	// When the caller already holds a transaction (and typically a handle()
-	// lease), use the tx only — re-entering handle() would deadlock on dbMu (#517).
-	if tx != nil {
-		_, err := tx.Exec(query, source, notebook, section, page)
+	clearBlocks := func(exec func(query string, args ...interface{}) (sql.Result, error)) error {
+		_, err := exec(
+			"DELETE FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+			source, notebook, section, page,
+		)
 		return err
+	}
+	clearProjection := func(exec func(query string, args ...interface{}) (sql.Result, error)) error {
+		for _, q := range []string{
+			"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+			"DELETE FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		} {
+			if _, err := exec(q, source, notebook, section, page); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// When the caller already holds a transaction (and typically a handle()
+	// lease), use the tx only — re-entering handle() would deadlock on dbMu.
+	// Reindex path: blocks only.
+	if tx != nil {
+		return clearBlocks(tx.Exec)
 	}
 	db, release, err := dm.handle()
 	if err != nil {
 		return ErrDBClosed
 	}
 	defer release()
-	_, err = db.Exec(query, source, notebook, section, page)
-	if err == nil {
-		// Watcher remove/rename and app delete paths use tx==nil; residual FTS
-		// windows must not keep deleted source pages until TTL expiry.
-		dm.invalidateUnlinkedScanCache()
+	// Delete/remove path: wrap blocks + projection deletes in one transaction
+	// so a mid-failure cannot orphan dashboard ghosts (QueryPagesByType does
+	// not JOIN blocks).
+	sqlTx, err := db.Begin()
+	if err != nil {
+		return err
 	}
-	return err
+	defer sqlTx.Rollback()
+	if err := clearBlocks(sqlTx.Exec); err != nil {
+		return err
+	}
+	if err := clearProjection(sqlTx.Exec); err != nil {
+		return err
+	}
+	if err := sqlTx.Commit(); err != nil {
+		return err
+	}
+	// Watcher remove/rename and app delete paths use tx==nil; residual FTS
+	// windows must not keep deleted source pages until TTL expiry.
+	dm.invalidateUnlinkedScanCache()
+	return nil
 }
 
 // DeleteBlockFromPage removes a single block by ID, but ONLY if it is at the
@@ -622,6 +662,64 @@ func (dm *DatabaseManager) CountBlocksForPage(source, notebook, section, page st
 		return 0, err
 	}
 	return n, nil
+}
+
+// PageExists reports whether any block is currently indexed for the
+// (source, notebook, section, page) tuple — i.e. the page is in the vault
+// index. Used by the relation-target validator to confirm a `page`/`pages`
+// relation points at a real page before the frontmatter write. Mirrors
+// CountBlocksForPage's WHERE shape under its own handle lease (same style as
+// ClearPageProjection).
+func (dm *DatabaseManager) PageExists(source, notebook, section, page string) (bool, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return false, ErrDBClosed
+	}
+	defer release()
+	if source == "" {
+		source = "vault"
+	}
+	var ok bool
+	err = db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?)",
+		source, notebook, section, page,
+	).Scan(&ok)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+// FindPageByLeaf resolves a bare page name (a relation reference with no path)
+// to the first indexed page carrying that leaf name in the source, returning
+// its (notebook, section, canonical page). Matching uses page_fold so a
+// case-variant ref (e.g. "alice" for page "Alice") resolves the same way as
+// wiki-link / unlinked leaf lookup (#844). The canonical page spelling from
+// the index is returned so callers can look up page_types / page_properties
+// with the exact key. ok is false when no page with that leaf is indexed.
+// LIMIT 1 keeps v1 deterministic: a leaf-name collision across notebooks is
+// ambiguous, and the first indexed page wins. ORDER BY notebook, section
+// makes the winner deterministic rather than dependent on row insertion order.
+func (dm *DatabaseManager) FindPageByLeaf(source, page string) (notebook, section, resolvedPage string, ok bool, err error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return "", "", "", false, ErrDBClosed
+	}
+	defer release()
+	if source == "" {
+		source = "vault"
+	}
+	err = db.QueryRow(
+		"SELECT notebook, section, page FROM blocks WHERE source = ? AND page_fold = ? ORDER BY notebook, section LIMIT 1",
+		source, pageFoldKey(page),
+	).Scan(&notebook, &section, &resolvedPage)
+	if err == sql.ErrNoRows {
+		return "", "", "", false, nil
+	}
+	if err != nil {
+		return "", "", "", false, err
+	}
+	return notebook, section, resolvedPage, true, nil
 }
 
 // IndexFileBlocks updates the index with one file's blocks in a single
@@ -837,9 +935,27 @@ func (dm *DatabaseManager) ClearSourceBlocks(source string) error {
 	if source == "" {
 		return nil
 	}
-	_, err = db.Exec("DELETE FROM blocks WHERE source = ?", source)
-	if err == nil {
-		dm.invalidateUnlinkedScanCache()
+	// Mirror ClearFileBlocks: wrap the blocks + page_types + page_properties
+	// deletes in one transaction so a mid-failure (blocks gone but a
+	// projection delete errors) cannot orphan the source as dashboard ghosts
+	// — QueryPagesByType does not JOIN blocks.
+	sqlTx, err := db.Begin()
+	if err != nil {
+		return err
 	}
-	return err
+	defer sqlTx.Rollback()
+	for _, q := range []string{
+		"DELETE FROM blocks WHERE source = ?",
+		"DELETE FROM page_types WHERE source = ?",
+		"DELETE FROM page_properties WHERE source = ?",
+	} {
+		if _, err := sqlTx.Exec(q, source); err != nil {
+			return err
+		}
+	}
+	if err := sqlTx.Commit(); err != nil {
+		return err
+	}
+	dm.invalidateUnlinkedScanCache()
+	return nil
 }

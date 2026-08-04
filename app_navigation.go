@@ -59,7 +59,8 @@ func (a *App) resolveNotebookDir(notebookName, source string) (string, error) {
 		if ln.RootFingerprint != "" {
 			currentFP, fpErr := config.ComputeRootFingerprint(ln.RootPath)
 			if fpErr != nil {
-				return "", fmt.Errorf("linked notebook %q root is inaccessible: %w", id, fpErr)
+				// Fixed string only — never wrap OS path errors for MCP/UI.
+				return "", fmt.Errorf("linked notebook %q root is inaccessible", id)
 			}
 			if currentFP != ln.RootFingerprint {
 				a.quarantineLink(id, "fingerprint_mismatch")

@@ -1,0 +1,172 @@
+package types
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+)
+
+// cacheTTL bounds how long a cached ListTypes result is considered fresh even
+// when the content stamp has not changed. The stamp (max of dir + per-file
+// mtimes) is the primary freshness gate; this TTL is defense-in-depth against
+// filesystems with coarse mtime resolution. Mirrors templates.cacheTTL.
+const cacheTTL = 5 * time.Minute
+
+// typeCache is a process-local content-stamp-aware cache of the full ListTypes
+// result per types directory. Types are few, so freshness is the max mtime of
+// the directory and every .yaml/.yml child — in-place content edits (sync
+// overwrite, same-inode write-back) bump file mtime without always bumping
+// the parent dir mtime on POSIX/Windows.
+//
+// In-process only. InvalidateTypesCache is called after SaveType/DeleteType
+// and by the TypeWatcher. We deliberately do not hook fsnotify inside the
+// cache — TypeWatcher owns observation. Mirrors templates.templateCache.
+type typeCache struct {
+	mu      sync.RWMutex
+	entries map[string]typeCacheEntry
+}
+
+type typeCacheEntry struct {
+	result       *ListTypesResult
+	loadedAt     time.Time
+	contentStamp time.Time // max mtime of dir + type files at load; mismatch → reload
+}
+
+var globalTypeCache = &typeCache{
+	entries: map[string]typeCacheEntry{},
+}
+
+// CachedListTypes returns the parsed type set for typesDir, using the cache when
+// the directory is unchanged. A missing directory bypasses the cache and
+// returns the empty result (fresh vault). A genuine I/O error propagates.
+// Mirrors templates.CachedGetTemplate's freshness gate, adapted to whole-dir
+// granularity.
+//
+// Callers always receive a deep copy so mutations cannot corrupt the shared
+// cache entry (or race under -race). Type counts are small.
+func CachedListTypes(typesDir string) (*ListTypesResult, error) {
+	if typesDir == "" {
+		return ListTypes(typesDir)
+	}
+	stamp, stampErr := typesContentStamp(typesDir)
+	if stampErr != nil {
+		// Missing dir: no cache, just the empty result.
+		return ListTypes(typesDir)
+	}
+	now := time.Now()
+
+	globalTypeCache.mu.RLock()
+	entry, ok := globalTypeCache.entries[typesDir]
+	globalTypeCache.mu.RUnlock()
+	if ok && entry.result != nil && entry.contentStamp.Equal(stamp) && now.Sub(entry.loadedAt) < cacheTTL {
+		return cloneListTypesResult(entry.result), nil
+	}
+
+	res, err := ListTypes(typesDir)
+	if err != nil {
+		return nil, err
+	}
+	globalTypeCache.mu.Lock()
+	globalTypeCache.entries[typesDir] = typeCacheEntry{
+		result:       res,
+		loadedAt:     now,
+		contentStamp: stamp,
+	}
+	globalTypeCache.mu.Unlock()
+	return cloneListTypesResult(res), nil
+}
+
+// typesContentStamp is the max ModTime of typesDir and every .yaml/.yml child.
+// In-place file edits bump file mtime without always bumping the directory.
+func typesContentStamp(typesDir string) (time.Time, error) {
+	info, err := os.Stat(typesDir)
+	if err != nil {
+		return time.Time{}, err
+	}
+	max := info.ModTime()
+	entries, err := os.ReadDir(typesDir)
+	if err != nil {
+		return max, nil // dir exists; listing failure → use dir mtime only
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if fi.ModTime().After(max) {
+			max = fi.ModTime()
+		}
+	}
+	return max, nil
+}
+
+// cloneListTypesResult deep-copies res so callers can safely own the result.
+func cloneListTypesResult(src *ListTypesResult) *ListTypesResult {
+	if src == nil {
+		return nil
+	}
+	out := &ListTypesResult{
+		Types:    make([]TypeDef, len(src.Types)),
+		Errors:   append([]TypeLoadError(nil), src.Errors...),
+		Warnings: append([]TypeLoadError(nil), src.Warnings...),
+	}
+	for i, t := range src.Types {
+		out.Types[i] = cloneTypeDef(t)
+	}
+	return out
+}
+
+func cloneTypeDef(t TypeDef) TypeDef {
+	c := t
+	if t.Properties != nil {
+		c.Properties = make([]PropertyDef, len(t.Properties))
+		for i, p := range t.Properties {
+			c.Properties[i] = clonePropertyDef(p)
+		}
+	}
+	return c
+}
+
+func clonePropertyDef(p PropertyDef) PropertyDef {
+	c := p
+	if p.Options != nil {
+		c.Options = append([]string(nil), p.Options...)
+	}
+	if p.Min != nil {
+		v := *p.Min
+		c.Min = &v
+	}
+	if p.Max != nil {
+		v := *p.Max
+		c.Max = &v
+	}
+	return c
+}
+
+// InvalidateTypesCache drops all cached entries. Called by the App after
+// SaveType/DeleteType (so the next read re-reads the new file) and by the
+// TypeWatcher (so an external edit is picked up). Mirrors
+// templates.InvalidateTemplateCache.
+func InvalidateTypesCache() {
+	globalTypeCache.mu.Lock()
+	defer globalTypeCache.mu.Unlock()
+	globalTypeCache.entries = map[string]typeCacheEntry{}
+}
+
+// ResetCacheForTests clears the entire cache. Test-only (exported so test files
+// in the same package can call it from setup); not used by production code.
+// Mirrors templates.ResetCacheForTests.
+func ResetCacheForTests() {
+	globalTypeCache.mu.Lock()
+	defer globalTypeCache.mu.Unlock()
+	globalTypeCache.entries = map[string]typeCacheEntry{}
+}

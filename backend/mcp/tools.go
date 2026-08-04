@@ -3,12 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 
 	"silt/backend/db"
 	"silt/backend/parser"
+	"silt/backend/types"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -62,6 +64,27 @@ func toolJSON(v any) (*mcp.CallToolResult, any, error) {
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: string(b)}},
 	}, v, nil
+}
+
+// toolValidationErr returns an MCP error result whose StructuredContent carries
+// a machine-readable {ok:false, errors:[{property,message}]} body. Clients can
+// branch on the offending property programmatically instead of pattern-matching
+// on text. The same JSON is also serialized as TextContent so legacy text-only
+// clients still see the message. Used only for schema-validation failures;
+// authorization denials and protocol errors stay plain-text via toolErr.
+func toolValidationErr(property, message string) (*mcp.CallToolResult, any, error) {
+	body := map[string]any{
+		"ok": false,
+		"errors": []map[string]string{
+			{"property": property, "message": message},
+		},
+	}
+	b, _ := json.Marshal(body)
+	return &mcp.CallToolResult{
+		IsError:           true,
+		Content:           []mcp.Content{&mcp.TextContent{Text: string(b)}},
+		StructuredContent: body,
+	}, body, nil
 }
 
 // registerTools attaches the initial tool surface to s.
@@ -350,5 +373,110 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		}
 		env.record("update_blocks", "ok", "", args)
 		return toolJSON(map[string]any{"ok": true, "count": len(parsed)})
+	})
+
+	type getPageMetadataIn struct {
+		Notebook string `json:"notebook" jsonschema:"notebook name"`
+		Section  string `json:"section" jsonschema:"section path (empty for root)"`
+		Page     string `json:"page" jsonschema:"page name without .md"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_page_metadata",
+		Description: "Get page type, properties (schema-merged), and raw frontmatter. Read-only.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getPageMetadataIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page}
+		if env.bridge == nil {
+			env.record("get_page_metadata", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		res, err := env.bridge.GetPageMetadata(ctx, in.Notebook, in.Section, in.Page)
+		if err != nil {
+			env.record("get_page_metadata", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		env.record("get_page_metadata", "ok", "", args)
+		return toolJSON(res)
+	})
+
+	type setPagePropertyIn struct {
+		Notebook string `json:"notebook" jsonschema:"notebook name"`
+		Section  string `json:"section" jsonschema:"section path (empty for root)"`
+		Page     string `json:"page" jsonschema:"page name without .md"`
+		Property string `json:"property" jsonschema:"property name from the type schema"`
+		Value    string `json:"value" jsonschema:"property value (validated against the type schema before writing)"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "set_page_property",
+		Description: "Set a single typed property. Schema-validated write — invalid values are rejected before any file I/O. For multiselect/pages properties, pass a comma-separated list (e.g. \"Alice, Bob\"). Requires write grant.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setPagePropertyIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "property": in.Property}
+		if !env.writeOK() {
+			env.record("set_page_property", "denied", "write not granted", args)
+			return toolErr("write tools are disabled — enable write grant in Silt Settings → AI → Local MCP")
+		}
+		if env.bridge == nil {
+			env.record("set_page_property", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		if err := env.bridge.SetPageProperty(ctx, in.Notebook, in.Section, in.Page, in.Property, in.Value); err != nil {
+			// Classify by error type, not blanket-wrap: only true schema-
+			// validation failures yield the structured {ok:false, errors:[...]}
+			// body so clients can branch on the offending property. Genuine IO
+			// /transient errors (page missing, vault not loaded, disk failure)
+			// stay plain-text via toolErr — otherwise a never-attempted write
+			// would masquerade as a value rejection.
+			var vErr types.ValidationError
+			var vErrs types.ValidationErrors
+			if errors.As(err, &vErr) || errors.As(err, &vErrs) {
+				env.record("set_page_property", "rejected", err.Error(), args)
+				return toolValidationErr(in.Property, err.Error())
+			}
+			env.record("set_page_property", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		env.record("set_page_property", "ok", "", args)
+		return toolJSON(map[string]any{"ok": true})
+	})
+
+	type setPageTypeIn struct {
+		Notebook string `json:"notebook" jsonschema:"notebook name"`
+		Section  string `json:"section" jsonschema:"section path (empty for root)"`
+		Page     string `json:"page" jsonschema:"page name without .md"`
+		Type     string `json:"type" jsonschema:"type id (from ListTypes) or empty to clear"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "set_page_type",
+		Description: "Assign or clear (empty type) a page's note type. Schema-aware write: existing values are checked against the new schema; mismatches are kept on disk and returned as 'flagged' (no rejection, no data loss). The type: line is always written unless the type id is unknown. Requires write grant.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setPageTypeIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "type": in.Type}
+		if !env.writeOK() {
+			env.record("set_page_type", "denied", "write not granted", args)
+			return toolErr("write tools are disabled — enable write grant in Silt Settings → AI → Local MCP")
+		}
+		if env.bridge == nil {
+			env.record("set_page_type", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		flagged, err := env.bridge.SetPageType(ctx, in.Notebook, in.Section, in.Page, in.Type)
+		if err != nil {
+			// Same classification as set_page_property: structured bodies are
+			// reserved for schema-validation failures. "*" is the conventional
+			// sentinel for "the type field itself" since set_page_type does not
+			// target a single named property.
+			var vErr types.ValidationError
+			var vErrs types.ValidationErrors
+			if errors.As(err, &vErr) || errors.As(err, &vErrs) {
+				env.record("set_page_type", "rejected", err.Error(), args)
+				return toolValidationErr("*", err.Error())
+			}
+			env.record("set_page_type", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		env.record("set_page_type", "ok", "", args)
+		result := map[string]any{"ok": true}
+		if len(flagged) > 0 {
+			result["flagged"] = flagged
+		}
+		return toolJSON(result)
 	})
 }

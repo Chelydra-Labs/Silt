@@ -700,6 +700,12 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 	// clobber the user's change. The WriteTracker cooldown only covers
 	// self-generated writes — it does not protect against genuine
 	// external mutations racing the watcher.
+	//
+	// notifyPageChanged must run AFTER this closure returns: it takes
+	// vaultMu.RLock via onExternalPageChanged, and App writers hold
+	// vaultMu.RLock then block on LockFileWrite — opposite order deadlocks
+	// once a lifecycle writer queues vaultMu.Lock. Mirrors clearIndexForFile.
+	var notifyNB, notifySec, notifyPage string
 	dw.coordinator.LockFileWrite(path, func() {
 		if dw.IsFocusLocked(path) {
 			return
@@ -787,10 +793,16 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 				}
 			}
 		})
+		// Capture coords for notify outside LockFileWrite — must not call
+		// notifyPageChanged (→ vaultMu.RLock) while holding the file lock:
+		// App writers take vaultMu.RLock then LockFileWrite (opposite order).
 		if indexedOK {
-			dw.notifyPageChanged(meta.Notebook, meta.Section, meta.Page)
+			notifyNB, notifySec, notifyPage = meta.Notebook, meta.Section, meta.Page
 		}
 	})
+	if notifyNB != "" || notifyPage != "" {
+		dw.notifyPageChanged(notifyNB, notifySec, notifyPage)
+	}
 }
 
 func (dw *DirectoryWatcher) clearIndexForFile(path string) []string {

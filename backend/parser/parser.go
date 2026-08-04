@@ -820,6 +820,13 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 		spacesPerTab = 4
 	}
 
+	// Externally-edited files (Obsidian / OneDrive / Dropbox sync) may carry a
+	// leading UTF-8 BOM; strings.TrimSpace does not strip U+FEFF, so peel it
+	// once here or the opening --- would not be recognized. Capture its
+	// presence so the block-ID rewrite below can re-prepend it — otherwise a
+	// BOM file that needs minting loses its BOM on write (sync diff).
+	hadBOM := strings.HasPrefix(content, "\uFEFF")
+	content = strings.TrimPrefix(content, "\uFEFF")
 	lines := strings.Split(content, "\n")
 	var meta FileMetadata
 	meta.Notebook = defaultNotebook
@@ -845,28 +852,61 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 
 		if hasFrontmatter {
 			fmStr := strings.Join(fmLines, "\n")
-			var parsedMeta FileMetadata
-			if err := yaml.Unmarshal([]byte(fmStr), &parsedMeta); err == nil {
-				if parsedMeta.Notebook != "" {
-					meta.Notebook = parsedMeta.Notebook
-				}
-				if parsedMeta.Section != "" {
-					meta.Section = parsedMeta.Section
-				}
-				if parsedMeta.Page != "" {
-					meta.Page = parsedMeta.Page
-				}
-				if parsedMeta.Date != "" {
-					meta.Date = normalizeDate(parsedMeta.Date)
-				}
-				if len(parsedMeta.Tags) > 0 {
-					meta.Tags = parsedMeta.Tags
-				}
-			} else {
+			// Parse the frontmatter ONCE into a node tree and Decode it into
+			// both the typed struct (known fields) and a raw map (all keys,
+			// for the type projection). A second yaml.Unmarshal would re-parse
+			// the same bytes — doubling parse cost — and its failure was
+			// swallowed, silently producing an empty Frontmatter.
+			var node yaml.Node
+			if err := yaml.Unmarshal([]byte(fmStr), &node); err != nil {
 				// Surface the parse failure so the caller can warn the
 				// user. Falling through with path-derived defaults would
 				// silently lose the user's authored metadata.
 				meta.Warnings = append(meta.Warnings, "yaml frontmatter parse error: "+err.Error())
+			} else {
+				var parsedMeta FileMetadata
+				if err := node.Decode(&parsedMeta); err != nil {
+					// Typed decode can fail on a single bad field (e.g. page: [1,2])
+					// while the rest of the map is fine. Still pull the raw map so
+					// type:/property projection is not silently emptied (AC5).
+					meta.Warnings = append(meta.Warnings, "yaml frontmatter parse error: "+err.Error())
+				} else {
+					if parsedMeta.Notebook != "" {
+						meta.Notebook = parsedMeta.Notebook
+					}
+					if parsedMeta.Section != "" {
+						meta.Section = parsedMeta.Section
+					}
+					if parsedMeta.Page != "" {
+						meta.Page = parsedMeta.Page
+					}
+					if parsedMeta.Date != "" {
+						meta.Date = normalizeDate(parsedMeta.Date)
+					}
+					if len(parsedMeta.Tags) > 0 {
+						meta.Tags = parsedMeta.Tags
+					}
+					// type: is the page's note-type id (typed-notes feature). The parser
+					// stores the raw frontmatter value; canonical-id resolution happens
+					// at the indexing/UI layer, which has access to the type schema.
+					if parsedMeta.Type != "" {
+						meta.Type = parsedMeta.Type
+					}
+				}
+				// Always decode the raw map — even when the typed struct failed —
+				// so schema-declared properties and type: remain projectable.
+				var rawFM map[string]any
+				if err := node.Decode(&rawFM); err != nil {
+					meta.Warnings = append(meta.Warnings, "yaml frontmatter decode error: "+err.Error())
+				} else {
+					meta.Frontmatter = rawFM
+					// If typed decode skipped type:, recover it from the raw map.
+					if meta.Type == "" {
+						if t, ok := rawFM["type"].(string); ok {
+							meta.Type = t
+						}
+					}
+				}
 			}
 		}
 	}
@@ -1060,6 +1100,12 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 	}
 
 	newContent := strings.Join(outputLines, "\n")
+	// outputLines reconstructs the full file (frontmatter opening --- … body),
+	// so re-prepending the BOM lands it before the opening fence — matching the
+	// input byte-for-byte when the rewrite modified anything.
+	if hadBOM {
+		newContent = "\uFEFF" + newContent
+	}
 	return blocks, meta, newContent, modifiedAny, nil
 }
 

@@ -20,6 +20,7 @@ import (
 	"silt/backend/monitor"
 	"silt/backend/spellcheck"
 	"silt/backend/templates"
+	"silt/backend/types"
 	"silt/backend/vault"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -146,6 +147,12 @@ type App struct {
 	// (mirrors configWatcher).
 	templateWatcher *templates.TemplateWatcher
 
+	// typeWatcher hot-reloads <vault>/.system/types/ so typed pages and the
+	// type manager stay live when a user adds/edits/deletes a type externally
+	// (mirrors templateWatcher). Started in initializeVaultServices, stopped
+	// in teardownVaultServices.
+	typeWatcher *types.TypeWatcher
+
 	// linkedConfigs is an mtime-aware cache of each linked notebook's
 	// co-located <root>/.system/config.yaml (#133). Keyed by source
 	// ('linked:<id>'). linkedConfigFor refreshes an entry when the on-disk
@@ -261,6 +268,10 @@ type App struct {
 	// renameHooks is package-local failure injection for rename transaction
 	// tests. Production leaves it nil and uses the real operations.
 	renameHooks *renameHooks
+	// frontmatterWriteAtomic, when non-nil, replaces parser.WriteFileAtomic
+	// inside writePageFrontmatterEdit so tests can inject a mid-write failure
+	// (MB-1 atomicity: turn-into must leave the file untouched on error).
+	frontmatterWriteAtomic func(path string, content []byte) error
 }
 
 // aiStreamSession type lives in app_ai_stream.go (#762). App fields
@@ -349,6 +360,10 @@ func (a *App) ServiceShutdown() error {
 	// down the DB, tracker, and watcher. Without this a fast window
 	// close could race an in-progress file write or MCP Start.
 	a.wg.Wait()
+	// Close the type + monitor watchers BEFORE taking the teardown Lock: both
+	// Close() join their loop goroutines, whose handlers take vaultMu, so
+	// closing them under the teardown Lock deadlocks (MB-1).
+	a.stopWatchersOutsideLock()
 	// Take the write lock for the terminal teardown so any reader that
 	// slipped in between wg.Wait() returning and this point can't
 	// dereference a service mid-close — including a concurrent
