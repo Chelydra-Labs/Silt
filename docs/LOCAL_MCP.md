@@ -37,7 +37,7 @@ loopback HTTP endpoint shown in Settings.
 | Discovery | `silt mcp` prefers the OS-keyring-pinned endpoint (`Silt` / `mcp-local-endpoint`), then `mcp-endpoint.json` only when it matches the pin (or the pin is unavailable), then port 17887. The file alone cannot redirect the bearer. The endpoint file stores `{endpoint,pid}` under a cross-process lock; a second Silt instance will not clear or overwrite a live peer’s discovery record (or its keyring pin). Ownership requires a live foreign PID **and** a successful `GET /health` (`silt-mcp`) so a crashed instance whose PID was reused by an unrelated process can be reclaimed automatically. Multi-instance desktop use is still unsupported as a product mode — the pin remains single-slot — but bind failure must not break the first instance’s `silt mcp` discovery. |
 | Health | `GET /health` is **intentionally unauthenticated** on loopback so `silt mcp` can discover a running host without the bearer token. It returns only a short presence/version string — no vault paths, tools, or secrets. Any local process can probe it; treat multi-tenant shared machines accordingly. |
 | Writes | Opt-in grant (`write_enabled`). No delete/move/bulk tools. |
-| Audit | `<vault>/.system/logs/mcp-audit.jsonl` — client, tool, vault path hash, outcome, redacted args (no note bodies). |
+| Audit | `<vault>/.system/logs/mcp-audit.jsonl` — one redacted record per attempted `tools/call` (client, tool, vault path hash, outcome, redacted args; no note bodies). A server-level middleware audits SDK input validation that runs before any handler, so malformed calls are recorded even when the handler never runs. Outcomes: `ok`, `error`, `denied`, `rejected` (handler-level value rejection), `rejected_schema` (argument shape/type failure caught by the SDK). See §Audit outcomes. |
 
 ## Lifecycle
 
@@ -108,6 +108,34 @@ string. Existing frontmatter values are checked against the new schema
 response as `flagged` — the call is not rejected and nothing is dropped. The
 `type:` line is written unless the type id is unknown. A follow-up
 `get_page_metadata` shows the surviving values.
+
+### Audit outcomes
+
+Every `tools/call` attempt produces exactly one record in
+`<vault>/.system/logs/mcp-audit.jsonl`, including calls the SDK rejects before
+a handler runs.
+
+| Outcome | When |
+|---------|------|
+| `ok` | Handler succeeded. |
+| `error` | Handler ran and returned an error (e.g. page not found, I/O failure). |
+| `denied` | Auth missing/invalid, or a write tool called without the write grant. |
+| `rejected` | Handler-level value rejection — a schema-aware write the bridge turned down (e.g. a `set_page_property` that passes shape validation but fails a relation-target check). |
+| `rejected_schema` | Argument shape/type failure caught by the SDK during input validation — missing required field, wrong-typed value, malformed JSON. Recorded even though the handler never runs. |
+
+Arguments are redacted identically on every path: identifier-shaped values
+(notebook, section, page, property name) are preserved so a rejected call is
+traceable to its target; **note body content is never persisted**, and a
+payload that fails to decode records only presence + byte length. Log rotation
+is non-atomic and best-effort — this is an observability log, not a
+durability-critical store, so it does not fsync per entry or run a background
+rotator.
+
+**What a client sees on a schema rejection.** A shape-invalid `tools/call`
+returns a `CallToolResult` with `isError: true` and the SDK's validation
+message (e.g. "missing required field `query`"). It is not a JSON-RPC error;
+unknown tools and malformed outer parameters are the JSON-RPC-error cases.
+Clients can treat any `isError` result uniformly when surfacing tool failures.
 
 ## Config (`config.yaml`)
 

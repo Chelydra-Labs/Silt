@@ -31,6 +31,23 @@ SQLite index reproducible from it.
   schema-validated **before** any file I/O, so an invalid value never touches
   the file.
 
+## Source mode editing
+
+The Edit ↔ Source view toggle's Source surface is a first-class Markdown
+editor:
+
+- It fills the available editor height with one deliberate scroll owner (the
+  source body), so long documents scroll in place instead of collapsing the
+  outer viewport or competing scroll containers.
+- Undo/redo runs on a bounded, local history rather than the textarea's native
+  stack (which is unobservable and can be silently cleared by a rerender).
+  Typing, paste, selection replacement, and Tab/Shift+Tab indentation all push
+  entries; a new edit clears the redo branch, and Reload is an explicit
+  history boundary.
+- Tab indents the current line and Shift+Tab outdents it, preserving caret and
+  selection. Conflict handling (Keep mine / Reload), debounced save, and the
+  Edit ↔ Source round trip are unchanged.
+
 ## One-time cache reset on first launch
 
 0.4.0 triggers a one-time reset of the embedded WebView2 user-data directory on
@@ -48,3 +65,20 @@ Subsequent launches behave normally.
 - Deleting the SQLite index (`index.sqlite*`) and relaunching rebuilds all
   type/property projections from frontmatter — the working-memory tier is fully
   reproducible.
+
+## Recovering the type projection
+
+The `page_types` / `page_properties` projection is reproducible working
+memory. The type watcher hot-reloads `.system/types/*.yaml` automatically and
+re-projects the affected pages in the background, so per-type dashboards
+normally stay current without any action. If a dashboard ever appears stale —
+for example after a sync clash or an edit made while Silt was starting:
+
+- `ReloadTypes` (the manual schema-refresh IPC) re-reads `.system/types/` and
+  schedules a full reprojection of every typed page. It is the documented
+  recovery action when the watcher's automatic reload may have missed an edit.
+- Restarting Silt re-scans `.system/types/` and re-projects on open.
+- As a last resort, delete the SQLite index (`index.sqlite*` in your local
+  DataDir — never inside the synced vault) and relaunch; every typed
+  projection rebuilds from frontmatter + the type schema. Notes and type
+  definitions are unaffected.
