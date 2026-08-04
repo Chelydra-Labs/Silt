@@ -86,9 +86,14 @@ func (a *App) SaveType(td types.TypeDef) error {
 	}
 	typePath := filepath.Join(a.typesDir(), saveID+".yaml")
 	if a.typeWatcher != nil {
-		// Path-scoped: only suppress events for this file so a coincident
-		// external edit to another type still reaches onChange.
-		a.typeWatcher.RegisterSelfWrite(typePath)
+		// Path- and content-scoped: arm the exact bytes SaveType will write
+		// (ID is yaml:"-" so SerializeType is independent of the derived
+		// id). Only this file's events are deferred; on debounce the watcher
+		// reads the file and compares — a match is a confirmed self-write
+		// (suppressed), a mismatch means an external/sync edit landed on top
+		// of our save and onChange fires anyway. A coincident edit to another
+		// type still fires (path-scoped).
+		a.typeWatcher.RegisterSelfWrite(typePath, types.SerializeType(&td))
 	}
 	if a.tracker != nil {
 		a.tracker.RegisterWrite(typePath)
@@ -126,7 +131,10 @@ func (a *App) DeleteType(id string) error {
 	}
 	typePath := filepath.Join(a.typesDir(), id+".yaml")
 	if a.typeWatcher != nil {
-		a.typeWatcher.RegisterSelfWrite(typePath)
+		// nil expected arms a delete: the watcher treats a missing file as
+		// a confirmed self-write (suppressed) and a post-delete recreate as
+		// an external edit (reload fires).
+		a.typeWatcher.RegisterSelfWrite(typePath, nil)
 	}
 	if a.tracker != nil {
 		a.tracker.RegisterWrite(typePath)
@@ -209,9 +217,10 @@ func (a *App) RestoreExampleTypes(ctx context.Context) ([]string, error) {
 		}
 		typePath := filepath.Join(a.typesDir(), td.ID+".yaml")
 		// Path-scoped per file so a coincident external edit to another type
-		// is not dropped while we restore the examples.
+		// is not dropped while we restore the examples. Content-scoped so an
+		// external edit landing on top of one of these writes still reloads.
 		if a.typeWatcher != nil {
-			a.typeWatcher.RegisterSelfWrite(typePath)
+			a.typeWatcher.RegisterSelfWrite(typePath, types.SerializeType(td))
 		}
 		if a.tracker != nil {
 			a.tracker.RegisterWrite(typePath)
