@@ -12,7 +12,7 @@
     registerAIChatController
   } from './drawer.svelte'
   import { AI_CHAT_COMMAND_EVENT, type AIChatCommandDetail } from './commands'
-  import type { EvidenceTarget } from './types'
+  import { dispatchNavigateEvidence } from './navigateEvidence'
   import { getAIAvailability } from './availability'
 
   const PLUGIN_ID = 'silt-ai-agent'
@@ -131,14 +131,6 @@
     chat.dispose()
   })
 
-  function navigateEvidence(target: EvidenceTarget) {
-    window.dispatchEvent(
-      new CustomEvent('navigate-to-block', {
-        detail: { blockId: target.blockId }
-      })
-    )
-  }
-
   // Mobile modal focus trap: keep Tab cycling inside the dialog so it cannot
   // escape into the app behind the scrim. (Desktop is a non-modal panel, so
   // the trap is gated on isMobile.) The confirmation card in ChatShell owns
@@ -221,7 +213,7 @@
           ctx?.openSettings('ai')
           closeAIChatDrawer()
         }}
-        onNavigateEvidence={navigateEvidence}
+        onNavigateEvidence={dispatchNavigateEvidence}
         onClear={chat.clear}
       />
     {:else}
