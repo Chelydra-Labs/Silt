@@ -17,21 +17,81 @@ import (
 	"silt/backend/types"
 )
 
+// computePageProjection resolves a page's note-type id and computes its set
+// of projected property rows from the live type schema. Pure: no DB access.
+// Returns ("", nil) for an untyped page (caller clears the projection). A
+// known schema miss falls back to a sanitized raw type id with no property
+// rows, so a hand-typed `type:` value still groups the page gracefully
+// (mirrors the prior projectPageType fallback).
+//
+// Split out of projectPageType so atomic block+projection write paths can
+// pre-compute the payload before opening the DB write, then pass it into
+// IndexFileWithProjection / IndexScanResultsWithProjection so blocks and
+// projection share one transaction.
+func (a *App) computePageProjection(meta parser.FileMetadata) (string, []db.ProjectedProperty) {
+	if meta.Type == "" {
+		return "", nil
+	}
+	typeID, err := types.ResolveTypeID(a.typesDir(), meta.Type)
+	if err != nil {
+		typeID = types.TypeIDFromName(meta.Type)
+	}
+	var props []db.ProjectedProperty
+	if td, gerr := types.GetType(a.typesDir(), typeID); gerr == nil {
+		for _, pdef := range td.Properties {
+			raw, present := lookupFrontmatter(meta.Frontmatter, pdef.Name)
+			if !present || raw == nil {
+				continue // sparse: only set values get rows
+			}
+			props = append(props, projectProperty(pdef, raw))
+		}
+	}
+	return typeID, props
+}
+
+// computeBatchProjections returns the per-result projection payload paired
+// with a scanner batch. projections[i] corresponds to results[i]; a result
+// that will be skipped (res.Notebook == "" or res.Err != nil) gets a zero
+// ScanProjection that IndexScanResultsWithProjection ignores. Used by the
+// cold-start and linked-tree scans so the batched atomic publish covers
+// blocks AND projection in one transaction.
+func computeBatchProjections(a *App, results []parser.ScanResult) []db.ScanProjection {
+	out := make([]db.ScanProjection, len(results))
+	for i, res := range results {
+		if res.Notebook == "" || res.Err != nil {
+			continue
+		}
+		typeID, props := a.computePageProjection(parser.FileMetadata{
+			Notebook:    res.Notebook,
+			Section:     res.Section,
+			Page:        res.Page,
+			Type:        res.Type,
+			Frontmatter: res.Frontmatter,
+		})
+		out[i] = db.ScanProjection{TypeID: typeID, Props: props}
+	}
+	return out
+}
+
 // projectPageType projects a page's note type and its set property values into
 // the working-memory index (typed-notes feature). It is called AFTER a
 // frontmatter-affecting (re)index — never inside the coordinator's WithDBWrite
 // closure, because the DB methods acquire their own handle and must not re-enter
 // the write lock.
 //
+// Projection-only path: this stays for callers that re-project a page WITHOUT
+// re-indexing its blocks (external-edit re-projection via onExternalPageChanged
+// and schema-triggered re-projection via reprojectAllTypedPages). Every
+// frontmatter-affecting block write now routes through IndexFileWithProjection
+// so the projection publish shares the block transaction.
+//
 // Resolution + value extraction use the live type schema (mtime-cached); the DB
 // stores the result. A page whose type is empty is un-projected (cleared) so a
-// page that loses its type does not linger in the dashboards. Block-only
-// mutations (task status, recurrence, dependencies) do not call this: they do
-// not touch frontmatter, so the projection is unchanged.
-// projectPageType projects a page's type/properties into SQLite. Returns a
-// non-nil error only for DB failures (clear/index); callers that need
-// restart-safe backfill (vault_init) must not record success markers when any
-// page fails. Soft failures (unknown type → raw id) still return nil.
+// page that loses its type does not linger in the dashboards.
+// projectPageType returns a non-nil error only for DB failures (clear/index);
+// callers that need restart-safe backfill (vault_init) must not record success
+// markers when any page fails. Soft failures (unknown type → raw id) still
+// return nil.
 func (a *App) projectPageType(source string, meta parser.FileMetadata) error {
 	if a.db == nil {
 		return nil
@@ -44,7 +104,8 @@ func (a *App) projectPageType(source string, meta parser.FileMetadata) error {
 		return nil
 	}
 
-	if meta.Type == "" {
+	typeID, props := a.computePageProjection(meta)
+	if typeID == "" {
 		// Untyped page: clear any stale projection so the dashboards drop it.
 		if err := a.db.ClearPageProjection(source, notebook, section, page); err != nil {
 			log.Printf("types: ClearPageProjection(%s/%s/%s/%s) failed: %v", source, notebook, section, page, err)
@@ -53,27 +114,6 @@ func (a *App) projectPageType(source string, meta parser.FileMetadata) error {
 		}
 		return nil
 	}
-
-	// Resolve the frontmatter type ref (id or display name) to its canonical
-	// id. An unknown type is tracked under a sanitized raw name with no
-	// property rows, so a hand-typed `type:` value still groups the page
-	// gracefully (the UI shows a raw type chip).
-	typeID, err := types.ResolveTypeID(a.typesDir(), meta.Type)
-	if err != nil {
-		typeID = types.TypeIDFromName(meta.Type)
-	}
-
-	var props []db.ProjectedProperty
-	if td, gerr := types.GetType(a.typesDir(), typeID); gerr == nil {
-		for _, pdef := range td.Properties {
-			raw, present := lookupFrontmatter(meta.Frontmatter, pdef.Name)
-			if !present || raw == nil {
-				continue // sparse: only set values get rows
-			}
-			props = append(props, projectProperty(pdef, raw))
-		}
-	}
-
 	if err := a.db.IndexPageProjection(source, notebook, section, page, typeID, props); err != nil {
 		log.Printf("types: IndexPageProjection(%s/%s/%s/%s) failed: %v", source, notebook, section, page, err)
 		a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
@@ -355,10 +395,13 @@ func (a *App) reprojectAllTypedPages() {
 	}
 }
 
-// onExternalPageChanged re-projects a page after the monitor watcher reindexes
-// it from an external edit. IndexFileBlocks no longer clears the projection
-// (block-only reindex preserves it), but external frontmatter edits still need
-// a fresh projectPageType so dashboards pick up type:/property changes.
+// onExternalPageChanged re-projects a page from its on-disk frontmatter, or
+// clears the projection when the file is gone / lost its type line.
+// Projection-only helper: the watcher's external-edit reindex path now
+// publishes blocks AND projection atomically via the AtomicReindexHandler
+// installed in initializeVaultServices, so this function is no longer in
+// the watcher's hot path. Retained as a primitive for direct callers (tests
+// and any future projection-only reconciliation).
 // Takes vaultMu.RLock; safe because stopWatchersOutsideLock closes the monitor
 // watcher OUTSIDE the teardown Lock, so this handler can drain mid-close
 // instead of deadlocking.

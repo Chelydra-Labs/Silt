@@ -30,26 +30,13 @@ type PageProjectionRow struct {
 	Properties []ProjectedProperty `json:"properties"`
 }
 
-// IndexPageProjection replaces a page's type projection in one transaction:
-// delete any existing page_types/page_properties rows for the page, then insert
-// a page_types row (the page is of typeID) and one page_properties row per set
-// property. Call ClearPageProjection instead when a page becomes untyped.
-// Reproducible from frontmatter + the type schema (cardinal rule 4).
-func (dm *DatabaseManager) IndexPageProjection(source, notebook, section, page, typeID string, props []ProjectedProperty) error {
-	db, release, err := dm.handle()
-	if err != nil {
-		return ErrDBClosed
-	}
-	defer release()
-	if source == "" {
-		source = "vault"
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
+// clearPageProjectionTx deletes a page's page_types and page_properties rows
+// on the caller's open transaction. Shared by every atomic projection clear
+// path (IndexPageProjection's replace, ClearPageProjection, and the unified
+// IndexFileWithProjection / IndexScanResultsWithProjection). The two DELETEs
+// run on the same tx so a mid-failure cannot leave one table cleared and
+// the other still carrying stale rows.
+func clearPageProjectionTx(tx *sql.Tx, source, notebook, section, page string) error {
 	if _, err := tx.Exec(
 		"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
 		source, notebook, section, page,
@@ -62,7 +49,22 @@ func (dm *DatabaseManager) IndexPageProjection(source, notebook, section, page, 
 	); err != nil {
 		return fmt.Errorf("failed to clear page_properties: %w", err)
 	}
+	return nil
+}
 
+// applyPageProjectionTx replaces a page's projection on the caller's open
+// transaction: clear prior rows, then (when typeID != "") insert one
+// page_types row plus one page_properties row per set property. typeID == ""
+// means untyped — clear only, no insert — so the unified block+projection
+// index path can atomically drop a page's projection when frontmatter loses
+// its `type:` line. The caller has already validated source/notebook/page.
+func applyPageProjectionTx(tx *sql.Tx, source, notebook, section, page, typeID string, props []ProjectedProperty) error {
+	if err := clearPageProjectionTx(tx, source, notebook, section, page); err != nil {
+		return err
+	}
+	if typeID == "" {
+		return nil
+	}
 	if _, err := tx.Exec(
 		"INSERT INTO page_types (source, notebook, section, page, type_name) VALUES (?, ?, ?, ?, ?)",
 		source, notebook, section, page, typeID,
@@ -77,7 +79,38 @@ func (dm *DatabaseManager) IndexPageProjection(source, notebook, section, page, 
 			return fmt.Errorf("failed to insert page_properties: %w", err)
 		}
 	}
-	// Test seam: same shape as IndexFileBlocks for the projection path.
+	return nil
+}
+
+// IndexPageProjection replaces a page's type projection in one transaction:
+// delete any existing page_types/page_properties rows for the page, then insert
+// a page_types row (the page is of typeID) and one page_properties row per set
+// property. Call ClearPageProjection instead when a page becomes untyped.
+// Reproducible from frontmatter + the type schema (cardinal rule 4).
+//
+// Projection-only path: external-edit re-projection (onExternalPageChanged)
+// and schema-triggered re-projection (reprojectAllTypedPages) still use this
+// because they have no blocks to update. Every frontmatter-affecting block
+// write path now routes through IndexFileWithProjection so blocks and
+// projection share one transaction.
+func (dm *DatabaseManager) IndexPageProjection(source, notebook, section, page, typeID string, props []ProjectedProperty) error {
+	db, release, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
+	defer release()
+	if source == "" {
+		source = "vault"
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if err := applyPageProjectionTx(tx, source, notebook, section, page, typeID, props); err != nil {
+		return err
+	}
+	// Test seam: same shape as IndexFileBlocks for the projection-only path.
 	if err := dm.runIndexerTestingHook(indexerHookContext{
 		Phase:    indexerHookIndexPageProjectionPreCommit,
 		Source:   source,
@@ -91,7 +124,8 @@ func (dm *DatabaseManager) IndexPageProjection(source, notebook, section, page, 
 }
 
 // ClearPageProjection removes a page's type projection (used when a page loses
-// its type or is deleted). Idempotent. Both deletes share one transaction so a
+// its type, is deleted, or its on-disk file vanishes during re-projection).
+// Idempotent. Both deletes share one transaction (clearPageProjectionTx) so a
 // mid-failure cannot leave page_properties rows orphaned after page_types is
 // gone (mirrors ClearFileBlocks / ClearSourceBlocks).
 func (dm *DatabaseManager) ClearPageProjection(source, notebook, section, page string) error {
@@ -108,17 +142,8 @@ func (dm *DatabaseManager) ClearPageProjection(source, notebook, section, page s
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(
-		"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
-		source, notebook, section, page,
-	); err != nil {
-		return fmt.Errorf("failed to clear page_types: %w", err)
-	}
-	if _, err := tx.Exec(
-		"DELETE FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
-		source, notebook, section, page,
-	); err != nil {
-		return fmt.Errorf("failed to clear page_properties: %w", err)
+	if err := clearPageProjectionTx(tx, source, notebook, section, page); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

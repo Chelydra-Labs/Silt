@@ -11,6 +11,12 @@ const (
 	indexerHookIndexFileBlocksPreCommit     indexerHookPhase = iota // after clears+inserts, before IndexFileBlocks commit
 	indexerHookIndexScanResultsPreCommit                            // after the batch loop, before IndexScanResults commit
 	indexerHookIndexPageProjectionPreCommit                         // after projection clear+insert, before IndexPageProjection commit
+	// Unified atomic block+projection publish. Tests that need to prove a
+	// reader never sees blocks-without-projection (or vice versa) target one
+	// of these phases — they fire AFTER both halves have been staged in the
+	// same transaction but BEFORE commit.
+	indexerHookIndexFileWithProjectionPreCommit
+	indexerHookIndexScanResultsWithProjectionPreCommit
 )
 
 // indexerHookContext carries call-site coordinates so a hook can decide

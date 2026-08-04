@@ -252,14 +252,12 @@ func (a *App) UpdateBlockState(blockID string, newState string) (string, error) 
 			// uses the same cleaned values that went into the file path.
 			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 			if err == nil {
-				var idxErr error
-				a.coordinator.WithDBWrite(func() {
-					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta.Tags, remeta.Warnings...)
-				})
-				if idxErr != nil {
-					log.Printf("UpdateBlockState: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
+				// Atomic block+projection publish: blocks and typed projection
+				// share one transaction so a reader never sees the just-saved
+				// page without its projection.
+				if idxErr := a.indexFile(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, blocks, remeta, remeta.Warnings...); idxErr != nil {
+					log.Printf("UpdateBlockState: indexFile failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
 				}
-				a.projectPageType(loc.Source, remeta)
 			}
 		})
 	}) // LockBlockWrite
@@ -582,14 +580,10 @@ func (a *App) writeBlockText(blockID string, transform func(currentClean string)
 			// mutated line's format).
 			reblocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 			if err == nil {
-				var idxErr error
-				a.coordinator.WithDBWrite(func() {
-					idxErr = a.db.IndexFileBlocks(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, reblocks, remeta.Tags, remeta.Warnings...)
-				})
-				if idxErr != nil {
-					log.Printf("writeBlockText: IndexFileBlocks failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
+				// Atomic block+projection publish (see UpdateBlockState).
+				if idxErr := a.indexFile(loc.Source, remeta.Notebook, remeta.Section, remeta.Page, reblocks, remeta, remeta.Warnings...); idxErr != nil {
+					log.Printf("writeBlockText: indexFile failed for %s/%s/%s/%s: %v", remeta.Notebook, remeta.Section, remeta.Page, remeta.Date, idxErr)
 				}
-				a.projectPageType(loc.Source, remeta)
 			}
 		})
 	}) // LockBlockWrite
@@ -645,14 +639,10 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 
 	parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
 	if err == nil {
-		var idxErr error
-		a.coordinator.WithDBWrite(func() {
-			idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
-		})
-		if idxErr != nil {
-			log.Printf("writePageFileLocked: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+		// Atomic block+projection publish (see UpdateBlockState).
+		if idxErr := a.indexFile(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta, meta.Warnings...); idxErr != nil {
+			log.Printf("writePageFileLocked: indexFile failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
 		}
-		a.projectPageType(source, meta)
 	}
 	return nil
 }
@@ -878,17 +868,12 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 				writeErr = fmt.Errorf("parse after source save: %w", parseErr)
 				return
 			}
-			var idxErr error
-			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
-			})
-			if idxErr != nil {
+			if idxErr := a.indexFile(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta, meta.Warnings...); idxErr != nil {
 				// Fail loud: disk write already landed, but search/graph would lag.
 				// Surface so the UI does not claim a fully successful save.
 				writeErr = fmt.Errorf("re-index after source save failed: %w", idxErr)
 				return
 			}
-			a.projectPageType(source, meta)
 			result = parsedBlocks
 		})
 	}) // LockBlocksWrite

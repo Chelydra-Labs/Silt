@@ -237,40 +237,80 @@ func TestIndexerTestingHook_IndexPageProjection_RollsBack(t *testing.T) {
 // indexer phase does not fire for the others. Without this, a hook that
 // injects a failure at IndexFileBlocks could ghost-fire during a follow-up
 // IndexPageProjection call (or vice versa) and produce baffling cascades.
+// Covers all five phases including the unified atomic paths.
 func TestIndexerTestingHook_PhaseScoped(t *testing.T) {
-	dm := newTestDB(t)
+	for _, tc := range []struct {
+		name   string
+		phase  indexerHookPhase
+		driver func(dm *DatabaseManager) error
+	}{
+		{
+			name:  "IndexFileBlocks",
+			phase: indexerHookIndexFileBlocksPreCommit,
+			driver: func(dm *DatabaseManager) error {
+				return dm.IndexFileBlocks("vault", "NB", "S", "P",
+					[]parser.ParsedBlock{sampleNoteBlock("11111111-1111-1111-1111-111111111111", 1)}, nil)
+			},
+		},
+		{
+			name:  "IndexScanResults",
+			phase: indexerHookIndexScanResultsPreCommit,
+			driver: func(dm *DatabaseManager) error {
+				_, _, err := dm.IndexScanResults([]parser.ScanResult{{
+					Notebook: "NB", Section: "S", Page: "P",
+					Blocks: []parser.ParsedBlock{sampleNoteBlock("22222222-2222-2222-2222-222222222222", 1)},
+				}})
+				return err
+			},
+		},
+		{
+			name:  "IndexPageProjection",
+			phase: indexerHookIndexPageProjectionPreCommit,
+			driver: func(dm *DatabaseManager) error {
+				return dm.IndexPageProjection("vault", "NB", "S", "P", "task", nil)
+			},
+		},
+		{
+			name:  "IndexFileWithProjection",
+			phase: indexerHookIndexFileWithProjectionPreCommit,
+			driver: func(dm *DatabaseManager) error {
+				return dm.IndexFileWithProjection("vault", "NB", "S", "P",
+					[]parser.ParsedBlock{sampleNoteBlock("33333333-3333-3333-3333-333333333333", 1)},
+					nil, "task", nil)
+			},
+		},
+		{
+			name:  "IndexScanResultsWithProjection",
+			phase: indexerHookIndexScanResultsWithProjectionPreCommit,
+			driver: func(dm *DatabaseManager) error {
+				results := []parser.ScanResult{{
+					Notebook: "NB", Section: "S", Page: "P",
+					Blocks: []parser.ParsedBlock{sampleNoteBlock("44444444-4444-4444-4444-444444444444", 1)},
+				}}
+				_, _, err := dm.IndexScanResultsWithProjection(results, []ScanProjection{{TypeID: "task"}})
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dm := newTestDB(t)
+			var fired []indexerHookPhase
+			dm.setIndexerTestingHook(func(ctx indexerHookContext) error {
+				if ctx.Phase == tc.phase {
+					fired = append(fired, ctx.Phase)
+					return sentinelHookErr
+				}
+				return nil
+			})
+			defer dm.setIndexerTestingHook(nil)
 
-	var fired []indexerHookPhase
-	dm.setIndexerTestingHook(func(ctx indexerHookContext) error {
-		if ctx.Phase == indexerHookIndexFileBlocksPreCommit {
-			fired = append(fired, ctx.Phase)
-			return sentinelHookErr
-		}
-		return nil
-	})
-	defer dm.setIndexerTestingHook(nil)
-
-	// IndexFileBlocks must fail.
-	err := dm.IndexFileBlocks("vault", "NB", "S", "P",
-		[]parser.ParsedBlock{sampleNoteBlock("11111111-1111-1111-1111-111111111111", 1)}, nil)
-	if !errors.Is(err, sentinelHookErr) {
-		t.Fatalf("IndexFileBlocks: expected sentinel, got %v", err)
-	}
-
-	// IndexScanResults and IndexPageProjection must NOT be touched by the
-	// IndexFileBlocks-only hook.
-	if _, _, err := dm.IndexScanResults([]parser.ScanResult{{
-		Notebook: "NB", Section: "S", Page: "P",
-		Blocks: []parser.ParsedBlock{sampleNoteBlock("22222222-2222-2222-2222-222222222222", 1)},
-	}}); err != nil {
-		t.Fatalf("IndexScanResults: hook should be inert here, got %v", err)
-	}
-	if err := dm.IndexPageProjection("vault", "NB", "S", "P", "task", nil); err != nil {
-		t.Fatalf("IndexPageProjection: hook should be inert here, got %v", err)
-	}
-
-	if len(fired) != 1 || fired[0] != indexerHookIndexFileBlocksPreCommit {
-		t.Errorf("expected exactly one IndexFileBlocks phase fire, got %+v", fired)
+			if err := tc.driver(dm); !errors.Is(err, sentinelHookErr) {
+				t.Fatalf("%s: expected sentinel, got %v", tc.name, err)
+			}
+			if len(fired) != 1 || fired[0] != tc.phase {
+				t.Errorf("%s: expected exactly one fire of its own phase, got %+v", tc.name, fired)
+			}
+		})
 	}
 }
 

@@ -251,12 +251,12 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 
 		blocks, meta, _, _, err := parser.ParseFileContent(scaffoldFrontmatter, safeNotebook, safeSection, safePage, safeDate, a.spacesPerTab)
 		if err == nil {
-			var idxErr error
-			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
-			})
-			if idxErr != nil {
-				log.Printf("CreatePage: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+			// Atomic block+projection publish: a freshly-created page has no
+			// type yet, so IndexFileWithProjection clears any stale projection
+			// for the (source, notebook, section, page) tuple atomically with
+			// the block insert.
+			if idxErr := a.indexFile(source, meta.Notebook, meta.Section, meta.Page, blocks, meta, meta.Warnings...); idxErr != nil {
+				log.Printf("CreatePage: indexFile failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
 			}
 		}
 	})

@@ -99,7 +99,7 @@ func renameTargetsFromMarkdownUnder(rootDir, notebook, sectionPrefix string, loc
 
 type renameHooks struct {
 	writeFileAtomic   func(string, []byte) error
-	indexFile         func(*App, string, string, string, string, []parser.ParsedBlock, []string, ...string) error
+	indexFile         func(*App, string, string, string, string, []parser.ParsedBlock, parser.FileMetadata, ...string) error
 	reconcileSection  func(*App, string, string, string, bool) error
 	reconcileNotebook func(*App, string, string, bool) error
 	// afterPreLockInbound runs after the initial inbound collect and before
@@ -133,18 +133,32 @@ func (a *App) renameWriteFileAtomic(path string, content []byte) error {
 	return parser.WriteFileAtomic(path, content)
 }
 
-func (a *App) renameIndexFile(source, notebook, section, page string, blocks []parser.ParsedBlock, tags []string, warnings ...string) error {
+func (a *App) renameIndexFile(source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata, warnings ...string) error {
 	if a.renameHooks != nil && a.renameHooks.indexFile != nil {
-		return a.renameHooks.indexFile(a, source, notebook, section, page, blocks, tags, warnings...)
+		return a.renameHooks.indexFile(a, source, notebook, section, page, blocks, meta, warnings...)
 	}
-	return a.indexFile(source, notebook, section, page, blocks, tags, warnings...)
+	return a.indexFile(source, notebook, section, page, blocks, meta, warnings...)
 }
 
-func (a *App) indexFile(source, notebook, section, page string, blocks []parser.ParsedBlock, tags []string, warnings ...string) error {
+// indexFile is the canonical atomic block+projection publish for single-file
+// write paths (save / create / duplicate / rename / source-mode edit). It
+// computes the page's projection payload from meta against the live schema,
+// then opens one DB transaction that replaces blocks AND projection together
+// via IndexFileWithProjection. A reader can never observe a freshly-saved
+// typed page without its projection (or vice versa).
+//
+// renameHooks.indexFile (when installed) intercepts this call for the rename
+// rollback tests; the hook sees the same atomic shape.
+func (a *App) indexFile(source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata, warnings ...string) error {
+	typeID, props := a.computePageProjection(meta)
 	var err error
 	a.coordinator.WithDBWrite(func() {
-		err = a.db.IndexFileBlocks(source, notebook, section, page, blocks, tags, warnings...)
+		err = a.db.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, typeID, props, warnings...)
 	})
+	if err != nil {
+		log.Printf("indexFile: IndexFileWithProjection failed for %s/%s/%s: %v", notebook, section, page, err)
+		a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
+	}
 	return err
 }
 
@@ -160,7 +174,7 @@ func (a *App) reindexFileContent(filePath, source, notebook, section, page strin
 	if useRenameHook {
 		index = a.renameIndexFile
 	}
-	if err := index(source, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...); err != nil {
+	if err := index(source, meta.Notebook, meta.Section, meta.Page, blocks, meta, meta.Warnings...); err != nil {
 		return fmt.Errorf("index %s: %w", filePath, err)
 	}
 	stat, statErr := os.Stat(filePath)
@@ -181,11 +195,8 @@ func (a *App) reindexFileContent(filePath, source, notebook, section, page strin
 			}
 		}
 	}
-	// Re-project the page's note type from the freshly parsed frontmatter.
-	// Outside WithDBWrite: the DB method acquires its own handle and must not
-	// re-enter the write lock. Runs only after parse, index, stat, and
-	// MarkFileIndexed all succeeded.
-	a.projectPageType(source, meta)
+	// Projection is published atomically with the block write inside indexFile
+	// (IndexFileWithProjection), so no separate projectPageType call remains.
 	return nil
 }
 
@@ -336,18 +347,13 @@ func (a *App) reindexFile(filePath, notebook, section, page string) {
 		log.Printf("reindexFile: parse failed for %s: %v", filePath, parseErr)
 		return
 	}
-	var idxErr error
+	// Atomic block+projection publish (see indexFile). The rename
+	// reconciliation paths re-parse the whole file when frontmatter shifted,
+	// so blocks and projection must move together.
 	reidxSource := a.resolveSourceByName(notebook)
-	a.coordinator.WithDBWrite(func() {
-		idxErr = a.db.IndexFileBlocks(reidxSource, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
-	})
-	if idxErr != nil {
-		log.Printf("reindexFile: index failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+	if err := a.indexFile(reidxSource, meta.Notebook, meta.Section, meta.Page, blocks, meta, meta.Warnings...); err != nil {
+		log.Printf("reindexFile: index failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, err)
 	}
-	// Re-project the page's note type from the freshly parsed frontmatter.
-	// Outside WithDBWrite: the DB method acquires its own handle and must not
-	// re-enter the write lock.
-	a.projectPageType(reidxSource, meta)
 	// Emit block:changed so live embeds/references refresh.
 	for _, b := range blocks {
 		if b.ID != "" {

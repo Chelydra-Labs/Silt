@@ -722,8 +722,62 @@ func (dm *DatabaseManager) FindPageByLeaf(source, page string) (notebook, sectio
 	return notebook, section, resolvedPage, true, nil
 }
 
+// indexFileBlocksStage clears prior block rows (by stable block ID + by page
+// metadata) and inserts the new block/task/tag/page_links/block_meta/
+// block_references/task_dependencies rows on the caller's open transaction.
+// Shared by IndexFileBlocks and IndexFileWithProjection so the block half of
+// the publish cannot drift between them. Empty blocks clears only; the caller
+// still owns the test-seam hook + commit (so the projection step in
+// IndexFileWithProjection runs after this returns).
+func (dm *DatabaseManager) indexFileBlocksStage(tx *sql.Tx, source, notebook, section, page string, blocks []parser.ParsedBlock, fileTags []string, logTag string) error {
+	if len(blocks) > 0 {
+		placeholders := make([]string, len(blocks))
+		args := make([]interface{}, len(blocks))
+		for i, b := range blocks {
+			placeholders[i] = "?"
+			args[i] = b.ID
+		}
+		query := "DELETE FROM blocks WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+		if _, err := tx.Exec(query, args...); err != nil {
+			return fmt.Errorf("failed to clear blocks by id: %w", err)
+		}
+	}
+
+	// Also clear by metadata to catch blocks the user removed from the file
+	// (their IDs are no longer in the new parse output). Scope by source so a
+	// linked notebook sharing a display name with a vault notebook cannot
+	// clear the vault's rows (#100).
+	if err := dm.ClearFileBlocks(tx, source, notebook, section, page); err != nil {
+		return fmt.Errorf("failed to clear old blocks: %w", err)
+	}
+
+	if len(blocks) == 0 {
+		return nil
+	}
+
+	stmts, err := prepareBlockIndexStmts(tx)
+	if err != nil {
+		return err
+	}
+	defer stmts.close()
+
+	if err := stmts.indexBlocks(source, notebook, section, page, blocks, fileTags, logTag); err != nil {
+		return err
+	}
+
+	// Per-file cycle guard: only one file's edges are visible here, so this
+	// detects within-file cycles only. The batched indexer's cross-file
+	// check catches cycles that span files.
+	warnOnDependencyCycle(blocks)
+	return indexTaskDependencies(tx, stmts.taskDep, blocks, logTag)
+}
+
 // IndexFileBlocks updates the index with one file's blocks in a single
-// transaction (the per-file / watcher / editor-save path).
+// transaction (the per-file / watcher / editor-save path). Block-only: does
+// NOT touch the page_types/page_properties projection, so block-only callers
+// (task status / deps / recurrence / subtree edits) preserve any existing
+// projection. Frontmatter-affecting callers MUST use IndexFileWithProjection
+// so blocks and projection share one transaction.
 //
 // fileWarnings is an optional slice of non-fatal diagnostics from the parser
 // (e.g. malformed YAML frontmatter). They are logged at warn level so a
@@ -747,53 +801,7 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	}
 	defer tx.Rollback()
 
-	// Delete any pre-existing rows for the block IDs we're about to (re)insert.
-	// Block IDs are stable across re-parses. Cascading FKs clean up their
-	// related tasks and tags.
-	if len(blocks) > 0 {
-		placeholders := make([]string, len(blocks))
-		args := make([]interface{}, len(blocks))
-		for i, b := range blocks {
-			placeholders[i] = "?"
-			args[i] = b.ID
-		}
-		query := "DELETE FROM blocks WHERE id IN (" + strings.Join(placeholders, ",") + ")"
-		if _, err := tx.Exec(query, args...); err != nil {
-			return fmt.Errorf("failed to clear blocks by id: %w", err)
-		}
-	}
-
-	// Also clear by metadata to catch blocks that the user removed from the
-	// file (their IDs are no longer in the new parse output). Scope by source
-	// so a linked notebook sharing a display name with a vault notebook cannot
-	// clear the vault's rows (#100).
-	if err := dm.ClearFileBlocks(tx, source, notebook, section, page); err != nil {
-		return fmt.Errorf("failed to clear old blocks: %w", err)
-	}
-
-	if len(blocks) == 0 {
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-		dm.invalidateUnlinkedScanCache()
-		return nil
-	}
-
-	stmts, err := prepareBlockIndexStmts(tx)
-	if err != nil {
-		return err
-	}
-	defer stmts.close()
-
-	if err := stmts.indexBlocks(source, notebook, section, page, blocks, fileTags, "IndexFileBlocks"); err != nil {
-		return err
-	}
-
-	// Per-file cycle guard: only one file's edges are visible here, so this
-	// detects within-file cycles only. The batched indexer's cross-file check
-	// catches cycles that span files.
-	warnOnDependencyCycle(blocks)
-	if err := indexTaskDependencies(tx, stmts.taskDep, blocks, "IndexFileBlocks"); err != nil {
+	if err := dm.indexFileBlocksStage(tx, source, notebook, section, page, blocks, fileTags, "IndexFileBlocks"); err != nil {
 		return err
 	}
 
@@ -818,12 +826,90 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 	return nil
 }
 
+// IndexFileWithProjection is the atomic block+projection publish: in one
+// transaction it clears the page's prior block rows (by ID + by metadata) and
+// its prior page_types/page_properties rows, inserts the new block rows
+// (blocks/tasks/tags/page_links/block_meta/block_references/task_dependencies),
+// and inserts the new projection rows (or clears the projection when typeID
+// is empty). A reader can never observe blocks without their projection or
+// vice versa — closing the gap left by IndexFileBlocks + projectPageType,
+// which previously committed blocks and projection in two separate
+// transactions.
+//
+// typeID == "" means the page is untyped: the projection is cleared (no
+// insert). Callers that mutate blocks only (task meta / deps / recurrence)
+// MUST use IndexFileBlocks instead — this method always rewrites the
+// projection state. Use this method for every frontmatter-affecting write
+// path (save, create, duplicate, rename, external-edit reindex).
+//
+// fileWarnings is an optional slice of non-fatal parser diagnostics; same
+// contract as IndexFileBlocks.
+func (dm *DatabaseManager) IndexFileWithProjection(
+	source, notebook, section, page string,
+	blocks []parser.ParsedBlock,
+	fileTags []string,
+	typeID string,
+	props []ProjectedProperty,
+	fileWarnings ...string,
+) error {
+	db, release, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
+	defer release()
+	if source == "" {
+		source = "vault"
+	}
+	for _, w := range fileWarnings {
+		log.Printf("db.IndexFileWithProjection(%s/%s/%s/%s): %s", source, notebook, section, page, w)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := dm.indexFileBlocksStage(tx, source, notebook, section, page, blocks, fileTags, "IndexFileWithProjection"); err != nil {
+		return err
+	}
+	// Projection clear/insert runs in the SAME tx as the block publish. A
+	// failure here rolls back the block clears+inserts too, so the prior
+	// committed block+projection state stays visible as a unit.
+	if err := applyPageProjectionTx(tx, source, notebook, section, page, typeID, props); err != nil {
+		return err
+	}
+
+	// Test seam: fires after blocks AND projection are staged in the same tx
+	// but before commit. A hook that returns an error here rolls back BOTH
+	// halves, so a concurrent reader never sees blocks-without-projection.
+	if err := dm.runIndexerTestingHook(indexerHookContext{
+		Phase:    indexerHookIndexFileWithProjectionPreCommit,
+		Source:   source,
+		Notebook: notebook,
+		Section:  section,
+		Page:     page,
+	}); err != nil {
+		return fmt.Errorf("indexer testing hook aborted IndexFileWithProjection: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	dm.invalidateUnlinkedScanCache()
+	return nil
+}
+
 // IndexScanResults inserts multiple scan results into the database in a single
 // transaction (the batched vault-startup / linked-notebook path). It returns
 // the count of files that were successfully indexed, plus a slice describing
 // files that were skipped because the scanner reported a per-file error.
 // Callers should surface the skipped set so users can distinguish a fully-loaded
 // vault from one with unreadable files.
+//
+// Block-only: does NOT touch page_types/page_properties. The cold-start and
+// linked-tree paths in the App layer route through IndexScanResultsWithProjection
+// so projection is published in the same batch transaction.
 func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, []string, error) {
 	db, release, err := dm.handle()
 	if err != nil {
@@ -842,10 +928,100 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	}
 	defer stmts.close()
 
+	indexedCount, skipped, err := dm.indexScanResultsStage(tx, stmts, results, nil)
+	if err != nil {
+		return 0, skipped, err
+	}
+
+	// Test seam: same shape as IndexFileBlocks; coordinates are zero
+	// because the batch spans many files.
+	if err := dm.runIndexerTestingHook(indexerHookContext{
+		Phase: indexerHookIndexScanResultsPreCommit,
+	}); err != nil {
+		return 0, skipped, fmt.Errorf("indexer testing hook aborted IndexScanResults: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, skipped, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	// Batch commit may have cleared/inserted blocks even when indexedCount is 0.
+	dm.invalidateUnlinkedScanCache()
+
+	return indexedCount, skipped, nil
+}
+
+// ScanProjection is the per-result atomic projection payload paired with a
+// parser.ScanResult by IndexScanResultsWithProjection. ScanProjection[i]
+// corresponds to results[i]; a nil slice means run block-only (no projection
+// rewrite) for that result.
+type ScanProjection struct {
+	TypeID string
+	Props  []ProjectedProperty
+}
+
+// IndexScanResultsWithProjection is the batched atomic block+projection
+// publish: one transaction clears/replaces blocks AND page_types/
+// page_properties for every result. projections MUST be the same length as
+// results; projections[i] is applied to results[i]'s (source, notebook,
+// section, page). A nil projections slice means "no projection work" — use
+// IndexScanResults directly instead.
+//
+// Use this for the vault cold-start scan and the linked-tree scan so the
+// batch publishes blocks and projection atomically per file. A reader can
+// never see a freshly-scanned typed page without its projection (or vice
+// versa) mid-batch.
+func (dm *DatabaseManager) IndexScanResultsWithProjection(results []parser.ScanResult, projections []ScanProjection) (int, []string, error) {
+	if len(projections) != len(results) {
+		return 0, nil, fmt.Errorf("IndexScanResultsWithProjection: projections length %d does not match results length %d", len(projections), len(results))
+	}
+	db, release, err := dm.handle()
+	if err != nil {
+		return 0, nil, ErrDBClosed
+	}
+	defer release()
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmts, err := prepareBlockIndexStmts(tx)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer stmts.close()
+
+	indexedCount, skipped, err := dm.indexScanResultsStage(tx, stmts, results, projections)
+	if err != nil {
+		return 0, skipped, err
+	}
+
+	// Test seam: same shape as IndexFileWithProjection; coordinates are zero
+	// because the batch spans many files.
+	if err := dm.runIndexerTestingHook(indexerHookContext{
+		Phase: indexerHookIndexScanResultsWithProjectionPreCommit,
+	}); err != nil {
+		return 0, skipped, fmt.Errorf("indexer testing hook aborted IndexScanResultsWithProjection: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, skipped, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	dm.invalidateUnlinkedScanCache()
+
+	return indexedCount, skipped, nil
+}
+
+// indexScanResultsStage is the shared body of IndexScanResults and
+// IndexScanResultsWithProjection: iterates results, clears/inserts blocks per
+// result, runs the cross-file dependency pass, and (when projections != nil)
+// applies each result's projection payload on the same tx. Skipped files
+// (res.Err or empty Notebook) bypass both the block and projection work.
+func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexStmts, results []parser.ScanResult, projections []ScanProjection) (int, []string, error) {
 	indexedCount := 0
 	var skipped []string
 
-	for _, res := range results {
+	for i, res := range results {
 		if res.Err != nil {
 			skipped = append(skipped, fmt.Sprintf("%s: %v", res.Path, res.Err))
 			continue
@@ -870,13 +1046,13 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		if len(res.Blocks) > 0 {
 			placeholders := make([]string, len(res.Blocks))
 			args := make([]interface{}, len(res.Blocks))
-			for i, b := range res.Blocks {
-				placeholders[i] = "?"
-				args[i] = b.ID
+			for j, b := range res.Blocks {
+				placeholders[j] = "?"
+				args[j] = b.ID
 			}
 			query := "DELETE FROM blocks WHERE id IN (" + strings.Join(placeholders, ",") + ")"
 			if _, err := tx.Exec(query, args...); err != nil {
-				return 0, skipped, fmt.Errorf("failed to clear blocks by id for %s: %w", res.Path, err)
+				return indexedCount, skipped, fmt.Errorf("failed to clear blocks by id for %s: %w", res.Path, err)
 			}
 		}
 
@@ -889,11 +1065,20 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 			source = "vault"
 		}
 		if err := dm.ClearFileBlocks(tx, source, res.Notebook, res.Section, res.Page); err != nil {
-			return 0, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
+			return indexedCount, skipped, fmt.Errorf("failed to clear blocks for %s: %w", res.Path, err)
 		}
 
 		if err := stmts.indexBlocks(source, res.Notebook, res.Section, res.Page, res.Blocks, res.Tags, "IndexScanResults"); err != nil {
-			return 0, skipped, err
+			return indexedCount, skipped, err
+		}
+
+		// Atomic projection publish: runs in the SAME tx as the block work.
+		// A failure here rolls back every block clear/insert for the batch
+		// so the prior committed state stays visible as a unit.
+		if projections != nil {
+			if err := applyPageProjectionTx(tx, source, res.Notebook, res.Section, res.Page, projections[i].TypeID, projections[i].Props); err != nil {
+				return indexedCount, skipped, fmt.Errorf("failed to apply projection for %s: %w", res.Path, err)
+			}
 		}
 
 		indexedCount++
@@ -924,22 +1109,8 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 		allBlocks = append(allBlocks, res.Blocks...)
 	}
 	if err := indexTaskDependencies(tx, stmts.taskDep, allBlocks, "IndexScanResults"); err != nil {
-		return 0, skipped, err
+		return indexedCount, skipped, err
 	}
-
-	// Test seam: same shape as IndexFileBlocks; coordinates are zero
-	// because the batch spans many files.
-	if err := dm.runIndexerTestingHook(indexerHookContext{
-		Phase: indexerHookIndexScanResultsPreCommit,
-	}); err != nil {
-		return 0, skipped, fmt.Errorf("indexer testing hook aborted IndexScanResults: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, skipped, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	// Batch commit may have cleared/inserted blocks even when indexedCount is 0.
-	dm.invalidateUnlinkedScanCache()
 
 	return indexedCount, skipped, nil
 }

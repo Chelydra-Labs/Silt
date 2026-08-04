@@ -1258,12 +1258,12 @@ func TestRenameSection_RollsBackPostRenameIndexFailureAndRetries(t *testing.T) {
 	app := newTestApp(t)
 	seedRenamePage(t, app, "TestNB", "Old", "Page1")
 	failed := false
-	app.renameHooks = &renameHooks{indexFile: func(a *App, source, notebook, section, page string, blocks []parser.ParsedBlock, tags []string, warnings ...string) error {
+	app.renameHooks = &renameHooks{indexFile: func(a *App, source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata, warnings ...string) error {
 		if !failed {
 			failed = true
 			return errors.New("injected post-rename section index failure")
 		}
-		return a.indexFile(source, notebook, section, page, blocks, tags, warnings...)
+		return a.indexFile(source, notebook, section, page, blocks, meta, warnings...)
 	}}
 	err := app.RenameSection("TestNB", "Old", "New")
 	if err == nil || !failed {
@@ -1350,12 +1350,12 @@ func TestRenameNotebook_RollsBackPostRenameIndexFailureAndRetries(t *testing.T) 
 	app := newTestApp(t)
 	seedRenamePage(t, app, "OldNB", "Nested", "Page1")
 	failed := false
-	app.renameHooks = &renameHooks{indexFile: func(a *App, source, notebook, section, page string, blocks []parser.ParsedBlock, tags []string, warnings ...string) error {
+	app.renameHooks = &renameHooks{indexFile: func(a *App, source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata, warnings ...string) error {
 		if !failed {
 			failed = true
 			return errors.New("injected post-rename notebook index failure")
 		}
-		return a.indexFile(source, notebook, section, page, blocks, tags, warnings...)
+		return a.indexFile(source, notebook, section, page, blocks, meta, warnings...)
 	}}
 	err := app.RenameNotebook("OldNB", "NewNB")
 	if err == nil || !failed {

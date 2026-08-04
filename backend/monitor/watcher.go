@@ -92,7 +92,25 @@ type DirectoryWatcher struct {
 	// Optional. Called from the watcher goroutine with notebook/section/page.
 	pageChangedHandlerMu sync.RWMutex
 	pageChangedHandler   func(notebook, section, page string)
+
+	// atomicReindexHandler is the App-supplied atomic block+projection
+	// publish. When nil, reindexFile falls back to defaultAtomicReindex
+	// (still atomic, but with an empty projection payload). Production
+	// (initializeVaultServices) installs a schema-aware closure over
+	// App.indexFile so external frontmatter edits publish blocks AND
+	// page_types/page_properties in one transaction — closing the gap left
+	// by the prior IndexFileBlocks + onExternalPageChanged two-step.
+	atomicReindexHandlerMu sync.RWMutex
+	atomicReindexHandler   AtomicReindexFunc
 }
+
+// AtomicReindexFunc is the App-supplied atomic block+projection publish the
+// watcher delegates the index step of reindexFile to. The handler MUST do
+// its own coordinator.WithDBWrite internally — the watcher does not wrap
+// the call (WithDBWrite is non-reentrant). meta carries the parsed
+// frontmatter; the handler computes typeID + props from it using the live
+// type schema. A non-nil return skips MarkFileIndexed for this event.
+type AtomicReindexFunc func(source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata) error
 
 // ReMintWarning is the payload handed to the reMintWarningHandler when the
 // watcher's mass-re-mint heuristic fires (#443). Carries enough context for
@@ -450,6 +468,38 @@ func (dw *DirectoryWatcher) SetReMintWarningHandler(fn func(ReMintWarning)) {
 	dw.reMintWarningHandlerMu.Unlock()
 }
 
+// SetAtomicReindexHandler installs the App-side atomic block+projection
+// publish that reindexFile delegates the index step to. Production
+// (initializeVaultServices) installs a closure over App.indexFile so an
+// external frontmatter edit publishes blocks AND page_types/page_properties
+// in one transaction. Pass nil to revert to defaultAtomicReindex (still
+// atomic; empty projection payload — used by tests that don't care about
+// typed projection). The handler is invoked from the watcher goroutine
+// inside LockFileWrite; it MUST do its own WithDBWrite and MUST NOT block
+// on the watcher's own locks.
+func (dw *DirectoryWatcher) SetAtomicReindexHandler(fn AtomicReindexFunc) {
+	dw.atomicReindexHandlerMu.Lock()
+	dw.atomicReindexHandler = fn
+	dw.atomicReindexHandlerMu.Unlock()
+}
+
+// defaultAtomicReindex is the fallback AtomicReindexFunc used when no
+// App-side handler is installed. It publishes blocks via
+// IndexFileWithProjection with an empty projection payload (typeID=""),
+// which atomically clears any existing projection for the page. Production
+// always installs the schema-aware handler via SetAtomicReindexHandler
+// before watcher.Start returns, so this default only covers tests that
+// don't exercise typed projection. It exists so the watcher has NO
+// non-atomic route: every reindex goes through IndexFileWithProjection
+// regardless of whether an App handler is set.
+func (dw *DirectoryWatcher) defaultAtomicReindex(source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata) error {
+	var err error
+	dw.coordinator.WithDBWrite(func() {
+		err = dw.dm.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, "", nil, meta.Warnings...)
+	})
+	return err
+}
+
 // linkedConfigSourceForPath returns the source ('linked:<id>') if path is a
 // linked root's co-located config.yaml (<root>/.system/config.yaml), or "" +
 // false otherwise. Used by the event loop to route co-located config edits
@@ -778,21 +828,36 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 		}
 
 		indexedOK := false
-		dw.coordinator.WithDBWrite(func() {
-			if err := dw.dm.IndexFileBlocks(source, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...); err != nil {
-				log.Printf("reindexFile: IndexFileBlocks failed for %s: %v", path, err)
-				return
-			}
+		// Atomic block+projection publish: the handler (production: App's
+		// schema-aware indexFile) opens its own WithDBWrite and publishes
+		// blocks + page_types/page_properties in one transaction. When no
+		// handler is installed (tests), defaultAtomicReindex still goes
+		// through IndexFileWithProjection so there is no non-atomic route.
+		// The handler runs INSIDE LockFileWrite so the read+publish pair
+		// stays serialized against concurrent App writers; the WithDBWrite
+		// lives inside the handler to keep the coordinator's write lock
+		// non-reentrant.
+		dw.atomicReindexHandlerMu.RLock()
+		handler := dw.atomicReindexHandler
+		dw.atomicReindexHandlerMu.RUnlock()
+		if handler == nil {
+			handler = dw.defaultAtomicReindex
+		}
+		if err := handler(source, meta.Notebook, meta.Section, meta.Page, blocks, meta); err != nil {
+			log.Printf("reindexFile: atomic index failed for %s: %v", path, err)
+		} else {
 			indexedOK = true
 			// Keep the files table warm during the session: a successful
 			// reindex records the file's current mtime/size so the next
 			// *startup* scan can skip it (#29).
 			if st, err := os.Stat(path); err == nil {
-				if err := dw.dm.MarkFileIndexed(nil, path, st.ModTime().UnixNano(), st.Size()); err != nil {
-					log.Printf("reindexFile: MarkFileIndexed failed for %s: %v", path, err)
-				}
+				dw.coordinator.WithDBWrite(func() {
+					if err := dw.dm.MarkFileIndexed(nil, path, st.ModTime().UnixNano(), st.Size()); err != nil {
+						log.Printf("reindexFile: MarkFileIndexed failed for %s: %v", path, err)
+					}
+				})
 			}
-		})
+		}
 		// Capture coords for notify outside LockFileWrite — must not call
 		// notifyPageChanged (→ vaultMu.RLock) while holding the file lock:
 		// App writers take vaultMu.RLock then LockFileWrite (opposite order).
@@ -803,6 +868,15 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 	if notifyNB != "" || notifyPage != "" {
 		dw.notifyPageChanged(notifyNB, notifySec, notifyPage)
 	}
+}
+
+// ReindexFile is the exported entry point for triggering the watcher's
+// full read+parse+atomic-index sequence on a specific path. It is the
+// integration-test seam for the atomic handler: App-level tests simulate an
+// external fsnotify event by calling this directly. Production fsnotify
+// events go through reindexFile via the listen loop.
+func (dw *DirectoryWatcher) ReindexFile(path string) {
+	dw.reindexFile(path)
 }
 
 func (dw *DirectoryWatcher) clearIndexForFile(path string) []string {
