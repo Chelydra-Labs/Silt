@@ -60,7 +60,12 @@ function everyEntry(): AIChatEntry[] {
       citationIndex: 1,
       title: 'Launch plan',
       excerpt: 'Ship in August',
-      target: { blockId: 'block-1', notebook: 'Work' }
+      target: {
+        blockId: 'block-1',
+        notebook: 'Work',
+        section: 'Notes',
+        page: 'Plan'
+      }
     }),
     toolCallEntry({
       id: 'call',
@@ -128,7 +133,9 @@ describe('ChatShell', () => {
     )
     expect(value.onNavigateEvidence).toHaveBeenCalledWith({
       blockId: 'block-1',
-      notebook: 'Work'
+      notebook: 'Work',
+      section: 'Notes',
+      page: 'Plan'
     })
   })
 

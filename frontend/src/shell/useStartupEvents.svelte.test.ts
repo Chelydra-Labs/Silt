@@ -256,6 +256,67 @@ describe('useStartupEvents (#768)', () => {
     expect(deps.setActivePage).toHaveBeenCalledWith('Alpha II')
   })
 
+  // #875: AI citation clicks must deliver a full page locator so handleSearchJump
+  // can openPage. blockId-only detail is the regression that shipped empty chrome.
+  it('navigate-to-block with full locator calls handleSearchJump with notebook/section/page/blockId', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-block', {
+        detail: {
+          notebook: 'Work',
+          section: 'Notes',
+          page: 'Plan',
+          blockId: 'block-1'
+        }
+      })
+    )
+
+    expect(deps.handleSearchJump).toHaveBeenCalledTimes(1)
+    expect(deps.handleSearchJump).toHaveBeenCalledWith(
+      {
+        source: undefined,
+        notebook: 'Work',
+        section: 'Notes',
+        page: 'Plan'
+      },
+      undefined,
+      'block-1'
+    )
+    expect(deps.openTasksView).not.toHaveBeenCalled()
+  })
+
+  it('navigate-to-block with only blockId does not open a resolvable page locator', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-block', {
+        detail: { blockId: 'orphan-block' }
+      })
+    )
+
+    // Handler still invokes jump with an empty locator — the bug surface that
+    // left App on empty chrome. Callers must supply notebook/section/page.
+    expect(deps.handleSearchJump).toHaveBeenCalledWith(
+      {
+        source: undefined,
+        notebook: undefined,
+        section: '',
+        page: undefined
+      },
+      undefined,
+      'orphan-block'
+    )
+  })
+
   it('dispose() invokes every captured off function + drops window listeners', () => {
     const bus = makeBus()
     wireEventsOn(bus)
