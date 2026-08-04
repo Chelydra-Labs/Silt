@@ -92,12 +92,19 @@ export interface SourceNavigationRef extends RecentPageRef {
   source?: string
 }
 
-/** True when notebook + page are present (section may be '' for root pages). */
+/** True when notebook + page are non-empty strings (section may be '' for root). */
 export function hasPageLocator(d: {
   notebook?: unknown
+  /** Ignored — root pages use ''; only notebook + page are required. */
+  section?: unknown
   page?: unknown
 }): boolean {
-  return Boolean(d?.notebook && d?.page)
+  return (
+    typeof d?.notebook === 'string' &&
+    d.notebook.length > 0 &&
+    typeof d?.page === 'string' &&
+    d.page.length > 0
+  )
 }
 
 export interface SearchNavigationJump {

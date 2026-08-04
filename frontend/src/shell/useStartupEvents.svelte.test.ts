@@ -414,6 +414,34 @@ describe('useStartupEvents (#768)', () => {
     expectIncompleteBlockNavRejected(deps)
   })
 
+  it('navigate-to-block with no detail does not jump and toasts', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(new CustomEvent('navigate-to-block'))
+
+    expectIncompleteBlockNavRejected(deps)
+  })
+
+  it('navigate-to-block with non-string notebook/page does not jump and toasts', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(
+      new CustomEvent('navigate-to-block', {
+        detail: { notebook: 1, page: true, blockId: 'b1' }
+      })
+    )
+
+    expectIncompleteBlockNavRejected(deps)
+  })
+
   it('navigate-to-page with full locator calls handleSearchJump', () => {
     const bus = makeBus()
     wireEventsOn(bus)
@@ -457,6 +485,23 @@ describe('useStartupEvents (#768)', () => {
         detail: { notebook: 'Work', section: 'Notes' }
       })
     )
+
+    expect(deps.handleSearchJump).not.toHaveBeenCalled()
+    expect(mocks.pushNotification).toHaveBeenCalledWith({
+      kind: 'info',
+      message: INCOMPLETE_PAGE_NAV_TOAST,
+      autoDismissMs: 5000
+    })
+  })
+
+  it('navigate-to-page with no detail does not jump and toasts', () => {
+    const bus = makeBus()
+    wireEventsOn(bus)
+    const { deps } = makeDeps()
+    controller = createStartupEvents(deps)
+    controller.attach()
+
+    window.dispatchEvent(new CustomEvent('navigate-to-page'))
 
     expect(deps.handleSearchJump).not.toHaveBeenCalled()
     expect(mocks.pushNotification).toHaveBeenCalledWith({

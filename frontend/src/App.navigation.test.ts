@@ -180,7 +180,7 @@ describe('App navigation coordination', () => {
     }
   })
 
-  it('hasPageLocator requires notebook and page; section may be empty', () => {
+  it('hasPageLocator requires non-empty string notebook and page', () => {
     expect(hasPageLocator({ notebook: 'Work', page: 'Plan' })).toBe(true)
     expect(
       hasPageLocator({ notebook: 'Work', section: '', page: 'Root' })
@@ -190,5 +190,12 @@ describe('App navigation coordination', () => {
     expect(hasPageLocator({ page: 'Plan' })).toBe(false)
     expect(hasPageLocator({ notebook: 'Work' })).toBe(false)
     expect(hasPageLocator({})).toBe(false)
+    // Truthy non-strings must not pass — docs require non-empty strings.
+    expect(hasPageLocator({ notebook: 1, page: 'Plan' })).toBe(false)
+    expect(hasPageLocator({ notebook: 'Work', page: true })).toBe(false)
+    expect(hasPageLocator({ notebook: { n: 'Work' }, page: 'Plan' })).toBe(
+      false
+    )
+    expect(hasPageLocator({ notebook: ['Work'], page: 'Plan' })).toBe(false)
   })
 })

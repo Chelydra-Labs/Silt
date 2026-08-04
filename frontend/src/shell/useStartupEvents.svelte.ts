@@ -317,8 +317,8 @@ export function createStartupEvents(
   }
 
   function handleNavigateToBlock(e: Event): void {
-    const d = (e as CustomEvent).detail
-    if (!d) return
+    // Normalize missing detail so null/undefined fail loud like incomplete objects.
+    const d = (e as CustomEvent).detail ?? {}
     if (rejectIncompletePageLocator('navigate-to-block', d)) return
     // resolveSourceNavigationTarget walks the (possibly-malformed/external)
     // navigation catalog; a throw here would propagate into the window-event
@@ -348,8 +348,7 @@ export function createStartupEvents(
     }
   }
   function handleNavigateToPage(e: Event): void {
-    const d = (e as CustomEvent).detail
-    if (!d) return
+    const d = (e as CustomEvent).detail ?? {}
     if (rejectIncompletePageLocator('navigate-to-page', d)) return
     try {
       const ref = resolveSourceNavigationTarget(deps.getNavigationCatalog(), {
