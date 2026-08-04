@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   binByProperty,
+  formatMultiValueDisplay,
   splitMultiValueText,
   type TypeDashboardRow
 } from './dashboards'
@@ -17,29 +18,37 @@ function row(page: string, tags: string): TypeDashboardRow {
 }
 
 describe('splitMultiValueText / binByProperty', () => {
-  it('splits on ", " matching the projection join (not bare commas)', () => {
-    expect(splitMultiValueText('x, y, z')).toEqual(['x', 'y', 'z'])
-    expect(splitMultiValueText('solo')).toEqual(['solo'])
+  it('parses JSON arrays so an entry may contain commas', () => {
+    expect(splitMultiValueText('["a, b","c"]')).toEqual(['a, b', 'c'])
+    expect(splitMultiValueText('[]')).toEqual([])
     expect(splitMultiValueText('')).toEqual([])
   })
 
-  it('bins multiselect without fracturing on bare commas inside a lone value', () => {
-    // Projection joins with ", ". A single stored value "alpha, beta" (one
-    // option) is indistinguishable from two options after join — that is the
-    // documented limit. Two clean options must still multi-membership bin.
+  it('still accepts legacy ", "-joined projections', () => {
+    expect(splitMultiValueText('x, y, z')).toEqual(['x', 'y', 'z'])
+    expect(splitMultiValueText('solo')).toEqual(['solo'])
+  })
+
+  it('formats multi-values for human display', () => {
+    expect(formatMultiValueDisplay('["a, b","c"]')).toBe('a, b, c')
+  })
+
+  it('bins multiselect with comma-containing options without phantom buckets', () => {
     const prop: PropertyDef = {
       name: 'tags',
       type: 'multiselect',
-      options: ['x', 'y']
+      options: ['a, b', 'c']
     }
     const sections = binByProperty(
-      [row('P1', 'x, y'), row('P2', 'x')],
+      [row('P1', '["a, b","c"]'), row('P2', '["a, b"]')],
       prop,
       'tags'
     )
-    const keys = sections.map((s) => s.label).sort()
-    expect(keys).toEqual(['x', 'y'])
-    const xRows = sections.find((s) => s.label === 'x')?.rows.map((r) => r.page)
-    expect(xRows?.sort()).toEqual(['P1', 'P2'])
+    const labels = sections.map((s) => s.label).sort()
+    expect(labels).toEqual(['a, b', 'c'])
+    const ab = sections.find((s) => s.label === 'a, b')?.rows.map((r) => r.page)
+    expect(ab?.sort()).toEqual(['P1', 'P2'])
+    const cOnly = sections.find((s) => s.label === 'c')?.rows.map((r) => r.page)
+    expect(cOnly).toEqual(['P1'])
   })
 })

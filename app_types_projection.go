@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -74,10 +75,11 @@ func (a *App) projectPageType(source string, meta parser.FileMetadata) {
 }
 
 // projectProperty builds one projection row from a raw frontmatter value and its
-// schema definition. ValueText is human-readable; ValueSort is a type-correct
-// coercion so the dashboard sorts/groups uniformly across property kinds
-// (numbers zero-padded to be lexicographically ordered, dates left as ISO which
-// sort naturally, checkboxes as 0/1, multi-values as a sorted joined set).
+// schema definition. ValueText is the wire form for dashboard cells/filters
+// (multi-values are a JSON string array so entries may contain commas);
+// ValueSort is a type-correct coercion so the dashboard sorts/groups uniformly
+// (numbers sign-aware padded, dates ISO, checkboxes 0/1, multi-values sorted
+// JSON).
 func projectProperty(pdef types.PropertyDef, raw any) db.ProjectedProperty {
 	return db.ProjectedProperty{
 		Property:  pdef.Name,
@@ -85,6 +87,22 @@ func projectProperty(pdef types.PropertyDef, raw any) db.ProjectedProperty {
 		ValueText: formatPropertyValue(raw),
 		ValueSort: propertySortKey(pdef.Type, raw),
 	}
+}
+
+// formatMultiValues encodes multiselect/pages entries as a JSON string array.
+// Comma-joined text cannot round-trip an option like "a, b"; JSON can. Empty
+// input yields "[]". Marshal failure falls back to a quoted single-element
+// array of the joined form so the row is never silently dropped.
+func formatMultiValues(parts []string) string {
+	if parts == nil {
+		parts = []string{}
+	}
+	b, err := json.Marshal(parts)
+	if err != nil {
+		fallback, _ := json.Marshal([]string{strings.Join(parts, ", ")})
+		return string(fallback)
+	}
+	return string(b)
 }
 
 func formatPropertyValue(raw any) string {
@@ -109,9 +127,9 @@ func formatPropertyValue(raw any) string {
 		for _, el := range v {
 			parts = append(parts, formatScalar(el))
 		}
-		return strings.Join(parts, ", ")
+		return formatMultiValues(parts)
 	case []string:
-		return strings.Join(v, ", ")
+		return formatMultiValues(v)
 	case nil:
 		return ""
 	}
@@ -174,7 +192,9 @@ func propertySortKey(pt types.PropertyType, raw any) string {
 		if strs, ok := toStringSlice(raw); ok {
 			sorted := append([]string(nil), strs...)
 			sort.Strings(sorted)
-			return strings.Join(sorted, ",")
+			// Same JSON encoding as ValueText so sort keys stay unambiguous
+			// when an entry contains a comma.
+			return formatMultiValues(sorted)
 		}
 		return formatPropertyValue(raw)
 	default:

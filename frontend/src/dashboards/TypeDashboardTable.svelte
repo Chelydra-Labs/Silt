@@ -5,11 +5,12 @@
   // rows interleaved with the group's data rows inside the same table, so a
   // single set of column headers stays visible and each group stays
   // self-describing for assistive tech.
-  import type {
-    DashboardColumn,
-    GroupSection,
-    SortState,
-    TypeDashboardRow
+  import {
+    splitMultiValueText,
+    type DashboardColumn,
+    type GroupSection,
+    type SortState,
+    type TypeDashboardRow
   } from './dashboards'
 
   interface Props {
@@ -175,11 +176,8 @@
     {/if}
   {:else if col.kind === 'select' && value}
     <span class="chip">{value}</span>
-  {:else if col.kind === 'multiselect' && value}
-    {#each value
-      .split(',')
-      .map((v) => v.trim())
-      .filter(Boolean) as v (v)}
+  {:else if (col.kind === 'multiselect' || col.kind === 'pages') && value}
+    {#each splitMultiValueText(value) as v (v)}
       <span class="chip">{v}</span>
     {/each}
   {:else}

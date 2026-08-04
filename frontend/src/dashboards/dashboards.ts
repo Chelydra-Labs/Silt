@@ -80,13 +80,33 @@ export function rowPropertyValue(
   return hit?.valueText ?? ''
 }
 
-/** Tokenize a projection multi-value (joined with ", "). */
+/**
+ * Tokenize a projection multi-value. Canonical wire form is a JSON string
+ * array so entries may contain commas (e.g. `["a, b","c"]`). Legacy ", "-joined
+ * text is still accepted until rows are reprojected.
+ */
 export function splitMultiValueText(raw: string): string[] {
-  if (!raw.trim()) return []
-  return raw
+  const t = raw.trim()
+  if (!t) return []
+  if (t.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(t)
+      if (Array.isArray(parsed)) {
+        return parsed.map(String).filter((v) => v !== '')
+      }
+    } catch {
+      /* fall through to legacy */
+    }
+  }
+  return t
     .split(', ')
     .map((v) => v.trim())
     .filter(Boolean)
+}
+
+/** Human display for a multi-value cell (join tokens with ", "). */
+export function formatMultiValueDisplay(raw: string): string {
+  return splitMultiValueText(raw).join(', ')
 }
 
 /**
@@ -105,9 +125,8 @@ export function binByProperty(
   const unassigned: TypeDashboardRow[] = []
   for (const row of rows) {
     const raw = rowPropertyValue(row, propName)
-    // Multi-values are joined with ", " by the projection layer (see
-    // formatPropertyValue). Split on that separator — bare "," would fracture
-    // a genuine option like "a, b" into phantom buckets.
+    // Multi-values are a JSON string array from the projection layer so an
+    // option like "a, b" is one token, not two phantom buckets.
     const values = multi
       ? splitMultiValueText(raw)
       : raw.trim()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -32,8 +33,8 @@ type TypeDashboardRow struct {
 // QueryPagesByType returns the pages of the given type, filtered and sorted for
 // the per-type dashboard. filter maps a property name to a required value (a row
 // is kept when: for scalar properties the ValueText equals the filter value; for
-// multiselect/pages the ValueText contains the value as one of its comma-joined
-// entries). sortProperty orders by the property's ValueSort (numeric/date/text
+// multiselect/pages the ValueText is a JSON string array and the filter matches
+// any entry). sortProperty orders by the property's ValueSort (numeric/date/text
 // coercion already computed at projection time); empty sortProperty sorts by page
 // path (notebook, section, page). sortDesc reverses. Grouping is done in the
 // frontend; this method returns a flat filtered+sorted list.
@@ -166,16 +167,33 @@ func dashboardPathKey(row db.PageProjectionRow) string {
 }
 
 // isMultiValueType reports whether a value type stores multiple entries in its
-// ValueText (comma-joined), so the filter applies contains-semantics rather
-// than equality.
+// ValueText (JSON string array), so the filter applies contains-semantics
+// rather than equality.
 func isMultiValueType(valueType string) bool {
 	return valueType == "multiselect" || valueType == "pages"
 }
 
-// splitDashboardMultiValues tokenizes a comma-joined multi-value. The
-// projection layer joins on ", "; trailing/empty tokens are skipped so a value
-// of "a, b" yields ["a", "b"].
+// splitDashboardMultiValues tokenizes a multi-value ValueText. Canonical form
+// is a JSON string array (so entries may contain commas). Legacy ", "-joined
+// projections (pre-JSON) still parse for warm indexes until reprojected.
 func splitDashboardMultiValues(valueText string) []string {
+	valueText = strings.TrimSpace(valueText)
+	if valueText == "" {
+		return nil
+	}
+	if strings.HasPrefix(valueText, "[") {
+		var parts []string
+		if err := json.Unmarshal([]byte(valueText), &parts); err == nil {
+			out := make([]string, 0, len(parts))
+			for _, p := range parts {
+				if p != "" {
+					out = append(out, p)
+				}
+			}
+			return out
+		}
+	}
+	// Legacy ", "-joined fallback.
 	parts := strings.Split(valueText, ", ")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {

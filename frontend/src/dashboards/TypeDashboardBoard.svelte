@@ -5,11 +5,12 @@
   // who think about their pages by the grouped dimension, complementing the
   // dense table. Cards are keyboard-activatable (role=button) so screen
   // readers and keyboard users reach the same onOpenPage path as a click.
-  import type {
-    DashboardColumn,
-    GroupSection,
-    TypeDashboardProp,
-    TypeDashboardRow
+  import {
+    formatMultiValueDisplay,
+    type DashboardColumn,
+    type GroupSection,
+    type TypeDashboardProp,
+    type TypeDashboardRow
   } from './dashboards'
 
   interface Props {
@@ -146,7 +147,7 @@
               {col.label}</span
             >
           {:else}
-            <span class="chip">{prop!.valueText}</span>
+            <span class="chip">{formatMultiValueDisplay(prop!.valueText)}</span>
           {/if}
         {/each}
       </div>

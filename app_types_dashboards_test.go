@@ -151,6 +151,74 @@ func TestQueryPagesByType_FilterByStatus(t *testing.T) {
 	}
 }
 
+func TestSplitDashboardMultiValues_JSONAndLegacy(t *testing.T) {
+	got := splitDashboardMultiValues(`["a, b","c"]`)
+	if len(got) != 2 || got[0] != "a, b" || got[1] != "c" {
+		t.Fatalf("JSON multi = %v, want [a, b c]", got)
+	}
+	got = splitDashboardMultiValues("x, y")
+	if len(got) != 2 || got[0] != "x" || got[1] != "y" {
+		t.Fatalf("legacy multi = %v, want [x y]", got)
+	}
+	if splitDashboardMultiValues("") != nil && len(splitDashboardMultiValues("")) != 0 {
+		t.Fatalf("empty should be empty, got %v", splitDashboardMultiValues(""))
+	}
+}
+
+func TestFormatMultiValues_RoundTripsCommaInEntry(t *testing.T) {
+	raw := formatMultiValues([]string{"a, b", "c"})
+	parts := splitDashboardMultiValues(raw)
+	if len(parts) != 2 || parts[0] != "a, b" || parts[1] != "c" {
+		t.Fatalf("round-trip = %v from %q", parts, raw)
+	}
+}
+
+func TestQueryPagesByType_FilterMultiValueWithCommaInOption(t *testing.T) {
+	app := newTestApp(t)
+	schema := types.TypeDef{
+		ID:   "multicomma",
+		Name: "MultiComma",
+		Properties: []types.PropertyDef{
+			{Name: "labels", Type: types.PropMultiSelect, Options: []string{"a, b", "c", "d"}},
+		},
+	}
+	if err := app.SaveType(schema); err != nil {
+		t.Fatalf("SaveType: %v", err)
+	}
+	content := "---\nnotebook: \"Books\"\nsection: \"\"\npage: \"Tagged\"\n" +
+		"date: \"2026-08-01\"\ntags: []\ntype: \"multicomma\"\n" +
+		"labels:\n  - \"a, b\"\n  - c\n---\n# Tagged\n"
+	writeFile(t, filepath.Join(app.vaultPath, "Books", "Tagged.md"), content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, "Books", "", "Tagged", "2026-08-01", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	app.projectPageType("vault", meta)
+
+	// Filter by the comma-containing option must match the whole token.
+	rows, err := app.QueryPagesByType("multicomma", map[string]string{"labels": "a, b"}, "", false)
+	if err != nil {
+		t.Fatalf("QueryPagesByType: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Page != "Tagged" {
+		t.Fatalf("filter labels=a, b = %+v, want Tagged", rows)
+	}
+	// Wire value is JSON, not a fractured join.
+	var labelText string
+	for _, p := range rows[0].Properties {
+		if p.Name == "labels" {
+			labelText = p.ValueText
+		}
+	}
+	parts := splitDashboardMultiValues(labelText)
+	if len(parts) != 2 || parts[0] != "a, b" || parts[1] != "c" {
+		t.Fatalf("projected labels = %q → %v, want [a, b c]", labelText, parts)
+	}
+}
+
 func TestQueryPagesByType_SortByRatingNegative(t *testing.T) {
 	app := newTestApp(t)
 	// Unique type id so shared in-memory DB pollution from other book tests
