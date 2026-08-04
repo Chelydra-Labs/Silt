@@ -77,6 +77,16 @@ func (dm *DatabaseManager) IndexPageProjection(source, notebook, section, page, 
 			return fmt.Errorf("failed to insert page_properties: %w", err)
 		}
 	}
+	// Test seam: same shape as IndexFileBlocks for the projection path.
+	if err := dm.runIndexerTestingHook(indexerHookContext{
+		Phase:    indexerHookIndexPageProjectionPreCommit,
+		Source:   source,
+		Notebook: notebook,
+		Section:  section,
+		Page:     page,
+	}); err != nil {
+		return fmt.Errorf("indexer testing hook aborted IndexPageProjection: %w", err)
+	}
 	return tx.Commit()
 }
 

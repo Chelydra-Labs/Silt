@@ -797,6 +797,19 @@ func (dm *DatabaseManager) IndexFileBlocks(source, notebook, section, page strin
 		return err
 	}
 
+	// Test seam: a hook may force a rollback after old rows are cleared and
+	// new rows staged but before commit. The deferred tx.Rollback undoes
+	// the clears too, so the prior committed state stays visible.
+	if err := dm.runIndexerTestingHook(indexerHookContext{
+		Phase:    indexerHookIndexFileBlocksPreCommit,
+		Source:   source,
+		Notebook: notebook,
+		Section:  section,
+		Page:     page,
+	}); err != nil {
+		return fmt.Errorf("indexer testing hook aborted IndexFileBlocks: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -912,6 +925,14 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 	}
 	if err := indexTaskDependencies(tx, stmts.taskDep, allBlocks, "IndexScanResults"); err != nil {
 		return 0, skipped, err
+	}
+
+	// Test seam: same shape as IndexFileBlocks; coordinates are zero
+	// because the batch spans many files.
+	if err := dm.runIndexerTestingHook(indexerHookContext{
+		Phase: indexerHookIndexScanResultsPreCommit,
+	}); err != nil {
+		return 0, skipped, fmt.Errorf("indexer testing hook aborted IndexScanResults: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
