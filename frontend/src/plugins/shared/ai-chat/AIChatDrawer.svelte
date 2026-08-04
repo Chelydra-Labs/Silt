@@ -13,6 +13,7 @@
   } from './drawer.svelte'
   import { AI_CHAT_COMMAND_EVENT, type AIChatCommandDetail } from './commands'
   import type { EvidenceTarget } from './types'
+  import { dispatchNavigateEvidence } from './navigateEvidence'
   import { getAIAvailability } from './availability'
 
   const PLUGIN_ID = 'silt-ai-agent'
@@ -132,11 +133,9 @@
   })
 
   function navigateEvidence(target: EvidenceTarget) {
-    window.dispatchEvent(
-      new CustomEvent('navigate-to-block', {
-        detail: { blockId: target.blockId }
-      })
-    )
+    // Forward the full page locator — blockId alone leaves the shell on the
+    // empty-notebook chrome (handler needs notebook/section/page to openPage).
+    dispatchNavigateEvidence(target)
   }
 
   // Mobile modal focus trap: keep Tab cycling inside the dialog so it cannot
