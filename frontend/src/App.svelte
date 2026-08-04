@@ -4,6 +4,7 @@
   import {
     resolveBreadcrumbSectionSelection,
     adaptSearchNavigation,
+    hasPageLocator,
     resolveSourceNavigationTarget,
     resolveDashboardOpenTarget
   } from './lib/navigationTargets'
@@ -647,6 +648,17 @@
     blockId: string
   ) {
     const { notebook, section, page } = locator
+    // Defense in depth for incomplete locators (#877). Toast lives on the
+    // navigate-to-block/page bus edge so we only warn here — no second toast.
+    if (!hasPageLocator(locator)) {
+      console.warn('handleSearchJump ignored: missing notebook/page', {
+        notebook,
+        section,
+        page,
+        blockId
+      })
+      return
+    }
     // Standalone-task routing guard (#374). A `.silt` notebook ref from
     // the search modal routes to the Tasks view; we deliberately do NOT
     // set `activeView = 'notes'` (which would jump the user out of the

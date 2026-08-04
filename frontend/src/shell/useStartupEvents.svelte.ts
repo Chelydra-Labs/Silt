@@ -40,6 +40,7 @@ import {
   getSettingsSections
 } from '../components/settings/settingsSections.svelte'
 import {
+  hasPageLocator,
   resolveSourceNavigationTarget,
   type SourceNavigationRef
 } from '../lib/navigationTargets'
@@ -288,9 +289,37 @@ export function createStartupEvents(
       )
     )
   }
+  // Incomplete notebook/page used to open empty chrome with no feedback (#877).
+  // Toast only at the bus edge; handleSearchJump warns without a second toast.
+  function rejectIncompletePageLocator(
+    eventName: 'navigate-to-block' | 'navigate-to-page',
+    d: {
+      notebook?: unknown
+      section?: unknown
+      page?: unknown
+      blockId?: unknown
+    }
+  ): boolean {
+    if (hasPageLocator(d)) return false
+    console.warn(`${eventName} ignored: missing notebook/page`, {
+      notebook: d.notebook,
+      section: d.section,
+      page: d.page,
+      blockId: d.blockId
+    })
+    const target = eventName === 'navigate-to-block' ? 'block' : 'page'
+    pushNotification({
+      kind: 'info',
+      message: `Couldn't open that ${target} — the link is missing page information.`,
+      autoDismissMs: 5000
+    })
+    return true
+  }
+
   function handleNavigateToBlock(e: Event): void {
-    const d = (e as CustomEvent).detail
-    if (!d) return
+    // Normalize missing detail so null/undefined fail loud like incomplete objects.
+    const d = (e as CustomEvent).detail ?? {}
+    if (rejectIncompletePageLocator('navigate-to-block', d)) return
     // resolveSourceNavigationTarget walks the (possibly-malformed/external)
     // navigation catalog; a throw here would propagate into the window-event
     // dispatch loop and silently drop the navigation. Catch + log instead.
@@ -319,8 +348,8 @@ export function createStartupEvents(
     }
   }
   function handleNavigateToPage(e: Event): void {
-    const d = (e as CustomEvent).detail
-    if (!d?.notebook || !d?.page) return
+    const d = (e as CustomEvent).detail ?? {}
+    if (rejectIncompletePageLocator('navigate-to-page', d)) return
     try {
       const ref = resolveSourceNavigationTarget(deps.getNavigationCatalog(), {
         source: d.source,
