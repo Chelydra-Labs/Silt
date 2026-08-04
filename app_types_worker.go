@@ -307,6 +307,28 @@ func (w *projectionReprojectWorker) reprojectOneLocator(dbMgr *db.DatabaseManage
 		}
 		return
 	}
+	// Guard against a page-deletion race: the locator list was snapshotted
+	// at the start of this batch, so a concurrent DeletePage /
+	// ClearFileBlocks may have removed the page's blocks AND projection
+	// between snapshot and this write. Without this check projectPageType
+	// would write a fresh page_types/page_properties row — resurrecting the
+	// projection for a page the user just deleted. PageExists is a single
+	// EXISTS probe on a covered index, cheap relative to the disk read we
+	// already paid.
+	stillExists, existsErr := dbMgr.PageExists(loc.Source, loc.Notebook, loc.Section, loc.Page)
+	if existsErr != nil {
+		// DB error — can't prove the page is gone, so leave the prior
+		// projection intact rather than risk a false clear.
+		log.Printf("types: reprojection PageExists check failed for %s/%s/%s/%s (projection kept): %v", loc.Source, loc.Notebook, loc.Section, loc.Page, existsErr)
+		w.app.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
+		return
+	}
+	if !stillExists {
+		// Page was deleted between snapshot and write. The blocks are gone
+		// and ClearFileBlocks already cleared the projection atomically with
+		// them — do NOT write a new row that would resurrect it.
+		return
+	}
 	if err := w.app.projectPageType(loc.Source, meta); err != nil {
 		w.app.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
 	}

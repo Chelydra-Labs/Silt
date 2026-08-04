@@ -78,9 +78,8 @@ func computeBatchProjections(a *App, results []parser.ScanResult) []db.ScanProje
 // the write lock.
 //
 // Projection-only path: this stays for callers that re-project a page WITHOUT
-// re-indexing its blocks (external-edit re-projection via onExternalPageChanged
-// and schema-triggered re-projection via reprojectAllTypedPages). Every
-// frontmatter-affecting block write now routes through IndexFileWithProjection
+// re-indexing its blocks (the projectionReprojectWorker's per-locator step).
+// Every frontmatter-affecting block write now routes through IndexFileWithProjection
 // so the projection publish shares the block transaction.
 //
 // Resolution + value extraction use the live type schema (mtime-cached); the DB
@@ -319,44 +318,3 @@ func toStringSlice(v any) ([]string, bool) {
 // iteration, and the scoped GetTypedPageLocatorsByIDs query keeps the work
 // proportional to the affected pages. The body lives on as
 // projectionReprojectWorker.reprojectOneLocator (single-locator step).
-//
-// onExternalPageChanged re-projects a page from its on-disk frontmatter, or
-// clears the projection when the file is gone / lost its type line.
-// Projection-only helper: the watcher's external-edit reindex path now
-// publishes blocks AND projection atomically via the AtomicReindexHandler
-// installed in initializeVaultServices, so this function is no longer in
-// the watcher's hot path. Retained as a primitive for direct callers (tests
-// and any future projection-only reconciliation).
-// Takes vaultMu.RLock; safe because stopWatchersOutsideLock closes the monitor
-// watcher OUTSIDE the teardown Lock, so this handler can drain mid-close
-// instead of deadlocking.
-func (a *App) onExternalPageChanged(notebook, section, page string) {
-	// No a.wg.Add here: this runs on the monitor-watcher dispatch goroutine,
-	// which is not itself tracked by a.wg. stopWatchersOutsideLock drains the
-	// watcher before ServiceShutdown's Wait; an Add from an untracked goroutine
-	// can race Wait and panic. Type-watcher onChange follows the same rule.
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" || a.db == nil {
-		return
-	}
-	safeNotebook := sanitizePathSegment(notebook)
-	safeSection, sectionErr := validateSectionPath(section, true)
-	safePage := sanitizePathSegment(page)
-	if safeNotebook == "" || safePage == "" || sectionErr != nil {
-		return
-	}
-	source := a.resolveSourceByName(safeNotebook)
-	_, meta, _, _, err := a.readPageFileForTypes(notebook, section, page)
-	if err != nil {
-		// File gone/unreadable: drop any lingering projection row (idempotent
-		// with the watcher's ClearFileBlocks, but covers a read failure path).
-		if cerr := a.db.ClearPageProjection(source, safeNotebook, safeSection, safePage); cerr != nil {
-			log.Printf("types: ClearPageProjection on external change (%s/%s/%s/%s) failed: %v", source, safeNotebook, safeSection, safePage, cerr)
-		}
-		return
-	}
-	// projectPageType re-derives type + set properties from the freshly-parsed
-	// frontmatter, or clears the projection when the type was removed.
-	a.projectPageType(source, meta)
-}

@@ -534,3 +534,189 @@ type readerWG struct{ ch chan struct{} }
 
 func (w *readerWG) init() func() { w.ch = make(chan struct{}, 1); return func() { <-w.ch } }
 func (w *readerWG) done()        { w.ch <- struct{}{} }
+
+// TestSaveType_CapturesPriorIDForRename proves the PLAN's "union of old and
+// new IDs" requirement: when SaveType overwrites a type whose display Name
+// differs from the incoming Name, the worker is enqueued for BOTH the
+// file-path ID and the prior Name's derived ID. Without this, pages that
+// were projected under the old Name's derived ID (the raw-name fallback
+// path in computePageProjection) would never be re-projected.
+//
+// The test seeds a FAKE page_types row under the old Name's derived ID
+// (simulating a page that fell back to the raw-name ID because the type
+// was temporarily unresolvable), then renames the type's display Name.
+// After flush, the fake page's projection must be cleared (the worker
+// visited it, found no file, and dropped it).
+func TestSaveType_CapturesPriorIDForRename(t *testing.T) {
+	app := newTestApp(t)
+	// Stage a type at `custom.yaml` whose display Name is "Old Display".
+	// TypeIDFromName("Old Display") = "old-display" ≠ "custom" — the
+	// mismatch that triggers the old+new enqueue.
+	oldSchema := types.TypeDef{
+		ID:   "custom",
+		Name: "Old Display",
+		Properties: []types.PropertyDef{
+			{Name: "title", Type: types.PropText},
+		},
+	}
+	if err := app.SaveType(oldSchema); err != nil {
+		t.Fatalf("SaveType(old): %v", err)
+	}
+	flushReprojection(t, app)
+
+	oldDerived := types.TypeIDFromName("Old Display")
+	if oldDerived == "custom" {
+		t.Fatalf("test setup: TypeIDFromName(\"Old Display\") = %q, want something ≠ \"custom\" so the rename is observable", oldDerived)
+	}
+
+	// Seed a FAKE page_types row under the OLD derived ID. This simulates a
+	// page whose projection was written via the raw-name fallback path
+	// (ResolveTypeID failed, computePageProjection used TypeIDFromName).
+	// The file does NOT exist on disk — the worker will find nothing to read
+	// and should clear the stale projection.
+	if err := app.db.IndexPageProjection("vault", "Books", "", "Ghost",
+		oldDerived, nil); err != nil {
+		t.Fatalf("seed fake projection under old-derived ID %q: %v", oldDerived, err)
+	}
+
+	// Rename: overwrite `custom.yaml` with Name "New Display".
+	newSchema := types.TypeDef{
+		ID:   "custom",
+		Name: "New Display",
+		Properties: []types.PropertyDef{
+			{Name: "title", Type: types.PropText},
+		},
+	}
+	if err := app.SaveType(newSchema); err != nil {
+		t.Fatalf("SaveType(new): %v", err)
+	}
+	flushReprojection(t, app)
+
+	// The fake page under the OLD derived ID must have been visited and
+	// cleared — proving the worker was enqueued with `oldDerived`.
+	row, err := app.db.GetPageProjection("vault", "Books", "", "Ghost")
+	if err != nil {
+		t.Fatalf("GetPageProjection for ghost page: %v", err)
+	}
+	if row != nil {
+		t.Errorf("ghost page projection under old-derived ID %q was not cleared — SaveType did not enqueue the prior Name's derived ID: got %+v", oldDerived, row)
+	}
+}
+
+// TestSaveType_SameNameDoesNotEnqueueExtraID proves the negative half: when
+// SaveType edits properties WITHOUT changing the display Name, only the
+// file-path ID is enqueued. No phantom second ID pollutes the pending set.
+func TestSaveType_SameNameDoesNotEnqueueExtraID(t *testing.T) {
+	app := newTestApp(t)
+	original := types.TypeDef{
+		ID:   "custom",
+		Name: "Stable Name",
+		Properties: []types.PropertyDef{
+			{Name: "title", Type: types.PropText},
+			{Name: "rating", Type: types.PropNumber},
+		},
+	}
+	if err := app.SaveType(original); err != nil {
+		t.Fatalf("SaveType(original): %v", err)
+	}
+	flushReprojection(t, app)
+
+	// Seed a page of the type so the scoped lookup has something to find.
+	seedTypedPageForWorker(t, app, "Books", "", "Dune", "custom",
+		"# Dune <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->")
+	// Also seed a FAKE row under the derived ID. If SaveType erroneously
+	// enqueued it, this row would be cleared. If it correctly enqueued ONLY
+	// "custom", this row survives untouched.
+	derivedID := types.TypeIDFromName("Stable Name")
+	if err := app.db.IndexPageProjection("vault", "Books", "", "Phantom",
+		derivedID, nil); err != nil {
+		t.Fatalf("seed phantom: %v", err)
+	}
+
+	// Edit properties WITHOUT renaming.
+	edited := types.TypeDef{
+		ID:   "custom",
+		Name: "Stable Name", // unchanged
+		Properties: []types.PropertyDef{
+			{Name: "title", Type: types.PropText},
+			{Name: "score", Type: types.PropNumber}, // rating → score
+		},
+	}
+	if err := app.SaveType(edited); err != nil {
+		t.Fatalf("SaveType(edited): %v", err)
+	}
+	flushReprojection(t, app)
+
+	// The phantom page under the derived ID must still be present — the
+	// worker was NOT asked to visit it.
+	row, err := app.db.GetPageProjection("vault", "Books", "", "Phantom")
+	if err != nil {
+		t.Fatalf("GetPageProjection(Phantom): %v", err)
+	}
+	if row == nil {
+		t.Errorf("phantom projection under derived ID %q was cleared — SaveType enqueued a spurious extra ID when the Name did not change", derivedID)
+	}
+}
+
+// TestProjectionReprojectWorker_DeletedPageNotResurrected proves the
+// page-deletion race fix: when a page's blocks are deleted between the
+// worker's locator snapshot and its per-page write, the worker must NOT
+// write a new projection. The PageExists guard catches the deletion and
+// skips the write — no resurrection.
+//
+// The test calls reprojectOneLocator directly (deterministic, no goroutine
+// timing) after simulating the concurrent deletion.
+func TestProjectionReprojectWorker_DeletedPageNotResurrected(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.SaveType(bookSchema("rating")); err != nil {
+		t.Fatalf("SaveType: %v", err)
+	}
+	flushReprojection(t, app)
+	seedTypedPageForWorker(t, app, "Books", "", "Dune", "book",
+		"# Dune <!-- id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa -->")
+
+	// Verify the projection exists.
+	row, err := app.db.GetPageProjection("vault", "Books", "", "Dune")
+	if err != nil || row == nil {
+		t.Fatalf("precondition: projection missing: row=%+v err=%v", row, err)
+	}
+
+	// Simulate a concurrent DeletePage: clear blocks + projection. The file
+	// is still on disk — the worker will be able to read it and parse it.
+	if err := app.db.ClearFileBlocks(nil, "vault", "Books", "", "Dune"); err != nil {
+		t.Fatalf("ClearFileBlocks (simulated delete): %v", err)
+	}
+
+	// Verify blocks are gone.
+	var n int
+	if err := app.db.SQLDB().QueryRow(
+		"SELECT COUNT(*) FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+		"vault", "Books", "", "Dune").Scan(&n); err != nil {
+		t.Fatalf("count blocks: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("precondition: blocks not cleared: %d", n)
+	}
+
+	// Now call reprojectOneLocator directly — this is the exact step the
+	// worker runs per locator. The file still exists on disk; without the
+	// PageExists guard, projectPageType would write a fresh projection,
+	// resurrecting the page on the dashboard.
+	loc := db.TypedPageLocator{
+		Source:   "vault",
+		Notebook: "Books",
+		Section:  "",
+		Page:     "Dune",
+		TypeName: "book",
+	}
+	app.reprojectWorker.reprojectOneLocator(app.db, app.vaultPath, app.spacesPerTab, loc)
+
+	// The projection must NOT have been resurrected.
+	row, err = app.db.GetPageProjection("vault", "Books", "", "Dune")
+	if err != nil {
+		t.Fatalf("GetPageProjection after reproject: %v", err)
+	}
+	if row != nil {
+		t.Errorf("projection was RESURRECTED for a deleted page — PageExists guard failed: %+v", row)
+	}
+}

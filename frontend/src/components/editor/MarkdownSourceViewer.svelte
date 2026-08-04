@@ -336,12 +336,40 @@
   }
 
   function announceHistory(msg: string): void {
-    historyStatus = msg
-    if (historyStatusTimer) clearTimeout(historyStatusTimer)
-    historyStatusTimer = setTimeout(() => {
-      historyStatus = ''
+    // Force re-announcement across identical messages (rapid undo/redo) by
+    // clearing synchronously then setting on the next microtask. Svelte
+    // batches state writes within a single tick, so a same-tick clear+set
+    // would coalesce and AT would observe no change. Splitting across a
+    // microtask produces two DOM mutations and the second one re-announces.
+    historyStatus = ''
+    if (historyStatusTimer) {
+      clearTimeout(historyStatusTimer)
       historyStatusTimer = null
-    }, 1500)
+    }
+    queueMicrotask(() => {
+      historyStatus = msg
+      historyStatusTimer = setTimeout(() => {
+        historyStatus = ''
+        historyStatusTimer = null
+      }, 1500)
+    })
+  }
+
+  /** Human-readable description of the value delta between two history
+   *  entries. Used so the live region says something meaningful ("Undid:
+   *  removed 5 characters") instead of a generic "Undid edit". */
+  function describeChange(
+    prev: SourceHistoryEntry | null,
+    next: SourceHistoryEntry
+  ): string {
+    if (!prev) return 'edit applied'
+    const delta = next.value.length - prev.value.length
+    if (delta === 0) return 'replaced content'
+    const magnitude = Math.abs(delta)
+    const unit = magnitude === 1 ? 'character' : 'characters'
+    return delta > 0
+      ? `added ${magnitude} ${unit}`
+      : `removed ${magnitude} ${unit}`
   }
 
   function markDirtyAndSchedule(): void {
@@ -418,39 +446,107 @@
     pendingPreSelection = null
   }
 
-  /** Tab indents the caret; Shift+Tab dedents the caret line. Both are
-   *  deliberate, history-recorded edits — never coalesced with typing. */
+  /** Tab/Shift+Tab transform covered lines without deleting the selection.
+   *
+   *  - Caret only (no selection): Tab inserts a literal `\t` at the caret;
+   *    Shift+Tab removes one leading `\t` or up to two leading spaces from
+   *    the caret's line (no-op when the line has no leading indent).
+   *  - With a selection: Tab prefixes every covered line with `\t`; Shift+Tab
+   *    removes one leading `\t` or up to two leading spaces from every
+   *    covered line. The selection is adjusted to keep covering the same
+   *    logical block (and, on indent, the newly-inserted prefixes).
+   *
+   *  "Covered" lines: the line containing `start` through the line containing
+   *  the character before `end`. When `end` sits exactly at a newline (i.e.
+   *  the trailing line was not actually selected), that trailing line is
+   *  excluded — matches the VS Code / Sublime convention.
+   *
+   *  Both paths push one history entry (never coalesced with typing) and
+   *  restore selection + focus via the shared `commitUserEdit` path. */
   function applyIndent(shift: boolean): void {
     const ta = textareaEl
     if (!ta) return
     const start = ta.selectionStart
     const end = ta.selectionEnd
     const val = buffer
-    let next: string
-    let caret: number
-    if (shift) {
+    const direction = ta.selectionDirection ?? 'forward'
+
+    // Caret-only path: simple insert / single-line dedent.
+    if (start === end) {
       const lineStart = val.lastIndexOf('\n', start - 1) + 1
-      const lead = val.slice(lineStart, lineStart + 2)
-      let remove = 0
-      if (lead.startsWith('\t')) remove = 1
-      else if (lead.startsWith('  ')) remove = 2
-      if (remove === 0) return
-      next = val.slice(0, lineStart) + val.slice(lineStart + remove)
-      caret = Math.max(lineStart, start - remove)
+      let next: string
+      let caret: number
+      if (shift) {
+        const lead = val.slice(lineStart, lineStart + 2)
+        let remove = 0
+        if (lead.startsWith('\t')) remove = 1
+        else if (lead.startsWith('  ')) remove = 2
+        if (remove === 0) return
+        next = val.slice(0, lineStart) + val.slice(lineStart + remove)
+        caret = Math.max(lineStart, start - remove)
+      } else {
+        next = val.slice(0, start) + '\t' + val.slice(end)
+        caret = start + 1
+      }
+      commitUserEdit(next, {
+        start: caret,
+        end: caret,
+        direction: 'forward'
+      })
+      queueMicrotask(() => textareaEl?.focus())
+      return
+    }
+
+    // Multi-line path: collect the start offset of every covered line.
+    const firstLineStart = val.lastIndexOf('\n', start - 1) + 1
+    // If end is at a column-0 boundary the user did not select that line.
+    const endForLastLine = end > 0 && val[end - 1] === '\n' ? end - 1 : end
+    const lastLineStart = val.lastIndexOf('\n', endForLastLine - 1) + 1
+
+    const lineStarts: number[] = []
+    for (let i = firstLineStart; i <= lastLineStart;) {
+      lineStarts.push(i)
+      const nextNL = val.indexOf('\n', i)
+      if (nextNL === -1) break
+      i = nextNL + 1
+    }
+    if (lineStarts.length === 0) return
+
+    // Build the new value by iterating in reverse so already-processed
+    // positions stay valid for the next iteration's index into `next`.
+    let next = val
+    if (shift) {
+      let removedBeforeStart = 0
+      let removedBeforeEnd = 0
+      let anyRemoved = false
+      for (let j = lineStarts.length - 1; j >= 0; j--) {
+        const pos = lineStarts[j]
+        let remove = 0
+        if (next[pos] === '\t') remove = 1
+        else if (next.slice(pos, pos + 2) === '  ') remove = 2
+        if (remove === 0) continue
+        next = next.slice(0, pos) + next.slice(pos + remove)
+        anyRemoved = true
+        if (pos < start) removedBeforeStart += remove
+        if (pos < end) removedBeforeEnd += remove
+      }
+      if (!anyRemoved) return
+      const newStart = start - removedBeforeStart
+      const newEnd = end - removedBeforeEnd
+      commitUserEdit(next, { start: newStart, end: newEnd, direction })
     } else {
-      next = val.slice(0, start) + '\t' + val.slice(end)
-      caret = start + 1
+      for (let j = lineStarts.length - 1; j >= 0; j--) {
+        const pos = lineStarts[j]
+        next = next.slice(0, pos) + '\t' + next.slice(pos)
+      }
+      // Indenting shifts the selection right by one per covered line and
+      // extends the anchor back to the first inserted prefix so a follow-up
+      // Tab/Shift+Tab operates on the same block.
+      const newStart = firstLineStart
+      const newEnd = end + lineStarts.length
+      commitUserEdit(next, { start: newStart, end: newEnd, direction })
     }
-    const selection: SourceHistorySelection = {
-      start: caret,
-      end: caret,
-      direction: 'forward'
-    }
-    commitUserEdit(next, selection)
-    queueMicrotask(() => {
-      if (!textareaEl) return
-      textareaEl.focus()
-    })
+    queueMicrotask(() => textareaEl?.focus())
   }
 
   function applyHistoryEntry(entry: SourceHistoryEntry): void {
@@ -464,19 +560,21 @@
   }
 
   function undo(): void {
+    const before = history.current()
     const entry = history.undo()
     if (!entry) return
     bumpHistory()
     applyHistoryEntry(entry)
-    announceHistory('Undid edit')
+    announceHistory(`Undid: ${describeChange(before, entry)}`)
   }
 
   function redo(): void {
+    const before = history.current()
     const entry = history.redo()
     if (!entry) return
     bumpHistory()
     applyHistoryEntry(entry)
-    announceHistory('Redid edit')
+    announceHistory(`Redid: ${describeChange(before, entry)}`)
   }
 
   function isUndoKey(e: KeyboardEvent): boolean {
@@ -604,8 +702,8 @@
             onclick={undo}
             disabled={!canUndo}
             aria-label="Undo"
-            title="Undo (Ctrl+Z)"
-            aria-keyshortcuts="Ctrl+Z"
+            title="Undo (Ctrl+Z / Cmd+Z)"
+            aria-keyshortcuts="Control+Z Meta+Z"
           >
             <span class="material-symbols-outlined" aria-hidden="true"
               >undo</span
@@ -617,8 +715,8 @@
             onclick={redo}
             disabled={!canRedo}
             aria-label="Redo"
-            title="Redo (Ctrl+Y)"
-            aria-keyshortcuts="Ctrl+Y"
+            title="Redo (Ctrl+Y / Ctrl+Shift+Z / Cmd+Shift+Z)"
+            aria-keyshortcuts="Control+Y Control+Shift+Z Meta+Shift+Z"
           >
             <span class="material-symbols-outlined" aria-hidden="true"
               >redo</span
@@ -672,7 +770,7 @@
         }}
         spellcheck="false"
         aria-label="Markdown source of {filePath}"
-        aria-keyshortcuts="Ctrl+Z Undo, Ctrl+Y Redo, Tab Indent, Shift+Tab Outdent"
+        aria-keyshortcuts="Control+Z Control+Y Control+Shift+Z Meta+Z Meta+Shift+Z"
         rows={lineCount}></textarea>
     {:else}
       <pre
@@ -782,12 +880,16 @@
     color: var(--color-status-danger);
   }
 
-  /* Single scroll owner: source-body scrolls both axes; the outer VSC
-     container gives the viewer its full height (h-full on the page-zoom
-     wrapper in Source mode) and does not compete for scroll. */
+  /* Single scroll owner: source-body scrolls vertically so line-numbers and
+     textarea move together; horizontal overflow lives on the textarea itself
+     (line-numbers are positional and stay fixed on the left while long lines
+     scroll under them, the standard code-editor split). Vertical scroll
+     never competes with the outer VSC container — h-full on the page-zoom
+     wrapper in Source mode bounds the chain. */
   .source-body {
     display: flex;
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
     flex: 1;
     min-height: 0;
   }
@@ -830,7 +932,13 @@
     width: 100%;
     min-height: 100%;
     box-sizing: border-box;
-    overflow: hidden;
+    /* rows={lineCount} makes the textarea tall enough that vertical never
+       overflows its own box, so the vertical scrollbar lives on .source-body.
+       Long lines (wrap="off") used to be clipped here, hiding typed text
+       past the right edge; horizontal auto lets the textarea scroll its own
+       content into view without disturbing the line-number column. */
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .source-textarea:focus {

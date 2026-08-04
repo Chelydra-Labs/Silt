@@ -99,7 +99,7 @@ type DirectoryWatcher struct {
 	// (initializeVaultServices) installs a schema-aware closure over
 	// App.indexFile so external frontmatter edits publish blocks AND
 	// page_types/page_properties in one transaction — closing the gap left
-	// by the prior IndexFileBlocks + onExternalPageChanged two-step.
+	// by the prior block-only IndexFileBlocks path.
 	atomicReindexHandlerMu sync.RWMutex
 	atomicReindexHandler   AtomicReindexFunc
 }
@@ -751,8 +751,8 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 	// self-generated writes — it does not protect against genuine
 	// external mutations racing the watcher.
 	//
-	// notifyPageChanged must run AFTER this closure returns: it takes
-	// vaultMu.RLock via onExternalPageChanged, and App writers hold
+	// notifyPageChanged must run AFTER this closure returns: the App's
+	// page-changed handler takes vaultMu.RLock, and App writers hold
 	// vaultMu.RLock then block on LockFileWrite — opposite order deadlocks
 	// once a lifecycle writer queues vaultMu.Lock. Mirrors clearIndexForFile.
 	var notifyNB, notifySec, notifyPage string

@@ -89,9 +89,9 @@ func applyPageProjectionTx(tx *sql.Tx, source, notebook, section, page, typeID s
 // property. Call ClearPageProjection instead when a page becomes untyped.
 // Reproducible from frontmatter + the type schema (cardinal rule 4).
 //
-// Projection-only path: external-edit re-projection (onExternalPageChanged)
-// and schema-triggered re-projection (reprojectAllTypedPages) still use this
-// because they have no blocks to update. Every frontmatter-affecting block
+// Projection-only path: the projectionReprojectWorker's per-locator step
+// (schema-triggered re-projection) still uses this because it has no blocks
+// to update. Every frontmatter-affecting block
 // write path now routes through IndexFileWithProjection so blocks and
 // projection share one transaction.
 func (dm *DatabaseManager) IndexPageProjection(source, notebook, section, page, typeID string, props []ProjectedProperty) error {

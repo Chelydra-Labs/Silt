@@ -504,8 +504,19 @@ describe('MarkdownSourceViewer editing history (#861)', () => {
     await tick()
     expect(undo).toBeEnabled()
     expect(redo).toBeDisabled()
-    expect(undo).toHaveAttribute('aria-keyshortcuts', 'Ctrl+Z')
-    expect(redo).toHaveAttribute('aria-keyshortcuts', 'Ctrl+Y')
+    // aria-keyshortcuts is a space-separated list of chords only (no labels);
+    // both Ctrl and Cmd platforms are listed.
+    expect(undo).toHaveAttribute('aria-keyshortcuts', 'Control+Z Meta+Z')
+    expect(redo).toHaveAttribute(
+      'aria-keyshortcuts',
+      'Control+Y Control+Shift+Z Meta+Shift+Z'
+    )
+    // Titles spell out every supported chord for discoverability.
+    expect(undo).toHaveAttribute('title', 'Undo (Ctrl+Z / Cmd+Z)')
+    expect(redo).toHaveAttribute(
+      'title',
+      'Redo (Ctrl+Y / Ctrl+Shift+Z / Cmd+Shift+Z)'
+    )
   })
 
   it('undoes and redoes through multiple steps via the toolbar buttons', async () => {
@@ -628,6 +639,101 @@ describe('MarkdownSourceViewer editing history (#861)', () => {
     await tick()
     expect(ta.value).toBe('no indent here')
     // No edit recorded — undo stays unavailable.
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled()
+  })
+
+  it('Tab on a multi-line selection prefixes every covered line (no deletion)', async () => {
+    // Regression for the destructive replace-selection bug: a 3-line
+    // selection used to collapse to a single "\t". It must now indent each
+    // covered line and keep the block selected so a follow-up Tab works.
+    mocks.fetchPageMarkdown.mockResolvedValue('alpha\nbeta\ngamma')
+    const ta = await seed('alpha\nbeta\ngamma')
+    ta.focus()
+    // Select from middle of "alpha" through middle of "gamma".
+    ta.selectionStart = 2
+    ta.selectionEnd = 'alpha\nbeta\ng'.length // 13
+    await fireEvent.keyDown(ta, { key: 'Tab' })
+    await tick()
+    expect(ta.value).toBe('\talpha\n\tbeta\n\tgamma')
+    // Selection extended to cover the new prefixes (whole block).
+    expect(ta.selectionStart).toBe(0)
+    expect(ta.selectionEnd).toBe('\talpha\n\tbeta\n\tg'.length)
+    // Undo restores the original 3 lines in one step.
+    await fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    await tick()
+    expect(ta.value).toBe('alpha\nbeta\ngamma')
+  })
+
+  it('Tab then Tab again deepens the indent (selection preserved across presses)', async () => {
+    mocks.fetchPageMarkdown.mockResolvedValue('one\ntwo\nthree')
+    const ta = await seed('one\ntwo\nthree')
+    ta.focus()
+    ta.selectionStart = 0
+    ta.selectionEnd = 'one\ntwo\nth'.length // 10
+    await fireEvent.keyDown(ta, { key: 'Tab' })
+    await tick()
+    expect(ta.value).toBe('\tone\n\ttwo\n\tthree')
+    // Second Tab deepens every covered line by another tab.
+    await fireEvent.keyDown(ta, { key: 'Tab' })
+    await tick()
+    expect(ta.value).toBe('\t\tone\n\t\ttwo\n\t\tthree')
+  })
+
+  it('Tab ignores a trailing line when the selection ends exactly at its start', async () => {
+    // VS Code / Sublime convention: if `end` sits at column 0 of a line,
+    // the user did not select that line — leave it untouched.
+    mocks.fetchPageMarkdown.mockResolvedValue('keep me\nuntouched')
+    const ta = await seed('keep me\nuntouched')
+    ta.focus()
+    ta.selectionStart = 0
+    ta.selectionEnd = 'keep me\n'.length // 8 — exactly at the newline boundary
+    await fireEvent.keyDown(ta, { key: 'Tab' })
+    await tick()
+    expect(ta.value).toBe('\tkeep me\nuntouched')
+  })
+
+  it('Shift+Tab on a multi-line selection dedents every covered line', async () => {
+    mocks.fetchPageMarkdown.mockResolvedValue('\tone\n\ttwo\n\tthree')
+    const ta = await seed('\tone\n\ttwo\n\tthree')
+    ta.focus()
+    // Select the whole block.
+    ta.selectionStart = 0
+    ta.selectionEnd = '\tone\n\ttwo\n\tthree'.length
+    await fireEvent.keyDown(ta, { key: 'Tab', shiftKey: true })
+    await tick()
+    expect(ta.value).toBe('one\ntwo\nthree')
+    // Selection contracted by one removed tab per line.
+    expect(ta.selectionStart).toBe(0)
+    expect(ta.selectionEnd).toBe('one\ntwo\nthree'.length)
+
+    // Undo restores the indented block.
+    await fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    await tick()
+    expect(ta.value).toBe('\tone\n\ttwo\n\tthree')
+  })
+
+  it('Shift+Tab on a mixed-indent selection removes one unit per line and skips blanks', async () => {
+    // First line has 2-space indent, second line has a tab, third has none.
+    mocks.fetchPageMarkdown.mockResolvedValue('  alpha\n\tbeta\nplain')
+    const ta = await seed('  alpha\n\tbeta\nplain')
+    ta.focus()
+    ta.selectionStart = 0
+    ta.selectionEnd = '  alpha\n\tbeta\nplain'.length
+    await fireEvent.keyDown(ta, { key: 'Tab', shiftKey: true })
+    await tick()
+    // Each indented line lost one unit; the plain line was untouched.
+    expect(ta.value).toBe('alpha\nbeta\nplain')
+  })
+
+  it('Shift+Tab multi-line is a no-op when no covered line has indent', async () => {
+    mocks.fetchPageMarkdown.mockResolvedValue('alpha\nbeta\ngamma')
+    const ta = await seed('alpha\nbeta\ngamma')
+    ta.focus()
+    ta.selectionStart = 0
+    ta.selectionEnd = 'alpha\nbeta\n'.length
+    await fireEvent.keyDown(ta, { key: 'Tab', shiftKey: true })
+    await tick()
+    expect(ta.value).toBe('alpha\nbeta\ngamma')
     expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled()
   })
 
@@ -762,14 +868,57 @@ describe('MarkdownSourceViewer editing history (#861)', () => {
     expect(ta.selectionStart).toBeGreaterThan(0)
   })
 
-  it('announces undo/redo to assistive tech via the stable live region', async () => {
+  it('announces a meaningful undo/redo message via the stable live region', async () => {
     const ta = await seed()
-    await fireEvent.input(ta, { target: { value: 'announce me' } })
+    // FETCH_BODY is "# From disk\n\nFetched body content" (24 chars). Typing
+    // a 5-char extension then undoing it yields a "removed 5 characters"
+    // description — concrete enough for an AT user to know what happened.
+    await fireEvent.input(ta, { target: { value: `${FETCH_BODY} extra` } })
     await tick()
     await fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
     await tick()
     const live = document.querySelector('[aria-live="polite"].sr-only')
-    expect(live?.textContent).toMatch(/undid/i)
+    expect(live?.textContent).toMatch(/undid:.*removed.*6 characters/i)
+  })
+
+  it('re-announces on rapid undo so AT users perceive every press', async () => {
+    const ta = await seed()
+    await fireEvent.input(ta, { target: { value: `${FETCH_BODY} a b c` } })
+    await tick()
+    await fireEvent.input(ta, { target: { value: `${FETCH_BODY} a b` } })
+    await tick()
+    await fireEvent.input(ta, { target: { value: `${FETCH_BODY} a` } })
+    await tick()
+
+    const live = document.querySelector('[aria-live="polite"].sr-only')!
+    // MutationObserver captures every textContent mutation, including the
+    // brief clear that `announceHistory` performs between identical
+    // messages. Without that clear, AT would treat the second undo as a
+    // no-op (no content change in the polite region).
+    const observed: string[] = []
+    const observer = new MutationObserver(() => {
+      observed.push(live.textContent ?? '')
+    })
+    observer.observe(live, {
+      characterData: true,
+      childList: true,
+      subtree: true
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    await tick()
+    await new Promise((r) => setTimeout(r, 0))
+    await fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    await tick()
+    await new Promise((r) => setTimeout(r, 0))
+    observer.disconnect()
+
+    // Final state is announced...
+    expect(live.textContent).toMatch(/undid/i)
+    // ...and the region went through an empty intermediate state between
+    // the two presses — that is what re-fires AT announcement for an
+    // otherwise-identical message string.
+    expect(observed).toContain('')
   })
 
   it('renders a single scroll owner that fills the editor area (#861 layout)', async () => {
@@ -819,5 +968,162 @@ describe('MarkdownSourceViewer editing history (#861)', () => {
     await tick()
     expect(evt2.defaultPrevented).toBe(true)
     expect(ta.value).toBe('# Step 12')
+  })
+
+  it('flushes the dirty buffer on unmount so edits are not lost', async () => {
+    // The debounced save may be in flight when the user closes the tab.
+    // onDestroy cancels the timer and writes the buffer directly so the
+    // edit survives the teardown.
+    mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Saved')])
+    const { unmount } = render(MarkdownSourceViewer, {
+      props: {
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    const ta = (await waitFor(() =>
+      screen.getByRole('textbox', { name: /markdown source/i })
+    )) as HTMLTextAreaElement
+    await waitFor(() => expect(ta.value).toContain('Fetched body content'))
+    // Type and unmount before the 500ms debounce fires.
+    await fireEvent.input(ta, { target: { value: '# unmount flush me' } })
+    await tick()
+    expect(mocks.savePageMarkdown).not.toHaveBeenCalled()
+
+    unmount()
+    // onDestroy's flush path writes the dirty buffer directly (no timer).
+    await waitFor(() =>
+      expect(mocks.savePageMarkdown).toHaveBeenCalledWith(
+        'Work',
+        'Sec',
+        'Page',
+        '# unmount flush me'
+      )
+    )
+  })
+
+  it('does not flush on unmount when there is nothing dirty to write', async () => {
+    mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Saved')])
+    const { unmount } = render(MarkdownSourceViewer, {
+      props: {
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: /markdown source/i }))
+    )
+    // No edit — buffer is clean (the seed).
+    unmount()
+    // Give the microtask queue a chance to flush any stray promise.
+    await tick()
+    expect(mocks.savePageMarkdown).not.toHaveBeenCalled()
+  })
+
+  it('completes the Source save round-trip: edit → save → onBlocksSaved payload', async () => {
+    // Verifies the Source-mode save contract end-to-end: the parent
+    // (VirtualScrollContainer) consumes `onBlocksSaved` to update `blocks`,
+    // which Edit mode re-renders from. The saved payload must reflect the
+    // buffer the user actually typed.
+    vi.useFakeTimers()
+    const savedBlocks = [
+      mkBlock('# Saved heading', { clean: '# Saved heading' }),
+      mkBlock('Saved body line', { clean: 'Saved body line' })
+    ]
+    mocks.savePageMarkdown.mockResolvedValue(savedBlocks)
+    const onBlocksSaved = vi.fn()
+    try {
+      render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page',
+          onBlocksSaved
+        }
+      })
+      const ta = (await waitFor(() =>
+        screen.getByRole('textbox', { name: /markdown source/i })
+      )) as HTMLTextAreaElement
+      await waitFor(() => expect(ta.value).toContain('Fetched body content'))
+
+      // Edit and let the debounced save fire.
+      await fireEvent.input(ta, {
+        target: { value: '# Saved heading\nSaved body line' }
+      })
+      await vi.advanceTimersByTimeAsync(500)
+
+      // IPC was called with the typed buffer, and the parent callback
+      // received the server-rendered block list.
+      await waitFor(() => expect(onBlocksSaved).toHaveBeenCalledTimes(1))
+      expect(mocks.savePageMarkdown).toHaveBeenCalledWith(
+        'Work',
+        'Sec',
+        'Page',
+        '# Saved heading\nSaved body line'
+      )
+      expect(onBlocksSaved).toHaveBeenCalledWith(savedBlocks)
+      // Buffer preserved across the round-trip; dirty cleared on success.
+      expect(ta.value).toBe('# Saved heading\nSaved body line')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('survives a Source save round-trip when the parent re-applies saved blocks', async () => {
+    // Mirrors the VSC wiring: onBlocksSaved → rerender with saved blocks.
+    // After a successful save, dirty clears and the next blocks prop change
+    // is treated as an external replacement while clean — the viewer
+    // re-fetches and the disk now returns the saved body (the mock
+    // simulates SavePageMarkdown having written it).
+    vi.useFakeTimers()
+    const savedBody = '# Round-trip body'
+    const savedBlocks = [mkBlock(savedBody)]
+    mocks.savePageMarkdown.mockResolvedValue(savedBlocks)
+    mocks.fetchPageMarkdown
+      .mockResolvedValueOnce(FETCH_BODY) // initial seed
+      .mockResolvedValueOnce(savedBody) // re-seed after save echo
+    try {
+      const { rerender } = render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page'
+        }
+      })
+      const ta = (await waitFor(() =>
+        screen.getByRole('textbox', { name: /markdown source/i })
+      )) as HTMLTextAreaElement
+      await waitFor(() => expect(ta.value).toContain('Fetched body content'))
+      await fireEvent.input(ta, { target: { value: savedBody } })
+      await vi.advanceTimersByTimeAsync(500)
+      await waitFor(() => expect(mocks.savePageMarkdown).toHaveBeenCalled())
+
+      // Parent re-applies the saved blocks. The viewer's $effect sees a
+      // clean buffer (save succeeded) and re-seeds; no conflict surfaces.
+      await rerender({
+        blocks: savedBlocks,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: /keep mine/i })).toBeNull()
+      )
+      expect(ta.value).toBe(savedBody)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

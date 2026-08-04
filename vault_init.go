@@ -380,8 +380,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// vectors) stay consistent with the note store (#850). Projection is
 	// published atomically by the reindex handler above, and clearIndexForFile
 	// already drops projection via ClearFileBlocks(tx==nil), so this callback
-	// no longer needs to re-project (the prior onExternalPageChanged call
-	// became redundant once the atomic path landed).
+	// only emits the plugin-notification event.
 	watcher.SetPageChangedHandler(func(notebook, section, page string) {
 		a.emitBlockChanged("", notebook, section, page, "")
 	})

@@ -17,7 +17,7 @@ import (
 // directly (bypassing fsnotify). The watcher delegates the index step to
 // the App-installed handler (App.indexFile), which must publish blocks AND
 // page_types/page_properties in ONE transaction — closing the gap left by
-// the prior IndexFileBlocks + onExternalPageChanged two-step.
+// the prior block-only IndexFileBlocks path.
 func TestWatcherAtomicHandler_PublishesBlocksAndProjectionTogether(t *testing.T) {
 	t.Setenv("SILT_DATA_DIR", t.TempDir())
 	hostConfigDir := t.TempDir()
@@ -80,7 +80,7 @@ func TestWatcherAtomicHandler_PublishesBlocksAndProjectionTogether(t *testing.T)
 	// Simulate the fsnotify trigger by invoking the watcher's reindex path
 	// directly. The watcher delegates the index step to the App-installed
 	// atomic handler (closure over a.indexFile). No separate
-	// onExternalPageChanged / projectPageType call is made — the handler
+	// projectPageType call is made — the handler
 	// is the single atomic publish.
 	app.watcher.ReindexFile(bookPath)
 
@@ -104,9 +104,8 @@ func TestWatcherAtomicHandler_PublishesBlocksAndProjectionTogether(t *testing.T)
 // verifies the symmetric half: when an external edit removes the page's
 // `type:` line, the watcher's atomic handler clears the projection in the
 // SAME transaction as the block rewrite. Before #865, the watcher path
-// would IndexFileBlocks (preserving the stale projection) and the App's
-// separate onExternalPageChanged was responsible for the clear — a
-// non-atomic pair. Now both move together.
+// was block-only and the projection clear was a separate non-atomic step.
+// Now both move together.
 func TestWatcherAtomicHandler_DropsProjectionWhenExternalEditRemovesType(t *testing.T) {
 	t.Setenv("SILT_DATA_DIR", t.TempDir())
 	hostConfigDir := t.TempDir()

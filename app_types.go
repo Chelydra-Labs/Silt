@@ -84,6 +84,21 @@ func (a *App) SaveType(td types.TypeDef) error {
 	if saveID == "" {
 		saveID = types.TypeIDFromName(td.Name)
 	}
+	// Capture the prior type at the destination path before overwriting. A
+	// display-name change may strand pages that referenced the old Name via
+	// frontmatter `type:` — ResolveTypeID matches by display name as well as
+	// by canonical id, so renaming the Name breaks the old-name resolution
+	// path and those pages' type_name shifts. Schedule the union of the
+	// destination id and the prior Name's derived id so both locator sets are
+	// re-projected. GetType reads from disk (not the mtime cache), so the
+	// read reflects the pre-write state even though we have not invalidated
+	// the cache yet.
+	reprojectIDs := []string{saveID}
+	if prior, gerr := types.GetType(a.typesDir(), saveID); gerr == nil && prior.Name != "" && prior.Name != td.Name {
+		if oldDerived := types.TypeIDFromName(prior.Name); oldDerived != saveID {
+			reprojectIDs = append(reprojectIDs, oldDerived)
+		}
+	}
 	typePath := filepath.Join(a.typesDir(), saveID+".yaml")
 	if a.typeWatcher != nil {
 		// Path- and content-scoped: arm the exact bytes SaveType will write
@@ -106,14 +121,16 @@ func (a *App) SaveType(td types.TypeDef) error {
 		return err
 	}
 	types.InvalidateTypesCache()
-	// Schedule a scoped reprojection (Phase 5 / #866): only pages of td.ID
-	// need a new projection, not every typed page in the vault. The worker
-	// coalesces rapid saves into one disk pass and re-fetches the schema
-	// per iteration so the final state converges without a generation
-	// counter. The type watcher suppresses fsnotify events for this
-	// method's own atomic write (RegisterSelfWrite above), so its onChange —
-	// the other enqueueReprojection caller — never fires for in-app edits.
-	a.enqueueReprojection(false, td.ID)
+	// Schedule a scoped reprojection (Phase 5 / #866): only pages of the
+	// affected type id(s) need a new projection. reprojectIDs carries the
+	// union of the destination id and, if the display Name changed, the
+	// prior Name's derived id. The worker coalesces rapid saves into one
+	// disk pass and re-fetches the schema per iteration so the final state
+	// converges without a generation counter. The type watcher suppresses
+	// fsnotify events for this method's own atomic write (RegisterSelfWrite
+	// above), so its onChange — the other enqueueReprojection caller —
+	// never fires for in-app edits.
+	a.enqueueReprojection(false, reprojectIDs...)
 	a.emit(EventTypesChanged, struct{}{})
 	log.Printf("types: SaveType → saved %q", td.ID)
 	return nil
