@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"silt/backend/db"
+	"silt/backend/types"
 )
 
 // TypeDashboardProp is one property value of a dashboard row. The internal sort
@@ -45,7 +46,17 @@ func (a *App) QueryPagesByType(typeName string, filter map[string]string, sortPr
 		return nil, fmt.Errorf("vault not loaded")
 	}
 
-	rows, err := a.db.QueryPagesByType(typeName)
+	// Resolve display name / case-variant refs to the canonical id stored in
+	// page_types (mirrors SetPageType / ResolveTypeID). Unknown refs fall back
+	// to a lowercased raw form so hand-authored type: values still match.
+	typeID := strings.TrimSpace(typeName)
+	if resolved, rerr := types.ResolveTypeID(a.typesDir(), typeID); rerr == nil {
+		typeID = resolved
+	} else if typeID != "" {
+		typeID = strings.ToLower(typeID)
+	}
+
+	rows, err := a.db.QueryPagesByType(typeID)
 	if err != nil {
 		return nil, err
 	}

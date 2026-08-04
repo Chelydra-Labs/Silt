@@ -99,6 +99,15 @@
   // has nothing to map, so it assigns directly.
   let turnInto = $state<{ newId: string; newLabel: string } | null>(null)
 
+  function resetTypeSelect(): void {
+    // Svelte only re-applies the select's value attr when the expression deps
+    // change; after a rejected write info is unchanged so the DOM would keep
+    // showing the picked type. Mirror cancelTurnInto.
+    if (typeSelectRef) {
+      typeSelectRef.value = info.isSet ? info.type.id : ''
+    }
+  }
+
   async function commitType(name: string): Promise<void> {
     try {
       const result = (await SetPageType(
@@ -115,6 +124,7 @@
       const message = coerceIPCError(e).message
       liveError = message
       onError(message)
+      resetTypeSelect()
     }
   }
 
@@ -160,6 +170,7 @@
       const message = coerceIPCError(e).message
       liveError = message
       onError(message)
+      resetTypeSelect()
       onChanged()
     }
   }
@@ -168,11 +179,8 @@
     turnInto = null
     // The user picked an option then cancelled the conversion preview, so the
     // <select>'s DOM value still shows the picked type while info is
-    // unchanged. Svelte only re-applies the `value` attribute when its
-    // expression deps change, so reset it imperatively to reflect info.
-    if (typeSelectRef) {
-      typeSelectRef.value = info.isSet ? info.type.id : ''
-    }
+    // unchanged. Reset imperatively to reflect info.
+    resetTypeSelect()
   }
 
   // Focus management (non-blocking): move focus into the panel on open, restore

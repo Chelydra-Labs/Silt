@@ -60,15 +60,13 @@ func SetFrontmatterField(content, key string, value any) (string, error) {
 
 	var lines []string
 	if idx >= 0 {
-		// Collapse the matched line and any indented block-continuation lines
-		// that follow it so a multi-line block value (key:\n  - a\n  - b) is
-		// fully replaced by the single inline line, not merged with it.
-		end := idx + 1
-		for end < len(inner) && isContinuationLine(inner[end]) {
-			end++
-		}
+		// Collapse the matched line and its value block so a multi-line value
+		// (sequence, map, or block scalar) is fully replaced by the single
+		// inline line. Indented comments under the key are preserved.
+		end, preserved := collapseValueBlock(inner, idx)
 		lines = append(lines, inner[:idx]...)
 		lines = append(lines, newLine)
+		lines = append(lines, preserved...)
 		lines = append(lines, inner[end:]...)
 	} else {
 		// Absent key: append as the last key line, which lands just before the
@@ -113,11 +111,9 @@ func ClearFrontmatterField(content, key string) (string, error) {
 		return content, nil
 	}
 
-	end := idx + 1
-	for end < len(inner) && isContinuationLine(inner[end]) {
-		end++
-	}
-	lines := append(append([]string{}, inner[:idx]...), inner[end:]...)
+	end, preserved := collapseValueBlock(inner, idx)
+	lines := append(append([]string{}, inner[:idx]...), preserved...)
+	lines = append(lines, inner[end:]...)
 
 	result := "---" + nl + strings.Join(lines, nl) + nl + "---" + nl + body
 	if hadBOM {
@@ -220,12 +216,82 @@ func countTopLevelKeyOccurrences(lines []string, key string) int {
 	return n
 }
 
+// blockScalarHeader matches a value that opens a YAML literal/folded block
+// (`key: |`, `key: >-`, `key: |2`, optional inline comment). Those blocks
+// include internal blank lines, so the plain indented-only continuation scan
+// would cut early and leave orphan body lines after a surgical edit.
+var blockScalarHeader = regexp.MustCompile(`:\s*[|>][-+]?\d*\s*(?:#.*)?$`)
+
+// isBlockScalarHeader reports whether the key line opens a `|` / `>` block.
+func isBlockScalarHeader(line string) bool {
+	return blockScalarHeader.MatchString(line)
+}
+
+// isIndentedComment reports a whitespace-prefixed full-line comment.
+func isIndentedComment(line string) bool {
+	if line == "" || (line[0] != ' ' && line[0] != '\t') {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(line), "#")
+}
+
 // isContinuationLine reports whether line belongs to a multi-line block value
 // under the key above it: a block sequence/map indents its entries, so any
-// line beginning with a space or tab is a continuation. Blank lines are not
-// continuations (they end the block), which preserves meaningful separators.
+// line beginning with a space or tab is a continuation — except indented
+// comments, which are preserved across edits (doc contract: comments on all
+// lines other than the edited key survive). Blank lines are not continuations
+// for plain sequences/maps (they end the block); block scalars handle blanks
+// separately via collapseValueBlock.
 func isContinuationLine(line string) bool {
-	return line != "" && (line[0] == ' ' || line[0] == '\t')
+	if line == "" || (line[0] != ' ' && line[0] != '\t') {
+		return false
+	}
+	if isIndentedComment(line) {
+		return false
+	}
+	return true
+}
+
+// collapseValueBlock finds the end index (exclusive) of the value belonging to
+// lines[keyIdx], returning any indented comments that should be kept after the
+// replacement line. Block scalars consume internal blank lines; plain
+// sequences/maps stop at the first blank or non-indented line.
+func collapseValueBlock(lines []string, keyIdx int) (end int, preservedComments []string) {
+	end = keyIdx + 1
+	blockScalar := keyIdx >= 0 && keyIdx < len(lines) && isBlockScalarHeader(lines[keyIdx])
+	for end < len(lines) {
+		line := lines[end]
+		if isIndentedComment(line) {
+			preservedComments = append(preservedComments, line)
+			end++
+			continue
+		}
+		if blockScalar {
+			// Blank or indented content stays inside the scalar; a non-indented
+			// non-blank line ends it. Trailing blanks before the next key are
+			// not part of the scalar — rewind them so separators survive.
+			if line == "" {
+				end++
+				continue
+			}
+			if line[0] == ' ' || line[0] == '\t' {
+				end++
+				continue
+			}
+			break
+		}
+		if isContinuationLine(line) {
+			end++
+			continue
+		}
+		break
+	}
+	if blockScalar {
+		for end > keyIdx+1 && lines[end-1] == "" {
+			end--
+		}
+	}
+	return end, preservedComments
 }
 
 // yamlInline renders value as a single-line YAML scalar or flow collection.

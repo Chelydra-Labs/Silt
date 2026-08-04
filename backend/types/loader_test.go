@@ -184,6 +184,22 @@ func TestGetType(t *testing.T) {
 	}
 }
 
+// TestGetType_BrokenYAMLFallsThroughToYML pins the extension fallback: a
+// broken canonical .yaml must not mask a valid sibling .yml for the same id.
+func TestGetType_BrokenYAMLFallsThroughToYML(t *testing.T) {
+	dir := t.TempDir()
+	writeTypeFile(t, dir, "book.yaml", "name: [unclosed\n")
+	writeTypeFile(t, dir, "book.yml", bookYAML)
+
+	td, err := GetType(dir, "book")
+	if err != nil {
+		t.Fatalf("GetType should load .yml after broken .yaml: %v", err)
+	}
+	if td.ID != "book" || td.Name != "Book" {
+		t.Errorf("got id=%q name=%q, want book/Book", td.ID, td.Name)
+	}
+}
+
 func TestGetType_TraversalRejected(t *testing.T) {
 	// typesDir lives under a parent; a canary type file sits OUTSIDE typesDir
 	// where an unsanitized filepath.Join("../parent/canary") would reach it.

@@ -866,6 +866,9 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 			} else {
 				var parsedMeta FileMetadata
 				if err := node.Decode(&parsedMeta); err != nil {
+					// Typed decode can fail on a single bad field (e.g. page: [1,2])
+					// while the rest of the map is fine. Still pull the raw map so
+					// type:/property projection is not silently emptied (AC5).
 					meta.Warnings = append(meta.Warnings, "yaml frontmatter parse error: "+err.Error())
 				} else {
 					if parsedMeta.Notebook != "" {
@@ -889,17 +892,19 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 					if parsedMeta.Type != "" {
 						meta.Type = parsedMeta.Type
 					}
-					// Decode the same node into a raw map so the type projection
-					// can extract schema-declared property values without re-reading
-					// the file. A map tolerates keys the typed FileMetadata struct
-					// does not model (author, status, …). A decode failure here is
-					// surfaced rather than swallowed so projection never silently
-					// sees an empty Frontmatter.
-					var rawFM map[string]any
-					if err := node.Decode(&rawFM); err != nil {
-						meta.Warnings = append(meta.Warnings, "yaml frontmatter decode error: "+err.Error())
-					} else {
-						meta.Frontmatter = rawFM
+				}
+				// Always decode the raw map — even when the typed struct failed —
+				// so schema-declared properties and type: remain projectable.
+				var rawFM map[string]any
+				if err := node.Decode(&rawFM); err != nil {
+					meta.Warnings = append(meta.Warnings, "yaml frontmatter decode error: "+err.Error())
+				} else {
+					meta.Frontmatter = rawFM
+					// If typed decode skipped type:, recover it from the raw map.
+					if meta.Type == "" {
+						if t, ok := rawFM["type"].(string); ok {
+							meta.Type = t
+						}
 					}
 				}
 			}

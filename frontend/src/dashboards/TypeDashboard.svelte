@@ -196,11 +196,14 @@
 
   // Switching types invalidates the prior type's filter/sort/group-by: the new
   // type's schema may not have the chosen property, which would otherwise blank
-  // the dashboard with a stale, non-matching filter.
+  // the dashboard with a stale, non-matching filter. Also drop rows immediately
+  // so the previous type's pages never render under the new schema's columns
+  // during the debounce/IPC window (reload only skeletons when rows is empty).
   function selectType(id: string): void {
     filter = {}
     sort = { property: PAGE_COLUMN_KEY, desc: false }
     groupBy = ''
+    rows = []
     selectedType = id
   }
 

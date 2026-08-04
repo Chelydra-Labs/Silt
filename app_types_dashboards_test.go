@@ -151,6 +151,89 @@ func TestQueryPagesByType_FilterByStatus(t *testing.T) {
 	}
 }
 
+func TestQueryPagesByType_SortByRatingNegative(t *testing.T) {
+	app := newTestApp(t)
+	// Unique type id so shared in-memory DB pollution from other book tests
+	// cannot leak into this ordering assertion.
+	schema := types.TypeDef{
+		ID:   "negsort",
+		Name: "NegSort",
+		Properties: []types.PropertyDef{
+			{Name: "rating", Type: types.PropNumber},
+		},
+	}
+	if err := app.SaveType(schema); err != nil {
+		t.Fatalf("SaveType: %v", err)
+	}
+	writeTypedDashboardPage := func(page string, rating float64) {
+		t.Helper()
+		content := "---\n" +
+			"notebook: \"Books\"\nsection: \"\"\npage: \"" + page + "\"\n" +
+			"date: \"2026-08-01\"\ntags: []\ntype: \"negsort\"\n" +
+			fmt.Sprintf("rating: %v\n", rating) +
+			"---\n# " + page + "\n"
+		filePath := filepath.Join(app.vaultPath, "Books", page+".md")
+		writeFile(t, filePath, content)
+		blocks, meta, _, _, err := parser.ParseFileContent(content, "Books", "", page, "2026-08-01", app.spacesPerTab)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+			t.Fatalf("index: %v", err)
+		}
+		app.projectPageType("vault", meta)
+	}
+	// Numeric ascending must be -1.5 < -1.2 < 0.5 (plain %020.6f reverses negatives).
+	writeTypedDashboardPage("NegA", -1.2)
+	writeTypedDashboardPage("NegB", -1.5)
+	writeTypedDashboardPage("Pos", 0.5)
+
+	rows, err := app.QueryPagesByType("negsort", nil, "rating", false)
+	if err != nil {
+		t.Fatalf("QueryPagesByType: %v", err)
+	}
+	got := pageNames(rows)
+	want := []string{"NegB", "NegA", "Pos"}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("sort by negative rating = %v, want %v", got, want)
+	}
+}
+
+func TestQueryPagesByType_ResolvesDisplayName(t *testing.T) {
+	app := newTestApp(t)
+	// Unique type so shared-DB book rows from other tests do not inflate the count.
+	schema := types.TypeDef{
+		ID:   "dispname",
+		Name: "Display Name Type",
+		Properties: []types.PropertyDef{
+			{Name: "title", Type: types.PropText},
+		},
+	}
+	if err := app.SaveType(schema); err != nil {
+		t.Fatalf("SaveType: %v", err)
+	}
+	content := "---\nnotebook: \"Books\"\nsection: \"\"\npage: \"Only\"\n" +
+		"date: \"2026-08-01\"\ntags: []\ntype: \"dispname\"\ntitle: \"Only\"\n---\n# Only\n"
+	writeFile(t, filepath.Join(app.vaultPath, "Books", "Only.md"), content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, "Books", "", "Only", "2026-08-01", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	app.projectPageType("vault", meta)
+
+	// Frontend uses canonical ids; IPC/MCP callers may pass the display name.
+	rows, err := app.QueryPagesByType("Display Name Type", nil, "", false)
+	if err != nil {
+		t.Fatalf("QueryPagesByType(display name): %v", err)
+	}
+	if len(rows) != 1 || rows[0].Page != "Only" {
+		t.Fatalf("QueryPagesByType(display name) = %+v, want 1 row Only", rows)
+	}
+}
+
 func TestQueryPagesByType_SortByRatingNumeric(t *testing.T) {
 	app := newTestApp(t)
 	seedDashboardBooks(t, app)

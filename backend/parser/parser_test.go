@@ -1078,6 +1078,35 @@ rating: 5
 	}
 }
 
+// TestParseFileContent_TypedDecodeFailureStillPopulatesFrontmatter pins the
+// projection contract when a single typed field is wrong (page: as a list):
+// the raw map — and type: — must still be available so dashboards do not drift.
+func TestParseFileContent_TypedDecodeFailureStillPopulatesFrontmatter(t *testing.T) {
+	doc := `---
+notebook: Books
+page: [1, 2]
+type: book
+author: "Frank"
+---
+# Body`
+	_, meta, _, _, err := ParseFileContent(doc, "DefaultNB", "", "DefaultPage", "2026-06-01", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if meta.Frontmatter == nil {
+		t.Fatal("Frontmatter must be populated even when typed decode fails")
+	}
+	if meta.Type != "book" {
+		t.Errorf("Type = %q, want book (recovered from raw map)", meta.Type)
+	}
+	if got, ok := meta.Frontmatter["author"]; !ok || got != "Frank" {
+		t.Errorf("Frontmatter[author] = %v, want Frank", meta.Frontmatter["author"])
+	}
+	if len(meta.Warnings) == 0 {
+		t.Error("expected a typed-decode warning")
+	}
+}
+
 func TestRenderFileContent_DefaultsBulletForNewBlockNote(t *testing.T) {
 	// Newly created editor blocks arrive with empty RawText. The serializer
 	// must emit a "- " bullet so the outliner round-trips correctly.

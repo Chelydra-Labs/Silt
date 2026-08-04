@@ -565,3 +565,62 @@ func TestSetFrontmatterField_MixedCaseKeyRoundTrip(t *testing.T) {
 		t.Errorf("error should mention duplicate, got %v", err)
 	}
 }
+
+// TestSetFrontmatterField_BlockScalarWithBlankLines pins collapse of a `|`
+// block that contains internal blank lines. Without blank-aware consumption
+// the edit would leave orphan indented lines and corrupt the frontmatter.
+func TestSetFrontmatterField_BlockScalarWithBlankLines(t *testing.T) {
+	input := "---\n" +
+		"notes: |\n" +
+		"  line1\n" +
+		"\n" +
+		"  line2\n" +
+		"title: \"Hi\"\n" +
+		"---\n" +
+		"body\n"
+	got, err := SetFrontmatterField(input, "notes", "flat")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "---\n" +
+		"notes: \"flat\"\n" +
+		"title: \"Hi\"\n" +
+		"---\n" +
+		"body\n"
+	if got != want {
+		t.Errorf("block scalar not fully collapsed\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Contains(got, "line1") || strings.Contains(got, "line2") {
+		t.Errorf("orphan block-scalar body left behind:\n%s", got)
+	}
+}
+
+// TestSetFrontmatterField_PreservesIndentedComments keeps an indented comment
+// that sat under the edited key (and does not treat it as a value continuation
+// that would strand later siblings).
+func TestSetFrontmatterField_PreservesIndentedComments(t *testing.T) {
+	input := "---\n" +
+		"tags:\n" +
+		"  - a\n" +
+		"  # keep me\n" +
+		"  - b\n" +
+		"title: \"Hi\"\n" +
+		"---\n" +
+		"body\n"
+	got, err := SetFrontmatterField(input, "tags", []string{"x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(got, "# keep me") {
+		t.Errorf("indented comment was dropped:\n%s", got)
+	}
+	if strings.Contains(got, "  - a") || strings.Contains(got, "  - b") {
+		t.Errorf("orphan sequence entries left behind:\n%s", got)
+	}
+	if !strings.Contains(got, `tags: ["x"]`) && !strings.Contains(got, "tags: [\"x\"]") {
+		// yamlInline may quote differently; just require tags updated and title intact.
+		if !strings.Contains(got, "tags:") || !strings.Contains(got, "title: \"Hi\"") {
+			t.Errorf("unexpected result:\n%s", got)
+		}
+	}
+}

@@ -80,6 +80,15 @@ export function rowPropertyValue(
   return hit?.valueText ?? ''
 }
 
+/** Tokenize a projection multi-value (joined with ", "). */
+export function splitMultiValueText(raw: string): string[] {
+  if (!raw.trim()) return []
+  return raw
+    .split(', ')
+    .map((v) => v.trim())
+    .filter(Boolean)
+}
+
 /**
  * Bin rows into GroupSections by a property's value. Multiselect/pages use
  * multi-membership (a row appears once per value); every other type is
@@ -96,11 +105,11 @@ export function binByProperty(
   const unassigned: TypeDashboardRow[] = []
   for (const row of rows) {
     const raw = rowPropertyValue(row, propName)
+    // Multi-values are joined with ", " by the projection layer (see
+    // formatPropertyValue). Split on that separator — bare "," would fracture
+    // a genuine option like "a, b" into phantom buckets.
     const values = multi
-      ? raw
-          .split(',')
-          .map((v) => v.trim())
-          .filter(Boolean)
+      ? splitMultiValueText(raw)
       : raw.trim()
         ? [raw.trim()]
         : []

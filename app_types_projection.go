@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -134,17 +135,31 @@ func formatScalar(el any) string {
 	return fmt.Sprintf("%v", el)
 }
 
+// numberSortBias keeps negative keys non-negative inside the fixed-width field
+// so lexicographic order matches numeric order. Matches the ~10^14 magnitude
+// the padding was designed for (see numberSortKey).
+const numberSortBias = 1e14
+
+// numberSortKey encodes f so byte-wise ascending order matches numeric order,
+// including negatives. Plain %020.6f puts the minus inside the width field, so
+// "-1.2" < "-1.5" lexicographically while -1.5 < -1.2 numerically.
+// Layout: '0'+biased abs for negatives, '1'+padded for non-negatives — every
+// negative sorts before every non-negative, and within each half order is correct.
+func numberSortKey(f float64) string {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return fmt.Sprintf("%v", f)
+	}
+	if f < 0 {
+		return fmt.Sprintf("0%020.6f", numberSortBias+f)
+	}
+	return fmt.Sprintf("1%020.6f", f)
+}
+
 func propertySortKey(pt types.PropertyType, raw any) string {
 	switch pt {
 	case types.PropNumber:
 		if f, ok := toFloat(raw); ok {
-			// Fixed-width zero-padding (sign-aware) so lexicographic order
-			// matches numeric order across typical dashboard ranges. The 20-
-			// digit integer width supports values up to ~10^14, which covers
-			// realistic note-property magnitudes (ratings, counts, priorities,
-			// small statistics); anything larger collides onto the same sort
-			// key and is undefined within that bucket.
-			return fmt.Sprintf("%020.6f", f)
+			return numberSortKey(f)
 		}
 		return formatPropertyValue(raw)
 	case types.PropCheckbox:

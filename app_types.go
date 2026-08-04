@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strings"
 
 	"silt/backend/types"
 	"silt/backend/vault"
@@ -75,7 +76,15 @@ func (a *App) SaveType(td types.TypeDef) error {
 	if a.vaultPath == "" {
 		return fmt.Errorf("vault not loaded")
 	}
-	typePath := filepath.Join(a.typesDir(), td.ID+".yaml")
+	// Derive the on-disk id before arming self-write suppression. The type
+	// editor always sends id:"" and types.SaveType fills it via TypeIDFromName
+	// — arming <typesDir>/.yaml would miss the real <id>.yaml write and the
+	// watcher would fire a redundant InvalidateTypesCache + reproject.
+	saveID := strings.TrimSpace(td.ID)
+	if saveID == "" {
+		saveID = types.TypeIDFromName(td.Name)
+	}
+	typePath := filepath.Join(a.typesDir(), saveID+".yaml")
 	if a.typeWatcher != nil {
 		// Path-scoped: only suppress events for this file so a coincident
 		// external edit to another type still reaches onChange.

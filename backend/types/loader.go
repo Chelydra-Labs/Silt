@@ -226,15 +226,25 @@ func GetType(typesDir, id string) (*TypeDef, error) {
 		return nil, fmt.Errorf("%w: %q", ErrTypeNotFound, id)
 	}
 	if typesDir != "" {
+		var firstErr error
 		for _, ext := range []string{".yaml", ".yml"} {
 			path := filepath.Join(typesDir, id+ext)
 			td, _, err := loadOne(path)
 			if err == nil {
 				return td, nil
 			}
-			if !os.IsNotExist(extractNotExist(err)) {
-				return nil, err
+			// Missing file → try the other extension. A broken/oversize
+			// canonical .yaml must not mask a valid sibling .yml (ListTypes
+			// would still surface the .yml via id-dedupe).
+			if os.IsNotExist(extractNotExist(err)) {
+				continue
 			}
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+		if firstErr != nil {
+			return nil, firstErr
 		}
 	}
 	return nil, fmt.Errorf("%w: %q", ErrTypeNotFound, id)

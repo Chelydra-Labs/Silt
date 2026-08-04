@@ -262,6 +262,29 @@ describe('PropertiesPanel', () => {
     })
   })
 
+  it('resets the type <select> DOM value when SetPageType fails', async () => {
+    appMocks.SetPageType.mockRejectedValue(new Error('disk full'))
+    render(PropertiesPanel, {
+      props: baseProps({
+        info: untypedInfo,
+        types: [
+          { id: 'book', name: 'Book' },
+          { id: 'movie', name: 'Movie' }
+        ]
+      })
+    })
+    const select = screen.getByRole('combobox', {
+      name: 'Page type'
+    }) as HTMLSelectElement
+    expect(select.value).toBe('')
+    await fireEvent.change(select, { target: { value: 'book' } })
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+    })
+    // Failure must not leave the select showing the rejected pick.
+    expect(select.value).toBe('')
+  })
+
   it('lists types in the native <select> and calls SetPageType on change', async () => {
     const onMismatched = vi.fn()
     render(PropertiesPanel, {
