@@ -160,24 +160,24 @@ func formatScalar(el any) string {
 	return fmt.Sprintf("%v", el)
 }
 
-// numberSortBias keeps negative keys non-negative inside the fixed-width field
-// so lexicographic order matches numeric order. Matches the ~10^14 magnitude
-// the padding was designed for (see numberSortKey).
-const numberSortBias = 1e14
-
-// numberSortKey encodes f so byte-wise ascending order matches numeric order,
-// including negatives. Plain %020.6f puts the minus inside the width field, so
-// "-1.2" < "-1.5" lexicographically while -1.5 < -1.2 numerically.
-// Layout: '0'+biased abs for negatives, '1'+padded for non-negatives — every
-// negative sorts before every non-negative, and within each half order is correct.
+// numberSortKey encodes f so byte-wise ascending order matches numeric order
+// across the full float64 range (including values beyond ±1e14). Uses the
+// IEEE-754 bit pattern with sign-bit transform: negatives sort before
+// positives, and magnitude order is preserved within each half. Prefix "0"
+// keeps all ordered values before NaN ("1").
 func numberSortKey(f float64) string {
-	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return fmt.Sprintf("%v", f)
+	if math.IsNaN(f) {
+		return "1"
 	}
-	if f < 0 {
-		return fmt.Sprintf("0%020.6f", numberSortBias+f)
+	bits := math.Float64bits(f)
+	if bits&(1<<63) != 0 {
+		// Negative: invert all bits so more-negative sorts first.
+		bits = ^bits
+	} else {
+		// Non-negative: flip sign bit so they sort after all negatives.
+		bits |= 1 << 63
 	}
-	return fmt.Sprintf("1%020.6f", f)
+	return fmt.Sprintf("0%016x", bits)
 }
 
 func propertySortKey(pt types.PropertyType, raw any) string {
@@ -310,12 +310,26 @@ func (a *App) reprojectAllTypedPages() {
 		}
 		contentBytes, err := os.ReadFile(filePath)
 		if err != nil {
+			// Missing/unreadable file (deleted between locator scan and here,
+			// or watcher missed the removal): drop the ghost projection so
+			// dashboards don't keep a page with no frontmatter to reproduce.
+			// Transient IO failures re-project on the next schema edit/scan.
+			if cerr := a.db.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); cerr != nil {
+				log.Printf("types: ClearPageProjection(%s/%s/%s/%s) after read failure during re-projection: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, cerr)
+			}
+			a.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
 			continue
 		}
 		// Re-parse so meta.Type + meta.Frontmatter reflect the current disk
 		// state; the schema cache has already been invalidated upstream.
 		_, meta, _, _, perr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
 		if perr != nil {
+			// Unparseable frontmatter cannot reproduce a projection — clear
+			// rather than leave a stale row (mirrors the untyped branch).
+			if cerr := a.db.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); cerr != nil {
+				log.Printf("types: ClearPageProjection(%s/%s/%s/%s) after parse failure during re-projection: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, cerr)
+			}
+			a.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
 			continue
 		}
 		if meta.Type == "" {
@@ -326,7 +340,7 @@ func (a *App) reprojectAllTypedPages() {
 			}
 			continue
 		}
-		a.projectPageType(loc.Source, meta)
+		_ = a.projectPageType(loc.Source, meta)
 	}
 }
 

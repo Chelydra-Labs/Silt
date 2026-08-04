@@ -446,7 +446,7 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "set_page_type",
-		Description: "Assign or clear (empty type) a page's note type. Schema-validated write — existing values are validated against the new schema before any file I/O. Values that do not fit the new schema are kept on disk and surfaced in the response as 'flagged'. Requires write grant.",
+		Description: "Assign or clear (empty type) a page's note type. Schema-aware write: existing values are checked against the new schema; mismatches are kept on disk and returned as 'flagged' (no rejection, no data loss). The type: line is always written unless the type id is unknown. Requires write grant.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setPageTypeIn) (*mcp.CallToolResult, any, error) {
 		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "type": in.Type}
 		if !env.writeOK() {

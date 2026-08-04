@@ -1,8 +1,10 @@
 package types
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestCachedListTypes_PopulatesAndServes(t *testing.T) {
@@ -95,5 +97,45 @@ func TestResetCacheForTests(t *testing.T) {
 	globalTypeCache.mu.RUnlock()
 	if l != 0 {
 		t.Errorf("ResetCacheForTests left %d entries", l)
+	}
+}
+
+func TestCachedListTypes_InPlaceEditBumpsContentStamp(t *testing.T) {
+	// In-place content overwrite can bump file mtime without the parent dir
+	// mtime changing; the content stamp must still force a reload.
+	ResetCacheForTests()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "book.yaml")
+	writeTypeFile(t, dir, "book.yaml", bookYAML)
+	// Pin an old mtime so the subsequent rewrite is guaranteed newer even on
+	// coarse-resolution filesystems (no sleep).
+	old := time.Now().Add(-2 * time.Second)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	res1, err := CachedListTypes(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res1.Types) != 1 || res1.Types[0].Name != "Book" {
+		t.Fatalf("first load = %+v", res1.Types)
+	}
+
+	updated := "name: Novel\nproperties:\n  - name: title\n    type: text\n"
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newer := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, newer, newer); err != nil {
+		t.Fatal(err)
+	}
+
+	res2, err := CachedListTypes(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res2.Types) != 1 || res2.Types[0].Name != "Novel" {
+		t.Fatalf("after in-place edit expected Novel, got %+v", res2.Types)
 	}
 }

@@ -403,6 +403,74 @@ describe('PropertiesPanel', () => {
     expect(onChanged).toHaveBeenCalled()
   })
 
+  it('typed→typed turn-into failure shows banner and resets the type select', async () => {
+    appMocks.GetType.mockImplementation(async (id: string) => {
+      if (id === 'book') return bookInfo.type
+      if (id === 'movie')
+        return {
+          id: 'movie',
+          name: 'Movie',
+          properties: [{ name: 'title', type: 'text' }]
+        }
+      return null
+    })
+    appMocks.GetPageProperties.mockResolvedValue([])
+    appMocks.TurnIntoPage.mockRejectedValue(new Error('disk full'))
+
+    render(PropertiesPanel, {
+      props: baseProps({
+        info: bookInfo,
+        types: [
+          { id: 'book', name: 'Book' },
+          { id: 'movie', name: 'Movie' }
+        ]
+      })
+    })
+
+    const select = screen.getByRole('combobox', {
+      name: 'Page type'
+    }) as HTMLSelectElement
+    await fireEvent.change(select, { target: { value: 'movie' } })
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: /Turn into/i })).toBeTruthy()
+    })
+    await fireEvent.click(
+      await screen.findByRole('button', { name: /Confirm|Turn into/i })
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('alert').textContent).toMatch(/disk full/i)
+    // Failed switch must not leave the select showing the rejected pick.
+    expect(select.value).toBe('book')
+  })
+
+  it('clears liveError when the page locator changes', async () => {
+    appMocks.SetPageType.mockRejectedValue(new Error('disk full'))
+    const { rerender } = render(PropertiesPanel, {
+      props: baseProps({
+        info: untypedInfo,
+        types: [{ id: 'book', name: 'Book' }]
+      })
+    })
+    const select = screen.getByRole('combobox', { name: 'Page type' })
+    await fireEvent.change(select, { target: { value: 'book' } })
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+    })
+
+    await rerender(
+      baseProps({
+        info: untypedInfo,
+        types: [{ id: 'book', name: 'Book' }],
+        locator: { notebook: 'Work', section: 'Projects', page: 'Other' }
+      })
+    )
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+  })
+
   it('fires onCreateType when the Create type button is clicked', async () => {
     const onCreateType = vi.fn()
     render(PropertiesPanel, {

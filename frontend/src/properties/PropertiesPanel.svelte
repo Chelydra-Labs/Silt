@@ -82,6 +82,17 @@
   // whichever is set.
   let liveError = $state('')
 
+  // Drop stale field/type errors when the user navigates to another page —
+  // otherwise the previous page's rejection banner lingers on the new page.
+  let lastLocatorKey = ''
+  $effect(() => {
+    const key = `${locator.notebook}/${locator.section}/${locator.page}`
+    if (lastLocatorKey !== '' && lastLocatorKey !== key) {
+      liveError = ''
+    }
+    lastLocatorKey = key
+  })
+
   function handleFieldError(message: string): void {
     liveError = message
     onError(message)

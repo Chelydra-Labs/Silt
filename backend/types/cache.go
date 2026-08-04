@@ -2,37 +2,36 @@ package types
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
 
 // cacheTTL bounds how long a cached ListTypes result is considered fresh even
-// when the dir-mtime check has not fired. The mtime check is the primary
-// freshness gate; this TTL is defense-in-depth against filesystems with coarse
-// mtime resolution. Mirrors templates.cacheTTL.
+// when the content stamp has not changed. The stamp (max of dir + per-file
+// mtimes) is the primary freshness gate; this TTL is defense-in-depth against
+// filesystems with coarse mtime resolution. Mirrors templates.cacheTTL.
 const cacheTTL = 5 * time.Minute
 
-// typeCache is a process-local, dir-mtime-aware cache of the full ListTypes
-// result per types directory. The type manager calls ListTypes whenever it
-// needs the schema set (assigning a type, validating a property, rendering the
-// dashboard), and re-reading + re-parsing every .yaml file each time is
-// wasteful. Types are few, so the granularity is the whole directory: any
-// add/modify/delete bumps the directory mtime and invalidates the entry.
+// typeCache is a process-local content-stamp-aware cache of the full ListTypes
+// result per types directory. Types are few, so freshness is the max mtime of
+// the directory and every .yaml/.yml child — in-place content edits (sync
+// overwrite, same-inode write-back) bump file mtime without always bumping
+// the parent dir mtime on POSIX/Windows.
 //
 // In-process only. InvalidateTypesCache is called after SaveType/DeleteType
-// (so the next read reflects the new file) and by the TypeWatcher (so an
-// external edit is picked up). We deliberately do not hook fsnotify inside the
-// cache — the dedicated TypeWatcher (watcher.go) owns observation and calls
-// InvalidateTypesCache on change. Mirrors templates.templateCache.
+// and by the TypeWatcher. We deliberately do not hook fsnotify inside the
+// cache — TypeWatcher owns observation. Mirrors templates.templateCache.
 type typeCache struct {
 	mu      sync.RWMutex
 	entries map[string]typeCacheEntry
 }
 
 type typeCacheEntry struct {
-	result     *ListTypesResult
-	loadedAt   time.Time
-	dirModTime time.Time // on-disk dir modtime at load; mismatch → reload
+	result       *ListTypesResult
+	loadedAt     time.Time
+	contentStamp time.Time // max mtime of dir + type files at load; mismatch → reload
 }
 
 var globalTypeCache = &typeCache{
@@ -51,18 +50,17 @@ func CachedListTypes(typesDir string) (*ListTypesResult, error) {
 	if typesDir == "" {
 		return ListTypes(typesDir)
 	}
-	info, statErr := os.Stat(typesDir)
-	if statErr != nil {
+	stamp, stampErr := typesContentStamp(typesDir)
+	if stampErr != nil {
 		// Missing dir: no cache, just the empty result.
 		return ListTypes(typesDir)
 	}
-	dirMod := info.ModTime()
 	now := time.Now()
 
 	globalTypeCache.mu.RLock()
 	entry, ok := globalTypeCache.entries[typesDir]
 	globalTypeCache.mu.RUnlock()
-	if ok && entry.result != nil && entry.dirModTime.Equal(dirMod) && now.Sub(entry.loadedAt) < cacheTTL {
+	if ok && entry.result != nil && entry.contentStamp.Equal(stamp) && now.Sub(entry.loadedAt) < cacheTTL {
 		return cloneListTypesResult(entry.result), nil
 	}
 
@@ -72,12 +70,43 @@ func CachedListTypes(typesDir string) (*ListTypesResult, error) {
 	}
 	globalTypeCache.mu.Lock()
 	globalTypeCache.entries[typesDir] = typeCacheEntry{
-		result:     res,
-		loadedAt:   now,
-		dirModTime: dirMod,
+		result:       res,
+		loadedAt:     now,
+		contentStamp: stamp,
 	}
 	globalTypeCache.mu.Unlock()
 	return cloneListTypesResult(res), nil
+}
+
+// typesContentStamp is the max ModTime of typesDir and every .yaml/.yml child.
+// In-place file edits bump file mtime without always bumping the directory.
+func typesContentStamp(typesDir string) (time.Time, error) {
+	info, err := os.Stat(typesDir)
+	if err != nil {
+		return time.Time{}, err
+	}
+	max := info.ModTime()
+	entries, err := os.ReadDir(typesDir)
+	if err != nil {
+		return max, nil // dir exists; listing failure → use dir mtime only
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if fi.ModTime().After(max) {
+			max = fi.ModTime()
+		}
+	}
+	return max, nil
 }
 
 // cloneListTypesResult deep-copies res so callers can safely own the result.

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -10,6 +12,47 @@ import (
 	"silt/backend/paths"
 	"silt/backend/vault"
 )
+
+func TestNumberSortKey_FullRangeOrder(t *testing.T) {
+	// Lexicographic order of keys must match numeric order across negatives,
+	// values beyond the old ±1e14 bias window, ±Inf, and NaN last.
+	vals := []float64{
+		math.Inf(-1),
+		-1e20,
+		-1e14 - 1,
+		-1.5,
+		-1.2,
+		-0.0,
+		0,
+		1.2,
+		1.5,
+		1e14 + 1,
+		1e20,
+		math.Inf(1),
+		math.NaN(),
+	}
+	keys := make([]string, len(vals))
+	for i, v := range vals {
+		keys[i] = numberSortKey(v)
+	}
+	if !sort.StringsAreSorted(keys) {
+		t.Fatalf("numberSortKey not sorted:\nvals=%v\nkeys=%v", vals, keys)
+	}
+	// Spot-check the old bias failure: -1.5 < -1.2 numerically and by key.
+	if numberSortKey(-1.5) >= numberSortKey(-1.2) {
+		t.Errorf("negative order broken: %q >= %q", numberSortKey(-1.5), numberSortKey(-1.2))
+	}
+	// Beyond ±1e14 must still order.
+	if numberSortKey(-1e20) >= numberSortKey(-1e14) {
+		t.Errorf("large negative order broken")
+	}
+	if numberSortKey(1e14) >= numberSortKey(1e20) {
+		t.Errorf("large positive order broken")
+	}
+	if numberSortKey(math.Inf(1)) >= numberSortKey(math.NaN()) {
+		t.Errorf("NaN must sort after +Inf")
+	}
+}
 
 // TestAC5_ColdStartRebuildsTypeProjections is the app-layer evidence for AC5:
 // "delete the index + relaunch rebuilds all type projections." The DB-layer

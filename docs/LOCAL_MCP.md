@@ -77,7 +77,7 @@ or pass `--url`.
 | `update_blocks` | write grant | Identity-preserving page replace |
 | `get_page_metadata` | read | Page type, schema-merged properties, raw frontmatter |
 | `set_page_property` | write grant | Single typed property; schema-validated — invalid values rejected before any file I/O |
-| `set_page_type` | write grant | Assign or clear (empty type) a page's note type; existing values validated against the new schema first |
+| `set_page_type` | write grant | Assign or clear (empty type) a page's note type; mismatches kept on disk and returned as flagged (no rejection) |
 
 ### Typed-properties tools
 
@@ -103,10 +103,11 @@ page byte-identical — the call returns the validation error and nothing is
 written.
 
 `set_page_type` assigns a new type id, or clears the page's type with an empty
-string. Existing frontmatter values are validated against the new schema before
-the `type:` line is touched; values that do not fit the new schema are kept
-unchanged on disk (no data loss) — the tool call itself succeeds in that case,
-and a follow-up `get_page_metadata` will show the surviving values.
+string. Existing frontmatter values are checked against the new schema
+(keep-and-flag): mismatches stay on disk unchanged and are returned in the
+response as `flagged` — the call is not rejected and nothing is dropped. The
+`type:` line is written unless the type id is unknown. A follow-up
+`get_page_metadata` shows the surviving values.
 
 ## Config (`config.yaml`)
 

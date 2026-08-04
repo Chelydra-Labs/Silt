@@ -359,11 +359,15 @@ func (a *App) SetPageProperty(notebook, section, page, property string, value an
 			}
 			_, curTD, curSet, _ := resolvePageTypeSchema(cur, a.typesDir())
 			if !curSet || curTD == nil {
-				return fmt.Errorf("page no longer has a resolvable type")
+				// Typed ValidationError so MCP classifies as structured rejection.
+				return types.ValidationError{Field: pdef.Name, Message: "page no longer has a resolvable type"}
 			}
 			curPdef, ok := curTD.Property(pdef.Name)
 			if !ok {
-				return fmt.Errorf("property %q is no longer declared by type %q", pdef.Name, curTD.ID)
+				return types.ValidationError{
+					Field:   pdef.Name,
+					Message: fmt.Sprintf("property %q is no longer declared by type %q", pdef.Name, curTD.ID),
+				}
 			}
 			if err := types.ValidateValue(curTD, curPdef.Name, value); err != nil {
 				return fmt.Errorf("value no longer validates against the current schema: %w", err)
@@ -523,21 +527,32 @@ func (a *App) SetPageType(notebook, section, page, typeName string) ([]string, e
 		return nil, err
 	}
 
-	// Keep-and-flag: validate every currently-set property that the new schema
-	// also declares. Failing names are returned for the UI to warn; the values
-	// stay in frontmatter unchanged (no drop, no coerce).
+	// Keep-and-flag mismatches are computed inside the file lock against
+	// freshly-read bytes (mirrors TurnIntoPage / SetPageProperty revalidate)
+	// so a concurrent external edit cannot stale the advisory flagged list.
 	var mismatched []string
-	for _, pdef := range newTD.Properties {
-		raw, present := lookupFrontmatter(meta.Frontmatter, pdef.Name)
-		if !present || raw == nil {
-			continue
+	revalidate := func(currentContent string) error {
+		mismatched = nil
+		_, freshMeta, _, _, perr := parser.ParseFileContent(
+			currentContent, meta.Notebook, meta.Section, meta.Page,
+			fileOrDefaultDate(filePath), a.spacesPerTab,
+		)
+		if perr != nil {
+			return nil
 		}
-		if verr := types.ValidateValue(newTD, pdef.Name, raw); verr != nil {
-			mismatched = append(mismatched, pdef.Name)
+		for _, pdef := range newTD.Properties {
+			raw, present := lookupFrontmatter(freshMeta.Frontmatter, pdef.Name)
+			if !present || raw == nil {
+				continue
+			}
+			if verr := types.ValidateValue(newTD, pdef.Name, raw); verr != nil {
+				mismatched = append(mismatched, pdef.Name)
+			}
 		}
+		return nil
 	}
 
-	writeErr := a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, nil, func(currentContent string) (string, error) {
+	writeErr := a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, revalidate, func(currentContent string) (string, error) {
 		return parser.SetFrontmatterField(currentContent, "type", typeID)
 	})
 	if writeErr != nil {

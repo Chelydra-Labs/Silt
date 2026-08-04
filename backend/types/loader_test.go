@@ -144,6 +144,31 @@ func TestListTypes_UnknownKeyWarning(t *testing.T) {
 	}
 }
 
+func TestListTypes_CapitalizedKeysWarn(t *testing.T) {
+	// yaml.v3 does not case-fold struct fields, so Name:/Properties: are
+	// ignored at decode time — the unknown-key pass must still warn.
+	dir := t.TempDir()
+	writeTypeFile(t, dir, "caps.yaml",
+		"Name: Caps\nproperties:\n  - name: title\n    type: text\n")
+
+	res, err := ListTypes(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.Types) != 1 {
+		t.Fatalf("expected 1 type, got %d errs=%v", len(res.Types), res.Errors)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w.Message, `unknown key "Name"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning for capitalized Name key, got %v", res.Warnings)
+	}
+}
+
 func TestListTypes_MissingDir(t *testing.T) {
 	res, err := ListTypes(filepath.Join(t.TempDir(), "does-not-exist"))
 	if err != nil {

@@ -267,7 +267,7 @@
 
 <div class="plf" class:mismatched>
   {#if refs.length > 0}
-    <div class="chips" aria-label={label}>
+    <div class="chips" role="group" aria-label={label}>
       {#each refs as ref (ref)}
         <span class="chip" class:dangling={idx ? isDangling(ref) : false}>
           <span class="chip-label">{refLabel(ref)}</span>

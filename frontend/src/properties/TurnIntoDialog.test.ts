@@ -179,6 +179,25 @@ describe('TurnIntoDialog', () => {
     expect(onConfirm).toHaveBeenCalledWith(['series'], true)
   })
 
+  it('surfaces a load error when GetPageProperties fails', async () => {
+    appMocks.GetPageProperties.mockRejectedValue(new Error('index offline'))
+    render(TurnIntoDialog, {
+      props: {
+        open: true,
+        locator,
+        oldTypeId: 'book',
+        newTypeId: 'film',
+        newTypeLabel: 'Film',
+        onConfirm: vi.fn(),
+        onCancel: vi.fn()
+      }
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('alert').textContent).toMatch(/index offline/i)
+  })
+
   it('cancel does not call onConfirm', async () => {
     const { onConfirm, onCancel } = await mountOpen()
     // The backdrop and footer both expose Cancel; click the footer button.

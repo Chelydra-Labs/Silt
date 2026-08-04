@@ -106,6 +106,10 @@ func loadOne(path string) (*TypeDef, []byte, error) {
 // map parse failure here is silent because ParseTypeBytes already accepted
 // the same bytes. KnownFields(true) is deliberately avoided so forward-compat
 // with newer Silt type files (extra keys) does not turn into hard errors.
+//
+// Keys are matched exactly (case-sensitive). gopkg.in/yaml.v3 struct decode
+// does not case-fold field names either, so `Name:` / `Properties:` are truly
+// ignored — warning on them is correct, not spurious.
 func detectUnknownTypeKeys(raw []byte, filename string) []TypeLoadError {
 	var root map[string]any
 	if err := yaml.Unmarshal(raw, &root); err != nil {
