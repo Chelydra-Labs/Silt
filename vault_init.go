@@ -307,6 +307,14 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.watcher = watcher
 	a.vaultPath = vaultPath
 
+	// Start the scoped reprojection worker (#866) so subsequent SaveType /
+	// DeleteType / type-watcher / ReloadTypes / RestoreExampleTypes calls
+	// coalesce onto a background goroutine that performs disk reads + DB
+	// writes WITHOUT holding vaultMu. Started BEFORE the type watcher so
+	// the very first external type edit has somewhere to enqueue.
+	a.reprojectWorker = newProjectionReprojectWorker(a)
+	a.reprojectWorker.start()
+
 	// Project typed-notes type/property values. Cold start / changed files
 	// always project (cardinal rule 4 — delete the index and these rebuild
 	// from frontmatter + the type schema). Warm upgrade from a pre-typed-notes
@@ -413,16 +421,16 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// Start hot-reload of .system/types/ so typed pages and the type manager
 	// stay live when a user adds/edits/deletes a type externally (the same
 	// posture as the template watcher). The onChange callback invalidates the
-	// type cache, emits types:changed, AND re-projects every typed page so the
-	// dashboard reflects the new schema without waiting for each page to be
-	// re-touched. Re-projection runs under vaultMu.Lock (the watcher hands off
-	// to the App as a lifecycle event); it re-reads each page's frontmatter
-	// against the freshly-loaded schema.
+	// type cache, emits types:changed, AND schedules a coalescing reprojection
+	// (Phase 5 / #866) so the dashboard reflects the new schema without
+	// waiting for each page to be re-touched. The worker scopes disk reads +
+	// DB writes outside the held Lock; onChange takes Lock only briefly as a
+	// lifecycle handoff (the worker re-checks vaultMu mid-flight).
 	if a.ctx != nil {
 		yw, yErr := types.NewTypeWatcher(a.typesDir(), func() {
 			types.InvalidateTypesCache()
 			a.vaultMu.Lock()
-			a.reprojectAllTypedPages()
+			a.enqueueReprojection(true)
 			a.vaultMu.Unlock()
 			a.emit(EventTypesChanged, struct{}{})
 		})

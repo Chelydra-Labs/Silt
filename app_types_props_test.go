@@ -947,6 +947,10 @@ func TestSaveType_ReprojectsTypedPages(t *testing.T) {
 	if err := app.SaveType(renamed); err != nil {
 		t.Fatalf("SaveType(renamed): %v", err)
 	}
+	// Phase 5 / #866: SaveType enqueues scoped reprojection asynchronously.
+	// Drain before asserting so the test observes the post-reprojection
+	// state deterministically rather than racing the worker.
+	flushReprojection(t, app)
 
 	// reprojectAllTypedPages re-parsed Dune.md against the renamed schema: the
 	// projection's stale `rating` row must be gone. (No `score` row appears
@@ -1003,6 +1007,8 @@ func TestDeleteType_ReprojectsTypedPages(t *testing.T) {
 	if err := app.DeleteType("book"); err != nil {
 		t.Fatalf("DeleteType(book): %v", err)
 	}
+	// Phase 5 / #866: DeleteType enqueues scoped reprojection asynchronously.
+	flushReprojection(t, app)
 
 	// The book type is gone, so re-projection resolves the page to a raw type
 	// name with no declared properties and clears its set-property rows.
@@ -1073,6 +1079,9 @@ func TestReloadTypes_ReprojectsTypedPages(t *testing.T) {
 	if err := app.ReloadTypes(); err != nil {
 		t.Fatalf("ReloadTypes: %v", err)
 	}
+	// Phase 5 / #866: ReloadTypes enqueues a full (allMode) reprojection
+	// asynchronously.
+	flushReprojection(t, app)
 	after := projectedPropertyNames(t, app, "Books", "", "Dune")
 	if after["rating"] {
 		t.Errorf("`rating` projection row still present after ReloadTypes renamed it to `score`; ReloadTypes did not re-project, got %v", after)
@@ -1166,6 +1175,8 @@ func TestTypedPages_NestedSectionRoundTrip(t *testing.T) {
 	if err := app.SaveType(renamed); err != nil {
 		t.Fatalf("SaveType(renamed): %v", err)
 	}
+	// Phase 5 / #866: SaveType enqueues scoped reprojection asynchronously.
+	flushReprojection(t, app)
 	afterRename := projectedPropertyNames(t, app, notebook, section, page)
 	if afterRename["rating"] {
 		t.Errorf("rating row lingered after SaveType rename — reprojectAllTypedPages did not reach nested-section page: %v", afterRename)

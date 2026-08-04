@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -312,89 +310,16 @@ func toStringSlice(v any) ([]string, bool) {
 	return nil, false
 }
 
-// reprojectAllTypedPages re-derives every typed page's projection from its
-// frontmatter against the freshly-loaded type schema. Called from the type
-// watcher's onChange handler so a schema edit (e.g. adding a property to
-// book.yaml) reaches pages that have already been indexed — without it the
-// dashboard would drift until each page is independently re-touched.
+// reprojectAllTypedPages was the synchronous full-vault reprojection that
+// every schema-edit caller (SaveType / DeleteType / ReloadTypes / the type
+// watcher / RestoreExampleTypes) used to invoke under vaultMu. Phase 5 / #866
+// replaced those callers with enqueueReprojection, which routes through the
+// scoped coalescing worker in app_types_worker.go — disk reads + DB writes
+// happen outside the lifecycle lock, the worker re-fetches schema per
+// iteration, and the scoped GetTypedPageLocatorsByIDs query keeps the work
+// proportional to the affected pages. The body lives on as
+// projectionReprojectWorker.reprojectOneLocator (single-locator step).
 //
-// The caller MUST hold vaultMu (RLock suffices — the body only reads
-// a.db / a.vaultPath; the watcher path at vault_init.go takes Lock as a
-// lifecycle handoff), and projectPageType / ClearPageProjection /
-// resolveNotebookDir touch fields (a.db, a.vaultPath) guarded by vaultMu.
-func (a *App) reprojectAllTypedPages() {
-	if a.db == nil {
-		return
-	}
-	locators, err := a.db.GetAllTypedPageLocators()
-	if err != nil {
-		log.Printf("types: GetAllTypedPageLocators failed during re-projection: %v", err)
-		return
-	}
-	for _, loc := range locators {
-		// Resolve the page's on-disk file the same way readPageFileForTypes
-		// does, then re-parse just the frontmatter. A missing/unreadable file
-		// (page deleted, external edit mid-scan) is skipped: the regular
-		// watcher path will reconcile it on the next file event.
-		safeNotebook := sanitizePathSegment(loc.Notebook)
-		// validateSectionPath (not sanitizePathSegment) so a multi-segment
-		// section like "Projects/Active" survives — sanitizePathSegment strips
-		// the "/", flattening it to "ProjectsActive" and ENOENT'ing the file.
-		safeSection, sectionErr := validateSectionPath(loc.Section, true)
-		safePage := sanitizePathSegment(loc.Page)
-		if sectionErr != nil {
-			continue
-		}
-		if safeNotebook == "" || safePage == "" {
-			continue
-		}
-		notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
-		if err != nil {
-			continue
-		}
-		filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
-		if !isPathWithinRoot(filePath, notebookDir) {
-			continue
-		}
-		contentBytes, err := os.ReadFile(filePath)
-		if err != nil {
-			// Only drop the projection when the file is confirmed gone. A
-			// transient lock/IO error during sync must not erase the locator
-			// (worklist is derived from page_types) or the page becomes
-			// invisible to future schema revalidation.
-			if os.IsNotExist(err) {
-				if cerr := a.db.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); cerr != nil {
-					log.Printf("types: ClearPageProjection(%s/%s/%s/%s) after missing file during re-projection: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, cerr)
-				}
-			} else {
-				log.Printf("types: read %s during re-projection failed (projection kept): %v", filePath, err)
-			}
-			a.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
-			continue
-		}
-		// Re-parse so meta.Type + meta.Frontmatter reflect the current disk
-		// state; the schema cache has already been invalidated upstream.
-		_, meta, _, _, perr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
-		if perr != nil {
-			// Keep the prior projection on parse failure — the file still
-			// exists and may become readable again; clearing would drop the
-			// locator from the next revalidation worklist.
-			log.Printf("types: parse %s during re-projection failed (projection kept): %v", filePath, perr)
-			a.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
-			continue
-		}
-		if meta.Type == "" {
-			// Page lost its type externally; drop the stale projection row.
-			if err := a.db.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); err != nil {
-				log.Printf("types: ClearPageProjection(%s/%s/%s/%s) during re-projection failed: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, err)
-				a.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
-			}
-			continue
-		}
-		_ = a.projectPageType(loc.Source, meta)
-	}
-}
-
 // onExternalPageChanged re-projects a page from its on-disk frontmatter, or
 // clears the projection when the file is gone / lost its type line.
 // Projection-only helper: the watcher's external-edit reindex path now

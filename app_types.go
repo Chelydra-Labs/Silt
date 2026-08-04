@@ -106,13 +106,14 @@ func (a *App) SaveType(td types.TypeDef) error {
 		return err
 	}
 	types.InvalidateTypesCache()
-	// Re-project now: the type watcher suppresses fsnotify events for this
+	// Schedule a scoped reprojection (Phase 5 / #866): only pages of td.ID
+	// need a new projection, not every typed page in the vault. The worker
+	// coalesces rapid saves into one disk pass and re-fetches the schema
+	// per iteration so the final state converges without a generation
+	// counter. The type watcher suppresses fsnotify events for this
 	// method's own atomic write (RegisterSelfWrite above), so its onChange —
-	// the only other caller of reprojectAllTypedPages — never fires for in-app
-	// schema edits, and typed pages' projections would drift until restart.
-	// Safe under the held RLock: reprojectAllTypedPages only reads a.db /
-	// a.vaultPath (handle-based DB locking) and does not re-acquire vaultMu.
-	a.reprojectAllTypedPages()
+	// the other enqueueReprojection caller — never fires for in-app edits.
+	a.enqueueReprojection(false, td.ID)
 	a.emit(EventTypesChanged, struct{}{})
 	log.Printf("types: SaveType → saved %q", td.ID)
 	return nil
@@ -147,13 +148,12 @@ func (a *App) DeleteType(id string) error {
 		return err
 	}
 	types.InvalidateTypesCache()
-	// Re-project now: the type watcher suppresses fsnotify events for this
-	// method's own atomic write (RegisterSelfWrite above), so its onChange —
-	// the only other caller of reprojectAllTypedPages — never fires for in-app
-	// schema edits, and typed pages' projections would drift until restart.
-	// Safe under the held RLock: reprojectAllTypedPages only reads a.db /
-	// a.vaultPath (handle-based DB locking) and does not re-acquire vaultMu.
-	a.reprojectAllTypedPages()
+	// Schedule a scoped reprojection (Phase 5 / #866): pages of `id` lose
+	// their type and must be cleared from the dashboard. The worker
+	// discovers them via GetTypedPageLocatorsByIDs (idx_page_types_type).
+	// A genuine rename (DeleteType(old) + SaveType(new)) enqueues both
+	// ids, so the union of affected pages is covered.
+	a.enqueueReprojection(false, id)
 	a.emit(EventTypesChanged, struct{}{})
 	log.Printf("types: DeleteType → removed %q", id)
 	return nil
@@ -175,12 +175,12 @@ func (a *App) ReloadTypes() error {
 		return nil
 	}
 	types.InvalidateTypesCache()
-	// Mirror SaveType/DeleteType: re-project under the held RLock so manual
-	// refresh reaches typed pages immediately (the watcher path is the only
-	// other caller, so without this the dashboard drifts until a page mutation
-	// or restart). Safe under RLock: reprojectAllTypedPages only reads a.db /
-	// a.vaultPath and does not re-acquire vaultMu.
-	a.reprojectAllTypedPages()
+	// Schedule a full (allMode) reprojection (Phase 5 / #866): ReloadTypes
+	// is the manual "I changed types externally and want Silt to catch up"
+	// path, so it cannot attribute the change to a single type id. The
+	// worker still scopes disk reads + DB writes outside vaultMu and
+	// coalesces with any concurrent SaveType / DeleteType.
+	a.enqueueReprojection(true)
 	a.emit(EventTypesChanged, struct{}{})
 	return nil
 }
@@ -234,7 +234,7 @@ func (a *App) RestoreExampleTypes(ctx context.Context) ([]string, error) {
 			// dashboard do not stay stale until an unrelated refresh.
 			if len(created) > 0 {
 				types.InvalidateTypesCache()
-				a.reprojectAllTypedPages()
+				a.enqueueReprojection(false, created...)
 				a.emit(EventTypesChanged, struct{}{})
 			}
 			return created, fmt.Errorf("restore example type %q: %w", td.ID, err)
@@ -243,9 +243,11 @@ func (a *App) RestoreExampleTypes(ctx context.Context) ([]string, error) {
 	}
 	if len(created) > 0 {
 		types.InvalidateTypesCache()
-		// Re-project once for the batch (same rationale as SaveType: the
-		// self-write window suppressed the watcher's onChange).
-		a.reprojectAllTypedPages()
+		// Schedule a scoped reprojection for the just-created ids only
+		// (Phase 5 / #866): unaffected typed pages keep their existing
+		// projection. Same rationale as SaveType: the self-write window
+		// suppressed the watcher's onChange for these files.
+		a.enqueueReprojection(false, created...)
 		a.emit(EventTypesChanged, struct{}{})
 	}
 	log.Printf("types: RestoreExampleTypes → created %d %v", len(created), created)

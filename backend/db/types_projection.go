@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // ProjectedProperty is one set property value of a page, as projected into the
@@ -177,6 +178,73 @@ func (dm *DatabaseManager) GetAllTypedPageLocators() ([]TypedPageLocator, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query page_types: %w", err)
 	}
+	return scanTypedPageLocators(rows)
+}
+
+// GetTypedPageLocatorsByIDs returns every distinct (source, notebook, section,
+// page, type_name) tuple whose type_name is in typeIDs. Used by the App's
+// scoped reprojection worker so a schema edit (save / delete) reaches only
+// pages of the affected type(s) — not every typed page in the vault.
+//
+// Served by idx_page_types_type (CREATE INDEX … ON page_types(type_name)).
+// Deduplicates typeIDs before query construction so a caller passing the
+// same id twice (e.g. old+new on rename when they happen to coincide) does
+// not double-count rows. An empty / deduped-to-empty input returns (nil, nil)
+// — the worker treats that as "nothing to do" rather than "reproject all".
+//
+// Deterministic row order (source, notebook, section, page) so the worker's
+// disk-read sequence is reproducible — a test can assert exact visit order.
+func (dm *DatabaseManager) GetTypedPageLocatorsByIDs(typeIDs []string) ([]TypedPageLocator, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
+	deduped := dedupeTypeIDs(typeIDs)
+	if len(deduped) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(deduped))
+	args := make([]interface{}, len(deduped))
+	for i, id := range deduped {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := "SELECT source, notebook, section, page, type_name FROM page_types " +
+		"WHERE type_name IN (" + strings.Join(placeholders, ",") + ") " +
+		"ORDER BY source, notebook, section, page"
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query page_types by type ids: %w", err)
+	}
+	return scanTypedPageLocators(rows)
+}
+
+// dedupeTypeIDs returns typeIDs with duplicates and empty strings removed,
+// preserving first-seen order so a test's expected visit sequence is stable.
+func dedupeTypeIDs(typeIDs []string) []string {
+	if len(typeIDs) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(typeIDs))
+	out := make([]string, 0, len(typeIDs))
+	for _, id := range typeIDs {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+// scanTypedPageLocators drains rows into a TypedPageLocator slice with one
+// shared scan loop. Used by both locator lookups so the row-decode contract
+// has a single source of truth.
+func scanTypedPageLocators(rows *sql.Rows) ([]TypedPageLocator, error) {
 	defer rows.Close()
 	var out []TypedPageLocator
 	for rows.Next() {

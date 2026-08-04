@@ -106,13 +106,21 @@ func TestCloseVault_DoesNotDeadlockWithTypeWatcher(t *testing.T) {
 
 // TestCloseVault_ConcurrentTypeWrites_NoHang_NoRace is the -race stress loop:
 // ~30 iterations of concurrent external type-file writes + CloseVault, each with
-// a timeout. The watcher's onChange mirrors the real handler (InvalidateTypesCache
-// + Lock + reproject + Unlock + emit), so any lock inversion or data race
-// surfaces under -race.
+// a timeout. The watcher's onChange mirrors the real handler
+// (InvalidateTypesCache + Lock + enqueueReprojection + Unlock + emit), so any
+// lock inversion or data race surfaces under -race. The coalescing worker
+// runs without holding vaultMu (Phase 5 / #866), so this loop also exercises
+// the close-vs-reprojection race — the worker must abandon mid-batch on
+// teardown, not panic on a nil db handle.
 func TestCloseVault_ConcurrentTypeWrites_NoHang_NoRace(t *testing.T) {
 	const iters = 30
 	for i := 0; i < iters; i++ {
 		app := newTestApp(t)
+		// Mirror production: initializeVaultServices starts the worker.
+		// newTestApp bypasses initializeVaultServices, so start the worker
+		// here exactly as the production path would.
+		app.reprojectWorker = newProjectionReprojectWorker(app)
+		app.reprojectWorker.start()
 		typesDir := app.typesDir()
 		if err := os.MkdirAll(typesDir, 0o755); err != nil {
 			t.Fatalf("mkdir types dir: %v", err)
@@ -121,7 +129,7 @@ func TestCloseVault_ConcurrentTypeWrites_NoHang_NoRace(t *testing.T) {
 		w, err := types.NewTypeWatcher(typesDir, func() {
 			types.InvalidateTypesCache()
 			app.vaultMu.Lock()
-			app.reprojectAllTypedPages()
+			app.enqueueReprojection(true)
 			app.vaultMu.Unlock()
 		})
 		if err != nil {
