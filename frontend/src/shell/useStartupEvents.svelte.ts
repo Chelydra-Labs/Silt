@@ -40,6 +40,7 @@ import {
   getSettingsSections
 } from '../components/settings/settingsSections.svelte'
 import {
+  hasPageLocator,
   resolveSourceNavigationTarget,
   type SourceNavigationRef
 } from '../lib/navigationTargets'
@@ -291,6 +292,23 @@ export function createStartupEvents(
   function handleNavigateToBlock(e: Event): void {
     const d = (e as CustomEvent).detail
     if (!d) return
+    // Incomplete locators used to call handleSearchJump with empty notebook/page
+    // and leave empty-notebook chrome with no feedback (#877). Fail loud here.
+    if (!hasPageLocator(d)) {
+      console.warn('navigate-to-block ignored: missing notebook/page', {
+        notebook: d.notebook,
+        section: d.section,
+        page: d.page,
+        blockId: d.blockId
+      })
+      pushNotification({
+        kind: 'info',
+        message:
+          "Couldn't open that block — the link is missing page information.",
+        autoDismissMs: 5000
+      })
+      return
+    }
     // resolveSourceNavigationTarget walks the (possibly-malformed/external)
     // navigation catalog; a throw here would propagate into the window-event
     // dispatch loop and silently drop the navigation. Catch + log instead.
@@ -320,7 +338,7 @@ export function createStartupEvents(
   }
   function handleNavigateToPage(e: Event): void {
     const d = (e as CustomEvent).detail
-    if (!d?.notebook || !d?.page) return
+    if (!hasPageLocator(d ?? {})) return
     try {
       const ref = resolveSourceNavigationTarget(deps.getNavigationCatalog(), {
         source: d.source,

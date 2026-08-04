@@ -92,6 +92,14 @@ export interface SourceNavigationRef extends RecentPageRef {
   source?: string
 }
 
+/** True when notebook + page are present (section may be '' for root pages). */
+export function hasPageLocator(d: {
+  notebook?: unknown
+  page?: unknown
+}): boolean {
+  return Boolean(d?.notebook && d?.page)
+}
+
 export interface SearchNavigationJump {
   locator: SourceNavigationRef
   date: string
