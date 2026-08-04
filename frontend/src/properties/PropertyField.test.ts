@@ -40,6 +40,32 @@ function field(overrides: Partial<PagePropertyValue> = {}): PagePropertyValue {
   }
 }
 
+describe('PropertyField — multiselect chips a11y', () => {
+  it('associates the label with the chips group via for/id', () => {
+    render(PropertyField, {
+      props: {
+        value: field({
+          name: 'tags',
+          label: 'Tags',
+          type: 'multiselect',
+          value: ['a'],
+          options: ['a', 'b']
+        }),
+        locator,
+        onError: vi.fn(),
+        onChanged: vi.fn()
+      }
+    })
+    const label = screen.getByText('Tags')
+    expect(label.tagName).toBe('LABEL')
+    const fieldId = label.getAttribute('for')
+    expect(fieldId).toBe('prop-tags')
+    const group = document.getElementById(fieldId!)
+    expect(group).not.toBeNull()
+    expect(group?.getAttribute('role')).toBe('group')
+  })
+})
+
 describe('PropertyField — multiselect free-text commit', () => {
   it('splits a comma-list into a string[] so the backend receives a list, not a bare string', async () => {
     render(PropertyField, {

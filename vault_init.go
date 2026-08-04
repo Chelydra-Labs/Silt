@@ -295,13 +295,24 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.watcher = watcher
 	a.vaultPath = vaultPath
 
-	// Project typed-notes type/property values for every file indexed above
-	// (the reproducible cold-start build of the projection; cardinal rule 4 —
-	// delete the index and these rebuild from frontmatter
-	// + the type schema on the next launch. Runs AFTER a.db/a.vaultPath are
-	// assigned (projectPageType uses both); each call opens its own DB lease,
-	// so it stays outside any WithDBWrite closure.
-	for _, res := range changed {
+	// Project typed-notes type/property values. Cold start / changed files
+	// always project (cardinal rule 4 — delete the index and these rebuild
+	// from frontmatter + the type schema). Warm upgrade from a pre-typed-notes
+	// index leaves the files table populated, so IsFileUnchanged skips every
+	// pre-existing page and `changed` is empty — without a one-shot backfill
+	// those hand-authored `type:` pages never appear in dashboards until
+	// touched. page_projection_backfill records that the full scan has been
+	// projected once; subsequent warm opens only project `changed`.
+	// Runs AFTER a.db/a.vaultPath are assigned (projectPageType uses both);
+	// each call opens its own DB lease, so it stays outside any WithDBWrite.
+	toProject := changed
+	backfillDone, berr := dbMgr.SchemaMigrationApplied(db.PageProjectionBackfillMarker)
+	if berr != nil {
+		log.Printf("initializeVaultServices: probe page_projection_backfill: %v", berr)
+	} else if !backfillDone {
+		toProject = results
+	}
+	for _, res := range toProject {
 		if res.Notebook == "" || res.Err != nil {
 			continue
 		}
@@ -312,6 +323,11 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			Type:        res.Type,
 			Frontmatter: res.Frontmatter,
 		})
+	}
+	if berr == nil && !backfillDone {
+		if err := dbMgr.RecordSchemaMigration(db.PageProjectionBackfillMarker); err != nil {
+			log.Printf("initializeVaultServices: record page_projection_backfill: %v", err)
+		}
 	}
 
 	// Route co-located per-notebook config edits to the cache invalidator +

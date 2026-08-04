@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"silt/backend/db"
 	"silt/backend/paths"
 	"silt/backend/vault"
 )
@@ -193,5 +194,94 @@ func TestAC5_ColdStartClearsTypeWhenFrontmatterDropped(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("expected 0 book pages after type stripped from frontmatter, got %d (%+v)", len(rows), rows)
+	}
+}
+
+// TestWarmUpgrade_ProjectsPreExistingTypedPages pins the 0.3.x → 0.4.0 path:
+// the files table already has mtime+size rows (so IsFileUnchanged skips every
+// page) while page_types/page_properties are empty and the
+// page_projection_backfill marker is absent. initializeVaultServices must
+// still project hand-authored `type:` pages on first miss of the marker.
+func TestWarmUpgrade_ProjectsPreExistingTypedPages(t *testing.T) {
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
+	hostConfigDir := t.TempDir()
+	t.Setenv("APPDATA", hostConfigDir)
+	t.Setenv("XDG_CONFIG_HOME", hostConfigDir)
+
+	vaultPath := t.TempDir()
+	if err := vault.ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault: %v", err)
+	}
+	bookPath := filepath.Join(vaultPath, "Books", "Dune.md")
+	writeFile(t, bookPath, "---\n"+
+		"notebook: \"Books\"\n"+
+		"section: \"\"\n"+
+		"page: \"Dune\"\n"+
+		"date: \"2026-08-01\"\n"+
+		"tags: []\n"+
+		"type: \"book\"\n"+
+		"title: \"Dune\"\n"+
+		"author: \"Frank Herbert\"\n"+
+		"status: \"done\"\n"+
+		"rating: 5\n"+
+		"---\n# Dune\n\nBody.\n")
+
+	app := &App{spacesPerTab: 4}
+	if err := app.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("first initializeVaultServices: %v", err)
+	}
+	if rows, _ := app.QueryPagesByType("book", nil, "", false); len(rows) != 1 {
+		t.Fatalf("expected 1 book page after first open, got %d", len(rows))
+	}
+	// Confirm the one-shot marker was recorded on the cold path too.
+	applied, err := app.db.SchemaMigrationApplied(db.PageProjectionBackfillMarker)
+	if err != nil || !applied {
+		t.Fatalf("expected page_projection_backfill marker after first open (applied=%v err=%v)", applied, err)
+	}
+	if err := app.CloseVault(); err != nil {
+		t.Fatalf("CloseVault: %v", err)
+	}
+
+	// Simulate a warm 0.3→0.4 index: files table intact (unchanged gate will
+	// skip the page), projection tables empty, backfill marker absent.
+	app2 := &App{spacesPerTab: 4}
+	if err := app2.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("warm reopen before wipe: %v", err)
+	}
+	if _, err := app2.db.SQLDB().Exec(
+		"DELETE FROM schema_migrations WHERE name = ?", db.PageProjectionBackfillMarker,
+	); err != nil {
+		t.Fatalf("drop backfill marker: %v", err)
+	}
+	for _, table := range []string{"page_types", "page_properties"} {
+		if _, err := app2.db.SQLDB().Exec("DELETE FROM " + table); err != nil {
+			t.Fatalf("clear %s: %v", table, err)
+		}
+	}
+	if err := app2.CloseVault(); err != nil {
+		t.Fatalf("CloseVault after wipe: %v", err)
+	}
+
+	// Warm open: files table still has the page row → changed is empty for
+	// Dune.md, but missing marker must force a full-results projection.
+	app3 := &App{spacesPerTab: 4}
+	if err := app3.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("warm upgrade initializeVaultServices: %v", err)
+	}
+	defer func() { _ = app3.CloseVault() }()
+
+	rows, err := app3.QueryPagesByType("book", nil, "", false)
+	if err != nil {
+		t.Fatalf("QueryPagesByType after warm upgrade: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("warm upgrade should project pre-existing typed page, got %d rows (%+v)", len(rows), rows)
+	}
+	if rows[0].Page != "Dune" {
+		t.Errorf("page = %q, want Dune", rows[0].Page)
+	}
+	applied, err = app3.db.SchemaMigrationApplied(db.PageProjectionBackfillMarker)
+	if err != nil || !applied {
+		t.Fatalf("expected page_projection_backfill marker after warm upgrade (applied=%v err=%v)", applied, err)
 	}
 }

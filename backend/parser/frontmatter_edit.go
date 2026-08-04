@@ -48,8 +48,15 @@ func SetFrontmatterField(content, key string, value any) (string, error) {
 	}
 	valueYAML := yamlInline(value)
 
-	idx, indent := findKeyLine(inner, key)
-	newLine := indent + key + ": " + valueYAML
+	idx, indent, diskKey := findKeyLine(inner, key)
+	// Preserve on-disk key casing when rewriting an existing line so a hand-
+	// typed `Rating:` is not rewritten as `rating:` (and so we never miss the
+	// line and append a case-variant duplicate). New keys use the caller form.
+	writeKey := key
+	if idx >= 0 && diskKey != "" {
+		writeKey = diskKey
+	}
+	newLine := indent + writeKey + ": " + valueYAML
 
 	var lines []string
 	if idx >= 0 {
@@ -101,7 +108,7 @@ func ClearFrontmatterField(content, key string) (string, error) {
 	if countTopLevelKeyOccurrences(inner, key) > 1 {
 		return "", fmt.Errorf("frontmatter key %q appears more than once; refusing to edit an ambiguous file", key)
 	}
-	idx, _ := findKeyLine(inner, key)
+	idx, _, _ := findKeyLine(inner, key)
 	if idx < 0 {
 		return content, nil
 	}
@@ -167,28 +174,32 @@ func stripTrailingCR(lines []string) []string {
 // findKeyLine returns -1 and SetFrontmatterField appends a duplicate (the old
 // line survives as dead weight; last-wins masks it behaviorally but the file
 // rots), and the duplicate guard (which uses this same pattern) never fires.
-// Matching stays case-sensitive: YAML keys are case-sensitive (Title != title).
+//
+// Matching is case-insensitive so a hand-typed `Rating:` line is found when
+// the schema key is `rating` (Property/lookupFrontmatter already ToLower-
+// compare). Group 1 captures the on-disk key spelling so rewrites preserve
+// the user's casing instead of forcing the schema form.
 func keyLinePattern(key string) *regexp.Regexp {
-	return regexp.MustCompile(`^['"]?` + regexp.QuoteMeta(key) + `['"]?\s*:`)
+	return regexp.MustCompile(`(?i)^['"]?(` + regexp.QuoteMeta(key) + `)['"]?\s*:`)
 }
 
 // findKeyLine locates the top-level (non-indented) line whose prefix is
-// `key:`. Typed-property keys always live at the top of the frontmatter, so
-// indented lines are skipped to avoid matching nested children of a block
-// value. It returns the line index and the leading indentation of the match
-// (always empty in practice, but preserved for verbatim reconstruction).
-// Returns -1 when the key is absent.
-func findKeyLine(lines []string, key string) (int, string) {
+// `key:` (case-insensitive). Typed-property keys always live at the top of
+// the frontmatter, so indented lines are skipped to avoid matching nested
+// children of a block value. It returns the line index, the leading
+// indentation of the match (always empty in practice), and the on-disk key
+// spelling so rewrites can preserve original casing. Returns -1 when absent.
+func findKeyLine(lines []string, key string) (int, string, string) {
 	pattern := keyLinePattern(key)
 	for i, line := range lines {
 		if line == "" || line[0] == ' ' || line[0] == '\t' {
 			continue
 		}
-		if pattern.MatchString(line) {
-			return i, ""
+		if m := pattern.FindStringSubmatch(line); m != nil {
+			return i, "", m[1]
 		}
 	}
-	return -1, ""
+	return -1, "", ""
 }
 
 // countTopLevelKeyOccurrences counts non-indented lines whose prefix is

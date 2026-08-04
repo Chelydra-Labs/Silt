@@ -342,6 +342,7 @@
     {:else if value.type === 'multiselect'}
       {#if hasOptions}
         <div
+          id={fieldId}
           class="chips"
           role="group"
           aria-label={`${value.label || value.name}${isRequired ? ' (required)' : ''}`}

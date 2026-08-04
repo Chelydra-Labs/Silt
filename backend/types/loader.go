@@ -266,7 +266,10 @@ func ResolveTypeID(typesDir, ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("%w: empty type reference", ErrTypeNotFound)
 	}
-	res, err := ListTypes(typesDir)
+	// CachedListTypes is mtime-aware and shared with the rest of the type
+	// stack; ListTypes here would re-read + re-parse every .yaml on each
+	// ResolveTypeID call (reprojectAllTypedPages → O(pages·types) disk I/O).
+	res, err := CachedListTypes(typesDir)
 	if err != nil {
 		return "", err
 	}

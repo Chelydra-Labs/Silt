@@ -175,62 +175,24 @@ func TestClearPageProjection(t *testing.T) {
 		t.Errorf("expected nil row after clear, got %+v", row)
 	}
 
+	// Both tables must be empty — the two deletes share one transaction so a
+	// partial clear cannot leave ghost page_properties rows.
+	for _, table := range []string{"page_types", "page_properties"} {
+		var n int
+		if err := dm.SQLDB().QueryRow(
+			"SELECT COUNT(*) FROM "+table+" WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+			"vault", "Work", "Notes", "Daily",
+		).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != 0 {
+			t.Errorf("expected 0 %s rows after ClearPageProjection, got %d", table, n)
+		}
+	}
+
 	// Idempotent: a second clear on the now-empty page is not an error.
 	if err := dm.ClearPageProjection("vault", "Work", "Notes", "Daily"); err != nil {
 		t.Errorf("second ClearPageProjection should be a no-op: %v", err)
-	}
-}
-
-func TestClearSourceProjection(t *testing.T) {
-	dm := newTestDB(t)
-
-	// Two pages of the same type, one under a linked source and one under the
-	// vault. Both share the type so QueryPagesByType can verify the scoping.
-	if err := dm.IndexPageProjection("linked:x", "Work", "Notes", "Daily", "task",
-		[]ProjectedProperty{{Property: "owner", ValueText: "Linked-Alice", ValueSort: "Linked-Alice", ValueType: "text"}},
-	); err != nil {
-		t.Fatalf("index linked: %v", err)
-	}
-	if err := dm.IndexPageProjection("vault", "Work", "Notes", "Daily", "task",
-		[]ProjectedProperty{{Property: "owner", ValueText: "Vault-Bob", ValueSort: "Vault-Bob", ValueType: "text"}},
-	); err != nil {
-		t.Fatalf("index vault: %v", err)
-	}
-
-	if err := dm.ClearSourceProjection("linked:x"); err != nil {
-		t.Fatalf("ClearSourceProjection: %v", err)
-	}
-
-	// The linked page's projection is gone; the vault page remains.
-	if row, _ := dm.GetPageProjection("linked:x", "Work", "Notes", "Daily"); row != nil {
-		t.Errorf("linked page projection should be cleared, got %+v", row)
-	}
-	row, _ := dm.GetPageProjection("vault", "Work", "Notes", "Daily")
-	if row == nil {
-		t.Fatalf("vault page projection should survive, got nil")
-	}
-	if row.TypeName != "task" {
-		t.Errorf("vault type_name = %q, want %q", row.TypeName, "task")
-	}
-
-	pages, err := dm.QueryPagesByType("task")
-	if err != nil {
-		t.Fatalf("QueryPagesByType: %v", err)
-	}
-	if len(pages) != 1 {
-		t.Fatalf("expected only the vault page after source clear, got %d pages", len(pages))
-	}
-	if pages[0].Source != "vault" {
-		t.Errorf("remaining page source = %q, want %q", pages[0].Source, "vault")
-	}
-
-	// ClearSourceProjection("") is a documented no-op (never clears the vault).
-	if err := dm.ClearSourceProjection(""); err != nil {
-		t.Errorf("ClearSourceProjection(\"\") should be a no-op: %v", err)
-	}
-	row, _ = dm.GetPageProjection("vault", "Work", "Notes", "Daily")
-	if row == nil {
-		t.Errorf("empty-source clear should not wipe the vault projection")
 	}
 }
 

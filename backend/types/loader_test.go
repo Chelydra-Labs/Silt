@@ -213,6 +213,7 @@ func TestGetType_TraversalRejected(t *testing.T) {
 }
 
 func TestResolveTypeID(t *testing.T) {
+	ResetCacheForTests()
 	dir := t.TempDir()
 	writeTypeFile(t, dir, "book.yaml", bookYAML)
 	writeTypeFile(t, dir, "person.yaml", personYAML)
@@ -243,5 +244,14 @@ func TestResolveTypeID(t *testing.T) {
 				t.Errorf("ResolveTypeID(%q) err = %v; want ErrTypeNotFound", c.ref, err)
 			}
 		})
+	}
+
+	// ResolveTypeID routes through CachedListTypes so reproject loops do not
+	// re-read every type file per page.
+	globalTypeCache.mu.RLock()
+	_, ok := globalTypeCache.entries[dir]
+	globalTypeCache.mu.RUnlock()
+	if !ok {
+		t.Fatal("expected ResolveTypeID to populate the types cache")
 	}
 }

@@ -885,3 +885,52 @@ func (dm *DatabaseManager) RebuildFTSIndex() error {
 	_, err = db.Exec("INSERT INTO blocks_fts(blocks_fts) VALUES ('rebuild');")
 	return err
 }
+
+// PageProjectionBackfillMarker is the schema_migrations row that records a
+// completed one-shot warm-upgrade projection of typed pages into
+// page_types/page_properties. Warm startup skips unchanged files via the
+// files-table mtime+size gate, so a 0.3.x → 0.4.0 vault that already carried
+// hand-authored `type:` frontmatter would otherwise never project those pages
+// until each file is touched. The App layer runs the backfill (it needs the
+// type schema + scan frontmatter); the marker lives here so it shares the
+// established ledger with block_references / page_fold backfills.
+const PageProjectionBackfillMarker = "page_projection_backfill"
+
+// SchemaMigrationApplied reports whether schema_migrations already has name.
+// Used by app-layer one-shot backfills that cannot run inside initSchema
+// because they need scan results / type schemas outside the db package.
+func (dm *DatabaseManager) SchemaMigrationApplied(name string) (bool, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return false, ErrDBClosed
+	}
+	defer release()
+	var appliedAt int64
+	err = db.QueryRow(
+		"SELECT applied_at FROM schema_migrations WHERE name = ?", name,
+	).Scan(&appliedAt)
+	if err == nil {
+		return true, nil
+	}
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return false, fmt.Errorf("probe schema_migrations %q: %w", name, err)
+}
+
+// RecordSchemaMigration inserts name into schema_migrations. Idempotent via
+// INSERT OR IGNORE so a concurrent/retry path cannot fail on PK conflict.
+func (dm *DatabaseManager) RecordSchemaMigration(name string) error {
+	db, release, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
+	defer release()
+	if _, err := db.Exec(
+		"INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+		name, time.Now().UnixNano(),
+	); err != nil {
+		return fmt.Errorf("record schema_migrations %q: %w", name, err)
+	}
+	return nil
+}

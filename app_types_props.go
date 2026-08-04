@@ -69,7 +69,12 @@ func (a *App) readPageFileForTypes(notebook, section, page string) (string, pars
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", parser.FileMetadata{}, "", "", fmt.Errorf("page file not found: %s", filePath)
+			// Notebook/section/page only — never the absolute vault path. MCP
+			// surfaces this string to the client; the caller already supplied
+			// the logical coordinates and does not need filesystem layout.
+			return "", parser.FileMetadata{}, "", "", fmt.Errorf(
+				"page file not found: %s/%s/%s", safeNotebook, safeSection, safePage,
+			)
 		}
 		return "", parser.FileMetadata{}, "", "", fmt.Errorf("read page file: %w", err)
 	}

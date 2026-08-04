@@ -81,7 +81,9 @@ func (dm *DatabaseManager) IndexPageProjection(source, notebook, section, page, 
 }
 
 // ClearPageProjection removes a page's type projection (used when a page loses
-// its type or is deleted). Idempotent.
+// its type or is deleted). Idempotent. Both deletes share one transaction so a
+// mid-failure cannot leave page_properties rows orphaned after page_types is
+// gone (mirrors ClearFileBlocks / ClearSourceBlocks).
 func (dm *DatabaseManager) ClearPageProjection(source, notebook, section, page string) error {
 	db, release, err := dm.handle()
 	if err != nil {
@@ -91,39 +93,24 @@ func (dm *DatabaseManager) ClearPageProjection(source, notebook, section, page s
 	if source == "" {
 		source = "vault"
 	}
-	if _, err := db.Exec(
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(
 		"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
 		source, notebook, section, page,
 	); err != nil {
 		return fmt.Errorf("failed to clear page_types: %w", err)
 	}
-	if _, err := db.Exec(
+	if _, err := tx.Exec(
 		"DELETE FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
 		source, notebook, section, page,
 	); err != nil {
 		return fmt.Errorf("failed to clear page_properties: %w", err)
 	}
-	return nil
-}
-
-// ClearSourceProjection removes every projection row for a source (used by
-// UnlinkNotebook so a linked notebook's projected types do not linger).
-func (dm *DatabaseManager) ClearSourceProjection(source string) error {
-	if source == "" {
-		return nil
-	}
-	db, release, err := dm.handle()
-	if err != nil {
-		return ErrDBClosed
-	}
-	defer release()
-	if _, err := db.Exec("DELETE FROM page_types WHERE source = ?", source); err != nil {
-		return fmt.Errorf("failed to clear page_types by source: %w", err)
-	}
-	if _, err := db.Exec("DELETE FROM page_properties WHERE source = ?", source); err != nil {
-		return fmt.Errorf("failed to clear page_properties by source: %w", err)
-	}
-	return nil
+	return tx.Commit()
 }
 
 // TypedPageLocator is one (source, notebook, section, page, type_name) tuple

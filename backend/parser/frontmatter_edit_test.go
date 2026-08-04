@@ -528,3 +528,40 @@ func TestSetFrontmatterField_BOMNoFrontmatterSingleBOM(t *testing.T) {
 		t.Errorf("result should start with BOM + opening fence\ngot: %q", got)
 	}
 }
+
+// TestSetFrontmatterField_MixedCaseKeyRoundTrip pins the read/write contract
+// for hand-typed frontmatter whose key casing differs from the schema form
+// (schema declares `rating`, file has `Rating: 5`). The matcher is case-
+// insensitive so the existing line is rewritten in place (preserving on-disk
+// casing) rather than appending a lowercase duplicate.
+func TestSetFrontmatterField_MixedCaseKeyRoundTrip(t *testing.T) {
+	input := "---\n" +
+		"title: \"Dune\"\n" +
+		"Rating: 5\n" +
+		"---\n" +
+		"body\n"
+
+	got, err := SetFrontmatterField(input, "rating", 6)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "---\n" +
+		"title: \"Dune\"\n" +
+		"Rating: 6\n" +
+		"---\n" +
+		"body\n"
+	if got != want {
+		t.Errorf("mixed-case key not updated in place\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Count(strings.ToLower(got), "rating:") != 1 {
+		t.Errorf("expected exactly one rating key line, got:\n%s", got)
+	}
+
+	// Case-variant pair is the same YAML key under our matcher — refuse.
+	dup := "---\nRating: 5\nrating: 7\n---\nbody\n"
+	if _, err := SetFrontmatterField(dup, "rating", 9); err == nil {
+		t.Fatal("expected duplicate-key error for Rating/rating pair")
+	} else if !strings.Contains(err.Error(), "appears more than once") {
+		t.Errorf("error should mention duplicate, got %v", err)
+	}
+}
