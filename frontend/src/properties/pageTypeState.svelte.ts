@@ -1,9 +1,10 @@
 // Reactive controller for the typed-notes surfaces (inline strip + bottom
 // panel). Owns the GetPageType/GetPageProperties round-trip, the SetPageType
 // keep-and-flag result, the type-picker listing (ListTypes), the panel-open
-// flag, the `types:changed` subscription that re-fetches the active page when
-// the type set changes externally, and the `types:projection-error`
-// subscription that refreshes + warns when a post-write re-parse fails.
+// flag, the `types:changed` / `block:changed` subscriptions that re-fetch the
+// active page when the type set or page content changes externally, and the
+// `types:projection-error` subscription that refreshes + warns when a
+// post-write re-parse fails.
 //
 // Built via the proven createX(deps) factory idiom (mirrors
 // useGlobalHotkeyDispatch): every read of the active locator is a closure the
@@ -62,8 +63,8 @@ export interface PageTypeController {
    * (used by the /type slash command). The panel watches it via a prop.
    */
   requestTypeMenu: () => void
-  /** Subscribe to `types:changed` + `types:projection-error`; returns a
-   *  disposer for onMount cleanup. */
+  /** Subscribe to `types:changed` / `block:changed` / `types:projection-error`;
+   *  returns a disposer for onMount cleanup. */
   attach: () => () => void
 }
 
@@ -196,16 +197,41 @@ export function createPageTypeController(
 
   function attach(): () => void {
     void loadTypes()
-    // Debounce so a burst of type-file changes coalesces into one reload +
-    // refresh (mirrors the templates store's `templates:changed` handler).
+    // Debounce so a burst of type-file / page-content changes coalesces into
+    // one reload + refresh (mirrors the templates store's handler).
     let timer: ReturnType<typeof setTimeout> | null = null
-    const offChanged = Events.On(EventName.EventTypesChanged, () => {
+    const scheduleRefresh = (reloadTypes: boolean) => {
       if (timer !== null) clearTimeout(timer)
       timer = setTimeout(() => {
         timer = null
-        void loadTypes()
+        if (reloadTypes) void loadTypes()
         void refresh()
       }, 100)
+    }
+    const offChanged = Events.On(EventName.EventTypesChanged, () => {
+      scheduleRefresh(true)
+    })
+    // External/sync/second-window frontmatter edits emit block:changed (not
+    // types:changed). Refresh the open panel so a subsequent edit does not
+    // overwrite the external value with a stale snapshot.
+    const offBlockChanged = Events.On(EventName.EventBlockChanged, (event) => {
+      const loc = deps.getLocator()
+      if (!loc.page) return
+      const ev = event?.data as
+        { notebook?: string; section?: string; page?: string } | undefined
+      if (
+        ev &&
+        (ev.notebook != null || ev.section != null || ev.page != null)
+      ) {
+        if (
+          (ev.notebook ?? '') !== (loc.notebook ?? '') ||
+          (ev.section ?? '') !== (loc.section ?? '') ||
+          (ev.page ?? '') !== (loc.page ?? '')
+        ) {
+          return
+        }
+      }
+      scheduleRefresh(false)
     })
     // A failed post-write re-parse leaves the type dashboard stale until the
     // next scan. The write itself succeeded, so this is a polite status, not
@@ -229,6 +255,7 @@ export function createPageTypeController(
         timer = null
       }
       offChanged()
+      offBlockChanged()
       offProjectionError()
     }
   }

@@ -40,6 +40,57 @@ func seedIndexedPageSource(t *testing.T, app *App, source, path, notebook, secti
 	})
 }
 
+func TestDuplicatePage_TypedPageIsProjected(t *testing.T) {
+	// MB2: duplicating a typed page must project the copy into page_types so
+	// dashboards include it without a restart.
+	app := newTestApp(t)
+	typesDir := filepath.Join(app.vaultPath, ".system", "types")
+	if err := os.MkdirAll(typesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(typesDir, "meeting.yaml"), []byte(
+		"name: Meeting\nproperties:\n  - name: status\n    type: text\n",
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	content := `---
+notebook: "Work"
+section: "Projects/Active"
+page: "Standup"
+type: "meeting"
+status: "open"
+---
+- [ ] Agenda <!-- id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa -->
+`
+	sourcePath := filepath.Join(app.vaultPath, "Work", "Projects", "Active", "Standup.md")
+	seedIndexedPage(t, app, sourcePath, "Work", "Projects/Active", "Standup", content)
+	// Seed the source projection the way a normal typed write would.
+	blocks, meta, _, _, err := parser.ParseFileContent(content, "Work", "Projects/Active", "Standup", "2026-01-01", app.spacesPerTab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = blocks
+	app.projectPageType("vault", meta)
+
+	if err := app.DuplicatePage("Work", "Projects/Active", "Standup", "Standup Copy"); err != nil {
+		t.Fatalf("DuplicatePage: %v", err)
+	}
+	rows, err := app.QueryPagesByType("meeting", nil, "", false)
+	if err != nil {
+		t.Fatalf("QueryPagesByType: %v", err)
+	}
+	found := false
+	for _, r := range rows {
+		if r.Page == "Standup Copy" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("duplicated typed page missing from QueryPagesByType; rows=%+v", rows)
+	}
+}
+
 func TestDuplicatePage_VaultFreshIDsFrontmatterAndIndex(t *testing.T) {
 	app := newTestApp(t)
 	sourcePath := filepath.Join(app.vaultPath, "Work", "Projects", "Active", "Original.md")

@@ -315,13 +315,16 @@ func (a *App) SetPageProperty(notebook, section, page, property string, value an
 	}
 	_, td, isSet, _ := resolvePageTypeSchema(meta, a.typesDir())
 	if !isSet || td == nil {
-		return fmt.Errorf("page has no type; assign a type before setting properties")
+		return types.ValidationError{Field: property, Message: "page has no type; assign a type before setting properties"}
 	}
 	// Case-insensitive schema lookup resolves a differently-cased frontmatter
 	// key to the canonical property name, which is what gets written back.
 	pdef, ok := td.Property(property)
 	if !ok {
-		return fmt.Errorf("unknown property %q for type %q", property, td.ID)
+		return types.ValidationError{
+			Field:   property,
+			Message: fmt.Sprintf("unknown property %q for type %q", property, td.ID),
+		}
 	}
 	// Structural validation BEFORE the write so an invalid value never lands on
 	// disk; the atomic write alone only guarantees durability, not correctness.
@@ -515,7 +518,10 @@ func (a *App) SetPageType(notebook, section, page, typeName string) ([]string, e
 	// page, so an unknown type name errors out before any file work.
 	typeID, err := types.ResolveTypeID(a.typesDir(), typeName)
 	if err != nil {
-		return nil, fmt.Errorf("unknown type %q: %w", typeName, err)
+		return nil, types.ValidationError{
+			Field:   "type",
+			Message: fmt.Sprintf("unknown type %q", typeName),
+		}
 	}
 	newTD, err := types.GetType(a.typesDir(), typeID)
 	if err != nil {

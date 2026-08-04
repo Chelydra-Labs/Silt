@@ -120,17 +120,37 @@
   })
 
   // Esc closes (fallback for when focus is not on the trigger, which keeps its
-  // own stopPropagation Esc handler). Bound only while open.
+  // own stopPropagation Esc handler). Bound only while open. stopPropagation
+  // so a parent window Esc handler (e.g. PropertiesPanel) does not also fire
+  // and dismiss the whole panel when only the dropdown should close.
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault()
+      e.stopPropagation()
       onClose()
     }
   }
+  // Outside-click close via document mousedown (not a full-viewport click
+  // catcher): a pointer-events:none backdrop lets the anchor input receive
+  // caret clicks while the dropdown is open (PageLinkField combobox).
+  function onDocMouseDown(e: MouseEvent) {
+    const t = e.target
+    if (!(t instanceof Node)) return
+    if (popoverEl?.contains(t)) return
+    if (anchor?.contains(t)) return
+    onClose()
+  }
   $effect(() => {
     if (!open) return
-    window.addEventListener('keydown', onKeydown)
-    return () => window.removeEventListener('keydown', onKeydown)
+    // Capture-phase Esc so we run before parent window handlers (e.g.
+    // PropertiesPanel) and stopPropagation actually prevents the panel close.
+    window.addEventListener('keydown', onKeydown, true)
+    // Capture so we see the event before focus moves; skip anchor + content.
+    document.addEventListener('mousedown', onDocMouseDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKeydown, true)
+      document.removeEventListener('mousedown', onDocMouseDown, true)
+    }
   })
 </script>
 
@@ -138,9 +158,10 @@
   <!-- The whole layer is portaled to document.body so neither the backdrop nor
        the content is clipped by the caller's overflow/stacking context. -->
   <div use:portal>
+    <!-- pointer-events:none: visual stacking only; outside-click is handled by
+         onDocMouseDown so the anchor (e.g. combobox input) stays clickable. -->
     <div
-      class="fixed inset-0 z-[100]"
-      onclick={onClose}
+      class="fixed inset-0 z-[100] pointer-events-none"
       aria-hidden="true"
     ></div>
     <div

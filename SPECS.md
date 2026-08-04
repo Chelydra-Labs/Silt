@@ -1466,7 +1466,7 @@ Typed properties are exposed to AI clients over the Local MCP host via three too
 
 - **get_page_metadata** (read, ungated): returns the page's type, schema-merged properties, and raw frontmatter in one snapshot.
 - **set_page_property** (write-gated): validates the value against the type's property schema (twice — at entry and again in the file lock) and relation targets (once at entry) before any file I/O. Invalid values return a structured error and leave the file byte-identical. Structural validation narrows the hot-reload race to a sub-millisecond window between the in-lock revalidation and the atomic write; a stale relation target is inert (points to a page that may have changed, not corruption). Single-key granularity.
-- **set_page_type** (write-gated): validates existing values against the new schema before the `type:` rewrite.
+- **set_page_type** (write-gated): schema-aware keep-and-flag — existing values are checked against the new schema; mismatches stay on disk and are returned as `flagged` (the call is not rejected). The `type:` line is written unless the type id is unknown (structured validation error).
 
 This schema-validates-every-write guarantee is the core safety argument for exposing typed-property writes to AI clients. See `docs/LOCAL_MCP.md` for the tool interface.
 

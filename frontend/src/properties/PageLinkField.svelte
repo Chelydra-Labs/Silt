@@ -188,6 +188,9 @@
     } else {
       onCommit('')
     }
+    // Removing the focused chip unmounts it; restore focus to the combobox
+    // so keyboard users are not stranded on <body>.
+    void tick().then(() => inputRef?.focus())
   }
 
   function onKeyDown(e: KeyboardEvent): void {

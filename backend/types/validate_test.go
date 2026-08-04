@@ -138,9 +138,12 @@ func TestValidateValue(t *testing.T) {
 		// date
 		{"date", "2026-08-01", true},
 		{"date", "08/01/2026", false},
+		{"date", "2024-02-30", false}, // Parse normalizes; round-trip rejects
+		{"date", "2024-04-31", false},
 		// datetime (bare date or RFC3339)
 		{"dt", "2026-08-01", true},
 		{"dt", "2026-08-01T10:00:00Z", true},
+		{"dt", "2024-02-30", false},
 		{"dt", "garbage", false},
 		// checkbox
 		{"chk", true, true},

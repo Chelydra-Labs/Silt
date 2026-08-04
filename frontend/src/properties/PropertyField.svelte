@@ -5,7 +5,7 @@
   // value is what SetPageProperty receives; the input's displayed value is a
   // derived string/array off the optimistic field, so a rejected edit snaps
   // back to the last accepted value.
-  import { untrack } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import {
     ClearPageProperty,
     SetPageProperty
@@ -172,9 +172,19 @@
     void field.commit(target.value)
   }
 
+  let freeMultiInputRef = $state<HTMLInputElement | null>(null)
+
   function removeMultiValue(opt: string): void {
     const next = multiValue.filter((v) => v !== opt)
     void field.commit(next)
+    // Chip button unmounts with the value; restore focus to the add input
+    // (or the group) so keyboard users are not stranded on <body>.
+    void tick().then(() => {
+      freeMultiInputRef?.focus()
+      if (!freeMultiInputRef) {
+        document.getElementById(fieldId)?.querySelector('button')?.focus()
+      }
+    })
   }
 
   function commitFreeMultiAdd(e?: Event): void {
@@ -259,6 +269,11 @@
       else field.value = prev
     } finally {
       clearPending = false
+      // Clear button unmounts when canClear becomes false; focus the control.
+      void tick().then(() => {
+        const el = document.getElementById(fieldId)
+        if (el instanceof HTMLElement) el.focus()
+      })
     }
   }
 
@@ -270,7 +285,11 @@
   <div class="label-row">
     <label id={`${fieldId}-label`} for={fieldId} class="label">
       {value.label || value.name}
-      {#if value.required}<span class="req" aria-hidden="true">*</span>{/if}
+      {#if value.required}
+        <span class="req" aria-hidden="true">*</span>
+        <!-- group containers cannot take aria-required; announce via label -->
+        <span class="sr-only"> (required)</span>
+      {/if}
     </label>
     {#if canClear}
       <button
@@ -440,9 +459,11 @@
             </button>
           {/each}
           <input
+            bind:this={freeMultiInputRef}
             type="text"
             class="input free-multi-input"
             value={freeMultiDraft}
+            aria-required={isRequired || undefined}
             oninput={(e) => (freeMultiDraft = e.currentTarget.value)}
             onkeydown={onFreeMultiKeydown}
             onchange={commitFreeMultiAdd}

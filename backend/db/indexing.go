@@ -517,18 +517,28 @@ func ExtractTags(text string) []string {
 // specific page on a given day, scoped to the notebook's source so a linked
 // notebook sharing a display name with a vault notebook cannot clear the
 // vault's rows (#100).
+//
+// Projection rows (page_types / page_properties) are cleared only on the
+// delete/remove path (tx == nil): deletes, rename-old-location, and
+// watcher-remove. The reindex path (tx != nil, used by IndexFileBlocks /
+// IndexScanResults) must NOT touch the projection — block-only mutations
+// (task meta, dependencies, recurrence, subtree edits) do not change
+// frontmatter type:/properties, and many App callers never re-call
+// projectPageType. Clearing the projection there silently drops typed pages
+// from dashboards for the rest of the session.
 func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section, page string) error {
 	if source == "" {
 		source = "vault"
 	}
-	// Clear the block rows and the typed-notes projection rows for this page
-	// together: deletes, rename-old-location, and watcher-remove all route
-	// through here, so the projection never lingers for a page whose blocks
-	// are gone. IndexFileBlocks re-adds the projection afterwards via
-	// projectPageType on the App layer.
-	clear := func(exec func(query string, args ...interface{}) (sql.Result, error)) error {
-		for _, q := range []string{
+	clearBlocks := func(exec func(query string, args ...interface{}) (sql.Result, error)) error {
+		_, err := exec(
 			"DELETE FROM blocks WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+			source, notebook, section, page,
+		)
+		return err
+	}
+	clearProjection := func(exec func(query string, args ...interface{}) (sql.Result, error)) error {
+		for _, q := range []string{
 			"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
 			"DELETE FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
 		} {
@@ -540,23 +550,27 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section
 	}
 	// When the caller already holds a transaction (and typically a handle()
 	// lease), use the tx only — re-entering handle() would deadlock on dbMu.
+	// Reindex path: blocks only.
 	if tx != nil {
-		return clear(tx.Exec)
+		return clearBlocks(tx.Exec)
 	}
 	db, release, err := dm.handle()
 	if err != nil {
 		return ErrDBClosed
 	}
 	defer release()
-	// Wrap the triple delete in one transaction so a mid-failure (blocks
-	// gone but a projection delete errors) cannot orphan the page as a
-	// ghost in dashboards — QueryPagesByType does not JOIN blocks.
+	// Delete/remove path: wrap blocks + projection deletes in one transaction
+	// so a mid-failure cannot orphan dashboard ghosts (QueryPagesByType does
+	// not JOIN blocks).
 	sqlTx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer sqlTx.Rollback()
-	if err := clear(sqlTx.Exec); err != nil {
+	if err := clearBlocks(sqlTx.Exec); err != nil {
+		return err
+	}
+	if err := clearProjection(sqlTx.Exec); err != nil {
 		return err
 	}
 	if err := sqlTx.Commit(); err != nil {

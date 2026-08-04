@@ -121,26 +121,41 @@ describe('Popover (#376)', () => {
     expect(layer.style.width).toBe('260px')
   })
 
-  it('calls onClose when the backdrop is clicked', async () => {
+  it('calls onClose on outside mousedown (not on anchor or content)', async () => {
     const anchor = makeAnchor()
     const onClose = vi.fn()
     render(PopoverHarness, {
       props: { anchor, open: true, onClose }
     })
-    // The backdrop is the full-viewport click-away layer portaled to body.
-    const backdrop = document.querySelector('.fixed.inset-0') as HTMLElement
-    expect(backdrop).toBeTruthy()
-    await fireEvent.click(backdrop)
+    // Backdrop is pointer-events:none so the anchor stays clickable; outside
+    // dismiss is a capture-phase document mousedown handler.
+    await fireEvent.mouseDown(document.body)
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('calls onClose on Escape', async () => {
+  it('does not close when mousedown is on the anchor', async () => {
     const anchor = makeAnchor()
     const onClose = vi.fn()
+    render(PopoverHarness, {
+      props: { anchor, open: true, onClose }
+    })
+    await fireEvent.mouseDown(anchor)
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('calls onClose on Escape and stops bubble-phase parent handlers', async () => {
+    const anchor = makeAnchor()
+    const onClose = vi.fn()
+    const parentEsc = vi.fn()
+    // Bubble-phase parent (mirrors PropertiesPanel) — must not run when the
+    // open popover consumes Esc in capture phase.
+    window.addEventListener('keydown', parentEsc)
     render(PopoverHarness, {
       props: { anchor, open: true, onClose }
     })
     await fireEvent.keyDown(window, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
+    expect(parentEsc).not.toHaveBeenCalled()
+    window.removeEventListener('keydown', parentEsc)
   })
 })

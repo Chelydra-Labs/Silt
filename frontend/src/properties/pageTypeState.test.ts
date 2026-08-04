@@ -101,6 +101,56 @@ describe('pageType controller', () => {
     expect(ctrl.values).toEqual([])
   })
 
+  it('re-fetches the active page on block:changed for the same locator', async () => {
+    appMocks.GetPageType.mockResolvedValue({
+      isSet: false,
+      type: {},
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([])
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+    const dispose = ctrl.attach()
+    await tick()
+    await ctrl.refresh()
+    await tick()
+    const callsAfterFirst = appMocks.GetPageType.mock.calls.length
+
+    eventsHandlers['block:changed']?.({
+      data: { notebook: 'Work', section: 'Projects', page: 'Plan' }
+    })
+    await new Promise((r) => setTimeout(r, 130))
+    await tick()
+
+    expect(appMocks.GetPageType.mock.calls.length).toBeGreaterThan(
+      callsAfterFirst
+    )
+    dispose()
+  })
+
+  it('ignores block:changed for a different page', async () => {
+    appMocks.GetPageType.mockResolvedValue({
+      isSet: false,
+      type: {},
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([])
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+    const dispose = ctrl.attach()
+    await tick()
+    await ctrl.refresh()
+    await tick()
+    const callsAfterFirst = appMocks.GetPageType.mock.calls.length
+
+    eventsHandlers['block:changed']?.({
+      data: { notebook: 'Work', section: 'Projects', page: 'Other' }
+    })
+    await new Promise((r) => setTimeout(r, 130))
+    await tick()
+
+    expect(appMocks.GetPageType.mock.calls.length).toBe(callsAfterFirst)
+    dispose()
+  })
+
   it('re-fetches the active page on the types:changed event', async () => {
     appMocks.GetPageType.mockResolvedValue({
       isSet: false,

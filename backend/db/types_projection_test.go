@@ -245,15 +245,43 @@ func TestQueryPagesByType_MultiplePages(t *testing.T) {
 	}
 }
 
-// TestClearFileBlocks_ClearsProjection proves the Task 1 safety net: clearing a
-// page's blocks also drops its projection rows, so DeletePage / rename-old /
-// watcher-remove cannot leave a dangling projection behind.
+// TestIndexFileBlocks_PreservesProjection is the MB1 regression: block-only
+// reindex (task meta / deps / recurrence) must not erase typed projection rows.
+// ClearFileBlocks(tx!=nil) clears blocks only; projection is App-owned.
+func TestIndexFileBlocks_PreservesProjection(t *testing.T) {
+	dm := newTestDB(t)
+	blocks := []parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)}
+	if err := dm.IndexFileBlocks("vault", "Work", "Sprint", "Board", blocks, nil); err != nil {
+		t.Fatalf("IndexFileBlocks seed: %v", err)
+	}
+	if err := dm.IndexPageProjection("vault", "Work", "Sprint", "Board", "task",
+		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}},
+	); err != nil {
+		t.Fatalf("IndexPageProjection: %v", err)
+	}
+	// Reindex with a different block set (simulates a task-meta edit).
+	blocks2 := []parser.ParsedBlock{sampleTaskBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1)}
+	if err := dm.IndexFileBlocks("vault", "Work", "Sprint", "Board", blocks2, nil); err != nil {
+		t.Fatalf("IndexFileBlocks reindex: %v", err)
+	}
+	row, err := dm.GetPageProjection("vault", "Work", "Sprint", "Board")
+	if err != nil {
+		t.Fatalf("GetPageProjection: %v", err)
+	}
+	if row == nil || row.TypeName != "task" {
+		t.Fatalf("projection must survive block-only reindex, got %+v", row)
+	}
+	if len(row.Properties) != 1 || row.Properties[0].ValueText != "Alice" {
+		t.Errorf("projection properties = %+v", row.Properties)
+	}
+}
+
+// TestClearFileBlocks_ClearsProjection proves the delete/remove safety net:
+// ClearFileBlocks(tx==nil) drops blocks AND projection so DeletePage /
+// rename-old / watcher-remove cannot leave a dangling projection behind.
 func TestClearFileBlocks_ClearsProjection(t *testing.T) {
 	dm := newTestDB(t)
 
-	// Seed block rows. IndexFileBlocks internally calls ClearFileBlocks (which
-	// now also wipes the projection) and then inserts the block — so the
-	// projection is empty after this step.
 	blocks := []parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)}
 	if err := dm.IndexFileBlocks("vault", "Work", "Sprint", "Board", blocks, nil); err != nil {
 		t.Fatalf("IndexFileBlocks: %v", err)

@@ -236,7 +236,10 @@ func ValidateValue(td *TypeDef, propName string, value any) error {
 		if !ok {
 			return ValidationError{Field: propName, Message: fmt.Sprintf("expected a date string (YYYY-MM-DD), got %T", value)}
 		}
-		if _, err := time.Parse("2006-01-02", s); err != nil {
+		// time.Parse normalizes overflow (2024-02-30 → March 1); round-trip
+		// the formatted value so calendar-impossible dates are rejected.
+		t, err := time.Parse("2006-01-02", s)
+		if err != nil || t.Format("2006-01-02") != s {
 			return ValidationError{Field: propName, Message: fmt.Sprintf("%q is not a valid date (YYYY-MM-DD)", s)}
 		}
 		return nil
@@ -247,7 +250,11 @@ func ValidateValue(td *TypeDef, propName string, value any) error {
 			return ValidationError{Field: propName, Message: fmt.Sprintf("expected a datetime string, got %T", value)}
 		}
 		// A bare date is an acceptable datetime; otherwise require RFC3339.
-		if _, err := time.Parse("2006-01-02", s); err == nil {
+		// Round-trip bare dates so 2024-02-30 is rejected (Parse normalizes).
+		if t, err := time.Parse("2006-01-02", s); err == nil {
+			if t.Format("2006-01-02") != s {
+				return ValidationError{Field: propName, Message: fmt.Sprintf("%q is not a valid datetime (YYYY-MM-DD or RFC3339)", s)}
+			}
 			return nil
 		}
 		if _, err := time.Parse(time.RFC3339, s); err != nil {

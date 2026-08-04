@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"silt/backend/db"
 	"silt/backend/parser"
@@ -129,6 +130,13 @@ func formatPropertyValue(raw any) string {
 		return strconv.Itoa(v)
 	case int64:
 		return strconv.FormatInt(v, 10)
+	case time.Time:
+		// yaml.v3 decodes bare date/datetime scalars as time.Time; normalize
+		// to ISO so quoted and unquoted frontmatter project identically.
+		if v.Hour() == 0 && v.Minute() == 0 && v.Second() == 0 && v.Nanosecond() == 0 {
+			return v.Format("2006-01-02")
+		}
+		return v.UTC().Format(time.RFC3339)
 	case []any:
 		parts := make([]string, 0, len(v))
 		for _, el := range v {
@@ -310,12 +318,16 @@ func (a *App) reprojectAllTypedPages() {
 		}
 		contentBytes, err := os.ReadFile(filePath)
 		if err != nil {
-			// Missing/unreadable file (deleted between locator scan and here,
-			// or watcher missed the removal): drop the ghost projection so
-			// dashboards don't keep a page with no frontmatter to reproduce.
-			// Transient IO failures re-project on the next schema edit/scan.
-			if cerr := a.db.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); cerr != nil {
-				log.Printf("types: ClearPageProjection(%s/%s/%s/%s) after read failure during re-projection: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, cerr)
+			// Only drop the projection when the file is confirmed gone. A
+			// transient lock/IO error during sync must not erase the locator
+			// (worklist is derived from page_types) or the page becomes
+			// invisible to future schema revalidation.
+			if os.IsNotExist(err) {
+				if cerr := a.db.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); cerr != nil {
+					log.Printf("types: ClearPageProjection(%s/%s/%s/%s) after missing file during re-projection: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, cerr)
+				}
+			} else {
+				log.Printf("types: read %s during re-projection failed (projection kept): %v", filePath, err)
 			}
 			a.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
 			continue
@@ -324,11 +336,10 @@ func (a *App) reprojectAllTypedPages() {
 		// state; the schema cache has already been invalidated upstream.
 		_, meta, _, _, perr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
 		if perr != nil {
-			// Unparseable frontmatter cannot reproduce a projection — clear
-			// rather than leave a stale row (mirrors the untyped branch).
-			if cerr := a.db.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); cerr != nil {
-				log.Printf("types: ClearPageProjection(%s/%s/%s/%s) after parse failure during re-projection: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, cerr)
-			}
+			// Keep the prior projection on parse failure — the file still
+			// exists and may become readable again; clearing would drop the
+			// locator from the next revalidation worklist.
+			log.Printf("types: parse %s during re-projection failed (projection kept): %v", filePath, perr)
 			a.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
 			continue
 		}
@@ -345,12 +356,12 @@ func (a *App) reprojectAllTypedPages() {
 }
 
 // onExternalPageChanged re-projects a page after the monitor watcher reindexes
-// (or clears) it from an external edit. The watcher's IndexFileBlocks drops the
-// typed projection via ClearFileBlocks, but the watcher path — unlike the App's
-// write paths — does not re-project, so without this an Obsidian/sync edit would
-// drop the page from type dashboards until restart. Takes vaultMu.RLock; safe
-// because stopWatchersOutsideLock closes the monitor watcher OUTSIDE the
-// teardown Lock, so this handler can drain mid-close instead of deadlocking.
+// it from an external edit. IndexFileBlocks no longer clears the projection
+// (block-only reindex preserves it), but external frontmatter edits still need
+// a fresh projectPageType so dashboards pick up type:/property changes.
+// Takes vaultMu.RLock; safe because stopWatchersOutsideLock closes the monitor
+// watcher OUTSIDE the teardown Lock, so this handler can drain mid-close
+// instead of deadlocking.
 func (a *App) onExternalPageChanged(notebook, section, page string) {
 	// No a.wg.Add here: this runs on the monitor-watcher dispatch goroutine,
 	// which is not itself tracked by a.wg. stopWatchersOutsideLock drains the
