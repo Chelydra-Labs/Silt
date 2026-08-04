@@ -566,6 +566,50 @@ func TestSetFrontmatterField_MixedCaseKeyRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSetFrontmatterField_FlowCollectionMultiline pins multi-line flow
+// sequences whose closing ] sits at column 0. Without bracket-depth tracking
+// the closer is left as an orphan and the whole frontmatter becomes invalid
+// YAML (type:/properties silently vanish on next parse).
+func TestSetFrontmatterField_FlowCollectionMultiline(t *testing.T) {
+	input := "---\n" +
+		"tags: [\n" +
+		"  \"a\",\n" +
+		"  \"b\"\n" +
+		"]\n" +
+		"rating: 5\n" +
+		"---\n" +
+		"body\n"
+	got, err := SetFrontmatterField(input, "tags", []string{"x", "y"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "---\n" +
+		"tags: [\"x\", \"y\"]\n" +
+		"rating: 5\n" +
+		"---\n" +
+		"body\n"
+	if got != want {
+		t.Errorf("flow collection not fully collapsed\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Contains(got, "]\nrating") && strings.Count(got, "]") > 1 {
+		// Extra ] would be the orphan closer.
+		if strings.Contains(got, "]\n]") || strings.Contains(got, "y\"]\n]") {
+			t.Errorf("orphan closing bracket left behind:\n%s", got)
+		}
+	}
+	// Must still parse as valid YAML frontmatter.
+	_, meta, _, _, perr := ParseFileContent(got, "N", "", "P", "2026-01-01", 4)
+	if perr != nil {
+		t.Fatalf("result must parse: %v\n%s", perr, got)
+	}
+	if meta.Frontmatter == nil {
+		t.Fatal("Frontmatter empty after flow-collection edit")
+	}
+	if _, ok := meta.Frontmatter["rating"]; !ok {
+		t.Errorf("rating lost after tags edit: %+v", meta.Frontmatter)
+	}
+}
+
 // TestSetFrontmatterField_BlockScalarWithBlankLines pins collapse of a `|`
 // block that contains internal blank lines. Without blank-aware consumption
 // the edit would leave orphan indented lines and corrupt the frontmatter.

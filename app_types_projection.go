@@ -27,16 +27,20 @@ import (
 // page that loses its type does not linger in the dashboards. Block-only
 // mutations (task status, recurrence, dependencies) do not call this: they do
 // not touch frontmatter, so the projection is unchanged.
-func (a *App) projectPageType(source string, meta parser.FileMetadata) {
+// projectPageType projects a page's type/properties into SQLite. Returns a
+// non-nil error only for DB failures (clear/index); callers that need
+// restart-safe backfill (vault_init) must not record success markers when any
+// page fails. Soft failures (unknown type → raw id) still return nil.
+func (a *App) projectPageType(source string, meta parser.FileMetadata) error {
 	if a.db == nil {
-		return
+		return nil
 	}
 	if source == "" {
 		source = "vault"
 	}
 	notebook, section, page := meta.Notebook, meta.Section, meta.Page
 	if notebook == "" && section == "" && page == "" {
-		return
+		return nil
 	}
 
 	if meta.Type == "" {
@@ -44,8 +48,9 @@ func (a *App) projectPageType(source string, meta parser.FileMetadata) {
 		if err := a.db.ClearPageProjection(source, notebook, section, page); err != nil {
 			log.Printf("types: ClearPageProjection(%s/%s/%s/%s) failed: %v", source, notebook, section, page, err)
 			a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
+			return err
 		}
-		return
+		return nil
 	}
 
 	// Resolve the frontmatter type ref (id or display name) to its canonical
@@ -71,7 +76,9 @@ func (a *App) projectPageType(source string, meta parser.FileMetadata) {
 	if err := a.db.IndexPageProjection(source, notebook, section, page, typeID, props); err != nil {
 		log.Printf("types: IndexPageProjection(%s/%s/%s/%s) failed: %v", source, notebook, section, page, err)
 		a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
+		return err
 	}
+	return nil
 }
 
 // projectProperty builds one projection row from a raw frontmatter value and its

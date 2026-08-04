@@ -29,13 +29,22 @@ func TestCachedListTypes_PopulatesAndServes(t *testing.T) {
 		t.Errorf("cached entry has wrong content: %+v", entry.result)
 	}
 
-	// A second call serves the cached entry (same result object).
+	// A second call serves from cache but returns a deep copy.
 	res2, err := CachedListTypes(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(res2.Types) != 1 || res2.Types[0].ID != "book" {
 		t.Errorf("second call returned %v", res2.Types)
+	}
+	// Mutation of the returned result must not corrupt the cache.
+	res2.Types[0].Name = "MUTATED"
+	res3, err := CachedListTypes(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res3.Types[0].Name == "MUTATED" {
+		t.Fatal("caller mutation leaked into the shared cache")
 	}
 }
 

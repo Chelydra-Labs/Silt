@@ -14,8 +14,11 @@ import (
 )
 
 // maxTypeFileBytes bounds an on-disk type file before it is parsed. Caps the
-// whole-file read so yaml.Unmarshal cannot be fed unbounded bytes by a hostile
-// synced type file. Mirrors templates.maxTemplateFileBytes.
+// raw byte read so a hostile synced type file cannot feed yaml.Unmarshal an
+// arbitrarily large buffer. It does NOT bound alias-expanded memory inside
+// yaml.v3 (nested anchors can still expand within the byte cap); .system/types
+// is user-trusted, matching the templates/ threat model. Mirrors
+// templates.maxTemplateFileBytes.
 const maxTypeFileBytes int64 = 64 << 10 // 64 KB
 
 // ErrTypeNotFound is returned (wrapped) by GetType/ResolveTypeID when no type
@@ -34,12 +37,8 @@ type TypeLoadError struct {
 // load errors (so the type manager can name the broken file) and forward-compat
 // warnings.
 //
-// Immutability contract: the cache (cache.go) shares ONE *ListTypesResult
-// instance across every caller of CachedListTypes for a given types dir, so
-// callers MUST treat the struct and its slices as read-only. Mutating the
-// returned Types/Errors/Warnings slices would corrupt the cache for every
-// concurrent reader and race under -race. Defensive copies belong in the
-// caller, not in the cache (a shallow copy would not protect element fields).
+// ListTypesResult is the enumeration payload. CachedListTypes returns a deep
+// copy per call so callers may own the result without corrupting the cache.
 type ListTypesResult struct {
 	Types    []TypeDef       `json:"types"`
 	Errors   []TypeLoadError `json:"errors"`

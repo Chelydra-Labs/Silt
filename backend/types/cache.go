@@ -45,8 +45,8 @@ var globalTypeCache = &typeCache{
 // Mirrors templates.CachedGetTemplate's freshness gate, adapted to whole-dir
 // granularity.
 //
-// The returned *ListTypesResult is shared across callers — treat it as
-// read-only (see the ListTypesResult immutability contract).
+// Callers always receive a deep copy so mutations cannot corrupt the shared
+// cache entry (or race under -race). Type counts are small.
 func CachedListTypes(typesDir string) (*ListTypesResult, error) {
 	if typesDir == "" {
 		return ListTypes(typesDir)
@@ -63,7 +63,7 @@ func CachedListTypes(typesDir string) (*ListTypesResult, error) {
 	entry, ok := globalTypeCache.entries[typesDir]
 	globalTypeCache.mu.RUnlock()
 	if ok && entry.result != nil && entry.dirModTime.Equal(dirMod) && now.Sub(entry.loadedAt) < cacheTTL {
-		return entry.result, nil
+		return cloneListTypesResult(entry.result), nil
 	}
 
 	res, err := ListTypes(typesDir)
@@ -77,7 +77,50 @@ func CachedListTypes(typesDir string) (*ListTypesResult, error) {
 		dirModTime: dirMod,
 	}
 	globalTypeCache.mu.Unlock()
-	return res, nil
+	return cloneListTypesResult(res), nil
+}
+
+// cloneListTypesResult deep-copies res so callers can safely own the result.
+func cloneListTypesResult(src *ListTypesResult) *ListTypesResult {
+	if src == nil {
+		return nil
+	}
+	out := &ListTypesResult{
+		Types:    make([]TypeDef, len(src.Types)),
+		Errors:   append([]TypeLoadError(nil), src.Errors...),
+		Warnings: append([]TypeLoadError(nil), src.Warnings...),
+	}
+	for i, t := range src.Types {
+		out.Types[i] = cloneTypeDef(t)
+	}
+	return out
+}
+
+func cloneTypeDef(t TypeDef) TypeDef {
+	c := t
+	if t.Properties != nil {
+		c.Properties = make([]PropertyDef, len(t.Properties))
+		for i, p := range t.Properties {
+			c.Properties[i] = clonePropertyDef(p)
+		}
+	}
+	return c
+}
+
+func clonePropertyDef(p PropertyDef) PropertyDef {
+	c := p
+	if p.Options != nil {
+		c.Options = append([]string(nil), p.Options...)
+	}
+	if p.Min != nil {
+		v := *p.Min
+		c.Min = &v
+	}
+	if p.Max != nil {
+		v := *p.Max
+		c.Max = &v
+	}
+	return c
 }
 
 // InvalidateTypesCache drops all cached entries. Called by the App after

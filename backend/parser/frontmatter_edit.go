@@ -254,14 +254,30 @@ func isContinuationLine(line string) bool {
 
 // collapseValueBlock finds the end index (exclusive) of the value belonging to
 // lines[keyIdx], returning any indented comments that should be kept after the
-// replacement line. Block scalars consume internal blank lines; plain
-// sequences/maps stop at the first blank or non-indented line.
+// replacement line. Block scalars consume internal blank lines; multi-line
+// flow collections ([…]/{…}) track bracket depth so a column-0 closer is
+// consumed (otherwise an orphan ]/} invalidates the whole frontmatter).
+// Plain block sequences/maps stop at the first blank or non-indented line.
 func collapseValueBlock(lines []string, keyIdx int) (end int, preservedComments []string) {
 	end = keyIdx + 1
-	blockScalar := keyIdx >= 0 && keyIdx < len(lines) && isBlockScalarHeader(lines[keyIdx])
+	if keyIdx < 0 || keyIdx >= len(lines) {
+		return end, nil
+	}
+	keyLine := lines[keyIdx]
+	blockScalar := isBlockScalarHeader(keyLine)
+	// Depth of unclosed [/{ on the key line (and subsequent value lines).
+	// flowDepth > 0 means we are inside a multi-line flow collection.
+	flowDepth := flowBracketDepth(keyLine)
 	for end < len(lines) {
 		line := lines[end]
 		if isIndentedComment(line) {
+			// Inside a flow collection, indented comments are part of the
+			// value span and must be consumed (not preserved mid-value).
+			if flowDepth > 0 {
+				flowDepth += flowBracketDepth(line)
+				end++
+				continue
+			}
 			preservedComments = append(preservedComments, line)
 			end++
 			continue
@@ -280,8 +296,17 @@ func collapseValueBlock(lines []string, keyIdx int) (end int, preservedComments 
 			}
 			break
 		}
+		if flowDepth > 0 {
+			// Still inside […]/{…}: consume every line (incl. column-0 closers
+			// and blanks) until depth returns to zero.
+			flowDepth += flowBracketDepth(line)
+			end++
+			continue
+		}
 		if isContinuationLine(line) {
 			end++
+			// A continuation may open a flow collection (rare but valid).
+			flowDepth += flowBracketDepth(line)
 			continue
 		}
 		break
@@ -292,6 +317,48 @@ func collapseValueBlock(lines []string, keyIdx int) (end int, preservedComments 
 		}
 	}
 	return end, preservedComments
+}
+
+// flowBracketDepth returns net unclosed flow-collection brackets on line
+// ([/{ +1, ]/} -1), ignoring brackets inside single- or double-quoted spans.
+func flowBracketDepth(line string) int {
+	depth := 0
+	inSingle, inDouble := false, false
+	escaped := false
+	for _, r := range line {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if inDouble {
+			if r == '\\' {
+				escaped = true
+				continue
+			}
+			if r == '"' {
+				inDouble = false
+			}
+			continue
+		}
+		if inSingle {
+			// YAML single-quoted: '' is escaped quote; no backslash escapes.
+			if r == '\'' {
+				inSingle = false
+			}
+			continue
+		}
+		switch r {
+		case '"':
+			inDouble = true
+		case '\'':
+			inSingle = true
+		case '[', '{':
+			depth++
+		case ']', '}':
+			depth--
+		}
+	}
+	return depth
 }
 
 // yamlInline renders value as a single-line YAML scalar or flow collection.
@@ -334,6 +401,34 @@ func yamlInline(value any) string {
 				parts[i] = strconv.Quote(s)
 			} else {
 				parts[i] = yamlInline(el)
+			}
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case []int:
+		parts := make([]string, len(v))
+		for i, n := range v {
+			parts[i] = strconv.Itoa(n)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case []int64:
+		parts := make([]string, len(v))
+		for i, n := range v {
+			parts[i] = strconv.FormatInt(n, 10)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case []float64:
+		parts := make([]string, len(v))
+		for i, n := range v {
+			parts[i] = strconv.FormatFloat(n, 'f', -1, 64)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case []bool:
+		parts := make([]string, len(v))
+		for i, b := range v {
+			if b {
+				parts[i] = "true"
+			} else {
+				parts[i] = "false"
 			}
 		}
 		return "[" + strings.Join(parts, ", ") + "]"

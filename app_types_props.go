@@ -573,7 +573,7 @@ func (a *App) TurnIntoPage(ctx context.Context, notebook, section, page, typeNam
 
 	// Resolve the target type (or clear). Unknown type errors before any write.
 	var typeID string
-	var mismatched []string
+	var newTD *types.TypeDef
 	clearType := strings.TrimSpace(typeName) == ""
 	if !clearType {
 		var rerr error
@@ -581,14 +581,34 @@ func (a *App) TurnIntoPage(ctx context.Context, notebook, section, page, typeNam
 		if rerr != nil {
 			return nil, fmt.Errorf("unknown type %q: %w", typeName, rerr)
 		}
-		newTD, gerr := types.GetType(a.typesDir(), typeID)
+		var gerr error
+		newTD, gerr = types.GetType(a.typesDir(), typeID)
 		if gerr != nil {
 			return nil, fmt.Errorf("load type %q: %w", typeID, gerr)
 		}
-		// Keep-and-flag: same as SetPageType — values that fail the new schema
-		// stay on disk; their names are returned for the UI to warn.
+	}
+
+	// Keep-and-flag mismatches are computed inside the file lock against
+	// freshly-read bytes (same window SetPageProperty closes via revalidate)
+	// so an external edit between the pre-lock read and the write cannot
+	// stale the advisory list.
+	var mismatched []string
+	revalidate := func(currentContent string) error {
+		mismatched = nil
+		if clearType || newTD == nil {
+			return nil
+		}
+		_, freshMeta, _, _, perr := parser.ParseFileContent(
+			currentContent, meta.Notebook, meta.Section, meta.Page,
+			fileOrDefaultDate(filePath), a.spacesPerTab,
+		)
+		if perr != nil {
+			// Parse failure is not a validation rejection of the type switch;
+			// let the edit path surface it if needed.
+			return nil
+		}
 		for _, pdef := range newTD.Properties {
-			raw, present := lookupFrontmatter(meta.Frontmatter, pdef.Name)
+			raw, present := lookupFrontmatter(freshMeta.Frontmatter, pdef.Name)
 			if !present || raw == nil {
 				continue
 			}
@@ -596,12 +616,13 @@ func (a *App) TurnIntoPage(ctx context.Context, notebook, section, page, typeNam
 				mismatched = append(mismatched, pdef.Name)
 			}
 		}
+		return nil
 	}
 
 	// One edit pass: type rewrite + every orphan clear. writePageFrontmatterEdit
 	// only touches disk after edit returns, so a failure leaves the file byte-
 	// identical (type NOT switched, orphans NOT cleared).
-	writeErr := a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, nil, func(currentContent string) (string, error) {
+	writeErr := a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, revalidate, func(currentContent string) (string, error) {
 		content := currentContent
 		var e error
 		if clearType {

@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -281,6 +282,12 @@ func ValidateValue(td *TypeDef, propName string, value any) error {
 		if !ok {
 			return ValidationError{Field: propName, Message: fmt.Sprintf("expected a number, got %T", value)}
 		}
+		// NaN/±Inf pass strconv.ParseFloat but fail every ordered comparison
+		// (IEEE-754), so min/max gates would otherwise fall through and let a
+		// client persist out-of-range values via MCP string coercion.
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return ValidationError{Field: propName, Message: fmt.Sprintf("%v is not a finite number", f)}
+		}
 		if def.Min != nil && f < *def.Min {
 			return ValidationError{Field: propName, Message: fmt.Sprintf("%v is below the minimum %v", f, *def.Min)}
 		}
@@ -331,10 +338,16 @@ func CoerceValue(def PropertyDef, value any) (any, error) {
 	switch def.Type {
 	case PropNumber:
 		if f, ok := asFloat(value); ok {
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				return nil, ValidationError{Field: def.Name, Message: fmt.Sprintf("%v is not a finite number", f)}
+			}
 			return f, nil
 		}
 		if s, ok := value.(string); ok {
 			if f, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+				if math.IsNaN(f) || math.IsInf(f, 0) {
+					return nil, ValidationError{Field: def.Name, Message: fmt.Sprintf("%v is not a finite number", f)}
+				}
 				return f, nil
 			}
 		}

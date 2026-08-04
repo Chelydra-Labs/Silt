@@ -2,6 +2,7 @@ package types
 
 import (
 	"errors"
+	"math"
 	"strings"
 	"testing"
 )
@@ -195,6 +196,20 @@ func TestValidateTypeDef_ReservedPropertyNames(t *testing.T) {
 	}
 }
 
+func TestValidateValue_NumberRejectsNonFinite(t *testing.T) {
+	td := &TypeDef{
+		Name: "X",
+		Properties: []PropertyDef{
+			{Name: "num", Type: PropNumber, Min: ptrFloat(0), Max: ptrFloat(10)},
+		},
+	}
+	for _, v := range []any{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		if err := ValidateValue(td, "num", v); err == nil {
+			t.Errorf("ValidateValue(num, %v) = nil; want non-finite rejection", v)
+		}
+	}
+}
+
 func TestValidateValue_MultiSelectRuneCap(t *testing.T) {
 	// Combined runes across elements are capped, not just per-element.
 	td := &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "pgs", Type: PropPages}}}
@@ -220,6 +235,8 @@ func TestCoerceValue(t *testing.T) {
 		{"string->number", PropertyDef{Type: PropNumber}, "5", float64(5), true},
 		{"number stays", PropertyDef{Type: PropNumber}, float64(5), float64(5), true},
 		{"bad number", PropertyDef{Type: PropNumber}, "abc", nil, false},
+		{"NaN string", PropertyDef{Type: PropNumber}, "NaN", nil, false},
+		{"Inf string", PropertyDef{Type: PropNumber}, "Inf", nil, false},
 		{"string->bool", PropertyDef{Type: PropCheckbox}, "true", true, true},
 		{"bool stays", PropertyDef{Type: PropCheckbox}, false, false, true},
 		{"number->text", PropertyDef{Type: PropText, Min: &min}, float64(42), "42", true},

@@ -317,22 +317,31 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	} else if !backfillDone {
 		toProject = results
 	}
+	// Only record the one-shot backfill marker when every page projected
+	// cleanly. projectPageType returns DB errors; swallowing them and still
+	// marking done would leave failed pages invisible until a file touch or
+	// schema edit (AC5 warm path). Re-run is idempotent (delete-then-insert).
+	backfillFailed := false
 	for _, res := range toProject {
 		if res.Notebook == "" || res.Err != nil {
 			continue
 		}
-		a.projectPageType(res.Source, parser.FileMetadata{
+		if err := a.projectPageType(res.Source, parser.FileMetadata{
 			Notebook:    res.Notebook,
 			Section:     res.Section,
 			Page:        res.Page,
 			Type:        res.Type,
 			Frontmatter: res.Frontmatter,
-		})
+		}); err != nil {
+			backfillFailed = true
+		}
 	}
-	if berr == nil && !backfillDone {
+	if berr == nil && !backfillDone && !backfillFailed {
 		if err := dbMgr.RecordSchemaMigration(db.PageProjectionBackfillMarker); err != nil {
 			log.Printf("initializeVaultServices: record page_projection_backfill: %v", err)
 		}
+	} else if backfillFailed && !backfillDone {
+		log.Printf("initializeVaultServices: page_projection_backfill incomplete; marker not recorded (will retry next open)")
 	}
 
 	// Route co-located per-notebook config edits to the cache invalidator +
