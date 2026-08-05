@@ -160,3 +160,34 @@ export function resolveGlobalHotkey(
   }
   return null
 }
+
+// Pure decision for whether the dispatch layer should actually apply
+// format_bold once resolveGlobalHotkey has handed it off. Extracted from
+// App.svelte's applyFormatBold closure so the two safety properties — no-op
+// while a modal dialog is open, and no-op when the recovered editor lives in
+// a hidden (display:none) background tab — are unit-testable independent of
+// the DOM. The caller computes isAnyDialogOpen (focus-inside-dialog check)
+// and editorVisible (offsetParent !== null) from DOM/state and passes them
+// in; this function stays free of side effects and DOM reads.
+//
+// activeView: only notes/backlinks mount an editor surface the dispatch can
+//   recover, mirroring isPropertiesPanelAvailable. Dashboard/settings/etc. are
+//   clean no-ops.
+// isAnyDialogOpen: true when focus is inside a <dialog> or [role="dialog"].
+//   Covers every modal (search, quick switcher, replace, quick add, template
+//   picker, type editor, shortcut help, plus NamePrompt/Confirm/Choice/
+//   SettingsMismatch dialogs) without enumerating each flag.
+// editorVisible: false when the recovered editor's view.dom has offsetParent
+//   === null (a hidden tab panel). getLastActiveEditor() survives blur, so
+//   after a tab switch it can still point at the page the user left — guard
+//   against mutating a page the user isn't looking at.
+export function shouldApplyFormatBold(opts: {
+  activeView: string
+  isAnyDialogOpen: boolean
+  editorVisible: boolean
+}): boolean {
+  if (opts.activeView !== 'notes' && opts.activeView !== 'backlinks')
+    return false
+  if (opts.isAnyDialogOpen) return false
+  return opts.editorVisible
+}

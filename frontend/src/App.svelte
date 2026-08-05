@@ -57,6 +57,7 @@
   import TemplatePicker from './templates/TemplatePicker.svelte'
   import { createSettingsDialogs } from './shell/useSettingsDialogs.svelte'
   import { createGlobalHotkeyDispatch } from './shell/useGlobalHotkeyDispatch.svelte'
+  import { shouldApplyFormatBold } from './shell/globalHotkeys'
   import { createStartupEvents } from './shell/useStartupEvents.svelte'
   import { ASSIGN_PAGE_TYPE_EVENT } from './shell/pageTypeEvents'
   import { effectiveHotkeys } from './settings/shortcutActions'
@@ -480,31 +481,35 @@
     // suppressed this when the editor was focused (ProseMirror owns the in-editor
     // path); here the editor is not focused, so recover an editor and apply bold.
     // Gated to notes/backlinks (mirrors isPropertiesPanelAvailable above) and to
-    // no-modal-open so a Ctrl+B on a dashboard/settings view or inside a dialog
-    // is a clean no-op. The recovered editor is also checked against hidden
-    // background tabs: getLastActiveEditor() is a global that survives blur, so
-    // after a tab switch (or the Ctrl+Alt+→/← cycle chords, which leave the new
-    // tab's editor unfocused) it can still point at the page the user left. A
-    // display:none tab panel makes the editor's view.dom non-visible
-    // (offsetParent === null) — guard against that so Ctrl+B never mutates a
-    // page the user isn't looking at.
+    // no-dialog-open so a Ctrl+B inside any modal is a clean no-op. The dialog
+    // check is generic — focus lives inside the open dialog, so
+    // document.activeElement.closest('dialog, [role="dialog"]') matches every
+    // modal (search, quick switcher, replace, quick add, template picker, type
+    // editor, shortcut help, plus NamePrompt/Confirm/Choice/SettingsMismatch)
+    // without enumerating each overlay flag. The recovered editor is also
+    // checked against hidden background tabs: getLastActiveEditor() is a global
+    // that survives blur, so after a tab switch (or the Ctrl+Alt+→/← cycle
+    // chords, which leave the new tab's editor unfocused) it can still point at
+    // the page the user left. A display:none tab panel makes the editor's
+    // view.dom non-visible (offsetParent === null) — guard against that so
+    // Ctrl+B never mutates a page the user isn't looking at. The decision itself
+    // is delegated to the pure shouldApplyFormatBold predicate (shell/
+    // globalHotkeys.ts) so the gating contract is unit-tested.
     applyFormatBold: () => {
-      if (activeView !== 'notes' && activeView !== 'backlinks') return
-      if (
-        showSearch ||
-        showQuickSwitcher ||
-        showGlobalReplace ||
-        showQuickAdd ||
-        showTemplatePicker ||
-        typeEditorOpen ||
-        shortcutHelp.open
-      ) {
-        return
-      }
       const editor = getActiveEditor() ?? getLastActiveEditor()
       if (!editor || editor.isDestroyed) return
       const dom = editor.view?.dom as HTMLElement | null
-      if (dom && dom.offsetParent === null) return
+      const isAnyDialogOpen = !!document.activeElement?.closest(
+        'dialog, [role="dialog"]'
+      )
+      if (
+        !shouldApplyFormatBold({
+          activeView,
+          isAnyDialogOpen,
+          editorVisible: dom ? dom.offsetParent !== null : false
+        })
+      )
+        return
       editor.chain().focus().toggleBold().run()
     }
   })

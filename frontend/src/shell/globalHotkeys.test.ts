@@ -4,7 +4,7 @@
 // direct test (App.svelte's component test only covers menu:save). These cases
 // pin the contract the shell switch-dispatches on.
 import { describe, expect, it } from 'vitest'
-import { resolveGlobalHotkey } from './globalHotkeys'
+import { resolveGlobalHotkey, shouldApplyFormatBold } from './globalHotkeys'
 
 // Build a keydown with modifier flags. key is the logical glyph (matchHotkey
 // lowercases it, so case is irrelevant).
@@ -282,5 +282,96 @@ describe('resolveGlobalHotkey', () => {
     expect(
       resolveGlobalHotkey(key('o', { altKey: true }), configured, false, false)
     ).toBe('open_quick_switcher')
+  })
+})
+
+describe('shouldApplyFormatBold', () => {
+  // Pins the four gating dimensions the dispatch-layer closure relied on:
+  // view, dialog presence, editor existence, and editor visibility. The
+  // predicate itself is pure — the caller computes isAnyDialogOpen and
+  // editorVisible from DOM/state — so these cases don't touch the DOM.
+
+  it('returns false for a non-editor view (dashboard)', () => {
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'dashboard',
+        isAnyDialogOpen: false,
+        editorVisible: true
+      })
+    ).toBe(false)
+  })
+
+  it('returns true on notes view with no dialog and a visible editor', () => {
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'notes',
+        isAnyDialogOpen: false,
+        editorVisible: true
+      })
+    ).toBe(true)
+  })
+
+  it('returns true on backlinks view with no dialog and a visible editor', () => {
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'backlinks',
+        isAnyDialogOpen: false,
+        editorVisible: true
+      })
+    ).toBe(true)
+  })
+
+  it('returns false when a dialog is open', () => {
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'notes',
+        isAnyDialogOpen: true,
+        editorVisible: true
+      })
+    ).toBe(false)
+  })
+
+  it('returns false when the editor is in a hidden background tab', () => {
+    // offsetParent === null on the recovered editor — the user isn't looking
+    // at the page getLastActiveEditor() would mutate.
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'notes',
+        isAnyDialogOpen: false,
+        editorVisible: false
+      })
+    ).toBe(false)
+  })
+
+  it('returns false when no editor could be recovered', () => {
+    // The caller maps an absent editor to editorVisible: false; combined with
+    // the predicate this keeps the absent-editor case a clean no-op.
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'notes',
+        isAnyDialogOpen: false,
+        editorVisible: false
+      })
+    ).toBe(false)
+  })
+
+  it('returns false for a hidden editor even on backlinks', () => {
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'backlinks',
+        isAnyDialogOpen: false,
+        editorVisible: false
+      })
+    ).toBe(false)
+  })
+
+  it('returns false when both a dialog is open and the editor is hidden', () => {
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'notes',
+        isAnyDialogOpen: true,
+        editorVisible: false
+      })
+    ).toBe(false)
   })
 })
