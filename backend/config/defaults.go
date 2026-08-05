@@ -1,6 +1,8 @@
 package config
 
 import (
+	"runtime"
+
 	"silt/backend/ai"
 	"silt/backend/spellcheck"
 )
@@ -9,6 +11,18 @@ import (
 // scaffolded by vault.ScaffoldVault, so a missing/empty field is never a
 // nil-deref and "first run" behaves like a fresh scaffold.
 func Defaults() SystemConfig {
+	// Tab-cycle chords are platform-conditional (#863): on Windows, WebView2
+	// unreliably relays Ctrl+Tab to the webview, so the cycle moves to
+	// Ctrl+Alt+Arrow. On Linux (WebKitGTK) Ctrl+Tab arrives fine and
+	// Ctrl+Alt+←/→ are swallowed by KDE/GNOME window managers — so the native
+	// Ctrl+Tab / Ctrl+Shift+Tab forms are kept there (and on macOS). close_tab
+	// (Ctrl+Shift+W) is reliable on every platform and stays unconditional.
+	nextTabChord := "Ctrl+Alt+Right"
+	prevTabChord := "Ctrl+Alt+Left"
+	if runtime.GOOS != "windows" {
+		nextTabChord = "Ctrl+Tab"
+		prevTabChord = "Ctrl+Shift+Tab"
+	}
 	return SystemConfig{
 		Notebooks: NotebooksConfig{
 			DefaultActive: "Work",
@@ -78,12 +92,15 @@ func Defaults() SystemConfig {
 			// contenteditable / ProseMirror, so the editor keeps format_link
 			// while typing.
 			"tasks_command_palette": "Ctrl+K",
-			// Tab strip hotkeys. Remapped off Ctrl+W / Ctrl+Tab because
-			// WebView2 unreliably relays those chords to the webview; the
-			// Ctrl+Alt+Arrow forms are stable. Each may be remapped or
-			// disabled (set to "") from Settings → General.
-			"next_tab":  "Ctrl+Alt+Right",
-			"prev_tab":  "Ctrl+Alt+Left",
+			// Tab strip hotkeys. next_tab/prev_tab are platform-conditional
+			// (computed above from runtime.GOOS): Windows uses Ctrl+Alt+Arrow
+			// because WebView2 drops Ctrl+Tab; Linux/macOS keep the native
+			// Ctrl+Tab / Ctrl+Shift+Tab forms because Ctrl+Alt+←/→ are
+			// WM-captured there. close_tab (Ctrl+Shift+W) is reliable on
+			// every platform. Each may be remapped or disabled (set to "")
+			// from Settings → General.
+			"next_tab":  nextTabChord,
+			"prev_tab":  prevTabChord,
 			"close_tab": "Ctrl+Shift+W",
 			// Inline formatting hotkeys. Standard editor bindings so muscle
 			// memory transfers. Each is overridable per-vault via the

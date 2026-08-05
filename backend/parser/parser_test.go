@@ -491,6 +491,32 @@ func TestParseFileContent_ScalarAliasesRecoversAllFields(t *testing.T) {
 	}
 }
 
+// TestParseFileContent_UnquotedDateSurvivesScalarAliasesRecovery covers the
+// regression where yaml.v3 resolves an UNQUOTED `date: 2026-08-05` to a
+// time.Time (not a string). The recovery branch previously asserted
+// `rawFM["date"].(string)` and silently dropped the date when the value was
+// a time.Time, falling back to file-mtime. The scalar `aliases: foo` forces
+// the typed-decode failure that triggers recovery, exactly as in
+// TestParseFileContent_ScalarAliasesRecoversAllFields — but with an unquoted
+// date (the existing test uses a quoted date and so misses this branch).
+func TestParseFileContent_UnquotedDateSurvivesScalarAliasesRecovery(t *testing.T) {
+	content := "---\n" +
+		"date: 2026-08-05\n" + // UNQUOTED → yaml resolves to time.Time
+		"aliases: foo\n" + // scalar — forces typed-decode failure → recovery path
+		"---\n# Plan\n"
+	blocks, meta, _, _, err := ParseFileContent(content, "work", "", "plan", "2026-08-05", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent failed: %v", err)
+	}
+	_ = blocks
+	if meta.Date != "2026-08-05" {
+		t.Errorf("unquoted date lost in raw-map recovery: got %q, want 2026-08-05", meta.Date)
+	}
+	if len(meta.Aliases) != 1 || meta.Aliases[0] != "foo" {
+		t.Errorf("scalar aliases not recovered alongside unquoted date: got %v, want [foo]", meta.Aliases)
+	}
+}
+
 // TestParseLine_BlockedBy covers the [blocked_by:: ((uuid))] token (#301):
 // single + multiple refs, CleanText stripping, de-duplication, that the
 // token is not echoed into ExtraTokens, and round-trip through render.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -103,16 +104,6 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.Hotkeys == nil {
 		cfg.Hotkeys = map[string]string{}
 	}
-	// format_subscript ↔ open_settings upgrade migration. The Ctrl+,
-	// chord moved from format_subscript to the new open_settings default, but
-	// the YAML merge decodes-over-Defaults and can't tell a persisted old
-	// default from an explicit choice — so a config saved before this change
-	// ends up with format_subscript AND open_settings both at "Ctrl+,". Move
-	// subscript to its new home (Ctrl+Shift,) only when the exact collision is
-	// present, so a user who customized either binding is never touched.
-	if cfg.Hotkeys["format_subscript"] == "Ctrl+," && cfg.Hotkeys["open_settings"] == "Ctrl+," {
-		cfg.Hotkeys["format_subscript"] = "Ctrl+Shift,"
-	}
 	// One-shot gate for the v1 hotkey-defaults migration. Once a vault has been
 	// normalized, never re-run it: normalize() runs on BOTH Load and Save, so
 	// without this gate a user who deliberately remaps a chord back to its
@@ -120,7 +111,11 @@ func normalize(cfg SystemConfig) SystemConfig {
 	// would have it silently re-migrated to the new default on the next Settings
 	// save — violating the "user remaps survive" contract. The marker is set
 	// unconditionally on the first normalize pass (idempotent), so a fresh vault
-	// or an already-migrated vault never re-enters the block.
+	// or an already-migrated vault never re-enters the block. The same gate
+	// covers the format_subscript ↔ open_settings collision-migration below —
+	// without it, re-binding format_subscript back to Ctrl+, would be silently
+	// re-migrated on every normalize, the same remap-clobber class the v1 gate
+	// fixes for the other chords.
 	if _, v1Done := cfg.Plugins.PluginSettings[hotkeysDefaultsV1MigratedKey].(bool); !v1Done {
 		// Hotkey-defaults v1 realignment migrations. Each of these chords moved
 		// to a new default; the YAML merge can't tell a persisted legacy default
@@ -128,6 +123,19 @@ func normalize(cfg SystemConfig) SystemConfig {
 		// equals the exact legacy default. A customized binding is never touched.
 		// Track whether any migration fired so a one-time notice can be stamped.
 		hotkeysV1Migrated := false
+		// format_subscript ↔ open_settings upgrade migration. The Ctrl+,
+		// chord moved from format_subscript to the new open_settings default,
+		// but the YAML merge decodes-over-Defaults and can't tell a persisted
+		// old default from an explicit choice — so a config saved before this
+		// change ends up with format_subscript AND open_settings both at
+		// "Ctrl+,". Move subscript to its new home (Ctrl+Shift,) only when the
+		// exact collision is present, so a user who customized either binding
+		// is never touched. Inside the v1 gate so a later remap back to Ctrl+,
+		// is preserved (one-shot, like the other v1 chords).
+		if cfg.Hotkeys["format_subscript"] == "Ctrl+," && cfg.Hotkeys["open_settings"] == "Ctrl+," {
+			cfg.Hotkeys["format_subscript"] = "Ctrl+Shift,"
+			hotkeysV1Migrated = true
+		}
 		if cfg.Hotkeys["toggle_sidebar"] == "Ctrl+B" {
 			// Freed Ctrl+B for unambiguous bold.
 			cfg.Hotkeys["toggle_sidebar"] = "Ctrl+\\"
@@ -144,15 +152,23 @@ func normalize(cfg SystemConfig) SystemConfig {
 			cfg.Hotkeys["close_tab"] = "Ctrl+Shift+W"
 			hotkeysV1Migrated = true
 		}
-		if cfg.Hotkeys["next_tab"] == "Ctrl+Tab" {
-			// WebView2 unreliably relays Ctrl+Tab; moved to Ctrl+Alt+Right.
-			cfg.Hotkeys["next_tab"] = "Ctrl+Alt+Right"
-			hotkeysV1Migrated = true
-		}
-		if cfg.Hotkeys["prev_tab"] == "Ctrl+Shift+Tab" {
-			// WebView2 unreliably relays Ctrl+Shift+Tab; moved to Ctrl+Alt+Left.
-			cfg.Hotkeys["prev_tab"] = "Ctrl+Alt+Left"
-			hotkeysV1Migrated = true
+		// next_tab/prev_tab migration is Windows-only: on Linux (WebKitGTK)
+		// Ctrl+Tab is delivered to the webview and Ctrl+Alt+←/→ are captured
+		// by the window manager (KDE/GNOME), so rewriting a Linux vault's
+		// working Ctrl+Tab to a WM-swallowed chord is a regression. Windows
+		// (WebView2) is the platform that actually needs the remap. Gate on
+		// runtime.GOOS so non-Windows vaults keep their Ctrl+Tab.
+		if runtime.GOOS == "windows" {
+			if cfg.Hotkeys["next_tab"] == "Ctrl+Tab" {
+				// WebView2 unreliably relays Ctrl+Tab; moved to Ctrl+Alt+Right.
+				cfg.Hotkeys["next_tab"] = "Ctrl+Alt+Right"
+				hotkeysV1Migrated = true
+			}
+			if cfg.Hotkeys["prev_tab"] == "Ctrl+Shift+Tab" {
+				// WebView2 unreliably relays Ctrl+Shift+Tab; moved to Ctrl+Alt+Left.
+				cfg.Hotkeys["prev_tab"] = "Ctrl+Alt+Left"
+				hotkeysV1Migrated = true
+			}
 		}
 		// One-time notice stamp: when a v1 migration rewrote legacy chords, mark
 		// the vault so the frontend can surface a dismissible Settings → Hotkeys

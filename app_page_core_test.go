@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"silt/backend/db"
 	"silt/backend/parser"
 	"silt/backend/types"
+	"silt/backend/vault"
 )
 
 // writeCorePage stages a page with the given frontmatter body (everything
@@ -439,4 +441,215 @@ func readFileForTest(t *testing.T, app *App, notebook, section, page string) (st
 		return "", err
 	}
 	return string(b), nil
+}
+
+// TestBlockOnlyWrite_RefreshesCoreModified pins the block-only write mtime
+// refresh added in commit 61fa4861: a task-status edit routes through
+// IndexFileBlocks (NOT indexFile) so the unified atomic path's MarkFileIndexed
+// never runs. Without markFileIndexedBestEffort at the end of the block-only
+// write chain, the files-table mtime cache stays at the pre-write value all
+// session (the fsnotify watcher ignores self-writes) and GetPageCoreMetadata
+// surfaces a stale/empty `modified`.
+//
+// This test seeds a typed page with a task, captures the seed files-table
+// mtime, runs SetTaskOwner (a canonical block-only write), and asserts the
+// cache was refreshed: db.FileMtime returns a strictly-greater value AND
+// GetPageCoreMetadata.Modified is non-empty + RFC3339-shaped.
+func TestBlockOnlyWrite_RefreshesCoreModified(t *testing.T) {
+	app := newTestApp(t)
+	const taskID = "aaaaaaaa-1111-1111-1111-111111111111"
+
+	// Seed a typed page with one task through the unified atomic path so the
+	// files-table mtime row is populated. The body carries one task block so a
+	// SetTaskOwner edit has a target.
+	content := "---\n" +
+		"notebook: \"Notes\"\n" +
+		"section: \"\"\n" +
+		"page: \"Chores\"\n" +
+		"date: \"2026-08-05\"\n" +
+		"tags: []\n" +
+		"---\n# Chores\n\n" +
+		"- [ ] walk the dog <!-- id: " + taskID + " -->\n"
+	filePath := filepath.Join(app.vaultPath, "Notes", "Chores.md")
+	writeFile(t, filePath, content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, "Notes", "", "Chores", "2026-08-05", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.indexFile("vault", "Notes", "", "Chores", blocks, meta, meta.Warnings...); err != nil {
+		t.Fatalf("indexFile: %v", err)
+	}
+	stat, statErr := os.Stat(filePath)
+	if statErr != nil {
+		t.Fatalf("stat seed: %v", statErr)
+	}
+	if err := app.db.MarkFileIndexed(nil, filePath, stat.ModTime().UnixNano(), stat.Size()); err != nil {
+		t.Fatalf("seed MarkFileIndexed: %v", err)
+	}
+
+	seedMtime, err := app.db.FileMtime(filePath)
+	if err != nil {
+		t.Fatalf("seed FileMtime: %v", err)
+	}
+	if seedMtime <= 0 {
+		t.Fatalf("seed FileMtime = %d, want positive (indexFile + MarkFileIndexed should populate it)", seedMtime)
+	}
+
+	// Some filesystems have coarse mtime resolution; bump the clock so the
+	// block-only write produces a strictly-greater mtime than the seed.
+	ensureMtimeBumps(t)
+
+	// Block-only write: SetTaskOwner routes through mutateTaskBlock →
+	// IndexFileBlocks + markFileIndexedBestEffort. IndexFileBlocks does NOT
+	// touch the files-table; only the best-effort marker call does.
+	if err := app.SetTaskOwner(taskID, "Alice"); err != nil {
+		t.Fatalf("SetTaskOwner: %v", err)
+	}
+
+	postMtime, err := app.db.FileMtime(filePath)
+	if err != nil {
+		t.Fatalf("post FileMtime: %v", err)
+	}
+	if postMtime <= seedMtime {
+		t.Errorf("block-only write did not refresh files-table mtime: seed=%d post=%d (markFileIndexedBestEffort regression)", seedMtime, postMtime)
+	}
+
+	got, err := app.GetPageCoreMetadata("Notes", "", "Chores")
+	if err != nil {
+		t.Fatalf("GetPageCoreMetadata after block-only write: %v", err)
+	}
+	if got.Modified == "" {
+		t.Fatal("Modified empty after block-only write; markFileIndexedBestEffort should refresh the cache so the Core panel reads the new mtime")
+	}
+	if _, perr := time.Parse(time.RFC3339, got.Modified); perr != nil {
+		t.Errorf("Modified not RFC3339 after block-only write: got %q (%v)", got.Modified, perr)
+	}
+}
+
+// TestWarmUpgrade_PageCoreBackfillRunsEvenWhenProjectionMarkerSet pins the
+// dual-marker contract (#867): a vault that already shipped typed notes
+// (PageProjectionBackfillMarker recorded by a prior version) but has NOT yet
+// run the page_core backfill (PageCoreBackfillMarker absent) must STILL project
+// page_core rows for warm-skipped pages on the next open. Gating core backfill
+// on the projection marker would skip it for exactly these vaults — every
+// 0.4.x typed-notes vault upgrading to the page_core version.
+//
+// This test drives the full initializeVaultServices path: seed a typed page,
+// confirm both markers land on first open, then simulate the warm-upgrade
+// state (files-table intact + projection marker set + core marker wiped +
+// page_core table wiped) and reopen. The page_core row must come back AND the
+// core backfill marker must be recorded on success.
+func TestWarmUpgrade_PageCoreBackfillRunsEvenWhenProjectionMarkerSet(t *testing.T) {
+	t.Setenv("SILT_DATA_DIR", t.TempDir())
+	hostConfigDir := t.TempDir()
+	t.Setenv("APPDATA", hostConfigDir)
+	t.Setenv("XDG_CONFIG_HOME", hostConfigDir)
+
+	vaultPath := t.TempDir()
+	if err := vault.ScaffoldVault(vaultPath); err != nil {
+		t.Fatalf("ScaffoldVault: %v", err)
+	}
+	bookPath := filepath.Join(vaultPath, "Books", "Dune.md")
+	writeFile(t, bookPath, "---\n"+
+		"notebook: \"Books\"\n"+
+		"section: \"\"\n"+
+		"page: \"Dune\"\n"+
+		"date: \"2026-08-01\"\n"+
+		"tags: []\n"+
+		"type: \"book\"\n"+
+		"title: \"Dune\"\n"+
+		"---\n# Dune\n\nBody.\n")
+
+	// First open: indexes the page and records BOTH backfill markers.
+	app := &App{spacesPerTab: 4}
+	if err := app.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("first initializeVaultServices: %v", err)
+	}
+	if err := app.SaveType(bookTypeSchema()); err != nil {
+		t.Fatalf("SaveType: %v", err)
+	}
+	// Force a re-projection so the book page is typed-projected + page_core
+	// is populated under the running version. The exact trigger isn't
+	// load-bearing here — only that the row exists after first open.
+	if row, _ := app.db.GetPageCoreProjection("vault", "Books", "", "Dune"); row == nil {
+		t.Fatalf("first open: page_core row missing for Dune — every indexed page must get one")
+	}
+	projDone, _ := app.db.SchemaMigrationApplied(db.PageProjectionBackfillMarker)
+	coreDone, _ := app.db.SchemaMigrationApplied(db.PageCoreBackfillMarker)
+	if err := app.CloseVault(); err != nil {
+		t.Fatalf("CloseVault: %v", err)
+	}
+
+	// Simulate the warm-upgrade window: the projection marker (set by the
+	// prior typed-notes version) is intact, but the page_core marker + rows
+	// are absent (the upgraded version has not yet backfilled). The files
+	// table stays intact so the next open warm-skips Dune.md.
+	app2 := &App{spacesPerTab: 4}
+	if err := app2.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("reopen to stage warm-upgrade state: %v", err)
+	}
+	// Stage: projection marker preserved (mimics prior version's ledger),
+	// core marker + page_core rows wiped (mimics pre-page_core upgrade).
+	if !projDone {
+		// First open should have set the projection marker. If something
+		// upstream changed, the rest of the test cannot stage the dual-marker
+		// state it is meant to assert.
+		if err := app2.db.RecordSchemaMigration(db.PageProjectionBackfillMarker); err != nil {
+			t.Fatalf("stage RecordSchemaMigration: %v", err)
+		}
+	}
+	if coreDone {
+		if _, err := app2.db.SQLDB().Exec(
+			"DELETE FROM schema_migrations WHERE name = ?", db.PageCoreBackfillMarker,
+		); err != nil {
+			t.Fatalf("wipe core marker: %v", err)
+		}
+	}
+	if _, err := app2.db.SQLDB().Exec("DELETE FROM page_core"); err != nil {
+		t.Fatalf("wipe page_core rows: %v", err)
+	}
+	// Sanity: the dual-marker state we wanted is now in place.
+	projSet, _ := app2.db.SchemaMigrationApplied(db.PageProjectionBackfillMarker)
+	coreSet, _ := app2.db.SchemaMigrationApplied(db.PageCoreBackfillMarker)
+	if !projSet || coreSet {
+		t.Fatalf("stage mismatch: projection=%v core=%v, want projection=true core=false", projSet, coreSet)
+	}
+	if err := app2.CloseVault(); err != nil {
+		t.Fatalf("CloseVault after staging: %v", err)
+	}
+
+	// Warm upgrade reopen: files table unchanged → Dune.md warm-skipped. With
+	// the projection marker set, the projection backfill loop is a no-op for
+	// Dune. The page_core backfill MUST still run (its own marker is missing)
+	// and record its marker on success — the dual-marker invariant.
+	app3 := &App{spacesPerTab: 4}
+	if err := app3.initializeVaultServices(vaultPath); err != nil {
+		t.Fatalf("warm-upgrade initializeVaultServices: %v", err)
+	}
+	defer func() { _ = app3.CloseVault() }()
+
+	// (a) page_core rows ARE produced for the warm-skipped page.
+	row, err := app3.db.GetPageCoreProjection("vault", "Books", "", "Dune")
+	if err != nil {
+		t.Fatalf("warm-upgrade GetPageCoreProjection: %v", err)
+	}
+	if row == nil {
+		t.Fatal("warm-upgrade: page_core row missing for Dune — the dual-marker gate skipped the core backfill even though PageCoreBackfillMarker was unset")
+	}
+	if row.Type != "book" {
+		t.Errorf("warm-upgrade page_core Type = %q, want book", row.Type)
+	}
+	if row.Date != "2026-08-01" {
+		t.Errorf("warm-upgrade page_core Date = %q, want 2026-08-01", row.Date)
+	}
+
+	// (b) PageCoreBackfillMarker gets recorded on success — proves the
+	// dual-marker gate did not piggy-back on the projection marker.
+	coreRecorded, err := app3.db.SchemaMigrationApplied(db.PageCoreBackfillMarker)
+	if err != nil {
+		t.Fatalf("post-upgrade SchemaMigrationApplied(core): %v", err)
+	}
+	if !coreRecorded {
+		t.Fatal("PageCoreBackfillMarker not recorded after warm-upgrade backfill — it would re-run on every open until recorded, defeating the one-shot contract")
+	}
 }

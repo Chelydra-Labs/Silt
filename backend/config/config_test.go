@@ -585,6 +585,11 @@ func TestNormalizeHotkeyCollisionMigration(t *testing.T) {
 // renamed chord migrates from its exact legacy default to the new default, a
 // customized binding is preserved untouched, and a clean current default is
 // left alone. Mirrors the format_subscript migration precedent above.
+//
+// next_tab/prev_tab are Windows-only migrations: on Linux (WebKitGTK) Ctrl+Tab
+// works and Ctrl+Alt+←/→ are WM-captured, so the legacy default is preserved
+// rather than rewritten. Those two cases run only when runtime.GOOS == "windows"
+// (see the platform gate in normalize.go).
 func TestNormalizeHotkeyDefaultsV1Migration(t *testing.T) {
 	type c struct {
 		action string
@@ -599,6 +604,13 @@ func TestNormalizeHotkeyDefaultsV1Migration(t *testing.T) {
 		{"prev_tab", "Ctrl+Shift+Tab", "Ctrl+Alt+Left"},
 	}
 	for _, tc := range cases {
+		// next_tab/prev_tab migration is Windows-only — the legacy Ctrl+Tab
+		// is preserved verbatim on Linux/macOS where Ctrl+Alt+Arrow is captured
+		// by the window manager. Skip those two on non-Windows so the test
+		// suite stays green across platforms.
+		if (tc.action == "next_tab" || tc.action == "prev_tab") && runtime.GOOS != "windows" {
+			continue
+		}
 		t.Run(tc.action+" legacy value migrates", func(t *testing.T) {
 			cfg := Defaults()
 			cfg.Hotkeys[tc.action] = tc.legacy
@@ -619,6 +631,9 @@ func TestNormalizeHotkeyDefaultsV1Migration(t *testing.T) {
 	t.Run("clean current defaults are untouched", func(t *testing.T) {
 		out := normalize(Defaults())
 		for _, tc := range cases {
+			if tc.action == "next_tab" || tc.action == "prev_tab" {
+				continue // platform-conditional default; checked in TestDefaults_NextPrevTabPlatformConditional
+			}
 			if out.Hotkeys[tc.action] != tc.want {
 				t.Errorf("clean default %s changed: got %q", tc.action, out.Hotkeys[tc.action])
 			}
@@ -638,6 +653,139 @@ func TestNormalizeHotkeyDefaultsV1Migration(t *testing.T) {
 			t.Errorf("clean defaults should not stamp the notice")
 		}
 	})
+}
+
+// TestNormalize_NextPrevTabMigration_PlatformGate documents and pins the
+// platform gate on the v1 next_tab/prev_tab migration. The migration from
+// Ctrl+Tab → Ctrl+Alt+Right (and the prev_tab sibling) only fires on Windows,
+// where WebView2 drops Ctrl+Tab; on Linux/macOS the working Ctrl+Tab default
+// must survive normalize() unchanged because Ctrl+Alt+←/→ are WM-captured.
+//
+// We cannot flip runtime.GOOS from a test, so this case asserts the contract
+// for the platform the test binary is running on. On Windows the legacy
+// Ctrl+Tab IS migrated (the WebView2 case the remap was added for); on
+// non-Windows the legacy default is preserved verbatim — pinning the
+// platform-branch invariant.
+func TestNormalize_NextPrevTabMigration_PlatformGate(t *testing.T) {
+	cfg := Defaults()
+	cfg.Hotkeys["next_tab"] = "Ctrl+Tab"
+	cfg.Hotkeys["prev_tab"] = "Ctrl+Shift+Tab"
+	out := normalize(cfg)
+	if runtime.GOOS == "windows" {
+		if out.Hotkeys["next_tab"] != "Ctrl+Alt+Right" {
+			t.Errorf("windows: next_tab should migrate to Ctrl+Alt+Right, got %q", out.Hotkeys["next_tab"])
+		}
+		if out.Hotkeys["prev_tab"] != "Ctrl+Alt+Left" {
+			t.Errorf("windows: prev_tab should migrate to Ctrl+Alt+Left, got %q", out.Hotkeys["prev_tab"])
+		}
+	} else {
+		if out.Hotkeys["next_tab"] != "Ctrl+Tab" {
+			t.Errorf("non-windows: next_tab Ctrl+Tab must be preserved, got %q", out.Hotkeys["next_tab"])
+		}
+		if out.Hotkeys["prev_tab"] != "Ctrl+Shift+Tab" {
+			t.Errorf("non-windows: prev_tab Ctrl+Shift+Tab must be preserved, got %q", out.Hotkeys["prev_tab"])
+		}
+	}
+}
+
+// TestDefaults_NextPrevTabPlatformConditional pins the defaults.go
+// platform-conditional for next_tab/prev_tab (#863): on Windows the default is
+// Ctrl+Alt+Right/Left (WebView2 drops Ctrl+Tab); on Linux/macOS the native
+// Ctrl+Tab / Ctrl+Shift+Tab is kept because Ctrl+Alt+←/→ are WM-captured.
+// close_tab (Ctrl+Shift+W) is platform-independent.
+func TestDefaults_NextPrevTabPlatformConditional(t *testing.T) {
+	d := Defaults()
+	if runtime.GOOS == "windows" {
+		if d.Hotkeys["next_tab"] != "Ctrl+Alt+Right" {
+			t.Errorf("windows default next_tab: want Ctrl+Alt+Right, got %q", d.Hotkeys["next_tab"])
+		}
+		if d.Hotkeys["prev_tab"] != "Ctrl+Alt+Left" {
+			t.Errorf("windows default prev_tab: want Ctrl+Alt+Left, got %q", d.Hotkeys["prev_tab"])
+		}
+	} else {
+		if d.Hotkeys["next_tab"] != "Ctrl+Tab" {
+			t.Errorf("non-windows default next_tab: want Ctrl+Tab, got %q", d.Hotkeys["next_tab"])
+		}
+		if d.Hotkeys["prev_tab"] != "Ctrl+Shift+Tab" {
+			t.Errorf("non-windows default prev_tab: want Ctrl+Shift+Tab, got %q", d.Hotkeys["prev_tab"])
+		}
+	}
+	// close_tab is reliable on every platform; never conditional.
+	if d.Hotkeys["close_tab"] != "Ctrl+Shift+W" {
+		t.Errorf("close_tab default: want Ctrl+Shift+W (all platforms), got %q", d.Hotkeys["close_tab"])
+	}
+}
+
+// TestDefaults_NoGlobalHotkeyChordConflict pins the global-scope uniqueness
+// invariant over the REAL Defaults() map — binding directly to the source of
+// truth so a future default change that introduces a real conflict fails this
+// test. Mirrors frontend/src/shell/defaults.noconflict.test.ts but reads the
+// canonical map (no hand-maintained mirror).
+//
+// Editor-scoped actions (consumed by the editor's ProseMirror keymap while the
+// editor is focused, never reaching the global resolver) are EXCLUDED:
+//   - prefixes: format_, set_, align_, indent_, unindent_
+//   - exact names: toggle_quote, toggle_details, table_insert_*
+//
+// The one exception is format_bold: Ctrl+B is bold EVERYWHERE (the editor
+// unfocused case is global-resolvable too), so it stays in the checked set.
+//
+// tasks_command_palette is hub-scoped (TasksHub keydown listener, not the
+// global resolver) and is excluded; it shares Ctrl+K with editor-scoped
+// format_link, disambiguated by the hub's editable-target guard.
+func TestDefaults_NoGlobalHotkeyChordConflict(t *testing.T) {
+	d := Defaults()
+	seen := make(map[string]string) // normalized chord → first action
+	count := 0
+	for action, chord := range d.Hotkeys {
+		if isEditorOrHubScopedAction(action) {
+			continue
+		}
+		count++
+		normalized := strings.ToLower(chord)
+		if prior, exists := seen[normalized]; exists {
+			t.Errorf("global chord conflict: %q and %q both default to %q",
+				prior, action, chord)
+			continue
+		}
+		seen[normalized] = action
+	}
+	// Sanity: the checked set is non-empty — guards against a future edit that
+	// accidentally re-classifies every action as editor-scoped, which would
+	// make the loop trivially pass.
+	if count < 10 {
+		t.Errorf("expected at least 10 global-resolvable actions, got %d", count)
+	}
+}
+
+// isEditorOrHubScopedAction reports whether a hotkey action is resolved by the
+// editor's ProseMirror keymap (editor-scoped) or the TasksHub keydown listener
+// (hub-scoped) rather than the global resolver. Those actions may share a chord
+// with a global action — focus/scope disambiguates them — so they are excluded
+// from the global conflict check.
+func isEditorOrHubScopedAction(action string) bool {
+	// format_bold is the ONE format_ action that is also global-resolvable
+	// (Ctrl+B is bold everywhere, including when the editor is unfocused), so
+	// it is NOT editor-scoped for the purposes of this check.
+	if action == "format_bold" {
+		return false
+	}
+	switch {
+	case strings.HasPrefix(action, "format_"),
+		strings.HasPrefix(action, "set_"),
+		strings.HasPrefix(action, "align_"),
+		strings.HasPrefix(action, "indent_"),
+		strings.HasPrefix(action, "unindent_"),
+		strings.HasPrefix(action, "table_"):
+		return true
+	}
+	switch action {
+	case "toggle_quote",
+		"toggle_details",
+		"tasks_command_palette":
+		return true
+	}
+	return false
 }
 
 // TestNormalizeHotkeyDefaultsV1_OneShotNoRefire verifies the one-shot gate:

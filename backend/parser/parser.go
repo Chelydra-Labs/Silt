@@ -963,13 +963,28 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 						}
 					}
 					if meta.Date == "" {
-						if d, ok := rawFM["date"].(string); ok && d != "" {
-							meta.Date = NormalizeDate(d)
+						// yaml.v3 resolves an UNQUOTED `date: 2026-08-05` to a
+						// time.Time, not a string — accept both so an unquoted
+						// date survives the typed-decode recovery path.
+						switch d := rawFM["date"].(type) {
+						case string:
+							if d != "" {
+								meta.Date = NormalizeDate(d)
+							}
+						case time.Time:
+							meta.Date = NormalizeDate(d.Format("2006-01-02"))
 						}
 					}
 					if meta.Created == "" {
-						if c, ok := rawFM["created"].(string); ok && c != "" {
-							meta.Created = c
+						// created is a full timestamp, so format as RFC3339 when
+						// yaml handed us a time.Time (unquoted scalar form).
+						switch c := rawFM["created"].(type) {
+						case string:
+							if c != "" {
+								meta.Created = c
+							}
+						case time.Time:
+							meta.Created = c.Format(time.RFC3339)
 						}
 					}
 					if len(meta.Tags) == 0 {
