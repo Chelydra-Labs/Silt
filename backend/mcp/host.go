@@ -361,6 +361,11 @@ func (h *Host) startHTTP(srv *mcpsdk.Server, token string, port int) error {
 	// cross-origin page cannot cause the browser to attach one) combined with
 	// the origin allowlist in authMiddleware (isAllowedOrigin). The loopback
 	// bind above separately blocks remote network access.
+	// Stateful transport intentionally stays on protocol 2025-11-25: go-sdk
+	// 1.7.0 serves the 2026-07-28 protocol only in stateless mode (SEP-2575),
+	// and flipping Stateless would change session semantics for every client.
+	// New-protocol clients negotiate down automatically; revisit only if
+	// 2026-07-28-only clients must be supported.
 	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server {
 		return srv
 	}, &mcpsdk.StreamableHTTPOptions{JSONResponse: true})
