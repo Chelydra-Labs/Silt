@@ -546,6 +546,7 @@
             type="button"
             class="sv-btn primary"
             onclick={() => void updateActiveView()}
+            disabled={savedViewsBusy}
           >
             Update “{activeSavedView.name}”
           </button>
@@ -555,6 +556,7 @@
             type="button"
             class="sv-btn danger"
             onclick={() => void deleteActiveView()}
+            disabled={savedViewsBusy}
             aria-label="Delete saved view {activeSavedView.name}"
           >
             <span
