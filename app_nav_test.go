@@ -1633,18 +1633,23 @@ func TestGetOpenTabs_EmptyVault(t *testing.T) {
 	}
 }
 
-// TestSetOpenTabs_SelfWriteSuppressed verifies that SetOpenTabs calls
-// RegisterSelfWrite so the config watcher does NOT fire a config:changed
-// reload for Silt's own write (#142). This is the PLAN's promised
-// self-write suppression test, exercised end-to-end via a real ConfigWatcher.
+// TestSetOpenTabs_SelfWriteSuppressed verifies that SetOpenTabs routes its
+// config write through saveConfigTracked, which arms the watcher's self-write
+// suppression window BEFORE config.Save (#142). The assertion is synchronous —
+// by the time SetOpenTabs returns, RegisterSelfWrite has run — so it does not
+// depend on fsnotify delivery timing (a starved watcher loop under -race can
+// drain a self-write event past the 500ms window and surface a spurious
+// reload, making the old "assert no reload within N ms" form flaky). The
+// window's actual event-suppression behavior is covered by backend/config's
+// TestConfigWatcher_SelfWrite_IsIgnored; this test only proves the App wires
+// the suppression up.
 func TestSetOpenTabs_SelfWriteSuppressed(t *testing.T) {
 	app := newTestApp(t)
 
-	// Set up a real config watcher so RegisterSelfWrite is meaningful.
-	changed := make(chan config.SystemConfig, 4)
-	cw, err := config.NewConfigWatcher(app.vaultPath, func(c config.SystemConfig) {
-		changed <- c
-	}, nil)
+	// A real watcher is needed so saveConfigTracked has something to arm.
+	// onChange is unused — the assertion is on the watcher's armed state, not
+	// on whether a reload fires.
+	cw, err := config.NewConfigWatcher(app.vaultPath, func(config.SystemConfig) {}, nil)
 	if err != nil {
 		t.Fatalf("NewConfigWatcher: %v", err)
 	}
@@ -1653,20 +1658,21 @@ func TestSetOpenTabs_SelfWriteSuppressed(t *testing.T) {
 	app.configWatcher = cw
 	defer func() { app.configWatcher = nil }()
 
-	// Give the watcher time to settle.
-	time.Sleep(150 * time.Millisecond)
+	if cw.IsSelfWriteArmed() {
+		t.Fatalf("watcher should not start with the self-write window armed")
+	}
 
 	tabs := []config.TabRef{{Notebook: "Work", Section: "", Page: "Page1"}}
 	if err := app.SetOpenTabs(tabs, nil); err != nil {
 		t.Fatalf("SetOpenTabs: %v", err)
 	}
 
-	// The watcher should NOT fire within the self-write cooldown window.
-	select {
-	case <-changed:
-		t.Fatalf("self-write should be suppressed, but config:changed fired")
-	case <-time.After(config.SelfWriteSuppressionTimeout):
-		// expected: no reload within the cooldown window
+	// saveConfigTracked arms the window synchronously before config.Save, so
+	// once SetOpenTabs returns the window MUST be armed. This is the contract
+	// that matters; whether fsnotify then suppresses the resulting events is
+	// the config package's concern.
+	if !cw.IsSelfWriteArmed() {
+		t.Fatalf("SetOpenTabs did not arm the watcher's self-write suppression")
 	}
 }
 

@@ -191,6 +191,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// index file yet) every file is "changed" and gets a full index. Pruning
 	// stale `files` rows for paths no longer on disk handles deletes/renames.
 	var changed []parser.ScanResult
+	var warmSkipped []parser.ScanResult
 	var seenPaths []string
 	for _, res := range results {
 		seenPaths = append(seenPaths, res.Path)
@@ -207,6 +208,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			continue
 		}
 		if unchanged {
+			warmSkipped = append(warmSkipped, res)
 			continue
 		}
 		changed = append(changed, res)
@@ -315,22 +317,21 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.reprojectWorker = newProjectionReprojectWorker(a)
 	a.reprojectWorker.start()
 
-	// Project typed-notes type/property values. Cold start / changed files
-	// always project (cardinal rule 4 — delete the index and these rebuild
-	// from frontmatter + the type schema). Warm upgrade from a pre-typed-notes
-	// index leaves the files table populated, so IsFileUnchanged skips every
-	// pre-existing page and `changed` is empty — without a one-shot backfill
-	// those hand-authored `type:` pages never appear in dashboards until
-	// touched. page_projection_backfill records that the full scan has been
-	// projected once; subsequent warm opens only project `changed`.
-	// Runs AFTER a.db/a.vaultPath are assigned (projectPageType uses both);
-	// each call opens its own DB lease, so it stays outside any WithDBWrite.
-	toProject := changed
+	// Typed-projection backfill. Two scenarios:
+	//   - Marker already set (warm restart): changed files were projected
+	//     atomically by IndexScanResultsWithProjection above. Nothing left.
+	//   - Marker not set (cold start or warm upgrade): project warm-skipped
+	//     files whose blocks were not re-indexed this session. Changed files
+	//     were already projected by the atomic batch, so only warmSkipped
+	//     needs the standalone pass. On a true cold start warmSkipped is
+	//     empty (every file was "changed") and the loop is a no-op.
 	backfillDone, berr := dbMgr.SchemaMigrationApplied(db.PageProjectionBackfillMarker)
 	if berr != nil {
 		log.Printf("initializeVaultServices: probe page_projection_backfill: %v", berr)
-	} else if !backfillDone {
-		toProject = results
+	}
+	var toProject []parser.ScanResult
+	if !backfillDone {
+		toProject = warmSkipped
 	}
 	// Only record the one-shot backfill marker when every page projected
 	// cleanly. projectPageType returns DB errors; swallowing them and still
@@ -341,6 +342,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		if res.Notebook == "" || res.Err != nil {
 			continue
 		}
+		a.backfillProjectionCount++
 		if err := a.projectPageType(res.Source, parser.FileMetadata{
 			Notebook:    res.Notebook,
 			Section:     res.Section,

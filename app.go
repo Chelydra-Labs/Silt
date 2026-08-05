@@ -285,6 +285,11 @@ type App struct {
 	// the prior behavior where reprojectAllTypedPages was a no-op without
 	// a db handle). See app_types_worker.go.
 	reprojectWorker *projectionReprojectWorker
+
+	// backfillProjectionCount counts projectPageType calls made by the
+	// cold-start backfill loop. Tests read it to prove the loop was
+	// skipped when the atomic batch already projected. Production never reads it.
+	backfillProjectionCount int
 }
 
 // aiStreamSession type lives in app_ai_stream.go (#762). App fields
