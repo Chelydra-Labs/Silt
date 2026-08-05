@@ -491,26 +491,37 @@ func TestParseFileContent_ScalarAliasesRecoversAllFields(t *testing.T) {
 	}
 }
 
-// TestParseFileContent_UnquotedDateSurvivesScalarAliasesRecovery covers the
-// regression where yaml.v3 resolves an UNQUOTED `date: 2026-08-05` to a
-// time.Time (not a string). The recovery branch previously asserted
-// `rawFM["date"].(string)` and silently dropped the date when the value was
-// a time.Time, falling back to file-mtime. The scalar `aliases: foo` forces
-// the typed-decode failure that triggers recovery, exactly as in
-// TestParseFileContent_ScalarAliasesRecoversAllFields — but with an unquoted
-// date (the existing test uses a quoted date and so misses this branch).
+// TestParseFileContent_UnquotedDateSurvivesScalarAliasesRecovery pins the
+// parser's behavior when frontmatter carries BOTH an unquoted date (which
+// yaml.v3 resolves to a time.Time in the raw map) AND a scalar `aliases: foo`
+// (which fails the typed []string decode, forcing the raw-map recovery path).
+//
+// yaml.v3 does NOT coerce a scalar into []string — `node.Decode(&parsedMeta)`
+// returns "cannot unmarshal !!str `foo` into []string", so the typed-success
+// block that would normally copy parsedMeta.Date is skipped. meta.Date is
+// pre-filled with defaultDate at the top of the function, so the recovery
+// must OVERWRITE it from raw frontmatter (a `if meta.Date == ""` guard would
+// never fire and the frontmatter date would be silently dropped, leaving the
+// page on the file-mtime default).
+//
+// To prove the recovery (not the defaultDate pre-fill) is what carries the
+// date, the defaultDate arg is INTENTIONALLY DIFFERENT from the frontmatter
+// date — if the recovery were dead, meta.Date would come back as 2026-01-01.
 func TestParseFileContent_UnquotedDateSurvivesScalarAliasesRecovery(t *testing.T) {
 	content := "---\n" +
 		"date: 2026-08-05\n" + // UNQUOTED → yaml resolves to time.Time
 		"aliases: foo\n" + // scalar — forces typed-decode failure → recovery path
 		"---\n# Plan\n"
-	blocks, meta, _, _, err := ParseFileContent(content, "work", "", "plan", "2026-08-05", 4)
+	// defaultDate DIFFERS from the frontmatter date so the test fails if the
+	// recovery branch is ever regressed to a `if meta.Date == ""` guard (which
+	// would leave meta.Date at the defaultDate pre-fill).
+	blocks, meta, _, _, err := ParseFileContent(content, "work", "", "plan", "2026-01-01", 4)
 	if err != nil {
 		t.Fatalf("ParseFileContent failed: %v", err)
 	}
 	_ = blocks
 	if meta.Date != "2026-08-05" {
-		t.Errorf("unquoted date lost in raw-map recovery: got %q, want 2026-08-05", meta.Date)
+		t.Errorf("frontmatter date lost on typed-decode failure: got %q (defaultDate pre-fill), want 2026-08-05 (recovered from raw frontmatter)", meta.Date)
 	}
 	if len(meta.Aliases) != 1 || meta.Aliases[0] != "foo" {
 		t.Errorf("scalar aliases not recovered alongside unquoted date: got %v, want [foo]", meta.Aliases)

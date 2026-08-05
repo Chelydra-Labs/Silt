@@ -389,6 +389,50 @@ func TestCreatePageFromTemplate_IPC_BuiltinTemplate(t *testing.T) {
 	}
 }
 
+// TestCreatePageFromTemplate_StampsCreated verifies the scaffolded frontmatter
+// carries a non-empty `created:` timestamp, matching CreatePage's behavior.
+// Without this, template-based pages carry an empty created until manually
+// edited — the spec says "created set on page creation" (#867).
+func TestCreatePageFromTemplate_StampsCreated(t *testing.T) {
+	app := newTestApp(t)
+	os.MkdirAll(filepath.Join(app.vaultPath, "Work", "Projects"), 0o755)
+
+	before := time.Now().Add(-time.Minute)
+	_, err := app.CreatePageFromTemplate("Work", "Projects", "MeetingCreated", "", "meeting-notes", map[string]string{"meeting_title": "Kickoff"})
+	if err != nil {
+		t.Fatalf("CreatePageFromTemplate: %v", err)
+	}
+	path := filepath.Join(app.vaultPath, "Work", "Projects", "MeetingCreated.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("page file not written: %v", err)
+	}
+	content := string(raw)
+	// The created line must be present and hold a parseable timestamp close
+	// to now (CreatePageFromTemplate stamps at write time, matching CreatePage).
+	createdLine := ""
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "created:") {
+			createdLine = strings.TrimSpace(strings.TrimPrefix(line, "created:"))
+			createdLine = strings.Trim(createdLine, `"`)
+			break
+		}
+	}
+	if createdLine == "" {
+		t.Fatalf("frontmatter missing non-empty created: field:\n%s", content)
+	}
+	// Parse in Local (the stamp was produced by time.Now().Format, which is
+	// local) — time.Parse without a location reads the zone-less string as
+	// UTC, which would skew the near-now check by the local UTC offset.
+	created, perr := time.ParseInLocation("2006-01-02T15:04:05", createdLine, time.Local)
+	if perr != nil {
+		t.Fatalf("created value %q is not a valid timestamp: %v", createdLine, perr)
+	}
+	if created.Before(before) || created.After(time.Now().Add(time.Minute)) {
+		t.Errorf("created timestamp %q is not near now", createdLine)
+	}
+}
+
 func TestCreatePageFromTemplate_IPC_DoesNotClobber(t *testing.T) {
 	app := newTestApp(t)
 	os.MkdirAll(filepath.Join(app.vaultPath, "Work", "Projects"), 0o755)

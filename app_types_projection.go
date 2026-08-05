@@ -125,6 +125,25 @@ func computePageCoreFromMeta(meta parser.FileMetadata) db.PageCoreFields {
 			}
 		}
 	}
+	// `date` is recovered from the raw frontmatter when the typed field is
+	// empty — mirrors the created/aliases fallbacks. The vault and linked
+	// scanners set meta.Date from the parser, but a hand-built ScanResult
+	// (or a future caller that skips the parser) would otherwise project an
+	// empty core.date even when frontmatter carries one. An unquoted
+	// `date: 2026-08-05` survives in Frontmatter as a time.Time, so handle
+	// both shapes (NormalizeDate takes the string form).
+	if core.Date == "" && meta.Frontmatter != nil {
+		if v, ok := lookupFrontmatter(meta.Frontmatter, "date"); ok {
+			switch d := v.(type) {
+			case string:
+				if d != "" {
+					core.Date = parser.NormalizeDate(d)
+				}
+			case time.Time:
+				core.Date = d.Format("2006-01-02")
+			}
+		}
+	}
 	return core
 }
 

@@ -254,8 +254,13 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 		)
 	}
 
-	scaffoldFrontmatter := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
-		strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeDate))
+	// `created` stamps the page's birth time once (#867); subsequent edits
+	// preserve it verbatim, matching how date/tags/type round-trip. Mirrors
+	// CreatePage's scaffold so template-based pages don't carry an empty
+	// created until manually edited.
+	createdStr := time.Now().Format("2006-01-02T15:04:05")
+	scaffoldFrontmatter := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ncreated: %s\ntags: []\n---\n",
+		strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeDate), strconv.Quote(createdStr))
 	content := scaffoldFrontmatter + rendered
 
 	a.wg.Add(1)

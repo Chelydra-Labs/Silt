@@ -962,18 +962,25 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 							meta.Type = t
 						}
 					}
-					if meta.Date == "" {
-						// yaml.v3 resolves an UNQUOTED `date: 2026-08-05` to a
-						// time.Time, not a string — accept both so an unquoted
-						// date survives the typed-decode recovery path.
-						switch d := rawFM["date"].(type) {
-						case string:
-							if d != "" {
-								meta.Date = NormalizeDate(d)
-							}
-						case time.Time:
-							meta.Date = NormalizeDate(d.Format("2006-01-02"))
+					// Recover the frontmatter date unconditionally. yaml.v3 FAILS
+					// the typed FileMetadata decode on a scalar `aliases: foo`
+					// (cannot unmarshal !!str into []string), so when frontmatter
+					// carries such a field the typed-success block above never
+					// runs and `meta.Date` keeps the defaultDate pre-fill from
+					// the top of the function. A `if meta.Date == ""` guard here
+					// would never fire (defaultDate is always non-empty in the
+					// production callers) and the frontmatter date would be
+					// silently dropped. On typed success this just re-normalizes
+					// the same value, so running it unconditionally is safe.
+					// An UNQUOTED `date: 2026-08-05` resolves to a time.Time in
+					// the raw map; a quoted one is a string — handle both.
+					switch d := rawFM["date"].(type) {
+					case string:
+						if d != "" {
+							meta.Date = NormalizeDate(d)
 						}
+					case time.Time:
+						meta.Date = NormalizeDate(d.Format("2006-01-02"))
 					}
 					if meta.Created == "" {
 						// created is a full timestamp, so format as RFC3339 when
