@@ -662,15 +662,13 @@
       >
         {item.clean_content}
       </div>
-      <div
-        class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm"
-      >
-        {#if item.notebook === STANDALONE_TASKS_NOTEBOOK}
-          Standalone task
-        {:else}
+      {#if item.notebook !== STANDALONE_TASKS_NOTEBOOK}
+        <div
+          class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm"
+        >
           {item.notebook} › {item.section} › {item.page}
-        {/if}
-      </div>
+        </div>
+      {/if}
     </button>
     <button
       type="button"
@@ -972,15 +970,13 @@
                     >
                       {item.clean_content}
                     </div>
-                    <div
-                      class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm"
-                    >
-                      {#if item.notebook === STANDALONE_TASKS_NOTEBOOK}
-                        Standalone task
-                      {:else}
+                    {#if item.notebook !== STANDALONE_TASKS_NOTEBOOK}
+                      <div
+                        class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm"
+                      >
                         {item.notebook} › {item.section} › {item.page}
-                      {/if}
-                    </div>
+                      </div>
+                    {/if}
                   </div>
                   <span
                     class="text-type-2xs text-text-muted font-label-sm flex-shrink-0"

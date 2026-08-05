@@ -422,12 +422,10 @@
         aria-hidden="true">zoom_in</span
       >
       <div class="min-w-0 flex-1">
-        <div
-          class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold truncate"
-        >
-          {#if isStandalone}
-            Standalone task
-          {:else}
+        {#if !isStandalone}
+          <div
+            class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold truncate"
+          >
             {notebook}<span
               class="material-symbols-outlined text-type-2xs align-middle"
               aria-hidden="true">chevron_right</span
@@ -435,8 +433,8 @@
               class="material-symbols-outlined text-type-2xs align-middle"
               aria-hidden="true">chevron_right</span
             >{page}
-          {/if}
-        </div>
+          </div>
+        {/if}
         <h2
           id="sub-editor-title"
           class="text-text-primary font-label-md text-base truncate"

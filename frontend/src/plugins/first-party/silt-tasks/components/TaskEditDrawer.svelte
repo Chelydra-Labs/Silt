@@ -195,16 +195,14 @@
         </section>
       {/if}
 
-      <!-- Source breadcrumb (source-aware) -->
-      <section class="pt-2 border-t border-surface-card-border">
-        <p class="text-type-2xs font-label-sm text-text-muted break-all">
-          {#if isStandalone}
-            Standalone task
-          {:else}
+      <!-- Source breadcrumb — omitted for standalone tasks (no source page). -->
+      {#if !isStandalone}
+        <section class="pt-2 border-t border-surface-card-border">
+          <p class="text-type-2xs font-label-sm text-text-muted break-all">
             {task.notebook} › {task.section} › {task.page}
-          {/if}
-        </p>
-      </section>
+          </p>
+        </section>
+      {/if}
     </div>
   </div>
 {/if}

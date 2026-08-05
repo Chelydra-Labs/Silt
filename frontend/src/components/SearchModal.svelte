@@ -635,10 +635,9 @@
             class:border-l-2={idx === selectedIdx}
             class:border-accent-primary-start={idx === selectedIdx}
           >
-            <!-- Breadcrumb metadata. For `.silt` standalone-task results, the
-                 synthetic notebook name is hidden (the routing guard sends
-                 the click to the Tasks view); we render a friendlier
-                 "Standalone task › tasks" instead. (#374) -->
+            <!-- Breadcrumb metadata. Standalone (`.silt`) results omit the
+                 path entirely — no synthetic notebook leak and no redundant
+                 "Standalone task" label; the click still routes to Tasks. -->
             <div
               class="flex items-center gap-1.5 text-type-2xs text-text-muted uppercase tracking-widest font-label-sm-bold"
             >
@@ -647,13 +646,7 @@
                 class="rounded-full border border-surface-modal-border bg-surface-modal px-1.5 py-0.5 text-type-3xs tracking-wider text-text-muted"
                 >{sourceLabel(res.source)}</span
               >
-              {#if res.notebook === STANDALONE_TASKS_NOTEBOOK}
-                <span>Standalone task</span>
-                <span class="material-symbols-outlined text-type-2xs"
-                  >chevron_right</span
-                >
-                <span>{res.page}</span>
-              {:else}
+              {#if res.notebook !== STANDALONE_TASKS_NOTEBOOK}
                 <span>{res.notebook}</span>
                 <span class="material-symbols-outlined text-type-2xs"
                   >chevron_right</span
@@ -663,10 +656,10 @@
                   >chevron_right</span
                 >
                 <span>{res.page}</span>
+                <span class="material-symbols-outlined text-type-2xs"
+                  >chevron_right</span
+                >
               {/if}
-              <span class="material-symbols-outlined text-type-2xs"
-                >chevron_right</span
-              >
               <span class="text-accent-primary-start">{res.file_date}</span>
             </div>
 
