@@ -38,7 +38,7 @@
   let { task, ctx, onClose, onMetaChanged, onOpenSubEditor }: Props = $props()
 
   // Source awareness: standalone (.silt) tasks have no source page, so the
-  // breadcrumb shows a friendly label and "Open source page" is hidden.
+  // breadcrumb is omitted and "Open source page" is hidden.
   let isStandalone = $derived(
     !!task && task.notebook === STANDALONE_TASKS_NOTEBOOK
   )
