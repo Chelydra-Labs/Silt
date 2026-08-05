@@ -1,12 +1,13 @@
-// Serializable saved-view identity contracts + load/persist helpers shared by
-// every surface that stores user-defined views (silt-tasks hub, typed-notes
-// dashboard). Extracted from the merge/strip loops that both consumers had
-// hand-rolled.
+// Serializable saved-view identity contracts + load/persist helpers for
+// surfaces that store user-defined views. Extracted from the merge/strip loops
+// the typed-notes dashboard hand-rolled; silt-tasks keeps its own persistence
+// loop for now (its system-view merge is more involved), so adopt this module
+// there later rather than claiming full shared ownership today.
 //
 // Pure: no Svelte, no bindings. Concrete view interfaces (silt-tasks
 // SavedView, dashboard DashboardSavedView) extend {@link SavedViewBase} and
 // add their own dimension fields. The merge/strip helpers are domain-agnostic
-// so the two persistence layers don't duplicate the bookkeeping.
+// so a persistence layer doesn't duplicate the bookkeeping.
 
 /** Common identity fields every saved view carries, regardless of surface. */
 export interface SavedViewBase {

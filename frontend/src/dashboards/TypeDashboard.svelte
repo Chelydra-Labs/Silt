@@ -74,8 +74,10 @@
   let filter = $state<FilterState>({})
   let sort = $state<SortState>({ property: PAGE_COLUMN_KEY, desc: false })
   let groupBy = $state('')
-  // View mode is local-only (not persisted) — the dashboard's primary mode
-  // is the dense table; board is a glance surface for grouped browsing.
+  // View mode is local-only between sessions (not persisted on its own), but
+  // it IS snapshotted into a saved view when the user saves one (see
+  // confirmSaveView/updateActiveView). The dashboard's primary mode is the
+  // dense table; board is a glance surface for grouped browsing.
   let viewMode = $state<'list' | 'board'>('list')
 
   // Collapsed group keys survive a re-bin (SvelteSet so toggles are reactive).

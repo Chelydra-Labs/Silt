@@ -23,8 +23,9 @@ import {
 const SEGMENTS = ['dashboards', 'typed_notes', 'saved_views'] as const
 
 // Soft cap on persisted saved views — guards against unbounded config.yaml
-// growth (mirrors MaxFavoritePages / MaxRecentPages). A user exceeding this is
-// exceedingly unlikely; the cap drops the tail (oldest-by-order) on persist.
+// growth (mirrors MaxFavoritePages / MaxRecentPages). Views are appended at
+// the tail on save, so keep the NEWEST MAX_SAVED_VIEWS (drop the oldest head)
+// — past the cap, dropping the just-created view would silently vanish it.
 const MAX_SAVED_VIEWS = 256
 
 /**
@@ -63,7 +64,9 @@ export async function persistTypedNotesSavedViews(
   if (!cfg) return 'Settings not loaded'
   let persistable = persistableDashboardSavedViews(views)
   if (persistable.length > MAX_SAVED_VIEWS) {
-    persistable = persistable.slice(0, MAX_SAVED_VIEWS)
+    // Keep the newest entries (saved views append at the tail): slice(-N)
+    // retains the last MAX_SAVED_VIEWS and drops the oldest head.
+    persistable = persistable.slice(-MAX_SAVED_VIEWS)
   }
   try {
     await SetTypedNotesSavedViews(persistable)
