@@ -152,6 +152,29 @@ func (a *App) renameIndexFile(source, notebook, section, page string, blocks []p
 func (a *App) indexFile(source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata, warnings ...string) error {
 	typeID, props := a.computePageProjection(meta)
 	core := a.computePageCore(meta)
+	// Capture the file's mtime/size BEFORE the index write so the files-table
+	// row records the mtime of the content being indexed — not whatever mtime a
+	// concurrent external edit (Obsidian/Dropbox/second Silt window) leaves on
+	// disk between the index commit and a post-commit stat. With a pre-commit
+	// snapshot, an external edit landing in the index window leaves the recorded
+	// mtime stale relative to the file's real (post-edit) mtime, so the warm-
+	// restart IsFileUnchanged check treats the file as "changed" and re-parses
+	// it — instead of silently skipping and persisting the stale content. The
+	// window is not eliminated entirely (an edit between the caller's write/parse
+	// and this stat can still mismatch), but the dangerous [index-commit, stat]
+	// window is gone. Best-effort: a stat/mark failure only leaves `modified`
+	// stale until the next external-triggered scan — it is not a write failure.
+	var filePath string
+	var fileMtime, fileSize int64
+	hasStat := false
+	if dir, derr := a.resolveNotebookDir(notebook, source); derr == nil {
+		filePath = filepath.Join(dir, section, page+".md")
+		if stat, se := os.Stat(filePath); se == nil {
+			fileMtime = stat.ModTime().UnixNano()
+			fileSize = stat.Size()
+			hasStat = true
+		}
+	}
 	var err error
 	a.coordinator.WithDBWrite(func() {
 		err = a.db.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, typeID, props, core, warnings...)
@@ -161,23 +184,16 @@ func (a *App) indexFile(source, notebook, section, page string, blocks []parser.
 		a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
 		return err
 	}
-	// Refresh the files-table mtime/size so the Core panel's read-only
-	// `modified` field stays current after an in-app write (frontmatter edit,
-	// block write, page create). The fsnotify watcher ignores self-writes, so
-	// without this the row would hold the startup-scan mtime all session. Every
-	// write path funnels through indexFile, so this single call covers them all.
-	// Best-effort: a stat/mark failure only leaves `modified` stale until the
-	// next external-triggered scan — it is not a write failure (the index above
-	// already committed).
-	if dir, derr := a.resolveNotebookDir(notebook, source); derr == nil {
-		filePath := filepath.Join(dir, section, page+".md")
-		if stat, se := os.Stat(filePath); se == nil {
-			a.coordinator.WithDBWrite(func() {
-				if me := a.db.MarkFileIndexed(nil, filePath, stat.ModTime().UnixNano(), stat.Size()); me != nil {
-					log.Printf("indexFile: MarkFileIndexed(%s) failed (modified may be stale): %v", filePath, me)
-				}
-			})
-		}
+	// Record the pre-index mtime snapshot so the Core panel's `modified` stays
+	// current after an in-app write (the fsnotify watcher ignores self-writes).
+	// Every write path funnels through indexFile, so this single call covers
+	// them all.
+	if hasStat {
+		a.coordinator.WithDBWrite(func() {
+			if me := a.db.MarkFileIndexed(nil, filePath, fileMtime, fileSize); me != nil {
+				log.Printf("indexFile: MarkFileIndexed(%s) failed (modified may be stale): %v", filePath, me)
+			}
+		})
 	}
 	return nil
 }

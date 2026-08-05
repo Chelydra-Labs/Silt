@@ -13,8 +13,10 @@ import (
 )
 
 // FileMtime returns the last-seen mtime (Unix nanoseconds) the index recorded
-// for the file at path, or (0, sql.ErrNoRows) when the file has no row (never
-// indexed, or the row was pruned). Used by GetPageCoreMetadata to surface a
+// for the file at path. A file with no row (never indexed, or the row was
+// pruned) returns (0, nil) — callers treat mt <= 0 as "no recorded mtime"
+// rather than an error, matching the GetPageCoreMetadata read path which
+// surfaces an empty `modified` until the file is indexed. Used to surface a
 // READ-ONLY `modified` value that stays fresh across block-only writes — a
 // task-status edit bumps the file mtime and MarkFileIndexed refreshes this
 // cache, so the panel reads the new value without re-parsing the frontmatter.
