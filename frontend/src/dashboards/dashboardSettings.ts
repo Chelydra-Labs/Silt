@@ -5,11 +5,13 @@
 //
 // Reads traverse the reactive settings.config snapshot (so a component
 // `$derived` that calls loadTypedNotesSavedViews re-runs on config:changed).
-// Writes mutate the snapshot in place + SaveSystemConfig it directly — NOT
-// saveConfig, which clears settings.dirty and would clobber an unsaved
-// Settings-panel draft. Mirrors noteZoom's atomic-write discipline.
+// Writes go through SetTypedNotesSavedViews — the Go-side TOCTOU-hardened
+// targeted setter that re-reads config.yaml under the config lock before
+// mutating the nested slice (#120/#475), so a concurrent external config edit
+// is preserved rather than clobbered by a stale full-snapshot save. The local
+// snapshot is mirrored optimistically after the Go write succeeds.
 
-import { SaveSystemConfig } from '../../bindings/silt/app.js'
+import { SetTypedNotesSavedViews } from '../../bindings/silt/app.js'
 import { settings } from '../settings/store.svelte'
 import {
   loadDashboardSavedViews,
@@ -19,6 +21,11 @@ import {
 
 // The config path: ui.dashboards.typed_notes.saved_views[].
 const SEGMENTS = ['dashboards', 'typed_notes', 'saved_views'] as const
+
+// Soft cap on persisted saved views — guards against unbounded config.yaml
+// growth (mirrors MaxFavoritePages / MaxRecentPages). A user exceeding this is
+// exceedingly unlikely; the cap drops the tail (oldest-by-order) on persist.
+const MAX_SAVED_VIEWS = 256
 
 /**
  * The raw saved-views array from the live vault config (or [] when the path
@@ -41,28 +48,37 @@ export function loadTypedNotesSavedViews(): DashboardSavedView[] {
 }
 
 /**
- * Persist the saved-views list. Strips system views + the system marker,
- * writes into ui.dashboards.typed_notes.saved_views, then atomically
- * SaveSystemConfig's the full snapshot. Returns false when config isn't
- * loaded yet or the write throws (fail-soft — the in-memory list still
- * reflects the user's intent for the session).
+ * Persist the saved-views list via the TOCTOU-hardened Go setter. Strips
+ * system views + the system marker, hands the opaque list to
+ * SetTypedNotesSavedViews (which re-reads config.yaml under the lock, mutates
+ * only the nested slice, and saves atomically), then mirrors the change into
+ * the local snapshot. Returns null on success or an error message on failure
+ * (fail-loud — the caller surfaces it in the toast rather than a generic
+ * boolean).
  */
 export async function persistTypedNotesSavedViews(
   views: DashboardSavedView[]
-): Promise<boolean> {
+): Promise<string | null> {
   const cfg = settings.config
-  if (!cfg) return false
-  if (!cfg.ui) cfg.ui = {} as typeof cfg.ui
-  const ui = cfg.ui as unknown as Record<string, unknown>
-  if (!ui.dashboards) ui.dashboards = {}
-  const dashboards = ui.dashboards as Record<string, unknown>
-  if (!dashboards.typed_notes) dashboards.typed_notes = {}
-  const typedNotes = dashboards.typed_notes as Record<string, unknown>
-  typedNotes.saved_views = persistableDashboardSavedViews(views)
+  if (!cfg) return 'Settings not loaded'
+  let persistable = persistableDashboardSavedViews(views)
+  if (persistable.length > MAX_SAVED_VIEWS) {
+    persistable = persistable.slice(0, MAX_SAVED_VIEWS)
+  }
   try {
-    await SaveSystemConfig(cfg)
-    return true
-  } catch {
-    return false
+    await SetTypedNotesSavedViews(persistable)
+    // Optimistic mirror: the Go setter does not emit config:changed, so update
+    // the local snapshot to match the persisted slice (keeps the reactive
+    // loadTypedNotesSavedViews $derived in sync without a round-trip).
+    if (!cfg.ui) cfg.ui = {} as typeof cfg.ui
+    const ui = cfg.ui as unknown as Record<string, unknown>
+    if (!ui.dashboards) ui.dashboards = {}
+    const dashboards = ui.dashboards as Record<string, unknown>
+    if (!dashboards.typed_notes) dashboards.typed_notes = {}
+    const typedNotes = dashboards.typed_notes as Record<string, unknown>
+    typedNotes.saved_views = persistable
+    return null
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e)
   }
 }

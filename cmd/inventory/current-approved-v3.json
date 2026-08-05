@@ -1017,6 +1017,10 @@
         "signature": "SetTaskTitle(blockID, title string) error"
       },
       {
+        "name": "SetTypedNotesSavedViews",
+        "signature": "SetTypedNotesSavedViews(views []any) error"
+      },
+      {
         "name": "SetTypewriterMode",
         "signature": "SetTypewriterMode(value bool) error"
       },

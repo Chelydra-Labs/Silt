@@ -101,6 +101,10 @@ export function coerceDashboardSavedView(
  * hand-edited YAML shouldn't surface duplicates). System views aren't merged
  * in here because the dashboard defines none today; the component composes
  * them via mergeViewById if/when system views are added.
+ *
+ * Dropped entries (malformed / duplicate id) emit a single console.warn so a
+ * user who hand-edited the YAML and broke a view gets a signal that it was
+ * discarded — fail-loud rather than a silent loss.
  */
 export function loadDashboardSavedViews(
   rawUser: unknown
@@ -108,12 +112,20 @@ export function loadDashboardSavedViews(
   if (!Array.isArray(rawUser)) return []
   const seen = new Set<string>()
   const out: DashboardSavedView[] = []
+  let dropped = 0
   for (const entry of rawUser) {
     const v = coerceDashboardSavedView(entry)
-    if (!v) continue
-    if (seen.has(v.id)) continue
+    if (!v || seen.has(v.id)) {
+      dropped++
+      continue
+    }
     seen.add(v.id)
     out.push(v)
+  }
+  if (dropped > 0) {
+    console.warn(
+      `dashboards: dropped ${dropped} invalid/duplicate saved-view entr${dropped === 1 ? 'y' : 'ies'} from config (hand-edited YAML?)`
+    )
   }
   return out
 }

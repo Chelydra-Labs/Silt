@@ -2288,6 +2288,88 @@ func TestAppendDismissedTip_Idempotent(t *testing.T) {
 	}
 }
 
+// TestSetTypedNotesSavedViews_ReplacesAndPreservesExternalEdit confirms the
+// dashboard saved-views setter (#863) writes ONLY the nested
+// ui.dashboards.typed_notes.saved_views slice while preserving a concurrent
+// external edit to an unrelated field — the TOCTOU property the full-snapshot
+// SaveSystemConfig path it replaced could violate when an external edit landed
+// between the frontend read and the Go write (#120/#475).
+func TestSetTypedNotesSavedViews_ReplacesAndPreservesExternalEdit(t *testing.T) {
+	app := newTestApp(t)
+
+	// Seed on-disk config with a known editor font + one existing saved view.
+	app.configMu.Lock()
+	app.cfg.Editor.FontFamily = "OriginalFont"
+	app.cfg.UI.Dashboards = map[string]any{
+		"typed_notes": map[string]any{
+			"saved_views": []any{map[string]any{"id": "old", "name": "Old"}},
+		},
+	}
+	app.configMu.Unlock()
+	if err := config.Save(app.vaultPath, app.cfg); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+
+	// Simulate an external editor changing Editor.FontFamily on disk AFTER the
+	// last config.Load but BEFORE the call. The in-memory a.cfg is now stale.
+	freshCfg, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("fresh load: %v", err)
+	}
+	freshCfg.Editor.FontFamily = "ExternalEditFont"
+	if err := config.Save(app.vaultPath, freshCfg); err != nil {
+		t.Fatalf("external edit save: %v", err)
+	}
+
+	newViews := []any{
+		map[string]any{"id": "a", "name": "Active"},
+		map[string]any{"id": "b", "name": "Archived"},
+	}
+	if err := app.SetTypedNotesSavedViews(newViews); err != nil {
+		t.Fatalf("SetTypedNotesSavedViews: %v", err)
+	}
+
+	// Reload from disk: the external edit must survive alongside the wholesale
+	// replacement of the saved_views slice.
+	loaded, err := config.Load(app.vaultPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if loaded.Editor.FontFamily != "ExternalEditFont" {
+		t.Errorf("external Editor.FontFamily edit lost: got %q, want %q", loaded.Editor.FontFamily, "ExternalEditFont")
+	}
+	tn, _ := loaded.UI.Dashboards["typed_notes"].(map[string]any)
+	if tn == nil {
+		t.Fatalf("typed_notes blob lost: %#v", loaded.UI.Dashboards)
+	}
+	views, _ := tn["saved_views"].([]any)
+	if len(views) != 2 {
+		t.Fatalf("saved_views not replaced: got %v, want 2 entries", views)
+	}
+	first, _ := views[0].(map[string]any)
+	if first["name"] != "Active" {
+		t.Errorf("saved_view[0] name lost: got %v, want Active", first)
+	}
+	// The stale in-memory cfg must have been refreshed to the re-read (the
+	// external edit visible to subsequent reads under the lock).
+	app.configMu.RLock()
+	memFont := app.cfg.Editor.FontFamily
+	app.configMu.RUnlock()
+	if memFont != "ExternalEditFont" {
+		t.Errorf("a.cfg not refreshed after write: got %q, want ExternalEditFont", memFont)
+	}
+}
+
+// TestSetTypedNotesSavedViews_RequiresVault guards the fail-loud no-vault path
+// (a no-op targeted write that would otherwise silently drop the user's view).
+func TestSetTypedNotesSavedViews_RequiresVault(t *testing.T) {
+	app := newTestApp(t)
+	app.vaultPath = ""
+	if err := app.SetTypedNotesSavedViews([]any{}); err == nil {
+		t.Error("expected error for unloaded vault, got nil")
+	}
+}
+
 // TestResolveNotebookDir covers the #100 notebook content-root resolver: the
 // vault path is byte-identical to the legacy join (zero regression), a linked
 // source resolves to its registered root, and unknown/missing ids fail loud.

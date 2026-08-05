@@ -151,9 +151,11 @@
 
   async function persistAll(next: DashboardSavedView[]): Promise<void> {
     savedViewsBusy = true
-    const ok = await persistTypedNotesSavedViews(next)
+    const err = await persistTypedNotesSavedViews(next)
     savedViewsBusy = false
-    savedViewsMessage = ok ? 'Saved view' : 'Could not save view'
+    // Surface the actual failure reason (fail-loud) rather than a generic
+    // banner; null means success.
+    savedViewsMessage = err ?? 'Saved view'
   }
 
   async function confirmSaveView(): Promise<void> {
@@ -473,25 +475,27 @@
     />
 
     <section class="saved-views-bar" aria-label="Saved views for this type">
-      <div class="sv-select-wrap">
-        <span class="material-symbols-outlined sv-icon" aria-hidden="true"
-          >bookmark</span
-        >
-        <select
-          class="sv-select"
-          aria-label="Saved views"
-          value={activeSavedViewId}
-          onchange={(e) => onSelectSavedView(e.currentTarget.value)}
-          disabled={savingView || savedViewsBusy}
-        >
-          <option value="">
-            {typeSavedViews.length === 0 ? 'No saved views' : 'Saved views'}
-          </option>
-          {#each typeSavedViews as v (v.id)}
-            <option value={v.id}>{v.name}</option>
-          {/each}
-        </select>
-      </div>
+      {#if typeSavedViews.length > 0 || savingView}
+        <div class="sv-select-wrap">
+          <span class="material-symbols-outlined sv-icon" aria-hidden="true"
+            >bookmark</span
+          >
+          <select
+            class="sv-select"
+            aria-label="Saved views"
+            value={activeSavedViewId}
+            onchange={(e) => onSelectSavedView(e.currentTarget.value)}
+            disabled={savingView || savedViewsBusy}
+          >
+            <option value="">
+              {typeSavedViews.length === 0 ? 'No saved views' : 'Saved views'}
+            </option>
+            {#each typeSavedViews as v (v.id)}
+              <option value={v.id}>{v.name}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
 
       {#if activeSavedView && savedViewDirty && !savingView}
         <span class="sv-modified" aria-label="Current view modified"
