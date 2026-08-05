@@ -84,30 +84,53 @@ func (a *App) SaveType(td types.TypeDef) error {
 	if saveID == "" {
 		saveID = types.TypeIDFromName(td.Name)
 	}
+	// Capture the prior type at the destination path before overwriting. A
+	// display-name change may strand pages that referenced the old Name via
+	// frontmatter `type:` — ResolveTypeID matches by display name as well as
+	// by canonical id, so renaming the Name breaks the old-name resolution
+	// path and those pages' type_name shifts. Schedule the union of the
+	// destination id and the prior Name's derived id so both locator sets are
+	// re-projected. GetType reads from disk (not the mtime cache), so the
+	// read reflects the pre-write state even though we have not invalidated
+	// the cache yet.
+	reprojectIDs := []string{saveID}
+	if prior, gerr := types.GetType(a.typesDir(), saveID); gerr == nil && prior.Name != "" && prior.Name != td.Name {
+		if oldDerived := types.TypeIDFromName(prior.Name); oldDerived != saveID {
+			reprojectIDs = append(reprojectIDs, oldDerived)
+		}
+	}
 	typePath := filepath.Join(a.typesDir(), saveID+".yaml")
 	if a.typeWatcher != nil {
-		// Path-scoped: only suppress events for this file so a coincident
-		// external edit to another type still reaches onChange.
-		a.typeWatcher.RegisterSelfWrite(typePath)
+		// Path- and content-scoped: arm the exact bytes SaveType will write
+		// (ID is yaml:"-" so SerializeType is independent of the derived
+		// id). Only this file's events are deferred; on debounce the watcher
+		// reads the file and compares — a match is a confirmed self-write
+		// (suppressed), a mismatch means an external/sync edit landed on top
+		// of our save and onChange fires anyway. A coincident edit to another
+		// type still fires (path-scoped).
+		a.typeWatcher.RegisterSelfWrite(typePath, types.SerializeType(&td))
 	}
 	if a.tracker != nil {
 		a.tracker.RegisterWrite(typePath)
 	}
 	if err := types.SaveType(a.typesDir(), &td); err != nil {
 		if a.typeWatcher != nil {
-			a.typeWatcher.UnregisterSelfWrite()
+			a.typeWatcher.UnregisterSelfWritePath(typePath)
 		}
 		log.Printf("types: SaveType(%q) failed: %v", td.ID, err)
 		return err
 	}
 	types.InvalidateTypesCache()
-	// Re-project now: the type watcher suppresses fsnotify events for this
-	// method's own atomic write (RegisterSelfWrite above), so its onChange —
-	// the only other caller of reprojectAllTypedPages — never fires for in-app
-	// schema edits, and typed pages' projections would drift until restart.
-	// Safe under the held RLock: reprojectAllTypedPages only reads a.db /
-	// a.vaultPath (handle-based DB locking) and does not re-acquire vaultMu.
-	a.reprojectAllTypedPages()
+	// Schedule a scoped reprojection (Phase 5 / #866): only pages of the
+	// affected type id(s) need a new projection. reprojectIDs carries the
+	// union of the destination id and, if the display Name changed, the
+	// prior Name's derived id. The worker coalesces rapid saves into one
+	// disk pass and re-fetches the schema per iteration so the final state
+	// converges without a generation counter. The type watcher suppresses
+	// fsnotify events for this method's own atomic write (RegisterSelfWrite
+	// above), so its onChange — the other enqueueReprojection caller —
+	// never fires for in-app edits.
+	a.enqueueReprojection(false, reprojectIDs...)
 	a.emit(EventTypesChanged, struct{}{})
 	log.Printf("types: SaveType → saved %q", td.ID)
 	return nil
@@ -126,26 +149,28 @@ func (a *App) DeleteType(id string) error {
 	}
 	typePath := filepath.Join(a.typesDir(), id+".yaml")
 	if a.typeWatcher != nil {
-		a.typeWatcher.RegisterSelfWrite(typePath)
+		// nil expected arms a delete: the watcher treats a missing file as
+		// a confirmed self-write (suppressed) and a post-delete recreate as
+		// an external edit (reload fires).
+		a.typeWatcher.RegisterSelfWrite(typePath, nil)
 	}
 	if a.tracker != nil {
 		a.tracker.RegisterWrite(typePath)
 	}
 	if err := types.DeleteType(a.typesDir(), id); err != nil {
 		if a.typeWatcher != nil {
-			a.typeWatcher.UnregisterSelfWrite()
+			a.typeWatcher.UnregisterSelfWritePath(typePath)
 		}
 		log.Printf("types: DeleteType(%q) failed: %v", id, err)
 		return err
 	}
 	types.InvalidateTypesCache()
-	// Re-project now: the type watcher suppresses fsnotify events for this
-	// method's own atomic write (RegisterSelfWrite above), so its onChange —
-	// the only other caller of reprojectAllTypedPages — never fires for in-app
-	// schema edits, and typed pages' projections would drift until restart.
-	// Safe under the held RLock: reprojectAllTypedPages only reads a.db /
-	// a.vaultPath (handle-based DB locking) and does not re-acquire vaultMu.
-	a.reprojectAllTypedPages()
+	// Schedule a scoped reprojection (Phase 5 / #866): pages of `id` lose
+	// their type and must be cleared from the dashboard. The worker
+	// discovers them via GetTypedPageLocatorsByIDs (idx_page_types_type).
+	// A genuine rename (DeleteType(old) + SaveType(new)) enqueues both
+	// ids, so the union of affected pages is covered.
+	a.enqueueReprojection(false, id)
 	a.emit(EventTypesChanged, struct{}{})
 	log.Printf("types: DeleteType → removed %q", id)
 	return nil
@@ -167,12 +192,12 @@ func (a *App) ReloadTypes() error {
 		return nil
 	}
 	types.InvalidateTypesCache()
-	// Mirror SaveType/DeleteType: re-project under the held RLock so manual
-	// refresh reaches typed pages immediately (the watcher path is the only
-	// other caller, so without this the dashboard drifts until a page mutation
-	// or restart). Safe under RLock: reprojectAllTypedPages only reads a.db /
-	// a.vaultPath and does not re-acquire vaultMu.
-	a.reprojectAllTypedPages()
+	// Schedule a full (allMode) reprojection (Phase 5 / #866): ReloadTypes
+	// is the manual "I changed types externally and want Silt to catch up"
+	// path, so it cannot attribute the change to a single type id. The
+	// worker still scopes disk reads + DB writes outside vaultMu and
+	// coalesces with any concurrent SaveType / DeleteType.
+	a.enqueueReprojection(true)
 	a.emit(EventTypesChanged, struct{}{})
 	return nil
 }
@@ -209,23 +234,24 @@ func (a *App) RestoreExampleTypes(ctx context.Context) ([]string, error) {
 		}
 		typePath := filepath.Join(a.typesDir(), td.ID+".yaml")
 		// Path-scoped per file so a coincident external edit to another type
-		// is not dropped while we restore the examples.
+		// is not dropped while we restore the examples. Content-scoped so an
+		// external edit landing on top of one of these writes still reloads.
 		if a.typeWatcher != nil {
-			a.typeWatcher.RegisterSelfWrite(typePath)
+			a.typeWatcher.RegisterSelfWrite(typePath, types.SerializeType(td))
 		}
 		if a.tracker != nil {
 			a.tracker.RegisterWrite(typePath)
 		}
 		if err := types.SaveType(a.typesDir(), td); err != nil {
 			if a.typeWatcher != nil {
-				a.typeWatcher.UnregisterSelfWrite()
+				a.typeWatcher.UnregisterSelfWritePath(typePath)
 			}
 			log.Printf("types: RestoreExampleTypes(%q) failed: %v", td.ID, err)
 			// Surface any types already written this batch so the picker /
 			// dashboard do not stay stale until an unrelated refresh.
 			if len(created) > 0 {
 				types.InvalidateTypesCache()
-				a.reprojectAllTypedPages()
+				a.enqueueReprojection(false, created...)
 				a.emit(EventTypesChanged, struct{}{})
 			}
 			return created, fmt.Errorf("restore example type %q: %w", td.ID, err)
@@ -234,9 +260,11 @@ func (a *App) RestoreExampleTypes(ctx context.Context) ([]string, error) {
 	}
 	if len(created) > 0 {
 		types.InvalidateTypesCache()
-		// Re-project once for the batch (same rationale as SaveType: the
-		// self-write window suppressed the watcher's onChange).
-		a.reprojectAllTypedPages()
+		// Schedule a scoped reprojection for the just-created ids only
+		// (Phase 5 / #866): unaffected typed pages keep their existing
+		// projection. Same rationale as SaveType: the self-write window
+		// suppressed the watcher's onChange for these files.
+		a.enqueueReprojection(false, created...)
 		a.emit(EventTypesChanged, struct{}{})
 	}
 	log.Printf("types: RestoreExampleTypes → created %d %v", len(created), created)

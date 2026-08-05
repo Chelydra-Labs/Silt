@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // ProjectedProperty is one set property value of a page, as projected into the
@@ -30,26 +31,13 @@ type PageProjectionRow struct {
 	Properties []ProjectedProperty `json:"properties"`
 }
 
-// IndexPageProjection replaces a page's type projection in one transaction:
-// delete any existing page_types/page_properties rows for the page, then insert
-// a page_types row (the page is of typeID) and one page_properties row per set
-// property. Call ClearPageProjection instead when a page becomes untyped.
-// Reproducible from frontmatter + the type schema (cardinal rule 4).
-func (dm *DatabaseManager) IndexPageProjection(source, notebook, section, page, typeID string, props []ProjectedProperty) error {
-	db, release, err := dm.handle()
-	if err != nil {
-		return ErrDBClosed
-	}
-	defer release()
-	if source == "" {
-		source = "vault"
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
+// clearPageProjectionTx deletes a page's page_types and page_properties rows
+// on the caller's open transaction. Shared by every atomic projection clear
+// path (IndexPageProjection's replace, ClearPageProjection, and the unified
+// IndexFileWithProjection / IndexScanResultsWithProjection). The two DELETEs
+// run on the same tx so a mid-failure cannot leave one table cleared and
+// the other still carrying stale rows.
+func clearPageProjectionTx(tx *sql.Tx, source, notebook, section, page string) error {
 	if _, err := tx.Exec(
 		"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
 		source, notebook, section, page,
@@ -62,7 +50,22 @@ func (dm *DatabaseManager) IndexPageProjection(source, notebook, section, page, 
 	); err != nil {
 		return fmt.Errorf("failed to clear page_properties: %w", err)
 	}
+	return nil
+}
 
+// applyPageProjectionTx replaces a page's projection on the caller's open
+// transaction: clear prior rows, then (when typeID != "") insert one
+// page_types row plus one page_properties row per set property. typeID == ""
+// means untyped — clear only, no insert — so the unified block+projection
+// index path can atomically drop a page's projection when frontmatter loses
+// its `type:` line. The caller has already validated source/notebook/page.
+func applyPageProjectionTx(tx *sql.Tx, source, notebook, section, page, typeID string, props []ProjectedProperty) error {
+	if err := clearPageProjectionTx(tx, source, notebook, section, page); err != nil {
+		return err
+	}
+	if typeID == "" {
+		return nil
+	}
 	if _, err := tx.Exec(
 		"INSERT INTO page_types (source, notebook, section, page, type_name) VALUES (?, ?, ?, ?, ?)",
 		source, notebook, section, page, typeID,
@@ -77,11 +80,53 @@ func (dm *DatabaseManager) IndexPageProjection(source, notebook, section, page, 
 			return fmt.Errorf("failed to insert page_properties: %w", err)
 		}
 	}
+	return nil
+}
+
+// IndexPageProjection replaces a page's type projection in one transaction:
+// delete any existing page_types/page_properties rows for the page, then insert
+// a page_types row (the page is of typeID) and one page_properties row per set
+// property. Call ClearPageProjection instead when a page becomes untyped.
+// Reproducible from frontmatter + the type schema (cardinal rule 4).
+//
+// Projection-only path: the projectionReprojectWorker's per-locator step
+// (schema-triggered re-projection) still uses this because it has no blocks
+// to update. Every frontmatter-affecting block
+// write path now routes through IndexFileWithProjection so blocks and
+// projection share one transaction.
+func (dm *DatabaseManager) IndexPageProjection(source, notebook, section, page, typeID string, props []ProjectedProperty) error {
+	db, release, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
+	defer release()
+	if source == "" {
+		source = "vault"
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if err := applyPageProjectionTx(tx, source, notebook, section, page, typeID, props); err != nil {
+		return err
+	}
+	// Test seam: same shape as IndexFileBlocks for the projection-only path.
+	if err := dm.runIndexerTestingHook(indexerHookContext{
+		Phase:    indexerHookIndexPageProjectionPreCommit,
+		Source:   source,
+		Notebook: notebook,
+		Section:  section,
+		Page:     page,
+	}); err != nil {
+		return fmt.Errorf("indexer testing hook aborted IndexPageProjection: %w", err)
+	}
 	return tx.Commit()
 }
 
 // ClearPageProjection removes a page's type projection (used when a page loses
-// its type or is deleted). Idempotent. Both deletes share one transaction so a
+// its type, is deleted, or its on-disk file vanishes during re-projection).
+// Idempotent. Both deletes share one transaction (clearPageProjectionTx) so a
 // mid-failure cannot leave page_properties rows orphaned after page_types is
 // gone (mirrors ClearFileBlocks / ClearSourceBlocks).
 func (dm *DatabaseManager) ClearPageProjection(source, notebook, section, page string) error {
@@ -98,17 +143,8 @@ func (dm *DatabaseManager) ClearPageProjection(source, notebook, section, page s
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(
-		"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
-		source, notebook, section, page,
-	); err != nil {
-		return fmt.Errorf("failed to clear page_types: %w", err)
-	}
-	if _, err := tx.Exec(
-		"DELETE FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
-		source, notebook, section, page,
-	); err != nil {
-		return fmt.Errorf("failed to clear page_properties: %w", err)
+	if err := clearPageProjectionTx(tx, source, notebook, section, page); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -142,6 +178,73 @@ func (dm *DatabaseManager) GetAllTypedPageLocators() ([]TypedPageLocator, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query page_types: %w", err)
 	}
+	return scanTypedPageLocators(rows)
+}
+
+// GetTypedPageLocatorsByIDs returns every distinct (source, notebook, section,
+// page, type_name) tuple whose type_name is in typeIDs. Used by the App's
+// scoped reprojection worker so a schema edit (save / delete) reaches only
+// pages of the affected type(s) — not every typed page in the vault.
+//
+// Served by idx_page_types_type (CREATE INDEX … ON page_types(type_name)).
+// Deduplicates typeIDs before query construction so a caller passing the
+// same id twice (e.g. old+new on rename when they happen to coincide) does
+// not double-count rows. An empty / deduped-to-empty input returns (nil, nil)
+// — the worker treats that as "nothing to do" rather than "reproject all".
+//
+// Deterministic row order (source, notebook, section, page) so the worker's
+// disk-read sequence is reproducible — a test can assert exact visit order.
+func (dm *DatabaseManager) GetTypedPageLocatorsByIDs(typeIDs []string) ([]TypedPageLocator, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
+	deduped := dedupeTypeIDs(typeIDs)
+	if len(deduped) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(deduped))
+	args := make([]interface{}, len(deduped))
+	for i, id := range deduped {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := "SELECT source, notebook, section, page, type_name FROM page_types " +
+		"WHERE type_name IN (" + strings.Join(placeholders, ",") + ") " +
+		"ORDER BY source, notebook, section, page"
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query page_types by type ids: %w", err)
+	}
+	return scanTypedPageLocators(rows)
+}
+
+// dedupeTypeIDs returns typeIDs with duplicates and empty strings removed,
+// preserving first-seen order so a test's expected visit sequence is stable.
+func dedupeTypeIDs(typeIDs []string) []string {
+	if len(typeIDs) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(typeIDs))
+	out := make([]string, 0, len(typeIDs))
+	for _, id := range typeIDs {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+// scanTypedPageLocators drains rows into a TypedPageLocator slice with one
+// shared scan loop. Used by both locator lookups so the row-decode contract
+// has a single source of truth.
+func scanTypedPageLocators(rows *sql.Rows) ([]TypedPageLocator, error) {
 	defer rows.Close()
 	var out []TypedPageLocator
 	for rows.Next() {

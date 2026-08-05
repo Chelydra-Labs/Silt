@@ -75,7 +75,35 @@ func newTestApp(t *testing.T) *App {
 		t.Fatalf("config.Load: %v", err)
 	}
 	app.applyConfigLocked(cfg)
+	// Start the reprojection worker (mirrors initializeVaultServices) and
+	// register a cleanup to stop it. LIFO ordering stops the worker before
+	// the DB closes and before eventEmit-swapping tests restore the field.
+	app.reprojectWorker = newProjectionReprojectWorker(app)
+	app.reprojectWorker.start()
+	t.Cleanup(func() {
+		app.vaultMu.Lock()
+		w := app.reprojectWorker
+		app.reprojectWorker = nil
+		app.vaultMu.Unlock()
+		if w != nil {
+			w.stopAndJoin()
+		}
+	})
 	return app
+}
+
+// flushReprojection blocks until the App's reprojection worker has processed
+// every enqueue made before this call (Phase 5 / #866). Production never
+// calls this — it exists for tests that need to assert post-reprojection
+// state without sleeps. No-op when no worker is running.
+func flushReprojection(t *testing.T, app *App) {
+	t.Helper()
+	if app.reprojectWorker == nil {
+		return
+	}
+	if !app.reprojectWorker.flushForTest(5 * time.Second) {
+		t.Fatalf("reprojection worker did not drain within timeout")
+	}
 }
 
 func writeFile(t *testing.T, path, content string) {

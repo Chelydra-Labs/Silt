@@ -64,6 +64,12 @@ type DatabaseManager struct {
 	unlinkedScanCacheMu  sync.Mutex
 	unlinkedScanCacheGen uint64
 	unlinkedScanCache    map[unlinkedScanCacheKey]unlinkedScanCacheEntry
+
+	// indexerTestingHook is a deterministic test seam: nil in production
+	// (the hot path is one atomic load + nil-check); tests install a hook
+	// via setIndexerTestingHook to force mid-transaction failures so they
+	// can prove atomic visibility and rollback. See index_hook.go.
+	indexerTestingHook indexerTestingHook
 }
 
 // FileStat records the last-seen filesystem attributes of an indexed file, used

@@ -277,12 +277,10 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 		}
 		blocks, meta, _, _, perr := parser.ParseFileContent(content, safeNotebook, safeSection, safePage, safeDate, a.spacesPerTab)
 		if perr == nil {
-			var idxErr error
-			a.coordinator.WithDBWrite(func() {
-				idxErr = a.db.IndexFileBlocks(tplSource, meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags, meta.Warnings...)
-			})
-			if idxErr != nil {
-				log.Printf("CreatePageFromTemplate: IndexFileBlocks failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
+			// Atomic block+projection publish: a template may carry a `type:`
+			// line, so the projection must land in the same tx as the blocks.
+			if idxErr := a.indexFile(tplSource, meta.Notebook, meta.Section, meta.Page, blocks, meta, meta.Warnings...); idxErr != nil {
+				log.Printf("CreatePageFromTemplate: indexFile failed for %s/%s/%s: %v", meta.Notebook, meta.Section, meta.Page, idxErr)
 			}
 		}
 	})

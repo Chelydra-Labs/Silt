@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"silt/backend/parser"
 	"silt/backend/types"
@@ -947,6 +948,10 @@ func TestSaveType_ReprojectsTypedPages(t *testing.T) {
 	if err := app.SaveType(renamed); err != nil {
 		t.Fatalf("SaveType(renamed): %v", err)
 	}
+	// Phase 5 / #866: SaveType enqueues scoped reprojection asynchronously.
+	// Drain before asserting so the test observes the post-reprojection
+	// state deterministically rather than racing the worker.
+	flushReprojection(t, app)
 
 	// reprojectAllTypedPages re-parsed Dune.md against the renamed schema: the
 	// projection's stale `rating` row must be gone. (No `score` row appears
@@ -1003,6 +1008,8 @@ func TestDeleteType_ReprojectsTypedPages(t *testing.T) {
 	if err := app.DeleteType("book"); err != nil {
 		t.Fatalf("DeleteType(book): %v", err)
 	}
+	// Phase 5 / #866: DeleteType enqueues scoped reprojection asynchronously.
+	flushReprojection(t, app)
 
 	// The book type is gone, so re-projection resolves the page to a raw type
 	// name with no declared properties and clears its set-property rows.
@@ -1073,6 +1080,9 @@ func TestReloadTypes_ReprojectsTypedPages(t *testing.T) {
 	if err := app.ReloadTypes(); err != nil {
 		t.Fatalf("ReloadTypes: %v", err)
 	}
+	// Phase 5 / #866: ReloadTypes enqueues a full (allMode) reprojection
+	// asynchronously.
+	flushReprojection(t, app)
 	after := projectedPropertyNames(t, app, "Books", "", "Dune")
 	if after["rating"] {
 		t.Errorf("`rating` projection row still present after ReloadTypes renamed it to `score`; ReloadTypes did not re-project, got %v", after)
@@ -1166,65 +1176,17 @@ func TestTypedPages_NestedSectionRoundTrip(t *testing.T) {
 	if err := app.SaveType(renamed); err != nil {
 		t.Fatalf("SaveType(renamed): %v", err)
 	}
+	// Phase 5 / #866: SaveType enqueues scoped reprojection asynchronously.
+	flushReprojection(t, app)
 	afterRename := projectedPropertyNames(t, app, notebook, section, page)
 	if afterRename["rating"] {
 		t.Errorf("rating row lingered after SaveType rename — reprojectAllTypedPages did not reach nested-section page: %v", afterRename)
 	}
 }
 
-// TestOnExternalPageChanged_ReprojectsAfterWatcherReindex pins NB-2: the monitor
-// watcher reindexes an externally-changed typed page (IndexFileBlocks →
-// ClearFileBlocks drops page_types/page_properties), but the page-changed handler
-// only emitBlockChanged'd — it did not re-project. So an Obsidian/sync edit would
-// drop the page from type dashboards until restart. The fix calls
-// onExternalPageChanged, which re-projects (or clears when the type is removed).
-func TestOnExternalPageChanged_ReprojectsAfterWatcherReindex(t *testing.T) {
-	app := newTestApp(t)
-	const notebook, section, page = "Books", "", "Dune"
-	filePath, _ := writeBookPage(t, app)
-
-	// SetPageProperty indexes + projects, so the projection carries rating.
-	if err := app.SetPageProperty(notebook, section, page, "rating", 5); err != nil {
-		t.Fatalf("SetPageProperty: %v", err)
-	}
-	before := projectedPropertyNames(t, app, notebook, section, page)
-	if !before["rating"] {
-		t.Fatalf("expected rating projection row before simulated reindex, got %v", before)
-	}
-
-	// Simulate the monitor watcher's reindex, which via IndexFileBlocks →
-	// ClearFileBlocks DROPS the typed projection. This is exactly the state
-	// after an external edit (the NB-2 bug: nothing re-projected).
-	if err := app.db.ClearPageProjection("vault", notebook, section, page); err != nil {
-		t.Fatalf("ClearPageProjection: %v", err)
-	}
-	if dropped := projectedPropertyNames(t, app, notebook, section, page); dropped["rating"] {
-		t.Fatalf("precondition: ClearPageProjection did not drop rating row, got %v", dropped)
-	}
-
-	// The fix: the page-changed handler now calls onExternalPageChanged, which
-	// re-projects from the on-disk frontmatter → rating row reappears with no
-	// restart and no SetPageProperty.
-	app.onExternalPageChanged(notebook, section, page)
-	if after := projectedPropertyNames(t, app, notebook, section, page); !after["rating"] {
-		t.Errorf("rating projection row not re-added by onExternalPageChanged: %v", after)
-	}
-
-	// Simulate an external edit that removes the page's type: the handler must
-	// CLEAR the projection so the page drops off type dashboards immediately.
-	raw, _ := os.ReadFile(filePath)
-	raw = []byte(strings.ReplaceAll(string(raw), "type: \"book\"\n", ""))
-	if err := os.WriteFile(filePath, raw, 0o644); err != nil {
-		t.Fatalf("rewrite file without type: %v", err)
-	}
-	app.onExternalPageChanged(notebook, section, page)
-	if cleared := projectedPropertyNames(t, app, notebook, section, page); len(cleared) != 0 {
-		t.Errorf("projection not cleared after type removed from frontmatter: %v", cleared)
-	}
-}
-
 // captureTypeEmits swaps app.eventEmit to record event names, returning a
-// snapshot function. Restored via t.Cleanup so other tests are unaffected.
+// snapshot function. The cleanup flushes the worker before restoring the
+// field so the worker goroutine does not race the unsynchronized write.
 func captureTypeEmits(t *testing.T, app *App) func() []string {
 	t.Helper()
 	var mu sync.Mutex
@@ -1234,7 +1196,13 @@ func captureTypeEmits(t *testing.T, app *App) func() []string {
 		got = append(got, name)
 		mu.Unlock()
 	}
-	t.Cleanup(func() { app.eventEmit = nil })
+	t.Cleanup(func() {
+		// Worker must be idle before we nil the field it reads in emit().
+		if app.reprojectWorker != nil {
+			app.reprojectWorker.flushForTest(5 * time.Second)
+		}
+		app.eventEmit = nil
+	})
 	return func() []string {
 		mu.Lock()
 		defer mu.Unlock()

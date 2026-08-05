@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"unicode/utf8"
 
@@ -28,6 +29,14 @@ func (e *toolEnv) writeOK() bool {
 }
 
 func (e *toolEnv) record(tool, outcome, errMsg string, args map[string]any) {
+	e.recordEntry(tool, outcome, errMsg, RedactArgs(args))
+}
+
+// recordEntry writes an audit row with already-redacted args metadata. The
+// schema-audit middleware uses this directly with redactSchemaArgs (raw client
+// args need the stricter allowlist), while handlers go through record +
+// RedactArgs for their trusted, known-shape arg maps.
+func (e *toolEnv) recordEntry(tool, outcome, errMsg string, meta map[string]any) {
 	if e.audit == nil {
 		return
 	}
@@ -45,8 +54,67 @@ func (e *toolEnv) record(tool, outcome, errMsg string, args map[string]any) {
 		Vault:    VaultPathHash(vp),
 		Outcome:  outcome,
 		Error:    errMsg,
-		ArgsMeta: RedactArgs(args),
+		ArgsMeta: meta,
 	})
+}
+
+// OutcomeRejectedSchema is the audit outcome for a tools/call that the
+// SDK rejected before the handler ran — input-schema validation or argument
+// unmarshal failure. Distinct from handler-level "rejected" (a schema-aware
+// write that the bridge turned down) so operators can tell client-shape
+// mistakes from value rejections.
+const OutcomeRejectedSchema = "rejected_schema"
+
+// schemaAuditMiddleware is the single server-level receiving middleware
+// installed at host construction. It observes — never alters — tools/call
+// results to audit confirmed SDK argument-validation/unmarshal failures as
+// rejected_schema. Classification is deliberately narrow:
+//
+//   - The handler must have returned err == nil with a *CallToolResult whose
+//     IsError is set AND whose embedded GetError is non-nil. That shape is
+//     produced only by the SDK's pre-handler input processing (applySchema /
+//     argument unmarshal), which calls SetError before returning early.
+//   - Handler-level outcomes (ok/error/denied/rejected) use toolErr /
+//     toolValidationErr, which never call SetError, so GetError is nil and
+//     they are not double-audited here.
+//   - JSON-RPC errors (unknown tool, malformed outer params, unknown method)
+//     return err != nil (or never reach the middleware at all) and are
+//     intentionally excluded — they are protocol problems, not argument
+//     rejections, and are covered by their own tests.
+//
+// Recording is best-effort (see recordSchemaRejection): this is the sole audit
+// path for pre-handler rejections, so an auditor hiccup must not turn a benign
+// schema failure into a server-side panic that hides the SDK's own error result.
+func schemaAuditMiddleware(env *toolEnv) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			res, err := next(ctx, method, req)
+			if method == "tools/call" && err == nil {
+				if ctr, ok := res.(*mcp.CallToolResult); ok && ctr != nil && ctr.IsError && ctr.GetError() != nil {
+					recordSchemaRejection(env, req, ctr.GetError())
+				}
+			}
+			return res, err
+		}
+	}
+}
+
+// recordSchemaRejection audits a single rejected_schema entry from the raw
+// CallToolParamsRaw. It recovers from auditor panics (logged, not re-thrown)
+// so an observability-store failure cannot regress the call outcome.
+func recordSchemaRejection(env *toolEnv, req mcp.Request, auditErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("mcp audit: rejected_schema record recovered: %v", r)
+		}
+	}()
+	tool := ""
+	var rawArgs json.RawMessage
+	if p, ok := req.GetParams().(*mcp.CallToolParamsRaw); ok && p != nil {
+		tool = p.Name
+		rawArgs = p.Arguments
+	}
+	env.recordEntry(tool, OutcomeRejectedSchema, sanitizeSchemaErr(auditErr.Error()), redactSchemaArgs(rawArgs))
 }
 
 func toolErr(msg string) (*mcp.CallToolResult, any, error) {

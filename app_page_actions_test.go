@@ -183,7 +183,7 @@ func TestDuplicatePage_PostWriteFailuresRollbackAndRetry(t *testing.T) {
 	}
 
 	originalIndex := duplicatePageIndex
-	duplicatePageIndex = func(*App, string, string, string, string, []parser.ParsedBlock, []string, ...string) error {
+	duplicatePageIndex = func(*App, string, string, string, string, []parser.ParsedBlock, parser.FileMetadata, ...string) error {
 		return errors.New("injected index failure")
 	}
 	t.Cleanup(func() { duplicatePageIndex = originalIndex })

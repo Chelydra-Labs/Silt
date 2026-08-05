@@ -19,12 +19,12 @@ var pageEmbedReferencePattern = regexp.MustCompile(`\{\{embed:([0-9a-fA-F]{8}-[0
 // callers cannot bypass the rollback protocol.
 var duplicatePagePostWriteParse = parser.ParseFileContent
 var duplicatePageBeforeWrite = func() {}
-var duplicatePageIndex = func(a *App, source, notebook, section, page string, blocks []parser.ParsedBlock, tags []string, warnings ...string) error {
-	var err error
-	a.coordinator.WithDBWrite(func() {
-		err = a.db.IndexFileBlocks(source, notebook, section, page, blocks, tags, warnings...)
-	})
-	return err
+
+// duplicatePageIndex wraps the atomic block+projection publish so a failed
+// duplicate rolls back blocks AND projection together (the same contract as
+// the production indexFile path it delegates to).
+var duplicatePageIndex = func(a *App, source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata, warnings ...string) error {
+	return a.indexFile(source, notebook, section, page, blocks, meta, warnings...)
 }
 
 func validatePageActionSegment(value, label string) (string, error) {
@@ -185,18 +185,13 @@ func (a *App) DuplicatePage(notebook, section, page, targetName string) error {
 				pageActionError(CodeNavigationDuplicate, "duplicate page could not be parsed; target rolled back", reparseErr))
 			return
 		}
-		indexErr := duplicatePageIndex(a, source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta.Tags, meta.Warnings...)
+		// Atomic block+projection publish: the duplicated page keeps the
+		// source's `type:` frontmatter, and the projection must land in the
+		// same transaction so dashboards never see the page without its type.
+		indexErr := duplicatePageIndex(a, source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta, meta.Warnings...)
 		if indexErr != nil {
 			runErr = rollbackDuplicateTarget(a, targetPath, source, safeNotebook, safeSection, safeTarget,
 				pageActionError(CodeNavigationDuplicate, "duplicate page could not be indexed; target rolled back", indexErr))
-			return
-		}
-		// IndexFileBlocks no longer clears/rebuilds the typed projection; a
-		// duplicated page keeps the source's type: frontmatter and must be
-		// projected explicitly or it is absent from dashboards until restart.
-		if projErr := a.projectPageType(source, meta); projErr != nil {
-			runErr = rollbackDuplicateTarget(a, targetPath, source, safeNotebook, safeSection, safeTarget,
-				pageActionError(CodeNavigationDuplicate, "duplicate page could not be projected; target rolled back", projErr))
 		}
 	})
 	return runErr

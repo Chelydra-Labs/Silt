@@ -598,6 +598,7 @@
       <!-- Page zoom scales title + editor/source only — not utility bar/find/chrome (#843). -->
       <div
         class="relative z-[1] flex flex-col note-page-zoom"
+        class:h-full={viewMode === 'source'}
         style={showEditorUtilityBar ? `zoom: ${noteZoom.factor}` : undefined}
         data-testid="note-page-zoom"
       >
@@ -622,8 +623,12 @@
           </p>
         </header>
 
+        <!-- Source mode (#861): the height chain must reach MarkdownSourceViewer
+             so its source-body owns the single deliberate scroll. Edit mode
+             keeps natural height so the outer container scrolls long content. -->
         <div
           class="w-full flex-1 flex flex-col gap-4"
+          class:min-h-0={viewMode === 'source'}
           style="max-width: var(--editor-measure, 70ch);"
         >
           {#if loadError}

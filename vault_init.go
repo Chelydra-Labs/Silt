@@ -191,6 +191,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// index file yet) every file is "changed" and gets a full index. Pruning
 	// stale `files` rows for paths no longer on disk handles deletes/renames.
 	var changed []parser.ScanResult
+	var warmSkipped []parser.ScanResult
 	var seenPaths []string
 	for _, res := range results {
 		seenPaths = append(seenPaths, res.Path)
@@ -207,6 +208,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			continue
 		}
 		if unchanged {
+			warmSkipped = append(warmSkipped, res)
 			continue
 		}
 		changed = append(changed, res)
@@ -216,7 +218,14 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// written to the index (NOT len(changed); errored/unresolvable files in
 	// `changed` are reported in `skipped` and excluded from this count). Used
 	// below to decide whether a post-index WAL checkpoint is worth running.
-	indexedCount, skipped, err := dbMgr.IndexScanResults(changed)
+	//
+	// Atomic batch: each changed file's typed projection is published in the
+	// SAME transaction as its blocks (IndexScanResultsWithProjection) so a
+	// reader can never see a freshly-scanned typed page without its
+	// projection (or vice versa). The projection payload is computed against
+	// the live schema before the tx opens.
+	changedProjections := computeBatchProjections(a, changed)
+	indexedCount, skipped, err := dbMgr.IndexScanResultsWithProjection(changed, changedProjections)
 	if err != nil {
 		_ = dbMgr.Close()
 		return fmt.Errorf("failed to index scan results: %w", err)
@@ -300,22 +309,29 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.watcher = watcher
 	a.vaultPath = vaultPath
 
-	// Project typed-notes type/property values. Cold start / changed files
-	// always project (cardinal rule 4 — delete the index and these rebuild
-	// from frontmatter + the type schema). Warm upgrade from a pre-typed-notes
-	// index leaves the files table populated, so IsFileUnchanged skips every
-	// pre-existing page and `changed` is empty — without a one-shot backfill
-	// those hand-authored `type:` pages never appear in dashboards until
-	// touched. page_projection_backfill records that the full scan has been
-	// projected once; subsequent warm opens only project `changed`.
-	// Runs AFTER a.db/a.vaultPath are assigned (projectPageType uses both);
-	// each call opens its own DB lease, so it stays outside any WithDBWrite.
-	toProject := changed
+	// Start the scoped reprojection worker (#866) so subsequent SaveType /
+	// DeleteType / type-watcher / ReloadTypes / RestoreExampleTypes calls
+	// coalesce onto a background goroutine that performs disk reads + DB
+	// writes WITHOUT holding vaultMu. Started BEFORE the type watcher so
+	// the very first external type edit has somewhere to enqueue.
+	a.reprojectWorker = newProjectionReprojectWorker(a)
+	a.reprojectWorker.start()
+
+	// Typed-projection backfill. Two scenarios:
+	//   - Marker already set (warm restart): changed files were projected
+	//     atomically by IndexScanResultsWithProjection above. Nothing left.
+	//   - Marker not set (cold start or warm upgrade): project warm-skipped
+	//     files whose blocks were not re-indexed this session. Changed files
+	//     were already projected by the atomic batch, so only warmSkipped
+	//     needs the standalone pass. On a true cold start warmSkipped is
+	//     empty (every file was "changed") and the loop is a no-op.
 	backfillDone, berr := dbMgr.SchemaMigrationApplied(db.PageProjectionBackfillMarker)
 	if berr != nil {
 		log.Printf("initializeVaultServices: probe page_projection_backfill: %v", berr)
-	} else if !backfillDone {
-		toProject = results
+	}
+	var toProject []parser.ScanResult
+	if !backfillDone {
+		toProject = warmSkipped
 	}
 	// Only record the one-shot backfill marker when every page projected
 	// cleanly. projectPageType returns DB errors; swallowing them and still
@@ -326,6 +342,7 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		if res.Notebook == "" || res.Err != nil {
 			continue
 		}
+		a.backfillProjectionCount++
 		if err := a.projectPageType(res.Source, parser.FileMetadata{
 			Notebook:    res.Notebook,
 			Section:     res.Section,
@@ -352,14 +369,22 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// The handler is called from the watcher goroutine; it only emits a Wails
 	// event (safe — no vaultMu/configMu access).
 	watcher.SetReMintWarningHandler(a.onReMintWarning)
+	// External fsnotify reindex delegates the index step to App's atomic
+	// block+projection publish (indexFile → IndexFileWithProjection), so an
+	// external frontmatter edit publishes blocks AND page_types/
+	// page_properties in one transaction. The handler does its own
+	// WithDBWrite; the watcher still owns mtime marking, re-mint detection,
+	// deletion, and notifyPageChanged.
+	watcher.SetAtomicReindexHandler(func(source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata) error {
+		return a.indexFile(source, notebook, section, page, blocks, meta, meta.Warnings...)
+	})
 	// External fsnotify reindex/clear → block:changed so plugin indexes (QA
-	// vectors) stay consistent with the note store (#850), AND re-project the
-	// page so the typed dashboards reflect the external edit immediately — the
-	// watcher's IndexFileBlocks drops the projection via ClearFileBlocks but
-	// the watcher path does not re-project on its own.
+	// vectors) stay consistent with the note store (#850). Projection is
+	// published atomically by the reindex handler above, and clearIndexForFile
+	// already drops projection via ClearFileBlocks(tx==nil), so this callback
+	// only emits the plugin-notification event.
 	watcher.SetPageChangedHandler(func(notebook, section, page string) {
 		a.emitBlockChanged("", notebook, section, page, "")
-		a.onExternalPageChanged(notebook, section, page)
 	})
 
 	// Start hot-reload of .system/config.yaml. External edits re-parse and
@@ -397,16 +422,16 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	// Start hot-reload of .system/types/ so typed pages and the type manager
 	// stay live when a user adds/edits/deletes a type externally (the same
 	// posture as the template watcher). The onChange callback invalidates the
-	// type cache, emits types:changed, AND re-projects every typed page so the
-	// dashboard reflects the new schema without waiting for each page to be
-	// re-touched. Re-projection runs under vaultMu.Lock (the watcher hands off
-	// to the App as a lifecycle event); it re-reads each page's frontmatter
-	// against the freshly-loaded schema.
+	// type cache, emits types:changed, AND schedules a coalescing reprojection
+	// (Phase 5 / #866) so the dashboard reflects the new schema without
+	// waiting for each page to be re-touched. The worker scopes disk reads +
+	// DB writes outside the held Lock; onChange takes Lock only briefly as a
+	// lifecycle handoff (the worker re-checks vaultMu mid-flight).
 	if a.ctx != nil {
 		yw, yErr := types.NewTypeWatcher(a.typesDir(), func() {
 			types.InvalidateTypesCache()
 			a.vaultMu.Lock()
-			a.reprojectAllTypedPages()
+			a.enqueueReprojection(true)
 			a.vaultMu.Unlock()
 			a.emit(EventTypesChanged, struct{}{})
 		})

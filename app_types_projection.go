@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,21 +15,80 @@ import (
 	"silt/backend/types"
 )
 
+// computePageProjection resolves a page's note-type id and computes its set
+// of projected property rows from the live type schema. Pure: no DB access.
+// Returns ("", nil) for an untyped page (caller clears the projection). A
+// known schema miss falls back to a sanitized raw type id with no property
+// rows, so a hand-typed `type:` value still groups the page gracefully
+// (mirrors the prior projectPageType fallback).
+//
+// Split out of projectPageType so atomic block+projection write paths can
+// pre-compute the payload before opening the DB write, then pass it into
+// IndexFileWithProjection / IndexScanResultsWithProjection so blocks and
+// projection share one transaction.
+func (a *App) computePageProjection(meta parser.FileMetadata) (string, []db.ProjectedProperty) {
+	if meta.Type == "" {
+		return "", nil
+	}
+	typeID, err := types.ResolveTypeID(a.typesDir(), meta.Type)
+	if err != nil {
+		typeID = types.TypeIDFromName(meta.Type)
+	}
+	var props []db.ProjectedProperty
+	if td, gerr := types.GetType(a.typesDir(), typeID); gerr == nil {
+		for _, pdef := range td.Properties {
+			raw, present := lookupFrontmatter(meta.Frontmatter, pdef.Name)
+			if !present || raw == nil {
+				continue // sparse: only set values get rows
+			}
+			props = append(props, projectProperty(pdef, raw))
+		}
+	}
+	return typeID, props
+}
+
+// computeBatchProjections returns the per-result projection payload paired
+// with a scanner batch. projections[i] corresponds to results[i]; a result
+// that will be skipped (res.Notebook == "" or res.Err != nil) gets a zero
+// ScanProjection that IndexScanResultsWithProjection ignores. Used by the
+// cold-start and linked-tree scans so the batched atomic publish covers
+// blocks AND projection in one transaction.
+func computeBatchProjections(a *App, results []parser.ScanResult) []db.ScanProjection {
+	out := make([]db.ScanProjection, len(results))
+	for i, res := range results {
+		if res.Notebook == "" || res.Err != nil {
+			continue
+		}
+		typeID, props := a.computePageProjection(parser.FileMetadata{
+			Notebook:    res.Notebook,
+			Section:     res.Section,
+			Page:        res.Page,
+			Type:        res.Type,
+			Frontmatter: res.Frontmatter,
+		})
+		out[i] = db.ScanProjection{TypeID: typeID, Props: props}
+	}
+	return out
+}
+
 // projectPageType projects a page's note type and its set property values into
 // the working-memory index (typed-notes feature). It is called AFTER a
 // frontmatter-affecting (re)index — never inside the coordinator's WithDBWrite
 // closure, because the DB methods acquire their own handle and must not re-enter
 // the write lock.
 //
+// Projection-only path: this stays for callers that re-project a page WITHOUT
+// re-indexing its blocks (the projectionReprojectWorker's per-locator step).
+// Every frontmatter-affecting block write now routes through IndexFileWithProjection
+// so the projection publish shares the block transaction.
+//
 // Resolution + value extraction use the live type schema (mtime-cached); the DB
 // stores the result. A page whose type is empty is un-projected (cleared) so a
-// page that loses its type does not linger in the dashboards. Block-only
-// mutations (task status, recurrence, dependencies) do not call this: they do
-// not touch frontmatter, so the projection is unchanged.
-// projectPageType projects a page's type/properties into SQLite. Returns a
-// non-nil error only for DB failures (clear/index); callers that need
-// restart-safe backfill (vault_init) must not record success markers when any
-// page fails. Soft failures (unknown type → raw id) still return nil.
+// page that loses its type does not linger in the dashboards.
+// projectPageType returns a non-nil error only for DB failures (clear/index);
+// callers that need restart-safe backfill (vault_init) must not record success
+// markers when any page fails. Soft failures (unknown type → raw id) still
+// return nil.
 func (a *App) projectPageType(source string, meta parser.FileMetadata) error {
 	if a.db == nil {
 		return nil
@@ -44,7 +101,8 @@ func (a *App) projectPageType(source string, meta parser.FileMetadata) error {
 		return nil
 	}
 
-	if meta.Type == "" {
+	typeID, props := a.computePageProjection(meta)
+	if typeID == "" {
 		// Untyped page: clear any stale projection so the dashboards drop it.
 		if err := a.db.ClearPageProjection(source, notebook, section, page); err != nil {
 			log.Printf("types: ClearPageProjection(%s/%s/%s/%s) failed: %v", source, notebook, section, page, err)
@@ -53,27 +111,6 @@ func (a *App) projectPageType(source string, meta parser.FileMetadata) error {
 		}
 		return nil
 	}
-
-	// Resolve the frontmatter type ref (id or display name) to its canonical
-	// id. An unknown type is tracked under a sanitized raw name with no
-	// property rows, so a hand-typed `type:` value still groups the page
-	// gracefully (the UI shows a raw type chip).
-	typeID, err := types.ResolveTypeID(a.typesDir(), meta.Type)
-	if err != nil {
-		typeID = types.TypeIDFromName(meta.Type)
-	}
-
-	var props []db.ProjectedProperty
-	if td, gerr := types.GetType(a.typesDir(), typeID); gerr == nil {
-		for _, pdef := range td.Properties {
-			raw, present := lookupFrontmatter(meta.Frontmatter, pdef.Name)
-			if !present || raw == nil {
-				continue // sparse: only set values get rows
-			}
-			props = append(props, projectProperty(pdef, raw))
-		}
-	}
-
 	if err := a.db.IndexPageProjection(source, notebook, section, page, typeID, props); err != nil {
 		log.Printf("types: IndexPageProjection(%s/%s/%s/%s) failed: %v", source, notebook, section, page, err)
 		a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
@@ -272,123 +309,12 @@ func toStringSlice(v any) ([]string, bool) {
 	return nil, false
 }
 
-// reprojectAllTypedPages re-derives every typed page's projection from its
-// frontmatter against the freshly-loaded type schema. Called from the type
-// watcher's onChange handler so a schema edit (e.g. adding a property to
-// book.yaml) reaches pages that have already been indexed — without it the
-// dashboard would drift until each page is independently re-touched.
-//
-// The caller MUST hold vaultMu (RLock suffices — the body only reads
-// a.db / a.vaultPath; the watcher path at vault_init.go takes Lock as a
-// lifecycle handoff), and projectPageType / ClearPageProjection /
-// resolveNotebookDir touch fields (a.db, a.vaultPath) guarded by vaultMu.
-func (a *App) reprojectAllTypedPages() {
-	if a.db == nil {
-		return
-	}
-	locators, err := a.db.GetAllTypedPageLocators()
-	if err != nil {
-		log.Printf("types: GetAllTypedPageLocators failed during re-projection: %v", err)
-		return
-	}
-	for _, loc := range locators {
-		// Resolve the page's on-disk file the same way readPageFileForTypes
-		// does, then re-parse just the frontmatter. A missing/unreadable file
-		// (page deleted, external edit mid-scan) is skipped: the regular
-		// watcher path will reconcile it on the next file event.
-		safeNotebook := sanitizePathSegment(loc.Notebook)
-		// validateSectionPath (not sanitizePathSegment) so a multi-segment
-		// section like "Projects/Active" survives — sanitizePathSegment strips
-		// the "/", flattening it to "ProjectsActive" and ENOENT'ing the file.
-		safeSection, sectionErr := validateSectionPath(loc.Section, true)
-		safePage := sanitizePathSegment(loc.Page)
-		if sectionErr != nil {
-			continue
-		}
-		if safeNotebook == "" || safePage == "" {
-			continue
-		}
-		notebookDir, err := a.resolveNotebookDir(safeNotebook, loc.Source)
-		if err != nil {
-			continue
-		}
-		filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
-		if !isPathWithinRoot(filePath, notebookDir) {
-			continue
-		}
-		contentBytes, err := os.ReadFile(filePath)
-		if err != nil {
-			// Only drop the projection when the file is confirmed gone. A
-			// transient lock/IO error during sync must not erase the locator
-			// (worklist is derived from page_types) or the page becomes
-			// invisible to future schema revalidation.
-			if os.IsNotExist(err) {
-				if cerr := a.db.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); cerr != nil {
-					log.Printf("types: ClearPageProjection(%s/%s/%s/%s) after missing file during re-projection: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, cerr)
-				}
-			} else {
-				log.Printf("types: read %s during re-projection failed (projection kept): %v", filePath, err)
-			}
-			a.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
-			continue
-		}
-		// Re-parse so meta.Type + meta.Frontmatter reflect the current disk
-		// state; the schema cache has already been invalidated upstream.
-		_, meta, _, _, perr := parser.ParseFileContent(string(contentBytes), safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab)
-		if perr != nil {
-			// Keep the prior projection on parse failure — the file still
-			// exists and may become readable again; clearing would drop the
-			// locator from the next revalidation worklist.
-			log.Printf("types: parse %s during re-projection failed (projection kept): %v", filePath, perr)
-			a.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
-			continue
-		}
-		if meta.Type == "" {
-			// Page lost its type externally; drop the stale projection row.
-			if err := a.db.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); err != nil {
-				log.Printf("types: ClearPageProjection(%s/%s/%s/%s) during re-projection failed: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, err)
-				a.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
-			}
-			continue
-		}
-		_ = a.projectPageType(loc.Source, meta)
-	}
-}
-
-// onExternalPageChanged re-projects a page after the monitor watcher reindexes
-// it from an external edit. IndexFileBlocks no longer clears the projection
-// (block-only reindex preserves it), but external frontmatter edits still need
-// a fresh projectPageType so dashboards pick up type:/property changes.
-// Takes vaultMu.RLock; safe because stopWatchersOutsideLock closes the monitor
-// watcher OUTSIDE the teardown Lock, so this handler can drain mid-close
-// instead of deadlocking.
-func (a *App) onExternalPageChanged(notebook, section, page string) {
-	// No a.wg.Add here: this runs on the monitor-watcher dispatch goroutine,
-	// which is not itself tracked by a.wg. stopWatchersOutsideLock drains the
-	// watcher before ServiceShutdown's Wait; an Add from an untracked goroutine
-	// can race Wait and panic. Type-watcher onChange follows the same rule.
-	a.vaultMu.RLock()
-	defer a.vaultMu.RUnlock()
-	if a.vaultPath == "" || a.db == nil {
-		return
-	}
-	safeNotebook := sanitizePathSegment(notebook)
-	safeSection, sectionErr := validateSectionPath(section, true)
-	safePage := sanitizePathSegment(page)
-	if safeNotebook == "" || safePage == "" || sectionErr != nil {
-		return
-	}
-	source := a.resolveSourceByName(safeNotebook)
-	_, meta, _, _, err := a.readPageFileForTypes(notebook, section, page)
-	if err != nil {
-		// File gone/unreadable: drop any lingering projection row (idempotent
-		// with the watcher's ClearFileBlocks, but covers a read failure path).
-		if cerr := a.db.ClearPageProjection(source, safeNotebook, safeSection, safePage); cerr != nil {
-			log.Printf("types: ClearPageProjection on external change (%s/%s/%s/%s) failed: %v", source, safeNotebook, safeSection, safePage, cerr)
-		}
-		return
-	}
-	// projectPageType re-derives type + set properties from the freshly-parsed
-	// frontmatter, or clears the projection when the type was removed.
-	a.projectPageType(source, meta)
-}
+// reprojectAllTypedPages was the synchronous full-vault reprojection that
+// every schema-edit caller (SaveType / DeleteType / ReloadTypes / the type
+// watcher / RestoreExampleTypes) used to invoke under vaultMu. Phase 5 / #866
+// replaced those callers with enqueueReprojection, which routes through the
+// scoped coalescing worker in app_types_worker.go — disk reads + DB writes
+// happen outside the lifecycle lock, the worker re-fetches schema per
+// iteration, and the scoped GetTypedPageLocatorsByIDs query keeps the work
+// proportional to the affected pages. The body lives on as
+// projectionReprojectWorker.reprojectOneLocator (single-locator step).

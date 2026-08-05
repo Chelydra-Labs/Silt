@@ -528,35 +528,25 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 		results = append(results, res)
 	}
 
+	// Atomic batch: each linked file's typed projection is published in the
+	// SAME transaction as its blocks (IndexScanResultsWithProjection), so a
+	// reader can never see a freshly-linked typed page without its
+	// projection. The post-batch per-result projectPageType loop the prior
+	// implementation ran is gone — the batch IS the atomic publish now.
+	linkedProjections := computeBatchProjections(a, results)
 	var (
 		indexedCount int
 		skipped      []string
 		idxErr       error
 	)
 	a.coordinator.WithDBWrite(func() {
-		indexedCount, skipped, idxErr = a.db.IndexScanResults(results)
+		indexedCount, skipped, idxErr = a.db.IndexScanResultsWithProjection(results, linkedProjections)
 	})
 	if idxErr != nil {
 		return indexedCount, fmt.Errorf("index linked tree: %w", idxErr)
 	}
 	for _, s := range skipped {
 		log.Printf("LinkNotebook(%s): skipped %s", ln.DisplayName, s)
-	}
-
-	// Project typed-notes type/property values for the freshly-linked tree.
-	// a.db/a.vaultPath are set (linking happens post-open); each call
-	// opens its own DB lease, so it stays outside the WithDBWrite above.
-	for _, res := range results {
-		if res.Notebook == "" || res.Err != nil {
-			continue
-		}
-		a.projectPageType(res.Source, parser.FileMetadata{
-			Notebook:    res.Notebook,
-			Section:     res.Section,
-			Page:        res.Page,
-			Type:        res.Type,
-			Frontmatter: res.Frontmatter,
-		})
 	}
 
 	// Post-commit files-table pass: record mtime+size for each successfully

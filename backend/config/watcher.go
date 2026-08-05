@@ -117,6 +117,13 @@ func (cw *ConfigWatcher) isSelfWrite() bool {
 	return time.Now().Before(cw.selfUntil)
 }
 
+// IsSelfWriteArmed exposes the self-write window state for tests to verify
+// the App→watcher wiring synchronously, instead of asserting "no reload
+// fires within N ms" — a negative that is timing-flaky under -race.
+func (cw *ConfigWatcher) IsSelfWriteArmed() bool {
+	return cw.isSelfWrite()
+}
+
 // UnregisterSelfWrite clears a self-write suppression window opened by
 // RegisterSelfWrite. Call it when a save that armed the window fails, so a
 // failed write does not leave the window open and silently drop a legitimate

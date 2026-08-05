@@ -715,7 +715,17 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `list_notebooks`; write (grant) — `create_page`, `update_blocks`. No
   delete/move/bulk. **Lifecycle:** start on vault open when enabled; stop on
   vault close/switch and `ServiceShutdown`; close-to-tray keeps MCP.
-  **Audit:** `<vault>/.system/logs/mcp-audit.jsonl` with redacted args.
+  **Audit:** `<vault>/.system/logs/mcp-audit.jsonl` — one redacted record per
+  attempted `tools/call`. A server-level receiving middleware observes SDK
+  input validation that runs **before** any tool handler, so an argument
+  rejected for shape (missing required field, wrong type, malformed JSON) is
+  still audited as `rejected_schema` — distinct from handler-level `rejected`
+  (a schema-aware write the bridge turned down). The full outcome taxonomy is
+  `ok` | `error` | `denied` | `rejected` | `rejected_schema`; arguments are
+  redacted the same way on every path (identifiers preserved, body content
+  never persisted; a non-decodable payload records presence + byte length
+  only). Rotation is non-atomic best-effort by design (observability, not a
+  durability-critical store).
   Settings UI: Settings → AI → Local MCP. User docs: `docs/LOCAL_MCP.md`.
   Optional portable Skill (workflow guidance only, not a second protocol):
   `integrations/silt-agent/SKILL.md`.
@@ -736,12 +746,34 @@ writing attach as capabilities when their flags are on.
 - **Typed notes** — schema-driven note types live in `<vault>/.system/types/*.yaml`
   and a page declares its type via YAML frontmatter `type:`. The SQLite
   projection (`page_types` / `page_properties`) is reproducible working memory
-  rebuilt from frontmatter + the type schema; the type watcher hot-reloads the
-  schema and re-projects every typed page so the dashboards do not drift on a
-  schema edit. **Type CRUD**: `ListTypes` / `GetType` / `SaveType` / `DeleteType`
-  (atomic write to `.system/types/<id>.yaml`, watcher self-write suppressed),
-  plus `ResolveTypeID` (frontmatter ref → canonical id) and `ReloadTypes`
-  (manual cache flush; both emit `types:changed`). **Per-page type ops**:
+  rebuilt from frontmatter + the type schema. **Atomic publication:** a page's
+  blocks and its type/property projection are committed in one DB transaction
+  (the canonical `IndexFileWithProjection` entry point), so a concurrent WAL
+  reader or a mid-write failure can never observe blocks with a missing or
+  half-updated projection; an untyped or invalid transition clears both
+  projection tables in that same transaction. Every frontmatter-affecting write
+  — save, property set, rename, create/duplicate, external watcher re-index,
+  restore, delete — routes through this one path; block-only mutations
+  (`IndexFileBlocks`) leave an existing projection intact. **Schema hot-reload:**
+  the type watcher's self-loop prevention is **content-identity based**, not a
+  time window. `RegisterSelfWrite` records the bytes Silt expects on disk after
+  its atomic save; the fsnotify burst is debounced, the settled file is re-read
+  once, and a match is a confirmed self-write (suppressed) while a mismatch
+  means an external/sync edit landed on top and the schema is reloaded anyway.
+  Events for other type files are never suppressed, so a coincident edit to the
+  same file is not dropped. **Scoped reprojection:** a vault-local coalescing
+  worker replaces up-front full-vault re-projection on each schema edit.
+  `SaveType` / `DeleteType` enqueue only the affected id (a rename enqueues old
+  and new); `ReloadTypes` and the type watcher enqueue all. The worker
+  snapshots state under `vaultMu`, then performs disk reads and projection
+  writes **outside** the lock — so cost scales with affected pages rather than
+  every typed page, rapid edits converge (schema is re-fetched per iteration),
+  and stale work is abandoned on vault switch/close. `types:projection-error`
+  diagnostics and the delete-the-index rebuild (rule 4) are preserved. **Type
+  CRUD**: `ListTypes` / `GetType` / `SaveType` / `DeleteType` (atomic write to
+  `.system/types/<id>.yaml`), plus `ResolveTypeID` (frontmatter ref → canonical
+  id) and `ReloadTypes` (manual schema refresh + full reprojection; both emit
+  `types:changed`). **Per-page type ops**:
   `GetPageType` (resolved schema + raw chip on unknown refs), `GetPageProperties`
   (full schema form with `IsSet` flags), `SetPageType` (keep-and-flag on schema
   mismatch), `SetPageProperty` / `ClearPageProperty` (surgical single-field

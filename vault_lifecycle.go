@@ -83,7 +83,7 @@ func (a *App) teardownVaultServices() {
 
 // stopWatchersOutsideLock closes the type watcher and the monitor watcher
 // WITHOUT holding vaultMu so their loop goroutines can drain an in-flight
-// handler. Both watchers' Close() joins the loop goroutine (wg.Wait), and the
+// handler. Both watchers' Close() join the loop goroutine (wg.Wait), and the
 // type watcher's onChange + the monitor watcher's page-changed handler take
 // vaultMu — closing them while teardown holds vaultMu.Lock would deadlock
 // (handler blocked on the Lock; Close blocked on the handler via wg.Wait). The
@@ -92,13 +92,23 @@ func (a *App) teardownVaultServices() {
 // SaveType/DeleteType's `if a.typeWatcher != nil` check observes the close
 // atomically with the field clear — no closed-but-non-nil window. Called BEFORE
 // the teardown Lock in every lifecycle teardown path.
+//
+// The scoped reprojection worker is stopped here too for the same reason:
+// its processBatch re-checks vaultMu mid-flight, but join must happen
+// outside the teardown Lock so a final in-flight batch can drain without
+// deadlocking against the teardown Lock it would re-acquire.
 func (a *App) stopWatchersOutsideLock() {
 	a.vaultMu.Lock()
 	tw := a.typeWatcher
 	a.typeWatcher = nil
 	dw := a.watcher
 	a.watcher = nil
+	rw := a.reprojectWorker
+	a.reprojectWorker = nil
 	a.vaultMu.Unlock()
+	if rw != nil {
+		rw.stopAndJoin()
+	}
 	if tw != nil {
 		_ = tw.Close()
 	}

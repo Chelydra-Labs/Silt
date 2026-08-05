@@ -272,6 +272,24 @@ type App struct {
 	// inside writePageFrontmatterEdit so tests can inject a mid-write failure
 	// (MB-1 atomicity: turn-into must leave the file untouched on error).
 	frontmatterWriteAtomic func(path string, content []byte) error
+
+	// reprojectWorker is the vault-scoped coalescing worker that replaced
+	// the synchronous reprojectAllTypedPages calls from SaveType / DeleteType
+	// / ReloadTypes / the type watcher / RestoreExampleTypes. Started in
+	// initializeVaultServices and stopped in stopWatchersOutsideLock so its
+	// lifecycle is bound to the vault AND runs OUTSIDE vaultMu (its disk +
+	// DB work happens without the lifecycle lock). nil before the first
+	// vault opens and after teardown; SaveType / DeleteType / ReloadTypes
+	// route through enqueueReprojection which is a no-op when nil (so a
+	// schema-edit IPC against a closed vault is silently dropped, matching
+	// the prior behavior where reprojectAllTypedPages was a no-op without
+	// a db handle). See app_types_worker.go.
+	reprojectWorker *projectionReprojectWorker
+
+	// backfillProjectionCount counts projectPageType calls made by the
+	// cold-start backfill loop. Tests read it to prove the loop was
+	// skipped when the atomic batch already projected. Production never reads it.
+	backfillProjectionCount int
 }
 
 // aiStreamSession type lives in app_ai_stream.go (#762). App fields
