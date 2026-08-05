@@ -113,47 +113,62 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.Hotkeys["format_subscript"] == "Ctrl+," && cfg.Hotkeys["open_settings"] == "Ctrl+," {
 		cfg.Hotkeys["format_subscript"] = "Ctrl+Shift,"
 	}
-	// Hotkey-defaults v1 realignment migrations. Each of these chords moved
-	// to a new default; the YAML merge can't tell a persisted legacy default
-	// from an explicit user choice, so migrate ONLY when the value still
-	// equals the exact legacy default. A customized binding is never touched.
-	// Track whether any migration fired so a one-time notice can be stamped.
-	hotkeysV1Migrated := false
-	if cfg.Hotkeys["toggle_sidebar"] == "Ctrl+B" {
-		// Freed Ctrl+B for unambiguous bold.
-		cfg.Hotkeys["toggle_sidebar"] = "Ctrl+\\"
-		hotkeysV1Migrated = true
-	}
-	if cfg.Hotkeys["toggle_view_mode"] == "Ctrl+Shift+V" {
-		// Relieved the Ctrl+Shift+V triple-fire (OS paste-plain, TasksHub
-		// display-mode cycle, and this action).
-		cfg.Hotkeys["toggle_view_mode"] = "Ctrl+Alt+R"
-		hotkeysV1Migrated = true
-	}
-	if cfg.Hotkeys["close_tab"] == "Ctrl+W" {
-		// WebView2 unreliably relays Ctrl+W; moved to Ctrl+Shift+W.
-		cfg.Hotkeys["close_tab"] = "Ctrl+Shift+W"
-		hotkeysV1Migrated = true
-	}
-	if cfg.Hotkeys["next_tab"] == "Ctrl+Tab" {
-		// WebView2 unreliably relays Ctrl+Tab; moved to Ctrl+Alt+Right.
-		cfg.Hotkeys["next_tab"] = "Ctrl+Alt+Right"
-		hotkeysV1Migrated = true
-	}
-	if cfg.Hotkeys["prev_tab"] == "Ctrl+Shift+Tab" {
-		// WebView2 unreliably relays Ctrl+Shift+Tab; moved to Ctrl+Alt+Left.
-		cfg.Hotkeys["prev_tab"] = "Ctrl+Alt+Left"
-		hotkeysV1Migrated = true
-	}
-	// One-time notice stamp: when a v1 migration rewrote legacy chords, mark
-	// the vault so the frontend can surface a dismissible Settings → Hotkeys
-	// pointer. Migrations fire at most once per vault (the legacy value is
-	// gone after the first rewrite), so the stamp is added at most once. The
-	// marker lives in dismissed_tips alongside the other one-time UI tips; its
-	// presence means "this vault's chords were realigned, surface the pointer"
-	// — the frontend clears its session gate after the user dismisses.
-	if hotkeysV1Migrated && !containsString(cfg.UI.DismissedTips, hotkeysDefaultsV1Notice) {
-		cfg.UI.DismissedTips = append(cfg.UI.DismissedTips, hotkeysDefaultsV1Notice)
+	// One-shot gate for the v1 hotkey-defaults migration. Once a vault has been
+	// normalized, never re-run it: normalize() runs on BOTH Load and Save, so
+	// without this gate a user who deliberately remaps a chord back to its
+	// legacy value after the upgrade (e.g. re-binding toggle_sidebar→Ctrl+B)
+	// would have it silently re-migrated to the new default on the next Settings
+	// save — violating the "user remaps survive" contract. The marker is set
+	// unconditionally on the first normalize pass (idempotent), so a fresh vault
+	// or an already-migrated vault never re-enters the block.
+	if _, v1Done := cfg.Plugins.PluginSettings[hotkeysDefaultsV1MigratedKey].(bool); !v1Done {
+		// Hotkey-defaults v1 realignment migrations. Each of these chords moved
+		// to a new default; the YAML merge can't tell a persisted legacy default
+		// from an explicit user choice, so migrate ONLY when the value still
+		// equals the exact legacy default. A customized binding is never touched.
+		// Track whether any migration fired so a one-time notice can be stamped.
+		hotkeysV1Migrated := false
+		if cfg.Hotkeys["toggle_sidebar"] == "Ctrl+B" {
+			// Freed Ctrl+B for unambiguous bold.
+			cfg.Hotkeys["toggle_sidebar"] = "Ctrl+\\"
+			hotkeysV1Migrated = true
+		}
+		if cfg.Hotkeys["toggle_view_mode"] == "Ctrl+Shift+V" {
+			// Relieved the Ctrl+Shift+V triple-fire (OS paste-plain, TasksHub
+			// display-mode cycle, and this action).
+			cfg.Hotkeys["toggle_view_mode"] = "Ctrl+Alt+R"
+			hotkeysV1Migrated = true
+		}
+		if cfg.Hotkeys["close_tab"] == "Ctrl+W" {
+			// WebView2 unreliably relays Ctrl+W; moved to Ctrl+Shift+W.
+			cfg.Hotkeys["close_tab"] = "Ctrl+Shift+W"
+			hotkeysV1Migrated = true
+		}
+		if cfg.Hotkeys["next_tab"] == "Ctrl+Tab" {
+			// WebView2 unreliably relays Ctrl+Tab; moved to Ctrl+Alt+Right.
+			cfg.Hotkeys["next_tab"] = "Ctrl+Alt+Right"
+			hotkeysV1Migrated = true
+		}
+		if cfg.Hotkeys["prev_tab"] == "Ctrl+Shift+Tab" {
+			// WebView2 unreliably relays Ctrl+Shift+Tab; moved to Ctrl+Alt+Left.
+			cfg.Hotkeys["prev_tab"] = "Ctrl+Alt+Left"
+			hotkeysV1Migrated = true
+		}
+		// One-time notice stamp: when a v1 migration rewrote legacy chords, mark
+		// the vault so the frontend can surface a dismissible Settings → Hotkeys
+		// pointer. The stamp is added at most once — the one-shot gate above
+		// guarantees this block never re-runs, so hotkeysV1Migrated can be true
+		// only on the single migration pass.
+		if hotkeysV1Migrated && !containsString(cfg.UI.DismissedTips, hotkeysDefaultsV1Notice) {
+			cfg.UI.DismissedTips = append(cfg.UI.DismissedTips, hotkeysDefaultsV1Notice)
+		}
+		cfg.Plugins.PluginSettings[hotkeysDefaultsV1MigratedKey] = true
+		// Drop the stale open_command_palette default (Alt+Q) — it has no
+		// resolver consumer and was removed from the canonical defaults, but
+		// YAML-merge semantics never delete persisted keys, so a 0.4.x vault
+		// keeps a non-functional entry in HotkeysTab/ShortcutHelp until it is
+		// explicitly removed here (one-shot, inside the v1 gate).
+		delete(cfg.Hotkeys, "open_command_palette")
 	}
 	if cfg.UI.NavOrder.Sections == nil {
 		cfg.UI.NavOrder.Sections = map[string][]string{}
@@ -523,6 +538,13 @@ const aiFeaturesMigratedKey = "_ai_features_migrated"
 // frontend may surface a one-time Settings → Hotkeys pointer while the stamp
 // is present.
 const hotkeysDefaultsV1Notice = "hotkeys_defaults_v1_notice"
+
+// hotkeysDefaultsV1MigratedKey is the one-shot marker (under plugin_settings,
+// mirroring aiFeaturesMigratedKey) that records a vault has been normalized
+// against the v1 hotkey defaults. Its presence gates the migration block so the
+// chords are realigned at most once per vault — a post-upgrade remap back to a
+// legacy chord is then preserved across saves rather than silently re-migrated.
+const hotkeysDefaultsV1MigratedKey = "_hotkeys_defaults_v1_migrated"
 
 // containsString reports whether s is present in xs. Used for the
 // dismissed_tips stamp so the migration is idempotent across re-loads.

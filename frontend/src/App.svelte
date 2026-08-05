@@ -485,6 +485,21 @@
     // destroyed/stale reference or no mounted editor is a silent no-op.
     applyFormatBold: () => {
       if (activeView !== 'notes' && activeView !== 'backlinks') return
+      // Don't bold (and yank focus to) the background page while a modal or
+      // overlay is open — Ctrl+B would escape the dialog and edit a hidden
+      // page (a11y focus-escape + surprising edit). The modal keydown listeners
+      // don't intercept Ctrl+B, so this guard is the defense.
+      if (
+        showSearch ||
+        showQuickSwitcher ||
+        showGlobalReplace ||
+        showQuickAdd ||
+        showTemplatePicker ||
+        typeEditorOpen ||
+        shortcutHelp.open
+      ) {
+        return
+      }
       const editor = getActiveEditor() ?? getLastActiveEditor()
       if (!editor || editor.isDestroyed) return
       editor.chain().focus().toggleBold().run()

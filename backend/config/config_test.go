@@ -640,6 +640,38 @@ func TestNormalizeHotkeyDefaultsV1Migration(t *testing.T) {
 	})
 }
 
+// TestNormalizeHotkeyDefaultsV1_OneShotNoRefire verifies the one-shot gate:
+// after the first normalize migrates legacy chords + stamps the marker, a user
+// who deliberately re-binds a chord to its legacy value must NOT have it
+// re-migrated on a subsequent normalize (which runs on both Load and Save).
+// Without the gate, the exact-legacy-match migration would silently clobber
+// the explicit post-upgrade remap — violating the "user remaps survive"
+// contract (#868 review finding).
+func TestNormalizeHotkeyDefaultsV1_OneShotNoRefire(t *testing.T) {
+	cfg := Defaults()
+	cfg.Hotkeys["toggle_sidebar"] = "Ctrl+B" // legacy default
+	out := normalize(cfg)
+	if out.Hotkeys["toggle_sidebar"] != "Ctrl+\\" {
+		t.Fatalf("first normalize: want Ctrl+\\, got %q", out.Hotkeys["toggle_sidebar"])
+	}
+	if done, _ := out.Plugins.PluginSettings[hotkeysDefaultsV1MigratedKey].(bool); !done {
+		t.Fatal("one-shot migration marker not set after first normalize")
+	}
+	// Simulate the user re-binding toggle_sidebar back to the legacy Ctrl+B
+	// after the upgrade. The next normalize (e.g. on Settings save) must NOT
+	// re-migrate it — the marker gates the whole block.
+	out.Hotkeys["toggle_sidebar"] = "Ctrl+B"
+	out = normalize(out)
+	if out.Hotkeys["toggle_sidebar"] != "Ctrl+B" {
+		t.Fatalf("second normalize re-migrated an explicit remap: want Ctrl+B preserved, got %q", out.Hotkeys["toggle_sidebar"])
+	}
+	// The gate must hold across further normalizes.
+	out = normalize(out)
+	if out.Hotkeys["toggle_sidebar"] != "Ctrl+B" {
+		t.Fatalf("third normalize re-migrated: want Ctrl+B preserved, got %q", out.Hotkeys["toggle_sidebar"])
+	}
+}
+
 // --- #133: co-located per-notebook config ---
 
 // TestLinkedConfigPath confirms the co-located path lives at
