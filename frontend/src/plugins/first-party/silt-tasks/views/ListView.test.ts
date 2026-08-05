@@ -476,7 +476,7 @@ describe('Tasks view', () => {
     ).toBeInTheDocument()
   })
 
-  it('drawer hides "Open source page" for a standalone (.silt) task', async () => {
+  it('omits standalone label on the list row and drawer for a .silt task', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (isOpenSql(sql))
         return { rows: [task('s1', 'Standalone')], truncated: false }
@@ -484,6 +484,13 @@ describe('Tasks view', () => {
     })
     render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
+
+    const row = document.querySelector('[data-block-id="s1"]') as HTMLElement
+    expect(row).toBeTruthy()
+    expect(row.textContent).toContain('Standalone')
+    expect(row.textContent).not.toContain('Standalone task')
+    expect(row.textContent).not.toContain('.silt')
+    expect(row.textContent).not.toContain('tasks.md')
 
     const bodyBtn = document.querySelector(
       '[data-block-id="s1"] button[aria-label^="Edit metadata for"]'
@@ -495,10 +502,12 @@ describe('Tasks view', () => {
       '[aria-labelledby="task-edit-drawer-title"]'
     )
     expect(drawer).toBeInTheDocument()
-    // Standalone tasks have no source page: the button is omitted and the
-    // drawer's breadcrumb reads "Standalone task" (not .silt › … › tasks.md).
+    // Standalone tasks have no source page: the button is omitted and no
+    // breadcrumb/label is shown (must not leak .silt › … › tasks.md).
     expect(screen.queryByText('Open source page')).toBeNull()
-    expect(drawer?.textContent).toContain('Standalone task')
+    expect(drawer?.textContent).not.toContain('Standalone task')
+    expect(drawer?.textContent).not.toContain('.silt')
+    expect(drawer?.textContent).not.toContain('tasks.md')
   })
 
   it('drawer shows "Open source page" for an in-page task', async () => {

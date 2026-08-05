@@ -230,7 +230,7 @@ describe('TaskSubEditorModal (#304)', () => {
     expect(dialog).toHaveTextContent('Daily')
   })
 
-  it('shows "Standalone task" instead of the synthetic .silt path for standalone tasks', async () => {
+  it('omits breadcrumb and does not leak the synthetic .silt path for standalone tasks', async () => {
     render(TaskSubEditorModal, {
       ...BASE_PROPS,
       notebook: STANDALONE_TASKS_NOTEBOOK,
@@ -243,10 +243,12 @@ describe('TaskSubEditorModal (#304)', () => {
     await flush()
 
     const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveTextContent('Standalone task')
-    // The synthetic notebook name + page file must NOT leak into the header.
+    // No redundant label; synthetic notebook name + page file must not leak.
+    expect(dialog).not.toHaveTextContent('Standalone task')
     expect(dialog).not.toHaveTextContent('.silt')
     expect(dialog).not.toHaveTextContent('tasks.md')
+    // Header still shows the parent task title.
+    expect(dialog).toHaveTextContent('Ship the feature')
   })
 
   it('mounts the TipTap editor once the subtree loads (loading state clears)', async () => {
