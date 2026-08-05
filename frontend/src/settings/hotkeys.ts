@@ -45,7 +45,14 @@ const KEY_ALIASES: Record<string, string> = {
   arrowup: 'arrowup',
   arrowdown: 'arrowdown',
   arrowleft: 'arrowleft',
-  arrowright: 'arrowright'
+  arrowright: 'arrowright',
+  // Short-form arrow tokens (e.g. "Ctrl+Alt+Right") normalize to the
+  // KeyboardEvent.key form so they match arrow-key events. Mirrors the
+  // PM_KEY_NORMALIZE mapping used by the ProseMirror keymap converter.
+  up: 'arrowup',
+  down: 'arrowdown',
+  left: 'arrowleft',
+  right: 'arrowright'
 }
 
 /** Parse a "Ctrl+Shift+P"-style binding. Returns null for empty/invalid input. */

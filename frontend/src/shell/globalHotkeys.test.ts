@@ -17,18 +17,18 @@ const defaults: Record<string, string> = {
   open_search: 'Ctrl+Shift+F',
   find_in_page: 'Ctrl+F',
   replace: 'Ctrl+H',
-  toggle_sidebar: 'Ctrl+B',
+  toggle_sidebar: 'Ctrl+\\',
   focus_sidebar: 'Ctrl+Shift+B',
   cycle_view_layout: 'Ctrl+Alt+V',
   new_task: 'Ctrl+Shift+N',
-  toggle_view_mode: 'Ctrl+Shift+V',
+  toggle_view_mode: 'Ctrl+Alt+R',
   toggle_format_toolbar: 'Ctrl+F1',
   toggle_focus_mode: 'Ctrl+Shift+D',
   toggle_typewriter_mode: 'Ctrl+Shift+Y',
   open_settings: 'Ctrl+,',
-  next_tab: 'Ctrl+Tab',
-  prev_tab: 'Ctrl+Shift+Tab',
-  close_tab: 'Ctrl+W',
+  next_tab: 'Ctrl+Alt+Right',
+  prev_tab: 'Ctrl+Alt+Left',
+  close_tab: 'Ctrl+Shift+W',
   new_page: 'Ctrl+N',
   new_section: 'Ctrl+Alt+N',
   new_notebook: 'Ctrl+Alt+Shift+N',
@@ -52,15 +52,18 @@ describe('resolveGlobalHotkey', () => {
     ).toBe('open_search')
   })
 
-  it('resolves toggle_sidebar on Ctrl+B when not in the editor', () => {
+  it('resolves format_bold on Ctrl+B when not in the editor', () => {
+    // Ctrl+B is bold everywhere now that toggle_sidebar moved to Ctrl+\. When
+    // the editor is not focused, the resolver returns format_bold so the
+    // dispatch can focus the active editor and apply bold.
     expect(
       resolveGlobalHotkey(key('b', { ctrlKey: true }), defaults, false, false)
-    ).toBe('toggle_sidebar')
+    ).toBe('format_bold')
   })
 
-  it('suppresses Ctrl+B inside the editor (format_bold owns it)', () => {
-    // The famous collision: Ctrl+B is toggle_sidebar globally AND format_bold in
-    // the editor. Editor-focused must yield null so the editor handles it.
+  it('suppresses Ctrl+B inside the editor (ProseMirror owns it)', () => {
+    // When the editor is focused, the editor-owned suppression yields null so
+    // ProseMirror applies bold natively (no double-fire).
     expect(
       resolveGlobalHotkey(key('b', { ctrlKey: true }), defaults, true, false)
     ).toBe(null)
@@ -99,10 +102,12 @@ describe('resolveGlobalHotkey', () => {
   })
 
   it('still fires global actions while the editor is focused', () => {
-    // toggle_view_mode is intentionally NOT editor-owned (#171/#195).
+    // toggle_view_mode is intentionally NOT editor-owned; it now lives on
+    // Ctrl+Alt+R (relocated off Ctrl+Shift+V to avoid the OS paste-plain /
+    // TasksHub display-cycle triple-fire).
     expect(
       resolveGlobalHotkey(
-        key('V', { ctrlKey: true, shiftKey: true }),
+        key('r', { ctrlKey: true, altKey: true }),
         defaults,
         true,
         false
@@ -151,18 +156,23 @@ describe('resolveGlobalHotkey', () => {
   })
 
   it('gates the tab-strip fallback on hasDisplayedTabs', () => {
-    const close = key('w', { ctrlKey: true })
+    const close = key('w', { ctrlKey: true, shiftKey: true })
     expect(resolveGlobalHotkey(close, defaults, false, true)).toBe('close_tab')
     expect(resolveGlobalHotkey(close, defaults, false, false)).toBe(null)
   })
 
   it('resolves next_tab / prev_tab only when tabs are displayed', () => {
     expect(
-      resolveGlobalHotkey(key('Tab', { ctrlKey: true }), defaults, false, true)
+      resolveGlobalHotkey(
+        key('ArrowRight', { ctrlKey: true, altKey: true }),
+        defaults,
+        false,
+        true
+      )
     ).toBe('next_tab')
     expect(
       resolveGlobalHotkey(
-        key('Tab', { ctrlKey: true, shiftKey: true }),
+        key('ArrowLeft', { ctrlKey: true, altKey: true }),
         defaults,
         false,
         true

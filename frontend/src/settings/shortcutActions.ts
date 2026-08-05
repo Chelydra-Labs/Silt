@@ -33,26 +33,102 @@ export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
     group: 'Navigation',
     defaultBinding: 'Ctrl+P'
   },
-  { id: 'toggle_sidebar', label: 'Show or hide sidebar', group: 'Navigation' },
-  { id: 'focus_sidebar', label: 'Focus sidebar', group: 'Navigation' },
-  { id: 'cycle_view_layout', label: 'Cycle view', group: 'Navigation' },
-  { id: 'open_search', label: 'Search vault', group: 'Search' },
-  { id: 'find_in_page', label: 'Find in page', group: 'Search' },
-  { id: 'replace', label: 'Replace in page', group: 'Search' },
-  { id: 'global_replace', label: 'Replace in vault', group: 'Search' },
-  { id: 'next_tab', label: 'Next tab', group: 'Tabs' },
-  { id: 'prev_tab', label: 'Previous tab', group: 'Tabs' },
-  { id: 'close_tab', label: 'Close tab', group: 'Tabs' },
+  {
+    id: 'toggle_sidebar',
+    label: 'Show or hide sidebar',
+    group: 'Navigation',
+    defaultBinding: 'Ctrl+\\'
+  },
+  {
+    id: 'focus_sidebar',
+    label: 'Focus sidebar',
+    group: 'Navigation',
+    defaultBinding: 'Ctrl+Shift+B'
+  },
+  {
+    id: 'cycle_view_layout',
+    label: 'Cycle view',
+    group: 'Navigation',
+    defaultBinding: 'Ctrl+Alt+V'
+  },
+  {
+    id: 'open_search',
+    label: 'Search vault',
+    group: 'Search',
+    defaultBinding: 'Ctrl+Shift+F'
+  },
+  {
+    id: 'find_in_page',
+    label: 'Find in page',
+    group: 'Search',
+    defaultBinding: 'Ctrl+F'
+  },
+  {
+    id: 'replace',
+    label: 'Replace in page',
+    group: 'Search',
+    defaultBinding: 'Ctrl+H'
+  },
+  {
+    id: 'global_replace',
+    label: 'Replace in vault',
+    group: 'Search',
+    defaultBinding: 'Ctrl+Shift+G'
+  },
+  {
+    id: 'next_tab',
+    label: 'Next tab',
+    group: 'Tabs',
+    defaultBinding: 'Ctrl+Alt+Right'
+  },
+  {
+    id: 'prev_tab',
+    label: 'Previous tab',
+    group: 'Tabs',
+    defaultBinding: 'Ctrl+Alt+Left'
+  },
+  {
+    id: 'close_tab',
+    label: 'Close tab',
+    group: 'Tabs',
+    defaultBinding: 'Ctrl+Shift+W'
+  },
   {
     id: 'open_template_picker',
     label: 'New page from template',
-    group: 'Templates'
+    group: 'Templates',
+    defaultBinding: 'Ctrl+Shift+T'
   },
-  { id: 'new_task', label: 'New task', group: 'Tasks' },
-  { id: 'format_bold', label: 'Bold', group: 'Editor' },
-  { id: 'format_italic', label: 'Italic', group: 'Editor' },
-  { id: 'format_underline', label: 'Underline', group: 'Editor' },
-  { id: 'format_link', label: 'Add link', group: 'Editor' },
+  {
+    id: 'new_task',
+    label: 'New task',
+    group: 'Tasks',
+    defaultBinding: 'Ctrl+Shift+N'
+  },
+  {
+    id: 'format_bold',
+    label: 'Bold',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+B'
+  },
+  {
+    id: 'format_italic',
+    label: 'Italic',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+I'
+  },
+  {
+    id: 'format_underline',
+    label: 'Underline',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+U'
+  },
+  {
+    id: 'format_link',
+    label: 'Add link',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+K'
+  },
   {
     id: 'indent_block',
     label: 'Indent block',
@@ -77,7 +153,12 @@ export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
     group: 'Editor',
     defaultBinding: 'Ctrl+Shift+7'
   },
-  { id: 'toggle_view_mode', label: 'Toggle source view', group: 'Editor' },
+  {
+    id: 'toggle_view_mode',
+    label: 'Toggle source view',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+Alt+R'
+  },
   {
     id: 'toggle_properties_panel',
     label: 'Edit page properties',
@@ -87,15 +168,27 @@ export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
   {
     id: 'toggle_format_toolbar',
     label: 'Toggle formatting toolbar',
-    group: 'Editor'
+    group: 'Editor',
+    defaultBinding: 'Ctrl+F1'
   },
-  { id: 'toggle_focus_mode', label: 'Toggle focus mode', group: 'Editor' },
+  {
+    id: 'toggle_focus_mode',
+    label: 'Toggle focus mode',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+Shift+D'
+  },
   {
     id: 'toggle_typewriter_mode',
     label: 'Toggle typewriter mode',
-    group: 'Editor'
+    group: 'Editor',
+    defaultBinding: 'Ctrl+Shift+Y'
   },
-  { id: 'open_settings', label: 'Open settings', group: 'App' },
+  {
+    id: 'open_settings',
+    label: 'Open settings',
+    group: 'App',
+    defaultBinding: 'Ctrl+,'
+  },
   {
     id: 'open_shortcuts_help',
     label: 'Keyboard shortcuts',

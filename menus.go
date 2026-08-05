@@ -38,7 +38,9 @@ func setupMenus(app *application.App, siltApp *App) {
 
 	// --- File ---
 	fileMenu := menu.AddSubmenu("File")
-	fileMenu.Add("New Page").SetAccelerator("Ctrl+N").OnClick(safeMenuCallback("new-page", func(ctx *application.Context) {
+	// New Page keeps no accelerator: the config-driven webview hotkey layer
+	// owns the Ctrl+N chord, and a native-menu accelerator would double-fire.
+	fileMenu.Add("New Page").OnClick(safeMenuCallback("new-page", func(ctx *application.Context) {
 		siltApp.emit(EventMenuNewPage)
 	}))
 	fileMenu.Add("Open Vault...").SetAccelerator("Ctrl+O").OnClick(safeMenuCallback("open-vault", func(ctx *application.Context) {
@@ -62,20 +64,25 @@ func setupMenus(app *application.App, siltApp *App) {
 
 	// --- View ---
 	viewMenu := menu.AddSubmenu("View")
-	viewMenu.Add("Toggle Sidebar").SetAccelerator("Ctrl+B").OnClick(safeMenuCallback("toggle-sidebar", func(ctx *application.Context) {
+	// Toggle Sidebar / Find / Settings keep no accelerator: their chords
+	// (Ctrl+\, Ctrl+F, Ctrl+,) are owned solely by the config-driven webview
+	// hotkey layer. A native-menu accelerator would double-fire on the same
+	// chord. The items stay so mouse-click dispatch (menu:* events) still
+	// works.
+	viewMenu.Add("Toggle Sidebar").OnClick(safeMenuCallback("toggle-sidebar", func(ctx *application.Context) {
 		siltApp.emit(EventMenuToggleSidebar)
 	}))
 	viewMenu.Add("Toggle Format Toolbar").OnClick(safeMenuCallback("toggle-format-toolbar", func(ctx *application.Context) {
 		siltApp.emit(EventMenuToggleFormatToolbar)
 	}))
-	viewMenu.Add("Find...").SetAccelerator("Ctrl+F").OnClick(safeMenuCallback("find", func(ctx *application.Context) {
+	viewMenu.Add("Find...").OnClick(safeMenuCallback("find", func(ctx *application.Context) {
 		siltApp.emit(EventMenuFind)
 	}))
 	viewMenu.Add("Focus Mode").OnClick(safeMenuCallback("focus-mode", func(ctx *application.Context) {
 		siltApp.emit(EventMenuFocusMode)
 	}))
 	viewMenu.AddSeparator()
-	viewMenu.Add("Settings...").SetAccelerator("Ctrl+,").OnClick(safeMenuCallback("settings", func(ctx *application.Context) {
+	viewMenu.Add("Settings...").OnClick(safeMenuCallback("settings", func(ctx *application.Context) {
 		siltApp.emit(EventMenuSettings)
 	}))
 	// Dev Mode Inspect (#679/#684). Disabled when Dev Mode and SILT_DEBUG are

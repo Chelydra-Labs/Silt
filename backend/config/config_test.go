@@ -579,6 +579,65 @@ func TestNormalizeHotkeyCollisionMigration(t *testing.T) {
 	})
 }
 
+// TestNormalizeHotkeyDefaultsV1Migration confirms the v1 realignment: each
+// renamed chord migrates from its exact legacy default to the new default, a
+// customized binding is preserved untouched, and a clean current default is
+// left alone. Mirrors the format_subscript migration precedent above.
+func TestNormalizeHotkeyDefaultsV1Migration(t *testing.T) {
+	type c struct {
+		action string
+		legacy string
+		want   string
+	}
+	cases := []c{
+		{"toggle_sidebar", "Ctrl+B", "Ctrl+\\"},
+		{"toggle_view_mode", "Ctrl+Shift+V", "Ctrl+Alt+R"},
+		{"close_tab", "Ctrl+W", "Ctrl+Shift+W"},
+		{"next_tab", "Ctrl+Tab", "Ctrl+Alt+Right"},
+		{"prev_tab", "Ctrl+Shift+Tab", "Ctrl+Alt+Left"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.action+" legacy value migrates", func(t *testing.T) {
+			cfg := Defaults()
+			cfg.Hotkeys[tc.action] = tc.legacy
+			out := normalize(cfg)
+			if out.Hotkeys[tc.action] != tc.want {
+				t.Errorf("%s should migrate %q → %q, got %q", tc.action, tc.legacy, tc.want, out.Hotkeys[tc.action])
+			}
+		})
+		t.Run(tc.action+" customized value is preserved", func(t *testing.T) {
+			cfg := Defaults()
+			cfg.Hotkeys[tc.action] = "Ctrl+F24" // a value no default uses
+			out := normalize(cfg)
+			if out.Hotkeys[tc.action] != "Ctrl+F24" {
+				t.Errorf("%s customization must not be touched, got %q", tc.action, out.Hotkeys[tc.action])
+			}
+		})
+	}
+	t.Run("clean current defaults are untouched", func(t *testing.T) {
+		out := normalize(Defaults())
+		for _, tc := range cases {
+			if out.Hotkeys[tc.action] != tc.want {
+				t.Errorf("clean default %s changed: got %q", tc.action, out.Hotkeys[tc.action])
+			}
+		}
+	})
+	t.Run("legacy values stamp the one-time notice", func(t *testing.T) {
+		cfg := Defaults()
+		cfg.Hotkeys["close_tab"] = "Ctrl+W" // legacy
+		out := normalize(cfg)
+		if !containsString(out.UI.DismissedTips, "hotkeys_defaults_v1_notice") {
+			t.Errorf("expected hotkeys_defaults_v1_notice stamp after migration")
+		}
+	})
+	t.Run("clean defaults do not stamp the notice", func(t *testing.T) {
+		out := normalize(Defaults())
+		if containsString(out.UI.DismissedTips, "hotkeys_defaults_v1_notice") {
+			t.Errorf("clean defaults should not stamp the notice")
+		}
+	})
+}
+
 // --- #133: co-located per-notebook config ---
 
 // TestLinkedConfigPath confirms the co-located path lives at
@@ -790,13 +849,15 @@ func TestDefaults_TabsConfig(t *testing.T) {
 			t.Errorf("defaults hotkeys missing %q", key)
 		}
 	}
-	if d.Hotkeys["next_tab"] != "Ctrl+Tab" {
+	// Tab-strip chords were remapped off Ctrl+W / Ctrl+Tab because WebView2
+	// unreliably relays those to the webview. See defaults.go for the rationale.
+	if d.Hotkeys["next_tab"] != "Ctrl+Alt+Right" {
 		t.Errorf("next_tab default: got %q", d.Hotkeys["next_tab"])
 	}
-	if d.Hotkeys["prev_tab"] != "Ctrl+Shift+Tab" {
+	if d.Hotkeys["prev_tab"] != "Ctrl+Alt+Left" {
 		t.Errorf("prev_tab default: got %q", d.Hotkeys["prev_tab"])
 	}
-	if d.Hotkeys["close_tab"] != "Ctrl+W" {
+	if d.Hotkeys["close_tab"] != "Ctrl+Shift+W" {
 		t.Errorf("close_tab default: got %q", d.Hotkeys["close_tab"])
 	}
 }

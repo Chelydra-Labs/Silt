@@ -79,7 +79,10 @@
   import { createPageTypeController } from './properties/pageTypeState.svelte'
   import TypeDashboard from './dashboards/TypeDashboard.svelte'
   import { toggleDateGlance } from './lib/dateGlanceState.svelte'
-  import { getActiveEditor } from './lib/editor/activeEditor.svelte'
+  import {
+    getActiveEditor,
+    getLastActiveEditor
+  } from './lib/editor/activeEditor.svelte'
   import {
     shortcutHelp,
     toggleShortcutHelp,
@@ -472,7 +475,17 @@
     isPropertiesPanelAvailable: () =>
       activeView === 'notes' || activeView === 'backlinks',
     closeTab: (tabId) => tabManager.handleCloseTab(tabId),
-    cycleTab: (dir) => tabManager.handleCycleTab(dir)
+    cycleTab: (dir) => tabManager.handleCycleTab(dir),
+    // Ctrl+B is bold everywhere. The resolver suppressed this when the editor
+    // was focused (ProseMirror owns the in-editor path); here the editor is
+    // not focused, so recover the active page's editor and apply bold. Falls
+    // back to the last-focused editor (the common blur-then-bold flow); a
+    // destroyed/stale reference or no mounted editor is a silent no-op.
+    applyFormatBold: () => {
+      const editor = getActiveEditor() ?? getLastActiveEditor()
+      if (!editor || editor.isDestroyed) return
+      editor.chain().focus().toggleBold().run()
+    }
   })
 
   // Startup-events controller (#768). Owns every onMount-registered listener

@@ -36,15 +36,20 @@ export type GlobalHotkeyAction =
   | 'open_quick_switcher'
   | 'open_shortcuts_help'
   | 'open_date_glance'
+  | 'format_bold'
 
 // Actions consumed by the editor's ProseMirror keymap when the contenteditable
 // is focused. When the editor is focused and one of these chords is pressed,
 // the global handler suppresses (returns null) so the editor can handle it and
-// the two layers don't double-fire (#168/#169/#173). toggle_view_mode is
-// intentionally NOT here: no editor keymap handles it, so it stays global even
-// while typing (#171/#195).
+// the two layers don't double-fire. toggle_view_mode is intentionally NOT
+// here: no editor keymap handles it, so it stays global even while typing.
 // indent_/unindent_ are editor keymap chords (defaults Tab / Shift-Tab);
 // when remapped they must still suppress the global handler while focused.
+//
+// format_bold is editor-owned when the editor IS focused (ProseMirror applies
+// bold natively), but when the editor is NOT focused it resolves globally so
+// the dispatch layer can focus the active editor and apply bold — Ctrl+B is
+// bold everywhere now that toggle_sidebar moved off it.
 const EDITOR_OWNED_PREFIXES = [
   'format_',
   'set_',
@@ -65,7 +70,8 @@ function isEditorOwned(action: string): boolean {
 // editorFocused: whether the event target is inside a .ProseMirror surface.
 // When true, an editor-owned chord (format/set/align) suppresses the global
 // handler entirely (returns null) rather than falling through to the tab-strip
-// fallback.
+// fallback. The exception is format_bold, which the dispatch layer owns the
+// "focus editor then apply" path for when the editor is not focused.
 //
 // hasDisplayedTabs gates the tab-strip fallback (next_tab/prev_tab/close_tab):
 // those are no-ops when the active notebook has no open tabs (#142).
@@ -105,7 +111,8 @@ export function resolveGlobalHotkey(
     'toggle_properties_panel',
     'toggle_format_toolbar',
     'toggle_focus_mode',
-    'toggle_typewriter_mode'
+    'toggle_typewriter_mode',
+    'format_bold'
   ]
   for (const action of ordered) {
     if (matchHotkey(e, hotkeys[action])) {

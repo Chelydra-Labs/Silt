@@ -124,19 +124,19 @@ vi.mock('./settings/store.svelte', () => ({
         find_in_page: 'Ctrl+F',
         replace: 'Ctrl+H',
         global_replace: 'Ctrl+Shift+G',
-        toggle_sidebar: 'Ctrl+B',
+        toggle_sidebar: 'Ctrl+\\',
         focus_sidebar: 'Ctrl+Shift+B',
         cycle_view_layout: 'Ctrl+Shift+L',
         open_template_picker: 'Ctrl+Shift+T',
         new_task: 'Ctrl+Shift+N',
-        toggle_view_mode: 'Ctrl+Shift+V',
+        toggle_view_mode: 'Ctrl+Alt+R',
         toggle_format_toolbar: 'Ctrl+Shift+E',
         toggle_focus_mode: 'Ctrl+Shift+M',
         toggle_typewriter_mode: 'Ctrl+Shift+O',
         open_settings: 'Ctrl+,',
-        next_tab: 'Ctrl+Tab',
-        prev_tab: 'Ctrl+Shift+Tab',
-        close_tab: 'Ctrl+W'
+        next_tab: 'Ctrl+Alt+ArrowRight',
+        prev_tab: 'Ctrl+Alt+ArrowLeft',
+        close_tab: 'Ctrl+Shift+W'
       },
       ui: {},
       editor: {}
@@ -262,19 +262,19 @@ const C = {
   find_in_page: 'Ctrl+F',
   replace: 'Ctrl+H',
   global_replace: 'Ctrl+Shift+G',
-  toggle_sidebar: 'Ctrl+B',
+  toggle_sidebar: 'Ctrl+\\',
   focus_sidebar: 'Ctrl+Shift+B',
   cycle_view_layout: 'Ctrl+Shift+L',
   open_template_picker: 'Ctrl+Shift+T',
   new_task: 'Ctrl+Shift+N',
-  toggle_view_mode: 'Ctrl+Shift+V',
+  toggle_view_mode: 'Ctrl+Alt+R',
   toggle_format_toolbar: 'Ctrl+Shift+E',
   toggle_focus_mode: 'Ctrl+Shift+M',
   toggle_typewriter_mode: 'Ctrl+Shift+O',
   open_settings: 'Ctrl+,',
-  next_tab: 'Ctrl+Tab',
-  prev_tab: 'Ctrl+Shift+Tab',
-  close_tab: 'Ctrl+W'
+  next_tab: 'Ctrl+Alt+ArrowRight',
+  prev_tab: 'Ctrl+Alt+ArrowLeft',
+  close_tab: 'Ctrl+Shift+W'
 } as const
 
 describe('global hotkey dispatch table (golden master)', () => {

@@ -7,7 +7,7 @@ const mockSettings = vi.hoisted(() => ({
       new_page: 'Alt+N',
       new_section: '',
       open_search: 'Ctrl+Shift+F',
-      close_tab: 'Ctrl+W'
+      close_tab: 'Ctrl+Shift+W'
     }
   }
 }))

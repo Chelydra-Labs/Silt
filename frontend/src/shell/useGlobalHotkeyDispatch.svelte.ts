@@ -62,6 +62,12 @@ export interface GlobalHotkeyDispatchDeps {
   isPropertiesPanelAvailable: () => boolean
   closeTab: (tabId: string) => void
   cycleTab: (dir: 1 | -1) => void
+  /** Ctrl+B is bold everywhere. When the editor is focused the resolver
+   *  already suppressed (ProseMirror handles it); this fires only when the
+   *  editor is NOT focused, so the host focuses the active page's editor and
+   *  applies bold there. No-op silently when no editor is available
+   *  (dashboard view, no page focused yet). */
+  applyFormatBold: () => void
 }
 
 export interface GlobalHotkeyDispatchController {
@@ -190,6 +196,12 @@ export function createGlobalHotkeyDispatch(
         // displayed set — closing a hidden tab from another notebook would be
         // surprising to the user.
         if (deps.isActiveTabDisplayed()) deps.closeTab(deps.getActiveTabId())
+        break
+      case 'format_bold':
+        // Resolver suppressed this when the editor was focused (ProseMirror
+        // owns it); reaching here means the editor was not focused, so the
+        // host focuses the active editor and applies bold.
+        deps.applyFormatBold()
         break
     }
   }
