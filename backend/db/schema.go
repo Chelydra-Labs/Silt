@@ -378,6 +378,34 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create page projection tables: %w", err)
 	}
 
+	// page_core: type-independent core-metadata projection (#867). One row per
+	// indexed page (typed OR untyped) carrying the core fields every page
+	// exposes in the PropertiesPanel regardless of type: type id (empty for
+	// untyped), date, aliases (JSON string array — same encoding as
+	// page_properties.value_text multi-values), and created. `modified` is NOT
+	// stored here — it is derived from the files-table mtime cache at read time
+	// so a block-only write (which bumps mtime without touching frontmatter)
+	// stays fresh without a re-index. Re-derivable from frontmatter on reindex
+	// (cardinal rule #4); source-scoped so a linked notebook sharing a display
+	// name with a vault notebook cannot collide (mirrors page_types/blocks).
+	// SEPARATE from page_properties (type-scoped) and tags (block-scoped index)
+	// by design (SPECS.md §11.6): composing the three is a read-side concern.
+	createPageCoreTable := `
+	CREATE TABLE IF NOT EXISTS page_core (
+		source   TEXT NOT NULL,
+		notebook TEXT NOT NULL,
+		section  TEXT NOT NULL,
+		page     TEXT NOT NULL,
+		type     TEXT NOT NULL DEFAULT '',
+		date     TEXT NOT NULL DEFAULT '',
+		aliases  TEXT NOT NULL DEFAULT '[]',
+		created  TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (source, notebook, section, page)
+	);`
+	if _, err := db.Exec(createPageCoreTable); err != nil {
+		return fmt.Errorf("failed to create page_core table: %w", err)
+	}
+
 	// Schema-migrations ledger — narrow, general-purpose marker table for
 	// restart-safe one-shot migrations whose completion cannot be inferred
 	// from `CREATE TABLE IF NOT EXISTS` alone (e.g. backfills over existing

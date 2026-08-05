@@ -5,6 +5,19 @@ const appMocks = vi.hoisted(() =>
   createAppIpcMocks({
     GetPageType: vi.fn(),
     GetPageProperties: vi.fn(),
+    GetPageCoreMetadata: vi.fn().mockResolvedValue({
+      notebook: '',
+      section: '',
+      page: '',
+      type: '',
+      date: '',
+      tags: [],
+      aliases: [],
+      created: '',
+      modified: '',
+      tagsAreReadOnly: false
+    }),
+    SetPageCoreMetadata: vi.fn().mockResolvedValue(undefined),
     ListTypes: vi
       .fn()
       .mockResolvedValue({ types: [], errors: [], warnings: [] })
@@ -39,6 +52,19 @@ const locator = { notebook: 'Work', section: 'Projects', page: 'Plan' }
 beforeEach(() => {
   appMocks.GetPageType.mockReset()
   appMocks.GetPageProperties.mockReset()
+  appMocks.GetPageCoreMetadata.mockReset().mockResolvedValue({
+    notebook: '',
+    section: '',
+    page: '',
+    type: '',
+    date: '',
+    tags: [],
+    aliases: [],
+    created: '',
+    modified: '',
+    tagsAreReadOnly: false
+  })
+  appMocks.SetPageCoreMetadata.mockReset().mockResolvedValue(undefined)
   appMocks.ListTypes.mockReset().mockResolvedValue({
     types: [],
     errors: [],
@@ -519,5 +545,77 @@ describe('pageType controller', () => {
     await tick()
     expect(ctrl.info.isSet).toBe(false)
     expect(ctrl.values).toEqual([])
+  })
+
+  it('commitCore applies a field-granular update and refetches the core payload (#867)', async () => {
+    appMocks.GetPageType.mockResolvedValue({
+      isSet: false,
+      type: {},
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([])
+    appMocks.GetPageCoreMetadata.mockResolvedValueOnce({
+      notebook: 'Work',
+      section: 'Projects',
+      page: 'Plan',
+      type: '',
+      date: '2026-08-05',
+      tags: ['work'],
+      aliases: [],
+      created: '',
+      modified: '',
+      tagsAreReadOnly: false
+    })
+    appMocks.GetPageCoreMetadata.mockResolvedValueOnce({
+      notebook: 'Work',
+      section: 'Projects',
+      page: 'Plan',
+      type: '',
+      date: '2026-09-01',
+      tags: ['work'],
+      aliases: [],
+      created: '',
+      modified: '',
+      tagsAreReadOnly: false
+    })
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+    await ctrl.refresh()
+    await tick()
+    expect(ctrl.core.date).toBe('2026-08-05')
+
+    await ctrl.commitCore({ date: '2026-09-01' })
+    await tick()
+
+    // Setter called with the changed field only.
+    expect(appMocks.SetPageCoreMetadata).toHaveBeenCalledWith(
+      'Work',
+      'Projects',
+      'Plan',
+      { date: '2026-09-01' }
+    )
+    // Refetched the core payload (NOT info/values — a core edit does not
+    // reshape the type-defined section).
+    expect(ctrl.core.date).toBe('2026-09-01')
+  })
+
+  it('commitCore surfaces an IPC error via setError (#867)', async () => {
+    appMocks.GetPageType.mockResolvedValue({
+      isSet: false,
+      type: {},
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([])
+    appMocks.SetPageCoreMetadata.mockRejectedValueOnce(new Error('disk full'))
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+    await ctrl.refresh()
+    await tick()
+
+    await ctrl.commitCore({ created: '2026-10-02T08:00:00' })
+    await tick()
+
+    expect(ctrl.error).toMatch(/disk full/i)
+    // Setter was attempted; the refresh was NOT triggered because the commit
+    // failed before the refetch step.
+    expect(appMocks.SetPageCoreMetadata).toHaveBeenCalled()
   })
 })

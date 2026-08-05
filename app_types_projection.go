@@ -59,16 +59,53 @@ func computeBatchProjections(a *App, results []parser.ScanResult) []db.ScanProje
 		if res.Notebook == "" || res.Err != nil {
 			continue
 		}
-		typeID, props := a.computePageProjection(parser.FileMetadata{
+		meta := parser.FileMetadata{
 			Notebook:    res.Notebook,
 			Section:     res.Section,
 			Page:        res.Page,
 			Type:        res.Type,
 			Frontmatter: res.Frontmatter,
-		})
-		out[i] = db.ScanProjection{TypeID: typeID, Props: props}
+		}
+		typeID, props := a.computePageProjection(meta)
+		out[i] = db.ScanProjection{
+			TypeID: typeID,
+			Props:  props,
+			Core:   computePageCoreFromMeta(meta),
+		}
 	}
 	return out
+}
+
+// computePageCore derives a page's type-independent core-metadata projection
+// payload (#867) from parsed frontmatter. Pure: no DB access. The App layer
+// is the source of truth for these values; the indexer inserts the result
+// atomically with blocks + page_types/page_properties. type/date/aliases/
+// created come from the parser-populated FileMetadata fields (round-tripped
+// verbatim with the rest of the frontmatter).
+func (a *App) computePageCore(meta parser.FileMetadata) db.PageCoreFields {
+	return computePageCoreFromMeta(meta)
+}
+
+// computePageCoreFromMeta is the pure core of computePageCore, shared with
+// computeBatchProjections (which synthesizes a FileMetadata from a ScanResult
+// and has no App receiver). type/date round-trip through the parser; aliases
+// is read from the raw frontmatter map when the typed field is empty (handles
+// a typed-decode failure that skips Aliases but leaves it in Frontmatter).
+func computePageCoreFromMeta(meta parser.FileMetadata) db.PageCoreFields {
+	core := db.PageCoreFields{
+		Type:    meta.Type,
+		Date:    meta.Date,
+		Aliases: meta.Aliases,
+		Created: meta.Created,
+	}
+	if core.Aliases == nil && meta.Frontmatter != nil {
+		if v, ok := lookupFrontmatter(meta.Frontmatter, "aliases"); ok && v != nil {
+			if s, ok := toStringSlice(v); ok {
+				core.Aliases = s
+			}
+		}
+	}
+	return core
 }
 
 // projectPageType projects a page's note type and its set property values into

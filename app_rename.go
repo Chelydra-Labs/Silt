@@ -151,9 +151,10 @@ func (a *App) renameIndexFile(source, notebook, section, page string, blocks []p
 // rollback tests; the hook sees the same atomic shape.
 func (a *App) indexFile(source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata, warnings ...string) error {
 	typeID, props := a.computePageProjection(meta)
+	core := a.computePageCore(meta)
 	var err error
 	a.coordinator.WithDBWrite(func() {
-		err = a.db.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, typeID, props, warnings...)
+		err = a.db.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, typeID, props, core, warnings...)
 	})
 	if err != nil {
 		log.Printf("indexFile: IndexFileWithProjection failed for %s/%s/%s: %v", notebook, section, page, err)

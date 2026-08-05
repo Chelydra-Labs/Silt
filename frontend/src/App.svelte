@@ -1145,6 +1145,8 @@
                 types={pageType.types}
                 typesLoading={pageType.typesLoading}
                 typeMenuRequest={pageType.typeMenuRequest}
+                core={pageType.core}
+                onCommitCore={pageType.commitCore}
                 locator={{
                   notebook: activeNotebook,
                   section: activeSection,

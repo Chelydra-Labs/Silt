@@ -172,6 +172,17 @@ type FileMetadata struct {
 	// untyped pages. Purely additive — an absent type field round-trips
 	// unchanged (AC#6), and the indexer projects it only when set.
 	Type string `yaml:"type,omitempty"`
+	// Aliases is the page's alias list (frontmatter `aliases:` string array).
+	// DISTINCT from page_links.alias (the wiki-link `[[target|alias]]` display
+	// text), which is a per-link render concern parsed off block bodies. Aliases
+	// is page-level metadata used for search/lookup surface forms. Round-trips
+	// through parse→render with the rest of the frontmatter.
+	Aliases []string `yaml:"aliases,omitempty"`
+	// Created is the page's creation timestamp (frontmatter `created:`,
+	// ISO datetime or bare YYYY-MM-DD). Set once on page creation and preserved
+	// verbatim thereafter. Empty when the field is absent. Round-trips through
+	// parse→render.
+	Created string `yaml:"created,omitempty"`
 
 	// Frontmatter is the raw parsed frontmatter (all keys) so the type
 	// projection can extract schema-declared property values without re-reading

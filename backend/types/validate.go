@@ -29,9 +29,11 @@ var (
 	propNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
 	// reservedPropertyNames are frontmatter keys Silt owns (page identity, tag
-	// extraction, locator fields). A property sharing one would be
-	// indistinguishable from the system value at read time, so ValidateTypeDef
-	// rejects it. Lowercase since propNameRe already forces lowercase.
+	// extraction, locator fields, or core page metadata). A property sharing one
+	// would be indistinguishable from the system value at read time, so
+	// ValidateTypeDef rejects it. Lowercase since propNameRe already forces
+	// lowercase. The core-metadata keys (aliases/created) join the set so a type
+	// schema cannot declare a property that collides with #867's core fields.
 	reservedPropertyNames = map[string]bool{
 		"notebook": true,
 		"section":  true,
@@ -39,6 +41,8 @@ var (
 		"date":     true,
 		"tags":     true,
 		"type":     true,
+		"aliases":  true,
+		"created":  true,
 	}
 )
 

@@ -39,7 +39,7 @@ func TestIndexFileWithProjection_AtomicReplace(t *testing.T) {
 		{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"},
 	}
 	if err := dm.IndexFileWithProjection(source, notebook, section, page,
-		[]parser.ParsedBlock{newBlock}, nil, "meeting", newProps); err != nil {
+		[]parser.ParsedBlock{newBlock}, nil, "meeting", newProps, PageCoreFields{}); err != nil {
 		t.Fatalf("IndexFileWithProjection: %v", err)
 	}
 
@@ -81,14 +81,14 @@ func TestIndexFileWithProjection_UntypedClearsProjection(t *testing.T) {
 	if err := dm.IndexFileWithProjection(source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
 		nil, "task",
-		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}); err != nil {
+		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}, PageCoreFields{}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
 	// Atomic transition to untyped: same page, typeID="".
 	if err := dm.IndexFileWithProjection(source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1)},
-		nil, "", nil); err != nil {
+		nil, "", nil, PageCoreFields{}); err != nil {
 		t.Fatalf("untyped reindex: %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestIndexFileWithProjection_PreservesOldStateOnHookFailure(t *testing.T) {
 	// Seed prior committed state via the atomic path itself.
 	if err := dm.IndexFileWithProjection(source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock(oldID, 1)}, nil, "task",
-		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}); err != nil {
+		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}, PageCoreFields{}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -155,7 +155,7 @@ func TestIndexFileWithProjection_PreservesOldStateOnHookFailure(t *testing.T) {
 
 	err := dm.IndexFileWithProjection(source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock(newID, 1)}, nil, "meeting",
-		[]ProjectedProperty{{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"}})
+		[]ProjectedProperty{{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"}}, PageCoreFields{})
 	if !errors.Is(err, sentinelHookErr) {
 		t.Fatalf("expected sentinel wrap, got %v", err)
 	}
@@ -209,7 +209,7 @@ func TestIndexFileWithProjection_ReaderNeverSeesHalfState(t *testing.T) {
 	if err := dm.IndexFileWithProjection(source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
 		nil, "task",
-		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}); err != nil {
+		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}, PageCoreFields{}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -249,7 +249,7 @@ func TestIndexFileWithProjection_ReaderNeverSeesHalfState(t *testing.T) {
 		writerDone <- dm.IndexFileWithProjection(source, notebook, section, page,
 			[]parser.ParsedBlock{sampleNoteBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1)},
 			nil, "meeting",
-			[]ProjectedProperty{{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"}})
+			[]ProjectedProperty{{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"}}, PageCoreFields{})
 	}()
 
 	// Wait for the writer to reach the hook (blocks+projection staged,
@@ -440,7 +440,7 @@ func TestIndexFileWithProjection_PreservesIndexFileBlocksBehavior(t *testing.T) 
 	if err := dm.IndexFileWithProjection(source, notebook, section, page,
 		[]parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
 		nil, "task",
-		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}); err != nil {
+		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}, PageCoreFields{}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 

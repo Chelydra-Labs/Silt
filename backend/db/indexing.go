@@ -541,6 +541,7 @@ func (dm *DatabaseManager) ClearFileBlocks(tx *sql.Tx, source, notebook, section
 		for _, q := range []string{
 			"DELETE FROM page_types WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
 			"DELETE FROM page_properties WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
+			"DELETE FROM page_core WHERE source = ? AND notebook = ? AND section = ? AND page = ?",
 		} {
 			if _, err := exec(q, source, notebook, section, page); err != nil {
 				return err
@@ -850,6 +851,7 @@ func (dm *DatabaseManager) IndexFileWithProjection(
 	fileTags []string,
 	typeID string,
 	props []ProjectedProperty,
+	core PageCoreFields,
 	fileWarnings ...string,
 ) error {
 	db, release, err := dm.handle()
@@ -877,6 +879,13 @@ func (dm *DatabaseManager) IndexFileWithProjection(
 	// failure here rolls back the block clears+inserts too, so the prior
 	// committed block+projection state stays visible as a unit.
 	if err := applyPageProjectionTx(tx, source, notebook, section, page, typeID, props); err != nil {
+		return err
+	}
+	// page_core rewrite shares the same tx as blocks + page_types/
+	// page_properties so the PropertiesPanel never reads a half-published
+	// core row. EVERY indexed page gets a row — the untyped case (empty
+	// type) is the whole point of #867.
+	if err := applyPageCoreTx(tx, source, notebook, section, page, core); err != nil {
 		return err
 	}
 
@@ -957,6 +966,10 @@ func (dm *DatabaseManager) IndexScanResults(results []parser.ScanResult) (int, [
 type ScanProjection struct {
 	TypeID string
 	Props  []ProjectedProperty
+	// Core is the type-independent core payload (#867). EVERY scanned page
+	// gets a core row (typed OR untyped), so callers should populate it even
+	// when TypeID is empty. Zero-value Core yields a row with empty fields.
+	Core PageCoreFields
 }
 
 // IndexScanResultsWithProjection is the batched atomic block+projection
@@ -1079,6 +1092,12 @@ func (dm *DatabaseManager) indexScanResultsStage(tx *sql.Tx, stmts *blockIndexSt
 			if err := applyPageProjectionTx(tx, source, res.Notebook, res.Section, res.Page, projections[i].TypeID, projections[i].Props); err != nil {
 				return indexedCount, skipped, fmt.Errorf("failed to apply projection for %s: %w", res.Path, err)
 			}
+			// page_core rewrite shares the batch tx so a cold-start scan
+			// never leaves a half-published core row. Every scanned page
+			// gets a row (typed OR untyped) — #867.
+			if err := applyPageCoreTx(tx, source, res.Notebook, res.Section, res.Page, projections[i].Core); err != nil {
+				return indexedCount, skipped, fmt.Errorf("failed to apply page_core for %s: %w", res.Path, err)
+			}
 		}
 
 		indexedCount++
@@ -1140,6 +1159,7 @@ func (dm *DatabaseManager) ClearSourceBlocks(source string) error {
 		"DELETE FROM blocks WHERE source = ?",
 		"DELETE FROM page_types WHERE source = ?",
 		"DELETE FROM page_properties WHERE source = ?",
+		"DELETE FROM page_core WHERE source = ?",
 	} {
 		if _, err := sqlTx.Exec(q, source); err != nil {
 			return err

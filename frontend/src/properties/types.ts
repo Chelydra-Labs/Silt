@@ -66,6 +66,41 @@ export interface PagePropertyValue {
   options?: string[]
 }
 
+/**
+ * Type-independent core metadata every page exposes in the PropertiesPanel
+ * (#867), regardless of whether it has a type. Composed at read time from
+ * frontmatter (type/date/tags/aliases/created) + the files-table mtime cache
+ * (modified). `modified` is read-only; the others are editable via
+ * SetPageCoreMetadata (type is owned by SetPageType).
+ */
+export interface PageCoreMetadata {
+  notebook: string
+  section: string
+  page: string
+  type: string
+  date: string
+  tags: string[]
+  aliases: string[]
+  /** ISO datetime or YYYY-MM-DD; empty when absent. */
+  created: string
+  /** RFC3339 timestamp from the file mtime; empty when never indexed. */
+  modified: string
+  /** Reserved for the frontmatter-vs-body hashtag policy toggle. */
+  tagsAreReadOnly: boolean
+}
+
+/**
+ * Field-granular write payload for SetPageCoreMetadata. Each field is optional;
+ * a null/undefined field means "leave unchanged". An empty string / empty
+ * array CLEARS the corresponding frontmatter key.
+ */
+export interface CoreFieldUpdate {
+  date?: string | null
+  aliases?: string[] | null
+  created?: string | null
+  tags?: string[] | null
+}
+
 export interface ListTypesResult {
   types: TypeDef[]
   errors?: string[]

@@ -12,9 +12,12 @@
   import { fly } from 'svelte/transition'
   import { SetPageType, TurnIntoPage } from '../../bindings/silt/app.js'
   import { coerceIPCError } from '../lib/ipcError'
+  import CoreMetadataSection from './CoreMetadataSection.svelte'
   import PropertyField from './PropertyField.svelte'
   import TurnIntoDialog from './TurnIntoDialog.svelte'
   import type {
+    CoreFieldUpdate,
+    PageCoreMetadata,
     PageLocator,
     PagePropertyValue,
     PageTypeInfo,
@@ -36,6 +39,14 @@
     locator: PageLocator
     /** Monotonic slash-command signal — when it bumps, open the type menu. */
     typeMenuRequest?: number
+    /** Type-independent core metadata (#867). Optional — when absent, the
+     *  Core section is suppressed (callers that haven't opted in continue to
+     *  see the legacy untyped / typed empty states). The host opts in by
+     *  passing both `core` and `onCommitCore`. */
+    core?: PageCoreMetadata
+    /** Field-granular core edit sink (#867). Optional; when absent, the Core
+     *  section renders read-only. */
+    onCommitCore?: (update: CoreFieldUpdate) => Promise<void>
     onClose: () => void
     /** After a successful type switch / property commit (re-fetches values). */
     onChanged: () => void
@@ -63,6 +74,8 @@
     typesLoading,
     locator,
     typeMenuRequest = 0,
+    core = undefined,
+    onCommitCore = undefined,
     onClose,
     onChanged,
     onMismatched,
@@ -274,6 +287,10 @@
   })
 
   let hasType = $derived(info.isSet)
+  // Core section is opt-in: the host passes both `core` and `onCommitCore` to
+  // enable the type-independent Core fields (#867). Legacy callers continue
+  // to see the untyped / typed empty states unchanged.
+  let coreEnabled = $derived(core !== undefined && onCommitCore !== undefined)
   // A `type:` ref that didn't resolve to a known type def. The pill renders a
   // subdued raw chip for this; the panel matches with a distinct message + a
   // Remove-type affordance to clear the bogus ref (the <select> can't reach
@@ -400,6 +417,15 @@
       </p>
     {/if}
 
+    {#if coreEnabled}
+      <CoreMetadataSection
+        core={core!}
+        onCommit={onCommitCore!}
+        onError={handleFieldError}
+        onChanged={handleChanged}
+      />
+    {/if}
+
     <div class="fields custom-scrollbar">
       {#if loading && values.length === 0}
         <p class="empty" role="status" aria-live="polite">Loading…</p>
@@ -407,9 +433,17 @@
         <p class="empty">Unrecognized type '{info.rawType}'.</p>
         <p class="empty">This type isn't defined in .system/types.</p>
       {:else if !hasType}
-        <p class="empty">
-          This page has no type. Assign one to add typed properties.
-        </p>
+        {#if coreEnabled}
+          <!-- #867: with the Core section mounted above, the untyped prompt
+               becomes a single "Assign a type" line. Core fields already
+               occupy the user's attention; the prompt stays minimal so the
+               panel does not duplicate the Core layout's affordances. -->
+          <p class="empty">Assign a type to add typed properties.</p>
+        {:else}
+          <p class="empty">
+            This page has no type. Assign one to add typed properties.
+          </p>
+        {/if}
       {:else if values.length === 0}
         <p class="empty">This type has no properties.</p>
       {:else}

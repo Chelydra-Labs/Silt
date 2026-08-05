@@ -12,6 +12,29 @@ import (
 	"time"
 )
 
+// FileMtime returns the last-seen mtime (Unix nanoseconds) the index recorded
+// for the file at path, or (0, sql.ErrNoRows) when the file has no row (never
+// indexed, or the row was pruned). Used by GetPageCoreMetadata to surface a
+// READ-ONLY `modified` value that stays fresh across block-only writes — a
+// task-status edit bumps the file mtime and MarkFileIndexed refreshes this
+// cache, so the panel reads the new value without re-parsing the frontmatter.
+func (dm *DatabaseManager) FileMtime(path string) (int64, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return 0, ErrDBClosed
+	}
+	defer release()
+	var mt int64
+	err = db.QueryRow("SELECT mtime FROM files WHERE path = ?", path).Scan(&mt)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to query files table mtime: %w", err)
+	}
+	return mt, nil
+}
+
 // IsFileUnchanged reports whether the file at `path` was previously indexed
 // with the exact same mtime (Unix nanoseconds) and size. A warm restart uses
 // this to skip re-parsing files the user has not touched since the last index.

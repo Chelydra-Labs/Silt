@@ -493,9 +493,19 @@ func (dw *DirectoryWatcher) SetAtomicReindexHandler(fn AtomicReindexFunc) {
 // non-atomic route: every reindex goes through IndexFileWithProjection
 // regardless of whether an App handler is set.
 func (dw *DirectoryWatcher) defaultAtomicReindex(source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata) error {
+	// Default path: no schema awareness, so typeID is "" (the App-installed
+	// handler owns schema-aware projection). Core fields are derived directly
+	// from parsed frontmatter so the page_core row stays fresh for the panel
+	// even when the App handler isn't installed (#867).
+	core := db.PageCoreFields{
+		Type:    meta.Type,
+		Date:    meta.Date,
+		Aliases: meta.Aliases,
+		Created: meta.Created,
+	}
 	var err error
 	dw.coordinator.WithDBWrite(func() {
-		err = dw.dm.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, "", nil, meta.Warnings...)
+		err = dw.dm.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, "", nil, core, meta.Warnings...)
 	})
 	return err
 }

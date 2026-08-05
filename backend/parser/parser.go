@@ -892,6 +892,16 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 					if parsedMeta.Type != "" {
 						meta.Type = parsedMeta.Type
 					}
+					// Core page-level metadata (#867): aliases (string array) and
+					// created (timestamp) are type-independent fields every page can
+					// expose. The parser preserves them as it does date/tags/type so
+					// an edit round-trips byte-for-byte through the frontmatter.
+					if len(parsedMeta.Aliases) > 0 {
+						meta.Aliases = parsedMeta.Aliases
+					}
+					if parsedMeta.Created != "" {
+						meta.Created = parsedMeta.Created
+					}
 				}
 				// Always decode the raw map — even when the typed struct failed —
 				// so schema-declared properties and type: remain projectable.
