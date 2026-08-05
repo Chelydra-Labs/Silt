@@ -66,6 +66,11 @@ or pass `--url`.
 - URL: `http://127.0.0.1:17887` (or the endpoint shown in Settings)
 - Header: `Authorization: Bearer <token>` (Settings → Show auth token)
 
+The host serves the stateful transport on MCP protocol **2025-11-25**. The
+go-sdk serves the newer 2026-07-28 protocol only in stateless mode, and this
+host intentionally stays stateful; clients negotiate down to 2025-11-25
+automatically, so no client-side version configuration is needed.
+
 ## Tools
 
 | Tool | Mode | Notes |
