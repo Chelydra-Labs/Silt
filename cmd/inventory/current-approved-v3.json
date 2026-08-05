@@ -297,6 +297,10 @@
         "signature": "GetOpenTabs() (OpenTabsResult, error)"
       },
       {
+        "name": "GetPageCoreMetadata",
+        "signature": "GetPageCoreMetadata(notebook, section, page string) (PageCoreMetadata, error)"
+      },
+      {
         "name": "GetPageProperties",
         "signature": "GetPageProperties(notebook, section, page string) ([]PagePropertyValue, error)"
       },
@@ -957,6 +961,10 @@
         "signature": "SetOpenTabs(openTabs []config.TabRef, activeTab *config.TabRef) error"
       },
       {
+        "name": "SetPageCoreMetadata",
+        "signature": "SetPageCoreMetadata(notebook, section, page string, update CoreFieldUpdate) error"
+      },
+      {
         "name": "SetPageProperty",
         "signature": "SetPageProperty(notebook, section, page, property string, value any) error"
       },
@@ -1100,6 +1108,7 @@
       "theme:files-dropped",
       "themes:changed",
       "types:changed",
+      "types:projection-error",
       "update:download:progress",
       "vault:archive:progress",
       "vault:closing",
@@ -1179,6 +1188,7 @@
       "frontend/src/components/settings/spellcheck/SpellcheckPackManager.test.ts",
       "frontend/src/dashboards/TypeDashboard.svelte",
       "frontend/src/dashboards/TypeDashboard.test.ts",
+      "frontend/src/dashboards/dashboardSettings.ts",
       "frontend/src/lib/devModeInspect.test.ts",
       "frontend/src/lib/devModeInspect.ts",
       "frontend/src/lib/editor/blockDepthDom.test.ts",
@@ -1219,13 +1229,18 @@
       "frontend/src/plugins/loader.test.ts",
       "frontend/src/plugins/loader.ts",
       "frontend/src/plugins/loader.vault-close.test.ts",
+      "frontend/src/plugins/shared/ai-chat/navigateEvidence.test.ts",
       "frontend/src/properties/PageLinkField.svelte",
       "frontend/src/properties/PageLinkField.test.ts",
       "frontend/src/properties/PropertiesPanel.svelte",
       "frontend/src/properties/PropertiesPanel.test.ts",
+      "frontend/src/properties/PropertiesPanelCore.test.ts",
       "frontend/src/properties/PropertyField.svelte",
+      "frontend/src/properties/PropertyField.test.ts",
       "frontend/src/properties/TurnIntoDialog.svelte",
       "frontend/src/properties/TurnIntoDialog.test.ts",
+      "frontend/src/properties/TypeEditorDialog.svelte",
+      "frontend/src/properties/TypeEditorDialog.test.ts",
       "frontend/src/properties/pageTypeState.svelte.ts",
       "frontend/src/properties/pageTypeState.test.ts",
       "frontend/src/settings/store.svelte.test.ts",
@@ -1284,6 +1299,8 @@
       "frontend/src/components/settings/VaultArchiveModal.test.ts",
       "frontend/src/components/settings/spellcheck/SpellcheckPackManager.svelte",
       "frontend/src/components/settings/spellcheck/SpellcheckPackManager.test.ts",
+      "frontend/src/dashboards/TypeDashboard.svelte",
+      "frontend/src/dashboards/TypeDashboard.test.ts",
       "frontend/src/lib/editor/blockDepthDom.test.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
       "frontend/src/lib/editor/spellcheck/customDictionary.svelte.test.ts",
@@ -1307,6 +1324,7 @@
       "frontend/src/plugins/loader.vault-close.test.ts",
       "frontend/src/plugins/shared/ai-chat/ChatShell.svelte",
       "frontend/src/plugins/shared/ai-chat/ChatShell.test.ts",
+      "frontend/src/plugins/shared/ai-chat/navigateEvidence.test.ts",
       "frontend/src/properties/pageTypeState.svelte.ts",
       "frontend/src/properties/pageTypeState.test.ts",
       "frontend/src/settings/store.svelte.test.ts",
@@ -1352,6 +1370,7 @@
       "theme:files-dropped",
       "themes:changed",
       "types:changed",
+      "types:projection-error",
       "update:download:progress",
       "vault:archive:progress",
       "vault:closing",
