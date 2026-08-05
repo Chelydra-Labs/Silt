@@ -1214,15 +1214,16 @@ parsing:
 # Key-Binding Map. Defaults are convention-anchored (see "Keyboard Shortcuts"
 # in ARCHITECTURE.md): ties anchor to document-processor conventions, with
 # code-editor conventions filling gaps where document processors have no
-# opinion. Windows/Linux only (Ctrl everywhere).
+# opinion. Windows/Linux only (Ctrl everywhere). Ctrl+B is bold unconditionally
+# (the universal editor convention); the sidebar toggles on Ctrl+\. Tab chords
+# sit on Ctrl+Alt+Arrow / Ctrl+Shift+W because WebView2 does not reliably
+# relay Ctrl+Tab / Ctrl+W to the page.
 # Spellcheck deliberately has NO hotkey (wavy underline + right-click + a
 # toolbar button). Paste is not listed: Ctrl+V = rich, Ctrl+Shift+V = plain.
 hotkeys:
   # open_search → Ctrl+Shift+F (the cross-file search convention;
   # single-document editors have no equivalent). Frees Ctrl+P for future Print.
   open_search: "Ctrl+Shift+F"
-  # open_command_palette → Alt+Q (the "search the app" convention).
-  open_command_palette: "Alt+Q"
   # open_settings → Ctrl+, (the universal settings convention; freed from
   # format_subscript, which moved to Ctrl+Shift, below). #511 made settings a
   # first-class sidebar-owned view.
@@ -1238,17 +1239,19 @@ hotkeys:
   indent_block: "Tab"
   unindent_block: "Shift+Tab"
   open_template_picker: "Ctrl+Shift+T"
-  next_tab: "Ctrl+Tab"
-  prev_tab: "Ctrl+Shift+Tab"
-  close_tab: "Ctrl+W"
-  # Sidebar hotkeys. Ctrl+B toggles visibility; focus_sidebar moves keyboard
-  # focus into the active sidebar's first control. When the editor is focused
-  # Ctrl+B resolves to format_bold; toggle_sidebar / focus_sidebar fire only
-  # outside the editor. If the sidebar is collapsed, focus_sidebar expands it
-  # first, then focuses.
-  toggle_sidebar: "Ctrl+B"
+  # Remapped off Ctrl+Tab / Ctrl+W: WebView2 does not reliably relay those
+  # browser-reserved chords to the page (see the ShortcutHelp legend).
+  next_tab: "Ctrl+Alt+Right"
+  prev_tab: "Ctrl+Alt+Left"
+  close_tab: "Ctrl+Shift+W"
+  # Sidebar hotkeys. The sidebar toggles on Ctrl+\ (Ctrl+B is reserved for
+  # bold, the universal editor convention). focus_sidebar moves keyboard focus
+  # into the active sidebar's first control. If the sidebar is collapsed,
+  # focus_sidebar expands it first, then focuses.
+  toggle_sidebar: "Ctrl+\\"
   focus_sidebar: "Ctrl+Shift+B"
-  # Inline formatting hotkeys.
+  # Inline formatting hotkeys. Ctrl+B bolds the active editor unconditionally
+  # (focusing it first if needed), matching every major editor.
   format_bold: "Ctrl+B"
   format_italic: "Ctrl+I"
   format_underline: "Ctrl+U"
@@ -1278,8 +1281,9 @@ hotkeys:
   table_insert_row_below: "Ctrl+Shift+Down"
   table_insert_col_left: "Ctrl+Shift+Left"
   table_insert_col_right: "Ctrl+Shift+Right"
-  # View mode toggle.
-  toggle_view_mode: "Ctrl+Shift+V"
+  # View mode toggle. Relocated off Ctrl+Shift+V (the OS paste-plain-text
+  # chord, and the Tasks Hub display-mode cycle) to avoid conflicts.
+  toggle_view_mode: "Ctrl+Alt+R"
   # toggle_format_toolbar → Ctrl+F1 (the "toggle ribbon" convention); frees
   # Ctrl+Shift+F for global search. focus_mode dims non-active paragraphs.
   toggle_format_toolbar: "Ctrl+F1"
@@ -1293,8 +1297,8 @@ hotkeys:
   global_replace: "Ctrl+Shift+G"
   toggle_typewriter_mode: "Ctrl+Shift+Y"
 # Editor-scoped shortcuts (heading, alignment, quote, details, table, format
-# marks) are remappable here; the remapped binding takes effect on the next
-# page load.
+# marks) are remappable here; the remapped binding is resolved live on each
+# keydown (no reload or remount needed).
 
 # Global Search accepts a filter object alongside the query:
 #   type: TASK / NOTE / HEADER / CODE / TABLE / DETAILS / CALLOUT
@@ -1458,7 +1462,7 @@ Type switching: when a typed page switches to a different type, a Turn-into dial
 
 11.4 Per-Type Dashboard
 
-A full-content-area view showing all pages of a given type in a sortable table with per-property filters and client-side group-by. Columns derive from the type's schema; cells render by value type (checkbox as a check/dash, select as a chip, dates formatted, text as-is). The page-name column always leads, with the hero field as a subtitle. Sortable column headers (click to toggle asc/desc); filter controls per property (dropdown for select/multiselect, text contains for text, tri-state for checkbox, date input for dates); group-by bins rows into collapsible sections. Rows link back to the editor on click.
+A full-content-area view showing all pages of a given type in a sortable table with per-property filters and client-side group-by. Columns derive from the type's schema; cells render by value type (checkbox as a check/dash, select as a chip, dates formatted, text as-is). The page-name column always leads, with the hero field as a subtitle. Sortable column headers (click to toggle asc/desc); filter controls per property (dropdown for select/multiselect, text contains for text, tri-state for checkbox, date input for dates); group-by bins rows into collapsible sections. Rows link back to the editor on click. Users can save the current filter/sort/group snapshot as a named view (persisted per-vault at `ui.dashboards.typed_notes.saved_views`, separate from the Tasks hub's plugin-owned saved views); saved views load from a control in the dashboard chrome.
 
 11.5 MCP Property Read/Write
 
@@ -1473,3 +1477,18 @@ This schema-validates-every-write guarantee is the core safety argument for expo
 11.6 Coexistence with Tags (§5.1)
 
 Typed properties and the existing smart-tag namespace system (§5.1) are complementary, not competing. Tags are free-form, user-assigned at any granularity, and queried via the tag typeahead (§5.4). Typed properties are schema-constrained, type-scoped, and queried via the dashboard. A page can carry both: tags for ad-hoc categorization and typed properties for structured fields. The SQLite projection for typed properties (`page_properties`) is separate from the tag index (`tags` table), so the two query paths never interfere.
+
+11.7 Core Page Metadata (Type-Independent)
+
+Beyond type-scoped properties, every page exposes a small set of core metadata fields in the properties panel regardless of whether it has a type. This replaces the former "untyped page has no fields" empty state: an untyped page now shows its core fields plus an optional "assign a type" prompt, and a typed page shows the core fields above its type-defined section.
+
+Core fields:
+
+- `type` — the page's type id (empty when untyped). Editable via the existing type-assignment flow.
+- `date` — the page date (already a frontmatter field). Editable.
+- `tags` — the page's tags, surfaced and editable here as a core field. Tag storage and the hierarchical tag index (§5.1) are unchanged; this is a presentation + edit surface over the same data, not a parallel tag system.
+- `aliases` — a list of alternate names for the page (new frontmatter field). Editable. Distinct from wiki-link display aliases (`[[target|alias]]`), which are link-occurrence metadata, not page identity.
+- `created` — the page's creation timestamp (new frontmatter field, set when the page is created). Editable.
+- `modified` — the page's last-modified time, read-only, derived from the file's modification time (not a frontmatter field).
+
+Source-of-truth and separation mirror the typed-notes contract: Markdown frontmatter is the source of truth for the editable core fields (`type`, `date`, `tags`, `aliases`, `created`); `modified` is filesystem-derived. The SQLite projection is a separate `page_core` table (one row per page), re-derived from frontmatter + file mtime on re-index, and is distinct from both `page_properties` (type-scoped) and the `tags` index — the three compose into one panel read but never share a query path. `aliases` and `created` join the reserved system keys a type schema cannot declare as property names.
