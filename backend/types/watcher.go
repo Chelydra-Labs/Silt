@@ -155,13 +155,34 @@ func (w *TypeWatcher) RegisterSelfWrite(path string, expected []byte) {
 	w.selfMu.Unlock()
 }
 
-// UnregisterSelfWrite clears every armed self-write entry opened by
-// RegisterSelfWrite. Call it when a save that armed a check fails, so a
-// failed write does not leave a stale arm that silently suppresses a
-// legitimate external edit landing inside it. No-op if no arm is open.
+// UnregisterSelfWrite clears every armed self-write entry. Prefer
+// UnregisterSelfWritePath for single-file failures so a concurrent arm for a
+// different file is not collateral damage (matters for RestoreExampleTypes'
+// batched saves). No-op if no arm is open.
 func (w *TypeWatcher) UnregisterSelfWrite() {
 	w.selfMu.Lock()
 	w.selfArmed = make(map[string]selfEntry)
+	w.selfMu.Unlock()
+}
+
+// UnregisterSelfWritePath removes only the arm for path, leaving arms for
+// other files intact. Use this on a single save/delete failure inside a
+// batch (e.g. RestoreExampleTypes) so a coincident arm for a successfully
+// saved sibling type is not cleared. No-op if path was not armed.
+func (w *TypeWatcher) UnregisterSelfWritePath(path string) {
+	if path == "" {
+		return
+	}
+	clean := filepath.Clean(path)
+	w.selfMu.Lock()
+	if len(w.selfArmed) > 0 {
+		for p := range w.selfArmed {
+			if strings.EqualFold(p, clean) {
+				delete(w.selfArmed, p)
+				break
+			}
+		}
+	}
 	w.selfMu.Unlock()
 }
 

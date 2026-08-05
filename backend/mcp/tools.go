@@ -29,6 +29,14 @@ func (e *toolEnv) writeOK() bool {
 }
 
 func (e *toolEnv) record(tool, outcome, errMsg string, args map[string]any) {
+	e.recordEntry(tool, outcome, errMsg, RedactArgs(args))
+}
+
+// recordEntry writes an audit row with already-redacted args metadata. The
+// schema-audit middleware uses this directly with redactSchemaArgs (raw client
+// args need the stricter allowlist), while handlers go through record +
+// RedactArgs for their trusted, known-shape arg maps.
+func (e *toolEnv) recordEntry(tool, outcome, errMsg string, meta map[string]any) {
 	if e.audit == nil {
 		return
 	}
@@ -46,7 +54,7 @@ func (e *toolEnv) record(tool, outcome, errMsg string, args map[string]any) {
 		Vault:    VaultPathHash(vp),
 		Outcome:  outcome,
 		Error:    errMsg,
-		ArgsMeta: RedactArgs(args),
+		ArgsMeta: meta,
 	})
 }
 
@@ -106,7 +114,7 @@ func recordSchemaRejection(env *toolEnv, req mcp.Request, auditErr error) {
 		tool = p.Name
 		rawArgs = p.Arguments
 	}
-	env.record(tool, OutcomeRejectedSchema, auditErr.Error(), decodeRawArgs(rawArgs))
+	env.recordEntry(tool, OutcomeRejectedSchema, sanitizeSchemaErr(auditErr.Error()), redactSchemaArgs(rawArgs))
 }
 
 func toolErr(msg string) (*mcp.CallToolResult, any, error) {

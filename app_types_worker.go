@@ -50,31 +50,36 @@ type projectionReprojectWorker struct {
 	stop chan struct{} // closed to request drain + exit
 	done chan struct{} // closed when goroutine has exited
 
-	// pending + allMode are guarded by mu. The worker drains both under one
-	// hold so an enqueue arriving during drain is observed in the NEXT
-	// iteration, not the current one (correct coalescing semantics).
+	// startOnce / stopOnce make start and stopAndJoin idempotent. stop on a
+	// never-started worker is a no-op (stopOnce runs, done is already closed
+	// by the deferred close in a noop wrapper). A double-stop does not panic
+	// on close(stop) because stopOnce gates it.
+	startOnce sync.Once
+	stopOnce  sync.Once
+	stopped   atomic.Bool // set by stopAndJoin so enqueue can short-circuit
+
 	mu      sync.Mutex
 	pending map[string]struct{}
 	allMode bool
 
-	// epoch / processed give tests a deterministic way to wait for the
-	// worker to finish a specific enqueue. epoch is bumped on every enqueue;
-	// processed is bumped after a batch finishes. flushForTest polls until
-	// processed >= target. Production never reads either.
 	epoch     atomic.Uint64
 	processed atomic.Uint64
 }
 
-// newProjectionReprojectWorker constructs an idle worker. Caller MUST follow
-// with start() once the vault's db / vaultPath are populated.
+// newProjectionReprojectWorker constructs an idle worker. done is pre-closed
+// so stopAndJoin on a never-started worker returns immediately.
 func newProjectionReprojectWorker(app *App) *projectionReprojectWorker {
-	return &projectionReprojectWorker{
+	w := &projectionReprojectWorker{
 		app:     app,
 		pending: make(map[string]struct{}),
 		wake:    make(chan struct{}, 1),
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
 	}
+	// Pre-close done so stopAndJoin on a never-started worker doesn't hang.
+	// start() replaces done with a fresh open channel before launching run().
+	close(w.done)
+	return w
 }
 
 // enqueueReprojection is the App-level entry point every former
@@ -94,22 +99,25 @@ func (a *App) enqueueReprojection(allMode bool, ids ...string) {
 	w.enqueue(allMode, ids...)
 }
 
-// start launches the worker goroutine. Idempotent — a second call while the
-// goroutine is running is a no-op (the new wake/stop channels would be
-// orphaned). Caller does NOT need to hold vaultMu.
+// start launches the worker goroutine. Idempotent via startOnce: a second
+// call is a no-op. Replaces the pre-closed done channel with a fresh one so
+// run's defer close(w.done) signals stopAndJoin correctly.
 func (w *projectionReprojectWorker) start() {
-	go w.run()
+	w.startOnce.Do(func() {
+		w.done = make(chan struct{})
+		go w.run()
+	})
 }
 
-// stopAndJoin signals the worker to exit and blocks until the goroutine is
-// done. Idempotent. Safe to call concurrently with an in-flight enqueue (the
-// pending set is dropped on exit — work not yet processed is abandoned,
-// which is correct for a vault close since the db handle is going away).
-// Caller does NOT need to hold vaultMu; this is invoked from
-// stopWatchersOutsideLock specifically so the worker can drain without
-// deadlocking against the teardown Lock.
+// stopAndJoin signals the worker to exit and blocks until done. Idempotent
+// via stopOnce: a second call is a no-op. Safe on a never-started worker
+// (done was pre-closed in the constructor). Safe concurrently with enqueue
+// (stopped flag short-circuits future enqueues).
 func (w *projectionReprojectWorker) stopAndJoin() {
-	close(w.stop)
+	w.stopOnce.Do(func() {
+		w.stopped.Store(true)
+		close(w.stop)
+	})
 	<-w.done
 }
 
@@ -126,6 +134,9 @@ func (w *projectionReprojectWorker) stopAndJoin() {
 //
 // Safe under any lock — only touches the worker's own mu.
 func (w *projectionReprojectWorker) enqueue(allMode bool, ids ...string) {
+	if w.stopped.Load() {
+		return
+	}
 	w.mu.Lock()
 	if allMode {
 		w.allMode = true
@@ -263,24 +274,37 @@ func (w *projectionReprojectWorker) reprojectOneLocator(dbMgr *db.DatabaseManage
 	safeSection, sectionErr := validateSectionPath(loc.Section, true)
 	safePage := sanitizePathSegment(loc.Page)
 	if sectionErr != nil || safeNotebook == "" || safePage == "" {
+		w.app.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
 		return
 	}
-	// resolveNotebookDir consults the linked-notebook registry when source
-	// is "linked:<id>", so the worker reaches linked typed pages too. It
-	// touches configMu (the linked-notebook registry), NOT vaultMu.
 	notebookDir, err := w.app.resolveNotebookDir(safeNotebook, loc.Source)
 	if err != nil {
+		w.app.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
 		return
 	}
 	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
 	if !isPathWithinRoot(filePath, notebookDir) {
+		w.app.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
+		return
+	}
+	// Capture mtime+size at read time to detect a concurrent file
+	// modification between read and projection write. Same strategy as
+	// IsFileUnchanged (files-table warm-start gate): mtime+size on the
+	// target filesystem is the architecture's existing staleness signal.
+	readInfo, statErr := os.Stat(filePath)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			if cerr := dbMgr.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); cerr != nil {
+				log.Printf("types: reprojection ClearPageProjection(%s/%s/%s/%s) after missing file: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, cerr)
+			}
+		} else {
+			log.Printf("types: reprojection stat %s failed (projection kept): %v", filePath, statErr)
+		}
+		w.app.emit(EventTypesProjectionError, map[string]string{"source": loc.Source, "page": loc.Page})
 		return
 	}
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
-		// Only drop the projection when the file is confirmed gone. A
-		// transient lock/IO error during sync must not erase the locator
-		// (the next schema edit re-enqueues it).
 		if os.IsNotExist(err) {
 			if cerr := dbMgr.ClearPageProjection(loc.Source, loc.Notebook, loc.Section, loc.Page); cerr != nil {
 				log.Printf("types: reprojection ClearPageProjection(%s/%s/%s/%s) after missing file: %v", loc.Source, loc.Notebook, loc.Section, loc.Page, cerr)
@@ -324,9 +348,14 @@ func (w *projectionReprojectWorker) reprojectOneLocator(dbMgr *db.DatabaseManage
 		return
 	}
 	if !stillExists {
-		// Page was deleted between snapshot and write. The blocks are gone
-		// and ClearFileBlocks already cleared the projection atomically with
-		// them — do NOT write a new row that would resurrect it.
+		return
+	}
+	// TOCTOU guard: re-stat the file. If mtime or size changed since our
+	// initial read, a concurrent writer rewrote the file between our read
+	// and this write. Our parsed meta is stale; skip so the concurrent
+	// writer's own atomic publish is the authoritative projection.
+	curInfo, statErr := os.Stat(filePath)
+	if statErr != nil || !curInfo.ModTime().Equal(readInfo.ModTime()) || curInfo.Size() != readInfo.Size() {
 		return
 	}
 	if err := w.app.projectPageType(loc.Source, meta); err != nil {

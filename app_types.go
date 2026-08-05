@@ -115,7 +115,7 @@ func (a *App) SaveType(td types.TypeDef) error {
 	}
 	if err := types.SaveType(a.typesDir(), &td); err != nil {
 		if a.typeWatcher != nil {
-			a.typeWatcher.UnregisterSelfWrite()
+			a.typeWatcher.UnregisterSelfWritePath(typePath)
 		}
 		log.Printf("types: SaveType(%q) failed: %v", td.ID, err)
 		return err
@@ -159,7 +159,7 @@ func (a *App) DeleteType(id string) error {
 	}
 	if err := types.DeleteType(a.typesDir(), id); err != nil {
 		if a.typeWatcher != nil {
-			a.typeWatcher.UnregisterSelfWrite()
+			a.typeWatcher.UnregisterSelfWritePath(typePath)
 		}
 		log.Printf("types: DeleteType(%q) failed: %v", id, err)
 		return err
@@ -244,7 +244,7 @@ func (a *App) RestoreExampleTypes(ctx context.Context) ([]string, error) {
 		}
 		if err := types.SaveType(a.typesDir(), td); err != nil {
 			if a.typeWatcher != nil {
-				a.typeWatcher.UnregisterSelfWrite()
+				a.typeWatcher.UnregisterSelfWritePath(typePath)
 			}
 			log.Printf("types: RestoreExampleTypes(%q) failed: %v", td.ID, err)
 			// Surface any types already written this batch so the picker /

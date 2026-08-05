@@ -1127,3 +1127,298 @@ describe('MarkdownSourceViewer editing history (#861)', () => {
     }
   })
 })
+
+// Revalidation fixes: three correctness regressions in the async lifecycle.
+// 1. Seed completion must not overwrite a dirty buffer (user typed during
+//    the in-flight fetchPageMarkdown).
+// 2. AcquireFocusLock completing after destroy must release the lock and
+//    not start a heartbeat interval (otherwise the backend lease leaks
+//    and RefreshFocusLock fires forever).
+// 3. Backward selection anchor/caret must survive multi-line indent/dedent.
+describe('MarkdownSourceViewer revalidation fixes', () => {
+  beforeEach(() => {
+    mocks.highlight.mockReset()
+    mocks.savePageMarkdown.mockReset()
+    mocks.fetchPageMarkdown.mockReset()
+    mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
+    mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Saved')])
+    mocks.AcquireFocusLock.mockReset()
+    mocks.AcquireFocusLock.mockResolvedValue(undefined)
+    mocks.ReleaseFocusLock.mockReset()
+    mocks.ReleaseFocusLock.mockResolvedValue(undefined)
+    mocks.RefreshFocusLock.mockReset()
+    mocks.RefreshFocusLock.mockResolvedValue(undefined)
+  })
+  afterEach(() => cleanup())
+
+  it('does not overwrite dirty local edits when the initial seed completes late', async () => {
+    vi.useFakeTimers()
+    let resolveFetch!: (v: string) => void
+    mocks.fetchPageMarkdown.mockImplementation(
+      () => new Promise<string>((r) => (resolveFetch = r))
+    )
+    try {
+      render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page'
+        }
+      })
+      const ta = (await waitFor(() =>
+        screen.getByRole('textbox', { name: /markdown source/i })
+      )) as HTMLTextAreaElement
+      // The seed is still in flight; buffer is empty.
+      expect(ta.value).toBe('')
+
+      // User starts editing before the on-disk content arrives.
+      await fireEvent.input(ta, { target: { value: '# my new content' } })
+      await tick()
+      expect(ta.value).toBe('# my new content')
+
+      // The fetch resolves with content that differs from what the user
+      // typed. The seed must NOT clobber the buffer.
+      resolveFetch('# from disk\n\nexisting body')
+      await vi.advanceTimersByTimeAsync(0)
+      await tick()
+
+      expect(ta.value).toBe('# my new content')
+      // Conflict surfaced so the user can make an informed choice.
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /keep mine/i })).toBeTruthy()
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not overwrite dirty edits when an external-change re-seed races with typing', async () => {
+    vi.useFakeTimers()
+    let resolveFetch!: (v: string) => void
+    mocks.fetchPageMarkdown.mockImplementation(
+      () => new Promise<string>((r) => (resolveFetch = r))
+    )
+    try {
+      const { rerender } = render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page'
+        }
+      })
+      const ta = (await waitFor(() =>
+        screen.getByRole('textbox', { name: /markdown source/i })
+      )) as HTMLTextAreaElement
+      // Resolve the initial seed so the buffer is clean.
+      resolveFetch(FETCH_BODY)
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => expect(ta.value).toContain('Fetched body content'))
+
+      // External blocks change while clean → $effect starts a re-seed.
+      // That re-seed's fetch is now pending (mockImplementation still defers).
+      let resolveReFetch!: (v: string) => void
+      mocks.fetchPageMarkdown.mockImplementation(
+        () => new Promise<string>((r) => (resolveReFetch = r))
+      )
+      await rerender({
+        blocks: [mkBlock('# External heading'), mkBlock('remote body')],
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      })
+      await tick()
+
+      // User starts typing during the in-flight re-seed.
+      await fireEvent.input(ta, { target: { value: '# typed during reseed' } })
+      await tick()
+      expect(ta.value).toBe('# typed during reseed')
+
+      // Re-seed resolves with the external content. Must NOT overwrite.
+      resolveReFetch('# fresh external body')
+      await vi.advanceTimersByTimeAsync(0)
+      await tick()
+      expect(ta.value).toBe('# typed during reseed')
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /keep mine/i })).toBeTruthy()
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not leak a heartbeat or backend lock when AcquireFocusLock resolves after destroy', async () => {
+    vi.useFakeTimers()
+    let resolveAcquire!: () => void
+    mocks.AcquireFocusLock.mockImplementation(
+      () => new Promise<void>((r) => (resolveAcquire = r))
+    )
+    try {
+      const { unmount } = render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page'
+        }
+      })
+      // AcquireFocusLock is in flight (onMount → acquireLock).
+      await vi.advanceTimersByTimeAsync(0)
+      expect(mocks.AcquireFocusLock).toHaveBeenCalledTimes(1)
+
+      // Destroy before the IPC resolves.
+      unmount()
+      // onDestroy's releaseLock sees hasFocusLock=false (acquire never
+      // completed) and returns early without calling ReleaseFocusLock.
+      expect(mocks.ReleaseFocusLock).not.toHaveBeenCalled()
+
+      // The late acquire resolves.
+      resolveAcquire()
+      await vi.advanceTimersByTimeAsync(0)
+
+      // The component released the lock it just acquired (no backend leak).
+      await waitFor(() =>
+        expect(mocks.ReleaseFocusLock).toHaveBeenCalledWith(
+          'Work',
+          'Sec',
+          'Page'
+        )
+      )
+
+      // No heartbeat was started, so RefreshFocusLock never fires even
+      // after the 20s interval would have elapsed.
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(mocks.RefreshFocusLock).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('heartbeat stops after a normal destroy (acquire had completed)', async () => {
+    vi.useFakeTimers()
+    mocks.AcquireFocusLock.mockResolvedValue(undefined)
+    try {
+      const { unmount } = render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page'
+        }
+      })
+      // Let acquire complete and the first heartbeat tick fire.
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(mocks.RefreshFocusLock).toHaveBeenCalledTimes(1)
+
+      unmount()
+      mocks.ReleaseFocusLock.mockClear()
+      mocks.RefreshFocusLock.mockClear()
+
+      // No further heartbeats after teardown.
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(mocks.RefreshFocusLock).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves backward selection direction through multi-line Tab', async () => {
+    mocks.fetchPageMarkdown.mockResolvedValue('alpha\nbeta\ngamma')
+    const ta = await seedAndWait('alpha\nbeta\ngamma')
+    ta.focus()
+    // Backward selection spanning lines 1-2: caret at the low index (col 2
+    // of "alpha"), anchor at the high index (col 3 of "beta").
+    ta.setSelectionRange(2, 'alpha\nbet'.length, 'backward')
+    expect(ta.selectionDirection).toBe('backward')
+
+    await fireEvent.keyDown(ta, { key: 'Tab' })
+    await tick()
+
+    expect(ta.value).toBe('\talpha\n\tbeta\ngamma')
+    // Direction preserved — focus (caret) stays at the low-index end.
+    expect(ta.selectionDirection).toBe('backward')
+    // Selection extended to cover the new prefixes.
+    expect(ta.selectionStart).toBe(0)
+    expect(ta.selectionEnd).toBe('\talpha\n\tbet'.length)
+  })
+
+  it('preserves backward selection direction through multi-line Shift+Tab', async () => {
+    mocks.fetchPageMarkdown.mockResolvedValue('\talpha\n\tbeta\ngamma')
+    const ta = await seedAndWait('\talpha\n\tbeta\ngamma')
+    ta.focus()
+    // Backward selection: caret in alpha, anchor in beta.
+    ta.setSelectionRange(2, '\talpha\n\tbet'.length, 'backward')
+    expect(ta.selectionDirection).toBe('backward')
+
+    await fireEvent.keyDown(ta, { key: 'Tab', shiftKey: true })
+    await tick()
+
+    expect(ta.value).toBe('alpha\nbeta\ngamma')
+    expect(ta.selectionDirection).toBe('backward')
+    // Caret at the low-index end (one position left of the original start
+    // because the leading tab before it was removed).
+    expect(ta.selectionStart).toBe(1)
+  })
+
+  it('preserves forward selection direction through multi-line Tab (regression)', async () => {
+    mocks.fetchPageMarkdown.mockResolvedValue('alpha\nbeta\ngamma')
+    const ta = await seedAndWait('alpha\nbeta\ngamma')
+    ta.focus()
+    ta.setSelectionRange(2, 'alpha\nbet'.length, 'forward')
+    expect(ta.selectionDirection).toBe('forward')
+
+    await fireEvent.keyDown(ta, { key: 'Tab' })
+    await tick()
+
+    expect(ta.value).toBe('\talpha\n\tbeta\ngamma')
+    expect(ta.selectionDirection).toBe('forward')
+    // Caret at the high-index end (forward = focus on the trailing edge).
+    expect(ta.selectionEnd).toBe('\talpha\n\tbet'.length)
+  })
+
+  it('restores backward selection direction after undo of an indent', async () => {
+    mocks.fetchPageMarkdown.mockResolvedValue('alpha\nbeta\ngamma')
+    const ta = await seedAndWait('alpha\nbeta\ngamma')
+    ta.focus()
+    // Two indents — both record the live backward selection direction.
+    ta.setSelectionRange(2, 'alpha\nbet'.length, 'backward')
+    await fireEvent.keyDown(ta, { key: 'Tab' })
+    await tick()
+    expect(ta.selectionDirection).toBe('backward')
+
+    await fireEvent.keyDown(ta, { key: 'Tab' })
+    await tick()
+    expect(ta.selectionDirection).toBe('backward')
+
+    // Undo once — returns to the first indent's state, including its
+    // recorded backward selection direction.
+    await fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    await tick()
+    expect(ta.value).toBe('\talpha\n\tbeta\ngamma')
+    expect(ta.selectionDirection).toBe('backward')
+  })
+
+  // Local helper: seed and wait for a specific body to settle.
+  async function seedAndWait(expected: string): Promise<HTMLTextAreaElement> {
+    render(MarkdownSourceViewer, {
+      props: {
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    const ta = (await waitFor(() =>
+      screen.getByRole('textbox', { name: /markdown source/i })
+    )) as HTMLTextAreaElement
+    await waitFor(() => expect(ta.value).toBe(expected))
+    return ta
+  }
+})

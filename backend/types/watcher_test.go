@@ -284,6 +284,61 @@ func TestTypeWatcher_UnregisterSelfWrite_ClearsWindow(t *testing.T) {
 	}
 }
 
+// TestTypeWatcher_UnregisterSelfWritePath_PreservesOthers proves the
+// path-scoped unregister removes only the specified arm, leaving arms for
+// other files intact. This matters for RestoreExampleTypes' batched saves:
+// if one save fails, only that path's arm should be cleared; the arms for
+// successfully saved siblings must survive so their self-write events are
+// still suppressed.
+func TestTypeWatcher_UnregisterSelfWritePath_PreservesOthers(t *testing.T) {
+	dir := t.TempDir()
+	typesDir := filepath.Join(dir, "types")
+	writeTypeFile(t, typesDir, "a.yaml", validUserType+"\n# a\n")
+	writeTypeFile(t, typesDir, "b.yaml", validUserType+"\n# b\n")
+
+	changed := make(chan struct{}, 8)
+	w, err := NewTypeWatcher(typesDir, func() {
+		select {
+		case changed <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("NewTypeWatcher: %v", err)
+	}
+	w.Start()
+	defer w.Close()
+
+	// Arm both a and b (simulating RestoreExampleTypes arming two saves).
+	w.RegisterSelfWrite(filepath.Join(typesDir, "a.yaml"), []byte(validUserType+"\n# a-self\n"))
+	w.RegisterSelfWrite(filepath.Join(typesDir, "b.yaml"), []byte(validUserType+"\n# b-self\n"))
+	// Simulate a's save failing: clear only a's arm.
+	w.UnregisterSelfWritePath(filepath.Join(typesDir, "a.yaml"))
+
+	// An external edit on a must NOT be suppressed (its arm was cleared).
+	if err := writeFile(filepath.Join(typesDir, "a.yaml"), validUserType+"\n# a-external\n"); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	select {
+	case <-changed:
+		// expected: a's arm was cleared, external edit fires
+	case <-time.After(SelfWriteSuppressionTimeout):
+		t.Fatal("a's external edit was suppressed — UnregisterSelfWritePath did not clear the arm")
+	}
+
+	// Now write to b with the EXACT armed content (self-write). It must be
+	// suppressed because b's arm survived the path-scoped unregister.
+	if err := writeFile(filepath.Join(typesDir, "b.yaml"), validUserType+"\n# b-self\n"); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+	select {
+	case <-changed:
+		t.Fatal("b's self-write was NOT suppressed — UnregisterSelfWritePath collateral-cleared b's arm")
+	case <-time.After(SelfWriteSuppressionTimeout):
+		// expected: b's arm survived, self-write suppressed
+	}
+}
+
 // TestTypeWatcher_SelfDeleteSuppressed arms a delete (nil expected = file
 // should not exist after) then removes the file. The settled state (file
 // absent) matches the armed expectation, so onChange must NOT fire — the

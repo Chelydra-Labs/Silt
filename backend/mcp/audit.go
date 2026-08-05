@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -194,13 +195,45 @@ func RedactArgs(args map[string]any) map[string]any {
 	return out
 }
 
-// decodeRawArgs decodes raw wire arguments (json.RawMessage from the SDK) into
-// a plain map suitable for RedactArgs. Schema failures frequently involve
-// malformed JSON or wrong-typed values; a decode failure yields a presence +
-// byte-length marker rather than the raw bytes — argument content is never
-// persisted, even when the SDK rejected it. Redaction itself happens in
-// AuditEntry recording (RedactArgs), same as handler-level args.
-func decodeRawArgs(raw json.RawMessage) map[string]any {
+// schemaIDKeys are the structural identifier keys whose string value is safe to
+// persist verbatim in a rejected_schema audit row. They are short, non-content
+// identifiers (vault path and property/type names) — the same keys handler-level
+// audit treats as safe. A non-string value in one of these slots is reduced to
+// a type marker so a wrong-typed value is never logged.
+var schemaIDKeys = map[string]bool{
+	"notebook": true,
+	"section":  true,
+	"page":     true,
+	"property": true,
+	"type":     true,
+}
+
+// schemaKnownKeys are the remaining keys declared by a tool input schema. Their
+// names are safe to record (schema-declared, not client content) but their
+// values are content-shaped, so only a length/count/presence marker is kept.
+// Any key outside both schemaIDKeys and schemaKnownKeys is client-supplied
+// (unknown) and aggregated without its name, so a malicious key cannot smuggle
+// content into the audit log as a metadata key.
+var schemaKnownKeys = map[string]bool{
+	"query":    true,
+	"offset":   true,
+	"limit":    true,
+	"tag":      true,
+	"date":     true,
+	"markdown": true,
+	"blocks":   true,
+	"value":    true,
+}
+
+// redactSchemaArgs decodes raw wire arguments from a rejected tools/call into a
+// strictly-allowlisted metadata map. Only schemaIDKeys string values are
+// persisted; every other value (notably `value`, body text, numbers, and
+// unknown client-supplied keys) is reduced to a shape marker — presence,
+// length, or count — never the content. This is stricter than RedactArgs
+// because the input is untrusted client data the SDK rejected, not a
+// handler-built map of known fields. Malformed JSON yields presence + byte
+// length (never the raw bytes).
+func redactSchemaArgs(raw json.RawMessage) map[string]any {
 	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
 		return nil
 	}
@@ -208,5 +241,102 @@ func decodeRawArgs(raw json.RawMessage) map[string]any {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return map[string]any{"args_present": true, "args_bytes": len(raw)}
 	}
-	return m
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(m)+2)
+	var unknownStrings, unknownOthers int
+	for k, v := range m {
+		switch {
+		case schemaIDKeys[k]:
+			if s, ok := v.(string); ok {
+				out[k] = s
+			} else if v != nil {
+				out[k+"_type"] = jsonTypeName(v)
+			}
+		case schemaKnownKeys[k]:
+			applyShapeMarker(out, k, v)
+		default:
+			// Unknown client-supplied key: aggregate without the name.
+			if _, ok := v.(string); ok {
+				unknownStrings++
+			} else if v != nil {
+				unknownOthers++
+			}
+		}
+	}
+	if unknownStrings > 0 {
+		out["unknown_string_args"] = unknownStrings
+	}
+	if unknownOthers > 0 {
+		out["unknown_other_args"] = unknownOthers
+	}
+	return out
+}
+
+// applyShapeMarker records a length/count/presence marker for k without its
+// value. Used for schemaKnownKeys (content-shaped but schema-declared).
+func applyShapeMarker(out map[string]any, k string, v any) {
+	switch v.(type) {
+	case string:
+		out[k+"_len"] = len([]rune(v.(string)))
+	case []any:
+		out[k+"_count"] = len(v.([]any))
+	case map[string]any:
+		out[k+"_present"] = true
+	case nil:
+		// omit null
+	case float64, int, int64, bool:
+		out[k+"_present"] = true
+	default:
+		out[k+"_type"] = jsonTypeName(v)
+	}
+}
+
+// jsonTypeName returns the JSON-schema type name for a decoded value.
+func jsonTypeName(v any) string {
+	switch v.(type) {
+	case bool:
+		return "boolean"
+	case float64, int, int64:
+		return "number"
+	case string:
+		return "string"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	case nil:
+		return "null"
+	default:
+		return "unknown"
+	}
+}
+
+// sanitizeSchemaErr strips input-derived content from an SDK schema-validation
+// error before it is persisted. The SDK echoes the offending VALUE in
+// type-mismatch messages (`type: 99 has type "integer"`) and client-supplied
+// KEY names in additional-property messages; both are input-derived and must
+// not be logged. Schema-derived parts (the "validating arguments" prefix,
+// property paths, declared type names, and missing-property names) are kept
+// because they are not client content and carry the forensic reason for the
+// rejection. A length cap bounds any unforeseen echo in future SDK versions.
+var (
+	schemaErrValueEcho = regexp.MustCompile(`type: .* has type `)
+	schemaErrAddlProps = regexp.MustCompile(`unexpected additional properties \[[^\]]*\]`)
+)
+
+const maxSchemaErrLen = 200
+
+func sanitizeSchemaErr(s string) string {
+	// Greedy match from "type:" to the last " has type " on the line: redacts
+	// the echoed value even if the value itself contains " has type ".
+	s = schemaErrValueEcho.ReplaceAllString(s, `type: <redacted> has type `)
+	// Drop client-supplied additional-property key names; the args meta already
+	// records their presence via the unknown_* aggregates.
+	s = schemaErrAddlProps.ReplaceAllString(s, `unexpected additional properties (redacted)`)
+	if r := []rune(s); len(r) > maxSchemaErrLen {
+		s = string(r[:maxSchemaErrLen]) + "..."
+	}
+	return s
 }

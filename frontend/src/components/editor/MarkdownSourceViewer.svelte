@@ -72,6 +72,10 @@
   let savedClearTimer: ReturnType<typeof setTimeout> | null = null
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null
   let hasFocusLock = false
+  // Set in onDestroy so an in-flight AcquireFocusLock IPC that resolves
+  // after teardown releases its lock immediately instead of starting a
+  // heartbeat interval that outlives the component.
+  let destroyed = false
   /** Fingerprint of last applied external blocks (ids + raw_text). */
   let lastBlocksKey = $state<string | null>(null)
   /** Fingerprint of blocks we just saved — skip false conflict on self-refresh. */
@@ -143,9 +147,12 @@
     }
     queueMicrotask(() => {
       if (!textareaEl) return
-      textareaEl.selectionStart = 0
-      textareaEl.selectionEnd = 0
-      textareaEl.selectionDirection = 'forward'
+      try {
+        textareaEl.setSelectionRange(0, 0, 'forward')
+      } catch {
+        textareaEl.selectionStart = 0
+        textareaEl.selectionEnd = 0
+      }
     })
   }
 
@@ -156,6 +163,15 @@
       try {
         const body = await fetchPageMarkdown(notebook, section, page)
         if (seq !== seedSeq) return
+        // The fetch may have resolved after the user started editing
+        // (initial mount with a slow IPC, or an external-change re-seed
+        // that raced with the user's first keystroke). Clobbering the
+        // buffer now would silently destroy their work — fall through to
+        // the conflict path so they can choose Keep mine or Reload.
+        if (dirty) {
+          conflictPending = true
+          return
+        }
         if (body.trim() !== '') {
           seedBuffer(body)
           return
@@ -165,6 +181,11 @@
       }
     }
     if (seq !== seedSeq) return
+    if (dirty) {
+      // Same protection on the fallback (reconstruct-from-blocks) path.
+      conflictPending = true
+      return
+    }
     if (source.length > 0) {
       seedBuffer(reconstructMarkdown(source))
     } else {
@@ -326,6 +347,11 @@
     conflictPending = false
     saveError = null
     savePhase = 'idle'
+    // Reload discards local edits by explicit user choice. Clear dirty
+    // BEFORE re-seeding so the async completion guard in
+    // seedFromDiskOrBlocks doesn't refuse the seed (and so a stale
+    // saveTimer doesn't try to flush the just-discarded buffer).
+    dirty = false
     if (saveTimer) {
       clearTimeout(saveTimer)
       saveTimer = null
@@ -401,9 +427,18 @@
     const len = textareaEl.value.length
     const start = Math.min(selection.start, len)
     const end = Math.min(selection.end, len)
-    textareaEl.selectionStart = start
-    textareaEl.selectionEnd = end
-    textareaEl.selectionDirection = selection.direction
+    // Use setSelectionRange rather than assigning selectionStart / End /
+    // Direction individually: the property setters reset direction to
+    // 'forward' on write, so a backward selection collapses to forward
+    // before the direction reassignment lands. The canonical API applies
+    // all three atomically and preserves the user's anchor/caret.
+    try {
+      textareaEl.setSelectionRange(start, end, selection.direction)
+    } catch {
+      textareaEl.selectionStart = start
+      textareaEl.selectionEnd = end
+      textareaEl.selectionDirection = selection.direction
+    }
   }
 
   function onBeforeInput(e: Event): void {
@@ -615,13 +650,24 @@
 
   async function acquireLock(): Promise<void> {
     if (!editable || !notebook || !page) return
+    const forNotebook = notebook
+    const forSection = section
+    const forPage = page
     try {
-      await AcquireFocusLock(notebook, section, page)
+      await AcquireFocusLock(forNotebook, forSection, forPage)
+      // The await may have outlived the component (tab close, view-mode
+      // switch, vault change). If so, release the lock we just acquired
+      // and don't start a heartbeat — otherwise the interval leaks and
+      // the backend holds the focus lease forever.
+      if (destroyed) {
+        void ReleaseFocusLock(forNotebook, forSection, forPage).catch(() => {})
+        return
+      }
       hasFocusLock = true
       if (heartbeatInterval) clearInterval(heartbeatInterval)
       heartbeatInterval = setInterval(() => {
-        if (!hasFocusLock) return
-        RefreshFocusLock(notebook, section, page).catch(() => {})
+        if (!hasFocusLock || destroyed) return
+        RefreshFocusLock(forNotebook, forSection, forPage).catch(() => {})
       }, 20000)
     } catch (e) {
       console.error('MarkdownSourceViewer: AcquireFocusLock failed:', e)
@@ -648,6 +694,7 @@
   })
 
   onDestroy(() => {
+    destroyed = true
     if (copyStatusTimer) clearTimeout(copyStatusTimer)
     if (historyStatusTimer) clearTimeout(historyStatusTimer)
     if (savedClearTimer) clearTimeout(savedClearTimer)
