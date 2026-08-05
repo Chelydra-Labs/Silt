@@ -479,16 +479,17 @@
     // Ctrl+B is bold everywhere an editor is the relevant surface. The resolver
     // suppressed this when the editor was focused (ProseMirror owns the in-editor
     // path); here the editor is not focused, so recover an editor and apply bold.
-    // Gated to notes/backlinks (mirrors isPropertiesPanelAvailable above) so a
-    // Ctrl+B on a dashboard/settings view is a clean no-op rather than routing
-    // bold + focus to a background page the user navigated away from. A
-    // destroyed/stale reference or no mounted editor is a silent no-op.
+    // Gated to notes/backlinks (mirrors isPropertiesPanelAvailable above) and to
+    // no-modal-open so a Ctrl+B on a dashboard/settings view or inside a dialog
+    // is a clean no-op. The recovered editor is also checked against hidden
+    // background tabs: getLastActiveEditor() is a global that survives blur, so
+    // after a tab switch (or the Ctrl+Alt+→/← cycle chords, which leave the new
+    // tab's editor unfocused) it can still point at the page the user left. A
+    // display:none tab panel makes the editor's view.dom non-visible
+    // (offsetParent === null) — guard against that so Ctrl+B never mutates a
+    // page the user isn't looking at.
     applyFormatBold: () => {
       if (activeView !== 'notes' && activeView !== 'backlinks') return
-      // Don't bold (and yank focus to) the background page while a modal or
-      // overlay is open — Ctrl+B would escape the dialog and edit a hidden
-      // page (a11y focus-escape + surprising edit). The modal keydown listeners
-      // don't intercept Ctrl+B, so this guard is the defense.
       if (
         showSearch ||
         showQuickSwitcher ||
@@ -502,6 +503,8 @@
       }
       const editor = getActiveEditor() ?? getLastActiveEditor()
       if (!editor || editor.isDestroyed) return
+      const dom = editor.view?.dom as HTMLElement | null
+      if (dom && dom.offsetParent === null) return
       editor.chain().focus().toggleBold().run()
     }
   })
