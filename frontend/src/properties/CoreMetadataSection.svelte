@@ -6,14 +6,17 @@
   // CoreFieldUpdate (only the changed field is sent, so sibling in-flight edits
   // don't race each other).
   //
-  // Editable text-list fields (tags, aliases) use a comma-separated text input
-  // whose value is split-and-trimmed on blur / Enter. This keeps the control
-  // single-line, fully keyboard-operable, and avoids a custom chip UI that
-  // would need its own a11y wiring (Tab trap, Remove affordance, live-region
-  // announcements). A value containing a comma round-trips through the
-  // frontmatter JSON array (yamlInline handles quoting).
+  // Free-text list fields (tags, aliases) are rendered by CoreListInput, which
+  // holds a LOCAL edit draft seeded on mount and remounts on page-locator
+  // change (the {#key pageLocator} gate below). That design prevents a
+  // concurrent core refresh (block:changed from a sync client or a sibling
+  // edit) from clobbering in-progress typing: the draft only re-seeds when the
+  // PAGE changes, not on every core refresh. The date / created fields are
+  // change-committed (select/pick → onchange), so the same clobber window has
+  // negligible impact there.
   import { coerceIPCError } from '../lib/ipcError'
   import type { CoreFieldUpdate, PageCoreMetadata } from './types'
+  import CoreListInput from './CoreListInput.svelte'
 
   interface Props {
     core: PageCoreMetadata
@@ -24,20 +27,9 @@
 
   let { core, onCommit, onError, onChanged }: Props = $props()
 
-  // Editable text-list fields (tags, aliases) are uncontrolled inputs whose
-  // value is projected from `core` and flushed on blur / Enter by reading the
-  // DOM value. Because Svelte only re-sets `value` when `core` actually
-  // changes, in-progress typing is preserved between flushes, and an external
-  // refresh (block:changed, IPC rejection) resyncs the field without stranding
-  // a stale typed value.
-  function splitList(input: string): string[] {
-    // Empty / whitespace-only → empty list (clears the frontmatter key).
-    if (input.trim() === '') return []
-    return input
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s !== '')
-  }
+  // Page identity gates CoreListInput remounts (see comment above). Composed
+  // from the core payload's locator fields.
+  let pageLocator = $derived(`${core.notebook}/${core.section}/${core.page}`)
 
   async function commit(update: CoreFieldUpdate): Promise<void> {
     try {
@@ -56,27 +48,6 @@
   async function onCreatedChange(e: Event): Promise<void> {
     const v = (e.currentTarget as HTMLInputElement).value
     await commit({ created: v })
-  }
-
-  function flushListField(
-    input: HTMLInputElement,
-    current: string[],
-    build: (next: string[]) => CoreFieldUpdate
-  ): void {
-    const next = splitList(input.value)
-    // Skip the commit when the parsed value matches the committed value —
-    // avoids a redundant write on a no-op blur (e.g. focusing then unfocusing
-    // the field without typing).
-    if (eqList(next, current)) return
-    void commit(build(next))
-  }
-
-  function eqList(a: string[], b: string[]): boolean {
-    if (a.length !== b.length) return false
-    for (let i = 0; i < a.length; i++) {
-      if (a[i] !== b[i]) return false
-    }
-    return true
   }
 
   // `created` accepts either a bare date or a full RFC3339 timestamp. Use a
@@ -138,72 +109,32 @@
       />
     </div>
 
-    <div class="core-field core-field-wide">
-      <label class="core-label" for="core-tags">
-        Tags{core.tagsAreReadOnly ? ' (read-only)' : ''}
-      </label>
-      <input
+    {#key pageLocator}
+      <CoreListInput
         id="core-tags"
-        class="core-input"
-        type="text"
-        inputmode="text"
+        label={`Tags${core.tagsAreReadOnly ? ' (read-only)' : ''}`}
         placeholder="comma, separated, tags"
-        value={core.tags.join(', ')}
+        hint="Frontmatter tag list. Comma-separated."
+        values={core.tags}
+        current={core.tags}
         disabled={core.tagsAreReadOnly}
-        onblur={(e) =>
-          flushListField(
-            e.currentTarget as HTMLInputElement,
-            core.tags,
-            (n) => ({ tags: n })
-          )}
-        onkeydown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            flushListField(
-              e.currentTarget as HTMLInputElement,
-              core.tags,
-              (n) => ({ tags: n })
-            )
-          }
-        }}
-        aria-describedby="core-tags-hint"
+        buildUpdate={(n) => ({ tags: n })}
+        onCommit={(u) => void commit(u)}
       />
-      <p id="core-tags-hint" class="core-hint">
-        Frontmatter tag list. Comma-separated.
-      </p>
-    </div>
+    {/key}
 
-    <div class="core-field core-field-wide">
-      <label class="core-label" for="core-aliases">Aliases</label>
-      <input
+    {#key pageLocator}
+      <CoreListInput
         id="core-aliases"
-        class="core-input"
-        type="text"
-        inputmode="text"
+        label="Aliases"
         placeholder="comma, separated, aliases"
-        value={core.aliases.join(', ')}
-        onblur={(e) =>
-          flushListField(
-            e.currentTarget as HTMLInputElement,
-            core.aliases,
-            (n) => ({ aliases: n })
-          )}
-        onkeydown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            flushListField(
-              e.currentTarget as HTMLInputElement,
-              core.aliases,
-              (n) => ({ aliases: n })
-            )
-          }
-        }}
-        aria-describedby="core-aliases-hint"
+        hint="Alternate names. Comma-separated. Distinct from wiki-link display text."
+        values={core.aliases}
+        current={core.aliases}
+        buildUpdate={(n) => ({ aliases: n })}
+        onCommit={(u) => void commit(u)}
       />
-      <p id="core-aliases-hint" class="core-hint">
-        Alternate names. Comma-separated. Distinct from wiki-link display text.
-      </p>
-    </div>
+    {/key}
 
     <div class="core-field">
       <span class="core-label" id="core-modified-label">Modified</span>
@@ -246,19 +177,6 @@
     gap: 0.2rem;
     min-width: 0;
   }
-  .core-field-wide {
-    grid-column: span 2;
-  }
-  /*
-    At narrow widths, the wide fields drop back to a single column so the
-    comma-separated inputs keep usable width rather than forcing horizontal
-    scroll.
-  */
-  @media (max-width: 40rem) {
-    .core-field-wide {
-      grid-column: auto;
-    }
-  }
   .core-label {
     font-size: var(--text-type-xs);
     color: var(--color-text-muted);
@@ -283,11 +201,6 @@
   .core-input:disabled {
     opacity: 0.6;
     cursor: not-allowed;
-  }
-  .core-hint {
-    margin: 0;
-    font-size: var(--text-type-xs);
-    color: var(--color-text-muted);
   }
   .core-value-readonly {
     font-size: var(--text-type-sm);

@@ -340,6 +340,33 @@ func TestReservedPropertyNames_IncludesCoreFields(t *testing.T) {
 	}
 }
 
+// TestComputePageCoreFromMeta_ScalarAliases confirms a hand-authored scalar
+// `aliases: foo` (not a list) is tolerated as a one-element list rather than
+// silently dropped from the projection — interop with Obsidian / hand-edited
+// frontmatter. Without the fallback, the typed []string decode fails, the
+// projection loses the value, and a subsequent panel save would clear it.
+func TestComputePageCoreFromMeta_ScalarAliases(t *testing.T) {
+	meta := parser.FileMetadata{
+		Notebook:    "Work",
+		Section:     "",
+		Page:        "Plan",
+		Frontmatter: map[string]any{"aliases": "foo"},
+	}
+	core := computePageCoreFromMeta(meta)
+	if len(core.Aliases) != 1 || core.Aliases[0] != "foo" {
+		t.Errorf("scalar aliases not tolerated: got %v, want [foo]", core.Aliases)
+	}
+
+	// An empty scalar string is NOT promoted to a one-element list (it would
+	// store [""] rather than clearing the field).
+	core = computePageCoreFromMeta(parser.FileMetadata{
+		Frontmatter: map[string]any{"aliases": ""},
+	})
+	if len(core.Aliases) != 0 {
+		t.Errorf("empty scalar aliases should be dropped: got %v", core.Aliases)
+	}
+}
+
 // readFileForTest reads a page file from the vault for assertion.
 func readFileForTest(t *testing.T, app *App, notebook, section, page string) (string, error) {
 	t.Helper()

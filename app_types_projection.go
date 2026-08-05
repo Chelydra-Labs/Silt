@@ -102,6 +102,14 @@ func computePageCoreFromMeta(meta parser.FileMetadata) db.PageCoreFields {
 		if v, ok := lookupFrontmatter(meta.Frontmatter, "aliases"); ok && v != nil {
 			if s, ok := toStringSlice(v); ok {
 				core.Aliases = s
+			} else if str, ok := v.(string); ok && str != "" {
+				// Tolerate a hand-authored scalar `aliases: foo` as a one-element
+				// list. The typed decode into []string fails on a scalar, so
+				// without this the value would be silently dropped from the
+				// projection (and then from the panel) even though frontmatter
+				// holds it — and a panel save would clear it. Interop with
+				// Obsidian / hand-edited YAML.
+				core.Aliases = []string{str}
 			}
 		}
 	}
@@ -118,6 +126,13 @@ func computePageCoreFromMeta(meta parser.FileMetadata) db.PageCoreFields {
 // re-indexing its blocks (the projectionReprojectWorker's per-locator step).
 // Every frontmatter-affecting block write now routes through IndexFileWithProjection
 // so the projection publish shares the block transaction.
+//
+// Note: this path touches ONLY page_types / page_properties (schema-derived).
+// It deliberately does NOT update page_core: page_core's fields (type, date,
+// aliases, created) are frontmatter-derived, not schema-derived, so a type-
+// definition rename / hot-reload that triggers this re-projection cannot change
+// page_core. page_core is republished only via the frontmatter-affecting block
+// index path (IndexFileWithProjection / IndexScanResultsWithProjection).
 //
 // Resolution + value extraction use the live type schema (mtime-cached); the DB
 // stores the result. A page whose type is empty is un-projected (cleared) so a
