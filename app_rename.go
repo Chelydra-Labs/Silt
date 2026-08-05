@@ -198,16 +198,27 @@ func (a *App) indexFile(source, notebook, section, page string, blocks []parser.
 	return nil
 }
 
-// markFileIndexedBestEffort refreshes the files-table mtime/size after a
-// block-only write (task status/owner/priority, dependency, recurrence, subtree
-// edits) that calls IndexFileBlocks directly, bypassing indexFile. Without it
-// the Core panel's read-only `modified` stays at the pre-write value all
-// session — the fsnotify watcher ignores self-writes, so nothing else refreshes
-// the row. Best-effort: a stat/mark failure only leaves `modified` stale until
-// the next external-triggered scan; it is never a write failure.
-func (a *App) markFileIndexedBestEffort(filePath string) {
-	stat, err := os.Stat(filePath)
-	if err != nil {
+// markFileIndexedBestEffort records the caller-captured pre-index mtime/size
+// snapshot on the files row after a block-only write (task status/owner/
+// priority, dependency, recurrence, subtree edits) that calls IndexFileBlocks
+// directly, bypassing indexFile. Without it the Core panel's read-only
+// `modified` stays at the pre-write value all session — the fsnotify watcher
+// ignores self-writes, so nothing else refreshes the row.
+//
+// The caller MUST stat the file immediately after WriteFileAtomic (BEFORE
+// IndexFileBlocks commits) and hand that os.FileInfo in — mirroring indexFile
+// and watcher.reindexFile's pre-index snapshot. A stat taken HERE (after the
+// index commit) would reintroduce the [index-commit, stat] window the
+// dcd2a6cd fix closed for indexFile: an external edit (Obsidian/Dropbox/second
+// Silt window) landing between the app's write and this mark would get its
+// mtime recorded against the pre-edit indexed content, and a warm restart's
+// IsFileUnchanged would match and silently persist the stale content. With the
+// caller's snapshot, such an edit leaves the recorded mtime stale relative to
+// the file's real mtime, so the warm restart re-parses. Best-effort: a nil stat
+// (the caller's stat failed) or a mark failure only leaves `modified` stale
+// until the next external-triggered scan; it is never a write failure.
+func (a *App) markFileIndexedBestEffort(filePath string, stat os.FileInfo) {
+	if stat == nil {
 		return
 	}
 	a.coordinator.WithDBWrite(func() {

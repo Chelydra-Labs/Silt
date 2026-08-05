@@ -405,6 +405,70 @@ func TestComputeBatchProjections_DateAndCreatedPopulateCore(t *testing.T) {
 	}
 }
 
+// TestComputeBatchProjections_LinkedSourceDateRecoveredFromFrontmatter pins
+// the linked-notebook batch ingest path: LinkNotebook builds ScanResults from
+// parser.FileMetadata, and page_core.date must populate even when the
+// ScanResult.Date is empty. The frontmatter fallback in
+// computePageCoreFromMeta recovers the date from raw frontmatter, and a
+// hand-built ScanResult with NO Date set proves that path works for linked
+// notebooks (the bug shape: the linked ingest previously omitted Date, so
+// every linked page projected an empty core.date).
+func TestComputeBatchProjections_LinkedSourceDateRecoveredFromFrontmatter(t *testing.T) {
+	app := newTestApp(t)
+	// Date is intentionally NOT set on the ScanResult — the frontmatter
+	// fallback must recover it (this is the linked-notebook bug shape).
+	results := []parser.ScanResult{{
+		Notebook: "External",
+		Section:  "Notes",
+		Page:     "Imported",
+		Source:   "linked:test",
+		Frontmatter: map[string]any{
+			"date":    "2026-03-12",
+			"created": "2026-03-12T09:00:00",
+		},
+	}}
+	out := computeBatchProjections(app, results)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 projection, got %d", len(out))
+	}
+	core := out[0].Core
+	if core.Date != "2026-03-12" {
+		t.Errorf("linked-source core.Date not recovered from frontmatter: got %q, want 2026-03-12", core.Date)
+	}
+	if core.Created != "2026-03-12T09:00:00" {
+		t.Errorf("linked-source core.Created not recovered from frontmatter: got %q", core.Created)
+	}
+}
+
+// TestComputePageCoreFromMeta_DateFallback pins the date fallback in
+// computePageCoreFromMeta directly: a FileMetadata with no Date but a
+// frontmatter date (in either string or time.Time shape) must recover it.
+// The unquoted-time.Time shape is what yaml.v3 produces for `date: 2026-08-05`.
+func TestComputePageCoreFromMeta_DateFallback(t *testing.T) {
+	// String date (quoted frontmatter form)
+	core := computePageCoreFromMeta(parser.FileMetadata{
+		Frontmatter: map[string]any{"date": "2026-07-15"},
+	})
+	if core.Date != "2026-07-15" {
+		t.Errorf("string date not recovered: got %q", core.Date)
+	}
+	// time.Time date (unquoted frontmatter form — what yaml.v3 resolves to)
+	core = computePageCoreFromMeta(parser.FileMetadata{
+		Frontmatter: map[string]any{"date": time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)},
+	})
+	if core.Date != "2026-08-05" {
+		t.Errorf("time.Time date not recovered: got %q", core.Date)
+	}
+	// Pre-set Date takes precedence over frontmatter (no overwrite).
+	core = computePageCoreFromMeta(parser.FileMetadata{
+		Date:        "2026-01-01",
+		Frontmatter: map[string]any{"date": "2026-07-15"},
+	})
+	if core.Date != "2026-01-01" {
+		t.Errorf("pre-set Date should take precedence: got %q", core.Date)
+	}
+}
+
 // TestComputePageCoreFromMeta_ScalarAliases confirms a hand-authored scalar
 // `aliases: foo` (not a list) is tolerated as a one-element list rather than
 // silently dropped from the projection — interop with Obsidian / hand-edited
@@ -523,6 +587,91 @@ func TestBlockOnlyWrite_RefreshesCoreModified(t *testing.T) {
 	}
 	if _, perr := time.Parse(time.RFC3339, got.Modified); perr != nil {
 		t.Errorf("Modified not RFC3339 after block-only write: got %q (%v)", got.Modified, perr)
+	}
+}
+
+// TestMarkFileIndexedBestEffort_UsesPreCommitStatNotPostCommitStat pins the
+// fix for PR #898 review finding #2: markFileIndexedBestEffort must record the
+// mtime/size snapshot its caller captured BEFORE IndexFileBlocks commits, NOT
+// re-stat the file after the index commit. A post-commit re-stat would
+// reintroduce the [index-commit, stat] window dcd2a6cd closed for indexFile:
+// an external edit (Obsidian/Dropbox/second Silt window) landing between the
+// app's write and that late stat would get its mtime recorded against the
+// pre-edit indexed content, and a warm restart's IsFileUnchanged would match
+// and silently persist the stale content.
+//
+// This simulates the window directly: capture the pre-commit FileInfo, then
+// bump the on-disk mtime to a strictly-later value (the "external edit"), then
+// hand the marker the pre-commit snapshot. A correct marker records the
+// pre-commit mtime; a marker that re-stats post-commit would record the bumped
+// (external) mtime and fail.
+func TestMarkFileIndexedBestEffort_UsesPreCommitStatNotPostCommitStat(t *testing.T) {
+	app := newTestApp(t)
+
+	// Stage a file + seed its files-table row so the marker has a path to update
+	// (MarkFileIndexed is an upsert, but seeding keeps the test honest about the
+	// "refresh an existing row" production path).
+	filePath := filepath.Join(app.vaultPath, "Notes", "Window.md")
+	writeFile(t, filePath, "---\nnotebook: \"Notes\"\npage: \"Window\"\ntags: []\n---\n# Window\n")
+	if err := app.db.MarkFileIndexed(nil, filePath, 1, 1); err != nil {
+		t.Fatalf("seed MarkFileIndexed: %v", err)
+	}
+
+	// Pre-commit snapshot — exactly what the call sites hand the marker (taken
+	// right after WriteFileAtomic, before IndexFileBlocks commits).
+	preStat, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("pre-commit stat: %v", err)
+	}
+	preMtime := preStat.ModTime().UnixNano()
+
+	// Simulate a concurrent external edit landing in the [index-commit, stat]
+	// window by moving the on-disk mtime strictly later than the snapshot.
+	future := preStat.ModTime().Add(2 * time.Hour)
+	if err := os.Chtimes(filePath, future, future); err != nil {
+		t.Fatalf("os.Chtimes (simulate external edit): %v", err)
+	}
+	diskMtimeAfterEdit, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("post-edit stat: %v", err)
+	}
+	if diskMtimeAfterEdit.ModTime().UnixNano() == preMtime {
+		t.Fatalf("test pre-condition failed: os.Chtimes did not advance the on-disk mtime; cannot discriminate pre- vs post-commit stat")
+	}
+
+	// The marker must use the caller's snapshot — the on-disk mtime is now
+	// `future`, but a correct marker records preMtime because it never re-stats.
+	app.markFileIndexedBestEffort(filePath, preStat)
+
+	got, err := app.db.FileMtime(filePath)
+	if err != nil {
+		t.Fatalf("FileMtime after mark: %v", err)
+	}
+	if got != preMtime {
+		t.Errorf("files-row mtime = %d, want pre-commit snapshot %d (marker must use the caller's stat, not re-stat post-commit — a late stat would record the external edit's %d against pre-edit indexed content)",
+			got, preMtime, diskMtimeAfterEdit.ModTime().UnixNano())
+	}
+}
+
+// TestMarkFileIndexedBestEffort_NilStatIsNoOp pins the best-effort contract:
+// when the caller could not stat the file (WriteFileAtomic's stat failed), the
+// marker must not touch the files row rather than panic on a nil FileInfo.
+func TestMarkFileIndexedBestEffort_NilStatIsNoOp(t *testing.T) {
+	app := newTestApp(t)
+	filePath := filepath.Join(app.vaultPath, "Notes", "Nil.md")
+	writeFile(t, filePath, "---\nnotebook: \"Notes\"\npage: \"Nil\"\ntags: []\n---\n# Nil\n")
+	if err := app.db.MarkFileIndexed(nil, filePath, 123456, 7); err != nil {
+		t.Fatalf("seed MarkFileIndexed: %v", err)
+	}
+
+	app.markFileIndexedBestEffort(filePath, nil) // must not panic, must not clobber
+
+	got, err := app.db.FileMtime(filePath)
+	if err != nil {
+		t.Fatalf("FileMtime: %v", err)
+	}
+	if got != 123456 {
+		t.Errorf("nil stat clobbered the files row: mtime = %d, want 123456 (nil stat must be a no-op)", got)
 	}
 }
 

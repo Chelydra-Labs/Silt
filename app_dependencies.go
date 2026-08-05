@@ -215,6 +215,15 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string) error {
 				return
 			}
 			didWrite = true
+			// Snapshot the mtime/size BEFORE IndexFileBlocks commits so the
+			// files row records the content just written, not whatever mtime a
+			// concurrent external edit lands between the index commit and the
+			// post-commit mark (same window indexFile closes). See
+			// markFileIndexedBestEffort.
+			var fileStat os.FileInfo
+			if s, se := os.Stat(filePath); se == nil {
+				fileStat = s
+			}
 
 			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 			if err == nil {
@@ -225,7 +234,7 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string) error {
 				if idxErr != nil {
 					log.Printf("SetTaskBlockedBy: IndexFileBlocks failed: %v", idxErr)
 				}
-				a.markFileIndexedBestEffort(filePath)
+				a.markFileIndexedBestEffort(filePath, fileStat)
 				for _, b := range blocks {
 					if b.ID == blockID {
 						emitFileDate = b.FileDate

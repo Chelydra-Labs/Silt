@@ -140,6 +140,15 @@ func (a *App) mutateTaskBlock(blockID, label string, mutate func(*parser.ParsedB
 				return
 			}
 			didWrite = true
+			// Snapshot the mtime/size BEFORE IndexFileBlocks commits so the
+			// files row records the content just written, not whatever mtime a
+			// concurrent external edit lands between the index commit and the
+			// post-commit mark (same window indexFile closes). See
+			// markFileIndexedBestEffort.
+			var fileStat os.FileInfo
+			if s, se := os.Stat(filePath); se == nil {
+				fileStat = s
+			}
 
 			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 			if err == nil {
@@ -150,7 +159,7 @@ func (a *App) mutateTaskBlock(blockID, label string, mutate func(*parser.ParsedB
 				if idxErr != nil {
 					log.Printf("%s: IndexFileBlocks failed: %v", label, idxErr)
 				}
-				a.markFileIndexedBestEffort(filePath)
+				a.markFileIndexedBestEffort(filePath, fileStat)
 				for _, b := range blocks {
 					if b.ID == blockID {
 						emitFileDate = b.FileDate
@@ -401,6 +410,15 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 					writeErr = err
 					return
 				}
+				// Snapshot the mtime/size BEFORE IndexFileBlocks commits so the
+				// files row records the content just written, not whatever mtime
+				// a concurrent external edit lands between the index commit and
+				// the post-commit mark (same window indexFile closes). See
+				// markFileIndexedBestEffort.
+				var fileStat os.FileInfo
+				if s, se := os.Stat(filePath); se == nil {
+					fileStat = s
+				}
 
 				blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 				if err == nil {
@@ -411,7 +429,7 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 					if idxErr != nil {
 						log.Printf("SetTaskOrders: IndexFileBlocks failed: %v", idxErr)
 					}
-					a.markFileIndexedBestEffort(filePath)
+					a.markFileIndexedBestEffort(filePath, fileStat)
 					// Collect the re-parsed blocks for emit. Map IDs once so
 					// this is O(moved) rather than O(moved × blocksInFile).
 					blocksByID := make(map[string]parser.ParsedBlock, len(blocks))
