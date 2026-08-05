@@ -476,12 +476,15 @@
       activeView === 'notes' || activeView === 'backlinks',
     closeTab: (tabId) => tabManager.handleCloseTab(tabId),
     cycleTab: (dir) => tabManager.handleCycleTab(dir),
-    // Ctrl+B is bold everywhere. The resolver suppressed this when the editor
-    // was focused (ProseMirror owns the in-editor path); here the editor is
-    // not focused, so recover the active page's editor and apply bold. Falls
-    // back to the last-focused editor (the common blur-then-bold flow); a
+    // Ctrl+B is bold everywhere an editor is the relevant surface. The resolver
+    // suppressed this when the editor was focused (ProseMirror owns the in-editor
+    // path); here the editor is not focused, so recover an editor and apply bold.
+    // Gated to notes/backlinks (mirrors isPropertiesPanelAvailable above) so a
+    // Ctrl+B on a dashboard/settings view is a clean no-op rather than routing
+    // bold + focus to a background page the user navigated away from. A
     // destroyed/stale reference or no mounted editor is a silent no-op.
     applyFormatBold: () => {
+      if (activeView !== 'notes' && activeView !== 'backlinks') return
       const editor = getActiveEditor() ?? getLastActiveEditor()
       if (!editor || editor.isDestroyed) return
       editor.chain().focus().toggleBold().run()
