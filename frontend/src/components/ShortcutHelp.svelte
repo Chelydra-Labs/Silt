@@ -158,25 +158,25 @@
       class="px-5 py-3 border-t border-surface-modal-border bg-surface-panel/50"
     >
       <p class="m-0 text-type-2xs text-text-muted leading-relaxed">
-        Tab shortcuts (Close, Next, Previous) use
-        <kbd
-          class="inline-flex px-1.5 py-0.5 rounded-md border border-surface-panel-border bg-surface-panel text-type-2xs text-text-muted font-mono whitespace-nowrap"
-          >Ctrl</kbd
-        >
-        +
-        <kbd
-          class="inline-flex px-1.5 py-0.5 rounded-md border border-surface-panel-border bg-surface-panel text-type-2xs text-text-muted font-mono whitespace-nowrap"
-          >Alt</kbd
-        >
-        arrows because the webview cannot reliably relay
+        Next/Previous use
         <kbd
           class="inline-flex px-1.5 py-0.5 rounded-md border border-surface-panel-border bg-surface-panel text-type-2xs text-text-muted font-mono whitespace-nowrap"
           >Ctrl</kbd
         >+<kbd
           class="inline-flex px-1.5 py-0.5 rounded-md border border-surface-panel-border bg-surface-panel text-type-2xs text-text-muted font-mono whitespace-nowrap"
-          >W</kbd
+          >Alt</kbd
         >
-        and
+        arrows, and Close uses
+        <kbd
+          class="inline-flex px-1.5 py-0.5 rounded-md border border-surface-panel-border bg-surface-panel text-type-2xs text-text-muted font-mono whitespace-nowrap"
+          >Ctrl</kbd
+        >+<kbd
+          class="inline-flex px-1.5 py-0.5 rounded-md border border-surface-panel-border bg-surface-panel text-type-2xs text-text-muted font-mono whitespace-nowrap"
+          >Shift</kbd
+        >+<kbd
+          class="inline-flex px-1.5 py-0.5 rounded-md border border-surface-panel-border bg-surface-panel text-type-2xs text-text-muted font-mono whitespace-nowrap"
+          >W</kbd
+        >, because the webview cannot reliably relay
         <kbd
           class="inline-flex px-1.5 py-0.5 rounded-md border border-surface-panel-border bg-surface-panel text-type-2xs text-text-muted font-mono whitespace-nowrap"
           >Ctrl</kbd

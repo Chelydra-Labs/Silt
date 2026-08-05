@@ -161,6 +161,11 @@
   }
 
   async function confirmSaveView(): Promise<void> {
+    // Guard the whole path: a second Enter during the in-flight save (before
+    // persistAll resolves) would otherwise mint a second id from the same
+    // pre-mirror snapshot and last-writer-win the first view away. The Save
+    // button is also disabled while busy, but keydown isn't.
+    if (savedViewsBusy) return
     const name = newViewName.trim()
     if (!name) return
     // Reuse an existing view's id when the name matches one for this type
@@ -181,6 +186,9 @@
     const next = existing
       ? savedViews.map((v) => (v.id === id ? view : v))
       : [...savedViews, view]
+    // Close the save dialog BEFORE awaiting the IPC so the name input can't
+    // receive a second Enter during the await (which would re-enter this
+    // function, hit the busy guard above, and no-op).
     savingView = false
     newViewName = ''
     activeSavedViewId = id
@@ -521,7 +529,7 @@
           type="button"
           class="sv-btn primary"
           onclick={() => void confirmSaveView()}
-          disabled={!newViewName.trim()}
+          disabled={savedViewsBusy || !newViewName.trim()}
         >
           Save
         </button>

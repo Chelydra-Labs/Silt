@@ -50,6 +50,16 @@
   // clobber in-progress typing on a concurrent core refresh; the {#key} gate
   // is the re-seed mechanism, not $state reactivity.
   let draft = $state(values.join(', '))
+  // Raw seed string for the true no-op check on flush: `eqList` compares the
+  // comma-SPLIT lists, so a committed value like "Harrison, Chris" would
+  // round-trip through split/join as ["Harrison", "Chris"] — failing eqList
+  // and rewriting frontmatter on a focus-then-blur with no typing. Comparing
+  // the raw draft against this seed catches that case at the string level.
+  // Plain `let` (not $state): only read inside flush(), never in markup, so it
+  // needs no reactivity — it re-seeds via the parent {#key} remount on nav.
+  // svelte-ignore state_referenced_locally
+  // Same intentional initial-only capture as `draft` above.
+  let seed = values.join(', ')
 
   function splitList(input: string): string[] {
     // Empty / whitespace-only → empty list (clears the frontmatter key).
@@ -69,9 +79,15 @@
   }
 
   async function flush(): Promise<void> {
+    // String-level no-op: if the raw draft is byte-identical to the seed, the
+    // user didn't type anything — skip the commit entirely. This is the only
+    // check that's immune to comma-splitting: a value like "Harrison, Chris"
+    // round-trips through split/join as two elements and would otherwise fail
+    // eqList below, triggering a spurious frontmatter rewrite on a no-op blur.
+    if (draft === seed) return
     const next = splitList(draft)
-    // Skip the commit when the parsed draft matches the committed value —
-    // avoids a redundant write on a no-op blur (focus-then-blur without typing).
+    // Secondary guard: the draft changed but parses to the same list as the
+    // committed value — still no commit needed (e.g. trailing whitespace).
     if (eqList(next, current)) return
     const ok = await onCommit(buildUpdate(next))
     if (!ok) {
@@ -81,6 +97,7 @@
       // will also bump rollbackNonce to remount us; this synchronous re-seed
       // covers the window before the remount lands.
       draft = current.join(', ')
+      seed = current.join(', ')
     }
   }
 </script>

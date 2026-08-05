@@ -9,7 +9,6 @@
 // the raw slice as an argument so they're unit-testable without IPC mocks.
 
 import {
-  mergeViewById,
   stripSystemFlag,
   type SavedViewBase
 } from '../lib/viewEngine/viewState'
@@ -141,13 +140,6 @@ export function persistableDashboardSavedViews(
   views: DashboardSavedView[]
 ): Omit<DashboardSavedView, 'system'>[] {
   return stripSystemFlag(views)
-}
-
-/** Merge two saved-view lists by id (later wins). */
-export function mergeDashboardSavedViews(
-  ...lists: DashboardSavedView[][]
-): DashboardSavedView[] {
-  return mergeViewById(...lists)
 }
 
 /**

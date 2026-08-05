@@ -24,7 +24,9 @@
     aria-live="polite"
     data-testid="hotkeys-defaults-notice"
   >
-    <span class="material-symbols-outlined text-icon-lg">keyboard</span>
+    <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+      >keyboard</span
+    >
     <span class="flex-1">
       Default shortcuts were updated to standard editor conventions — Ctrl+B is
       bold everywhere (sidebar is now Ctrl+\), tab navigation moved to
