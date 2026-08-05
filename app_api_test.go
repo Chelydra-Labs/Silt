@@ -75,16 +75,20 @@ func newTestApp(t *testing.T) *App {
 		t.Fatalf("config.Load: %v", err)
 	}
 	app.applyConfigLocked(cfg)
-	// Mirror production: initializeVaultServices starts the scoped
-	// reprojection worker (Phase 5 / #866). newTestApp bypasses that path,
-	// so start it here so SaveType / DeleteType / ReloadTypes /
-	// RestoreExampleTypes tests observe the same async coalescing behavior.
-	// stopAndJoin runs in t.Cleanup via the App's teardown path
-	// (CloseVault / ServiceShutdown); for tests that don't close, the
-	// goroutine leaks into the test binary exit (acceptable for a per-test
-	// worker).
+	// Start the reprojection worker (mirrors initializeVaultServices) and
+	// register a cleanup to stop it. LIFO ordering stops the worker before
+	// the DB closes and before eventEmit-swapping tests restore the field.
 	app.reprojectWorker = newProjectionReprojectWorker(app)
 	app.reprojectWorker.start()
+	t.Cleanup(func() {
+		app.vaultMu.Lock()
+		w := app.reprojectWorker
+		app.reprojectWorker = nil
+		app.vaultMu.Unlock()
+		if w != nil {
+			w.stopAndJoin()
+		}
+	})
 	return app
 }
 

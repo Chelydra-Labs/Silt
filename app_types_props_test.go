@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"silt/backend/parser"
 	"silt/backend/types"
@@ -1184,7 +1185,8 @@ func TestTypedPages_NestedSectionRoundTrip(t *testing.T) {
 }
 
 // captureTypeEmits swaps app.eventEmit to record event names, returning a
-// snapshot function. Restored via t.Cleanup so other tests are unaffected.
+// snapshot function. The cleanup flushes the worker before restoring the
+// field so the worker goroutine does not race the unsynchronized write.
 func captureTypeEmits(t *testing.T, app *App) func() []string {
 	t.Helper()
 	var mu sync.Mutex
@@ -1194,7 +1196,13 @@ func captureTypeEmits(t *testing.T, app *App) func() []string {
 		got = append(got, name)
 		mu.Unlock()
 	}
-	t.Cleanup(func() { app.eventEmit = nil })
+	t.Cleanup(func() {
+		// Worker must be idle before we nil the field it reads in emit().
+		if app.reprojectWorker != nil {
+			app.reprojectWorker.flushForTest(5 * time.Second)
+		}
+		app.eventEmit = nil
+	})
 	return func() []string {
 		mu.Lock()
 		defer mu.Unlock()
