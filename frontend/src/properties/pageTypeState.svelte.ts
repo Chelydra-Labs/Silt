@@ -240,6 +240,13 @@ export function createPageTypeController(
   async function commitCore(update: CoreFieldUpdate): Promise<void> {
     const { notebook, section, page } = deps.getLocator()
     if (!notebook || !page) return
+    // Capture the locator BEFORE the write so a navigation A→B during the
+    // in-flight commit cannot refetch A's core onto B's panel (or route a
+    // later blur of A's draft to B). refreshToken is shared with refresh(),
+    // so it does not encode WHICH page this commit targeted — the locator
+    // comparison is the only reliable guard. Mirrors refresh()'s
+    // locator-key check.
+    const loc = deps.getLocator()
     try {
       // The Wails JSDoc generator emits the CoreFieldUpdate model fields as
       // required-but-nullable (`T | null | undefined`) rather than optional,
@@ -256,6 +263,12 @@ export function createPageTypeController(
       setError(coerceIPCError(e).message)
       return
     }
+    if (
+      loc.notebook !== deps.getLocator().notebook ||
+      loc.section !== deps.getLocator().section ||
+      loc.page !== deps.getLocator().page
+    )
+      return
     setError('')
     // Refresh the core payload from disk truth (the write succeeded; re-derive
     // type/date/tags/aliases/created/modified). info/values/mismatched are

@@ -223,6 +223,7 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (
 				if idxErr != nil {
 					log.Printf("SaveSubtreeBlocks: IndexFileBlocks failed: %v", idxErr)
 				}
+				a.markFileIndexedBestEffort(filePath)
 				for _, b := range blocks {
 					if b.ID == blockID {
 						emitFileDate = b.FileDate
@@ -470,6 +471,7 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID string
 				if idxErr != nil {
 					log.Printf("AppendTaskComment: IndexFileBlocks failed: %v", idxErr)
 				}
+				a.markFileIndexedBestEffort(filePath)
 				for _, b := range blocks {
 					if b.ID == taskID {
 						emitFileDate = b.FileDate

@@ -150,6 +150,7 @@ func (a *App) mutateTaskBlock(blockID, label string, mutate func(*parser.ParsedB
 				if idxErr != nil {
 					log.Printf("%s: IndexFileBlocks failed: %v", label, idxErr)
 				}
+				a.markFileIndexedBestEffort(filePath)
 				for _, b := range blocks {
 					if b.ID == blockID {
 						emitFileDate = b.FileDate
@@ -410,6 +411,7 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 					if idxErr != nil {
 						log.Printf("SetTaskOrders: IndexFileBlocks failed: %v", idxErr)
 					}
+					a.markFileIndexedBestEffort(filePath)
 					// Collect the re-parsed blocks for emit. Map IDs once so
 					// this is O(moved) rather than O(moved × blocksInFile).
 					blocksByID := make(map[string]parser.ParsedBlock, len(blocks))

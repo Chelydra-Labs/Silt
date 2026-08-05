@@ -31,12 +31,26 @@
   // from the core payload's locator fields.
   let pageLocator = $derived(`${core.notebook}/${core.section}/${core.page}`)
 
-  async function commit(update: CoreFieldUpdate): Promise<void> {
+  // Bumped on a failed commit so the date/created/CoreListInput fields remount
+  // and re-seed from the unchanged committed `core` (rollback). Svelte only
+  // re-applies a controlled input's value when its expression deps change; on
+  // a rejected write `core` is unchanged so the picked value would otherwise
+  // linger. The {#key `${pageLocator}:${rollbackNonce}`} wrappers below force
+  // a remount → re-seed. Mirrors PropertiesPanel's resetTypeSelect pattern.
+  let rollbackNonce = $state(0)
+
+  async function commit(update: CoreFieldUpdate): Promise<boolean> {
     try {
       await onCommit(update)
       onChanged()
+      return true
     } catch (e) {
       onError(coerceIPCError(e).message)
+      // Trigger rollback of the date/created/CoreListInput fields — they
+      // remount and re-seed from the committed core (which the rejected write
+      // did not change).
+      rollbackNonce++
+      return false
     }
   }
 
@@ -87,29 +101,33 @@
   <h3 id="core-section-title" class="core-title">Core</h3>
 
   <div class="core-grid">
-    <div class="core-field">
-      <label class="core-label" for="core-date">Date</label>
-      <input
-        id="core-date"
-        class="core-input"
-        type="date"
-        value={core.date}
-        onchange={onDateChange}
-      />
-    </div>
+    {#key `${pageLocator}:${rollbackNonce}`}
+      <div class="core-field">
+        <label class="core-label" for="core-date">Date</label>
+        <input
+          id="core-date"
+          class="core-input"
+          type="date"
+          value={core.date}
+          onchange={onDateChange}
+        />
+      </div>
+    {/key}
 
-    <div class="core-field">
-      <label class="core-label" for="core-created">Created</label>
-      <input
-        id="core-created"
-        class="core-input"
-        type={createdInputType}
-        value={createdInputValue}
-        onchange={onCreatedChange}
-      />
-    </div>
+    {#key `${pageLocator}:${rollbackNonce}`}
+      <div class="core-field">
+        <label class="core-label" for="core-created">Created</label>
+        <input
+          id="core-created"
+          class="core-input"
+          type={createdInputType}
+          value={createdInputValue}
+          onchange={onCreatedChange}
+        />
+      </div>
+    {/key}
 
-    {#key pageLocator}
+    {#key `${pageLocator}:${rollbackNonce}`}
       <CoreListInput
         id="core-tags"
         label={`Tags${core.tagsAreReadOnly ? ' (read-only)' : ''}`}
@@ -119,11 +137,11 @@
         current={core.tags}
         disabled={core.tagsAreReadOnly}
         buildUpdate={(n) => ({ tags: n })}
-        onCommit={(u) => void commit(u)}
+        onCommit={async (u) => commit(u)}
       />
     {/key}
 
-    {#key pageLocator}
+    {#key `${pageLocator}:${rollbackNonce}`}
       <CoreListInput
         id="core-aliases"
         label="Aliases"
@@ -132,7 +150,7 @@
         values={core.aliases}
         current={core.aliases}
         buildUpdate={(n) => ({ aliases: n })}
-        onCommit={(u) => void commit(u)}
+        onCommit={async (u) => commit(u)}
       />
     {/key}
 

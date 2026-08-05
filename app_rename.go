@@ -198,6 +198,25 @@ func (a *App) indexFile(source, notebook, section, page string, blocks []parser.
 	return nil
 }
 
+// markFileIndexedBestEffort refreshes the files-table mtime/size after a
+// block-only write (task status/owner/priority, dependency, recurrence, subtree
+// edits) that calls IndexFileBlocks directly, bypassing indexFile. Without it
+// the Core panel's read-only `modified` stays at the pre-write value all
+// session — the fsnotify watcher ignores self-writes, so nothing else refreshes
+// the row. Best-effort: a stat/mark failure only leaves `modified` stale until
+// the next external-triggered scan; it is never a write failure.
+func (a *App) markFileIndexedBestEffort(filePath string) {
+	stat, err := os.Stat(filePath)
+	if err != nil {
+		return
+	}
+	a.coordinator.WithDBWrite(func() {
+		if me := a.db.MarkFileIndexed(nil, filePath, stat.ModTime().UnixNano(), stat.Size()); me != nil {
+			log.Printf("markFileIndexedBestEffort(%s): %v", filePath, me)
+		}
+	})
+}
+
 func (a *App) reindexFileContent(filePath, source, notebook, section, page string, content []byte, useRenameHook bool) error {
 	blocks, meta, _, _, parseErr := parser.ParseFileContent(
 		string(content), notebook, section, page,
@@ -210,12 +229,18 @@ func (a *App) reindexFileContent(filePath, source, notebook, section, page strin
 	if useRenameHook {
 		index = a.renameIndexFile
 	}
-	if err := index(source, meta.Notebook, meta.Section, meta.Page, blocks, meta, meta.Warnings...); err != nil {
-		return fmt.Errorf("index %s: %w", filePath, err)
-	}
+	// Capture the mtime/size BEFORE the index write so the files-table row
+	// records the mtime of the content being indexed — not a mtime a concurrent
+	// external edit leaves between the index commit and a post-commit stat
+	// (same rationale as indexFile's internal pre-index snapshot). indexFile
+	// captures its own snapshot too; this mark is the source of truth for the
+	// renameIndexFile path and a redundant idempotent write for indexFile.
 	stat, statErr := os.Stat(filePath)
 	if statErr != nil {
 		return fmt.Errorf("stat indexed file %s: %w", filePath, statErr)
+	}
+	if err := index(source, meta.Notebook, meta.Section, meta.Page, blocks, meta, meta.Warnings...); err != nil {
+		return fmt.Errorf("index %s: %w", filePath, err)
 	}
 	var markErr error
 	a.coordinator.WithDBWrite(func() {

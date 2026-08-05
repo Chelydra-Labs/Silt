@@ -18,7 +18,11 @@
     current: string[]
     /** Field-granular update builder, e.g. (n) => ({ tags: n }). */
     buildUpdate: (next: string[]) => CoreFieldUpdate
-    onCommit: (update: CoreFieldUpdate) => void
+    /** Resolves true on success, false on failure. On failure the parent
+     *  bumps its rollback nonce and remounts this input (re-seeding the draft
+     *  from `current`); we ALSO re-seed here synchronously so a stale
+     *  draft can't drive a second failing write before the remount lands. */
+    onCommit: (update: CoreFieldUpdate) => Promise<boolean>
     id: string
     label: string
     placeholder: string
@@ -64,12 +68,20 @@
     return true
   }
 
-  function flush(): void {
+  async function flush(): Promise<void> {
     const next = splitList(draft)
     // Skip the commit when the parsed draft matches the committed value —
     // avoids a redundant write on a no-op blur (focus-then-blur without typing).
     if (eqList(next, current)) return
-    onCommit(buildUpdate(next))
+    const ok = await onCommit(buildUpdate(next))
+    if (!ok) {
+      // Rejected write (disk full / sync lock / page moved): re-seed the draft
+      // from the committed value so the next blur's eqList check passes and we
+      // don't retry the same failing write on every subsequent blur. The parent
+      // will also bump rollbackNonce to remount us; this synchronous re-seed
+      // covers the window before the remount lands.
+      draft = current.join(', ')
+    }
   }
 </script>
 
@@ -86,8 +98,12 @@
     onblur={flush}
     onkeydown={(e) => {
       if (e.key === 'Enter') {
+        // Don't flush during IME composition (CJK input) — the Enter that
+        // confirms a candidate would otherwise commit the raw composition
+        // string to tags/aliases.
+        if (e.isComposing || e.keyCode === 229) return
         e.preventDefault()
-        flush()
+        void flush()
       }
     }}
     aria-describedby={`${id}-hint`}

@@ -924,6 +924,15 @@ func (dm *DatabaseManager) RebuildFTSIndex() error {
 // established ledger with block_references / page_fold backfills.
 const PageProjectionBackfillMarker = "page_projection_backfill"
 
+// PageCoreBackfillMarker is the schema_migrations row that records a completed
+// one-shot warm-upgrade projection of type-independent core metadata (#867)
+// into page_core. It is SEPARATE from PageProjectionBackfillMarker: a vault
+// that already shipped typed notes (projection marker set) still needs page_core
+// rows for warm-skipped pages when upgrading to the version that introduces
+// page_core, so gating core backfill on the projection marker would skip it
+// entirely for exactly those vaults.
+const PageCoreBackfillMarker = "page_core_backfill"
+
 // SchemaMigrationApplied reports whether schema_migrations already has name.
 // Used by app-layer one-shot backfills that cannot run inside initSchema
 // because they need scan results / type schemas outside the db package.

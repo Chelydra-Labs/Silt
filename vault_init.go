@@ -329,15 +329,25 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	if berr != nil {
 		log.Printf("initializeVaultServices: probe page_projection_backfill: %v", berr)
 	}
+	// page_core has its OWN one-shot marker. A vault that already shipped typed
+	// notes (PageProjectionBackfillMarker set) still needs page_core rows for
+	// warm-skipped pages when upgrading to the version that introduces page_core
+	// (#867); gating core backfill on the projection marker would skip it for
+	// exactly those vaults.
+	coreBackfillDone, cberr := dbMgr.SchemaMigrationApplied(db.PageCoreBackfillMarker)
+	if cberr != nil {
+		log.Printf("initializeVaultServices: probe page_core_backfill: %v", cberr)
+	}
 	var toProject []parser.ScanResult
-	if !backfillDone {
+	if !backfillDone || !coreBackfillDone {
 		toProject = warmSkipped
 	}
-	// Only record the one-shot backfill marker when every page projected
-	// cleanly. projectPageType returns DB errors; swallowing them and still
-	// marking done would leave failed pages invisible until a file touch or
-	// schema edit (AC5 warm path). Re-run is idempotent (delete-then-insert).
+	// Only record each one-shot marker when its own backfill completes cleanly.
+	// projectPageType / projectPageCore return DB errors; swallowing them and
+	// still marking done would leave failed pages invisible until a file touch
+	// or schema edit (AC5 warm path). Re-run is idempotent (delete-then-insert).
 	backfillFailed := false
+	coreBackfillFailed := false
 	for _, res := range toProject {
 		if res.Notebook == "" || res.Err != nil {
 			continue
@@ -351,17 +361,15 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			Date:        res.Date,
 			Frontmatter: res.Frontmatter,
 		}
-		if err := a.projectPageType(res.Source, meta); err != nil {
-			backfillFailed = true
+		if !backfillDone {
+			if err := a.projectPageType(res.Source, meta); err != nil {
+				backfillFailed = true
+			}
 		}
-		// page_core backfill: warm-skipped pages never entered the unified
-		// IndexFileWithProjection path, so they lack a page_core row until this
-		// derives it from frontmatter (+ date). Untyped pages get a row too —
-		// page_core exists for the untyped case. A failure here is independent
-		// of the typed-projection failure above; both set backfillFailed so the
-		// one-shot marker is withheld and the backfill retries next open.
-		if err := a.projectPageCore(res.Source, meta); err != nil {
-			backfillFailed = true
+		if !coreBackfillDone {
+			if err := a.projectPageCore(res.Source, meta); err != nil {
+				coreBackfillFailed = true
+			}
 		}
 	}
 	if berr == nil && !backfillDone && !backfillFailed {
@@ -370,6 +378,13 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 		}
 	} else if backfillFailed && !backfillDone {
 		log.Printf("initializeVaultServices: page_projection_backfill incomplete; marker not recorded (will retry next open)")
+	}
+	if cberr == nil && !coreBackfillDone && !coreBackfillFailed {
+		if err := dbMgr.RecordSchemaMigration(db.PageCoreBackfillMarker); err != nil {
+			log.Printf("initializeVaultServices: record page_core_backfill: %v", err)
+		}
+	} else if coreBackfillFailed && !coreBackfillDone {
+		log.Printf("initializeVaultServices: page_core_backfill incomplete; marker not recorded (will retry next open)")
 	}
 
 	// Route co-located per-notebook config edits to the cache invalidator +
