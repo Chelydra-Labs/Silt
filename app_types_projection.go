@@ -64,6 +64,7 @@ func computeBatchProjections(a *App, results []parser.ScanResult) []db.ScanProje
 			Section:     res.Section,
 			Page:        res.Page,
 			Type:        res.Type,
+			Date:        res.Date,
 			Frontmatter: res.Frontmatter,
 		}
 		typeID, props := a.computePageProjection(meta)
@@ -110,6 +111,17 @@ func computePageCoreFromMeta(meta parser.FileMetadata) db.PageCoreFields {
 				// holds it — and a panel save would clear it. Interop with
 				// Obsidian / hand-edited YAML.
 				core.Aliases = []string{str}
+			}
+		}
+	}
+	// `created` is recovered from the raw frontmatter when the typed field is
+	// empty — the batch ingest path synthesizes a FileMetadata from a ScanResult
+	// that carries frontmatter but may not have populated Created, and a
+	// hand-authored bare created: survives in Frontmatter.
+	if core.Created == "" && meta.Frontmatter != nil {
+		if v, ok := lookupFrontmatter(meta.Frontmatter, "created"); ok {
+			if str, ok := v.(string); ok && str != "" {
+				core.Created = str
 			}
 		}
 	}
@@ -169,6 +181,28 @@ func (a *App) projectPageType(source string, meta parser.FileMetadata) error {
 		return err
 	}
 	return nil
+}
+
+// projectPageCore writes a page's type-independent core-metadata row to
+// page_core. Used by the warm-upgrade backfill (initializeVaultServices) for
+// pages whose blocks were warm-skipped on restart and thus never entered the
+// unified IndexFileWithProjection path that would otherwise publish page_core.
+// Unlike projectPageType, this writes a row for EVERY page (typed OR untyped) —
+// page_core's whole point is the untyped case. Reproducible from frontmatter
+// (cardinal rule 4). No event emission on failure; the caller aggregates
+// backfillFailed so a partial backfill retries next open.
+func (a *App) projectPageCore(source string, meta parser.FileMetadata) error {
+	if a.db == nil {
+		return nil
+	}
+	if source == "" {
+		source = "vault"
+	}
+	if meta.Notebook == "" && meta.Section == "" && meta.Page == "" {
+		return nil
+	}
+	core := computePageCoreFromMeta(meta)
+	return a.db.IndexPageCore(source, meta.Notebook, meta.Section, meta.Page, core)
 }
 
 // projectProperty builds one projection row from a raw frontmatter value and its

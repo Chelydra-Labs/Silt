@@ -842,13 +842,20 @@ func (a *App) SetPageCoreMetadata(notebook, section, page string, update CoreFie
 		var e error
 		if update.Date != nil {
 			// SetFrontmatterField renders the value via yamlInline; pass the
-			// raw string and let the renderer quote it. An empty string clears
-			// via ClearFrontmatterField so the field round-trips to "absent"
-			// rather than `date: ""`.
+			// normalized date. An empty string clears via ClearFrontmatterField
+			// so the field round-trips to "absent" rather than `date: ""`.
 			d := strings.TrimSpace(*update.Date)
 			if d == "" {
 				content, e = parser.ClearFrontmatterField(content, "date")
 			} else {
+				// Normalize M/D/YY → YYYY-MM-DD (matching the parser's read-side
+				// normalization) and reject anything that isn't a real calendar
+				// date, so a garbage value can't land in blocks.file_date /
+				// page_core.date and corrupt date-scoped queries.
+				d = parser.NormalizeDate(d)
+				if _, perr := time.Parse("2006-01-02", d); perr != nil {
+					return "", fmt.Errorf("invalid date %q: use YYYY-MM-DD or M/D/YYYY", *update.Date)
+				}
 				content, e = parser.SetFrontmatterField(content, "date", d)
 			}
 			if e != nil {

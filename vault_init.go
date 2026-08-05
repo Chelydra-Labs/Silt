@@ -343,13 +343,24 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 			continue
 		}
 		a.backfillProjectionCount++
-		if err := a.projectPageType(res.Source, parser.FileMetadata{
+		meta := parser.FileMetadata{
 			Notebook:    res.Notebook,
 			Section:     res.Section,
 			Page:        res.Page,
 			Type:        res.Type,
+			Date:        res.Date,
 			Frontmatter: res.Frontmatter,
-		}); err != nil {
+		}
+		if err := a.projectPageType(res.Source, meta); err != nil {
+			backfillFailed = true
+		}
+		// page_core backfill: warm-skipped pages never entered the unified
+		// IndexFileWithProjection path, so they lack a page_core row until this
+		// derives it from frontmatter (+ date). Untyped pages get a row too —
+		// page_core exists for the untyped case. A failure here is independent
+		// of the typed-projection failure above; both set backfillFailed so the
+		// one-shot marker is withheld and the backfill retries next open.
+		if err := a.projectPageCore(res.Source, meta); err != nil {
 			backfillFailed = true
 		}
 	}

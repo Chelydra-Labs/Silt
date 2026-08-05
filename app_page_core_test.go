@@ -340,6 +340,41 @@ func TestReservedPropertyNames_IncludesCoreFields(t *testing.T) {
 	}
 }
 
+// TestComputeBatchProjections_DateAndCreatedPopulateCore covers the cold-start
+// / linked-tree batch ingest path: computeBatchProjections synthesizes a
+// FileMetadata per ScanResult, and the Core projection must carry the scanner-
+// resolved date (res.Date) and recover `created` from the raw frontmatter.
+// Previously the synthesized meta omitted Date and there was no created
+// fallback, so every batch-indexed page got an empty-core row on the primary
+// ingest path (review finding P1 #2).
+func TestComputeBatchProjections_DateAndCreatedPopulateCore(t *testing.T) {
+	app := newTestApp(t)
+	results := []parser.ScanResult{{
+		Notebook: "Work",
+		Section:  "",
+		Page:     "Plan",
+		Date:     "2026-07-15",
+		Frontmatter: map[string]any{
+			"created": "2026-01-01T00:00:00",
+			"aliases": []any{"foo", "bar"},
+		},
+	}}
+	out := computeBatchProjections(app, results)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 projection, got %d", len(out))
+	}
+	core := out[0].Core
+	if core.Date != "2026-07-15" {
+		t.Errorf("Core.Date not populated from res.Date: got %q", core.Date)
+	}
+	if core.Created != "2026-01-01T00:00:00" {
+		t.Errorf("Core.Created not recovered from frontmatter: got %q", core.Created)
+	}
+	if len(core.Aliases) != 2 || core.Aliases[0] != "foo" {
+		t.Errorf("Core.Aliases not populated: got %v", core.Aliases)
+	}
+}
+
 // TestComputePageCoreFromMeta_ScalarAliases confirms a hand-authored scalar
 // `aliases: foo` (not a list) is tolerated as a one-element list rather than
 // silently dropped from the projection — interop with Obsidian / hand-edited

@@ -66,7 +66,7 @@ func TestNormalizeDate(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		actual := normalizeDate(tc.input)
+		actual := NormalizeDate(tc.input)
 		if actual != tc.expected {
 			t.Errorf("For %q expected %q, got %q", tc.input, tc.expected, actual)
 		}
@@ -455,6 +455,40 @@ func TestParseLine_Recurrence(t *testing.T) {
 			t.Errorf("rendered output missing [recur:: every month]:\n%s", rendered)
 		}
 	})
+}
+
+// TestParseFileContent_ScalarAliasesRecoversAllFields covers the parser-level
+// regression where a hand-authored scalar `aliases: foo` fails the typed
+// []string decode. The raw-map recovery must still populate aliases (as
+// ["foo"]) AND date/tags/created — otherwise one bad aliases value would
+// silently drop the file's date (→ wrong blocks.file_date) and tags (→ vanish
+// from the tag index) on every reparse. The projection-level test
+// (TestComputePageCoreFromMeta_ScalarAliases) bypasses the parser; this one
+// exercises the actual decode + recovery chain.
+func TestParseFileContent_ScalarAliasesRecoversAllFields(t *testing.T) {
+	content := "---\n" +
+		"date: \"2026-07-15\"\n" +
+		"tags: [\"work\", \"planning\"]\n" +
+		"aliases: foo\n" + // scalar, not a list — fails typed []string decode
+		"created: \"2026-01-01T00:00:00\"\n" +
+		"---\n# Plan\n"
+	blocks, meta, _, _, err := ParseFileContent(content, "work", "", "plan", "2026-07-15", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent failed: %v", err)
+	}
+	_ = blocks
+	if meta.Date != "2026-07-15" {
+		t.Errorf("date lost on scalar-aliases decode failure: got %q", meta.Date)
+	}
+	if len(meta.Tags) != 2 || meta.Tags[0] != "work" || meta.Tags[1] != "planning" {
+		t.Errorf("tags lost on scalar-aliases decode failure: got %v", meta.Tags)
+	}
+	if len(meta.Aliases) != 1 || meta.Aliases[0] != "foo" {
+		t.Errorf("scalar aliases not recovered: got %v, want [foo]", meta.Aliases)
+	}
+	if meta.Created != "2026-01-01T00:00:00" {
+		t.Errorf("created lost on scalar-aliases decode failure: got %q", meta.Created)
+	}
 }
 
 // TestParseLine_BlockedBy covers the [blocked_by:: ((uuid))] token (#301):

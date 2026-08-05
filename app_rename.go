@@ -159,8 +159,27 @@ func (a *App) indexFile(source, notebook, section, page string, blocks []parser.
 	if err != nil {
 		log.Printf("indexFile: IndexFileWithProjection failed for %s/%s/%s: %v", notebook, section, page, err)
 		a.emit(EventTypesProjectionError, map[string]string{"source": source, "page": page})
+		return err
 	}
-	return err
+	// Refresh the files-table mtime/size so the Core panel's read-only
+	// `modified` field stays current after an in-app write (frontmatter edit,
+	// block write, page create). The fsnotify watcher ignores self-writes, so
+	// without this the row would hold the startup-scan mtime all session. Every
+	// write path funnels through indexFile, so this single call covers them all.
+	// Best-effort: a stat/mark failure only leaves `modified` stale until the
+	// next external-triggered scan — it is not a write failure (the index above
+	// already committed).
+	if dir, derr := a.resolveNotebookDir(notebook, source); derr == nil {
+		filePath := filepath.Join(dir, section, page+".md")
+		if stat, se := os.Stat(filePath); se == nil {
+			a.coordinator.WithDBWrite(func() {
+				if me := a.db.MarkFileIndexed(nil, filePath, stat.ModTime().UnixNano(), stat.Size()); me != nil {
+					log.Printf("indexFile: MarkFileIndexed(%s) failed (modified may be stale): %v", filePath, me)
+				}
+			})
+		}
+	}
+	return nil
 }
 
 func (a *App) reindexFileContent(filePath, source, notebook, section, page string, content []byte, useRenameHook bool) error {

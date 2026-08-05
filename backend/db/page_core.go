@@ -79,6 +79,33 @@ func applyPageCoreTx(tx *sql.Tx, source, notebook, section, page string, core Pa
 	return nil
 }
 
+// IndexPageCore replaces a page's core row in one transaction (clear + insert),
+// for the projection-only backfill path (warm-upgrade vault_init): pages whose
+// blocks were warm-skipped on restart never entered the unified
+// IndexFileWithProjection path, so they lack a page_core row until either a
+// file touch or this backfill derives it from frontmatter. Mirrors
+// IndexPageProjection's standalone-tx shape. Reproducible from frontmatter
+// (cardinal rule 4); an empty core is valid (untyped page).
+func (dm *DatabaseManager) IndexPageCore(source, notebook, section, page string, core PageCoreFields) error {
+	db, release, err := dm.handle()
+	if err != nil {
+		return ErrDBClosed
+	}
+	defer release()
+	if source == "" {
+		source = "vault"
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if err := applyPageCoreTx(tx, source, notebook, section, page, core); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // PageCoreRow is the read shape of one page's core projection. Aliases is the
 // decoded string slice (never nil). Used by GetPageCoreProjection for tests +
 // future dashboards; the per-page PropertiesPanel read path composes from
