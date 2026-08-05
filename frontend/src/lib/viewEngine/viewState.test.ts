@@ -1,36 +1,12 @@
 // Contracts for the shared saved-view bookkeeping helpers (#863).
-// mergeViewById + stripSystemFlag are the load/persist primitives both
-// consumers' settings layers compose on top of.
+// stripSystemFlag is the persist primitive both consumers' settings layers
+// compose on top of.
 import { describe, it, expect } from 'vitest'
-import { mergeViewById, stripSystemFlag, type SavedViewBase } from './viewState'
+import { stripSystemFlag, type SavedViewBase } from './viewState'
 
 interface V extends SavedViewBase {
   mode: string
 }
-
-describe('mergeViewById', () => {
-  it('dedupes by id across lists (later lists win)', () => {
-    const a: V[] = [{ id: '1', name: 'one', mode: 'list' }]
-    const b: V[] = [
-      { id: '1', name: 'one-updated', mode: 'board' },
-      { id: '2', name: 'two', mode: 'list' }
-    ]
-    expect(mergeViewById(a, b)).toEqual([
-      { id: '1', name: 'one-updated', mode: 'board' },
-      { id: '2', name: 'two', mode: 'list' }
-    ])
-  })
-
-  it('preserves first-seen order when no collision', () => {
-    const a: V[] = [{ id: 'sys', name: 'S', mode: 'list', system: true }]
-    const b: V[] = [{ id: 'u1', name: 'U', mode: 'board' }]
-    expect(mergeViewById(a, b).map((v) => v.id)).toEqual(['sys', 'u1'])
-  })
-
-  it('handles zero lists', () => {
-    expect(mergeViewById()).toEqual([])
-  })
-})
 
 describe('stripSystemFlag', () => {
   it('drops system views and removes the system marker from the rest', () => {

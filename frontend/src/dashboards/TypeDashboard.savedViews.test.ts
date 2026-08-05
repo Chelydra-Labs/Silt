@@ -319,4 +319,35 @@ describe('TypeDashboard — saved-view chrome (#863/#868)', () => {
     // And NOT the success copy that the resolved branch would surface.
     expect(screen.queryByText('Saved view')).toBeNull()
   })
+
+  it('failed confirmSaveView leaves activeSavedViewId pointing at no ghost', async () => {
+    // Pre-seed + select a real view so the <select> renders and its bound
+    // value reflects activeSavedViewId — that's the only DOM reflection of
+    // the state, so the assertion has to go through it. A rejecting persist
+    // must NOT adopt the would-be-new id; activeSavedViewId stays at the
+    // prior 'v1' rather than dangling at a never-persisted ghost.
+    appMocks.SetTypedNotesSavedViews.mockRejectedValue(
+      new Error('vault not loaded')
+    )
+    seedConfig([bookView()])
+
+    await mount()
+    const select = screen.getByRole('combobox', { name: 'Saved views' })
+    await fireEvent.change(select, { target: { value: 'v1' } })
+    expect(select).toHaveValue('v1')
+
+    // "Save as new" path: a fresh id is minted, but the persist rejects, so
+    // the new id must not stick.
+    await fireEvent.click(screen.getByRole('button', { name: 'Save as new' }))
+    const input = screen.getByRole('textbox', { name: 'New saved view name' })
+    await fireEvent.input(input, { target: { value: 'Doomed View' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    // activeSavedViewId is unchanged from its prior 'v1' — no ghost. The
+    // select's bound value is its DOM reflection; without this guard it
+    // would carry the never-persisted uuid (and show the placeholder).
+    await waitFor(() => {
+      expect(select).toHaveValue('v1')
+    })
+  })
 })

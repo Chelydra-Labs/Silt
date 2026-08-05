@@ -98,8 +98,8 @@ export function coerceDashboardSavedView(
  * Load the user saved-views list from a raw config slice. Coerces each entry,
  * drops invalid ones, and dedupes by id (first wins — colliding ids in
  * hand-edited YAML shouldn't surface duplicates). System views aren't merged
- * in here because the dashboard defines none today; the component composes
- * them via mergeViewById if/when system views are added.
+ * in here because the dashboard defines none today; a future system-view set
+ * would compose against this list at load time.
  *
  * Dropped entries (malformed / duplicate id) emit a single console.warn so a
  * user who hand-edited the YAML and broke a view gets a signal that it was

@@ -1,14 +1,13 @@
-// Serializable saved-view identity contracts + load/persist helpers for
-// surfaces that store user-defined views. Extracted from the merge/strip loops
-// the typed-notes dashboard hand-rolled; silt-tasks keeps its own standalone
-// SavedView and persistence loop for now (its system-view merge is more
-// involved), so this module is consumed by the dashboard today — adopt it in
-// silt-tasks later if the shapes converge.
+// Serializable saved-view identity contracts + persist helpers for surfaces
+// that store user-defined views. Extracted from the strip loop the typed-notes
+// dashboard hand-rolled; silt-tasks keeps its own standalone SavedView and
+// persistence loop for now (its system-view merge is more involved), so this
+// module is consumed by the dashboard today — adopt it in silt-tasks later if
+// the shapes converge.
 //
 // Pure: no Svelte, no bindings. The dashboard's DashboardSavedView extends
-// {@link SavedViewBase} and adds its own dimension fields; the merge/strip
-// helpers are domain-agnostic so a persistence layer doesn't duplicate the
-// bookkeeping.
+// {@link SavedViewBase} and adds its own dimension fields; the strip helper is
+// domain-agnostic so a persistence layer doesn't duplicate the bookkeeping.
 
 /** Common identity fields every saved view carries, regardless of surface. */
 export interface SavedViewBase {
@@ -18,22 +17,6 @@ export interface SavedViewBase {
   name: string
   /** True for code-defined defaults (read-only, not persisted to YAML). */
   system?: boolean
-}
-
-/**
- * Merge multiple saved-view lists by id (later lists win on collision). Used
- * by loaders that compose code-defined system views with user views read from
- * config — dedup is by id so a user view can never shadow a system one (the
- * `sys-` prefix is reserved at coerce time).
- */
-export function mergeViewById<T extends { id: string }>(...lists: T[][]): T[] {
-  const merged = new Map<string, T>()
-  for (const list of lists) {
-    for (const v of list) {
-      merged.set(v.id, v)
-    }
-  }
-  return [...merged.values()]
 }
 
 /**

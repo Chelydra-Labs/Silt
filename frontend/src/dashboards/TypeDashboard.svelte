@@ -93,6 +93,14 @@
   let savedViewsBusy = $state(false)
   let savedViewsMessage = $state('')
 
+  // Focus management for the inline save dialog: the dialog swaps the Save
+  // button for a name input on open and swaps back on close — without an
+  // explicit move, focus falls to <body> both directions. The mode-radio
+  // handler uses the same queueMicrotask-after-state-change pattern; the
+  // microtask runs after Svelte flushes the DOM swap so the ref is bound.
+  let nameInputRef = $state<HTMLInputElement | null>(null)
+  let saveButtonRef = $state<HTMLButtonElement | null>(null)
+
   // loadTypedNotesSavedViews reads the reactive settings.config snapshot, so
   // this $derived re-runs on config:changed (e.g. an external edit or a
   // save round-trip) and the list stays in sync with the persisted state.
@@ -144,20 +152,30 @@
   function startSaveView(): void {
     newViewName = activeSavedView?.name ?? ''
     savingView = true
+    // Move focus into the just-mounted name input (mirrors the mode-radio
+    // focus pattern below) — without this, focus falls to <body> when the
+    // Save button unmounts.
+    queueMicrotask(() => nameInputRef?.focus())
   }
 
   function cancelSaveView(): void {
     savingView = false
     newViewName = ''
+    // Restore focus to the Save button so the bar remains keyboard-operable
+    // after the input unmounts.
+    queueMicrotask(() => saveButtonRef?.focus())
   }
 
-  async function persistAll(next: DashboardSavedView[]): Promise<void> {
+  async function persistAll(
+    next: DashboardSavedView[]
+  ): Promise<string | null> {
     savedViewsBusy = true
     const err = await persistTypedNotesSavedViews(next)
     savedViewsBusy = false
     // Surface the actual failure reason (fail-loud) rather than a generic
     // banner; null means success.
     savedViewsMessage = err ?? 'Saved view'
+    return err
   }
 
   async function confirmSaveView(): Promise<void> {
@@ -191,8 +209,14 @@
     // function, hit the busy guard above, and no-op).
     savingView = false
     newViewName = ''
-    activeSavedViewId = id
-    await persistAll(next)
+    // Restore focus to the Save button as the dialog closes.
+    queueMicrotask(() => saveButtonRef?.focus())
+    const err = await persistAll(next)
+    // Only adopt the new id once the view actually landed on disk — a
+    // rejected persist would otherwise leave a ghost id pointing at a
+    // never-persisted view (activeSavedView resolves null, the <select>
+    // shows the placeholder, the next "Save current" mints a fresh id).
+    if (!err) activeSavedViewId = id
   }
 
   async function updateActiveView(): Promise<void> {
@@ -519,6 +543,7 @@
           class="sv-name-input"
           aria-label="New saved view name"
           placeholder="View name"
+          bind:this={nameInputRef}
           bind:value={newViewName}
           onkeydown={(e) => {
             if (e.key === 'Enter') void confirmSaveView()
@@ -542,6 +567,7 @@
           class="sv-btn"
           onclick={startSaveView}
           disabled={savedViewsBusy}
+          bind:this={saveButtonRef}
         >
           <span
             class="material-symbols-outlined text-icon-sm"
