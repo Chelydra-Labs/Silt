@@ -3,11 +3,13 @@
   import {
     settings,
     saveConfig,
-    reloadFromBackend
+    reloadFromBackend,
+    appendDismissedTip
   } from '../../settings/store.svelte'
   import type { SystemConfig } from '../../settings/store.svelte'
   import { parseHotkey } from '../../settings/hotkeys'
   import HotkeyCaptureInput from './HotkeyCaptureInput.svelte'
+  import HotkeysDefaultsNotice from './HotkeysDefaultsNotice.svelte'
   import {
     SHORTCUT_ACTIONS,
     shortcutBinding
@@ -17,6 +19,20 @@
     ringAnchor?: string | null
   }
   let { ringAnchor = null }: Props = $props()
+
+  // v1 default-keymap migration notice (#868). The Go normalizer stamps
+  // V1_NOTICE into ui.dismissed_tips when it rewrites a legacy chord; the banner
+  // stays visible until the user acknowledges (appends V1_ACK via the existing
+  // add-only appendDismissedTip helper, so no removal IPC is needed).
+  const V1_NOTICE = 'hotkeys_defaults_v1_notice'
+  const V1_ACK = 'hotkeys_defaults_v1_ack'
+  let v1NoticeDismissed = $derived.by(() => {
+    const tips = settings.config?.ui?.dismissed_tips ?? []
+    return !tips.includes(V1_NOTICE) || tips.includes(V1_ACK)
+  })
+  function dismissV1Notice() {
+    void appendDismissedTip(V1_ACK)
+  }
 
   let draft = $state<SystemConfig | null>(null)
   let lastSaved = $state<SystemConfig | null>(null)
@@ -136,6 +152,13 @@
           </button>
         </div>
       {/if}
+
+      <!-- v1 default-keymap migration notice (#868). Surfaces the relocated
+           chords to a user reviewing their shortcuts after upgrade. -->
+      <HotkeysDefaultsNotice
+        dismissed={v1NoticeDismissed}
+        onDismiss={dismissV1Notice}
+      />
 
       <!-- Hotkeys Group Card -->
       <div
