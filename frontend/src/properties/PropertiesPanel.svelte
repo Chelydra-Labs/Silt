@@ -117,6 +117,18 @@
     onChanged()
   }
 
+  // Core commits are field-granular: commitCore already refetched only the
+  // core payload internally (a core edit never reshapes the type-defined
+  // section, so info/values need no re-fetch). Skip the full onChanged()→
+  // refresh() here — otherwise a single field edit cost 1 SET + 4 GETs (the
+  // internal core GET plus refresh's type+props+core GETs). We still must
+  // clear a stale failure banner from a prior rejection; commitCore already
+  // cleared the controller-level `error` on success, so only liveError
+  // remains.
+  function handleCoreChanged(): void {
+    liveError = ''
+  }
+
   // Turn-into orchestration. A TYPED page switching to a different type (or
   // being cleared) previews the conversion via TurnIntoDialog so the user can
   // see how existing values fare + opt in to clearing orphans. Untyped → typed
@@ -422,7 +434,7 @@
         core={core!}
         onCommit={onCommitCore!}
         onError={handleFieldError}
-        onChanged={handleChanged}
+        onChanged={handleCoreChanged}
       />
     {/if}
 

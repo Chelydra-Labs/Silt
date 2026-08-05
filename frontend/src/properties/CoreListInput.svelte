@@ -60,6 +60,12 @@
   // svelte-ignore state_referenced_locally
   // Same intentional initial-only capture as `draft` above.
   let seed = values.join(', ')
+  // True while a flush()-triggered commit is mid-round-trip. Guards the
+  // Enter-then-blur double-write (#14): blur fires within the same IPC window
+  // as Enter's commit, and without this flag the blur's flush would pass both
+  // the seed and eqList guards (neither `current` nor `seed` has caught up yet)
+  // and queue a duplicate write. Plain `let`: read/written only inside flush().
+  let commitInFlight = false
 
   function splitList(input: string): string[] {
     // Empty / whitespace-only → empty list (clears the frontmatter key).
@@ -85,19 +91,37 @@
     // round-trips through split/join as two elements and would otherwise fail
     // eqList below, triggering a spurious frontmatter rewrite on a no-op blur.
     if (draft === seed) return
+    // Enter-then-blur dedupe (#14): Enter triggers a flush, then blur fires
+    // within the same IPC round-trip. Without this guard the blur's flush
+    // passes the `draft === seed` check (seed still holds the pre-Enter value)
+    // and the eqList check (`current` hasn't re-rendered yet) and queues a
+    // second identical write. The in-flight flag short-circuits the duplicate;
+    // the seed update below covers the post-round-trip window.
+    if (commitInFlight) return
     const next = splitList(draft)
     // Secondary guard: the draft changed but parses to the same list as the
     // committed value — still no commit needed (e.g. trailing whitespace).
     if (eqList(next, current)) return
-    const ok = await onCommit(buildUpdate(next))
-    if (!ok) {
-      // Rejected write (disk full / sync lock / page moved): re-seed the draft
-      // from the committed value so the next blur's eqList check passes and we
-      // don't retry the same failing write on every subsequent blur. The parent
-      // will also bump rollbackNonce to remount us; this synchronous re-seed
-      // covers the window before the remount lands.
-      draft = current.join(', ')
-      seed = current.join(', ')
+    commitInFlight = true
+    try {
+      const ok = await onCommit(buildUpdate(next))
+      if (!ok) {
+        // Rejected write (disk full / sync lock / page moved): re-seed the draft
+        // from the committed value so the next blur's eqList check passes and we
+        // don't retry the same failing write on every subsequent blur. The parent
+        // will also bump rollbackNonce to remount us; this synchronous re-seed
+        // covers the window before the remount lands.
+        draft = current.join(', ')
+        seed = current.join(', ')
+        return
+      }
+      // Success: advance seed to the committed draft so a blur that lands
+      // after the round-trip resolves (commitInFlight cleared) but before the
+      // core refetch re-renders `current` hits the `draft === seed` no-op
+      // check instead of re-writing the identical value.
+      seed = draft
+    } finally {
+      commitInFlight = false
     }
   }
 </script>

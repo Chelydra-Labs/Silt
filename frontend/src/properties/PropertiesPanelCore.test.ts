@@ -8,11 +8,10 @@ import {
   waitFor
 } from '@testing-library/svelte'
 
-// Mock the Wails app bindings. PropertiesPanel itself does not call IPC for
-// the Core section (it delegates to the host's onCommitCore prop), but
-// CoreMetadataSection's commit path is exercised through that callback. The
-// mocks stay because PropertiesPanel's SetPageType / TurnIntoPage paths still
-// need them.
+// Mock the Wails app bindings. PropertiesPanel's SetPageType / TurnIntoPage
+// paths use these directly, and the real-controller integration test (#9)
+// drives the core-commit path through createPageTypeController →
+// GetPageCoreMetadata / SetPageCoreMetadata.
 const appMocks = vi.hoisted(() =>
   createAppIpcMocks({
     SetPageProperty: vi.fn().mockResolvedValue(undefined),
@@ -20,12 +19,23 @@ const appMocks = vi.hoisted(() =>
     TurnIntoPage: vi.fn().mockResolvedValue([]),
     ClearPageProperty: vi.fn().mockResolvedValue(undefined),
     GetType: vi.fn().mockResolvedValue(null),
-    GetPageProperties: vi.fn().mockResolvedValue([])
+    GetPageType: vi.fn().mockResolvedValue({
+      isSet: false,
+      type: {},
+      rawType: ''
+    }),
+    GetPageProperties: vi.fn().mockResolvedValue([]),
+    GetPageCoreMetadata: vi.fn().mockResolvedValue(undefined),
+    SetPageCoreMetadata: vi.fn().mockResolvedValue(undefined),
+    ListTypes: vi
+      .fn()
+      .mockResolvedValue({ types: [], errors: [], warnings: [] })
   })
 )
 vi.mock('$silt-app', () => appMocks)
 
 import PropertiesPanel from './PropertiesPanel.svelte'
+import { createPageTypeController } from './pageTypeState.svelte'
 import type { PageCoreMetadata, PagePropertyValue, PageTypeInfo } from './types'
 
 const locator = { notebook: 'Work', section: 'Projects', page: 'Plan' }
@@ -87,7 +97,14 @@ beforeEach(() => {
   appMocks.TurnIntoPage.mockReset().mockResolvedValue([])
   appMocks.ClearPageProperty.mockReset().mockResolvedValue(undefined)
   appMocks.GetType.mockReset().mockResolvedValue(null)
+  appMocks.GetPageType.mockReset().mockResolvedValue({
+    isSet: false,
+    type: {},
+    rawType: ''
+  })
   appMocks.GetPageProperties.mockReset().mockResolvedValue([])
+  appMocks.GetPageCoreMetadata.mockReset().mockResolvedValue(undefined)
+  appMocks.SetPageCoreMetadata.mockReset().mockResolvedValue(undefined)
 })
 
 afterEach(cleanup)
@@ -211,21 +228,128 @@ describe('PropertiesPanel Core section (#867)', () => {
     expect(onCommitCore).not.toHaveBeenCalled()
   })
 
-  it('surfaces aria-live banner when onCommitCore rejects', async () => {
-    const onCommitCore = vi.fn().mockRejectedValue(new Error('disk full'))
+  it('surfaces the aria-live banner AND rolls back the input when the real commitCore rejects (#9, MB#1)', async () => {
+    // Wire the REAL createPageTypeController so the rejection flows through
+    // the actual commitCore → CoreMetadataSection.commit() catch path. The
+    // previous mock-rejection-only test could not detect the swallow bug
+    // (commitCore caught + returned, so commit()'s catch never fired in
+    // production even though the mock fulfilled the rejecting contract).
+    appMocks.GetPageCoreMetadata.mockResolvedValue(makeCore())
+    appMocks.SetPageCoreMetadata.mockRejectedValue(new Error('disk full'))
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+    await ctrl.refresh()
+    await tick()
+
     render(PropertiesPanel, {
       props: baseProps({
         info: untypedInfo,
-        core: makeCore(),
-        onCommitCore
+        core: ctrl.core,
+        onCommitCore: ctrl.commitCore,
+        error: ctrl.error,
+        onError: ctrl.setError,
+        onChanged: ctrl.refresh
       })
     })
     const dateInput = document.getElementById('core-date') as HTMLInputElement
+    expect(dateInput.value).toBe('2026-08-05')
+
     await fireEvent.change(dateInput, { target: { value: '2026-09-01' } })
+
+    // commitCore rejected → commit()'s catch fired onError (banner) +
+    // rollbackNonce++ (input remount + re-seed from the unchanged committed core).
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument()
     })
     expect(screen.getByRole('alert').textContent).toMatch(/disk full/i)
+    // The rejected write left the committed core unchanged; the rollback
+    // remounted the date input so it re-seeds from core.date.
+    await waitFor(() => {
+      const reseeded = document.getElementById('core-date') as HTMLInputElement
+      expect(reseeded.value).toBe('2026-08-05')
+    })
+  })
+
+  it('clears the banner after a successful core commit and skips the redundant type/props refetch (#11)', async () => {
+    // commitCore refetches only the core payload internally; the panel's
+    // handleCoreChanged clears liveError without calling the full refresh(),
+    // so a single field edit is 1 SET + 1 core GET (not 1 SET + 4 GETs).
+    appMocks.GetPageCoreMetadata.mockResolvedValueOnce(makeCore())
+    appMocks.GetPageCoreMetadata.mockResolvedValueOnce(
+      makeCore({ date: '2026-09-01', modified: '2026-08-05T11:00:00Z' })
+    )
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+    await ctrl.refresh()
+    await tick()
+
+    render(PropertiesPanel, {
+      props: baseProps({
+        info: untypedInfo,
+        core: ctrl.core,
+        onCommitCore: ctrl.commitCore,
+        error: ctrl.error,
+        onError: ctrl.setError,
+        onChanged: ctrl.refresh
+      })
+    })
+    const dateInput = document.getElementById('core-date') as HTMLInputElement
+    await fireEvent.change(dateInput, { target: { value: '2026-09-01' } })
+    await tick()
+
+    // No error banner after a successful commit.
+    expect(screen.queryByRole('alert')).toBeNull()
+    // The setter was called exactly once (no double-write).
+    expect(appMocks.SetPageCoreMetadata).toHaveBeenCalledTimes(1)
+    // Core was refetched exactly once (commitCore's internal refetch). The
+    // full refresh() (type + props + core) did NOT fire — GetPageType /
+    // GetPageProperties stay at their refresh() baseline of one call each.
+    expect(appMocks.GetPageCoreMetadata).toHaveBeenCalledTimes(2)
+    expect(appMocks.GetPageType).toHaveBeenCalledTimes(1)
+    expect(appMocks.GetPageProperties).toHaveBeenCalledTimes(1)
+  })
+
+  it('CoreListInput does not double-write on Enter-then-blur within the IPC round-trip (#14)', async () => {
+    // Enter kicks off a commit, then blur fires within the same IPC round-trip
+    // and would re-trigger an identical write. The commitInFlight guard in
+    // CoreListInput.flush() short-circuits the duplicate.
+    appMocks.GetPageCoreMetadata.mockResolvedValue(makeCore({ tags: ['work'] }))
+    // Block the SET so blur lands while Enter's commit is still in flight.
+    let resolveSet!: (v: unknown) => void
+    appMocks.SetPageCoreMetadata.mockReturnValue(
+      new Promise((r) => {
+        resolveSet = r
+      })
+    )
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+    await ctrl.refresh()
+    await tick()
+
+    render(PropertiesPanel, {
+      props: baseProps({
+        info: untypedInfo,
+        core: ctrl.core,
+        onCommitCore: ctrl.commitCore,
+        error: ctrl.error,
+        onError: ctrl.setError,
+        onChanged: ctrl.refresh
+      })
+    })
+    const tagsInput = screen.getByLabelText(/Tags/) as HTMLInputElement
+    await fireEvent.input(tagsInput, { target: { value: 'work, alpha' } })
+    // Enter starts the commit (SET is blocked on resolveSet, so it stays in flight).
+    await fireEvent.keyDown(tagsInput, { key: 'Enter' })
+    await tick()
+    expect(appMocks.SetPageCoreMetadata).toHaveBeenCalledTimes(1)
+
+    // Blur within the round-trip — must NOT queue a second write.
+    await fireEvent.blur(tagsInput)
+    await tick()
+    expect(appMocks.SetPageCoreMetadata).toHaveBeenCalledTimes(1)
+
+    // Let the in-flight commit resolve; still only one write total.
+    resolveSet(undefined)
+    await tick()
+    await tick()
+    expect(appMocks.SetPageCoreMetadata).toHaveBeenCalledTimes(1)
   })
 
   it('tags and aliases inputs are keyboard-operable via Enter', async () => {

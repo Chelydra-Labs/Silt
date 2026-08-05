@@ -261,7 +261,12 @@ export function createPageTypeController(
       )
     } catch (e) {
       setError(coerceIPCError(e).message)
-      return
+      // Rethrow so CoreMetadataSection.commit()'s catch fires — that path
+      // renders the aria-live banner (onError → liveError) and bumps
+      // rollbackNonce so the input re-seeds from the unchanged committed core.
+      // Swallowing here left the success path to run: onChanged() cleared the
+      // banner and the rejected value lingered as a ghost with no feedback.
+      throw e
     }
     if (
       loc.notebook !== deps.getLocator().notebook ||

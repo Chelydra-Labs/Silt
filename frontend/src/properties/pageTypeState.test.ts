@@ -598,7 +598,7 @@ describe('pageType controller', () => {
     expect(ctrl.core.date).toBe('2026-09-01')
   })
 
-  it('commitCore surfaces an IPC error via setError (#867)', async () => {
+  it('commitCore surfaces an IPC error via setError AND rejects so the panel rollback fires (#867, MB#1)', async () => {
     appMocks.GetPageType.mockResolvedValue({
       isSet: false,
       type: {},
@@ -610,12 +610,162 @@ describe('pageType controller', () => {
     await ctrl.refresh()
     await tick()
 
-    await ctrl.commitCore({ created: '2026-10-02T08:00:00' })
+    // MB#1: commitCore MUST reject (not swallow) so CoreMetadataSection.commit()'s
+    // catch fires the aria-live banner + rollbackNonce. The old swallow returned
+    // a resolved promise, leaving the success path to clear the banner.
+    await expect(
+      ctrl.commitCore({ created: '2026-10-02T08:00:00' })
+    ).rejects.toThrow(/disk full/i)
     await tick()
 
     expect(ctrl.error).toMatch(/disk full/i)
     // Setter was attempted; the refresh was NOT triggered because the commit
     // failed before the refetch step.
     expect(appMocks.SetPageCoreMetadata).toHaveBeenCalled()
+    // No core refetch after a failed write (the early throw skips it).
+    expect(appMocks.GetPageCoreMetadata).toHaveBeenCalledTimes(1)
+  })
+
+  it('commitCore refreshes core.modified from disk truth after a write (#10a)', async () => {
+    appMocks.GetPageType.mockResolvedValue({
+      isSet: false,
+      type: {},
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([])
+    // Initial load: modified is the pre-write mtime.
+    appMocks.GetPageCoreMetadata.mockResolvedValueOnce({
+      notebook: 'Work',
+      section: 'Projects',
+      page: 'Plan',
+      type: '',
+      date: '2026-08-05',
+      tags: [],
+      aliases: [],
+      created: '',
+      modified: '2026-08-05T10:00:00Z',
+      tagsAreReadOnly: false
+    })
+    // Post-write refetch: the backend bumped modified (file just rewritten).
+    appMocks.GetPageCoreMetadata.mockResolvedValueOnce({
+      notebook: 'Work',
+      section: 'Projects',
+      page: 'Plan',
+      type: '',
+      date: '2026-09-01',
+      tags: [],
+      aliases: [],
+      created: '',
+      modified: '2026-08-05T11:00:00Z',
+      tagsAreReadOnly: false
+    })
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+    await ctrl.refresh()
+    await tick()
+    expect(ctrl.core.modified).toBe('2026-08-05T10:00:00Z')
+
+    await ctrl.commitCore({ date: '2026-09-01' })
+    await tick()
+
+    // The read-only modified field advanced — the post-write refetch landed.
+    expect(ctrl.core.modified).toBe('2026-08-05T11:00:00Z')
+    expect(ctrl.core.date).toBe('2026-09-01')
+  })
+
+  it('commitCore skips the old-page core refetch when the locator changes mid-commit (#10b)', async () => {
+    appMocks.GetPageType.mockResolvedValue({
+      isSet: false,
+      type: {},
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([])
+    appMocks.GetPageCoreMetadata.mockResolvedValue({
+      notebook: 'Work',
+      section: 'Projects',
+      page: 'A',
+      type: '',
+      date: '2026-08-05',
+      tags: [],
+      aliases: [],
+      created: '',
+      modified: '',
+      tagsAreReadOnly: false
+    })
+    let current = { notebook: 'Work', section: 'Projects', page: 'A' }
+    const ctrl = createPageTypeController({ getLocator: () => current })
+    await ctrl.refresh()
+    await tick()
+    const coreCallsAfterRefresh = appMocks.GetPageCoreMetadata.mock.calls.length
+
+    // Block the SET so we can navigate A→B while A's commit is in flight.
+    let resolveSet!: (v: unknown) => void
+    appMocks.SetPageCoreMetadata.mockReturnValue(
+      new Promise((r) => {
+        resolveSet = r
+      })
+    )
+    const commitPromise = ctrl.commitCore({ date: '2026-09-01' })
+    await tick()
+    // Navigate A→B during the in-flight commit.
+    current = { notebook: 'Work', section: 'Projects', page: 'B' }
+    resolveSet(undefined)
+    await commitPromise
+    await tick()
+
+    // The locator guard (pageTypeState.svelte.ts:266-271) bailed before the
+    // refetch: no extra GetPageCoreMetadata call. Without the guard, A's
+    // refetched core would paint onto B's panel as a stale snapshot.
+    expect(appMocks.GetPageCoreMetadata.mock.calls.length).toBe(
+      coreCallsAfterRefresh
+    )
+  })
+
+  it('wipes core to EMPTY_CORE when the locator loses its page (#10c)', async () => {
+    appMocks.GetPageType.mockResolvedValue({
+      isSet: false,
+      type: {},
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([])
+    appMocks.GetPageCoreMetadata.mockResolvedValue({
+      notebook: 'Work',
+      section: 'Projects',
+      page: 'A',
+      type: '',
+      date: '2026-08-05',
+      tags: ['stale'],
+      aliases: ['ghost'],
+      created: '2026-01-01',
+      modified: '2026-01-02',
+      tagsAreReadOnly: false
+    })
+    let current: { notebook: string; section: string; page: string } = {
+      notebook: 'Work',
+      section: 'Projects',
+      page: 'A'
+    }
+    const ctrl = createPageTypeController({ getLocator: () => current })
+    await ctrl.refresh()
+    await tick()
+    expect(ctrl.core.tags).toEqual(['stale'])
+
+    // Navigate to a page-less view — core must wipe so the prior page's fields
+    // never paint over the empty chrome.
+    current = { notebook: '', section: '', page: '' }
+    await ctrl.refresh()
+    await tick()
+
+    expect(ctrl.core).toEqual({
+      notebook: '',
+      section: '',
+      page: '',
+      type: '',
+      date: '',
+      tags: [],
+      aliases: [],
+      created: '',
+      modified: '',
+      tagsAreReadOnly: false
+    })
   })
 })
