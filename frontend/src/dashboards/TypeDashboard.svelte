@@ -25,6 +25,16 @@
     type SortState,
     type TypeDashboardRow
   } from './dashboards'
+  import { singleSection } from '../lib/viewEngine/grouping'
+  import {
+    loadTypedNotesSavedViews,
+    persistTypedNotesSavedViews
+  } from './dashboardSettings'
+  import {
+    viewMatchesDashboardState,
+    type DashboardSavedView,
+    type DashboardViewState
+  } from './dashboardSavedViews'
 
   interface Props {
     /** Initial type id to display (may be '' to land on the picker). */
@@ -70,6 +80,129 @@
 
   // Collapsed group keys survive a re-bin (SvelteSet so toggles are reactive).
   let collapsed = new SvelteSet<string>()
+
+  // --- Saved views (#863) --------------------------------------------------
+  // User-defined views persist to ui.dashboards.typed_notes.saved_views[] per
+  // vault. A view snapshots filter/sort/group-by/view-mode for one type; the
+  // list is dashboard-wide and filtered to the active type here.
+  let activeSavedViewId = $state('')
+  let savingView = $state(false)
+  let newViewName = $state('')
+  let savedViewsBusy = $state(false)
+  let savedViewsMessage = $state('')
+
+  // loadTypedNotesSavedViews reads the reactive settings.config snapshot, so
+  // this $derived re-runs on config:changed (e.g. an external edit or a
+  // save round-trip) and the list stays in sync with the persisted state.
+  let savedViews = $derived<DashboardSavedView[]>(loadTypedNotesSavedViews())
+  let typeSavedViews = $derived(
+    savedViews.filter((v) => v.typeId === selectedType)
+  )
+  let activeSavedView = $derived(
+    savedViews.find((v) => v.id === activeSavedViewId) ?? null
+  )
+  let dashboardViewState = $derived<DashboardViewState>({
+    typeId: selectedType,
+    filter,
+    sort,
+    groupBy,
+    viewMode
+  })
+  let savedViewDirty = $derived(
+    !!activeSavedView &&
+      !viewMatchesDashboardState(activeSavedView, dashboardViewState)
+  )
+
+  // Auto-clear the aria-live status message so it doesn't linger across
+  // unrelated interactions.
+  $effect(() => {
+    const msg = savedViewsMessage
+    if (!msg) return
+    const t = setTimeout(() => (savedViewsMessage = ''), 2500)
+    return () => clearTimeout(t)
+  })
+
+  function applySavedView(view: DashboardSavedView): void {
+    if (view.filter) filter = { ...view.filter }
+    if (view.sort) sort = { ...view.sort }
+    groupBy = view.groupBy ?? ''
+    if (view.viewMode) viewMode = view.viewMode
+    activeSavedViewId = view.id
+  }
+
+  function onSelectSavedView(id: string): void {
+    if (id === '') {
+      activeSavedViewId = ''
+      return
+    }
+    const v = savedViews.find((x) => x.id === id)
+    if (v) applySavedView(v)
+  }
+
+  function startSaveView(): void {
+    newViewName = activeSavedView?.name ?? ''
+    savingView = true
+  }
+
+  function cancelSaveView(): void {
+    savingView = false
+    newViewName = ''
+  }
+
+  async function persistAll(next: DashboardSavedView[]): Promise<void> {
+    savedViewsBusy = true
+    const ok = await persistTypedNotesSavedViews(next)
+    savedViewsBusy = false
+    savedViewsMessage = ok ? 'Saved view' : 'Could not save view'
+  }
+
+  async function confirmSaveView(): Promise<void> {
+    const name = newViewName.trim()
+    if (!name) return
+    // Reuse an existing view's id when the name matches one for this type
+    // (rename-in-place); otherwise mint a new id.
+    const existing = typeSavedViews.find(
+      (v) => v.name.toLowerCase() === name.toLowerCase()
+    )
+    const id = existing?.id ?? crypto.randomUUID()
+    const view: DashboardSavedView = {
+      id,
+      name,
+      typeId: selectedType,
+      filter: { ...filter },
+      sort: { ...sort },
+      groupBy,
+      viewMode
+    }
+    const next = existing
+      ? savedViews.map((v) => (v.id === id ? view : v))
+      : [...savedViews, view]
+    savingView = false
+    newViewName = ''
+    activeSavedViewId = id
+    await persistAll(next)
+  }
+
+  async function updateActiveView(): Promise<void> {
+    if (!activeSavedView) return
+    const view: DashboardSavedView = {
+      ...activeSavedView,
+      filter: { ...filter },
+      sort: { ...sort },
+      groupBy,
+      viewMode
+    }
+    const next = savedViews.map((v) => (v.id === view.id ? view : v))
+    await persistAll(next)
+  }
+
+  async function deleteActiveView(): Promise<void> {
+    if (!activeSavedView) return
+    const next = savedViews.filter((v) => v.id !== activeSavedView.id)
+    activeSavedViewId = ''
+    await persistAll(next)
+    savedViewsMessage = 'Deleted view'
+  }
 
   // --- Type list -----------------------------------------------------------
   async function loadTypes(): Promise<void> {
@@ -155,7 +288,7 @@
 
   let sections = $derived.by<GroupSection[]>(() => {
     if (groupBy === '' || !currentType) {
-      return [{ key: '__all__', label: '', rows }]
+      return singleSection(rows, '__all__', '')
     }
     const prop = (currentType.properties ?? []).find((p) => p.name === groupBy)
     return binByProperty(rows, prop, groupBy)
@@ -204,6 +337,9 @@
     sort = { property: PAGE_COLUMN_KEY, desc: false }
     groupBy = ''
     rows = []
+    // A saved view belongs to exactly one type; drop the active view when
+    // switching so its dims don't linger over the new type's schema.
+    activeSavedViewId = ''
     // Cover the trailing-debounce window so we never flash the empty state
     // ("No pages of this type") before reload starts.
     loading = id !== ''
@@ -335,6 +471,96 @@
       onGroupByChange={(name) => (groupBy = name)}
       onFilterChange={(f) => (filter = f)}
     />
+
+    <section class="saved-views-bar" aria-label="Saved views for this type">
+      <div class="sv-select-wrap">
+        <span class="material-symbols-outlined sv-icon" aria-hidden="true"
+          >bookmark</span
+        >
+        <select
+          class="sv-select"
+          aria-label="Saved views"
+          value={activeSavedViewId}
+          onchange={(e) => onSelectSavedView(e.currentTarget.value)}
+          disabled={savingView || savedViewsBusy}
+        >
+          <option value="">
+            {typeSavedViews.length === 0 ? 'No saved views' : 'Saved views'}
+          </option>
+          {#each typeSavedViews as v (v.id)}
+            <option value={v.id}>{v.name}</option>
+          {/each}
+        </select>
+      </div>
+
+      {#if activeSavedView && savedViewDirty && !savingView}
+        <span class="sv-modified" aria-label="Current view modified"
+          >modified</span
+        >
+      {/if}
+
+      {#if savingView}
+        <input
+          type="text"
+          class="sv-name-input"
+          aria-label="New saved view name"
+          placeholder="View name"
+          bind:value={newViewName}
+          onkeydown={(e) => {
+            if (e.key === 'Enter') void confirmSaveView()
+            else if (e.key === 'Escape') cancelSaveView()
+          }}
+        />
+        <button
+          type="button"
+          class="sv-btn primary"
+          onclick={() => void confirmSaveView()}
+          disabled={!newViewName.trim()}
+        >
+          Save
+        </button>
+        <button type="button" class="sv-btn" onclick={cancelSaveView}>
+          Cancel
+        </button>
+      {:else}
+        <button
+          type="button"
+          class="sv-btn"
+          onclick={startSaveView}
+          disabled={savedViewsBusy}
+        >
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true">save</span
+          >
+          {activeSavedView ? 'Save as new' : 'Save current'}
+        </button>
+        {#if activeSavedView && savedViewDirty}
+          <button
+            type="button"
+            class="sv-btn primary"
+            onclick={() => void updateActiveView()}
+          >
+            Update “{activeSavedView.name}”
+          </button>
+        {/if}
+        {#if activeSavedView}
+          <button
+            type="button"
+            class="sv-btn danger"
+            onclick={() => void deleteActiveView()}
+            aria-label="Delete saved view {activeSavedView.name}"
+          >
+            <span
+              class="material-symbols-outlined text-icon-sm"
+              aria-hidden="true">delete</span
+            >
+          </button>
+        {/if}
+      {/if}
+
+      <span class="sr-only" aria-live="polite">{savedViewsMessage}</span>
+    </section>
 
     {#if error}
       <div class="state error" role="alert">{error}</div>
@@ -642,5 +868,122 @@
   .view-toggle-btn:focus-visible {
     outline: 2px solid var(--color-border-focus);
     outline-offset: 1px;
+  }
+  .saved-views-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    padding: 0.4rem 1rem;
+    border-bottom: 1px solid var(--color-surface-panel-border);
+    background: var(--color-surface-panel);
+  }
+  .sv-select-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .sv-icon {
+    position: absolute;
+    left: 0.35rem;
+    font-size: var(--text-icon-sm);
+    color: var(--color-text-muted);
+    pointer-events: none;
+  }
+  .sv-select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding: 0.25rem 1.5rem 0.25rem 1.5rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--color-surface-panel-border);
+    background: var(--color-surface-app);
+    color: var(--color-text-primary);
+    font-size: var(--text-type-sm);
+    font-family: var(--font-body, sans-serif);
+    cursor: pointer;
+    max-width: 16rem;
+  }
+  .sv-select:hover {
+    background: var(--color-hover);
+  }
+  .sv-select:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .sv-name-input {
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--color-accent-primary-start);
+    background: var(--color-surface-app);
+    color: var(--color-text-primary);
+    font-size: var(--text-type-sm);
+    font-family: var(--font-body, sans-serif);
+    min-width: 10rem;
+  }
+  .sv-name-input:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .sv-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.55rem;
+    border: 1px solid var(--color-surface-panel-border);
+    background: var(--color-surface-app);
+    color: var(--color-text-primary);
+    border-radius: 0.375rem;
+    font-family: var(--font-body, sans-serif);
+    font-size: var(--text-type-sm);
+    cursor: pointer;
+    transition:
+      background 120ms var(--transition-standard),
+      color 120ms var(--transition-standard);
+  }
+  .sv-btn:hover:not(:disabled) {
+    background: var(--color-hover);
+  }
+  .sv-btn:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .sv-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .sv-btn.primary {
+    border-color: var(--color-accent-primary-start);
+    background: var(--color-accent-primary-glow);
+    color: var(--color-accent-primary-start);
+  }
+  .sv-btn.primary:hover:not(:disabled) {
+    background: var(--color-hover);
+  }
+  .sv-btn.danger {
+    border-color: var(--color-surface-panel-border);
+    color: var(--color-text-muted);
+  }
+  .sv-btn.danger:hover:not(:disabled) {
+    color: var(--color-status-danger);
+    background: var(--color-hover);
+  }
+  .sv-modified {
+    color: var(--color-text-muted);
+    font-size: var(--text-type-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: var(--font-mono, monospace);
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

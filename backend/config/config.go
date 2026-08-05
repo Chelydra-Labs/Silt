@@ -191,6 +191,13 @@ type UIConfig struct {
 	// NoteZoom is the per-vault note content zoom factor (0.7–2.0, step 0.1).
 	// Independent of editor.font_size_px. nil normalizes to 1.0 (#849).
 	NoteZoom *float64 `yaml:"note_zoom,omitempty" json:"note_zoom,omitempty"`
+	// Dashboards holds frontend-owned per-dashboard config (e.g. the typed-notes
+	// dashboard's user saved views at ui.dashboards.typed_notes.saved_views).
+	// The frontend owns the nested shape, so Go carries it as an opaque blob
+	// (same precedent as PluginsConfig.PluginSettings). Unknown nested keys are
+	// otherwise silently dropped by YAML round-trip, which would make the
+	// dashboard's saved-view persistence a no-op.
+	Dashboards map[string]any `yaml:"dashboards,omitempty" json:"dashboards,omitempty"`
 }
 
 // NavigationSectionRef is the canonical identity of a section in a vault.

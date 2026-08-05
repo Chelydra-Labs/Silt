@@ -83,7 +83,7 @@
     {@render lane({
       key: '__all__',
       label: 'All pages',
-      rows: sections[0]?.rows ?? []
+      items: sections[0]?.items ?? []
     })}
   {:else}
     {#each sections as section (section.key)}
@@ -93,7 +93,7 @@
 </div>
 
 {#snippet lane(section: GroupSection)}
-  {@const count = section.rows.length}
+  {@const count = section.items.length}
   <section
     class="column"
     role="group"
@@ -107,7 +107,7 @@
       {#if count === 0}
         <p class="column-empty">No pages</p>
       {:else}
-        {#each section.rows as row (row.source + ':' + row.notebook + ':' + row.section + ':' + row.page)}
+        {#each section.items as row (row.source + ':' + row.notebook + ':' + row.section + ':' + row.page)}
           {@render card(row)}
         {/each}
       {/if}

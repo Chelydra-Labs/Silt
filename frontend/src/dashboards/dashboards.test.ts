@@ -46,9 +46,13 @@ describe('splitMultiValueText / binByProperty', () => {
     )
     const labels = sections.map((s) => s.label).sort()
     expect(labels).toEqual(['a, b', 'c'])
-    const ab = sections.find((s) => s.label === 'a, b')?.rows.map((r) => r.page)
+    const ab = sections
+      .find((s) => s.label === 'a, b')
+      ?.items.map((r) => r.page)
     expect(ab?.sort()).toEqual(['P1', 'P2'])
-    const cOnly = sections.find((s) => s.label === 'c')?.rows.map((r) => r.page)
+    const cOnly = sections
+      .find((s) => s.label === 'c')
+      ?.items.map((r) => r.page)
     expect(cOnly).toEqual(['P1'])
   })
 })

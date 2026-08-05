@@ -5,6 +5,10 @@
 // grouping model). The TypeDef/PropertyDef/PropertyType types are reused from
 // the properties module so the schema has one source of truth.
 import type { PropertyDef, PropertyType, TypeDef } from '../properties/types'
+import {
+  binByKey,
+  type GroupSection as VEGroupSection
+} from '../lib/viewEngine/grouping'
 
 /** One property value on a dashboard row (the wire shape from QueryPagesByType). */
 export interface TypeDashboardProp {
@@ -34,12 +38,7 @@ export interface SortState {
   desc: boolean
 }
 
-export interface GroupSection {
-  /** Stable key (used as the DOM data-group + collapse-set entry). */
-  key: string
-  label: string
-  rows: TypeDashboardRow[]
-}
+export type GroupSection = VEGroupSection<TypeDashboardRow>
 
 /** The page-name pseudo-column, always first. Sort key '' is the IPC's
  *  "sort by path" sentinel. */
@@ -114,6 +113,11 @@ export function formatMultiValueDisplay(raw: string): string {
  * multi-membership (a row appears once per value); every other type is
  * single-membership. Empty values fall into a trailing "Unassigned" bucket so
  * they stay discoverable. Group order is alphabetical with Unassigned last.
+ *
+ * The binning algorithm is the shared generic primitive from
+ * lib/viewEngine/grouping.ts; this function supplies the dashboard-specific
+ * projection (rowPropertyValue), multi-vs-single membership based on the
+ * property's type, and the `propName::` key namespace.
  */
 export function binByProperty(
   rows: TypeDashboardRow[],
@@ -121,38 +125,13 @@ export function binByProperty(
   propName: string
 ): GroupSection[] {
   const multi = prop?.type === 'multiselect' || prop?.type === 'pages'
-  const buckets = new Map<string, TypeDashboardRow[]>()
-  const unassigned: TypeDashboardRow[] = []
-  for (const row of rows) {
-    const raw = rowPropertyValue(row, propName)
-    // Multi-values are a JSON string array from the projection layer so an
-    // option like "a, b" is one token, not two phantom buckets.
-    const values = multi
-      ? splitMultiValueText(raw)
-      : raw.trim()
-        ? [raw.trim()]
-        : []
-    if (values.length === 0) {
-      unassigned.push(row)
-      continue
-    }
-    for (const v of values) {
-      if (!buckets.has(v)) buckets.set(v, [])
-      buckets.get(v)!.push(row)
-    }
-  }
-  const keys = [...buckets.keys()].sort((a, b) => a.localeCompare(b))
-  const sections = keys.map((k) => ({
-    key: `${propName}::${k}`,
-    label: k,
-    rows: buckets.get(k) ?? []
-  }))
-  if (unassigned.length > 0) {
-    sections.push({
-      key: `${propName}::__unassigned__`,
-      label: 'Unassigned',
-      rows: unassigned
-    })
-  }
-  return sections
+  return binByKey(rows, {
+    keyOf: (row) => {
+      const raw = rowPropertyValue(row, propName)
+      // Multi-values are a JSON string array from the projection layer so an
+      // option like "a, b" is one token, not two phantom buckets.
+      return multi ? splitMultiValueText(raw) : raw.trim() ? [raw.trim()] : []
+    },
+    sectionKey: (v) => `${propName}::${v}`
+  })
 }

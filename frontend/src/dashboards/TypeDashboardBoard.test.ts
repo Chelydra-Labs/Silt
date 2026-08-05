@@ -55,12 +55,12 @@ describe('TypeDashboardBoard', () => {
       {
         key: 's::read',
         label: 'read',
-        rows: [makeRow('Dune', 'Dune', 'read')]
+        items: [makeRow('Dune', 'Dune', 'read')]
       },
       {
         key: 's::reading',
         label: 'reading',
-        rows: [makeRow('Neuromancer', 'Neuromancer', 'reading')]
+        items: [makeRow('Neuromancer', 'Neuromancer', 'reading')]
       }
     ]
     render(TypeDashboardBoard, {
@@ -85,7 +85,7 @@ describe('TypeDashboardBoard', () => {
       {
         key: 's::read',
         label: 'read',
-        rows: [makeRow('Dune', 'Dune', 'read')]
+        items: [makeRow('Dune', 'Dune', 'read')]
       }
     ]
     render(TypeDashboardBoard, {
@@ -111,7 +111,7 @@ describe('TypeDashboardBoard', () => {
       {
         key: 's::read',
         label: 'read',
-        rows: [makeRow('Dune', 'Dune', 'read')]
+        items: [makeRow('Dune', 'Dune', 'read')]
       }
     ]
     render(TypeDashboardBoard, {
@@ -138,7 +138,7 @@ describe('TypeDashboardBoard', () => {
       {
         key: 's::read',
         label: 'read',
-        rows: [makeRow('Dune', 'Dune', 'read')]
+        items: [makeRow('Dune', 'Dune', 'read')]
       }
     ]
     render(TypeDashboardBoard, {
@@ -161,11 +161,11 @@ describe('TypeDashboardBoard', () => {
     // against one so future groupings (e.g. all-schema-options binning)
     // render correctly without a special case at the call site.
     const sections: GroupSection[] = [
-      { key: 's::read', label: 'read', rows: [] },
+      { key: 's::read', label: 'read', items: [] },
       {
         key: 's::reading',
         label: 'reading',
-        rows: [makeRow('Neuromancer', 'Neuromancer', 'reading')]
+        items: [makeRow('Neuromancer', 'Neuromancer', 'reading')]
       }
     ]
     render(TypeDashboardBoard, {
@@ -186,7 +186,7 @@ describe('TypeDashboardBoard', () => {
       {
         key: '__all__',
         label: '',
-        rows: [
+        items: [
           makeRow('Dune', 'Dune', 'read'),
           makeRow('Neuromancer', 'Neuromancer', 'reading')
         ]
@@ -213,7 +213,7 @@ describe('TypeDashboardBoard', () => {
       {
         key: 's::read',
         label: 'read',
-        rows: [makeRow('Dune', 'Dune', 'read')]
+        items: [makeRow('Dune', 'Dune', 'read')]
       }
     ]
     render(TypeDashboardBoard, {

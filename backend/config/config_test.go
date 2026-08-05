@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // writeFile is a tiny helper for tests.
@@ -1856,5 +1858,41 @@ func TestNormalize_NoteZoom(t *testing.T) {
 	cfg = normalize(SystemConfig{UI: UIConfig{NoteZoom: &mid}})
 	if cfg.UI.NoteZoom == nil || *cfg.UI.NoteZoom != 1.2 {
 		t.Fatalf("snap 1.24 → 1.2, got %v", cfg.UI.NoteZoom)
+	}
+}
+
+// TestDashboards_RoundTrip guards the frontend-owned dashboard config blob
+// (e.g. the typed-notes dashboard's saved views at
+// ui.dashboards.typed_notes.saved_views). Go carries it as an opaque
+// map[string]any; if the UIConfig field were removed, the nested YAML keys
+// would be silently dropped on round-trip and the dashboard's saved-view
+// persistence would become a no-op.
+func TestDashboards_RoundTrip(t *testing.T) {
+	src := SystemConfig{UI: UIConfig{Dashboards: map[string]any{
+		"typed_notes": map[string]any{
+			"saved_views": []any{
+				map[string]any{"id": "abc", "name": "Active Projects"},
+			},
+		},
+	}}}
+	out, err := yaml.Marshal(src)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back SystemConfig
+	if err := yaml.Unmarshal(out, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	tn, _ := back.UI.Dashboards["typed_notes"].(map[string]any)
+	if tn == nil {
+		t.Fatalf("typed_notes blob dropped on round-trip; Dashboards=%v", back.UI.Dashboards)
+	}
+	views, _ := tn["saved_views"].([]any)
+	if len(views) != 1 {
+		t.Fatalf("saved_views did not round-trip; got %v", views)
+	}
+	first, _ := views[0].(map[string]any)
+	if first["name"] != "Active Projects" {
+		t.Fatalf("saved_view name lost; got %v", first)
 	}
 }
