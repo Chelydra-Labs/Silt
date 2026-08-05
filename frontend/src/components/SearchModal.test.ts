@@ -277,6 +277,46 @@ describe('SearchModal keyboard a11y', () => {
     })
   })
 
+  it('renders standalone (.silt) results without a label or path leak', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'st-1',
+          source: 'vault',
+          notebook: '.silt',
+          section: '',
+          page: 'tasks.md',
+          file_date: '2026-07-23',
+          clean_content: 'Standalone task from quick-add',
+          snippet: null
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 20,
+      has_more: false
+    })
+    render(SearchModal, {
+      props: { onClose: vi.fn(), onJump: vi.fn() }
+    })
+    const input = screen.getByPlaceholderText(
+      /Search notebooks, sections, or task content/i
+    )
+    await fireEvent.input(input, { target: { value: 'quick-add' } })
+    await vi.waitFor(() => {
+      expect(
+        screen.getByText('Standalone task from quick-add')
+      ).toBeInTheDocument()
+    })
+    // No redundant "Standalone task" label; no .silt path leak; source
+    // badge and file date remain for context.
+    expect(screen.queryByText('Standalone task')).toBeNull()
+    expect(screen.queryByText('.silt')).toBeNull()
+    expect(screen.queryByText('tasks.md')).toBeNull()
+    expect(screen.getByLabelText('Vault source')).toBeInTheDocument()
+    expect(screen.getByText('2026-07-23')).toBeInTheDocument()
+  })
+
   it('shows the typed source qualifier and sends identical click/Enter navigation payloads', async () => {
     const result = {
       id: 'block-712',

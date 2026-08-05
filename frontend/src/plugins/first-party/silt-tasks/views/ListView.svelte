@@ -654,7 +654,7 @@
         }
       }}
       class="flex-1 min-w-0 text-left bg-transparent border-none p-0 cursor-pointer"
-      aria-label={`Edit metadata for ${item.clean_content}${item.due_date ? `, due ${item.due_date}` : ', no due date'}${item.subtask_total > 0 ? `, ${item.subtask_done} of ${item.subtask_total} subtasks done` : ''}`}
+      aria-label={`Edit metadata for ${item.clean_content}${item.notebook === STANDALONE_TASKS_NOTEBOOK ? ', standalone task' : ''}${item.due_date ? `, due ${item.due_date}` : ', no due date'}${item.subtask_total > 0 ? `, ${item.subtask_done} of ${item.subtask_total} subtasks done` : ''}`}
     >
       <div
         class="text-text-primary text-sm font-body-md truncate"
