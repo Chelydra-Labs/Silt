@@ -8,13 +8,26 @@
   // stamp via the existing appendDismissedTip helper (add-only, atomic), so no
   // removal IPC is needed. Presentational + prop-driven for easy testing.
   // role="status" aria-live="polite" so screen readers announce it.
+  //
+  // The tab-chord text is derived from the resolved hotkey map rather than
+  // hardcoded (#863): on Linux/macOS the v1 migration does NOT rewrite
+  // next_tab/prev_tab (Ctrl+Tab works there), so claiming "tab navigation moved
+  // to Ctrl+Alt+Arrow" would contradict the table on every non-Windows vault.
+  // Passing the resolved map in keeps the notice consistent with the
+  // ShortcutHelp table and the HotkeysTab grid, which all derive from the same
+  // source.
+  import { shortcutBinding } from '../../settings/shortcutActions'
 
   interface Props {
     dismissed: boolean
     onDismiss: () => void
+    hotkeys: Record<string, string | undefined>
   }
 
-  let { dismissed, onDismiss }: Props = $props()
+  let { dismissed, onDismiss, hotkeys }: Props = $props()
+
+  let nextTabChord = $derived(shortcutBinding('next_tab', hotkeys))
+  let closeTabChord = $derived(shortcutBinding('close_tab', hotkeys))
 </script>
 
 {#if !dismissed}
@@ -29,8 +42,8 @@
     >
     <span class="flex-1">
       Default shortcuts were updated to standard editor conventions — Ctrl+B is
-      bold everywhere (sidebar is now Ctrl+\), tab navigation moved to
-      Ctrl+Alt+Arrow / Ctrl+Shift+W, and the view-mode toggle moved to
+      bold everywhere (sidebar is now Ctrl+\), tab navigation uses
+      {nextTabChord} / {closeTabChord}, and the view-mode toggle moved to
       Ctrl+Alt+R. Review or remap them below.
     </span>
     <button

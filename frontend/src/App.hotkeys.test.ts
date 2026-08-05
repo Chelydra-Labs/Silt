@@ -51,7 +51,20 @@ const spies = vi.hoisted(() => ({
   toggleDateGlance: vi.fn(),
   toggleFormatToolbar: vi.fn(async () => true),
   toggleFocusMode: vi.fn(async () => true),
-  toggleTypewriterMode: vi.fn(async () => true)
+  toggleTypewriterMode: vi.fn(async () => true),
+  // applyFormatBold closure recovery + chain. Kept here (not inline) so the
+  // $silt-app mock factory and the activeEditor mock can both reference the
+  // same hoisted bindings across tests.
+  getActiveEditor: vi.fn(() => null),
+  getLastActiveEditor: vi.fn(() => null),
+  boldRun: vi.fn(),
+  boldToggleBold: vi.fn(function (this: { run: () => void }) {
+    return this
+  }),
+  boldFocus: vi.fn(function (this: { toggleBold: () => void }) {
+    return this
+  }),
+  boldChain: vi.fn()
 }))
 
 vi.mock('$silt-app', () => {
@@ -136,7 +149,12 @@ vi.mock('./settings/store.svelte', () => ({
         open_settings: 'Ctrl+,',
         next_tab: 'Ctrl+Alt+ArrowRight',
         prev_tab: 'Ctrl+Alt+ArrowLeft',
-        close_tab: 'Ctrl+Shift+W'
+        close_tab: 'Ctrl+Shift+W',
+        // format_bold is the editor-owned-via-ProseMirror-when-focused,
+        // global-resolvable-when-not action. Bound explicitly so the golden
+        // master covers its dispatch wiring (the Ctrl+B → applyFormatBold
+        // closure path) and not just the resolver default fallback.
+        format_bold: 'Ctrl+B'
       },
       ui: {},
       editor: {}
@@ -169,6 +187,16 @@ vi.mock('./lib/editor/search/findBarState.svelte', () => ({
 }))
 vi.mock('./lib/dateGlanceState.svelte', () => ({
   toggleDateGlance: spies.toggleDateGlance
+}))
+// applyFormatBold closure recovers the active editor through this module. The
+// default mock returns null on both getters so applyFormatBold early-returns
+// (no editor) in every test that doesn't explicitly stage one — keeping the
+// existing golden-master assertions untouched. The format_bold test stages a
+// fake editor with a real attached DOM node so the offsetParent visibility
+// guard inside the closure passes.
+vi.mock('./lib/editor/activeEditor.svelte', () => ({
+  getActiveEditor: spies.getActiveEditor,
+  getLastActiveEditor: spies.getLastActiveEditor
 }))
 
 // Overlay components are stubbed with a distinctive marker so the dispatch is
@@ -274,7 +302,8 @@ const C = {
   open_settings: 'Ctrl+,',
   next_tab: 'Ctrl+Alt+ArrowRight',
   prev_tab: 'Ctrl+Alt+ArrowLeft',
-  close_tab: 'Ctrl+Shift+W'
+  close_tab: 'Ctrl+Shift+W',
+  format_bold: 'Ctrl+B'
 } as const
 
 describe('global hotkey dispatch table (golden master)', () => {
@@ -463,6 +492,74 @@ describe('global hotkey dispatch table (golden master)', () => {
     await waitFor(() => expect(bindings.SetOpenTabs).toHaveBeenCalled())
     const [tabs] = bindings.SetOpenTabs.mock.calls.at(-1)!
     expect(tabs[0].view_mode).toBe('source')
+  })
+
+  // --- format_bold (App-level applyFormatBold closure wiring) ---
+  // The pure shouldApplyFormatBold predicate is covered by globalHotkeys.test
+  // (#768). This pins the App-level closure that the resolver hands off to:
+  // editor recovery via getActiveEditor/getLastActiveEditor, the
+  // offsetParent visibility guard, and the chain().focus().toggleBold().run()
+  // dispatch. The closure's dialog-open guard is focus-driven (closest on
+  // document.activeElement); a residual risk noted in the finding is that a
+  // Ctrl+B pressed while an overlay is open but unfocused could slip past
+  // the guard. The existing applyFormatBold deliberately does not enumerate
+  // overlay flags (see its inline comment), and a centralized overlay signal
+  // would be a larger architectural change — left as a noted residual.
+  it('dispatches format_bold to apply bold on the recovered editor', async () => {
+    // Stage a fake editor with a real DOM node attached to document.body so
+    // view.dom.offsetParent !== null (the closure's visibility guard).
+    // jsdom doesn't compute layout, so offsetParent must be stubbed explicitly
+    // (in a real browser, an attached visible element's offsetParent is body).
+    const dom = document.createElement('div')
+    document.body.appendChild(dom)
+    Object.defineProperty(dom, 'offsetParent', {
+      configurable: true,
+      value: document.body
+    })
+    const chain = {
+      run: spies.boldRun,
+      toggleBold: spies.boldToggleBold,
+      focus: spies.boldFocus
+    } as unknown as ReturnType<typeof spies.boldChain>
+    spies.boldChain.mockImplementation(() => chain)
+    spies.boldFocus.mockImplementation(function (this: typeof chain) {
+      return this
+    })
+    spies.boldToggleBold.mockImplementation(function (this: typeof chain) {
+      return this
+    })
+    spies.boldRun.mockReset()
+    const editor = {
+      isDestroyed: false,
+      view: { dom },
+      chain: spies.boldChain
+    }
+    spies.getActiveEditor.mockReturnValue(editor as never)
+
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountApp()
+    press(C.format_bold)
+    await tick()
+
+    expect(spies.boldChain).toHaveBeenCalledTimes(1)
+    expect(spies.boldFocus).toHaveBeenCalledTimes(1)
+    expect(spies.boldToggleBold).toHaveBeenCalledTimes(1)
+    expect(spies.boldRun).toHaveBeenCalledTimes(1)
+
+    document.body.removeChild(dom)
+    spies.getActiveEditor.mockReset()
+    spies.getActiveEditor.mockReturnValue(null as never)
+  })
+
+  it('format_bold is a clean no-op when no editor can be recovered', async () => {
+    // No fake editor staged — getActiveEditor/getLastActiveEditor return null.
+    // The closure must early-return without invoking the chain.
+    spies.boldChain.mockClear()
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountApp()
+    press(C.format_bold)
+    await tick()
+    expect(spies.boldChain).not.toHaveBeenCalled()
   })
 
   // --- gating (the load-bearing resolution behavior) ---

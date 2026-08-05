@@ -758,35 +758,10 @@ func TestDefaults_NoGlobalHotkeyChordConflict(t *testing.T) {
 	}
 }
 
-// isEditorOrHubScopedAction reports whether a hotkey action is resolved by the
-// editor's ProseMirror keymap (editor-scoped) or the TasksHub keydown listener
-// (hub-scoped) rather than the global resolver. Those actions may share a chord
-// with a global action — focus/scope disambiguates them — so they are excluded
-// from the global conflict check.
-func isEditorOrHubScopedAction(action string) bool {
-	// format_bold is the ONE format_ action that is also global-resolvable
-	// (Ctrl+B is bold everywhere, including when the editor is unfocused), so
-	// it is NOT editor-scoped for the purposes of this check.
-	if action == "format_bold" {
-		return false
-	}
-	switch {
-	case strings.HasPrefix(action, "format_"),
-		strings.HasPrefix(action, "set_"),
-		strings.HasPrefix(action, "align_"),
-		strings.HasPrefix(action, "indent_"),
-		strings.HasPrefix(action, "unindent_"),
-		strings.HasPrefix(action, "table_"):
-		return true
-	}
-	switch action {
-	case "toggle_quote",
-		"toggle_details",
-		"tasks_command_palette":
-		return true
-	}
-	return false
-}
+// isEditorOrHubScopedAction now lives in hotkeys.go so the post-migration
+// duplicate-chord scan in normalize() can share the same scope classification
+// with this test (single source of truth — keeps the defaults-uniqueness
+// invariant here aligned with the runtime conflict scan).
 
 // TestNormalizeHotkeyDefaultsV1_OneShotNoRefire verifies the one-shot gate:
 // after the first normalize migrates legacy chords + stamps the marker, a user
@@ -818,6 +793,141 @@ func TestNormalizeHotkeyDefaultsV1_OneShotNoRefire(t *testing.T) {
 	if out.Hotkeys["toggle_sidebar"] != "Ctrl+B" {
 		t.Fatalf("third normalize re-migrated: want Ctrl+B preserved, got %q", out.Hotkeys["toggle_sidebar"])
 	}
+}
+
+// TestNormalizeHotkeys_GlobalConflictScan verifies the post-migration
+// duplicate-chord scan: when a vault's deliberate remap puts two
+// global-resolvable actions on the same chord, normalize stamps
+// hotkeys_global_conflict_notice so the frontend can surface a dismissible
+// pointer (first-match-wins would otherwise silently shadow one of them).
+// Covers the canonical #868 case: focus_sidebar=Ctrl+B (deliberate remap)
+// colliding with format_bold=Ctrl+B (the v1 realignment default).
+//
+// Observability only — neither binding is rewritten, and the explicit-remap
+// contract from TestNormalizeHotkeyDefaultsV1_OneShotNoRefire is preserved.
+func TestNormalizeHotkeys_GlobalConflictScan(t *testing.T) {
+	t.Run("stamps notice when two global actions share a chord", func(t *testing.T) {
+		cfg := Defaults()
+		// Deliberate remap of focus_sidebar onto Ctrl+B (the format_bold
+		// default). After normalize, both global actions live on Ctrl+B.
+		cfg.Hotkeys["focus_sidebar"] = "Ctrl+B"
+		out := normalize(cfg)
+		if !containsString(out.UI.DismissedTips, hotkeysGlobalConflictNotice) {
+			t.Errorf("expected %q stamp for focus_sidebar=Ctrl+B vs format_bold=Ctrl+B",
+				hotkeysGlobalConflictNotice)
+		}
+		// The remap is preserved (observability, not resolution).
+		if out.Hotkeys["focus_sidebar"] != "Ctrl+B" {
+			t.Errorf("focus_sidebar remap clobbered: got %q", out.Hotkeys["focus_sidebar"])
+		}
+		if out.Hotkeys["format_bold"] != "Ctrl+B" {
+			t.Errorf("format_bold default changed: got %q", out.Hotkeys["format_bold"])
+		}
+	})
+
+	t.Run("no stamp for clean defaults", func(t *testing.T) {
+		out := normalize(Defaults())
+		if containsString(out.UI.DismissedTips, hotkeysGlobalConflictNotice) {
+			t.Errorf("clean defaults should not stamp %q", hotkeysGlobalConflictNotice)
+		}
+	})
+
+	t.Run("no stamp for editor-scoped overlap (focus disambiguates)", func(t *testing.T) {
+		// format_italic is editor-scoped: it may share a chord with a global
+		// action because the editor's ProseMirror keymap owns it while focused.
+		cfg := Defaults()
+		cfg.Hotkeys["format_italic"] = "Ctrl+N" // same as global new_page
+		out := normalize(cfg)
+		if containsString(out.UI.DismissedTips, hotkeysGlobalConflictNotice) {
+			t.Errorf("editor-scoped overlap should not stamp %q", hotkeysGlobalConflictNotice)
+		}
+	})
+
+	t.Run("stamp is idempotent across normalizes", func(t *testing.T) {
+		cfg := Defaults()
+		cfg.Hotkeys["focus_sidebar"] = "Ctrl+B"
+		out := normalize(cfg)
+		if n := strings.Count(strings.Join(out.UI.DismissedTips, ","), hotkeysGlobalConflictNotice); n != 1 {
+			t.Fatalf("first normalize: want 1 stamp, got %d", n)
+		}
+		// A second normalize (e.g. Settings save) must not duplicate the stamp.
+		out = normalize(out)
+		if n := strings.Count(strings.Join(out.UI.DismissedTips, ","), hotkeysGlobalConflictNotice); n != 1 {
+			t.Errorf("second normalize: want 1 stamp, got %d", n)
+		}
+	})
+
+	t.Run("resolved conflict does not re-stamp", func(t *testing.T) {
+		// When the user fixes the remap after acknowledging, the scan should
+		// not re-add the stamp — so the dismissible tip stays dismissed.
+		cfg := Defaults()
+		cfg.Hotkeys["focus_sidebar"] = "Ctrl+B"
+		out := normalize(cfg)
+		// User fixes the remap and the dismissed tip is dropped (acked).
+		out.Hotkeys["focus_sidebar"] = "Ctrl+Shift+B"
+		tips := out.UI.DismissedTips[:0]
+		for _, tip := range out.UI.DismissedTips {
+			if tip != hotkeysGlobalConflictNotice {
+				tips = append(tips, tip)
+			}
+		}
+		out.UI.DismissedTips = tips
+		out = normalize(out)
+		if containsString(out.UI.DismissedTips, hotkeysGlobalConflictNotice) {
+			t.Errorf("resolved conflict should not re-stamp %q", hotkeysGlobalConflictNotice)
+		}
+	})
+}
+
+// TestFindGlobalHotkeyConflicts pins the conflict-finder directly. The
+// normalize-driven test above only checks the stamp side-effect; this covers
+// the multiple-conflicts and determinism cases.
+func TestFindGlobalHotkeyConflicts(t *testing.T) {
+	t.Run("empty map on conflict-free config", func(t *testing.T) {
+		if got := FindGlobalHotkeyConflicts(Defaults().Hotkeys); len(got) != 0 {
+			t.Errorf("expected no conflicts on Defaults, got %v", got)
+		}
+	})
+
+	t.Run("surfaces two global actions on the same chord", func(t *testing.T) {
+		hotkeys := map[string]string{
+			"format_bold":   "Ctrl+B",
+			"focus_sidebar": "Ctrl+B", // conflict
+			"open_settings": "Ctrl+,",
+		}
+		got := FindGlobalHotkeyConflicts(hotkeys)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 conflict, got %v", got)
+		}
+		owners := got["ctrl+b"]
+		if len(owners) != 2 {
+			t.Fatalf("expected 2 owners on ctrl+b, got %v", owners)
+		}
+		// Owners are sorted for determinism.
+		if owners[0] != "focus_sidebar" || owners[1] != "format_bold" {
+			t.Errorf("unexpected owner order: %v", owners)
+		}
+	})
+
+	t.Run("editor-scoped overlap is not a conflict", func(t *testing.T) {
+		hotkeys := map[string]string{
+			"format_italic": "Ctrl+K", // editor-scoped
+			"new_page":      "Ctrl+K", // global
+		}
+		if got := FindGlobalHotkeyConflicts(hotkeys); len(got) != 0 {
+			t.Errorf("editor/global overlap should not be flagged: %v", got)
+		}
+	})
+
+	t.Run("disabled binding never conflicts", func(t *testing.T) {
+		hotkeys := map[string]string{
+			"format_bold":   "",
+			"focus_sidebar": "",
+		}
+		if got := FindGlobalHotkeyConflicts(hotkeys); len(got) != 0 {
+			t.Errorf("empty bindings should not conflict: %v", got)
+		}
+	})
 }
 
 // --- #133: co-located per-notebook config ---

@@ -7,7 +7,13 @@ const mockSettings = vi.hoisted(() => ({
       new_page: 'Alt+N',
       new_section: '',
       open_search: 'Ctrl+Shift+F',
-      close_tab: 'Ctrl+Shift+W'
+      close_tab: 'Ctrl+Shift+W',
+      // The legend derives these from the resolved config (#863): the footer
+      // must mirror whatever the table shows rather than hardcoding Windows
+      // chords. Use the Windows defaults here so the legend's Ctrl+Alt+Arrow
+      // caveat surfaces; the next test pins the Linux-style Ctrl+Tab path.
+      next_tab: 'Ctrl+Alt+Right',
+      prev_tab: 'Ctrl+Alt+Left'
     }
   }
 }))
@@ -31,6 +37,38 @@ describe('ShortcutHelp', () => {
     expect(
       screen.getByRole('region', { name: 'Shortcut list' })
     ).toHaveAttribute('tabindex', '0')
+  })
+
+  it('derives the tab-chord legend from the resolved config (Windows form)', () => {
+    // When next_tab resolves to the Ctrl+Alt+Arrow form, the legend shows
+    // those chords verbatim AND surfaces the WebView2/Ctrl+Tab caveat.
+    render(ShortcutHelp, { props: { onClose: vi.fn() } })
+    const footer = document.querySelector('footer')!
+    // Chord tokens render as separate <kbd> elements; assert the footer text
+    // contains the resolved chord tokens and the caveat.
+    expect(footer.textContent).toContain('Alt')
+    expect(footer.textContent).toContain('Right')
+    expect(footer.textContent).toContain('Left')
+    expect(footer.textContent).toContain('Shift')
+    expect(footer.textContent).toContain('W')
+    // Caveat appears because next_tab matched the Ctrl+Alt+Arrow form.
+    expect(footer.textContent).toContain('Ctrl')
+    expect(footer.textContent).toContain('Tab')
+    expect(footer.textContent).toContain('cannot reliably relay')
+  })
+
+  it('omits the WebView2 caveat when next_tab uses Ctrl+Tab (non-Windows form)', () => {
+    // Simulate the Linux/macOS default: next_tab=Ctrl+Tab works there, so the
+    // legend must NOT claim "the webview cannot reliably relay Ctrl+Tab".
+    mockSettings.config.hotkeys = {
+      ...mockSettings.config.hotkeys,
+      next_tab: 'Ctrl+Tab',
+      prev_tab: 'Ctrl+Shift+Tab'
+    }
+    render(ShortcutHelp, { props: { onClose: vi.fn() } })
+    const footer = document.querySelector('footer')!
+    expect(footer.textContent).toContain('Tab')
+    expect(footer.textContent).not.toContain('cannot reliably relay')
   })
 
   it('focuses close, closes on Escape, and restores trigger focus', async () => {

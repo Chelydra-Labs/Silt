@@ -154,10 +154,14 @@
       {/if}
 
       <!-- v1 default-keymap migration notice (#868). Surfaces the relocated
-           chords to a user reviewing their shortcuts after upgrade. -->
+           chords to a user reviewing their shortcuts after upgrade. The
+           tab-chord text is derived from the resolved hotkey map so the notice
+           matches the ShortcutHelp table and the HotkeysTab grid on every
+           platform (#863: Linux keeps Ctrl+Tab, Windows uses Ctrl+Alt+Arrow). -->
       <HotkeysDefaultsNotice
         dismissed={v1NoticeDismissed}
         onDismiss={dismissV1Notice}
+        hotkeys={draft?.hotkeys ?? {}}
       />
 
       <!-- Hotkeys Group Card -->

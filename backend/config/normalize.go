@@ -186,6 +186,25 @@ func normalize(cfg SystemConfig) SystemConfig {
 		// explicitly removed here (one-shot, inside the v1 gate).
 		delete(cfg.Hotkeys, "open_command_palette")
 	}
+	// Post-migration global-chord conflict scan (#868 review finding #8): a
+	// vault that deliberately remapped a global action onto a chord the v1
+	// migration just made global-resolvable (the canonical case is
+	// focus_sidebar=Ctrl+B colliding with the newly-default format_bold=Ctrl+B)
+	// ends up with two global actions on the same chord. The frontend resolver
+	// is first-match-wins, so the shadowed action silently never fires. The
+	// migration block above can't catch this — it only rewrites exact-legacy
+	// defaults — so scan the post-migration map and stamp a one-time pointer
+	// when any two global-resolvable actions share a chord. Observability only:
+	// the user keeps both bindings (their explicit remap is preserved) and gets
+	// a dismissible pointer in Settings → Hotkeys explaining the silent
+	// shadowing. Runs every normalize so a post-upgrade remap that creates a
+	// new conflict is also surfaced; the stamp is idempotent via
+	// containsString so re-loads don't duplicate it.
+	if conflicts := FindGlobalHotkeyConflicts(cfg.Hotkeys); len(conflicts) > 0 {
+		if !containsString(cfg.UI.DismissedTips, hotkeysGlobalConflictNotice) {
+			cfg.UI.DismissedTips = append(cfg.UI.DismissedTips, hotkeysGlobalConflictNotice)
+		}
+	}
 	if cfg.UI.NavOrder.Sections == nil {
 		cfg.UI.NavOrder.Sections = map[string][]string{}
 	}
@@ -561,6 +580,17 @@ const hotkeysDefaultsV1Notice = "hotkeys_defaults_v1_notice"
 // chords are realigned at most once per vault — a post-upgrade remap back to a
 // legacy chord is then preserved across saves rather than silently re-migrated.
 const hotkeysDefaultsV1MigratedKey = "_hotkeys_defaults_v1_migrated"
+
+// hotkeysGlobalConflictNotice is the dismissed_tips stamp written when the
+// post-migration duplicate-chord scan finds two global-resolvable actions
+// sharing a chord (e.g. a vault that deliberately remapped focus_sidebar onto
+// Ctrl+B, which the v1 realignment then collided with by making format_bold
+// global-resolvable at Ctrl+B). First-match-wins would silently shadow one of
+// the two, so the frontend surfaces a dismissible Settings → Hotkeys pointer
+// while the stamp is present. Observability only — the bindings themselves are
+// preserved (the explicit remap contract is intact), the user is told which
+// chord to remap.
+const hotkeysGlobalConflictNotice = "hotkeys_global_conflict_notice"
 
 // containsString reports whether s is present in xs. Used for the
 // dismissed_tips stamp so the migration is idempotent across re-loads.
