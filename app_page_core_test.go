@@ -275,6 +275,34 @@ func TestSetPageCoreMetadata_WritesRoundTrip(t *testing.T) {
 	}
 }
 
+// TestGetPageCoreMetadata_ModifiedRefreshedAfterWrite verifies the read-only
+// `modified` reflects an in-app write, not just the startup-scan mtime. Every
+// write path funnels through indexFile, which now refreshes the files-table
+// row; GetPageCoreMetadata reads that mtime. Without the indexFile
+// MarkFileIndexed call, modified would stay empty (no files row) or hold the
+// pre-write mtime all session because the watcher ignores self-writes.
+func TestGetPageCoreMetadata_ModifiedRefreshedAfterWrite(t *testing.T) {
+	app := newTestApp(t)
+	writeCorePage(t, app, "Notes", "", "Plan",
+		"notebook: \"Notes\"\npage: \"Plan\"\ndate: \"2026-08-05\"\n")
+
+	newDate := "2026-09-09"
+	if err := app.SetPageCoreMetadata("Notes", "", "Plan", CoreFieldUpdate{Date: &newDate}); err != nil {
+		t.Fatalf("SetPageCoreMetadata: %v", err)
+	}
+	got, err := app.GetPageCoreMetadata("Notes", "", "Plan")
+	if err != nil {
+		t.Fatalf("GetPageCoreMetadata: %v", err)
+	}
+	if got.Modified == "" {
+		t.Fatal("Modified empty after in-app core write; indexFile should refresh the files-table mtime so the Core panel stays current without an external-triggered scan")
+	}
+	// Sanity: it's the RFC3339 timestamp GetPageCoreMetadata emits (not garbage).
+	if _, perr := time.Parse(time.RFC3339, got.Modified); perr != nil {
+		t.Errorf("Modified not a parseable RFC3339 timestamp: got %q (%v)", got.Modified, perr)
+	}
+}
+
 // TestSetPageCoreMetadata_NoOpEmptyUpdate verifies an update with every field
 // nil is a no-op (no reindex, no file touch).
 func TestSetPageCoreMetadata_NoOpEmptyUpdate(t *testing.T) {
