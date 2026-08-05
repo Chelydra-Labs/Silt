@@ -439,7 +439,7 @@ describe('TaskEditDrawer — source awareness + affordances', () => {
     expect(pinBtn?.getAttribute('aria-pressed')).toBe('true')
   })
 
-  it('hides "Open source page" and shows "Standalone task" for a .silt task', () => {
+  it('hides "Open source page" and omits breadcrumb for a .silt task', () => {
     const ctx = makeCtx()
     render(TaskEditDrawer, {
       props: {
@@ -448,8 +448,10 @@ describe('TaskEditDrawer — source awareness + affordances', () => {
         onClose: () => {}
       }
     })
-    expect(screen.getByText('Standalone task')).toBeTruthy()
+    expect(screen.queryByText('Standalone task')).toBeNull()
     expect(screen.queryByText('Open source page')).toBeNull()
+    expect(screen.queryByText('.silt')).toBeNull()
+    expect(screen.queryByText('tasks.md')).toBeNull()
   })
 
   it('shows "Open source page" for an in-page task', () => {
