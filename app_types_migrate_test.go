@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"silt/backend/config"
+	"silt/backend/db"
 	"silt/backend/types"
 )
 
@@ -165,6 +166,91 @@ properties:
 	}
 	if td2.HeroField != "created_value" {
 		t.Errorf("second pass disturbed heroField: %q", td2.HeroField)
+	}
+}
+
+// TestMigrateReservedTypeProperties_PageCoreOnlyPath exercises the cold-index
+// branch: page present in page_core but absent from page_types (warm-skip /
+// projection lag). Migration must still rewrite FM via ListPageCoreTypeMatches.
+func TestMigrateReservedTypeProperties_PageCoreOnlyPath(t *testing.T) {
+	app := newTestApp(t)
+
+	typesDir := app.typesDir()
+	if err := os.MkdirAll(typesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `name: Book
+properties:
+  - name: title
+    type: text
+  - name: created
+    type: date
+`
+	if err := os.WriteFile(filepath.Join(typesDir, "book.yaml"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// File on disk only — do not indexFile/writeCorePage (those project page_types).
+	fmBody := "notebook: \"Notes\"\nsection: \"\"\npage: \"Dune\"\ntype: book\n" +
+		"created: \"2020-01-15\"\ntitle: \"Dune\"\n"
+	content := "---\n" + fmBody + "---\n# Dune\n\nBody.\n"
+	dunePath := filepath.Join(app.vaultPath, "Notes", "Dune.md")
+	writeFile(t, dunePath, content)
+
+	if err := app.db.IndexPageCore("vault", "Notes", "", "Dune", db.PageCoreFields{
+		Type:    "book",
+		Created: "2020-01-15",
+	}); err != nil {
+		t.Fatalf("IndexPageCore: %v", err)
+	}
+	// Cold path = page_core only. Clear any page_types row so migrate cannot
+	// satisfy the locator via GetTypedPageLocatorsByIDs (mirrors warm-skip).
+	if err := app.db.ClearPageProjection("vault", "Notes", "", "Dune"); err != nil {
+		t.Fatalf("ClearPageProjection: %v", err)
+	}
+	core, err := app.db.GetPageCoreProjection("vault", "Notes", "", "Dune")
+	if err != nil || core == nil || core.Type != "book" {
+		t.Fatalf("precondition page_core: row=%+v err=%v", core, err)
+	}
+
+	typedLocs, err := app.db.GetTypedPageLocatorsByIDs([]string{"book"})
+	if err != nil {
+		t.Fatalf("GetTypedPageLocatorsByIDs: %v", err)
+	}
+	if len(typedLocs) != 0 {
+		t.Fatalf("precondition: page_types has %d book locators, want 0 (cold path)", len(typedLocs))
+	}
+
+	app.migrateReservedTypeProperties()
+
+	duneRaw, err := os.ReadFile(dunePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dune := string(duneRaw)
+	if !strings.Contains(dune, "created_value:") {
+		t.Errorf("Dune missing created_value after page_core-only migrate:\n%s", dune)
+	}
+	for _, line := range strings.Split(dune, "\n") {
+		trim := strings.TrimSpace(line)
+		if strings.HasPrefix(trim, "created:") && !strings.HasPrefix(trim, "created_value:") {
+			t.Errorf("Dune still has reserved created key: %q", trim)
+		}
+	}
+	if !strings.Contains(dune, "2020-01-15") {
+		t.Errorf("created value not preserved:\n%s", dune)
+	}
+
+	td, err := types.GetType(typesDir, "book")
+	if err != nil {
+		t.Fatalf("GetType after migrate: %v", err)
+	}
+	names := map[string]bool{}
+	for _, p := range td.Properties {
+		names[p.Name] = true
+	}
+	if names["created"] || !names["created_value"] {
+		t.Errorf("schema props = %v, want created_value and no created", names)
 	}
 }
 
