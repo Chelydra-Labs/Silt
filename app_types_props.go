@@ -793,6 +793,14 @@ func (a *App) getPageCoreMetadataLocked(notebook, section, page string) (PageCor
 		Aliases:  meta.Aliases,
 		Created:  meta.Created,
 	}
+	// `date`: the parser pre-fills meta.Date with the file mtime (defaultDate)
+	// so the file index always has a date. The panel reads this value directly:
+	// if `date:` is absent from frontmatter the user cleared it, so surfacing
+	// meta.Date would re-show a synthetic date the user just removed. Mirrors
+	// the same guard in computePageCoreFromMeta (the projection write path).
+	if v, ok := lookupFrontmatter(meta.Frontmatter, "date"); !ok || v == nil {
+		out.Date = ""
+	}
 	if out.Tags == nil {
 		out.Tags = []string{}
 	}
@@ -880,19 +888,20 @@ func (a *App) SetPageCoreMetadata(notebook, section, page string, update CoreFie
 				// Reject anything that isn't one of the formats the codebase
 				// itself produces for created: a bare calendar date, the
 				// offset-less local-timestamp form the block renderer writes
-				// (parser's 2006-01-02T15:04:05), or full RFC3339 (with Z/
-				// offset, what yaml.v3 time.Time scalars format to). Mirrors the
-				// date guard above; a garbage MCP/plugin value must not land in
-				// page_core.created.
+				// (parser's 2006-01-02T15:04:05), minute-precision form the
+				// datetime-local input emits (2006-01-02T15:04), or full
+				// RFC3339 (with Z/offset, what yaml.v3 time.Time scalars format
+				// to). Mirrors the date guard above; a garbage MCP/plugin value
+				// must not land in page_core.created.
 				createdOK := false
-				for _, lay := range []string{"2006-01-02", "2006-01-02T15:04:05", time.RFC3339} {
+				for _, lay := range []string{"2006-01-02", "2006-01-02T15:04", "2006-01-02T15:04:05", time.RFC3339} {
 					if _, perr := time.Parse(lay, c); perr == nil {
 						createdOK = true
 						break
 					}
 				}
 				if !createdOK {
-					return "", fmt.Errorf("invalid created %q: use YYYY-MM-DD or an ISO 8601 timestamp (e.g. 2026-08-05 or 2026-08-05T14:30:00Z)", *update.Created)
+					return "", fmt.Errorf("invalid created %q: use YYYY-MM-DD or an ISO 8601 timestamp (e.g. 2026-08-05, 2026-08-05T14:30, or 2026-08-05T14:30:00Z)", *update.Created)
 				}
 				content, e = parser.SetFrontmatterField(content, "created", c)
 			}

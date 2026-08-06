@@ -305,6 +305,65 @@ func TestGetPageCoreMetadata_ModifiedRefreshedAfterWrite(t *testing.T) {
 	}
 }
 
+// TestGetPageCoreMetadata_ClearedDateStaysEmpty pins NB#1 (#867): the parser
+// pre-fills meta.Date with the file mtime (defaultDate) — never empty in
+// production. When frontmatter has no `date:` key (the user cleared it, or the
+// page never had one), GetPageCoreMetadata must return Date="" rather than
+// re-surfacing the synthetic mtime date. Covers all three shapes the spec
+// calls out: a real date round-trips; a cleared date stays empty; a page that
+// never had a date reads empty.
+func TestGetPageCoreMetadata_ClearedDateStaysEmpty(t *testing.T) {
+	app := newTestApp(t)
+
+	// (1) A real frontmatter date round-trips through the read path.
+	writeCorePage(t, app, "Notes", "", "Plan",
+		"notebook: \"Notes\"\npage: \"Plan\"\ndate: \"2026-08-05\"\n")
+	got, err := app.GetPageCoreMetadata("Notes", "", "Plan")
+	if err != nil {
+		t.Fatalf("GetPageCoreMetadata(with date): %v", err)
+	}
+	if got.Date != "2026-08-05" {
+		t.Fatalf("Date = %q, want 2026-08-05 (frontmatter date must round-trip)", got.Date)
+	}
+
+	// (2) Clearing the date removes the frontmatter key; the next read must
+	// NOT resurrect the file-mtime defaultDate the parser pre-fills. This is
+	// the exact bug shape — without the frontmatter-presence guard the panel
+	// would show a date the user just removed.
+	empty := ""
+	if err := app.SetPageCoreMetadata("Notes", "", "Plan", CoreFieldUpdate{Date: &empty}); err != nil {
+		t.Fatalf("SetPageCoreMetadata(clear date): %v", err)
+	}
+	got, err = app.GetPageCoreMetadata("Notes", "", "Plan")
+	if err != nil {
+		t.Fatalf("GetPageCoreMetadata(cleared date): %v", err)
+	}
+	if got.Date != "" {
+		t.Errorf("Date = %q after clear, want empty (frontmatter has no date key; the parser's mtime defaultDate must not leak into the panel)", got.Date)
+	}
+	// The projection row must agree — the write path (computePageCoreFromMeta)
+	// applies the same guard, so the dashboard stays consistent with the panel.
+	row, _ := app.db.GetPageCoreProjection("vault", "Notes", "", "Plan")
+	if row == nil {
+		t.Fatal("page_core row missing after clear")
+	}
+	if row.Date != "" {
+		t.Errorf("page_core.Date = %q after clear, want empty (projection must also respect the cleared date)", row.Date)
+	}
+
+	// (3) A page that NEVER had a date reads empty too — same code path as the
+	// post-clear reparse (frontmatter has no date key, defaultDate non-empty).
+	writeCorePage(t, app, "Notes", "", "Plain",
+		"notebook: \"Notes\"\npage: \"Plain\"\ntags: []\n")
+	got2, err := app.GetPageCoreMetadata("Notes", "", "Plain")
+	if err != nil {
+		t.Fatalf("GetPageCoreMetadata(no date ever): %v", err)
+	}
+	if got2.Date != "" {
+		t.Errorf("Date = %q for date-less page, want empty (no date frontmatter ⇒ no synthetic date)", got2.Date)
+	}
+}
+
 // TestSetPageCoreMetadata_NoOpEmptyUpdate verifies an update with every field
 // nil is a no-op (no reindex, no file touch).
 func TestSetPageCoreMetadata_NoOpEmptyUpdate(t *testing.T) {
@@ -372,11 +431,17 @@ func TestReservedPropertyNames_IncludesCoreFields(t *testing.T) {
 
 // TestComputeBatchProjections_DateAndCreatedPopulateCore covers the cold-start
 // / linked-tree batch ingest path: computeBatchProjections synthesizes a
-// FileMetadata per ScanResult, and the Core projection must carry the scanner-
-// resolved date (res.Date) and recover `created` from the raw frontmatter.
-// Previously the synthesized meta omitted Date and there was no created
-// fallback, so every batch-indexed page got an empty-core row on the primary
-// ingest path (review finding P1 #2).
+// FileMetadata per ScanResult, and the Core projection must carry `date` and
+// recover `created` from the raw frontmatter. Previously the synthesized meta
+// omitted Date and there was no created fallback, so every batch-indexed page
+// got an empty-core row on the primary ingest path (review finding P1 #2).
+//
+// NB#1 (#867): the scanner copies the frontmatter date into res.Date, so a
+// real date round-trips through both. But when frontmatter has NO date the
+// scanner fills res.Date with the file mtime (a synthetic default) — and
+// core.Date must NOT project that synthetic value (the user-facing panel would
+// otherwise show a date the author never set). So core.Date is sourced from
+// frontmatter here, with res.Date kept consistent to mirror the real scanner.
 func TestComputeBatchProjections_DateAndCreatedPopulateCore(t *testing.T) {
 	app := newTestApp(t)
 	results := []parser.ScanResult{{
@@ -385,6 +450,7 @@ func TestComputeBatchProjections_DateAndCreatedPopulateCore(t *testing.T) {
 		Page:     "Plan",
 		Date:     "2026-07-15",
 		Frontmatter: map[string]any{
+			"date":    "2026-07-15",
 			"created": "2026-01-01T00:00:00",
 			"aliases": []any{"foo", "bar"},
 		},
@@ -395,7 +461,7 @@ func TestComputeBatchProjections_DateAndCreatedPopulateCore(t *testing.T) {
 	}
 	core := out[0].Core
 	if core.Date != "2026-07-15" {
-		t.Errorf("Core.Date not populated from res.Date: got %q", core.Date)
+		t.Errorf("Core.Date not populated from frontmatter date: got %q", core.Date)
 	}
 	if core.Created != "2026-01-01T00:00:00" {
 		t.Errorf("Core.Created not recovered from frontmatter: got %q", core.Created)
@@ -466,6 +532,111 @@ func TestComputePageCoreFromMeta_DateFallback(t *testing.T) {
 	})
 	if core.Date != "2026-01-01" {
 		t.Errorf("pre-set Date should take precedence: got %q", core.Date)
+	}
+}
+
+// TestComputePageCoreFromMeta_NoFrontmatterDateClearsSynthetic pins NB#1
+// (#867): the parser pre-fills meta.Date with the file mtime (defaultDate), so
+// when frontmatter carries no `date:` key meta.Date is a synthetic value. The
+// core projection is user-facing — it must project "" (the author set no date)
+// rather than leak the mtime default. The parser's defaulting is left intact
+// for the file index / blocks.file_date, which still need a date.
+func TestComputePageCoreFromMeta_NoFrontmatterDateClearsSynthetic(t *testing.T) {
+	// meta.Date holds a synthetic mtime default; frontmatter has NO date key.
+	// core.Date must be "" — the user never authored a date.
+	core := computePageCoreFromMeta(parser.FileMetadata{
+		Date:        "2026-08-01", // defaultDate (file mtime) — synthetic
+		Frontmatter: map[string]any{"tags": []any{"x"}},
+	})
+	if core.Date != "" {
+		t.Errorf("synthetic defaultDate leaked into core.Date: got %q, want empty (frontmatter has no date key)", core.Date)
+	}
+
+	// No frontmatter at all (untyped, hand-built ScanResult): same — empty.
+	core = computePageCoreFromMeta(parser.FileMetadata{
+		Date: "2026-08-01",
+	})
+	if core.Date != "" {
+		t.Errorf("core.Date = %q with no frontmatter, want empty", core.Date)
+	}
+
+	// frontmatter HAS a date: meta.Date (the parser's normalized copy) is kept.
+	core = computePageCoreFromMeta(parser.FileMetadata{
+		Date:        "2026-08-05",
+		Frontmatter: map[string]any{"date": "2026-08-05"},
+	})
+	if core.Date != "2026-08-05" {
+		t.Errorf("core.Date = %q with frontmatter date present, want 2026-08-05", core.Date)
+	}
+}
+
+// TestComputePageCoreFromMeta_CreatedTimeTimeFallback pins NB#2 (#867): an
+// UNQUOTED `created: 2026-08-05T14:30:00` is decoded by yaml.v3 as a time.Time
+// in the raw frontmatter map. The created fallback in computePageCoreFromMeta
+// must format it (previously it only accepted string, so unquoted-timestamp
+// files projected an empty core.created until individually reindexed). Mirrors
+// the date fallback's time.Time handling.
+func TestComputePageCoreFromMeta_CreatedTimeTimeFallback(t *testing.T) {
+	// Full timestamp → RFC3339 (the shape yaml.v3 time.Time scalars format to).
+	core := computePageCoreFromMeta(parser.FileMetadata{
+		Frontmatter: map[string]any{
+			"created": time.Date(2026, 8, 5, 14, 30, 0, 0, time.UTC),
+		},
+	})
+	if core.Created != "2026-08-05T14:30:00Z" {
+		t.Errorf("created time.Time not formatted: got %q, want 2026-08-05T14:30:00Z", core.Created)
+	}
+
+	// Bare date scalar (midnight UTC) → calendar date, matching the accepted
+	// created shapes (a bare `created: 2026-08-05` survives as midnight).
+	core = computePageCoreFromMeta(parser.FileMetadata{
+		Frontmatter: map[string]any{
+			"created": time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	if core.Created != "2026-08-05" {
+		t.Errorf("bare-date created not formatted as calendar date: got %q, want 2026-08-05", core.Created)
+	}
+
+	// Quoted string form still works (unchanged).
+	core = computePageCoreFromMeta(parser.FileMetadata{
+		Frontmatter: map[string]any{"created": "2026-08-05T14:30:00"},
+	})
+	if core.Created != "2026-08-05T14:30:00" {
+		t.Errorf("string created not recovered: got %q", core.Created)
+	}
+}
+
+// TestComputeBatchProjections_CreatedTimeTimeRecovered pins NB#2 (#867) at the
+// batch ingest path: the cold-start / linked-tree scanner builds ScanResults
+// whose Frontmatter map carries the yaml.v3-decoded time.Time for an unquoted
+// `created: 2026-08-05T14:30:00`. computeBatchProjections must recover a
+// non-empty, correctly-formatted core.created — otherwise every unquoted-
+// created page projects empty until individually reindexed.
+func TestComputeBatchProjections_CreatedTimeTimeRecovered(t *testing.T) {
+	app := newTestApp(t)
+	results := []parser.ScanResult{{
+		Notebook: "Work",
+		Section:  "",
+		Page:     "Plan",
+		Frontmatter: map[string]any{
+			"date":    time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC),
+			"created": time.Date(2026, 8, 5, 14, 30, 0, 0, time.UTC),
+		},
+	}}
+	out := computeBatchProjections(app, results)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 projection, got %d", len(out))
+	}
+	core := out[0].Core
+	if core.Created == "" {
+		t.Fatal("core.Created empty for unquoted-timestamp created (time.Time fallback missing)")
+	}
+	if core.Created != "2026-08-05T14:30:00Z" {
+		t.Errorf("core.Created = %q, want 2026-08-05T14:30:00Z", core.Created)
+	}
+	if core.Date != "2026-08-05" {
+		t.Errorf("core.Date = %q, want 2026-08-05", core.Date)
 	}
 }
 

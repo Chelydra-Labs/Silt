@@ -103,6 +103,17 @@ func computePageCoreFromMeta(meta parser.FileMetadata) db.PageCoreFields {
 		Aliases: meta.Aliases,
 		Created: meta.Created,
 	}
+	// `date`: the parser pre-fills meta.Date with the file mtime (defaultDate)
+	// so other consumers (file index, blocks.file_date) always see a date.
+	// core.Date is the user-facing value the PropertiesPanel renders: if
+	// `date:` is absent from frontmatter the user intentionally cleared it, so
+	// projecting the synthetic mtime date would silently undo the clear on
+	// every reparse. Wipe it; the frontmatter fallback below re-populates only
+	// when the key is actually present. The parser's meta.Date defaulting is
+	// deliberately left intact (the file index relies on it).
+	if v, ok := lookupFrontmatter(meta.Frontmatter, "date"); !ok || v == nil {
+		core.Date = ""
+	}
 	if core.Aliases == nil && meta.Frontmatter != nil {
 		if v, ok := lookupFrontmatter(meta.Frontmatter, "aliases"); ok && v != nil {
 			if s, ok := toStringSlice(v); ok {
@@ -121,11 +132,26 @@ func computePageCoreFromMeta(meta parser.FileMetadata) db.PageCoreFields {
 	// `created` is recovered from the raw frontmatter when the typed field is
 	// empty — the batch ingest path synthesizes a FileMetadata from a ScanResult
 	// that carries frontmatter but may not have populated Created, and a
-	// hand-authored bare created: survives in Frontmatter.
+	// hand-authored bare created: survives in Frontmatter. An UNQUOTED
+	// `created: 2026-08-05T14:30:00` resolves to a time.Time in the raw map
+	// (yaml.v3 timestamp decoding); a quoted one is a string — handle both,
+	// mirroring the date fallback below.
 	if core.Created == "" && meta.Frontmatter != nil {
 		if v, ok := lookupFrontmatter(meta.Frontmatter, "created"); ok {
-			if str, ok := v.(string); ok && str != "" {
-				core.Created = str
+			switch c := v.(type) {
+			case string:
+				if c != "" {
+					core.Created = c
+				}
+			case time.Time:
+				// A bare date scalar (midnight UTC) formats as a calendar date
+				// to match the accepted created shapes; a real timestamp goes
+				// to RFC3339. Mirrors formatPropertyValue's time.Time branch.
+				if c.Hour() == 0 && c.Minute() == 0 && c.Second() == 0 && c.Nanosecond() == 0 {
+					core.Created = c.Format("2006-01-02")
+				} else {
+					core.Created = c.UTC().Format(time.RFC3339)
+				}
 			}
 		}
 	}

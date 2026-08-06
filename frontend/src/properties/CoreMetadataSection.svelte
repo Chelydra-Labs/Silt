@@ -60,7 +60,20 @@
   }
 
   async function onCreatedChange(e: Event): Promise<void> {
-    const v = (e.currentTarget as HTMLInputElement).value
+    let v = (e.currentTarget as HTMLInputElement).value
+    // datetime-local emits YYYY-MM-DDTHH:MM (minute precision, no seconds);
+    // the backend created-validation (app_types_props.go) accepts only
+    // YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, or RFC3339 — none match minute
+    // precision. Append :00 so the value isn't rejected. The date input
+    // (bare-date case) already produces an accepted value, so leave it.
+    if (
+      createdInputType === 'datetime-local' &&
+      v &&
+      !v.endsWith('Z') &&
+      v.split(':').length === 2
+    ) {
+      v = v + ':00'
+    }
     await commit({ created: v })
   }
 

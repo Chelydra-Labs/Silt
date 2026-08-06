@@ -179,6 +179,54 @@ describe('PropertiesPanel Core section (#867)', () => {
     expect(onCommitCore).toHaveBeenCalledWith({ date: '2026-09-01' })
   })
 
+  it('appends seconds to a datetime-local created edit so the backend accepts it (MB#1)', async () => {
+    // datetime-local emits YYYY-MM-DDTHH:MM (minute precision, no seconds).
+    // The backend's created validation (app_types_props.go) rejects anything
+    // that isn't YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, or RFC3339 — so every
+    // created edit through datetime-local was being rejected. onCreatedChange
+    // must append :00 before committing.
+    const onCommitCore = vi.fn().mockResolvedValue(undefined)
+    render(PropertiesPanel, {
+      props: baseProps({
+        info: untypedInfo,
+        core: makeCore(),
+        onCommitCore
+      })
+    })
+    const createdInput = document.getElementById(
+      'core-created'
+    ) as HTMLInputElement
+    expect(createdInput).not.toBeNull()
+    expect(createdInput.type).toBe('datetime-local')
+    await fireEvent.change(createdInput, {
+      target: { value: '2026-09-01T08:30' }
+    })
+    await tick()
+    expect(onCommitCore).toHaveBeenCalledWith({
+      created: '2026-09-01T08:30:00'
+    })
+  })
+
+  it('leaves a bare-date created edit untouched (already backend-accepted)', async () => {
+    // The date input emits YYYY-MM-DD, which the backend already accepts —
+    // onCreatedChange must NOT append seconds in this mode.
+    const onCommitCore = vi.fn().mockResolvedValue(undefined)
+    render(PropertiesPanel, {
+      props: baseProps({
+        info: untypedInfo,
+        core: makeCore({ created: '2026-08-05' }),
+        onCommitCore
+      })
+    })
+    const createdInput = document.getElementById(
+      'core-created'
+    ) as HTMLInputElement
+    expect(createdInput.type).toBe('date')
+    await fireEvent.change(createdInput, { target: { value: '2026-09-01' } })
+    await tick()
+    expect(onCommitCore).toHaveBeenCalledWith({ created: '2026-09-01' })
+  })
+
   it('commits aliases as a parsed comma-separated list on blur', async () => {
     const onCommitCore = vi.fn().mockResolvedValue(undefined)
     render(PropertiesPanel, {
