@@ -195,19 +195,12 @@
     if (savedViewsBusy) return
     const name = newViewName.trim()
     if (!name) return
-    // Reuse an existing view's id ONLY when the colliding name IS the active
-    // view being re-saved (rename-in-place). A different same-name view would
-    // otherwise be silently overwritten — mint a fresh id instead, matching
-    // TasksHub's save-new path.
-    const existing =
-      activeSavedViewId !== ''
-        ? typeSavedViews.find(
-            (v) =>
-              v.id === activeSavedViewId &&
-              v.name.toLowerCase() === name.toLowerCase()
-          )
-        : undefined
-    const id = existing?.id ?? freshId()
+    // "Save as new" ALWAYS creates a fresh view: mint a new id and append.
+    // Reusing an existing view's id (even the active one's) would silently
+    // overwrite it and contradict the button label — updating in place is
+    // updateActiveView's job. Two same-named views are allowed, matching
+    // TasksHub's save-new semantics.
+    const id = freshId()
     const view: DashboardSavedView = {
       id,
       name,
@@ -217,9 +210,7 @@
       groupBy,
       viewMode
     }
-    const next = existing
-      ? savedViews.map((v) => (v.id === id ? view : v))
-      : [...savedViews, view]
+    const next = [...savedViews, view]
     // Close the save dialog BEFORE awaiting the IPC so the name input can't
     // receive a second Enter during the await (which would re-enter this
     // function, hit the busy guard above, and no-op).

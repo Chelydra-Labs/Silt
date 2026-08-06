@@ -27,6 +27,7 @@
   let { dismissed, onDismiss, hotkeys }: Props = $props()
 
   let nextTabChord = $derived(shortcutBinding('next_tab', hotkeys))
+  let prevTabChord = $derived(shortcutBinding('prev_tab', hotkeys))
   let closeTabChord = $derived(shortcutBinding('close_tab', hotkeys))
 </script>
 
@@ -43,8 +44,8 @@
     <span class="flex-1">
       Default shortcuts were updated to standard editor conventions — Ctrl+B is
       bold everywhere (sidebar is now Ctrl+\), tab navigation uses
-      {nextTabChord} / {closeTabChord}, and the view-mode toggle moved to
-      Ctrl+Alt+R. Review or remap them below.
+      {nextTabChord} / {prevTabChord}, close with {closeTabChord}, and the
+      view-mode toggle moved to Ctrl+Alt+R. Review or remap them below.
     </span>
     <button
       type="button"

@@ -387,10 +387,9 @@ describe('TypeDashboard — saved-view chrome (#863/#868)', () => {
   })
 
   it('saving a name colliding with a different view mints a fresh id instead of overwriting (#863)', async () => {
-    // Pre-fix, confirmSaveView matched ANY same-type view by name and reused
-    // its id — an unconfirmed overwrite of an unrelated view. With the fix,
-    // the existing id is reused only when it IS the active view being
-    // re-saved (rename-in-place); otherwise a fresh id is appended.
+    // "Save as new" always mints a fresh id and appends — colliding with ANY
+    // existing view's name (active or not) never reuses that view's id, so an
+    // unrelated same-named view can't be silently clobbered.
     seedConfig([bookView({ id: 'v1', name: 'Reading List' })])
     appMocks.SetTypedNotesSavedViews.mockResolvedValue(undefined)
 
@@ -423,5 +422,39 @@ describe('TypeDashboard — saved-view chrome (#863/#868)', () => {
         screen.getAllByRole('option', { name: 'Reading List' })
       ).toHaveLength(2)
     })
+  })
+
+  it('"Save as new" with an unchanged name does not overwrite the active view (#863)', async () => {
+    // The pre-fix rename-in-place branch reused the active view's id when the
+    // pre-filled name was left unchanged, so "Save as new" silently replaced
+    // the active view's snapshot — contradicting the button label. "Save as
+    // new" must ALWAYS mint a fresh id; updating in place is updateActiveView's
+    // job. startSaveView pre-fills the input with the active view's name, so
+    // this exercises the exact regression: same name, active view selected.
+    seedConfig([bookView({ id: 'v1', name: 'Reading List' })])
+    appMocks.SetTypedNotesSavedViews.mockResolvedValue(undefined)
+
+    await mount()
+    // Select the seeded view so activeSavedViewId === 'v1' and the bar shows
+    // "Save as new" — the scenario the rename-in-place branch mishandled.
+    const select = screen.getByRole('combobox', { name: 'Saved views' })
+    await fireEvent.change(select, { target: { value: 'v1' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Save as new' }))
+    const input = screen.getByRole('textbox', { name: 'New saved view name' })
+    // startSaveView pre-fills the active view's name; leave it unchanged.
+    expect(input).toHaveValue('Reading List')
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(appMocks.SetTypedNotesSavedViews).toHaveBeenCalledTimes(1)
+    })
+    const persisted = appMocks.SetTypedNotesSavedViews.mock
+      .calls[0][0] as DashboardSavedView[]
+    // Two views now: the original v1 (preserved) plus a new entry whose id is
+    // NOT v1. Overwriting would have produced a single entry reusing v1's id.
+    expect(persisted).toHaveLength(2)
+    const ids = persisted.map((v) => v.id)
+    expect(ids).toContain('v1')
+    expect(ids.filter((id) => id !== 'v1')).toHaveLength(1)
   })
 })
