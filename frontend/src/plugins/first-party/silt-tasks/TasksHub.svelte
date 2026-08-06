@@ -35,6 +35,7 @@
     deleteSavedView,
     clearScopeOverride,
     narrowScopeTo,
+    enterTasksFromMainNavigation,
     type DisplayMode,
     type GroupBy,
     type SavedView,
@@ -84,6 +85,7 @@
   let blockDeferredHydration = false
   let awaitingRouteFirstHydration = false
   let settingsSnapshotLoaded = false
+  let navigationEntryHandled = false
 
   // Counts reported upward by the active renderer (List today).
   let openCount = $state(0)
@@ -128,47 +130,63 @@
   // Hydrate from the persisted default once on mount; afterwards every user
   // switch is persisted. untrack so the initial set doesn't loop through the
   // $derived that reads hubState.displayMode.
+  function hydrateSavedViews(): void {
+    const state = getTaskHubState()
+    const views = loadSavedViews()
+    if (!views.length) return
+
+    // The active view is session state. Keep it in the list when a remount
+    // races a settings snapshot that has not caught up with the last write.
+    const activeView = state.activeSavedViewId
+      ? state.savedViews.find((view) => view.id === state.activeSavedViewId)
+      : undefined
+    if (
+      activeView &&
+      !views.some((view) => view.id === state.activeSavedViewId)
+    ) {
+      views.push(activeView)
+    }
+    state.savedViews = views
+  }
+
   function hydrateInitialSettings(): void {
     // A page route is an isolated projection over the user's base/saved view.
     // Settings can be cached while it is open, but must not rewrite that base.
     if (getTaskPageRoute()) return
 
-    const persisted = loadDefaultDisplayMode()
-    if (persisted !== getTaskHubState().displayMode) {
-      setDisplayMode(persisted)
+    const state = getTaskHubState()
+    const activeSavedView = state.activeSavedViewId !== ''
+    if (!activeSavedView) {
+      const persisted = loadDefaultDisplayMode()
+      if (persisted !== state.displayMode) setDisplayMode(persisted)
+      const persistedGroup = loadDefaultGroupBy()
+      if (persistedGroup !== state.groupBy) setGroupBy(persistedGroup)
+      const persistedSort = loadDefaultSort()
+      if (persistedSort !== state.sort) setSort(persistedSort)
+      const persistedCols = loadColumns()
+      if (persistedCols.length && !columnsEqual(persistedCols, state.columns)) {
+        setColumns(persistedCols)
+      }
     }
-    const persistedGroup = loadDefaultGroupBy()
-    if (persistedGroup !== getTaskHubState().groupBy) {
-      setGroupBy(persistedGroup)
-    }
-    const persistedSort = loadDefaultSort()
-    if (persistedSort !== getTaskHubState().sort) {
-      setSort(persistedSort)
-    }
-    const persistedCols = loadColumns()
-    const currentCols = getTaskHubState().columns
-    if (persistedCols.length && !columnsEqual(persistedCols, currentCols)) {
-      setColumns(persistedCols)
-    }
-    const views = loadSavedViews()
-    if (views.length) getTaskHubState().savedViews = views
-    getTaskHubState().savedViewsDirty = false
-    getTaskHubState().activeSavedViewId = ''
+    hydrateSavedViews()
+    if (!activeSavedView) state.savedViewsDirty = false
   }
 
   function rehydrateFromSettings(): void {
-    if (getTaskHubState().savedViewsDirty) return
-    const views = loadSavedViews()
-    if (views.length) getTaskHubState().savedViews = views
+    const state = getTaskHubState()
+    if (state.savedViewsDirty) return
+    hydrateSavedViews()
+    // An active saved view owns the effective dimensions until the user
+    // changes or clears it; defaults must not replace that view on refresh.
+    if (state.activeSavedViewId !== '') return
     const mode = loadDefaultDisplayMode()
-    if (mode !== getTaskHubState().displayMode) setDisplayMode(mode)
+    if (mode !== state.displayMode) setDisplayMode(mode)
     const group = loadDefaultGroupBy()
-    if (group !== getTaskHubState().groupBy) setGroupBy(group)
+    if (group !== state.groupBy) setGroupBy(group)
     const sortVal = loadDefaultSort()
-    if (sortVal !== getTaskHubState().sort) setSort(sortVal)
+    if (sortVal !== state.sort) setSort(sortVal)
     const cols = loadColumns()
-    const curCols = getTaskHubState().columns
-    if (cols.length && !columnsEqual(cols, curCols)) setColumns(cols)
+    if (cols.length && !columnsEqual(cols, state.columns)) setColumns(cols)
   }
 
   function applyOrDeferSettingsHydration(kind: 'initial' | 'refresh'): void {
@@ -384,7 +402,13 @@
     void ctx.activeNotebook
     void ctx.activeSection
     void ctx.activePage
-    if (getTaskPageRoute()) return
+    const pageRouteActive = !!getTaskPageRoute()
+    if (!navigationEntryHandled) {
+      navigationEntryHandled = true
+      enterTasksFromMainNavigation()
+      return
+    }
+    if (pageRouteActive) return
     narrowScopeTo(defaultScope())
   })
   let scopeCrumb = $derived.by(() => {

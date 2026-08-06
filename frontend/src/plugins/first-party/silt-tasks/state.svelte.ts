@@ -405,6 +405,20 @@ export function narrowScopeTo(s: Scope): void {
   markDirtyIfViewActive()
 }
 
+/**
+ * Entering Tasks from the main navigation starts at the whole vault. A page
+ * route, explicit scope choice, or active saved view owns the scope instead.
+ */
+export function enterTasksFromMainNavigation(): void {
+  if (
+    _state.pageRoute ||
+    _state.scopeUserOverride ||
+    _state.activeSavedViewId !== ''
+  )
+    return
+  _state.scope = 'vault'
+}
+
 /** User reset (clicked "Follow" / reset). Re-enables navigation auto-narrow. */
 export function clearScopeOverride(): void {
   _state.scopeUserOverride = false

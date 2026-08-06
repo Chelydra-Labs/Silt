@@ -49,6 +49,7 @@ import { v2CtxStubs } from '../../test-helpers'
 import {
   clearTaskPageRoute,
   enterTaskPageRoute,
+  applySavedView,
   getTaskHubState,
   getTaskHubViewState,
   getTaskPageRoute,
@@ -99,7 +100,7 @@ if (
   Range.prototype.getBoundingClientRect = () => zeroRect
 }
 
-function makeCtx(): PluginContext {
+function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   return {
     ...v2CtxStubs,
     activeNotebook: '',
@@ -133,7 +134,8 @@ function makeCtx(): PluginContext {
         }
       }
       return () => {}
-    }
+    },
+    ...overrides
   }
 }
 
@@ -199,6 +201,81 @@ describe('Tasks hub shell (#424)', () => {
     expect(document.querySelector('[data-tasks-view]')).toBeTruthy()
     expect(screen.queryByTestId('tasks-board-stub')).toBeNull()
     expect(screen.queryByTestId('tasks-calendar-stub')).toBeNull()
+  })
+
+  it('enters from main navigation at Vault even when a page is active', async () => {
+    render(TasksHub, {
+      ctx: makeCtx({
+        activeNotebook: 'Team',
+        activeSection: 'Meetings',
+        activePage: 'Weekly sync'
+      }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    expect(getTaskHubState().scope).toBe('vault')
+    expect(getTaskHubState().scopeUserOverride).toBe(false)
+    expect(screen.getByTestId('tasks-hub-scope-toggle')).toHaveTextContent(
+      'Scope: Vault'
+    )
+  })
+
+  it('keeps deliberate Page scope selectable after entering from navigation', async () => {
+    render(TasksHub, {
+      ctx: makeCtx({
+        activeNotebook: 'Team',
+        activeSection: 'Meetings',
+        activePage: 'Weekly sync'
+      }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-hub-scope-toggle'))
+    await fireEvent.click(screen.getByTestId('scope-option-page'))
+    await flush()
+
+    expect(getTaskHubState().scope).toBe('page')
+    expect(getTaskHubState().scopeUserOverride).toBe(true)
+  })
+
+  it('preserves an active saved view across remount and settings hydration', async () => {
+    const savedView = {
+      id: 'persisted-view',
+      name: 'Planning board',
+      displayMode: 'board' as const,
+      groupBy: 'status' as const,
+      sort: 'priority' as const,
+      scope: 'page' as const,
+      filters: { owners: [], priorities: [], dueDate: '' as const, tags: [] }
+    }
+    mocks.tasksSettings = {
+      default_display_mode: 'calendar',
+      default_group_by: 'owner',
+      default_sort: 'title',
+      saved_views: [savedView]
+    }
+
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    applySavedView(savedView)
+    expect(getTaskHubState().activeSavedViewId).toBe(savedView.id)
+
+    cleanup()
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(getTaskHubState()).toMatchObject({
+      displayMode: 'board',
+      groupBy: 'status',
+      sort: 'priority',
+      scope: 'page',
+      scopeUserOverride: true,
+      activeSavedViewId: savedView.id,
+      savedViewsDirty: false
+    })
+    expect(screen.getByTestId('tasks-board')).toBeInTheDocument()
   })
 
   it('switching to Board renders the Board renderer and persists the preference', async () => {
