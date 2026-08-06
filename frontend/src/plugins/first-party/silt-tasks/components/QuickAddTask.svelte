@@ -149,7 +149,13 @@
   }
 </script>
 
-<div class="relative">
+<div class="group relative">
+  <span
+    class="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-text-muted transition-colors group-focus-within:text-accent-primary-start"
+    aria-hidden="true"
+  >
+    <span class="material-symbols-outlined text-icon-md">add_task</span>
+  </span>
   <input
     bind:this={inputEl}
     bind:value={title}
@@ -163,22 +169,24 @@
     aria-invalid={!!errorMsg}
     aria-busy={busy}
     data-testid="quick-add-task-input"
-    class="w-full h-9 px-2.5 rounded border border-accent-primary-start/40 bg-surface-panel text-text-primary text-sm font-body-md placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 disabled:opacity-60 {busy
-      ? 'pr-7'
-      : ''}"
+    class="h-10 w-full rounded-lg border border-surface-panel-border bg-surface-card pl-9 pr-11 text-type-md font-body-md text-text-primary shadow-sm placeholder:text-text-muted transition-all hover:border-border-active focus:border-accent-primary-start focus:outline-none focus:ring-2 focus:ring-accent-primary-start/20 disabled:opacity-60"
   />
-  {#if busy}
-    <!-- Busy spinner: progress_activity is Material's dedicated spin glyph;
-         animate-spin matches the convention used across the app (#461). -->
+  <button
+    type="button"
+    onclick={() => void submit()}
+    disabled={busy || !title.trim()}
+    aria-label={busy ? 'Adding task' : 'Add task'}
+    class="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-transparent bg-accent-primary-glow text-accent-primary-start transition-all hover:border-accent-primary-start/30 hover:bg-accent-primary-start hover:text-text-on-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus disabled:bg-transparent disabled:text-text-disabled disabled:opacity-70 disabled:cursor-not-allowed"
+  >
     <span
-      class="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted"
+      class="material-symbols-outlined text-icon-md {busy
+        ? 'animate-spin'
+        : ''}"
       aria-hidden="true"
     >
-      <span class="material-symbols-outlined text-icon-sm animate-spin"
-        >progress_activity</span
-      >
+      {busy ? 'progress_activity' : 'arrow_upward'}
     </span>
-  {/if}
+  </button>
 </div>
 {#if errorMsg}
   <div class="mt-1">

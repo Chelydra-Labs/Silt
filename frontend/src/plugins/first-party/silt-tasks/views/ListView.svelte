@@ -22,6 +22,8 @@
   import {
     coerceTaskRow,
     formatEstimateSum,
+    PRIORITY_LABELS,
+    priorityClass,
     type TaskDetail,
     type TaskViewProps
   } from '../types'
@@ -351,6 +353,13 @@
     return `${formatEstimateSum(sum)} estimated`
   }
 
+  function taskTags(item: TaskDetail): string[] {
+    return (item.tags ?? '')
+      .split('|')
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+  }
+
   // Generalized grouping for status/owner/priority/tag/notebook/section/page.
   // 'none' returns a single flat section; 'dueDate' is handled by the legacy
   // $derived blocks above so the existing data-group keys + tone classes stay
@@ -611,12 +620,13 @@
 
 {#snippet taskRow(item: TaskDetail, groupKey: string)}
   <div
-    class="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-hover transition-colors"
+    class="tasks-list-row group relative flex min-h-12 items-center gap-3 overflow-hidden rounded-lg border border-transparent px-3 py-2 pl-3.5 transition-all hover:border-surface-card-border hover:bg-hover hover:shadow-sm focus-within:border-border-focus focus-within:bg-hover"
     class:tasks-focused={focusedRowId === item.id}
     class:tasks-drag-over={dragOverId === item.id}
     class:tasks-dragging={draggingId === item.id}
     data-block-id={item.id}
     data-group-key={groupKey}
+    data-status={item.status}
     role="listitem"
     ondragover={(e) => onRowDragOver(e, item, groupKey)}
     ondrop={(e) => onRowDrop(e, item, groupKey)}
@@ -644,7 +654,7 @@
         void markDone(item)
       }}
       title="Mark done"
-      class="w-5 h-5 rounded todo-check flex-shrink-0 cursor-pointer hover:border-accent-primary-start"
+      class="w-5 h-5 rounded todo-check flex-shrink-0 cursor-pointer border-surface-card-border bg-surface-card hover:border-accent-primary-start hover:bg-accent-primary-glow transition-colors"
       role="checkbox"
       aria-checked="false"
       aria-label="Mark done"
@@ -658,19 +668,17 @@
           openSubEditor(item)
         }
       }}
-      class="flex-1 min-w-0 text-left bg-transparent border-none p-0 cursor-pointer"
+      class="flex-1 min-w-0 rounded text-left bg-transparent border-none p-0 cursor-pointer focus-visible:outline-none"
       aria-label={`Edit metadata for ${item.clean_content}${item.notebook === STANDALONE_TASKS_NOTEBOOK ? ', standalone task' : ''}${item.due_date ? `, due ${item.due_date}` : ', no due date'}${item.subtask_total > 0 ? `, ${item.subtask_done} of ${item.subtask_total} subtasks done` : ''}`}
     >
       <div
-        class="text-text-primary text-sm font-body-md truncate"
+        class="truncate text-type-md font-body-md font-medium text-text-primary transition-colors group-hover:text-accent-primary-start"
         data-testid="tasks-row-content"
       >
         {item.clean_content}
       </div>
       {#if item.notebook !== STANDALONE_TASKS_NOTEBOOK}
-        <div
-          class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm"
-        >
+        <div class="truncate text-type-2xs text-text-muted font-label-sm">
           {item.notebook} › {item.section} › {item.page}
         </div>
       {/if}
@@ -683,7 +691,7 @@
         e.stopPropagation()
         openSubEditor(item)
       }}
-      class="opacity-40 hover:opacity-100 focus-visible:opacity-100 text-text-muted hover:text-accent-primary-start transition-opacity p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0"
+      class="hidden opacity-40 hover:opacity-100 focus-visible:opacity-100 text-text-muted hover:text-accent-primary-start transition-all p-1 rounded border-none bg-transparent cursor-pointer flex-shrink-0 sm:block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
     >
       <span class="material-symbols-outlined text-icon-md">edit_note</span>
     </button>
@@ -696,15 +704,32 @@
         >[{item.subtask_done}/{item.subtask_total}]</span
       >
     {/if}
+    {#if item.priority && item.priority <= 3}
+      <span
+        class="hidden rounded-full border px-1.5 py-0.5 text-type-3xs font-label-sm uppercase tracking-wide md:inline-flex {priorityClass(
+          item.priority
+        )}"
+      >
+        {PRIORITY_LABELS[item.priority] ?? 'Normal'}
+      </span>
+    {/if}
+    {#if taskTags(item).length > 0}
+      <span
+        class="hidden max-w-24 truncate rounded-full border border-surface-card-border bg-surface-panel px-1.5 py-0.5 text-type-3xs font-label-sm text-text-muted lg:inline-flex"
+        title={taskTags(item)[0]}
+      >
+        #{taskTags(item)[0]}
+      </span>
+    {/if}
     {#if item.owner}
       <span
-        class="text-type-2xs text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded px-1.5 py-0.5"
-        >[{item.owner}]</span
+        class="hidden max-w-24 truncate text-type-2xs text-accent-secondary-start bg-accent-secondary-glow border border-accent-secondary-start/30 rounded-full px-1.5 py-0.5 sm:inline-flex"
+        title={`Owner: ${item.owner}`}>{item.owner}</span
       >
     {/if}
     {#if item.due_date}
       <span
-        class="text-type-2xs {item.status === 'DONE'
+        class="hidden text-type-2xs sm:inline-flex {item.status === 'DONE'
           ? 'text-text-muted'
           : dueDateTextClass(
               dueDateClass(item.due_date, today)
@@ -747,7 +772,7 @@
   <div class="sr-only" aria-live="polite">{liveMessage}</div>
 
   <div
-    class="flex-1 overflow-y-auto custom-scrollbar px-6 py-4 space-y-6 max-w-4xl w-full"
+    class="mx-auto flex-1 w-full max-w-5xl overflow-y-auto px-3 py-5 space-y-7 custom-scrollbar sm:px-5 lg:px-6"
   >
     {#if loading}
       <div
@@ -855,7 +880,9 @@
                   </span>
                 {/if}
               </h2>
-              <div class="space-y-1">
+              <div
+                class="space-y-1 rounded-xl border border-surface-panel-border/60 bg-surface-panel/20 p-1"
+              >
                 {#each group.list as item (item.id)}
                   <div animate:flip={{ duration: 200, easing: cubicOut }}>
                     {@render taskRow(item, group.key)}
@@ -867,7 +894,11 @@
         {/each}
       {:else if hubGroupBy === 'none'}
         {#if filteredOpen.length > 0}
-          <div class="space-y-1" data-group="all" aria-label="All Tasks">
+          <div
+            class="space-y-1 rounded-xl border border-surface-panel-border/60 bg-surface-panel/20 p-1"
+            data-group="all"
+            aria-label="All Tasks"
+          >
             {#each sortRows(filteredOpen) as item (item.id)}
               <div animate:flip={{ duration: 200, easing: cubicOut }}>
                 {@render taskRow(item, 'all')}
@@ -914,7 +945,10 @@
               </button>
             </h2>
             {#if !collapsedSections.has(group.key)}
-              <div id={`tasks-group-${group.key}`} class="space-y-1">
+              <div
+                id={`tasks-group-${group.key}`}
+                class="space-y-1 rounded-xl border border-surface-panel-border/60 bg-surface-panel/20 p-1"
+              >
                 {#each group.items as item (item.id)}
                   <div animate:flip={{ duration: 200, easing: cubicOut }}>
                     {@render taskRow(item, group.key)}
@@ -1010,16 +1044,18 @@
   </div>
 
   <div
-    class="px-6 py-3 border-t border-surface-panel-border bg-surface-panel flex-shrink-0"
+    class="tasks-quick-add-bar flex-shrink-0 border-t border-surface-panel-border px-3 py-3 sm:px-5 lg:px-6"
     data-testid="tasks-inline-quickadd"
   >
-    <QuickAddTask
-      {ctx}
-      placeholder="Add a task — Enter to add"
-      keepOpenAfterCreate={true}
-      autofocus={false}
-      clearOnEscape={true}
-    />
+    <div class="mx-auto w-full max-w-5xl">
+      <QuickAddTask
+        {ctx}
+        placeholder="Add a task — Enter to add"
+        keepOpenAfterCreate={true}
+        autofocus={false}
+        clearOnEscape={true}
+      />
+    </div>
   </div>
 </div>
 
@@ -1063,6 +1099,18 @@
       background 600ms ease-out,
       box-shadow 600ms ease-out;
   }
+  .tasks-list-row::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 2px;
+    background: var(--color-text-muted);
+    opacity: 0.25;
+  }
+  .tasks-list-row[data-status='DOING']::before {
+    background: var(--color-accent-secondary-start);
+    opacity: 1;
+  }
   .todo-check:focus-visible {
     outline: 2px solid var(--color-accent-primary-start);
     outline-offset: 2px;
@@ -1083,10 +1131,27 @@
     transform: rotate(45deg);
   }
   .tasks-drag-over {
+    border-color: var(--color-accent-primary-start);
     box-shadow: inset 0 2px 0 var(--color-accent-primary-start);
     background: var(--color-accent-primary-glow);
+    transform: translateY(1px);
   }
   .tasks-dragging {
     opacity: 0.4;
+  }
+  .tasks-quick-add-bar {
+    background: color-mix(in srgb, var(--color-surface-panel) 90%, transparent);
+    backdrop-filter: blur(12px);
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .tasks-quick-add-bar {
+      background: var(--color-surface-panel);
+      backdrop-filter: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tasks-list-row {
+      transition: none;
+    }
   }
 </style>

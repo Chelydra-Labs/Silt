@@ -718,397 +718,418 @@
   let totalCount = $derived(openCount + doneCount)
 </script>
 
-<div class="flex-1 flex flex-col min-h-0 overflow-hidden" data-tasks-hub>
+<div
+  class="flex-1 flex flex-col min-h-0 overflow-hidden bg-surface-app"
+  data-tasks-hub
+>
   <header
-    class="px-6 py-3 border-b border-surface-panel-border flex items-center gap-3 flex-wrap"
+    class="tasks-hub-header relative z-30 flex flex-wrap items-center gap-3 border-b border-surface-panel-border px-3 py-3 sm:flex-nowrap sm:px-5 lg:px-6"
+    data-testid="tasks-hub-header"
   >
-    <span class="material-symbols-outlined text-accent-primary-start"
-      >checklist</span
+    <span
+      class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-accent-primary-start/20 bg-accent-primary-glow text-accent-primary-start"
+      aria-hidden="true"
     >
-    <h1
-      bind:this={hubHeading}
-      tabindex="-1"
-      class="font-headline-lg text-headline-lg text-text-primary flex items-baseline gap-2"
-    >
-      {manifest?.name ?? 'Tasks'}
-      <span
-        class="text-text-muted text-type-sm font-body-md normal-case font-normal ml-1"
-        aria-live="polite"
-        data-testid="tasks-hub-count"
+      <span class="material-symbols-outlined text-icon-xl">checklist</span>
+    </span>
+    <div class="min-w-0 flex-1">
+      <h1
+        bind:this={hubHeading}
+        tabindex="-1"
+        class="font-headline-lg text-headline-lg truncate text-text-primary"
       >
-        {openCount} active task{openCount === 1 ? '' : 's'}{doneCount > 0
-          ? ` · ${doneCount} done`
-          : ''}
-      </span>
-      {#if activeSavedView && !pageRoute}
-        <!-- Active saved view name next to the title. The "(modified)" dirty
+        {manifest?.name ?? 'Tasks'}
+      </h1>
+      <div class="mt-0.5 flex min-w-0 items-center gap-2">
+        <span
+          class="text-text-muted text-type-xs font-label-sm"
+          aria-live="polite"
+          data-testid="tasks-hub-count"
+        >
+          {openCount} active task{openCount === 1 ? '' : 's'}{doneCount > 0
+            ? ` · ${doneCount} done`
+            : ''}
+        </span>
+        {#if activeSavedView && !pageRoute}
+          <!-- Active saved view name next to the title. The "(modified)" dirty
              signal is carried by the accent dot on the bookmark button (below)
              rather than dimming this label, so the dirty state is prominent
              without making the name harder to read. -->
-        <span
-          class="text-text-muted text-type-sm font-body-md normal-case font-normal ml-2 flex items-center gap-1"
-          data-testid="tasks-hub-active-view"
-        >
-          <span aria-hidden="true">·</span>
           <span
-            >{activeSavedView.name}{hubState.savedViewsDirty
-              ? ' (modified)'
-              : ''}</span
+            class="flex min-w-0 items-center gap-1 text-type-xs font-label-sm text-text-muted"
+            data-testid="tasks-hub-active-view"
           >
-        </span>
-      {/if}
-    </h1>
+            <span aria-hidden="true">·</span>
+            <span class="truncate"
+              >{activeSavedView.name}{hubState.savedViewsDirty
+                ? ' (modified)'
+                : ''}</span
+            >
+          </span>
+        {/if}
+      </div>
+    </div>
 
-    <!-- Saved-view bookmark (#427). Three regimes: no view active →
+    <div
+      class="order-2 flex basis-full items-center justify-between gap-2 pt-1 sm:order-none sm:ml-auto sm:basis-auto sm:justify-end sm:pt-0"
+      data-testid="tasks-hub-header-actions"
+    >
+      <!-- Saved-view bookmark (#427). Three regimes: no view active →
          save composer; view active + modified → update/save-as menu;
          view active + clean → rename/delete menu. Popover is a positioned
          dialog with Escape + click-away close (mirrors FilterBar). -->
-    <div
-      class="relative flex items-center"
-      class:hidden={!!pageRoute}
-      aria-hidden={pageRoute ? 'true' : undefined}
-      data-testid="tasks-hub-saved-view-control"
-    >
-      <button
-        type="button"
-        onclick={() => {
-          if (savedViewPopover !== 'closed') {
-            closePopover()
-            return
-          }
-          if (!activeSavedView) openSaveComposer()
-          else openMenu()
-        }}
-        aria-haspopup="dialog"
-        aria-expanded={savedViewPopover !== 'closed'}
-        aria-label={activeSavedView
-          ? hubState.savedViewsDirty
-            ? `Saved view "${activeSavedView.name}" modified — open actions`
-            : `Saved view "${activeSavedView.name}" active — open actions`
-          : 'Save current view'}
-        title={activeSavedView
-          ? hubState.savedViewsDirty
-            ? `"${activeSavedView.name}" (modified) — click for save options`
-            : `"${activeSavedView.name}" — click for rename/delete`
-          : 'Save current view'}
-        data-testid="tasks-hub-bookmark"
-        data-popover-state={savedViewPopover}
-        class="flex items-center gap-1 px-2 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors"
+      <div
+        class="relative flex items-center"
+        class:hidden={!!pageRoute}
+        aria-hidden={pageRoute ? 'true' : undefined}
+        data-testid="tasks-hub-saved-view-control"
       >
-        <span
-          class="material-symbols-outlined text-icon-md {activeViewMatchesState
-            ? 'fill-accent-primary-start text-accent-primary-start'
-            : ''}"
-          aria-hidden="true"
-          >{activeSavedView ? 'bookmark' : 'bookmark_add'}</span
+        <button
+          type="button"
+          onclick={() => {
+            if (savedViewPopover !== 'closed') {
+              closePopover()
+              return
+            }
+            if (!activeSavedView) openSaveComposer()
+            else openMenu()
+          }}
+          aria-haspopup="dialog"
+          aria-expanded={savedViewPopover !== 'closed'}
+          aria-label={activeSavedView
+            ? hubState.savedViewsDirty
+              ? `Saved view "${activeSavedView.name}" modified — open actions`
+              : `Saved view "${activeSavedView.name}" active — open actions`
+            : 'Save current view'}
+          title={activeSavedView
+            ? hubState.savedViewsDirty
+              ? `"${activeSavedView.name}" (modified) — click for save options`
+              : `"${activeSavedView.name}" — click for rename/delete`
+            : 'Save current view'}
+          data-testid="tasks-hub-bookmark"
+          data-popover-state={savedViewPopover}
+          class="flex min-h-8 items-center gap-1 rounded-lg border border-surface-panel-border bg-surface-panel px-2 text-type-sm font-label-sm text-text-muted shadow-sm transition-all hover:border-border-active hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start"
         >
-        {#if activeSavedView && hubState.savedViewsDirty}
-          <!-- Dirty accent dot: a more prominent signal than the old dimmed
+          <span
+            class="material-symbols-outlined text-icon-md {activeViewMatchesState
+              ? 'fill-accent-primary-start text-accent-primary-start'
+              : ''}"
+            aria-hidden="true"
+            >{activeSavedView ? 'bookmark' : 'bookmark_add'}</span
+          >
+          {#if activeSavedView && hubState.savedViewsDirty}
+            <!-- Dirty accent dot: a more prominent signal than the old dimmed
                italic label alone (#460). Secondary-accent so it reads against
                the primary bookmark fill and matches the .dirty-dot convention
                used elsewhere (e.g. TabStrip). Decorative — the aria-label
                above already announces "modified". -->
-          <span
-            class="w-1.5 h-1.5 rounded-full bg-accent-secondary-start"
-            aria-hidden="true"
-            data-testid="tasks-hub-dirty-dot"
-          ></span>
-        {/if}
-      </button>
-
-      {#if savedViewPopover === 'save'}
-        <div
-          transition:fly={{ y: -4, duration: 100 }}
-          class="absolute z-50 mt-1 top-full left-0 min-w-60 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl p-2"
-          role="dialog"
-          aria-label="Save current view"
-          data-testid="tasks-hub-save-view-popover"
-        >
-          <label class="block text-type-xs font-label-sm text-text-muted mb-1">
-            View name
-            <input
-              type="text"
-              bind:this={composerInput}
-              bind:value={composerName}
-              placeholder="e.g. Sprint 15"
-              data-testid="tasks-hub-save-view-name"
-              onkeydown={(e) => {
-                if (e.key === 'Enter') void commitSaveNew()
-                else if (e.key === 'Escape') closePopover()
-              }}
-              class="mt-1 w-full px-2 py-1 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm outline-none focus:border-accent-primary-start"
-            />
-          </label>
-          {#if savedViewError}
-            <p
-              class="mt-1 text-error text-type-xs font-body-md"
-              role="alert"
-              data-testid="tasks-hub-save-view-error"
-            >
-              {savedViewError}
-            </p>
-          {/if}
-          <div class="mt-2 flex items-center justify-end gap-1">
-            <button
-              type="button"
-              onclick={closePopover}
-              data-testid="tasks-hub-save-view-cancel"
-              class="px-2 py-1 rounded text-type-xs font-label-sm text-text-muted hover:bg-hover border-none bg-transparent cursor-pointer"
-              >Cancel</button
-            >
-            <button
-              type="button"
-              onclick={() => void commitSaveNew()}
-              data-testid="tasks-hub-save-view-commit"
-              class="px-2 py-1 rounded text-type-xs font-label-sm bg-accent-primary-start text-text-on-accent border-none cursor-pointer"
-              >Save</button
-            >
-          </div>
-        </div>
-      {:else if savedViewPopover === 'rename'}
-        <div
-          transition:fly={{ y: -4, duration: 100 }}
-          class="absolute z-50 mt-1 top-full left-0 min-w-60 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl p-2"
-          role="dialog"
-          aria-label={`Rename ${activeSavedView?.name ?? 'view'}`}
-          data-testid="tasks-hub-rename-view-popover"
-        >
-          <label class="block text-type-xs font-label-sm text-text-muted mb-1">
-            New name
-            <input
-              type="text"
-              bind:this={composerInput}
-              bind:value={composerName}
-              data-testid="tasks-hub-rename-view-name"
-              onkeydown={(e) => {
-                if (e.key === 'Enter') void commitRename()
-                else if (e.key === 'Escape') closePopover()
-              }}
-              class="mt-1 w-full px-2 py-1 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm outline-none focus:border-accent-primary-start"
-            />
-          </label>
-          {#if savedViewError}
-            <p class="mt-1 text-error text-type-xs font-body-md" role="alert">
-              {savedViewError}
-            </p>
-          {/if}
-          <div class="mt-2 flex items-center justify-end gap-1">
-            <button
-              type="button"
-              onclick={closePopover}
-              data-testid="tasks-hub-rename-view-cancel"
-              class="px-2 py-1 rounded text-type-xs font-label-sm text-text-muted hover:bg-hover border-none bg-transparent cursor-pointer"
-              >Cancel</button
-            >
-            <button
-              type="button"
-              onclick={() => void commitRename()}
-              data-testid="tasks-hub-rename-view-commit"
-              class="px-2 py-1 rounded text-type-xs font-label-sm bg-accent-primary-start text-text-on-accent border-none cursor-pointer"
-              >Rename</button
-            >
-          </div>
-        </div>
-      {:else if savedViewPopover === 'menu'}
-        <div
-          transition:fly={{ y: -4, duration: 100 }}
-          class="absolute z-50 mt-1 top-full left-0 min-w-50 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
-          role="dialog"
-          aria-label={`Actions for ${activeSavedView?.name ?? 'view'}`}
-          data-testid="tasks-hub-view-menu"
-        >
-          {#if hubState.savedViewsDirty}
-            <button
-              type="button"
-              onclick={() => void commitUpdateActive()}
-              data-testid="tasks-hub-update-view"
-              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
-            >
-              <span
-                class="material-symbols-outlined text-icon-sm"
-                aria-hidden="true">save</span
-              >
-              <span>Update “{activeSavedView?.name}”</span>
-            </button>
-            <button
-              type="button"
-              onclick={openSaveComposer}
-              data-testid="tasks-hub-save-as-new"
-              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
-            >
-              <span
-                class="material-symbols-outlined text-icon-sm"
-                aria-hidden="true">add</span
-              >
-              <span>Save as new…</span>
-            </button>
-          {:else}
-            <button
-              type="button"
-              onclick={() => {
-                composerName = activeSavedView?.name ?? ''
-                savedViewError = ''
-                savedViewPopover = 'rename'
-                void tick().then(() => composerInput?.focus())
-              }}
-              data-testid="tasks-hub-rename-view"
-              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
-            >
-              <span
-                class="material-symbols-outlined text-icon-sm"
-                aria-hidden="true">edit</span
-              >
-              <span>Rename…</span>
-            </button>
-            <button
-              type="button"
-              disabled={activeSavedView?.system}
-              aria-disabled={activeSavedView?.system}
-              title={activeSavedView?.system
-                ? 'System views cannot be deleted'
-                : undefined}
-              onclick={() => requestDelete()}
-              data-testid="tasks-hub-delete-view"
-              class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-error text-left border-none bg-transparent cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-            >
-              <span
-                class="material-symbols-outlined text-icon-sm"
-                aria-hidden="true">delete</span
-              >
-              <span>Delete{activeSavedView?.system ? ' (system)' : ''}</span>
-            </button>
-          {/if}
-        </div>
-      {/if}
-    </div>
-
-    <!-- View-mode segmented control (WAI-ARIA radiogroup, roving tabindex). -->
-    <div
-      class="ml-auto flex items-center gap-1 p-1 rounded-lg border border-surface-panel-border bg-surface-panel"
-      role="radiogroup"
-      aria-label="Tasks display mode"
-      tabindex="-1"
-      data-testid="tasks-hub-mode-switcher"
-      onkeydown={onModeKeydown}
-    >
-      {#each MODES as m (m.value)}
-        <button
-          type="button"
-          role="radio"
-          aria-checked={hubState.displayMode === m.value}
-          aria-label={`${m.label} mode`}
-          tabindex={hubState.displayMode === m.value ? 0 : -1}
-          data-mode={m.value}
-          data-testid={`tasks-hub-mode-${m.value}`}
-          onclick={() => chooseMode(m.value)}
-          title={`${m.label} mode (Ctrl+Shift+V)`}
-          class="flex items-center gap-1.5 px-2.5 py-1 rounded text-type-sm font-label-sm transition-colors border-none cursor-pointer {hubState.displayMode ===
-          m.value
-            ? 'bg-accent-primary-start text-text-on-accent'
-            : 'bg-transparent text-text-muted hover:bg-hover hover:text-text-primary'}"
-        >
-          <span
-            class="material-symbols-outlined text-icon-sm"
-            aria-hidden="true">{m.icon}</span
-          >
-          <span aria-hidden="true">{m.label}</span>
-        </button>
-      {/each}
-    </div>
-
-    <div class="relative flex items-center" data-testid="tasks-preferences">
-      <button
-        bind:this={preferencesButton}
-        type="button"
-        onclick={togglePreferences}
-        aria-label="Task preferences"
-        aria-haspopup="dialog"
-        aria-expanded={preferencesOpen}
-        aria-controls="tasks-preferences-popover"
-        title="Task preferences"
-        class="flex h-9 w-9 items-center justify-center rounded-lg border border-surface-panel-border bg-surface-panel text-text-muted hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors cursor-pointer"
-      >
-        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
-          >tune</span
-        >
-      </button>
-
-      {#if preferencesOpen}
-        <div
-          id="tasks-preferences-popover"
-          transition:fly={{ y: -4, duration: 100 }}
-          class="absolute z-50 top-full right-0 mt-2 w-64 rounded-lg border border-surface-popover-border bg-surface-popover p-3 shadow-xl"
-          role="dialog"
-          aria-labelledby="tasks-preferences-title"
-          data-testid="tasks-preferences-popover"
-        >
-          <div class="mb-3 flex items-center gap-2">
             <span
-              class="material-symbols-outlined text-icon-md text-accent-primary-start"
-              aria-hidden="true">calendar_view_week</span
-            >
-            <h2
-              id="tasks-preferences-title"
-              class="text-type-sm font-label-sm-bold text-text-primary"
-            >
-              Task preferences
-            </h2>
-          </div>
-
-          <fieldset>
-            <legend class="text-type-xs font-label-sm-bold text-text-primary">
-              First day of week
-            </legend>
-            <p
-              id="tasks-week-start-description"
-              class="mt-0.5 text-type-xs font-body-md text-text-muted"
-            >
-              Used by calendars, week groups, and “This Week”.
-            </p>
-            <div
-              class="mt-2 grid grid-cols-2 gap-1 rounded-lg border border-surface-panel-border bg-surface-panel p-1"
-            >
-              {#each ['sunday', 'monday'] as value (value)}
-                {@const selected = weekStart === value}
-                <label
-                  class="relative flex min-h-8 items-center justify-center gap-1 rounded-md px-2 text-type-xs font-label-sm cursor-pointer transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-accent-primary-start {selected
-                    ? 'bg-accent-primary-start text-text-on-accent'
-                    : 'text-text-muted hover:bg-hover hover:text-text-primary'}"
-                >
-                  <input
-                    type="radio"
-                    name="tasks-week-start"
-                    {value}
-                    checked={selected}
-                    aria-describedby="tasks-week-start-description"
-                    onchange={() => void chooseWeekStart(value as WeekStart)}
-                    class="sr-only"
-                  />
-                  <span>{value === 'sunday' ? 'Sunday' : 'Monday'}</span>
-                  {#if selected}
-                    <span
-                      class="material-symbols-outlined text-icon-xs"
-                      aria-hidden="true">check</span
-                    >
-                  {/if}
-                </label>
-              {/each}
-            </div>
-          </fieldset>
-
-          {#if weekStartError}
-            <p class="mt-2 text-type-xs font-body-md text-error" role="alert">
-              {weekStartError}
-            </p>
+              class="w-1.5 h-1.5 rounded-full bg-accent-secondary-start"
+              aria-hidden="true"
+              data-testid="tasks-hub-dirty-dot"
+            ></span>
           {/if}
-        </div>
-      {/if}
+        </button>
+
+        {#if savedViewPopover === 'save'}
+          <div
+            transition:fly={{ y: -4, duration: 100 }}
+            class="absolute z-50 mt-1 top-full left-0 min-w-60 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl p-2"
+            role="dialog"
+            aria-label="Save current view"
+            data-testid="tasks-hub-save-view-popover"
+          >
+            <label
+              class="block text-type-xs font-label-sm text-text-muted mb-1"
+            >
+              View name
+              <input
+                type="text"
+                bind:this={composerInput}
+                bind:value={composerName}
+                placeholder="e.g. Sprint 15"
+                data-testid="tasks-hub-save-view-name"
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') void commitSaveNew()
+                  else if (e.key === 'Escape') closePopover()
+                }}
+                class="mt-1 w-full px-2 py-1 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm outline-none focus:border-accent-primary-start"
+              />
+            </label>
+            {#if savedViewError}
+              <p
+                class="mt-1 text-error text-type-xs font-body-md"
+                role="alert"
+                data-testid="tasks-hub-save-view-error"
+              >
+                {savedViewError}
+              </p>
+            {/if}
+            <div class="mt-2 flex items-center justify-end gap-1">
+              <button
+                type="button"
+                onclick={closePopover}
+                data-testid="tasks-hub-save-view-cancel"
+                class="px-2 py-1 rounded text-type-xs font-label-sm text-text-muted hover:bg-hover border-none bg-transparent cursor-pointer"
+                >Cancel</button
+              >
+              <button
+                type="button"
+                onclick={() => void commitSaveNew()}
+                data-testid="tasks-hub-save-view-commit"
+                class="px-2 py-1 rounded text-type-xs font-label-sm bg-accent-primary-start text-text-on-accent border-none cursor-pointer"
+                >Save</button
+              >
+            </div>
+          </div>
+        {:else if savedViewPopover === 'rename'}
+          <div
+            transition:fly={{ y: -4, duration: 100 }}
+            class="absolute z-50 mt-1 top-full left-0 min-w-60 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl p-2"
+            role="dialog"
+            aria-label={`Rename ${activeSavedView?.name ?? 'view'}`}
+            data-testid="tasks-hub-rename-view-popover"
+          >
+            <label
+              class="block text-type-xs font-label-sm text-text-muted mb-1"
+            >
+              New name
+              <input
+                type="text"
+                bind:this={composerInput}
+                bind:value={composerName}
+                data-testid="tasks-hub-rename-view-name"
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') void commitRename()
+                  else if (e.key === 'Escape') closePopover()
+                }}
+                class="mt-1 w-full px-2 py-1 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm outline-none focus:border-accent-primary-start"
+              />
+            </label>
+            {#if savedViewError}
+              <p class="mt-1 text-error text-type-xs font-body-md" role="alert">
+                {savedViewError}
+              </p>
+            {/if}
+            <div class="mt-2 flex items-center justify-end gap-1">
+              <button
+                type="button"
+                onclick={closePopover}
+                data-testid="tasks-hub-rename-view-cancel"
+                class="px-2 py-1 rounded text-type-xs font-label-sm text-text-muted hover:bg-hover border-none bg-transparent cursor-pointer"
+                >Cancel</button
+              >
+              <button
+                type="button"
+                onclick={() => void commitRename()}
+                data-testid="tasks-hub-rename-view-commit"
+                class="px-2 py-1 rounded text-type-xs font-label-sm bg-accent-primary-start text-text-on-accent border-none cursor-pointer"
+                >Rename</button
+              >
+            </div>
+          </div>
+        {:else if savedViewPopover === 'menu'}
+          <div
+            transition:fly={{ y: -4, duration: 100 }}
+            class="absolute z-50 mt-1 top-full left-0 min-w-50 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+            role="dialog"
+            aria-label={`Actions for ${activeSavedView?.name ?? 'view'}`}
+            data-testid="tasks-hub-view-menu"
+          >
+            {#if hubState.savedViewsDirty}
+              <button
+                type="button"
+                onclick={() => void commitUpdateActive()}
+                data-testid="tasks-hub-update-view"
+                class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
+              >
+                <span
+                  class="material-symbols-outlined text-icon-sm"
+                  aria-hidden="true">save</span
+                >
+                <span>Update “{activeSavedView?.name}”</span>
+              </button>
+              <button
+                type="button"
+                onclick={openSaveComposer}
+                data-testid="tasks-hub-save-as-new"
+                class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
+              >
+                <span
+                  class="material-symbols-outlined text-icon-sm"
+                  aria-hidden="true">add</span
+                >
+                <span>Save as new…</span>
+              </button>
+            {:else}
+              <button
+                type="button"
+                onclick={() => {
+                  composerName = activeSavedView?.name ?? ''
+                  savedViewError = ''
+                  savedViewPopover = 'rename'
+                  void tick().then(() => composerInput?.focus())
+                }}
+                data-testid="tasks-hub-rename-view"
+                class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-text-primary text-left border-none bg-transparent cursor-pointer"
+              >
+                <span
+                  class="material-symbols-outlined text-icon-sm"
+                  aria-hidden="true">edit</span
+                >
+                <span>Rename…</span>
+              </button>
+              <button
+                type="button"
+                disabled={activeSavedView?.system}
+                aria-disabled={activeSavedView?.system}
+                title={activeSavedView?.system
+                  ? 'System views cannot be deleted'
+                  : undefined}
+                onclick={() => requestDelete()}
+                data-testid="tasks-hub-delete-view"
+                class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm text-error text-left border-none bg-transparent cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              >
+                <span
+                  class="material-symbols-outlined text-icon-sm"
+                  aria-hidden="true">delete</span
+                >
+                <span>Delete{activeSavedView?.system ? ' (system)' : ''}</span>
+              </button>
+            {/if}
+          </div>
+        {/if}
+      </div>
+
+      <!-- View-mode segmented control (WAI-ARIA radiogroup, roving tabindex). -->
+      <div
+        class="flex shrink-0 items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-1 shadow-sm"
+        role="radiogroup"
+        aria-label="Tasks display mode"
+        tabindex="-1"
+        data-testid="tasks-hub-mode-switcher"
+        onkeydown={onModeKeydown}
+      >
+        {#each MODES as m (m.value)}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={hubState.displayMode === m.value}
+            aria-label={`${m.label} mode`}
+            tabindex={hubState.displayMode === m.value ? 0 : -1}
+            data-mode={m.value}
+            data-testid={`tasks-hub-mode-${m.value}`}
+            onclick={() => chooseMode(m.value)}
+            title={`${m.label} mode (Ctrl+Shift+V)`}
+            class="flex min-h-8 items-center gap-1.5 rounded-md border px-2 sm:px-2.5 text-type-sm font-label-sm transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start {hubState.displayMode ===
+            m.value
+              ? 'border-accent-primary-start/30 bg-accent-primary-glow text-accent-primary-start shadow-sm'
+              : 'border-transparent bg-transparent text-text-muted hover:bg-hover hover:text-text-primary'}"
+          >
+            <span
+              class="material-symbols-outlined text-icon-sm"
+              aria-hidden="true">{m.icon}</span
+            >
+            <span class="hidden sm:inline" aria-hidden="true">{m.label}</span>
+          </button>
+        {/each}
+      </div>
+
+      <div class="relative flex items-center" data-testid="tasks-preferences">
+        <button
+          bind:this={preferencesButton}
+          type="button"
+          onclick={togglePreferences}
+          aria-label="Task preferences"
+          aria-haspopup="dialog"
+          aria-expanded={preferencesOpen}
+          aria-controls="tasks-preferences-popover"
+          title="Task preferences"
+          class="flex h-9 w-9 items-center justify-center rounded-lg border border-surface-panel-border bg-surface-panel text-text-muted shadow-sm hover:border-border-active hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-all cursor-pointer"
+        >
+          <span
+            class="material-symbols-outlined text-icon-md"
+            aria-hidden="true">tune</span
+          >
+        </button>
+
+        {#if preferencesOpen}
+          <div
+            id="tasks-preferences-popover"
+            transition:fly={{ y: -4, duration: 100 }}
+            class="absolute z-50 top-full right-0 mt-2 w-64 rounded-lg border border-surface-popover-border bg-surface-popover p-3 shadow-xl"
+            role="dialog"
+            aria-labelledby="tasks-preferences-title"
+            data-testid="tasks-preferences-popover"
+          >
+            <div class="mb-3 flex items-center gap-2">
+              <span
+                class="material-symbols-outlined text-icon-md text-accent-primary-start"
+                aria-hidden="true">calendar_view_week</span
+              >
+              <h2
+                id="tasks-preferences-title"
+                class="text-type-sm font-label-sm-bold text-text-primary"
+              >
+                Task preferences
+              </h2>
+            </div>
+
+            <fieldset>
+              <legend class="text-type-xs font-label-sm-bold text-text-primary">
+                First day of week
+              </legend>
+              <p
+                id="tasks-week-start-description"
+                class="mt-0.5 text-type-xs font-body-md text-text-muted"
+              >
+                Used by calendars, week groups, and “This Week”.
+              </p>
+              <div
+                class="mt-2 grid grid-cols-2 gap-1 rounded-lg border border-surface-panel-border bg-surface-panel p-1"
+              >
+                {#each ['sunday', 'monday'] as value (value)}
+                  {@const selected = weekStart === value}
+                  <label
+                    class="relative flex min-h-8 items-center justify-center gap-1 rounded-md px-2 text-type-xs font-label-sm cursor-pointer transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-accent-primary-start {selected
+                      ? 'bg-accent-primary-start text-text-on-accent'
+                      : 'text-text-muted hover:bg-hover hover:text-text-primary'}"
+                  >
+                    <input
+                      type="radio"
+                      name="tasks-week-start"
+                      {value}
+                      checked={selected}
+                      aria-describedby="tasks-week-start-description"
+                      onchange={() => void chooseWeekStart(value as WeekStart)}
+                      class="sr-only"
+                    />
+                    <span>{value === 'sunday' ? 'Sunday' : 'Monday'}</span>
+                    {#if selected}
+                      <span
+                        class="material-symbols-outlined text-icon-xs"
+                        aria-hidden="true">check</span
+                      >
+                    {/if}
+                  </label>
+                {/each}
+              </div>
+            </fieldset>
+
+            {#if weekStartError}
+              <p class="mt-2 text-type-xs font-body-md text-error" role="alert">
+                {weekStartError}
+              </p>
+            {/if}
+          </div>
+        {/if}
+      </div>
     </div>
   </header>
 
   {#if pageRoute}
     <div
-      class="px-6 py-2.5 border-b border-surface-panel-border bg-accent-primary-start/5 flex items-center gap-3"
+      class="flex items-center gap-3 border-b border-accent-primary-start/20 bg-accent-primary-glow px-3 py-2.5 sm:px-5 lg:px-6"
       data-testid="tasks-page-context"
     >
       <span
@@ -1154,7 +1175,7 @@
 
   {#if pageRoute && countsReady && totalCount === 0}
     <div
-      class="px-6 pt-4 text-type-sm font-body-md text-text-muted"
+      class="px-3 pt-4 text-type-sm font-body-md text-text-muted sm:px-5 lg:px-6"
       data-testid="tasks-page-empty"
     >
       No tasks on this page.
@@ -1239,3 +1260,17 @@
     onAddTask={handlePaletteAddTask}
   />
 </div>
+
+<style>
+  .tasks-hub-header {
+    background: color-mix(in srgb, var(--color-surface-app) 92%, transparent);
+    backdrop-filter: blur(14px);
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .tasks-hub-header {
+      background: var(--color-surface-app);
+      backdrop-filter: none;
+    }
+  }
+</style>

@@ -167,6 +167,62 @@ describe('FilterBar facet search (#462)', () => {
   })
 })
 
+describe('FilterBar popover focus', () => {
+  it('moves focus into a single-select popover and returns it on Escape', async () => {
+    render(FilterBar, { props: makeProps() })
+
+    const trigger = screen.getByTestId('tasks-hub-scope-toggle')
+    expect(trigger).toHaveAttribute('aria-controls', 'tasks-filter-scope')
+    await fireEvent.click(trigger)
+    await tick()
+
+    expect(
+      screen.getByRole('listbox', { name: 'Filter by scope' })
+    ).toBeTruthy()
+    expect(document.activeElement).toBe(
+      screen.getByTestId('scope-option-vault')
+    )
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await tick()
+    expect(document.activeElement).toBe(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('returns focus after choosing a single-select option', async () => {
+    const onGroupByChange = vi.fn()
+    render(FilterBar, { props: makeProps({ onGroupByChange }) })
+
+    const trigger = screen.getByTestId('tasks-hub-group-by-toggle')
+    await fireEvent.click(trigger)
+    await tick()
+    await fireEvent.click(screen.getByTestId('group-option-owner'))
+    await tick()
+
+    expect(onGroupByChange).toHaveBeenCalledWith('owner')
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('keeps the click-away backdrop out of the accessibility and tab order', async () => {
+    render(FilterBar, { props: makeProps() })
+
+    const trigger = screen.getByTestId('tasks-hub-scope-toggle')
+    await fireEvent.click(trigger)
+    await tick()
+
+    const backdrop = screen.getByTestId('tasks-filter-backdrop')
+    expect(backdrop.tagName).toBe('DIV')
+    expect(backdrop).toHaveAttribute('role', 'presentation')
+    expect(backdrop).toHaveAttribute('aria-hidden', 'true')
+    expect(backdrop).toHaveAttribute('tabindex', '-1')
+
+    await fireEvent.click(backdrop)
+    await tick()
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(document.activeElement).toBe(trigger)
+  })
+})
+
 describe('FilterBar stale chip (#440)', () => {
   it('toggles filters.stale true then false', async () => {
     const onFiltersChange = vi.fn()

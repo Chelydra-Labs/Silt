@@ -4,6 +4,7 @@
   // are the same {owners, priorities, dueDate, tags}); the type now comes
   // from the unified state module so this component survives the kanban
   // retirement (#429). The sidebar (#432) mirrors these toggles bidirectionally.
+  import { tick } from 'svelte'
   import { fly } from 'svelte/transition'
   import type {
     TaskFilters,
@@ -52,6 +53,7 @@
   type ChipKey =
     'scope' | 'group' | 'sort' | 'owner' | 'priority' | 'dueDate' | 'tags'
   let openChip = $state<ChipKey | null>(null)
+  let activeTrigger = $state<HTMLButtonElement | null>(null)
 
   // #462: facet-list search. The DISTINCT facet queries (TasksHub.reloadFacets)
   // cap at 200 rows; with that many owners or tags, finding one is a scroll
@@ -82,11 +84,24 @@
     if (openChip !== 'tags') tagQuery = ''
   })
 
-  function toggleChip(k: ChipKey) {
-    openChip = openChip === k ? null : k
+  function toggleChip(k: ChipKey, trigger: HTMLButtonElement) {
+    if (openChip === k) {
+      close()
+      return
+    }
+    activeTrigger = trigger
+    openChip = k
+    void tick().then(() => {
+      document
+        .querySelector<HTMLElement>(
+          `[data-filter-popover="${k}"] input:not([type="checkbox"]), [data-filter-popover="${k}"] button:not(:disabled), [data-filter-popover="${k}"] input[type="checkbox"]`
+        )
+        ?.focus()
+    })
   }
-  function close() {
+  function close(returnFocus = false) {
     openChip = null
+    if (returnFocus) void tick().then(() => activeTrigger?.focus())
   }
 
   const PRIORITIES = [
@@ -176,7 +191,7 @@
     const container = e.currentTarget as HTMLElement
     const items = Array.from(
       container.querySelectorAll<HTMLElement>(
-        'button, input[type="checkbox"], label'
+        'button:not(:disabled), input[type="checkbox"]:not(:disabled)'
       )
     )
     if (items.length === 0) return
@@ -203,7 +218,9 @@
   // alone so the user can edit the query with the caret normally.
   function onFacetSearchKeydown(e: KeyboardEvent) {
     if (e.key !== 'ArrowDown') return
-    const popover = (e.currentTarget as HTMLElement).closest('[role="group"]')
+    const popover = (e.currentTarget as HTMLElement).closest(
+      '[data-filter-popover]'
+    )
     // Focus the first checkbox directly (not the wrapping <label>, which isn't
     // focusable and would no-op the focus() call).
     const first = popover?.querySelector<HTMLInputElement>(
@@ -211,6 +228,7 @@
     )
     if (!first) return
     e.preventDefault()
+    e.stopPropagation()
     first.focus()
   }
 
@@ -248,7 +266,7 @@
   $effect(() => {
     if (!openChip) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close()
+      if (e.key === 'Escape') close(true)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -256,20 +274,20 @@
 </script>
 
 <div
-  class="flex items-center gap-2 px-6 py-2 border-b border-surface-panel-border flex-wrap relative"
+  class="tasks-filter-toolbar relative z-20 flex flex-wrap items-center gap-1.5 border-b border-surface-panel-border px-3 py-2 sm:px-5 lg:px-6"
+  aria-label="Task view controls"
 >
   <!-- Scope Chip -->
   <div class="relative">
     <button
       type="button"
       data-testid="tasks-hub-scope-toggle"
-      onclick={() => toggleChip('scope')}
+      onclick={(e) => toggleChip('scope', e.currentTarget)}
       aria-expanded={openChip === 'scope'}
       aria-haspopup="listbox"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
-      'scope'
-        ? 'border-accent-primary-start/40 text-text-primary'
-        : ''}"
+      aria-controls="tasks-filter-scope"
+      data-active={openChip === 'scope' ? 'true' : undefined}
+      class="task-filter-chip"
     >
       <span class="material-symbols-outlined text-icon-sm">
         {scope === 'vault'
@@ -289,9 +307,11 @@
     </button>
     {#if openChip === 'scope'}
       <div
+        id="tasks-filter-scope"
+        data-filter-popover="scope"
         transition:fly={{ y: -4, duration: 100 }}
         onkeydown={handlePopoverKeydown}
-        class="absolute z-50 mt-1 min-w-40 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+        class="task-filter-menu absolute left-0 z-50 mt-1 min-w-40 py-1"
         role="listbox"
         tabindex="-1"
         aria-label="Filter by scope"
@@ -304,10 +324,12 @@
             {disabled}
             onclick={() => {
               onScopeChange(opt.value)
-              close()
+              close(true)
             }}
             title={disabled ? `Select a ${opt.value} first` : undefined}
-            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent {scope ===
+            role="option"
+            aria-selected={scope === opt.value}
+            class="task-filter-option disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent {scope ===
             opt.value
               ? 'text-accent-primary-start'
               : 'text-text-primary'}"
@@ -327,20 +349,21 @@
     {/if}
   </div>
 
-  <div class="h-4 w-px bg-surface-panel-border mx-2"></div>
+  <div class="mx-1 hidden h-5 w-px bg-surface-panel-border sm:block"></div>
 
   <!-- Group by Chip -->
   <div class="relative">
     <button
       type="button"
       data-testid="tasks-hub-group-by-toggle"
-      onclick={() => toggleChip('group')}
+      onclick={(e) => toggleChip('group', e.currentTarget)}
       aria-expanded={openChip === 'group'}
       aria-haspopup="listbox"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
-        'group' || groupBy !== 'none'
-        ? 'border-accent-primary-start/40 text-text-primary'
-        : ''}"
+      aria-controls="tasks-filter-group"
+      data-active={openChip === 'group' || groupBy !== 'none'
+        ? 'true'
+        : undefined}
+      class="task-filter-chip"
     >
       <span class="material-symbols-outlined text-icon-sm">view_module</span>
       <span
@@ -351,9 +374,11 @@
     </button>
     {#if openChip === 'group'}
       <div
+        id="tasks-filter-group"
+        data-filter-popover="group"
         transition:fly={{ y: -4, duration: 100 }}
         onkeydown={handlePopoverKeydown}
-        class="absolute z-50 mt-1 min-w-40 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
+        class="task-filter-menu absolute left-0 z-50 mt-1 max-h-64 min-w-40 overflow-y-auto py-1 custom-scrollbar"
         role="listbox"
         tabindex="-1"
         aria-label="Group tasks by"
@@ -364,10 +389,11 @@
             data-testid={`group-option-${opt.value}`}
             onclick={() => {
               onGroupByChange(opt.value)
-              close()
+              close(true)
             }}
-            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm transition-colors {groupBy ===
-            opt.value
+            role="option"
+            aria-selected={groupBy === opt.value}
+            class="task-filter-option {groupBy === opt.value
               ? 'text-accent-primary-start'
               : 'text-text-primary'}"
           >
@@ -391,13 +417,14 @@
     <button
       type="button"
       data-testid="tasks-hub-sort-toggle"
-      onclick={() => toggleChip('sort')}
+      onclick={(e) => toggleChip('sort', e.currentTarget)}
       aria-expanded={openChip === 'sort'}
       aria-haspopup="listbox"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
-        'sort' || sort !== 'manual'
-        ? 'border-accent-primary-start/40 text-text-primary'
-        : ''}"
+      aria-controls="tasks-filter-sort"
+      data-active={openChip === 'sort' || sort !== 'manual'
+        ? 'true'
+        : undefined}
+      class="task-filter-chip"
     >
       <span class="material-symbols-outlined text-icon-sm">sort</span>
       <span
@@ -408,9 +435,11 @@
     </button>
     {#if openChip === 'sort'}
       <div
+        id="tasks-filter-sort"
+        data-filter-popover="sort"
         transition:fly={{ y: -4, duration: 100 }}
         onkeydown={handlePopoverKeydown}
-        class="absolute z-50 mt-1 min-w-40 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+        class="task-filter-menu absolute left-0 z-50 mt-1 min-w-45 py-1"
         role="listbox"
         tabindex="-1"
         aria-label="Sort tasks by"
@@ -421,10 +450,11 @@
             data-testid={`sort-option-${opt.value}`}
             onclick={() => {
               onSortChange(opt.value)
-              close()
+              close(true)
             }}
-            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm transition-colors {sort ===
-            opt.value
+            role="option"
+            aria-selected={sort === opt.value}
+            class="task-filter-option {sort === opt.value
               ? 'text-accent-primary-start'
               : 'text-text-primary'}"
           >
@@ -443,18 +473,19 @@
     {/if}
   </div>
 
-  <div class="h-4 w-px bg-surface-panel-border mx-2"></div>
+  <div class="mx-1 hidden h-5 w-px bg-surface-panel-border sm:block"></div>
   <!-- Owner chip -->
   <div class="relative">
     <button
       type="button"
-      onclick={() => toggleChip('owner')}
+      onclick={(e) => toggleChip('owner', e.currentTarget)}
       aria-expanded={openChip === 'owner'}
-      aria-haspopup="true"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
-        'owner' || filters.owners.length
-        ? 'border-accent-primary-start/40 text-text-primary'
-        : ''}"
+      aria-haspopup="dialog"
+      aria-controls="tasks-filter-owner"
+      data-active={openChip === 'owner' || filters.owners.length > 0
+        ? 'true'
+        : undefined}
+      class="task-filter-chip"
     >
       <span class="material-symbols-outlined text-icon-sm">person</span>
       <span
@@ -464,11 +495,14 @@
     </button>
     {#if openChip === 'owner'}
       <div
+        id="tasks-filter-owner"
+        data-filter-popover="owner"
         transition:fly={{ y: -4, duration: 100 }}
-        class="absolute z-50 mt-1 min-w-45 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
-        role="group"
+        class="task-filter-menu absolute left-0 z-50 mt-1 max-h-64 min-w-45 overflow-y-auto py-1 custom-scrollbar"
+        role="dialog"
         tabindex="-1"
         aria-label="Filter by owner"
+        onkeydown={handlePopoverKeydown}
       >
         {#if owners.length > FACET_SEARCH_THRESHOLD}
           <div
@@ -486,12 +520,7 @@
             />
           </div>
         {/if}
-        <div
-          role="listbox"
-          aria-label="Owners"
-          tabindex="-1"
-          onkeydown={handlePopoverKeydown}
-        >
+        <div role="group" aria-label="Owners" tabindex="-1">
           {#if owners.length === 0}
             <div class="px-3 py-2 text-type-xs text-text-muted font-label-sm">
               No owners
@@ -524,13 +553,14 @@
   <div class="relative">
     <button
       type="button"
-      onclick={() => toggleChip('priority')}
+      onclick={(e) => toggleChip('priority', e.currentTarget)}
       aria-expanded={openChip === 'priority'}
-      aria-haspopup="true"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
-        'priority' || filters.priorities.length
-        ? 'border-accent-primary-start/40 text-text-primary'
-        : ''}"
+      aria-haspopup="dialog"
+      aria-controls="tasks-filter-priority"
+      data-active={openChip === 'priority' || filters.priorities.length > 0
+        ? 'true'
+        : undefined}
+      class="task-filter-chip"
     >
       <span class="material-symbols-outlined text-icon-sm">flag</span>
       <span
@@ -542,10 +572,12 @@
     </button>
     {#if openChip === 'priority'}
       <div
+        id="tasks-filter-priority"
+        data-filter-popover="priority"
         transition:fly={{ y: -4, duration: 100 }}
         onkeydown={handlePopoverKeydown}
-        class="absolute z-50 mt-1 min-w-40 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
-        role="listbox"
+        class="task-filter-menu absolute left-0 z-50 mt-1 min-w-40 py-1"
+        role="dialog"
         tabindex="-1"
         aria-label="Filter by priority"
       >
@@ -570,13 +602,14 @@
   <div class="relative">
     <button
       type="button"
-      onclick={() => toggleChip('dueDate')}
+      onclick={(e) => toggleChip('dueDate', e.currentTarget)}
       aria-expanded={openChip === 'dueDate'}
       aria-haspopup="listbox"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
-        'dueDate' || filters.dueDate
-        ? 'border-accent-primary-start/40 text-text-primary'
-        : ''}"
+      aria-controls="tasks-filter-due-date"
+      data-active={openChip === 'dueDate' || !!filters.dueDate
+        ? 'true'
+        : undefined}
+      class="task-filter-chip"
     >
       <span class="material-symbols-outlined text-icon-sm">schedule</span>
       <span>{filters.dueDate ? dueLabel() : 'Due date'}</span>
@@ -584,9 +617,11 @@
     </button>
     {#if openChip === 'dueDate'}
       <div
+        id="tasks-filter-due-date"
+        data-filter-popover="dueDate"
         transition:fly={{ y: -4, duration: 100 }}
         onkeydown={handlePopoverKeydown}
-        class="absolute z-50 mt-1 min-w-40 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+        class="task-filter-menu absolute left-0 z-50 mt-1 min-w-40 py-1"
         role="listbox"
         tabindex="-1"
         aria-label="Filter by due date"
@@ -594,9 +629,13 @@
         {#each DUE_OPTIONS as opt (opt.value)}
           <button
             type="button"
-            onclick={() => setDueDate(opt.value)}
-            class="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-hover text-type-sm font-label-sm {filters.dueDate ===
-            opt.value
+            onclick={() => {
+              setDueDate(opt.value)
+              close(true)
+            }}
+            role="option"
+            aria-selected={filters.dueDate === opt.value}
+            class="task-filter-option {filters.dueDate === opt.value
               ? 'text-accent-primary-start'
               : 'text-text-primary'}"
           >
@@ -619,9 +658,8 @@
     onclick={toggleStale}
     aria-pressed={!!filters.stale}
     title="Open tasks with no last-modified time, or last modified more than 30 days ago."
-    class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {filters.stale
-      ? 'border-accent-primary-start/40 text-text-primary'
-      : ''}"
+    data-active={filters.stale ? 'true' : undefined}
+    class="task-filter-chip"
   >
     <span class="material-symbols-outlined text-icon-sm">history</span>
     <span>Stale (30d)</span>
@@ -631,13 +669,14 @@
   <div class="relative">
     <button
       type="button"
-      onclick={() => toggleChip('tags')}
+      onclick={(e) => toggleChip('tags', e.currentTarget)}
       aria-expanded={openChip === 'tags'}
-      aria-haspopup="true"
-      class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-text-primary transition-colors {openChip ===
-        'tags' || filters.tags.length
-        ? 'border-accent-primary-start/40 text-text-primary'
-        : ''}"
+      aria-haspopup="dialog"
+      aria-controls="tasks-filter-tags"
+      data-active={openChip === 'tags' || filters.tags.length > 0
+        ? 'true'
+        : undefined}
+      class="task-filter-chip"
     >
       <span class="material-symbols-outlined text-icon-sm">label</span>
       <span>Tags{filters.tags.length ? ` (${filters.tags.length})` : ''}</span>
@@ -645,11 +684,14 @@
     </button>
     {#if openChip === 'tags'}
       <div
+        id="tasks-filter-tags"
+        data-filter-popover="tags"
         transition:fly={{ y: -4, duration: 100 }}
-        class="absolute z-50 mt-1 min-w-50 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto custom-scrollbar"
-        role="group"
+        class="task-filter-menu absolute right-0 z-50 mt-1 max-h-64 min-w-50 overflow-y-auto py-1 custom-scrollbar sm:left-0 sm:right-auto"
+        role="dialog"
         tabindex="-1"
         aria-label="Filter by tag"
+        onkeydown={handlePopoverKeydown}
       >
         {#if tags.length > FACET_SEARCH_THRESHOLD}
           <div
@@ -667,12 +709,7 @@
             />
           </div>
         {/if}
-        <div
-          role="listbox"
-          aria-label="Tags"
-          tabindex="-1"
-          onkeydown={handlePopoverKeydown}
-        >
+        <div role="group" aria-label="Tags" tabindex="-1">
           {#if tags.length === 0}
             <div class="px-3 py-2 text-type-xs text-text-muted font-label-sm">
               No tags
@@ -705,7 +742,7 @@
     <button
       type="button"
       onclick={clearAll}
-      class="flex items-center gap-1 px-2 py-1 text-type-sm font-label-sm text-text-muted hover:text-error transition-colors"
+      class="flex min-h-8 items-center gap-1 rounded-md border border-transparent px-2 text-type-sm font-label-sm text-text-muted transition-colors hover:border-error/20 hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
     >
       <span class="material-symbols-outlined text-icon-sm">close</span>
       <span>Clear all</span>
@@ -713,13 +750,13 @@
   {/if}
 
   {#if activeCount > 0}
-    <span class="text-type-xs text-text-muted font-label-sm">
+    <span class="hidden text-type-xs text-text-muted font-label-sm lg:inline">
       {activeCount} active filter{activeCount === 1 ? '' : 's'}
     </span>
   {/if}
 
-  <div class="ml-auto flex items-center gap-2">
-    <span class="text-text-muted text-type-sm font-body-md">
+  <div class="ml-auto flex min-h-8 items-center gap-2 pl-1">
+    <span class="whitespace-nowrap text-text-muted text-type-xs font-label-sm">
       {scopeCrumb} · {totalCount} task{totalCount === 1 ? '' : 's'}
     </span>
     {#if scopeUserOverride}
@@ -739,14 +776,108 @@
   <!-- Click-away backdrop: closes whichever chip popover is open. -->
   {#if openChip}
     <div
-      class="fixed inset-0 z-40"
+      class="fixed inset-0 z-40 cursor-default border-none bg-transparent"
       role="presentation"
-      onclick={close}
-      tabindex="-1"
       aria-hidden="true"
+      tabindex="-1"
+      onclick={() => close(true)}
+      data-testid="tasks-filter-backdrop"
     ></div>
   {/if}
 
   <!-- aria-live: announces active-filter count changes (AGENTS.md a11y). -->
   <div class="sr-only" aria-live="polite">{filterLiveMessage}</div>
 </div>
+
+<style>
+  .tasks-filter-toolbar {
+    background: color-mix(in srgb, var(--color-surface-app) 88%, transparent);
+    backdrop-filter: blur(14px);
+  }
+
+  :global(.task-filter-chip) {
+    display: flex;
+    min-height: 2rem;
+    align-items: center;
+    gap: 0.375rem;
+    border: 1px solid var(--color-surface-panel-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-panel);
+    padding: 0 0.625rem;
+    color: var(--color-text-muted);
+    font-family: var(--font-mono, var(--editor-mono-font-family));
+    font-size: var(--text-type-sm);
+    cursor: pointer;
+    transition:
+      border-color 150ms var(--transition-standard),
+      background 150ms var(--transition-standard),
+      color 150ms var(--transition-standard),
+      transform 150ms var(--transition-standard);
+  }
+
+  :global(.task-filter-chip:hover) {
+    border-color: var(--color-border-active);
+    background: var(--color-hover);
+    color: var(--color-text-primary);
+  }
+
+  :global(.task-filter-chip:active) {
+    transform: translateY(1px);
+  }
+
+  :global(.task-filter-chip[data-active='true']) {
+    border-color: color-mix(
+      in srgb,
+      var(--color-accent-primary-start) 45%,
+      var(--color-surface-panel-border)
+    );
+    background: var(--color-accent-primary-glow);
+    color: var(--color-accent-primary-start);
+  }
+
+  :global(.task-filter-chip:focus-visible) {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 2px;
+  }
+
+  :global(.task-filter-menu) {
+    border: 1px solid var(--color-surface-popover-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface-popover);
+    box-shadow: var(--shadow-lg);
+  }
+
+  :global(.task-filter-option) {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 0.5rem;
+    border: 0;
+    background: transparent;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    font-family: var(--font-mono, var(--editor-mono-font-family));
+    font-size: var(--text-type-sm);
+    cursor: pointer;
+    transition: background 120ms var(--transition-standard);
+  }
+
+  :global(.task-filter-option:hover),
+  :global(.task-filter-option:focus-visible) {
+    background: var(--color-hover);
+    outline: none;
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .tasks-filter-toolbar {
+      background: var(--color-surface-app);
+      backdrop-filter: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :global(.task-filter-chip) {
+      transition: none;
+    }
+  }
+</style>

@@ -192,6 +192,23 @@ describe('Tasks hub shell (#424)', () => {
     expect(screen.getByRole('button', { name: /Owner/i })).toBeInTheDocument()
   })
 
+  it('stacks header actions at narrow widths and preserves the desktop row', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(screen.getByTestId('tasks-hub-header')).toHaveClass(
+      'flex-wrap',
+      'sm:flex-nowrap'
+    )
+    const actions = screen.getByTestId('tasks-hub-header-actions')
+    expect(actions).toHaveClass('basis-full', 'sm:basis-auto', 'sm:ml-auto')
+    expect(actions).toContainElement(screen.getByTestId('tasks-hub-bookmark'))
+    expect(actions).toContainElement(
+      screen.getByTestId('tasks-hub-mode-switcher')
+    )
+    expect(actions).toContainElement(screen.getByTestId('tasks-preferences'))
+  })
+
   it('defaults to List mode and renders the list renderer', async () => {
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()

@@ -162,10 +162,13 @@
   })
 </script>
 
-<section aria-labelledby="tasks-smart-lists-heading">
+<section
+  aria-labelledby="tasks-smart-lists-heading"
+  class="rounded-xl border border-surface-sidebar-border bg-surface-panel/35 p-2 shadow-sm"
+>
   <h3
     id="tasks-smart-lists-heading"
-    class="px-2 font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
+    class="px-1.5 pt-0.5 font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
   >
     Smart Lists
     <span class="font-label-sm normal-case tracking-normal text-text-muted/60">
@@ -173,7 +176,7 @@
     </span>
   </h3>
   {#if counts.all > 0 || counts.completed > 0}
-    <ul role="listbox" aria-label="Smart lists" class="mt-1 space-y-0.5">
+    <ul role="listbox" aria-label="Smart lists" class="mt-1.5 space-y-0.5">
       {#each smartLists as item, i (item.id)}
         {@const selected = activeFilter === item.id}
         <li>
@@ -189,10 +192,10 @@
             }}
             onkeydown={onListKeydown}
             onfocus={() => (listFocusIdx = i)}
-            class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-type-sm font-body-md cursor-pointer border-none bg-transparent transition-colors
+            class="group relative w-full flex min-h-9 items-center gap-2 overflow-hidden px-2.5 py-1.5 rounded-lg text-left text-type-sm font-body-md cursor-pointer border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-border-focus
             {selected
-              ? 'bg-accent-primary-glow text-accent-primary-start'
-              : 'text-text-primary hover:bg-hover'}"
+              ? 'border-accent-primary-start/25 bg-accent-primary-glow text-accent-primary-start shadow-sm'
+              : 'border-transparent bg-transparent text-text-primary hover:border-surface-sidebar-border hover:bg-hover'}"
           >
             <span
               class="material-symbols-outlined text-icon-sm"
@@ -211,7 +214,7 @@
             </span>
             <span class="flex-1 truncate">{item.label}</span>
             <span
-              class="text-type-2xs text-text-muted bg-surface-popover px-1.5 py-0.5 rounded-sm font-label-sm"
+              class="min-w-6 text-center text-type-2xs text-text-muted bg-surface-popover border border-surface-popover-border px-1.5 py-0.5 rounded-full font-label-sm"
               aria-label="{counts[item.id]} tasks"
               data-testid={`count-${item.id}`}
             >
@@ -234,7 +237,7 @@
       type="button"
       onclick={() => clearActiveFilter()}
       data-testid="clear-filter"
-      class="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-type-xs font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-surface-popover-border bg-transparent transition-colors"
+      class="mt-1.5 w-full flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-type-xs font-label-sm text-text-muted hover:bg-error/10 hover:text-error cursor-pointer border border-dashed border-surface-popover-border bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
     >
       <span class="material-symbols-outlined text-icon-xs">close</span>
       Clear filter
