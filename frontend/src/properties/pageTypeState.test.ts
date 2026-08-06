@@ -605,6 +605,23 @@ describe('pageType controller', () => {
       rawType: ''
     })
     appMocks.GetPageProperties.mockResolvedValue([])
+    // The real backend echoes the request locator into the core response
+    // (app_types_props.go: ParseFileContent is passed the locator, and the
+    // response's Notebook/Section/Page are read from the parsed meta).
+    // commitCore sources its write target from these fields (coreLocator),
+    // so the mock must populate them or the commit early-returns.
+    appMocks.GetPageCoreMetadata.mockResolvedValue({
+      notebook: 'Work',
+      section: 'Projects',
+      page: 'Plan',
+      type: '',
+      date: '',
+      tags: [],
+      aliases: [],
+      created: '',
+      modified: '',
+      tagsAreReadOnly: false
+    })
     appMocks.SetPageCoreMetadata.mockRejectedValueOnce(new Error('disk full'))
     const ctrl = createPageTypeController({ getLocator: () => locator })
     await ctrl.refresh()
@@ -715,6 +732,63 @@ describe('pageType controller', () => {
     // The locator guard (pageTypeState.svelte.ts:266-271) bailed before the
     // refetch: no extra GetPageCoreMetadata call. Without the guard, A's
     // refetched core would paint onto B's panel as a stale snapshot.
+    expect(appMocks.GetPageCoreMetadata.mock.calls.length).toBe(
+      coreCallsAfterRefresh
+    )
+  })
+
+  it('commitCore targets the captured core locator, not the post-navigation locator (NB#3)', async () => {
+    // The blur of page A's tags/aliases input fires AFTER the user navigates
+    // to page B (the {#key pageLocator} remount destroys A's input, and the
+    // browser fires blur on the destroying element). At that moment
+    // deps.getLocator() returns B — so without the fix, A's draft was
+    // silently written to B. commitCore must source the write target from
+    // the locator captured when A's core was loaded (coreLocator), not from
+    // deps.getLocator() at commit time.
+    appMocks.GetPageType.mockResolvedValue({
+      isSet: false,
+      type: {},
+      rawType: ''
+    })
+    appMocks.GetPageProperties.mockResolvedValue([])
+    appMocks.GetPageCoreMetadata.mockResolvedValue({
+      notebook: 'Work',
+      section: 'Projects',
+      page: 'A',
+      type: '',
+      date: '2026-08-05',
+      tags: ['draft'],
+      aliases: [],
+      created: '',
+      modified: '',
+      tagsAreReadOnly: false
+    })
+    let current = { notebook: 'Work', section: 'Projects', page: 'A' }
+    const ctrl = createPageTypeController({ getLocator: () => current })
+    await ctrl.refresh()
+    await tick()
+    expect(ctrl.core.page).toBe('A')
+    const coreCallsAfterRefresh = appMocks.GetPageCoreMetadata.mock.calls.length
+
+    // Navigate A→B before the commit fires. (In the real app this triggers
+    // a refresh that wipes core; here we just mutate the locator to isolate
+    // the commit-target behavior from the wipe/refetch bookkeeping.)
+    current = { notebook: 'Work', section: 'Projects', page: 'B' }
+
+    await ctrl.commitCore({ tags: ['draft', 'final'] })
+    await tick()
+
+    // The write targeted A (whose core data seeded the edit), NOT B (the
+    // post-navigation locator). Pre-fix, SetPageCoreMetadata would have been
+    // called with page 'B'.
+    expect(appMocks.SetPageCoreMetadata).toHaveBeenCalledWith(
+      'Work',
+      'Projects',
+      'A',
+      { tags: ['draft', 'final'] }
+    )
+    // The post-write refetch is skipped because the locator moved A→B — no
+    // extra GetPageCoreMetadata call beyond the refresh() baseline.
     expect(appMocks.GetPageCoreMetadata.mock.calls.length).toBe(
       coreCallsAfterRefresh
     )
