@@ -1141,13 +1141,19 @@ func TestDefaults_TabsConfig(t *testing.T) {
 			t.Errorf("defaults hotkeys missing %q", key)
 		}
 	}
-	// Tab-strip chords were remapped off Ctrl+W / Ctrl+Tab because WebView2
-	// unreliably relays those to the webview. See defaults.go for the rationale.
-	if d.Hotkeys["next_tab"] != "Ctrl+Alt+Right" {
-		t.Errorf("next_tab default: got %q", d.Hotkeys["next_tab"])
+	// Tab-strip chords are platform-conditional (see defaults.go): Windows
+	// uses Ctrl+Alt+Arrow (WebView2 can't relay Ctrl+Tab); Linux/macOS keep
+	// Ctrl+Tab / Ctrl+Shift+Tab (reliable there, Ctrl+Alt+arrows are
+	// WM-captured). close_tab (Ctrl+Shift+W) is reliable on all platforms.
+	wantNextTab, wantPrevTab := "Ctrl+Alt+Right", "Ctrl+Alt+Left"
+	if runtime.GOOS != "windows" {
+		wantNextTab, wantPrevTab = "Ctrl+Tab", "Ctrl+Shift+Tab"
 	}
-	if d.Hotkeys["prev_tab"] != "Ctrl+Alt+Left" {
-		t.Errorf("prev_tab default: got %q", d.Hotkeys["prev_tab"])
+	if d.Hotkeys["next_tab"] != wantNextTab {
+		t.Errorf("next_tab default: got %q, want %q", d.Hotkeys["next_tab"], wantNextTab)
+	}
+	if d.Hotkeys["prev_tab"] != wantPrevTab {
+		t.Errorf("prev_tab default: got %q, want %q", d.Hotkeys["prev_tab"], wantPrevTab)
 	}
 	if d.Hotkeys["close_tab"] != "Ctrl+Shift+W" {
 		t.Errorf("close_tab default: got %q", d.Hotkeys["close_tab"])
