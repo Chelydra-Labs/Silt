@@ -14,7 +14,7 @@ const mockSettings = vi.hoisted(() => ({
       // caveat surfaces; the next test pins the Linux-style Ctrl+Tab path.
       next_tab: 'Ctrl+Alt+Right',
       prev_tab: 'Ctrl+Alt+Left'
-    }
+    } as Record<string, string>
   }
 }))
 vi.mock('../settings/store.svelte', () => ({ settings: mockSettings }))
@@ -69,6 +69,23 @@ describe('ShortcutHelp', () => {
     const footer = document.querySelector('footer')!
     expect(footer.textContent).toContain('Tab')
     expect(footer.textContent).not.toContain('cannot reliably relay')
+  })
+
+  it('does not badge the platform-conditional tab chords as Remapped on non-Windows defaults', () => {
+    // next_tab/prev_tab have NO static frontend default (their chord is
+    // platform-conditional), so ShortcutHelp must not show "Remapped" when the
+    // backend resolves them to the Linux/macOS Ctrl+Tab form. Previously the
+    // hardcoded Windows defaultBinding (Ctrl+Alt+Arrow) mismatched the
+    // resolved Ctrl+Tab on every non-Windows vault, false-firing the badge.
+    mockSettings.config.hotkeys = {
+      next_tab: 'Ctrl+Tab',
+      prev_tab: 'Ctrl+Shift+Tab',
+      close_tab: 'Ctrl+Shift+W'
+    }
+    render(ShortcutHelp, { props: { onClose: vi.fn() } })
+    // The Tabs group renders with real chords but no value differs from a
+    // static default (there is none for the cycle chords), so no badge.
+    expect(screen.queryByText('Remapped')).not.toBeInTheDocument()
   })
 
   it('focuses close, closes on Escape, and restores trigger focus', async () => {

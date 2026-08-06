@@ -67,6 +67,17 @@
   // and queue a duplicate write. Plain `let`: read/written only inside flush().
   let commitInFlight = false
 
+  // A committed value that already contains a comma (e.g. "Harrison, Chris")
+  // is ambiguous under comma-split: the FIRST genuine edit commits the split
+  // list, silently turning one entry into two. The no-op guard above protects
+  // a bare focus/blur, but any real keystroke trips the rewrite. Surface a
+  // persistent hint so the user knows the next edit will split these values —
+  // the split behavior itself is correct for normal multi-value entry.
+  let hasEmbeddedComma = $derived(current.some((v) => v.includes(',')))
+  let describedBy = $derived(
+    hasEmbeddedComma ? `${id}-hint ${id}-comma-note` : `${id}-hint`
+  )
+
   function splitList(input: string): string[] {
     // Empty / whitespace-only → empty list (clears the frontmatter key).
     if (input.trim() === '') return []
@@ -147,9 +158,15 @@
         void flush()
       }
     }}
-    aria-describedby={`${id}-hint`}
+    aria-describedby={describedBy}
   />
   <p id={`${id}-hint`} class="core-hint">{hint}</p>
+  {#if hasEmbeddedComma}
+    <p id={`${id}-comma-note`} class="core-warn" role="note">
+      An existing value contains a comma. Any edit you make will split the field
+      on commas, turning it into separate entries.
+    </p>
+  {/if}
 </div>
 
 <style>
@@ -201,5 +218,10 @@
     margin: 0;
     font-size: var(--text-type-xs);
     color: var(--color-text-muted);
+  }
+  .core-warn {
+    margin: 0;
+    font-size: var(--text-type-xs);
+    color: var(--color-status-warn);
   }
 </style>

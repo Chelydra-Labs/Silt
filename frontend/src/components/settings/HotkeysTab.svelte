@@ -12,7 +12,8 @@
   import HotkeysDefaultsNotice from './HotkeysDefaultsNotice.svelte'
   import {
     SHORTCUT_ACTIONS,
-    shortcutBinding
+    shortcutBinding,
+    shortcutScope
   } from '../../settings/shortcutActions'
 
   interface Props {
@@ -83,15 +84,23 @@
       : []
   )
   let conflicts = $derived.by(() => {
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
-    const byBinding = new Map<string, string[]>()
+    // Scope-aware: two actions sharing a chord only conflict when they share a
+    // resolver scope (global/editor/hub). The defaults ship format_link
+    // (Ctrl+K, editor) and tasks_command_palette (Ctrl+K, hub) on the same
+    // chord — they fire in different focus contexts, so a scope-blind grid
+    // would wrongly flag them and block Save. shortcutScope is the single
+    // frontend source of truth for the split (mirrors the backend's
+    // isEditorOrHubScopedAction).
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper rebuilt each derivation
+    const byBucket = new Map<string, string[]>()
     for (const [key, value] of hotkeyEntries) {
       const normalized = value.trim().toLocaleLowerCase()
       if (!normalized) continue
-      byBinding.set(normalized, [...(byBinding.get(normalized) ?? []), key])
+      const bucket = `${shortcutScope(key)}::${normalized}`
+      byBucket.set(bucket, [...(byBucket.get(bucket) ?? []), key])
     }
     return new Map(
-      [...byBinding.values()]
+      [...byBucket.values()]
         .filter((keys) => keys.length > 1)
         .flatMap((keys) =>
           keys.map(

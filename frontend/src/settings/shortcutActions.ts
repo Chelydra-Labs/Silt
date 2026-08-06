@@ -8,6 +8,47 @@ export interface ShortcutActionDefinition {
   defaultBinding?: string
 }
 
+// Resolver scope of a hotkey action: which keydown handler actually dispatches
+// it. Two actions sharing a chord only AMBIGUOUSLY collide when they share a
+// scope — an editor-scoped chord and a hub-scoped chord fire in different focus
+// contexts, so they coexist. This is the single frontend source of truth for
+// the scope split; the HotkeysTab conflict grid and the defaults-uniqueness
+// regression test both consume it. Mirrors the backend's
+// isEditorOrHubScopedAction classification (backend/config/hotkeys.go), split
+// out into editor vs hub so the grid can tell them apart.
+export type ShortcutScope = 'global' | 'editor' | 'hub'
+
+// Consumed by the editor's ProseMirror keymap while the contenteditable is
+// focused, so they never reach the global resolver in that context.
+const EDITOR_SCOPED_PREFIXES = [
+  'format_',
+  'set_',
+  'align_',
+  'indent_',
+  'unindent_',
+  'table_'
+]
+// Editor-scoped by exact name (no consistent prefix).
+const EDITOR_SCOPED_EXACT = new Set([
+  'toggle_quote',
+  'toggle_details',
+  'toggle_bullet_list',
+  'toggle_ordered_list'
+])
+// Consumed by the TasksHub keydown listener, not the global resolver.
+const HUB_SCOPED_EXACT = new Set(['tasks_command_palette'])
+
+export function shortcutScope(action: string): ShortcutScope {
+  if (HUB_SCOPED_EXACT.has(action)) return 'hub'
+  // format_bold is the one format_ action that is ALSO global-resolvable
+  // (Ctrl+B is bold everywhere, including when the editor is unfocused), so it
+  // stays global and still conflicts with other global Ctrl+B bindings.
+  if (action === 'format_bold') return 'global'
+  if (EDITOR_SCOPED_EXACT.has(action)) return 'editor'
+  if (EDITOR_SCOPED_PREFIXES.some((p) => action.startsWith(p))) return 'editor'
+  return 'global'
+}
+
 export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
   {
     id: 'new_page',
@@ -78,14 +119,19 @@ export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
   {
     id: 'next_tab',
     label: 'Next tab',
-    group: 'Tabs',
-    defaultBinding: 'Ctrl+Alt+Right'
+    group: 'Tabs'
+    // No static defaultBinding: the tab-cycle chord is platform-conditional
+    // (Ctrl+Tab on Linux/macOS, Ctrl+Alt+Right on Windows — see the v1
+    // migration in backend/config/normalize.go). The backend Defaults() map is
+    // the source of truth and always populates this entry, so omitting a
+    // frontend default keeps ShortcutHelp's "Remapped" badge from false-
+    // firing on every non-Windows vault (badge compares against defaultBinding).
   },
   {
     id: 'prev_tab',
     label: 'Previous tab',
-    group: 'Tabs',
-    defaultBinding: 'Ctrl+Alt+Left'
+    group: 'Tabs'
+    // No static defaultBinding — see next_tab (platform-conditional chord).
   },
   {
     id: 'close_tab',
