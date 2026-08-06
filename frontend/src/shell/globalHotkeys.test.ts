@@ -101,6 +101,85 @@ describe('resolveGlobalHotkey', () => {
     ).toBe(null)
   })
 
+  describe('#898 — scope-aware suppression matches shortcutScope', () => {
+    // Regression: the conflict grid (shortcutScope) classifies table_* and the
+    // exact-name toggle_* actions as editor-scoped, so it permits them to share
+    // a chord with a global action (resolved by focus, not flagged as a
+    // conflict). For that to be sound, the runtime resolver MUST suppress the
+    // global handler for the same action set when the editor is focused —
+    // otherwise both the editor keymap and the global handler fire (double-
+    // fire). These cases pin the agreement: every action shortcutScope treats
+    // as editor-scoped is one isEditorOwned suppresses, and vice-versa.
+    //
+    // Each case remaps an editor-scoped action onto open_search's chord
+    // (Ctrl+Shift+F) and asserts: focused → null (editor wins, no double-fire),
+    // unfocused → open_search (global still resolves).
+
+    const cases: Array<[string, KeyboardEvent]> = [
+      // Prefix-based editor ownership (table_ was the headline missing entry).
+      ['table_insert_row_above', key('F', { ctrlKey: true, shiftKey: true })],
+      ['table_insert_col_right', key('F', { ctrlKey: true, shiftKey: true })],
+      // Exact-name editor ownership (no consistent prefix).
+      ['toggle_quote', key('F', { ctrlKey: true, shiftKey: true })],
+      ['toggle_bullet_list', key('F', { ctrlKey: true, shiftKey: true })],
+      ['toggle_ordered_list', key('F', { ctrlKey: true, shiftKey: true })],
+      ['toggle_details', key('F', { ctrlKey: true, shiftKey: true })],
+      // format_bold stays editor-owned while focused even though shortcutScope
+      // returns 'global' for it (it is also global-resolvable when unfocused).
+      ['format_bold', key('F', { ctrlKey: true, shiftKey: true })]
+    ]
+
+    it.each(cases)(
+      'suppresses the shared chord for editor-scoped %s when focused (no double-fire)',
+      (action, event) => {
+        const hotkeys = {
+          ...defaults,
+          [action]: 'Ctrl+Shift+F' // collide with open_search
+        }
+        expect(resolveGlobalHotkey(event, hotkeys, true, false)).toBe(null)
+      }
+    )
+
+    it.each(cases)(
+      'still fires the global action for %s collision when editor NOT focused',
+      (action, event) => {
+        const hotkeys = {
+          ...defaults,
+          [action]: 'Ctrl+Shift+F' // collide with open_search
+        }
+        // Editor not focused → the editor-scoped action is irrelevant and the
+        // global action resolves normally.
+        expect(resolveGlobalHotkey(event, hotkeys, false, false)).toBe(
+          'open_search'
+        )
+      }
+    )
+
+    it('the editor-scoped action itself never resolves globally (it is not a GlobalHotkeyAction)', () => {
+      // Belt-and-suspenders: an editor-scoped action sharing a chord with a
+      // global one can't itself be returned by resolveGlobalHotkey because it
+      // isn't a member of GlobalHotkeyAction, so even if suppression failed it
+      // would fall through to open_search — never double-fire as the editor
+      // action. This pins the type-level guarantee the no-double-fire property
+      // rests on.
+      const hotkeys = {
+        ...defaults,
+        table_insert_row_above: 'Ctrl+Shift+F'
+      }
+      // Unfocused, with no colliding global action on this chord: the editor
+      // action is unknown to the resolver, so nothing fires.
+      const noCollision = { ...hotkeys, open_search: 'Ctrl+Shift+G' }
+      expect(
+        resolveGlobalHotkey(
+          key('F', { ctrlKey: true, shiftKey: true }),
+          noCollision,
+          false,
+          false
+        )
+      ).toBe(null)
+    })
+  })
+
   it('still fires global actions while the editor is focused', () => {
     // toggle_view_mode is intentionally NOT editor-owned; it now lives on
     // Ctrl+Alt+R (relocated off Ctrl+Shift+V to avoid the OS paste-plain /

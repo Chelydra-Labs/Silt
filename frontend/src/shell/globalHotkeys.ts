@@ -43,23 +43,48 @@ export type GlobalHotkeyAction =
 // the global handler suppresses (returns null) so the editor can handle it and
 // the two layers don't double-fire. toggle_view_mode is intentionally NOT
 // here: no editor keymap handles it, so it stays global even while typing.
-// indent_/unindent_ are editor keymap chords (defaults Tab / Shift-Tab);
-// when remapped they must still suppress the global handler while focused.
+//
+// This MUST mirror the editor-scoped branch of shortcutScope in
+// ../settings/shortcutActions.ts (prefixes + exact names) and the backend's
+// isEditorOrHubScopedAction (hotkeys.go). The scope split is the single source
+// of truth for the HotkeysTab conflict grid: an action it classifies as
+// editor-scoped is one the grid permits to share a chord with a global action
+// (resolved by focus, not flagged as a conflict). If this classifier omits an
+// action the grid treats as editor-scoped, the grid green-lights a combination
+// that double-fires when the editor is focused — the exact #898 regression.
 //
 // format_bold is editor-owned when the editor IS focused (ProseMirror applies
 // bold natively), but when the editor is NOT focused it resolves globally so
 // the dispatch layer can focus the active editor and apply bold — Ctrl+B is
-// bold everywhere now that toggle_sidebar moved off it.
+// bold everywhere now that toggle_sidebar moved off it. shortcutScope returns
+// 'global' for it (it conflicts with other global chords) but the prefix match
+// here still flags it editor-owned so the global handler suppresses while
+// focused; the two answers serve different purposes and both are correct.
 const EDITOR_OWNED_PREFIXES = [
   'format_',
   'set_',
   'align_',
   'indent_',
-  'unindent_'
+  'unindent_',
+  'table_'
 ]
 
+// Editor-scoped by exact name (no consistent prefix). These are registered in
+// the ProseMirror config-driven keymap (keymaps.ts buildConfigDrivenShortcuts):
+// quote/details/list toggles. tasks_command_palette is NOT here — it is
+// hub-scoped (TasksHub keydown listener), not editor-scoped.
+const EDITOR_OWNED_EXACT = new Set([
+  'toggle_quote',
+  'toggle_details',
+  'toggle_bullet_list',
+  'toggle_ordered_list'
+])
+
 function isEditorOwned(action: string): boolean {
-  return EDITOR_OWNED_PREFIXES.some((p) => action.startsWith(p))
+  return (
+    EDITOR_OWNED_PREFIXES.some((p) => action.startsWith(p)) ||
+    EDITOR_OWNED_EXACT.has(action)
+  )
 }
 
 // resolveGlobalHotkey returns the single global action a keydown should fire,
