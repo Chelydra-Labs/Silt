@@ -36,6 +36,8 @@ func isEditorOrHubScopedAction(action string) bool {
 	}
 	switch action {
 	case "toggle_quote",
+		"toggle_bullet_list",
+		"toggle_ordered_list",
 		"toggle_details",
 		"tasks_command_palette":
 		return true
