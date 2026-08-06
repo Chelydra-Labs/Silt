@@ -180,7 +180,8 @@ func TestValidateValue(t *testing.T) {
 }
 
 func TestValidateTypeDef_ReservedPropertyNames(t *testing.T) {
-	for _, name := range []string{"notebook", "section", "page", "date", "tags", "type"} {
+	// Full reserved set including core-metadata keys from #867/#898.
+	for _, name := range []string{"notebook", "section", "page", "date", "tags", "type", "aliases", "created"} {
 		t.Run(name, func(t *testing.T) {
 			td := &TypeDef{Name: "X", Properties: []PropertyDef{{Name: name, Type: PropText}}}
 			err := ValidateTypeDef(td)

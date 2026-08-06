@@ -317,6 +317,13 @@ func (a *App) initializeVaultServices(vaultPath string) error {
 	a.reprojectWorker = newProjectionReprojectWorker(a)
 	a.reprojectWorker.start()
 
+	// #900: before projection backfill / type catalog use, rename legacy type
+	// schema properties that collide with core metadata (created/aliases) and
+	// rewrite matching page frontmatter keys. Content-driven + idempotent.
+	// Runs after db + worker are live so page rewrites can reindex, and before
+	// the type watcher so self-write arming is optional (nil-safe).
+	a.migrateReservedTypeProperties()
+
 	// Typed-projection backfill. Two scenarios:
 	//   - Marker already set (warm restart): changed files were projected
 	//     atomically by IndexScanResultsWithProjection above. Nothing left.
