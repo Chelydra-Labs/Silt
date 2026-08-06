@@ -378,6 +378,34 @@ func (dm *DatabaseManager) initSchema() error {
 		return fmt.Errorf("failed to create page projection tables: %w", err)
 	}
 
+	// page_core: type-independent core-metadata projection (#867). One row per
+	// indexed page (typed OR untyped) carrying the core fields every page
+	// exposes in the PropertiesPanel regardless of type: type id (empty for
+	// untyped), date, aliases (JSON string array — same encoding as
+	// page_properties.value_text multi-values), and created. `modified` is NOT
+	// stored here — it is derived from the files-table mtime cache at read time
+	// so a block-only write (which bumps mtime without touching frontmatter)
+	// stays fresh without a re-index. Re-derivable from frontmatter on reindex
+	// (cardinal rule #4); source-scoped so a linked notebook sharing a display
+	// name with a vault notebook cannot collide (mirrors page_types/blocks).
+	// SEPARATE from page_properties (type-scoped) and tags (block-scoped index)
+	// by design (SPECS.md §11.6): composing the three is a read-side concern.
+	createPageCoreTable := `
+	CREATE TABLE IF NOT EXISTS page_core (
+		source   TEXT NOT NULL,
+		notebook TEXT NOT NULL,
+		section  TEXT NOT NULL,
+		page     TEXT NOT NULL,
+		type     TEXT NOT NULL DEFAULT '',
+		date     TEXT NOT NULL DEFAULT '',
+		aliases  TEXT NOT NULL DEFAULT '[]',
+		created  TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (source, notebook, section, page)
+	);`
+	if _, err := db.Exec(createPageCoreTable); err != nil {
+		return fmt.Errorf("failed to create page_core table: %w", err)
+	}
+
 	// Schema-migrations ledger — narrow, general-purpose marker table for
 	// restart-safe one-shot migrations whose completion cannot be inferred
 	// from `CREATE TABLE IF NOT EXISTS` alone (e.g. backfills over existing
@@ -895,6 +923,15 @@ func (dm *DatabaseManager) RebuildFTSIndex() error {
 // type schema + scan frontmatter); the marker lives here so it shares the
 // established ledger with block_references / page_fold backfills.
 const PageProjectionBackfillMarker = "page_projection_backfill"
+
+// PageCoreBackfillMarker is the schema_migrations row that records a completed
+// one-shot warm-upgrade projection of type-independent core metadata (#867)
+// into page_core. It is SEPARATE from PageProjectionBackfillMarker: a vault
+// that already shipped typed notes (projection marker set) still needs page_core
+// rows for warm-skipped pages when upgrading to the version that introduces
+// page_core, so gating core backfill on the projection marker would skip it
+// entirely for exactly those vaults.
+const PageCoreBackfillMarker = "page_core_backfill"
 
 // SchemaMigrationApplied reports whether schema_migrations already has name.
 // Used by app-layer one-shot backfills that cannot run inside initSchema

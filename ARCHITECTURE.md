@@ -373,6 +373,29 @@ CREATE TABLE page_properties (
 );
 CREATE INDEX idx_page_types_type ON page_types(type_name);
 CREATE INDEX idx_page_properties_type_prop ON page_properties(type_name, property, value_sort);
+-- Type-independent core-metadata projection (re-derived from frontmatter +
+-- files-table mtime). One row per indexed page, typed OR untyped — unlike
+-- page_types/page_properties, an untyped page still gets a row so the
+-- PropertiesPanel can show core fields (#867). Carries type id (empty when
+-- untyped), date, aliases (JSON string array — same encoding as
+-- page_properties.value_text multi-values), and created. `modified` is NOT
+-- stored: it is read fresh from the files-table mtime cache so a block-only
+-- write (which bumps mtime without touching frontmatter) stays current without
+-- a re-index. Tags are NOT stored here either — the block-scoped `tags` index
+-- remains the tag query path (SPECS.md §11.6/§11.7). Separate from
+-- page_properties (type-scoped) and tags by design; composing the three is a
+-- read-side concern. Source-scoped (mirrors page_types/blocks).
+CREATE TABLE page_core (
+    source   TEXT NOT NULL,
+    notebook TEXT NOT NULL,
+    section  TEXT NOT NULL,
+    page     TEXT NOT NULL,
+    type     TEXT NOT NULL DEFAULT '',
+    date     TEXT NOT NULL DEFAULT '',
+    aliases  TEXT NOT NULL DEFAULT '[]',
+    created  TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (source, notebook, section, page)
+);
 
 
 3.1 External / Linked Notebooks
@@ -1494,7 +1517,7 @@ snapshot setter. The canonical navigation defaults are `Ctrl+N` for a new page,
 for the page switcher, and `Shift+?` for shortcut help; an explicit empty
 binding disables an action.
 
-config.SystemConfig mirrors the SPECS §10.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui / ai). The `ai.*` block (#216, #218, #632) carries two provider configs (chat + embedding: provider_type, base_url, model, tuning), `use_keyring`, and `features` (`enabled` / `rag_enabled` / `summaries_enabled` — product enablement for first-party AI modules; dependents clamp when master is off). API keys are `json:"-"` (never serialized to the frontend) and, when `use_keyring` is on + the OS keyring is reachable, are stored in the OS credential store (`backend/keyring`) instead of plaintext config — so a synced vault doesn't carry cloud keys. `SaveSystemConfig` preserves live keys server-side so a frontend round-trip doesn't blank them. The `ui.*` block holds per-vault UI preferences: `sidebar_width`, `nav_order` (explicit section/page ordering for drag-to-reorder), `open_tabs` / `active_tab` (pinned-tab persistence — preview tabs are ephemeral), `enable_preview_tabs`, `max_open_tabs`, `show_format_toolbar`, `show_tab_dirty_indicators` (default true), `dismissed_tips`, `note_zoom` (note content zoom 0.7–2.0, independent of `editor.font_size_px`; atomic `SetNoteZoom`), and `formatting.*` toggles. Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
+config.SystemConfig mirrors the SPECS §10.1 schema (notebooks / editor / parsing / hotkeys / plugins / ui / ai). The `ai.*` block (#216, #218, #632) carries two provider configs (chat + embedding: provider_type, base_url, model, tuning), `use_keyring`, and `features` (`enabled` / `rag_enabled` / `summaries_enabled` — product enablement for first-party AI modules; dependents clamp when master is off). API keys are `json:"-"` (never serialized to the frontend) and, when `use_keyring` is on + the OS keyring is reachable, are stored in the OS credential store (`backend/keyring`) instead of plaintext config — so a synced vault doesn't carry cloud keys. `SaveSystemConfig` preserves live keys server-side so a frontend round-trip doesn't blank them. The `ui.*` block holds per-vault UI preferences: `sidebar_width`, `nav_order` (explicit section/page ordering for drag-to-reorder), `open_tabs` / `active_tab` (pinned-tab persistence — preview tabs are ephemeral), `enable_preview_tabs`, `max_open_tabs`, `show_format_toolbar`, `show_tab_dirty_indicators` (default true), `dismissed_tips`, `note_zoom` (note content zoom 0.7–2.0, independent of `editor.font_size_px`; atomic `SetNoteZoom`), `dashboards` (a frontend-owned per-dashboard config blob — e.g. the typed-notes dashboard's user saved views at `ui.dashboards.typed_notes.saved_views`, carried as `map[string]any` so Go need not model each nested key), and `formatting.*` toggles. Load(vaultPath) decodes over config.Defaults() so omitted sections keep their default values rather than being zero-valued; a missing file returns defaults (non-fatal), but a file that exists and fails to parse returns an error (fail-loud — never silently fall through). Save(vaultPath, cfg) is atomic (temp file + fsync + rename), matching the durability guarantee of note writes. The App holds the parsed config under configMu and replaces it wholesale on reload (never mutated in place), so a struct read under RLock is a safe snapshot.
 
 8.2 Hot-Reload (backend/config.ConfigWatcher)
 
@@ -1519,8 +1542,9 @@ live via resolveShortcut on each keydown in SiltBlockKeymaps, so HotkeysTab
 saves apply without remounting the editor. Visual nesting uses data-depth on
 the outer NodeView root (outerNodeViewAttrs) so `.ProseMirror > div[data-depth]`
 CSS applies. The cycle_view_layout hotkey is wired in App.svelte's
-global keydown handler alongside open_search, toggle_sidebar, and
-toggle_view_mode. Inline formatting marks, block alignment,
+global keydown handler alongside open_search, toggle_sidebar, toggle_view_mode,
+and format_bold (which focuses the active editor then applies bold when it is
+not already focused). Inline formatting marks, block alignment,
 text/background color, and the source/edit view toggle are all
 additive to clean_text — the Go parser sees formatted text as opaque and
 requires zero parser changes.
@@ -1546,8 +1570,15 @@ processors have no opinion. Windows/Linux only
 (`Ctrl` everywhere). Spellcheck deliberately has no hotkey (wavy underline +
 right-click + a FormatToolbar button). Settings opens on `open_settings`
 (`Ctrl+,`, the universal settings convention); `Ctrl+,` was freed by moving
-`format_subscript` to `Ctrl+Shift,`. `Load()` decodes over
-`Defaults()`, which is the single source of truth for hotkeys. Paste is not in the hotkey map:
+`format_subscript` to `Ctrl+Shift,`. `Ctrl+B` is bold unconditionally
+(focusing the active editor first when it is not already focused) — the sidebar
+toggles on `Ctrl+\` instead, so the chord matches every major editor. Tab
+navigation sits on `Ctrl+Alt+Right/Left` and `Ctrl+Shift+W` because WebView2
+does not reliably relay `Ctrl+Tab` / `Ctrl+W`; the relocation is noted in the
+ShortcutHelp legend. `Load()` migrates the relieved/renamed v1 defaults (an
+exact-legacy match only, so user remaps survive the YAML merge ambiguity) and
+stamps a one-time `dismissed_tips` marker pointing to Settings → Hotkeys, then
+decodes over `Defaults()`, which is the single source of truth for hotkeys. Paste is not in the hotkey map:
 `Ctrl+V` is ProseMirror's native rich paste, `Ctrl+Shift+V` inserts the
 clipboard as plain text (PlainPaste extension, lib/editor/plainPaste.ts).
 

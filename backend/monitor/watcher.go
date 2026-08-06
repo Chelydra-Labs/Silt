@@ -493,9 +493,19 @@ func (dw *DirectoryWatcher) SetAtomicReindexHandler(fn AtomicReindexFunc) {
 // non-atomic route: every reindex goes through IndexFileWithProjection
 // regardless of whether an App handler is set.
 func (dw *DirectoryWatcher) defaultAtomicReindex(source, notebook, section, page string, blocks []parser.ParsedBlock, meta parser.FileMetadata) error {
+	// Default path: no schema awareness, so typeID is "" (the App-installed
+	// handler owns schema-aware projection). Core fields are derived directly
+	// from parsed frontmatter so the page_core row stays fresh for the panel
+	// even when the App handler isn't installed (#867).
+	core := db.PageCoreFields{
+		Type:    meta.Type,
+		Date:    meta.Date,
+		Aliases: meta.Aliases,
+		Created: meta.Created,
+	}
 	var err error
 	dw.coordinator.WithDBWrite(func() {
-		err = dw.dm.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, "", nil, meta.Warnings...)
+		err = dw.dm.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, "", nil, core, meta.Warnings...)
 	})
 	return err
 }
@@ -843,16 +853,29 @@ func (dw *DirectoryWatcher) reindexFile(path string) {
 		if handler == nil {
 			handler = dw.defaultAtomicReindex
 		}
+		// Capture the mtime/size BEFORE the index write so the files-table row
+		// records the mtime of the content being indexed — not whatever mtime a
+		// concurrent external edit (Obsidian/Dropbox/second Silt window) leaves
+		// on disk between the index commit and a post-commit stat. With a
+		// pre-commit snapshot, an edit in the index window makes the recorded
+		// mtime stale relative to the file, so the next *startup* scan treats it
+		// as changed and re-parses instead of skipping and persisting stale
+		// content (#29). The App handler (indexFile) captures its own pre-index
+		// snapshot too; this mark is the source of truth for the
+		// defaultAtomicReindex fallback path and a redundant idempotent write
+		// for the indexFile path.
+		var fileMtime, fileSize int64
+		hasStat := false
+		if st, serr := os.Stat(path); serr == nil {
+			fileMtime, fileSize, hasStat = st.ModTime().UnixNano(), st.Size(), true
+		}
 		if err := handler(source, meta.Notebook, meta.Section, meta.Page, blocks, meta); err != nil {
 			log.Printf("reindexFile: atomic index failed for %s: %v", path, err)
 		} else {
 			indexedOK = true
-			// Keep the files table warm during the session: a successful
-			// reindex records the file's current mtime/size so the next
-			// *startup* scan can skip it (#29).
-			if st, err := os.Stat(path); err == nil {
+			if hasStat {
 				dw.coordinator.WithDBWrite(func() {
-					if err := dw.dm.MarkFileIndexed(nil, path, st.ModTime().UnixNano(), st.Size()); err != nil {
+					if err := dw.dm.MarkFileIndexed(nil, path, fileMtime, fileSize); err != nil {
 						log.Printf("reindexFile: MarkFileIndexed failed for %s: %v", path, err)
 					}
 				})

@@ -52,7 +52,7 @@ describe('TypeDashboardTable', () => {
       {
         key: '__all__',
         label: '',
-        rows: [makeRow('Dune', 'Dune', 'Work', 'Reading')]
+        items: [makeRow('Dune', 'Dune', 'Work', 'Reading')]
       }
     ]
     render(TypeDashboardTable, {
@@ -83,7 +83,7 @@ describe('TypeDashboardTable', () => {
       {
         key: '__all__',
         label: '',
-        rows: [makeRow('Plan', '', 'Work', '')]
+        items: [makeRow('Plan', '', 'Work', '')]
       }
     ]
     render(TypeDashboardTable, {

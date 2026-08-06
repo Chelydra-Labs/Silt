@@ -66,7 +66,7 @@ func TestNormalizeDate(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		actual := normalizeDate(tc.input)
+		actual := NormalizeDate(tc.input)
 		if actual != tc.expected {
 			t.Errorf("For %q expected %q, got %q", tc.input, tc.expected, actual)
 		}
@@ -455,6 +455,77 @@ func TestParseLine_Recurrence(t *testing.T) {
 			t.Errorf("rendered output missing [recur:: every month]:\n%s", rendered)
 		}
 	})
+}
+
+// TestParseFileContent_ScalarAliasesRecoversAllFields covers the parser-level
+// regression where a hand-authored scalar `aliases: foo` fails the typed
+// []string decode. The raw-map recovery must still populate aliases (as
+// ["foo"]) AND date/tags/created — otherwise one bad aliases value would
+// silently drop the file's date (→ wrong blocks.file_date) and tags (→ vanish
+// from the tag index) on every reparse. The projection-level test
+// (TestComputePageCoreFromMeta_ScalarAliases) bypasses the parser; this one
+// exercises the actual decode + recovery chain.
+func TestParseFileContent_ScalarAliasesRecoversAllFields(t *testing.T) {
+	content := "---\n" +
+		"date: \"2026-07-15\"\n" +
+		"tags: [\"work\", \"planning\"]\n" +
+		"aliases: foo\n" + // scalar, not a list — fails typed []string decode
+		"created: \"2026-01-01T00:00:00\"\n" +
+		"---\n# Plan\n"
+	blocks, meta, _, _, err := ParseFileContent(content, "work", "", "plan", "2026-07-15", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent failed: %v", err)
+	}
+	_ = blocks
+	if meta.Date != "2026-07-15" {
+		t.Errorf("date lost on scalar-aliases decode failure: got %q", meta.Date)
+	}
+	if len(meta.Tags) != 2 || meta.Tags[0] != "work" || meta.Tags[1] != "planning" {
+		t.Errorf("tags lost on scalar-aliases decode failure: got %v", meta.Tags)
+	}
+	if len(meta.Aliases) != 1 || meta.Aliases[0] != "foo" {
+		t.Errorf("scalar aliases not recovered: got %v, want [foo]", meta.Aliases)
+	}
+	if meta.Created != "2026-01-01T00:00:00" {
+		t.Errorf("created lost on scalar-aliases decode failure: got %q", meta.Created)
+	}
+}
+
+// TestParseFileContent_UnquotedDateSurvivesScalarAliasesRecovery pins the
+// parser's behavior when frontmatter carries BOTH an unquoted date (which
+// yaml.v3 resolves to a time.Time in the raw map) AND a scalar `aliases: foo`
+// (which fails the typed []string decode, forcing the raw-map recovery path).
+//
+// yaml.v3 does NOT coerce a scalar into []string — `node.Decode(&parsedMeta)`
+// returns "cannot unmarshal !!str `foo` into []string", so the typed-success
+// block that would normally copy parsedMeta.Date is skipped. meta.Date is
+// pre-filled with defaultDate at the top of the function, so the recovery
+// must OVERWRITE it from raw frontmatter (a `if meta.Date == ""` guard would
+// never fire and the frontmatter date would be silently dropped, leaving the
+// page on the file-mtime default).
+//
+// To prove the recovery (not the defaultDate pre-fill) is what carries the
+// date, the defaultDate arg is INTENTIONALLY DIFFERENT from the frontmatter
+// date — if the recovery were dead, meta.Date would come back as 2026-01-01.
+func TestParseFileContent_UnquotedDateSurvivesScalarAliasesRecovery(t *testing.T) {
+	content := "---\n" +
+		"date: 2026-08-05\n" + // UNQUOTED → yaml resolves to time.Time
+		"aliases: foo\n" + // scalar — forces typed-decode failure → recovery path
+		"---\n# Plan\n"
+	// defaultDate DIFFERS from the frontmatter date so the test fails if the
+	// recovery branch is ever regressed to a `if meta.Date == ""` guard (which
+	// would leave meta.Date at the defaultDate pre-fill).
+	blocks, meta, _, _, err := ParseFileContent(content, "work", "", "plan", "2026-01-01", 4)
+	if err != nil {
+		t.Fatalf("ParseFileContent failed: %v", err)
+	}
+	_ = blocks
+	if meta.Date != "2026-08-05" {
+		t.Errorf("frontmatter date lost on typed-decode failure: got %q (defaultDate pre-fill), want 2026-08-05 (recovered from raw frontmatter)", meta.Date)
+	}
+	if len(meta.Aliases) != 1 || meta.Aliases[0] != "foo" {
+		t.Errorf("scalar aliases not recovered alongside unquoted date: got %v, want [foo]", meta.Aliases)
+	}
 }
 
 // TestParseLine_BlockedBy covers the [blocked_by:: ((uuid))] token (#301):

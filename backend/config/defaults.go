@@ -1,6 +1,8 @@
 package config
 
 import (
+	"runtime"
+
 	"silt/backend/ai"
 	"silt/backend/spellcheck"
 )
@@ -9,6 +11,18 @@ import (
 // scaffolded by vault.ScaffoldVault, so a missing/empty field is never a
 // nil-deref and "first run" behaves like a fresh scaffold.
 func Defaults() SystemConfig {
+	// Tab-cycle chords are platform-conditional (#863): on Windows, WebView2
+	// unreliably relays Ctrl+Tab to the webview, so the cycle moves to
+	// Ctrl+Alt+Arrow. On Linux (WebKitGTK) Ctrl+Tab arrives fine and
+	// Ctrl+Alt+←/→ are swallowed by KDE/GNOME window managers — so the native
+	// Ctrl+Tab / Ctrl+Shift+Tab forms are kept there (and on macOS). close_tab
+	// (Ctrl+Shift+W) is reliable on every platform and stays unconditional.
+	nextTabChord := "Ctrl+Alt+Right"
+	prevTabChord := "Ctrl+Alt+Left"
+	if runtime.GOOS != "windows" {
+		nextTabChord = "Ctrl+Tab"
+		prevTabChord = "Ctrl+Shift+Tab"
+	}
 	return SystemConfig{
 		Notebooks: NotebooksConfig{
 			DefaultActive: "Work",
@@ -37,23 +51,27 @@ func Defaults() SystemConfig {
 			DefaultTaskPriority: 3,
 		},
 		Hotkeys: map[string]string{
-			// Sprint 17 hotkey realignment (convention-anchored; see SPECS.md
-			// "Keyboard Shortcuts"). Windows/Linux only.
+			// Default chords are anchored to widely-established editor/OS
+			// conventions so muscle memory transfers and the native menu and
+			// config-driven webview layers don't both fire on the same key.
+			// Tab-chord actions (close/next/prev tab) avoid Ctrl+W and
+			// Ctrl+Tab because WebView2 unreliably relays those to the
+			// webview; sidebar toggle moves to Ctrl+\ so Ctrl+B is bold
+			// everywhere. Windows/Linux only.
 			// open_search: cross-vault global search → Ctrl+Shift+F (the
 			// cross-file "find in files" convention; single-document editors
 			// have no cross-file search). Frees Ctrl+P for future Print.
 			"open_search": "Ctrl+Shift+F",
-			// open_command_palette → Alt+Q (the search-the-app
-			// convention). Frees Ctrl+/ for other use.
-			"open_command_palette": "Alt+Q",
-			"toggle_sidebar":       "Ctrl+B",
-			"focus_sidebar":        "Ctrl+Shift+B",
+			// toggle_sidebar → Ctrl+\ so Ctrl+B is unambiguously bold. A
+			// common outliner convention for panel toggle.
+			"toggle_sidebar": "Ctrl+\\",
+			"focus_sidebar":  "Ctrl+Shift+B",
 			// cycle_view_layout → Ctrl+Alt+V. Alt+Tab is the OS window-switcher
 			// on Windows/Linux (captured before the app sees it) and never fired.
 			"cycle_view_layout": "Ctrl+Alt+V",
 			// open_settings → Ctrl+, (the universal settings convention.
-			// #511 opens settings as a workspace tab. Note this
-			// freed Ctrl+, from format_subscript, which moved to Ctrl+Shift+, below.
+			// Opens settings as a workspace tab. This freed Ctrl+, from
+			// format_subscript, which moved to Ctrl+Shift+, below.
 			"open_settings":        "Ctrl+,",
 			"new_page":             "Ctrl+N",
 			"new_section":          "Ctrl+Alt+N",
@@ -63,29 +81,33 @@ func Defaults() SystemConfig {
 			"indent_block":         "Tab",
 			"unindent_block":       "Shift+Tab",
 			"open_template_picker": "Ctrl+Shift+T",
-			// Global standalone-task quick-add (#368). Opens an app-level
-			// overlay (not a plugin action) that creates a task in
+			// Global standalone-task quick-add. Opens an app-level overlay
+			// (not a plugin action) that creates a task in
 			// <vault>/.silt/tasks.md. "N" for New; Shift+T was taken by the
 			// template picker.
 			"new_task": "Ctrl+Shift+N",
-			// Hub-scoped Tasks command palette (#436). Same chord as
-			// format_link (Ctrl+K); conflict is resolved by focus scope —
-			// the hub handler only fires when focus is not an input /
-			// textarea / contenteditable / ProseMirror, so the editor keeps
-			// format_link while typing.
+			// Hub-scoped Tasks command palette. Same chord as format_link
+			// (Ctrl+K); conflict is resolved by focus scope — the hub
+			// handler only fires when focus is not an input / textarea /
+			// contenteditable / ProseMirror, so the editor keeps format_link
+			// while typing.
 			"tasks_command_palette": "Ctrl+K",
-			// Tab strip hotkeys (#142). `tab` and `w` already parse cleanly
-			// via the frontend parseHotkey layer (KEY_ALIASES in
-			// frontend/src/settings/hotkeys.ts). Each may be remapped or
-			// disabled (set to "") from Settings → General.
-			"next_tab":  "Ctrl+Tab",
-			"prev_tab":  "Ctrl+Shift+Tab",
-			"close_tab": "Ctrl+W",
-			// Inline formatting hotkeys (#168). Standard editor bindings
-			// so muscle memory transfers. Each is overridable per-vault via
-			// the deep-merge. The editor's ProseMirror keymaps consume these
+			// Tab strip hotkeys. next_tab/prev_tab are platform-conditional
+			// (computed above from runtime.GOOS): Windows uses Ctrl+Alt+Arrow
+			// because WebView2 drops Ctrl+Tab; Linux/macOS keep the native
+			// Ctrl+Tab / Ctrl+Shift+Tab forms because Ctrl+Alt+←/→ are
+			// WM-captured there. close_tab (Ctrl+Shift+W) is reliable on
+			// every platform. Each may be remapped or disabled (set to "")
+			// from Settings → General.
+			"next_tab":  nextTabChord,
+			"prev_tab":  prevTabChord,
+			"close_tab": "Ctrl+Shift+W",
+			// Inline formatting hotkeys. Standard editor bindings so muscle
+			// memory transfers. Each is overridable per-vault via the
+			// deep-merge. The editor's ProseMirror keymaps consume these
 			// inside the contenteditable; the global handler skips them when
-			// the editor is focused (Ctrl+B resolution).
+			// the editor is focused. Ctrl+B is bold unconditionally now that
+			// toggle_sidebar moved off it.
 			"format_bold":        "Ctrl+B",
 			"format_italic":      "Ctrl+I",
 			"format_underline":   "Ctrl+U",
@@ -95,8 +117,8 @@ func Defaults() SystemConfig {
 			"format_highlight":   "Ctrl+Shift+H",
 			"format_subscript":   "Ctrl+Shift,",
 			"format_superscript": "Ctrl+.",
-			// Heading level hotkeys (#169 / #645). H4–H6 use Alt+5..7 because
-			// Ctrl+Alt+4 is reserved for set_task.
+			// Heading level hotkeys. H4–H6 use Alt+5..7 because Ctrl+Alt+4
+			// is reserved for set_task.
 			"set_h1":   "Ctrl+Alt+1",
 			"set_h2":   "Ctrl+Alt+2",
 			"set_h3":   "Ctrl+Alt+3",
@@ -105,25 +127,28 @@ func Defaults() SystemConfig {
 			"set_h6":   "Ctrl+Alt+7",
 			"set_note": "Ctrl+Alt+0",
 			"set_task": "Ctrl+Alt+4",
-			// Text alignment hotkeys (#173). Standard alignment bindings.
+			// Text alignment hotkeys. Standard alignment bindings.
 			"align_left":    "Ctrl+Shift+L",
 			"align_center":  "Ctrl+Shift+E",
 			"align_right":   "Ctrl+Shift+R",
 			"align_justify": "Ctrl+Shift+J",
-			// Blockquote toggle (#188). Standard blockquote binding.
+			// Blockquote toggle. Standard blockquote binding.
 			"toggle_quote": "Ctrl+Shift+9",
-			// Foldable details toggle (#183). Ctrl+Shift+. (Ctrl+. is taken by
-			// the Superscript mark).
+			// Foldable details toggle. Ctrl+Shift+. (Ctrl+. is taken by the
+			// Superscript mark).
 			"toggle_details": "Ctrl+Shift+.",
-			// Table row/column insert hotkeys (#172). Standard row/column-insert
+			// Table row/column insert hotkeys. Standard row/column-insert
 			// bindings; deletion + merge are toolbar-only in v1.
 			"table_insert_row_above": "Ctrl+Shift+Up",
 			"table_insert_row_below": "Ctrl+Shift+Down",
 			"table_insert_col_left":  "Ctrl+Shift+Left",
 			"table_insert_col_right": "Ctrl+Shift+Right",
-			// View mode toggle (#171). Standard source/view toggle binding.
-			"toggle_view_mode": "Ctrl+Shift+V",
-			// Formatting toolbar toggle and focus mode toggle (#168 Phase 3).
+			// View mode toggle. Moved off Ctrl+Shift+V (the OS
+			// paste-without-formatting convention, and the TasksHub
+			// display-mode cycle) to Ctrl+Alt+R so the three no longer
+			// collide.
+			"toggle_view_mode": "Ctrl+Alt+R",
+			// Formatting toolbar toggle and focus mode toggle.
 			// toggle_format_toolbar → Ctrl+F1 (the toggle-ribbon convention);
 			// frees Ctrl+Shift+F for global search (open_search above).
 			"toggle_format_toolbar": "Ctrl+F1",

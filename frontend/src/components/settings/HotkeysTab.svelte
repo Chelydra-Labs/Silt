@@ -3,20 +3,37 @@
   import {
     settings,
     saveConfig,
-    reloadFromBackend
+    reloadFromBackend,
+    appendDismissedTip
   } from '../../settings/store.svelte'
   import type { SystemConfig } from '../../settings/store.svelte'
   import { parseHotkey } from '../../settings/hotkeys'
   import HotkeyCaptureInput from './HotkeyCaptureInput.svelte'
+  import HotkeysDefaultsNotice from './HotkeysDefaultsNotice.svelte'
   import {
     SHORTCUT_ACTIONS,
-    shortcutBinding
+    shortcutBinding,
+    shortcutScope
   } from '../../settings/shortcutActions'
 
   interface Props {
     ringAnchor?: string | null
   }
   let { ringAnchor = null }: Props = $props()
+
+  // v1 default-keymap migration notice (#868). The Go normalizer stamps
+  // V1_NOTICE into ui.dismissed_tips when it rewrites a legacy chord; the banner
+  // stays visible until the user acknowledges (appends V1_ACK via the existing
+  // add-only appendDismissedTip helper, so no removal IPC is needed).
+  const V1_NOTICE = 'hotkeys_defaults_v1_notice'
+  const V1_ACK = 'hotkeys_defaults_v1_ack'
+  let v1NoticeDismissed = $derived.by(() => {
+    const tips = settings.config?.ui?.dismissed_tips ?? []
+    return !tips.includes(V1_NOTICE) || tips.includes(V1_ACK)
+  })
+  function dismissV1Notice() {
+    void appendDismissedTip(V1_ACK)
+  }
 
   let draft = $state<SystemConfig | null>(null)
   let lastSaved = $state<SystemConfig | null>(null)
@@ -67,15 +84,23 @@
       : []
   )
   let conflicts = $derived.by(() => {
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
-    const byBinding = new Map<string, string[]>()
+    // Scope-aware: two actions sharing a chord only conflict when they share a
+    // resolver scope (global/editor/hub). The defaults ship format_link
+    // (Ctrl+K, editor) and tasks_command_palette (Ctrl+K, hub) on the same
+    // chord — they fire in different focus contexts, so a scope-blind grid
+    // would wrongly flag them and block Save. shortcutScope is the single
+    // frontend source of truth for the split (mirrors the backend's
+    // isEditorOrHubScopedAction).
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper rebuilt each derivation
+    const byBucket = new Map<string, string[]>()
     for (const [key, value] of hotkeyEntries) {
       const normalized = value.trim().toLocaleLowerCase()
       if (!normalized) continue
-      byBinding.set(normalized, [...(byBinding.get(normalized) ?? []), key])
+      const bucket = `${shortcutScope(key)}::${normalized}`
+      byBucket.set(bucket, [...(byBucket.get(bucket) ?? []), key])
     }
     return new Map(
-      [...byBinding.values()]
+      [...byBucket.values()]
         .filter((keys) => keys.length > 1)
         .flatMap((keys) =>
           keys.map(
@@ -136,6 +161,17 @@
           </button>
         </div>
       {/if}
+
+      <!-- v1 default-keymap migration notice (#868). Surfaces the relocated
+           chords to a user reviewing their shortcuts after upgrade. The
+           tab-chord text is derived from the resolved hotkey map so the notice
+           matches the ShortcutHelp table and the HotkeysTab grid on every
+           platform (#863: Linux keeps Ctrl+Tab, Windows uses Ctrl+Alt+Arrow). -->
+      <HotkeysDefaultsNotice
+        dismissed={v1NoticeDismissed}
+        onDismiss={dismissV1Notice}
+        hotkeys={draft?.hotkeys ?? {}}
+      />
 
       <!-- Hotkeys Group Card -->
       <div

@@ -520,6 +520,13 @@ func (a *App) indexLinkedTree(ln config.LinkedNotebook) (int, error) {
 			// projection on relink.
 			Type:        meta.Type,
 			Frontmatter: meta.Frontmatter,
+			// Date feeds page_core.date via computeBatchProjections. Without
+			// it, every linked-tree page projects an empty core.date — the
+			// vault scanner sets this (scanner.go), but the linked batch
+			// ingest previously omitted it. Created/Aliases are intentionally
+			// not on ScanResult; they are recovered from Frontmatter in the
+			// projection step (same as the vault path).
+			Date: meta.Date,
 		}
 		if statErr == nil {
 			res.MTime = st.ModTime()

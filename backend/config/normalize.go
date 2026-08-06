@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -69,14 +70,14 @@ func ValidateHotkeys(hotkeys map[string]string) error {
 		}
 	}
 	// NOTE: no cross-action duplicate-chord check. Several defaults share a
-	// chord by design and are disambiguated by focus context — e.g. Ctrl+B is
-	// toggle_sidebar (global, fires when the editor is not focused) AND
-	// format_bold (consumed by the editor's ProseMirror keymap when focused).
+	// chord by design and are disambiguated by focus/scope context — e.g.
+	// tasks_command_palette (Ctrl+K, hub-scoped) overlaps format_link
+	// (Ctrl+K, editor-scoped), resolved by the hub's editable-target guard.
 	// A blanket duplicate detector would reject every config built from these
 	// defaults. The one known *unintended* collision — format_subscript ↔
-	// open_settings on Ctrl+, after the #511 move — is resolved deterministically
-	// in normalize() instead, since the YAML merge can't tell a persisted old
-	// default from an explicit choice.
+	// open_settings on Ctrl+, — is resolved deterministically in normalize()
+	// instead, since the YAML merge can't tell a persisted old default from
+	// an explicit choice.
 	return nil
 }
 
@@ -103,15 +104,87 @@ func normalize(cfg SystemConfig) SystemConfig {
 	if cfg.Hotkeys == nil {
 		cfg.Hotkeys = map[string]string{}
 	}
-	// format_subscript ↔ open_settings upgrade migration (#511). The Ctrl+,
-	// chord moved from format_subscript to the new open_settings default, but
-	// the YAML merge decodes-over-Defaults and can't tell a persisted old
-	// default from an explicit choice — so a config saved before this change
-	// ends up with format_subscript AND open_settings both at "Ctrl+,". Move
-	// subscript to its new home (Ctrl+Shift,) only when the exact collision is
-	// present, so a user who customized either binding is never touched.
-	if cfg.Hotkeys["format_subscript"] == "Ctrl+," && cfg.Hotkeys["open_settings"] == "Ctrl+," {
-		cfg.Hotkeys["format_subscript"] = "Ctrl+Shift,"
+	// One-shot gate for the v1 hotkey-defaults migration. Once a vault has been
+	// normalized, never re-run it: normalize() runs on BOTH Load and Save, so
+	// without this gate a user who deliberately remaps a chord back to its
+	// legacy value after the upgrade (e.g. re-binding toggle_sidebar→Ctrl+B)
+	// would have it silently re-migrated to the new default on the next Settings
+	// save — violating the "user remaps survive" contract. The marker is set
+	// unconditionally on the first normalize pass (idempotent), so a fresh vault
+	// or an already-migrated vault never re-enters the block. The same gate
+	// covers the format_subscript ↔ open_settings collision-migration below —
+	// without it, re-binding format_subscript back to Ctrl+, would be silently
+	// re-migrated on every normalize, the same remap-clobber class the v1 gate
+	// fixes for the other chords.
+	if _, v1Done := cfg.Plugins.PluginSettings[hotkeysDefaultsV1MigratedKey].(bool); !v1Done {
+		// Hotkey-defaults v1 realignment migrations. Each of these chords moved
+		// to a new default; the YAML merge can't tell a persisted legacy default
+		// from an explicit user choice, so migrate ONLY when the value still
+		// equals the exact legacy default. A customized binding is never touched.
+		// Track whether any migration fired so a one-time notice can be stamped.
+		hotkeysV1Migrated := false
+		// format_subscript ↔ open_settings upgrade migration. The Ctrl+,
+		// chord moved from format_subscript to the new open_settings default,
+		// but the YAML merge decodes-over-Defaults and can't tell a persisted
+		// old default from an explicit choice — so a config saved before this
+		// change ends up with format_subscript AND open_settings both at
+		// "Ctrl+,". Move subscript to its new home (Ctrl+Shift,) only when the
+		// exact collision is present, so a user who customized either binding
+		// is never touched. Inside the v1 gate so a later remap back to Ctrl+,
+		// is preserved (one-shot, like the other v1 chords).
+		if cfg.Hotkeys["format_subscript"] == "Ctrl+," && cfg.Hotkeys["open_settings"] == "Ctrl+," {
+			cfg.Hotkeys["format_subscript"] = "Ctrl+Shift,"
+			hotkeysV1Migrated = true
+		}
+		if cfg.Hotkeys["toggle_sidebar"] == "Ctrl+B" {
+			// Freed Ctrl+B for unambiguous bold.
+			cfg.Hotkeys["toggle_sidebar"] = "Ctrl+\\"
+			hotkeysV1Migrated = true
+		}
+		if cfg.Hotkeys["toggle_view_mode"] == "Ctrl+Shift+V" {
+			// Relieved the Ctrl+Shift+V triple-fire (OS paste-plain, TasksHub
+			// display-mode cycle, and this action).
+			cfg.Hotkeys["toggle_view_mode"] = "Ctrl+Alt+R"
+			hotkeysV1Migrated = true
+		}
+		if cfg.Hotkeys["close_tab"] == "Ctrl+W" {
+			// WebView2 unreliably relays Ctrl+W; moved to Ctrl+Shift+W.
+			cfg.Hotkeys["close_tab"] = "Ctrl+Shift+W"
+			hotkeysV1Migrated = true
+		}
+		// next_tab/prev_tab migration is Windows-only: on Linux (WebKitGTK)
+		// Ctrl+Tab is delivered to the webview and Ctrl+Alt+←/→ are captured
+		// by the window manager (KDE/GNOME), so rewriting a Linux vault's
+		// working Ctrl+Tab to a WM-swallowed chord is a regression. Windows
+		// (WebView2) is the platform that actually needs the remap. Gate on
+		// runtime.GOOS so non-Windows vaults keep their Ctrl+Tab.
+		if runtime.GOOS == "windows" {
+			if cfg.Hotkeys["next_tab"] == "Ctrl+Tab" {
+				// WebView2 unreliably relays Ctrl+Tab; moved to Ctrl+Alt+Right.
+				cfg.Hotkeys["next_tab"] = "Ctrl+Alt+Right"
+				hotkeysV1Migrated = true
+			}
+			if cfg.Hotkeys["prev_tab"] == "Ctrl+Shift+Tab" {
+				// WebView2 unreliably relays Ctrl+Shift+Tab; moved to Ctrl+Alt+Left.
+				cfg.Hotkeys["prev_tab"] = "Ctrl+Alt+Left"
+				hotkeysV1Migrated = true
+			}
+		}
+		// One-time notice stamp: when a v1 migration rewrote legacy chords, mark
+		// the vault so the frontend can surface a dismissible Settings → Hotkeys
+		// pointer. The stamp is added at most once — the one-shot gate above
+		// guarantees this block never re-runs, so hotkeysV1Migrated can be true
+		// only on the single migration pass.
+		if hotkeysV1Migrated && !containsString(cfg.UI.DismissedTips, hotkeysDefaultsV1Notice) {
+			cfg.UI.DismissedTips = append(cfg.UI.DismissedTips, hotkeysDefaultsV1Notice)
+		}
+		cfg.Plugins.PluginSettings[hotkeysDefaultsV1MigratedKey] = true
+		// Drop the stale open_command_palette default (Alt+Q) — it has no
+		// resolver consumer and was removed from the canonical defaults, but
+		// YAML-merge semantics never delete persisted keys, so a 0.4.x vault
+		// keeps a non-functional entry in HotkeysTab/ShortcutHelp until it is
+		// explicitly removed here (one-shot, inside the v1 gate).
+		delete(cfg.Hotkeys, "open_command_palette")
 	}
 	if cfg.UI.NavOrder.Sections == nil {
 		cfg.UI.NavOrder.Sections = map[string][]string{}
@@ -474,6 +547,31 @@ func minInt(a, b int) int {
 // aiFeaturesMigratedKey is a one-shot marker under plugin_settings so the
 // plugins.disabled → ai.features migration (#632) runs exactly once per vault.
 const aiFeaturesMigratedKey = "_ai_features_migrated"
+
+// hotkeysDefaultsV1Notice is the dismissed_tips stamp written when the v1
+// hotkey-defaults realignment (Ctrl+B → bold, Ctrl+Shift+V → Ctrl+Alt+R,
+// tab chords off Ctrl+W/Ctrl+Tab) rewrites a vault's legacy chords. The
+// frontend may surface a one-time Settings → Hotkeys pointer while the stamp
+// is present.
+const hotkeysDefaultsV1Notice = "hotkeys_defaults_v1_notice"
+
+// hotkeysDefaultsV1MigratedKey is the one-shot marker (under plugin_settings,
+// mirroring aiFeaturesMigratedKey) that records a vault has been normalized
+// against the v1 hotkey defaults. Its presence gates the migration block so the
+// chords are realigned at most once per vault — a post-upgrade remap back to a
+// legacy chord is then preserved across saves rather than silently re-migrated.
+const hotkeysDefaultsV1MigratedKey = "_hotkeys_defaults_v1_migrated"
+
+// containsString reports whether s is present in xs. Used for the
+// dismissed_tips stamp so the migration is idempotent across re-loads.
+func containsString(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
 
 // seededOptInDisabledKey is the legacy marker written by seedOptInDisabledPlugins
 // (removed in #632). Presence proves the vault once tracked the full opt-in AI

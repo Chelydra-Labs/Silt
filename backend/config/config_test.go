@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // writeFile is a tiny helper for tests.
@@ -579,6 +581,215 @@ func TestNormalizeHotkeyCollisionMigration(t *testing.T) {
 	})
 }
 
+// TestNormalizeHotkeyDefaultsV1Migration confirms the v1 realignment: each
+// renamed chord migrates from its exact legacy default to the new default, a
+// customized binding is preserved untouched, and a clean current default is
+// left alone. Mirrors the format_subscript migration precedent above.
+//
+// next_tab/prev_tab are Windows-only migrations: on Linux (WebKitGTK) Ctrl+Tab
+// works and Ctrl+Alt+←/→ are WM-captured, so the legacy default is preserved
+// rather than rewritten. Those two cases run only when runtime.GOOS == "windows"
+// (see the platform gate in normalize.go).
+func TestNormalizeHotkeyDefaultsV1Migration(t *testing.T) {
+	type c struct {
+		action string
+		legacy string
+		want   string
+	}
+	cases := []c{
+		{"toggle_sidebar", "Ctrl+B", "Ctrl+\\"},
+		{"toggle_view_mode", "Ctrl+Shift+V", "Ctrl+Alt+R"},
+		{"close_tab", "Ctrl+W", "Ctrl+Shift+W"},
+		{"next_tab", "Ctrl+Tab", "Ctrl+Alt+Right"},
+		{"prev_tab", "Ctrl+Shift+Tab", "Ctrl+Alt+Left"},
+	}
+	for _, tc := range cases {
+		// next_tab/prev_tab migration is Windows-only — the legacy Ctrl+Tab
+		// is preserved verbatim on Linux/macOS where Ctrl+Alt+Arrow is captured
+		// by the window manager. Skip those two on non-Windows so the test
+		// suite stays green across platforms.
+		if (tc.action == "next_tab" || tc.action == "prev_tab") && runtime.GOOS != "windows" {
+			continue
+		}
+		t.Run(tc.action+" legacy value migrates", func(t *testing.T) {
+			cfg := Defaults()
+			cfg.Hotkeys[tc.action] = tc.legacy
+			out := normalize(cfg)
+			if out.Hotkeys[tc.action] != tc.want {
+				t.Errorf("%s should migrate %q → %q, got %q", tc.action, tc.legacy, tc.want, out.Hotkeys[tc.action])
+			}
+		})
+		t.Run(tc.action+" customized value is preserved", func(t *testing.T) {
+			cfg := Defaults()
+			cfg.Hotkeys[tc.action] = "Ctrl+F24" // a value no default uses
+			out := normalize(cfg)
+			if out.Hotkeys[tc.action] != "Ctrl+F24" {
+				t.Errorf("%s customization must not be touched, got %q", tc.action, out.Hotkeys[tc.action])
+			}
+		})
+	}
+	t.Run("clean current defaults are untouched", func(t *testing.T) {
+		out := normalize(Defaults())
+		for _, tc := range cases {
+			if tc.action == "next_tab" || tc.action == "prev_tab" {
+				continue // platform-conditional default; checked in TestDefaults_NextPrevTabPlatformConditional
+			}
+			if out.Hotkeys[tc.action] != tc.want {
+				t.Errorf("clean default %s changed: got %q", tc.action, out.Hotkeys[tc.action])
+			}
+		}
+	})
+	t.Run("legacy values stamp the one-time notice", func(t *testing.T) {
+		cfg := Defaults()
+		cfg.Hotkeys["close_tab"] = "Ctrl+W" // legacy
+		out := normalize(cfg)
+		if !containsString(out.UI.DismissedTips, "hotkeys_defaults_v1_notice") {
+			t.Errorf("expected hotkeys_defaults_v1_notice stamp after migration")
+		}
+	})
+	t.Run("clean defaults do not stamp the notice", func(t *testing.T) {
+		out := normalize(Defaults())
+		if containsString(out.UI.DismissedTips, "hotkeys_defaults_v1_notice") {
+			t.Errorf("clean defaults should not stamp the notice")
+		}
+	})
+}
+
+// TestNormalize_NextPrevTabMigration_PlatformGate documents and pins the
+// platform gate on the v1 next_tab/prev_tab migration. The migration from
+// Ctrl+Tab → Ctrl+Alt+Right (and the prev_tab sibling) only fires on Windows,
+// where WebView2 drops Ctrl+Tab; on Linux/macOS the working Ctrl+Tab default
+// must survive normalize() unchanged because Ctrl+Alt+←/→ are WM-captured.
+//
+// We cannot flip runtime.GOOS from a test, so this case asserts the contract
+// for the platform the test binary is running on. On Windows the legacy
+// Ctrl+Tab IS migrated (the WebView2 case the remap was added for); on
+// non-Windows the legacy default is preserved verbatim — pinning the
+// platform-branch invariant.
+func TestNormalize_NextPrevTabMigration_PlatformGate(t *testing.T) {
+	cfg := Defaults()
+	cfg.Hotkeys["next_tab"] = "Ctrl+Tab"
+	cfg.Hotkeys["prev_tab"] = "Ctrl+Shift+Tab"
+	out := normalize(cfg)
+	if runtime.GOOS == "windows" {
+		if out.Hotkeys["next_tab"] != "Ctrl+Alt+Right" {
+			t.Errorf("windows: next_tab should migrate to Ctrl+Alt+Right, got %q", out.Hotkeys["next_tab"])
+		}
+		if out.Hotkeys["prev_tab"] != "Ctrl+Alt+Left" {
+			t.Errorf("windows: prev_tab should migrate to Ctrl+Alt+Left, got %q", out.Hotkeys["prev_tab"])
+		}
+	} else {
+		if out.Hotkeys["next_tab"] != "Ctrl+Tab" {
+			t.Errorf("non-windows: next_tab Ctrl+Tab must be preserved, got %q", out.Hotkeys["next_tab"])
+		}
+		if out.Hotkeys["prev_tab"] != "Ctrl+Shift+Tab" {
+			t.Errorf("non-windows: prev_tab Ctrl+Shift+Tab must be preserved, got %q", out.Hotkeys["prev_tab"])
+		}
+	}
+}
+
+// TestDefaults_NextPrevTabPlatformConditional pins the defaults.go
+// platform-conditional for next_tab/prev_tab (#863): on Windows the default is
+// Ctrl+Alt+Right/Left (WebView2 drops Ctrl+Tab); on Linux/macOS the native
+// Ctrl+Tab / Ctrl+Shift+Tab is kept because Ctrl+Alt+←/→ are WM-captured.
+// close_tab (Ctrl+Shift+W) is platform-independent.
+func TestDefaults_NextPrevTabPlatformConditional(t *testing.T) {
+	d := Defaults()
+	if runtime.GOOS == "windows" {
+		if d.Hotkeys["next_tab"] != "Ctrl+Alt+Right" {
+			t.Errorf("windows default next_tab: want Ctrl+Alt+Right, got %q", d.Hotkeys["next_tab"])
+		}
+		if d.Hotkeys["prev_tab"] != "Ctrl+Alt+Left" {
+			t.Errorf("windows default prev_tab: want Ctrl+Alt+Left, got %q", d.Hotkeys["prev_tab"])
+		}
+	} else {
+		if d.Hotkeys["next_tab"] != "Ctrl+Tab" {
+			t.Errorf("non-windows default next_tab: want Ctrl+Tab, got %q", d.Hotkeys["next_tab"])
+		}
+		if d.Hotkeys["prev_tab"] != "Ctrl+Shift+Tab" {
+			t.Errorf("non-windows default prev_tab: want Ctrl+Shift+Tab, got %q", d.Hotkeys["prev_tab"])
+		}
+	}
+	// close_tab is reliable on every platform; never conditional.
+	if d.Hotkeys["close_tab"] != "Ctrl+Shift+W" {
+		t.Errorf("close_tab default: want Ctrl+Shift+W (all platforms), got %q", d.Hotkeys["close_tab"])
+	}
+}
+
+// TestDefaults_NoGlobalHotkeyChordConflict pins the global-scope uniqueness
+// invariant over the REAL Defaults() map — binding directly to the source of
+// truth so a future default change that introduces a real conflict fails this
+// test. Mirrors frontend/src/shell/defaults.noconflict.test.ts but reads the
+// canonical map (no hand-maintained mirror).
+//
+// Editor-scoped actions (consumed by the editor's ProseMirror keymap while the
+// editor is focused, never reaching the global resolver) are EXCLUDED:
+//   - prefixes: format_, set_, align_, indent_, unindent_
+//   - exact names: toggle_quote, toggle_details, table_insert_*
+//
+// The one exception is format_bold: Ctrl+B is bold EVERYWHERE (the editor
+// unfocused case is global-resolvable too), so it stays in the checked set.
+//
+// tasks_command_palette is hub-scoped (TasksHub keydown listener, not the
+// global resolver) and is excluded; it shares Ctrl+K with editor-scoped
+// format_link, disambiguated by the hub's editable-target guard.
+func TestDefaults_NoGlobalHotkeyChordConflict(t *testing.T) {
+	d := Defaults()
+	seen := make(map[string]string) // normalized chord → first action
+	count := 0
+	for action, chord := range d.Hotkeys {
+		if isEditorOrHubScopedAction(action) {
+			continue
+		}
+		count++
+		normalized := strings.ToLower(chord)
+		if prior, exists := seen[normalized]; exists {
+			t.Errorf("global chord conflict: %q and %q both default to %q",
+				prior, action, chord)
+			continue
+		}
+		seen[normalized] = action
+	}
+	// Sanity: the checked set is non-empty — guards against a future edit that
+	// accidentally re-classifies every action as editor-scoped, which would
+	// make the loop trivially pass.
+	if count < 10 {
+		t.Errorf("expected at least 10 global-resolvable actions, got %d", count)
+	}
+}
+
+// TestNormalizeHotkeyDefaultsV1_OneShotNoRefire verifies the one-shot gate:
+// after the first normalize migrates legacy chords + stamps the marker, a user
+// who deliberately re-binds a chord to its legacy value must NOT have it
+// re-migrated on a subsequent normalize (which runs on both Load and Save).
+// Without the gate, the exact-legacy-match migration would silently clobber
+// the explicit post-upgrade remap — violating the "user remaps survive"
+// contract (#868 review finding).
+func TestNormalizeHotkeyDefaultsV1_OneShotNoRefire(t *testing.T) {
+	cfg := Defaults()
+	cfg.Hotkeys["toggle_sidebar"] = "Ctrl+B" // legacy default
+	out := normalize(cfg)
+	if out.Hotkeys["toggle_sidebar"] != "Ctrl+\\" {
+		t.Fatalf("first normalize: want Ctrl+\\, got %q", out.Hotkeys["toggle_sidebar"])
+	}
+	if done, _ := out.Plugins.PluginSettings[hotkeysDefaultsV1MigratedKey].(bool); !done {
+		t.Fatal("one-shot migration marker not set after first normalize")
+	}
+	// Simulate the user re-binding toggle_sidebar back to the legacy Ctrl+B
+	// after the upgrade. The next normalize (e.g. on Settings save) must NOT
+	// re-migrate it — the marker gates the whole block.
+	out.Hotkeys["toggle_sidebar"] = "Ctrl+B"
+	out = normalize(out)
+	if out.Hotkeys["toggle_sidebar"] != "Ctrl+B" {
+		t.Fatalf("second normalize re-migrated an explicit remap: want Ctrl+B preserved, got %q", out.Hotkeys["toggle_sidebar"])
+	}
+	// The gate must hold across further normalizes.
+	out = normalize(out)
+	if out.Hotkeys["toggle_sidebar"] != "Ctrl+B" {
+		t.Fatalf("third normalize re-migrated: want Ctrl+B preserved, got %q", out.Hotkeys["toggle_sidebar"])
+	}
+}
+
 // --- #133: co-located per-notebook config ---
 
 // TestLinkedConfigPath confirms the co-located path lives at
@@ -790,13 +1001,21 @@ func TestDefaults_TabsConfig(t *testing.T) {
 			t.Errorf("defaults hotkeys missing %q", key)
 		}
 	}
-	if d.Hotkeys["next_tab"] != "Ctrl+Tab" {
-		t.Errorf("next_tab default: got %q", d.Hotkeys["next_tab"])
+	// Tab-strip chords are platform-conditional (see defaults.go): Windows
+	// uses Ctrl+Alt+Arrow (WebView2 can't relay Ctrl+Tab); Linux/macOS keep
+	// Ctrl+Tab / Ctrl+Shift+Tab (reliable there, Ctrl+Alt+arrows are
+	// WM-captured). close_tab (Ctrl+Shift+W) is reliable on all platforms.
+	wantNextTab, wantPrevTab := "Ctrl+Alt+Right", "Ctrl+Alt+Left"
+	if runtime.GOOS != "windows" {
+		wantNextTab, wantPrevTab = "Ctrl+Tab", "Ctrl+Shift+Tab"
 	}
-	if d.Hotkeys["prev_tab"] != "Ctrl+Shift+Tab" {
-		t.Errorf("prev_tab default: got %q", d.Hotkeys["prev_tab"])
+	if d.Hotkeys["next_tab"] != wantNextTab {
+		t.Errorf("next_tab default: got %q, want %q", d.Hotkeys["next_tab"], wantNextTab)
 	}
-	if d.Hotkeys["close_tab"] != "Ctrl+W" {
+	if d.Hotkeys["prev_tab"] != wantPrevTab {
+		t.Errorf("prev_tab default: got %q, want %q", d.Hotkeys["prev_tab"], wantPrevTab)
+	}
+	if d.Hotkeys["close_tab"] != "Ctrl+Shift+W" {
 		t.Errorf("close_tab default: got %q", d.Hotkeys["close_tab"])
 	}
 }
@@ -1795,5 +2014,214 @@ func TestNormalize_NoteZoom(t *testing.T) {
 	cfg = normalize(SystemConfig{UI: UIConfig{NoteZoom: &mid}})
 	if cfg.UI.NoteZoom == nil || *cfg.UI.NoteZoom != 1.2 {
 		t.Fatalf("snap 1.24 → 1.2, got %v", cfg.UI.NoteZoom)
+	}
+}
+
+// TestDashboards_RoundTrip guards the frontend-owned dashboard config blob
+// (e.g. the typed-notes dashboard's saved views at
+// ui.dashboards.typed_notes.saved_views). Go carries it as an opaque
+// map[string]any; if the UIConfig field were removed, the nested YAML keys
+// would be silently dropped on round-trip and the dashboard's saved-view
+// persistence would become a no-op.
+func TestDashboards_RoundTrip(t *testing.T) {
+	src := SystemConfig{UI: UIConfig{Dashboards: map[string]any{
+		"typed_notes": map[string]any{
+			"saved_views": []any{
+				map[string]any{"id": "abc", "name": "Active Projects"},
+			},
+		},
+	}}}
+	out, err := yaml.Marshal(src)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back SystemConfig
+	if err := yaml.Unmarshal(out, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	tn, _ := back.UI.Dashboards["typed_notes"].(map[string]any)
+	if tn == nil {
+		t.Fatalf("typed_notes blob dropped on round-trip; Dashboards=%v", back.UI.Dashboards)
+	}
+	views, _ := tn["saved_views"].([]any)
+	if len(views) != 1 {
+		t.Fatalf("saved_views did not round-trip; got %v", views)
+	}
+	first, _ := views[0].(map[string]any)
+	if first["name"] != "Active Projects" {
+		t.Fatalf("saved_view name lost; got %v", first)
+	}
+}
+
+// --- sparse hotkey persistence (#863/#867/#868 PR #898) ---
+//
+// Save strips default-matching hotkey entries before marshal so config.yaml
+// carries only user overrides + explicit disables. Defaults() is the single
+// source of truth at Load time (decode-over-Defaults sparse merge), so this
+// is invisible to the user — but it stops platform-conditional chords
+// (next_tab/prev_tab differ by runtime.GOOS) from being frozen into the
+// synced config file, which would break a vault shared across OSes.
+
+// TestSave_StripsDefaultHotkeys pins the sparse-persistence contract: Save
+// writes only overrides + explicit disables to config.yaml, never the
+// materialized defaults. Reads the raw YAML back so the assertion covers the
+// on-disk shape, not just the post-Load effective map.
+func TestSave_StripsDefaultHotkeys(t *testing.T) {
+	tmp := t.TempDir()
+	defaults := Defaults()
+	cfg := defaults
+	// Mix: default value (stripped), user override (kept), explicit disable
+	// (kept), and an action unknown to Defaults (a future-or-custom action —
+	// kept, since strip only drops default-matching entries).
+	cfg.Hotkeys["format_bold"] = defaults.Hotkeys["format_bold"] // matches default → stripped
+	cfg.Hotkeys["open_search"] = "Alt+P"                         // override → kept
+	cfg.Hotkeys["close_tab"] = ""                                // explicit disable → kept
+	cfg.Hotkeys["custom_user_action"] = "Ctrl+F24"               // not in defaults → kept
+
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(ConfigPath(tmp))
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	var persisted struct {
+		Hotkeys map[string]string `yaml:"hotkeys"`
+	}
+	if err := yaml.Unmarshal(raw, &persisted); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := persisted.Hotkeys["format_bold"]; ok {
+		t.Errorf("default-matching format_bold must be stripped, got %q", persisted.Hotkeys["format_bold"])
+	}
+	if persisted.Hotkeys["open_search"] != "Alt+P" {
+		t.Errorf("override open_search must be kept, got %q", persisted.Hotkeys["open_search"])
+	}
+	if v, ok := persisted.Hotkeys["close_tab"]; !ok {
+		t.Errorf("explicit disable close_tab must be kept as a key, got absent (raw=%s)", raw)
+	} else if v != "" {
+		t.Errorf("explicit disable close_tab must be empty string, got %q", v)
+	}
+	if persisted.Hotkeys["custom_user_action"] != "Ctrl+F24" {
+		t.Errorf("custom action must be kept, got %q", persisted.Hotkeys["custom_user_action"])
+	}
+}
+
+// TestSave_Load_RoundTrip_PreservesEffectiveConfig confirms the sparse-save
+// strategy is invisible to the user: the effective hotkey map seen by the
+// frontend (Defaults overlaid with user overrides from config.yaml) matches
+// before and after a Save/Load round-trip. This is the load-side counterpart
+// to TestSave_StripsDefaultHotkeys: stripped defaults re-materialize from
+// Defaults() on Load, so the user never sees a missing binding.
+func TestSave_Load_RoundTrip_PreservesEffectiveConfig(t *testing.T) {
+	tmp := t.TempDir()
+	defaults := Defaults()
+	effective := map[string]string{}
+	for k, v := range defaults.Hotkeys {
+		effective[k] = v
+	}
+	// Apply a few overrides + an explicit disable.
+	effective["open_search"] = "Alt+P"        // override
+	effective["close_tab"] = ""               // disable
+	effective["format_bold"] = "Ctrl+Shift+B" // override
+
+	cfg := defaults
+	cfg.Hotkeys = effective
+
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Every effective entry (defaults + overrides) must round-trip.
+	for k, want := range effective {
+		if got := loaded.Hotkeys[k]; got != want {
+			t.Errorf("effective hotkey %q: got %q, want %q", k, got, want)
+		}
+	}
+	// Sanity: every Defaults() key is present after Load (sparse storage must
+	// not lose defaults — they re-materialize from Defaults() on Load).
+	for k, dv := range defaults.Hotkeys {
+		got, ok := loaded.Hotkeys[k]
+		if !ok {
+			t.Errorf("default hotkey %q missing after Load (sparse storage lost it)", k)
+			continue
+		}
+		// Keys we overrode above are checked in the prior loop; the rest must
+		// match the default exactly.
+		if effective[k] == dv && got != dv {
+			t.Errorf("default hotkey %q drifted: got %q, want %q", k, got, dv)
+		}
+	}
+}
+
+// TestSave_StripsPlatformConditionalTabChords verifies the cross-OS sync
+// resolution: next_tab/prev_tab are platform-conditional defaults (computed
+// from runtime.GOOS in Defaults()) and are stripped on Save so a vault synced
+// across Windows/Linux carries no frozen chord. The expected default differs
+// by platform; the strip result (absent from config.yaml) is the same on
+// every OS, so this test is green without cross-compilation. close_tab is a
+// platform-independent default and is also stripped (it matches the default
+// on every OS).
+func TestSave_StripsPlatformConditionalTabChords(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := Defaults() // next_tab/prev_tab/close_tab all sit at platform default
+
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(ConfigPath(tmp))
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	body := string(raw)
+	// Substring check is sufficient — no other field name contains these
+	// substrings, and `next_tab:` etc. as map keys would be the only matches.
+	for _, key := range []string{"next_tab", "prev_tab", "close_tab"} {
+		if strings.Contains(body, key+":") {
+			t.Errorf("%q must be absent from config.yaml (platform default stripped), got:\n%s", key, body)
+		}
+	}
+	// Effective config still resolves: a Load gives back the platform default
+	// for next_tab/prev_tab, proving the cross-OS contract.
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	wantNext, wantPrev := "Ctrl+Alt+Right", "Ctrl+Alt+Left"
+	if runtime.GOOS != "windows" {
+		wantNext, wantPrev = "Ctrl+Tab", "Ctrl+Shift+Tab"
+	}
+	if loaded.Hotkeys["next_tab"] != wantNext {
+		t.Errorf("next_tab effective after Load: got %q, want %q", loaded.Hotkeys["next_tab"], wantNext)
+	}
+	if loaded.Hotkeys["prev_tab"] != wantPrev {
+		t.Errorf("prev_tab effective after Load: got %q, want %q", loaded.Hotkeys["prev_tab"], wantPrev)
+	}
+	if loaded.Hotkeys["close_tab"] != "Ctrl+Shift+W" {
+		t.Errorf("close_tab effective after Load: got %q, want Ctrl+Shift+W", loaded.Hotkeys["close_tab"])
+	}
+}
+
+// TestSave_DoesNotMutateCallerHotkeys guards against an aliasing regression:
+// stripDefaultHotkeys must build a fresh map rather than deleting from the
+// caller's map in place, since SystemConfig's map fields alias the input
+// through Save's value-receiver. A caller that holds onto cfg.Hotkeys after
+// Save must see the same map it passed in (this is what TestSave_RoundTrip
+// depends on for its DeepEqual assertion).
+func TestSave_DoesNotMutateCallerHotkeys(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := Defaults()
+	before := map[string]string{}
+	for k, v := range cfg.Hotkeys {
+		before[k] = v
+	}
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.Hotkeys, before) {
+		t.Errorf("Save mutated caller's hotkeys map:\n got  %+v\n want %+v", cfg.Hotkeys, before)
 	}
 }

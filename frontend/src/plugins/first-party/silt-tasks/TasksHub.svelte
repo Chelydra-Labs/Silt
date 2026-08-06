@@ -285,10 +285,12 @@
     return !!t.closest?.('.ProseMirror')
   }
 
-  // Ctrl+Shift+V cycles List → Board → Calendar → List. Guard against the
-  // browser's paste-without-formatting shortcut when the user is typing in
-  // an input/textarea/contenteditable so the hub doesn't steal the keystroke
-  // mid-composition.
+  // Ctrl+Shift+V cycles List → Board → Calendar → List. This chord is owned
+  // SOLELY by the TasksHub display-mode cycle: the global toggle_view_mode was
+  // relocated to Ctrl+Alt+R so the OS paste-without-formatting convention and
+  // this hub cycle no longer collide with it on the same key. The
+  // editable-target guard below keeps in-editor paste-plain working (the hub
+  // never steals the keystroke mid-composition).
   function onGlobalKeydown(e: KeyboardEvent) {
     if (!(e.ctrlKey && e.shiftKey) || e.key !== 'V') return
     if (isEditableTarget(e.target)) return

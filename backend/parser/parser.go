@@ -156,7 +156,12 @@ func extractInlineID(line string) string {
 	return ""
 }
 
-func normalizeDate(d string) string {
+// NormalizeDate canonicalizes a page date to YYYY-MM-DD. Accepts a literal
+// YYYY-MM-DD or an M/D/YY (or MM/DD/YYYY) form; anything else is returned
+// unchanged so the caller can validate/reject it. Exported so the core-
+// metadata write path can normalize a user-entered date before writing it,
+// matching the parser's read-side normalization (one source of truth).
+func NormalizeDate(d string) string {
 	d = strings.TrimSpace(d)
 	if d == "" {
 		return ""
@@ -187,6 +192,42 @@ func normalizeDate(d string) string {
 	}
 
 	return d
+}
+
+// recoverStringList coerces a raw frontmatter value into a []string for the
+// page-level list fields (tags, aliases), tolerating the shapes a hand-authored
+// YAML value can take: a YAML list (decoded by yaml.v3 as []any, or []string),
+// or a bare scalar string (e.g. `aliases: foo`). Used in the raw-map recovery
+// path when the typed FileMetadata decode failed on one bad field, so a
+// surviving list field isn't silently dropped alongside the failing one.
+// Returns nil for an empty/unknown value so the caller's len()==0 guard skips
+// the assignment and preserves the typed-decode value when that succeeded.
+func recoverStringList(v any) []string {
+	switch t := v.(type) {
+	case []string:
+		out := make([]string, 0, len(t))
+		for _, s := range t {
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, e := range t {
+			if s, ok := e.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if t == "" {
+			return nil
+		}
+		return []string{t}
+	default:
+		return nil
+	}
 }
 
 func parseLeadingIndent(line string, spacesPerTab int) int {
@@ -234,9 +275,9 @@ func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priorit
 		val := strings.TrimSpace(m[2])
 		switch key {
 		case "due":
-			dueDate = normalizeDate(val)
+			dueDate = NormalizeDate(val)
 		case "start":
-			startDate = normalizeDate(val)
+			startDate = NormalizeDate(val)
 		case "owner", "o":
 			owner = val
 		case "priority", "p":
@@ -881,7 +922,7 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 						meta.Page = parsedMeta.Page
 					}
 					if parsedMeta.Date != "" {
-						meta.Date = normalizeDate(parsedMeta.Date)
+						meta.Date = NormalizeDate(parsedMeta.Date)
 					}
 					if len(parsedMeta.Tags) > 0 {
 						meta.Tags = parsedMeta.Tags
@@ -892,6 +933,16 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 					if parsedMeta.Type != "" {
 						meta.Type = parsedMeta.Type
 					}
+					// Core page-level metadata (#867): aliases (string array) and
+					// created (timestamp) are type-independent fields every page can
+					// expose. The parser preserves them as it does date/tags/type so
+					// an edit round-trips byte-for-byte through the frontmatter.
+					if len(parsedMeta.Aliases) > 0 {
+						meta.Aliases = parsedMeta.Aliases
+					}
+					if parsedMeta.Created != "" {
+						meta.Created = parsedMeta.Created
+					}
 				}
 				// Always decode the raw map — even when the typed struct failed —
 				// so schema-declared properties and type: remain projectable.
@@ -900,10 +951,57 @@ func ParseFileContent(content string, defaultNotebook, defaultSection, defaultPa
 					meta.Warnings = append(meta.Warnings, "yaml frontmatter decode error: "+err.Error())
 				} else {
 					meta.Frontmatter = rawFM
-					// If typed decode skipped type:, recover it from the raw map.
+					// Typed decode can fail on a single bad field (e.g. a scalar
+					// `aliases: foo` failing the []string decode) while the rest of
+					// the map is fine. Recover every known page-level field from the
+					// raw map so a bad aliases/type value doesn't silently drop the
+					// file's date, tags, created, or type (which would corrupt
+					// blocks.file_date, the tag index, and page_core on reparse).
 					if meta.Type == "" {
 						if t, ok := rawFM["type"].(string); ok {
 							meta.Type = t
+						}
+					}
+					// Recover the frontmatter date unconditionally. yaml.v3 FAILS
+					// the typed FileMetadata decode on a scalar `aliases: foo`
+					// (cannot unmarshal !!str into []string), so when frontmatter
+					// carries such a field the typed-success block above never
+					// runs and `meta.Date` keeps the defaultDate pre-fill from
+					// the top of the function. A `if meta.Date == ""` guard here
+					// would never fire (defaultDate is always non-empty in the
+					// production callers) and the frontmatter date would be
+					// silently dropped. On typed success this just re-normalizes
+					// the same value, so running it unconditionally is safe.
+					// An UNQUOTED `date: 2026-08-05` resolves to a time.Time in
+					// the raw map; a quoted one is a string — handle both.
+					switch d := rawFM["date"].(type) {
+					case string:
+						if d != "" {
+							meta.Date = NormalizeDate(d)
+						}
+					case time.Time:
+						meta.Date = NormalizeDate(d.Format("2006-01-02"))
+					}
+					if meta.Created == "" {
+						// created is a full timestamp, so format as RFC3339 when
+						// yaml handed us a time.Time (unquoted scalar form).
+						switch c := rawFM["created"].(type) {
+						case string:
+							if c != "" {
+								meta.Created = c
+							}
+						case time.Time:
+							meta.Created = c.Format(time.RFC3339)
+						}
+					}
+					if len(meta.Tags) == 0 {
+						if t := recoverStringList(rawFM["tags"]); len(t) > 0 {
+							meta.Tags = t
+						}
+					}
+					if len(meta.Aliases) == 0 {
+						if a := recoverStringList(rawFM["aliases"]); len(a) > 0 {
+							meta.Aliases = a
 						}
 					}
 				}

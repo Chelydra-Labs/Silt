@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"silt/backend/parser"
 	"silt/backend/types"
@@ -35,6 +36,58 @@ type PagePropertyValue struct {
 	IsSet    bool     `json:"isSet"`
 	Required bool     `json:"required"`
 	Options  []string `json:"options,omitempty"`
+}
+
+// PageCoreMetadata is the type-independent core-fields payload every page
+// exposes in the PropertiesPanel (#867), regardless of whether it has a type.
+// Composed at read time from several sources:
+//   - Type/Date/Aliases/Created — parsed from the page frontmatter (the
+//     source of truth, consistent with GetPageType/GetPageProperties).
+//   - Tags — the frontmatter `tags:` array (editable via the same path).
+//   - Modified — READ-ONLY, read from the files-table mtime cache (the
+//     freshest value without re-stating the file).
+//
+// TagsAreReadOnly is false today (frontmatter-tags is the editable path); it
+// is exposed so the panel can render body-only hashtag notes when a future
+// toggle changes the policy. Aliases/Created are non-empty only when present
+// in frontmatter; the panel treats empty as "unset" and writes the field on
+// first edit.
+type PageCoreMetadata struct {
+	Notebook string   `json:"notebook"`
+	Section  string   `json:"section"`
+	Page     string   `json:"page"`
+	Type     string   `json:"type"`
+	Date     string   `json:"date"`
+	Tags     []string `json:"tags"`
+	Aliases  []string `json:"aliases"`
+	Created  string   `json:"created"`
+	// Modified is an ISO 8601 (RFC3339) timestamp derived from the file's
+	// last-known mtime. Empty when the file has no files-table row yet.
+	Modified string `json:"modified"`
+	// TagsAreReadOnly is reserved for the frontmatter-vs-body hashtag policy
+	// toggle (today frontmatter tags ARE editable so this is false). The
+	// panel reads it to decide whether the tag control is disabled.
+	TagsAreReadOnly bool `json:"tagsAreReadOnly"`
+}
+
+// CoreFieldUpdate is the field-granular write payload for SetPageCoreMetadata.
+// Each pointer is optional; a nil field means "leave unchanged". This avoids a
+// wholesale overwrite (which would require the caller to read-modify-write
+// the whole struct and race a concurrent sibling edit). Mirrors the surgical
+// single-field edit model of SetPageProperty.
+type CoreFieldUpdate struct {
+	// Date, when non-nil, sets the frontmatter `date:` field (YYYY-MM-DD or
+	// a normalizeable M/D/YY form). An empty string clears it.
+	Date *string `json:"date,omitempty"`
+	// Aliases, when non-nil, replaces the frontmatter `aliases:` array. An
+	// empty/nil slice clears it.
+	Aliases *[]string `json:"aliases,omitempty"`
+	// Created, when non-nil, sets the frontmatter `created:` field. An
+	// empty string clears it.
+	Created *string `json:"created,omitempty"`
+	// Tags, when non-nil, replaces the frontmatter `tags:` array. An empty/
+	// nil slice clears it.
+	Tags *[]string `json:"tags,omitempty"`
 }
 
 // readPageFileForTypes reads and parses a page file, returning the raw content,
@@ -698,5 +751,174 @@ func (a *App) ClearPageProperty(notebook, section, page, property string) error 
 	}
 	return a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, nil, func(currentContent string) (string, error) {
 		return parser.ClearFrontmatterField(currentContent, pdef.Name)
+	})
+}
+
+// GetPageCoreMetadata returns the type-independent core metadata the
+// PropertiesPanel renders above the type-defined section (#867). Every page
+// exposes these fields whether or not it has a type. Composed at read time
+// from frontmatter (type/date/tags/aliases/created) + the files-table mtime
+// cache (modified). Tags are read from the frontmatter `tags:` array (the
+// editable source of truth), NOT from the block-scoped tags index — the
+// frontmatter is consistent with what SetPageCoreMetadata just wrote.
+//
+// Lock posture mirrors GetPageType/GetPageProperties (vaultMu.RLock). The
+// files-table mtime lookup is a separate DB read under the same RLock so the
+// snapshot is coherent (a concurrent writer cannot interleave).
+func (a *App) GetPageCoreMetadata(notebook, section, page string) (PageCoreMetadata, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	a.wg.Add(1)
+	defer a.wg.Done()
+	return a.getPageCoreMetadataLocked(notebook, section, page)
+}
+
+// getPageCoreMetadataLocked is the lock-held core of GetPageCoreMetadata. The
+// caller MUST hold a.vaultMu (at least RLock) and have incremented a.wg.
+func (a *App) getPageCoreMetadataLocked(notebook, section, page string) (PageCoreMetadata, error) {
+	if a.vaultPath == "" || a.db == nil {
+		return PageCoreMetadata{}, fmt.Errorf("vault not loaded")
+	}
+	_, meta, source, filePath, err := a.readPageFileForTypes(notebook, section, page)
+	if err != nil {
+		return PageCoreMetadata{}, err
+	}
+	out := PageCoreMetadata{
+		Notebook: meta.Notebook,
+		Section:  meta.Section,
+		Page:     meta.Page,
+		Type:     meta.Type,
+		Date:     meta.Date,
+		Tags:     meta.Tags,
+		Aliases:  meta.Aliases,
+		Created:  meta.Created,
+	}
+	// `date`: the parser pre-fills meta.Date with the file mtime (defaultDate)
+	// so the file index always has a date. The panel reads this value directly:
+	// if `date:` is absent from frontmatter the user cleared it, so surfacing
+	// meta.Date would re-show a synthetic date the user just removed. Mirrors
+	// the same guard in computePageCoreFromMeta (the projection write path).
+	if v, ok := lookupFrontmatter(meta.Frontmatter, "date"); !ok || v == nil {
+		out.Date = ""
+	}
+	if out.Tags == nil {
+		out.Tags = []string{}
+	}
+	if out.Aliases == nil {
+		out.Aliases = []string{}
+	}
+	// Modified: the freshest mtime the index has seen for the file. A
+	// block-only write (task status / deps) bumps file mtime without
+	// touching frontmatter; the files-table row is updated by
+	// MarkFileIndexed on every successful write, so this stays current
+	// without re-parsing. Empty when the file has no row yet (never
+	// indexed, or a fresh vault that has not finished its scan).
+	if mt, merr := a.db.FileMtime(filePath); merr == nil && mt > 0 {
+		out.Modified = time.Unix(0, mt).UTC().Format(time.RFC3339)
+	}
+	_ = source // source reserved for future scope-filter; filePath is path-keyed
+	return out, nil
+}
+
+// SetPageCoreMetadata applies a field-granular update to the editable core
+// fields (date / aliases / created / tags). Each non-nil field in update is
+// written; nil fields are left untouched. The write follows the established
+// read→validate→atomic-frontmatter-write→reparse→reindex chain
+// (writePageFrontmatterEdit), so a multi-field edit lands in ONE atomic file
+// write and the page_core projection is re-derived in the same transaction.
+//
+// `type` is owned by SetPageType (it has a keep-and-flag advisory contract the
+// panel depends on); this setter intentionally does not touch it. An empty
+// update (every field nil) is a no-op success.
+func (a *App) SetPageCoreMetadata(notebook, section, page string, update CoreFieldUpdate) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	a.wg.Add(1)
+	defer a.wg.Done()
+	if a.vaultPath == "" || a.db == nil {
+		return fmt.Errorf("vault not loaded")
+	}
+	if update.Date == nil && update.Aliases == nil && update.Created == nil && update.Tags == nil {
+		return nil // no-op
+	}
+	_, meta, source, filePath, err := a.readPageFileForTypes(notebook, section, page)
+	if err != nil {
+		return err
+	}
+	return a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, nil, func(currentContent string) (string, error) {
+		content := currentContent
+		var e error
+		if update.Date != nil {
+			// SetFrontmatterField renders the value via yamlInline; pass the
+			// normalized date. An empty string clears via ClearFrontmatterField
+			// so the field round-trips to "absent" rather than `date: ""`.
+			d := strings.TrimSpace(*update.Date)
+			if d == "" {
+				content, e = parser.ClearFrontmatterField(content, "date")
+			} else {
+				// Normalize M/D/YY → YYYY-MM-DD (matching the parser's read-side
+				// normalization) and reject anything that isn't a real calendar
+				// date, so a garbage value can't land in blocks.file_date /
+				// page_core.date and corrupt date-scoped queries.
+				d = parser.NormalizeDate(d)
+				if _, perr := time.Parse("2006-01-02", d); perr != nil {
+					return "", fmt.Errorf("invalid date %q: use YYYY-MM-DD or M/D/YYYY", *update.Date)
+				}
+				content, e = parser.SetFrontmatterField(content, "date", d)
+			}
+			if e != nil {
+				return "", e
+			}
+		}
+		if update.Aliases != nil {
+			if len(*update.Aliases) == 0 {
+				content, e = parser.ClearFrontmatterField(content, "aliases")
+			} else {
+				content, e = parser.SetFrontmatterField(content, "aliases", *update.Aliases)
+			}
+			if e != nil {
+				return "", e
+			}
+		}
+		if update.Created != nil {
+			c := strings.TrimSpace(*update.Created)
+			if c == "" {
+				content, e = parser.ClearFrontmatterField(content, "created")
+			} else {
+				// Reject anything that isn't one of the formats the codebase
+				// itself produces for created: a bare calendar date, the
+				// offset-less local-timestamp form the block renderer writes
+				// (parser's 2006-01-02T15:04:05), minute-precision form the
+				// datetime-local input emits (2006-01-02T15:04), or full
+				// RFC3339 (with Z/offset, what yaml.v3 time.Time scalars format
+				// to). Mirrors the date guard above; a garbage MCP/plugin value
+				// must not land in page_core.created.
+				createdOK := false
+				for _, lay := range []string{"2006-01-02", "2006-01-02T15:04", "2006-01-02T15:04:05", time.RFC3339} {
+					if _, perr := time.Parse(lay, c); perr == nil {
+						createdOK = true
+						break
+					}
+				}
+				if !createdOK {
+					return "", fmt.Errorf("invalid created %q: use YYYY-MM-DD or an ISO 8601 timestamp (e.g. 2026-08-05, 2026-08-05T14:30, or 2026-08-05T14:30:00Z)", *update.Created)
+				}
+				content, e = parser.SetFrontmatterField(content, "created", c)
+			}
+			if e != nil {
+				return "", e
+			}
+		}
+		if update.Tags != nil {
+			if len(*update.Tags) == 0 {
+				content, e = parser.ClearFrontmatterField(content, "tags")
+			} else {
+				content, e = parser.SetFrontmatterField(content, "tags", *update.Tags)
+			}
+			if e != nil {
+				return "", e
+			}
+		}
+		return content, nil
 	})
 }

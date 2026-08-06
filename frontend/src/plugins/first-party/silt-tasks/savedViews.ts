@@ -6,13 +6,19 @@
 // give the user a non-empty "Saved Views" list on first paint (a brand-new
 // vault has no user views yet) and demonstrate each display mode.
 //
-// The two fingerprint helpers power the "is the live state the same as
-// this saved view?" check used by the header bookmark and (Phase 7) the
-// sidebar list highlight. Two views with identical dimensions share a
-// fingerprint, so the comparison reduces to a string ===.
+// The "is the live state the same as this saved view?" check is the generic
+// partial-snapshot matcher from lib/viewEngine/savedViews.ts; this module
+// supplies the task-specific dim set + the two dims that need structural
+// comparison (`columns` via columnsEqual incl. wipLimit; `filters` via the
+// nested partial bag check). SYSTEM_VIEWS itself stays task-specific.
 
 import { columnsEqual } from './columns'
-import type { SavedView, TaskHubState } from './state.svelte'
+import type { BoardColumn } from './columns'
+import type { SavedView, TaskFilters, TaskHubState } from './state.svelte'
+import {
+  viewMatchesState as veViewMatchesState,
+  arrayEqual
+} from '../../../lib/viewEngine/savedViews'
 
 /**
  * The three built-in saved views. Ids are stable strings (not UUIDs) so
@@ -54,74 +60,64 @@ export const SYSTEM_VIEWS: SavedView[] = [
   }
 ]
 
+/** The dims a SavedView can snapshot — the matcher compares only these. */
+const MATCH_DIMS = [
+  'displayMode',
+  'groupBy',
+  'sort',
+  'scope',
+  'calendarSubMode',
+  'columns',
+  'filters'
+] as const
+
+/**
+ * Partial comparison of the `filters` bag: each sub-field the VIEW defines
+ * is compared; undefined-by-view sub-fields are skipped. `stale` is the
+ * exception — it's compared unconditionally (mirrors the original contract:
+ * a view with no stale opinion still shouldn't match a state surfacing
+ * stale-only tasks).
+ */
+function filtersEqual(viewFilters: unknown, stateFilters: unknown): boolean {
+  if (!viewFilters || typeof viewFilters !== 'object') return false
+  if (!stateFilters || typeof stateFilters !== 'object') return false
+  const v = viewFilters as TaskFilters
+  const s = stateFilters as TaskFilters
+  if (v.owners !== undefined && !arrayEqual(v.owners, s.owners)) return false
+  if (v.priorities !== undefined && !arrayEqual(v.priorities, s.priorities))
+    return false
+  if (v.dueDate !== undefined && v.dueDate !== s.dueDate) return false
+  if (v.tags !== undefined && !arrayEqual(v.tags, s.tags)) return false
+  if (!!v.stale !== !!s.stale) return false
+  return true
+}
+
 /**
  * Lenient "does this view match the current state?" check (#427, #432).
  *
  * System views are partial templates — they define only the dims they care
  * about (e.g. "Today's Board" specifies board/status/today-filters but says
  * nothing about calendarSubMode or columns). The strict fingerprint
- * comparison (fingerprintOf === fingerprintOfState) treats undefined view
- * dims as empty strings, so it never matches a state that has those dims
- * populated — system views never highlighted as active.
+ * comparison treats undefined view dims as empty strings, so it never
+ * matches a state that has those dims populated — system views never
+ * highlighted as active.
  *
- * This function compares ONLY the dims the view defines. A user view that
- * snapshots every dim reduces to the strict check (all 10 defined → all 10
- * compared). A system view that omits calendarSubMode/columns matches any
- * state where its defined dims equal the state's, regardless of what the
- * state has for the omitted dims. This matches user mental model: a system
- * view is a starting template, not a complete snapshot.
- *
- * Used by the Sidebar active-highlight and the TasksHub bookmark icon. The
- * `savedViewsDirty` flag (set by every state setter when a view is active)
- * remains the source of truth for "user has diverged from the saved
- * snapshot" — it triggers the "Update / Save as new" menu prompt even for
- * system views when the user changes an omitted dim, which is the right
- * behavior (the user has personalized the template and may want to save
- * their version).
+ * Delegates to the generic partial-snapshot matcher with task-specific
+ * equality for `columns` (structural, wipLimit-aware) and `filters` (nested
+ * partial bag). A user view that snapshots every dim reduces to the strict
+ * check. Used by the Sidebar active-highlight and the TasksHub bookmark icon.
  */
 export function viewMatchesState(view: SavedView, s: TaskHubState): boolean {
-  if (view.displayMode !== undefined && view.displayMode !== s.displayMode)
-    return false
-  if (view.groupBy !== undefined && view.groupBy !== s.groupBy) return false
-  if (view.sort !== undefined && view.sort !== s.sort) return false
-  if (view.scope !== undefined && view.scope !== s.scope) return false
-  if (
-    view.calendarSubMode !== undefined &&
-    view.calendarSubMode !== s.calendarSubMode
+  return veViewMatchesState(
+    view as unknown as Record<string, unknown>,
+    s as unknown as Record<string, unknown>,
+    MATCH_DIMS,
+    (dim) => {
+      if (dim === 'columns') {
+        return (a, b) => columnsEqual(a as BoardColumn[], b as BoardColumn[])
+      }
+      if (dim === 'filters') return filtersEqual
+      return undefined
+    }
   )
-    return false
-  if (view.columns !== undefined && !columnsEqual(view.columns, s.columns))
-    return false
-  if (view.filters !== undefined) {
-    if (
-      view.filters.owners !== undefined &&
-      !arrayEqual(view.filters.owners, s.filters.owners)
-    )
-      return false
-    if (
-      view.filters.priorities !== undefined &&
-      !arrayEqual(view.filters.priorities, s.filters.priorities)
-    )
-      return false
-    if (
-      view.filters.dueDate !== undefined &&
-      view.filters.dueDate !== s.filters.dueDate
-    )
-      return false
-    if (
-      view.filters.tags !== undefined &&
-      !arrayEqual(view.filters.tags, s.filters.tags)
-    )
-      return false
-    if (!!view.filters.stale !== !!s.filters.stale) return false
-  }
-  return true
-}
-
-function arrayEqual<T>(a: T[], b: T[]): boolean {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false
-  }
-  return true
 }

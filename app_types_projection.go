@@ -59,16 +59,122 @@ func computeBatchProjections(a *App, results []parser.ScanResult) []db.ScanProje
 		if res.Notebook == "" || res.Err != nil {
 			continue
 		}
-		typeID, props := a.computePageProjection(parser.FileMetadata{
+		meta := parser.FileMetadata{
 			Notebook:    res.Notebook,
 			Section:     res.Section,
 			Page:        res.Page,
 			Type:        res.Type,
+			Date:        res.Date,
 			Frontmatter: res.Frontmatter,
-		})
-		out[i] = db.ScanProjection{TypeID: typeID, Props: props}
+		}
+		typeID, props := a.computePageProjection(meta)
+		out[i] = db.ScanProjection{
+			TypeID: typeID,
+			Props:  props,
+			Core:   computePageCoreFromMeta(meta),
+		}
 	}
 	return out
+}
+
+// computePageCore derives a page's type-independent core-metadata projection
+// payload (#867) from parsed frontmatter. Pure: no DB access. The App layer
+// is the source of truth for these values; the indexer inserts the result
+// atomically with blocks + page_types/page_properties. type/date/aliases/
+// created come from the parser-populated FileMetadata fields (round-tripped
+// verbatim with the rest of the frontmatter).
+func (a *App) computePageCore(meta parser.FileMetadata) db.PageCoreFields {
+	return computePageCoreFromMeta(meta)
+}
+
+// computePageCoreFromMeta is the pure core of computePageCore, shared with
+// computeBatchProjections (which synthesizes a FileMetadata from a ScanResult
+// and has no App receiver). type/date round-trip through the parser; aliases
+// is read from the raw frontmatter map when the typed field is empty (handles
+// a typed-decode failure that skips Aliases but leaves it in Frontmatter).
+func computePageCoreFromMeta(meta parser.FileMetadata) db.PageCoreFields {
+	core := db.PageCoreFields{
+		// Type deliberately holds the RAW frontmatter ref (e.g. "meeting"), not
+		// the canonicalized page_types.type_name id. No consumer joins the two
+		// today; the canonicalization decision (raw ref vs id) is deferred until
+		// the first join-consumer lands, at which point both sides must agree.
+		Type:    meta.Type,
+		Date:    meta.Date,
+		Aliases: meta.Aliases,
+		Created: meta.Created,
+	}
+	// `date`: the parser pre-fills meta.Date with the file mtime (defaultDate)
+	// so other consumers (file index, blocks.file_date) always see a date.
+	// core.Date is the user-facing value the PropertiesPanel renders: if
+	// `date:` is absent from frontmatter the user intentionally cleared it, so
+	// projecting the synthetic mtime date would silently undo the clear on
+	// every reparse. Wipe it; the frontmatter fallback below re-populates only
+	// when the key is actually present. The parser's meta.Date defaulting is
+	// deliberately left intact (the file index relies on it).
+	if v, ok := lookupFrontmatter(meta.Frontmatter, "date"); !ok || v == nil {
+		core.Date = ""
+	}
+	if core.Aliases == nil && meta.Frontmatter != nil {
+		if v, ok := lookupFrontmatter(meta.Frontmatter, "aliases"); ok && v != nil {
+			if s, ok := toStringSlice(v); ok {
+				core.Aliases = s
+			} else if str, ok := v.(string); ok && str != "" {
+				// Tolerate a hand-authored scalar `aliases: foo` as a one-element
+				// list. The typed decode into []string fails on a scalar, so
+				// without this the value would be silently dropped from the
+				// projection (and then from the panel) even though frontmatter
+				// holds it — and a panel save would clear it. Interop with
+				// Obsidian / hand-edited YAML.
+				core.Aliases = []string{str}
+			}
+		}
+	}
+	// `created` is recovered from the raw frontmatter when the typed field is
+	// empty — the batch ingest path synthesizes a FileMetadata from a ScanResult
+	// that carries frontmatter but may not have populated Created, and a
+	// hand-authored bare created: survives in Frontmatter. An UNQUOTED
+	// `created: 2026-08-05T14:30:00` resolves to a time.Time in the raw map
+	// (yaml.v3 timestamp decoding); a quoted one is a string — handle both,
+	// mirroring the date fallback below.
+	if core.Created == "" && meta.Frontmatter != nil {
+		if v, ok := lookupFrontmatter(meta.Frontmatter, "created"); ok {
+			switch c := v.(type) {
+			case string:
+				if c != "" {
+					core.Created = c
+				}
+			case time.Time:
+				// A bare date scalar (midnight UTC) formats as a calendar date
+				// to match the accepted created shapes; a real timestamp goes
+				// to RFC3339. Mirrors formatPropertyValue's time.Time branch.
+				if c.Hour() == 0 && c.Minute() == 0 && c.Second() == 0 && c.Nanosecond() == 0 {
+					core.Created = c.Format("2006-01-02")
+				} else {
+					core.Created = c.UTC().Format(time.RFC3339)
+				}
+			}
+		}
+	}
+	// `date` is recovered from the raw frontmatter when the typed field is
+	// empty — mirrors the created/aliases fallbacks. The vault and linked
+	// scanners set meta.Date from the parser, but a hand-built ScanResult
+	// (or a future caller that skips the parser) would otherwise project an
+	// empty core.date even when frontmatter carries one. An unquoted
+	// `date: 2026-08-05` survives in Frontmatter as a time.Time, so handle
+	// both shapes (NormalizeDate takes the string form).
+	if core.Date == "" && meta.Frontmatter != nil {
+		if v, ok := lookupFrontmatter(meta.Frontmatter, "date"); ok {
+			switch d := v.(type) {
+			case string:
+				if d != "" {
+					core.Date = parser.NormalizeDate(d)
+				}
+			case time.Time:
+				core.Date = d.Format("2006-01-02")
+			}
+		}
+	}
+	return core
 }
 
 // projectPageType projects a page's note type and its set property values into
@@ -81,6 +187,13 @@ func computeBatchProjections(a *App, results []parser.ScanResult) []db.ScanProje
 // re-indexing its blocks (the projectionReprojectWorker's per-locator step).
 // Every frontmatter-affecting block write now routes through IndexFileWithProjection
 // so the projection publish shares the block transaction.
+//
+// Note: this path touches ONLY page_types / page_properties (schema-derived).
+// It deliberately does NOT update page_core: page_core's fields (type, date,
+// aliases, created) are frontmatter-derived, not schema-derived, so a type-
+// definition rename / hot-reload that triggers this re-projection cannot change
+// page_core. page_core is republished only via the frontmatter-affecting block
+// index path (IndexFileWithProjection / IndexScanResultsWithProjection).
 //
 // Resolution + value extraction use the live type schema (mtime-cached); the DB
 // stores the result. A page whose type is empty is un-projected (cleared) so a
@@ -117,6 +230,28 @@ func (a *App) projectPageType(source string, meta parser.FileMetadata) error {
 		return err
 	}
 	return nil
+}
+
+// projectPageCore writes a page's type-independent core-metadata row to
+// page_core. Used by the warm-upgrade backfill (initializeVaultServices) for
+// pages whose blocks were warm-skipped on restart and thus never entered the
+// unified IndexFileWithProjection path that would otherwise publish page_core.
+// Unlike projectPageType, this writes a row for EVERY page (typed OR untyped) —
+// page_core's whole point is the untyped case. Reproducible from frontmatter
+// (cardinal rule 4). No event emission on failure; the caller aggregates
+// backfillFailed so a partial backfill retries next open.
+func (a *App) projectPageCore(source string, meta parser.FileMetadata) error {
+	if a.db == nil {
+		return nil
+	}
+	if source == "" {
+		source = "vault"
+	}
+	if meta.Notebook == "" && meta.Section == "" && meta.Page == "" {
+		return nil
+	}
+	core := computePageCoreFromMeta(meta)
+	return a.db.IndexPageCore(source, meta.Notebook, meta.Section, meta.Page, core)
 }
 
 // projectProperty builds one projection row from a raw frontmatter value and its

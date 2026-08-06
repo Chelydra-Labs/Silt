@@ -213,6 +213,15 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (
 				return
 			}
 			didWrite = true
+			// Snapshot the mtime/size BEFORE IndexFileBlocks commits so the
+			// files row records the content just written, not whatever mtime a
+			// concurrent external edit lands between the index commit and the
+			// post-commit mark (same window indexFile closes). See
+			// markFileIndexedBestEffort.
+			var fileStat os.FileInfo
+			if s, se := os.Stat(filePath); se == nil {
+				fileStat = s
+			}
 
 			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 			if err == nil {
@@ -222,6 +231,8 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (
 				})
 				if idxErr != nil {
 					log.Printf("SaveSubtreeBlocks: IndexFileBlocks failed: %v", idxErr)
+				} else {
+					a.markFileIndexedBestEffort(filePath, fileStat)
 				}
 				for _, b := range blocks {
 					if b.ID == blockID {
@@ -460,6 +471,15 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID string
 				return
 			}
 			didWrite = true
+			// Snapshot the mtime/size BEFORE IndexFileBlocks commits so the
+			// files row records the content just written, not whatever mtime a
+			// concurrent external edit lands between the index commit and the
+			// post-commit mark (same window indexFile closes). See
+			// markFileIndexedBestEffort.
+			var fileStat os.FileInfo
+			if s, se := os.Stat(filePath); se == nil {
+				fileStat = s
+			}
 
 			blocks, remeta, _, _, err := parser.ParseFileContent(newContent, meta.Notebook, meta.Section, meta.Page, meta.Date, a.spacesPerTab)
 			if err == nil {
@@ -469,6 +489,8 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID string
 				})
 				if idxErr != nil {
 					log.Printf("AppendTaskComment: IndexFileBlocks failed: %v", idxErr)
+				} else {
+					a.markFileIndexedBestEffort(filePath, fileStat)
 				}
 				for _, b := range blocks {
 					if b.ID == taskID {

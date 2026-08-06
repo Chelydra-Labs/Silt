@@ -8,6 +8,47 @@ export interface ShortcutActionDefinition {
   defaultBinding?: string
 }
 
+// Resolver scope of a hotkey action: which keydown handler actually dispatches
+// it. Two actions sharing a chord only AMBIGUOUSLY collide when they share a
+// scope — an editor-scoped chord and a hub-scoped chord fire in different focus
+// contexts, so they coexist. This is the single frontend source of truth for
+// the scope split; the HotkeysTab conflict grid and the defaults-uniqueness
+// regression test both consume it. Mirrors the backend's
+// isEditorOrHubScopedAction classification (backend/config/hotkeys.go), split
+// out into editor vs hub so the grid can tell them apart.
+export type ShortcutScope = 'global' | 'editor' | 'hub'
+
+// Consumed by the editor's ProseMirror keymap while the contenteditable is
+// focused, so they never reach the global resolver in that context.
+const EDITOR_SCOPED_PREFIXES = [
+  'format_',
+  'set_',
+  'align_',
+  'indent_',
+  'unindent_',
+  'table_'
+]
+// Editor-scoped by exact name (no consistent prefix).
+const EDITOR_SCOPED_EXACT = new Set([
+  'toggle_quote',
+  'toggle_details',
+  'toggle_bullet_list',
+  'toggle_ordered_list'
+])
+// Consumed by the TasksHub keydown listener, not the global resolver.
+const HUB_SCOPED_EXACT = new Set(['tasks_command_palette'])
+
+export function shortcutScope(action: string): ShortcutScope {
+  if (HUB_SCOPED_EXACT.has(action)) return 'hub'
+  // format_bold is the one format_ action that is ALSO global-resolvable
+  // (Ctrl+B is bold everywhere, including when the editor is unfocused), so it
+  // stays global and still conflicts with other global Ctrl+B bindings.
+  if (action === 'format_bold') return 'global'
+  if (EDITOR_SCOPED_EXACT.has(action)) return 'editor'
+  if (EDITOR_SCOPED_PREFIXES.some((p) => action.startsWith(p))) return 'editor'
+  return 'global'
+}
+
 export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
   {
     id: 'new_page',
@@ -33,26 +74,107 @@ export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
     group: 'Navigation',
     defaultBinding: 'Ctrl+P'
   },
-  { id: 'toggle_sidebar', label: 'Show or hide sidebar', group: 'Navigation' },
-  { id: 'focus_sidebar', label: 'Focus sidebar', group: 'Navigation' },
-  { id: 'cycle_view_layout', label: 'Cycle view', group: 'Navigation' },
-  { id: 'open_search', label: 'Search vault', group: 'Search' },
-  { id: 'find_in_page', label: 'Find in page', group: 'Search' },
-  { id: 'replace', label: 'Replace in page', group: 'Search' },
-  { id: 'global_replace', label: 'Replace in vault', group: 'Search' },
-  { id: 'next_tab', label: 'Next tab', group: 'Tabs' },
-  { id: 'prev_tab', label: 'Previous tab', group: 'Tabs' },
-  { id: 'close_tab', label: 'Close tab', group: 'Tabs' },
+  {
+    id: 'toggle_sidebar',
+    label: 'Show or hide sidebar',
+    group: 'Navigation',
+    defaultBinding: 'Ctrl+\\'
+  },
+  {
+    id: 'focus_sidebar',
+    label: 'Focus sidebar',
+    group: 'Navigation',
+    defaultBinding: 'Ctrl+Shift+B'
+  },
+  {
+    id: 'cycle_view_layout',
+    label: 'Cycle view',
+    group: 'Navigation',
+    defaultBinding: 'Ctrl+Alt+V'
+  },
+  {
+    id: 'open_search',
+    label: 'Search vault',
+    group: 'Search',
+    defaultBinding: 'Ctrl+Shift+F'
+  },
+  {
+    id: 'find_in_page',
+    label: 'Find in page',
+    group: 'Search',
+    defaultBinding: 'Ctrl+F'
+  },
+  {
+    id: 'replace',
+    label: 'Replace in page',
+    group: 'Search',
+    defaultBinding: 'Ctrl+H'
+  },
+  {
+    id: 'global_replace',
+    label: 'Replace in vault',
+    group: 'Search',
+    defaultBinding: 'Ctrl+Shift+G'
+  },
+  {
+    id: 'next_tab',
+    label: 'Next tab',
+    group: 'Tabs'
+    // No static defaultBinding: the tab-cycle chord is platform-conditional
+    // (Ctrl+Tab on Linux/macOS, Ctrl+Alt+Right on Windows — see the v1
+    // migration in backend/config/normalize.go). The backend Defaults() map is
+    // the source of truth and always populates this entry, so omitting a
+    // frontend default keeps ShortcutHelp's "Remapped" badge from false-
+    // firing on every non-Windows vault (badge compares against defaultBinding).
+  },
+  {
+    id: 'prev_tab',
+    label: 'Previous tab',
+    group: 'Tabs'
+    // No static defaultBinding — see next_tab (platform-conditional chord).
+  },
+  {
+    id: 'close_tab',
+    label: 'Close tab',
+    group: 'Tabs',
+    defaultBinding: 'Ctrl+Shift+W'
+  },
   {
     id: 'open_template_picker',
     label: 'New page from template',
-    group: 'Templates'
+    group: 'Templates',
+    defaultBinding: 'Ctrl+Shift+T'
   },
-  { id: 'new_task', label: 'New task', group: 'Tasks' },
-  { id: 'format_bold', label: 'Bold', group: 'Editor' },
-  { id: 'format_italic', label: 'Italic', group: 'Editor' },
-  { id: 'format_underline', label: 'Underline', group: 'Editor' },
-  { id: 'format_link', label: 'Add link', group: 'Editor' },
+  {
+    id: 'new_task',
+    label: 'New task',
+    group: 'Tasks',
+    defaultBinding: 'Ctrl+Shift+N'
+  },
+  {
+    id: 'format_bold',
+    label: 'Bold',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+B'
+  },
+  {
+    id: 'format_italic',
+    label: 'Italic',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+I'
+  },
+  {
+    id: 'format_underline',
+    label: 'Underline',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+U'
+  },
+  {
+    id: 'format_link',
+    label: 'Add link',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+K'
+  },
   {
     id: 'indent_block',
     label: 'Indent block',
@@ -77,7 +199,12 @@ export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
     group: 'Editor',
     defaultBinding: 'Ctrl+Shift+7'
   },
-  { id: 'toggle_view_mode', label: 'Toggle source view', group: 'Editor' },
+  {
+    id: 'toggle_view_mode',
+    label: 'Toggle source view',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+Alt+R'
+  },
   {
     id: 'toggle_properties_panel',
     label: 'Edit page properties',
@@ -87,15 +214,27 @@ export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
   {
     id: 'toggle_format_toolbar',
     label: 'Toggle formatting toolbar',
-    group: 'Editor'
+    group: 'Editor',
+    defaultBinding: 'Ctrl+F1'
   },
-  { id: 'toggle_focus_mode', label: 'Toggle focus mode', group: 'Editor' },
+  {
+    id: 'toggle_focus_mode',
+    label: 'Toggle focus mode',
+    group: 'Editor',
+    defaultBinding: 'Ctrl+Shift+D'
+  },
   {
     id: 'toggle_typewriter_mode',
     label: 'Toggle typewriter mode',
-    group: 'Editor'
+    group: 'Editor',
+    defaultBinding: 'Ctrl+Shift+Y'
   },
-  { id: 'open_settings', label: 'Open settings', group: 'App' },
+  {
+    id: 'open_settings',
+    label: 'Open settings',
+    group: 'App',
+    defaultBinding: 'Ctrl+,'
+  },
   {
     id: 'open_shortcuts_help',
     label: 'Keyboard shortcuts',

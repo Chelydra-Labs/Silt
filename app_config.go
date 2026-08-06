@@ -249,3 +249,45 @@ func (a *App) AppendDismissedTip(tipID string) error {
 	a.cfg.UI.DismissedTips = append(a.cfg.UI.DismissedTips, tipID)
 	return a.saveConfigTracked(a.cfg)
 }
+
+// SetTypedNotesSavedViews atomically replaces the typed-notes dashboard's
+// saved-view list at ui.dashboards.typed_notes.saved_views. Mirrors the
+// TOCTOU-hardened contract of UpdatePluginSetting (#120/#475): config.yaml is
+// re-read under configMu.Lock immediately before the mutation, so a concurrent
+// external edit (Obsidian/Dropbox/second Silt window/hand-edit) that landed
+// after the last config.Load is merged into the save rather than overwritten.
+// Only the nested saved_views slice is touched; every other config field is
+// preserved verbatim. The dashboard owns the nested shape, so Go carries the
+// list as an opaque any slice (the frontend coerces on load via the
+// Dashboards map[string]any blob). Like the other internal atomic setters it
+// does NOT emit config:changed — the frontend settings store mirrors the
+// change optimistically and external edits still flow through watcher →
+// applyConfig.
+func (a *App) SetTypedNotesSavedViews(views []any) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" {
+		return fmt.Errorf("vault not loaded")
+	}
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	// Re-read config.yaml under the lock so an external edit to an unrelated
+	// section is preserved rather than overwritten by the stale in-memory cfg
+	// (same rationale as UpdatePluginSetting). A re-read failure refuses
+	// loudly rather than destroying the user's signal that config is broken.
+	freshCfg, loadErr := config.Load(a.vaultPath)
+	if loadErr != nil {
+		return fmt.Errorf("cannot read config.yaml before update: %w", loadErr)
+	}
+	if freshCfg.UI.Dashboards == nil {
+		freshCfg.UI.Dashboards = map[string]any{}
+	}
+	typedNotes, _ := freshCfg.UI.Dashboards["typed_notes"].(map[string]any)
+	if typedNotes == nil {
+		typedNotes = map[string]any{}
+	}
+	typedNotes["saved_views"] = views
+	freshCfg.UI.Dashboards["typed_notes"] = typedNotes
+	a.cfg = freshCfg
+	return a.saveConfigTracked(a.cfg)
+}

@@ -45,7 +45,8 @@ function makeDeps(overrides: Partial<GlobalHotkeyDispatchDeps> = {}): {
     toggleViewMode: vi.fn(),
     togglePropertiesPanel: vi.fn(),
     closeTab: vi.fn(),
-    cycleTab: vi.fn()
+    cycleTab: vi.fn(),
+    applyFormatBold: vi.fn()
   }
   let sidebarCollapsed = false
   const deps: GlobalHotkeyDispatchDeps = {
@@ -73,7 +74,8 @@ function makeDeps(overrides: Partial<GlobalHotkeyDispatchDeps> = {}): {
       open_settings: 'Ctrl+,',
       next_tab: 'Ctrl+Tab',
       prev_tab: 'Ctrl+Shift+Tab',
-      close_tab: 'Ctrl+W'
+      close_tab: 'Ctrl+W',
+      format_bold: 'Ctrl+B'
     }),
     getHasDisplayedTabs: () => true,
     getActiveTabId: () => 'tab-1',
@@ -100,6 +102,7 @@ function makeDeps(overrides: Partial<GlobalHotkeyDispatchDeps> = {}): {
     isPropertiesPanelAvailable: () => true,
     closeTab: spies.closeTab,
     cycleTab: spies.cycleTab,
+    applyFormatBold: spies.applyFormatBold,
     ...overrides
   }
   return { deps, spies }
@@ -157,6 +160,16 @@ describe('useGlobalHotkeyDispatch (#768)', () => {
     dispatch.attach()
     window.dispatchEvent(press('e', { ctrlKey: true }))
     expect(spies.setSidebarCollapsed).toHaveBeenCalledWith(true)
+  })
+
+  it('format_bold routes to applyFormatBold when the editor is not focused', () => {
+    // Ctrl+B is bold everywhere. The resolver returns format_bold only when
+    // the editor is NOT focused (the editor-focused path is ProseMirror's).
+    const { deps, spies } = makeDeps()
+    dispatch = createGlobalHotkeyDispatch(deps)
+    dispatch.attach()
+    window.dispatchEvent(press('b', { ctrlKey: true }))
+    expect(spies.applyFormatBold).toHaveBeenCalledOnce()
   })
 
   it('close_tab fires only when the active tab is displayed', () => {

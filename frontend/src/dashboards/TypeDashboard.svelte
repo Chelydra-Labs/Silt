@@ -25,6 +25,16 @@
     type SortState,
     type TypeDashboardRow
   } from './dashboards'
+  import { singleSection } from '../lib/viewEngine/grouping'
+  import {
+    loadTypedNotesSavedViews,
+    persistTypedNotesSavedViews
+  } from './dashboardSettings'
+  import {
+    viewMatchesDashboardState,
+    type DashboardSavedView,
+    type DashboardViewState
+  } from './dashboardSavedViews'
 
   interface Props {
     /** Initial type id to display (may be '' to land on the picker). */
@@ -64,12 +74,190 @@
   let filter = $state<FilterState>({})
   let sort = $state<SortState>({ property: PAGE_COLUMN_KEY, desc: false })
   let groupBy = $state('')
-  // View mode is local-only (not persisted) — the dashboard's primary mode
-  // is the dense table; board is a glance surface for grouped browsing.
+  // View mode is local-only between sessions (not persisted on its own), but
+  // it IS snapshotted into a saved view when the user saves one (see
+  // confirmSaveView/updateActiveView). The dashboard's primary mode is the
+  // dense table; board is a glance surface for grouped browsing.
   let viewMode = $state<'list' | 'board'>('list')
 
   // Collapsed group keys survive a re-bin (SvelteSet so toggles are reactive).
   let collapsed = new SvelteSet<string>()
+
+  // --- Saved views (#863) --------------------------------------------------
+  // User-defined views persist to ui.dashboards.typed_notes.saved_views[] per
+  // vault. A view snapshots filter/sort/group-by/view-mode for one type; the
+  // list is dashboard-wide and filtered to the active type here.
+  let activeSavedViewId = $state('')
+  let savingView = $state(false)
+  let newViewName = $state('')
+  let savedViewsBusy = $state(false)
+  let savedViewsMessage = $state('')
+
+  // Focus management for the inline save dialog: the dialog swaps the Save
+  // button for a name input on open and swaps back on close — without an
+  // explicit move, focus falls to <body> both directions. The mode-radio
+  // handler uses the same queueMicrotask-after-state-change pattern; the
+  // microtask runs after Svelte flushes the DOM swap so the ref is bound.
+  let nameInputRef = $state<HTMLInputElement | null>(null)
+  let saveButtonRef = $state<HTMLButtonElement | null>(null)
+
+  // loadTypedNotesSavedViews reads the reactive settings.config snapshot, so
+  // this $derived re-runs on config:changed (e.g. an external edit or a
+  // save round-trip) and the list stays in sync with the persisted state.
+  let savedViews = $derived<DashboardSavedView[]>(loadTypedNotesSavedViews())
+  let typeSavedViews = $derived(
+    savedViews.filter((v) => v.typeId === selectedType)
+  )
+  let activeSavedView = $derived(
+    savedViews.find((v) => v.id === activeSavedViewId) ?? null
+  )
+  let dashboardViewState = $derived<DashboardViewState>({
+    typeId: selectedType,
+    filter,
+    sort,
+    groupBy,
+    viewMode
+  })
+  let savedViewDirty = $derived(
+    !!activeSavedView &&
+      !viewMatchesDashboardState(activeSavedView, dashboardViewState)
+  )
+
+  // Auto-clear the aria-live status message so it doesn't linger across
+  // unrelated interactions.
+  $effect(() => {
+    const msg = savedViewsMessage
+    if (!msg) return
+    const t = setTimeout(() => (savedViewsMessage = ''), 2500)
+    return () => clearTimeout(t)
+  })
+
+  function applySavedView(view: DashboardSavedView): void {
+    if (view.filter) filter = { ...view.filter }
+    if (view.sort) sort = { ...view.sort }
+    groupBy = view.groupBy ?? ''
+    if (view.viewMode) viewMode = view.viewMode
+    activeSavedViewId = view.id
+  }
+
+  function onSelectSavedView(id: string): void {
+    if (id === '') {
+      activeSavedViewId = ''
+      return
+    }
+    const v = savedViews.find((x) => x.id === id)
+    if (v) applySavedView(v)
+  }
+
+  function startSaveView(): void {
+    newViewName = activeSavedView?.name ?? ''
+    savingView = true
+    // Move focus into the just-mounted name input (mirrors the mode-radio
+    // focus pattern below) — without this, focus falls to <body> when the
+    // Save button unmounts.
+    queueMicrotask(() => nameInputRef?.focus())
+  }
+
+  function cancelSaveView(): void {
+    savingView = false
+    newViewName = ''
+    // Restore focus to the Save button so the bar remains keyboard-operable
+    // after the input unmounts.
+    queueMicrotask(() => saveButtonRef?.focus())
+  }
+
+  async function persistAll(
+    next: DashboardSavedView[]
+  ): Promise<string | null> {
+    savedViewsBusy = true
+    const err = await persistTypedNotesSavedViews(next)
+    savedViewsBusy = false
+    // Surface the actual failure reason (fail-loud) rather than a generic
+    // banner; null means success.
+    savedViewsMessage = err ?? 'Saved view'
+    return err
+  }
+
+  // crypto.randomUUID is missing on borderline WebKitGTK webviews; fall back
+  // to a timestamp+random slug so the save path can't throw there. Mirrors
+  // TasksHub.svelte's freshId().
+  function freshId(): string {
+    return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `view-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  }
+
+  async function confirmSaveView(): Promise<void> {
+    // Guard the whole path: a second Enter during the in-flight save (before
+    // persistAll resolves) would otherwise mint a second id from the same
+    // pre-mirror snapshot and last-writer-win the first view away. The Save
+    // button is also disabled while busy, but keydown isn't.
+    if (savedViewsBusy) return
+    const name = newViewName.trim()
+    if (!name) return
+    // "Save as new" ALWAYS creates a fresh view: mint a new id and append.
+    // Reusing an existing view's id (even the active one's) would silently
+    // overwrite it and contradict the button label — updating in place is
+    // updateActiveView's job. Two same-named views are allowed, matching
+    // TasksHub's save-new semantics.
+    const id = freshId()
+    const view: DashboardSavedView = {
+      id,
+      name,
+      typeId: selectedType,
+      filter: { ...filter },
+      sort: { ...sort },
+      groupBy,
+      viewMode
+    }
+    const next = [...savedViews, view]
+    // Close the save dialog BEFORE awaiting the IPC so the name input can't
+    // receive a second Enter during the await (which would re-enter this
+    // function, hit the busy guard above, and no-op).
+    savingView = false
+    newViewName = ''
+    // Restore focus to the Save button as the dialog closes.
+    queueMicrotask(() => saveButtonRef?.focus())
+    const err = await persistAll(next)
+    // Only adopt the new id once the view actually landed on disk — a
+    // rejected persist would otherwise leave a ghost id pointing at a
+    // never-persisted view (activeSavedView resolves null, the <select>
+    // shows the placeholder, the next "Save current" mints a fresh id).
+    if (!err) activeSavedViewId = id
+  }
+
+  async function updateActiveView(): Promise<void> {
+    // Mirror confirmSaveView's busy guard: the Update button's disabled flag
+    // is applied on re-render, so two rapid activations could both dispatch
+    // before the flag lands.
+    if (savedViewsBusy) return
+    if (!activeSavedView) return
+    const view: DashboardSavedView = {
+      ...activeSavedView,
+      filter: { ...filter },
+      sort: { ...sort },
+      groupBy,
+      viewMode
+    }
+    const next = savedViews.map((v) => (v.id === view.id ? view : v))
+    await persistAll(next)
+  }
+
+  async function deleteActiveView(): Promise<void> {
+    // Mirror confirmSaveView's busy guard (see updateActiveView).
+    if (savedViewsBusy) return
+    if (!activeSavedView) return
+    const next = savedViews.filter((v) => v.id !== activeSavedView.id)
+    const err = await persistAll(next)
+    // Only clear the active id and announce success once the view actually
+    // left disk — persistAll already set savedViewsMessage to the error
+    // string on failure, and overwriting it with 'Deleted view' would
+    // announce success while the view is still in the list.
+    if (!err) {
+      activeSavedViewId = ''
+      savedViewsMessage = 'Deleted view'
+    }
+  }
 
   // --- Type list -----------------------------------------------------------
   async function loadTypes(): Promise<void> {
@@ -155,7 +343,7 @@
 
   let sections = $derived.by<GroupSection[]>(() => {
     if (groupBy === '' || !currentType) {
-      return [{ key: '__all__', label: '', rows }]
+      return singleSection(rows, '__all__', '')
     }
     const prop = (currentType.properties ?? []).find((p) => p.name === groupBy)
     return binByProperty(rows, prop, groupBy)
@@ -204,6 +392,9 @@
     sort = { property: PAGE_COLUMN_KEY, desc: false }
     groupBy = ''
     rows = []
+    // A saved view belongs to exactly one type; drop the active view when
+    // switching so its dims don't linger over the new type's schema.
+    activeSavedViewId = ''
     // Cover the trailing-debounce window so we never flash the empty state
     // ("No pages of this type") before reload starts.
     loading = id !== ''
@@ -335,6 +526,102 @@
       onGroupByChange={(name) => (groupBy = name)}
       onFilterChange={(f) => (filter = f)}
     />
+
+    <section class="saved-views-bar" aria-label="Saved views for this type">
+      {#if typeSavedViews.length > 0 || savingView}
+        <div class="sv-select-wrap">
+          <span class="material-symbols-outlined sv-icon" aria-hidden="true"
+            >bookmark</span
+          >
+          <select
+            class="sv-select"
+            aria-label="Saved views"
+            value={activeSavedViewId}
+            onchange={(e) => onSelectSavedView(e.currentTarget.value)}
+            disabled={savingView || savedViewsBusy}
+          >
+            <option value="">
+              {typeSavedViews.length === 0 ? 'No saved views' : 'Saved views'}
+            </option>
+            {#each typeSavedViews as v (v.id)}
+              <option value={v.id}>{v.name}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
+
+      {#if activeSavedView && savedViewDirty && !savingView}
+        <span class="sv-modified" aria-label="Current view modified"
+          >modified</span
+        >
+      {/if}
+
+      {#if savingView}
+        <input
+          type="text"
+          class="sv-name-input"
+          aria-label="New saved view name"
+          placeholder="View name"
+          bind:this={nameInputRef}
+          bind:value={newViewName}
+          onkeydown={(e) => {
+            if (e.key === 'Enter') void confirmSaveView()
+            else if (e.key === 'Escape') cancelSaveView()
+          }}
+        />
+        <button
+          type="button"
+          class="sv-btn primary"
+          onclick={() => void confirmSaveView()}
+          disabled={savedViewsBusy || !newViewName.trim()}
+        >
+          Save
+        </button>
+        <button type="button" class="sv-btn" onclick={cancelSaveView}>
+          Cancel
+        </button>
+      {:else}
+        <button
+          type="button"
+          class="sv-btn"
+          onclick={startSaveView}
+          disabled={savedViewsBusy}
+          bind:this={saveButtonRef}
+        >
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true">save</span
+          >
+          {activeSavedView ? 'Save as new' : 'Save current'}
+        </button>
+        {#if activeSavedView && savedViewDirty}
+          <button
+            type="button"
+            class="sv-btn primary"
+            onclick={() => void updateActiveView()}
+            disabled={savedViewsBusy}
+          >
+            Update “{activeSavedView.name}”
+          </button>
+        {/if}
+        {#if activeSavedView}
+          <button
+            type="button"
+            class="sv-btn danger"
+            onclick={() => void deleteActiveView()}
+            disabled={savedViewsBusy}
+            aria-label="Delete saved view {activeSavedView.name}"
+          >
+            <span
+              class="material-symbols-outlined text-icon-sm"
+              aria-hidden="true">delete</span
+            >
+          </button>
+        {/if}
+      {/if}
+
+      <span class="sr-only" aria-live="polite">{savedViewsMessage}</span>
+    </section>
 
     {#if error}
       <div class="state error" role="alert">{error}</div>
@@ -642,5 +929,122 @@
   .view-toggle-btn:focus-visible {
     outline: 2px solid var(--color-border-focus);
     outline-offset: 1px;
+  }
+  .saved-views-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    padding: 0.4rem 1rem;
+    border-bottom: 1px solid var(--color-surface-panel-border);
+    background: var(--color-surface-panel);
+  }
+  .sv-select-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .sv-icon {
+    position: absolute;
+    left: 0.35rem;
+    font-size: var(--text-icon-sm);
+    color: var(--color-text-muted);
+    pointer-events: none;
+  }
+  .sv-select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding: 0.25rem 1.5rem 0.25rem 1.5rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--color-surface-panel-border);
+    background: var(--color-surface-app);
+    color: var(--color-text-primary);
+    font-size: var(--text-type-sm);
+    font-family: var(--font-body, sans-serif);
+    cursor: pointer;
+    max-width: 16rem;
+  }
+  .sv-select:hover {
+    background: var(--color-hover);
+  }
+  .sv-select:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .sv-name-input {
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--color-accent-primary-start);
+    background: var(--color-surface-app);
+    color: var(--color-text-primary);
+    font-size: var(--text-type-sm);
+    font-family: var(--font-body, sans-serif);
+    min-width: 10rem;
+  }
+  .sv-name-input:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .sv-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.55rem;
+    border: 1px solid var(--color-surface-panel-border);
+    background: var(--color-surface-app);
+    color: var(--color-text-primary);
+    border-radius: 0.375rem;
+    font-family: var(--font-body, sans-serif);
+    font-size: var(--text-type-sm);
+    cursor: pointer;
+    transition:
+      background 120ms var(--transition-standard),
+      color 120ms var(--transition-standard);
+  }
+  .sv-btn:hover:not(:disabled) {
+    background: var(--color-hover);
+  }
+  .sv-btn:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .sv-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .sv-btn.primary {
+    border-color: var(--color-accent-primary-start);
+    background: var(--color-accent-primary-glow);
+    color: var(--color-accent-primary-start);
+  }
+  .sv-btn.primary:hover:not(:disabled) {
+    background: var(--color-hover);
+  }
+  .sv-btn.danger {
+    border-color: var(--color-surface-panel-border);
+    color: var(--color-text-muted);
+  }
+  .sv-btn.danger:hover:not(:disabled) {
+    color: var(--color-status-danger);
+    background: var(--color-hover);
+  }
+  .sv-modified {
+    color: var(--color-text-muted);
+    font-size: var(--text-type-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: var(--font-mono, monospace);
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

@@ -4,6 +4,13 @@
 // concern (the query's ORDER BY, or ListView's client-side re-sort);
 // grouping.ts only assigns rows to buckets.
 //
+// The generic binning algorithm (scalar / tag / multi-membership / trailing
+// unassigned) lives in lib/viewEngine/grouping.ts and is shared with the
+// typed-notes dashboard. This module keeps the TASK-SPECIFIC bits that don't
+// generalize: the 'dueDate' time-horizon bucketing (depends on plusDaysISO
+// + a today anchor), the 'status' lane model (TODO/DOING/DONE + laneLabel),
+// and the dimension→field projection (owner/priority/tags/notebook/...).
+//
 // The 'dueDate' bins produce the same data-group keys the legacy Tasks
 // ListView has always rendered (overdue/today/upcoming/later/undated),
 // so the existing tests stay byte-exact when ListView delegates to
@@ -13,14 +20,13 @@ import { plusDaysISO } from '../../sdk'
 import type { TaskDetail } from './types'
 import { laneLabel } from './types'
 import type { GroupBy } from './state.svelte'
+import {
+  binByKey,
+  singleSection,
+  type GroupSection as VEGroupSection
+} from '../../../lib/viewEngine/grouping'
 
-export interface GroupSection {
-  /** Stable data-group key (used as the DOM attribute + test selector). */
-  key: string
-  /** Human-readable heading (used as aria-label). */
-  label: string
-  items: TaskDetail[]
-}
+export type GroupSection = VEGroupSection<TaskDetail>
 
 const STATUS_ORDER: readonly string[] = ['TODO', 'DOING', 'DONE']
 
@@ -146,87 +152,52 @@ function valueLabel(value: string, dim: GroupBy): string {
 
 /**
  * Bin rows by a single-value dimension (owner/priority/notebook/section/
- * page). Non-empty values are sorted alphabetically (numeric-asc for
- * priority); the empty/zero rows form a trailing "Unassigned"/"No X"
- * section so they're always discoverable at the bottom.
+ * page) via the shared generic binner. The dim-specific projection
+ * (rowValue), key namespace (`${dim}-`), numeric-vs-alpha ordering
+ * (priority), label rendering (valueLabel), and the trailing Unassigned
+ * label are the task-specific adapters the generic primitive takes.
  */
 function binByScalar(
   rows: TaskDetail[],
   dim: Exclude<GroupBy, 'none' | 'dueDate' | 'status' | 'tag'>
 ): GroupSection[] {
-  const groups = new Map<string, TaskDetail[]>()
-  const unassigned: TaskDetail[] = []
-  for (const r of rows) {
-    const v = rowValue(r, dim)
-    if (!v) {
-      unassigned.push(r)
-      continue
-    }
-    if (!groups.has(v)) groups.set(v, [])
-    groups.get(v)!.push(r)
-  }
-  const keys = [...groups.keys()].sort((a, b) => {
-    if (dim === 'priority') return Number(a) - Number(b)
-    return a.localeCompare(b)
+  return binByKey(rows, {
+    keyOf: (row) => rowValue(row, dim),
+    sectionKey: (v) => `${dim}-${v}`,
+    sectionLabel: (v) => valueLabel(v, dim),
+    // Priority sorts numeric ascending; every other scalar is alphabetical
+    // (the generic default).
+    compareKeys:
+      dim === 'priority' ? (a, b) => Number(a) - Number(b) : undefined,
+    unassignedLabel: unassignedLabel(dim)
   })
-  const sections = keys.map((k) => ({
-    key: `${dim}-${k}`,
-    label: valueLabel(k, dim),
-    items: groups.get(k) ?? []
-  }))
-  if (unassigned.length > 0) {
-    sections.push({
-      key: `${dim}-__unassigned__`,
-      label: unassignedLabel(dim),
-      items: unassigned
-    })
-  }
-  return sections
 }
 
 /**
- * Bin rows by tag. A row with multiple tags appears once per tag
- * (multi-membership); rows with no tags fall into the trailing
- * "No Tag" bucket. Tag order is alphabetical.
+ * Bin rows by tag via the shared generic binner's multi-membership path.
+ * A row with multiple tags appears once per tag (the pipe-delimited list is
+ * split here; rows with no tags fall into the trailing "No Tag" bucket via
+ * the generic unassigned path). Tag order is alphabetical.
  */
 function binByTag(rows: TaskDetail[]): GroupSection[] {
-  const groups = new Map<string, TaskDetail[]>()
-  const unassigned: TaskDetail[] = []
-  for (const r of rows) {
-    const tags = (r.tags ?? '')
-      .split('|')
-      .map((t) => t.trim())
-      .filter(Boolean)
-    if (tags.length === 0) {
-      unassigned.push(r)
-      continue
-    }
-    for (const t of tags) {
-      if (!groups.has(t)) groups.set(t, [])
-      groups.get(t)!.push(r)
-    }
-  }
-  const keys = [...groups.keys()].sort((a, b) => a.localeCompare(b))
-  const sections = keys.map((k) => ({
-    key: `tag-${k}`,
-    label: k,
-    items: groups.get(k) ?? []
-  }))
-  if (unassigned.length > 0) {
-    sections.push({
-      key: 'tag-__unassigned__',
-      label: unassignedLabel('tag'),
-      items: unassigned
-    })
-  }
-  return sections
+  return binByKey(rows, {
+    keyOf: (row) =>
+      (row.tags ?? '')
+        .split('|')
+        .map((t) => t.trim())
+        .filter(Boolean),
+    sectionKey: (v) => `tag-${v}`,
+    unassignedLabel: unassignedLabel('tag')
+  })
 }
 
 /**
- * Bin rows into GroupSections for the given dimension. Always returns
- * the canonical bucket set for that dimension in the canonical order —
- * empty buckets are kept (length 0) so the caller can decide whether
- * to render them.
+ * Bin rows into GroupSections for the given dimension. dueDate and status use
+ * dimension-specific binners (canonical bucket shape and order); the other six
+ * dimensions delegate to the generic binner, which emits only present buckets
+ * plus a trailing Unassigned. Of the two specific binners, only dueDate keeps
+ * empty buckets at length 0 — status omits canonical statuses that have no rows
+ * — so callers must not assume a fixed bucket set across dimensions.
  */
 export function binByDimension(
   rows: TaskDetail[],
@@ -235,7 +206,7 @@ export function binByDimension(
 ): GroupSection[] {
   switch (groupBy) {
     case 'none':
-      return [{ key: 'all', label: 'All Tasks', items: [...rows] }]
+      return singleSection(rows, 'all', 'All Tasks')
     case 'dueDate':
       return binByDueDate(rows, ctx.today)
     case 'status':
@@ -249,6 +220,6 @@ export function binByDimension(
     case 'page':
       return binByScalar(rows, groupBy)
     default:
-      return [{ key: 'all', label: 'All Tasks', items: [...rows] }]
+      return singleSection(rows, 'all', 'All Tasks')
   }
 }

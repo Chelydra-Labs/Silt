@@ -228,9 +228,12 @@ func (a *App) CreatePage(notebook, section, page, dateStr string) (string, error
 
 	// Create an empty page — just frontmatter, no scaffold blocks. The user
 	// starts with a blank editor; the page's date lives in the frontmatter
-	// metadata, not as a visible content block.
-	scaffoldFrontmatter := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
-		strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeDate))
+	// metadata, not as a visible content block. `created` stamps the page's
+	// birth time once (#867); subsequent edits preserve it verbatim, matching
+	// how date/tags/type round-trip.
+	createdStr := time.Now().Format("2006-01-02T15:04:05")
+	scaffoldFrontmatter := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ncreated: %s\ntags: []\n---\n",
+		strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeDate), strconv.Quote(createdStr))
 
 	a.wg.Add(1)
 	defer a.wg.Done()

@@ -74,7 +74,7 @@ func TestReindexFile_InvokesAtomicHandler(t *testing.T) {
 		// exercised against real DB state.
 		var err error
 		dw.coordinator.WithDBWrite(func() {
-			err = dm.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, "", nil, meta.Warnings...)
+			err = dm.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, "", nil, db.PageCoreFields{Type: meta.Type, Date: meta.Date, Aliases: meta.Aliases, Created: meta.Created}, meta.Warnings...)
 		})
 		return err
 	})
@@ -270,7 +270,7 @@ func TestReindexFile_HandlerComputeProjection(t *testing.T) {
 		}
 		var err error
 		dw.coordinator.WithDBWrite(func() {
-			err = dm.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, typeID, props, meta.Warnings...)
+			err = dm.IndexFileWithProjection(source, notebook, section, page, blocks, meta.Tags, typeID, props, db.PageCoreFields{Type: meta.Type, Date: meta.Date, Aliases: meta.Aliases, Created: meta.Created}, meta.Warnings...)
 		})
 		return err
 	})

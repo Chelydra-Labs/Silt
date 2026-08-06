@@ -191,6 +191,13 @@ type UIConfig struct {
 	// NoteZoom is the per-vault note content zoom factor (0.7–2.0, step 0.1).
 	// Independent of editor.font_size_px. nil normalizes to 1.0 (#849).
 	NoteZoom *float64 `yaml:"note_zoom,omitempty" json:"note_zoom,omitempty"`
+	// Dashboards holds frontend-owned per-dashboard config (e.g. the typed-notes
+	// dashboard's user saved views at ui.dashboards.typed_notes.saved_views).
+	// The frontend owns the nested shape, so Go carries it as an opaque blob
+	// (same precedent as PluginsConfig.PluginSettings). Unknown nested keys are
+	// otherwise silently dropped by YAML round-trip, which would make the
+	// dashboard's saved-view persistence a no-op.
+	Dashboards map[string]any `yaml:"dashboards,omitempty" json:"dashboards,omitempty"`
 }
 
 // NavigationSectionRef is the canonical identity of a section in a vault.
@@ -331,13 +338,49 @@ func migrateLegacyQuickAccessCollapsed(data []byte, cfg *SystemConfig) {
 // Save atomically writes cfg to <vault>/.system/config.yaml. Atomicity
 // (temp file + fsync + rename) guarantees the on-disk file is either the
 // previous version or the new one in full, never a half-written file.
+//
+// Hotkeys are sparse-persisted: after normalize, default-matching entries are
+// stripped so config.yaml carries only user overrides + explicit disables
+// (""). Defaults() remains the single source of truth at Load time (sparse
+// merge over Defaults), so writing defaults back would freeze
+// platform-conditional chords into the synced file — breaking a vault shared
+// across OSes (Windows Ctrl+Alt+Right vs Linux Ctrl+Tab for next_tab).
 func Save(vaultPath string, cfg SystemConfig) error {
 	cfg = normalize(cfg)
+	stripDefaultHotkeys(&cfg)
 	out, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config.yaml: %w", err)
 	}
 	return writeFileAtomic(ConfigPath(vaultPath), out, 0o600)
+}
+
+// stripDefaultHotkeys removes hotkey entries that match the current platform
+// default, so config.yaml carries only user overrides + explicit disables —
+// not materialized defaults. This keeps platform-conditional chords (computed
+// at runtime from runtime.GOOS) out of the synced config file: a vault shared
+// across OSes gets correct per-OS defaults because Defaults() is never frozen
+// into the YAML.
+//
+// Load's decode-over-Defaults sparse merge re-materializes the stripped
+// defaults on the next read, so the effective map the frontend sees is
+// unchanged. Explicit empty-string disables are kept (they don't match any
+// default chord and are the only way to "turn off" a default — deleting the
+// key would restore it via the YAML merge).
+//
+// A fresh map is built rather than deleting in place: SystemConfig is passed
+// by value through Save, but its map fields are reference types that alias
+// the caller's input, so in-place deletes would corrupt the caller's view.
+func stripDefaultHotkeys(cfg *SystemConfig) {
+	defaults := Defaults()
+	stripped := make(map[string]string, len(cfg.Hotkeys))
+	for k, v := range cfg.Hotkeys {
+		if dv, ok := defaults.Hotkeys[k]; ok && v == dv {
+			continue
+		}
+		stripped[k] = v
+	}
+	cfg.Hotkeys = stripped
 }
 
 // writeFileAtomic writes data to a sibling temp file, fsyncs it, then renames

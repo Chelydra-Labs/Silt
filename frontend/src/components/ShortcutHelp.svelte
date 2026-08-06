@@ -20,6 +20,22 @@
   let hasAnyBindings = $derived(
     actions.some((a) => shortcutBinding(a.id, hotkeys))
   )
+  // Tab-strip chords for the footer legend, derived from the SAME resolved
+  // hotkey map that drives the table above so the legend and the table never
+  // disagree. The backend defaults are platform-conditional (#863):
+  // next_tab/prev_tab are Ctrl+Tab on Linux/macOS (Ctrl+Alt+←/→ are
+  // WM-captured there) and Ctrl+Alt+Right/Left on Windows (WebView2 drops
+  // Ctrl+Tab). Hardcoding the Windows chord here left the legend contradicting
+  // the table on every non-Windows machine.
+  let nextTabChord = $derived(shortcutBinding('next_tab', hotkeys))
+  let prevTabChord = $derived(shortcutBinding('prev_tab', hotkeys))
+  let closeTabChord = $derived(shortcutBinding('close_tab', hotkeys))
+  // The Ctrl+Tab WebView2 caveat only makes sense where the resolved chord
+  // actually took the Ctrl+Alt+Arrow form. On Linux the table shows Ctrl+Tab
+  // (and that chord works there), so the caveat would be misinformation.
+  let tabChordMovedOffCtrlTab = $derived(
+    /Ctrl\+Alt/i.test(nextTabChord) || /Ctrl\+Alt/i.test(prevTabChord)
+  )
 
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
@@ -154,5 +170,28 @@
         </div>
       {/if}
     </div>
+    <footer
+      class="px-5 py-3 border-t border-surface-modal-border bg-surface-panel/50"
+    >
+      <p class="m-0 text-type-2xs text-text-muted leading-relaxed">
+        Next/Previous use
+        {@render chord(nextTabChord)}
+        /
+        {@render chord(prevTabChord)}
+        and Close uses
+        {@render chord(closeTabChord)}.{#if tabChordMovedOffCtrlTab}
+          On Windows the webview cannot reliably relay
+          {@render chord('Ctrl+Tab')}, so the cycle moved to Ctrl+Alt+Arrow.{/if}
+      </p>
+    </footer>
   </div>
 </div>
+
+{#snippet chord(binding: string)}
+  {#each binding.split('+') as token, i (i)}
+    {#if i > 0}+{/if}<kbd
+      class="inline-flex px-1.5 py-0.5 rounded-md border border-surface-panel-border bg-surface-panel text-type-2xs text-text-muted font-mono whitespace-nowrap"
+      >{token}</kbd
+    >
+  {/each}
+{/snippet}

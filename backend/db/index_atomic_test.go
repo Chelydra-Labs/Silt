@@ -39,7 +39,7 @@ func TestIndexFileWithProjection_AtomicReplace(t *testing.T) {
 		{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"},
 	}
 	if err := dm.IndexFileWithProjection(source, notebook, section, page,
-		[]parser.ParsedBlock{newBlock}, nil, "meeting", newProps); err != nil {
+		[]parser.ParsedBlock{newBlock}, nil, "meeting", newProps, PageCoreFields{}); err != nil {
 		t.Fatalf("IndexFileWithProjection: %v", err)
 	}
 
@@ -81,14 +81,14 @@ func TestIndexFileWithProjection_UntypedClearsProjection(t *testing.T) {
 	if err := dm.IndexFileWithProjection(source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
 		nil, "task",
-		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}); err != nil {
+		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}, PageCoreFields{}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
 	// Atomic transition to untyped: same page, typeID="".
 	if err := dm.IndexFileWithProjection(source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1)},
-		nil, "", nil); err != nil {
+		nil, "", nil, PageCoreFields{}); err != nil {
 		t.Fatalf("untyped reindex: %v", err)
 	}
 
@@ -124,6 +124,14 @@ func TestIndexFileWithProjection_UntypedClearsProjection(t *testing.T) {
 // both halves are staged but before commit must roll back BOTH halves. The
 // prior committed block AND projection remain visible; no new partial state
 // leaks. This is the property #865 was filed for.
+//
+// The seed also populates a NON-EMPTY page_core projection (#867). page_core
+// is written in the SAME transaction as blocks + page_types/page_properties,
+// so its atomicity is structurally guaranteed — but the prior test seeded
+// PageCoreFields{} (empty) and only asserted blocks + page_types/page_properties
+// survival, leaving the page_core half unpinned. Seed real values here and
+// assert (a) a successful publish writes them back via GetPageCoreProjection,
+// (b) on the abort/rollback case no half-published core row leaks.
 func TestIndexFileWithProjection_PreservesOldStateOnHookFailure(t *testing.T) {
 	dm := newTestDB(t)
 
@@ -136,11 +144,35 @@ func TestIndexFileWithProjection_PreservesOldStateOnHookFailure(t *testing.T) {
 	oldID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	newID := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 
+	// Non-empty core seeded so the page_core atomic half is observable.
+	seededCore := PageCoreFields{
+		Type:    "task",
+		Date:    "2026-01-02",
+		Aliases: []string{"a"},
+		Created: "2026-01-01T00:00:00Z",
+	}
+
 	// Seed prior committed state via the atomic path itself.
 	if err := dm.IndexFileWithProjection(source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock(oldID, 1)}, nil, "task",
-		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}); err != nil {
+		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}, seededCore); err != nil {
 		t.Fatalf("seed: %v", err)
+	}
+
+	// (a) Sanity: the seed publish wrote the page_core row verbatim — proves
+	// the happy path round-trips the core fields through the atomic write.
+	coreRow, err := dm.GetPageCoreProjection(source, notebook, section, page)
+	if err != nil {
+		t.Fatalf("seed GetPageCoreProjection: %v", err)
+	}
+	if coreRow == nil {
+		t.Fatalf("seed: page_core row missing after successful publish")
+	}
+	if coreRow.Type != seededCore.Type ||
+		coreRow.Date != seededCore.Date ||
+		coreRow.Created != seededCore.Created ||
+		len(coreRow.Aliases) != 1 || coreRow.Aliases[0] != "a" {
+		t.Fatalf("seed: page_core round-trip mismatch: got %+v, want %+v", coreRow, seededCore)
 	}
 
 	// Inject failure at the unified pre-commit seam.
@@ -153,9 +185,17 @@ func TestIndexFileWithProjection_PreservesOldStateOnHookFailure(t *testing.T) {
 	})
 	defer dm.setIndexerTestingHook(nil)
 
-	err := dm.IndexFileWithProjection(source, notebook, section, page,
+	// Replacement carries a DIFFERENT core payload so a leaked half-publish
+	// would be observable.
+	replacementCore := PageCoreFields{
+		Type:    "meeting",
+		Date:    "2026-03-04",
+		Aliases: []string{"b", "c"},
+		Created: "2026-03-03T00:00:00Z",
+	}
+	err = dm.IndexFileWithProjection(source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock(newID, 1)}, nil, "meeting",
-		[]ProjectedProperty{{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"}})
+		[]ProjectedProperty{{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"}}, replacementCore)
 	if !errors.Is(err, sentinelHookErr) {
 		t.Fatalf("expected sentinel wrap, got %v", err)
 	}
@@ -183,6 +223,29 @@ func TestIndexFileWithProjection_PreservesOldStateOnHookFailure(t *testing.T) {
 		row.Properties[0].ValueText != "Alice" {
 		t.Errorf("prior projection property did not survive: %+v", row.Properties)
 	}
+
+	// (b) page_core rollback: the seeded core row survives verbatim and the
+	// replacement core never leaked. A half-published core (e.g. meeting date
+	// or aliases [b,c]) would mean the unified tx was not actually atomic.
+	coreAfter, err := dm.GetPageCoreProjection(source, notebook, section, page)
+	if err != nil {
+		t.Fatalf("post-rollback GetPageCoreProjection: %v", err)
+	}
+	if coreAfter == nil {
+		t.Fatalf("page_core row missing after rollback — seeded core was lost")
+	}
+	if coreAfter.Type != seededCore.Type {
+		t.Errorf("page_core type drifted on rollback: got %q, want %q", coreAfter.Type, seededCore.Type)
+	}
+	if coreAfter.Date != seededCore.Date {
+		t.Errorf("page_core date drifted on rollback: got %q, want %q", coreAfter.Date, seededCore.Date)
+	}
+	if coreAfter.Created != seededCore.Created {
+		t.Errorf("page_core created drifted on rollback: got %q, want %q", coreAfter.Created, seededCore.Created)
+	}
+	if len(coreAfter.Aliases) != 1 || coreAfter.Aliases[0] != "a" {
+		t.Errorf("page_core aliases drifted on rollback: got %v, want [a]", coreAfter.Aliases)
+	}
 }
 
 // TestIndexFileWithProjection_ReaderNeverSeesHalfState is the concurrency
@@ -209,7 +272,7 @@ func TestIndexFileWithProjection_ReaderNeverSeesHalfState(t *testing.T) {
 	if err := dm.IndexFileWithProjection(source, notebook, section, page,
 		[]parser.ParsedBlock{sampleNoteBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
 		nil, "task",
-		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}); err != nil {
+		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}, PageCoreFields{}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -249,7 +312,7 @@ func TestIndexFileWithProjection_ReaderNeverSeesHalfState(t *testing.T) {
 		writerDone <- dm.IndexFileWithProjection(source, notebook, section, page,
 			[]parser.ParsedBlock{sampleNoteBlock("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 1)},
 			nil, "meeting",
-			[]ProjectedProperty{{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"}})
+			[]ProjectedProperty{{Property: "status", ValueText: "done", ValueSort: "done", ValueType: "select"}}, PageCoreFields{})
 	}()
 
 	// Wait for the writer to reach the hook (blocks+projection staged,
@@ -440,7 +503,7 @@ func TestIndexFileWithProjection_PreservesIndexFileBlocksBehavior(t *testing.T) 
 	if err := dm.IndexFileWithProjection(source, notebook, section, page,
 		[]parser.ParsedBlock{sampleTaskBlock("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 1)},
 		nil, "task",
-		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}); err != nil {
+		[]ProjectedProperty{{Property: "owner", ValueText: "Alice", ValueSort: "Alice", ValueType: "text"}}, PageCoreFields{}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 

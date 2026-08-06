@@ -4,7 +4,7 @@
 // direct test (App.svelte's component test only covers menu:save). These cases
 // pin the contract the shell switch-dispatches on.
 import { describe, expect, it } from 'vitest'
-import { resolveGlobalHotkey } from './globalHotkeys'
+import { resolveGlobalHotkey, shouldApplyFormatBold } from './globalHotkeys'
 
 // Build a keydown with modifier flags. key is the logical glyph (matchHotkey
 // lowercases it, so case is irrelevant).
@@ -17,18 +17,18 @@ const defaults: Record<string, string> = {
   open_search: 'Ctrl+Shift+F',
   find_in_page: 'Ctrl+F',
   replace: 'Ctrl+H',
-  toggle_sidebar: 'Ctrl+B',
+  toggle_sidebar: 'Ctrl+\\',
   focus_sidebar: 'Ctrl+Shift+B',
   cycle_view_layout: 'Ctrl+Alt+V',
   new_task: 'Ctrl+Shift+N',
-  toggle_view_mode: 'Ctrl+Shift+V',
+  toggle_view_mode: 'Ctrl+Alt+R',
   toggle_format_toolbar: 'Ctrl+F1',
   toggle_focus_mode: 'Ctrl+Shift+D',
   toggle_typewriter_mode: 'Ctrl+Shift+Y',
   open_settings: 'Ctrl+,',
-  next_tab: 'Ctrl+Tab',
-  prev_tab: 'Ctrl+Shift+Tab',
-  close_tab: 'Ctrl+W',
+  next_tab: 'Ctrl+Alt+Right',
+  prev_tab: 'Ctrl+Alt+Left',
+  close_tab: 'Ctrl+Shift+W',
   new_page: 'Ctrl+N',
   new_section: 'Ctrl+Alt+N',
   new_notebook: 'Ctrl+Alt+Shift+N',
@@ -52,15 +52,18 @@ describe('resolveGlobalHotkey', () => {
     ).toBe('open_search')
   })
 
-  it('resolves toggle_sidebar on Ctrl+B when not in the editor', () => {
+  it('resolves format_bold on Ctrl+B when not in the editor', () => {
+    // Ctrl+B is bold everywhere now that toggle_sidebar moved to Ctrl+\. When
+    // the editor is not focused, the resolver returns format_bold so the
+    // dispatch can focus the active editor and apply bold.
     expect(
       resolveGlobalHotkey(key('b', { ctrlKey: true }), defaults, false, false)
-    ).toBe('toggle_sidebar')
+    ).toBe('format_bold')
   })
 
-  it('suppresses Ctrl+B inside the editor (format_bold owns it)', () => {
-    // The famous collision: Ctrl+B is toggle_sidebar globally AND format_bold in
-    // the editor. Editor-focused must yield null so the editor handles it.
+  it('suppresses Ctrl+B inside the editor (ProseMirror owns it)', () => {
+    // When the editor is focused, the editor-owned suppression yields null so
+    // ProseMirror applies bold natively (no double-fire).
     expect(
       resolveGlobalHotkey(key('b', { ctrlKey: true }), defaults, true, false)
     ).toBe(null)
@@ -98,11 +101,92 @@ describe('resolveGlobalHotkey', () => {
     ).toBe(null)
   })
 
+  describe('#898 — scope-aware suppression matches shortcutScope', () => {
+    // Regression: the conflict grid (shortcutScope) classifies table_* and the
+    // exact-name toggle_* actions as editor-scoped, so it permits them to share
+    // a chord with a global action (resolved by focus, not flagged as a
+    // conflict). For that to be sound, the runtime resolver MUST suppress the
+    // global handler for the same action set when the editor is focused —
+    // otherwise both the editor keymap and the global handler fire (double-
+    // fire). These cases pin the agreement: every action shortcutScope treats
+    // as editor-scoped is one isEditorOwned suppresses, and vice-versa.
+    //
+    // Each case remaps an editor-scoped action onto open_search's chord
+    // (Ctrl+Shift+F) and asserts: focused → null (editor wins, no double-fire),
+    // unfocused → open_search (global still resolves).
+
+    const cases: Array<[string, KeyboardEvent]> = [
+      // Prefix-based editor ownership (table_ was the headline missing entry).
+      ['table_insert_row_above', key('F', { ctrlKey: true, shiftKey: true })],
+      ['table_insert_col_right', key('F', { ctrlKey: true, shiftKey: true })],
+      // Exact-name editor ownership (no consistent prefix).
+      ['toggle_quote', key('F', { ctrlKey: true, shiftKey: true })],
+      ['toggle_bullet_list', key('F', { ctrlKey: true, shiftKey: true })],
+      ['toggle_ordered_list', key('F', { ctrlKey: true, shiftKey: true })],
+      ['toggle_details', key('F', { ctrlKey: true, shiftKey: true })],
+      // format_bold stays editor-owned while focused even though shortcutScope
+      // returns 'global' for it (it is also global-resolvable when unfocused).
+      ['format_bold', key('F', { ctrlKey: true, shiftKey: true })]
+    ]
+
+    it.each(cases)(
+      'suppresses the shared chord for editor-scoped %s when focused (no double-fire)',
+      (action, event) => {
+        const hotkeys = {
+          ...defaults,
+          [action]: 'Ctrl+Shift+F' // collide with open_search
+        }
+        expect(resolveGlobalHotkey(event, hotkeys, true, false)).toBe(null)
+      }
+    )
+
+    it.each(cases)(
+      'still fires the global action for %s collision when editor NOT focused',
+      (action, event) => {
+        const hotkeys = {
+          ...defaults,
+          [action]: 'Ctrl+Shift+F' // collide with open_search
+        }
+        // Editor not focused → the editor-scoped action is irrelevant and the
+        // global action resolves normally.
+        expect(resolveGlobalHotkey(event, hotkeys, false, false)).toBe(
+          'open_search'
+        )
+      }
+    )
+
+    it('the editor-scoped action itself never resolves globally (it is not a GlobalHotkeyAction)', () => {
+      // Belt-and-suspenders: an editor-scoped action sharing a chord with a
+      // global one can't itself be returned by resolveGlobalHotkey because it
+      // isn't a member of GlobalHotkeyAction, so even if suppression failed it
+      // would fall through to open_search — never double-fire as the editor
+      // action. This pins the type-level guarantee the no-double-fire property
+      // rests on.
+      const hotkeys = {
+        ...defaults,
+        table_insert_row_above: 'Ctrl+Shift+F'
+      }
+      // Unfocused, with no colliding global action on this chord: the editor
+      // action is unknown to the resolver, so nothing fires.
+      const noCollision = { ...hotkeys, open_search: 'Ctrl+Shift+G' }
+      expect(
+        resolveGlobalHotkey(
+          key('F', { ctrlKey: true, shiftKey: true }),
+          noCollision,
+          false,
+          false
+        )
+      ).toBe(null)
+    })
+  })
+
   it('still fires global actions while the editor is focused', () => {
-    // toggle_view_mode is intentionally NOT editor-owned (#171/#195).
+    // toggle_view_mode is intentionally NOT editor-owned; it now lives on
+    // Ctrl+Alt+R (relocated off Ctrl+Shift+V to avoid the OS paste-plain /
+    // TasksHub display-cycle triple-fire).
     expect(
       resolveGlobalHotkey(
-        key('V', { ctrlKey: true, shiftKey: true }),
+        key('r', { ctrlKey: true, altKey: true }),
         defaults,
         true,
         false
@@ -151,18 +235,23 @@ describe('resolveGlobalHotkey', () => {
   })
 
   it('gates the tab-strip fallback on hasDisplayedTabs', () => {
-    const close = key('w', { ctrlKey: true })
+    const close = key('w', { ctrlKey: true, shiftKey: true })
     expect(resolveGlobalHotkey(close, defaults, false, true)).toBe('close_tab')
     expect(resolveGlobalHotkey(close, defaults, false, false)).toBe(null)
   })
 
   it('resolves next_tab / prev_tab only when tabs are displayed', () => {
     expect(
-      resolveGlobalHotkey(key('Tab', { ctrlKey: true }), defaults, false, true)
+      resolveGlobalHotkey(
+        key('ArrowRight', { ctrlKey: true, altKey: true }),
+        defaults,
+        false,
+        true
+      )
     ).toBe('next_tab')
     expect(
       resolveGlobalHotkey(
-        key('Tab', { ctrlKey: true, shiftKey: true }),
+        key('ArrowLeft', { ctrlKey: true, altKey: true }),
         defaults,
         false,
         true
@@ -272,5 +361,96 @@ describe('resolveGlobalHotkey', () => {
     expect(
       resolveGlobalHotkey(key('o', { altKey: true }), configured, false, false)
     ).toBe('open_quick_switcher')
+  })
+})
+
+describe('shouldApplyFormatBold', () => {
+  // Pins the four gating dimensions the dispatch-layer closure relied on:
+  // view, dialog presence, editor existence, and editor visibility. The
+  // predicate itself is pure — the caller computes isAnyDialogOpen and
+  // editorVisible from DOM/state — so these cases don't touch the DOM.
+
+  it('returns false for a non-editor view (dashboard)', () => {
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'dashboard',
+        isAnyDialogOpen: false,
+        editorVisible: true
+      })
+    ).toBe(false)
+  })
+
+  it('returns true on notes view with no dialog and a visible editor', () => {
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'notes',
+        isAnyDialogOpen: false,
+        editorVisible: true
+      })
+    ).toBe(true)
+  })
+
+  it('returns true on backlinks view with no dialog and a visible editor', () => {
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'backlinks',
+        isAnyDialogOpen: false,
+        editorVisible: true
+      })
+    ).toBe(true)
+  })
+
+  it('returns false when a dialog is open', () => {
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'notes',
+        isAnyDialogOpen: true,
+        editorVisible: true
+      })
+    ).toBe(false)
+  })
+
+  it('returns false when the editor is in a hidden background tab', () => {
+    // offsetParent === null on the recovered editor — the user isn't looking
+    // at the page getLastActiveEditor() would mutate.
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'notes',
+        isAnyDialogOpen: false,
+        editorVisible: false
+      })
+    ).toBe(false)
+  })
+
+  it('returns false when no editor could be recovered', () => {
+    // The caller maps an absent editor to editorVisible: false; combined with
+    // the predicate this keeps the absent-editor case a clean no-op.
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'notes',
+        isAnyDialogOpen: false,
+        editorVisible: false
+      })
+    ).toBe(false)
+  })
+
+  it('returns false for a hidden editor even on backlinks', () => {
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'backlinks',
+        isAnyDialogOpen: false,
+        editorVisible: false
+      })
+    ).toBe(false)
+  })
+
+  it('returns false when both a dialog is open and the editor is hidden', () => {
+    expect(
+      shouldApplyFormatBold({
+        activeView: 'notes',
+        isAnyDialogOpen: true,
+        editorVisible: false
+      })
+    ).toBe(false)
   })
 })

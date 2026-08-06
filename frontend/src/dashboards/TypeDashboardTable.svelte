@@ -107,7 +107,7 @@
                 type="button"
                 class="group-toggle"
                 aria-expanded={!collapsed.has(section.key)}
-                aria-label="{section.label} group, {section.rows.length} pages"
+                aria-label="{section.label} group, {section.items.length} pages"
                 onclick={() => onToggleGroup(section.key)}
               >
                 <span
@@ -119,14 +119,14 @@
                 >
                 <span class="group-label">{section.label}</span>
                 <span class="group-count" aria-hidden="true"
-                  >{section.rows.length}</span
+                  >{section.items.length}</span
                 >
               </button>
             </th>
           </tr>
         {/if}
         {#if !grouped || !collapsed.has(section.key)}
-          {#each section.rows as row (row.source + ':' + row.notebook + ':' + row.section + ':' + row.page)}
+          {#each section.items as row (row.source + ':' + row.notebook + ':' + row.section + ':' + row.page)}
             <tr class="data-row">
               <td class="page-cell">
                 <button

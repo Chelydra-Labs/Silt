@@ -14,14 +14,18 @@
 import { Events } from '@wailsio/runtime'
 import { EventName } from '../generated/enums'
 import {
+  GetPageCoreMetadata,
   GetPageProperties,
   GetPageType,
-  ListTypes
+  ListTypes,
+  SetPageCoreMetadata
 } from '../../bindings/silt/app.js'
 import { coerceIPCError } from '../lib/ipcError'
 import { pushNotification } from '../notifications/store.svelte'
 import type {
+  CoreFieldUpdate,
   ListTypesResult,
+  PageCoreMetadata,
   PageLocator,
   PagePropertyValue,
   PageTypeInfo,
@@ -33,6 +37,19 @@ const EMPTY_INFO: PageTypeInfo = {
   type: { id: '', name: '', properties: [] },
   isSet: false,
   rawType: ''
+}
+
+const EMPTY_CORE: PageCoreMetadata = {
+  notebook: '',
+  section: '',
+  page: '',
+  type: '',
+  date: '',
+  tags: [],
+  aliases: [],
+  created: '',
+  modified: '',
+  tagsAreReadOnly: false
 }
 
 export interface PageTypeControllerDeps {
@@ -49,6 +66,10 @@ export interface PageTypeController {
   readonly typesLoading: boolean
   readonly panelOpen: boolean
   readonly heroValue: string
+  /** Type-independent core metadata (#867). Always defined (EMPTY_CORE when
+   *  no page is active). The panel renders this as a Core section above the
+   *  type-defined section. */
+  readonly core: PageCoreMetadata
   /** Monotonic request counter the panel watches (slash-command-driven). */
   readonly typeMenuRequest: number
   refresh: () => Promise<void>
@@ -58,6 +79,9 @@ export interface PageTypeController {
   /** Keep-and-flag warnings from a type switch (surfaces them on the fields). */
   setMismatched: (names: string[]) => void
   setError: (message: string) => void
+  /** Apply a field-granular core-metadata update (#867) and refetch the core
+   *  payload. The panel calls this for each editable core field edit. */
+  commitCore: (update: CoreFieldUpdate) => Promise<void>
   /**
    * Monotonic counter the host bumps to request the panel open its type menu
    * (used by the /type slash command). The panel watches it via a prop.
@@ -79,6 +103,19 @@ export function createPageTypeController(
   let types = $state<TypeDef[]>([])
   let typesLoading = $state(false)
   let panelOpen = $state(false)
+  // Core metadata (#867). Always defined — EMPTY_CORE when no page is active
+  // or before the first fetch lands. Wiped on locator change so a stale prior
+  // page's core fields never paint over the new page.
+  let core = $state<PageCoreMetadata>(EMPTY_CORE)
+  // The locator of the page whose data is currently in `core` (captured when
+  // the core payload lands, NOT on every wipe). commitCore reads THIS, not
+  // deps.getLocator(), so an in-flight blur-commit on page A's unmounting
+  // input cannot route A's draft to page B when the user navigates A→B
+  // mid-edit. Left untouched on locator-change wipes: the {#key pageLocator}
+  // gate in CoreMetadataSection discards A's draft visually, and a stale-edit
+  // write should land on A (whose data seeded it) — never be silently
+  // retargeted to B by the post-navigation locator.
+  let coreLocator: PageLocator = { notebook: '', section: '', page: '' }
   // Monotonic counter the host bumps to request the panel's type menu (the
   // /type slash command). 0 = "no request yet" so the panel's watcher skips
   // its initial run.
@@ -108,6 +145,7 @@ export function createPageTypeController(
       values = []
       mismatched = []
       error = ''
+      core = EMPTY_CORE
       lastLocator = ''
       return
     }
@@ -125,6 +163,7 @@ export function createPageTypeController(
       values = []
       mismatched = []
       error = ''
+      core = EMPTY_CORE
     } else {
       error = ''
     }
@@ -132,19 +171,34 @@ export function createPageTypeController(
     // Skeleton only when there is nothing on screen yet (first load / after wipe).
     if (values.length === 0) loading = true
     try {
-      const [typeInfo, props] = await Promise.all([
+      const [typeInfo, props, coreMeta] = await Promise.all([
         GetPageType(notebook, section, page),
-        GetPageProperties(notebook, section, page)
+        GetPageProperties(notebook, section, page),
+        GetPageCoreMetadata(notebook, section, page)
       ])
       if (token !== refreshToken) return
       const nextInfo = (typeInfo as PageTypeInfo) ?? EMPTY_INFO
       const nextValues = (props as PagePropertyValue[]) ?? []
+      const nextCore = (coreMeta as PageCoreMetadata | null) ?? EMPTY_CORE
+      // Normalize tags/aliases to non-null arrays so the panel's .length / map
+      // never NPEs on a stale or partial payload.
+      if (!Array.isArray(nextCore.tags)) nextCore.tags = []
+      if (!Array.isArray(nextCore.aliases)) nextCore.aliases = []
       // Schema change (type switch / property set reshape): replace wholesale.
       // Same schema: still assign the new arrays so values update, but the
       // panel's keyed {#each values as v (v.name)} keeps matching field
       // instances mounted — focus and sibling edits survive.
       info = nextInfo
       values = nextValues
+      core = nextCore
+      // Capture the page this core payload belongs to. commitCore uses this
+      // (not deps.getLocator() at commit time) so a navigation A→B during an
+      // in-flight edit cannot retarget A's draft to B.
+      coreLocator = {
+        notebook: nextCore.notebook,
+        section: nextCore.section,
+        page: nextCore.page
+      }
       // Do NOT clear mismatched here: a same-page fetch (the post-switch
       // refresh) must preserve the warnings commitType just set. They clear
       // on navigation (locatorChanged) or are replaced by the next switch.
@@ -193,6 +247,82 @@ export function createPageTypeController(
 
   function setError(message: string): void {
     error = message
+  }
+
+  // commitCore applies a field-granular core-metadata update (#867) via the
+  // IPC setter, then refetches only the core payload (info/values stay
+  // mounted — a core edit does not reshape the type-defined section). Reuses
+  // the same refreshToken so a stale response is discarded. Errors surface
+  // through the existing error banner via setError.
+  async function commitCore(update: CoreFieldUpdate): Promise<void> {
+    // Source the write target from `coreLocator` (the page whose data is in
+    // `core`, captured at load time) — NOT deps.getLocator() at commit time.
+    // If the user edited tags/aliases on page A then navigated to page B
+    // before the blur-commit fired, the blur lands on A's unmounting input
+    // while deps.getLocator() already returns B; without this guard A's
+    // draft would silently write to B. The {#key pageLocator} remount in
+    // CoreMetadataSection discards A's draft visually; the write must land
+    // on A (the page whose data seeded it) or be skipped — never retargeted.
+    const { notebook, section, page } = coreLocator
+    if (!notebook || !page) return
+    try {
+      // The Wails JSDoc generator emits the CoreFieldUpdate model fields as
+      // required-but-nullable (`T | null | undefined`) rather than optional,
+      // so the local Partial-style interface is structurally incompatible at
+      // the type layer even though the runtime shape is identical (omitted
+      // keys / null / value). Cast through the bindings model at the boundary.
+      await SetPageCoreMetadata(
+        notebook,
+        section,
+        page,
+        update as unknown as Parameters<typeof SetPageCoreMetadata>[3]
+      )
+    } catch (e) {
+      setError(coerceIPCError(e).message)
+      // Rethrow so CoreMetadataSection.commit()'s catch fires — that path
+      // renders the aria-live banner (onError → liveError) and bumps
+      // rollbackNonce so the input re-seeds from the unchanged committed core.
+      // Swallowing here left the success path to run: onChanged() cleared the
+      // banner and the rejected value lingered as a ghost with no feedback.
+      throw e
+    }
+    // Skip the post-write refetch if the user navigated away from the page
+    // whose core was just written — painting the fresh core onto a different
+    // page's panel would be a stale snapshot. The write itself already landed
+    // on the correct page (coreLocator); only the refetch is gated on the
+    // current locator.
+    const now = deps.getLocator()
+    if (
+      now.notebook !== notebook ||
+      now.section !== section ||
+      now.page !== page
+    )
+      return
+    setError('')
+    // Refresh the core payload from disk truth (the write succeeded; re-derive
+    // type/date/tags/aliases/created/modified). info/values/mismatched are
+    // untouched — a core edit never changes the type-defined fields.
+    const token = ++refreshToken
+    try {
+      const nextCore = (await GetPageCoreMetadata(
+        notebook,
+        section,
+        page
+      )) as PageCoreMetadata | null
+      if (token !== refreshToken) return
+      const c = nextCore ?? EMPTY_CORE
+      if (!Array.isArray(c.tags)) c.tags = []
+      if (!Array.isArray(c.aliases)) c.aliases = []
+      core = c
+      coreLocator = {
+        notebook: c.notebook,
+        section: c.section,
+        page: c.page
+      }
+    } catch (e) {
+      if (token !== refreshToken) return
+      setError(coerceIPCError(e).message)
+    }
   }
 
   function attach(): () => void {
@@ -295,6 +425,9 @@ export function createPageTypeController(
       if (!hit || !hit.isSet) return ''
       return formatHero(hit.value)
     },
+    get core() {
+      return core
+    },
     refresh,
     open,
     close,
@@ -302,6 +435,7 @@ export function createPageTypeController(
     requestTypeMenu,
     setMismatched,
     setError,
+    commitCore,
     attach
   }
 }

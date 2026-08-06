@@ -1,6 +1,9 @@
 package db
 
-import "sync/atomic"
+import (
+	"errors"
+	"sync/atomic"
+)
 
 // indexerHookPhase identifies one pre-commit point inside an indexing
 // transaction so a test can target a single indexer when injecting a
@@ -65,4 +68,25 @@ func (dm *DatabaseManager) runIndexerTestingHook(ctx indexerHookContext) error {
 		return nil
 	}
 	return (*fnPtr)(ctx)
+}
+
+// FailIndexFileBlocksForTest forces the next IndexFileBlocks for the given page
+// to fail at pre-commit, so integration tests in other packages can assert that
+// a write path gates its files-row marker on a successful index. The hook is
+// scoped to the page so unrelated indexers keep working. The DatabaseManager
+// stays fully readable (a closed DB would also block the read-back and mask the
+// gate). Pass reset=true to clear. Test-only seam — not part of the public IPC
+// surface; safe to call from any package.
+func (dm *DatabaseManager) FailIndexFileBlocksForTest(notebook, section, page string, reset bool) {
+	if reset {
+		dm.setIndexerTestingHook(nil)
+		return
+	}
+	dm.setIndexerTestingHook(func(ctx indexerHookContext) error {
+		if ctx.Phase == indexerHookIndexFileBlocksPreCommit &&
+			ctx.Notebook == notebook && ctx.Section == section && ctx.Page == page {
+			return errors.New("ForcedIndexFileBlocksFailure (test seam)")
+		}
+		return nil
+	})
 }
