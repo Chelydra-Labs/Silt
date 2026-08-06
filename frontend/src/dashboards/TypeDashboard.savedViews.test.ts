@@ -350,4 +350,78 @@ describe('TypeDashboard — saved-view chrome (#863/#868)', () => {
       expect(select).toHaveValue('v1')
     })
   })
+
+  it('deleteActiveView surfaces the persist error and keeps the view in the list (#863)', async () => {
+    // The pre-fix handler unconditionally overwrote savedViewsMessage with
+    // 'Deleted view' AFTER the rejecting persist, so the aria-live region
+    // announced success while the view was still on disk and still selected.
+    appMocks.SetTypedNotesSavedViews.mockRejectedValue(
+      new Error('vault not loaded')
+    )
+    seedConfig([bookView()])
+
+    await mount()
+    const select = screen.getByRole('combobox', { name: 'Saved views' })
+    await fireEvent.change(select, { target: { value: 'v1' } })
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Delete saved view Reading List' })
+    )
+
+    // The error string is announced (persistAll set it), NOT the success
+    // copy that the resolved branch would surface.
+    const liveRegion = await screen.findByText('vault not loaded')
+    expect(liveRegion).toHaveAttribute('aria-live', 'polite')
+    expect(screen.queryByText('Deleted view')).toBeNull()
+
+    // The view is still in the list: the persist rejected, so no optimistic
+    // mirror removed it from config (the $derived savedViews is unchanged)
+    // and activeSavedViewId stays at 'v1' (only cleared on success). Both
+    // the bound select value and the offered option reflect that.
+    await waitFor(() => {
+      expect(select).toHaveValue('v1')
+    })
+    expect(
+      screen.getByRole('option', { name: 'Reading List' })
+    ).toBeInTheDocument()
+  })
+
+  it('saving a name colliding with a different view mints a fresh id instead of overwriting (#863)', async () => {
+    // Pre-fix, confirmSaveView matched ANY same-type view by name and reused
+    // its id — an unconfirmed overwrite of an unrelated view. With the fix,
+    // the existing id is reused only when it IS the active view being
+    // re-saved (rename-in-place); otherwise a fresh id is appended.
+    seedConfig([bookView({ id: 'v1', name: 'Reading List' })])
+    appMocks.SetTypedNotesSavedViews.mockResolvedValue(undefined)
+
+    await mount()
+    // Do NOT select the seeded view: activeSavedViewId stays '' so this is a
+    // genuine "save new" whose name happens to collide with another view.
+    await fireEvent.click(screen.getByRole('button', { name: 'Save current' }))
+    const input = screen.getByRole('textbox', { name: 'New saved view name' })
+    await fireEvent.input(input, { target: { value: 'Reading List' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    // The persisted payload must contain BOTH the original v1 (untouched) and
+    // a new entry with a distinct id — not a single entry reusing v1's id
+    // (which would mean the original view's snapshot was clobbered).
+    await waitFor(() => {
+      expect(appMocks.SetTypedNotesSavedViews).toHaveBeenCalledTimes(1)
+    })
+    const persisted = appMocks.SetTypedNotesSavedViews.mock
+      .calls[0][0] as DashboardSavedView[]
+    expect(persisted).toHaveLength(2)
+    const ids = persisted.map((v) => v.id)
+    expect(ids).toContain('v1')
+    expect(ids.filter((id) => id !== 'v1')).toHaveLength(1)
+
+    // After the optimistic mirror lands, the select offers two same-named
+    // options — the original and the new one — confirming neither clobbered
+    // the other.
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole('option', { name: 'Reading List' })
+      ).toHaveLength(2)
+    })
+  })
 })

@@ -178,6 +178,15 @@
     return err
   }
 
+  // crypto.randomUUID is missing on borderline WebKitGTK webviews; fall back
+  // to a timestamp+random slug so the save path can't throw there. Mirrors
+  // TasksHub.svelte's freshId().
+  function freshId(): string {
+    return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `view-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  }
+
   async function confirmSaveView(): Promise<void> {
     // Guard the whole path: a second Enter during the in-flight save (before
     // persistAll resolves) would otherwise mint a second id from the same
@@ -186,12 +195,19 @@
     if (savedViewsBusy) return
     const name = newViewName.trim()
     if (!name) return
-    // Reuse an existing view's id when the name matches one for this type
-    // (rename-in-place); otherwise mint a new id.
-    const existing = typeSavedViews.find(
-      (v) => v.name.toLowerCase() === name.toLowerCase()
-    )
-    const id = existing?.id ?? crypto.randomUUID()
+    // Reuse an existing view's id ONLY when the colliding name IS the active
+    // view being re-saved (rename-in-place). A different same-name view would
+    // otherwise be silently overwritten — mint a fresh id instead, matching
+    // TasksHub's save-new path.
+    const existing =
+      activeSavedViewId !== ''
+        ? typeSavedViews.find(
+            (v) =>
+              v.id === activeSavedViewId &&
+              v.name.toLowerCase() === name.toLowerCase()
+          )
+        : undefined
+    const id = existing?.id ?? freshId()
     const view: DashboardSavedView = {
       id,
       name,
@@ -220,6 +236,10 @@
   }
 
   async function updateActiveView(): Promise<void> {
+    // Mirror confirmSaveView's busy guard: the Update button's disabled flag
+    // is applied on re-render, so two rapid activations could both dispatch
+    // before the flag lands.
+    if (savedViewsBusy) return
     if (!activeSavedView) return
     const view: DashboardSavedView = {
       ...activeSavedView,
@@ -233,11 +253,19 @@
   }
 
   async function deleteActiveView(): Promise<void> {
+    // Mirror confirmSaveView's busy guard (see updateActiveView).
+    if (savedViewsBusy) return
     if (!activeSavedView) return
     const next = savedViews.filter((v) => v.id !== activeSavedView.id)
-    activeSavedViewId = ''
-    await persistAll(next)
-    savedViewsMessage = 'Deleted view'
+    const err = await persistAll(next)
+    // Only clear the active id and announce success once the view actually
+    // left disk — persistAll already set savedViewsMessage to the error
+    // string on failure, and overwriting it with 'Deleted view' would
+    // announce success while the view is still in the list.
+    if (!err) {
+      activeSavedViewId = ''
+      savedViewsMessage = 'Deleted view'
+    }
   }
 
   // --- Type list -----------------------------------------------------------
