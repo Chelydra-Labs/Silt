@@ -79,7 +79,7 @@ func TestValidateTypeDef(t *testing.T) {
 		{"select no options", &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "s", Type: PropSelect}}}, "requires at least one option"},
 		{"number min>max", &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "n", Type: PropNumber, Min: &max, Max: &min}}}, "greater than max"},
 		{"hero unknown", &TypeDef{Name: "X", HeroField: "nope", Properties: []PropertyDef{{Name: "a", Type: PropText}}}, "references an unknown property"},
-		{"reserved name", &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "type", Type: PropText}}}, "is reserved"},
+		{"reserved name", &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "type", Type: PropText}}}, "reserved core metadata field"},
 		{"bad default", &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "n", Type: PropNumber, Default: "not a number"}}}, "expected a number"},
 		{"bad target", &TypeDef{Name: "X", Properties: []PropertyDef{{Name: "r", Type: PropPage, Target: "Bad Target!"}}}, "must be a valid type id"},
 	}
@@ -187,8 +187,11 @@ func TestValidateTypeDef_ReservedPropertyNames(t *testing.T) {
 			if err == nil {
 				t.Fatalf("reserved name %q should be rejected", name)
 			}
-			if !strings.Contains(err.Error(), "is reserved") {
-				t.Errorf("reserved name %q: error %q should mention 'is reserved'", name, err.Error())
+			// The message must be actionable (tell the user to rename) and name
+			// the reserved field — a cryptic "is reserved" leaves an upgrading
+			// vault with no fix path (PR #898 review finding #7).
+			if !strings.Contains(err.Error(), "rename the property") {
+				t.Errorf("reserved name %q: error %q should tell the user to rename the property", name, err.Error())
 			}
 		})
 	}

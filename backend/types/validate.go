@@ -117,7 +117,7 @@ func ValidateTypeDef(td *TypeDef) error {
 		case reservedPropertyNames[strings.ToLower(p.Name)]:
 			errs = append(errs, ValidationError{
 				Field:   prefix + ".name",
-				Message: fmt.Sprintf("property name %q is reserved (collides with a system-managed frontmatter key)", p.Name),
+				Message: fmt.Sprintf("property name %q is a reserved core metadata field (notebook/section/page/date/tags/type/aliases/created) — rename the property to avoid the conflict", p.Name),
 			})
 		case seen[strings.ToLower(p.Name)]:
 			errs = append(errs, ValidationError{

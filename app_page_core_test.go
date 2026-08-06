@@ -590,6 +590,88 @@ func TestBlockOnlyWrite_RefreshesCoreModified(t *testing.T) {
 	}
 }
 
+// TestBlockOnlyWrite_DoesNotStampFilesRowWhenIndexFails pins PR #898 review
+// finding #1: when IndexFileBlocks fails after a block-only write, the call
+// site must NOT call markFileIndexedBestEffort. Stamping the files row with the
+// mtime of content that was never indexed would make a warm restart's
+// IsFileUnchanged match → the page is skipped and stale blocks/tags persist
+// silently until the next full scan.
+//
+// The hook forces IndexFileBlocks to fail for the edited page while keeping the
+// DatabaseManager readable (a closed DB would also block the read-back and mask
+// whether the gate or the closed handle prevented the stamp). With the gate the
+// marker is skipped, so the files row stays at its seed mtime even though
+// SetTaskOwner returns nil — the file write itself succeeded; only the index
+// failed (self-heals on next scan).
+func TestBlockOnlyWrite_DoesNotStampFilesRowWhenIndexFails(t *testing.T) {
+	app := newTestApp(t)
+	const taskID = "aaaaaaaa-1111-1111-1111-111111111111"
+
+	content := "---\n" +
+		"notebook: \"Notes\"\n" +
+		"section: \"\"\n" +
+		"page: \"Chores\"\n" +
+		"date: \"2026-08-05\"\n" +
+		"tags: []\n" +
+		"---\n# Chores\n\n" +
+		"- [ ] walk the dog <!-- id: " + taskID + " -->\n"
+	filePath := filepath.Join(app.vaultPath, "Notes", "Chores.md")
+	writeFile(t, filePath, content)
+	blocks, meta, _, _, err := parser.ParseFileContent(content, "Notes", "", "Chores", "2026-08-05", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent: %v", err)
+	}
+	if err := app.indexFile("vault", "Notes", "", "Chores", blocks, meta, meta.Warnings...); err != nil {
+		t.Fatalf("indexFile: %v", err)
+	}
+	stat, statErr := os.Stat(filePath)
+	if statErr != nil {
+		t.Fatalf("stat seed: %v", statErr)
+	}
+	if err := app.db.MarkFileIndexed(nil, filePath, stat.ModTime().UnixNano(), stat.Size()); err != nil {
+		t.Fatalf("seed MarkFileIndexed: %v", err)
+	}
+	seedMtime, err := app.db.FileMtime(filePath)
+	if err != nil {
+		t.Fatalf("seed FileMtime: %v", err)
+	}
+
+	// Force the NEXT IndexFileBlocks for this page to fail at pre-commit. The
+	// hook is scoped to the page so unrelated indexers keep working. Clear it
+	// before the test returns so App teardown can reindex freely.
+	app.db.FailIndexFileBlocksForTest("Notes", "", "Chores", false)
+	defer app.db.FailIndexFileBlocksForTest("Notes", "", "Chores", true)
+	ensureMtimeBumps(t)
+
+	if err := app.SetTaskOwner(taskID, "Alice"); err != nil {
+		t.Fatalf("SetTaskOwner: %v", err)
+	}
+	// Clear the hook immediately so the assertion's own reads (and any later
+	// App cleanup) are unaffected; the defer above is just a safety net.
+	app.db.FailIndexFileBlocksForTest("Notes", "", "Chores", true)
+
+	// The file WAS rewritten (WriteFileAtomic succeeded), so its on-disk mtime
+	// advanced. The files row, though, must still hold the seed value: the
+	// index failed, so stamping would record the mtime of never-indexed content.
+	postMtime, err := app.db.FileMtime(filePath)
+	if err != nil {
+		t.Fatalf("post FileMtime: %v", err)
+	}
+	if postMtime != seedMtime {
+		t.Errorf("files row stamped despite IndexFileBlocks failure: seed=%d post=%d (marker must be gated on a successful index, mirroring indexFile)", seedMtime, postMtime)
+	}
+
+	// Sanity: confirm the on-disk file really did change (proves the failure
+	// was the index, not the write) so a stale-seed false-pass can't hide here.
+	diskStat, derr := os.Stat(filePath)
+	if derr != nil {
+		t.Fatalf("post-write stat: %v", derr)
+	}
+	if diskStat.ModTime().UnixNano() <= seedMtime {
+		t.Fatalf("test pre-condition failed: on-disk mtime did not advance past seed (%d); cannot prove the write succeeded while the index failed", seedMtime)
+	}
+}
+
 // TestMarkFileIndexedBestEffort_UsesPreCommitStatNotPostCommitStat pins the
 // fix for PR #898 review finding #2: markFileIndexedBestEffort must record the
 // mtime/size snapshot its caller captured BEFORE IndexFileBlocks commits, NOT

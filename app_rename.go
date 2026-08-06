@@ -217,6 +217,12 @@ func (a *App) indexFile(source, notebook, section, page string, blocks []parser.
 // the file's real mtime, so the warm restart re-parses. Best-effort: a nil stat
 // (the caller's stat failed) or a mark failure only leaves `modified` stale
 // until the next external-triggered scan; it is never a write failure.
+//
+// The caller MUST gate this call on a successful IndexFileBlocks: stamping the
+// files row when the index write failed would record the mtime of content that
+// was never indexed, so a warm restart's IsFileUnchanged matches and silently
+// persists stale blocks/tags until the next full scan. Mirrors indexFile's gate
+// on the projection write (IndexFileWithProjection must succeed before it marks).
 func (a *App) markFileIndexedBestEffort(filePath string, stat os.FileInfo) {
 	if stat == nil {
 		return

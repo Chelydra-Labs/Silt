@@ -173,8 +173,9 @@ func (a *App) setTaskRecurrence(blockID, recurrenceRule string) error {
 				})
 				if idxErr != nil {
 					log.Printf("SetTaskRecurrence: IndexFileBlocks failed: %v", idxErr)
+				} else {
+					a.markFileIndexedBestEffort(filePath, fileStat)
 				}
-				a.markFileIndexedBestEffort(filePath, fileStat)
 				for _, b := range blocks {
 					if b.ID == blockID {
 						emitFileDate = b.FileDate

@@ -94,6 +94,10 @@ func (a *App) computePageCore(meta parser.FileMetadata) db.PageCoreFields {
 // a typed-decode failure that skips Aliases but leaves it in Frontmatter).
 func computePageCoreFromMeta(meta parser.FileMetadata) db.PageCoreFields {
 	core := db.PageCoreFields{
+		// Type deliberately holds the RAW frontmatter ref (e.g. "meeting"), not
+		// the canonicalized page_types.type_name id. No consumer joins the two
+		// today; the canonicalization decision (raw ref vs id) is deferred until
+		// the first join-consumer lands, at which point both sides must agree.
 		Type:    meta.Type,
 		Date:    meta.Date,
 		Aliases: meta.Aliases,

@@ -1386,3 +1386,85 @@ func TestTurnIntoPage_WriteFailureLeavesFileUntouched(t *testing.T) {
 		t.Error("orphan values were cleared despite write failure")
 	}
 }
+
+// TestSetPageCoreMetadata_CreatedFormatValidation pins PR #898 review finding #8:
+// the `created` write path must reject anything that isn't a bare YYYY-MM-DD
+// date or a parseable RFC3339 timestamp, mirroring the `date` field's guard. A
+// future MCP/plugin caller could otherwise pass garbage into page_core.created.
+func TestSetPageCoreMetadata_CreatedFormatValidation(t *testing.T) {
+	app := newTestApp(t)
+	writeFile(t, filepath.Join(app.vaultPath, "Notes", "Plain.md"),
+		"---\nnotebook: \"Notes\"\nsection: \"\"\npage: \"Plain\"\ndate: \"2026-08-01\"\ntags: []\n---\n# Plain\n")
+
+	readCreated := func() string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(app.vaultPath, "Notes", "Plain.md"))
+		if err != nil {
+			t.Fatalf("read file: %v", err)
+		}
+		s := string(b)
+		// created is absent on the seed; return "" when not present.
+		for _, line := range strings.Split(s, "\n") {
+			if strings.HasPrefix(line, "created: ") {
+				return strings.Trim(strings.TrimPrefix(line, "created: "), `"`)
+			}
+		}
+		return ""
+	}
+
+	// Garbage must be rejected and leave the file untouched (no `created` line).
+	bad := "not a date"
+	if err := app.SetPageCoreMetadata("Notes", "", "Plain", CoreFieldUpdate{Created: &bad}); err == nil {
+		t.Fatal("SetPageCoreMetadata accepted garbage created value; want an error")
+	}
+	if got := readCreated(); got != "" {
+		t.Errorf("garbage created should not be written; file has created: %q", got)
+	}
+
+	// A bare YYYY-MM-DD date is accepted.
+	goodDate := "2026-08-05"
+	if err := app.SetPageCoreMetadata("Notes", "", "Plain", CoreFieldUpdate{Created: &goodDate}); err != nil {
+		t.Fatalf("bare date created rejected: %v", err)
+	}
+	if got := readCreated(); got != goodDate {
+		t.Errorf("created = %q, want %q", got, goodDate)
+	}
+
+	// A full RFC3339 timestamp is accepted (created marks an instant).
+	goodTS := "2026-08-05T14:30:00Z"
+	if err := app.SetPageCoreMetadata("Notes", "", "Plain", CoreFieldUpdate{Created: &goodTS}); err != nil {
+		t.Fatalf("RFC3339 created rejected: %v", err)
+	}
+	if got := readCreated(); got != goodTS {
+		t.Errorf("created = %q, want %q", got, goodTS)
+	}
+
+	// The codebase's own offset-less timestamp form (parser's block CreatedAt
+	// format 2006-01-02T15:04:05) is accepted — strict RFC3339 would wrongly
+	// reject the format the renderer itself produces.
+	noOffset := "2026-10-02T08:00:00"
+	if err := app.SetPageCoreMetadata("Notes", "", "Plain", CoreFieldUpdate{Created: &noOffset}); err != nil {
+		t.Fatalf("offset-less created rejected: %v", err)
+	}
+	if got := readCreated(); got != noOffset {
+		t.Errorf("created = %q, want %q", got, noOffset)
+	}
+
+	// An empty string clears the field (must still be allowed).
+	empty := ""
+	if err := app.SetPageCoreMetadata("Notes", "", "Plain", CoreFieldUpdate{Created: &empty}); err != nil {
+		t.Fatalf("empty created (clear) rejected: %v", err)
+	}
+	if got := readCreated(); got != "" {
+		t.Errorf("created = %q, want cleared (absent)", got)
+	}
+
+	// A space-separated timestamp (not ISO 8601) is rejected.
+	almost := "2026-08-05 14:30:00"
+	if err := app.SetPageCoreMetadata("Notes", "", "Plain", CoreFieldUpdate{Created: &almost}); err == nil {
+		t.Fatal("SetPageCoreMetadata accepted a space-separated timestamp; want an error")
+	}
+	if _, perr := time.Parse(time.RFC3339, almost); perr == nil {
+		t.Fatalf("test pre-condition: %q should not parse as RFC3339", almost)
+	}
+}

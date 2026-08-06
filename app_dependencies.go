@@ -233,8 +233,9 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string) error {
 				})
 				if idxErr != nil {
 					log.Printf("SetTaskBlockedBy: IndexFileBlocks failed: %v", idxErr)
+				} else {
+					a.markFileIndexedBestEffort(filePath, fileStat)
 				}
-				a.markFileIndexedBestEffort(filePath, fileStat)
 				for _, b := range blocks {
 					if b.ID == blockID {
 						emitFileDate = b.FileDate

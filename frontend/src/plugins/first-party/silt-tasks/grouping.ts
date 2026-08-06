@@ -192,10 +192,12 @@ function binByTag(rows: TaskDetail[]): GroupSection[] {
 }
 
 /**
- * Bin rows into GroupSections for the given dimension. Always returns
- * the canonical bucket set for that dimension in the canonical order —
- * empty buckets are kept (length 0) so the caller can decide whether
- * to render them.
+ * Bin rows into GroupSections for the given dimension. dueDate and status use
+ * dimension-specific binners (canonical bucket shape and order); the other six
+ * dimensions delegate to the generic binner, which emits only present buckets
+ * plus a trailing Unassigned. Of the two specific binners, only dueDate keeps
+ * empty buckets at length 0 — status omits canonical statuses that have no rows
+ * — so callers must not assume a fixed bucket set across dimensions.
  */
 export function binByDimension(
   rows: TaskDetail[],

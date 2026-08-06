@@ -877,6 +877,23 @@ func (a *App) SetPageCoreMetadata(notebook, section, page string, update CoreFie
 			if c == "" {
 				content, e = parser.ClearFrontmatterField(content, "created")
 			} else {
+				// Reject anything that isn't one of the formats the codebase
+				// itself produces for created: a bare calendar date, the
+				// offset-less local-timestamp form the block renderer writes
+				// (parser's 2006-01-02T15:04:05), or full RFC3339 (with Z/
+				// offset, what yaml.v3 time.Time scalars format to). Mirrors the
+				// date guard above; a garbage MCP/plugin value must not land in
+				// page_core.created.
+				createdOK := false
+				for _, lay := range []string{"2006-01-02", "2006-01-02T15:04:05", time.RFC3339} {
+					if _, perr := time.Parse(lay, c); perr == nil {
+						createdOK = true
+						break
+					}
+				}
+				if !createdOK {
+					return "", fmt.Errorf("invalid created %q: use YYYY-MM-DD or an ISO 8601 timestamp (e.g. 2026-08-05 or 2026-08-05T14:30:00Z)", *update.Created)
+				}
 				content, e = parser.SetFrontmatterField(content, "created", c)
 			}
 			if e != nil {
