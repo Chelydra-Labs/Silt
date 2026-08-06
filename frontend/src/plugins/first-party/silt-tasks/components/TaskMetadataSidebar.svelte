@@ -3,7 +3,6 @@
   import { fly } from 'svelte/transition'
   import { tick, untrack } from 'svelte'
   import type { PluginContext, TaskStatus } from '../../../sdk'
-  import { plusDaysISO } from '../../../sdk'
   import { trailingDebounce } from '../debounce'
   import { friendlyCaughtError } from '../errors'
   import { optimisticField } from '../optimisticField.svelte'
@@ -16,6 +15,8 @@
   import BlockedDoneGuard from './BlockedDoneGuard.svelte'
   import CommentThread from './CommentThread.svelte'
   import Popover from '../../../../components/Popover.svelte'
+  import { buildDueDatePresets } from './dueDatePresets'
+  import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
 
   /**
    * The shared task metadata surface — extracted from TaskEditDrawer so the
@@ -155,6 +156,8 @@
   let tagsAnnouncement = $state('')
   let titleDraft = $state('')
   let estimateInvalid = $state(false)
+  let weekStart = $derived(getTaskWeekStart())
+  let dueDatePresets = $derived(buildDueDatePresets(ctx.today, weekStart))
 
   // ctx is a stable plugin-context singleton — see BoardView for rationale.
   // svelte-ignore state_referenced_locally
@@ -671,7 +674,7 @@
               }}
             />
           </div>
-          {#each [{ label: 'Today', value: ctx.today }, { label: 'Tomorrow', value: plusDaysISO(ctx.today, 1) }, { label: 'Next week', value: plusDaysISO(ctx.today, 7) }] as preset (preset.label)}
+          {#each dueDatePresets as preset (preset.label)}
             <button
               type="button"
               class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm hover:bg-hover transition-colors {dueDateField.value ===

@@ -36,6 +36,7 @@
     clearScopeOverride,
     narrowScopeTo,
     enterTasksFromMainNavigation,
+    setWeekStart,
     type DisplayMode,
     type GroupBy,
     type SavedView,
@@ -54,8 +55,12 @@
     reloadTasksSettings,
     persistDefaultDisplayMode,
     persistDefaultGroupBy,
-    persistDefaultSort
+    persistDefaultSort,
+    loadWeekStart,
+    persistWeekStart
   } from './settings'
+  import type { WeekStart } from '../../../lib/dateGrid'
+  import { getTaskWeekStart } from '../../../lib/taskWeekStart.svelte'
   import { cloneColumns, columnsEqual } from './columns'
   import { viewMatchesState } from './savedViews'
 
@@ -75,6 +80,7 @@
   ]
 
   let hubState = $derived(getTaskHubViewState())
+  let weekStart = $derived(getTaskWeekStart())
   let pageRoute = $derived(getTaskPageRoute())
   let hubHeading = $state<HTMLHeadingElement | null>(null)
   let routeAnnouncement = $state('')
@@ -150,6 +156,7 @@
   }
 
   function hydrateInitialSettings(): void {
+    setWeekStart(loadWeekStart())
     // A page route is an isolated projection over the user's base/saved view.
     // Settings can be cached while it is open, but must not rewrite that base.
     if (getTaskPageRoute()) return
@@ -173,6 +180,7 @@
   }
 
   function rehydrateFromSettings(): void {
+    setWeekStart(loadWeekStart())
     const state = getTaskHubState()
     if (state.savedViewsDirty) return
     hydrateSavedViews()
@@ -284,6 +292,50 @@
   function chooseSort(s: SortMode) {
     setSort(s)
     if (!getTaskPageRoute()) void persistDefaultSort(s)
+  }
+
+  // Week boundaries belong to Tasks rather than the app at large. Keep the
+  // affordance in the hub header and write through the same per-vault plugin
+  // settings path that hydrates the calendars and task queries.
+  let preferencesOpen = $state(false)
+  let preferencesButton = $state<HTMLButtonElement | null>(null)
+  let weekStartError = $state('')
+  let weekStartSaveSeq = 0
+
+  function togglePreferences(): void {
+    preferencesOpen = !preferencesOpen
+    weekStartError = ''
+    if (preferencesOpen) {
+      closePopover()
+      void tick().then(() => {
+        document
+          .querySelector<HTMLInputElement>(
+            'input[name="tasks-week-start"]:checked'
+          )
+          ?.focus()
+      })
+    }
+  }
+
+  function closePreferences(returnFocus = false): void {
+    if (!preferencesOpen) return
+    preferencesOpen = false
+    weekStartError = ''
+    if (returnFocus) void tick().then(() => preferencesButton?.focus())
+  }
+
+  async function chooseWeekStart(value: WeekStart): Promise<void> {
+    const previous = getTaskWeekStart()
+    if (value === previous) return
+    const saveSeq = ++weekStartSaveSeq
+    weekStartError = ''
+    setWeekStart(value)
+    const saved = await persistWeekStart(value)
+    if (saveSeq !== weekStartSaveSeq) return
+    if (!saved) {
+      setWeekStart(previous)
+      weekStartError = 'Couldn’t save this preference. Try again.'
+    }
   }
 
   // Hub-scoped command palette (#436). Opened by tasks_command_palette
@@ -654,7 +706,9 @@
   // no-ops when the popover is closed — avoids any $effect re-run race
   // when the popover transitions from closed → open.
   function onPopoverKeydown(e: KeyboardEvent) {
-    if (savedViewPopover !== 'closed' && e.key === 'Escape') closePopover()
+    if (e.key !== 'Escape') return
+    if (savedViewPopover !== 'closed') closePopover()
+    if (preferencesOpen) closePreferences(true)
   }
 
   // Click-away backdrop closes whichever popover is open (mirrors FilterBar).
@@ -961,6 +1015,95 @@
         </button>
       {/each}
     </div>
+
+    <div class="relative flex items-center" data-testid="tasks-preferences">
+      <button
+        bind:this={preferencesButton}
+        type="button"
+        onclick={togglePreferences}
+        aria-label="Task preferences"
+        aria-haspopup="dialog"
+        aria-expanded={preferencesOpen}
+        aria-controls="tasks-preferences-popover"
+        title="Task preferences"
+        class="flex h-9 w-9 items-center justify-center rounded-lg border border-surface-panel-border bg-surface-panel text-text-muted hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start transition-colors cursor-pointer"
+      >
+        <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+          >tune</span
+        >
+      </button>
+
+      {#if preferencesOpen}
+        <div
+          id="tasks-preferences-popover"
+          transition:fly={{ y: -4, duration: 100 }}
+          class="absolute z-50 top-full right-0 mt-2 w-64 rounded-lg border border-surface-popover-border bg-surface-popover p-3 shadow-xl"
+          role="dialog"
+          aria-labelledby="tasks-preferences-title"
+          data-testid="tasks-preferences-popover"
+        >
+          <div class="mb-3 flex items-center gap-2">
+            <span
+              class="material-symbols-outlined text-icon-md text-accent-primary-start"
+              aria-hidden="true">calendar_view_week</span
+            >
+            <h2
+              id="tasks-preferences-title"
+              class="text-type-sm font-label-sm-bold text-text-primary"
+            >
+              Task preferences
+            </h2>
+          </div>
+
+          <fieldset>
+            <legend class="text-type-xs font-label-sm-bold text-text-primary">
+              First day of week
+            </legend>
+            <p
+              id="tasks-week-start-description"
+              class="mt-0.5 text-type-xs font-body-md text-text-muted"
+            >
+              Used by calendars, week groups, and “This Week”.
+            </p>
+            <div
+              class="mt-2 grid grid-cols-2 gap-1 rounded-lg border border-surface-panel-border bg-surface-panel p-1"
+            >
+              {#each ['sunday', 'monday'] as value (value)}
+                {@const selected = weekStart === value}
+                <label
+                  class="relative flex min-h-8 items-center justify-center gap-1 rounded-md px-2 text-type-xs font-label-sm cursor-pointer transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-accent-primary-start {selected
+                    ? 'bg-accent-primary-start text-text-on-accent'
+                    : 'text-text-muted hover:bg-hover hover:text-text-primary'}"
+                >
+                  <input
+                    type="radio"
+                    name="tasks-week-start"
+                    {value}
+                    checked={selected}
+                    aria-describedby="tasks-week-start-description"
+                    onchange={() => void chooseWeekStart(value as WeekStart)}
+                    class="sr-only"
+                  />
+                  <span>{value === 'sunday' ? 'Sunday' : 'Monday'}</span>
+                  {#if selected}
+                    <span
+                      class="material-symbols-outlined text-icon-xs"
+                      aria-hidden="true">check</span
+                    >
+                  {/if}
+                </label>
+              {/each}
+            </div>
+          </fieldset>
+
+          {#if weekStartError}
+            <p class="mt-2 text-type-xs font-body-md text-error" role="alert">
+              {weekStartError}
+            </p>
+          {/if}
+        </div>
+      {/if}
+    </div>
   </header>
 
   {#if pageRoute}
@@ -1044,6 +1187,16 @@
       aria-hidden="true"
       data-testid="tasks-hub-saved-view-backdrop"
     ></div>
+  {/if}
+
+  {#if preferencesOpen}
+    <button
+      type="button"
+      class="fixed inset-0 z-40 cursor-default border-none bg-transparent"
+      onclick={() => closePreferences(true)}
+      aria-label="Close task preferences"
+      data-testid="tasks-preferences-backdrop"
+    ></button>
   {/if}
 
   <!-- sr-only live region for saved-view announcements (mirrors

@@ -16,6 +16,15 @@
 // is owned by the migration issue (#431); this module is the read/write surface.
 
 import type { PluginContext } from '../../sdk'
+import {
+  normalizeWeekStart,
+  isWeekStart,
+  type WeekStart
+} from '../../../lib/dateGrid'
+import {
+  resetTaskWeekStart,
+  setTaskWeekStart
+} from '../../../lib/taskWeekStart.svelte'
 import { normalizeColumns, type BoardColumn } from './columns'
 import { SYSTEM_VIEWS } from './savedViews'
 import type {
@@ -47,6 +56,7 @@ export async function initTasksSettings(ctx: PluginContext): Promise<void> {
   saveFn = (key, value) =>
     ctx.updatePluginSetting(key, value).catch(() => false)
   configSlice = (await ctx.getPluginSettings()) ?? {}
+  setTaskWeekStart(loadWeekStart())
 }
 
 /**
@@ -58,6 +68,7 @@ export async function reloadTasksSettings(ctx: PluginContext): Promise<void> {
   saveFn = (key, value) =>
     ctx.updatePluginSetting(key, value).catch(() => false)
   configSlice = (await ctx.getPluginSettings()) ?? {}
+  setTaskWeekStart(loadWeekStart())
 }
 
 /**
@@ -69,6 +80,7 @@ export async function reloadTasksSettings(ctx: PluginContext): Promise<void> {
 export function resetTasksSettings(): void {
   configSlice = {}
   saveFn = null
+  resetTaskWeekStart()
 }
 
 /** The on-disk slice `plugins.plugin_settings['silt-tasks']`, or {}. */
@@ -137,6 +149,21 @@ export function loadDefaultGroupBy(): GroupBy {
 export function loadDefaultSort(): SortMode {
   const v = tasksSettings()['default_sort']
   return isSortMode(v) ? v : 'dueDate'
+}
+
+/** Persisted first day of the calendar week; Sunday remains the default. */
+export function loadWeekStart(): WeekStart {
+  return normalizeWeekStart(tasksSettings()['week_start'])
+}
+
+/** Atomically write a validated first-day-of-week preference. */
+export function persistWeekStart(value: WeekStart): Promise<boolean> {
+  if (!isWeekStart(value)) return Promise.resolve(false)
+  if (!saveFn) return Promise.resolve(false)
+  return saveFn('week_start', value).then((ok) => {
+    if (ok) setTaskWeekStart(value)
+    return ok
+  })
 }
 
 /**

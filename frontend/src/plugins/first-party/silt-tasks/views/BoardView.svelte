@@ -59,6 +59,7 @@
   } from './controllers/useBoardDnd.svelte'
   import { dueDateAnchor, groupByDispatch } from '../groupByDispatch'
   import { createStatusColumnsController } from './controllers/useStatusColumns.svelte'
+  import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
 
   type Props = TaskViewProps
 
@@ -122,6 +123,7 @@
   let sort = $derived(getTaskHubViewState().sort)
   let scope = $derived(getTaskHubViewState().scope)
   let filters = $derived(getTaskHubViewState().filters)
+  let weekStart = $derived(getTaskWeekStart())
   let today = $derived(ctx.today)
   let dndEnabled = $derived(DND_DIMENSIONS.has(groupBy))
 
@@ -139,7 +141,8 @@
     loaded: TaskDetail[],
     g: GroupBy,
     configuredStatuses: string[],
-    iso: string
+    iso: string,
+    configuredWeekStart: typeof weekStart
   ): Lane[] {
     if (g === 'status') {
       // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
@@ -174,7 +177,10 @@
         items: buckets[p]
       }))
     }
-    const sections = binByDimension(loaded, g, { today: iso })
+    const sections = binByDimension(loaded, g, {
+      today: iso,
+      weekStart: configuredWeekStart
+    })
     if (g === 'dueDate') {
       // value carries the bucket KEY (e.g. 'today') so dueDateAnchor can
       // switch on it — the label ('Today') isn't a stable dispatch handle.
@@ -214,7 +220,8 @@
       rows,
       groupBy,
       columnNames(cols.statusColumns),
-      today
+      today,
+      weekStart
     )
   }
 
@@ -330,6 +337,7 @@
     void groupBy
     void sort
     void getTaskHubViewState().activeFilter
+    void weekStart
     void today
     void ctx.activeNotebook
     void ctx.activeSection
@@ -346,6 +354,7 @@
   // re-query lands so the header strip flips dimension immediately.
   $effect(() => {
     void groupBy
+    void weekStart
     void cols.statusColumns
     rebin()
   })

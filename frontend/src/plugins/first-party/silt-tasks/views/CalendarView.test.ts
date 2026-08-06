@@ -118,7 +118,8 @@ import {
   enterTaskPageRoute,
   clearTaskPageRoute,
   setGroupBy,
-  setCalendarSubMode
+  setCalendarSubMode,
+  setWeekStart
 } from '../state.svelte'
 import { initTasksSettings } from '../settings'
 
@@ -312,6 +313,20 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     expect(
       document.querySelectorAll('[role="gridcell"]').length
     ).toBeGreaterThan(0)
+  })
+
+  it('uses Monday as the first calendar column when configured', async () => {
+    await mockQueries([])
+    resetTaskHubState()
+    setWeekStart('monday')
+    setCalendarSubMode('month')
+    render(CalendarView, { ctx: makeCtx(), onCountChange: vi.fn() })
+    await flush()
+    const headers = document.querySelectorAll(
+      '[data-testid="tasks-calendar"] [role="columnheader"]'
+    )
+    expect(headers[0]?.textContent?.trim()).toBe('Mon')
+    expect(document.querySelector('[data-celldate="2026-06-29"]')).toBeTruthy()
   })
 
   it('a task with due_date=today appears in today’s cell', async () => {
@@ -569,6 +584,33 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     // The heading changes from "July 2026" to a date-range form.
     const heading = screen.getByRole('heading', { level: 2 })
     expect(heading.textContent).toMatch(/–/)
+  })
+
+  it('formats week headings from actual boundaries across months and years', async () => {
+    await mockQueries([])
+    await renderCalendar()
+    await fireEvent.click(screen.getByTestId('calendar-submode-week'))
+    await flush()
+
+    window.dispatchEvent(
+      new CustomEvent('calendar:focus-date', {
+        detail: { date: '2026-07-01' }
+      })
+    )
+    await flush()
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(
+      'June 28–July 4, 2026'
+    )
+
+    window.dispatchEvent(
+      new CustomEvent('calendar:focus-date', {
+        detail: { date: '2026-01-01' }
+      })
+    )
+    await flush()
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(
+      'December 28, 2025–January 3, 2026'
+    )
   })
 
   // --- Group-by ignored + one-time notice ------------------------------

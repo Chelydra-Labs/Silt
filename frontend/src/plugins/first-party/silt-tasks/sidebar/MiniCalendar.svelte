@@ -23,6 +23,7 @@
     addMonths,
     monthWeeks as computeMonthWeeks
   } from '../../../../lib/dateGrid'
+  import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -33,6 +34,7 @@
 
   let hubState = $derived(getTaskHubState())
   let activeFocusDate = $derived(hubState.focusDate)
+  let weekStart = $derived(getTaskWeekStart())
 
   let byDate = $state<Record<string, number>>({})
   let errorMsg = $state('')
@@ -142,6 +144,12 @@
     'December'
   ]
   const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+  let dayLabels = $derived(
+    Array.from(
+      { length: 7 },
+      (_, i) => DOW[(i + (weekStart === 'monday' ? 1 : 0)) % 7]
+    )
+  )
 
   // Today's ISO key for the in-month today marker. Mirrors
   // miniCursorFromToday's injected-today semantics (ctx.today || localToday(),
@@ -161,7 +169,7 @@
 
   // Mini-cal month grid uses the pure dateGrid helpers shared with the Tasks
   // calendar and the Date Glance popover.
-  let miniWeeks = $derived(computeMonthWeeks(miniCursor))
+  let miniWeeks = $derived(computeMonthWeeks(miniCursor, weekStart))
 
   // Clamp the roving-tabindex cursor when the visible month shrinks (e.g.
   // paging from a 6-week to a 5-week month). Without this, miniFocusIdx can
@@ -277,7 +285,7 @@
       </div>
       <div class="grid grid-cols-7 gap-0.5" role="grid">
         <div role="row" class="contents">
-          {#each DOW as d, dowI (dowI)}
+          {#each dayLabels as d, dowI (dowI)}
             <div
               role="columnheader"
               class="text-center text-type-3xs uppercase tracking-widest font-label-sm-bold text-text-muted py-0.5"

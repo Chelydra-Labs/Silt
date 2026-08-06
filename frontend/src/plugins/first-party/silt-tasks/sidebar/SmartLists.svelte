@@ -7,7 +7,9 @@
   // drilling. reloadSignal is owned by the container; this component's
   // $effect re-runs reloadCounts() on every tick (initial mount = 0).
   import type { PluginContext } from '../../../sdk'
-  import { plusDaysISO, localToday } from '../../../sdk'
+  import { localToday } from '../../../sdk'
+  import { endOfWeekISO } from '../../../../lib/dateGrid'
+  import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import {
     getTaskHubState,
@@ -61,19 +63,18 @@
     errorMsg = ''
     try {
       const today = ctx.today || localToday()
-      const tomorrow = plusDaysISO(today, 1)
-      const weekAhead = plusDaysISO(today, 7)
+      const weekEnd = endOfWeekISO(today, getTaskWeekStart())
       // `AS "all"` is double-quoted because ALL is a SQLite keyword
       // (UNION ALL / SELECT ALL); a bare `AS all` is a syntax error.
       const res = await ctx.sqliteQuery(
         `SELECT
            SUM(CASE WHEN t.status != 'DONE' AND t.due_date = ? THEN 1 ELSE 0 END) AS today,
-           SUM(CASE WHEN t.status != 'DONE' AND t.due_date >= ? AND t.due_date <= ? THEN 1 ELSE 0 END) AS upcoming,
+           SUM(CASE WHEN t.status != 'DONE' AND t.due_date > ? AND t.due_date <= ? THEN 1 ELSE 0 END) AS upcoming,
            SUM(CASE WHEN t.status != 'DONE' AND t.due_date < ? THEN 1 ELSE 0 END) AS overdue,
            SUM(CASE WHEN t.status = 'DONE' THEN 1 ELSE 0 END) AS completed,
            SUM(CASE WHEN t.status != 'DONE' THEN 1 ELSE 0 END) AS "all"
         FROM blocks b JOIN tasks t ON b.id = t.block_id`,
-        [today, tomorrow, weekAhead, today]
+        [today, today, weekEnd, today]
       )
       const row = res.rows?.[0] ?? {}
       // A newer reload superseded this one; drop the stale result.

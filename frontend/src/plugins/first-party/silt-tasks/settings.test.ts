@@ -19,9 +19,13 @@ import {
   loadSavedViews,
   persistSavedViews,
   loadColumns,
-  initTasksSettings
+  initTasksSettings,
+  reloadTasksSettings,
+  loadWeekStart,
+  persistWeekStart
 } from './settings'
 import { SYSTEM_VIEWS } from './savedViews'
+import { getTaskWeekStart } from '../../../lib/taskWeekStart.svelte'
 
 // Seed the module-scoped config slice (and wire saveFn to
 // mocks.updatePluginSetting) by constructing a throwaway ctx whose
@@ -251,5 +255,47 @@ describe('loadColumns (#421/#437)', () => {
       { name: 'DOING' },
       { name: 'DONE' }
     ])
+  })
+})
+
+describe('week_start preference (#888)', () => {
+  beforeEach(async () => {
+    mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
+    await setTasksSettings({})
+  })
+
+  it('defaults malformed or missing values to Sunday', async () => {
+    expect(loadWeekStart()).toBe('sunday')
+    await setTasksSettings({ week_start: 'friday' })
+    expect(loadWeekStart()).toBe('sunday')
+  })
+
+  it('loads a persisted Monday value', async () => {
+    await setTasksSettings({ week_start: 'monday' })
+    expect(loadWeekStart()).toBe('monday')
+  })
+
+  it('persists only validated values through the SDK', async () => {
+    await expect(persistWeekStart('monday')).resolves.toBe(true)
+    expect(getTaskWeekStart()).toBe('monday')
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'week_start',
+      'monday'
+    )
+    mocks.updatePluginSetting.mockClear()
+    await expect(persistWeekStart('saturday' as never)).resolves.toBe(false)
+    expect(mocks.updatePluginSetting).not.toHaveBeenCalled()
+  })
+
+  it('refreshes the reactive source for an active-notebook settings reload', async () => {
+    const ctx = {
+      getPluginSettings: vi.fn().mockResolvedValue({ week_start: 'monday' }),
+      updatePluginSetting: mocks.updatePluginSetting
+    } as unknown as PluginContext
+    await reloadTasksSettings(ctx)
+    expect(getTaskWeekStart()).toBe('monday')
+    vi.mocked(ctx.getPluginSettings).mockResolvedValue({ week_start: 'sunday' })
+    await reloadTasksSettings(ctx)
+    expect(getTaskWeekStart()).toBe('sunday')
   })
 })

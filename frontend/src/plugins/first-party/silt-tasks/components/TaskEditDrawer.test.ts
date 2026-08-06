@@ -278,6 +278,27 @@ describe('TaskEditDrawer — due-date editor', () => {
     expect(setTaskDueDate).toHaveBeenCalledWith('task-1', '2026-07-02')
   })
 
+  it('renders the six calendar-aware due-date presets', async () => {
+    const ctx = makeCtx({ today: '2026-07-02' })
+    const { container } = render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx, onClose: () => {} }
+    })
+    await fireEvent.click(
+      container.querySelector('button[aria-haspopup="dialog"]') as HTMLElement
+    )
+    for (const label of [
+      'Today',
+      'Tomorrow',
+      'End of week',
+      'End of next week',
+      'End of month',
+      'End of next month'
+    ]) {
+      expect(screen.getByText(label)).toBeTruthy()
+    }
+    expect(screen.queryByText('Next week')).toBeNull()
+  })
+
   it('Clear due date commits an empty string', async () => {
     const setTaskDueDate = vi.fn().mockResolvedValue(true)
     const ctx = makeCtx({ setTaskDueDate })

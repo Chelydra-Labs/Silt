@@ -55,6 +55,7 @@ import {
   getTaskPageRoute,
   resetTaskHubState
 } from './state.svelte'
+import { getTaskWeekStart } from '../../../lib/taskWeekStart.svelte'
 
 // jsdom polyfills: ListView pulls in TaskEditDrawer/TaskSubEditorModal, whose
 // transition:fly + TipTap need Element.animate / elementFromPoint / Range rects.
@@ -312,7 +313,8 @@ describe('Tasks hub shell (#424)', () => {
 
   it('hydrates the display mode from the persisted vault setting on mount', async () => {
     mocks.tasksSettings = {
-      default_display_mode: 'calendar'
+      default_display_mode: 'calendar',
+      week_start: 'monday'
     }
 
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
@@ -325,6 +327,91 @@ describe('Tasks hub shell (#424)', () => {
         .getByRole('radio', { name: /Calendar mode/i })
         .getAttribute('aria-checked')
     ).toBe('true')
+    expect(getTaskWeekStart()).toBe('monday')
+  })
+
+  it('exposes the vault-scoped week start in compact Task preferences', async () => {
+    mocks.tasksSettings = { week_start: 'monday' }
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const trigger = screen.getByRole('button', { name: 'Task preferences' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+    await fireEvent.click(trigger)
+    await flush()
+
+    expect(
+      screen.getByRole('dialog', { name: 'Task preferences' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('group', { name: 'First day of week' })
+    ).toBeInTheDocument()
+    const monday = screen.getByRole('radio', { name: 'Monday' })
+    expect(monday).toBeChecked()
+    expect(monday).toHaveFocus()
+  })
+
+  it('updates week boundaries immediately and persists through Tasks settings', async () => {
+    let finishSave: ((saved: boolean) => void) | undefined
+    mocks.updatePluginSetting.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishSave = resolve
+        })
+    )
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Task preferences' })
+    )
+    await fireEvent.click(screen.getByRole('radio', { name: 'Monday' }))
+    await tick()
+
+    expect(getTaskWeekStart()).toBe('monday')
+    expect(screen.getByRole('radio', { name: 'Monday' })).toBeChecked()
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'week_start',
+      'monday'
+    )
+
+    finishSave?.(true)
+    await flush()
+  })
+
+  it('restores the prior week start and announces a persistence failure', async () => {
+    mocks.updatePluginSetting.mockResolvedValueOnce(false)
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Task preferences' })
+    )
+    await fireEvent.click(screen.getByRole('radio', { name: 'Monday' }))
+    await flush()
+
+    expect(getTaskWeekStart()).toBe('sunday')
+    expect(screen.getByRole('radio', { name: 'Sunday' })).toBeChecked()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Couldn’t save this preference. Try again.'
+    )
+  })
+
+  it('closes Task preferences with Escape and returns focus to its trigger', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const trigger = screen.getByRole('button', { name: 'Task preferences' })
+    await fireEvent.click(trigger)
+    await flush()
+    expect(screen.getByTestId('tasks-preferences-popover')).toBeInTheDocument()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flush()
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveFocus()
   })
 
   it('mode switcher uses roving tabindex (checked radio is tabbable)', async () => {

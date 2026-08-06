@@ -27,6 +27,12 @@
 // kept identical so #38 can swap imports one-for-one.
 
 import { cloneColumns, normalizeColumns, type BoardColumn } from './columns'
+import type { WeekStart } from '../../../lib/dateGrid'
+import {
+  getTaskWeekStart,
+  resetTaskWeekStart,
+  setTaskWeekStart
+} from '../../../lib/taskWeekStart.svelte'
 
 export type { BoardColumn } from './columns'
 
@@ -138,6 +144,7 @@ export interface TaskHubQueryContext {
   activeSection: string
   activePage: string
   today: string
+  weekStart: WeekStart
 }
 
 /**
@@ -327,7 +334,8 @@ export function getTaskHubQueryContext(ambient: {
     activeNotebook: target?.notebook ?? ambient.activeNotebook,
     activeSection: target?.section ?? ambient.activeSection,
     activePage: target?.page ?? ambient.activePage,
-    today: ambient.today
+    today: ambient.today,
+    weekStart: getTaskWeekStart()
   }
 }
 
@@ -357,6 +365,11 @@ export function setCalendarSubMode(mode: CalendarSubMode): void {
     _state.calendarSubMode = mode
     markDirtyIfViewActive()
   }
+}
+
+/** Set the hydrated per-vault calendar week boundary. */
+export function setWeekStart(weekStart: WeekStart): void {
+  setTaskWeekStart(weekStart)
 }
 
 /** Change the grouping dimension. The query builder reads this on re-query. */
@@ -641,6 +654,7 @@ export function resetTaskHubState(): void {
   _state.focusDate = defaults.focusDate
   _state.activeFilter = defaults.activeFilter
   _state.calendarSubMode = defaults.calendarSubMode
+  resetTaskWeekStart()
   _state.columns = cloneColumns(defaults.columns)
   _state.savedViews = []
   _state.activeSavedViewId = ''

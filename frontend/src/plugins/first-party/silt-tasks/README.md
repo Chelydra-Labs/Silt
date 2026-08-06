@@ -18,6 +18,7 @@ state/query module per mode.
 | `grouping.ts` | Pure client-side binning (`binByDimension`) — assigns rows to ordered `GroupSection`s for the 9 grouping dimensions. |
 | `savedViews.ts` | The three code-defined `SYSTEM_VIEWS` + the `fingerprintOf` / `fingerprintOfState` helpers that power the "is the live state the same as this saved view?" check. |
 | `settings.ts` | YAML pref I/O for everything under `plugins.plugin_settings.silt-tasks`. Reads come from the synchronous settings snapshot; writes go through the atomic `updatePluginSetting`. |
+| `lib/taskWeekStart.svelte.ts` | Reactive active-vault projection of the persisted Tasks week-start preference for global calendar surfaces. |
 | `TasksHub.svelte` | The shell — title + open/done count header, mode switcher, FilterBar, scope breadcrumb, saved-view bookmark affordance, and the route to the active renderer. |
 | `views/ListView.svelte` | List renderer — time-horizon (or any `groupBy`) sections, inline quick-add, row drag-reorder under `sort: manual`. |
 | `views/BoardView.svelte` | Board renderer — status columns, HTML5 drag-and-drop with FLIP animation, manual `[order::]` reordering, ArrowLeft/Right keyboard parity. |
@@ -65,6 +66,7 @@ All prefs live under `plugins.plugin_settings.silt-tasks` in the vault
 | `default_group_by` | One of the 9 `GroupBy` values (survives a List → Board hop). |
 | `default_sort` | One of the 8 `SortMode` values (incl. `modified`, `estimate`). |
 | `calendar_sub_mode` | `month` / `week`. |
+| `week_start` | `sunday` / `monday` (defaults to `sunday`; controls all task calendar and week-range boundaries). |
 | `columns` | Status-board lanes: legacy `string[]` or `{ name, wipLimit? }[]` (defaults to TODO/DOING/DONE, unlimited WIP). |
 | `saved_views[]` | User-defined saved views (system views are re-derived from code, never persisted). |
 | `local_author` | Seeded from the OS username (`ctx.getLocalAuthor`) on first comment; the user's override always wins. |

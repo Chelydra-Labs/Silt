@@ -38,6 +38,7 @@ function row(overrides: Partial<TaskDetail> & { id: string }): TaskDetail {
 }
 
 const TODAY = '2026-07-06'
+const GROUP_CTX = { today: TODAY, weekStart: 'sunday' as const }
 
 describe('binByDimension — none', () => {
   it('returns a single section containing every row', () => {
@@ -45,7 +46,7 @@ describe('binByDimension — none', () => {
       row({ id: 'a', due_date: '2026-07-04' }),
       row({ id: 'b', due_date: '' })
     ]
-    const sections = binByDimension(rows, 'none', { today: TODAY })
+    const sections = binByDimension(rows, 'none', GROUP_CTX)
     expect(sections).toHaveLength(1)
     expect(sections[0].key).toBe('all')
     expect(sections[0].label).toBe('All Tasks')
@@ -55,7 +56,7 @@ describe('binByDimension — none', () => {
 
 describe('binByDimension — dueDate', () => {
   it('produces the canonical 5 buckets in order with the legacy keys', () => {
-    const sections = binByDimension([], 'dueDate', { today: TODAY })
+    const sections = binByDimension([], 'dueDate', GROUP_CTX)
     expect(sections.map((s) => s.key)).toEqual([
       'overdue',
       'today',
@@ -77,15 +78,15 @@ describe('binByDimension — dueDate', () => {
       row({ id: 'overdue', due_date: '2026-07-05' }), // < today
       row({ id: 'today', due_date: '2026-07-06' }), // == today
       row({ id: 'tomorrow', due_date: '2026-07-07' }), // today+1 → upcoming
-      row({ id: 'inweek', due_date: '2026-07-13' }), // today+7 → upcoming
-      row({ id: 'later', due_date: '2026-07-14' }), // today+8 → later
+      row({ id: 'inweek', due_date: '2026-07-11' }), // configured week-end → upcoming
+      row({ id: 'later', due_date: '2026-07-12' }), // after configured week → later
       row({ id: 'undated', due_date: '' })
     ]
-    const sections = binByDimension(rows, 'dueDate', { today: TODAY })
+    const sections = binByDimension(rows, 'dueDate', GROUP_CTX)
     const byKey = Object.fromEntries(sections.map((s) => [s.key, s.items]))
     expect(byKey.overdue.map((i) => i.id)).toEqual(['overdue'])
     expect(byKey.today.map((i) => i.id)).toEqual(['today'])
-    // Tomorrow AND day-7 both fall in upcoming (boundary inclusive).
+    // Tomorrow and the configured week-end both fall in upcoming.
     expect(byKey.upcoming.map((i) => i.id)).toEqual(['tomorrow', 'inweek'])
     expect(byKey.later.map((i) => i.id)).toEqual(['later'])
     expect(byKey.undated.map((i) => i.id)).toEqual(['undated'])
@@ -96,7 +97,7 @@ describe('binByDimension — dueDate', () => {
       row({ id: 'a', due_date: '2026-07-06' }),
       row({ id: 'b', due_date: '2030-01-01' })
     ]
-    const sections = binByDimension(rows, 'dueDate', { today: TODAY })
+    const sections = binByDimension(rows, 'dueDate', GROUP_CTX)
     const totalAssigned = sections.reduce((n, s) => n + s.items.length, 0)
     expect(totalAssigned).toBe(rows.length)
   })
@@ -111,7 +112,7 @@ describe('binByDimension — status', () => {
       row({ id: 'z', status: 'WAITING' as TaskDetail['status'] }),
       row({ id: 'a', status: 'BLOCKED' as TaskDetail['status'] })
     ]
-    const sections = binByDimension(rows, 'status', { today: TODAY })
+    const sections = binByDimension(rows, 'status', GROUP_CTX)
     expect(sections.map((s) => s.key)).toEqual([
       'TODO',
       'DOING',
@@ -128,7 +129,7 @@ describe('binByDimension — status', () => {
     const sections = binByDimension(
       [row({ id: 'x', status: 'TODO' })],
       'status',
-      { today: TODAY }
+      GROUP_CTX
     )
     expect(sections.map((s) => s.key)).toEqual(['TODO'])
   })
@@ -142,7 +143,7 @@ describe('binByDimension — owner', () => {
       row({ id: '3', owner: 'Alice' }),
       row({ id: '4', owner: 'Bob' })
     ]
-    const sections = binByDimension(rows, 'owner', { today: TODAY })
+    const sections = binByDimension(rows, 'owner', GROUP_CTX)
     expect(sections.map((s) => s.label)).toEqual([
       'Alice',
       'Bob',
@@ -164,7 +165,7 @@ describe('binByDimension — priority', () => {
       row({ id: 'c', priority: 0 }),
       row({ id: 'd', priority: 2 })
     ]
-    const sections = binByDimension(rows, 'priority', { today: TODAY })
+    const sections = binByDimension(rows, 'priority', GROUP_CTX)
     expect(sections.map((s) => s.label)).toEqual([
       'Critical',
       'Normal',
@@ -182,7 +183,7 @@ describe('binByDimension — tag', () => {
       row({ id: 'b', tags: 'work/backend' }),
       row({ id: 'c', tags: '' })
     ]
-    const sections = binByDimension(rows, 'tag', { today: TODAY })
+    const sections = binByDimension(rows, 'tag', GROUP_CTX)
     // Alphabetical tag sections first, then trailing "No Tag".
     expect(sections.map((s) => s.label)).toEqual([
       'team-alpha',
@@ -206,7 +207,7 @@ describe('binByDimension — notebook/section/page', () => {
       row({ id: 'b', notebook: 'Personal', section: 'S2', page: 'P2' }),
       row({ id: 'c', notebook: '', section: '', page: '' })
     ]
-    const sections = binByDimension(rows, 'notebook', { today: TODAY })
+    const sections = binByDimension(rows, 'notebook', GROUP_CTX)
     expect(sections.map((s) => s.label)).toEqual([
       'Personal',
       'Work',
@@ -222,7 +223,7 @@ describe('binByDimension — notebook/section/page', () => {
         row({ id: 'c', section: '' })
       ],
       'section',
-      { today: TODAY }
+      GROUP_CTX
     )
     expect(sections.map((s) => s.label)).toEqual([
       'Daily',
@@ -239,7 +240,7 @@ describe('binByDimension — notebook/section/page', () => {
         row({ id: 'c', page: '' })
       ],
       'page',
-      { today: TODAY }
+      GROUP_CTX
     )
     expect(sections.map((s) => s.label)).toEqual([
       '2026-07-06',

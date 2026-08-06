@@ -36,12 +36,14 @@
   import {
     ymd,
     startOfWeek,
+    endOfWeek,
     startOfMonth,
     endOfMonth,
     addMonths,
     addDays,
     monthWeeks as computeMonthWeeks
   } from '../../../../lib/dateGrid'
+  import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
 
   type Props = TaskViewProps
 
@@ -52,6 +54,7 @@
   let scope = $derived(getTaskHubViewState().scope)
   let filters = $derived(getTaskHubViewState().filters)
   let groupBy = $derived(getTaskHubViewState().groupBy)
+  let weekStart = $derived(getTaskWeekStart())
   let today = $derived(ctx.today)
 
   // --- Local state --------------------------------------------------------
@@ -114,33 +117,54 @@
   // monthWeeks (month view) and weekDays (week view) use the pure dateGrid
   // helpers shared with the sidebar mini-cal and the Date Glance popover.
   let monthWeeks = $derived(
-    subMode === 'month' ? computeMonthWeeks(cursor) : []
+    subMode === 'month' ? computeMonthWeeks(cursor, weekStart) : []
   )
 
   let weekDays = $derived.by(() => {
     if (subMode !== 'week') return []
-    const first = startOfWeek(cursor)
+    const first = startOfWeek(cursor, weekStart)
     return Array.from({ length: 7 }, (_, i) => addDays(first, i))
   })
 
   let windowStart = $derived(
     subMode === 'month'
-      ? startOfWeek(startOfMonth(cursor))
-      : startOfWeek(cursor)
+      ? startOfWeek(startOfMonth(cursor), weekStart)
+      : startOfWeek(cursor, weekStart)
   )
   let windowEnd = $derived(
     subMode === 'month'
-      ? addDays(startOfWeek(endOfMonth(cursor)), 6)
-      : addDays(startOfWeek(cursor), 6)
+      ? endOfWeek(endOfMonth(cursor), weekStart)
+      : endOfWeek(cursor, weekStart)
   )
+
+  let dayLabels = $derived(
+    Array.from(
+      { length: 7 },
+      (_, i) => DOW[(i + (weekStart === 'monday' ? 1 : 0)) % 7]
+    )
+  )
+
+  function formatWeekHeading(start: Date, end: Date): string {
+    const startMonth = MONTHS[start.getMonth()]
+    const endMonth = MONTHS[end.getMonth()]
+    const startYear = start.getFullYear()
+    const endYear = end.getFullYear()
+    if (startYear !== endYear) {
+      return `${startMonth} ${start.getDate()}, ${startYear}–${endMonth} ${end.getDate()}, ${endYear}`
+    }
+    if (start.getMonth() !== end.getMonth()) {
+      return `${startMonth} ${start.getDate()}–${endMonth} ${end.getDate()}, ${endYear}`
+    }
+    return `${startMonth} ${start.getDate()}–${end.getDate()}, ${endYear}`
+  }
 
   let heading = $derived(
     subMode === 'month'
       ? `${MONTHS[cursor.getMonth()]} ${cursor.getFullYear()}`
-      : `${MONTHS[cursor.getMonth()]} ${startOfWeek(cursor).getDate()}–${addDays(
-          startOfWeek(cursor),
-          6
-        ).getDate()}, ${cursor.getFullYear()}`
+      : formatWeekHeading(
+          startOfWeek(cursor, weekStart),
+          endOfWeek(cursor, weekStart)
+        )
   )
 
   let todayKey = $derived.by(() => {
@@ -256,6 +280,7 @@
   // Reload whenever any reactive input the query depends on changes.
   $effect(() => {
     void subMode
+    void weekStart
     void scope
     void filters.owners
     void filters.priorities
@@ -751,7 +776,7 @@
            parent grid). -->
       <div class="grid grid-cols-7 gap-1 min-w-[43.75rem]" role="grid">
         <div role="row" class="contents">
-          {#each DOW as d, dowI (dowI)}
+          {#each dayLabels as d, dowI (dowI)}
             <div
               role="columnheader"
               class="text-center text-type-2xs uppercase tracking-widest font-label-sm-bold text-text-muted py-1"

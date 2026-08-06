@@ -12,7 +12,8 @@
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
   import type { PluginManifest } from '../../../sdk'
-  import { plusDaysISO } from '../../../sdk'
+  import { endOfWeekISO } from '../../../../lib/dateGrid'
+  import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
   import QuickAddTask from '../components/QuickAddTask.svelte'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
@@ -193,8 +194,8 @@
     void nowTick
     return ctx.today
   })
-  let tomorrow = $derived(plusDaysISO(today, 1))
-  let weekAhead = $derived(plusDaysISO(today, 7))
+  let weekStart = $derived(getTaskWeekStart())
+  let weekEnd = $derived(endOfWeekISO(today, weekStart))
 
   // Reload whenever any reactive input the query depends on changes.
   $effect(() => {
@@ -203,6 +204,7 @@
     void hub.groupBy
     void hub.sort
     void hub.activeFilter
+    void weekStart
     void today
     void ctx.activeNotebook
     void ctx.activeSection
@@ -261,13 +263,13 @@
   let upcoming = $derived(
     filteredOpen
       .filter(
-        (i) => !!i.due_date && i.due_date >= tomorrow && i.due_date <= weekAhead
+        (i) => !!i.due_date && i.due_date > today && i.due_date <= weekEnd
       )
       .sort((a, b) => a.due_date.localeCompare(b.due_date))
   )
   let later = $derived(
     filteredOpen
-      .filter((i) => !!i.due_date && i.due_date > weekAhead)
+      .filter((i) => !!i.due_date && i.due_date > weekEnd)
       .sort((a, b) => a.due_date.localeCompare(b.due_date))
   )
   let undated = $derived(filteredOpen.filter((i) => !i.due_date))
@@ -355,7 +357,10 @@
   // byte-exact (preserves every ListView test).
   let groupedSections = $derived.by<GroupSection[]>(() => {
     if (hubGroupBy === 'dueDate' || hubGroupBy === 'none') return []
-    const sections = binByDimension(filteredOpen, hubGroupBy, { today })
+    const sections = binByDimension(filteredOpen, hubGroupBy, {
+      today,
+      weekStart
+    })
     // Apply the within-section sort to each non-empty bucket; drop empty
     // buckets so the list stays compact when the data is sparse.
     return sections

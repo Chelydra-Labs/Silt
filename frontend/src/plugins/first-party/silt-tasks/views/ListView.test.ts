@@ -19,6 +19,7 @@ import type {
   PluginEventPayload
 } from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
+import { addDaysISO, endOfWeekISO } from '../../../../lib/dateGrid'
 import {
   resetTaskHubState,
   enterTaskPageRoute,
@@ -27,7 +28,8 @@ import {
   setFilters,
   setGroupBy,
   setScope,
-  setSort
+  setSort,
+  setWeekStart
 } from '../state.svelte'
 
 // jsdom polyfills: the shared drawer uses Svelte transition:fly (element.
@@ -712,9 +714,11 @@ describe('Tasks view', () => {
     expect(sql).toMatch(/LIMIT 500/)
   })
 
-  it('Upcoming group is capped at today+7; beyond-week lands in Later (#370 open question #3 + review)', async () => {
-    const today8 = dateOffsetStr(8)
-    const today3 = dateOffsetStr(3)
+  it('Upcoming ends at the configured calendar week; later dates stay in Later', async () => {
+    const configuredToday = '2026-07-06'
+    setWeekStart('monday')
+    const today3 = addDaysISO(configuredToday, 1)
+    const today8 = addDaysISO(endOfWeekISO(configuredToday, 'monday'), 1)
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (isOpenSql(sql)) {
         return {
@@ -728,7 +732,10 @@ describe('Tasks view', () => {
       return { rows: [], truncated: false }
     })
 
-    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    render(Tasks, {
+      ctx: { ...makeCtx(), today: configuredToday },
+      manifest: MANIFEST
+    })
     await flush()
 
     const insideWeek = document.querySelector('[data-block-id="in3"]')
@@ -737,7 +744,7 @@ describe('Tasks view', () => {
       insideWeek?.closest('[data-group]')?.getAttribute('data-group')
     ).toBe('upcoming')
 
-    // Tasks due beyond the 7-day Upcoming window used to vanish into
+    // Tasks due beyond the configured week used to vanish into
     // no group (silently dropped from the UI while still inflating
     // the header count). They now render in their own "Later" group.
     const beyondWeek = document.querySelector('[data-block-id="in8"]')
@@ -748,13 +755,11 @@ describe('Tasks view', () => {
   })
 
   it('Upcoming includes tasks due exactly tomorrow (boundary regression — review off-by-one)', async () => {
-    // Boundary case: due_date === today + 1 (tomorrow). The earlier
-    // filter `i.due_date > tomorrow` strictly excluded this row, so
-    // tasks due tomorrow disappeared from the UI entirely (no group
-    // matched). The fix is inclusive on both ends, matching
-    // README.md AC3: tomorrow <= due_date <= today + 7 days.
-    const today = todayStr()
-    const tomorrow = dateOffsetStr(1)
+    // Boundary case: due_date === tomorrow. The configured Monday-start week
+    // keeps this test independent of the wall-clock weekday.
+    const today = '2026-07-06'
+    const tomorrow = addDaysISO(today, 1)
+    setWeekStart('monday')
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (isOpenSql(sql)) {
         return {
@@ -765,7 +770,10 @@ describe('Tasks view', () => {
       return { rows: [], truncated: false }
     })
 
-    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    render(Tasks, {
+      ctx: { ...makeCtx(), today },
+      manifest: MANIFEST
+    })
     await flush()
 
     const tomorrowRow = document.querySelector('[data-block-id="tm1"]')
@@ -781,7 +789,10 @@ describe('Tasks view', () => {
       truncated: false
     })
     cleanup()
-    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    render(Tasks, {
+      ctx: { ...makeCtx(), today },
+      manifest: MANIFEST
+    })
     await flush()
     const todayRow = document.querySelector('[data-block-id="td"]')
     expect(todayRow?.closest('[data-group]')?.getAttribute('data-group')).toBe(
@@ -791,7 +802,7 @@ describe('Tasks view', () => {
 
   it('tasks due beyond 7 days render in the Later group (review fix — no-longer-vanishing gap)', async () => {
     // The SQL has no upper date bound; without the Later bucket,
-    // a due_date > today+7 row matched every filter (overdue,
+    // a due_date after the configured week matched every filter (overdue,
     // today, upcoming, undated) as false → dropped from the UI
     // entirely while still inflating the header's openItems count.
     // This locks the gap closed.

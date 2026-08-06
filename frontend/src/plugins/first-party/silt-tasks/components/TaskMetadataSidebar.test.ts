@@ -209,4 +209,15 @@ describe('TaskMetadataSidebar', () => {
     expect(setTaskTitle).toHaveBeenCalledWith('task-1', 'Water the garden')
     expect(onMetaChanged).toHaveBeenCalled()
   })
+
+  it('offers calendar-aware due-date presets with resolved local dates', async () => {
+    const ctx = makeCtx({ today: '2026-07-06' })
+    render(TaskMetadataSidebar, { props: { task: makeTask(), ctx } })
+    await fireEvent.click(screen.getByRole('button', { name: /2026-07-15/ }))
+    expect(screen.getByText('End of week')).toBeTruthy()
+    expect(screen.getByText('2026-07-11')).toBeTruthy()
+    expect(screen.getByText('End of next week')).toBeTruthy()
+    expect(screen.getByText('2026-07-18')).toBeTruthy()
+    expect(screen.queryByText('Next week')).toBeNull()
+  })
 })

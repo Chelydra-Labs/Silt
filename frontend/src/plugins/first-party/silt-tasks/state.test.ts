@@ -105,7 +105,8 @@ describe('silt-tasks unified state (#419)', () => {
         activeNotebook: 'Work',
         activeSection: 'Meetings',
         activePage: 'Sprint Review',
-        today: '2026-07-22'
+        today: '2026-07-22',
+        weekStart: 'sunday'
       })
       expect(getTaskHubState().scope).toBe('notebook')
       expect(getTaskHubState().savedViewsDirty).toBe(false)
