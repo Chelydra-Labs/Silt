@@ -23,7 +23,7 @@ import {
   UniqueBlockIds,
   blocksToDoc
 } from './index'
-import type { ParsedBlock } from './types'
+import { DEFAULT_TASK_PRIORITY, type ParsedBlock } from './types'
 
 // jsdom omits or stubs layout-dependent DOM APIs that TipTap v3's Placeholder
 // viewport tracker touches during editor construction. We omit Placeholder
@@ -142,7 +142,7 @@ export function mkBlock(
     owner: '',
     start_date: '',
     due_date: '',
-    priority: 3,
+    priority: DEFAULT_TASK_PRIORITY,
     line_number: 1,
     file_date: '2026-06-15',
     ...overrides

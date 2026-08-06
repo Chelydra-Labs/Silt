@@ -197,6 +197,13 @@ export interface PluginContext {
    */
   setTaskDueDate: (id: string, dueDate: string) => Promise<boolean>
   /**
+   * Rewrite a task's independent `[start:: YYYY-MM-DD]` planning date.
+   * Pass an empty string to clear it. This setter never infers or changes the
+   * due date or estimate. Round-trips through markdown and is gated by
+   * content-mutate.
+   */
+  setTaskStartDate: (id: string, startDate: string) => Promise<boolean>
+  /**
    * Rewrite a task's `[recur:: RULE]` inline token on disk atomically (#296).
    * Pass an empty string to clear the recurrence (the "stop recurring" path).
    * A non-empty rule must be valid recurrence grammar (`every day|weekday|
@@ -308,8 +315,8 @@ export interface PluginContext {
    * markdown file `<vault>/.silt/tasks.md` (#368). The task is queryable via
    * sqliteQuery / QueryTasks immediately and survives a full re-index because
    * it round-trips through the markdown-source-of-truth. title is required;
-   * dueDate (YYYY-MM-DD) and status default to no due date / TODO. Returns the
-   * new block's UUID. Gated by content-mutate.
+   * dueDate (YYYY-MM-DD) and status default to no due date / TODO; priority
+   * defaults to Normal. Returns the new block's UUID. Gated by content-mutate.
    */
   createTask: (opts: {
     title: string
@@ -402,8 +409,8 @@ export interface PluginContext {
 
   /**
    * Block CRUD (#104). These reuse the same atomic-write + re-index path as
-   * the core editor. Gated by the content-mutate capability (#156).
-   * createBlock returns the new block's UUID.
+   * the core editor. New TASK blocks default to Normal priority. Gated by the
+   * content-mutate capability (#156). createBlock returns the new block's UUID.
    */
   createBlock: (opts: {
     type: 'TASK' | 'NOTE' | 'HEADER'

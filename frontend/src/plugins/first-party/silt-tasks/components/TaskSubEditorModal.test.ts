@@ -503,6 +503,40 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     expect(
       screen.getByRole('button', { name: 'Hide details' })
     ).toBeInTheDocument()
+    expect(screen.getByText('Essentials')).toBeInTheDocument()
+    expect(screen.getByLabelText('Owner')).toBeInTheDocument()
+    expect(screen.getByTestId('task-planning-disclosure')).not.toHaveAttribute(
+      'open'
+    )
+  })
+
+  it('keeps the modal open when Escape dismisses a nested metadata popover', async () => {
+    const onClose = vi.fn()
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+
+    const dueTrigger = screen.getByRole('button', { name: /2026-07-15/ })
+    await fireEvent.click(dueTrigger)
+    await flush()
+    expect(
+      screen.getByRole('dialog', { name: 'Due date options' })
+    ).toBeInTheDocument()
+
+    dueTrigger.focus()
+    await fireEvent.keyDown(dueTrigger, { key: 'Escape' })
+    await flush()
+    expect(dueTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(dueTrigger)
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('a metadata change persists via ctx and fires onMetaChanged', async () => {
@@ -529,6 +563,27 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
 
     expect(updateBlockState).toHaveBeenCalledWith('task-1', 'DONE')
     expect(onMetaChanged).toHaveBeenCalled()
+  })
+
+  it('writes Start day changes through the shared sidebar context', async () => {
+    const setTaskStartDate = vi.fn().mockResolvedValue(true)
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx({ setTaskStartDate }),
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+
+    await fireEvent.change(screen.getByLabelText('Start day'), {
+      target: { value: '2026-07-09' }
+    })
+    await flush()
+
+    expect(setTaskStartDate).toHaveBeenCalledWith('task-1', '2026-07-09')
   })
 
   it('collapses the sidebar into a disclosure on narrow viewports', async () => {

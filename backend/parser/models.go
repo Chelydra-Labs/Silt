@@ -2,6 +2,10 @@ package parser
 
 type BlockType string
 
+// DefaultTaskPriority is the priority assigned to a task created without an
+// explicit priority. Priorities are 1=Critical, 2=Normal, 3=Low.
+const DefaultTaskPriority = 2
+
 const (
 	BlockTask   BlockType = "TASK"
 	BlockNote   BlockType = "NOTE"

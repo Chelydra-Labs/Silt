@@ -170,7 +170,7 @@ func TestLoadLinked_RejectsOversizeConfig(t *testing.T) {
 // reach the indexer.
 func TestLoad_LegacyShorthandRegexIgnored(t *testing.T) {
 	vault := t.TempDir()
-	hostile := "parsing:\n  auto_inject_uuid: true\n  default_task_priority: 3\n  shorthand_regex: \"^(a+)+$\"\n"
+	hostile := "parsing:\n  auto_inject_uuid: true\n  default_task_priority: 2\n  shorthand_regex: \"^(a+)+$\"\n"
 	writeFile(t, ConfigPath(vault), hostile)
 	cfg, err := Load(vault)
 	if err != nil {

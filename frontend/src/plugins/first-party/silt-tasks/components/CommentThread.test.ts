@@ -619,4 +619,30 @@ describe('CommentThread', () => {
     )
     expect(screen.getByText('my reply')).toBeInTheDocument()
   })
+
+  it('Escape dismisses only the reply composer and restores trigger focus', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'parent comment',
+          author: 'alice',
+          timestamp: '2026-07-01T09:00:00',
+          parent_id: 'task-1'
+        })
+      ])
+    })
+    mount({ ctx })
+    await flush()
+
+    const replyButton = screen.getByLabelText('Reply to comment')
+    await fireEvent.click(replyButton)
+    const composer = screen.getByLabelText('Reply text')
+    expect(document.activeElement).toBe(composer)
+
+    await fireEvent.keyDown(composer, { key: 'Escape' })
+    await flush()
+    expect(screen.queryByLabelText('Reply text')).toBeNull()
+    expect(document.activeElement).toBe(replyButton)
+  })
 })

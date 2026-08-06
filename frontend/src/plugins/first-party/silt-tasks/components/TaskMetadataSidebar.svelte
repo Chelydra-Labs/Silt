@@ -42,6 +42,12 @@
      * host needs this signal as a safety net).
      */
     busy?: boolean
+    /** Pins the primary controls to the top of the host's scroll container. */
+    stickyPrimary?: boolean
+    /** When supplied, close becomes part of the shared primary action header. */
+    onClose?: () => void
+    /** Gives the host dialog a stable accessible name without duplicating UI. */
+    headingId?: string
   }
 
   // busy is a write-only $bindable: the sidebar pushes its interaction state UP
@@ -49,8 +55,16 @@
   // sidebar never reads its own value, so the default is never consumed here.
   // Do NOT mirror it onto aria-busy — "a popover is open" is not a loading
   // state and would mislead assistive tech.
-  // eslint-disable-next-line no-useless-assignment
-  let { task, ctx, onMetaChanged, busy = $bindable() }: Props = $props()
+  let {
+    task,
+    ctx,
+    onMetaChanged,
+    // eslint-disable-next-line no-useless-assignment
+    busy = $bindable(),
+    stickyPrimary = false,
+    onClose,
+    headingId
+  }: Props = $props()
 
   let rootRef = $state<HTMLDivElement | null>(null)
 
@@ -103,6 +117,12 @@
     onChanged: notifyMeta,
     onError: setMetaError
   })
+  const startDateField = optimisticField<string>({
+    initial: '',
+    write: (v) => ctx.setTaskStartDate(task!.id, v),
+    onChanged: notifyMeta,
+    onError: setMetaError
+  })
   const statusField = optimisticField<TaskStatus>({
     initial: 'TODO',
     write: (s) => ctx.updateBlockState(task!.id, s),
@@ -152,12 +172,16 @@
   let customRecurrence = $state('')
 
   let ownerDraft = $state('')
+  let startDateDraft = $state('')
   let tagDraft = $state('')
   let tagsAnnouncement = $state('')
   let titleDraft = $state('')
   let estimateInvalid = $state(false)
   let weekStart = $derived(getTaskWeekStart())
   let dueDatePresets = $derived(buildDueDatePresets(ctx.today, weekStart))
+  let disclosureTaskId = $state('')
+  let planningOpen = $state(false)
+  let activityOpen = $state(false)
 
   // ctx is a stable plugin-context singleton — see BoardView for rationale.
   // svelte-ignore state_referenced_locally
@@ -189,6 +213,7 @@
     void task?.progress
     void task?.recurrence
     void task?.due_date
+    void task?.start_date
     void task?.status
     void task?.owner
     void task?.priority
@@ -202,6 +227,10 @@
       recurrenceField.reset(task?.recurrence ?? '')
     if (untrack(() => !dueDateField.pending))
       dueDateField.reset(task?.due_date ?? '')
+    if (untrack(() => !startDateField.pending)) {
+      startDateField.reset(task?.start_date ?? '')
+      startDateDraft = task?.start_date ?? ''
+    }
     if (untrack(() => !statusField.pending)) {
       statusField.reset(task?.status ?? 'TODO')
       statusCommitted = task?.status ?? 'TODO'
@@ -226,6 +255,19 @@
       estimateInvalid = false
     }
     metaError = ''
+  })
+
+  // Seed disclosures once per task. User choices survive optimistic host
+  // refreshes; switching tasks gets a fresh, content-aware default.
+  $effect(() => {
+    if (task.id === disclosureTaskId) return
+    disclosureTaskId = task.id
+    planningOpen =
+      task.progress > 0 ||
+      task.estimate_minutes !== null ||
+      !!task.recurrence ||
+      blockedByList.length > 0
+    activityOpen = task.comments_count > 0 || !!task.completed_at
   })
 
   async function togglePin() {
@@ -266,6 +308,7 @@
     recurrenceOpen = false
     recurrenceFocusIdx = -1
     customRecurrence = ''
+    void tick().then(() => recurrenceTrigger?.focus())
   }
 
   function onRecurrenceKeydown(e: KeyboardEvent) {
@@ -308,8 +351,17 @@
     await dueDateField.commit(value)
   }
 
+  async function commitStartDate(value: string) {
+    startDateDraft = value
+    if (!task || startDateField.pending || value === startDateField.value)
+      return
+    const ok = await startDateField.commit(value)
+    if (!ok) startDateDraft = startDateField.value
+  }
+
   function closeDueDate() {
     dueDateOpen = false
+    void tick().then(() => dueDateTrigger?.focus())
   }
 
   function onDueDateKeydown(e: KeyboardEvent) {
@@ -545,411 +597,251 @@
   })
 </script>
 
-<div bind:this={rootRef} class="space-y-6">
-  {#if metaError}
-    <ErrorBanner
-      message={`Couldn't save: ${metaError}`}
-      dataTestId="task-meta-error"
-    />
+<div bind:this={rootRef}>
+  {#if headingId}
+    <h2 id={headingId} class="sr-only">Edit task: {task.clean_content}</h2>
   {/if}
 
-  <!-- Title editor -->
-  <section>
-    <input
-      type="text"
-      class="w-full bg-transparent border-none outline-none focus:ring-1 focus:ring-accent-primary-start/40 hover:bg-hover rounded -mx-1 px-1 placeholder:text-text-muted font-headline-md text-headline-md text-text-primary break-words {titleField.pending
-        ? 'opacity-50'
-        : ''}"
-      bind:value={titleDraft}
-      readonly={titleField.pending}
-      aria-busy={titleField.pending}
-      aria-label="Task title"
-      onblur={commitTitle}
-      onkeydown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault()
-          void commitTitle()
-        }
-      }}
-    />
-  </section>
-
-  <!-- Status radiogroup -->
-  <section>
-    <h3
-      class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted mb-2"
-    >
-      Status
-    </h3>
-    <div
-      class="flex items-center gap-0.5 bg-surface-panel border border-surface-panel-border rounded-lg p-0.5"
-      role="radiogroup"
-      aria-label="Task status"
-      tabindex="-1"
-      onkeydown={onStatusKeydown}
-    >
-      {#each STATUSES as s (s)}
-        <button
-          data-status={s}
-          type="button"
-          onclick={() => void setStatus(s)}
-          role="radio"
-          aria-checked={statusField.value === s}
-          tabindex={statusField.value === s ? 0 : -1}
-          disabled={statusField.pending}
-          class="flex-1 px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          class:bg-hover={statusField.value === s}
-          class:text-accent-primary-start={statusField.value === s}
-          class:text-text-muted={statusField.value !== s}
-        >
-          {laneLabel(s)}
-        </button>
-      {/each}
-    </div>
-  </section>
-
-  <!-- Due-date editor -->
-  <section>
-    <h3
-      class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted mb-2"
-    >
-      Due date
-    </h3>
-    <button
-      bind:this={dueDateTrigger}
-      type="button"
-      onclick={() => {
-        dueDateOpen = !dueDateOpen
-      }}
-      onkeydown={onDueDateKeydown}
-      disabled={dueDateField.pending}
-      aria-haspopup="dialog"
-      aria-expanded={dueDateOpen}
-      class="w-full flex items-center justify-between px-3 py-2 rounded border border-surface-card-border bg-surface-card hover:bg-hover transition-colors disabled:opacity-50 text-type-sm font-label-sm text-text-primary"
-    >
-      <span class="flex items-center gap-2">
+  <header
+    data-testid="task-primary-header"
+    class="space-y-3 border-b border-surface-card-border bg-surface-card px-5 py-4 {stickyPrimary
+      ? 'sticky top-0 z-20 shadow-lg'
+      : ''}"
+  >
+    <div class="flex items-start gap-2">
+      {#if task.recurrence}
         <span
-          class="material-symbols-outlined text-icon-md {dueDateField.value
-            ? 'text-accent-secondary-start'
-            : 'text-text-muted'}"
-          aria-hidden="true">event</span
-        >
-        {dueDateField.value || 'Set due date…'}
-      </span>
-      <span
-        class="material-symbols-outlined text-icon-sm text-text-muted"
-        aria-hidden="true">expand_more</span
-      >
-    </button>
-    <Popover
-      open={dueDateOpen}
-      onClose={closeDueDate}
-      anchor={dueDateTrigger}
-      matchWidth
-      class="rounded border border-surface-popover-border bg-surface-popover shadow-lg"
-    >
-      {#snippet content()}
-        <div
-          transition:fly={{ y: -4, duration: 100 }}
-          role="dialog"
-          aria-label="Due date options"
-        >
-          <div class="p-2 border-b border-surface-card-border">
-            <input
-              type="date"
-              aria-label="Custom due date"
-              class="w-full px-2 py-1 text-type-sm font-label-sm bg-surface-card border border-surface-card-border rounded text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
-              value={dueDateField.value}
-              oninput={(e) => (dueDateField.value = e.currentTarget.value)}
-              onkeydown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  if (dueDateField.value) void commitDueDate(dueDateField.value)
-                } else if (e.key === 'Escape') {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  closeDueDate()
-                }
-              }}
-            />
-          </div>
-          {#each dueDatePresets as preset (preset.label)}
-            <button
-              type="button"
-              class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm hover:bg-hover transition-colors {dueDateField.value ===
-              preset.value
-                ? 'text-accent-primary-start font-label-sm-bold'
-                : 'text-text-primary'}"
-              onclick={() => void commitDueDate(preset.value)}
-            >
-              {preset.label}
-              <span class="text-text-muted text-type-2xs ml-1"
-                >{preset.value}</span
-              >
-            </button>
-          {/each}
-          {#if dueDateField.value}
-            <div class="border-t border-surface-card-border">
-              <button
-                type="button"
-                class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm text-text-muted hover:bg-hover transition-colors"
-                onclick={() => void commitDueDate('')}
-              >
-                Clear due date
-              </button>
-            </div>
-          {/if}
-        </div>
-      {/snippet}
-    </Popover>
-  </section>
-
-  <!-- Pin toggle -->
-  <section>
-    <button
-      type="button"
-      onclick={togglePin}
-      disabled={pinField.pending}
-      class="w-full flex items-center justify-between px-3 py-2 rounded border border-surface-card-border bg-surface-card hover:bg-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      aria-pressed={pinField.value}
-    >
-      <span
-        class="flex items-center gap-2 text-type-sm font-label-sm text-text-primary"
-      >
-        <span class="material-symbols-outlined text-icon-md">push_pin</span>
-        {pinField.value ? 'Pinned' : 'Pin'}
-      </span>
-      {#if pinField.value}
-        <span
-          class="material-symbols-outlined text-icon-md text-accent-primary-start"
-          >check</span
+          class="material-symbols-outlined mt-1 shrink-0 text-icon-md text-accent-secondary-start"
+          aria-hidden="true"
+          title="Recurring: {task.recurrence}">event_repeat</span
         >
       {/if}
-    </button>
-  </section>
-
-  <!-- Progress slider -->
-  <section>
-    <div class="flex items-center justify-between mb-2">
-      <h3
-        class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
-      >
-        Progress
-      </h3>
-      <span class="text-type-xs font-label-sm text-text-primary">
-        {progressState}%{#if task.subtask_total > 0}
-          <span
-            class="text-text-muted ml-1"
-            data-testid="task-subtask-count"
-            aria-label="{task.subtask_done} of {task.subtask_total} subtasks done"
-            >[{task.subtask_done}/{task.subtask_total}]</span
-          >
-        {/if}
-      </span>
-    </div>
-    <input
-      type="range"
-      min="0"
-      max="100"
-      value={progressState}
-      oninput={(e) => {
-        if (!progressPending) progressState = Number(e.currentTarget.value)
-      }}
-      onchange={onProgressChange}
-      disabled={progressPending}
-      aria-label="Task progress"
-      class="w-full accent-accent-secondary-start disabled:opacity-50"
-    />
-    <div
-      class="mt-2 h-1 bg-surface-card border border-surface-card-border rounded overflow-hidden"
-    >
-      <div
-        class="h-full bg-accent-secondary-start transition-all"
-        style="width: {progressState}%"
-      ></div>
-    </div>
-  </section>
-
-  <!-- Estimate (#439) -->
-  <section>
-    <div class="flex items-center justify-between gap-2 mb-1">
-      <h3
-        class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
-      >
-        <label for="task-estimate-input">Estimate</label>
-      </h3>
       <input
-        id="task-estimate-input"
         type="text"
-        data-testid="task-estimate-input"
-        class="w-28 px-2 py-0.5 border rounded-sm text-text-primary border-surface-card-border bg-surface-card text-right focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimateField.pending
+        class="min-w-0 flex-1 rounded border-none bg-transparent px-1 font-headline-md text-headline-md text-text-primary outline-none placeholder:text-text-muted hover:bg-hover focus:ring-1 focus:ring-accent-primary-start/40 {titleField.pending
           ? 'opacity-50'
           : ''}"
-        placeholder="—"
-        value={estimateField.value}
-        oninput={(e) => (estimateField.value = e.currentTarget.value)}
-        readonly={estimateField.pending}
-        aria-busy={estimateField.pending}
-        aria-invalid={estimateInvalid}
-        aria-describedby="task-estimate-hint"
-        onblur={() => void commitEstimate()}
+        bind:value={titleDraft}
+        readonly={titleField.pending}
+        aria-busy={titleField.pending}
+        aria-label="Task title"
+        onblur={commitTitle}
         onkeydown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault()
-            void commitEstimate()
+            void commitTitle()
           }
         }}
       />
-    </div>
-    <p
-      id="task-estimate-hint"
-      class="text-type-2xs text-text-muted font-label-sm"
-    >
-      30m, 2h, 1d, 2.5d
-    </p>
-  </section>
-
-  <!-- Recurrence editor -->
-  <section>
-    <h3
-      class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted mb-2"
-    >
-      Recurrence
-    </h3>
-    {#if dueDateField.value}
-      <button
-        bind:this={recurrenceTrigger}
-        type="button"
-        onclick={() => {
-          recurrenceOpen = !recurrenceOpen
-          recurrenceFocusIdx = 0
-        }}
-        onkeydown={onRecurrenceKeydown}
-        disabled={recurrenceField.pending}
-        aria-haspopup="listbox"
-        aria-expanded={recurrenceOpen}
-        aria-controls="recurrence-listbox"
-        class="w-full flex items-center justify-between px-3 py-2 rounded border border-surface-card-border bg-surface-card hover:bg-hover transition-colors disabled:opacity-50 text-type-sm font-label-sm text-text-primary"
-      >
-        <span class="flex items-center gap-2">
-          <span
-            class="material-symbols-outlined text-icon-md {recurrenceField.value
-              ? 'text-accent-secondary-start'
-              : 'text-text-muted'}"
-            aria-hidden="true">event_repeat</span
-          >
-          {recurrenceField.value || 'Set recurrence…'}
-        </span>
-        <span
-          class="material-symbols-outlined text-icon-sm text-text-muted"
-          aria-hidden="true">expand_more</span
+      {#if onClose}
+        <button
+          type="button"
+          onclick={onClose}
+          aria-label="Close detail panel"
+          class="shrink-0 rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start"
         >
-      </button>
-      <Popover
-        open={recurrenceOpen}
-        onClose={closeRecurrence}
-        anchor={recurrenceTrigger}
-        matchWidth
-        class="rounded border border-surface-popover-border bg-surface-popover shadow-lg"
-      >
-        {#snippet content()}
-          <div
-            id="recurrence-listbox"
-            transition:fly={{ y: -4, duration: 100 }}
-            role="listbox"
-            tabindex="-1"
-            aria-label="Recurrence options"
+          <span class="material-symbols-outlined" aria-hidden="true">close</span
           >
-            <div class="p-2 border-b border-surface-card-border">
-              <input
-                type="text"
-                placeholder="Custom (e.g. every 5 days)"
-                aria-label="Custom recurrence rule"
-                class="w-full px-2 py-1 text-type-sm font-label-sm bg-surface-card border border-surface-card-border rounded text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
-                bind:value={customRecurrence}
-                onkeydown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    if (customRecurrence.trim())
-                      void commitRecurrence(customRecurrence.trim())
-                  } else if (e.key === 'Escape') {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    closeRecurrence()
-                  }
-                }}
-              />
-            </div>
-            {#each RECURRENCE_PRESETS as preset, i (preset.value)}
-              <button
-                type="button"
-                role="option"
-                aria-selected={recurrenceField.value === preset.value}
-                tabindex={recurrenceFocusIdx === i ? 0 : -1}
-                class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm hover:bg-hover transition-colors {recurrenceField.value ===
-                preset.value
-                  ? 'text-accent-primary-start font-label-sm-bold'
-                  : 'text-text-primary'} {recurrenceFocusIdx === i
-                  ? 'bg-hover'
-                  : ''}"
-                onclick={() => void commitRecurrence(preset.value)}
-              >
-                {preset.value}
-                {#if preset.hint}
-                  <span class="text-text-muted text-type-2xs ml-1"
-                    >({preset.hint})</span
-                  >
-                {/if}
-              </button>
-            {/each}
-            {#if recurrenceField.value}
-              <div class="border-t border-surface-card-border">
+        </button>
+      {/if}
+    </div>
+
+    <section aria-labelledby="task-status-label">
+      <h3
+        id="task-status-label"
+        class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
+      >
+        Status
+      </h3>
+      <div
+        class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
+        role="radiogroup"
+        aria-label="Task status"
+        tabindex="-1"
+        onkeydown={onStatusKeydown}
+      >
+        {#each STATUSES as s (s)}
+          <button
+            data-status={s}
+            type="button"
+            onclick={() => void setStatus(s)}
+            role="radio"
+            aria-checked={statusField.value === s}
+            tabindex={statusField.value === s ? 0 : -1}
+            disabled={statusField.pending}
+            class="flex-1 cursor-pointer rounded border-none px-2.5 py-1 font-label-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            class:bg-hover={statusField.value === s}
+            class:text-accent-primary-start={statusField.value === s}
+            class:text-text-muted={statusField.value !== s}
+          >
+            {laneLabel(s)}
+          </button>
+        {/each}
+      </div>
+    </section>
+
+    <div class="grid grid-cols-2 gap-2">
+      <section class="min-w-0">
+        <h3
+          class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
+        >
+          Due date
+        </h3>
+        <button
+          bind:this={dueDateTrigger}
+          type="button"
+          onclick={() => {
+            dueDateOpen = !dueDateOpen
+          }}
+          onkeydown={onDueDateKeydown}
+          disabled={dueDateField.pending}
+          aria-haspopup="dialog"
+          aria-expanded={dueDateOpen}
+          class="flex w-full items-center justify-between gap-1 rounded border border-surface-card-border bg-surface-card px-2 py-1.5 font-label-sm text-type-xs text-text-primary transition-colors hover:bg-hover disabled:opacity-50"
+        >
+          <span class="flex min-w-0 items-center gap-1.5">
+            <span
+              class="material-symbols-outlined shrink-0 text-icon-sm {dueDateField.value
+                ? 'text-accent-secondary-start'
+                : 'text-text-muted'}"
+              aria-hidden="true">event</span
+            >
+            <span class="truncate">{dueDateField.value || 'Set date…'}</span>
+          </span>
+          <span
+            class="material-symbols-outlined shrink-0 text-icon-sm text-text-muted"
+            aria-hidden="true">expand_more</span
+          >
+        </button>
+        <Popover
+          open={dueDateOpen}
+          onClose={closeDueDate}
+          anchor={dueDateTrigger}
+          matchWidth
+          class="rounded border border-surface-popover-border bg-surface-popover shadow-lg"
+        >
+          {#snippet content()}
+            <div
+              transition:fly={{ y: -4, duration: 100 }}
+              role="dialog"
+              aria-label="Due date options"
+            >
+              <div class="border-b border-surface-card-border p-2">
+                <input
+                  type="date"
+                  aria-label="Custom due date"
+                  class="w-full rounded border border-surface-card-border bg-surface-card px-2 py-1 font-label-sm text-type-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
+                  value={dueDateField.value}
+                  oninput={(e) => (dueDateField.value = e.currentTarget.value)}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      if (dueDateField.value)
+                        void commitDueDate(dueDateField.value)
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      closeDueDate()
+                    }
+                  }}
+                />
+              </div>
+              {#each dueDatePresets as preset (preset.label)}
                 <button
                   type="button"
-                  role="option"
-                  aria-selected={false}
-                  tabindex={recurrenceFocusIdx === RECURRENCE_PRESETS.length
-                    ? 0
-                    : -1}
-                  class="w-full text-left px-3 py-1.5 text-type-sm font-label-sm text-text-muted hover:bg-hover transition-colors {recurrenceFocusIdx ===
-                  RECURRENCE_PRESETS.length
-                    ? 'bg-hover'
-                    : ''}"
-                  onclick={() => void commitRecurrence('')}
+                  class="w-full px-3 py-1.5 text-left font-label-sm text-type-sm transition-colors hover:bg-hover {dueDateField.value ===
+                  preset.value
+                    ? 'font-label-sm-bold text-accent-primary-start'
+                    : 'text-text-primary'}"
+                  onclick={() => void commitDueDate(preset.value)}
                 >
-                  Stop recurring
+                  {preset.label}
+                  <span class="ml-1 text-type-2xs text-text-muted"
+                    >{preset.value}</span
+                  >
                 </button>
-              </div>
-            {/if}
-          </div>
-        {/snippet}
-      </Popover>
-    {:else}
-      <p class="text-type-xs font-label-sm text-text-muted italic">
-        Set a due date first to configure recurrence.
-      </p>
-    {/if}
-  </section>
+              {/each}
+              {#if dueDateField.value}
+                <div class="border-t border-surface-card-border">
+                  <button
+                    type="button"
+                    class="w-full px-3 py-1.5 text-left font-label-sm text-type-sm text-text-muted transition-colors hover:bg-hover"
+                    onclick={() => void commitDueDate('')}
+                  >
+                    Clear due date
+                  </button>
+                </div>
+              {/if}
+            </div>
+          {/snippet}
+        </Popover>
+      </section>
 
-  <!-- Read-only details -->
-  <section>
-    <h3
-      class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted mb-3"
-    >
-      Details
-    </h3>
-    <dl class="flex flex-col gap-2.5 text-type-sm font-label-sm">
-      <div class="flex items-center justify-between gap-2">
-        <dt class="text-text-muted shrink-0">
+      <section>
+        <h3
+          class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
+        >
+          Pin
+        </h3>
+        <button
+          type="button"
+          onclick={togglePin}
+          disabled={pinField.pending}
+          class="flex w-full items-center justify-between rounded border border-surface-card-border bg-surface-card px-2 py-1.5 font-label-sm text-type-xs text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+          aria-pressed={pinField.value}
+        >
+          <span class="flex items-center gap-1.5">
+            <span
+              class="material-symbols-outlined text-icon-sm"
+              aria-hidden="true">push_pin</span
+            >
+            {pinField.value ? 'Pinned' : 'Pin task'}
+          </span>
+          {#if pinField.value}
+            <span
+              class="material-symbols-outlined text-icon-sm text-accent-primary-start"
+              aria-hidden="true">check</span
+            >
+          {/if}
+        </button>
+      </section>
+    </div>
+
+    {#if metaError}
+      <ErrorBanner
+        message={`Couldn't save: ${metaError}`}
+        dataTestId="task-meta-error"
+      />
+    {/if}
+  </header>
+
+  <section
+    aria-labelledby="task-essentials-heading"
+    class="space-y-4 px-5 py-5"
+  >
+    <div class="flex items-center gap-2">
+      <span
+        class="material-symbols-outlined text-icon-md text-accent-secondary-start"
+        aria-hidden="true">person_edit</span
+      >
+      <h3
+        id="task-essentials-heading"
+        class="font-label-sm-bold text-type-xs uppercase tracking-widest text-text-primary"
+      >
+        Essentials
+      </h3>
+    </div>
+    <dl class="flex flex-col gap-3 font-label-sm text-type-sm">
+      <div class="flex items-center justify-between gap-3">
+        <dt class="shrink-0 text-text-muted">
           <label for="task-owner-input">Owner</label>
         </dt>
-        <dd class="flex-1 max-w-50">
+        <dd class="min-w-0 flex-1">
           <input
             id="task-owner-input"
             type="text"
-            class="w-full px-2 py-0.5 border rounded-sm text-text-primary border-surface-card-border bg-surface-card text-right focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {ownerField.pending
+            class="w-full rounded-sm border border-surface-card-border bg-surface-card px-2 py-1 text-right text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {ownerField.pending
               ? 'opacity-50'
               : ''}"
             placeholder="Unassigned"
@@ -966,13 +858,13 @@
           />
         </dd>
       </div>
-      <div class="flex items-center justify-between gap-2">
-        <dt id="task-priority-label" class="text-text-muted shrink-0">
+      <div class="flex items-center justify-between gap-3">
+        <dt id="task-priority-label" class="shrink-0 text-text-muted">
           Priority
         </dt>
-        <dd class="flex-1 max-w-55">
+        <dd class="min-w-0 flex-1">
           <div
-            class="flex items-center gap-0.5 bg-surface-panel border border-surface-panel-border rounded-lg p-0.5"
+            class="flex items-center gap-0.5 rounded-lg border border-surface-panel-border bg-surface-panel p-0.5"
             role="radiogroup"
             aria-labelledby="task-priority-label"
             tabindex="-1"
@@ -993,7 +885,7 @@
                     ? 0
                     : -1}
                 disabled={priorityField.pending}
-                class="flex-1 px-2 py-0.5 rounded font-label-sm border-none cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                class="flex-1 cursor-pointer rounded border-none px-2 py-0.5 font-label-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                 class:bg-hover={priorityField.value === p}
                 class:text-accent-primary-start={priorityField.value === p}
                 class:text-text-muted={priorityField.value !== p}
@@ -1004,53 +896,35 @@
           </div>
         </dd>
       </div>
-      {#if task.created_at || task.completed_at}
-        <div class="flex flex-start justify-between gap-2">
-          <dt class="text-text-muted shrink-0">Created</dt>
-          <dd class="text-text-primary text-right">
-            {#if task.created_at}
-              {formatTimestamp(task.created_at)}
-            {:else}
-              <span class="text-text-muted">—</span>
-            {/if}
-            {#if task.completed_at}
-              <span class="block text-text-muted">
-                Completed {formatTimestamp(task.completed_at)}
-              </span>
-            {/if}
-          </dd>
-        </div>
-      {/if}
-      {#if nextOccurrence}
-        <div class="flex items-center justify-between">
-          <dt class="text-text-muted">Next occurrence</dt>
-          <dd class="text-accent-secondary-start">{nextOccurrence}</dd>
-        </div>
-      {:else if recurrenceField.value && dueDateField.value}
-        <div class="flex items-center justify-between">
-          <dt class="text-text-muted">Next occurrence</dt>
-          <dd class="text-text-muted italic text-type-xs">
-            Computed on completion
-          </dd>
-        </div>
-      {/if}
-      <div class="flex items-center justify-between">
-        <dt class="text-text-muted">Start date</dt>
-        <dd class="text-text-primary">{task.start_date || '—'}</dd>
+      <div class="flex items-start justify-between gap-3">
+        <dt class="shrink-0 pt-1 text-text-muted">
+          <label for="task-start-date-input">Start day</label>
+        </dt>
+        <dd class="min-w-0 flex-1">
+          <input
+            id="task-start-date-input"
+            type="date"
+            bind:value={startDateDraft}
+            disabled={startDateField.pending}
+            aria-busy={startDateField.pending}
+            onchange={(e) => void commitStartDate(e.currentTarget.value)}
+            class="w-full rounded-sm border border-surface-card-border bg-surface-card px-2 py-1 text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 disabled:opacity-50"
+          />
+        </dd>
       </div>
-      <div class="flex flex-start justify-between gap-2">
-        <dt class="text-text-muted shrink-0 pt-0.5">Tags</dt>
-        <dd class="flex-1 min-w-0">
+      <div class="flex items-start justify-between gap-3">
+        <dt class="shrink-0 pt-1 text-text-muted">Tags</dt>
+        <dd class="min-w-0 flex-1">
           <span class="sr-only" aria-live="polite">{tagsAnnouncement}</span>
-          <ul class="flex flex-wrap gap-1 justify-end items-center">
+          <ul class="flex flex-wrap items-center justify-end gap-1">
             {#each tagsField.value as tg (tg)}
               <li
-                class="flex items-center gap-0.5 px-1.5 py-0.5 border rounded-sm text-type-sm text-accent-secondary-start border-accent-secondary-start/30 bg-accent-secondary-glow"
+                class="flex items-center gap-0.5 rounded-sm border border-accent-secondary-start/30 bg-accent-secondary-glow px-1.5 py-0.5 text-type-sm text-accent-secondary-start"
               >
                 <span>{tg}</span>
                 <button
                   type="button"
-                  class="text-text-muted hover:text-error transition-colors disabled:opacity-50"
+                  class="text-text-muted transition-colors hover:text-error disabled:opacity-50"
                   aria-label="Remove tag {tg}"
                   disabled={tagsField.pending}
                   onclick={() => removeTag(tg)}
@@ -1059,13 +933,13 @@
                 >
               </li>
             {/each}
-            <li>
+            <li class="min-w-0 flex-1">
               <label class="sr-only" for="task-tag-add">Add a tag</label>
               <input
                 id="task-tag-add"
                 type="text"
-                class="flex-1 min-w-25 px-1.5 py-0.5 text-type-sm bg-transparent border border-surface-card-border rounded focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 text-text-primary placeholder:text-text-muted disabled:opacity-50"
-                placeholder="Add…"
+                class="w-full rounded border border-surface-card-border bg-transparent px-1.5 py-0.5 text-right text-type-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 disabled:opacity-50"
+                placeholder="Add tag…"
                 bind:value={tagDraft}
                 disabled={tagsField.pending}
                 onkeydown={(e) => {
@@ -1082,36 +956,288 @@
     </dl>
   </section>
 
-  <!-- Counts -->
-  <section class="flex items-center gap-4">
-    <div class="flex items-center gap-1.5 text-text-muted">
-      <span class="material-symbols-outlined text-icon-md">chat_bubble</span>
-      <span class="text-type-sm font-label-sm">{task.comments_count}</span>
-      <span class="text-type-2xs font-label-sm text-text-muted">comments</span>
-    </div>
-    <div class="flex items-center gap-1.5 text-text-muted">
-      <span class="material-symbols-outlined text-icon-md">link</span>
-      <span class="text-type-sm font-label-sm">{task.links_count}</span>
-      <span class="text-type-2xs font-label-sm text-text-muted">links</span>
-    </div>
-  </section>
+  <details
+    class="group border-t border-surface-card-border"
+    bind:open={planningOpen}
+    data-testid="task-planning-disclosure"
+  >
+    <summary
+      class="cursor-pointer px-5 py-4 text-text-primary transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start"
+    >
+      <span class="font-label-sm-bold text-type-sm">Planning & tracking</span>
+    </summary>
+    <div class="space-y-6 px-5 pb-5 pt-2">
+      <section>
+        <div class="mb-2 flex items-center justify-between">
+          <h3
+            class="font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
+          >
+            Progress
+          </h3>
+          <span class="font-label-sm text-type-xs text-text-primary">
+            {progressState}%{#if task.subtask_total > 0}
+              <span
+                class="ml-1 text-text-muted"
+                data-testid="task-subtask-count"
+                aria-label="{task.subtask_done} of {task.subtask_total} subtasks done"
+                >[{task.subtask_done}/{task.subtask_total}]</span
+              >
+            {/if}
+          </span>
+        </div>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          value={progressState}
+          oninput={(e) => {
+            if (!progressPending) progressState = Number(e.currentTarget.value)
+          }}
+          onchange={onProgressChange}
+          disabled={progressPending}
+          aria-label="Task progress"
+          class="w-full accent-accent-secondary-start disabled:opacity-50"
+        />
+        <div
+          class="mt-2 h-1 overflow-hidden rounded border border-surface-card-border bg-surface-card"
+        >
+          <div
+            class="h-full bg-accent-secondary-start transition-all"
+            style="width: {progressState}%"
+          ></div>
+        </div>
+      </section>
 
-  <CommentThread
-    taskId={task.id}
-    notebook={task.notebook}
-    section={task.section}
-    page={task.page}
-    fileDate={task.file_date ?? ''}
-    {ctx}
-    onCommentsChanged={onMetaChanged}
-  />
+      <section>
+        <div class="mb-1 flex items-center justify-between gap-2">
+          <h3
+            class="font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
+          >
+            <label for="task-estimate-input">Estimate</label>
+          </h3>
+          <input
+            id="task-estimate-input"
+            type="text"
+            data-testid="task-estimate-input"
+            class="w-28 rounded-sm border border-surface-card-border bg-surface-card px-2 py-0.5 text-right text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimateField.pending
+              ? 'opacity-50'
+              : ''}"
+            placeholder="—"
+            value={estimateField.value}
+            oninput={(e) => (estimateField.value = e.currentTarget.value)}
+            readonly={estimateField.pending}
+            aria-busy={estimateField.pending}
+            aria-invalid={estimateInvalid}
+            aria-describedby="task-estimate-hint"
+            onblur={() => void commitEstimate()}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                void commitEstimate()
+              }
+            }}
+          />
+        </div>
+        <p
+          id="task-estimate-hint"
+          class="font-label-sm text-type-2xs text-text-muted"
+        >
+          Try 30m, 2h, 1d, or 2.5d
+        </p>
+      </section>
 
-  <DependencyPicker
-    cardId={task.id}
-    blockedBy={blockedByList}
-    {ctx}
-    {onMetaChanged}
-  />
+      <section>
+        <h3
+          class="mb-2 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
+        >
+          Recurrence
+        </h3>
+        {#if dueDateField.value}
+          <button
+            bind:this={recurrenceTrigger}
+            type="button"
+            onclick={() => {
+              recurrenceOpen = !recurrenceOpen
+              recurrenceFocusIdx = 0
+            }}
+            onkeydown={onRecurrenceKeydown}
+            disabled={recurrenceField.pending}
+            aria-haspopup="listbox"
+            aria-expanded={recurrenceOpen}
+            aria-controls="recurrence-listbox"
+            class="flex w-full items-center justify-between rounded border border-surface-card-border bg-surface-card px-3 py-2 font-label-sm text-type-sm text-text-primary transition-colors hover:bg-hover disabled:opacity-50"
+          >
+            <span class="flex items-center gap-2">
+              <span
+                class="material-symbols-outlined text-icon-md {recurrenceField.value
+                  ? 'text-accent-secondary-start'
+                  : 'text-text-muted'}"
+                aria-hidden="true">event_repeat</span
+              >
+              {recurrenceField.value || 'Set recurrence…'}
+            </span>
+            <span
+              class="material-symbols-outlined text-icon-sm text-text-muted"
+              aria-hidden="true">expand_more</span
+            >
+          </button>
+          <Popover
+            open={recurrenceOpen}
+            onClose={closeRecurrence}
+            anchor={recurrenceTrigger}
+            matchWidth
+            class="rounded border border-surface-popover-border bg-surface-popover shadow-lg"
+          >
+            {#snippet content()}
+              <div
+                id="recurrence-listbox"
+                transition:fly={{ y: -4, duration: 100 }}
+                role="listbox"
+                tabindex="-1"
+                aria-label="Recurrence options"
+              >
+                <div class="border-b border-surface-card-border p-2">
+                  <input
+                    type="text"
+                    placeholder="Custom (e.g. every 5 days)"
+                    aria-label="Custom recurrence rule"
+                    class="w-full rounded border border-surface-card-border bg-surface-card px-2 py-1 font-label-sm text-type-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
+                    bind:value={customRecurrence}
+                    onkeydown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        if (customRecurrence.trim())
+                          void commitRecurrence(customRecurrence.trim())
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        closeRecurrence()
+                      }
+                    }}
+                  />
+                </div>
+                {#each RECURRENCE_PRESETS as preset, i (preset.value)}
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={recurrenceField.value === preset.value}
+                    tabindex={recurrenceFocusIdx === i ? 0 : -1}
+                    class="w-full px-3 py-1.5 text-left font-label-sm text-type-sm transition-colors hover:bg-hover {recurrenceField.value ===
+                    preset.value
+                      ? 'font-label-sm-bold text-accent-primary-start'
+                      : 'text-text-primary'} {recurrenceFocusIdx === i
+                      ? 'bg-hover'
+                      : ''}"
+                    onclick={() => void commitRecurrence(preset.value)}
+                  >
+                    {preset.value}
+                    {#if preset.hint}
+                      <span class="ml-1 text-type-2xs text-text-muted"
+                        >({preset.hint})</span
+                      >
+                    {/if}
+                  </button>
+                {/each}
+                {#if recurrenceField.value}
+                  <div class="border-t border-surface-card-border">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={false}
+                      tabindex={recurrenceFocusIdx === RECURRENCE_PRESETS.length
+                        ? 0
+                        : -1}
+                      class="w-full px-3 py-1.5 text-left font-label-sm text-type-sm text-text-muted transition-colors hover:bg-hover {recurrenceFocusIdx ===
+                      RECURRENCE_PRESETS.length
+                        ? 'bg-hover'
+                        : ''}"
+                      onclick={() => void commitRecurrence('')}
+                    >
+                      Stop recurring
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            {/snippet}
+          </Popover>
+        {:else}
+          <p class="font-label-sm text-type-xs italic text-text-muted">
+            Set a due date first to configure recurrence.
+          </p>
+        {/if}
+        {#if nextOccurrence}
+          <p class="mt-2 font-label-sm text-type-xs text-text-muted">
+            Next occurrence <span class="text-accent-secondary-start"
+              >{nextOccurrence}</span
+            >
+          </p>
+        {:else if recurrenceField.value && dueDateField.value}
+          <p class="mt-2 font-label-sm text-type-xs italic text-text-muted">
+            Next occurrence is computed on completion.
+          </p>
+        {/if}
+      </section>
+
+      <DependencyPicker
+        cardId={task.id}
+        blockedBy={blockedByList}
+        {ctx}
+        {onMetaChanged}
+      />
+    </div>
+  </details>
+
+  <details
+    class="group border-y border-surface-card-border"
+    bind:open={activityOpen}
+    data-testid="task-activity-disclosure"
+  >
+    <summary
+      class="cursor-pointer px-5 py-4 text-text-primary transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start"
+    >
+      <span class="font-label-sm-bold text-type-sm">Activity</span>
+      <span class="ml-1 font-label-sm text-type-xs text-text-muted">
+        {task.comments_count} comments · {task.links_count} links · timestamps
+      </span>
+    </summary>
+    <div class="space-y-5 px-5 pb-5 pt-2">
+      {#if task.created_at || task.completed_at}
+        <dl class="flex flex-col gap-2 font-label-sm text-type-xs">
+          {#if task.created_at}
+            <div class="flex items-start justify-between gap-3">
+              <dt class="text-text-muted">Created</dt>
+              <dd class="text-right text-text-primary">
+                <time datetime={task.created_at}
+                  >{formatTimestamp(task.created_at)}</time
+                >
+              </dd>
+            </div>
+          {/if}
+          {#if task.completed_at}
+            <div class="flex items-start justify-between gap-3">
+              <dt class="text-text-muted">Completed</dt>
+              <dd class="text-right text-text-primary">
+                <time datetime={task.completed_at}
+                  >{formatTimestamp(task.completed_at)}</time
+                >
+              </dd>
+            </div>
+          {/if}
+        </dl>
+      {/if}
+
+      <CommentThread
+        taskId={task.id}
+        notebook={task.notebook}
+        section={task.section}
+        page={task.page}
+        fileDate={task.file_date ?? ''}
+        {ctx}
+        onCommentsChanged={onMetaChanged}
+      />
+    </div>
+  </details>
 </div>
 
 <BlockedDoneGuard

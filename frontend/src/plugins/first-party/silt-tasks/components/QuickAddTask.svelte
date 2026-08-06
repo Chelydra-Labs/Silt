@@ -3,8 +3,9 @@
   // (#368). Shared by the calendar (day-cell + toolbar), the kanban
   // (per-column + inbox), and the global Ctrl+Shift+N overlay.
   //
-  // Title-only is the v1 surface: sensible defaults (status TODO, no due date
-  // unless the surface supplied one) match the issue's acceptance criteria.
+  // Title-only is the v1 surface: sensible defaults (status TODO, normal
+  // priority, no due date unless the surface supplied one) match the issue's
+  // acceptance criteria.
   // Rich editing stays on the existing task/note editor.
   //
   // A plugin surface passes `ctx` (uses ctx.createTask). The app-shell global

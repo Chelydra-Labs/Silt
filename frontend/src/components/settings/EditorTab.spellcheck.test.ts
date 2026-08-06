@@ -55,7 +55,7 @@ const settingsMocks = vi.hoisted(() => {
       show_format_toolbar: true,
       formatting: { typography_enabled: true, color_enabled: true }
     },
-    parsing: { auto_inject_uuid: true, default_task_priority: 3 },
+    parsing: { auto_inject_uuid: true, default_task_priority: 2 },
     hotkeys: {},
     plugins: { active: [], disabled: [], plugin_settings: {} }
   }

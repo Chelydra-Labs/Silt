@@ -137,20 +137,135 @@ async function flush() {
 describe('TaskMetadataSidebar', () => {
   beforeEach(() => cleanup())
 
-  it('renders all primary metadata controls', () => {
+  it('keeps primary actions and essential metadata immediately visible', () => {
     const ctx = makeCtx()
     render(TaskMetadataSidebar, {
       props: { task: makeTask(), ctx }
     })
-    // Title, Status, Due date, Pin, Progress, Estimate, Recurrence, Details.
     expect(screen.getByLabelText('Task title')).toBeTruthy()
     expect(screen.getByText('Status')).toBeTruthy()
     expect(screen.getByText('Due date')).toBeTruthy()
     expect(screen.getByText('Pin')).toBeTruthy()
-    expect(screen.getByText('Progress')).toBeTruthy()
-    expect(screen.getByText('Estimate')).toBeTruthy()
-    expect(screen.getByText('Recurrence')).toBeTruthy()
-    expect(screen.getByText('Details')).toBeTruthy()
+    expect(screen.getByText('Essentials')).toBeTruthy()
+    expect(screen.getByLabelText('Owner')).toBeTruthy()
+    expect(screen.getByText('Priority')).toBeTruthy()
+    expect(screen.getByLabelText('Start day')).toBeTruthy()
+    expect(screen.getByLabelText('Add a tag')).toBeTruthy()
+  })
+
+  it('exposes Start day as a labelled local date input', () => {
+    render(TaskMetadataSidebar, {
+      props: {
+        task: makeTask({ start_date: '2026-07-08' }),
+        ctx: makeCtx()
+      }
+    })
+
+    const input = screen.getByLabelText('Start day') as HTMLInputElement
+    expect(input.type).toBe('date')
+    expect(input.value).toBe('2026-07-08')
+  })
+
+  it('sets Start day without inferring due date or duration', async () => {
+    const setTaskStartDate = vi.fn().mockResolvedValue(true)
+    const setTaskDueDate = vi.fn().mockResolvedValue(true)
+    const setTaskEstimate = vi.fn().mockResolvedValue(true)
+    const onMetaChanged = vi.fn()
+    render(TaskMetadataSidebar, {
+      props: {
+        task: makeTask(),
+        ctx: makeCtx({
+          setTaskStartDate,
+          setTaskDueDate,
+          setTaskEstimate
+        }),
+        onMetaChanged
+      }
+    })
+
+    await fireEvent.change(screen.getByLabelText('Start day'), {
+      target: { value: '2026-07-09' }
+    })
+    await flush()
+
+    expect(setTaskStartDate).toHaveBeenCalledWith('task-1', '2026-07-09')
+    expect(setTaskDueDate).not.toHaveBeenCalled()
+    expect(setTaskEstimate).not.toHaveBeenCalled()
+    expect(onMetaChanged).toHaveBeenCalled()
+  })
+
+  it('clears Start day with an empty local date', async () => {
+    const setTaskStartDate = vi.fn().mockResolvedValue(true)
+    render(TaskMetadataSidebar, {
+      props: {
+        task: makeTask({ start_date: '2026-07-08' }),
+        ctx: makeCtx({ setTaskStartDate })
+      }
+    })
+
+    await fireEvent.change(screen.getByLabelText('Start day'), {
+      target: { value: '' }
+    })
+    await flush()
+
+    expect(setTaskStartDate).toHaveBeenCalledWith('task-1', '')
+  })
+
+  it('rolls Start day back when the write is rejected', async () => {
+    const setTaskStartDate = vi
+      .fn()
+      .mockRejectedValue(new Error('start date rejected'))
+    render(TaskMetadataSidebar, {
+      props: {
+        task: makeTask({ start_date: '2026-07-08' }),
+        ctx: makeCtx({ setTaskStartDate })
+      }
+    })
+
+    const input = screen.getByLabelText('Start day') as HTMLInputElement
+    await fireEvent.change(input, { target: { value: '2026-07-09' } })
+    await flush()
+
+    expect(setTaskStartDate).toHaveBeenCalledWith('task-1', '2026-07-09')
+    expect(input.value).toBe('2026-07-08')
+    expect(screen.getByTestId('task-meta-error')).toHaveTextContent(
+      "Couldn't save: start date rejected"
+    )
+  })
+
+  it('defaults empty secondary sections closed', () => {
+    render(TaskMetadataSidebar, {
+      props: { task: makeTask(), ctx: makeCtx() }
+    })
+
+    expect(screen.getByTestId('task-planning-disclosure')).not.toHaveAttribute(
+      'open'
+    )
+    expect(screen.getByTestId('task-activity-disclosure')).not.toHaveAttribute(
+      'open'
+    )
+  })
+
+  it('opens populated sections and exposes native disclosure summaries', () => {
+    render(TaskMetadataSidebar, {
+      props: {
+        task: makeTask({
+          progress: 35,
+          estimate_minutes: 90,
+          comments_count: 2
+        }),
+        ctx: makeCtx()
+      }
+    })
+
+    expect(screen.getByTestId('task-planning-disclosure')).toHaveAttribute(
+      'open'
+    )
+    expect(screen.getByTestId('task-activity-disclosure')).toHaveAttribute(
+      'open'
+    )
+    expect(screen.getByText('Planning & tracking')).toBeInTheDocument()
+    expect(screen.getByText('Activity')).toBeInTheDocument()
   })
 
   it('an optimistic status edit calls ctx.updateBlockState', async () => {

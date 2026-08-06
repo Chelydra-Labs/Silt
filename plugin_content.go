@@ -30,8 +30,9 @@ type PluginCreateBlockOp struct {
 
 // PluginCreateBlock creates a single block after `afterID` (or at the end of the
 // page identified by notebook/section/page when afterID is empty). type must be
-// TASK, NOTE, or HEADER. The new block's UUID is the pre-minted NewID carried
-// in the op so the caller gets back the exact id that lands on disk.
+// TASK, NOTE, or HEADER. New TASK blocks receive Normal priority. The new
+// block's UUID is the pre-minted NewID carried in the op so the caller gets
+// back the exact id that lands on disk.
 // Returns the new block's UUID.
 // Gated by content-mutate (#156). Session-token verified (#151).
 func (a *App) PluginCreateBlock(pluginID, sessionToken, afterID, notebook, section, page, blockType, text string) (string, error) {
@@ -278,6 +279,9 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 					Type:      r.blockType,
 					CleanText: r.text,
 					FileDate:  time.Now().Format("2006-01-02"),
+				}
+				if r.blockType == parser.BlockTask {
+					nb.Priority = parser.DefaultTaskPriority
 				}
 				mutated = insertAfter(mutated, r.op.AfterID, nb)
 				createdIDs = append(createdIDs, r.newID)

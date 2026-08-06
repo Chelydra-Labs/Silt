@@ -31,6 +31,7 @@ import {
 } from '@tiptap/core'
 import { newlineInCode } from '@tiptap/pm/commands'
 import { TextSelection } from '@tiptap/pm/state'
+import { DEFAULT_TASK_PRIORITY } from './types'
 import {
   Details,
   DetailsContent,
@@ -199,8 +200,9 @@ export const TaskBlock = Node.create({
           attrs.recurrence ? { 'data-recurrence': attrs.recurrence } : {}
       },
       priority: {
-        default: 3,
-        parseHTML: (el) => Number(el.getAttribute('data-priority') || 3),
+        default: DEFAULT_TASK_PRIORITY,
+        parseHTML: (el) =>
+          Number(el.getAttribute('data-priority')) || DEFAULT_TASK_PRIORITY,
         renderHTML: (attrs) => ({ 'data-priority': String(attrs.priority) })
       },
       file_date: {
@@ -258,7 +260,7 @@ export const TaskBlock = Node.create({
             start_date: '',
             due_date: '',
             recurrence: '',
-            priority: 3,
+            priority: DEFAULT_TASK_PRIORITY,
             file_date: node.attrs.file_date || ''
           })
           return tr

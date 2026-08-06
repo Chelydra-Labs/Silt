@@ -165,6 +165,7 @@ describe('TipTap engine smoke', () => {
     const node = editor.state.doc.child(0)
     expect(node.type.name).toBe('taskBlock')
     expect(node.attrs.status).toBe('TODO')
+    expect(node.attrs.priority).toBe(2)
     expect(editor.getText()).toBe('')
 
     editor.destroy()
@@ -213,6 +214,7 @@ describe('TipTap engine smoke', () => {
     const node = editor.state.doc.child(0)
     expect(node.type.name).toBe('taskBlock')
     expect(node.attrs.status).toBe('TODO')
+    expect(node.attrs.priority).toBe(2)
     expect(editor.getText()).toBe('')
 
     editor.destroy()
@@ -261,6 +263,7 @@ describe('TipTap engine smoke', () => {
     const node = editor.state.doc.child(0)
     expect(node.type.name).toBe('taskBlock')
     expect(node.attrs.status).toBe('DONE')
+    expect(node.attrs.priority).toBe(2)
     expect(editor.getText()).toBe('')
 
     editor.destroy()

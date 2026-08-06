@@ -11,6 +11,7 @@ import {
   PluginUpdateBlockState,
   PluginUpdateTaskMeta,
   PluginSetTaskDueDate,
+  PluginSetTaskStartDate,
   PluginSetTaskRecurrence,
   PluginSetTaskBlockedBy,
   PluginSetTaskOwner,
@@ -252,6 +253,9 @@ export function makePluginContext(
     // The mutation surface behind calendar drag-and-drop rescheduling.
     setTaskDueDate: (id, dueDate) =>
       PluginSetTaskDueDate(pluginID, sessionToken ?? '', id, dueDate),
+    // Start is independent planning metadata; no due-date/estimate inference.
+    setTaskStartDate: (id, startDate) =>
+      PluginSetTaskStartDate(pluginID, sessionToken ?? '', id, startDate),
     // Rewrite a task's [recur:: RULE] token (#296). Empty string clears it
     // (stop recurring). Validated server-side for grammar + due-date anchor.
     setTaskRecurrence: (id, recurrence) =>
@@ -339,7 +343,7 @@ export function makePluginContext(
       )
     },
     // Create a standalone task in <vault>/.silt/tasks.md (#368). title required;
-    // dueDate/status optional with TODO + no-due defaults.
+    // dueDate/status optional with TODO + no-due defaults; priority is Normal.
     createTask: (opts) =>
       PluginCreateTask(
         pluginID,

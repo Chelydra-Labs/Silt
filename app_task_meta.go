@@ -466,9 +466,8 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 }
 
 // SetTaskPriority rewrites the [priority:: N] inline token on a task block
-// (#412). Pass 0 (or 3, the renderer's "normal" sentinel) to omit the token.
-// The renderer re-emits from ParsedBlock.Priority (writer.go ~:1198, omit
-// when 0 or 3), so the round trip is byte-stable.
+// (#412). Pass 0 (or the legacy omitted-token value 3) to omit the token.
+// Positive non-default priorities round-trip through the canonical renderer.
 //
 // Follows the canonical write chain (same as SetTaskOwner).
 func (a *App) SetTaskPriority(blockID string, priority int) error {

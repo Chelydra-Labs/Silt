@@ -78,11 +78,21 @@ func TestPluginCreateBlock_InsertsAndPersists(t *testing.T) {
 	found := false
 	for _, b := range blocks {
 		if b.ID == id && strings.Contains(b.CleanText, "new plugin task") {
+			if b.Priority != parser.DefaultTaskPriority {
+				t.Errorf("created task priority = %d, want %d (Normal)", b.Priority, parser.DefaultTaskPriority)
+			}
 			found = true
 		}
 	}
 	if !found {
 		t.Fatalf("created block %s not found in page blocks", id)
+	}
+	updated, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read updated page: %v", err)
+	}
+	if !strings.Contains(string(updated), "[priority:: 2]") {
+		t.Errorf("new TASK block should persist Normal priority, page content:\n%s", updated)
 	}
 }
 

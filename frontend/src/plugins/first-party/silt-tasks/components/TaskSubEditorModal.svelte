@@ -545,24 +545,26 @@
       {#if task && sidebarOpen && !isNarrow}
         <aside
           id="sub-editor-sidebar"
-          class="w-80 flex-shrink-0 border-l border-surface-modal-border overflow-y-auto custom-scrollbar px-4 py-4"
+          class="w-80 flex-shrink-0 border-l border-surface-modal-border overflow-y-auto custom-scrollbar"
         >
           <TaskMetadataSidebar
             {task}
             {ctx}
             {onMetaChanged}
+            stickyPrimary
             bind:busy={sidebarBusy}
           />
         </aside>
       {:else if task && sidebarOpen && isNarrow}
         <aside
           id="sub-editor-sidebar"
-          class="flex-shrink-0 border-t border-surface-modal-border overflow-y-auto custom-scrollbar px-4 py-4 max-h-[40vh]"
+          class="flex-shrink-0 border-t border-surface-modal-border overflow-y-auto custom-scrollbar max-h-[40vh]"
         >
           <TaskMetadataSidebar
             {task}
             {ctx}
             {onMetaChanged}
+            stickyPrimary
             bind:busy={sidebarBusy}
           />
         </aside>

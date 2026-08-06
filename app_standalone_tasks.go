@@ -82,8 +82,8 @@ func (a *App) ensureStandaloneTasksFile() (string, error) {
 // full re-index because it round-trips through the markdown-source-of-truth.
 //
 // title is required (single-line; newlines collapse to spaces). dueDate is
-// optional ("YYYY-MM-DD" or "" for no due date). status defaults to TODO;
-// accepted values are TODO / DOING / DONE.
+// optional ("YYYY-MM-DD" or "" for no due date). status defaults to TODO and
+// priority defaults to Normal; accepted values are TODO / DOING / DONE.
 //
 // Gated by content-mutate (#156). Session-token verified (#236). The global
 // quick-add shortcut uses the ungated CreateStandaloneTask core method.
@@ -145,6 +145,7 @@ func (a *App) CreateStandaloneTask(title, dueDate, status string) (string, error
 		Status:    taskStatus,
 		CleanText: cleanTitle,
 		DueDate:   dueDate,
+		Priority:  parser.DefaultTaskPriority,
 		FileDate:  today,
 		CreatedAt: now.Format("2006-01-02T15:04:05"), // #417 lifecycle stamp
 		// ManualOrder is set after parsing the existing file (below) so it

@@ -74,6 +74,7 @@
   let replyText = $state('')
   let replyPending = $state(false)
   let replyTextareaEl = $state<HTMLTextAreaElement | null>(null)
+  let replyReturnEl: HTMLButtonElement | null = null
 
   // YYYY-MM-DD HH:MM (local) for display; "Undated" fallback for legacy
   // NOTEs without a [ts::] token. Mirrors the TaskEditDrawer inline formatter
@@ -299,9 +300,10 @@
     }
   }
 
-  async function startReply(comment: Comment) {
+  async function startReply(comment: Comment, trigger: HTMLButtonElement) {
     replyToId = comment.id
     replyText = ''
+    replyReturnEl = trigger
     await tick()
     replyTextareaEl?.focus()
   }
@@ -309,6 +311,7 @@
   function cancelReply() {
     replyToId = null
     replyText = ''
+    void tick().then(() => replyReturnEl?.focus())
   }
 
   async function submitReply() {
@@ -359,6 +362,7 @@
         )
       }))
       replyToId = null
+      void tick().then(() => replyReturnEl?.focus())
       onCommentsChanged?.()
       liveMessage = 'Reply added'
     } catch (e) {
@@ -496,7 +500,7 @@
           class="text-type-2xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors px-1"
           aria-label="Reply to comment"
           title="Reply"
-          onclick={() => startReply(c)}
+          onclick={(e) => startReply(c, e.currentTarget)}
         >
           Reply
         </button>

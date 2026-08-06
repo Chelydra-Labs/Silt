@@ -53,7 +53,7 @@ function mkBlock(
     owner: '',
     start_date: '',
     due_date: '',
-    priority: 3,
+    priority: 2,
     line_number: 1,
     file_date: '2026-06-14',
     ...overrides

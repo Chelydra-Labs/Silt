@@ -348,6 +348,10 @@ func buildNextRecurrence(completed parser.ParsedBlock, all []parser.ParsedBlock,
 		}
 	}
 	taskPos++ // the spawned block itself
+	priority := completed.Priority
+	if priority <= 0 {
+		priority = parser.DefaultTaskPriority
+	}
 	return parser.ParsedBlock{
 		ID:          uuid.New().String(),
 		ParentID:    completed.ParentID,
@@ -358,7 +362,7 @@ func buildNextRecurrence(completed parser.ParsedBlock, all []parser.ParsedBlock,
 		Owner:       completed.Owner,
 		StartDate:   completed.StartDate,
 		DueDate:     recurrence.FormatDate(next),
-		Priority:    completed.Priority,
+		Priority:    priority,
 		Pinned:      completed.Pinned,
 		Progress:    0, // new instance starts fresh
 		Recurrence:  completed.Recurrence,

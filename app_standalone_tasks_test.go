@@ -51,9 +51,10 @@ func TestPluginCreateTask_CreatesFileAndIndexesBlock(t *testing.T) {
 
 	// Block is queryable in the index.
 	var status, due string
+	var priority int
 	err = app.db.SQLDB().QueryRow(
-		"SELECT t.status, t.due_date FROM tasks t WHERE t.block_id = ?", id,
-	).Scan(&status, &due)
+		"SELECT t.status, t.due_date, t.priority FROM tasks t WHERE t.block_id = ?", id,
+	).Scan(&status, &due, &priority)
 	if err != nil {
 		t.Fatalf("task row not found in index: %v", err)
 	}
@@ -62,6 +63,9 @@ func TestPluginCreateTask_CreatesFileAndIndexesBlock(t *testing.T) {
 	}
 	if due != "2026-07-15" {
 		t.Errorf("expected due 2026-07-15, got %q", due)
+	}
+	if priority != parser.DefaultTaskPriority {
+		t.Errorf("expected default priority %d (Normal), got %d", parser.DefaultTaskPriority, priority)
 	}
 
 	// Block is a TASK block under the synthetic notebook.
@@ -129,6 +133,13 @@ func TestPluginCreateTask_DefaultsAndValidation(t *testing.T) {
 	if status != "TODO" {
 		t.Errorf("expected default status TODO, got %q", status)
 	}
+	var priority int
+	if err := app.db.SQLDB().QueryRow("SELECT priority FROM tasks WHERE block_id = ?", id).Scan(&priority); err != nil {
+		t.Fatalf("query default priority: %v", err)
+	}
+	if priority != parser.DefaultTaskPriority {
+		t.Errorf("expected default priority %d (Normal), got %d", parser.DefaultTaskPriority, priority)
+	}
 }
 
 // TestPluginCreateTask_FileContentHasGFMSyntax verifies the on-disk file holds
@@ -154,6 +165,9 @@ func TestPluginCreateTask_FileContentHasGFMSyntax(t *testing.T) {
 	}
 	if !strings.Contains(s, "[due:: 2026-08-01]") {
 		t.Errorf("expected [due:: 2026-08-01] token, file content:\n%s", s)
+	}
+	if !strings.Contains(s, "[priority:: 2]") {
+		t.Errorf("expected default [priority:: 2] token, file content:\n%s", s)
 	}
 	if !strings.Contains(s, id) {
 		t.Errorf("expected block id %s in file, content:\n%s", id, s)
@@ -241,6 +255,61 @@ func TestPluginSetTaskDueDate_SetsReplacesClears(t *testing.T) {
 	assertDue("2026-07-25")
 	set("") // clear
 	assertDue("")
+}
+
+func TestPluginSetTaskStartDate_SetsReplacesClears(t *testing.T) {
+	app := newTestApp(t)
+	tok := registerTestSession(t, app, "silt-tasks")
+	taskID := "56565656-5656-5656-5656-565656565656"
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "plan me")
+
+	assertStart := func(want string) {
+		t.Helper()
+		var got sql.NullString
+		if err := app.db.SQLDB().QueryRow(
+			"SELECT start_date FROM tasks WHERE block_id = ?", taskID,
+		).Scan(&got); err != nil {
+			t.Fatalf("query start date: %v", err)
+		}
+		if want == "" {
+			if got.Valid && got.String != "" {
+				t.Errorf("expected cleared start date, got %q", got.String)
+			}
+		} else if !got.Valid || got.String != want {
+			t.Errorf("expected start date %q, got %+v", want, got)
+		}
+	}
+
+	for _, date := range []string{"2026-07-20", "2026-07-25", ""} {
+		ok, err := app.PluginSetTaskStartDate("silt-tasks", tok, taskID, date)
+		if err != nil || !ok {
+			t.Fatalf("PluginSetTaskStartDate(%q): ok=%v err=%v", date, ok, err)
+		}
+		assertStart(date)
+	}
+}
+
+func TestPluginSetTaskStartDate_RejectsInvalidDate(t *testing.T) {
+	app := newTestApp(t)
+	tok := registerTestSession(t, app, "silt-tasks")
+	taskID := "57575757-5757-5757-5757-575757575757"
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "guard start")
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "Daily.md")
+	before, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read page before invalid start date: %v", err)
+	}
+
+	if _, err := app.PluginSetTaskStartDate("silt-tasks", tok, taskID, "2026/07/20"); err == nil {
+		t.Fatal("expected error for malformed start date")
+	}
+	after, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read page after invalid start date: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("invalid start date changed the source file:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
 }
 
 // TestPluginSetTaskDueDate_RejectsInvalidDate verifies a malformed date never

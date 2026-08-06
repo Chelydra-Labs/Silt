@@ -1405,7 +1405,7 @@ func TestRenderFileContent_ScaffoldSnapshot(t *testing.T) {
 	fm := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-14\"\ntags: []\n---\n"
 	got := RenderFileContent(blocks, "", fm, 4)
 	// Two managed lines, each with an injected UUID; header uses '#', task
-	// uses the TODO checkbox syntax with default priority (#3 is omitted).
+	// uses the TODO checkbox syntax with legacy omitted priority.
 	if strings.Count(got, "<!-- id:") != 2 {
 		t.Errorf("expected 2 injected IDs, got %d in:\n%s", strings.Count(got, "<!-- id:"), got)
 	}

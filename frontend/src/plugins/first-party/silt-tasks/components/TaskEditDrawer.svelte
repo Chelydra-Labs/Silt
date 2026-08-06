@@ -5,18 +5,16 @@
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
 
   import type { TaskDetail } from '../types'
-  import { PRIORITY_LABELS, priorityClass } from '../types'
   import TaskMetadataSidebar from './TaskMetadataSidebar.svelte'
 
   /**
    * Shared task inspector/edit drawer — the single metadata surface for every
    * task-editing view (Tasks list, Kanban board, future Calendar/Agenda).
    *
-   * NON-BLOCKING inspector pane (GitLab Pajamas / NNGroup pattern): no scrim,
-   * `aria-modal="false"`, focus moves to the panel on open + restores on
-   * close, but is NOT trapped — the user can click/Tab back to the host list
-   * to switch tasks. This is what removes the single/double-click
-   * disambiguation the Kanban board used to need.
+   * Non-modal inspector pane: `aria-modal="false"`, focus moves to the panel
+   * on open and restores on close, but is not trapped. A transparent
+   * light-dismiss layer closes pointer interactions outside the drawer while
+   * keyboard users can still leave the pane naturally.
    *
    * All metadata controls (title, status, due date, pin, progress, estimate,
    * recurrence, owner, priority, timestamps, tags, dependencies, comments)
@@ -111,61 +109,34 @@
 </script>
 
 {#if task}
+  <button
+    type="button"
+    tabindex="-1"
+    aria-label="Close task drawer"
+    data-testid="task-drawer-backdrop"
+    onclick={onClose}
+    class="fixed inset-x-0 bottom-0 top-12 z-30 cursor-default border-none bg-transparent p-0"
+  ></button>
   <div
     bind:this={panelRef}
     transition:fly={{ x: 320, duration: 200 }}
-    class="fixed right-0 top-12 h-[calc(100vh-48px)] w-96 bg-surface-card border-l border-surface-card-border z-40 overflow-y-auto custom-scrollbar focus:outline-none shadow-2xl"
+    class="fixed right-0 top-12 z-40 h-[calc(100vh-48px)] w-full overflow-y-auto border-l border-surface-card-border bg-surface-card shadow-2xl custom-scrollbar focus:outline-none sm:w-96 lg:w-full lg:max-w-md"
     role="dialog"
     aria-modal="false"
     aria-labelledby="task-edit-drawer-title"
     tabindex="-1"
   >
-    <!-- Header -->
-    <div
-      class="flex items-start justify-between gap-2 px-5 py-4 border-b border-surface-card-border sticky top-0 bg-surface-card"
-    >
-      <div class="flex flex-col gap-1.5 min-w-0 flex-1">
-        {#if task.priority >= 1 && task.priority <= 3}
-          <span
-            class="self-start px-1.5 py-0.5 border rounded-sm font-label-sm text-type-3xs uppercase tracking-wide w-fit {priorityClass(
-              task.priority
-            )}"
-          >
-            {PRIORITY_LABELS[task.priority] ?? 'Normal'}
-          </span>
-        {/if}
-        <h2
-          id="task-edit-drawer-title"
-          class="font-headline-md text-headline-md text-text-primary break-words flex items-start gap-1"
-        >
-          {#if task.recurrence}
-            <span
-              class="material-symbols-outlined text-icon-md text-accent-secondary-start shrink-0 mt-1"
-              aria-hidden="true"
-              title="Recurring: {task.recurrence}">event_repeat</span
-            >
-          {/if}
-          <span class="break-words">{task.clean_content}</span>
-        </h2>
-      </div>
-      <button
-        type="button"
-        onclick={onClose}
-        aria-label="Close detail panel"
-        class="text-text-muted hover:text-text-primary transition-colors shrink-0"
-      >
-        <span class="material-symbols-outlined">close</span>
-      </button>
-    </div>
+    <TaskMetadataSidebar
+      {task}
+      {ctx}
+      {onMetaChanged}
+      {onClose}
+      stickyPrimary
+      headingId="task-edit-drawer-title"
+      bind:busy={sidebarBusy}
+    />
 
-    <div class="px-5 py-4 space-y-6">
-      <TaskMetadataSidebar
-        {task}
-        {ctx}
-        {onMetaChanged}
-        bind:busy={sidebarBusy}
-      />
-
+    <div class="space-y-4 px-5 py-5">
       {#if onOpenSubEditor}
         <section>
           <button
