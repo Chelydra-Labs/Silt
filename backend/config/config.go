@@ -338,13 +338,49 @@ func migrateLegacyQuickAccessCollapsed(data []byte, cfg *SystemConfig) {
 // Save atomically writes cfg to <vault>/.system/config.yaml. Atomicity
 // (temp file + fsync + rename) guarantees the on-disk file is either the
 // previous version or the new one in full, never a half-written file.
+//
+// Hotkeys are sparse-persisted: after normalize, default-matching entries are
+// stripped so config.yaml carries only user overrides + explicit disables
+// (""). Defaults() remains the single source of truth at Load time (sparse
+// merge over Defaults), so writing defaults back would freeze
+// platform-conditional chords into the synced file — breaking a vault shared
+// across OSes (Windows Ctrl+Alt+Right vs Linux Ctrl+Tab for next_tab).
 func Save(vaultPath string, cfg SystemConfig) error {
 	cfg = normalize(cfg)
+	stripDefaultHotkeys(&cfg)
 	out, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config.yaml: %w", err)
 	}
 	return writeFileAtomic(ConfigPath(vaultPath), out, 0o600)
+}
+
+// stripDefaultHotkeys removes hotkey entries that match the current platform
+// default, so config.yaml carries only user overrides + explicit disables —
+// not materialized defaults. This keeps platform-conditional chords (computed
+// at runtime from runtime.GOOS) out of the synced config file: a vault shared
+// across OSes gets correct per-OS defaults because Defaults() is never frozen
+// into the YAML.
+//
+// Load's decode-over-Defaults sparse merge re-materializes the stripped
+// defaults on the next read, so the effective map the frontend sees is
+// unchanged. Explicit empty-string disables are kept (they don't match any
+// default chord and are the only way to "turn off" a default — deleting the
+// key would restore it via the YAML merge).
+//
+// A fresh map is built rather than deleting in place: SystemConfig is passed
+// by value through Save, but its map fields are reference types that alias
+// the caller's input, so in-place deletes would corrupt the caller's view.
+func stripDefaultHotkeys(cfg *SystemConfig) {
+	defaults := Defaults()
+	stripped := make(map[string]string, len(cfg.Hotkeys))
+	for k, v := range cfg.Hotkeys {
+		if dv, ok := defaults.Hotkeys[k]; ok && v == dv {
+			continue
+		}
+		stripped[k] = v
+	}
+	cfg.Hotkeys = stripped
 }
 
 // writeFileAtomic writes data to a sibling temp file, fsyncs it, then renames

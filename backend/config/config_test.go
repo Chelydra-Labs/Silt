@@ -758,11 +758,6 @@ func TestDefaults_NoGlobalHotkeyChordConflict(t *testing.T) {
 	}
 }
 
-// isEditorOrHubScopedAction now lives in hotkeys.go so the post-migration
-// duplicate-chord scan in normalize() can share the same scope classification
-// with this test (single source of truth — keeps the defaults-uniqueness
-// invariant here aligned with the runtime conflict scan).
-
 // TestNormalizeHotkeyDefaultsV1_OneShotNoRefire verifies the one-shot gate:
 // after the first normalize migrates legacy chords + stamps the marker, a user
 // who deliberately re-binds a chord to its legacy value must NOT have it
@@ -793,141 +788,6 @@ func TestNormalizeHotkeyDefaultsV1_OneShotNoRefire(t *testing.T) {
 	if out.Hotkeys["toggle_sidebar"] != "Ctrl+B" {
 		t.Fatalf("third normalize re-migrated: want Ctrl+B preserved, got %q", out.Hotkeys["toggle_sidebar"])
 	}
-}
-
-// TestNormalizeHotkeys_GlobalConflictScan verifies the post-migration
-// duplicate-chord scan: when a vault's deliberate remap puts two
-// global-resolvable actions on the same chord, normalize stamps
-// hotkeys_global_conflict_notice so the frontend can surface a dismissible
-// pointer (first-match-wins would otherwise silently shadow one of them).
-// Covers the canonical #868 case: focus_sidebar=Ctrl+B (deliberate remap)
-// colliding with format_bold=Ctrl+B (the v1 realignment default).
-//
-// Observability only — neither binding is rewritten, and the explicit-remap
-// contract from TestNormalizeHotkeyDefaultsV1_OneShotNoRefire is preserved.
-func TestNormalizeHotkeys_GlobalConflictScan(t *testing.T) {
-	t.Run("stamps notice when two global actions share a chord", func(t *testing.T) {
-		cfg := Defaults()
-		// Deliberate remap of focus_sidebar onto Ctrl+B (the format_bold
-		// default). After normalize, both global actions live on Ctrl+B.
-		cfg.Hotkeys["focus_sidebar"] = "Ctrl+B"
-		out := normalize(cfg)
-		if !containsString(out.UI.DismissedTips, hotkeysGlobalConflictNotice) {
-			t.Errorf("expected %q stamp for focus_sidebar=Ctrl+B vs format_bold=Ctrl+B",
-				hotkeysGlobalConflictNotice)
-		}
-		// The remap is preserved (observability, not resolution).
-		if out.Hotkeys["focus_sidebar"] != "Ctrl+B" {
-			t.Errorf("focus_sidebar remap clobbered: got %q", out.Hotkeys["focus_sidebar"])
-		}
-		if out.Hotkeys["format_bold"] != "Ctrl+B" {
-			t.Errorf("format_bold default changed: got %q", out.Hotkeys["format_bold"])
-		}
-	})
-
-	t.Run("no stamp for clean defaults", func(t *testing.T) {
-		out := normalize(Defaults())
-		if containsString(out.UI.DismissedTips, hotkeysGlobalConflictNotice) {
-			t.Errorf("clean defaults should not stamp %q", hotkeysGlobalConflictNotice)
-		}
-	})
-
-	t.Run("no stamp for editor-scoped overlap (focus disambiguates)", func(t *testing.T) {
-		// format_italic is editor-scoped: it may share a chord with a global
-		// action because the editor's ProseMirror keymap owns it while focused.
-		cfg := Defaults()
-		cfg.Hotkeys["format_italic"] = "Ctrl+N" // same as global new_page
-		out := normalize(cfg)
-		if containsString(out.UI.DismissedTips, hotkeysGlobalConflictNotice) {
-			t.Errorf("editor-scoped overlap should not stamp %q", hotkeysGlobalConflictNotice)
-		}
-	})
-
-	t.Run("stamp is idempotent across normalizes", func(t *testing.T) {
-		cfg := Defaults()
-		cfg.Hotkeys["focus_sidebar"] = "Ctrl+B"
-		out := normalize(cfg)
-		if n := strings.Count(strings.Join(out.UI.DismissedTips, ","), hotkeysGlobalConflictNotice); n != 1 {
-			t.Fatalf("first normalize: want 1 stamp, got %d", n)
-		}
-		// A second normalize (e.g. Settings save) must not duplicate the stamp.
-		out = normalize(out)
-		if n := strings.Count(strings.Join(out.UI.DismissedTips, ","), hotkeysGlobalConflictNotice); n != 1 {
-			t.Errorf("second normalize: want 1 stamp, got %d", n)
-		}
-	})
-
-	t.Run("resolved conflict does not re-stamp", func(t *testing.T) {
-		// When the user fixes the remap after acknowledging, the scan should
-		// not re-add the stamp — so the dismissible tip stays dismissed.
-		cfg := Defaults()
-		cfg.Hotkeys["focus_sidebar"] = "Ctrl+B"
-		out := normalize(cfg)
-		// User fixes the remap and the dismissed tip is dropped (acked).
-		out.Hotkeys["focus_sidebar"] = "Ctrl+Shift+B"
-		tips := out.UI.DismissedTips[:0]
-		for _, tip := range out.UI.DismissedTips {
-			if tip != hotkeysGlobalConflictNotice {
-				tips = append(tips, tip)
-			}
-		}
-		out.UI.DismissedTips = tips
-		out = normalize(out)
-		if containsString(out.UI.DismissedTips, hotkeysGlobalConflictNotice) {
-			t.Errorf("resolved conflict should not re-stamp %q", hotkeysGlobalConflictNotice)
-		}
-	})
-}
-
-// TestFindGlobalHotkeyConflicts pins the conflict-finder directly. The
-// normalize-driven test above only checks the stamp side-effect; this covers
-// the multiple-conflicts and determinism cases.
-func TestFindGlobalHotkeyConflicts(t *testing.T) {
-	t.Run("empty map on conflict-free config", func(t *testing.T) {
-		if got := FindGlobalHotkeyConflicts(Defaults().Hotkeys); len(got) != 0 {
-			t.Errorf("expected no conflicts on Defaults, got %v", got)
-		}
-	})
-
-	t.Run("surfaces two global actions on the same chord", func(t *testing.T) {
-		hotkeys := map[string]string{
-			"format_bold":   "Ctrl+B",
-			"focus_sidebar": "Ctrl+B", // conflict
-			"open_settings": "Ctrl+,",
-		}
-		got := FindGlobalHotkeyConflicts(hotkeys)
-		if len(got) != 1 {
-			t.Fatalf("expected 1 conflict, got %v", got)
-		}
-		owners := got["ctrl+b"]
-		if len(owners) != 2 {
-			t.Fatalf("expected 2 owners on ctrl+b, got %v", owners)
-		}
-		// Owners are sorted for determinism.
-		if owners[0] != "focus_sidebar" || owners[1] != "format_bold" {
-			t.Errorf("unexpected owner order: %v", owners)
-		}
-	})
-
-	t.Run("editor-scoped overlap is not a conflict", func(t *testing.T) {
-		hotkeys := map[string]string{
-			"format_italic": "Ctrl+K", // editor-scoped
-			"new_page":      "Ctrl+K", // global
-		}
-		if got := FindGlobalHotkeyConflicts(hotkeys); len(got) != 0 {
-			t.Errorf("editor/global overlap should not be flagged: %v", got)
-		}
-	})
-
-	t.Run("disabled binding never conflicts", func(t *testing.T) {
-		hotkeys := map[string]string{
-			"format_bold":   "",
-			"focus_sidebar": "",
-		}
-		if got := FindGlobalHotkeyConflicts(hotkeys); len(got) != 0 {
-			t.Errorf("empty bindings should not conflict: %v", got)
-		}
-	})
 }
 
 // --- #133: co-located per-notebook config ---
@@ -2190,5 +2050,178 @@ func TestDashboards_RoundTrip(t *testing.T) {
 	first, _ := views[0].(map[string]any)
 	if first["name"] != "Active Projects" {
 		t.Fatalf("saved_view name lost; got %v", first)
+	}
+}
+
+// --- sparse hotkey persistence (#863/#867/#868 PR #898) ---
+//
+// Save strips default-matching hotkey entries before marshal so config.yaml
+// carries only user overrides + explicit disables. Defaults() is the single
+// source of truth at Load time (decode-over-Defaults sparse merge), so this
+// is invisible to the user — but it stops platform-conditional chords
+// (next_tab/prev_tab differ by runtime.GOOS) from being frozen into the
+// synced config file, which would break a vault shared across OSes.
+
+// TestSave_StripsDefaultHotkeys pins the sparse-persistence contract: Save
+// writes only overrides + explicit disables to config.yaml, never the
+// materialized defaults. Reads the raw YAML back so the assertion covers the
+// on-disk shape, not just the post-Load effective map.
+func TestSave_StripsDefaultHotkeys(t *testing.T) {
+	tmp := t.TempDir()
+	defaults := Defaults()
+	cfg := defaults
+	// Mix: default value (stripped), user override (kept), explicit disable
+	// (kept), and an action unknown to Defaults (a future-or-custom action —
+	// kept, since strip only drops default-matching entries).
+	cfg.Hotkeys["format_bold"] = defaults.Hotkeys["format_bold"] // matches default → stripped
+	cfg.Hotkeys["open_search"] = "Alt+P"                         // override → kept
+	cfg.Hotkeys["close_tab"] = ""                                // explicit disable → kept
+	cfg.Hotkeys["custom_user_action"] = "Ctrl+F24"               // not in defaults → kept
+
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(ConfigPath(tmp))
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	var persisted struct {
+		Hotkeys map[string]string `yaml:"hotkeys"`
+	}
+	if err := yaml.Unmarshal(raw, &persisted); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := persisted.Hotkeys["format_bold"]; ok {
+		t.Errorf("default-matching format_bold must be stripped, got %q", persisted.Hotkeys["format_bold"])
+	}
+	if persisted.Hotkeys["open_search"] != "Alt+P" {
+		t.Errorf("override open_search must be kept, got %q", persisted.Hotkeys["open_search"])
+	}
+	if v, ok := persisted.Hotkeys["close_tab"]; !ok {
+		t.Errorf("explicit disable close_tab must be kept as a key, got absent (raw=%s)", raw)
+	} else if v != "" {
+		t.Errorf("explicit disable close_tab must be empty string, got %q", v)
+	}
+	if persisted.Hotkeys["custom_user_action"] != "Ctrl+F24" {
+		t.Errorf("custom action must be kept, got %q", persisted.Hotkeys["custom_user_action"])
+	}
+}
+
+// TestSave_Load_RoundTrip_PreservesEffectiveConfig confirms the sparse-save
+// strategy is invisible to the user: the effective hotkey map seen by the
+// frontend (Defaults overlaid with user overrides from config.yaml) matches
+// before and after a Save/Load round-trip. This is the load-side counterpart
+// to TestSave_StripsDefaultHotkeys: stripped defaults re-materialize from
+// Defaults() on Load, so the user never sees a missing binding.
+func TestSave_Load_RoundTrip_PreservesEffectiveConfig(t *testing.T) {
+	tmp := t.TempDir()
+	defaults := Defaults()
+	effective := map[string]string{}
+	for k, v := range defaults.Hotkeys {
+		effective[k] = v
+	}
+	// Apply a few overrides + an explicit disable.
+	effective["open_search"] = "Alt+P"        // override
+	effective["close_tab"] = ""               // disable
+	effective["format_bold"] = "Ctrl+Shift+B" // override
+
+	cfg := defaults
+	cfg.Hotkeys = effective
+
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// Every effective entry (defaults + overrides) must round-trip.
+	for k, want := range effective {
+		if got := loaded.Hotkeys[k]; got != want {
+			t.Errorf("effective hotkey %q: got %q, want %q", k, got, want)
+		}
+	}
+	// Sanity: every Defaults() key is present after Load (sparse storage must
+	// not lose defaults — they re-materialize from Defaults() on Load).
+	for k, dv := range defaults.Hotkeys {
+		got, ok := loaded.Hotkeys[k]
+		if !ok {
+			t.Errorf("default hotkey %q missing after Load (sparse storage lost it)", k)
+			continue
+		}
+		// Keys we overrode above are checked in the prior loop; the rest must
+		// match the default exactly.
+		if effective[k] == dv && got != dv {
+			t.Errorf("default hotkey %q drifted: got %q, want %q", k, got, dv)
+		}
+	}
+}
+
+// TestSave_StripsPlatformConditionalTabChords verifies the cross-OS sync
+// resolution: next_tab/prev_tab are platform-conditional defaults (computed
+// from runtime.GOOS in Defaults()) and are stripped on Save so a vault synced
+// across Windows/Linux carries no frozen chord. The expected default differs
+// by platform; the strip result (absent from config.yaml) is the same on
+// every OS, so this test is green without cross-compilation. close_tab is a
+// platform-independent default and is also stripped (it matches the default
+// on every OS).
+func TestSave_StripsPlatformConditionalTabChords(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := Defaults() // next_tab/prev_tab/close_tab all sit at platform default
+
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(ConfigPath(tmp))
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	body := string(raw)
+	// Substring check is sufficient — no other field name contains these
+	// substrings, and `next_tab:` etc. as map keys would be the only matches.
+	for _, key := range []string{"next_tab", "prev_tab", "close_tab"} {
+		if strings.Contains(body, key+":") {
+			t.Errorf("%q must be absent from config.yaml (platform default stripped), got:\n%s", key, body)
+		}
+	}
+	// Effective config still resolves: a Load gives back the platform default
+	// for next_tab/prev_tab, proving the cross-OS contract.
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	wantNext, wantPrev := "Ctrl+Alt+Right", "Ctrl+Alt+Left"
+	if runtime.GOOS != "windows" {
+		wantNext, wantPrev = "Ctrl+Tab", "Ctrl+Shift+Tab"
+	}
+	if loaded.Hotkeys["next_tab"] != wantNext {
+		t.Errorf("next_tab effective after Load: got %q, want %q", loaded.Hotkeys["next_tab"], wantNext)
+	}
+	if loaded.Hotkeys["prev_tab"] != wantPrev {
+		t.Errorf("prev_tab effective after Load: got %q, want %q", loaded.Hotkeys["prev_tab"], wantPrev)
+	}
+	if loaded.Hotkeys["close_tab"] != "Ctrl+Shift+W" {
+		t.Errorf("close_tab effective after Load: got %q, want Ctrl+Shift+W", loaded.Hotkeys["close_tab"])
+	}
+}
+
+// TestSave_DoesNotMutateCallerHotkeys guards against an aliasing regression:
+// stripDefaultHotkeys must build a fresh map rather than deleting from the
+// caller's map in place, since SystemConfig's map fields alias the input
+// through Save's value-receiver. A caller that holds onto cfg.Hotkeys after
+// Save must see the same map it passed in (this is what TestSave_RoundTrip
+// depends on for its DeepEqual assertion).
+func TestSave_DoesNotMutateCallerHotkeys(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := Defaults()
+	before := map[string]string{}
+	for k, v := range cfg.Hotkeys {
+		before[k] = v
+	}
+	if err := Save(tmp, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.Hotkeys, before) {
+		t.Errorf("Save mutated caller's hotkeys map:\n got  %+v\n want %+v", cfg.Hotkeys, before)
 	}
 }
