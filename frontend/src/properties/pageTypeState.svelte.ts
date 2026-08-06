@@ -29,7 +29,8 @@ import type {
   PageLocator,
   PagePropertyValue,
   PageTypeInfo,
-  TypeDef
+  TypeDef,
+  TypeLoadError
 } from './types'
 
 const EMPTY_INFO: PageTypeInfo = {
@@ -64,6 +65,8 @@ export interface PageTypeController {
   readonly loading: boolean
   readonly types: TypeDef[]
   readonly typesLoading: boolean
+  /** Per-file load errors from ListTypes (broken type YAML). Empty when clean. */
+  readonly typeLoadErrors: TypeLoadError[]
   readonly panelOpen: boolean
   readonly heroValue: string
   /** Type-independent core metadata (#867). Always defined (EMPTY_CORE when
@@ -102,6 +105,7 @@ export function createPageTypeController(
   let loading = $state(false)
   let types = $state<TypeDef[]>([])
   let typesLoading = $state(false)
+  let typeLoadErrors = $state<TypeLoadError[]>([])
   let panelOpen = $state(false)
   // Core metadata (#867). Always defined — EMPTY_CORE when no page is active
   // or before the first fetch lands. Wiped on locator change so a stale prior
@@ -216,10 +220,23 @@ export function createPageTypeController(
     try {
       const res = (await ListTypes()) as ListTypesResult | null
       types = res?.types ?? []
+      // Normalize errors: backend sends {file,message}[]; tolerate legacy
+      // string[] shapes so a stale binding never crashes the picker.
+      const raw = res?.errors ?? []
+      typeLoadErrors = raw.map((e) =>
+        typeof e === 'string'
+          ? { file: '', message: e }
+          : {
+              file: e.file ?? '',
+              message:
+                typeof e.message === 'string' ? e.message : 'unknown error'
+            }
+      )
     } catch (e) {
       // A failed listing is non-fatal — the menu just shows what it has. The
       // banner is reserved for edit failures the user can act on.
       console.error('types: ListTypes failed:', e)
+      typeLoadErrors = []
     } finally {
       typesLoading = false
     }
@@ -411,6 +428,9 @@ export function createPageTypeController(
     },
     get typesLoading() {
       return typesLoading
+    },
+    get typeLoadErrors() {
+      return typeLoadErrors
     },
     get panelOpen() {
       return panelOpen

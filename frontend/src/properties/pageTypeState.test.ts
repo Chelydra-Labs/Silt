@@ -177,6 +177,24 @@ describe('pageType controller', () => {
     dispose()
   })
 
+  it('retains ListTypes per-file load errors on the controller', async () => {
+    appMocks.ListTypes.mockResolvedValue({
+      types: [{ id: 'book', name: 'Book', properties: [] }],
+      errors: [{ file: 'broken.yaml', message: 'type broken.yaml is invalid' }],
+      warnings: []
+    })
+    const ctrl = createPageTypeController({ getLocator: () => locator })
+    const dispose = ctrl.attach()
+    await vi.waitFor(() => {
+      expect(ctrl.typesLoading).toBe(false)
+    })
+    expect(ctrl.typeLoadErrors).toEqual([
+      { file: 'broken.yaml', message: 'type broken.yaml is invalid' }
+    ])
+    expect(ctrl.types).toHaveLength(1)
+    dispose()
+  })
+
   it('re-fetches the active page on the types:changed event', async () => {
     appMocks.GetPageType.mockResolvedValue({
       isSet: false,

@@ -796,7 +796,11 @@ writing attach as capabilities when their flags are on.
   CRUD**: `ListTypes` / `GetType` / `SaveType` / `DeleteType` (atomic write to
   `.system/types/<id>.yaml`), plus `ResolveTypeID` (frontmatter ref → canonical
   id) and `ReloadTypes` (manual schema refresh + full reprojection; both emit
-  `types:changed`). **Per-page type ops**:
+  `types:changed`). On vault open, a content-driven pass renames legacy type
+  properties that collide with core metadata keys `created`/`aliases` and
+  rewrites matching page frontmatter (SPECS §11.7); a dismissible notice is
+  stamped under `ui.dismissed_tips` with the rename list in
+  `plugins.plugin_settings._reserved_prop_renames_v1`. **Per-page type ops**:
   `GetPageType` (resolved schema + raw chip on unknown refs), `GetPageProperties`
   (full schema form with `IsSet` flags), `SetPageType` (keep-and-flag on schema
   mismatch), `SetPageProperty` / `ClearPageProperty` (surgical single-field

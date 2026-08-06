@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // PageCoreFields is the type-independent core payload the App layer computes
@@ -157,6 +158,67 @@ func (dm *DatabaseManager) GetPageCoreProjection(source, notebook, section, page
 	row.Created = createdVal
 	row.Aliases = decodeAliasesJSON(aliasesVal)
 	return &row, nil
+}
+
+// ListPageCoreTypeMatches returns page locators whose page_core.type matches
+// any of the given type ids or display names (case-insensitive). Used by the
+// #900 reserved-property migration to find pages that may not yet appear in
+// page_types (e.g. warm-skipped files before projection backfill).
+func (dm *DatabaseManager) ListPageCoreTypeMatches(typeIDs, typeNames []string) ([]TypedPageLocator, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return nil, ErrDBClosed
+	}
+	defer release()
+
+	refs := make([]string, 0, len(typeIDs)+len(typeNames))
+	seen := map[string]bool{}
+	for _, id := range typeIDs {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[strings.ToLower(id)] {
+			continue
+		}
+		seen[strings.ToLower(id)] = true
+		refs = append(refs, id)
+	}
+	for _, name := range typeNames {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[strings.ToLower(name)] {
+			continue
+		}
+		seen[strings.ToLower(name)] = true
+		refs = append(refs, name)
+	}
+	if len(refs) == 0 {
+		return nil, nil
+	}
+
+	// SQLite LOWER(type) IN (...) so display-name refs match case-insensitively.
+	placeholders := make([]string, len(refs))
+	args := make([]any, len(refs))
+	for i, r := range refs {
+		placeholders[i] = "LOWER(?)"
+		args[i] = strings.ToLower(r)
+	}
+	query := "SELECT source, notebook, section, page, type FROM page_core " +
+		"WHERE LOWER(type) IN (" + strings.Join(placeholders, ",") + ") " +
+		"AND type != '' " +
+		"ORDER BY source, notebook, section, page"
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query page_core by type: %w", err)
+	}
+	defer rows.Close()
+
+	var out []TypedPageLocator
+	for rows.Next() {
+		var loc TypedPageLocator
+		if err := rows.Scan(&loc.Source, &loc.Notebook, &loc.Section, &loc.Page, &loc.TypeName); err != nil {
+			return nil, fmt.Errorf("failed to scan page_core type match: %w", err)
+		}
+		out = append(out, loc)
+	}
+	return out, rows.Err()
 }
 
 // decodeAliasesJSON parses a page_core.aliases JSON string-array cell back into

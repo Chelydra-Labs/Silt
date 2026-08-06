@@ -101,10 +101,25 @@ export interface CoreFieldUpdate {
   tags?: string[] | null
 }
 
+/** Per-file load failure from ListTypes (matches Go types.TypeLoadError). */
+export interface TypeLoadError {
+  file: string
+  message: string
+}
+
 export interface ListTypesResult {
   types: TypeDef[]
-  errors?: string[]
-  warnings?: string[]
+  errors?: TypeLoadError[]
+  warnings?: TypeLoadError[]
+}
+
+/** One rename applied by the #900 reserved-property vault-open migration. */
+export interface ReservedPropRename {
+  type_id?: string
+  type_name?: string
+  file?: string
+  from: string
+  to: string
 }
 
 /** Active page locator — the triple every typed-notes IPC call needs. */

@@ -11,7 +11,14 @@
   import { coerceIPCError } from '../lib/ipcError'
   import { EventName } from '../generated/enums'
   import { trailingDebounce } from '../plugins/first-party/silt-tasks/debounce'
-  import type { TypeDef } from '../properties/types'
+  import type {
+    ListTypesResult,
+    ReservedPropRename,
+    TypeDef,
+    TypeLoadError
+  } from '../properties/types'
+  import ReservedPropRenameNotice from '../properties/ReservedPropRenameNotice.svelte'
+  import { settings, appendDismissedTip } from '../settings/store.svelte'
   import TypeDashboardFilters from './TypeDashboardFilters.svelte'
   import TypeDashboardTable from './TypeDashboardTable.svelte'
   import TypeDashboardBoard from './TypeDashboardBoard.svelte'
@@ -63,6 +70,38 @@
   let types = $state<TypeDef[]>([])
   let typesLoading = $state(true)
   let typesError = $state('')
+  let typeLoadErrors = $state<TypeLoadError[]>([])
+
+  // #900 reserved-property migration notice (vault-open rename of created/aliases).
+  const RENAME_NOTICE = 'reserved_prop_rename_v1_notice'
+  const RENAME_ACK = 'reserved_prop_rename_v1_ack'
+  let renameNoticeDismissed = $derived.by(() => {
+    const tips = settings.config?.ui?.dismissed_tips ?? []
+    return !tips.includes(RENAME_NOTICE) || tips.includes(RENAME_ACK)
+  })
+  let renameList = $derived.by((): ReservedPropRename[] => {
+    const raw =
+      settings.config?.plugins?.plugin_settings?.['_reserved_prop_renames_v1']
+    if (!Array.isArray(raw)) return []
+    const out: ReservedPropRename[] = []
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue
+      const o = item as Record<string, unknown>
+      const from = typeof o.from === 'string' ? o.from : ''
+      const to = typeof o.to === 'string' ? o.to : ''
+      if (!from || !to) continue
+      out.push({
+        type_id: typeof o.type_id === 'string' ? o.type_id : undefined,
+        type_name: typeof o.type_name === 'string' ? o.type_name : undefined,
+        from,
+        to
+      })
+    }
+    return out
+  })
+  function dismissRenameNotice() {
+    void appendDismissedTip(RENAME_ACK)
+  }
 
   // Seed from the incoming prop once (untrack: the dashboard's type picker
   // then owns the value; a parent prop change does not silently switch types).
@@ -264,8 +303,24 @@
     typesLoading = true
     typesError = ''
     try {
-      const res = (await ListTypes()) as { types?: TypeDef[] } | null
+      const res = (await ListTypes()) as ListTypesResult | null
       types = res?.types ?? []
+      const rawErrs: unknown[] = Array.isArray(res?.errors) ? res!.errors! : []
+      const normalized: TypeLoadError[] = []
+      for (const e of rawErrs) {
+        if (typeof e === 'string') {
+          normalized.push({ file: '', message: e })
+          continue
+        }
+        if (e && typeof e === 'object') {
+          const o = e as { file?: unknown; message?: unknown }
+          normalized.push({
+            file: typeof o.file === 'string' ? o.file : '',
+            message: typeof o.message === 'string' ? o.message : 'unknown error'
+          })
+        }
+      }
+      typeLoadErrors = normalized
       // If the incoming typeName isn't in the list (or none was passed), land
       // on the first available type so the dashboard shows something.
       if (types.length > 0 && !types.some((t) => t.id === selectedType)) {
@@ -273,6 +328,7 @@
       }
     } catch (e) {
       typesError = coerceIPCError(e).message
+      typeLoadErrors = []
     } finally {
       typesLoading = false
     }
@@ -475,6 +531,37 @@
       <p class="desc">{currentType.description}</p>
     {/if}
   </header>
+
+  <div class="notices">
+    <ReservedPropRenameNotice
+      dismissed={renameNoticeDismissed}
+      renames={renameList}
+      onDismiss={dismissRenameNotice}
+    />
+    {#if typeLoadErrors.length > 0}
+      <div
+        class="load-errors"
+        role="status"
+        aria-live="polite"
+        data-testid="type-load-errors"
+      >
+        <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
+          >warning</span
+        >
+        <span>
+          {typeLoadErrors.length === 1
+            ? '1 type file failed to load'
+            : `${typeLoadErrors.length} type files failed to load`}:
+          {typeLoadErrors
+            .slice(0, 3)
+            .map((e) => e.file || e.message)
+            .join('; ')}{typeLoadErrors.length > 3
+            ? `; +${typeLoadErrors.length - 3} more`
+            : ''}
+        </span>
+      </div>
+    {/if}
+  </div>
 
   {#if typesLoading}
     <div class="state" role="status" aria-live="polite">Loading types…</div>
@@ -725,6 +812,33 @@
     padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--color-surface-panel-border);
     flex: 0 0 auto;
+  }
+  .notices {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem 0;
+    flex: 0 0 auto;
+  }
+  .notices:empty {
+    display: none;
+  }
+  .load-errors {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.65rem 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid
+      color-mix(in srgb, var(--color-error, #c62828) 35%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--color-error, #c62828) 10%,
+      transparent
+    );
+    color: var(--color-error, #c62828);
+    font-size: var(--text-type-sm);
+    font-family: var(--font-body, sans-serif);
   }
   .title-row {
     display: flex;

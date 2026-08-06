@@ -78,8 +78,8 @@ const (
 // key under which the value is stored AND the machine identity used in queries
 // and dashboards; it is therefore constrained to ^[a-z][a-z0-9_]*$ (filename-
 // safe, SQL-safe, and unable to collide with the system-managed frontmatter
-// keys notebook/section/page/date/tags/type). Label is an optional human label;
-// when unset it falls back to Name.
+// keys notebook/section/page/date/tags/type/aliases/created). Label is an
+// optional human label; when unset it falls back to Name.
 type PropertyDef struct {
 	Name        string       `yaml:"name" json:"name"`
 	Label       string       `yaml:"label,omitempty" json:"label,omitempty"`
