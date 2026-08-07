@@ -213,6 +213,34 @@ describe('TurnIntoDialog', () => {
     expect(onCancel).toHaveBeenCalled()
   })
 
+  it('traps focus: Tab wraps at the dialog boundaries (shared focusTrap util)', async () => {
+    // Give the dialog an enabled clear-orphaned checkbox so there are 3 real
+    // tab stops to cycle (checkbox → Cancel → Turn into). The shared focusTrap
+    // util must wrap from the last back to the first.
+    appMocks.GetPageProperties.mockResolvedValue([
+      ...CURRENT_VALUES,
+      {
+        name: 'series',
+        label: 'Series',
+        type: 'text',
+        value: 'Dune Chronicles',
+        isSet: true,
+        required: false
+      }
+    ])
+    await mountOpen()
+    const confirm = screen.getByRole('button', { name: 'Turn into Film' })
+    const checkbox = screen.getByRole('checkbox')
+    confirm.focus()
+    expect(document.activeElement).toBe(confirm)
+    // Forward Tab from the last focusable wraps to the first (the checkbox).
+    await fireEvent.keyDown(window, { key: 'Tab' })
+    expect(document.activeElement).toBe(checkbox)
+    // Shift+Tab from the first wraps back to the last.
+    await fireEvent.keyDown(window, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(confirm)
+  })
+
   it('is a blocking modal (aria-modal=true) with the type in the title', async () => {
     await mountOpen()
     const dialog = screen.getByRole('dialog')
