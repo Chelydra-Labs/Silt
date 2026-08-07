@@ -74,9 +74,11 @@ describe('BlockPickerModal focus trap', () => {
       props: { onPick: vi.fn(), onClose }
     })
 
-    // Modal steals focus to the search input on mount.
+    // Modal steals focus to the search input after tick (trap install).
     const input = screen.getByPlaceholderText(/Search blocks to embed/i)
-    expect(document.activeElement).toBe(input)
+    await waitFor(() => {
+      expect(document.activeElement).toBe(input)
+    })
 
     unmount()
     expect(document.activeElement).toBe(trigger)

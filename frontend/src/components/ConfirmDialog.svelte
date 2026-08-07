@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
+  import { trapFocus } from '../lib/focusTrap'
 
   /**
    * Shared confirmation dialog (vault-style a11y). Backdrop blur, Esc +
-   * click-away cancel, Tab focus trap. Does not autofocus confirm — the
-   * dialog container receives focus so destructive actions need a deliberate
-   * choice (#531).
+   * click-away cancel, Tab focus trap via shared focusTrap. Does not
+   * autofocus confirm — the dialog container receives focus so destructive
+   * actions need a deliberate choice (#531).
    */
   interface Props {
     title: string
@@ -32,46 +33,26 @@
   let dialogRef = $state<HTMLDivElement | null>(null)
   let previouslyFocused: HTMLElement | null = null
 
-  const FOCUSABLE =
-    'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
-
-  function focusableEls(): HTMLElement[] {
-    if (!dialogRef) return []
-    return Array.from(dialogRef.querySelectorAll<HTMLElement>(FOCUSABLE))
-  }
-
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
       onCancel()
-      return
-    }
-    if (e.key === 'Tab' && dialogRef) {
-      const els = focusableEls()
-      if (els.length === 0) return
-      const first = els[0]
-      const last = els[els.length - 1]
-      const active = document.activeElement as HTMLElement | null
-      if (e.shiftKey) {
-        if (active === first || !dialogRef.contains(active)) {
-          e.preventDefault()
-          last.focus()
-        }
-      } else if (active === last || !dialogRef.contains(active)) {
-        e.preventDefault()
-        first.focus()
-      }
     }
   }
 
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement | null
     window.addEventListener('keydown', handleKeydown, true)
-    void tick().then(() => dialogRef?.focus())
+    let disposeTrap = () => {}
+    void tick().then(() => {
+      if (dialogRef) disposeTrap = trapFocus(dialogRef)
+      dialogRef?.focus()
+    })
     return () => {
+      disposeTrap()
       window.removeEventListener('keydown', handleKeydown, true)
-      previouslyFocused?.focus?.()
+      if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
     }
   })
 </script>
