@@ -165,6 +165,21 @@ describe('FilterBar facet search (#462)', () => {
     const firstCheckbox = screen.getByLabelText('Alice', { exact: false })
     expect(document.activeElement).toBe(firstCheckbox)
   })
+
+  it('keeps Home and End as native caret keys in facet search inputs', async () => {
+    const owners = Array.from({ length: 11 }, (_, i) => `owner-${i}`)
+    render(FilterBar, { props: makeProps({ owners }) })
+
+    await fireEvent.click(screen.getByRole('button', { name: /Owner/ }))
+    await tick()
+    const search = screen.getByTestId('owner-facet-search')
+    search.focus()
+
+    await fireEvent.keyDown(search, { key: 'Home' })
+    expect(document.activeElement).toBe(search)
+    await fireEvent.keyDown(search, { key: 'End' })
+    expect(document.activeElement).toBe(search)
+  })
 })
 
 describe('FilterBar popover focus', () => {

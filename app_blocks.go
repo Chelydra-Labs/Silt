@@ -651,6 +651,9 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 	return nil
 }
 func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error {
+	if err := validateTaskBlockPriorities(blocks); err != nil {
+		return err
+	}
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {

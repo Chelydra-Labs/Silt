@@ -13,6 +13,7 @@
     SortMode,
     Scope
   } from '../state.svelte'
+  import { motionDuration } from '../motion'
 
   interface Props {
     filters: TaskFilters
@@ -217,6 +218,12 @@
   // of the listbox — needs its own bridge). ArrowLeft/Right/Home/End are left
   // alone so the user can edit the query with the caret normally.
   function onFacetSearchKeydown(e: KeyboardEvent) {
+    if (e.key === 'Home' || e.key === 'End') {
+      // The surrounding popover uses Home/End for option navigation. Keep
+      // those native caret keys inside the search field.
+      e.stopPropagation()
+      return
+    }
     if (e.key !== 'ArrowDown') return
     const popover = (e.currentTarget as HTMLElement).closest(
       '[data-filter-popover]'
@@ -309,7 +316,7 @@
       <div
         id="tasks-filter-scope"
         data-filter-popover="scope"
-        transition:fly={{ y: -4, duration: 100 }}
+        transition:fly={{ y: -4, duration: motionDuration(100) }}
         onkeydown={handlePopoverKeydown}
         class="task-filter-menu absolute left-0 z-50 mt-1 min-w-40 py-1"
         role="listbox"
@@ -376,7 +383,7 @@
       <div
         id="tasks-filter-group"
         data-filter-popover="group"
-        transition:fly={{ y: -4, duration: 100 }}
+        transition:fly={{ y: -4, duration: motionDuration(100) }}
         onkeydown={handlePopoverKeydown}
         class="task-filter-menu absolute left-0 z-50 mt-1 max-h-64 min-w-40 overflow-y-auto py-1 custom-scrollbar"
         role="listbox"
@@ -437,7 +444,7 @@
       <div
         id="tasks-filter-sort"
         data-filter-popover="sort"
-        transition:fly={{ y: -4, duration: 100 }}
+        transition:fly={{ y: -4, duration: motionDuration(100) }}
         onkeydown={handlePopoverKeydown}
         class="task-filter-menu absolute left-0 z-50 mt-1 min-w-45 py-1"
         role="listbox"
@@ -497,7 +504,7 @@
       <div
         id="tasks-filter-owner"
         data-filter-popover="owner"
-        transition:fly={{ y: -4, duration: 100 }}
+        transition:fly={{ y: -4, duration: motionDuration(100) }}
         class="task-filter-menu absolute left-0 z-50 mt-1 max-h-64 min-w-45 overflow-y-auto py-1 custom-scrollbar"
         role="dialog"
         tabindex="-1"
@@ -574,7 +581,7 @@
       <div
         id="tasks-filter-priority"
         data-filter-popover="priority"
-        transition:fly={{ y: -4, duration: 100 }}
+        transition:fly={{ y: -4, duration: motionDuration(100) }}
         onkeydown={handlePopoverKeydown}
         class="task-filter-menu absolute left-0 z-50 mt-1 min-w-40 py-1"
         role="dialog"
@@ -619,7 +626,7 @@
       <div
         id="tasks-filter-due-date"
         data-filter-popover="dueDate"
-        transition:fly={{ y: -4, duration: 100 }}
+        transition:fly={{ y: -4, duration: motionDuration(100) }}
         onkeydown={handlePopoverKeydown}
         class="task-filter-menu absolute left-0 z-50 mt-1 min-w-40 py-1"
         role="listbox"
@@ -686,7 +693,7 @@
       <div
         id="tasks-filter-tags"
         data-filter-popover="tags"
-        transition:fly={{ y: -4, duration: 100 }}
+        transition:fly={{ y: -4, duration: motionDuration(100) }}
         class="task-filter-menu absolute right-0 z-50 mt-1 max-h-64 min-w-50 overflow-y-auto py-1 custom-scrollbar sm:left-0 sm:right-auto"
         role="dialog"
         tabindex="-1"

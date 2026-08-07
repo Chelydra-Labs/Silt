@@ -3,6 +3,7 @@
   import { fly } from 'svelte/transition'
   import type { PluginContext, SubtreeBlock } from '../../../sdk'
   import RichText from '../../../../components/RichText.svelte'
+  import { motionDuration } from '../motion'
   import { loadLocalAuthor, persistLocalAuthor } from '../settings'
   import ErrorBanner from './ErrorBanner.svelte'
   import { friendlyCaughtError } from '../errors'
@@ -483,7 +484,7 @@
     class:ml-4={nested}
     class:border-l-2={nested}
     class:border-l-accent-primary-start={nested}
-    transition:fly={{ duration: 120, y: -4 }}
+    transition:fly={{ duration: motionDuration(120), y: -4 }}
   >
     <header class="flex items-center justify-between gap-2 mb-1">
       <p class="text-type-2xs font-label-sm text-text-muted">

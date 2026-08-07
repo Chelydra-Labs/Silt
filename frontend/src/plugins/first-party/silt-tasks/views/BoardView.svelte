@@ -60,6 +60,7 @@
   import { dueDateAnchor, groupByDispatch } from '../groupByDispatch'
   import { createStatusColumnsController } from './controllers/useStatusColumns.svelte'
   import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
+  import { LEGACY_MISSING_TASK_PRIORITY } from '../../../../lib/taskPriority'
 
   type Props = TaskViewProps
 
@@ -84,6 +85,7 @@
   let columns = $state<Lane[]>([])
   let loading = $state(true)
   let errorMsg = $state('')
+  let resultsTruncated = $state(false)
 
   let selectedCard = $state<TaskDetail | null>(null)
   let subEditorCard = $state<TaskDetail | null>(null)
@@ -167,7 +169,10 @@
         '3': []
       }
       for (const r of loaded) {
-        const p = r.priority && r.priority > 0 ? r.priority : 3
+        const p =
+          r.priority && r.priority > 0
+            ? r.priority
+            : LEGACY_MISSING_TASK_PRIORITY
         const key = p <= 1 ? '1' : p === 2 ? '2' : '3'
         buckets[key].push(r)
       }
@@ -298,6 +303,7 @@
     const my = ++loadSeq
     loading = true
     errorMsg = ''
+    resultsTruncated = false
     try {
       const { sql, params } = buildQuery(
         scope,
@@ -310,9 +316,10 @@
         }),
         { groupBy, sort, activeFilter: getTaskHubViewState().activeFilter }
       )
-      const { rows: raw } = await ctx.sqliteQuery(sql, params)
+      const { rows: raw, truncated } = await ctx.sqliteQuery(sql, params)
       if (my !== loadSeq) return
       rows = (raw as unknown[]).map((r) => coerceTaskRow(r))
+      resultsTruncated = truncated
       rebin()
       // Keep the open drawer in sync with fresh data; if the task left the
       // result set, keep the last-known snapshot rather than snapping closed.
@@ -542,6 +549,22 @@
         {groupBy} values — switch to List mode or filter to fewer to keep the board
         manageable.
       </span>
+    </div>
+  {/if}
+
+  {#if resultsTruncated}
+    <div
+      class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-type-sm font-body-md flex items-center gap-2"
+      role="status"
+      data-testid="board-truncated-notice"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >info</span
+      >
+      <span
+        >Some tasks are hidden because the Board result limit was reached.
+        Filter or narrow the scope to see more.</span
+      >
     </div>
   {/if}
 

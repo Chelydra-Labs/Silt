@@ -347,6 +347,26 @@ describe('Tasks hub shell (#424)', () => {
     expect(getTaskWeekStart()).toBe('monday')
   })
 
+  it('surfaces a task-settings load failure without applying stale hydration', async () => {
+    const notify = vi.fn().mockResolvedValue(true)
+    render(TasksHub, {
+      ctx: makeCtx({
+        getPluginSettings: vi
+          .fn()
+          .mockRejectedValue(new Error('vault is closing')),
+        notify
+      }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    expect(notify).toHaveBeenCalledWith({
+      title: 'Tasks',
+      body: "Couldn't load task preferences: vault is closing"
+    })
+    expect(getTaskWeekStart()).toBe('sunday')
+  })
+
   it('exposes the vault-scoped week start in compact Task preferences', async () => {
     mocks.tasksSettings = { week_start: 'monday' }
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
@@ -1172,6 +1192,7 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     // closePopover) instead of waiting for the transition timer.
     const bm = screen.getByTestId('tasks-hub-bookmark')
     expect(bm.getAttribute('data-popover-state')).toBe('closed')
+    expect(document.activeElement).toBe(bm)
   })
 
   it('delete uses the in-app confirm modal, not window.confirm (#470)', async () => {

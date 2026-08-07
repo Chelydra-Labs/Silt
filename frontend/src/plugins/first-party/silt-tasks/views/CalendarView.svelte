@@ -17,13 +17,19 @@
   // Calendar ignores the hub's groupBy (the grid has no second axis); a
   // one-time notice informs the user the first time per session they enter
   // Calendar mode with a non-'none'/non-'dueDate' groupBy active.
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount, onDestroy, tick } from 'svelte'
+  import Popover from '../../../../components/Popover.svelte'
   import { plusDaysISO } from '../../../sdk'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
-  import { coerceTaskRow, type TaskDetail, type TaskViewProps } from '../types'
+  import {
+    coerceTaskRow,
+    laneLabel,
+    type TaskDetail,
+    type TaskViewProps
+  } from '../types'
   import {
     getTaskHubQueryContext,
     getTaskHubViewState,
@@ -75,6 +81,7 @@
   let overdueAll = $state<TaskDetail[]>([])
   let loading = $state(true)
   let errorMsg = $state('')
+  let resultsTruncated = $state(false)
   let selectedTask = $state<TaskDetail | null>(null)
   let subEditorTask = $state<TaskDetail | null>(null)
   // null = closed; '' = open undated; YYYY-MM-DD = open for that day.
@@ -194,6 +201,88 @@
     return out
   })
 
+  // Month cells stay compact, but their overflow must remain actionable. A
+  // portaled agenda escapes the scroll/grid clipping context and keeps every
+  // hidden task available to keyboard, pointer, and drag users.
+  let agendaDate = $state<string | null>(null)
+  let agendaAnchor = $state<HTMLElement | null>(null)
+  let agendaFocusIdx = $state(0)
+
+  let agendaEntries = $derived.by(() => {
+    if (!agendaDate) return []
+    const scheduled = byDate[agendaDate] ?? []
+    const surfaced =
+      agendaDate === todayKey
+        ? overdueSurfaced.filter(
+            (task) => !scheduled.some((item) => item.id === task.id)
+          )
+        : []
+    return [
+      ...scheduled.map((item) => ({ item, overdue: false })),
+      ...surfaced.map((item) => ({ item, overdue: true }))
+    ]
+  })
+
+  let agendaHeading = $derived.by(() => {
+    if (!agendaDate) return ''
+    const [year, month, day] = agendaDate.split('-').map(Number)
+    return `${MONTHS[(month ?? 1) - 1]} ${day}, ${year}`
+  })
+
+  function focusAgendaItem(index: number): void {
+    agendaFocusIdx = index
+    void tick().then(() => {
+      document
+        .querySelector<HTMLElement>(`[data-calendar-agenda-index="${index}"]`)
+        ?.focus()
+    })
+  }
+
+  function openDayAgenda(e: MouseEvent, date: string): void {
+    e.stopPropagation()
+    agendaAnchor = e.currentTarget as HTMLElement
+    agendaDate = date
+    focusAgendaItem(0)
+  }
+
+  function closeDayAgenda(returnFocus = true): void {
+    const trigger = agendaAnchor
+    agendaDate = null
+    agendaAnchor = null
+    agendaFocusIdx = 0
+    if (returnFocus) void tick().then(() => trigger?.focus())
+  }
+
+  function openAgendaTask(item: TaskDetail): void {
+    closeDayAgenda(false)
+    selectedTask = item
+  }
+
+  function onAgendaTaskKeydown(
+    e: KeyboardEvent,
+    item: TaskDetail,
+    index: number
+  ): void {
+    if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault()
+      e.stopPropagation()
+      closeDayAgenda(false)
+      subEditorTask = item
+      return
+    }
+    if (e.altKey) {
+      onCardKeydown(e, item)
+      return
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+    e.preventDefault()
+    const last = agendaEntries.length - 1
+    if (e.key === 'Home') focusAgendaItem(0)
+    else if (e.key === 'End') focusAgendaItem(last)
+    else if (e.key === 'ArrowDown') focusAgendaItem(Math.min(last, index + 1))
+    else focusAgendaItem(Math.max(0, index - 1))
+  }
+
   // --- Query/reload ------------------------------------------------------
   // Three queries: a windowed SELECT for the visible month/week, a separate
   // undated SELECT for the "No Date" strip, and an all-overdue-open SELECT
@@ -207,6 +296,7 @@
     const my = ++loadSeq
     loading = true
     errorMsg = ''
+    resultsTruncated = false
     try {
       const ctxLike = getTaskHubQueryContext({
         activeNotebook: ctx.activeNotebook,
@@ -246,6 +336,11 @@
       byDate = bucket
       undated = (undatedRes.rows as unknown[]).map((r) => coerceTaskRow(r))
       overdueAll = (overdueRes.rows as unknown[]).map((r) => coerceTaskRow(r))
+      resultsTruncated =
+        winRes.truncated ||
+        undatedRes.truncated ||
+        overdueRes.truncated ||
+        overdueRes.rows.length >= 500
       // Keep the open drawer in sync with fresh data.
       if (selectedTask) {
         const fresh =
@@ -341,6 +436,7 @@
   let subModeError = $state('')
   const SUBMODES: CalendarSubMode[] = ['month', 'week']
   function chooseSubMode(m: CalendarSubMode) {
+    closeDayAgenda(false)
     setCalendarSubMode(m)
     // Reset roving tabindex: month grid has up to 42 cells, week has 7, so a
     // stale idx from the other layout would leave no cell with tabindex=0.
@@ -402,20 +498,25 @@
 
   // --- Navigation -------------------------------------------------------
   function prev() {
+    closeDayAgenda(false)
     cursor = subMode === 'month' ? addMonths(cursor, -1) : addDays(cursor, -7)
   }
   function next() {
+    closeDayAgenda(false)
     cursor = subMode === 'month' ? addMonths(cursor, 1) : addDays(cursor, 7)
   }
   function goToday() {
+    closeDayAgenda(false)
     cursor = cursorFromToday()
   }
 
   // --- Quick-add --------------------------------------------------------
   function openQuickAddForDay(day: Date) {
+    closeDayAgenda(false)
     quickAddDate = ymd(day)
   }
   function openQuickAddUndated() {
+    closeDayAgenda(false)
     quickAddDate = ''
   }
   function closeQuickAdd() {
@@ -723,6 +824,22 @@
     />
   {/if}
 
+  {#if resultsTruncated}
+    <div
+      class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-type-sm font-body-md flex items-center gap-2"
+      role="status"
+      data-testid="calendar-truncated-notice"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >info</span
+      >
+      <span
+        >Some tasks are hidden because the Calendar result limit was reached.
+        Filter or narrow the scope to see more.</span
+      >
+    </div>
+  {/if}
+
   <!-- Screen-reader announcement of drag/keyboard reschedules. -->
   <div class="sr-only" role="status" aria-live="polite">
     {rescheduleAnnouncement}
@@ -881,8 +998,16 @@
                   >
                 {/each}
                 {#if items.length > 3}
-                  <span class="text-type-3xs text-text-muted px-1"
-                    >+{items.length - 3} more</span
+                  <button
+                    type="button"
+                    onclick={(e) => openDayAgenda(e, ymd(day))}
+                    aria-haspopup="dialog"
+                    aria-expanded={agendaDate === ymd(day)}
+                    aria-controls="calendar-day-agenda"
+                    aria-label={`Show ${items.length - 3} more tasks for ${ymd(day)}`}
+                    data-testid={`calendar-more-${ymd(day)}`}
+                    class="w-full rounded-md border border-transparent px-1 py-0.5 text-left text-type-3xs font-label-sm text-text-muted transition-colors hover:border-surface-card-border hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+                    >+{items.length - 3} more</button
                   >
                 {/if}
                 <!-- Overdue open tasks surface in today's cell with an error-tone
@@ -908,8 +1033,16 @@
                   >
                 {/each}
                 {#if overdueHere.length > 2}
-                  <span class="text-type-3xs text-error px-1"
-                    >+{overdueHere.length - 2} overdue</span
+                  <button
+                    type="button"
+                    onclick={(e) => openDayAgenda(e, ymd(day))}
+                    aria-haspopup="dialog"
+                    aria-expanded={agendaDate === ymd(day)}
+                    aria-controls="calendar-day-agenda"
+                    aria-label={`Show ${overdueHere.length - 2} more overdue tasks for ${ymd(day)}`}
+                    data-testid={`calendar-overdue-more-${ymd(day)}`}
+                    class="w-full rounded-md border border-error/20 bg-error/10 px-1 py-0.5 text-left text-type-3xs font-label-sm text-error transition-colors hover:border-error hover:bg-error-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+                    >+{overdueHere.length - 2} overdue</button
                   >
                 {/if}
                 {#if quickAddDate === ymd(day)}
@@ -1096,6 +1229,116 @@
     {/if}
   </div>
 </div>
+
+<Popover
+  open={agendaDate !== null}
+  onClose={() => closeDayAgenda(true)}
+  anchor={agendaAnchor}
+  class="w-64 rounded-xl border border-surface-popover-border bg-surface-popover shadow-lg sm:w-80"
+>
+  {#snippet content()}
+    <div
+      id="calendar-day-agenda"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="calendar-day-agenda-title"
+      class="p-2.5"
+      data-testid="calendar-day-agenda"
+    >
+      <header
+        class="mb-2 flex items-center gap-2 border-b border-surface-popover-border px-1 pb-2"
+      >
+        <span
+          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-primary-glow text-accent-primary-start"
+          aria-hidden="true"
+        >
+          <span class="material-symbols-outlined text-icon-md">event_note</span>
+        </span>
+        <div class="min-w-0 flex-1">
+          <h3
+            id="calendar-day-agenda-title"
+            class="truncate text-type-md font-label-sm-bold text-text-primary"
+          >
+            {agendaHeading}
+          </h3>
+          <p class="text-type-xs font-label-sm text-text-muted">
+            {agendaEntries.length} task{agendaEntries.length === 1 ? '' : 's'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onclick={() => closeDayAgenda(true)}
+          aria-label="Close day agenda"
+          class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-transparent text-text-muted transition-colors hover:border-surface-popover-border hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+        >
+          <span
+            class="material-symbols-outlined text-icon-md"
+            aria-hidden="true">close</span
+          >
+        </button>
+      </header>
+
+      <ul class="max-h-80 space-y-1 overflow-y-auto custom-scrollbar">
+        {#each agendaEntries as entry, index (entry.item.id)}
+          <li>
+            <button
+              type="button"
+              draggable="true"
+              tabindex={index === agendaFocusIdx ? 0 : -1}
+              data-calendar-agenda-index={index}
+              data-calendar-agenda-task={entry.item.id}
+              aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+              ondragstart={(e) => onCardDragStart(e, entry.item)}
+              ondragend={onCardDragEnd}
+              onkeydown={(e) => onAgendaTaskKeydown(e, entry.item, index)}
+              onclick={() => openAgendaTask(entry.item)}
+              class="group flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {entry.overdue
+                ? 'border-error/20 bg-error/10 hover:border-error/40 hover:bg-error-bg'
+                : 'border-surface-card-border bg-surface-card hover:border-border-active hover:bg-hover'}"
+            >
+              <span
+                class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full {entry.overdue
+                  ? 'bg-error'
+                  : entry.item.status === 'DOING'
+                    ? 'bg-accent-secondary-start'
+                    : entry.item.status === 'DONE'
+                      ? 'bg-accent-primary-start'
+                      : 'bg-text-muted'}"
+                aria-hidden="true"
+              ></span>
+              <span class="min-w-0 flex-1">
+                <span
+                  class="block text-type-sm font-body-md leading-snug {entry.overdue
+                    ? 'text-error'
+                    : 'text-text-primary'}"
+                >
+                  {entry.item.clean_content}
+                </span>
+                <span
+                  class="mt-0.5 flex flex-wrap items-center gap-x-2 text-type-3xs font-label-sm text-text-muted"
+                >
+                  {#if entry.overdue}
+                    <span>Overdue · {entry.item.due_date}</span>
+                  {:else}
+                    <span>{laneLabel(entry.item.status)}</span>
+                  {/if}
+                  {#if entry.item.owner}<span>{entry.item.owner}</span>{/if}
+                </span>
+              </span>
+              <span
+                class="material-symbols-outlined mt-0.5 text-icon-sm text-text-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                aria-hidden="true">arrow_forward</span
+              >
+            </button>
+          </li>
+        {/each}
+      </ul>
+      <p class="mt-2 px-1 text-type-3xs font-label-sm text-text-muted">
+        Enter opens details · Shift+Enter opens notes · Alt+Arrow reschedules
+      </p>
+    </div>
+  {/snippet}
+</Popover>
 
 <TaskEditDrawer
   task={selectedTask}

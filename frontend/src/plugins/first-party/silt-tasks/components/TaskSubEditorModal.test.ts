@@ -417,6 +417,73 @@ describe('TaskSubEditorModal (#304)', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('keeps failed edits open and supports retrying the save', async () => {
+    const onClose = vi.fn()
+    mocks.saveSubtreeBlocks
+      .mockRejectedValueOnce(new Error('disk locked'))
+      .mockRejectedValueOnce(new Error('disk locked'))
+      .mockResolvedValueOnce(true)
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement
+    pm.textContent = 'edited content'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    await vi.waitFor(() =>
+      expect(screen.getByText(/Save failed: disk locked/)).toBeInTheDocument()
+    )
+
+    expect(onClose).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getAllByLabelText('Close sub-editor').at(-1)!)
+    await vi.waitFor(() =>
+      expect(mocks.saveSubtreeBlocks).toHaveBeenCalledTimes(2)
+    )
+    expect(onClose).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry save' }))
+    await vi.waitFor(() =>
+      expect(mocks.saveSubtreeBlocks).toHaveBeenCalledTimes(3)
+    )
+    await flush()
+    expect(screen.queryByText(/Save failed: disk locked/)).toBeNull()
+
+    await fireEvent.click(screen.getAllByLabelText('Close sub-editor').at(-1)!)
+    await flush()
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows explicitly discarding edits after a failed save', async () => {
+    const onClose = vi.fn()
+    mocks.saveSubtreeBlocks.mockRejectedValueOnce(new Error('disk locked'))
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    const pm = document.querySelector('.ProseMirror') as HTMLElement
+    pm.textContent = 'edited content'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Discard changes' })
+      ).toBeInTheDocument()
+    )
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Discard changes' })
+    )
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(mocks.saveSubtreeBlocks).toHaveBeenCalledTimes(1)
+  })
+
   it('flushes a pending snapshot when unmounted during an in-flight save (no data loss)', async () => {
     // Regression: unmount-without-close used to drop edits made during an
     // in-flight save because the retry was gated on a live editor, which

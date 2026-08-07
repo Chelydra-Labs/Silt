@@ -45,6 +45,8 @@ export const TASKS_PLUGIN_ID = 'silt-tasks'
 // layer (#133) without a synchronous app-store import.
 let configSlice: Record<string, unknown> = {}
 let saveFn: ((key: string, value: unknown) => Promise<boolean>) | null = null
+let settingsRequestSeq = 0
+let preloadedSettings: Promise<boolean> | null = null
 
 /**
  * Wire the SDK into the module: capture the persist function and load the
@@ -52,11 +54,48 @@ let saveFn: ((key: string, value: unknown) => Promise<boolean>) | null = null
  * load* call). The returned slice is also available synchronously via
  * tasksSettings() for the hydration block that follows.
  */
-export async function initTasksSettings(ctx: PluginContext): Promise<void> {
-  saveFn = (key, value) =>
+async function readTasksSettings(ctx: PluginContext): Promise<boolean> {
+  const request = ++settingsRequestSeq
+  const nextSaveFn = (key: string, value: unknown) =>
     ctx.updatePluginSetting(key, value).catch(() => false)
-  configSlice = (await ctx.getPluginSettings()) ?? {}
+  saveFn = null
+  const nextSlice = (await ctx.getPluginSettings()) ?? {}
+  if (request !== settingsRequestSeq) return false
+  saveFn = nextSaveFn
+  configSlice = nextSlice
   setTaskWeekStart(loadWeekStart())
+  return true
+}
+
+/**
+ * Prime the active-vault settings before any Tasks surface mounts. The loader
+ * awaits this lifecycle hook, so global consumers such as DateGlance never
+ * paint the previous vault's week start first.
+ */
+export function preloadTasksSettings(ctx: PluginContext): Promise<boolean> {
+  if (!preloadedSettings) {
+    const request = readTasksSettings(ctx)
+    preloadedSettings = request
+    void request.then(
+      (ok) => {
+        if (!ok && preloadedSettings === request) preloadedSettings = null
+      },
+      () => {
+        if (preloadedSettings === request) preloadedSettings = null
+      }
+    )
+  }
+  return preloadedSettings
+}
+
+/** Consume lifecycle preloading when the Tasks hub mounts, or load directly in tests/embedded hosts. */
+export function initTasksSettings(ctx: PluginContext): Promise<boolean> {
+  if (preloadedSettings) {
+    const loaded = preloadedSettings
+    preloadedSettings = null
+    return loaded
+  }
+  return readTasksSettings(ctx)
 }
 
 /**
@@ -64,11 +103,19 @@ export async function initTasksSettings(ctx: PluginContext): Promise<void> {
  * or active-notebook:changed signals a stale cache). Also refreshes saveFn
  * so a post-vault-switch remount captures the new ctx.
  */
-export async function reloadTasksSettings(ctx: PluginContext): Promise<void> {
-  saveFn = (key, value) =>
+export async function reloadTasksSettings(
+  ctx: PluginContext
+): Promise<boolean> {
+  const request = ++settingsRequestSeq
+  const nextSaveFn = (key: string, value: unknown) =>
     ctx.updatePluginSetting(key, value).catch(() => false)
-  configSlice = (await ctx.getPluginSettings()) ?? {}
+  saveFn = null
+  const nextSlice = (await ctx.getPluginSettings()) ?? {}
+  if (request !== settingsRequestSeq) return false
+  saveFn = nextSaveFn
+  configSlice = nextSlice
   setTaskWeekStart(loadWeekStart())
+  return true
 }
 
 /**
@@ -78,6 +125,8 @@ export async function reloadTasksSettings(ctx: PluginContext): Promise<void> {
  * resetTaskHubState().
  */
 export function resetTasksSettings(): void {
+  settingsRequestSeq++
+  preloadedSettings = null
   configSlice = {}
   saveFn = null
   resetTaskWeekStart()

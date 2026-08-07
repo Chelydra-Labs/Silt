@@ -638,10 +638,7 @@
       <span
         class="material-symbols-outlined text-icon-sm text-text-muted/60 hover:text-text-muted cursor-grab active:cursor-grabbing flex-shrink-0 select-none"
         draggable="true"
-        role="button"
-        tabindex="0"
-        aria-grabbed={draggingId === item.id ? 'true' : 'false'}
-        aria-label={`Reorder ${item.clean_content}`}
+        aria-hidden="true"
         title="Drag to reorder"
         data-testid={`tasks-row-drag-handle-${item.id}`}
         ondragstart={(e) => onRowDragStart(e, item, groupKey)}
@@ -729,12 +726,19 @@
     {/if}
     {#if item.due_date}
       <span
-        class="hidden text-type-2xs sm:inline-flex {item.status === 'DONE'
+        class="inline-flex items-center gap-1 text-type-2xs {item.status ===
+        'DONE'
           ? 'text-text-muted'
           : dueDateTextClass(
               dueDateClass(item.due_date, today)
-            )} font-label-sm flex-shrink-0">{item.due_date}</span
+            )} font-label-sm flex-shrink-0"
+        data-testid={`tasks-row-due-${item.id}`}
       >
+        <span class="material-symbols-outlined text-icon-xs" aria-hidden="true"
+          >schedule</span
+        >
+        {item.due_date}
+      </span>
     {/if}
   </div>
 {/snippet}
@@ -842,8 +846,7 @@
               All caught up!
             </h3>
             <p class="text-text-muted text-type-md font-body-md">
-              You have no active tasks. Restore a completed task below to the
-              active list, type in the box below, or use
+              You have no active tasks. Add one in the box below or use
               <kbd
                 class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-surface-panel-border font-mono text-type-xs"
                 >Ctrl+Shift+N</kbd

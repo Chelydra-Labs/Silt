@@ -16,7 +16,9 @@
   import CommentThread from './CommentThread.svelte'
   import Popover from '../../../../components/Popover.svelte'
   import { buildDueDatePresets } from './dueDatePresets'
+  import { nextRecurrenceDate } from './recurrencePreview'
   import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
+  import { motionDuration } from '../motion'
 
   /**
    * The shared task metadata surface — extracted from TaskEditDrawer so the
@@ -555,46 +557,9 @@
   }
 
   // Computed next-occurrence preview from the LOCAL optimistic mirrors.
-  let nextOccurrence = $derived.by(() => {
-    const recurrence = recurrenceField.value
-    const dueDate = dueDateField.value
-    if (!recurrence || !dueDate) return ''
-    const due = new SvelteDate(dueDate + 'T00:00:00')
-    if (isNaN(due.getTime())) return ''
-    const today = new SvelteDate()
-    today.setHours(0, 0, 0, 0)
-    if (due <= today) return ''
-    const rule = recurrence.toLowerCase()
-    let step: Date
-    if (rule.includes('day') && !rule.includes('weekday')) {
-      const n = parseInt(rule.match(/(\d+)\s*day/)?.[1] ?? '1')
-      step = new SvelteDate(due.getTime() + n * 86400000)
-    } else if (rule.includes('weekday')) {
-      step = new SvelteDate(due.getTime() + 86400000)
-      while (step.getDay() === 0 || step.getDay() === 6)
-        step.setDate(step.getDate() + 1)
-    } else if (rule.includes('week')) {
-      const n = parseInt(rule.match(/(\d+)\s*week/)?.[1] ?? '1')
-      step = new SvelteDate(due.getTime() + n * 7 * 86400000)
-    } else if (rule.includes('month')) {
-      const n = parseInt(rule.match(/(\d+)\s*month/)?.[1] ?? '1')
-      step = new SvelteDate(
-        due.getFullYear(),
-        due.getMonth() + n,
-        due.getDate()
-      )
-    } else if (rule.includes('year')) {
-      const n = parseInt(rule.match(/(\d+)\s*year/)?.[1] ?? '1')
-      step = new SvelteDate(
-        due.getFullYear() + n,
-        due.getMonth(),
-        due.getDate()
-      )
-    } else {
-      return ''
-    }
-    return step.toISOString().slice(0, 10)
-  })
+  let nextOccurrence = $derived(
+    nextRecurrenceDate(recurrenceField.value, dueDateField.value)
+  )
 </script>
 
 <div bind:this={rootRef}>
@@ -722,7 +687,7 @@
         >
           {#snippet content()}
             <div
-              transition:fly={{ y: -4, duration: 100 }}
+              transition:fly={{ y: -4, duration: motionDuration(100) }}
               role="dialog"
               aria-label="Due date options"
             >
@@ -1091,7 +1056,7 @@
             {#snippet content()}
               <div
                 id="recurrence-listbox"
-                transition:fly={{ y: -4, duration: 100 }}
+                transition:fly={{ y: -4, duration: motionDuration(100) }}
                 role="listbox"
                 tabindex="-1"
                 aria-label="Recurrence options"

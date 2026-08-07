@@ -1,6 +1,7 @@
 import type { RegisteredPlugin } from './sdk'
 import TasksHub from './first-party/silt-tasks/TasksHub.svelte'
 import TasksSidebar from './first-party/silt-tasks/Sidebar.svelte'
+import { preloadTasksSettings } from './first-party/silt-tasks/settings'
 import AttachmentsPlugin from './first-party/silt-attachments'
 import AISummaryPlugin from './first-party/silt-ai-summary'
 import AIQAPlugin from './first-party/silt-ai-qa'
@@ -40,6 +41,11 @@ registerPlugin({
   },
   component: TasksHub,
   sidebarComponent: TasksSidebar,
+  onVaultOpen: async (ctx) => {
+    const loaded = await preloadTasksSettings(ctx)
+    if (!loaded)
+      throw new Error('Tasks settings became stale during vault load')
+  },
   source: 'first-party'
 })
 // silt-ai-summary (#220–#223): dismissible per-note summary banner. The first

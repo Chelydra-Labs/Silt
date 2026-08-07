@@ -40,6 +40,7 @@ vi.mock('$silt-app', () =>
   createAppIpcMocks({
     ListPlugins: vi.fn(() => Promise.resolve([])),
     ReadPluginSource: vi.fn(),
+    GetPluginSettingsForNotebook: vi.fn(() => Promise.resolve({})),
     RegisterPluginSession: vi.fn(() => Promise.resolve('t')),
     UnregisterPluginSession: vi.fn(() => Promise.resolve(undefined))
   })

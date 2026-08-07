@@ -20,6 +20,7 @@ import {
   persistSavedViews,
   loadColumns,
   initTasksSettings,
+  preloadTasksSettings,
   reloadTasksSettings,
   loadWeekStart,
   persistWeekStart
@@ -275,6 +276,22 @@ describe('week_start preference (#888)', () => {
     expect(loadWeekStart()).toBe('monday')
   })
 
+  it('preloads the active-vault value before the Tasks hub consumes settings', async () => {
+    const preloadCtx = {
+      getPluginSettings: vi.fn().mockResolvedValue({ week_start: 'monday' }),
+      updatePluginSetting: mocks.updatePluginSetting
+    } as unknown as PluginContext
+    const hubCtx = {
+      getPluginSettings: vi.fn(),
+      updatePluginSetting: mocks.updatePluginSetting
+    } as unknown as PluginContext
+
+    await expect(preloadTasksSettings(preloadCtx)).resolves.toBe(true)
+    expect(getTaskWeekStart()).toBe('monday')
+    await expect(initTasksSettings(hubCtx)).resolves.toBe(true)
+    expect(hubCtx.getPluginSettings).not.toHaveBeenCalled()
+  })
+
   it('persists only validated values through the SDK', async () => {
     await expect(persistWeekStart('monday')).resolves.toBe(true)
     expect(getTaskWeekStart()).toBe('monday')
@@ -297,5 +314,57 @@ describe('week_start preference (#888)', () => {
     vi.mocked(ctx.getPluginSettings).mockResolvedValue({ week_start: 'sunday' })
     await reloadTasksSettings(ctx)
     expect(getTaskWeekStart()).toBe('sunday')
+  })
+
+  it('ignores stale init and reload completions after a vault switch', async () => {
+    let resolveOldInit!: (slice: Record<string, unknown>) => void
+    let resolveNewInit!: (slice: Record<string, unknown>) => void
+    const oldInit = new Promise<Record<string, unknown>>(
+      (resolve) => (resolveOldInit = resolve)
+    )
+    const newInit = new Promise<Record<string, unknown>>(
+      (resolve) => (resolveNewInit = resolve)
+    )
+    const oldCtx = {
+      getPluginSettings: vi.fn(() => oldInit),
+      updatePluginSetting: mocks.updatePluginSetting
+    } as unknown as PluginContext
+    const newCtx = {
+      getPluginSettings: vi.fn(() => newInit),
+      updatePluginSetting: mocks.updatePluginSetting
+    } as unknown as PluginContext
+
+    const oldInitResult = initTasksSettings(oldCtx)
+    const newInitResult = initTasksSettings(newCtx)
+    resolveNewInit({ week_start: 'monday' })
+    await expect(newInitResult).resolves.toBe(true)
+    resolveOldInit({ week_start: 'sunday' })
+    await expect(oldInitResult).resolves.toBe(false)
+    expect(loadWeekStart()).toBe('monday')
+
+    let resolveOldReload!: (slice: Record<string, unknown>) => void
+    let resolveNewReload!: (slice: Record<string, unknown>) => void
+    const oldReload = new Promise<Record<string, unknown>>(
+      (resolve) => (resolveOldReload = resolve)
+    )
+    const newReload = new Promise<Record<string, unknown>>(
+      (resolve) => (resolveNewReload = resolve)
+    )
+    const oldReloadCtx = {
+      getPluginSettings: vi.fn(() => oldReload),
+      updatePluginSetting: mocks.updatePluginSetting
+    } as unknown as PluginContext
+    const newReloadCtx = {
+      getPluginSettings: vi.fn(() => newReload),
+      updatePluginSetting: mocks.updatePluginSetting
+    } as unknown as PluginContext
+
+    const oldReloadResult = reloadTasksSettings(oldReloadCtx)
+    const newReloadResult = reloadTasksSettings(newReloadCtx)
+    resolveNewReload({ week_start: 'sunday' })
+    await expect(newReloadResult).resolves.toBe(true)
+    resolveOldReload({ week_start: 'monday' })
+    await expect(oldReloadResult).resolves.toBe(false)
+    expect(loadWeekStart()).toBe('sunday')
   })
 })

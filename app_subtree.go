@@ -133,6 +133,9 @@ func (a *App) PluginSaveSubtreeBlocks(pluginID, sessionToken, blockID string, ch
 // LockBlockWrite(parentID) and LockFileWrite(filePath) so the splice is atomic
 // and races no concurrent writer. Returns true when a write occurred.
 func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (bool, error) {
+	if err := validateTaskBlockPriorities(children); err != nil {
+		return false, err
+	}
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {

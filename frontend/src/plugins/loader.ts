@@ -146,7 +146,7 @@ export async function loadPlugins(
       // resolving its settings (#133). The location getters stay reactive.
       const ctx = makePluginContext(id, token)
       def?.init?.(ctx)
-      def?.onVaultOpen?.(ctx)
+      await def?.onVaultOpen?.(ctx)
       // Disk plugins render DiskPluginNotice unless they export a default
       // object with `.component`. Do not honor a bare named `component` export:
       // that would mount untrusted compiled UI in the host webview. The iframe
@@ -212,7 +212,7 @@ export async function loadPlugins(
     }
     const ctx = makePluginContext(id, fpToken)
     fp.init?.(ctx)
-    fp.onVaultOpen?.(ctx)
+    await fp.onVaultOpen?.(ctx)
     plugins.set(id, fp)
   }
 

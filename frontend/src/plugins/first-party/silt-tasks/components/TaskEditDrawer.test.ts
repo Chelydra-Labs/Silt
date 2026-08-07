@@ -545,7 +545,7 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
     )
   })
 
-  it('closes from the outside backdrop but not from drawer content', async () => {
+  it('is genuinely non-modal: outside input closes without blocking its target', async () => {
     const onClose = vi.fn()
     render(TaskEditDrawer, {
       props: { task: makeTask(), ctx: makeCtx(), onClose }
@@ -554,11 +554,20 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
     await fireEvent.click(screen.getByRole('dialog'))
     expect(onClose).not.toHaveBeenCalled()
 
-    await fireEvent.click(screen.getByTestId('task-drawer-backdrop'))
+    const outside = document.createElement('button')
+    const outsideClick = vi.fn()
+    outside.addEventListener('click', outsideClick)
+    document.body.appendChild(outside)
+    await fireEvent.mouseDown(outside)
+    await fireEvent.click(outside)
     expect(onClose).toHaveBeenCalledTimes(1)
+    expect(outsideClick).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog')).toHaveAttribute('aria-modal', 'false')
+    expect(screen.queryByTestId('task-drawer-backdrop')).toBeNull()
+    outside.remove()
   })
 
-  it('does not treat nested popover interaction as a backdrop click', async () => {
+  it('does not treat nested popover interaction as an outside click', async () => {
     const onClose = vi.fn()
     const setTaskDueDate = vi.fn().mockResolvedValue(true)
     render(TaskEditDrawer, {

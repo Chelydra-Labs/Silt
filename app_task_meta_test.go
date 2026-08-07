@@ -159,6 +159,66 @@ func TestSetTaskPriority_SetAndClear(t *testing.T) {
 	}
 }
 
+func TestSetTaskPriority_RejectsOutOfRangeWithoutWriting(t *testing.T) {
+	app := newTestApp(t)
+	const id = "cccc3434-1111-1111-1111-111111111111"
+	content := "- [ ] ship [priority:: 2] <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "PrioRange", "2026-07-01", content)
+	tok := registerTestSession(t, app, "silt-tasks")
+	before, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read before: %v", err)
+	}
+
+	for _, priority := range []int{-1, 4, 99} {
+		if err := app.SetTaskPriority(id, priority); err == nil {
+			t.Errorf("SetTaskPriority(%d) should reject out-of-range value", priority)
+		}
+	}
+	if ok, err := app.PluginSetTaskPriority("silt-tasks", tok, id, 4); ok || err == nil {
+		t.Fatalf("PluginSetTaskPriority(4) = ok=%v err=%v, want rejection", ok, err)
+	}
+
+	after, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read after: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("invalid priority changed the source file:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestSaveFileBlocks_RejectsOutOfRangePriority(t *testing.T) {
+	app := newTestApp(t)
+	const id = "cccc5656-1111-1111-1111-111111111111"
+	content := "- [ ] ship [priority:: 2] <!-- id: " + id + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "PrioSaveRange", "2026-07-01", content)
+	blocks, err := app.FetchPageBlocks("W", "S", "PrioSaveRange")
+	if err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	for i := range blocks {
+		if blocks[i].ID == id {
+			blocks[i].Priority = 4
+		}
+	}
+	before, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read before: %v", err)
+	}
+
+	if err := app.SaveFileBlocks("W", "S", "PrioSaveRange", blocks); err == nil {
+		t.Fatal("SaveFileBlocks should reject an out-of-range task priority")
+	}
+	after, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read after: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("invalid priority changed the source file:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
 func TestSetTaskPriority_RejectsNonTask(t *testing.T) {
 	app := newTestApp(t)
 	const note = "dddd1212-1111-1111-1111-111111111111"

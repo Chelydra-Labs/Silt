@@ -309,6 +309,10 @@ describe('Tasks view', () => {
     // visual distinction from Today/Upcoming/No Date.
     const heading = section?.querySelector('h2')
     expect(heading?.className).toContain('text-error')
+    const due = screen.getByTestId('tasks-row-due-o1')
+    expect(due).toHaveTextContent(ymd)
+    expect(due).not.toHaveClass('hidden')
+    expect(due.className).toContain('text-error')
   })
 
   it('Completed group is collapsed by default and expands on click (#370 AC4)', async () => {
@@ -385,6 +389,35 @@ describe('Tasks view', () => {
     expect(screen.getByTestId('tasks-completed-toggle').textContent).toContain(
       '1'
     )
+  })
+
+  it('does not advertise unsupported completed-task restoration', async () => {
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) return { rows: [], truncated: false }
+      if (isDoneSql(sql)) {
+        return {
+          rows: [
+            {
+              id: 'done-only',
+              notebook: '.silt',
+              section: '',
+              page: 'tasks',
+              file_date: todayStr(),
+              clean_content: 'already done',
+              status: 'DONE'
+            }
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(screen.getByText(/You have no active tasks/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Restore a completed task/i)).toBeNull()
   })
 
   it('mark-done calls updateBlockState with DONE and removes the row (#370 AC6)', async () => {
@@ -1149,7 +1182,7 @@ describe('Tasks view — manual ordering (#426)', () => {
     ).toBeInTheDocument()
   })
 
-  it("sort='manual' rows are within a role=listitem container with a draggable handle", async () => {
+  it("sort='manual' exposes the pointer-only drag handle honestly", async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (isOpenSql(sql)) {
         return { rows: [task('m1', 'manual row', { manual_order: 1 })] }
@@ -1167,6 +1200,9 @@ describe('Tasks view — manual ordering (#426)', () => {
       '[data-testid="tasks-row-drag-handle-m1"]'
     )
     expect(handle?.getAttribute('draggable')).toBe('true')
+    expect(handle).toHaveAttribute('aria-hidden', 'true')
+    expect(handle).not.toHaveAttribute('role')
+    expect(handle).not.toHaveAttribute('tabindex')
   })
 
   it("sort != 'manual' does NOT render a drag handle (rows open drawer on click)", async () => {

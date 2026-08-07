@@ -6,15 +6,16 @@
 
   import type { TaskDetail } from '../types'
   import TaskMetadataSidebar from './TaskMetadataSidebar.svelte'
+  import { motionDuration } from '../motion'
 
   /**
    * Shared task inspector/edit drawer — the single metadata surface for every
    * task-editing view (Tasks list, Kanban board, future Calendar/Agenda).
    *
    * Non-modal inspector pane: `aria-modal="false"`, focus moves to the panel
-   * on open and restores on close, but is not trapped. A transparent
-   * light-dismiss layer closes pointer interactions outside the drawer while
-   * keyboard users can still leave the pane naturally.
+   * on open and restores on close, but is not trapped. Outside pointer input
+   * light-dismisses without an intercepting backdrop, so the host view remains
+   * genuinely interactive for pointer and keyboard users.
    *
    * All metadata controls (title, status, due date, pin, progress, estimate,
    * recurrence, owner, priority, timestamps, tags, dependencies, comments)
@@ -100,26 +101,36 @@
     }
   }
 
+  function onDocumentMouseDown(e: MouseEvent) {
+    if (!task || sidebarBusy) return
+    const target = e.target
+    if (!(target instanceof Node) || panelRef?.contains(target)) return
+    // Shared popovers are portaled outside the drawer. Their semantic roots
+    // must remain interactive without being mistaken for an outside click.
+    if (
+      target instanceof Element &&
+      target.closest('[role="dialog"], [role="listbox"], [role="menu"]')
+    )
+      return
+    onClose()
+  }
+
   // Esc-to-close listener is bound only while the drawer is open.
   $effect(() => {
     if (!task) return
     window.addEventListener('keydown', onWindowKeydown)
-    return () => window.removeEventListener('keydown', onWindowKeydown)
+    document.addEventListener('mousedown', onDocumentMouseDown, true)
+    return () => {
+      window.removeEventListener('keydown', onWindowKeydown)
+      document.removeEventListener('mousedown', onDocumentMouseDown, true)
+    }
   })
 </script>
 
 {#if task}
-  <button
-    type="button"
-    tabindex="-1"
-    aria-label="Close task drawer"
-    data-testid="task-drawer-backdrop"
-    onclick={onClose}
-    class="fixed inset-x-0 bottom-0 top-12 z-30 cursor-default border-none bg-transparent p-0"
-  ></button>
   <div
     bind:this={panelRef}
-    transition:fly={{ x: 320, duration: 200 }}
+    transition:fly={{ x: 320, duration: motionDuration(200) }}
     class="fixed right-0 top-12 z-40 h-[calc(100vh-48px)] w-full overflow-y-auto border-l border-surface-card-border bg-surface-card shadow-2xl custom-scrollbar focus:outline-none sm:w-96 lg:w-full lg:max-w-md"
     role="dialog"
     aria-modal="false"

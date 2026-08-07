@@ -325,6 +325,22 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     }
   })
 
+  it('shows a user-visible notice when the task result is truncated', async () => {
+    resetTaskHubState()
+    setGroupBy('status')
+    mocks.sqliteQuery.mockReset().mockResolvedValue({
+      rows: [row({ id: 'truncated-1', clean_content: 'Visible task' })],
+      truncated: true
+    })
+
+    render(BoardView, { ctx: makeCtx(), onCountChange: vi.fn() })
+    await flush()
+
+    expect(screen.getByTestId('board-truncated-notice')).toHaveTextContent(
+      'Some tasks are hidden'
+    )
+  })
+
   // --- Column derivation per dimension ----------------------------------
 
   it('renders TODO/DOING/DONE columns for groupBy=status', async () => {

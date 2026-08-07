@@ -23,6 +23,7 @@
   import type { PluginContext } from '../../../sdk'
   import { STANDALONE_TASKS_NOTEBOOK } from '../../../../lib/standaloneTasksNav'
   import TaskMetadataSidebar from './TaskMetadataSidebar.svelte'
+  import { motionDuration } from '../motion'
   import type { TaskDetail } from '../types'
   import { fetchTaskDetail } from '../query'
 
@@ -265,9 +266,7 @@
       clearTimeout(saveTimer)
       saveTimer = null
     }
-    if (unsavedChanges) {
-      void persist()
-    }
+    if (unsavedChanges) void persist()
     await inFlight
     while (saveRequested || saving) {
       await inFlight
@@ -277,8 +276,29 @@
   async function attemptClose() {
     if (unsavedChanges || saving) {
       await drainSave()
-      unsavedChanges = false
+      // A failed final save keeps the modal open so the user can retry or
+      // explicitly discard the edits instead of losing them on close.
+      if (unsavedChanges || saveError) return
     }
+    onClose()
+  }
+
+  function retrySave(): void {
+    if (saving) return
+    saveError = ''
+    void persist()
+  }
+
+  function discardChanges(): void {
+    if (saving) return
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    saveRequested = false
+    pendingSnapshot = null
+    unsavedChanges = false
+    saveError = ''
     onClose()
   }
 
@@ -393,7 +413,7 @@
 
 <div
   class="fixed inset-0 z-[180] flex items-center justify-center p-6 bg-black/40 backdrop-blur-[2px]"
-  transition:fly={{ y: -12, duration: 150 }}
+  transition:fly={{ y: -12, duration: motionDuration(150) }}
 >
   <!-- Backdrop -->
   <button
@@ -539,6 +559,22 @@
             Esc to close
           </span>
         </footer>
+        {#if saveError}
+          <div class="flex items-center justify-end gap-2 px-5 pb-2">
+            <button
+              type="button"
+              class="text-type-xs font-label-sm text-text-muted hover:text-text-primary"
+              disabled={saving}
+              onclick={discardChanges}>Discard changes</button
+            >
+            <button
+              type="button"
+              class="text-type-xs font-label-sm text-accent-primary-start hover:text-text-primary"
+              disabled={saving}
+              onclick={retrySave}>Retry save</button
+            >
+          </div>
+        {/if}
       </div>
 
       <!-- Sidebar: metadata (#780 / #826) — gated on sidebarOpen for both layouts -->

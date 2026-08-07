@@ -259,7 +259,7 @@ func parseLeadingIndent(line string, spacesPerTab int) int {
 // Unknown keys are preserved in extraTokens so the file round-trips
 // without data loss.
 func scanTaskTokens(remainder string) (owner, startDate, dueDate string, priority int, pinned *bool, progress int, recurrence, description string, blockedBy []string, extraTokens []string, createdAt, completedAt string, manualOrder int, modifiedAt, estimate string) {
-	priority = 3 // legacy omitted-token value; new task creation sets Normal explicitly
+	priority = LegacyMissingTaskPriority
 	progress = 0
 	matches := TaskTokenRegex.FindAllStringSubmatch(remainder, -1)
 	// Strip all [key:: value] tokens from the remainder to get the

@@ -979,7 +979,7 @@ export interface SiltPlugin {
   /** Called once when the plugin is loaded; receives the host context. */
   init?: (ctx: PluginContext) => void
   /** Called after init once a vault is open and the context is fully usable (#106). */
-  onVaultOpen?: (ctx: PluginContext) => void
+  onVaultOpen?: (ctx: PluginContext) => void | Promise<void>
   /** Called before the active vault tears down (workspace switch / app close) so
    *  the plugin can release watchers/timers. #106. */
   onVaultClose?: () => void
@@ -1035,7 +1035,7 @@ export interface RegisteredPlugin {
   /** Optional init hook invoked with the live PluginContext. */
   init?: (ctx: PluginContext) => void
   /** v2 lifecycle hooks (#106) — invoked by the host loader. */
-  onVaultOpen?: (ctx: PluginContext) => void
+  onVaultOpen?: (ctx: PluginContext) => void | Promise<void>
   onVaultClose?: () => void
   onShutdown?: () => void
   /** Origin: bundled with the app vs loaded from .system/plugins/. */

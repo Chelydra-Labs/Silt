@@ -486,7 +486,32 @@ func (a *App) PluginSetTaskPriority(pluginID, sessionToken, blockID string, prio
 // points. Delegates the shared write-chain to mutateTaskBlock; see that
 // method for the chain.
 func (a *App) setTaskPriority(blockID string, priority int) error {
+	if err := validateTaskPriority(priority); err != nil {
+		return err
+	}
 	return a.mutateTaskBlock(blockID, "SetTaskPriority", func(b *parser.ParsedBlock) { b.Priority = priority })
+}
+
+// validateTaskPriority is shared by every IPC write that accepts ParsedBlock
+// values. Zero is retained as the legacy omitted-token/clear value; new task
+// creation paths use parser.DefaultTaskPriority explicitly.
+func validateTaskPriority(priority int) error {
+	if priority < 0 || priority > 3 {
+		return fmt.Errorf("task priority must be between 0 and 3 (0 clears priority; got %d)", priority)
+	}
+	return nil
+}
+
+func validateTaskBlockPriorities(blocks []parser.ParsedBlock) error {
+	for _, block := range blocks {
+		if block.Type != parser.BlockTask {
+			continue
+		}
+		if err := validateTaskPriority(block.Priority); err != nil {
+			return fmt.Errorf("block %s: %w", block.ID, err)
+		}
+	}
+	return nil
 }
 
 // SetTaskTags rewrites the hashtag set on a task's CleanText (the prose),

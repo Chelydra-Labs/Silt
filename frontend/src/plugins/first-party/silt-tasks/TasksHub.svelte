@@ -63,6 +63,7 @@
   import { getTaskWeekStart } from '../../../lib/taskWeekStart.svelte'
   import { cloneColumns, columnsEqual } from './columns'
   import { viewMatchesState } from './savedViews'
+  import { motionDuration } from './motion'
 
   interface Props {
     ctx: PluginContext
@@ -91,6 +92,7 @@
   let blockDeferredHydration = false
   let awaitingRouteFirstHydration = false
   let settingsSnapshotLoaded = false
+  let settingsHydrationSeq = 0
   let navigationEntryHandled = false
 
   // Counts reported upward by the active renderer (List today).
@@ -242,15 +244,38 @@
   }
 
   onMount(() => {
+    let mounted = true
+    const hydrationSeq = () => ++settingsHydrationSeq
+    const reportSettingsFailure = (error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error)
+      const message = `Couldn't load task preferences${detail ? `: ${detail}` : ''}`
+      weekStartError = message
+      void ctx.notify({ title: 'Tasks', body: message }).catch(() => {})
+    }
+    const requestSettings = (
+      load: () => Promise<boolean>,
+      kind: 'initial' | 'refresh',
+      onApplied?: () => void | Promise<void>
+    ) => {
+      const request = hydrationSeq()
+      void load()
+        .then((applied) => {
+          if (!mounted || request !== settingsHydrationSeq || !applied) return
+          settingsSnapshotLoaded = true
+          applyOrDeferSettingsHydration(kind)
+          void onApplied?.()
+        })
+        .catch((error: unknown) => {
+          if (!mounted || request !== settingsHydrationSeq) return
+          reportSettingsFailure(error)
+        })
+    }
+
     // Pull the settings slice through the SDK (per-active-notebook override
     // layer #133) before any load* read. initTasksSettings is async because
     // getPluginSettings hits the Go binding, so hydration + facet reload run
     // in its .then().
-    void initTasksSettings(ctx).then(() => {
-      settingsSnapshotLoaded = true
-      applyOrDeferSettingsHydration('initial')
-      void reloadFacets()
-    })
+    requestSettings(() => initTasksSettings(ctx), 'initial', reloadFacets)
 
     // Subsequent external edits (e.g. co-located config.yaml change on a
     // linked notebook) arrive as config:changed. initTasksSettings already
@@ -262,18 +287,14 @@
     // a linked notebook with its own co-located config.yaml can carry
     // different columns / default modes / saved views.
     const unsubConfig = ctx.on('config:changed', () => {
-      void reloadTasksSettings(ctx).then(() => {
-        settingsSnapshotLoaded = true
-        applyOrDeferSettingsHydration('refresh')
-      })
+      requestSettings(() => reloadTasksSettings(ctx), 'refresh')
     })
     const unsubNav = ctx.on('active-notebook:changed', () => {
-      void reloadTasksSettings(ctx).then(() => {
-        settingsSnapshotLoaded = true
-        applyOrDeferSettingsHydration('refresh')
-      })
+      requestSettings(() => reloadTasksSettings(ctx), 'refresh')
     })
     return () => {
+      mounted = false
+      settingsHydrationSeq++
       unsubConfig()
       unsubNav()
     }
@@ -541,6 +562,7 @@
   let savedViewError = $state('')
   let savedViewLiveMsg = $state('')
   let composerInput = $state<HTMLInputElement | null>(null)
+  let bookmarkButton = $state<HTMLButtonElement | null>(null)
 
   let activeSavedView = $derived(
     hubState.activeSavedViewId
@@ -570,10 +592,11 @@
     savedViewPopover = 'menu'
   }
 
-  function closePopover() {
+  function closePopover(returnFocus = false) {
     savedViewPopover = 'closed'
     composerName = ''
     savedViewError = ''
+    if (returnFocus) void tick().then(() => bookmarkButton?.focus())
   }
 
   // Build a SavedView snapshot from the current hub state. Used by both
@@ -618,7 +641,7 @@
     }
     savedViewError = ''
     savedViewLiveMsg = msg
-    closePopover()
+    closePopover(true)
   }
 
   // Save current state as a NEW view, then mark it active.
@@ -707,7 +730,7 @@
   // when the popover transitions from closed → open.
   function onPopoverKeydown(e: KeyboardEvent) {
     if (e.key !== 'Escape') return
-    if (savedViewPopover !== 'closed') closePopover()
+    if (savedViewPopover !== 'closed') closePopover(true)
     if (preferencesOpen) closePreferences(true)
   }
 
@@ -785,6 +808,7 @@
         data-testid="tasks-hub-saved-view-control"
       >
         <button
+          bind:this={bookmarkButton}
           type="button"
           onclick={() => {
             if (savedViewPopover !== 'closed') {
@@ -833,7 +857,7 @@
 
         {#if savedViewPopover === 'save'}
           <div
-            transition:fly={{ y: -4, duration: 100 }}
+            transition:fly={{ y: -4, duration: motionDuration(100) }}
             class="absolute z-50 mt-1 top-full left-0 min-w-60 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl p-2"
             role="dialog"
             aria-label="Save current view"
@@ -851,7 +875,7 @@
                 data-testid="tasks-hub-save-view-name"
                 onkeydown={(e) => {
                   if (e.key === 'Enter') void commitSaveNew()
-                  else if (e.key === 'Escape') closePopover()
+                  else if (e.key === 'Escape') closePopover(true)
                 }}
                 class="mt-1 w-full px-2 py-1 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm outline-none focus:border-accent-primary-start"
               />
@@ -868,7 +892,7 @@
             <div class="mt-2 flex items-center justify-end gap-1">
               <button
                 type="button"
-                onclick={closePopover}
+                onclick={() => closePopover(true)}
                 data-testid="tasks-hub-save-view-cancel"
                 class="px-2 py-1 rounded text-type-xs font-label-sm text-text-muted hover:bg-hover border-none bg-transparent cursor-pointer"
                 >Cancel</button
@@ -884,7 +908,7 @@
           </div>
         {:else if savedViewPopover === 'rename'}
           <div
-            transition:fly={{ y: -4, duration: 100 }}
+            transition:fly={{ y: -4, duration: motionDuration(100) }}
             class="absolute z-50 mt-1 top-full left-0 min-w-60 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl p-2"
             role="dialog"
             aria-label={`Rename ${activeSavedView?.name ?? 'view'}`}
@@ -901,7 +925,7 @@
                 data-testid="tasks-hub-rename-view-name"
                 onkeydown={(e) => {
                   if (e.key === 'Enter') void commitRename()
-                  else if (e.key === 'Escape') closePopover()
+                  else if (e.key === 'Escape') closePopover(true)
                 }}
                 class="mt-1 w-full px-2 py-1 rounded bg-surface-panel border border-surface-panel-border text-text-primary text-type-sm outline-none focus:border-accent-primary-start"
               />
@@ -914,7 +938,7 @@
             <div class="mt-2 flex items-center justify-end gap-1">
               <button
                 type="button"
-                onclick={closePopover}
+                onclick={() => closePopover(true)}
                 data-testid="tasks-hub-rename-view-cancel"
                 class="px-2 py-1 rounded text-type-xs font-label-sm text-text-muted hover:bg-hover border-none bg-transparent cursor-pointer"
                 >Cancel</button
@@ -930,7 +954,7 @@
           </div>
         {:else if savedViewPopover === 'menu'}
           <div
-            transition:fly={{ y: -4, duration: 100 }}
+            transition:fly={{ y: -4, duration: motionDuration(100) }}
             class="absolute z-50 mt-1 top-full left-0 min-w-50 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
             role="dialog"
             aria-label={`Actions for ${activeSavedView?.name ?? 'view'}`}
@@ -1056,7 +1080,7 @@
         {#if preferencesOpen}
           <div
             id="tasks-preferences-popover"
-            transition:fly={{ y: -4, duration: 100 }}
+            transition:fly={{ y: -4, duration: motionDuration(100) }}
             class="absolute z-50 top-full right-0 mt-2 w-64 rounded-lg border border-surface-popover-border bg-surface-popover p-3 shadow-xl"
             role="dialog"
             aria-labelledby="tasks-preferences-title"
@@ -1203,7 +1227,7 @@
     <div
       class="fixed inset-0 z-40"
       role="presentation"
-      onclick={closePopover}
+      onclick={() => closePopover(true)}
       tabindex="-1"
       aria-hidden="true"
       data-testid="tasks-hub-saved-view-backdrop"
