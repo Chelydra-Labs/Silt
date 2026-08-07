@@ -198,24 +198,62 @@ describe('agent-loop', () => {
     expect(res.hitIterationCap).toBe(false)
   })
 
-  it('stops at MAX_ITERATIONS when the model keeps calling tools', async () => {
+  it('forces a final answer on the last iteration when the model keeps calling tools', async () => {
     registerTool({
       name: 'loop',
       description: 'always called',
       parameters: { type: 'object', properties: {} },
-      handler: async () => ({ content: 'again' })
+      handler: async () => ({ content: 'MUOPT changes the plant for reports' })
     })
-    // Every turn returns a tool call — the loop must cap at MAX_ITERATIONS.
-    const ctx = mockCtx(() =>
-      mockStream({
-        content: '',
-        model: 'm',
-        tool_calls: [{ id: 'tc', name: 'loop', arguments: {} }]
-      })
+    const completeReqs: Array<{
+      toolChoice?: { mode: string }
+      tools?: unknown[]
+    }> = []
+    // Tool-using turns always request another tool; the reserved last turn
+    // must force toolChoice none and synthesize an answer from vault_data.
+    const ctx = mockCtx((n) => {
+      if (n < MAX_ITERATIONS) {
+        return mockStream({
+          content: '',
+          model: 'm',
+          tool_calls: [{ id: `tc${n}`, name: 'loop', arguments: {} }]
+        })
+      }
+      return mockStream(
+        { content: 'Use MUOPT to change the plant for reports.', model: 'm' },
+        ['Use MUOPT to change the plant for reports.']
+      )
+    })
+    const origComplete = ctx.ai.complete.bind(ctx.ai)
+    ctx.ai.complete = ((req: unknown) => {
+      completeReqs.push(req as (typeof completeReqs)[0])
+      return origComplete(req as never)
+    }) as typeof ctx.ai.complete
+
+    const res = await runAgent(
+      ctx,
+      'which screen changes plant for reports?',
+      []
     )
-    const res = await runAgent(ctx, 'go', [])
-    expect(res.hitIterationCap).toBe(true)
     expect(res.iterations).toBe(MAX_ITERATIONS)
+    expect(res.forcedFinalAnswer).toBe(true)
+    expect(res.hitIterationCap).toBe(true)
+    expect(res.text).toBe('Use MUOPT to change the plant for reports.')
+    // Last complete: no tools catalog, toolChoice none.
+    const lastReq = completeReqs[completeReqs.length - 1]
+    expect(lastReq.toolChoice).toEqual({ mode: 'none' })
+    expect(lastReq.tools).toBeUndefined()
+    // Earlier turns still offered tools.
+    expect(completeReqs[0].toolChoice).toEqual({ mode: 'auto' })
+    expect(completeReqs[0].tools).toBeDefined()
+  })
+
+  it('buildSystemPrompt steers the model to stop once vault_data is enough', () => {
+    const ctx = mockCtx(() => mockStream({ content: '', model: 'm' }))
+    const prompt = buildSystemPrompt(ctx)
+    expect(prompt).toMatch(/TOOL BUDGET/i)
+    expect(prompt).toMatch(/Do not keep calling tools/i)
+    expect(prompt).toMatch(/answer the user directly/i)
   })
 
   it('stops when the abort signal is already aborted', async () => {

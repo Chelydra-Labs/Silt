@@ -316,7 +316,18 @@ export function createAgentCapability(): AIChatCapability {
           protocolHistory = priorHistory
           return
         }
-        if (result.hitIterationCap) {
+        // Prefer the forced wrap-up answer when the model never voluntarily
+        // stopped tool-calling. Only show the hard stop banner when there is
+        // still nothing useful to display.
+        if (!finalTextRecorded && result.text) {
+          updateAssistant(result.text, false)
+          protocolHistory = [
+            ...protocolHistory,
+            { role: 'assistant', content: result.text }
+          ]
+          finalTextRecorded = true
+        }
+        if (result.hitIterationCap && !result.text?.trim()) {
           context.append(
             statusEntry({
               role: 'system',
@@ -324,13 +335,6 @@ export function createAgentCapability(): AIChatCapability {
               message: 'Stopped after reaching the iteration limit.'
             })
           )
-        }
-        if (!finalTextRecorded && result.text) {
-          updateAssistant(result.text, false)
-          protocolHistory = [
-            ...protocolHistory,
-            { role: 'assistant', content: result.text }
-          ]
         }
       } catch (e) {
         // Provider error mid-turn: roll back so protocolHistory only ever
