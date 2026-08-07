@@ -58,6 +58,11 @@
     } else if (task && drawerOpen && tid !== lastTaskId) {
       const active = document.activeElement as HTMLElement | null
       if (active && !panelRef?.contains(active)) previouslyFocused = active
+      // Switching tasks mid-scroll strands the reader where the old task's
+      // comments were; snap the panel back to the new task's header. Direct
+      // scrollTop (not scrollTo) so it is an instant reset and observable in
+      // the jsdom test environment, which does not implement scrollTo.
+      if (panelRef) panelRef.scrollTop = 0
     } else if (!task && drawerOpen) {
       drawerOpen = false
       if (previouslyFocused?.isConnected) {
@@ -131,7 +136,7 @@
   <div
     bind:this={panelRef}
     transition:fly={{ x: 320, duration: motionDuration(200) }}
-    class="fixed right-0 top-12 z-40 h-[calc(100vh-48px)] w-full overflow-y-auto border-l border-surface-card-border bg-surface-card shadow-2xl custom-scrollbar focus:outline-none sm:w-96 lg:w-full lg:max-w-md"
+    class="fixed right-0 top-12 z-40 h-[calc(100vh-48px)] w-full overflow-y-auto border-l border-surface-card-border bg-surface-card shadow-2xl custom-scrollbar focus:outline-none sm:w-[480px] lg:w-[540px] lg:max-w-xl"
     role="dialog"
     aria-modal="false"
     aria-labelledby="task-edit-drawer-title"

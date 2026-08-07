@@ -448,20 +448,18 @@ describe('TaskEditDrawer — source awareness + affordances', () => {
 
   it('renders aria-pressed as a real boolean (pinned coercion, not INT 0/1)', () => {
     const ctx = makeCtx()
-    const { container } = render(TaskEditDrawer, {
-      // SQL delivers pinned as INTEGER 1; cast simulates the wire shape.
+    render(TaskEditDrawer, {
+      // SQL delivers pinned as INTEGER 1; cast simulates the wire shapes.
       props: {
         task: makeTask({ pinned: 1 as unknown as boolean }),
         ctx,
         onClose: () => {}
       }
     })
-    const pinBtn = Array.from(
-      container.querySelectorAll('button[aria-pressed]')
-    ).find((b) => b.textContent?.includes('Pin')) as HTMLElement | undefined
-    expect(pinBtn).toBeTruthy()
+    // Icon-only pin button: query by its accessible name, not text content.
+    const pinBtn = screen.getByRole('button', { name: /pin/i })
     // Coerced to a real boolean — never the out-of-spec "1".
-    expect(pinBtn?.getAttribute('aria-pressed')).toBe('true')
+    expect(pinBtn.getAttribute('aria-pressed')).toBe('true')
   })
 
   it('hides "Open source page" and omits breadcrumb for a .silt task', () => {
@@ -533,15 +531,16 @@ describe('TaskEditDrawer — source awareness + affordances', () => {
 describe('TaskEditDrawer — information architecture and keyboard flow', () => {
   beforeEach(() => cleanup())
 
-  it('uses the full mobile width and widens modestly on desktop', () => {
+  it('uses the full mobile width and widens to 480–540px on desktop', () => {
     render(TaskEditDrawer, {
       props: { task: makeTask(), ctx: makeCtx(), onClose: () => {} }
     })
 
     expect(screen.getByRole('dialog')).toHaveClass(
       'w-full',
-      'sm:w-96',
-      'lg:max-w-md'
+      'sm:w-[480px]',
+      'lg:w-[540px]',
+      'lg:max-w-xl'
     )
   })
 
@@ -585,7 +584,29 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('keeps title, status, due date, pin, and close in one sticky header', () => {
+  it('does not light-dismiss the drawer while a nested popover is open', async () => {
+    const onClose = vi.fn()
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx: makeCtx(), onClose }
+    })
+
+    // Open the due-date popover.
+    await fireEvent.click(screen.getByRole('button', { name: /2026-07-15/ }))
+    expect(
+      screen.getByRole('dialog', { name: 'Due date options' })
+    ).toBeTruthy()
+
+    // A mousedown fully outside the drawer AND the popover must NOT close the
+    // drawer while the popover is open — the sidebarBusy guard holds so the
+    // user doesn't lose the drawer mid-date-edit. (The popover closes itself.)
+    const outside = document.createElement('button')
+    document.body.appendChild(outside)
+    await fireEvent.mouseDown(outside)
+    expect(onClose).not.toHaveBeenCalled()
+    outside.remove()
+  })
+
+  it('keeps title, status, due date, start day, pin, and close in one sticky header', () => {
     render(TaskEditDrawer, {
       props: { task: makeTask(), ctx: makeCtx(), onClose: () => {} }
     })
@@ -599,6 +620,7 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
     expect(header).toContainElement(
       screen.getByRole('button', { name: /2026-07-15/ })
     )
+    expect(header).toContainElement(screen.getByLabelText('Start day'))
     expect(header).toContainElement(
       screen.getByRole('button', { name: /Pin task/ })
     )
@@ -607,7 +629,7 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
     )
   })
 
-  it('uses content-aware defaults for planning and activity', () => {
+  it('renders planning and activity sections always open regardless of task content', () => {
     render(TaskEditDrawer, {
       props: {
         task: makeTask({
@@ -619,12 +641,12 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
       }
     })
 
-    expect(screen.getByTestId('task-planning-disclosure')).toHaveAttribute(
-      'open'
+    // The content-aware open/closed distinction no longer exists: both flat
+    // sections render their content unconditionally.
+    expect(screen.getByTestId('task-planning-section')).toHaveTextContent(
+      'Recurrence'
     )
-    expect(screen.getByTestId('task-activity-disclosure')).toHaveAttribute(
-      'open'
-    )
+    expect(screen.getByTestId('task-activity-section')).toBeInTheDocument()
   })
 
   it('Escape closes a nested due-date popover before closing the drawer', async () => {
@@ -668,6 +690,28 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
     await tick()
     expect(document.activeElement).toBe(trigger)
     trigger.remove()
+  })
+})
+
+describe('TaskEditDrawer — scroll reset on task switch', () => {
+  beforeEach(() => cleanup())
+
+  it('snaps the panel back to the top when switching tasks', async () => {
+    const ctx = makeCtx()
+    const { rerender } = render(TaskEditDrawer, {
+      props: { task: makeTask({ id: 'task-a' }), ctx, onClose: () => {} }
+    })
+    // Simulate the user having scrolled down into the comments of task A.
+    const panel = screen.getByRole('dialog')
+    panel.scrollTop = 480
+    expect(panel.scrollTop).toBe(480)
+
+    await rerender({ task: makeTask({ id: 'task-b' }), ctx, onClose: () => {} })
+    await tick()
+
+    // The same panel element is reused (the {#if task} block stays mounted),
+    // so its scrollTop reflects the reset the task-switch effect applied.
+    expect(screen.getByRole('dialog').scrollTop).toBe(0)
   })
 })
 

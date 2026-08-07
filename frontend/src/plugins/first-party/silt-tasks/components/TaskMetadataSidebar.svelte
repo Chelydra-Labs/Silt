@@ -181,9 +181,6 @@
   let estimateInvalid = $state(false)
   let weekStart = $derived(getTaskWeekStart())
   let dueDatePresets = $derived(buildDueDatePresets(ctx.today, weekStart))
-  let disclosureTaskId = $state('')
-  let planningOpen = $state(false)
-  let activityOpen = $state(false)
 
   // ctx is a stable plugin-context singleton — see BoardView for rationale.
   // svelte-ignore state_referenced_locally
@@ -257,19 +254,6 @@
       estimateInvalid = false
     }
     metaError = ''
-  })
-
-  // Seed disclosures once per task. User choices survive optimistic host
-  // refreshes; switching tasks gets a fresh, content-aware default.
-  $effect(() => {
-    if (task.id === disclosureTaskId) return
-    disclosureTaskId = task.id
-    planningOpen =
-      task.progress > 0 ||
-      task.estimate_minutes !== null ||
-      !!task.recurrence ||
-      blockedByList.length > 0
-    activityOpen = task.comments_count > 0 || !!task.completed_at
   })
 
   async function togglePin() {
@@ -562,7 +546,7 @@
   )
 </script>
 
-<div bind:this={rootRef}>
+<div bind:this={rootRef} class="task-metadata-sidebar">
   {#if headingId}
     <h2 id={headingId} class="sr-only">Edit task: {task.clean_content}</h2>
   {/if}
@@ -598,12 +582,27 @@
           }
         }}
       />
+      <button
+        type="button"
+        onclick={togglePin}
+        disabled={pinField.pending}
+        aria-pressed={pinField.value}
+        aria-label={pinField.value ? 'Unpin task' : 'Pin task'}
+        title={pinField.value ? 'Unpin task' : 'Pin task'}
+        class="pin-button shrink-0 rounded p-1 transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start disabled:cursor-not-allowed disabled:opacity-50 {pinField.value
+          ? 'text-accent-primary-start'
+          : 'text-text-muted'}"
+      >
+        <span class="material-symbols-outlined pin-icon" aria-hidden="true"
+          >push_pin</span
+        >
+      </button>
       {#if onClose}
         <button
           type="button"
           onclick={onClose}
           aria-label="Close detail panel"
-          class="shrink-0 rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start"
+          class="shrink-0 rounded border-l border-surface-card-border p-1 pl-1.5 ml-0.5 text-text-muted transition-colors hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start"
         >
           <span class="material-symbols-outlined" aria-hidden="true">close</span
           >
@@ -645,14 +644,16 @@
       </div>
     </section>
 
-    <div class="grid grid-cols-2 gap-2">
+    <div class="field-pair grid grid-cols-2 gap-2">
       <section class="min-w-0">
         <h3
+          id="task-due-date-label"
           class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
         >
           Due date
         </h3>
         <button
+          id="task-due-date-trigger"
           bind:this={dueDateTrigger}
           type="button"
           onclick={() => {
@@ -662,6 +663,7 @@
           disabled={dueDateField.pending}
           aria-haspopup="dialog"
           aria-expanded={dueDateOpen}
+          aria-labelledby="task-due-date-label task-due-date-trigger"
           class="flex w-full items-center justify-between gap-1 rounded border border-surface-card-border bg-surface-card px-2 py-1.5 font-label-sm text-type-xs text-text-primary transition-colors hover:bg-hover disabled:opacity-50"
         >
           <span class="flex min-w-0 items-center gap-1.5">
@@ -743,33 +745,23 @@
         </Popover>
       </section>
 
-      <section>
+      <section class="min-w-0">
         <h3
+          id="task-start-date-label"
           class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
         >
-          Pin
+          Start day
         </h3>
-        <button
-          type="button"
-          onclick={togglePin}
-          disabled={pinField.pending}
-          class="flex w-full items-center justify-between rounded border border-surface-card-border bg-surface-card px-2 py-1.5 font-label-sm text-type-xs text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
-          aria-pressed={pinField.value}
-        >
-          <span class="flex items-center gap-1.5">
-            <span
-              class="material-symbols-outlined text-icon-sm"
-              aria-hidden="true">push_pin</span
-            >
-            {pinField.value ? 'Pinned' : 'Pin task'}
-          </span>
-          {#if pinField.value}
-            <span
-              class="material-symbols-outlined text-icon-sm text-accent-primary-start"
-              aria-hidden="true">check</span
-            >
-          {/if}
-        </button>
+        <input
+          id="task-start-date-input"
+          type="date"
+          aria-labelledby="task-start-date-label"
+          bind:value={startDateDraft}
+          disabled={startDateField.pending}
+          aria-busy={startDateField.pending}
+          onchange={(e) => void commitStartDate(e.currentTarget.value)}
+          class="w-full min-w-0 rounded border border-surface-card-border bg-surface-card px-2 py-1.5 font-label-sm text-type-xs text-text-primary transition-colors hover:bg-hover focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 disabled:cursor-not-allowed disabled:opacity-50"
+        />
       </section>
     </div>
 
@@ -797,7 +789,7 @@
         Essentials
       </h3>
     </div>
-    <dl class="flex flex-col gap-3 font-label-sm text-type-sm">
+    <dl class="field-pair grid grid-cols-2 gap-3 font-label-sm text-type-sm">
       <div class="flex items-center justify-between gap-3">
         <dt class="shrink-0 text-text-muted">
           <label for="task-owner-input">Owner</label>
@@ -861,23 +853,7 @@
           </div>
         </dd>
       </div>
-      <div class="flex items-start justify-between gap-3">
-        <dt class="shrink-0 pt-1 text-text-muted">
-          <label for="task-start-date-input">Start day</label>
-        </dt>
-        <dd class="min-w-0 flex-1">
-          <input
-            id="task-start-date-input"
-            type="date"
-            bind:value={startDateDraft}
-            disabled={startDateField.pending}
-            aria-busy={startDateField.pending}
-            onchange={(e) => void commitStartDate(e.currentTarget.value)}
-            class="w-full rounded-sm border border-surface-card-border bg-surface-card px-2 py-1 text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 disabled:opacity-50"
-          />
-        </dd>
-      </div>
-      <div class="flex items-start justify-between gap-3">
+      <div class="col-span-full flex items-start justify-between gap-3">
         <dt class="shrink-0 pt-1 text-text-muted">Tags</dt>
         <dd class="min-w-0 flex-1">
           <span class="sr-only" aria-live="polite">{tagsAnnouncement}</span>
@@ -921,19 +897,26 @@
     </dl>
   </section>
 
-  <details
-    class="group border-t border-surface-card-border"
-    bind:open={planningOpen}
-    data-testid="task-planning-disclosure"
+  <section
+    aria-labelledby="task-planning-heading"
+    class="space-y-4 border-t border-surface-card-border px-5 py-5"
+    data-testid="task-planning-section"
   >
-    <summary
-      class="cursor-pointer px-5 py-4 text-text-primary transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start"
-    >
-      <span class="font-label-sm-bold text-type-sm">Planning & tracking</span>
-    </summary>
-    <div class="space-y-6 px-5 pb-5 pt-2">
+    <div class="flex items-center gap-2">
+      <span
+        class="material-symbols-outlined text-icon-md text-accent-secondary-start"
+        aria-hidden="true">tune</span
+      >
+      <h3
+        id="task-planning-heading"
+        class="font-label-sm-bold text-type-xs uppercase tracking-widest text-text-primary"
+      >
+        Planning & tracking
+      </h3>
+    </div>
+    <div class="space-y-6">
       <section>
-        <div class="mb-2 flex items-center justify-between">
+        <div class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
           <h3
             class="font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
           >
@@ -949,6 +932,44 @@
               >
             {/if}
           </span>
+          <div class="ml-auto flex flex-col items-end gap-0.5">
+            <div class="flex items-center gap-1.5">
+              <label
+                for="task-estimate-input"
+                class="font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
+              >
+                Estimate
+              </label>
+              <input
+                id="task-estimate-input"
+                type="text"
+                data-testid="task-estimate-input"
+                class="w-28 rounded-sm border border-surface-card-border bg-surface-card px-2 py-0.5 text-right text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimateField.pending
+                  ? 'opacity-50'
+                  : ''}"
+                placeholder="—"
+                value={estimateField.value}
+                oninput={(e) => (estimateField.value = e.currentTarget.value)}
+                readonly={estimateField.pending}
+                aria-busy={estimateField.pending}
+                aria-invalid={estimateInvalid}
+                aria-describedby="task-estimate-hint"
+                onblur={() => void commitEstimate()}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void commitEstimate()
+                  }
+                }}
+              />
+            </div>
+            <p
+              id="task-estimate-hint"
+              class="font-label-sm text-type-2xs text-text-muted"
+            >
+              Try 30m, 2h, 1d, or 2.5d
+            </p>
+          </div>
         </div>
         <input
           type="range"
@@ -961,6 +982,7 @@
           onchange={onProgressChange}
           disabled={progressPending}
           aria-label="Task progress"
+          aria-valuetext={`${progressState}% complete`}
           class="w-full accent-accent-secondary-start disabled:opacity-50"
         />
         <div
@@ -971,44 +993,6 @@
             style="width: {progressState}%"
           ></div>
         </div>
-      </section>
-
-      <section>
-        <div class="mb-1 flex items-center justify-between gap-2">
-          <h3
-            class="font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
-          >
-            <label for="task-estimate-input">Estimate</label>
-          </h3>
-          <input
-            id="task-estimate-input"
-            type="text"
-            data-testid="task-estimate-input"
-            class="w-28 rounded-sm border border-surface-card-border bg-surface-card px-2 py-0.5 text-right text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimateField.pending
-              ? 'opacity-50'
-              : ''}"
-            placeholder="—"
-            value={estimateField.value}
-            oninput={(e) => (estimateField.value = e.currentTarget.value)}
-            readonly={estimateField.pending}
-            aria-busy={estimateField.pending}
-            aria-invalid={estimateInvalid}
-            aria-describedby="task-estimate-hint"
-            onblur={() => void commitEstimate()}
-            onkeydown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                void commitEstimate()
-              }
-            }}
-          />
-        </div>
-        <p
-          id="task-estimate-hint"
-          class="font-label-sm text-type-2xs text-text-muted"
-        >
-          Try 30m, 2h, 1d, or 2.5d
-        </p>
       </section>
 
       <section>
@@ -1151,22 +1135,29 @@
         {onMetaChanged}
       />
     </div>
-  </details>
+  </section>
 
-  <details
-    class="group border-y border-surface-card-border"
-    bind:open={activityOpen}
-    data-testid="task-activity-disclosure"
+  <section
+    aria-labelledby="task-activity-heading"
+    class="space-y-4 border-y border-surface-card-border px-5 py-5"
+    data-testid="task-activity-section"
   >
-    <summary
-      class="cursor-pointer px-5 py-4 text-text-primary transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start"
-    >
-      <span class="font-label-sm-bold text-type-sm">Activity</span>
-      <span class="ml-1 font-label-sm text-type-xs text-text-muted">
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span
+        class="material-symbols-outlined text-icon-md text-accent-secondary-start"
+        aria-hidden="true">forum</span
+      >
+      <h3
+        id="task-activity-heading"
+        class="font-label-sm-bold text-type-xs uppercase tracking-widest text-text-primary"
+      >
+        Activity
+      </h3>
+      <span class="font-label-sm text-type-xs text-text-muted">
         {task.comments_count} comments · {task.links_count} links · timestamps
       </span>
-    </summary>
-    <div class="space-y-5 px-5 pb-5 pt-2">
+    </div>
+    <div class="space-y-5">
       {#if task.created_at || task.completed_at}
         <dl class="flex flex-col gap-2 font-label-sm text-type-xs">
           {#if task.created_at}
@@ -1202,7 +1193,7 @@
         onCommentsChanged={onMetaChanged}
       />
     </div>
-  </details>
+  </section>
 </div>
 
 <BlockedDoneGuard
@@ -1211,3 +1202,34 @@
   onConfirm={confirmBlockedDone}
   onCancel={cancelBlockedDone}
 />
+
+<style>
+  /* Establish this component as a container so field pairs can collapse to a
+     single column on narrow hosts (the 320px sub-editor modal aside) while
+     staying side-by-side in the 480–540px task drawer. Native container-query
+     pattern mirroring FormatToolbar.svelte — no JS, no props. */
+  .task-metadata-sidebar {
+    container-type: inline-size;
+  }
+  @container (max-width: 360px) {
+    .field-pair {
+      grid-template-columns: 1fr;
+    }
+  }
+  /* Filled-vs-outlined push_pin mirrors SidebarQuickAccess.svelte: the glyph
+     fill tracks aria-pressed so the "pinned" cue is shape, not color alone. */
+  .pin-icon {
+    font-variation-settings:
+      'FILL' 0,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 20;
+  }
+  .pin-button[aria-pressed='true'] .pin-icon {
+    font-variation-settings:
+      'FILL' 1,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 20;
+  }
+</style>

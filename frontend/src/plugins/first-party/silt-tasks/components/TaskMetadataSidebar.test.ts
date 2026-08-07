@@ -145,7 +145,7 @@ describe('TaskMetadataSidebar', () => {
     expect(screen.getByLabelText('Task title')).toBeTruthy()
     expect(screen.getByText('Status')).toBeTruthy()
     expect(screen.getByText('Due date')).toBeTruthy()
-    expect(screen.getByText('Pin')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Pin task' })).toBeTruthy()
     expect(screen.getByText('Essentials')).toBeTruthy()
     expect(screen.getByLabelText('Owner')).toBeTruthy()
     expect(screen.getByText('Priority')).toBeTruthy()
@@ -233,20 +233,22 @@ describe('TaskMetadataSidebar', () => {
     )
   })
 
-  it('defaults empty secondary sections closed', () => {
-    render(TaskMetadataSidebar, {
+  it('renders flat sections always open with no disclosure toggle', () => {
+    const { container } = render(TaskMetadataSidebar, {
       props: { task: makeTask(), ctx: makeCtx() }
     })
 
-    expect(screen.getByTestId('task-planning-disclosure')).not.toHaveAttribute(
-      'open'
-    )
-    expect(screen.getByTestId('task-activity-disclosure')).not.toHaveAttribute(
-      'open'
-    )
+    const planning = screen.getByTestId('task-planning-section')
+    const activity = screen.getByTestId('task-activity-section')
+    // Sections are always open: content renders regardless of task population,
+    // with no native <details> to collapse it.
+    expect(planning).toHaveTextContent('Progress')
+    expect(planning).toHaveTextContent('Recurrence')
+    expect(activity).toHaveTextContent('Comments')
+    expect(container.querySelectorAll('details, summary')).toHaveLength(0)
   })
 
-  it('opens populated sections and exposes native disclosure summaries', () => {
+  it('renders flat section headers for planning and activity', () => {
     render(TaskMetadataSidebar, {
       props: {
         task: makeTask({
@@ -258,14 +260,32 @@ describe('TaskMetadataSidebar', () => {
       }
     })
 
-    expect(screen.getByTestId('task-planning-disclosure')).toHaveAttribute(
-      'open'
-    )
-    expect(screen.getByTestId('task-activity-disclosure')).toHaveAttribute(
-      'open'
-    )
-    expect(screen.getByText('Planning & tracking')).toBeInTheDocument()
-    expect(screen.getByText('Activity')).toBeInTheDocument()
+    // Content renders under real h3 section headers (SR section nav) with no
+    // disclosure affordance — the old open/closed summaries are gone.
+    expect(
+      screen.getByRole('heading', { name: 'Planning & tracking', level: 3 })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'Activity', level: 3 })
+    ).toBeInTheDocument()
+    expect(screen.queryAllByTestId('task-planning-disclosure')).toHaveLength(0)
+    expect(screen.queryAllByTestId('task-activity-disclosure')).toHaveLength(0)
+  })
+
+  it('wires the responsive container + field-pairs so the narrow modal sidebar stacks to one column', () => {
+    const { container } = render(TaskMetadataSidebar, {
+      props: { task: makeTask(), ctx: makeCtx() }
+    })
+
+    // The sidebar root is a container (container-type: inline-size) and the date
+    // pair + Essentials [Owner | Priority] pair carry .field-pair, which the
+    // @container (max-width: 360px) rule collapses to one column inside the 320px
+    // sub-editor modal aside. jsdom can't evaluate container queries, so this
+    // guards the mechanism's presence rather than the computed geometry.
+    expect(container.querySelector('.task-metadata-sidebar')).toBeTruthy()
+    expect(
+      container.querySelectorAll('.field-pair').length
+    ).toBeGreaterThanOrEqual(2)
   })
 
   it('an optimistic status edit calls ctx.updateBlockState', async () => {
@@ -286,11 +306,8 @@ describe('TaskMetadataSidebar', () => {
     render(TaskMetadataSidebar, {
       props: { task: makeTask(), ctx }
     })
-    // The Pin button is the one with aria-pressed containing "Pin" text.
-    const pinBtn = Array.from(
-      document.querySelectorAll('button[aria-pressed]')
-    ).find((b) => b.textContent?.includes('Pin')) as HTMLElement
-    expect(pinBtn).toBeTruthy()
+    // Icon-only pin button: query by its accessible name, not text content.
+    const pinBtn = screen.getByRole('button', { name: 'Pin task' })
     await fireEvent.click(pinBtn)
     await flush()
     expect(updateTaskMeta).toHaveBeenCalledWith('task-1', { pinned: true })
