@@ -562,7 +562,7 @@
   )
 </script>
 
-<div bind:this={rootRef}>
+<div bind:this={rootRef} class="task-metadata-sidebar">
   {#if headingId}
     <h2 id={headingId} class="sr-only">Edit task: {task.clean_content}</h2>
   {/if}
@@ -1211,3 +1211,15 @@
   onConfirm={confirmBlockedDone}
   onCancel={cancelBlockedDone}
 />
+
+<style>
+  /* Establish this component as a container so field pairs can collapse to a
+     single column on narrow hosts (the 320px sub-editor modal aside) while
+     staying side-by-side in the 480–540px task drawer. Native container-query
+     pattern mirroring FormatToolbar.svelte — no JS, no props. The actual
+     `.field-pair` collapse rule is added alongside its first use (header date
+     row) to keep each commit free of unused-CSS warnings. */
+  .task-metadata-sidebar {
+    container-type: inline-size;
+  }
+</style>

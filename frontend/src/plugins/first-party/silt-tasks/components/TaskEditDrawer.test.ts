@@ -533,15 +533,16 @@ describe('TaskEditDrawer — source awareness + affordances', () => {
 describe('TaskEditDrawer — information architecture and keyboard flow', () => {
   beforeEach(() => cleanup())
 
-  it('uses the full mobile width and widens modestly on desktop', () => {
+  it('uses the full mobile width and widens to 480–540px on desktop', () => {
     render(TaskEditDrawer, {
       props: { task: makeTask(), ctx: makeCtx(), onClose: () => {} }
     })
 
     expect(screen.getByRole('dialog')).toHaveClass(
       'w-full',
-      'sm:w-96',
-      'lg:max-w-md'
+      'sm:w-[480px]',
+      'lg:w-[540px]',
+      'lg:max-w-xl'
     )
   })
 
