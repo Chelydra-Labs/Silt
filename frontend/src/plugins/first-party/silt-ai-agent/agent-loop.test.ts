@@ -133,6 +133,56 @@ describe('agent-loop', () => {
     expect(payloads.some((p) => p.status === 'ok')).toBe(true)
   })
 
+  it('preserves thought_signature on tool_calls into the next complete (#915)', async () => {
+    registerTool({
+      name: 'lookup',
+      description: 'looks something up',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => ({ content: 'found' })
+    })
+
+    const completeCalls: unknown[] = []
+    const ctx = mockCtx((n) => {
+      if (n === 1) {
+        return mockStream({
+          content: '',
+          model: 'm',
+          tool_calls: [
+            {
+              id: 'tc1',
+              name: 'lookup',
+              arguments: { q: 'x' },
+              thought_signature: 'gemini-sig-xyz'
+            }
+          ]
+        })
+      }
+      return mockStream({ content: 'done', model: 'm' })
+    })
+    // Capture messages passed to complete on each iteration.
+    const origComplete = ctx.ai.complete.bind(ctx.ai)
+    ctx.ai.complete = ((req: unknown) => {
+      const r = req as {
+        messages: Array<{ tool_calls?: Array<{ thought_signature?: string }> }>
+      }
+      completeCalls.push(r.messages)
+      return origComplete(req as never)
+    }) as typeof ctx.ai.complete
+
+    await runAgent(ctx, 'find it', [])
+    expect(completeCalls.length).toBeGreaterThanOrEqual(2)
+    const secondMessages = completeCalls[1] as Array<{
+      role?: string
+      tool_calls?: Array<{ thought_signature?: string }>
+    }>
+    const assistantWithTools = secondMessages.find(
+      (m) => m.role === 'assistant' && m.tool_calls?.length
+    )
+    expect(assistantWithTools?.tool_calls?.[0].thought_signature).toBe(
+      'gemini-sig-xyz'
+    )
+  })
+
   it('returns immediately when no tool calls (single-shot answer)', async () => {
     const ctx = mockCtx(() =>
       mockStream({ content: 'direct answer', model: 'm' }, [

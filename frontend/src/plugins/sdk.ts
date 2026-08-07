@@ -794,11 +794,15 @@ export interface PluginAIToolDef {
 }
 
 /** A tool invocation the model requested (#595). arguments is the raw JSON
- *  object the provider returned (unwrapped from OpenAI's stringified form). */
+ *  object the provider returned (unwrapped from OpenAI's stringified form).
+ *  thought_signature is opaque Gemini 3+ baggage that must round-trip on
+ *  multi-turn tool loops (#915); omit for other providers. */
 export interface PluginAIToolCall {
   id: string
   name: string
   arguments: Record<string, unknown>
+  /** Opaque Gemini thought signature; never strip when replaying history. */
+  thought_signature?: string
 }
 
 /** One streamed fragment of a tool call (#595). The same call is split across
