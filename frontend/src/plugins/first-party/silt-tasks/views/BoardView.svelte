@@ -879,9 +879,20 @@
     transform: translateY(-1px);
   }
 
-  /* Room to scroll the selected card clear of the fixed overlay drawer. */
+  /* Room to scroll the selected card clear of the fixed overlay drawer.
+     Matches TaskEditDrawer breakpoints: full-bleed on xs, 480 from sm, 540 from lg. */
   .board-inspector-open {
-    padding-right: min(540px, 40vw);
+    padding-right: 0;
+  }
+  @media (min-width: 640px) {
+    .board-inspector-open {
+      padding-right: min(480px, 40vw);
+    }
+  }
+  @media (min-width: 1024px) {
+    .board-inspector-open {
+      padding-right: min(540px, 40vw);
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {

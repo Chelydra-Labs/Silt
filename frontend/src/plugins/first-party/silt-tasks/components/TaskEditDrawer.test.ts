@@ -768,7 +768,7 @@ describe('TaskEditDrawer — variant + light-dismiss', () => {
       }
     })
     expect(screen.getByTestId('task-filtered-out-banner')).toHaveTextContent(
-      'No longer in this view'
+      'Hidden by current filters — edits still save'
     )
   })
 

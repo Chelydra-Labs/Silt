@@ -606,6 +606,7 @@
       class:max-h-[min(40vh,24rem)]={isDrawerLayout}
       class:overflow-y-auto={isDrawerLayout}
       class:custom-scrollbar={isDrawerLayout}
+      aria-label={isDrawerLayout ? 'Comments' : undefined}
       data-testid={isDrawerLayout ? 'comment-list-scroll' : undefined}
     >
       {#each comments as c (c.key)}

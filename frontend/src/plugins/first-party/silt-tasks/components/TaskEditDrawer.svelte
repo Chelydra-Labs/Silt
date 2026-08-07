@@ -36,6 +36,11 @@
     onNextTask?: () => void
     hasPrevTask?: boolean
     hasNextTask?: boolean
+    /**
+     * Mirrors sidebar popover/dialog busy upward so list J/K can pause while
+     * a nested control is open (same signal Esc already uses).
+     */
+    busy?: boolean
   }
 
   let {
@@ -49,7 +54,9 @@
     onPrevTask,
     onNextTask,
     hasPrevTask = false,
-    hasNextTask = false
+    hasNextTask = false,
+    // eslint-disable-next-line no-useless-assignment
+    busy = $bindable(false)
   }: Props = $props()
 
   let isStandalone = $derived(
@@ -90,6 +97,9 @@
   })
 
   let sidebarBusy = $state(false)
+  $effect(() => {
+    busy = sidebarBusy
+  })
 
   function openSourcePage() {
     if (!task) return
@@ -142,72 +152,59 @@
   })
 </script>
 
-{#if task}
-  <div
-    bind:this={panelRef}
-    transition:fly={{
-      x: isPane ? 0 : 320,
-      duration: motionDuration(isPane ? 0 : 200)
-    }}
-    class={isPane
-      ? 'flex h-full w-full flex-col overflow-hidden border-l border-surface-card-border bg-surface-card shadow-none focus:outline-none'
-      : 'fixed right-0 top-12 z-40 flex h-[calc(100vh-48px)] w-full flex-col overflow-hidden border-l border-surface-card-border bg-surface-card shadow-2xl focus:outline-none sm:w-[480px] lg:w-[540px] lg:max-w-xl'}
-    role={isPane ? 'region' : 'dialog'}
-    aria-modal={isPane ? undefined : 'false'}
-    aria-labelledby="task-edit-drawer-title"
-    tabindex="-1"
-    data-testid="task-edit-drawer"
-    data-variant={variant}
-  >
-    {#if filteredOut}
-      <div
-        class="flex-shrink-0 border-b border-surface-card-border bg-surface-panel px-5 py-2 text-type-xs font-label-sm text-text-muted"
-        data-testid="task-filtered-out-banner"
-        role="status"
-      >
-        No longer in this view
-      </div>
-    {/if}
-
-    {#if showTraversal}
-      <div
-        class="flex flex-shrink-0 items-center justify-between gap-2 border-b border-surface-card-border px-3 py-1.5"
-        data-testid="task-inspector-traversal"
-      >
-        <button
-          type="button"
-          class="inline-flex items-center gap-1 rounded px-2 py-1 text-type-xs font-label-sm text-text-muted transition-colors hover:bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-          aria-label="Previous task"
-          disabled={!hasPrevTask}
-          onclick={() => onPrevTask?.()}
-        >
-          <span
-            class="material-symbols-outlined text-icon-sm"
-            aria-hidden="true">chevron_left</span
-          >
-          Previous
-        </button>
-        <button
-          type="button"
-          class="inline-flex items-center gap-1 rounded px-2 py-1 text-type-xs font-label-sm text-text-muted transition-colors hover:bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-          aria-label="Next task"
-          disabled={!hasNextTask}
-          onclick={() => onNextTask?.()}
-        >
-          Next
-          <span
-            class="material-symbols-outlined text-icon-sm"
-            aria-hidden="true">chevron_right</span
-          >
-        </button>
-      </div>
-    {/if}
-
+{#snippet drawerBody()}
+  {#if filteredOut}
     <div
-      bind:this={scrollBodyRef}
-      class="min-h-0 flex-1 overflow-y-auto custom-scrollbar"
-      data-testid="task-edit-drawer-scroll"
+      class="flex-shrink-0 border-b border-surface-card-border bg-surface-panel px-5 py-2 text-type-xs font-label-sm text-text-muted"
+      data-testid="task-filtered-out-banner"
+      role="status"
     >
+      Hidden by current filters — edits still save
+    </div>
+  {/if}
+
+  {#if showTraversal}
+    <div
+      class="flex flex-shrink-0 items-center justify-between gap-2 border-b border-surface-card-border px-3 py-1.5"
+      data-testid="task-inspector-traversal"
+    >
+      <button
+        type="button"
+        class="inline-flex items-center gap-1 rounded px-2 py-1 text-type-xs font-label-sm text-text-muted transition-colors hover:bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+        aria-label="Previous task"
+        title="Previous task (K)"
+        aria-keyshortcuts="K"
+        disabled={!hasPrevTask}
+        onclick={() => onPrevTask?.()}
+      >
+        <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
+          >chevron_left</span
+        >
+        Previous
+      </button>
+      <button
+        type="button"
+        class="inline-flex items-center gap-1 rounded px-2 py-1 text-type-xs font-label-sm text-text-muted transition-colors hover:bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+        aria-label="Next task"
+        title="Next task (J)"
+        aria-keyshortcuts="J"
+        disabled={!hasNextTask}
+        onclick={() => onNextTask?.()}
+      >
+        Next
+        <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
+          >chevron_right</span
+        >
+      </button>
+    </div>
+  {/if}
+
+  <div
+    bind:this={scrollBodyRef}
+    class="min-h-0 flex-1 overflow-y-auto custom-scrollbar"
+    data-testid="task-edit-drawer-scroll"
+  >
+    {#if task}
       <TaskMetadataSidebar
         {task}
         {ctx}
@@ -218,47 +215,75 @@
         headingId="task-edit-drawer-title"
         bind:busy={sidebarBusy}
       />
-    </div>
-
-    <div
-      class="flex-shrink-0 space-y-3 border-t border-surface-card-border px-5 py-4"
-    >
-      {#if onOpenSubEditor}
-        <section>
-          <button
-            type="button"
-            onclick={onOpenSubEditor}
-            class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-surface-card-border bg-surface-card text-text-primary hover:bg-hover transition-all font-label-sm-bold"
-          >
-            <span class="material-symbols-outlined text-icon-md">edit_note</span
-            >
-            Open sub-editor
-          </button>
-        </section>
-      {/if}
-
-      {#if !isStandalone}
-        <section>
-          <button
-            type="button"
-            onclick={openSourcePage}
-            class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-accent-primary-start/30 bg-accent-primary-glow text-accent-primary-start hover:brightness-110 transition-all font-label-sm-bold"
-          >
-            <span class="material-symbols-outlined text-icon-md"
-              >open_in_new</span
-            >
-            Open source page
-          </button>
-        </section>
-      {/if}
-
-      {#if !isStandalone}
-        <section class="pt-2 border-t border-surface-card-border">
-          <p class="text-type-2xs font-label-sm text-text-muted break-all">
-            {task.notebook} › {task.section} › {task.page}
-          </p>
-        </section>
-      {/if}
-    </div>
+    {/if}
   </div>
+
+  <div
+    class="flex-shrink-0 space-y-3 border-t border-surface-card-border px-5 py-4"
+  >
+    {#if onOpenSubEditor}
+      <section>
+        <button
+          type="button"
+          onclick={onOpenSubEditor}
+          class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-surface-card-border bg-surface-card text-text-primary hover:bg-hover transition-all font-label-sm-bold"
+        >
+          <span class="material-symbols-outlined text-icon-md">edit_note</span>
+          Open sub-editor
+        </button>
+      </section>
+    {/if}
+
+    {#if task && !isStandalone}
+      <section>
+        <button
+          type="button"
+          onclick={openSourcePage}
+          class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-accent-primary-start/30 bg-accent-primary-glow text-accent-primary-start hover:brightness-110 transition-all font-label-sm-bold"
+        >
+          <span class="material-symbols-outlined text-icon-md">open_in_new</span
+          >
+          Open source page
+        </button>
+      </section>
+      <section class="pt-2 border-t border-surface-card-border">
+        <p class="text-type-2xs font-label-sm text-text-muted break-all">
+          {task.notebook} › {task.section} › {task.page}
+        </p>
+      </section>
+    {/if}
+  </div>
+{/snippet}
+
+{#if task}
+  {#if isPane}
+    <!-- In-flow pane: no enter/exit transition (list stays interactive). -->
+    <div
+      bind:this={panelRef}
+      class="flex h-full w-full flex-col overflow-hidden border-l border-surface-card-border bg-surface-card shadow-none focus:outline-none"
+      role="region"
+      aria-labelledby="task-edit-drawer-title"
+      aria-keyshortcuts={showTraversal ? 'J K' : undefined}
+      tabindex="-1"
+      data-testid="task-edit-drawer"
+      data-variant="pane"
+    >
+      {@render drawerBody()}
+    </div>
+  {:else}
+    <div
+      bind:this={panelRef}
+      transition:fly={{ x: 320, duration: motionDuration(200) }}
+      class="fixed right-0 top-12 z-40 flex h-[calc(100vh-48px)] w-full flex-col overflow-hidden border-l border-surface-card-border bg-surface-card shadow-2xl focus:outline-none sm:w-[480px] lg:w-[540px] lg:max-w-xl"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="task-edit-drawer-title"
+      aria-keyshortcuts={showTraversal ? 'J K' : undefined}
+      tabindex="-1"
+      data-testid="task-edit-drawer"
+      data-variant="overlay"
+    >
+      {@render drawerBody()}
+    </div>
+  {/if}
 {/if}

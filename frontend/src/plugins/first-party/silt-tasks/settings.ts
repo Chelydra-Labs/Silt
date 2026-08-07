@@ -47,6 +47,25 @@ let configSlice: Record<string, unknown> = {}
 let saveFn: ((key: string, value: unknown) => Promise<boolean>) | null = null
 let settingsRequestSeq = 0
 let preloadedSettings: Promise<boolean> | null = null
+/** Bumps whenever the settings slice is replaced so views can re-hydrate. */
+let settingsEpoch = 0
+const settingsEpochListeners = new Set<() => void>()
+
+/** Subscribe to settings-slice replacements (init/reload/reset). */
+export function onTasksSettingsChanged(fn: () => void): () => void {
+  settingsEpochListeners.add(fn)
+  return () => settingsEpochListeners.delete(fn)
+}
+
+function bumpSettingsEpoch() {
+  settingsEpoch++
+  for (const fn of settingsEpochListeners) fn()
+}
+
+/** Current settings generation (tests / diagnostics). */
+export function tasksSettingsEpoch(): number {
+  return settingsEpoch
+}
 
 /**
  * Wire the SDK into the module: capture the persist function and load the
@@ -64,6 +83,7 @@ async function readTasksSettings(ctx: PluginContext): Promise<boolean> {
   saveFn = nextSaveFn
   configSlice = nextSlice
   setTaskWeekStart(loadWeekStart())
+  bumpSettingsEpoch()
   return true
 }
 
@@ -115,6 +135,7 @@ export async function reloadTasksSettings(
   saveFn = nextSaveFn
   configSlice = nextSlice
   setTaskWeekStart(loadWeekStart())
+  bumpSettingsEpoch()
   return true
 }
 
@@ -130,6 +151,7 @@ export function resetTasksSettings(): void {
   configSlice = {}
   saveFn = null
   resetTaskWeekStart()
+  bumpSettingsEpoch()
 }
 
 /** The on-disk slice `plugins.plugin_settings['silt-tasks']`, or {}. */
@@ -193,20 +215,35 @@ export function loadInspectorPaneWidth(): number {
   const v = tasksSettings()['inspector_pane_width']
   if (typeof v !== 'number' || !Number.isFinite(v))
     return DEFAULT_INSPECTOR_PANE_WIDTH
-  return Math.max(
-    MIN_INSPECTOR_PANE_WIDTH,
-    Math.min(MAX_INSPECTOR_PANE_WIDTH, Math.round(v))
-  )
+  return clampInspectorPaneWidth(v)
 }
 
 export function persistInspectorPaneWidth(px: number): Promise<boolean> {
-  const clamped = Math.max(
-    MIN_INSPECTOR_PANE_WIDTH,
-    Math.min(MAX_INSPECTOR_PANE_WIDTH, Math.round(px))
-  )
+  const clamped = clampInspectorPaneWidth(px)
   return saveFn
     ? saveFn('inspector_pane_width', clamped)
     : Promise.resolve(false)
+}
+
+/** Clamp a preferred pane width to absolute min/max. */
+export function clampInspectorPaneWidth(px: number): number {
+  return Math.max(
+    MIN_INSPECTOR_PANE_WIDTH,
+    Math.min(MAX_INSPECTOR_PANE_WIDTH, Math.round(px))
+  )
+}
+
+/**
+ * Max pane width that still leaves the master list ≥ MIN_LIST_MASTER_WIDTH.
+ * Falls back to absolute max when host width is unknown (0).
+ */
+export function maxInspectorPaneWidthForHost(hostWidth: number): number {
+  if (hostWidth <= 0) return MAX_INSPECTOR_PANE_WIDTH
+  const budget = hostWidth - MIN_LIST_MASTER_WIDTH - INSPECTOR_SPLIT_HANDLE
+  return Math.max(
+    MIN_INSPECTOR_PANE_WIDTH,
+    Math.min(MAX_INSPECTOR_PANE_WIDTH, budget)
+  )
 }
 
 /** True when the list host can fit master min + handle + pane min. */

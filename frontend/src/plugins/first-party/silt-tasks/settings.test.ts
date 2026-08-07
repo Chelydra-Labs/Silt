@@ -27,6 +27,8 @@ import {
   loadInspectorPaneWidth,
   persistInspectorPaneWidth,
   canFitInspectorSplit,
+  maxInspectorPaneWidthForHost,
+  onTasksSettingsChanged,
   DEFAULT_INSPECTOR_PANE_WIDTH,
   MIN_INSPECTOR_PANE_WIDTH,
   MAX_INSPECTOR_PANE_WIDTH,
@@ -410,5 +412,21 @@ describe('inspector pane width (#910)', () => {
     const need = MIN_LIST_MASTER_WIDTH + 4 + MIN_INSPECTOR_PANE_WIDTH
     expect(canFitInspectorSplit(need)).toBe(true)
     expect(canFitInspectorSplit(need - 1)).toBe(false)
+  })
+
+  it('maxInspectorPaneWidthForHost leaves room for the master list', () => {
+    expect(maxInspectorPaneWidthForHost(0)).toBe(MAX_INSPECTOR_PANE_WIDTH)
+    // host 900 → budget 900 - 420 - 4 = 476
+    expect(maxInspectorPaneWidthForHost(900)).toBe(476)
+    // wide host still caps at absolute max
+    expect(maxInspectorPaneWidthForHost(2000)).toBe(MAX_INSPECTOR_PANE_WIDTH)
+  })
+
+  it('onTasksSettingsChanged fires after init/reload', async () => {
+    const seen: number[] = []
+    const unsub = onTasksSettingsChanged(() => seen.push(1))
+    await setTasksSettings({ inspector_pane_width: 500 })
+    expect(seen.length).toBeGreaterThanOrEqual(1)
+    unsub()
   })
 })

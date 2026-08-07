@@ -1028,6 +1028,7 @@
                     aria-controls="calendar-day-agenda"
                     aria-label={`Show ${items.length - 3} more tasks for ${ymd(day)}`}
                     data-testid={`calendar-more-${ymd(day)}`}
+                    data-task-hit
                     class="w-full rounded-md border border-transparent px-1 py-0.5 text-left text-type-3xs font-label-sm text-text-muted transition-colors hover:border-surface-card-border hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
                     >+{items.length - 3} more</button
                   >
@@ -1069,6 +1070,7 @@
                     aria-controls="calendar-day-agenda"
                     aria-label={`Show ${overdueHere.length - 2} more overdue tasks for ${ymd(day)}`}
                     data-testid={`calendar-overdue-more-${ymd(day)}`}
+                    data-task-hit
                     class="w-full rounded-md border border-error/20 bg-error/10 px-1 py-0.5 text-left text-type-3xs font-label-sm text-error transition-colors hover:border-error hover:bg-error-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
                     >+{overdueHere.length - 2} overdue</button
                   >

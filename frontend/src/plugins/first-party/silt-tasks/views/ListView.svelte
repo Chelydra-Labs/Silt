@@ -22,11 +22,12 @@
   import SidebarResizeHandle from '../../../../components/SidebarResizeHandle.svelte'
   import {
     canFitInspectorSplit,
+    clampInspectorPaneWidth,
     DEFAULT_INSPECTOR_PANE_WIDTH,
     loadInspectorPaneWidth,
-    MAX_INSPECTOR_PANE_WIDTH,
+    maxInspectorPaneWidthForHost,
     MIN_INSPECTOR_PANE_WIDTH,
-    MIN_LIST_MASTER_WIDTH,
+    onTasksSettingsChanged,
     persistInspectorPaneWidth
   } from '../settings'
   import {
@@ -86,7 +87,11 @@
   let subEditorTask = $state<TaskDetail | null>(null)
   let hostEl = $state<HTMLDivElement | null>(null)
   let hostWidth = $state(0)
+  /** False until the host has a measured width — avoids overlay→pane flash. */
+  let hostMeasured = $state(false)
   let paneWidth = $state(loadInspectorPaneWidth())
+  /** Inspector sidebar popover/dialog busy — blocks J/K while open. */
+  let inspectorBusy = $state(false)
   // DONE-on-blocked guard (#302): shared hook owns pending state + blocker
   // fetch. ListView attaches the item so confirmBlockedDone can hand it to
   // commitMarkDown. On a fetch failure ListView surfaces markDownError + an
@@ -212,25 +217,50 @@
   // Measure the list host (not window) so narrow hub panes fall back to overlay.
   $effect(() => {
     const el = hostEl
-    if (!el || typeof ResizeObserver === 'undefined') return
+    if (!el) return
+    const applyWidth = (w: number) => {
+      hostWidth = w
+      hostMeasured = true
+    }
+    if (typeof ResizeObserver === 'undefined') {
+      applyWidth(el.clientWidth)
+      return
+    }
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect?.width ?? el.clientWidth
-      hostWidth = w
+      applyWidth(w)
     })
     ro.observe(el)
-    hostWidth = el.clientWidth
+    applyWidth(el.clientWidth)
     return () => ro.disconnect()
   })
 
+  // Re-read persisted pane width after async settings hydrate / config reload.
+  $effect(() => {
+    return onTasksSettingsChanged(() => {
+      paneWidth = loadInspectorPaneWidth()
+    })
+  })
+
   let usePane = $derived(
-    !!selectedTask && hostWidth > 0 && canFitInspectorSplit(hostWidth)
+    !!selectedTask && hostMeasured && canFitInspectorSplit(hostWidth)
   )
+  /** Defer mounting either inspector shell until host width is known. */
+  let inspectorReady = $derived(!!selectedTask && hostMeasured)
+  let paneMaxForHost = $derived(maxInspectorPaneWidthForHost(hostWidth))
   let effectivePaneWidth = $derived(
-    Math.min(
-      paneWidth,
-      Math.max(MIN_INSPECTOR_PANE_WIDTH, hostWidth - MIN_LIST_MASTER_WIDTH - 4)
-    )
+    Math.min(clampInspectorPaneWidth(paneWidth), paneMaxForHost)
   )
+
+  function setPaneWidth(w: number) {
+    paneWidth = Math.min(clampInspectorPaneWidth(w), paneMaxForHost)
+  }
+
+  function commitPaneWidth(w: number) {
+    const next = Math.min(clampInspectorPaneWidth(w), paneMaxForHost)
+    paneWidth = next
+    void persistInspectorPaneWidth(next)
+  }
 
   // Must be declared before the reload $effect so day-boundary ticks
   // re-subscribe and re-query date filters (overdue/today/upcoming).
@@ -511,25 +541,47 @@
       ? flatOpenOrder.findIndex((t) => t.id === selectedTask!.id)
       : -1
   )
-  let hasPrevTask = $derived(selectedIndex > 0)
+  // When the selected task is filtered out (index -1), still allow jumping
+  // into the visible order so keyboard triage is not stranded.
+  let hasPrevTask = $derived(
+    flatOpenOrder.length > 0 &&
+      (selectedIndex > 0 || (selectedIndex < 0 && selectedFilteredOut))
+  )
   let hasNextTask = $derived(
-    selectedIndex >= 0 && selectedIndex < flatOpenOrder.length - 1
+    flatOpenOrder.length > 0 &&
+      (selectedIndex < 0
+        ? selectedFilteredOut
+        : selectedIndex < flatOpenOrder.length - 1)
   )
 
   function goPrevTask() {
-    if (!hasPrevTask) return
+    if (flatOpenOrder.length === 0) return
+    if (selectedIndex < 0) {
+      // Filtered-out: K jumps to the last visible task.
+      selectedTask = flatOpenOrder[flatOpenOrder.length - 1]
+      selectedFilteredOut = false
+      return
+    }
+    if (selectedIndex <= 0) return
     selectedTask = flatOpenOrder[selectedIndex - 1]
     selectedFilteredOut = false
   }
 
   function goNextTask() {
-    if (!hasNextTask) return
+    if (flatOpenOrder.length === 0) return
+    if (selectedIndex < 0) {
+      // Filtered-out: J jumps to the first visible task.
+      selectedTask = flatOpenOrder[0]
+      selectedFilteredOut = false
+      return
+    }
+    if (selectedIndex >= flatOpenOrder.length - 1) return
     selectedTask = flatOpenOrder[selectedIndex + 1]
     selectedFilteredOut = false
   }
 
   function onListTraversalKeydown(e: KeyboardEvent) {
-    if (!selectedTask) return
+    if (!selectedTask || inspectorBusy) return
     const key = e.key
     if (key !== 'j' && key !== 'J' && key !== 'k' && key !== 'K') return
     const t = e.target
@@ -729,8 +781,8 @@
 {#snippet taskRow(item: TaskDetail, groupKey: string)}
   <div
     class="tasks-list-row group relative flex min-h-12 items-center gap-3 overflow-hidden rounded-lg border border-transparent px-3 py-2 pl-3.5 transition-all hover:border-surface-card-border hover:bg-hover hover:shadow-sm focus-within:border-border-focus focus-within:bg-hover"
-    class:tasks-focused={focusedRowId === item.id ||
-      selectedTask?.id === item.id}
+    class:tasks-selected={selectedTask?.id === item.id}
+    class:tasks-focused={focusedRowId === item.id}
     class:tasks-drag-over={dragOverId === item.id}
     class:tasks-dragging={draggingId === item.id}
     data-block-id={item.id}
@@ -1165,18 +1217,15 @@
       </div>
     </div>
 
-    {#if selectedTask && usePane}
+    {#if inspectorReady && usePane}
       <SidebarResizeHandle
         edge="end"
         width={effectivePaneWidth}
         min={MIN_INSPECTOR_PANE_WIDTH}
-        max={MAX_INSPECTOR_PANE_WIDTH}
-        defaultWidth={DEFAULT_INSPECTOR_PANE_WIDTH}
-        onWidthChange={(w) => (paneWidth = w)}
-        onWidthCommit={(w) => {
-          paneWidth = w
-          void persistInspectorPaneWidth(w)
-        }}
+        max={paneMaxForHost}
+        defaultWidth={Math.min(DEFAULT_INSPECTOR_PANE_WIDTH, paneMaxForHost)}
+        onWidthChange={setPaneWidth}
+        onWidthCommit={commitPaneWidth}
         ariaLabel="Resize task inspector"
       />
       <div
@@ -1199,6 +1248,7 @@
           onNextTask={goNextTask}
           {hasPrevTask}
           {hasNextTask}
+          bind:busy={inspectorBusy}
         />
       </div>
     {/if}
@@ -1220,7 +1270,7 @@
   </div>
 </div>
 
-{#if selectedTask && !usePane}
+{#if inspectorReady && !usePane}
   <TaskEditDrawer
     variant="overlay"
     task={selectedTask}
@@ -1236,6 +1286,7 @@
     onNextTask={goNextTask}
     {hasPrevTask}
     {hasNextTask}
+    bind:busy={inspectorBusy}
   />
 {/if}
 {#if subEditorTask}
@@ -1260,16 +1311,34 @@
 />
 
 <style>
-  .tasks-focused {
+  /* Persistent inspector selection (distinct from deep-link flash). */
+  .tasks-selected {
     background: color-mix(
       in srgb,
       var(--color-accent-primary-glow) 100%,
       transparent
     );
     box-shadow: 0 0 0 1px var(--color-accent-primary-start) inset;
+  }
+  /* Temporary deep-link / focus-jump flash. */
+  .tasks-focused {
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow) 70%,
+      transparent
+    );
+    box-shadow: 0 0 0 1px var(--color-accent-secondary-start) inset;
     transition:
       background 600ms ease-out,
       box-shadow 600ms ease-out;
+  }
+  .tasks-selected.tasks-focused {
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow) 100%,
+      transparent
+    );
+    box-shadow: 0 0 0 1px var(--color-accent-primary-start) inset;
   }
   .tasks-list-row::before {
     content: '';
