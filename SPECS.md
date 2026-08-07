@@ -1209,7 +1209,7 @@ editor:
 # non-regex parse knobs below are configurable.
 parsing:
   auto_inject_uuid: true
-  default_task_priority: 3
+  default_task_priority: 2
 
 # Key-Binding Map. Defaults are convention-anchored (see "Keyboard Shortcuts"
 # in ARCHITECTURE.md): ties anchor to document-processor conventions, with

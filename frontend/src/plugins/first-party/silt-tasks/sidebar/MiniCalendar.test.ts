@@ -5,7 +5,11 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
 import MiniCalendar from './MiniCalendar.svelte'
 import type { PluginContext } from '../../../sdk'
 import { v2CtxStubs } from '../../../test-helpers'
-import { getTaskHubState, resetTaskHubState } from '../state.svelte'
+import {
+  getTaskHubState,
+  resetTaskHubState,
+  setWeekStart
+} from '../state.svelte'
 
 const mocks = vi.hoisted(() => ({
   sqliteQuery: vi.fn()
@@ -78,6 +82,23 @@ describe('sidebar/MiniCalendar (#763)', () => {
     )
     expect(todayCell).toBeTruthy()
     expect(todayCell!.getAttribute('aria-current')).toBe('date')
+  })
+
+  it('uses Monday as the first mini-calendar column when configured', async () => {
+    setWeekStart('monday')
+    render(MiniCalendar, { ctx: makeCtx(), reloadSignal: 0 })
+    await flush()
+    const headers = document.querySelectorAll(
+      '[data-test-tasks-sidebar] [role="columnheader"]'
+    )
+    // The component may be rendered standalone in this test, so select the
+    // first columnheader rather than relying on the sidebar container.
+    const firstHeader =
+      headers[0] ?? document.querySelector('[role="columnheader"]')
+    expect(firstHeader?.textContent?.trim()).toBe('M')
+    expect(
+      document.querySelector('[data-testid="mini-day-2026-06-29"]')
+    ).toBeTruthy()
   })
 
   it('reloadSignal prop change triggers a re-query', async () => {

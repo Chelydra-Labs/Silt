@@ -417,6 +417,73 @@ describe('TaskSubEditorModal (#304)', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('keeps failed edits open and supports retrying the save', async () => {
+    const onClose = vi.fn()
+    mocks.saveSubtreeBlocks
+      .mockRejectedValueOnce(new Error('disk locked'))
+      .mockRejectedValueOnce(new Error('disk locked'))
+      .mockResolvedValueOnce(true)
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+
+    const pm = document.querySelector('.ProseMirror') as HTMLElement
+    pm.textContent = 'edited content'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    await vi.waitFor(() =>
+      expect(screen.getByText(/Save failed: disk locked/)).toBeInTheDocument()
+    )
+
+    expect(onClose).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getAllByLabelText('Close sub-editor').at(-1)!)
+    await vi.waitFor(() =>
+      expect(mocks.saveSubtreeBlocks).toHaveBeenCalledTimes(2)
+    )
+    expect(onClose).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry save' }))
+    await vi.waitFor(() =>
+      expect(mocks.saveSubtreeBlocks).toHaveBeenCalledTimes(3)
+    )
+    await flush()
+    expect(screen.queryByText(/Save failed: disk locked/)).toBeNull()
+
+    await fireEvent.click(screen.getAllByLabelText('Close sub-editor').at(-1)!)
+    await flush()
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows explicitly discarding edits after a failed save', async () => {
+    const onClose = vi.fn()
+    mocks.saveSubtreeBlocks.mockRejectedValueOnce(new Error('disk locked'))
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    const pm = document.querySelector('.ProseMirror') as HTMLElement
+    pm.textContent = 'edited content'
+    pm.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Discard changes' })
+      ).toBeInTheDocument()
+    )
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Discard changes' })
+    )
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(mocks.saveSubtreeBlocks).toHaveBeenCalledTimes(1)
+  })
+
   it('flushes a pending snapshot when unmounted during an in-flight save (no data loss)', async () => {
     // Regression: unmount-without-close used to drop edits made during an
     // in-flight save because the retry was gated on a live editor, which
@@ -503,6 +570,40 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     expect(
       screen.getByRole('button', { name: 'Hide details' })
     ).toBeInTheDocument()
+    expect(screen.getByText('Essentials')).toBeInTheDocument()
+    expect(screen.getByLabelText('Owner')).toBeInTheDocument()
+    expect(screen.getByTestId('task-planning-disclosure')).not.toHaveAttribute(
+      'open'
+    )
+  })
+
+  it('keeps the modal open when Escape dismisses a nested metadata popover', async () => {
+    const onClose = vi.fn()
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx(),
+      onClose
+    })
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+
+    const dueTrigger = screen.getByRole('button', { name: /2026-07-15/ })
+    await fireEvent.click(dueTrigger)
+    await flush()
+    expect(
+      screen.getByRole('dialog', { name: 'Due date options' })
+    ).toBeInTheDocument()
+
+    dueTrigger.focus()
+    await fireEvent.keyDown(dueTrigger, { key: 'Escape' })
+    await flush()
+    expect(dueTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(dueTrigger)
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await flush()
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('a metadata change persists via ctx and fires onMetaChanged', async () => {
@@ -529,6 +630,27 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
 
     expect(updateBlockState).toHaveBeenCalledWith('task-1', 'DONE')
     expect(onMetaChanged).toHaveBeenCalled()
+  })
+
+  it('writes Start day changes through the shared sidebar context', async () => {
+    const setTaskStartDate = vi.fn().mockResolvedValue(true)
+    render(TaskSubEditorModal, {
+      ...BASE_PROPS,
+      ctx: makeCtx({ setTaskStartDate }),
+      onClose: () => {}
+    })
+    await vi.waitFor(() =>
+      expect(document.querySelector('.ProseMirror')).not.toBeNull()
+    )
+    await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
+    await flush()
+
+    await fireEvent.change(screen.getByLabelText('Start day'), {
+      target: { value: '2026-07-09' }
+    })
+    await flush()
+
+    expect(setTaskStartDate).toHaveBeenCalledWith('task-1', '2026-07-09')
   })
 
   it('collapses the sidebar into a disclosure on narrow viewports', async () => {

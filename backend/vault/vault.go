@@ -330,7 +330,7 @@ editor:
 # synced vault is a parser-DoS vector (audit F11).
 parsing:
   auto_inject_uuid: true
-  default_task_priority: 3
+  default_task_priority: 2
 
 # Plugin Registry
 plugins:

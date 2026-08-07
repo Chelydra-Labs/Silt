@@ -59,6 +59,8 @@
   } from './controllers/useBoardDnd.svelte'
   import { dueDateAnchor, groupByDispatch } from '../groupByDispatch'
   import { createStatusColumnsController } from './controllers/useStatusColumns.svelte'
+  import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
+  import { LEGACY_MISSING_TASK_PRIORITY } from '../../../../lib/taskPriority'
 
   type Props = TaskViewProps
 
@@ -83,6 +85,7 @@
   let columns = $state<Lane[]>([])
   let loading = $state(true)
   let errorMsg = $state('')
+  let resultsTruncated = $state(false)
 
   let selectedCard = $state<TaskDetail | null>(null)
   let subEditorCard = $state<TaskDetail | null>(null)
@@ -116,12 +119,14 @@
   } | null>(null)
   // Per-column quick-add shell: which column's inline add row is open.
   let quickAddCol = $state<string | null>(null)
+  let dragOverLaneKey = $state<string | null>(null)
 
   // --- Hub state (reactive reads) -----------------------------------------
   let groupBy = $derived(getTaskHubViewState().groupBy)
   let sort = $derived(getTaskHubViewState().sort)
   let scope = $derived(getTaskHubViewState().scope)
   let filters = $derived(getTaskHubViewState().filters)
+  let weekStart = $derived(getTaskWeekStart())
   let today = $derived(ctx.today)
   let dndEnabled = $derived(DND_DIMENSIONS.has(groupBy))
 
@@ -139,7 +144,8 @@
     loaded: TaskDetail[],
     g: GroupBy,
     configuredStatuses: string[],
-    iso: string
+    iso: string,
+    configuredWeekStart: typeof weekStart
   ): Lane[] {
     if (g === 'status') {
       // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive local/helper
@@ -163,7 +169,10 @@
         '3': []
       }
       for (const r of loaded) {
-        const p = r.priority && r.priority > 0 ? r.priority : 3
+        const p =
+          r.priority && r.priority > 0
+            ? r.priority
+            : LEGACY_MISSING_TASK_PRIORITY
         const key = p <= 1 ? '1' : p === 2 ? '2' : '3'
         buckets[key].push(r)
       }
@@ -174,7 +183,10 @@
         items: buckets[p]
       }))
     }
-    const sections = binByDimension(loaded, g, { today: iso })
+    const sections = binByDimension(loaded, g, {
+      today: iso,
+      weekStart: configuredWeekStart
+    })
     if (g === 'dueDate') {
       // value carries the bucket KEY (e.g. 'today') so dueDateAnchor can
       // switch on it — the label ('Today') isn't a stable dispatch handle.
@@ -214,7 +226,8 @@
       rows,
       groupBy,
       columnNames(cols.statusColumns),
-      today
+      today,
+      weekStart
     )
   }
 
@@ -290,6 +303,7 @@
     const my = ++loadSeq
     loading = true
     errorMsg = ''
+    resultsTruncated = false
     try {
       const { sql, params } = buildQuery(
         scope,
@@ -302,9 +316,10 @@
         }),
         { groupBy, sort, activeFilter: getTaskHubViewState().activeFilter }
       )
-      const { rows: raw } = await ctx.sqliteQuery(sql, params)
+      const { rows: raw, truncated } = await ctx.sqliteQuery(sql, params)
       if (my !== loadSeq) return
       rows = (raw as unknown[]).map((r) => coerceTaskRow(r))
+      resultsTruncated = truncated
       rebin()
       // Keep the open drawer in sync with fresh data; if the task left the
       // result set, keep the last-known snapshot rather than snapping closed.
@@ -330,6 +345,7 @@
     void groupBy
     void sort
     void getTaskHubViewState().activeFilter
+    void weekStart
     void today
     void ctx.activeNotebook
     void ctx.activeSection
@@ -346,6 +362,7 @@
   // re-query lands so the header strip flips dimension immediately.
   $effect(() => {
     void groupBy
+    void weekStart
     void cols.statusColumns
     rebin()
   })
@@ -410,6 +427,29 @@
     }
   }
 
+  function onLaneDragOver(e: DragEvent, col: Lane): void {
+    dnd.onLaneDragOver(e, col)
+    if (dndEnabled && dnd.draggingId) dragOverLaneKey = col.key
+  }
+
+  function onLaneDragLeave(e: DragEvent, col: Lane): void {
+    const related = e.relatedTarget as Node | null
+    if (related && e.currentTarget instanceof HTMLElement) {
+      if (e.currentTarget.contains(related)) return
+    }
+    if (dragOverLaneKey === col.key) dragOverLaneKey = null
+  }
+
+  function onLaneDrop(e: DragEvent, col: Lane): void {
+    dragOverLaneKey = null
+    dnd.onLaneDrop(e, col)
+  }
+
+  function finishCardDrag(): void {
+    dragOverLaneKey = null
+    dnd.cleanupDrag()
+  }
+
   // --- Per-column quick-add ----------------------------------------------
   // Returns the createTask prefill for a column, or null when quick-add
   // isn't supported (custom status columns; location dimensions).
@@ -471,7 +511,7 @@
 </script>
 
 <div
-  class="flex-1 flex flex-col min-h-0 overflow-hidden"
+  class="flex-1 flex flex-col min-h-0 overflow-hidden bg-surface-app"
   data-testid="tasks-board"
 >
   {#if dnd.moveError}
@@ -512,6 +552,22 @@
     </div>
   {/if}
 
+  {#if resultsTruncated}
+    <div
+      class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-type-sm font-body-md flex items-center gap-2"
+      role="status"
+      data-testid="board-truncated-notice"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >info</span
+      >
+      <span
+        >Some tasks are hidden because the Board result limit was reached.
+        Filter or narrow the scope to see more.</span
+      >
+    </div>
+  {/if}
+
   <!-- aria-live region for drag/keyboard move announcements -->
   <div class="sr-only" aria-live="polite">{dnd.liveMessage}</div>
 
@@ -522,7 +578,7 @@
            feel like a preview. Reuses the global .skeleton-text shimmer so the
            pulse matches ListView's loading rows. -->
       <div
-        class="h-full flex gap-4 p-4 overflow-x-auto custom-scrollbar"
+        class="h-full flex gap-3 p-3 overflow-x-auto custom-scrollbar sm:gap-4 sm:p-4"
         data-testid="tasks-board-loading"
         aria-busy="true"
         aria-label="Loading board"
@@ -545,7 +601,7 @@
       <ErrorBanner message={errorMsg} />
     {:else}
       <div
-        class="h-full flex gap-4 p-4 overflow-x-auto custom-scrollbar"
+        class="h-full flex gap-3 p-3 overflow-x-auto custom-scrollbar sm:gap-4 sm:p-4"
         role="list"
         aria-label="Board columns"
       >
@@ -559,15 +615,21 @@
           {@const overWip = wipLimit != null && cards.length > wipLimit}
           {@const qa = quickAddFor(col)}
           <section
-            class="flex flex-col min-w-70 flex-1 max-w-100 rounded-lg border border-surface-panel-border bg-surface-panel/50 {cols.colDragIndex ===
+            class="board-lane flex flex-col min-w-70 flex-1 max-w-100 overflow-hidden rounded-xl border border-surface-panel-border bg-surface-panel/50 shadow-sm transition-all {cols.colDragIndex ===
             colIdx
               ? 'opacity-50'
-              : ''} {overWip ? 'ring-1 ring-status-warn/40' : ''}"
+              : ''} {overWip
+              ? 'ring-1 ring-status-warn/40'
+              : ''} {dragOverLaneKey === col.key
+              ? 'board-lane-drop-target'
+              : ''}"
             role="group"
             aria-label={col.label}
             data-wip-over={overWip ? 'true' : undefined}
-            ondragover={(e) => dnd.onLaneDragOver(e, col)}
-            ondrop={(e) => dnd.onLaneDrop(e, col)}
+            data-drop-target={dragOverLaneKey === col.key ? 'true' : undefined}
+            ondragover={(e) => onLaneDragOver(e, col)}
+            ondragleave={(e) => onLaneDragLeave(e, col)}
+            ondrop={(e) => onLaneDrop(e, col)}
           >
             <!-- Column drag-reorder (status dimension) is a pointer-only
                  affordance; Rename/Remove are exposed via the header menu
@@ -604,7 +666,7 @@
               onColDragEnd={() => cols.clearColDragIndex()}
             />
             <div
-              class="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2 min-h-25"
+              class="flex-1 overflow-y-auto custom-scrollbar p-2.5 space-y-2.5 min-h-25"
             >
               {#each cards as card, i (card.id)}
                 <div animate:flip={{ duration: 200, easing: cubicOut }}>
@@ -618,10 +680,13 @@
                     dragging={dnd.draggingId === card.id}
                     dragOver={dnd.dragOverCardId === card.id}
                     onDragStart={(e) => dnd.onDragStart(e, card, col.key)}
-                    onDragEnd={dnd.cleanupDrag}
+                    onDragEnd={finishCardDrag}
                     onCardDragOver={(e) => dnd.onCardDragOver(e, card, col)}
                     onCardDragLeave={() => dnd.clearDragOverIf(card.id)}
-                    onCardDrop={(e) => dnd.onCardDrop(e, card, col)}
+                    onCardDrop={(e) => {
+                      dragOverLaneKey = null
+                      dnd.onCardDrop(e, card, col)
+                    }}
                     onKeydown={(e) => onCardKeydown(e, card, col)}
                     onSelect={() => (selectedCard = card)}
                   />
@@ -629,9 +694,14 @@
               {/each}
               {#if cards.length === 0}
                 <div
-                  class="text-center text-text-muted text-type-xs font-body-md py-6 border border-dashed border-surface-panel-border rounded-lg"
+                  class="text-center text-text-muted text-type-xs font-body-md py-8 border border-dashed border-surface-panel-border rounded-lg transition-colors {dragOverLaneKey ===
+                  col.key
+                    ? 'border-accent-primary-start bg-accent-primary-glow text-accent-primary-start'
+                    : ''}"
                 >
-                  No {col.label.toLowerCase()} tasks
+                  {dragOverLaneKey === col.key
+                    ? 'Drop task here'
+                    : `No ${col.label.toLowerCase()} tasks`}
                 </div>
               {/if}
             </div>
@@ -658,7 +728,7 @@
                     onclick={() => (quickAddCol = col.key)}
                     aria-label={`Add task to ${col.label}`}
                     data-testid={`board-add-${col.key}`}
-                    class="w-full flex items-center justify-end gap-1 py-1 text-type-xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer"
+                    class="w-full flex items-center justify-center gap-1 rounded-md py-1.5 text-type-xs font-label-sm text-text-muted hover:bg-hover hover:text-accent-primary-start transition-colors border-none bg-transparent cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
                   >
                     <span class="material-symbols-outlined text-icon-sm"
                       >add</span
@@ -678,7 +748,7 @@
             <button
               type="button"
               onclick={cols.addColumn}
-              class="flex items-center gap-1 px-2.5 py-1 rounded border border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors self-start"
+              class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-dashed border-surface-panel-border bg-surface-panel text-type-sm font-label-sm text-text-muted hover:bg-hover hover:text-accent-primary-start hover:border-accent-primary-start/40 transition-colors self-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
               aria-label="Add column"
             >
               <span class="material-symbols-outlined text-icon-md">add</span>
@@ -772,3 +842,24 @@
     }}
   />
 {/if}
+
+<style>
+  .board-lane-drop-target {
+    border-color: var(--color-accent-primary-start);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow) 70%,
+      var(--color-surface-panel)
+    );
+    box-shadow:
+      0 0 0 2px var(--color-accent-primary-glow),
+      var(--shadow-md);
+    transform: translateY(-1px);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .board-lane {
+      transition: none;
+    }
+  }
+</style>

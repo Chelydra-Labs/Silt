@@ -6,7 +6,11 @@ import {
   endOfMonth,
   addMonths,
   addDays,
-  monthWeeks
+  monthWeeks,
+  endOfWeek,
+  startOfWeekISO,
+  endOfWeekISO,
+  addDaysISO
 } from './dateGrid'
 
 describe('dateGrid', () => {
@@ -37,6 +41,18 @@ describe('dateGrid', () => {
     it('is idempotent on a Sunday', () => {
       const sun = new Date(2026, 2, 1) // Mar 1 2026 is a Sunday
       expect(ymd(startOfWeek(sun))).toBe('2026-03-01')
+    })
+
+    it('supports Monday-start weeks across a Sunday boundary', () => {
+      const d = new Date(2026, 2, 1) // Sunday
+      expect(ymd(startOfWeek(d, 'monday'))).toBe('2026-02-23')
+      expect(ymd(endOfWeek(d, 'monday'))).toBe('2026-03-01')
+    })
+
+    it('keeps ISO boundary helpers in local calendar time', () => {
+      expect(startOfWeekISO('2026-01-01', 'monday')).toBe('2025-12-29')
+      expect(endOfWeekISO('2026-01-01', 'monday')).toBe('2026-01-04')
+      expect(addDaysISO('2025-12-31', 1)).toBe('2026-01-01')
     })
   })
 
@@ -107,6 +123,12 @@ describe('dateGrid', () => {
         .filter((d) => d.getMonth() === 2)
         .map((d) => d.getDate())
       expect(inMonthDays).toEqual(Array.from({ length: 31 }, (_, i) => i + 1))
+    })
+
+    it('places Monday first in a Monday-start month grid', () => {
+      const first = monthWeeks(new Date(2026, 2, 15), 'monday')[0][0]
+      expect(first.getDay()).toBe(1)
+      expect(ymd(first)).toBe('2026-02-23')
     })
   })
 })

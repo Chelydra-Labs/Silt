@@ -16,7 +16,8 @@
 // so the existing tests stay byte-exact when ListView delegates to
 // binByDimension instead of its own $derived filters.
 
-import { plusDaysISO } from '../../sdk'
+import { endOfWeekISO } from '../../../lib/dateGrid'
+import type { WeekStart } from '../../../lib/dateGrid'
 import type { TaskDetail } from './types'
 import { laneLabel } from './types'
 import type { GroupBy } from './state.svelte'
@@ -32,19 +33,24 @@ const STATUS_ORDER: readonly string[] = ['TODO', 'DOING', 'DONE']
 
 function dueDateBucket(
   iso: string | undefined | null,
-  today: string
+  today: string,
+  weekStart: WeekStart
 ): 'overdue' | 'today' | 'upcoming' | 'later' | 'undated' {
   if (!iso) return 'undated'
   if (iso < today) return 'overdue'
   if (iso === today) return 'today'
-  // Tomorrow (today+1) through today+7 share the "Upcoming" bucket so the
-  // 5-bucket shape matches the legacy ListView's data-group keys exactly.
-  const weekAhead = plusDaysISO(today, 7)
-  if (iso >= plusDaysISO(today, 1) && iso <= weekAhead) return 'upcoming'
+  // Tomorrow through the configured calendar week-end share the "Upcoming"
+  // bucket, so the list and smart-list boundaries cannot drift apart.
+  const weekEnd = endOfWeekISO(today, weekStart)
+  if (iso > today && iso <= weekEnd) return 'upcoming'
   return 'later'
 }
 
-function binByDueDate(rows: TaskDetail[], today: string): GroupSection[] {
+function binByDueDate(
+  rows: TaskDetail[],
+  today: string,
+  weekStart: WeekStart
+): GroupSection[] {
   const buckets: Record<
     'overdue' | 'today' | 'upcoming' | 'later' | 'undated',
     TaskDetail[]
@@ -56,7 +62,7 @@ function binByDueDate(rows: TaskDetail[], today: string): GroupSection[] {
     undated: []
   }
   for (const r of rows) {
-    buckets[dueDateBucket(r.due_date, today)].push(r)
+    buckets[dueDateBucket(r.due_date, today, weekStart)].push(r)
   }
   return [
     { key: 'overdue', label: 'Overdue', items: buckets.overdue },
@@ -202,13 +208,13 @@ function binByTag(rows: TaskDetail[]): GroupSection[] {
 export function binByDimension(
   rows: TaskDetail[],
   groupBy: GroupBy,
-  ctx: { today: string }
+  ctx: { today: string; weekStart: WeekStart }
 ): GroupSection[] {
   switch (groupBy) {
     case 'none':
       return singleSection(rows, 'all', 'All Tasks')
     case 'dueDate':
-      return binByDueDate(rows, ctx.today)
+      return binByDueDate(rows, ctx.today, ctx.weekStart)
     case 'status':
       return binByStatus(rows)
     case 'tag':

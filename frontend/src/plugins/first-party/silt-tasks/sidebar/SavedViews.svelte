@@ -275,14 +275,17 @@
 </script>
 
 <!-- Saved Views (lifted from KanbanSidebar; management UX #470) -->
-<section aria-labelledby="tasks-saved-views-heading">
+<section
+  aria-labelledby="tasks-saved-views-heading"
+  class="rounded-xl border border-surface-sidebar-border bg-surface-panel/35 p-2 shadow-sm"
+>
   <h3
     id="tasks-saved-views-heading"
-    class="px-2 font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
+    class="px-1.5 pt-0.5 font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
   >
     Saved Views
   </h3>
-  <ul role="list" class="mt-1 space-y-0.5">
+  <ul role="list" class="mt-1.5 space-y-0.5">
     {#each hubState.savedViews as view (view.id)}
       {@const isActive = viewMatchesState(view, hubState)}
       {@const isRenaming = renamingId === view.id}
@@ -298,9 +301,9 @@
         ondrop={(e) => onViewDrop(e, view)}
       >
         <div
-          class="flex items-center gap-0.5 px-1 py-0.5 rounded text-type-sm font-body-md border transition-colors
+          class="flex min-h-9 items-center gap-0.5 px-1 py-0.5 rounded-lg text-type-sm font-body-md border transition-all
             {isActive
-            ? 'bg-accent-primary-glow border-accent-primary-start/30 text-accent-primary-start'
+            ? 'bg-accent-primary-glow border-accent-primary-start/30 text-accent-primary-start shadow-sm'
             : 'text-text-primary hover:bg-hover border-transparent'}
             {isDragging ? 'opacity-40' : ''}
             {isDropBefore
@@ -364,7 +367,7 @@
               type="button"
               onclick={() => activateView(view)}
               aria-pressed={isActive}
-              class="flex-1 min-w-0 text-left px-1.5 py-1 rounded cursor-pointer border-none bg-transparent"
+              class="flex-1 min-w-0 text-left px-1.5 py-1 rounded cursor-pointer border-none bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-border-focus"
             >
               <span class="truncate inline-block max-w-full align-middle"
                 >{view.name}</span

@@ -32,6 +32,7 @@ import {
   getTaskHubQueryContext,
   getTaskHubViewState,
   clearTaskPageRoute,
+  enterTasksFromMainNavigation,
   MAX_USER_SAVED_VIEWS,
   resetTaskHubState
 } from './state.svelte'
@@ -104,7 +105,8 @@ describe('silt-tasks unified state (#419)', () => {
         activeNotebook: 'Work',
         activeSection: 'Meetings',
         activePage: 'Sprint Review',
-        today: '2026-07-22'
+        today: '2026-07-22',
+        weekStart: 'sunday'
       })
       expect(getTaskHubState().scope).toBe('notebook')
       expect(getTaskHubState().savedViewsDirty).toBe(false)
@@ -224,6 +226,48 @@ describe('silt-tasks unified state (#419)', () => {
       clearScopeOverride()
       narrowScopeTo('page')
       expect(getTaskHubState().scope).toBe('page')
+    })
+  })
+
+  describe('enterTasksFromMainNavigation()', () => {
+    it('returns automatic scope to the vault', () => {
+      narrowScopeTo('page')
+
+      enterTasksFromMainNavigation()
+
+      expect(getTaskHubState().scope).toBe('vault')
+      expect(getTaskHubState().scopeUserOverride).toBe(false)
+    })
+
+    it('preserves a deliberately selected Page scope', () => {
+      setScope('page')
+
+      enterTasksFromMainNavigation()
+
+      expect(getTaskHubState().scope).toBe('page')
+      expect(getTaskHubState().scopeUserOverride).toBe(true)
+    })
+
+    it('preserves page routes and active saved views', () => {
+      enterTaskPageRoute({
+        source: 'linked:meetings',
+        notebook: 'Work',
+        section: 'Meetings',
+        page: 'Sprint Review',
+        nonce: 'main-nav-route'
+      })
+      enterTasksFromMainNavigation()
+      expect(getTaskPageRoute()?.target.nonce).toBe('main-nav-route')
+
+      clearTaskPageRoute()
+      applySavedView({
+        id: 'saved-page',
+        name: 'Saved page',
+        scope: 'page'
+      })
+      enterTasksFromMainNavigation()
+      expect(getTaskHubState().scope).toBe('page')
+      expect(getTaskHubState().activeSavedViewId).toBe('saved-page')
     })
   })
 

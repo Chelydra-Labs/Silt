@@ -70,7 +70,7 @@
 </script>
 
 <div
-  class="flex items-center justify-between px-3 py-2.5 border-b border-surface-panel-border"
+  class="flex min-h-11 items-center justify-between border-b border-surface-panel-border bg-surface-panel px-3 py-2.5"
   role="group"
   aria-label={`${colLabel} column header`}
   draggable={canManage ? 'true' : undefined}
@@ -83,13 +83,13 @@
   <div class="flex items-center gap-2 min-w-0">
     {#if canManage}
       <span
-        class="material-symbols-outlined text-icon-sm text-text-muted cursor-grab active:cursor-grabbing shrink-0"
+        class="material-symbols-outlined text-icon-sm text-text-muted/50 hover:text-text-muted cursor-grab active:cursor-grabbing shrink-0 transition-colors"
         title="Drag to reorder"
         spellcheck="false">drag_indicator</span
       >
     {/if}
     <span
-      class="w-2 h-2 rounded-full shrink-0"
+      class="w-2 h-2 rounded-full shrink-0 shadow-sm"
       class:bg-text-muted={colValue !== 'DOING' && colValue !== 'DONE'}
       class:bg-accent-secondary-start={colValue === 'DOING'}
       class:bg-accent-primary-start={colValue === 'DONE'}
@@ -108,7 +108,7 @@
       />
     {:else}
       <h2
-        class="font-label-sm-bold uppercase tracking-widest text-type-xs text-text-muted truncate"
+        class="truncate text-type-xs font-label-sm-bold uppercase tracking-widest text-text-primary"
         title={canManage ? 'Double-click to rename' : colLabel}
         ondblclick={canManage ? onStartRename : undefined}
       >
@@ -117,7 +117,7 @@
     {/if}
     {#if wipLimit != null}
       <span
-        class="bg-hover text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm {overWip
+        class="border border-surface-panel-border bg-surface-card text-type-2xs px-1.5 py-0.5 rounded-full font-label-sm {overWip
           ? 'text-status-warn'
           : 'text-text-muted'}"
         data-testid={`board-wip-badge-${colKey}`}
@@ -130,7 +130,7 @@
       </span>
     {:else}
       <span
-        class="bg-hover text-text-muted text-type-2xs px-1.5 py-0.5 rounded-sm font-label-sm"
+        class="border border-surface-panel-border bg-surface-card text-text-muted text-type-2xs px-1.5 py-0.5 rounded-full font-label-sm"
         >{cardCount}</span
       >
     {/if}
@@ -151,14 +151,14 @@
         onclick={onToggleMenu}
         aria-label="Column actions"
         aria-expanded={menuOpen}
-        aria-haspopup="true"
-        class="text-text-muted hover:text-text-primary transition-colors p-0.5"
+        aria-haspopup="menu"
+        class="flex h-7 w-7 items-center justify-center rounded-md border border-transparent text-text-muted hover:border-surface-panel-border hover:bg-hover hover:text-text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
       >
         <span class="material-symbols-outlined text-icon-md">more_horiz</span>
       </button>
       {#if menuOpen}
         <div
-          class="absolute right-0 top-full mt-1 z-50 min-w-35 bg-surface-popover border border-surface-popover-border rounded-lg shadow-xl py-1"
+          class="absolute right-0 top-full mt-1 z-50 min-w-35 bg-surface-popover border border-surface-popover-border rounded-lg shadow-lg py-1"
           role="menu"
           tabindex="-1"
           onkeydown={(e) => {

@@ -4,6 +4,7 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import { keydownHandler } from '@tiptap/pm/keymap'
 import { freshId } from './uniqueIdPlugin'
+import { DEFAULT_TASK_PRIORITY } from './types'
 import { resolveShortcut } from '../../settings/hotkeys'
 import { settings } from '../../settings/store.svelte'
 import {
@@ -126,7 +127,7 @@ export function convertToBlock(
       owner: '',
       start_date: '',
       due_date: '',
-      priority: 3
+      priority: DEFAULT_TASK_PRIORITY
     })
   } else {
     editor.commands.setNode(type, baseAttrs)

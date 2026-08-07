@@ -17,13 +17,19 @@
   // Calendar ignores the hub's groupBy (the grid has no second axis); a
   // one-time notice informs the user the first time per session they enter
   // Calendar mode with a non-'none'/non-'dueDate' groupBy active.
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount, onDestroy, tick } from 'svelte'
+  import Popover from '../../../../components/Popover.svelte'
   import { plusDaysISO } from '../../../sdk'
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import ErrorBanner from '../components/ErrorBanner.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import QuickAddTask from '../components/QuickAddTask.svelte'
-  import { coerceTaskRow, type TaskDetail, type TaskViewProps } from '../types'
+  import {
+    coerceTaskRow,
+    laneLabel,
+    type TaskDetail,
+    type TaskViewProps
+  } from '../types'
   import {
     getTaskHubQueryContext,
     getTaskHubViewState,
@@ -36,12 +42,14 @@
   import {
     ymd,
     startOfWeek,
+    endOfWeek,
     startOfMonth,
     endOfMonth,
     addMonths,
     addDays,
     monthWeeks as computeMonthWeeks
   } from '../../../../lib/dateGrid'
+  import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
 
   type Props = TaskViewProps
 
@@ -52,6 +60,7 @@
   let scope = $derived(getTaskHubViewState().scope)
   let filters = $derived(getTaskHubViewState().filters)
   let groupBy = $derived(getTaskHubViewState().groupBy)
+  let weekStart = $derived(getTaskWeekStart())
   let today = $derived(ctx.today)
 
   // --- Local state --------------------------------------------------------
@@ -72,6 +81,7 @@
   let overdueAll = $state<TaskDetail[]>([])
   let loading = $state(true)
   let errorMsg = $state('')
+  let resultsTruncated = $state(false)
   let selectedTask = $state<TaskDetail | null>(null)
   let subEditorTask = $state<TaskDetail | null>(null)
   // null = closed; '' = open undated; YYYY-MM-DD = open for that day.
@@ -114,33 +124,54 @@
   // monthWeeks (month view) and weekDays (week view) use the pure dateGrid
   // helpers shared with the sidebar mini-cal and the Date Glance popover.
   let monthWeeks = $derived(
-    subMode === 'month' ? computeMonthWeeks(cursor) : []
+    subMode === 'month' ? computeMonthWeeks(cursor, weekStart) : []
   )
 
   let weekDays = $derived.by(() => {
     if (subMode !== 'week') return []
-    const first = startOfWeek(cursor)
+    const first = startOfWeek(cursor, weekStart)
     return Array.from({ length: 7 }, (_, i) => addDays(first, i))
   })
 
   let windowStart = $derived(
     subMode === 'month'
-      ? startOfWeek(startOfMonth(cursor))
-      : startOfWeek(cursor)
+      ? startOfWeek(startOfMonth(cursor), weekStart)
+      : startOfWeek(cursor, weekStart)
   )
   let windowEnd = $derived(
     subMode === 'month'
-      ? addDays(startOfWeek(endOfMonth(cursor)), 6)
-      : addDays(startOfWeek(cursor), 6)
+      ? endOfWeek(endOfMonth(cursor), weekStart)
+      : endOfWeek(cursor, weekStart)
   )
+
+  let dayLabels = $derived(
+    Array.from(
+      { length: 7 },
+      (_, i) => DOW[(i + (weekStart === 'monday' ? 1 : 0)) % 7]
+    )
+  )
+
+  function formatWeekHeading(start: Date, end: Date): string {
+    const startMonth = MONTHS[start.getMonth()]
+    const endMonth = MONTHS[end.getMonth()]
+    const startYear = start.getFullYear()
+    const endYear = end.getFullYear()
+    if (startYear !== endYear) {
+      return `${startMonth} ${start.getDate()}, ${startYear}–${endMonth} ${end.getDate()}, ${endYear}`
+    }
+    if (start.getMonth() !== end.getMonth()) {
+      return `${startMonth} ${start.getDate()}–${endMonth} ${end.getDate()}, ${endYear}`
+    }
+    return `${startMonth} ${start.getDate()}–${end.getDate()}, ${endYear}`
+  }
 
   let heading = $derived(
     subMode === 'month'
       ? `${MONTHS[cursor.getMonth()]} ${cursor.getFullYear()}`
-      : `${MONTHS[cursor.getMonth()]} ${startOfWeek(cursor).getDate()}–${addDays(
-          startOfWeek(cursor),
-          6
-        ).getDate()}, ${cursor.getFullYear()}`
+      : formatWeekHeading(
+          startOfWeek(cursor, weekStart),
+          endOfWeek(cursor, weekStart)
+        )
   )
 
   let todayKey = $derived.by(() => {
@@ -170,6 +201,88 @@
     return out
   })
 
+  // Month cells stay compact, but their overflow must remain actionable. A
+  // portaled agenda escapes the scroll/grid clipping context and keeps every
+  // hidden task available to keyboard, pointer, and drag users.
+  let agendaDate = $state<string | null>(null)
+  let agendaAnchor = $state<HTMLElement | null>(null)
+  let agendaFocusIdx = $state(0)
+
+  let agendaEntries = $derived.by(() => {
+    if (!agendaDate) return []
+    const scheduled = byDate[agendaDate] ?? []
+    const surfaced =
+      agendaDate === todayKey
+        ? overdueSurfaced.filter(
+            (task) => !scheduled.some((item) => item.id === task.id)
+          )
+        : []
+    return [
+      ...scheduled.map((item) => ({ item, overdue: false })),
+      ...surfaced.map((item) => ({ item, overdue: true }))
+    ]
+  })
+
+  let agendaHeading = $derived.by(() => {
+    if (!agendaDate) return ''
+    const [year, month, day] = agendaDate.split('-').map(Number)
+    return `${MONTHS[(month ?? 1) - 1]} ${day}, ${year}`
+  })
+
+  function focusAgendaItem(index: number): void {
+    agendaFocusIdx = index
+    void tick().then(() => {
+      document
+        .querySelector<HTMLElement>(`[data-calendar-agenda-index="${index}"]`)
+        ?.focus()
+    })
+  }
+
+  function openDayAgenda(e: MouseEvent, date: string): void {
+    e.stopPropagation()
+    agendaAnchor = e.currentTarget as HTMLElement
+    agendaDate = date
+    focusAgendaItem(0)
+  }
+
+  function closeDayAgenda(returnFocus = true): void {
+    const trigger = agendaAnchor
+    agendaDate = null
+    agendaAnchor = null
+    agendaFocusIdx = 0
+    if (returnFocus) void tick().then(() => trigger?.focus())
+  }
+
+  function openAgendaTask(item: TaskDetail): void {
+    closeDayAgenda(false)
+    selectedTask = item
+  }
+
+  function onAgendaTaskKeydown(
+    e: KeyboardEvent,
+    item: TaskDetail,
+    index: number
+  ): void {
+    if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault()
+      e.stopPropagation()
+      closeDayAgenda(false)
+      subEditorTask = item
+      return
+    }
+    if (e.altKey) {
+      onCardKeydown(e, item)
+      return
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+    e.preventDefault()
+    const last = agendaEntries.length - 1
+    if (e.key === 'Home') focusAgendaItem(0)
+    else if (e.key === 'End') focusAgendaItem(last)
+    else if (e.key === 'ArrowDown') focusAgendaItem(Math.min(last, index + 1))
+    else focusAgendaItem(Math.max(0, index - 1))
+  }
+
   // --- Query/reload ------------------------------------------------------
   // Three queries: a windowed SELECT for the visible month/week, a separate
   // undated SELECT for the "No Date" strip, and an all-overdue-open SELECT
@@ -183,6 +296,7 @@
     const my = ++loadSeq
     loading = true
     errorMsg = ''
+    resultsTruncated = false
     try {
       const ctxLike = getTaskHubQueryContext({
         activeNotebook: ctx.activeNotebook,
@@ -222,6 +336,11 @@
       byDate = bucket
       undated = (undatedRes.rows as unknown[]).map((r) => coerceTaskRow(r))
       overdueAll = (overdueRes.rows as unknown[]).map((r) => coerceTaskRow(r))
+      resultsTruncated =
+        winRes.truncated ||
+        undatedRes.truncated ||
+        overdueRes.truncated ||
+        overdueRes.rows.length >= 500
       // Keep the open drawer in sync with fresh data.
       if (selectedTask) {
         const fresh =
@@ -256,6 +375,7 @@
   // Reload whenever any reactive input the query depends on changes.
   $effect(() => {
     void subMode
+    void weekStart
     void scope
     void filters.owners
     void filters.priorities
@@ -316,6 +436,7 @@
   let subModeError = $state('')
   const SUBMODES: CalendarSubMode[] = ['month', 'week']
   function chooseSubMode(m: CalendarSubMode) {
+    closeDayAgenda(false)
     setCalendarSubMode(m)
     // Reset roving tabindex: month grid has up to 42 cells, week has 7, so a
     // stale idx from the other layout would leave no cell with tabindex=0.
@@ -377,20 +498,25 @@
 
   // --- Navigation -------------------------------------------------------
   function prev() {
+    closeDayAgenda(false)
     cursor = subMode === 'month' ? addMonths(cursor, -1) : addDays(cursor, -7)
   }
   function next() {
+    closeDayAgenda(false)
     cursor = subMode === 'month' ? addMonths(cursor, 1) : addDays(cursor, 7)
   }
   function goToday() {
+    closeDayAgenda(false)
     cursor = cursorFromToday()
   }
 
   // --- Quick-add --------------------------------------------------------
   function openQuickAddForDay(day: Date) {
+    closeDayAgenda(false)
     quickAddDate = ymd(day)
   }
   function openQuickAddUndated() {
+    closeDayAgenda(false)
     quickAddDate = ''
   }
   function closeQuickAdd() {
@@ -565,18 +691,23 @@
   data-testid="tasks-calendar"
 >
   <header
-    class="px-6 py-3 border-b border-surface-panel-border flex flex-col gap-2"
+    class="calendar-toolbar flex flex-col gap-2.5 border-b border-surface-panel-border px-3 py-3 sm:px-5 lg:px-6"
   >
     <!-- Row 1: Icon, sub-mode toggle, New task -->
     <div class="flex items-center gap-3 w-full flex-wrap">
-      <span class="material-symbols-outlined text-accent-primary-start">
-        {subMode === 'month' ? 'calendar_month' : 'calendar_view_week'}
+      <span
+        class="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-primary-glow text-accent-primary-start"
+        aria-hidden="true"
+      >
+        <span class="material-symbols-outlined text-icon-lg">
+          {subMode === 'month' ? 'calendar_month' : 'calendar_view_week'}
+        </span>
       </span>
 
       <!-- Month/Week sub-toggle ( BELOW the main hub mode switcher — rendered
            inside CalendarView's header area). Reads/writes calendarSubMode. -->
       <div
-        class="flex items-center gap-0.5 bg-surface-panel border border-surface-panel-border rounded-lg p-0.5"
+        class="flex items-center gap-0.5 bg-surface-panel border border-surface-panel-border rounded-lg p-1 shadow-sm"
         role="radiogroup"
         aria-label="Calendar layout"
         tabindex="-1"
@@ -590,10 +721,11 @@
           data-testid="calendar-submode-month"
           tabindex={subMode === 'month' ? 0 : -1}
           onclick={() => chooseSubMode('month')}
-          class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
-          class:bg-hover={subMode === 'month'}
-          class:text-accent-primary-start={subMode === 'month'}
-          class:text-text-muted={subMode !== 'month'}>Month</button
+          class="min-h-7 px-2.5 py-1 rounded-md font-label-sm border cursor-pointer transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {subMode ===
+          'month'
+            ? 'border-accent-primary-start/30 bg-accent-primary-glow text-accent-primary-start'
+            : 'border-transparent bg-transparent text-text-muted hover:bg-hover'}"
+          >Month</button
         >
         <button
           type="button"
@@ -603,10 +735,11 @@
           data-testid="calendar-submode-week"
           tabindex={subMode === 'week' ? 0 : -1}
           onclick={() => chooseSubMode('week')}
-          class="px-2.5 py-1 rounded font-label-sm border-none cursor-pointer transition-colors"
-          class:bg-hover={subMode === 'week'}
-          class:text-accent-primary-start={subMode === 'week'}
-          class:text-text-muted={subMode !== 'week'}>Week</button
+          class="min-h-7 px-2.5 py-1 rounded-md font-label-sm border cursor-pointer transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {subMode ===
+          'week'
+            ? 'border-accent-primary-start/30 bg-accent-primary-glow text-accent-primary-start'
+            : 'border-transparent bg-transparent text-text-muted hover:bg-hover'}"
+          >Week</button
         >
       </div>
 
@@ -615,7 +748,7 @@
           type="button"
           onclick={openQuickAddUndated}
           data-testid="calendar-new-task-btn"
-          class="flex items-center gap-1 px-2.5 py-1 rounded border border-accent-primary-start/40 text-accent-primary-start hover:bg-accent-primary-glow font-label-sm bg-transparent cursor-pointer transition-colors"
+          class="flex min-h-8 items-center gap-1 rounded-lg border border-accent-primary-start/30 bg-accent-primary-glow px-2.5 py-1 text-accent-primary-start shadow-sm hover:border-accent-primary-start hover:bg-accent-primary-start hover:text-text-on-accent font-label-sm cursor-pointer transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
         >
           <span class="material-symbols-outlined text-icon-md">add</span>New
           task
@@ -625,14 +758,14 @@
 
     <!-- Row 2: Date range + navigation -->
     <div class="flex items-center gap-2 flex-wrap">
-      <h2 class="font-headline-md text-headline-md text-text-primary">
+      <h2 class="font-headline-md text-headline-md min-w-0 text-text-primary">
         {heading}
       </h2>
       <div class="flex items-center gap-1 ml-2">
         <button
           type="button"
           onclick={prev}
-          class="p-1.5 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
+          class="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-hover text-text-muted hover:text-accent-primary-start border border-transparent bg-transparent cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
           aria-label="Previous"
         >
           <span class="material-symbols-outlined text-icon-lg"
@@ -642,13 +775,13 @@
         <button
           type="button"
           onclick={goToday}
-          class="px-2.5 py-1 rounded border border-surface-panel-border text-text-muted hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm bg-transparent cursor-pointer transition-colors"
+          class="min-h-8 px-2.5 py-1 rounded-lg border border-surface-panel-border text-text-muted hover:bg-hover hover:text-accent-primary-start hover:border-accent-primary-start/40 font-label-sm bg-surface-panel cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
           >Today</button
         >
         <button
           type="button"
           onclick={next}
-          class="p-1.5 rounded hover:bg-hover text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer"
+          class="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-hover text-text-muted hover:text-accent-primary-start border border-transparent bg-transparent cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
           aria-label="Next"
         >
           <span class="material-symbols-outlined text-icon-lg"
@@ -691,6 +824,22 @@
     />
   {/if}
 
+  {#if resultsTruncated}
+    <div
+      class="px-6 py-2 bg-status-warn/10 border-b border-status-warn/30 text-status-warn text-type-sm font-body-md flex items-center gap-2"
+      role="status"
+      data-testid="calendar-truncated-notice"
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >info</span
+      >
+      <span
+        >Some tasks are hidden because the Calendar result limit was reached.
+        Filter or narrow the scope to see more.</span
+      >
+    </div>
+  {/if}
+
   <!-- Screen-reader announcement of drag/keyboard reschedules. -->
   <div class="sr-only" role="status" aria-live="polite">
     {rescheduleAnnouncement}
@@ -699,7 +848,7 @@
   {#if quickAddDate === ''}
     <!-- Toolbar "New task" quick-add: undated. -->
     <div
-      class="px-6 py-2 border-b border-surface-panel-border bg-surface-panel"
+      class="px-3 py-2.5 border-b border-surface-panel-border bg-surface-panel sm:px-5 lg:px-6"
     >
       <div class="max-w-md">
         <QuickAddTask
@@ -718,7 +867,7 @@
          full-width strip, matching BoardView/ListView's error placement. -->
     <ErrorBanner message={errorMsg} />
   {/if}
-  <div class="flex-1 overflow-auto custom-scrollbar p-4">
+  <div class="flex-1 overflow-auto custom-scrollbar p-3 sm:p-4 lg:p-5">
     {#if loading}
       <!-- Skeleton: 6×7 day-cell grid mirroring the month layout, so the
            switch from skeleton to real grid doesn't reflow. Reuses the global
@@ -749,9 +898,9 @@
            DOW headers role="columnheader". The row wrappers use display:contents
            so the CSS grid layout is unaffected (children participate in the
            parent grid). -->
-      <div class="grid grid-cols-7 gap-1 min-w-[43.75rem]" role="grid">
+      <div class="grid grid-cols-7 gap-1.5 min-w-[43.75rem]" role="grid">
         <div role="row" class="contents">
-          {#each DOW as d, dowI (dowI)}
+          {#each dayLabels as d, dowI (dowI)}
             <div
               role="columnheader"
               class="text-center text-type-2xs uppercase tracking-widest font-label-sm-bold text-text-muted py-1"
@@ -798,12 +947,14 @@
                   if (t.closest('button,input')) return
                   openQuickAddForDay(day)
                 }}
-                class="min-h-22 rounded-lg border p-1.5 flex flex-col gap-0.5 transition-all focus:outline-none focus:border-accent-primary-start focus:ring-1 focus:ring-accent-primary-start/40 {overCellDate ===
+                class="calendar-day-cell group min-h-22 rounded-lg border p-1.5 flex flex-col gap-1 transition-all focus:outline-none focus:border-accent-primary-start focus:ring-2 focus:ring-border-focus {overCellDate ===
                 ymd(day)
-                  ? 'border-accent-primary-glow ring-2 ring-accent-primary-glow/40'
+                  ? 'calendar-day-drop-target'
                   : inMonth
-                    ? 'border-surface-panel-border bg-surface-panel'
-                    : 'border-surface-panel-border/30 bg-transparent'}"
+                    ? 'border-surface-panel-border bg-surface-panel/70 hover:border-border-active hover:bg-surface-panel'
+                    : 'border-surface-panel-border/30 bg-surface-panel/20'} {isToday
+                  ? 'border-accent-primary-start/40'
+                  : ''}"
               >
                 <div class="flex items-center justify-between">
                   <span
@@ -822,7 +973,7 @@
                     }}
                     aria-label="Add task for {ymd(day)}"
                     data-testid="calendar-day-add"
-                    class="text-text-muted hover:text-accent-primary-start border-none bg-transparent cursor-pointer p-0 leading-none"
+                    class="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-50 hover:bg-hover hover:text-accent-primary-start group-hover:opacity-100 border-none bg-transparent cursor-pointer p-0 leading-none focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
                   >
                     <span class="material-symbols-outlined text-icon-sm"
                       >add</span
@@ -838,7 +989,8 @@
                     ondragend={onCardDragEnd}
                     onkeydown={(e) => onCardKeydown(e, item)}
                     onclick={() => (selectedTask = item)}
-                    class="text-left text-type-2xs truncate px-1 py-0.5 rounded bg-accent-primary-glow border border-accent-primary-start/20 text-accent-primary-start hover:brightness-110 transition-all cursor-pointer {dragTaskId ===
+                    data-status={item.status}
+                    class="calendar-task-chip text-left text-type-2xs truncate px-1.5 py-1 rounded-md bg-surface-card border border-surface-card-border text-text-primary hover:border-accent-primary-start/40 hover:bg-hover transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {dragTaskId ===
                     item.id
                       ? 'opacity-40'
                       : ''}"
@@ -846,8 +998,16 @@
                   >
                 {/each}
                 {#if items.length > 3}
-                  <span class="text-type-3xs text-text-muted px-1"
-                    >+{items.length - 3} more</span
+                  <button
+                    type="button"
+                    onclick={(e) => openDayAgenda(e, ymd(day))}
+                    aria-haspopup="dialog"
+                    aria-expanded={agendaDate === ymd(day)}
+                    aria-controls="calendar-day-agenda"
+                    aria-label={`Show ${items.length - 3} more tasks for ${ymd(day)}`}
+                    data-testid={`calendar-more-${ymd(day)}`}
+                    class="w-full rounded-md border border-transparent px-1 py-0.5 text-left text-type-3xs font-label-sm text-text-muted transition-colors hover:border-surface-card-border hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+                    >+{items.length - 3} more</button
                   >
                 {/if}
                 <!-- Overdue open tasks surface in today's cell with an error-tone
@@ -873,8 +1033,16 @@
                   >
                 {/each}
                 {#if overdueHere.length > 2}
-                  <span class="text-type-3xs text-error px-1"
-                    >+{overdueHere.length - 2} overdue</span
+                  <button
+                    type="button"
+                    onclick={(e) => openDayAgenda(e, ymd(day))}
+                    aria-haspopup="dialog"
+                    aria-expanded={agendaDate === ymd(day)}
+                    aria-controls="calendar-day-agenda"
+                    aria-label={`Show ${overdueHere.length - 2} more overdue tasks for ${ymd(day)}`}
+                    data-testid={`calendar-overdue-more-${ymd(day)}`}
+                    class="w-full rounded-md border border-error/20 bg-error/10 px-1 py-0.5 text-left text-type-3xs font-label-sm text-error transition-colors hover:border-error hover:bg-error-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+                    >+{overdueHere.length - 2} overdue</button
                   >
                 {/if}
                 {#if quickAddDate === ymd(day)}
@@ -903,7 +1071,10 @@
               ? overdueSurfaced.filter((o) => !items.some((i) => i.id === o.id))
               : []}
             <div
-              class="flex flex-col gap-1.5 min-h-30"
+              class="calendar-week-day flex min-h-40 flex-col gap-1.5 rounded-xl border border-surface-panel-border bg-surface-panel/50 p-2 transition-all hover:border-border-active {overCellDate ===
+              ymd(day)
+                ? 'calendar-day-drop-target'
+                : ''}"
               role="gridcell"
               tabindex={cellFocusIdx === i ? 0 : -1}
               data-celldate={ymd(day)}
@@ -924,9 +1095,6 @@
                 openQuickAddForDay(day)
               }}
               onkeydown={(e) => onCellKeydown(e, day)}
-              class:ring-2={overCellDate === ymd(day)}
-              class:ring-accent-primary-glow={overCellDate === ymd(day)}
-              class:rounded-lg={overCellDate === ymd(day)}
             >
               <div
                 class="flex items-center justify-between pb-2 border-b border-surface-panel-border"
@@ -967,7 +1135,8 @@
                   ondragend={onCardDragEnd}
                   onkeydown={(e) => onCardKeydown(e, item)}
                   onclick={() => (selectedTask = item)}
-                  class="text-left text-type-sm px-2 py-1.5 rounded bg-surface-panel border border-surface-panel-border hover:border-accent-primary-start/40 text-text-primary transition-all cursor-pointer {dragTaskId ===
+                  data-status={item.status}
+                  class="calendar-task-chip text-left text-type-sm px-2 py-1.5 rounded-md bg-surface-card border border-surface-card-border hover:border-accent-primary-start/40 hover:bg-hover text-text-primary shadow-sm transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {dragTaskId ===
                   item.id
                     ? 'opacity-40'
                     : ''}"
@@ -1013,8 +1182,8 @@
          cell → sets due date (handled by the day cell's ondrop above). -->
     {#if undated.length > 0}
       <section
-        class="mt-4 p-3 rounded-lg border border-surface-panel-border bg-surface-panel/50 {overNoDate
-          ? 'ring-2 ring-accent-primary-glow/40'
+        class="mt-4 p-3 rounded-xl border border-surface-panel-border bg-surface-panel/50 transition-all {overNoDate
+          ? 'border-accent-primary-start ring-2 ring-accent-primary-glow'
           : ''}"
         aria-label="No Date tasks"
         data-testid="calendar-no-date-strip"
@@ -1061,6 +1230,116 @@
   </div>
 </div>
 
+<Popover
+  open={agendaDate !== null}
+  onClose={() => closeDayAgenda(true)}
+  anchor={agendaAnchor}
+  class="w-64 rounded-xl border border-surface-popover-border bg-surface-popover shadow-lg sm:w-80"
+>
+  {#snippet content()}
+    <div
+      id="calendar-day-agenda"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="calendar-day-agenda-title"
+      class="p-2.5"
+      data-testid="calendar-day-agenda"
+    >
+      <header
+        class="mb-2 flex items-center gap-2 border-b border-surface-popover-border px-1 pb-2"
+      >
+        <span
+          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-primary-glow text-accent-primary-start"
+          aria-hidden="true"
+        >
+          <span class="material-symbols-outlined text-icon-md">event_note</span>
+        </span>
+        <div class="min-w-0 flex-1">
+          <h3
+            id="calendar-day-agenda-title"
+            class="truncate text-type-md font-label-sm-bold text-text-primary"
+          >
+            {agendaHeading}
+          </h3>
+          <p class="text-type-xs font-label-sm text-text-muted">
+            {agendaEntries.length} task{agendaEntries.length === 1 ? '' : 's'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onclick={() => closeDayAgenda(true)}
+          aria-label="Close day agenda"
+          class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-transparent text-text-muted transition-colors hover:border-surface-popover-border hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
+        >
+          <span
+            class="material-symbols-outlined text-icon-md"
+            aria-hidden="true">close</span
+          >
+        </button>
+      </header>
+
+      <ul class="max-h-80 space-y-1 overflow-y-auto custom-scrollbar">
+        {#each agendaEntries as entry, index (entry.item.id)}
+          <li>
+            <button
+              type="button"
+              draggable="true"
+              tabindex={index === agendaFocusIdx ? 0 : -1}
+              data-calendar-agenda-index={index}
+              data-calendar-agenda-task={entry.item.id}
+              aria-keyshortcuts="Enter Shift+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+              ondragstart={(e) => onCardDragStart(e, entry.item)}
+              ondragend={onCardDragEnd}
+              onkeydown={(e) => onAgendaTaskKeydown(e, entry.item, index)}
+              onclick={() => openAgendaTask(entry.item)}
+              class="group flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {entry.overdue
+                ? 'border-error/20 bg-error/10 hover:border-error/40 hover:bg-error-bg'
+                : 'border-surface-card-border bg-surface-card hover:border-border-active hover:bg-hover'}"
+            >
+              <span
+                class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full {entry.overdue
+                  ? 'bg-error'
+                  : entry.item.status === 'DOING'
+                    ? 'bg-accent-secondary-start'
+                    : entry.item.status === 'DONE'
+                      ? 'bg-accent-primary-start'
+                      : 'bg-text-muted'}"
+                aria-hidden="true"
+              ></span>
+              <span class="min-w-0 flex-1">
+                <span
+                  class="block text-type-sm font-body-md leading-snug {entry.overdue
+                    ? 'text-error'
+                    : 'text-text-primary'}"
+                >
+                  {entry.item.clean_content}
+                </span>
+                <span
+                  class="mt-0.5 flex flex-wrap items-center gap-x-2 text-type-3xs font-label-sm text-text-muted"
+                >
+                  {#if entry.overdue}
+                    <span>Overdue · {entry.item.due_date}</span>
+                  {:else}
+                    <span>{laneLabel(entry.item.status)}</span>
+                  {/if}
+                  {#if entry.item.owner}<span>{entry.item.owner}</span>{/if}
+                </span>
+              </span>
+              <span
+                class="material-symbols-outlined mt-0.5 text-icon-sm text-text-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                aria-hidden="true">arrow_forward</span
+              >
+            </button>
+          </li>
+        {/each}
+      </ul>
+      <p class="mt-2 px-1 text-type-3xs font-label-sm text-text-muted">
+        Enter opens details · Shift+Enter opens notes · Alt+Arrow reschedules
+      </p>
+    </div>
+  {/snippet}
+</Popover>
+
 <TaskEditDrawer
   task={selectedTask}
   {ctx}
@@ -1083,3 +1362,53 @@
     }}
   />
 {/if}
+
+<style>
+  .calendar-toolbar {
+    background: color-mix(
+      in srgb,
+      var(--color-surface-panel) 72%,
+      var(--color-surface-app)
+    );
+  }
+
+  .calendar-day-drop-target {
+    border-color: var(--color-accent-primary-start);
+    background: var(--color-accent-primary-glow);
+    box-shadow: inset 0 0 0 1px var(--color-accent-primary-start);
+    transform: translateY(-1px);
+  }
+
+  .calendar-task-chip {
+    position: relative;
+    padding-left: 0.625rem;
+  }
+
+  .calendar-task-chip::before {
+    content: '';
+    position: absolute;
+    inset: 0.25rem auto 0.25rem 0.2rem;
+    width: 2px;
+    border-radius: var(--radius-full);
+    background: var(--color-text-muted);
+    opacity: 0.5;
+  }
+
+  .calendar-task-chip[data-status='DOING']::before {
+    background: var(--color-accent-secondary-start);
+    opacity: 1;
+  }
+
+  .calendar-task-chip[data-status='DONE']::before {
+    background: var(--color-accent-primary-start);
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .calendar-day-cell,
+    .calendar-week-day,
+    .calendar-task-chip {
+      transition: none;
+    }
+  }
+</style>

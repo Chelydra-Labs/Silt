@@ -14,7 +14,13 @@
 
 import { asString } from '../../asString'
 import { serializeInlineContent, legacyTokenizeInline } from './serialize'
-import type { ParsedBlock, DocJSON, NodeJSON, BlockType } from '../types'
+import {
+  DEFAULT_TASK_PRIORITY,
+  type ParsedBlock,
+  type DocJSON,
+  type NodeJSON,
+  type BlockType
+} from '../types'
 
 // Concatenate the text descendants of a NodeJSON[] (used for code blocks,
 // whose content is plain `text*` with no marks). Newlines inside a text node
@@ -292,7 +298,10 @@ function blockToNode(block: ParsedBlock): NodeJSON {
           start_date: block.start_date || '',
           due_date: block.due_date || '',
           recurrence: block.recurrence || '',
-          priority: block.priority || 3,
+          priority:
+            block.priority && block.priority > 0
+              ? block.priority
+              : DEFAULT_TASK_PRIORITY,
           file_date: block.file_date || ''
         },
         content
@@ -509,7 +518,7 @@ function synthBodyBlock(
     owner: '',
     start_date: '',
     due_date: '',
-    priority: 3,
+    priority: DEFAULT_TASK_PRIORITY,
     line_number: lineNumber,
     file_date: '',
     ...extra
@@ -1262,7 +1271,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       owner: '',
       start_date: '',
       due_date: '',
-      priority: 3,
+      priority: DEFAULT_TASK_PRIORITY,
       line_number: lineNumber,
       file_date: (attrs.file_date as string) || ''
     }
@@ -1273,7 +1282,7 @@ export function docToBlocks(doc: DocJSON | NodeJSON): ParsedBlock[] {
       block.start_date = (attrs.start_date as string) || ''
       block.due_date = (attrs.due_date as string) || ''
       block.recurrence = (attrs.recurrence as string) || ''
-      block.priority = Number(attrs.priority ?? 3)
+      block.priority = Number(attrs.priority) || DEFAULT_TASK_PRIORITY
       block.raw_text = `- [${block.status === 'DOING' ? '/' : block.status === 'DONE' ? 'x' : ' '}] ${block.status} TASK ${cleanText}`
     } else if (type === 'NOTE') {
       if (quoteMarker) {

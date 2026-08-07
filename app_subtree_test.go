@@ -298,6 +298,36 @@ func TestPluginSaveSubtreeBlocks_FirstPartySucceeds(t *testing.T) {
 	}
 }
 
+func TestSaveSubtreeBlocks_RejectsOutOfRangePriority(t *testing.T) {
+	app := newTestApp(t)
+	const parent = "a1b2c3d4-0000-0000-0000-000000000070"
+	content := "- [ ] parent <!-- id: " + parent + " -->\n"
+	filePath := indexTestFile(t, app, "W", "S", "SubtreePrioRange", "2026-07-01", content)
+	before, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read before: %v", err)
+	}
+
+	child := []parser.ParsedBlock{{
+		ID:        "b2c3d4e5-0000-0000-0000-000000000071",
+		Type:      parser.BlockTask,
+		Depth:     1,
+		Priority:  4,
+		CleanText: "invalid priority child",
+	}}
+	if ok, err := app.SaveSubtreeBlocks(parent, child); ok || err == nil {
+		t.Fatalf("SaveSubtreeBlocks invalid priority = ok=%v err=%v, want rejection", ok, err)
+	}
+
+	after, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read after: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("invalid priority changed the source file:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
 // TestSpliceSubtree_NormalizesIncomingDepths verifies a plugin caller passing
 // children with Depth <= parentDepth can't corrupt the file hierarchy: the
 // splice forces every child strictly beneath the parent, preserving relative

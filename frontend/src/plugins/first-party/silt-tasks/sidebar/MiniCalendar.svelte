@@ -23,6 +23,7 @@
     addMonths,
     monthWeeks as computeMonthWeeks
   } from '../../../../lib/dateGrid'
+  import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
 
   interface Props {
     ctx: PluginContext
@@ -33,6 +34,7 @@
 
   let hubState = $derived(getTaskHubState())
   let activeFocusDate = $derived(hubState.focusDate)
+  let weekStart = $derived(getTaskWeekStart())
 
   let byDate = $state<Record<string, number>>({})
   let errorMsg = $state('')
@@ -142,6 +144,12 @@
     'December'
   ]
   const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+  let dayLabels = $derived(
+    Array.from(
+      { length: 7 },
+      (_, i) => DOW[(i + (weekStart === 'monday' ? 1 : 0)) % 7]
+    )
+  )
 
   // Today's ISO key for the in-month today marker. Mirrors
   // miniCursorFromToday's injected-today semantics (ctx.today || localToday(),
@@ -161,7 +169,7 @@
 
   // Mini-cal month grid uses the pure dateGrid helpers shared with the Tasks
   // calendar and the Date Glance popover.
-  let miniWeeks = $derived(computeMonthWeeks(miniCursor))
+  let miniWeeks = $derived(computeMonthWeeks(miniCursor, weekStart))
 
   // Clamp the roving-tabindex cursor when the visible month shrinks (e.g.
   // paging from a 6-week to a 5-week month). Without this, miniFocusIdx can
@@ -213,8 +221,11 @@
 </script>
 
 <!-- Jump-to-Date mini-cal (lifted from CalendarSidebar) -->
-<section aria-labelledby="tasks-mini-heading" class="flex flex-col">
-  <div class="flex items-center justify-between px-2">
+<section
+  aria-labelledby="tasks-mini-heading"
+  class="flex flex-col rounded-xl border border-surface-sidebar-border bg-surface-panel/35 p-2 shadow-sm"
+>
+  <div class="flex items-center justify-between px-1.5">
     <h3
       id="tasks-mini-heading"
       class="font-label-sm-bold uppercase tracking-widest text-type-2xs text-text-muted"
@@ -235,7 +246,7 @@
     </button>
   </div>
   {#if calendarExpanded}
-    <div id="tasks-mini-calendar-content" class="mt-1 px-2">
+    <div id="tasks-mini-calendar-content" class="mt-1 px-1">
       <div class="flex items-center justify-between mb-1">
         <button
           type="button"
@@ -277,7 +288,7 @@
       </div>
       <div class="grid grid-cols-7 gap-0.5" role="grid">
         <div role="row" class="contents">
-          {#each DOW as d, dowI (dowI)}
+          {#each dayLabels as d, dowI (dowI)}
             <div
               role="columnheader"
               class="text-center text-type-3xs uppercase tracking-widest font-label-sm-bold text-text-muted py-0.5"
@@ -311,13 +322,15 @@
                 aria-current={isToday ? 'date' : undefined}
                 aria-selected={isPicked ? 'true' : undefined}
                 data-testid={`mini-day-${key}`}
-                class="aspect-square flex flex-col items-center justify-center gap-0.5 rounded-md text-type-sm font-label-sm cursor-pointer border-none bg-transparent focus-visible:ring-2 focus-visible:ring-accent-primary-start focus-visible:outline-none
+                class="aspect-square flex flex-col items-center justify-center gap-0.5 rounded-md text-type-sm font-label-sm cursor-pointer border border-transparent bg-transparent transition-all focus-visible:ring-2 focus-visible:ring-border-focus focus-visible:outline-none
                   {isToday
-                  ? 'bg-accent-primary-glow text-accent-primary-start font-label-sm-bold'
+                  ? 'border-accent-primary-start/25 bg-accent-primary-glow text-accent-primary-start font-label-sm-bold'
                   : inMonth
                     ? 'text-text-primary hover:bg-hover'
                     : 'text-text-muted/50 hover:bg-hover'}
-                  {isPicked ? 'ring-1 ring-accent-primary-start' : ''}"
+                  {isPicked
+                  ? 'border-accent-primary-start ring-1 ring-accent-primary-start shadow-sm'
+                  : ''}"
               >
                 <span>{day.getDate()}</span>
                 {#if count > 0}
@@ -336,7 +349,7 @@
           type="button"
           onclick={() => clearFocusDate()}
           data-testid="clear-focus"
-          class="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 rounded text-type-xs font-label-sm text-text-muted hover:text-error cursor-pointer border border-dashed border-surface-popover-border bg-transparent transition-colors"
+          class="mt-1.5 w-full flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-type-xs font-label-sm text-text-muted hover:bg-error/10 hover:text-error cursor-pointer border border-dashed border-surface-popover-border bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
         >
           <span class="material-symbols-outlined text-icon-xs">close</span>
           Clear jump date

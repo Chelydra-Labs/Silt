@@ -3,6 +3,7 @@
   import { fly } from 'svelte/transition'
   import type { PluginContext, SubtreeBlock } from '../../../sdk'
   import RichText from '../../../../components/RichText.svelte'
+  import { motionDuration } from '../motion'
   import { loadLocalAuthor, persistLocalAuthor } from '../settings'
   import ErrorBanner from './ErrorBanner.svelte'
   import { friendlyCaughtError } from '../errors'
@@ -74,6 +75,7 @@
   let replyText = $state('')
   let replyPending = $state(false)
   let replyTextareaEl = $state<HTMLTextAreaElement | null>(null)
+  let replyReturnEl: HTMLButtonElement | null = null
 
   // YYYY-MM-DD HH:MM (local) for display; "Undated" fallback for legacy
   // NOTEs without a [ts::] token. Mirrors the TaskEditDrawer inline formatter
@@ -299,9 +301,10 @@
     }
   }
 
-  async function startReply(comment: Comment) {
+  async function startReply(comment: Comment, trigger: HTMLButtonElement) {
     replyToId = comment.id
     replyText = ''
+    replyReturnEl = trigger
     await tick()
     replyTextareaEl?.focus()
   }
@@ -309,6 +312,7 @@
   function cancelReply() {
     replyToId = null
     replyText = ''
+    void tick().then(() => replyReturnEl?.focus())
   }
 
   async function submitReply() {
@@ -359,6 +363,7 @@
         )
       }))
       replyToId = null
+      void tick().then(() => replyReturnEl?.focus())
       onCommentsChanged?.()
       liveMessage = 'Reply added'
     } catch (e) {
@@ -479,7 +484,7 @@
     class:ml-4={nested}
     class:border-l-2={nested}
     class:border-l-accent-primary-start={nested}
-    transition:fly={{ duration: 120, y: -4 }}
+    transition:fly={{ duration: motionDuration(120), y: -4 }}
   >
     <header class="flex items-center justify-between gap-2 mb-1">
       <p class="text-type-2xs font-label-sm text-text-muted">
@@ -496,7 +501,7 @@
           class="text-type-2xs font-label-sm text-text-muted hover:text-accent-primary-start transition-colors px-1"
           aria-label="Reply to comment"
           title="Reply"
-          onclick={() => startReply(c)}
+          onclick={(e) => startReply(c, e.currentTarget)}
         >
           Reply
         </button>

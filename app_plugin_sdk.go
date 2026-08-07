@@ -337,6 +337,32 @@ func (a *App) PluginSetTaskDueDate(pluginID, sessionToken, blockID, dueDate stri
 	return true, nil
 }
 
+// PluginSetTaskStartDate rewrites a task's [start:: YYYY-MM-DD] planning date
+// on disk. The start date is independent metadata: it does not derive a due
+// date or duration, and changing either of those fields does not change it.
+// Pass the empty string to clear the token.
+//
+// Gated by content-mutate. Session-token verified.
+func (a *App) PluginSetTaskStartDate(pluginID, sessionToken, blockID, startDate string) (bool, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return false, err
+	}
+	if startDate != "" {
+		if _, derr := time.Parse("2006-01-02", startDate); derr != nil {
+			return false, fmt.Errorf("invalid startDate %q (want YYYY-MM-DD or empty to clear)", startDate)
+		}
+	}
+	if err := a.mutateTaskBlock(blockID, "PluginSetTaskStartDate", func(b *parser.ParsedBlock) {
+		b.StartDate = startDate
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // PluginSetTaskEstimate rewrites a task's [estimate::] duration token on disk
 // (#439). Pass the empty string to clear the estimate. Non-empty values must
 // parse via parser.ParseEstimateMinutes (m/h/d units) so invalid durations

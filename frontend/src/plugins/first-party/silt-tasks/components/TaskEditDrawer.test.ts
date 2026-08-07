@@ -145,26 +145,30 @@ describe('TaskEditDrawer — recurrence', () => {
 
   it('does not render the repeat badge when recurrence is empty', () => {
     const ctx = makeCtx()
-    const { container } = render(TaskEditDrawer, {
+    render(TaskEditDrawer, {
       props: { task: makeTask(), ctx, onClose: () => {} }
     })
-    // The header h2 should carry no event_repeat icon for a non-recurring task.
-    const title = container.querySelector('#task-edit-drawer-title')
-    expect(title?.querySelector('.material-symbols-outlined')).toBeNull()
-    void container
+    const header = screen.getByTestId('task-primary-header')
+    expect(
+      Array.from(header.querySelectorAll('.material-symbols-outlined')).some(
+        (icon) => icon.textContent?.trim() === 'event_repeat'
+      )
+    ).toBe(false)
   })
 
   it('renders the repeat badge in the header when recurrence is set', () => {
     const ctx = makeCtx()
-    const { container } = render(TaskEditDrawer, {
+    render(TaskEditDrawer, {
       props: {
         task: makeTask({ recurrence: 'every week' }),
         ctx,
         onClose: () => {}
       }
     })
-    const title = container.querySelector('#task-edit-drawer-title')
-    const badge = title?.querySelector('.material-symbols-outlined')
+    const header = screen.getByTestId('task-primary-header')
+    const badge = Array.from(
+      header.querySelectorAll('.material-symbols-outlined')
+    ).find((icon) => icon.textContent?.trim() === 'event_repeat')
     expect(badge).toBeTruthy()
     expect(badge?.textContent?.trim()).toBe('event_repeat')
   })
@@ -276,6 +280,27 @@ describe('TaskEditDrawer — due-date editor', () => {
     const today = screen.getByText('Today')
     await fireEvent.click(today)
     expect(setTaskDueDate).toHaveBeenCalledWith('task-1', '2026-07-02')
+  })
+
+  it('renders the six calendar-aware due-date presets', async () => {
+    const ctx = makeCtx({ today: '2026-07-02' })
+    const { container } = render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx, onClose: () => {} }
+    })
+    await fireEvent.click(
+      container.querySelector('button[aria-haspopup="dialog"]') as HTMLElement
+    )
+    for (const label of [
+      'Today',
+      'Tomorrow',
+      'End of week',
+      'End of next week',
+      'End of month',
+      'End of next month'
+    ]) {
+      expect(screen.getByText(label)).toBeTruthy()
+    }
+    expect(screen.queryByText('Next week')).toBeNull()
   })
 
   it('Clear due date commits an empty string', async () => {
@@ -502,6 +527,147 @@ describe('TaskEditDrawer — source awareness + affordances', () => {
       props: { task: makeTask(), ctx, onClose: () => {} }
     })
     expect(screen.queryByText('Open sub-editor')).toBeNull()
+  })
+})
+
+describe('TaskEditDrawer — information architecture and keyboard flow', () => {
+  beforeEach(() => cleanup())
+
+  it('uses the full mobile width and widens modestly on desktop', () => {
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx: makeCtx(), onClose: () => {} }
+    })
+
+    expect(screen.getByRole('dialog')).toHaveClass(
+      'w-full',
+      'sm:w-96',
+      'lg:max-w-md'
+    )
+  })
+
+  it('is genuinely non-modal: outside input closes without blocking its target', async () => {
+    const onClose = vi.fn()
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx: makeCtx(), onClose }
+    })
+
+    await fireEvent.click(screen.getByRole('dialog'))
+    expect(onClose).not.toHaveBeenCalled()
+
+    const outside = document.createElement('button')
+    const outsideClick = vi.fn()
+    outside.addEventListener('click', outsideClick)
+    document.body.appendChild(outside)
+    await fireEvent.mouseDown(outside)
+    await fireEvent.click(outside)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(outsideClick).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('dialog')).toHaveAttribute('aria-modal', 'false')
+    expect(screen.queryByTestId('task-drawer-backdrop')).toBeNull()
+    outside.remove()
+  })
+
+  it('does not treat nested popover interaction as an outside click', async () => {
+    const onClose = vi.fn()
+    const setTaskDueDate = vi.fn().mockResolvedValue(true)
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask(),
+        ctx: makeCtx({ setTaskDueDate }),
+        onClose
+      }
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: /2026-07-15/ }))
+    await fireEvent.click(screen.getByText('Today'))
+
+    expect(setTaskDueDate).toHaveBeenCalledWith('task-1', '2026-07-02')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('keeps title, status, due date, pin, and close in one sticky header', () => {
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx: makeCtx(), onClose: () => {} }
+    })
+
+    const header = screen.getByTestId('task-primary-header')
+    expect(header).toHaveClass('sticky', 'top-0')
+    expect(header).toContainElement(screen.getByLabelText('Task title'))
+    expect(header).toContainElement(
+      screen.getByRole('radiogroup', { name: 'Task status' })
+    )
+    expect(header).toContainElement(
+      screen.getByRole('button', { name: /2026-07-15/ })
+    )
+    expect(header).toContainElement(
+      screen.getByRole('button', { name: /Pin task/ })
+    )
+    expect(header).toContainElement(
+      screen.getByRole('button', { name: 'Close detail panel' })
+    )
+  })
+
+  it('uses content-aware defaults for planning and activity', () => {
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask({
+          recurrence: 'every week',
+          comments_count: 3
+        }),
+        ctx: makeCtx(),
+        onClose: () => {}
+      }
+    })
+
+    expect(screen.getByTestId('task-planning-disclosure')).toHaveAttribute(
+      'open'
+    )
+    expect(screen.getByTestId('task-activity-disclosure')).toHaveAttribute(
+      'open'
+    )
+  })
+
+  it('Escape closes a nested due-date popover before closing the drawer', async () => {
+    const onClose = vi.fn()
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx: makeCtx(), onClose }
+    })
+    const dueTrigger = screen.getByRole('button', { name: /2026-07-15/ })
+    await fireEvent.click(dueTrigger)
+    await tick()
+    expect(
+      screen.getByRole('dialog', { name: 'Due date options' })
+    ).toBeTruthy()
+
+    dueTrigger.focus()
+    await fireEvent.keyDown(dueTrigger, { key: 'Escape' })
+    await tick()
+    expect(dueTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(dueTrigger)
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores focus to the host trigger after the drawer unmounts', async () => {
+    const trigger = document.createElement('button')
+    trigger.textContent = 'Open task'
+    document.body.appendChild(trigger)
+    trigger.focus()
+    const onClose = vi.fn()
+    const ctx = makeCtx()
+    const { rerender } = render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx, onClose }
+    })
+    await tick()
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+    await rerender({ task: null, ctx, onClose })
+    await tick()
+    expect(document.activeElement).toBe(trigger)
+    trigger.remove()
   })
 })
 

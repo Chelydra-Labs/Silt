@@ -15,7 +15,8 @@ const ctx: QueryCtxLike = {
   activeNotebook: 'Work',
   activeSection: 'Journal',
   activePage: 'Today',
-  today: '2026-06-22'
+  today: '2026-06-22',
+  weekStart: 'sunday'
 }
 
 const emptyFilters: TaskFilters = {
@@ -123,11 +124,11 @@ describe('buildQuery — filter branches (ported from silt-kanban)', () => {
     expect(params).toEqual(['2026-06-22'])
   })
 
-  it('dueDate=week uses BETWEEN today and today+7', () => {
+  it('dueDate=week uses the configured calendar week boundaries', () => {
     const filters: TaskFilters = { ...emptyFilters, dueDate: 'week' }
     const { sql, params } = buildQuery('vault', filters, ctx)
     expect(sql).toContain('t.due_date BETWEEN ? AND ?')
-    expect(params).toEqual(['2026-06-22', '2026-06-29'])
+    expect(params).toEqual(['2026-06-21', '2026-06-27'])
   })
 
   it('dueDate=none matches NULL or empty string', () => {
@@ -458,14 +459,14 @@ describe('buildQuery — activeFilter lever (new in #432)', () => {
     expect(params).toEqual(['2026-06-22'])
   })
 
-  it("activeFilter='upcoming' adds status!=DONE AND due_date>today AND due_date<=today+7", () => {
+  it("activeFilter='upcoming' ends at the configured calendar week-end", () => {
     const { sql, params } = buildQuery('vault', emptyFilters, ctx, {
       activeFilter: 'upcoming'
     })
     expect(sql).toContain("t.status != 'DONE'")
     expect(sql).toContain('t.due_date > ?')
     expect(sql).toContain('t.due_date <= ?')
-    expect(params).toEqual(['2026-06-22', '2026-06-29'])
+    expect(params).toEqual(['2026-06-22', '2026-06-27'])
   })
 
   it("activeFilter='completed' adds status=DONE", () => {

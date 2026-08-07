@@ -135,7 +135,8 @@ import {
   clearTaskPageRoute,
   setGroupBy,
   setSort,
-  setActiveFilter
+  setActiveFilter,
+  setWeekStart
 } from '../state.svelte'
 import { initTasksSettings } from '../settings'
 
@@ -322,6 +323,22 @@ describe('BoardView — dimension-aware Board (#421)', () => {
         'Sprint Review'
       ])
     }
+  })
+
+  it('shows a user-visible notice when the task result is truncated', async () => {
+    resetTaskHubState()
+    setGroupBy('status')
+    mocks.sqliteQuery.mockReset().mockResolvedValue({
+      rows: [row({ id: 'truncated-1', clean_content: 'Visible task' })],
+      truncated: true
+    })
+
+    render(BoardView, { ctx: makeCtx(), onCountChange: vi.fn() })
+    await flush()
+
+    expect(screen.getByTestId('board-truncated-notice')).toHaveTextContent(
+      'Some tasks are hidden'
+    )
   })
 
   // --- Column derivation per dimension ----------------------------------
@@ -1139,6 +1156,31 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     expect(sql).toContain("t.status != 'DONE'")
     expect(sql).toContain('t.due_date = ?')
     expect(params).toContain(TODAY)
+  })
+
+  it('reloads and re-bins when the configured week start changes', async () => {
+    resetTaskHubState()
+    setGroupBy('dueDate')
+    setActiveFilter('upcoming')
+    mocks.sqliteQuery.mockReset().mockResolvedValue({
+      rows: [row({ id: 'boundary', due_date: '2026-07-12' })],
+      truncated: false
+    })
+
+    render(BoardView, { ctx: makeCtx(), onCountChange: vi.fn() })
+    await flush()
+    const callsBefore = mocks.sqliteQuery.mock.calls.length
+    expect(screen.getByRole('group', { name: 'Later' })).toBeInTheDocument()
+
+    setWeekStart('monday')
+    await flush()
+
+    expect(mocks.sqliteQuery.mock.calls.length).toBeGreaterThan(callsBefore)
+    expect(screen.getByRole('group', { name: 'Upcoming' })).toHaveTextContent(
+      'Task'
+    )
+    const lastParams = mocks.sqliteQuery.mock.calls.at(-1)?.[1] as unknown[]
+    expect(lastParams).toContain('2026-07-12')
   })
 
   it('shows subtask badge and column estimate sum when present (#434/#439)', async () => {

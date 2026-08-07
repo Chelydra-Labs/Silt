@@ -1,6 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { tick } from 'svelte'
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte'
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within
+} from '@testing-library/svelte'
 
 // jsdom polyfills — CalendarView pulls in TaskEditDrawer/TaskSubEditorModal
 // (transition:fly + TipTap), which need the Web Animations API + caret rects.
@@ -118,7 +124,8 @@ import {
   enterTaskPageRoute,
   clearTaskPageRoute,
   setGroupBy,
-  setCalendarSubMode
+  setCalendarSubMode,
+  setWeekStart
 } from '../state.svelte'
 import { initTasksSettings } from '../settings'
 
@@ -290,6 +297,22 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     }
   })
 
+  it('shows a user-visible notice when any calendar result is truncated', async () => {
+    resetTaskHubState()
+    setCalendarSubMode('month')
+    mocks.sqliteQuery.mockReset().mockResolvedValue({
+      rows: [row({ id: 'truncated-1', due_date: TODAY })],
+      truncated: true
+    })
+
+    render(CalendarView, { ctx: makeCtx(), onCountChange: vi.fn() })
+    await flush()
+
+    expect(screen.getByTestId('calendar-truncated-notice')).toHaveTextContent(
+      'Some tasks are hidden'
+    )
+  })
+
   // --- Grid rendering ----------------------------------------------------
 
   it('renders a 6×7 day-cell skeleton while loading (#458)', async () => {
@@ -314,6 +337,20 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     ).toBeGreaterThan(0)
   })
 
+  it('uses Monday as the first calendar column when configured', async () => {
+    await mockQueries([])
+    resetTaskHubState()
+    setWeekStart('monday')
+    setCalendarSubMode('month')
+    render(CalendarView, { ctx: makeCtx(), onCountChange: vi.fn() })
+    await flush()
+    const headers = document.querySelectorAll(
+      '[data-testid="tasks-calendar"] [role="columnheader"]'
+    )
+    expect(headers[0]?.textContent?.trim()).toBe('Mon')
+    expect(document.querySelector('[data-celldate="2026-06-29"]')).toBeTruthy()
+  })
+
   it('a task with due_date=today appears in today’s cell', async () => {
     await mockQueries([
       row({ id: 't1', clean_content: 'Standup meeting', due_date: TODAY })
@@ -324,6 +361,129 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     const todayCell = document.querySelector(`[data-celldate="${TODAY}"]`)
     expect(todayCell).toBeTruthy()
     expect(todayCell!.textContent).toContain('Standup meeting')
+  })
+
+  describe('month-cell overflow agenda', () => {
+    const overflowRows = Array.from({ length: 5 }, (_, index) =>
+      row({
+        id: `overflow-${index + 1}`,
+        clean_content: `Overflow task ${index + 1}`,
+        due_date: TODAY
+      })
+    )
+
+    it('exposes every capped task and returns focus to the trigger on Escape', async () => {
+      await mockQueries(overflowRows)
+      await renderCalendar()
+
+      expect(screen.queryByText('Overflow task 4')).toBeNull()
+      const trigger = screen.getByRole('button', {
+        name: `Show 2 more tasks for ${TODAY}`
+      })
+      await fireEvent.click(trigger)
+      await flush()
+
+      const agenda = screen.getByRole('dialog', { name: 'July 6, 2026' })
+      expect(agenda).toHaveAttribute('aria-modal', 'false')
+      for (let index = 1; index <= 5; index++) {
+        expect(within(agenda).getByText(`Overflow task ${index}`)).toBeTruthy()
+      }
+
+      const first = within(agenda).getByRole('button', {
+        name: /Overflow task 1/i
+      })
+      const second = within(agenda).getByRole('button', {
+        name: /Overflow task 2/i
+      })
+      expect(document.activeElement).toBe(first)
+      await fireEvent.keyDown(first, { key: 'ArrowDown' })
+      expect(document.activeElement).toBe(second)
+
+      await fireEvent.keyDown(second, { key: 'Escape' })
+      await flush()
+      expect(screen.queryByTestId('calendar-day-agenda')).toBeNull()
+      expect(document.activeElement).toBe(trigger)
+    })
+
+    it('opens a hidden task in the existing edit drawer', async () => {
+      await mockQueries(overflowRows)
+      await renderCalendar()
+
+      await fireEvent.click(
+        screen.getByRole('button', {
+          name: `Show 2 more tasks for ${TODAY}`
+        })
+      )
+      await flush()
+      const agenda = screen.getByTestId('calendar-day-agenda')
+      await fireEvent.click(
+        within(agenda).getByRole('button', { name: /Overflow task 5/i })
+      )
+      await flush()
+
+      expect(screen.queryByTestId('calendar-day-agenda')).toBeNull()
+      const drawer = screen.getByRole('dialog', { name: /Overflow task 5/i })
+      expect(drawer).toHaveAttribute('aria-modal', 'false')
+    })
+
+    it('keeps hidden agenda tasks draggable onto day cells', async () => {
+      await mockQueries(overflowRows)
+      await renderCalendar()
+
+      await fireEvent.click(
+        screen.getByRole('button', {
+          name: `Show 2 more tasks for ${TODAY}`
+        })
+      )
+      await flush()
+      const hiddenTask = within(
+        screen.getByTestId('calendar-day-agenda')
+      ).getByRole('button', { name: /Overflow task 4/i })
+      expect(hiddenTask).toHaveAttribute('draggable', 'true')
+
+      await fireEvent.dragStart(hiddenTask)
+      const targetDate = ymdForCell(7)
+      const target = document.querySelector(`[data-celldate="${targetDate}"]`)!
+      await fireEvent.dragOver(target)
+      await fireEvent.drop(target)
+      await flush()
+
+      expect(mocks.setTaskDueDate).toHaveBeenCalledWith(
+        'overflow-4',
+        targetDate
+      )
+    })
+
+    it('replaces capped overdue text with an agenda trigger', async () => {
+      const overdueRows = Array.from({ length: 4 }, (_, index) =>
+        row({
+          id: `overdue-overflow-${index + 1}`,
+          clean_content: `Hidden overdue ${index + 1}`,
+          due_date: `2026-06-0${index + 1}`
+        })
+      )
+      mocks.sqliteQuery.mockReset()
+      mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('due_date IS NULL')) {
+          return { rows: [], truncated: false }
+        }
+        if (sql.includes("status != 'DONE'") && !sql.includes('due_date >=')) {
+          return { rows: overdueRows, truncated: false }
+        }
+        return { rows: [], truncated: false }
+      })
+      await renderCalendar()
+
+      const trigger = screen.getByRole('button', {
+        name: `Show 2 more overdue tasks for ${TODAY}`
+      })
+      await fireEvent.click(trigger)
+      await flush()
+
+      const agenda = screen.getByTestId('calendar-day-agenda')
+      expect(within(agenda).getAllByText(/Hidden overdue/)).toHaveLength(4)
+      expect(within(agenda).getAllByText(/Overdue ·/)).toHaveLength(4)
+    })
   })
 
   // --- #414 closure: single-click → drawer (no navigate-to-block) -------
@@ -569,6 +729,33 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     // The heading changes from "July 2026" to a date-range form.
     const heading = screen.getByRole('heading', { level: 2 })
     expect(heading.textContent).toMatch(/–/)
+  })
+
+  it('formats week headings from actual boundaries across months and years', async () => {
+    await mockQueries([])
+    await renderCalendar()
+    await fireEvent.click(screen.getByTestId('calendar-submode-week'))
+    await flush()
+
+    window.dispatchEvent(
+      new CustomEvent('calendar:focus-date', {
+        detail: { date: '2026-07-01' }
+      })
+    )
+    await flush()
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(
+      'June 28–July 4, 2026'
+    )
+
+    window.dispatchEvent(
+      new CustomEvent('calendar:focus-date', {
+        detail: { date: '2026-01-01' }
+      })
+    )
+    await flush()
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent(
+      'December 28, 2025–January 3, 2026'
+    )
   })
 
   // --- Group-by ignored + one-time notice ------------------------------

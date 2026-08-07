@@ -5,9 +5,17 @@ import { cleanup, render, screen, fireEvent } from '@testing-library/svelte'
 // never touches the real clipboard or toast DOM.
 const copyTextMock = vi.hoisted(() => vi.fn().mockResolvedValue(true))
 const pushNotificationMock = vi.hoisted(() => vi.fn())
+const dateGlanceSettingsMock = vi.hoisted(() => ({
+  config: {
+    editor: {}
+  }
+}))
 vi.mock('../lib/pageActions', () => ({ copyText: copyTextMock }))
 vi.mock('../notifications/store.svelte', () => ({
   pushNotification: pushNotificationMock
+}))
+vi.mock('../settings/store.svelte', () => ({
+  settings: dateGlanceSettingsMock
 }))
 
 import DateGlance from './DateGlance.svelte'
@@ -18,6 +26,10 @@ import {
   setDateGlanceAnchor
 } from '../lib/dateGlanceState.svelte'
 import { POPOVER_MARGIN } from '../lib/editor/popoverPositioning'
+import {
+  resetTaskWeekStart,
+  setTaskWeekStart
+} from '../lib/taskWeekStart.svelte'
 
 const anchor = document.createElement('div')
 document.body.append(anchor)
@@ -67,12 +79,14 @@ beforeEach(() => {
   // Resolve activeAnchor via the real open path (no body fallback).
   openDateGlance()
   dateGlance.insertEditor = null
+  setTaskWeekStart('sunday')
 })
 
 afterEach(() => {
   cleanup()
   closeDateGlance()
   setDateGlanceAnchor(null)
+  resetTaskWeekStart()
   document
     .querySelectorAll('[data-date-glance-placement]')
     .forEach((n) => n.remove())
@@ -87,6 +101,30 @@ async function clickFirstDayCell(): Promise<void> {
 }
 
 describe('DateGlance', () => {
+  it('uses the active Tasks Monday week start for its shared month grid', async () => {
+    setTaskWeekStart('monday')
+    render(DateGlance)
+    const headers = screen
+      .getByRole('dialog')
+      .querySelectorAll('[aria-hidden="true"] span')
+    expect(headers[0]?.textContent).toBe('M')
+  })
+
+  it('updates its grid when the active Tasks preference changes', async () => {
+    render(DateGlance)
+    expect(
+      screen.getByRole('dialog').querySelector('[aria-hidden="true"] span')
+        ?.textContent
+    ).toBe('S')
+
+    setTaskWeekStart('monday')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(
+      screen.getByRole('dialog').querySelector('[aria-hidden="true"] span')
+        ?.textContent
+    ).toBe('M')
+  })
+
   it('inserts the date at the editor cursor when an insert target exists', async () => {
     const run = vi.fn(() => true)
     const insertContent = vi.fn(() => ({ run }))

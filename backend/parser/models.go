@@ -3,6 +3,15 @@ package parser
 type BlockType string
 
 const (
+	// DefaultTaskPriority is the priority assigned to a task created without
+	// an explicit priority. Priorities are 1=Critical, 2=Normal, 3=Low.
+	DefaultTaskPriority = 2
+	// LegacyMissingTaskPriority is the value retained for older task lines that
+	// have no [priority::] token. New task creation must set priority explicitly.
+	LegacyMissingTaskPriority = 3
+)
+
+const (
 	BlockTask   BlockType = "TASK"
 	BlockNote   BlockType = "NOTE"
 	BlockHeader BlockType = "HEADER"

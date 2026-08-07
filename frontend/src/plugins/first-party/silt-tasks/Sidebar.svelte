@@ -80,7 +80,7 @@
 </script>
 
 <aside
-  class="flex flex-col gap-4 px-3 py-3"
+  class="flex flex-col gap-3 px-2.5 py-3"
   aria-label="Tasks sidebar"
   data-test-tasks-sidebar
 >

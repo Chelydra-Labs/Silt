@@ -15,7 +15,8 @@
 // Pure function: no side effects, no $state, no IPC. All values flow
 // through `?` placeholders; nothing is string-interpolated into the SQL.
 
-import { plusDaysISO } from '../../sdk'
+import { addDaysISO, endOfWeekISO, startOfWeekISO } from '../../../lib/dateGrid'
+import type { WeekStart } from '../../../lib/dateGrid'
 import type { PluginContext } from '../../sdk'
 import type {
   CalendarFilter,
@@ -77,6 +78,8 @@ export interface QueryCtxLike {
   activeSection: string
   activePage: string
   today: string
+  /** Explicit per-vault week boundary used by all week filters. */
+  weekStart: WeekStart
 }
 
 /**
@@ -289,7 +292,10 @@ export function buildQuery(
       params.push(today)
     } else if (due === 'week') {
       where.push('t.due_date BETWEEN ? AND ?')
-      params.push(today, plusDaysISO(today, 7))
+      params.push(
+        startOfWeekISO(today, ctx.weekStart),
+        endOfWeekISO(today, ctx.weekStart)
+      )
     } else if (due === 'none') {
       where.push("(t.due_date IS NULL OR t.due_date = '')")
     }
@@ -305,7 +311,7 @@ export function buildQuery(
   // Stale filter (#440): open tasks with no modified_at or last touch older
   // than 30 local days. Compare date-only prefix so ISO timestamps work.
   if (f.stale) {
-    const cutoff = plusDaysISO(ctx.today, -30)
+    const cutoff = addDaysISO(ctx.today, -30)
     where.push(
       "t.status != 'DONE' AND (t.modified_at IS NULL OR t.modified_at = '' OR substr(t.modified_at, 1, 10) < ?)"
     )
@@ -327,7 +333,7 @@ export function buildQuery(
       params.push(today)
     } else if (af === 'upcoming') {
       where.push("t.status != 'DONE'", 't.due_date > ?', 't.due_date <= ?')
-      params.push(today, plusDaysISO(today, 7))
+      params.push(today, endOfWeekISO(today, ctx.weekStart))
     } else if (af === 'completed') {
       where.push("t.status = 'DONE'")
     }

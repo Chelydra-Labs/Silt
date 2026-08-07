@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => {
     },
     parsing: {
       auto_inject_uuid: true,
-      default_task_priority: 3
+      default_task_priority: 2
     },
     hotkeys: { open_search: 'Ctrl+P' },
     plugins: { active: [], disabled: [], plugin_settings: {} }

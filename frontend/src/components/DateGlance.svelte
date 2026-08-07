@@ -11,6 +11,7 @@
   import Popover from './Popover.svelte'
   import { dateGlance, closeDateGlance } from '../lib/dateGlanceState.svelte'
   import { monthWeeks, ymd, addMonths } from '../lib/dateGrid'
+  import { getTaskWeekStart } from '../lib/taskWeekStart.svelte'
   import { formatDate, resolveDateFormat } from '../lib/dateFormat'
   import { settings } from '../settings/store.svelte'
   import { copyText } from '../lib/pageActions'
@@ -35,13 +36,20 @@
   let cursor = $state(new Date())
   let today = $state(new Date())
   let todayKey = $state(ymd(new Date()))
+  let weekStart = $derived(getTaskWeekStart())
   let focusISO = $state('')
   // Drill-down view: days (default) → months → years
   let calView = $state<'days' | 'months' | 'years'>('days')
   // First year in the 12-year picker grid
   let yearRangeStart = $state(0)
 
-  let weeks = $derived(monthWeeks(cursor))
+  let weeks = $derived(monthWeeks(cursor, weekStart))
+  let dayLabels = $derived(
+    Array.from(
+      { length: 7 },
+      (_, i) => DOW[(i + (weekStart === 'monday' ? 1 : 0)) % 7]
+    )
+  )
   let flat = $derived(weeks.flat())
   let monthName = $derived(
     cursor.toLocaleDateString(undefined, { month: 'long' })
@@ -360,7 +368,7 @@
           class="mb-1 grid grid-cols-7 gap-0.5 text-center text-type-3xs uppercase tracking-[0.12em] text-text-muted"
           aria-hidden="true"
         >
-          {#each DOW as d, i (i)}
+          {#each dayLabels as d, i (i)}
             <span class="py-0.5">{d}</span>
           {/each}
         </div>

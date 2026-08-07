@@ -720,6 +720,17 @@ func TestParseLine_EdgeCases(t *testing.T) {
 	})
 }
 
+func TestParseLine_LegacyMissingPriorityKeepsCompatibility(t *testing.T) {
+	line := "- [ ] Legacy task without a priority token <!-- id: 55555555-5555-5555-5555-555555555555 -->"
+	block, _, _ := ParseLine(line, 1, 4)
+	if block.Priority != LegacyMissingTaskPriority {
+		t.Fatalf("missing priority parsed as %d, want legacy value %d", block.Priority, LegacyMissingTaskPriority)
+	}
+	if rendered := renderBlock(block, 4); strings.Contains(rendered, "[priority::") {
+		t.Fatalf("legacy missing-priority task gained a token: %s", rendered)
+	}
+}
+
 // TestParseLine_EmptyBulletContent covers the #570 fix: bullet-prefix
 // detection on a trailing-id-only line like "- <!-- id: uuid -->". cleanLine
 // ("- " after CleanLineID) must survive TrimSpace so HasPrefix("- ", "- ")
@@ -1405,7 +1416,7 @@ func TestRenderFileContent_ScaffoldSnapshot(t *testing.T) {
 	fm := "---\nnotebook: \"Work\"\nsection: \"Journal\"\npage: \"Daily\"\ndate: \"2026-06-14\"\ntags: []\n---\n"
 	got := RenderFileContent(blocks, "", fm, 4)
 	// Two managed lines, each with an injected UUID; header uses '#', task
-	// uses the TODO checkbox syntax with default priority (#3 is omitted).
+	// uses the TODO checkbox syntax with legacy omitted priority.
 	if strings.Count(got, "<!-- id:") != 2 {
 		t.Errorf("expected 2 injected IDs, got %d in:\n%s", strings.Count(got, "<!-- id:"), got)
 	}

@@ -26,6 +26,7 @@ vi.mock('$silt-app', () =>
   createAppIpcMocks({
     ListPlugins: mockListPlugins,
     ReadPluginSource: mockReadPluginSource,
+    GetPluginSettingsForNotebook: vi.fn(() => Promise.resolve({})),
     RegisterPluginSession: mockRegisterSession,
     UnregisterPluginSession: mockUnregisterSession,
     ClosePluginDB: mockClosePluginDB

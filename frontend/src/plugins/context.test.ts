@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   pluginMutateBlock: vi.fn(() => Promise.resolve(true)),
   pluginUpdateBlockState: vi.fn(() => Promise.resolve(true)),
   pluginSetTaskOrder: vi.fn(() => Promise.resolve(true)),
+  pluginSetTaskStartDate: vi.fn(() => Promise.resolve(true)),
   getPluginSettingsForNotebook: vi.fn(() => Promise.resolve({})),
   getActiveLocation: vi.fn(() => ({
     notebook: 'Work',
@@ -28,6 +29,7 @@ vi.mock('$silt-app', () =>
     PluginUpdateBlockState: mocks.pluginUpdateBlockState,
     PluginUpdateTaskMeta: mocks.pluginUpdateTaskMeta,
     PluginSetTaskOrder: mocks.pluginSetTaskOrder,
+    PluginSetTaskStartDate: mocks.pluginSetTaskStartDate,
     GetPluginSettingsForNotebook: mocks.getPluginSettingsForNotebook
   })
 )
@@ -158,6 +160,34 @@ describe('makePluginContext — setTaskOrder wiring (#426)', () => {
       '',
       'block-1',
       0
+    )
+  })
+})
+
+describe('makePluginContext — setTaskStartDate wiring', () => {
+  beforeEach(() => {
+    mocks.pluginSetTaskStartDate.mockClear()
+  })
+
+  it('threads identity and preserves set/clear values verbatim', async () => {
+    const ctx = makePluginContext('silt-tasks', 'tok-start')
+
+    await ctx.setTaskStartDate('block-1', '2026-08-03')
+    await ctx.setTaskStartDate('block-1', '')
+
+    expect(mocks.pluginSetTaskStartDate).toHaveBeenNthCalledWith(
+      1,
+      'silt-tasks',
+      'tok-start',
+      'block-1',
+      '2026-08-03'
+    )
+    expect(mocks.pluginSetTaskStartDate).toHaveBeenNthCalledWith(
+      2,
+      'silt-tasks',
+      'tok-start',
+      'block-1',
+      ''
     )
   })
 })

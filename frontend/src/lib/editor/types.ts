@@ -6,6 +6,9 @@
 
 export type BlockType = 'TASK' | 'NOTE' | 'HEADER' | 'CODE'
 
+// Must match parser.DefaultTaskPriority for task nodes created in the editor.
+export { DEFAULT_TASK_PRIORITY } from '../taskPriority'
+
 export interface ParsedBlock {
   id: string
   parent_id: string

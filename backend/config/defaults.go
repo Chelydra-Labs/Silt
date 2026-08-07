@@ -48,7 +48,7 @@ func Defaults() SystemConfig {
 		},
 		Parsing: ParsingConfig{
 			AutoInjectUUID:      true,
-			DefaultTaskPriority: 3,
+			DefaultTaskPriority: 2,
 		},
 		Hotkeys: map[string]string{
 			// Default chords are anchored to widely-established editor/OS

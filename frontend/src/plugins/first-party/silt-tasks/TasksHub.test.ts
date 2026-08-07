@@ -49,11 +49,13 @@ import { v2CtxStubs } from '../../test-helpers'
 import {
   clearTaskPageRoute,
   enterTaskPageRoute,
+  applySavedView,
   getTaskHubState,
   getTaskHubViewState,
   getTaskPageRoute,
   resetTaskHubState
 } from './state.svelte'
+import { getTaskWeekStart } from '../../../lib/taskWeekStart.svelte'
 
 // jsdom polyfills: ListView pulls in TaskEditDrawer/TaskSubEditorModal, whose
 // transition:fly + TipTap need Element.animate / elementFromPoint / Range rects.
@@ -99,7 +101,7 @@ if (
   Range.prototype.getBoundingClientRect = () => zeroRect
 }
 
-function makeCtx(): PluginContext {
+function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
   return {
     ...v2CtxStubs,
     activeNotebook: '',
@@ -133,7 +135,8 @@ function makeCtx(): PluginContext {
         }
       }
       return () => {}
-    }
+    },
+    ...overrides
   }
 }
 
@@ -189,6 +192,23 @@ describe('Tasks hub shell (#424)', () => {
     expect(screen.getByRole('button', { name: /Owner/i })).toBeInTheDocument()
   })
 
+  it('stacks header actions at narrow widths and preserves the desktop row', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(screen.getByTestId('tasks-hub-header')).toHaveClass(
+      'flex-wrap',
+      'sm:flex-nowrap'
+    )
+    const actions = screen.getByTestId('tasks-hub-header-actions')
+    expect(actions).toHaveClass('basis-full', 'sm:basis-auto', 'sm:ml-auto')
+    expect(actions).toContainElement(screen.getByTestId('tasks-hub-bookmark'))
+    expect(actions).toContainElement(
+      screen.getByTestId('tasks-hub-mode-switcher')
+    )
+    expect(actions).toContainElement(screen.getByTestId('tasks-preferences'))
+  })
+
   it('defaults to List mode and renders the list renderer', async () => {
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()
@@ -199,6 +219,81 @@ describe('Tasks hub shell (#424)', () => {
     expect(document.querySelector('[data-tasks-view]')).toBeTruthy()
     expect(screen.queryByTestId('tasks-board-stub')).toBeNull()
     expect(screen.queryByTestId('tasks-calendar-stub')).toBeNull()
+  })
+
+  it('enters from main navigation at Vault even when a page is active', async () => {
+    render(TasksHub, {
+      ctx: makeCtx({
+        activeNotebook: 'Team',
+        activeSection: 'Meetings',
+        activePage: 'Weekly sync'
+      }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    expect(getTaskHubState().scope).toBe('vault')
+    expect(getTaskHubState().scopeUserOverride).toBe(false)
+    expect(screen.getByTestId('tasks-hub-scope-toggle')).toHaveTextContent(
+      'Scope: Vault'
+    )
+  })
+
+  it('keeps deliberate Page scope selectable after entering from navigation', async () => {
+    render(TasksHub, {
+      ctx: makeCtx({
+        activeNotebook: 'Team',
+        activeSection: 'Meetings',
+        activePage: 'Weekly sync'
+      }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    await fireEvent.click(screen.getByTestId('tasks-hub-scope-toggle'))
+    await fireEvent.click(screen.getByTestId('scope-option-page'))
+    await flush()
+
+    expect(getTaskHubState().scope).toBe('page')
+    expect(getTaskHubState().scopeUserOverride).toBe(true)
+  })
+
+  it('preserves an active saved view across remount and settings hydration', async () => {
+    const savedView = {
+      id: 'persisted-view',
+      name: 'Planning board',
+      displayMode: 'board' as const,
+      groupBy: 'status' as const,
+      sort: 'priority' as const,
+      scope: 'page' as const,
+      filters: { owners: [], priorities: [], dueDate: '' as const, tags: [] }
+    }
+    mocks.tasksSettings = {
+      default_display_mode: 'calendar',
+      default_group_by: 'owner',
+      default_sort: 'title',
+      saved_views: [savedView]
+    }
+
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+    applySavedView(savedView)
+    expect(getTaskHubState().activeSavedViewId).toBe(savedView.id)
+
+    cleanup()
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    expect(getTaskHubState()).toMatchObject({
+      displayMode: 'board',
+      groupBy: 'status',
+      sort: 'priority',
+      scope: 'page',
+      scopeUserOverride: true,
+      activeSavedViewId: savedView.id,
+      savedViewsDirty: false
+    })
+    expect(screen.getByTestId('tasks-board')).toBeInTheDocument()
   })
 
   it('switching to Board renders the Board renderer and persists the preference', async () => {
@@ -235,7 +330,8 @@ describe('Tasks hub shell (#424)', () => {
 
   it('hydrates the display mode from the persisted vault setting on mount', async () => {
     mocks.tasksSettings = {
-      default_display_mode: 'calendar'
+      default_display_mode: 'calendar',
+      week_start: 'monday'
     }
 
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
@@ -248,6 +344,131 @@ describe('Tasks hub shell (#424)', () => {
         .getByRole('radio', { name: /Calendar mode/i })
         .getAttribute('aria-checked')
     ).toBe('true')
+    expect(getTaskWeekStart()).toBe('monday')
+  })
+
+  it('surfaces a task-settings load failure without applying stale hydration', async () => {
+    const notify = vi.fn().mockResolvedValue(true)
+    render(TasksHub, {
+      ctx: makeCtx({
+        getPluginSettings: vi
+          .fn()
+          .mockRejectedValue(new Error('vault is closing')),
+        notify
+      }),
+      manifest: MANIFEST
+    })
+    await flush()
+
+    expect(notify).toHaveBeenCalledWith({
+      title: 'Tasks',
+      body: "Couldn't load task preferences: vault is closing"
+    })
+    expect(getTaskWeekStart()).toBe('sunday')
+  })
+
+  it('exposes the vault-scoped week start in compact Task preferences', async () => {
+    mocks.tasksSettings = { week_start: 'monday' }
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const trigger = screen.getByRole('button', { name: 'Task preferences' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+    await fireEvent.click(trigger)
+    await flush()
+
+    expect(
+      screen.getByRole('dialog', { name: 'Task preferences' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('group', { name: 'First day of week' })
+    ).toBeInTheDocument()
+    const monday = screen.getByRole('radio', { name: 'Monday' })
+    expect(monday).toBeChecked()
+    expect(monday).toHaveFocus()
+  })
+
+  it('updates week boundaries immediately and persists through Tasks settings', async () => {
+    let finishSave: ((saved: boolean) => void) | undefined
+    mocks.updatePluginSetting.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishSave = resolve
+        })
+    )
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Task preferences' })
+    )
+    await fireEvent.click(screen.getByRole('radio', { name: 'Monday' }))
+    await tick()
+
+    expect(getTaskWeekStart()).toBe('monday')
+    expect(screen.getByRole('radio', { name: 'Monday' })).toBeChecked()
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'week_start',
+      'monday'
+    )
+
+    finishSave?.(true)
+    await flush()
+  })
+
+  it('restores the prior week start and announces a persistence failure', async () => {
+    mocks.updatePluginSetting.mockResolvedValueOnce(false)
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Task preferences' })
+    )
+    await fireEvent.click(screen.getByRole('radio', { name: 'Monday' }))
+    await flush()
+
+    expect(getTaskWeekStart()).toBe('sunday')
+    expect(screen.getByRole('radio', { name: 'Sunday' })).toBeChecked()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Couldn’t save this preference. Try again.'
+    )
+  })
+
+  it('closes Task preferences with Escape and returns focus to its trigger', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const trigger = screen.getByRole('button', { name: 'Task preferences' })
+    await fireEvent.click(trigger)
+    await flush()
+    expect(screen.getByTestId('tasks-preferences-popover')).toBeInTheDocument()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flush()
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveFocus()
+  })
+
+  it('keeps the Task preferences click-away backdrop out of the tab and accessibility trees', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const trigger = screen.getByRole('button', { name: 'Task preferences' })
+    await fireEvent.click(trigger)
+    await flush()
+
+    const backdrop = screen.getByTestId('tasks-preferences-backdrop')
+    expect(backdrop.tagName).toBe('DIV')
+    expect(backdrop).toHaveAttribute('role', 'presentation')
+    expect(backdrop).toHaveAttribute('aria-hidden', 'true')
+    expect(backdrop).toHaveAttribute('tabindex', '-1')
+
+    await fireEvent.click(backdrop)
+    await flush()
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveFocus()
   })
 
   it('mode switcher uses roving tabindex (checked radio is tabbable)', async () => {
@@ -991,6 +1212,7 @@ describe('Tasks hub — saved views bookmark (#427)', () => {
     // closePopover) instead of waiting for the transition timer.
     const bm = screen.getByTestId('tasks-hub-bookmark')
     expect(bm.getAttribute('data-popover-state')).toBe('closed')
+    expect(document.activeElement).toBe(bm)
   })
 
   it('delete uses the in-app confirm modal, not window.confirm (#470)', async () => {

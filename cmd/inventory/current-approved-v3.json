@@ -705,6 +705,10 @@
         "signature": "PluginSetTaskRecurrence(pluginID, sessionToken, blockID, recurrenceRule string) (bool, error)"
       },
       {
+        "name": "PluginSetTaskStartDate",
+        "signature": "PluginSetTaskStartDate(pluginID, sessionToken, blockID, startDate string) (bool, error)"
+      },
+      {
         "name": "PluginSetTaskTags",
         "signature": "PluginSetTaskTags(pluginID, sessionToken, blockID string, tags []string) (bool, error)"
       },
@@ -1170,6 +1174,7 @@
       "frontend/src/components/settings/EditorTab.spellcheck.test.ts",
       "frontend/src/components/settings/GeneralTab.svelte",
       "frontend/src/components/settings/GeneralTab.test.ts",
+      "frontend/src/components/settings/HotkeysTab.notice.test.ts",
       "frontend/src/components/settings/NetworkAuditViewer.svelte",
       "frontend/src/components/settings/PluginSettingsPanel.test.ts",
       "frontend/src/components/settings/PluginsTab.svelte",
@@ -1190,8 +1195,10 @@
       "frontend/src/components/settings/plugins/PluginInstallFlow.test.ts",
       "frontend/src/components/settings/spellcheck/SpellcheckPackManager.svelte",
       "frontend/src/components/settings/spellcheck/SpellcheckPackManager.test.ts",
+      "frontend/src/dashboards/TypeDashboard.savedViews.test.ts",
       "frontend/src/dashboards/TypeDashboard.svelte",
       "frontend/src/dashboards/TypeDashboard.test.ts",
+      "frontend/src/dashboards/dashboardSettings.test.ts",
       "frontend/src/dashboards/dashboardSettings.ts",
       "frontend/src/lib/devModeInspect.test.ts",
       "frontend/src/lib/devModeInspect.ts",
@@ -1303,8 +1310,10 @@
       "frontend/src/components/settings/VaultArchiveModal.test.ts",
       "frontend/src/components/settings/spellcheck/SpellcheckPackManager.svelte",
       "frontend/src/components/settings/spellcheck/SpellcheckPackManager.test.ts",
+      "frontend/src/dashboards/TypeDashboard.savedViews.test.ts",
       "frontend/src/dashboards/TypeDashboard.svelte",
       "frontend/src/dashboards/TypeDashboard.test.ts",
+      "frontend/src/dashboards/dashboardSettings.test.ts",
       "frontend/src/lib/editor/blockDepthDom.test.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
       "frontend/src/lib/editor/spellcheck/customDictionary.svelte.test.ts",
@@ -1383,6 +1392,6 @@
       "vault:moved",
       "vault:watch-coverage"
     ],
-    "plugin_method_count": 57
+    "plugin_method_count": 58
   }
 }
