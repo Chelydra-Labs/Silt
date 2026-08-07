@@ -52,7 +52,7 @@
     onError: (message: string) => void
     /** Open the in-app type editor (the empty-state escape hatch). */
     onCreateType?: () => void
-    /** Restore the shipped example types (Book, Meeting). */
+    /** Restore the shipped example types pack. */
     onRestoreExamples?: () => void
     /** How management actions render. Peek collapses Create/Restore/Remove
      *  behind a more_vert menu so the 32vh header stays single-row; modal

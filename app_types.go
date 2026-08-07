@@ -248,8 +248,8 @@ func (a *App) GetTypesReprojectionStatus() TypesReprojectionStatus {
 	}
 }
 
-// RestoreExampleTypes re-seeds the shipped example note types (Book, Meeting)
-// into <vault>/.system/types/ when absent — the quick unblock for a user who has
+// RestoreExampleTypes re-seeds the shipped example note-type pack into
+// <vault>/.system/types/ when absent — the quick unblock for a user who has
 // no types and hit the empty-state dead-end. Idempotent: a type whose id already
 // exists is left untouched so the user's edits survive a repeat call. Returns
 // the ids of the types it actually created (empty if all already existed).

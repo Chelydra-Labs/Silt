@@ -56,7 +56,7 @@
     /** Open the in-app type editor (the empty-state escape hatch). Optional —
      *  defaults to no-op so the panel stays mountable in isolation (tests). */
     onCreateType?: () => void
-    /** Restore the shipped example types (Book, Meeting). */
+    /** Restore the shipped example types pack. */
     onRestoreExamples?: () => void
   }
 
