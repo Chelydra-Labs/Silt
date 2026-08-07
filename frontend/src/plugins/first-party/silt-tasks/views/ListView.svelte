@@ -1225,13 +1225,17 @@
         onWidthCommit={commitPaneWidth}
         ariaLabel="Resize task inspector"
       />
+    {/if}
+    <!-- Single TaskEditDrawer instance: pane is in-flow flex child; overlay
+         uses position:fixed so it leaves the flex flow (#919). -->
+    {#if inspectorReady}
       <div
-        class="flex-shrink-0 h-full overflow-hidden"
-        style="width: {effectivePaneWidth}px"
-        data-testid="tasks-inspector-pane"
+        class={usePane ? 'flex-shrink-0 h-full overflow-hidden' : 'contents'}
+        style={usePane ? `width: ${effectivePaneWidth}px` : undefined}
+        data-testid={usePane ? 'tasks-inspector-pane' : undefined}
       >
         <TaskEditDrawer
-          variant="pane"
+          variant={usePane ? 'pane' : 'overlay'}
           task={selectedTask}
           filteredOut={selectedFilteredOut}
           {ctx}
@@ -1266,26 +1270,6 @@
     </div>
   </div>
 </div>
-
-{#if inspectorReady && !usePane}
-  <TaskEditDrawer
-    variant="overlay"
-    task={selectedTask}
-    filteredOut={selectedFilteredOut}
-    {ctx}
-    onMetaChanged={reload}
-    onOpenSubEditor={() => selectedTask && (subEditorTask = selectedTask)}
-    onClose={() => {
-      selectedTask = null
-      selectedFilteredOut = false
-    }}
-    onPrevTask={goPrevTask}
-    onNextTask={goNextTask}
-    {hasPrevTask}
-    {hasNextTask}
-    bind:busy={inspectorBusy}
-  />
-{/if}
 {#if subEditorTask}
   <TaskSubEditorModal
     blockId={subEditorTask.id}
