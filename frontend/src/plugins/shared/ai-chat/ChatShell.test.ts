@@ -139,6 +139,39 @@ describe('ChatShell', () => {
     })
   })
 
+  it('collapses multi-source evidence behind one disclosure (#915)', async () => {
+    const evidence = Array.from({ length: 10 }, (_, i) =>
+      evidenceEntry({
+        id: `e${i + 1}`,
+        role: 'assistant',
+        citationIndex: i + 1,
+        title: `Source ${i + 1}`,
+        excerpt: `Excerpt ${i + 1}`,
+        target: { blockId: `b${i + 1}` }
+      })
+    )
+    const value = props([
+      textEntry({ id: 'u', role: 'user', content: 'Where is plant?' }),
+      ...evidence
+    ])
+    const { getByRole, getByText, queryByText } = render(ChatShell, {
+      props: value
+    })
+    const disclosure = getByRole('button', { name: /10 sources/i })
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false')
+    // Collapsed: individual source titles should not flood the log.
+    expect(queryByText('Source 5')).not.toBeInTheDocument()
+    await fireEvent.click(disclosure)
+    expect(disclosure).toHaveAttribute('aria-expanded', 'true')
+    expect(getByText('Source 5')).toBeInTheDocument()
+    await fireEvent.click(
+      getByRole('button', { name: 'Open source 5: Source 5' })
+    )
+    expect(value.onNavigateEvidence).toHaveBeenCalledWith({
+      blockId: 'b5'
+    })
+  })
+
   it('consolidates tool activity behind one collapsed disclosure (#845)', async () => {
     const transcript = [
       textEntry({ id: 'u', role: 'user', content: 'Search' }),

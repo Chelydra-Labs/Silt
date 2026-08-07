@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -766,6 +767,165 @@ func TestCompleteGoogle_EncodesToolResultAsFunctionResponse(t *testing.T) {
 	}
 	if resp["count"] != float64(3) {
 		t.Errorf("response.count = %v, want 3", resp["count"])
+	}
+}
+
+// Gemini 3+ requires thoughtSignature on functionCall parts to be echoed on
+// the next multi-turn request (#915). Capture on decode and re-attach on encode.
+func TestCompleteGoogle_RoundTripsThoughtSignature(t *testing.T) {
+	const sig = "opaque-thought-sig-abc123"
+	var captured []googleGenerateRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req googleGenerateRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Errorf("parse request: %v", err)
+		}
+		captured = append(captured, req)
+		w.Header().Set("Content-Type", "application/json")
+		if len(captured) == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"candidates": []map[string]any{{"content": map[string]any{
+					"parts": []map[string]any{{
+						"functionCall": map[string]any{
+							"id": "call_sig", "name": "search_notes",
+							"args": map[string]any{"q": "plant"},
+						},
+						"thoughtSignature": sig,
+					}},
+				}}},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []map[string]any{{"content": map[string]any{
+				"parts": []map[string]any{{"text": "The plant is in Settings."}},
+			}}},
+		})
+	}))
+	defer srv.Close()
+
+	provider := AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, Model: "gemini-3-flash-lite"}
+	first, err := Complete(context.Background(), CompleteRequest{
+		Provider: provider,
+		Messages: []ChatMessage{{Role: RoleUser, Content: "Where is the plant?"}},
+		Tools:    []ToolDef{dummyTool()},
+	})
+	if err != nil {
+		t.Fatalf("first Complete: %v", err)
+	}
+	if len(first.ToolCalls) != 1 {
+		t.Fatalf("tool_calls = %d, want 1", len(first.ToolCalls))
+	}
+	if first.ToolCalls[0].ThoughtSignature != sig {
+		t.Fatalf("ThoughtSignature = %q, want %q", first.ToolCalls[0].ThoughtSignature, sig)
+	}
+
+	_, err = Complete(context.Background(), CompleteRequest{
+		Provider: provider,
+		Messages: []ChatMessage{
+			{Role: RoleUser, Content: "Where is the plant?"},
+			{Role: RoleAssistant, ToolCalls: first.ToolCalls},
+			{Role: RoleTool, ToolCallID: first.ToolCalls[0].ID, Content: `{"hits":1}`},
+		},
+		Tools: []ToolDef{dummyTool()},
+	})
+	if err != nil {
+		t.Fatalf("second Complete: %v", err)
+	}
+	if len(captured) != 2 {
+		t.Fatalf("requests = %d, want 2", len(captured))
+	}
+	// Second request: user, model(functionCall+sig), user(functionResponse).
+	model := captured[1].Contents[1]
+	if model.Role != "model" || len(model.Parts) != 1 {
+		t.Fatalf("model turn = %+v", model)
+	}
+	if model.Parts[0].FunctionCall == nil {
+		t.Fatal("missing functionCall on second request")
+	}
+	if model.Parts[0].ThoughtSignature != sig {
+		t.Errorf("egress thoughtSignature = %q, want %q", model.Parts[0].ThoughtSignature, sig)
+	}
+	// Raw JSON must use camelCase thoughtSignature (Google wire form).
+	raw, _ := json.Marshal(model.Parts[0])
+	if !strings.Contains(string(raw), `"thoughtSignature":"`+sig+`"`) {
+		t.Errorf("egress part JSON missing camelCase thoughtSignature: %s", raw)
+	}
+}
+
+func TestCompleteGoogle_ThoughtSignatureSnakeCaseIngress(t *testing.T) {
+	const sig = "snake-sig-xyz"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []map[string]any{{"content": map[string]any{
+				"parts": []map[string]any{{
+					"functionCall": map[string]any{
+						"name": "search_notes", "args": map[string]any{"q": "x"},
+					},
+					"thought_signature": sig,
+				}},
+			}}},
+		})
+	}))
+	defer srv.Close()
+
+	res, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, Model: "gemini-3-flash-lite"},
+		Messages: []ChatMessage{{Role: RoleUser, Content: "x"}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if len(res.ToolCalls) != 1 || res.ToolCalls[0].ThoughtSignature != sig {
+		t.Fatalf("tool_call = %+v, want ThoughtSignature %q", res.ToolCalls, sig)
+	}
+}
+
+func TestCompleteGoogle_ParallelToolCallsThoughtSignatureOnFirstOnly(t *testing.T) {
+	const sig = "first-only-sig"
+	var captured googleGenerateRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []map[string]any{{"content": map[string]any{
+				"parts": []map[string]any{{"text": "ok"}},
+			}}},
+		})
+	}))
+	defer srv.Close()
+
+	_, err := Complete(context.Background(), CompleteRequest{
+		Provider: AIProvider{ProviderType: ProviderGoogle, BaseURL: srv.URL, Model: "gemini-3-flash-lite"},
+		Messages: []ChatMessage{
+			{Role: RoleUser, Content: "parallel"},
+			{Role: RoleAssistant, ToolCalls: []ToolCall{
+				{ID: "c1", Name: "search_notes", Arguments: json.RawMessage(`{"q":"a"}`), ThoughtSignature: sig},
+				{ID: "c2", Name: "read_blocks", Arguments: json.RawMessage(`{"ids":["1"]}`)},
+			}},
+			{Role: RoleTool, ToolCallID: "c1", Content: `{}`},
+			{Role: RoleTool, ToolCallID: "c2", Content: `{}`},
+		},
+		Tools: []ToolDef{
+			dummyTool(),
+			{Name: "read_blocks", Parameters: json.RawMessage(`{"type":"object"}`)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	model := captured.Contents[1]
+	if len(model.Parts) != 2 {
+		t.Fatalf("model parts = %d, want 2", len(model.Parts))
+	}
+	if model.Parts[0].ThoughtSignature != sig {
+		t.Errorf("first FC signature = %q, want %q", model.Parts[0].ThoughtSignature, sig)
+	}
+	if model.Parts[1].ThoughtSignature != "" {
+		t.Errorf("second FC signature = %q, want empty", model.Parts[1].ThoughtSignature)
 	}
 }
 

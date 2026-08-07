@@ -160,8 +160,13 @@ surface when the embedding model or index format changes.
 - **Bounded.** A turn stops after **8 iterations** whether or not the model
   emitted a final answer (reported as "hit iteration cap" so you can
   rephrase).
-- **Transparent.** Every tool call and result renders as a card between
-  your prompt and the answer; the chat shows what the agent did and why.
+- **Transparent.** Tool calls and results collapse into a compact activity
+  disclosure; multi-source evidence collapses into an **“N sources”** group
+  (expand to open any citation). The chat still shows what the agent did
+  without flooding the drawer.
+- **Provider baggage.** Multi-turn tool history preserves opaque provider
+  fields on each `tool_call` (notably Gemini 3+ `thought_signature` via the
+  native Google provider). Stripping those fields breaks the next model turn.
 - **Cancellable.** **Escape** (or the stop button) aborts the in-flight run
   between iterations; partial tool side-effects already applied remain
   (they are normal edits, each a single undo step).

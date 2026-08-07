@@ -135,6 +135,28 @@ describe('ctx.ai.complete tool-calling (#595)', () => {
     ])
   })
 
+  it('preserves thought_signature on tool_calls from the result (#915)', async () => {
+    mocks.pluginAIComplete.mockResolvedValueOnce({
+      content: '',
+      model: 'm',
+      tool_calls: [
+        {
+          id: 'call_1',
+          name: 'search_notes',
+          arguments: { q: 'x' },
+          thought_signature: 'opaque-sig'
+        }
+      ]
+    } as never)
+    const ctx = makePluginContext('p')
+    const res = await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'x' }]
+    })
+    expect(res.tool_calls?.[0]).toMatchObject({
+      thought_signature: 'opaque-sig'
+    })
+  })
+
   it('threads tool_calls + tool_call_id on messages for multi-turn replay', async () => {
     const ctx = makePluginContext('p')
     const messages = [
@@ -154,6 +176,33 @@ describe('ctx.ai.complete tool-calling (#595)', () => {
       unknown
     >
     expect(input.messages).toEqual(messages)
+  })
+
+  it('threads thought_signature on outbound tool_calls for multi-turn replay (#915)', async () => {
+    const ctx = makePluginContext('p')
+    const messages = [
+      { role: 'user', content: 'find plant' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call_1',
+            name: 'search_notes',
+            arguments: { q: 'plant' },
+            thought_signature: 'sig-roundtrip'
+          }
+        ]
+      },
+      { role: 'tool', content: '1 match', tool_call_id: 'call_1' }
+    ] as unknown as PluginAIChatMessage[]
+    await ctx.ai.complete({ messages })
+    const input = mocks.pluginAIComplete.mock.calls[0][2] as {
+      messages: Array<{ tool_calls?: Array<{ thought_signature?: string }> }>
+    }
+    expect(input.messages[1].tool_calls?.[0].thought_signature).toBe(
+      'sig-roundtrip'
+    )
   })
 })
 
@@ -439,6 +488,42 @@ describe('ctx.ai.complete stream (#226)', () => {
     expect(res.tool_calls).toEqual([
       { id: 'call_1', name: 'search_notes', arguments: { q: 'x' } }
     ])
+  })
+
+  it('preserves thought_signature on streamed done tool_calls (#915)', async () => {
+    mocks.pluginAIComplete.mockResolvedValueOnce({
+      stream_id: 'sid-sig',
+      model: 'm'
+    } as never)
+    const ctx = makePluginContext('p', 'tok')
+    const stream = await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true
+    })
+    const iter = (async () => {
+      for await (const _d of stream) {
+        /* drain */
+      }
+    })()
+    await Promise.resolve()
+    mocks.emitEvent('ai:complete:done:p', {
+      stream_id: 'sid-sig',
+      content: '',
+      model: 'm',
+      tool_calls: [
+        {
+          id: 'call_1',
+          name: 'search_notes',
+          arguments: { q: 'x' },
+          thought_signature: 'stream-sig'
+        }
+      ]
+    })
+    await iter
+    const res = await stream.result()
+    expect(res.tool_calls?.[0]).toMatchObject({
+      thought_signature: 'stream-sig'
+    })
   })
 })
 

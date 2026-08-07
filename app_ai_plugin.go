@@ -53,10 +53,13 @@ type PluginAIToolDef struct {
 
 // PluginAIToolCall is one tool invocation the model requested (#595). Arguments
 // is the raw JSON object bytes (unwrapped from OpenAI's stringified form).
+// ThoughtSignature is opaque Gemini 3+ baggage that must round-trip on
+// multi-turn tool loops (#915); empty for other providers.
 type PluginAIToolCall struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Arguments        json.RawMessage `json:"arguments,omitempty"`
+	ThoughtSignature string          `json:"thought_signature,omitempty"`
 }
 
 // PluginAIToolChoice constrains tool selection (#595).
@@ -374,7 +377,12 @@ func toAIToolCalls(in []PluginAIToolCall) []ai.ToolCall {
 	}
 	out := make([]ai.ToolCall, len(in))
 	for i, c := range in {
-		out[i] = ai.ToolCall{ID: c.ID, Name: c.Name, Arguments: c.Arguments}
+		out[i] = ai.ToolCall{
+			ID:               c.ID,
+			Name:             c.Name,
+			Arguments:        c.Arguments,
+			ThoughtSignature: c.ThoughtSignature,
+		}
 	}
 	return out
 }

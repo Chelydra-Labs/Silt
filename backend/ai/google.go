@@ -21,10 +21,47 @@ type googleContent struct {
 }
 
 type googleTextPart struct {
-	Text             string              `json:"text,omitempty"`
-	Thought          bool                `json:"thought,omitempty"`
+	Text string `json:"text,omitempty"`
+	// Thought marks internal reasoning scratchpad parts (Gemini 2.5+). Those
+	// are not user-facing answer text.
+	Thought bool `json:"thought,omitempty"`
+	// ThoughtSignature is Gemini 3+ opaque state on the part that carries a
+	// functionCall (sibling field). Must be echoed on multi-turn tool loops or
+	// the API returns 400. Accept camelCase on the wire; UnmarshalJSON also
+	// accepts snake_case thought_signature.
+	ThoughtSignature string              `json:"thoughtSignature,omitempty"`
 	FunctionCall     *googleFunctionCall `json:"functionCall,omitempty"`
 	FunctionResponse *googleFunctionResp `json:"functionResponse,omitempty"`
+}
+
+// UnmarshalJSON accepts both thoughtSignature and thought_signature so either
+// wire spelling from Google is preserved into ThoughtSignature.
+func (p *googleTextPart) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Text                string              `json:"text,omitempty"`
+		Thought             bool                `json:"thought,omitempty"`
+		ThoughtSignature    string              `json:"thoughtSignature,omitempty"`
+		ThoughtSignatureAlt string              `json:"thought_signature,omitempty"`
+		FunctionCall        *googleFunctionCall `json:"functionCall,omitempty"`
+		FunctionResponse    *googleFunctionResp `json:"functionResponse,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	p.Text = raw.Text
+	p.Thought = raw.Thought
+	p.ThoughtSignature = raw.ThoughtSignature
+	if p.ThoughtSignature == "" {
+		p.ThoughtSignature = raw.ThoughtSignatureAlt
+	}
+	p.FunctionCall = raw.FunctionCall
+	p.FunctionResponse = raw.FunctionResponse
+	// Some responses nest the signature on the functionCall object; prefer
+	// part-level, fall back to nested.
+	if p.ThoughtSignature == "" && p.FunctionCall != nil {
+		p.ThoughtSignature = p.FunctionCall.thoughtSignatureValue()
+	}
+	return nil
 }
 
 // googleFunctionCall is the model's request to invoke a tool (#595). Google
@@ -34,6 +71,19 @@ type googleFunctionCall struct {
 	ID   string          `json:"id,omitempty"`
 	Name string          `json:"name"`
 	Args json.RawMessage `json:"args,omitempty"`
+	// Nested signature spellings (uncommon; part-level is canonical).
+	ThoughtSignature    string `json:"thoughtSignature,omitempty"`
+	ThoughtSignatureAlt string `json:"thought_signature,omitempty"`
+}
+
+func (fc *googleFunctionCall) thoughtSignatureValue() string {
+	if fc == nil {
+		return ""
+	}
+	if fc.ThoughtSignature != "" {
+		return fc.ThoughtSignature
+	}
+	return fc.ThoughtSignatureAlt
 }
 
 // googleFunctionResp is a tool result fed back to the model (#595), sent as a
@@ -343,8 +393,11 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 			}
 			for _, tc := range m.ToolCalls {
 				args := googleArgsFromRaw(tc.Arguments)
+				// Echo Gemini thought signatures on the same part as the
+				// functionCall (#915). Empty is fine for non-Google history.
 				parts = append(parts, googleTextPart{
-					FunctionCall: &googleFunctionCall{ID: tc.ID, Name: tc.Name, Args: args},
+					ThoughtSignature: tc.ThoughtSignature,
+					FunctionCall:     &googleFunctionCall{ID: tc.ID, Name: tc.Name, Args: args},
 				})
 			}
 			contents = append(contents, googleContent{Role: "model", Parts: parts})
@@ -414,12 +467,11 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 	// Concatenate non-thought text parts and collect functionCall parts.
 	// Gemini 2.5+ thinking models emit reasoning in parts with thought:true —
 	// those are internal scratchpad, not the user-facing answer, so skipped.
+	// FunctionCall parts are handled first so a thought-flagged FC (if any)
+	// still yields a tool call and preserves thoughtSignature (#915).
 	var sb strings.Builder
 	var toolCalls []ToolCall
 	for _, p := range resp.Candidates[0].Content.Parts {
-		if p.Thought {
-			continue
-		}
 		if p.FunctionCall != nil {
 			// Preserve Google's opaque id when present; callers use it to
 			// correlate the later tool-result message. Older responses without
@@ -428,11 +480,19 @@ func completeGoogle(ctx context.Context, req CompleteRequest, model, baseURL str
 			if id == "" {
 				id = p.FunctionCall.Name
 			}
+			sig := p.ThoughtSignature
+			if sig == "" {
+				sig = p.FunctionCall.thoughtSignatureValue()
+			}
 			toolCalls = append(toolCalls, ToolCall{
-				ID:        id,
-				Name:      p.FunctionCall.Name,
-				Arguments: googleArgsFromRaw(p.FunctionCall.Args),
+				ID:               id,
+				Name:             p.FunctionCall.Name,
+				Arguments:        googleArgsFromRaw(p.FunctionCall.Args),
+				ThoughtSignature: sig,
 			})
+			continue
+		}
+		if p.Thought {
 			continue
 		}
 		// Skip empty Text on a functionResponse-bearing part (only relevant

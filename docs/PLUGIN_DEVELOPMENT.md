@@ -898,18 +898,21 @@ passes `tools` (`PluginAIToolDef[]` — name / description / JSON-Schema
 `parameters`) plus optional `tool_choice` (`PluginAIToolChoice` — `{ mode:
 'auto' | 'none' | 'force', tool_name? }`). The provider encodes them in its
 own wire shape; the result carries any `tool_calls`
-(`PluginAIToolCall[]` — id / name / `arguments` as a raw JSON object). For
-multi-turn use, replay history with an `assistant` message carrying
-`tool_calls` and one `tool` message per result, correlated by
-`tool_call_id`. Streamed runs additionally surface in-progress tool-call
-fragments on `stream.toolDeltas` and via the `ai:complete:tool-delta`
-event. Reference consumer: `silt-ai-agent`
-([docs/plugins/silt-ai-agent.md](./plugins/silt-ai-agent.md)).
+(`PluginAIToolCall[]` — id / name / `arguments` as a raw JSON object, plus
+optional opaque fields such as `thought_signature`). For multi-turn use,
+replay history with an `assistant` message carrying `tool_calls` and one
+`tool` message per result, correlated by `tool_call_id`. **Do not strip
+unknown `tool_call` fields when replaying** — Gemini 3+ via the native
+Google provider requires `thought_signature` on function-call parts to be
+echoed unchanged or the next turn fails with a 400 (#915). Streamed runs
+additionally surface in-progress tool-call fragments on `stream.toolDeltas`
+and via the `ai:complete:tool-delta` event. Reference consumer:
+`silt-ai-agent` ([docs/plugins/silt-ai-agent.md](./plugins/silt-ai-agent.md)).
 
-**Streaming (`stream: true`, #226).** Supported for OpenAI-compatible and local
-(Ollama `/v1`) chat endpoints. Native Google/Anthropic reject streaming with a
-`bad-request` error — fall back to non-stream `complete` or use an
-OpenAI-compatible endpoint. When streaming:
+**Streaming (`stream: true`, #226).** OpenAI-compatible and local (Ollama `/v1`)
+chat endpoints use true SSE. Native Google/Anthropic have no SSE path in v1;
+the host buffers a non-stream completion and emits it as a single delta so
+`stream: true` still works (the agent loop always streams). When streaming:
 
 ```ts
 const stream = await ctx.ai.complete({
