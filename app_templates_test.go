@@ -2,8 +2,10 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -749,5 +751,87 @@ func TestRenderTemplateBlocks_IPC_UUIDUniqueness(t *testing.T) {
 			t.Errorf("UUID collision across two insertions: %q appears in both — PK collision risk", b.ID)
 		}
 		seen[b.ID] = true
+	}
+}
+
+// TestCreatePageFromTemplate_AssignsTypeAndHeroProps verifies #914: mapped
+// templates seed type: + hero property from placeholders; unmapped templates
+// stay body-only (no type:).
+func TestCreatePageFromTemplate_AssignsTypeAndHeroProps(t *testing.T) {
+	app := newTestApp(t)
+	nb := filepath.Join(app.vaultPath, "Work", "Projects")
+	if err := os.MkdirAll(nb, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		page       string
+		templateID string
+		vars       map[string]string
+		wantType   string
+		wantProp   string // "key: value" substring after unquote-friendly check
+		wantKey    string
+		wantVal    string
+	}{
+		{"M1", "meeting-notes", map[string]string{"meeting_title": "Q3 planning"}, "meeting", "topic", "topic", "Q3 planning"},
+		{"B1", "reading-notes", map[string]string{"title": "Dune"}, "book", "title", "title", "Dune"},
+		{"P1", "project-brief", map[string]string{"project_name": "Apollo"}, "project", "title", "title", "Apollo"},
+		{"D1", "decision-log", map[string]string{"title": "Use SQLite"}, "decision", "title", "title", "Use SQLite"},
+		{"O1", "one-on-one", map[string]string{"with": "Alex"}, "one_on_one", "with", "with", "Alex"},
+		{"S1", "standup-notes", map[string]string{"project_name": "Silt"}, "standup", "project", "project", "Silt"},
+		{"R1", "retrospective", map[string]string{"title": "Sprint 12"}, "retrospective", "title", "title", "Sprint 12"},
+	}
+	for _, c := range cases {
+		t.Run(c.templateID, func(t *testing.T) {
+			_, err := app.CreatePageFromTemplate("Work", "Projects", c.page, "", c.templateID, c.vars)
+			if err != nil {
+				t.Fatalf("CreatePageFromTemplate: %v", err)
+			}
+			raw, err := os.ReadFile(filepath.Join(nb, c.page+".md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			content := string(raw)
+			if !strings.Contains(content, "type: "+strconv.Quote(c.wantType)) &&
+				!strings.Contains(content, "type: \""+c.wantType+"\"") {
+				// strconv.Quote always double-quotes
+				if !strings.Contains(content, fmt.Sprintf("type: %q", c.wantType)) {
+					t.Errorf("missing type %q in frontmatter:\n%s", c.wantType, content)
+				}
+			}
+			if !strings.Contains(content, fmt.Sprintf("%s: %q", c.wantKey, c.wantVal)) {
+				t.Errorf("missing property %s=%q in frontmatter:\n%s", c.wantKey, c.wantVal, content)
+			}
+		})
+	}
+
+	untyped := []struct {
+		page, templateID string
+		vars             map[string]string
+	}{
+		{"N1", "notes", map[string]string{"title": "Scratch"}},
+		{"Day1", "daily-note", nil},
+		{"Week1", "weekly-review", nil},
+	}
+	for _, c := range untyped {
+		t.Run("untyped_"+c.templateID, func(t *testing.T) {
+			_, err := app.CreatePageFromTemplate("Work", "Projects", c.page, "", c.templateID, c.vars)
+			if err != nil {
+				t.Fatalf("CreatePageFromTemplate: %v", err)
+			}
+			raw, err := os.ReadFile(filepath.Join(nb, c.page+".md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Frontmatter must not assign a note type for body-only templates.
+			fmEnd := strings.Index(string(raw)[3:], "---")
+			if fmEnd < 0 {
+				t.Fatalf("no frontmatter end:\n%s", raw)
+			}
+			fm := string(raw)[:fmEnd+6]
+			if strings.Contains(fm, "\ntype:") || strings.Contains(fm, "\rtype:") {
+				t.Errorf("%s should not set type: in frontmatter:\n%s", c.templateID, fm)
+			}
+		})
 	}
 }

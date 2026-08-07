@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
+  import { trapFocus } from '../lib/focusTrap'
 
   /**
    * Multi-action confirmation dialog (#664). Primary + secondary actions plus
-   * cancel. Focus trap, Esc cancel, no autofocus on destructive paths.
+   * cancel. Shared focusTrap, Esc cancel, no autofocus on destructive paths.
    */
   interface Props {
     title: string
@@ -35,36 +36,11 @@
   let dialogRef = $state<HTMLDivElement | null>(null)
   let previouslyFocused: HTMLElement | null = null
 
-  const FOCUSABLE =
-    'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
-
-  function focusableEls(): HTMLElement[] {
-    if (!dialogRef) return []
-    return Array.from(dialogRef.querySelectorAll<HTMLElement>(FOCUSABLE))
-  }
-
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
       onCancel()
-      return
-    }
-    if (e.key === 'Tab' && dialogRef) {
-      const els = focusableEls()
-      if (els.length === 0) return
-      const first = els[0]
-      const last = els[els.length - 1]
-      const active = document.activeElement as HTMLElement | null
-      if (e.shiftKey) {
-        if (active === first || !dialogRef.contains(active)) {
-          e.preventDefault()
-          last.focus()
-        }
-      } else if (active === last || !dialogRef.contains(active)) {
-        e.preventDefault()
-        first.focus()
-      }
     }
   }
 
@@ -74,11 +50,16 @@
     previouslyFocused =
       returnFocusTo ?? (document.activeElement as HTMLElement | null)
     window.addEventListener('keydown', handleKeydown, true)
-    void tick().then(() => dialogRef?.focus())
+    let disposeTrap = () => {}
+    void tick().then(() => {
+      if (dialogRef) disposeTrap = trapFocus(dialogRef)
+      dialogRef?.focus()
+    })
     return () => {
+      disposeTrap()
       window.removeEventListener('keydown', handleKeydown, true)
       const target = returnFocusTo ?? previouslyFocused
-      target?.focus?.()
+      if (target?.isConnected) target.focus?.()
     }
   })
 </script>

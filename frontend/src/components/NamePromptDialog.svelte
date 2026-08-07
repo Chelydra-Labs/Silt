@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
+  import { trapFocus } from '../lib/focusTrap'
 
   /**
    * Named prompt dialog for Save as / Rename (#531). Focuses the text field
    * on open; validates non-empty trim; Esc / backdrop cancel; Ctrl/Cmd+Enter
-   * submits (#662).
+   * submits (#662). Tab trap via shared focusTrap.
    */
   interface Props {
     title: string
@@ -43,14 +44,6 @@
   let error = $state<string | null>(null)
   let previouslyFocused: HTMLElement | null = null
 
-  const FOCUSABLE =
-    'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
-
-  function focusableEls(): HTMLElement[] {
-    if (!dialogRef) return []
-    return Array.from(dialogRef.querySelectorAll<HTMLElement>(FOCUSABLE))
-  }
-
   function submit() {
     const trimmed = value.trim()
     if (!trimmed) {
@@ -78,36 +71,22 @@
     ) {
       e.preventDefault()
       if (!busy) submit()
-      return
-    }
-    if (e.key === 'Tab' && dialogRef) {
-      const els = focusableEls()
-      if (els.length === 0) return
-      const first = els[0]
-      const last = els[els.length - 1]
-      const active = document.activeElement as HTMLElement | null
-      if (e.shiftKey) {
-        if (active === first || !dialogRef.contains(active)) {
-          e.preventDefault()
-          last.focus()
-        }
-      } else if (active === last || !dialogRef.contains(active)) {
-        e.preventDefault()
-        first.focus()
-      }
     }
   }
 
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement | null
     window.addEventListener('keydown', handleKeydown, true)
+    let disposeTrap = () => {}
     void tick().then(() => {
+      if (dialogRef) disposeTrap = trapFocus(dialogRef)
       inputRef?.focus()
       inputRef?.select()
     })
     return () => {
+      disposeTrap()
       window.removeEventListener('keydown', handleKeydown, true)
-      previouslyFocused?.focus?.()
+      if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
     }
   })
 </script>

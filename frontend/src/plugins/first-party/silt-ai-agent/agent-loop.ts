@@ -8,6 +8,11 @@
 // bounded (max 8 iterations) so a model stuck calling tools cannot spin
 // forever, and is cancellable via an AbortSignal or the session cancel flag.
 //
+// The **last** iteration is reserved for a forced text answer (`toolChoice:
+// none`, no tools). Models that keep searching after vault_data already has
+// the answer still get a synthesis turn instead of only
+// "Stopped after reaching the iteration limit."
+//
 // Phase 5 staging (#605): when a tool returns `{isStaged: true, stagedToken}`,
 // the loop does NOT feed it to the model. Instead it pauses with an onStaging
 // callback; the UX calls resolveStaging(token, confirmed) to resume. On
@@ -167,8 +172,14 @@ export interface AgentRunResult {
   iterations: number
   /** True when the loop stopped because cancellation was requested. */
   cancelled: boolean
-  /** True when the loop hit MAX_ITERATIONS without a final answer. */
+  /**
+   * True when the loop exhausted tool-using iterations without a voluntary
+   * tool-free answer. A forced final synthesis turn may still have produced
+   * `text`; the chat UI only shows the hard stop banner when text is empty.
+   */
   hitIterationCap: boolean
+  /** True when the final answer came from the reserved no-tools wrap-up turn. */
+  forcedFinalAnswer?: boolean
 }
 
 /**
@@ -208,7 +219,12 @@ export function buildSystemPrompt(
     'the vault (and the current page from UI LOCATION) and ground answers in',
     'that material when applicable.',
     'Use the available tools to search, read, create, and organize notes.',
-    'When you have enough information, answer the user directly without calling more tools.',
+    '',
+    'TOOL BUDGET: Prefer one focused search_notes (and read_blocks only if the',
+    'snippet is incomplete), then answer. Do not keep calling tools once',
+    '<vault_data> already contains enough to answer. Avoid re-running nearly',
+    'the same query with minor wording changes. When you have enough',
+    'information, answer the user directly without calling more tools.',
     '',
     formatUiLocationForPrompt(loc),
     '',
@@ -504,6 +520,8 @@ export async function runAgent(
 
   let iterations = 0
   let lastText = ''
+  /** True once we have fed at least one tool result into `messages`. */
+  let hadToolResults = false
   try {
     while (iterations < MAX_ITERATIONS) {
       if (cancelled()) {
@@ -515,6 +533,22 @@ export async function runAgent(
         }
       }
       iterations++
+      // Reserve the final iteration for synthesis when the model has been
+      // tool-calling. Without this, a model that never voluntarily stops
+      // burns the whole budget on search/read and the user only sees the
+      // iteration-limit banner — even when vault_data already had the answer.
+      const forceFinalAnswer = iterations === MAX_ITERATIONS && hadToolResults
+      if (forceFinalAnswer) {
+        // Explicit steer so providers that ignore toolChoice=none still stop
+        // searching and synthesize from prior <vault_data> turns.
+        messages.push({
+          role: 'user',
+          content:
+            'Tool budget reached. Answer the user now using only the tool ' +
+            'results already in this conversation. Do not call tools. If the ' +
+            'notes contain the answer, state it clearly and cite the relevant note.'
+        })
+      }
       const completeReq = {
         // Providers receive a stable request snapshot; later tool-result
         // appends must not mutate an earlier request retained by a test
@@ -525,8 +559,15 @@ export async function runAgent(
             ? { tool_calls: message.tool_calls.map((call) => ({ ...call })) }
             : {})
         })),
-        tools: buildToolCatalog(),
-        toolChoice: { mode: 'auto' as const },
+        ...(forceFinalAnswer
+          ? {
+              // No catalog + none: model must produce text from prior tool turns.
+              toolChoice: { mode: 'none' as const }
+            }
+          : {
+              tools: buildToolCatalog(),
+              toolChoice: { mode: 'auto' as const }
+            }),
         stream: true as const
       }
       // Host rate limit: Go already waits up to ~3s; if still denied, cool down
@@ -572,14 +613,17 @@ export async function runAgent(
       }
 
       const calls = result.tool_calls ?? []
-      if (calls.length === 0) {
-        // No further tool use: this is the final answer.
+      if (calls.length === 0 || forceFinalAnswer) {
+        // Voluntary stop, or reserved wrap-up turn (ignore any stray tool_calls).
         opts.onDone?.(lastText)
+        const emptyForced = forceFinalAnswer && !lastText.trim()
         return {
           text: lastText,
           iterations,
           cancelled: false,
-          hitIterationCap: false
+          // Hard-stop banner only when wrap-up produced nothing useful.
+          hitIterationCap: emptyForced,
+          forcedFinalAnswer: forceFinalAnswer || undefined
         }
       }
 
@@ -724,9 +768,11 @@ export async function runAgent(
           tool_call_id: call.id,
           content: toolMessage
         })
+        hadToolResults = true
       }
     }
-    // Exited the loop by hitting the cap without a tool-free final answer.
+    // Exited without a final answer (e.g. last iteration had no prior tools
+    // so forceFinalAnswer never ran, yet the model only emitted tool calls).
     return {
       text: lastText,
       iterations,

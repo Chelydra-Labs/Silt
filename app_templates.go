@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"silt/backend/parser"
 	"silt/backend/templates"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -189,12 +191,71 @@ func (a *App) ReloadTemplates() error {
 	return nil
 }
 
+// templateTypeBinding maps a built-in template id to the example type id and
+// optional placeholder→property seeds applied only on CreatePageFromTemplate
+// (new page create). Insert-at-cursor (RenderTemplateBlocks) never forces a
+// type. notes / daily-note / weekly-review intentionally have no entry.
+type templateTypeBinding struct {
+	typeID string
+	// placeholder → property name; only non-empty vars are written.
+	props map[string]string
+}
+
+// templateTypeBindings is the closed map of template id → type + hero seeds.
+// Keep in sync with docs/TEMPLATES.md pairing note and issue #914 ACs.
+var templateTypeBindings = map[string]templateTypeBinding{
+	"meeting-notes": {typeID: "meeting", props: map[string]string{"meeting_title": "topic"}},
+	"reading-notes": {typeID: "book", props: map[string]string{"title": "title"}},
+	"project-brief": {typeID: "project", props: map[string]string{"project_name": "title"}},
+	"decision-log":  {typeID: "decision", props: map[string]string{"title": "title"}},
+	"one-on-one":    {typeID: "one_on_one", props: map[string]string{"with": "with"}},
+	"standup-notes": {typeID: "standup", props: map[string]string{"project_name": "project"}},
+	"retrospective": {typeID: "retrospective", props: map[string]string{"title": "title"}},
+}
+
+// scaffoldTemplateFrontmatter builds the standard page frontmatter plus any
+// template→type binding (type: + seeded property values from placeholders).
+func scaffoldTemplateFrontmatter(notebook, section, page, date, created string, templateID string, vars map[string]string) string {
+	var b strings.Builder
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "notebook: %s\n", strconv.Quote(notebook))
+	fmt.Fprintf(&b, "section: %s\n", strconv.Quote(section))
+	fmt.Fprintf(&b, "page: %s\n", strconv.Quote(page))
+	fmt.Fprintf(&b, "date: %s\n", strconv.Quote(date))
+	fmt.Fprintf(&b, "created: %s\n", strconv.Quote(created))
+	b.WriteString("tags: []\n")
+	if bind, ok := templateTypeBindings[templateID]; ok {
+		fmt.Fprintf(&b, "type: %s\n", strconv.Quote(bind.typeID))
+		// Stable key order so multi-prop bindings stay byte-deterministic.
+		placeholders := make([]string, 0, len(bind.props))
+		for placeholder := range bind.props {
+			placeholders = append(placeholders, placeholder)
+		}
+		sort.Strings(placeholders)
+		for _, placeholder := range placeholders {
+			prop := bind.props[placeholder]
+			val := ""
+			if vars != nil {
+				val = strings.TrimSpace(vars[placeholder])
+			}
+			if val == "" {
+				continue
+			}
+			fmt.Fprintf(&b, "%s: %s\n", prop, strconv.Quote(val))
+		}
+	}
+	b.WriteString("---\n")
+	return b.String()
+}
+
 // CreatePageFromTemplate creates a new page pre-filled with a rendered
 // template's body. It composes with the existing CreatePage write path: render
 // the template, prepend the standard frontmatter (SPECS §3.3), write atomically
 // (temp + rename, SPECS §7.1) under the file-write lock + self-write tracker,
 // and index the resulting blocks via ParseFileContent so task/embed/tag
-// pipelines pick them up immediately. Returns the resolved date string.
+// pipelines pick them up immediately. When the template id is in
+// templateTypeBindings, the scaffold also sets type: and obvious placeholder→
+// property defaults (#914). Returns the resolved date string.
 func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateID string, vars map[string]string) (string, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -257,10 +318,12 @@ func (a *App) CreatePageFromTemplate(notebook, section, page, dateStr, templateI
 	// `created` stamps the page's birth time once (#867); subsequent edits
 	// preserve it verbatim, matching how date/tags/type round-trip. Mirrors
 	// CreatePage's scaffold so template-based pages don't carry an empty
-	// created until manually edited.
+	// created until manually edited. Mapped templates also seed type: + hero
+	// properties from placeholders (#914).
 	createdStr := time.Now().Format("2006-01-02T15:04:05")
-	scaffoldFrontmatter := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ncreated: %s\ntags: []\n---\n",
-		strconv.Quote(safeNotebook), strconv.Quote(safeSection), strconv.Quote(safePage), strconv.Quote(safeDate), strconv.Quote(createdStr))
+	scaffoldFrontmatter := scaffoldTemplateFrontmatter(
+		safeNotebook, safeSection, safePage, safeDate, createdStr, templateID, vars,
+	)
 	content := scaffoldFrontmatter + rendered
 
 	a.wg.Add(1)

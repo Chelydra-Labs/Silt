@@ -78,11 +78,10 @@ WebView2/macOS, and must verify, for a `showModal()` modal:
 ## Consequences
 
 - **`lib/focusTrap.ts` is the committed seed** and the interim contract. It is
-  consumed by the three properties-family dialogs today; the remaining five
-  cross-domain surfaces migrate onto it (or onto whatever the spike selects)
-  under **#905**, sequenced: properties-family (done) → generic dialogs
-  (`ConfirmDialog`/`ChoiceDialog`/`NamePromptDialog`/`BlockPickerModal`) →
-  `TaskSubEditorModal`. `ModalShell` stays as-is (alert-style, no trap).
+  consumed by the properties-family dialogs and the five cross-domain surfaces
+  migrated under **#905** (`ConfirmDialog`/`ChoiceDialog`/`NamePromptDialog`/
+  `BlockPickerModal`/`TaskSubEditorModal`). `ModalShell` stays as-is
+  (alert-style, no trap). Native `<dialog>` remains gated on the WebKitGTK spike.
 - **No native `<dialog>` migration happens before the spike.** Shipping one
   native-`<dialog>` modal next to eight overlay-`<div>` modals would be *more*
   divergence, not less, and would bet foundational a11y behavior (focus trap,

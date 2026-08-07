@@ -157,9 +157,11 @@ surface when the embedding model or index format changes.
 
 - **User-invoked.** Nothing runs until you send a message — no background
   polling, no auto-run on note open.
-- **Bounded.** A turn stops after **8 iterations** whether or not the model
-  emitted a final answer (reported as "hit iteration cap" so you can
-  rephrase).
+- **Bounded.** A turn allows up to **8 iterations**. The last iteration is
+  reserved for a forced text answer (`toolChoice: none`) when the model has
+  already used tools but never voluntarily stopped — so vault hits still get
+  a synthesis instead of only an iteration-cap banner. The hard stop message
+  appears only when that wrap-up still produces no text.
 - **Transparent.** Tool calls and results collapse into a compact activity
   disclosure; multi-source evidence collapses into an **“N sources”** group
   (expand to open any citation). The chat still shows what the agent did
@@ -222,7 +224,7 @@ the "no unsolicited writes" invariant while letting the agent act. See
 | "Chat model not configured" | Settings → AI → set chat model |
 | Tool result truncated in chat | Tool bodies cap at 10 KB for the model; the agent re-queries with a narrower call when it needs more |
 | Staged op shows "expired" | Tokens live 5 minutes — re-run the request and confirm promptly |
-| Agent hit the iteration cap | Rephrase toward a narrower goal, or split into two turns |
+| Agent hit the iteration cap with no answer | Rare after the forced wrap-up turn; rephrase toward a narrower goal, or split into two turns. If you only see a long tool trail then a good answer, the model used the full tool budget before synthesizing — that is expected. |
 
 ## Related
 

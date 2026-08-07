@@ -64,7 +64,7 @@
     /** Open the in-app type editor (header "New type" + empty-state action).
      *  Optional so the dashboard stays mountable in isolation (tests). */
     onCreateType?: () => void
-    /** Restore the shipped example types (Book, Meeting). Optional — the
+    /** Restore the shipped example types pack. Optional — the
      *  dashboard is the type-management surface, so it owns both empty-state
      *  escapes. */
     onRestoreExamples?: () => void

@@ -1433,7 +1433,7 @@ Type schemas live in `<vault>/.system/types/<type>.yaml`, siblings to `.system/t
   - `target` (for page/pages): constrains the relation to pages of this target type
   - `default` (optional): the default value for new instances
 
-The vault scaffolder seeds `.system/types/` with example types (a Book type and a Meeting type) on first vault init. Users create and edit type files directly or via the UI; a hot-reload watcher picks up external edits.
+The vault scaffolder seeds `.system/types/` with an eight-type example pack on first vault init: **Book**, **Meeting**, **Person**, **Project**, **Decision**, **One-on-one**, **Standup**, and **Retrospective** (stable ids `book`, `meeting`, `person`, `project`, `decision`, `one_on_one`, `standup`, `retrospective`). Daily / Weekly review stay body templates only — they are not seeded as types. Seeds are existence-guarded (never overwrite user edits); **Restore examples** adds missing ids only. Users create and edit type files directly or via the UI; a hot-reload watcher picks up external edits.
 
 11.2 Property-Type Taxonomy & Encoding
 

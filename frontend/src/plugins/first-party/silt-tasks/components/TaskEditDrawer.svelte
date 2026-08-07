@@ -67,15 +67,27 @@
 
   // Focus management: overlay moves focus into the panel on open; pane does
   // not (list keyboard triage stays on the master). Both restore on close.
+  // Single root element — variant flips update classes/role in place (#919).
   let panelRef = $state<HTMLDivElement | null>(null)
   let scrollBodyRef = $state<HTMLDivElement | null>(null)
   let previouslyFocused: HTMLElement | null = null
   let drawerOpen = false
   let lastTaskId = ''
+  // Suppress fly when flipping overlay↔pane mid-session (same instance).
+  let skipFly = $state(false)
+  let lastVariant: 'overlay' | 'pane' | null = null
+  $effect(() => {
+    const v = isPane ? 'pane' : 'overlay'
+    if (lastVariant !== null && lastVariant !== v) {
+      skipFly = true
+    }
+    lastVariant = v
+  })
   $effect(() => {
     const tid = task?.id ?? ''
     if (task && !drawerOpen) {
       drawerOpen = true
+      skipFly = false
       previouslyFocused = document.activeElement as HTMLElement
       if (!isPane) {
         void tick().then(() => panelRef?.focus())
@@ -88,6 +100,8 @@
       if (scrollBodyRef) scrollBodyRef.scrollTop = 0
     } else if (!task && drawerOpen) {
       drawerOpen = false
+      skipFly = false
+      lastVariant = null
       if (previouslyFocused?.isConnected) {
         previouslyFocused.focus?.()
       }
@@ -260,34 +274,25 @@
 {/snippet}
 
 {#if task}
-  {#if isPane}
-    <!-- In-flow pane: no enter/exit transition (list stays interactive). -->
-    <div
-      bind:this={panelRef}
-      class="flex h-full w-full flex-col overflow-hidden border-l border-surface-card-border bg-surface-card shadow-none focus:outline-none"
-      role="region"
-      aria-labelledby="task-edit-drawer-title"
-      aria-keyshortcuts={showTraversal ? 'J K' : undefined}
-      tabindex="-1"
-      data-testid="task-edit-drawer"
-      data-variant="pane"
-    >
-      {@render drawerBody()}
-    </div>
-  {:else}
-    <div
-      bind:this={panelRef}
-      transition:fly={{ x: 320, duration: motionDuration(200) }}
-      class="fixed right-0 top-12 z-40 flex h-[calc(100vh-48px)] w-full flex-col overflow-hidden border-l border-surface-card-border bg-surface-card shadow-2xl focus:outline-none sm:w-[480px] lg:w-[540px] lg:max-w-xl"
-      role="dialog"
-      aria-modal="false"
-      aria-labelledby="task-edit-drawer-title"
-      aria-keyshortcuts={showTraversal ? 'J K' : undefined}
-      tabindex="-1"
-      data-testid="task-edit-drawer"
-      data-variant="overlay"
-    >
-      {@render drawerBody()}
-    </div>
-  {/if}
+  <!-- Single root so overlay↔pane flips update classes/role in place (#919).
+       Fly only on first overlay open — not on mid-session variant changes. -->
+  <div
+    bind:this={panelRef}
+    transition:fly={{
+      x: 320,
+      duration: isPane || skipFly ? 0 : motionDuration(200)
+    }}
+    class={isPane
+      ? 'flex h-full w-full flex-col overflow-hidden border-l border-surface-card-border bg-surface-card shadow-none focus:outline-none'
+      : 'fixed right-0 top-12 z-40 flex h-[calc(100vh-48px)] w-full flex-col overflow-hidden border-l border-surface-card-border bg-surface-card shadow-2xl focus:outline-none sm:w-[480px] lg:w-[540px] lg:max-w-xl'}
+    role={isPane ? 'region' : 'dialog'}
+    aria-modal={isPane ? undefined : 'false'}
+    aria-labelledby="task-edit-drawer-title"
+    aria-keyshortcuts={showTraversal ? 'J K' : undefined}
+    tabindex="-1"
+    data-testid="task-edit-drawer"
+    data-variant={isPane ? 'pane' : 'overlay'}
+  >
+    {@render drawerBody()}
+  </div>
 {/if}

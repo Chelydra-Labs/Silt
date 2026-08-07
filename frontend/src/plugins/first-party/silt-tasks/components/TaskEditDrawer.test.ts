@@ -748,7 +748,7 @@ describe('TaskEditDrawer — scroll reset on task switch', () => {
 describe('TaskEditDrawer — variant + light-dismiss', () => {
   beforeEach(() => cleanup())
 
-  it('overlay uses dialog semantics; pane uses region', () => {
+  it('overlay uses dialog semantics; pane uses region', async () => {
     const ctx = makeCtx()
     const { rerender } = render(TaskEditDrawer, {
       props: {
@@ -763,12 +763,42 @@ describe('TaskEditDrawer — variant + light-dismiss', () => {
     expect(overlay.getAttribute('data-variant')).toBe('overlay')
     expect(overlay.className).toMatch(/fixed/)
 
-    void rerender({
+    await rerender({
       task: makeTask(),
       ctx,
       onClose: () => {},
       variant: 'pane'
     })
+    await tick()
+    // Same DOM node — variant flip must not remount (#919).
+    const pane = screen.getByTestId('task-edit-drawer')
+    expect(pane).toBe(overlay)
+    expect(pane.getAttribute('role')).toBe('region')
+    expect(pane.getAttribute('data-variant')).toBe('pane')
+    expect(pane.className).not.toMatch(/\bfixed\b/)
+  })
+
+  it('keeps the same root across overlay↔pane while drafts stay mounted', async () => {
+    const ctx = makeCtx()
+    const task = makeTask({ clean_content: 'Draft host' })
+    const { rerender } = render(TaskEditDrawer, {
+      props: { task, ctx, onClose: () => {}, variant: 'overlay' }
+    })
+    const root = screen.getByTestId('task-edit-drawer')
+    const scroll = screen.getByTestId('task-edit-drawer-scroll')
+    scroll.scrollTop = 42
+
+    await rerender({ task, ctx, onClose: () => {}, variant: 'pane' })
+    await tick()
+    expect(screen.getByTestId('task-edit-drawer')).toBe(root)
+    expect(screen.getByTestId('task-edit-drawer-scroll').scrollTop).toBe(42)
+
+    await rerender({ task, ctx, onClose: () => {}, variant: 'overlay' })
+    await tick()
+    expect(screen.getByTestId('task-edit-drawer')).toBe(root)
+    expect(screen.getByTestId('task-edit-drawer').getAttribute('role')).toBe(
+      'dialog'
+    )
   })
 
   it('pane variant is a region without fixed positioning', async () => {

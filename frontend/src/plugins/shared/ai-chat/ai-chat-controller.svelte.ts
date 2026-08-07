@@ -291,17 +291,18 @@ export function createAgentCapability(): AIChatCapability {
         },
         onDone: (finalText) => {
           if (stale()) return
+          // Match agent-loop empty checks: whitespace-only is not a real answer
+          // (avoids a blank bubble + iteration-limit banner on forced wrap-up).
+          if (!finalText.trim()) return
           // Keep citation numbering identical to the retrieval prompt. The
           // parser deliberately drops unknown markers, matching Q&A behavior.
           parseCitations(finalText, citationPassages)
           updateAssistant(finalText, false)
-          if (finalText) {
-            protocolHistory = [
-              ...protocolHistory,
-              { role: 'assistant', content: finalText }
-            ]
-            finalTextRecorded = true
-          }
+          protocolHistory = [
+            ...protocolHistory,
+            { role: 'assistant', content: finalText }
+          ]
+          finalTextRecorded = true
         }
       }
 
@@ -316,7 +317,18 @@ export function createAgentCapability(): AIChatCapability {
           protocolHistory = priorHistory
           return
         }
-        if (result.hitIterationCap) {
+        // Prefer the forced wrap-up answer when the model never voluntarily
+        // stopped tool-calling. Only show the hard stop banner when there is
+        // still nothing useful to display.
+        if (!finalTextRecorded && result.text?.trim()) {
+          updateAssistant(result.text, false)
+          protocolHistory = [
+            ...protocolHistory,
+            { role: 'assistant', content: result.text }
+          ]
+          finalTextRecorded = true
+        }
+        if (result.hitIterationCap && !result.text?.trim()) {
           context.append(
             statusEntry({
               role: 'system',
@@ -324,13 +336,6 @@ export function createAgentCapability(): AIChatCapability {
               message: 'Stopped after reaching the iteration limit.'
             })
           )
-        }
-        if (!finalTextRecorded && result.text) {
-          updateAssistant(result.text, false)
-          protocolHistory = [
-            ...protocolHistory,
-            { role: 'assistant', content: result.text }
-          ]
         }
       } catch (e) {
         // Provider error mid-turn: roll back so protocolHistory only ever

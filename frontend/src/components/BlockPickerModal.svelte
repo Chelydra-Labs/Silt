@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { SearchBlocks } from '../../bindings/silt/app.js'
+  import { trapFocus } from '../lib/focusTrap'
 
   interface Props {
     onPick: (blockId: string) => void
@@ -52,14 +53,6 @@
   let dialogEl = $state<HTMLDivElement | null>(null)
   let previouslyFocused: HTMLElement | null = null
 
-  const FOCUSABLE =
-    'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
-
-  function focusableEls(): HTMLElement[] {
-    if (!dialogEl) return []
-    return Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE))
-  }
-
   function pick(res: BlockSearchResult) {
     onPick(res.id)
     onClose()
@@ -72,26 +65,7 @@
       onClose()
       return
     }
-    // Dialog-scoped trap (same pattern as ConfirmDialog): runs on window
-    // capture so Tab still wraps when focus is on clear/result buttons, not
-    // only when the search input is focused.
-    if (e.key === 'Tab' && dialogEl) {
-      const els = focusableEls()
-      if (els.length === 0) return
-      const first = els[0]
-      const last = els[els.length - 1]
-      const active = document.activeElement as HTMLElement | null
-      if (e.shiftKey) {
-        if (active === first || !dialogEl.contains(active)) {
-          e.preventDefault()
-          last.focus()
-        }
-      } else if (active === last || !dialogEl.contains(active)) {
-        e.preventDefault()
-        first.focus()
-      }
-      return
-    }
+    // Arrow/Enter stay surface-owned; Tab wrap is shared focusTrap.
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       if (results.length > 0) {
@@ -111,11 +85,14 @@
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement | null
     window.addEventListener('keydown', handleKeydown, true)
-    inputEl?.focus()
+    let disposeTrap = () => {}
+    void tick().then(() => {
+      if (dialogEl) disposeTrap = trapFocus(dialogEl)
+      inputEl?.focus()
+    })
     return () => {
+      disposeTrap()
       window.removeEventListener('keydown', handleKeydown, true)
-      // Only restore if the prior element is still in the document (e.g. a
-      // tab/button that wasn't unmounted while the picker was open).
       if (previouslyFocused?.isConnected) {
         previouslyFocused.focus()
       }

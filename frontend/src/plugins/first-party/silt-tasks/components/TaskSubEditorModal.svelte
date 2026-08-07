@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount, onDestroy, untrack } from 'svelte'
+  import { onMount, onDestroy, tick, untrack } from 'svelte'
+  import { trapFocus } from '../../../../lib/focusTrap'
   import { createEditor, EditorContent } from 'svelte-tiptap'
   import type { Editor } from 'svelte-tiptap'
   import { fly } from 'svelte/transition'
@@ -93,16 +94,9 @@
 
   let suppressUpdate = false
 
-  // --- Focus trap (Tab/Shift+Tab cycle within the dialog) ---
+  // --- Focus trap (shared focusTrap; Esc stays surface-owned) ---
   let dialogRef = $state<HTMLDivElement | null>(null)
   let previouslyFocused: HTMLElement | null = null
-  const FOCUSABLE =
-    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-
-  function focusableElements(): HTMLElement[] {
-    if (!dialogRef) return []
-    return Array.from(dialogRef.querySelectorAll<HTMLElement>(FOCUSABLE))
-  }
 
   const extensions = [
     StarterKit.configure({
@@ -312,25 +306,6 @@
       e.preventDefault()
       e.stopPropagation()
       void attemptClose()
-      return
-    }
-    if (e.key === 'Tab' && dialogRef) {
-      const els = focusableElements()
-      if (els.length === 0) return
-      const first = els[0]
-      const last = els[els.length - 1]
-      const active = document.activeElement as HTMLElement | null
-      if (e.shiftKey) {
-        if (active === first || !dialogRef.contains(active)) {
-          e.preventDefault()
-          last.focus()
-        }
-      } else {
-        if (active === last) {
-          e.preventDefault()
-          first.focus()
-        }
-      }
     }
   }
 
@@ -382,11 +357,16 @@
     // Lock background scroll while the full-screen modal is open.
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
+    let disposeTrap = () => {}
+    void tick().then(() => {
+      if (dialogRef) disposeTrap = trapFocus(dialogRef)
+    })
     if (!initialTask) void loadTaskDetail()
     return () => {
+      disposeTrap()
       void drainSave()
       document.body.style.overflow = prevOverflow
-      previouslyFocused?.focus?.()
+      if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
     }
   })
 

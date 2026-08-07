@@ -316,7 +316,7 @@
     typeEditorOpen = true
   }
 
-  // Restore the shipped example types (Book, Meeting). Idempotent server-side:
+  // Restore the shipped example types pack. Idempotent server-side:
   // a type whose id exists is left untouched, so this is safe to repeat. The
   // returned ids distinguish "newly restored" from "already present" so the
   // toast reflects what actually happened.

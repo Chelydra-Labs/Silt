@@ -12,6 +12,7 @@ import (
 
 	"silt/backend/parser"
 	"silt/backend/types"
+	"silt/backend/vault"
 )
 
 // bookTypeSchema is the canonical test schema: text + text + select + number,
@@ -1213,16 +1214,18 @@ func captureTypeEmits(t *testing.T, app *App) func() []string {
 }
 
 // TestRestoreExampleTypes_CreatesWhenAbsent verifies the empty-state unblock:
-// with no types on disk, RestoreExampleTypes writes the shipped Book + Meeting
-// defs (canonical form via types.SaveType), returns their ids in order, writes
-// both files, and emits types:changed exactly once.
+// with no types on disk, RestoreExampleTypes writes the full shipped example
+// pack (canonical form via types.SaveType), returns their ids in order, writes
+// all files, and emits types:changed exactly once.
 func TestRestoreExampleTypes_CreatesWhenAbsent(t *testing.T) {
 	app := newTestApp(t)
-	// newTestApp scaffolds the vault, which seeds book + meeting. Remove both
+	// newTestApp scaffolds the vault, which seeds the example pack. Remove all
 	// to stage the empty-state dead-end this IPC unblocks.
-	for _, id := range []string{"book", "meeting"} {
-		if err := os.Remove(filepath.Join(app.typesDir(), id+".yaml")); err != nil {
-			t.Fatalf("remove scaffolded %s.yaml: %v", id, err)
+	wantIDs := make([]string, 0, len(vault.ExampleTypes()))
+	for _, td := range vault.ExampleTypes() {
+		wantIDs = append(wantIDs, td.ID)
+		if err := os.Remove(filepath.Join(app.typesDir(), td.ID+".yaml")); err != nil {
+			t.Fatalf("remove scaffolded %s.yaml: %v", td.ID, err)
 		}
 	}
 	types.InvalidateTypesCache()
@@ -1233,11 +1236,16 @@ func TestRestoreExampleTypes_CreatesWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RestoreExampleTypes: %v", err)
 	}
-	// Deterministic order (Book, Meeting) from ExampleTypes.
-	if len(created) != 2 || created[0] != "book" || created[1] != "meeting" {
-		t.Fatalf("created = %v, want [book meeting]", created)
+	// Deterministic order from ExampleTypes (eight-type pack).
+	if len(created) != len(wantIDs) {
+		t.Fatalf("created = %v, want %v", created, wantIDs)
 	}
-	// Both files exist on disk and parse back to the seeded names.
+	for i, id := range wantIDs {
+		if created[i] != id {
+			t.Fatalf("created[%d] = %q, want %q (full: %v)", i, created[i], id, created)
+		}
+	}
+	// All files exist on disk and parse back to the seeded ids.
 	for _, id := range created {
 		td, err := types.GetType(app.typesDir(), id)
 		if err != nil {
@@ -1263,11 +1271,11 @@ func TestRestoreExampleTypes_CreatesWhenAbsent(t *testing.T) {
 // TestRestoreExampleTypes_IdempotentPreservesEdits verifies the idempotency
 // contract: a type whose id already exists is left untouched (the user's edits
 // survive), and only missing types are created. Meeting is removed so the call
-// has real work to do alongside the skip.
+// has real work to do alongside the skip; newer pack members stay present.
 func TestRestoreExampleTypes_IdempotentPreservesEdits(t *testing.T) {
 	app := newTestApp(t)
-	// newTestApp seeded book + meeting. Rewrite book.yaml with a user edit
-	// (an extra property) so we can assert it is NOT overwritten.
+	// newTestApp seeded the full example pack. Rewrite book.yaml with a user
+	// edit (an extra property) so we can assert it is NOT overwritten.
 	bookPath := filepath.Join(app.typesDir(), "book.yaml")
 	userEdited := "# user-edited book\nname: Book\nheroField: title\nproperties:\n" +
 		"  - name: title\n    type: text\n    required: true\n" +
@@ -1285,7 +1293,7 @@ func TestRestoreExampleTypes_IdempotentPreservesEdits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RestoreExampleTypes: %v", err)
 	}
-	// Only meeting was missing; book was skipped (idempotent).
+	// Only meeting was missing; book and the rest of the pack were skipped.
 	if len(created) != 1 || created[0] != "meeting" {
 		t.Fatalf("created = %v, want [meeting] (book must be skipped)", created)
 	}
