@@ -85,10 +85,12 @@ means JSON Schema's extensibility buys nothing.
 ## Consequences
 
 - **`.system/types/*.yaml`** is a new per-vault YAML asset (tier 2), sibling
-  to `.system/templates/`. Shipped defaults (`book.yaml`, `meeting.yaml`)
-  scaffold the directory on vault init. A hot-reload watcher (extending the
-  templates watcher pattern) bumps an in-memory schema generation and emits
-  a `types:changed` event on external edits.
+  to `.system/templates/`. Shipped defaults scaffold the directory on vault
+  init: `book`, `meeting`, `person`, `project`, `decision`, `one_on_one`,
+  `standup`, `retrospective` (entities + structured rituals; not Daily/Weekly).
+  A hot-reload watcher (extending the templates watcher pattern) bumps an
+  in-memory schema generation and emits a `types:changed` event on external
+  edits.
 - **`page_types` + `page_properties`** are new SQLite projection tables
   (tier 5, working memory). They are reproducible: deleting the index and
   relaunching rebuilds them from frontmatter + schema. Source-aware

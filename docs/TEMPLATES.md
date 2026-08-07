@@ -29,9 +29,25 @@ A **template** is *parameterized Markdown*: a title, a category, an icon, an opt
 
 > First-class templates are bundled (embedded in the binary) and always selectable. They are **read-only** — you cannot overwrite or delete them. To customize one, copy its content into a new user template with a different id.
 
+### Template ↔ type pairing (new page only)
+
+When you create a **new page** from a mapped template, Silt sets frontmatter `type:` and seeds the obvious hero property from the placeholder you filled in. Insert-at-cursor does **not** change the page type.
+
+| Template id | Type id | Placeholder → property |
+| :--- | :--- | :--- |
+| `meeting-notes` | `meeting` | `meeting_title` → `topic` |
+| `reading-notes` | `book` | `title` → `title` |
+| `project-brief` | `project` | `project_name` → `title` |
+| `decision-log` | `decision` | `title` → `title` |
+| `one-on-one` | `one_on_one` | `with` → `with` |
+| `standup-notes` | `standup` | `project_name` → `project` |
+| `retrospective` | `retrospective` | `title` → `title` (when supplied) |
+
+**Body-only** (no `type:`): `notes`, `daily-note`, `weekly-review`.
+
 ### Two ways to insert
 
-1. **New Page → From Template…** — creates a new page pre-filled with the rendered template. Click the `content_copy` icon in the sidebar (next to New Page) or press **Ctrl+Shift+T**.
+1. **New Page → From Template…** — creates a new page pre-filled with the rendered template (and type pairing above when mapped). Click the `content_copy` icon in the sidebar (next to New Page) or press **Ctrl+Shift+T**.
 2. **Insert at cursor** — type `/template` in the editor's slash menu to insert the rendered template's blocks at the cursor position in the current page.
 
 ---
