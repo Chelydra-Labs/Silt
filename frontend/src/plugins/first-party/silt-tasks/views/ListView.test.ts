@@ -468,6 +468,16 @@ describe('Tasks view', () => {
     expect(drawer?.textContent).toContain('Drawer task')
     expect(handler).not.toHaveBeenCalled()
     window.removeEventListener('navigate-to-block', handler)
+
+    const row = document.querySelector('[data-block-id="nav1"]') as HTMLElement
+    expect(row.getAttribute('aria-current')).toBe('true')
+
+    // Click same row toggles closed.
+    await fireEvent.click(bodyBtn)
+    await flush()
+    expect(
+      document.querySelector('[aria-labelledby="task-edit-drawer-title"]')
+    ).toBeNull()
   })
 
   it('clicking the pencil affordance opens the sub-editor modal', async () => {
