@@ -370,4 +370,40 @@ describe('AI chat controller — proposal accept/discard failure handling', () =
     expect(await first).toBe(true)
     controller.dispose()
   })
+
+  it('treats whitespace-only forced wrap-up as empty (banner, no blank bubble)', async () => {
+    agentMocks.run.mockImplementationOnce(
+      async (_text: string, _history: unknown, opts: AgentRunOptions) => {
+        // Mirrors agent-loop: onDone gets whitespace; hitIterationCap true
+        // because !lastText.trim().
+        opts.onDone?.('   \n\t  ')
+        return {
+          text: '   \n\t  ',
+          hitIterationCap: true,
+          forcedFinalAnswer: true,
+          cancelled: false,
+          iterations: 8
+        }
+      }
+    )
+
+    const controller = createAIChatController()
+    controller.attach(pluginContextStub())
+    await controller.send('edge wrap-up')
+
+    const assistantTexts = controller.transcript
+      .filter((e) => e.kind === 'text' && e.role === 'assistant')
+      .map((e) => (e.kind === 'text' ? e.content : ''))
+    // No blank/whitespace assistant bubble.
+    expect(assistantTexts.every((c) => c.trim().length > 0)).toBe(true)
+    expect(
+      controller.transcript.some(
+        (e) =>
+          e.kind === 'status' &&
+          e.status === 'iteration-limit' &&
+          /iteration limit/i.test(e.message)
+      )
+    ).toBe(true)
+    controller.dispose()
+  })
 })
