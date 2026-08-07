@@ -903,9 +903,9 @@ func TestProjectionReprojectWorker_TOCOUConcurrentEditSkipsWrite(t *testing.T) {
 // TestProjectionReprojectWorker_EmitsErrorForInvalidLocator (which captures
 // projection-error emits), extended to record the full payload so the
 // progress tests can assert state/processed/total shape.
-func progressEmitRecorder(app *App) (snapshot func() []map[string]any, restore func()) {
+func progressEmitRecorder(app *App) (snapshot func() []TypesReprojectionProgressEvent, restore func()) {
 	var emitMu sync.Mutex
-	var recs []map[string]any
+	var recs []TypesReprojectionProgressEvent
 	origEmit := app.eventEmit
 	app.eventEmit = func(name string, data ...any) {
 		emitMu.Lock()
@@ -916,14 +916,14 @@ func progressEmitRecorder(app *App) (snapshot func() []map[string]any, restore f
 		if len(data) == 0 {
 			return
 		}
-		if m, ok := data[0].(map[string]any); ok {
-			recs = append(recs, m)
+		if ev, ok := data[0].(TypesReprojectionProgressEvent); ok {
+			recs = append(recs, ev)
 		}
 	}
-	return func() []map[string]any {
+	return func() []TypesReprojectionProgressEvent {
 		emitMu.Lock()
 		defer emitMu.Unlock()
-		out := make([]map[string]any, len(recs))
+		out := make([]TypesReprojectionProgressEvent, len(recs))
 		copy(out, recs)
 		return out
 	}, func() { app.eventEmit = origEmit }
@@ -957,8 +957,8 @@ func TestProjectionReprojectWorker_EmitsProgressForNonEmptyBatch(t *testing.T) {
 	}
 
 	// Pre-batch: the worker is idle (no batch in flight).
-	if status := app.GetTypesReprojectionStatus(); status["active"] != false {
-		t.Errorf("pre-batch status active = %v, want false", status["active"])
+	if status := app.GetTypesReprojectionStatus(); status.Active {
+		t.Errorf("pre-batch status active = %v, want false", status.Active)
 	}
 
 	snapshot, restore := progressEmitRecorder(app)
@@ -981,30 +981,30 @@ func TestProjectionReprojectWorker_EmitsProgressForNonEmptyBatch(t *testing.T) {
 	}
 	// First emit is the `running` start with processed=0 and total=pageCount.
 	first := recs[0]
-	if first["state"] != "running" {
-		t.Errorf("first emit state = %v, want running", first["state"])
+	if first.State != "running" {
+		t.Errorf("first emit state = %v, want running", first.State)
 	}
-	if first["total"] != uint64(pageCount) {
-		t.Errorf("first emit total = %v, want %d", first["total"], pageCount)
+	if first.Total != uint64(pageCount) {
+		t.Errorf("first emit total = %v, want %d", first.Total, pageCount)
 	}
-	if first["processed"] != uint64(0) {
-		t.Errorf("first emit processed = %v, want 0", first["processed"])
+	if first.Processed != uint64(0) {
+		t.Errorf("first emit processed = %v, want 0", first.Processed)
 	}
 	// Last emit is the `done` terminator with processed=total=pageCount.
 	last := recs[len(recs)-1]
-	if last["state"] != "done" {
-		t.Errorf("last emit state = %v, want done", last["state"])
+	if last.State != "done" {
+		t.Errorf("last emit state = %v, want done", last.State)
 	}
-	if last["total"] != uint64(pageCount) {
-		t.Errorf("last emit total = %v, want %d", last["total"], pageCount)
+	if last.Total != uint64(pageCount) {
+		t.Errorf("last emit total = %v, want %d", last.Total, pageCount)
 	}
-	if last["processed"] != uint64(pageCount) {
-		t.Errorf("last emit processed = %v, want %d", last["processed"], pageCount)
+	if last.Processed != uint64(pageCount) {
+		t.Errorf("last emit processed = %v, want %d", last.Processed, pageCount)
 	}
 
 	// Post-batch: the worker reset to idle.
-	if status := app.GetTypesReprojectionStatus(); status["active"] != false {
-		t.Errorf("post-batch status active = %v, want false", status["active"])
+	if status := app.GetTypesReprojectionStatus(); status.Active {
+		t.Errorf("post-batch status active = %v, want false", status.Active)
 	}
 }
 
@@ -1055,14 +1055,14 @@ func TestGetTypesReprojectionStatus_IdleShape(t *testing.T) {
 		app.vaultMu.Unlock()
 
 		status := app.GetTypesReprojectionStatus()
-		if status["active"] != false {
-			t.Errorf("active = %v, want false", status["active"])
+		if status.Active {
+			t.Errorf("active = %v, want false", status.Active)
 		}
-		if status["processed"] != uint64(0) {
-			t.Errorf("processed = %v, want 0", status["processed"])
+		if status.Processed != 0 {
+			t.Errorf("processed = %v, want 0", status.Processed)
 		}
-		if status["total"] != uint64(0) {
-			t.Errorf("total = %v, want 0", status["total"])
+		if status.Total != 0 {
+			t.Errorf("total = %v, want 0", status.Total)
 		}
 	})
 	t.Run("idle worker returns all-zero inactive", func(t *testing.T) {
@@ -1074,14 +1074,14 @@ func TestGetTypesReprojectionStatus_IdleShape(t *testing.T) {
 		// No enqueue in flight → worker is idle between batches.
 
 		status := app.GetTypesReprojectionStatus()
-		if status["active"] != false {
-			t.Errorf("active = %v, want false", status["active"])
+		if status.Active {
+			t.Errorf("active = %v, want false", status.Active)
 		}
-		if status["processed"] != uint64(0) {
-			t.Errorf("processed = %v, want 0", status["processed"])
+		if status.Processed != 0 {
+			t.Errorf("processed = %v, want 0", status.Processed)
 		}
-		if status["total"] != uint64(0) {
-			t.Errorf("total = %v, want 0", status["total"])
+		if status.Total != 0 {
+			t.Errorf("total = %v, want 0", status.Total)
 		}
 	})
 }

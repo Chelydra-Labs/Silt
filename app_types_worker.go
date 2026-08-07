@@ -272,10 +272,10 @@ func (w *projectionReprojectWorker) runOneBatch() {
 		return
 	}
 	w.progress.Store(&reprojectionProgress{total: total, processed: 0})
-	w.app.emit(EventTypesReprojectionProgress, map[string]any{
-		"state":     "running",
-		"processed": uint64(0),
-		"total":     total,
+	w.app.emit(EventTypesReprojectionProgress, TypesReprojectionProgressEvent{
+		State:     "running",
+		Processed: 0,
+		Total:     total,
 	})
 	// Throttle intermediate emits so a 10k-page vault does not fire an event
 	// per page. ~20 updates over the run (or every 25 for small batches) is
@@ -302,18 +302,18 @@ func (w *projectionReprojectWorker) runOneBatch() {
 		done := uint64(i + 1)
 		w.progress.Store(&reprojectionProgress{total: total, processed: done})
 		if done == total || (step > 0 && done%step == 0) {
-			w.app.emit(EventTypesReprojectionProgress, map[string]any{
-				"state":     "running",
-				"processed": done,
-				"total":     total,
+			w.app.emit(EventTypesReprojectionProgress, TypesReprojectionProgressEvent{
+				State:     "running",
+				Processed: done,
+				Total:     total,
 			})
 		}
 	}
 
-	w.app.emit(EventTypesReprojectionProgress, map[string]any{
-		"state":     "done",
-		"processed": total,
-		"total":     total,
+	w.app.emit(EventTypesReprojectionProgress, TypesReprojectionProgressEvent{
+		State:     "done",
+		Processed: total,
+		Total:     total,
 	})
 	w.progress.Store(nil)
 }

@@ -220,7 +220,7 @@ describe('pageType controller', () => {
     dispose()
   })
 
-  it('on types:projection-error, refreshes the active page and surfaces a transient warning', async () => {
+  it('on types:projection-error, debounces refresh + toast so a burst coalesces', async () => {
     appMocks.GetPageType.mockResolvedValue({
       isSet: false,
       type: {},
@@ -233,19 +233,29 @@ describe('pageType controller', () => {
     await ctrl.refresh()
     await tick()
     const callsAfterFirst = appMocks.GetPageType.mock.calls.length
+    const listCallsAfterFirst = appMocks.ListTypes.mock.calls.length
+    pushNotification.mockClear()
 
-    // Fire the subscribed `types:projection-error` handler. There's no
-    // debounce on this path (unlike `types:changed`) — the refresh + toast
-    // fire immediately.
+    // Burst of projection-error events — must not fire refresh/toast yet.
+    eventsHandlers['types:projection-error']?.()
+    eventsHandlers['types:projection-error']?.()
     eventsHandlers['types:projection-error']?.()
     await new Promise((r) => setTimeout(r, 0))
     await tick()
+    expect(appMocks.GetPageType.mock.calls.length).toBe(callsAfterFirst)
+    expect(pushNotification).not.toHaveBeenCalled()
 
-    // (a) refresh triggered: GetPageType was called again.
+    // After the trailing debounce window, one reload + one toast.
+    await new Promise((r) => setTimeout(r, 130))
+    await tick()
+
     expect(appMocks.GetPageType.mock.calls.length).toBeGreaterThan(
       callsAfterFirst
     )
-    // (b) warning surface received a non-error (info/polite) notification.
+    expect(appMocks.ListTypes.mock.calls.length).toBeGreaterThan(
+      listCallsAfterFirst
+    )
+    expect(pushNotification).toHaveBeenCalledTimes(1)
     expect(pushNotification).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'info' })
     )

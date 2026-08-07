@@ -6,8 +6,11 @@
 //     freshly mounted dashboard renders an already-running pass (the live
 //     event only fires for batches that begin AFTER the listener attaches).
 //   - Live updates: the `types:reprojection:progress` event carries
-//     {state: "running"|"done", processed, total} as the batch advances. The
-//     store sets active=false on "done" and hides itself.
+//     TypesReprojectionProgressEvent {state, processed, total} as the batch
+//     advances. The store sets active=false on "done" and hides itself.
+//
+// Payload field names match the Go structs in app_types.go (SoT). The event
+// bus still delivers `any` at the boundary, so we normalize once here.
 //
 // Mirrors pageTypeState.svelte.ts's attach()/disposer pattern: attach() opens
 // the event subscription and returns a cleanup closure the host wires into
@@ -15,6 +18,20 @@
 import { Events } from '@wailsio/runtime'
 import { EventName } from '../generated/enums'
 import { GetTypesReprojectionStatus } from '../../bindings/silt/app.js'
+
+/** Mirrors Go TypesReprojectionProgressEvent (app_types.go). */
+export interface TypesReprojectionProgressEvent {
+  state: string // "running" | "done" at runtime
+  processed: number
+  total: number
+}
+
+/** Mirrors Go TypesReprojectionStatus (app_types.go). */
+export interface TypesReprojectionStatus {
+  active: boolean
+  processed: number
+  total: number
+}
 
 export interface ReprojectionStatus {
   readonly active: boolean
@@ -25,6 +42,28 @@ export interface ReprojectionStatus {
   attach: () => () => void
 }
 
+function asNumber(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0
+}
+
+function normalizeProgress(data: unknown): TypesReprojectionProgressEvent {
+  const d = (data ?? {}) as Partial<TypesReprojectionProgressEvent>
+  return {
+    state: typeof d.state === 'string' ? d.state : '',
+    processed: asNumber(d.processed),
+    total: asNumber(d.total)
+  }
+}
+
+function normalizeStatus(data: unknown): TypesReprojectionStatus {
+  const d = (data ?? {}) as Partial<TypesReprojectionStatus>
+  return {
+    active: d.active === true,
+    processed: asNumber(d.processed),
+    total: asNumber(d.total)
+  }
+}
+
 export function createReprojectionStatus(): ReprojectionStatus {
   let active = $state(false)
   let processed = $state(0)
@@ -33,32 +72,24 @@ export function createReprojectionStatus(): ReprojectionStatus {
   // fresher event with the stale snapshot captured during its IPC round-trip.
   let eventReceived = false
 
-  function apply(
-    state: string | undefined,
-    nextProcessed: number,
-    nextTotal: number
-  ): void {
-    total = nextTotal
-    processed = nextProcessed
-    active = state !== 'done' && nextTotal > 0
+  function apply(ev: TypesReprojectionProgressEvent): void {
+    total = ev.total
+    processed = ev.processed
+    active = ev.state !== 'done' && ev.total > 0
   }
 
   async function seed(): Promise<void> {
     try {
-      const res = (await GetTypesReprojectionStatus()) as {
-        active?: boolean
-        processed?: number
-        total?: number
-      } | null
-      if (!res) return
+      const res = await GetTypesReprojectionStatus()
+      if (res == null) return
       // A live event that arrived while this IPC was in flight is strictly
       // fresher than the snapshot captured at call time — don't let the stale
       // seed clobber it (the race window is small but real for fast batches).
       if (eventReceived) return
-      const t = typeof res.total === 'number' ? res.total : 0
-      total = t
-      processed = typeof res.processed === 'number' ? res.processed : 0
-      active = res.active === true
+      const status = normalizeStatus(res)
+      total = status.total
+      processed = status.processed
+      active = status.active
     } catch {
       // Cold-state read is best-effort — a transient IPC failure leaves the
       // store idle; the live event will still catch any in-flight batch.
@@ -70,16 +101,7 @@ export function createReprojectionStatus(): ReprojectionStatus {
     void seed()
     const off = Events.On(EventName.EventTypesReprojectionProgress, (event) => {
       eventReceived = true
-      const data = (event?.data ?? {}) as {
-        state?: string
-        processed?: number
-        total?: number
-      }
-      apply(
-        data.state,
-        typeof data.processed === 'number' ? data.processed : 0,
-        typeof data.total === 'number' ? data.total : 0
-      )
+      apply(normalizeProgress(event?.data))
     })
     return () => off()
   }

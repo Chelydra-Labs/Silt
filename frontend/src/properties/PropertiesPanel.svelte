@@ -151,6 +151,7 @@
       {onError}
       {onCreateType}
       {onRestoreExamples}
+      actionsLayout="menu"
     >
       {#snippet trailing()}
         <div class="chrome-group">
