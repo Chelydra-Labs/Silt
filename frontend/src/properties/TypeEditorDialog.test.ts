@@ -16,6 +16,7 @@ const appMocks = vi.hoisted(() =>
 vi.mock('$silt-app', () => appMocks)
 
 import TypeEditorDialog from './TypeEditorDialog.svelte'
+import { getFocusable } from '../lib/focusTrap'
 
 beforeEach(() => {
   appMocks.SaveType.mockReset().mockResolvedValue(undefined)
@@ -107,6 +108,19 @@ describe('TypeEditorDialog — rendering & a11y', () => {
       const lbl = document.querySelector(`label[for="${id}"]`)
       expect(lbl).not.toBeNull()
     }
+  })
+
+  it('includes the hero <select> in the focus cycle (shared focusTrap util)', async () => {
+    // The old per-dialog trap selector omitted <select>, so a select would be
+    // skipped by the focus wrap. The shared util's spec-aligned selector
+    // includes it — prove it end-to-end on the real dialog DOM.
+    await open()
+    const dialog = screen.getByRole('dialog')
+    const focusables = getFocusable(dialog)
+    expect(focusables).toContain(heroSelect())
+    // A property-row type <select> is also a real tab stop.
+    const rowTypeSelect = screen.getByLabelText('Property 1 type')
+    expect(focusables).toContain(rowTypeSelect)
   })
 })
 

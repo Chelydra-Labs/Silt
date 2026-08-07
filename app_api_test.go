@@ -95,7 +95,11 @@ func newTestApp(t *testing.T) *App {
 // flushReprojection blocks until the App's reprojection worker has processed
 // every enqueue made before this call (Phase 5 / #866). Production never
 // calls this — it exists for tests that need to assert post-reprojection
-// state without sleeps. No-op when no worker is running.
+// state without sleeps. No-op when no worker is running. Go-side
+// synchronization only: it does NOT guarantee the frontend has received the
+// worker's `done` progress event, which crosses the IPC boundary
+// asynchronously — tests that assert on emitted events do so via the
+// in-process emit recorder, not via this drain.
 func flushReprojection(t *testing.T, app *App) {
 	t.Helper()
 	if app.reprojectWorker == nil {

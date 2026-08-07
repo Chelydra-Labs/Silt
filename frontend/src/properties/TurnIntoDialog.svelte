@@ -12,6 +12,7 @@
   import { tick } from 'svelte'
   import { GetType, GetPageProperties } from '../../bindings/silt/app.js'
   import { coerceIPCError } from '../lib/ipcError'
+  import { trapFocus } from '../lib/focusTrap'
   import { classifyPair } from './typeCompat'
   import type {
     PageLocator,
@@ -169,47 +170,29 @@
     if (!open) clearOrphaned = false
   })
 
-  // ---- Focus trap (mirrors ConfirmDialog) --------------------------------
+  // ---- Focus trap --------------------------------------------------------
+  // Tab/Shift+Tab wrap is delegated to the shared trapFocus util (spec-aligned
+  // selector that includes <select>/<textarea>/a[href]/[contenteditable>, which
+  // the old per-dialog selector omitted). Esc is handled here because it has a
+  // surface-specific side effect (cancel + stopPropagation).
   let previouslyFocused: HTMLElement | null = null
-  const FOCUSABLE =
-    'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
-
-  function focusableEls(): HTMLElement[] {
-    if (!dialogRef) return []
-    return Array.from(dialogRef.querySelectorAll<HTMLElement>(FOCUSABLE))
-  }
 
   function handleKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
       onCancel()
-      return
-    }
-    if (e.key === 'Tab' && dialogRef) {
-      const els = focusableEls()
-      if (els.length === 0) return
-      const first = els[0]
-      const last = els[els.length - 1]
-      const active = document.activeElement as HTMLElement | null
-      if (e.shiftKey) {
-        if (active === first || !dialogRef.contains(active)) {
-          e.preventDefault()
-          last.focus()
-        }
-      } else if (active === last || !dialogRef.contains(active)) {
-        e.preventDefault()
-        first.focus()
-      }
     }
   }
 
   $effect(() => {
     if (!open) return
     previouslyFocused = document.activeElement as HTMLElement | null
+    const disposeTrap = dialogRef ? trapFocus(dialogRef) : () => {}
     window.addEventListener('keydown', handleKeydown, true)
     void tick().then(() => dialogRef?.focus())
     return () => {
+      disposeTrap()
       window.removeEventListener('keydown', handleKeydown, true)
       if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
       previouslyFocused = null

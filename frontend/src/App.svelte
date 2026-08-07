@@ -76,6 +76,7 @@
   import DateGlance from './components/DateGlance.svelte'
   import PageTypePill from './properties/PageTypePill.svelte'
   import PropertiesPanel from './properties/PropertiesPanel.svelte'
+  import PropertiesEditModal from './properties/PropertiesEditModal.svelte'
   import TypeEditorDialog from './properties/TypeEditorDialog.svelte'
   import { createPageTypeController } from './properties/pageTypeState.svelte'
   import TypeDashboard from './dashboards/TypeDashboard.svelte'
@@ -1179,6 +1180,31 @@
                   page: activePage
                 }}
                 onClose={pageType.close}
+                onOpenModal={pageType.openModal}
+                onChanged={pageType.refresh}
+                onMismatched={pageType.setMismatched}
+                onError={pageType.setError}
+                onCreateType={openTypeEditor}
+                onRestoreExamples={restoreExampleTypes}
+              />
+              <PropertiesEditModal
+                open={pageType.modalOpen}
+                info={pageType.info}
+                values={pageType.values}
+                mismatched={pageType.mismatched}
+                error={pageType.error}
+                loading={pageType.loading}
+                types={pageType.types}
+                typesLoading={pageType.typesLoading}
+                typeMenuRequest={pageType.typeMenuRequest}
+                core={pageType.core}
+                onCommitCore={pageType.commitCore}
+                locator={{
+                  notebook: activeNotebook,
+                  section: activeSection,
+                  page: activePage
+                }}
+                onClose={pageType.closeModal}
                 onChanged={pageType.refresh}
                 onMismatched={pageType.setMismatched}
                 onError={pageType.setError}

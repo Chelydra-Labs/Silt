@@ -792,7 +792,13 @@ writing attach as capabilities when their flags are on.
   writes **outside** the lock — so cost scales with affected pages rather than
   every typed page, rapid edits converge (schema is re-fetched per iteration),
   and stale work is abandoned on vault switch/close. `types:projection-error`
-  diagnostics and the delete-the-index rebuild (rule 4) are preserved. **Type
+  diagnostics and the delete-the-index rebuild (rule 4) are preserved. The
+  worker also emits `types:reprojection:progress` (`{state,processed,total}`,
+  throttled: start, every ~25 pages / ~5%, done) so the type dashboard can show
+  a non-blocking progress affordance, and `GetTypesReprojectionStatus` exposes
+  the live `{active,processed,total}` snapshot for a surface mounted
+  mid-reprojection; `ReloadTypes` (manual schema refresh) drives a full pass and
+  is the dashboard's user-facing Refresh action. **Type
   CRUD**: `ListTypes` / `GetType` / `SaveType` / `DeleteType` (atomic write to
   `.system/types/<id>.yaml`), plus `ResolveTypeID` (frontmatter ref → canonical
   id) and `ReloadTypes` (manual schema refresh + full reprojection; both emit
