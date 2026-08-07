@@ -145,7 +145,7 @@ describe('TaskMetadataSidebar', () => {
     expect(screen.getByLabelText('Task title')).toBeTruthy()
     expect(screen.getByText('Status')).toBeTruthy()
     expect(screen.getByText('Due date')).toBeTruthy()
-    expect(screen.getByText('Pin')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Pin task' })).toBeTruthy()
     expect(screen.getByText('Essentials')).toBeTruthy()
     expect(screen.getByLabelText('Owner')).toBeTruthy()
     expect(screen.getByText('Priority')).toBeTruthy()
@@ -286,11 +286,8 @@ describe('TaskMetadataSidebar', () => {
     render(TaskMetadataSidebar, {
       props: { task: makeTask(), ctx }
     })
-    // The Pin button is the one with aria-pressed containing "Pin" text.
-    const pinBtn = Array.from(
-      document.querySelectorAll('button[aria-pressed]')
-    ).find((b) => b.textContent?.includes('Pin')) as HTMLElement
-    expect(pinBtn).toBeTruthy()
+    // Icon-only pin button: query by its accessible name, not text content.
+    const pinBtn = screen.getByRole('button', { name: 'Pin task' })
     await fireEvent.click(pinBtn)
     await flush()
     expect(updateTaskMeta).toHaveBeenCalledWith('task-1', { pinned: true })

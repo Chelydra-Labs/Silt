@@ -598,6 +598,21 @@
           }
         }}
       />
+      <button
+        type="button"
+        onclick={togglePin}
+        disabled={pinField.pending}
+        aria-pressed={pinField.value}
+        aria-label={pinField.value ? 'Unpin task' : 'Pin task'}
+        title={pinField.value ? 'Unpin task' : 'Pin task'}
+        class="pin-button shrink-0 rounded p-1 transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start disabled:cursor-not-allowed disabled:opacity-50 {pinField.value
+          ? 'text-accent-primary-start'
+          : 'text-text-muted'}"
+      >
+        <span class="material-symbols-outlined pin-icon" aria-hidden="true"
+          >push_pin</span
+        >
+      </button>
       {#if onClose}
         <button
           type="button"
@@ -645,7 +660,7 @@
       </div>
     </section>
 
-    <div class="grid grid-cols-2 gap-2">
+    <div class="field-pair grid grid-cols-2 gap-2">
       <section class="min-w-0">
         <h3
           class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
@@ -743,33 +758,23 @@
         </Popover>
       </section>
 
-      <section>
+      <section class="min-w-0">
         <h3
+          id="task-start-date-label"
           class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
         >
-          Pin
+          Start day
         </h3>
-        <button
-          type="button"
-          onclick={togglePin}
-          disabled={pinField.pending}
-          class="flex w-full items-center justify-between rounded border border-surface-card-border bg-surface-card px-2 py-1.5 font-label-sm text-type-xs text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
-          aria-pressed={pinField.value}
-        >
-          <span class="flex items-center gap-1.5">
-            <span
-              class="material-symbols-outlined text-icon-sm"
-              aria-hidden="true">push_pin</span
-            >
-            {pinField.value ? 'Pinned' : 'Pin task'}
-          </span>
-          {#if pinField.value}
-            <span
-              class="material-symbols-outlined text-icon-sm text-accent-primary-start"
-              aria-hidden="true">check</span
-            >
-          {/if}
-        </button>
+        <input
+          id="task-start-date-input"
+          type="date"
+          aria-labelledby="task-start-date-label"
+          bind:value={startDateDraft}
+          disabled={startDateField.pending}
+          aria-busy={startDateField.pending}
+          onchange={(e) => void commitStartDate(e.currentTarget.value)}
+          class="w-full min-w-0 rounded border border-surface-card-border bg-surface-card px-2 py-1.5 font-label-sm text-type-xs text-text-primary transition-colors hover:bg-hover focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 disabled:cursor-not-allowed disabled:opacity-50"
+        />
       </section>
     </div>
 
@@ -859,22 +864,6 @@
               </button>
             {/each}
           </div>
-        </dd>
-      </div>
-      <div class="flex items-start justify-between gap-3">
-        <dt class="shrink-0 pt-1 text-text-muted">
-          <label for="task-start-date-input">Start day</label>
-        </dt>
-        <dd class="min-w-0 flex-1">
-          <input
-            id="task-start-date-input"
-            type="date"
-            bind:value={startDateDraft}
-            disabled={startDateField.pending}
-            aria-busy={startDateField.pending}
-            onchange={(e) => void commitStartDate(e.currentTarget.value)}
-            class="w-full rounded-sm border border-surface-card-border bg-surface-card px-2 py-1 text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 disabled:opacity-50"
-          />
         </dd>
       </div>
       <div class="flex items-start justify-between gap-3">
@@ -1216,10 +1205,29 @@
   /* Establish this component as a container so field pairs can collapse to a
      single column on narrow hosts (the 320px sub-editor modal aside) while
      staying side-by-side in the 480–540px task drawer. Native container-query
-     pattern mirroring FormatToolbar.svelte — no JS, no props. The actual
-     `.field-pair` collapse rule is added alongside its first use (header date
-     row) to keep each commit free of unused-CSS warnings. */
+     pattern mirroring FormatToolbar.svelte — no JS, no props. */
   .task-metadata-sidebar {
     container-type: inline-size;
+  }
+  @container (max-width: 360px) {
+    .field-pair {
+      grid-template-columns: 1fr;
+    }
+  }
+  /* Filled-vs-outlined push_pin mirrors SidebarQuickAccess.svelte: the glyph
+     fill tracks aria-pressed so the "pinned" cue is shape, not color alone. */
+  .pin-icon {
+    font-variation-settings:
+      'FILL' 0,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 20;
+  }
+  .pin-button[aria-pressed='true'] .pin-icon {
+    font-variation-settings:
+      'FILL' 1,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 20;
   }
 </style>

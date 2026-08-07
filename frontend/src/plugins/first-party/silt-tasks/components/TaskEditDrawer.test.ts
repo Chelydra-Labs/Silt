@@ -448,20 +448,18 @@ describe('TaskEditDrawer — source awareness + affordances', () => {
 
   it('renders aria-pressed as a real boolean (pinned coercion, not INT 0/1)', () => {
     const ctx = makeCtx()
-    const { container } = render(TaskEditDrawer, {
-      // SQL delivers pinned as INTEGER 1; cast simulates the wire shape.
+    render(TaskEditDrawer, {
+      // SQL delivers pinned as INTEGER 1; cast simulates the wire shapes.
       props: {
         task: makeTask({ pinned: 1 as unknown as boolean }),
         ctx,
         onClose: () => {}
       }
     })
-    const pinBtn = Array.from(
-      container.querySelectorAll('button[aria-pressed]')
-    ).find((b) => b.textContent?.includes('Pin')) as HTMLElement | undefined
-    expect(pinBtn).toBeTruthy()
+    // Icon-only pin button: query by its accessible name, not text content.
+    const pinBtn = screen.getByRole('button', { name: /pin/i })
     // Coerced to a real boolean — never the out-of-spec "1".
-    expect(pinBtn?.getAttribute('aria-pressed')).toBe('true')
+    expect(pinBtn.getAttribute('aria-pressed')).toBe('true')
   })
 
   it('hides "Open source page" and omits breadcrumb for a .silt task', () => {
@@ -586,7 +584,7 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('keeps title, status, due date, pin, and close in one sticky header', () => {
+  it('keeps title, status, due date, start day, pin, and close in one sticky header', () => {
     render(TaskEditDrawer, {
       props: { task: makeTask(), ctx: makeCtx(), onClose: () => {} }
     })
@@ -600,6 +598,7 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
     expect(header).toContainElement(
       screen.getByRole('button', { name: /2026-07-15/ })
     )
+    expect(header).toContainElement(screen.getByLabelText('Start day'))
     expect(header).toContainElement(
       screen.getByRole('button', { name: /Pin task/ })
     )
