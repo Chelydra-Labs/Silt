@@ -671,6 +671,28 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
   })
 })
 
+describe('TaskEditDrawer — scroll reset on task switch', () => {
+  beforeEach(() => cleanup())
+
+  it('snaps the panel back to the top when switching tasks', async () => {
+    const ctx = makeCtx()
+    const { rerender } = render(TaskEditDrawer, {
+      props: { task: makeTask({ id: 'task-a' }), ctx, onClose: () => {} }
+    })
+    // Simulate the user having scrolled down into the comments of task A.
+    const panel = screen.getByRole('dialog')
+    panel.scrollTop = 480
+    expect(panel.scrollTop).toBe(480)
+
+    await rerender({ task: makeTask({ id: 'task-b' }), ctx, onClose: () => {} })
+    await tick()
+
+    // The same panel element is reused (the {#if task} block stays mounted),
+    // so its scrollTop reflects the reset the task-switch effect applied.
+    expect(screen.getByRole('dialog').scrollTop).toBe(0)
+  })
+})
+
 describe('TaskEditDrawer — created/completed metadata line (#417)', () => {
   beforeEach(() => cleanup())
 

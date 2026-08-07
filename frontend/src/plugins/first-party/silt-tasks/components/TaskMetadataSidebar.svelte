@@ -786,7 +786,7 @@
         Essentials
       </h3>
     </div>
-    <dl class="flex flex-col gap-3 font-label-sm text-type-sm">
+    <dl class="field-pair grid grid-cols-2 gap-3 font-label-sm text-type-sm">
       <div class="flex items-center justify-between gap-3">
         <dt class="shrink-0 text-text-muted">
           <label for="task-owner-input">Owner</label>
@@ -850,7 +850,7 @@
           </div>
         </dd>
       </div>
-      <div class="flex items-start justify-between gap-3">
+      <div class="col-span-full flex items-start justify-between gap-3">
         <dt class="shrink-0 pt-1 text-text-muted">Tags</dt>
         <dd class="min-w-0 flex-1">
           <span class="sr-only" aria-live="polite">{tagsAnnouncement}</span>
@@ -913,7 +913,7 @@
     </div>
     <div class="space-y-6">
       <section>
-        <div class="mb-2 flex items-center justify-between">
+        <div class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
           <h3
             class="font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
           >
@@ -929,6 +929,36 @@
               >
             {/if}
           </span>
+          <div class="ml-auto flex items-center gap-1.5">
+            <label
+              for="task-estimate-input"
+              class="font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
+            >
+              Estimate
+            </label>
+            <input
+              id="task-estimate-input"
+              type="text"
+              data-testid="task-estimate-input"
+              class="w-28 rounded-sm border border-surface-card-border bg-surface-card px-2 py-0.5 text-right text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimateField.pending
+                ? 'opacity-50'
+                : ''}"
+              placeholder="—"
+              value={estimateField.value}
+              oninput={(e) => (estimateField.value = e.currentTarget.value)}
+              readonly={estimateField.pending}
+              aria-busy={estimateField.pending}
+              aria-invalid={estimateInvalid}
+              aria-describedby="task-estimate-hint"
+              onblur={() => void commitEstimate()}
+              onkeydown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void commitEstimate()
+                }
+              }}
+            />
+          </div>
         </div>
         <input
           type="range"
@@ -941,6 +971,7 @@
           onchange={onProgressChange}
           disabled={progressPending}
           aria-label="Task progress"
+          aria-valuetext={`${progressState}% complete`}
           class="w-full accent-accent-secondary-start disabled:opacity-50"
         />
         <div
@@ -951,41 +982,9 @@
             style="width: {progressState}%"
           ></div>
         </div>
-      </section>
-
-      <section>
-        <div class="mb-1 flex items-center justify-between gap-2">
-          <h3
-            class="font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
-          >
-            <label for="task-estimate-input">Estimate</label>
-          </h3>
-          <input
-            id="task-estimate-input"
-            type="text"
-            data-testid="task-estimate-input"
-            class="w-28 rounded-sm border border-surface-card-border bg-surface-card px-2 py-0.5 text-right text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimateField.pending
-              ? 'opacity-50'
-              : ''}"
-            placeholder="—"
-            value={estimateField.value}
-            oninput={(e) => (estimateField.value = e.currentTarget.value)}
-            readonly={estimateField.pending}
-            aria-busy={estimateField.pending}
-            aria-invalid={estimateInvalid}
-            aria-describedby="task-estimate-hint"
-            onblur={() => void commitEstimate()}
-            onkeydown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                void commitEstimate()
-              }
-            }}
-          />
-        </div>
         <p
           id="task-estimate-hint"
-          class="font-label-sm text-type-2xs text-text-muted"
+          class="mt-2 font-label-sm text-type-2xs text-text-muted"
         >
           Try 30m, 2h, 1d, or 2.5d
         </p>
