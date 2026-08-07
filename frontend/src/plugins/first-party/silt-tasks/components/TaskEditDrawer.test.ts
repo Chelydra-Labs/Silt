@@ -607,7 +607,7 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
     )
   })
 
-  it('uses content-aware defaults for planning and activity', () => {
+  it('renders planning and activity sections always open regardless of task content', () => {
     render(TaskEditDrawer, {
       props: {
         task: makeTask({
@@ -619,12 +619,12 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
       }
     })
 
-    expect(screen.getByTestId('task-planning-disclosure')).toHaveAttribute(
-      'open'
+    // The content-aware open/closed distinction no longer exists: both flat
+    // sections render their content unconditionally.
+    expect(screen.getByTestId('task-planning-section')).toHaveTextContent(
+      'Recurrence'
     )
-    expect(screen.getByTestId('task-activity-disclosure')).toHaveAttribute(
-      'open'
-    )
+    expect(screen.getByTestId('task-activity-section')).toBeInTheDocument()
   })
 
   it('Escape closes a nested due-date popover before closing the drawer', async () => {

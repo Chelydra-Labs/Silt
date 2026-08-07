@@ -233,20 +233,22 @@ describe('TaskMetadataSidebar', () => {
     )
   })
 
-  it('defaults empty secondary sections closed', () => {
-    render(TaskMetadataSidebar, {
+  it('renders flat sections always open with no disclosure toggle', () => {
+    const { container } = render(TaskMetadataSidebar, {
       props: { task: makeTask(), ctx: makeCtx() }
     })
 
-    expect(screen.getByTestId('task-planning-disclosure')).not.toHaveAttribute(
-      'open'
-    )
-    expect(screen.getByTestId('task-activity-disclosure')).not.toHaveAttribute(
-      'open'
-    )
+    const planning = screen.getByTestId('task-planning-section')
+    const activity = screen.getByTestId('task-activity-section')
+    // Sections are always open: content renders regardless of task population,
+    // with no native <details> to collapse it.
+    expect(planning).toHaveTextContent('Progress')
+    expect(planning).toHaveTextContent('Recurrence')
+    expect(activity).toHaveTextContent('Comments')
+    expect(container.querySelectorAll('details, summary')).toHaveLength(0)
   })
 
-  it('opens populated sections and exposes native disclosure summaries', () => {
+  it('renders flat section headers for planning and activity', () => {
     render(TaskMetadataSidebar, {
       props: {
         task: makeTask({
@@ -258,14 +260,16 @@ describe('TaskMetadataSidebar', () => {
       }
     })
 
-    expect(screen.getByTestId('task-planning-disclosure')).toHaveAttribute(
-      'open'
-    )
-    expect(screen.getByTestId('task-activity-disclosure')).toHaveAttribute(
-      'open'
-    )
-    expect(screen.getByText('Planning & tracking')).toBeInTheDocument()
-    expect(screen.getByText('Activity')).toBeInTheDocument()
+    // Content renders under real h3 section headers (SR section nav) with no
+    // disclosure affordance — the old open/closed summaries are gone.
+    expect(
+      screen.getByRole('heading', { name: 'Planning & tracking', level: 3 })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: 'Activity', level: 3 })
+    ).toBeInTheDocument()
+    expect(screen.queryAllByTestId('task-planning-disclosure')).toHaveLength(0)
+    expect(screen.queryAllByTestId('task-activity-disclosure')).toHaveLength(0)
   })
 
   it('an optimistic status edit calls ctx.updateBlockState', async () => {

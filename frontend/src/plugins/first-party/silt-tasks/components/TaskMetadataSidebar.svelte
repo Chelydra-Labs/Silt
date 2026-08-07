@@ -181,9 +181,6 @@
   let estimateInvalid = $state(false)
   let weekStart = $derived(getTaskWeekStart())
   let dueDatePresets = $derived(buildDueDatePresets(ctx.today, weekStart))
-  let disclosureTaskId = $state('')
-  let planningOpen = $state(false)
-  let activityOpen = $state(false)
 
   // ctx is a stable plugin-context singleton — see BoardView for rationale.
   // svelte-ignore state_referenced_locally
@@ -257,19 +254,6 @@
       estimateInvalid = false
     }
     metaError = ''
-  })
-
-  // Seed disclosures once per task. User choices survive optimistic host
-  // refreshes; switching tasks gets a fresh, content-aware default.
-  $effect(() => {
-    if (task.id === disclosureTaskId) return
-    disclosureTaskId = task.id
-    planningOpen =
-      task.progress > 0 ||
-      task.estimate_minutes !== null ||
-      !!task.recurrence ||
-      blockedByList.length > 0
-    activityOpen = task.comments_count > 0 || !!task.completed_at
   })
 
   async function togglePin() {
@@ -910,17 +894,24 @@
     </dl>
   </section>
 
-  <details
-    class="group border-t border-surface-card-border"
-    bind:open={planningOpen}
-    data-testid="task-planning-disclosure"
+  <section
+    aria-labelledby="task-planning-heading"
+    class="space-y-4 border-t border-surface-card-border px-5 py-5"
+    data-testid="task-planning-section"
   >
-    <summary
-      class="cursor-pointer px-5 py-4 text-text-primary transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start"
-    >
-      <span class="font-label-sm-bold text-type-sm">Planning & tracking</span>
-    </summary>
-    <div class="space-y-6 px-5 pb-5 pt-2">
+    <div class="flex items-center gap-2">
+      <span
+        class="material-symbols-outlined text-icon-md text-accent-secondary-start"
+        aria-hidden="true">tune</span
+      >
+      <h3
+        id="task-planning-heading"
+        class="font-label-sm-bold text-type-xs uppercase tracking-widest text-text-primary"
+      >
+        Planning & tracking
+      </h3>
+    </div>
+    <div class="space-y-6">
       <section>
         <div class="mb-2 flex items-center justify-between">
           <h3
@@ -1140,22 +1131,29 @@
         {onMetaChanged}
       />
     </div>
-  </details>
+  </section>
 
-  <details
-    class="group border-y border-surface-card-border"
-    bind:open={activityOpen}
-    data-testid="task-activity-disclosure"
+  <section
+    aria-labelledby="task-activity-heading"
+    class="space-y-4 border-y border-surface-card-border px-5 py-5"
+    data-testid="task-activity-section"
   >
-    <summary
-      class="cursor-pointer px-5 py-4 text-text-primary transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start"
-    >
-      <span class="font-label-sm-bold text-type-sm">Activity</span>
-      <span class="ml-1 font-label-sm text-type-xs text-text-muted">
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span
+        class="material-symbols-outlined text-icon-md text-accent-secondary-start"
+        aria-hidden="true">forum</span
+      >
+      <h3
+        id="task-activity-heading"
+        class="font-label-sm-bold text-type-xs uppercase tracking-widest text-text-primary"
+      >
+        Activity
+      </h3>
+      <span class="font-label-sm text-type-xs text-text-muted">
         {task.comments_count} comments · {task.links_count} links · timestamps
       </span>
-    </summary>
-    <div class="space-y-5 px-5 pb-5 pt-2">
+    </div>
+    <div class="space-y-5">
       {#if task.created_at || task.completed_at}
         <dl class="flex flex-col gap-2 font-label-sm text-type-xs">
           {#if task.created_at}
@@ -1191,7 +1189,7 @@
         onCommentsChanged={onMetaChanged}
       />
     </div>
-  </details>
+  </section>
 </div>
 
 <BlockedDoneGuard

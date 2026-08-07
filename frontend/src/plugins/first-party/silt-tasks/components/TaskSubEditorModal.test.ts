@@ -572,9 +572,7 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('Essentials')).toBeInTheDocument()
     expect(screen.getByLabelText('Owner')).toBeInTheDocument()
-    expect(screen.getByTestId('task-planning-disclosure')).not.toHaveAttribute(
-      'open'
-    )
+    expect(screen.getByTestId('task-planning-section')).toBeInTheDocument()
   })
 
   it('keeps the modal open when Escape dismisses a nested metadata popover', async () => {
