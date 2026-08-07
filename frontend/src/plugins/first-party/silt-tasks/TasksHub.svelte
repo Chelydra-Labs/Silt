@@ -1235,13 +1235,14 @@
   {/if}
 
   {#if preferencesOpen}
-    <button
-      type="button"
-      class="fixed inset-0 z-40 cursor-default border-none bg-transparent"
+    <div
+      class="fixed inset-0 z-40"
+      role="presentation"
       onclick={() => closePreferences(true)}
-      aria-label="Close task preferences"
+      tabindex="-1"
+      aria-hidden="true"
       data-testid="tasks-preferences-backdrop"
-    ></button>
+    ></div>
   {/if}
 
   <!-- sr-only live region for saved-view announcements (mirrors

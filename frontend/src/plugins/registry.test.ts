@@ -3,9 +3,11 @@
 // (first_party_test.go) pins the other direction. silt-tasks was once added
 // here without updating the Go set, which broke task creation (#407); this
 // test fails if the two sides drift apart again.
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { firstPartyPlugins } from './registry'
+import { firstPartyPlugins, getFirstParty } from './registry'
+import type { PluginContext } from './sdk'
+import { resetTasksSettings } from './first-party/silt-tasks/settings'
 
 describe('first-party registry parity with Go FirstPartyPluginIDs (#407)', () => {
   // This roster MUST match backend/plugins/first_party.go's FirstPartyPluginIDs.
@@ -55,5 +57,38 @@ describe('first-party registry parity with Go FirstPartyPluginIDs (#407)', () =>
       )
       expect(plugin?.component, `${id} should be headless`).toBeUndefined()
     }
+  })
+
+  it('does not reject when a task settings preload becomes stale during load', async () => {
+    let resolveSettings!: (settings: Record<string, unknown>) => void
+    const pendingSettings = new Promise<Record<string, unknown>>(
+      (resolve) => (resolveSettings = resolve)
+    )
+    const ctx = {
+      getPluginSettings: vi.fn(() => pendingSettings),
+      updatePluginSetting: vi.fn()
+    } as unknown as PluginContext
+    const tasks = getFirstParty('silt-tasks')
+
+    expect(tasks?.onVaultOpen).toBeDefined()
+    resetTasksSettings()
+    const opening = tasks!.onVaultOpen!(ctx)
+    resetTasksSettings()
+    resolveSettings({ week_start: 'monday' })
+
+    await expect(opening).resolves.toBeUndefined()
+  })
+
+  it('still rejects when the task settings read itself fails', async () => {
+    const tasks = getFirstParty('silt-tasks')
+    const error = new Error('settings IPC failed')
+    const ctx = {
+      getPluginSettings: vi.fn().mockRejectedValue(error),
+      updatePluginSetting: vi.fn()
+    } as unknown as PluginContext
+
+    resetTasksSettings()
+    await expect(tasks!.onVaultOpen!(ctx)).rejects.toThrow(error)
+    resetTasksSettings()
   })
 })

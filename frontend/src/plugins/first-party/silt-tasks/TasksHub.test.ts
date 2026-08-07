@@ -451,6 +451,26 @@ describe('Tasks hub shell (#424)', () => {
     expect(trigger).toHaveFocus()
   })
 
+  it('keeps the Task preferences click-away backdrop out of the tab and accessibility trees', async () => {
+    render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const trigger = screen.getByRole('button', { name: 'Task preferences' })
+    await fireEvent.click(trigger)
+    await flush()
+
+    const backdrop = screen.getByTestId('tasks-preferences-backdrop')
+    expect(backdrop.tagName).toBe('DIV')
+    expect(backdrop).toHaveAttribute('role', 'presentation')
+    expect(backdrop).toHaveAttribute('aria-hidden', 'true')
+    expect(backdrop).toHaveAttribute('tabindex', '-1')
+
+    await fireEvent.click(backdrop)
+    await flush()
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveFocus()
+  })
+
   it('mode switcher uses roving tabindex (checked radio is tabbable)', async () => {
     render(TasksHub, { ctx: makeCtx(), manifest: MANIFEST })
     await flush()

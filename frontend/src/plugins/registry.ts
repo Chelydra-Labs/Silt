@@ -43,8 +43,9 @@ registerPlugin({
   sidebarComponent: TasksSidebar,
   onVaultOpen: async (ctx) => {
     const loaded = await preloadTasksSettings(ctx)
-    if (!loaded)
-      throw new Error('Tasks settings became stale during vault load')
+    // A false result means a vault switch superseded this preload. The next
+    // load owns settings now; only rejected reads represent real failures.
+    if (!loaded) return
   },
   source: 'first-party'
 })
