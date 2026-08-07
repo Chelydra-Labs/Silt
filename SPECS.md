@@ -813,7 +813,12 @@ export interface PluginAIToolCall {
   id: string;            // correlates the tool-result message with this call
   name: string;
   arguments: Record<string, unknown>; // raw JSON object (unwrapped from
-}                        // OpenAI's stringified form by the host)
+                         // OpenAI's stringified form by the host)
+  // Opaque Gemini 3+ thought signature on functionCall parts. Host and agent
+  // loops MUST echo this unchanged on multi-turn tool history (#915). Omit for
+  // other providers. Never strip unknown tool_call fields when replaying.
+  thought_signature?: string;
+}
 
 // PluginAICompleteRequest gains optional tools + tool_choice
 interface PluginAICompleteRequest {

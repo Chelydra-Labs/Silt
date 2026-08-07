@@ -97,6 +97,14 @@ provider type with a configurable Base URL covers all of them without per-vendor
 code. If a provider diverges from the OpenAI shape, it won't work yet — file an
 issue and we'll evaluate a dedicated adapter.
 
+### Google (Gemini) native provider
+
+Use the **Google** provider type for Google AI Studio / Generative Language API
+(not the OpenAI-compat shim). Gemini 3.x models require opaque **thought
+signatures** on tool-call turns; Silt's native adapter captures and echoes them
+automatically so multi-step agent tool loops keep working. Prefer this type over
+pointing OpenAI-compatible at Gemini when using tools.
+
 ---
 
 ## Key security
