@@ -486,9 +486,12 @@ const res = await ctx.fetch('https://api.example.com/data', {
 CORS-free (Go-side proxy), with timeout/size/redirect caps. Host + status are
 audit-logged in Settings → Plugins (never the body).
 
-**Rate limiting (#153).** Each plugin's fetch calls are throttled by a
-per-plugin token-bucket rate limiter (default: 1 request/sec, burst of 10).
-To request a higher limit, declare it in the manifest:
+**Rate limiting (#153).** Each plugin's fetch and AI calls share a per-plugin
+token-bucket rate limiter. Defaults: third-party plugins 1 request/sec with
+burst 10; first-party (bundled) plugins 8 rps / burst 40. AI preflight may
+wait briefly for a token; if still denied the error includes
+`retry_after_ms=N` so callers can cool down and retry. To request a different
+limit, declare it in the manifest:
 
 ```json
 {

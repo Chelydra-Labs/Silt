@@ -1392,14 +1392,18 @@ escalate beyond its grants or impersonate another plugin). See ADR
 `docs/decisions/0005-plugin-webview-isolation-wontfix.md`; #151/#152
 stay blocked on a Wails v3 capability that does not exist today.
 
-**Rate limiting.** `PluginFetch` is throttled by a per-plugin token-
-bucket rate limiter (default 1 rps, burst 10; manifest `ratelimit` override).
-Buckets are evicted on uninstall. Capability denials (`requireGrant`) and
-rate-limit rejects (fetch + AI) also increment a session-scoped in-memory
-per-plugin counter (`GetPluginSecurityStats`) and emit a structured
-`security:event` Wails event so Settings → Plugins can show a warning badge
-(#518). Counters clear on vault close and per-plugin uninstall — not
-persisted (not markdown-reproducible).
+**Rate limiting.** `PluginFetch` and CapAI calls share a per-plugin token-
+bucket rate limiter. Third-party defaults are 1 rps / burst 10; first-party
+(bundled) plugins default to 8 rps / burst 40 so multi-turn AI agent loops are
+not starved. Manifest `ratelimit` may override within host caps. AI preflight
+waits up to a short cooldown for a token before denying (sleep is outside
+`vaultMu`); denials embed `retry_after_ms` for client backoff. Buckets are
+evicted on uninstall. Capability denials (`requireGrant`) and rate-limit
+rejects (fetch + AI) also increment a session-scoped in-memory per-plugin
+counter (`GetPluginSecurityStats`) and emit a structured `security:event`
+Wails event so Settings → Plugins can show a warning badge (#518). Counters
+clear on vault close and per-plugin uninstall — not persisted (not
+markdown-reproducible).
 
 **Network audit log.** `auditNetwork` appends to the in-memory log
 (capped 500 entries) under `networkAuditMu`, then enqueues a disk-write op
