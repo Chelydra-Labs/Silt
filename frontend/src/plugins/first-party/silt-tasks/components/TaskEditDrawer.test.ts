@@ -269,11 +269,11 @@ describe('TaskEditDrawer — due-date editor', () => {
   it('a preset commits via ctx.setTaskDueDate', async () => {
     const setTaskDueDate = vi.fn().mockResolvedValue(true)
     const ctx = makeCtx({ setTaskDueDate, today: '2026-07-02' })
-    const { container } = render(TaskEditDrawer, {
+    render(TaskEditDrawer, {
       props: { task: makeTask(), ctx, onClose: () => {} }
     })
-    const trigger = container.querySelector(
-      'button[aria-haspopup="dialog"]'
+    const trigger = document.getElementById(
+      'task-due-date-trigger'
     ) as HTMLElement
     await fireEvent.click(trigger)
     // The "Today" preset carries ctx.today as its value.
@@ -284,11 +284,11 @@ describe('TaskEditDrawer — due-date editor', () => {
 
   it('renders the six calendar-aware due-date presets', async () => {
     const ctx = makeCtx({ today: '2026-07-02' })
-    const { container } = render(TaskEditDrawer, {
+    render(TaskEditDrawer, {
       props: { task: makeTask(), ctx, onClose: () => {} }
     })
     await fireEvent.click(
-      container.querySelector('button[aria-haspopup="dialog"]') as HTMLElement
+      document.getElementById('task-due-date-trigger') as HTMLElement
     )
     for (const label of [
       'Today',
@@ -306,15 +306,15 @@ describe('TaskEditDrawer — due-date editor', () => {
   it('Clear due date commits an empty string', async () => {
     const setTaskDueDate = vi.fn().mockResolvedValue(true)
     const ctx = makeCtx({ setTaskDueDate })
-    const { container } = render(TaskEditDrawer, {
+    render(TaskEditDrawer, {
       props: {
         task: makeTask({ due_date: '2026-07-15' }),
         ctx,
         onClose: () => {}
       }
     })
-    const trigger = container.querySelector(
-      'button[aria-haspopup="dialog"]'
+    const trigger = document.getElementById(
+      'task-due-date-trigger'
     ) as HTMLElement
     await fireEvent.click(trigger)
     const clear = screen.getByText('Clear due date')
@@ -702,16 +702,136 @@ describe('TaskEditDrawer — scroll reset on task switch', () => {
       props: { task: makeTask({ id: 'task-a' }), ctx, onClose: () => {} }
     })
     // Simulate the user having scrolled down into the comments of task A.
-    const panel = screen.getByRole('dialog')
-    panel.scrollTop = 480
-    expect(panel.scrollTop).toBe(480)
+    const scroll = screen.getByTestId('task-edit-drawer-scroll')
+    scroll.scrollTop = 480
+    expect(scroll.scrollTop).toBe(480)
 
     await rerender({ task: makeTask({ id: 'task-b' }), ctx, onClose: () => {} })
     await tick()
 
-    // The same panel element is reused (the {#if task} block stays mounted),
+    // The same scroll body is reused (the {#if task} block stays mounted),
     // so its scrollTop reflects the reset the task-switch effect applied.
-    expect(screen.getByRole('dialog').scrollTop).toBe(0)
+    expect(screen.getByTestId('task-edit-drawer-scroll').scrollTop).toBe(0)
+  })
+
+  it('closes open metadata popovers when switching tasks', async () => {
+    const ctx = makeCtx()
+    const { rerender } = render(TaskEditDrawer, {
+      props: { task: makeTask({ id: 'task-a' }), ctx, onClose: () => {} }
+    })
+    const trigger = document.getElementById(
+      'task-start-date-trigger'
+    ) as HTMLButtonElement
+    await fireEvent.click(trigger)
+    await tick()
+    expect(
+      screen.getByRole('dialog', { name: 'Start day options' })
+    ).toBeTruthy()
+
+    await rerender({
+      task: makeTask({ id: 'task-b', clean_content: 'Other' }),
+      ctx,
+      onClose: () => {}
+    })
+    await tick()
+
+    expect(
+      screen.queryByRole('dialog', { name: 'Start day options' })
+    ).toBeNull()
+    const nextTrigger = document.getElementById(
+      'task-start-date-trigger'
+    ) as HTMLButtonElement
+    expect(nextTrigger.getAttribute('aria-expanded')).toBe('false')
+  })
+})
+
+describe('TaskEditDrawer — variant + light-dismiss', () => {
+  beforeEach(() => cleanup())
+
+  it('overlay uses dialog semantics; pane uses region', () => {
+    const ctx = makeCtx()
+    const { rerender } = render(TaskEditDrawer, {
+      props: {
+        task: makeTask(),
+        ctx,
+        onClose: () => {},
+        variant: 'overlay'
+      }
+    })
+    const overlay = screen.getByTestId('task-edit-drawer')
+    expect(overlay.getAttribute('role')).toBe('dialog')
+    expect(overlay.getAttribute('data-variant')).toBe('overlay')
+    expect(overlay.className).toMatch(/fixed/)
+
+    void rerender({
+      task: makeTask(),
+      ctx,
+      onClose: () => {},
+      variant: 'pane'
+    })
+  })
+
+  it('pane variant is a region without fixed positioning', async () => {
+    const ctx = makeCtx()
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask(),
+        ctx,
+        onClose: () => {},
+        variant: 'pane'
+      }
+    })
+    const pane = screen.getByTestId('task-edit-drawer')
+    expect(pane.getAttribute('role')).toBe('region')
+    expect(pane.getAttribute('data-variant')).toBe('pane')
+    expect(pane.className).not.toMatch(/\bfixed\b/)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('shows filtered-out banner when filteredOut is set', () => {
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask(),
+        ctx: makeCtx(),
+        onClose: () => {},
+        filteredOut: true
+      }
+    })
+    expect(screen.getByTestId('task-filtered-out-banner')).toHaveTextContent(
+      'Hidden by current filters — edits still save'
+    )
+  })
+
+  it('light-dismiss ignores mousedown on data-task-hit targets', async () => {
+    const onClose = vi.fn()
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask(),
+        ctx: makeCtx(),
+        onClose,
+        variant: 'overlay'
+      }
+    })
+    const hit = document.createElement('button')
+    hit.setAttribute('data-task-hit', '')
+    document.body.appendChild(hit)
+    await fireEvent.mouseDown(hit)
+    expect(onClose).not.toHaveBeenCalled()
+    hit.remove()
+  })
+
+  it('pane does not light-dismiss on outside mousedown', async () => {
+    const onClose = vi.fn()
+    render(TaskEditDrawer, {
+      props: {
+        task: makeTask(),
+        ctx: makeCtx(),
+        onClose,
+        variant: 'pane'
+      }
+    })
+    await fireEvent.mouseDown(document.body)
+    expect(onClose).not.toHaveBeenCalled()
   })
 })
 

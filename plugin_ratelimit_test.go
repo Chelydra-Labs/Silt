@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,23 +72,65 @@ func TestPluginRateLimiter_SeparatePlugins(t *testing.T) {
 
 // Tests that resolvePluginRatelimit returns safe defaults for edge cases.
 func TestResolvePluginRatelimit_EdgeCases(t *testing.T) {
-	// Empty vaultPath returns defaults.
+	// Empty vaultPath returns third-party defaults.
 	rps, burst := resolvePluginRatelimit("", "any-plugin")
 	if rps != defaultPluginFetchRPS || burst != defaultPluginFetchBurst {
 		t.Errorf("empty vaultPath should return defaults, got rps=%v burst=%v", rps, burst)
 	}
 
-	// Invalid plugin ID returns defaults.
+	// First-party AI plugins get higher defaults (no manifest required).
+	rps, burst = resolvePluginRatelimit("", "silt-ai-agent")
+	if rps != defaultFirstPartyAIRPS || burst != defaultFirstPartyAIBurst {
+		t.Errorf("silt-ai-agent defaults = rps=%v burst=%v, want %v/%v",
+			rps, burst, defaultFirstPartyAIRPS, defaultFirstPartyAIBurst)
+	}
+
+	// Invalid plugin ID returns third-party defaults.
 	rps, burst = resolvePluginRatelimit("/tmp", "../../../etc/passwd")
 	if rps != defaultPluginFetchRPS || burst != defaultPluginFetchBurst {
 		t.Errorf("invalid pluginID should return defaults, got rps=%v burst=%v", rps, burst)
 	}
 
-	// Non-existent manifest returns defaults.
+	// Non-existent third-party manifest returns third-party defaults.
 	dir := t.TempDir()
 	rps, burst = resolvePluginRatelimit(dir, "nonexistent-plugin")
 	if rps != defaultPluginFetchRPS || burst != defaultPluginFetchBurst {
 		t.Errorf("missing manifest should return defaults, got rps=%v burst=%v", rps, burst)
+	}
+}
+
+func TestPluginRateLimiter_AllowOrWait(t *testing.T) {
+	rl := newPluginRateLimiter()
+	// Tiny bucket via a third-party id with no manifest (1 rps, burst 10).
+	// Exhaust burst, then wait should succeed within 2s for one token.
+	for i := 0; i < defaultPluginFetchBurst; i++ {
+		if !rl.allow("", "wait-plugin") {
+			t.Fatalf("burst allow %d failed", i)
+		}
+	}
+	start := time.Now()
+	waited, ok := rl.allowOrWait("", "wait-plugin", 2*time.Second)
+	elapsed := time.Since(start)
+	if !ok {
+		t.Fatal("allowOrWait should succeed after short refill wait")
+	}
+	if waited < 50*time.Millisecond {
+		t.Errorf("expected a non-trivial wait, got %v", waited)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("wait took too long: %v", elapsed)
+	}
+}
+
+func TestPluginRateLimiter_AllowOrWaitDeniesWhenMaxWaitTooShort(t *testing.T) {
+	rl := newPluginRateLimiter()
+	for i := 0; i < defaultPluginFetchBurst; i++ {
+		rl.allow("", "deny-wait")
+	}
+	// 1 rps → need ~1s for next token; 10ms maxWait must deny.
+	_, ok := rl.allowOrWait("", "deny-wait", 10*time.Millisecond)
+	if ok {
+		t.Fatal("allowOrWait should deny when maxWait is shorter than refill")
 	}
 }
 
@@ -105,5 +149,29 @@ func TestResolvePluginRatelimit_OversizeManifestFallsBack(t *testing.T) {
 	rps, burst := resolvePluginRatelimit(vault, "p")
 	if rps != defaultPluginFetchRPS || burst != defaultPluginFetchBurst {
 		t.Errorf("oversize manifest should fall back to defaults, got rps=%v burst=%v", rps, burst)
+	}
+}
+
+func TestHostDefaultRatelimit_FirstParty(t *testing.T) {
+	rps, burst := hostDefaultRatelimit("silt-ai-agent")
+	if rps != defaultFirstPartyAIRPS || burst != defaultFirstPartyAIBurst {
+		t.Fatalf("got %v/%v", rps, burst)
+	}
+	rps, burst = hostDefaultRatelimit("third-party-x")
+	if rps != defaultPluginFetchRPS || burst != defaultPluginFetchBurst {
+		t.Fatalf("third-party got %v/%v", rps, burst)
+	}
+}
+
+// Pins the host→plugin retry_after key so a rename cannot silently break the
+// silt-ai-agent parser (HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY in agent-loop.ts).
+func TestAIRateLimitRetryAfterKey_Contract(t *testing.T) {
+	if aiRateLimitRetryAfterKey != "retry_after_ms" {
+		t.Fatalf("aiRateLimitRetryAfterKey = %q, want retry_after_ms (keep in sync with agent-loop.ts)", aiRateLimitRetryAfterKey)
+	}
+	msg := fmt.Sprintf("plugin %q AI rate limit exceeded (max %.1f rps, burst %d); %s=%d",
+		"silt-ai-agent", 8.0, 40, aiRateLimitRetryAfterKey, 250)
+	if !strings.Contains(msg, "retry_after_ms=250") {
+		t.Fatalf("formatted error missing contract token: %q", msg)
 	}
 }

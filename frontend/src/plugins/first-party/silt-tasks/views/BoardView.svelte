@@ -88,7 +88,18 @@
   let resultsTruncated = $state(false)
 
   let selectedCard = $state<TaskDetail | null>(null)
+  let selectedFilteredOut = $state(false)
   let subEditorCard = $state<TaskDetail | null>(null)
+
+  function selectCard(card: TaskDetail) {
+    if (selectedCard?.id === card.id) {
+      selectedCard = null
+      selectedFilteredOut = false
+      return
+    }
+    selectedCard = card
+    selectedFilteredOut = false
+  }
   // DONE-on-blocked guard (#302): the shared hook owns the pending state +
   // blocker fetch; BoardView attaches the optimistic-move context (card +
   // source/dest columns) the confirm/cancel handlers need to revert or
@@ -325,7 +336,12 @@
       // result set, keep the last-known snapshot rather than snapping closed.
       if (selectedCard) {
         const fresh = rows.find((r) => r.id === selectedCard!.id)
-        if (fresh) selectedCard = fresh
+        if (fresh) {
+          selectedCard = fresh
+          selectedFilteredOut = false
+        } else {
+          selectedFilteredOut = true
+        }
       }
     } catch (e) {
       if (my !== loadSeq) return
@@ -423,7 +439,7 @@
       subEditorCard = card
     } else if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
-      selectedCard = card
+      selectCard(card)
     }
   }
 
@@ -602,6 +618,7 @@
     {:else}
       <div
         class="h-full flex gap-3 p-3 overflow-x-auto custom-scrollbar sm:gap-4 sm:p-4"
+        class:board-inspector-open={!!selectedCard}
         role="list"
         aria-label="Board columns"
       >
@@ -688,7 +705,8 @@
                       dnd.onCardDrop(e, card, col)
                     }}
                     onKeydown={(e) => onCardKeydown(e, card, col)}
-                    onSelect={() => (selectedCard = card)}
+                    onSelect={() => selectCard(card)}
+                    selected={selectedCard?.id === card.id}
                   />
                 </div>
               {/each}
@@ -775,7 +793,11 @@
 <TaskEditDrawer
   task={selectedCard}
   {ctx}
-  onClose={() => (selectedCard = null)}
+  filteredOut={selectedFilteredOut}
+  onClose={() => {
+    selectedCard = null
+    selectedFilteredOut = false
+  }}
   onMetaChanged={reload}
   onOpenSubEditor={() => selectedCard && (subEditorCard = selectedCard)}
 />
@@ -855,6 +877,23 @@
       0 0 0 2px var(--color-accent-primary-glow),
       var(--shadow-md);
     transform: translateY(-1px);
+  }
+
+  /* Room to scroll the selected card clear of the fixed overlay drawer.
+     Match TaskEditDrawer widths exactly (no 40vw undershoot). Full-bleed
+     overlay below sm needs no extra gutter. */
+  .board-inspector-open {
+    padding-right: 0;
+  }
+  @media (min-width: 640px) {
+    .board-inspector-open {
+      padding-right: 480px;
+    }
+  }
+  @media (min-width: 1024px) {
+    .board-inspector-open {
+      padding-right: 540px;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {

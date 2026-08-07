@@ -83,6 +83,17 @@
   let errorMsg = $state('')
   let resultsTruncated = $state(false)
   let selectedTask = $state<TaskDetail | null>(null)
+  let selectedFilteredOut = $state(false)
+
+  function selectTask(item: TaskDetail) {
+    if (selectedTask?.id === item.id) {
+      selectedTask = null
+      selectedFilteredOut = false
+      return
+    }
+    selectedTask = item
+    selectedFilteredOut = false
+  }
   let subEditorTask = $state<TaskDetail | null>(null)
   // null = closed; '' = open undated; YYYY-MM-DD = open for that day.
   let quickAddDate = $state<string | null>(null)
@@ -255,7 +266,7 @@
 
   function openAgendaTask(item: TaskDetail): void {
     closeDayAgenda(false)
-    selectedTask = item
+    selectTask(item)
   }
 
   function onAgendaTaskKeydown(
@@ -347,7 +358,12 @@
           winRows.find((r) => r.id === selectedTask!.id) ??
           undated.find((r) => r.id === selectedTask!.id) ??
           overdueAll.find((r) => r.id === selectedTask!.id)
-        if (fresh) selectedTask = fresh
+        if (fresh) {
+          selectedTask = fresh
+          selectedFilteredOut = false
+        } else {
+          selectedFilteredOut = true
+        }
       }
     } catch (e) {
       if (my !== loadSeq) return
@@ -988,11 +1004,17 @@
                     ondragstart={(e) => onCardDragStart(e, item)}
                     ondragend={onCardDragEnd}
                     onkeydown={(e) => onCardKeydown(e, item)}
-                    onclick={() => (selectedTask = item)}
+                    onclick={() => selectTask(item)}
                     data-status={item.status}
+                    data-task-hit
+                    aria-current={selectedTask?.id === item.id
+                      ? 'true'
+                      : undefined}
                     class="calendar-task-chip text-left text-type-2xs truncate px-1.5 py-1 rounded-md bg-surface-card border border-surface-card-border text-text-primary hover:border-accent-primary-start/40 hover:bg-hover transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {dragTaskId ===
                     item.id
                       ? 'opacity-40'
+                      : ''} {selectedTask?.id === item.id
+                      ? 'tasks-selected'
                       : ''}"
                     title={item.clean_content}>{item.clean_content}</button
                   >
@@ -1006,6 +1028,7 @@
                     aria-controls="calendar-day-agenda"
                     aria-label={`Show ${items.length - 3} more tasks for ${ymd(day)}`}
                     data-testid={`calendar-more-${ymd(day)}`}
+                    data-task-hit
                     class="w-full rounded-md border border-transparent px-1 py-0.5 text-left text-type-3xs font-label-sm text-text-muted transition-colors hover:border-surface-card-border hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
                     >+{items.length - 3} more</button
                   >
@@ -1022,10 +1045,16 @@
                     ondragstart={(e) => onCardDragStart(e, item)}
                     ondragend={onCardDragEnd}
                     onkeydown={(e) => onCardKeydown(e, item)}
-                    onclick={() => (selectedTask = item)}
+                    onclick={() => selectTask(item)}
+                    data-task-hit
+                    aria-current={selectedTask?.id === item.id
+                      ? 'true'
+                      : undefined}
                     class="text-left text-type-2xs truncate px-1 py-0.5 rounded bg-error-bg border-l-2 border-l-error text-error hover:brightness-110 transition-all cursor-pointer {dragTaskId ===
                     item.id
                       ? 'opacity-40'
+                      : ''} {selectedTask?.id === item.id
+                      ? 'tasks-selected'
                       : ''}"
                     title="Overdue (was due {item.due_date}): {item.clean_content}"
                     aria-label="Overdue (was due {item.due_date}): {item.clean_content}"
@@ -1041,6 +1070,7 @@
                     aria-controls="calendar-day-agenda"
                     aria-label={`Show ${overdueHere.length - 2} more overdue tasks for ${ymd(day)}`}
                     data-testid={`calendar-overdue-more-${ymd(day)}`}
+                    data-task-hit
                     class="w-full rounded-md border border-error/20 bg-error/10 px-1 py-0.5 text-left text-type-3xs font-label-sm text-error transition-colors hover:border-error hover:bg-error-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus"
                     >+{overdueHere.length - 2} overdue</button
                   >
@@ -1134,11 +1164,17 @@
                   ondragstart={(e) => onCardDragStart(e, item)}
                   ondragend={onCardDragEnd}
                   onkeydown={(e) => onCardKeydown(e, item)}
-                  onclick={() => (selectedTask = item)}
+                  onclick={() => selectTask(item)}
                   data-status={item.status}
+                  data-task-hit
+                  aria-current={selectedTask?.id === item.id
+                    ? 'true'
+                    : undefined}
                   class="calendar-task-chip text-left text-type-sm px-2 py-1.5 rounded-md bg-surface-card border border-surface-card-border hover:border-accent-primary-start/40 hover:bg-hover text-text-primary shadow-sm transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {dragTaskId ===
                   item.id
                     ? 'opacity-40'
+                    : ''} {selectedTask?.id === item.id
+                    ? 'tasks-selected'
                     : ''}"
                   title={item.clean_content}>{item.clean_content}</button
                 >
@@ -1152,10 +1188,16 @@
                   ondragstart={(e) => onCardDragStart(e, item)}
                   ondragend={onCardDragEnd}
                   onkeydown={(e) => onCardKeydown(e, item)}
-                  onclick={() => (selectedTask = item)}
+                  onclick={() => selectTask(item)}
+                  data-task-hit
+                  aria-current={selectedTask?.id === item.id
+                    ? 'true'
+                    : undefined}
                   class="text-left text-type-sm px-2 py-1.5 rounded bg-error-bg border-l-2 border-l-error text-error transition-all cursor-pointer {dragTaskId ===
                   item.id
                     ? 'opacity-40'
+                    : ''} {selectedTask?.id === item.id
+                    ? 'tasks-selected'
                     : ''}"
                   title="Overdue (was due {item.due_date}): {item.clean_content}"
                   aria-label="Overdue (was due {item.due_date}): {item.clean_content}"
@@ -1215,11 +1257,13 @@
                 ondragstart={(e) => onCardDragStart(e, item)}
                 ondragend={onCardDragEnd}
                 onkeydown={(e) => onCardKeydown(e, item)}
-                onclick={() => (selectedTask = item)}
+                onclick={() => selectTask(item)}
+                data-task-hit
+                aria-current={selectedTask?.id === item.id ? 'true' : undefined}
                 class="text-left text-type-xs truncate max-w-55 px-2 py-1 rounded bg-surface-card border border-surface-card-border text-text-primary hover:border-accent-primary-start/40 transition-all cursor-pointer {dragTaskId ===
                 item.id
                   ? 'opacity-40'
-                  : ''}"
+                  : ''} {selectedTask?.id === item.id ? 'tasks-selected' : ''}"
                 title={item.clean_content}>{item.clean_content}</button
               >
             </li>
@@ -1292,9 +1336,16 @@
               ondragend={onCardDragEnd}
               onkeydown={(e) => onAgendaTaskKeydown(e, entry.item, index)}
               onclick={() => openAgendaTask(entry.item)}
+              data-task-hit
+              aria-current={selectedTask?.id === entry.item.id
+                ? 'true'
+                : undefined}
               class="group flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {entry.overdue
                 ? 'border-error/20 bg-error/10 hover:border-error/40 hover:bg-error-bg'
-                : 'border-surface-card-border bg-surface-card hover:border-border-active hover:bg-hover'}"
+                : 'border-surface-card-border bg-surface-card hover:border-border-active hover:bg-hover'} {selectedTask?.id ===
+              entry.item.id
+                ? 'tasks-selected'
+                : ''}"
             >
               <span
                 class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full {entry.overdue
@@ -1343,7 +1394,11 @@
 <TaskEditDrawer
   task={selectedTask}
   {ctx}
-  onClose={() => (selectedTask = null)}
+  filteredOut={selectedFilteredOut}
+  onClose={() => {
+    selectedTask = null
+    selectedFilteredOut = false
+  }}
   onMetaChanged={reload}
   onOpenSubEditor={() => selectedTask && (subEditorTask = selectedTask)}
 />
@@ -1364,6 +1419,11 @@
 {/if}
 
 <style>
+  .tasks-selected {
+    box-shadow: 0 0 0 1px var(--color-accent-primary-start) inset;
+    border-color: var(--color-accent-primary-start);
+  }
+
   .calendar-toolbar {
     background: color-mix(
       in srgb,

@@ -1094,7 +1094,7 @@ The `handleDrop` ProseMirror plugin is deliberately conservative: it returns `tr
 
 The Board is one of three display modes hosted by the unified `silt-tasks` plugin (`frontend/src/plugins/first-party/silt-tasks/views/BoardView.svelte`, mounted inside `TasksHub.svelte`). It uses the identical `PluginContext` SDK as any third-party plugin — no direct `window.go.*` access. It reads the task set via the shared SQL builder (`silt-tasks/query.ts`) against the unified hub state (`state.svelte.ts`) and shifts status via `ctx.updateBlockState`, preserving the "core feature decoupling" contract (SPECS §8.3).
 
-Cards are rendered as `role="button"` elements with `aria-grabbed`/`aria-label` and animated with Svelte's native `svelte/animate/flip` (200ms cubic-out, per DESIGN.md §6). HTML5 drag-and-drop drives the data; the FLIP animation repositions remaining cards in the same paint frame. Keyboard users change status with ArrowLeft/ArrowRight directly; Enter/click opens the shared non-blocking inspector drawer (`silt-tasks/components/TaskEditDrawer.svelte`) and `Shift+Enter` opens the shared scoped sub-editor (`TaskSubEditorModal`). The board supports multi-level scope (vault / notebook / section / page) via a segmented control, with the SQL `WHERE` clause built per scope level. Cross-card and within-column drops persist a new `[order:: N]` manual-sort position via `ctx.setTaskOrder`.
+Cards are rendered as `role="button"` elements with `aria-grabbed`/`aria-label` and animated with Svelte's native `svelte/animate/flip` (200ms cubic-out, per DESIGN.md §6). HTML5 drag-and-drop drives the data; the FLIP animation repositions remaining cards in the same paint frame. Keyboard users change status with ArrowLeft/ArrowRight directly; Enter/click opens the shared non-blocking inspector drawer (`silt-tasks/components/TaskEditDrawer.svelte`) and `Shift+Enter` opens the shared scoped sub-editor (`TaskSubEditorModal`). List mode uses an in-flow resizable inspector pane when the host is wide enough; Board and Calendar keep the overlay drawer. The board supports multi-level scope (vault / notebook / section / page) via a segmented control, with the SQL `WHERE` clause built per scope level. Cross-card and within-column drops persist a new `[order:: N]` manual-sort position via `ctx.setTaskOrder`.
 
 **Unified hub state.** The Board is not a standalone plugin — it shares one `TaskHubState` reactive store and one `buildQuery` SQL factory with the List and Calendar modes. The hub state (scope + filters + `focusDate` + `activeFilter` + `displayMode` + `groupBy` + `sort` + `columns` + saved views) is the single reactive source of truth the shell (`TasksHub.svelte`), the unified sidebar (`Sidebar.svelte`), and all three renderers read from and write to. The `scopeUserOverride` invariant (a user-narrowed scope survives an automatic scope change) lives in `setScope` / `narrowScopeTo` / `clearScopeOverride`.
 
@@ -1392,14 +1392,18 @@ escalate beyond its grants or impersonate another plugin). See ADR
 `docs/decisions/0005-plugin-webview-isolation-wontfix.md`; #151/#152
 stay blocked on a Wails v3 capability that does not exist today.
 
-**Rate limiting.** `PluginFetch` is throttled by a per-plugin token-
-bucket rate limiter (default 1 rps, burst 10; manifest `ratelimit` override).
-Buckets are evicted on uninstall. Capability denials (`requireGrant`) and
-rate-limit rejects (fetch + AI) also increment a session-scoped in-memory
-per-plugin counter (`GetPluginSecurityStats`) and emit a structured
-`security:event` Wails event so Settings → Plugins can show a warning badge
-(#518). Counters clear on vault close and per-plugin uninstall — not
-persisted (not markdown-reproducible).
+**Rate limiting.** `PluginFetch` and CapAI calls share a per-plugin token-
+bucket rate limiter. Third-party defaults are 1 rps / burst 10; first-party
+(bundled) plugins default to 8 rps / burst 40 so multi-turn AI agent loops are
+not starved. Manifest `ratelimit` may override within host caps. AI preflight
+waits up to a short cooldown for a token before denying (sleep is outside
+`vaultMu`); denials embed `retry_after_ms` for client backoff. Buckets are
+evicted on uninstall. Capability denials (`requireGrant`) and rate-limit
+rejects (fetch + AI) also increment a session-scoped in-memory per-plugin
+counter (`GetPluginSecurityStats`) and emit a structured `security:event`
+Wails event so Settings → Plugins can show a warning badge (#518). Counters
+clear on vault close and per-plugin uninstall — not persisted (not
+markdown-reproducible).
 
 **Network audit log.** `auditNetwork` appends to the in-memory log
 (capped 500 entries) under `networkAuditMu`, then enqueues a disk-write op

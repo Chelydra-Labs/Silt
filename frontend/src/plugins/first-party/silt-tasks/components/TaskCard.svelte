@@ -27,6 +27,7 @@
     onCardDrop: (e: DragEvent) => void
     onKeydown: (e: KeyboardEvent) => void
     onSelect: () => void
+    selected?: boolean
   }
 
   let {
@@ -44,7 +45,8 @@
     onCardDragLeave,
     onCardDrop,
     onKeydown,
-    onSelect
+    onSelect,
+    selected = false
   }: Props = $props()
 
   let cardTags = $derived(
@@ -59,16 +61,18 @@
   data-card={card.id}
   data-index={index}
   data-status={card.status}
+  data-task-hit
   role="button"
   tabindex="0"
   aria-grabbed={dragging ? 'true' : 'false'}
+  aria-current={selected ? 'true' : undefined}
   aria-label={`${card.clean_content}, ${colLabel}${card.owner ? `, owner ${card.owner}` : ''}${card.due_date ? `, due ${card.due_date}` : ''}${card.pinned ? ', pinned' : ''}${card.recurrence ? `, recurring ${card.recurrence}` : ''}${card.is_blocked ? ', blocked by unfinished prerequisite' : ''}${card.subtask_total > 0 ? `, ${card.subtask_done} of ${card.subtask_total} subtasks done` : ''}.${dndEnabled ? ' Arrow keys change ' + groupBy + '.' : ''}`}
   draggable={dndEnabled ? 'true' : 'false'}
   class="task-card group relative overflow-hidden rounded-lg border border-surface-card-border bg-surface-card p-3 pl-3.5 shadow-sm transition-all duration-200 hover:-translate-y-px hover:border-border-active hover:bg-hover hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-border-focus {dndEnabled
     ? 'cursor-grab active:cursor-grabbing'
     : ''} {dragging ? 'opacity-40 scale-95' : ''} {dragOver
     ? 'task-card-drop-target'
-    : ''}"
+    : ''} {selected ? 'tasks-selected' : ''}"
   ondragstart={(e) => onDragStart(e)}
   ondragend={onDragEnd}
   ondragover={(e) => onCardDragOver(e)}
@@ -258,6 +262,16 @@
       0 0 0 2px var(--color-accent-primary-start),
       var(--shadow-md);
     transform: translateY(-2px);
+  }
+
+  .task-card.tasks-selected {
+    border-color: var(--color-accent-primary-start);
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow) 100%,
+      transparent
+    );
+    box-shadow: 0 0 0 1px var(--color-accent-primary-start) inset;
   }
 
   @media (prefers-reduced-motion: reduce) {

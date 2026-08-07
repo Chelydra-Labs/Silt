@@ -11,6 +11,8 @@ import {
   buildSystemPrompt,
   createAgentSession,
   MAX_ITERATIONS,
+  HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY,
+  parseHostRateLimitRetryMs,
   runAgent,
   truncateToolResult,
   wrapUntrustedToolResult,
@@ -226,6 +228,35 @@ describe('agent-loop', () => {
     expect(
       (ctx.ai.complete as ReturnType<typeof vi.fn>).mock.calls
     ).toHaveLength(0)
+  })
+
+  it('parseHostRateLimitRetryMs reads retry_after_ms from host errors', () => {
+    // Pin the cross-boundary key (must match aiRateLimitRetryAfterKey in Go).
+    expect(HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY).toBe('retry_after_ms')
+    expect(
+      parseHostRateLimitRetryMs(
+        new Error(
+          `plugin "silt-ai-agent" AI rate limit exceeded (max 8.0 rps, burst 40); ${HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY}=250`
+        )
+      )
+    ).toBe(250)
+    expect(parseHostRateLimitRetryMs(new Error('unrelated'))).toBeNull()
+  })
+
+  it('retries complete() after a host AI rate-limit error', async () => {
+    let calls = 0
+    const ctx = mockCtx(() => {
+      calls++
+      if (calls === 1) {
+        throw new Error(
+          'plugin "silt-ai-agent" AI rate limit exceeded (max 8.0 rps, burst 40); retry_after_ms=5'
+        )
+      }
+      return mockStream({ content: 'recovered', model: 'm' }, ['recovered'])
+    })
+    const res = await runAgent(ctx, 'q', [])
+    expect(res.text).toBe('recovered')
+    expect(calls).toBe(2)
   })
 
   it('stops mid-loop when cancelled during tool dispatch', async () => {

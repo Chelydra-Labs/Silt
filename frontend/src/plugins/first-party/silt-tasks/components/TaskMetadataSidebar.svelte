@@ -16,6 +16,7 @@
   import CommentThread from './CommentThread.svelte'
   import Popover from '../../../../components/Popover.svelte'
   import { buildDueDatePresets } from './dueDatePresets'
+  import { buildStartDatePresets } from './startDatePresets'
   import { nextRecurrenceDate } from './recurrencePreview'
   import { getTaskWeekStart } from '../../../../lib/taskWeekStart.svelte'
   import { motionDuration } from '../motion'
@@ -50,6 +51,8 @@
     onClose?: () => void
     /** Gives the host dialog a stable accessible name without duplicating UI. */
     headingId?: string
+    /** Forwarded to CommentThread (drawer inspector vs inline sub-editor). */
+    commentLayout?: 'inline' | 'drawer'
   }
 
   // busy is a write-only $bindable: the sidebar pushes its interaction state UP
@@ -65,7 +68,8 @@
     busy = $bindable(),
     stickyPrimary = false,
     onClose,
-    headingId
+    headingId,
+    commentLayout = 'inline'
   }: Props = $props()
 
   let rootRef = $state<HTMLDivElement | null>(null)
@@ -168,8 +172,10 @@
 
   let recurrenceOpen = $state(false)
   let dueDateOpen = $state(false)
+  let startDateOpen = $state(false)
   let recurrenceTrigger = $state<HTMLButtonElement | null>(null)
   let dueDateTrigger = $state<HTMLButtonElement | null>(null)
+  let startDateTrigger = $state<HTMLButtonElement | null>(null)
   let recurrenceFocusIdx = $state(-1)
   let customRecurrence = $state('')
 
@@ -181,6 +187,7 @@
   let estimateInvalid = $state(false)
   let weekStart = $derived(getTaskWeekStart())
   let dueDatePresets = $derived(buildDueDatePresets(ctx.today, weekStart))
+  let startDatePresets = $derived(buildStartDatePresets(ctx.today, weekStart))
 
   // ctx is a stable plugin-context singleton — see BoardView for rationale.
   // svelte-ignore state_referenced_locally
@@ -204,7 +211,8 @@
   // Mirror the busy state up to the host so its window Esc handler can avoid
   // closing while a popover or the BlockedDoneDialog is open.
   $effect(() => {
-    busy = recurrenceOpen || dueDateOpen || !!blockedGuard.pending
+    busy =
+      recurrenceOpen || dueDateOpen || startDateOpen || !!blockedGuard.pending
   })
 
   $effect(() => {
@@ -339,6 +347,7 @@
 
   async function commitStartDate(value: string) {
     startDateDraft = value
+    closeStartDate()
     if (!task || startDateField.pending || value === startDateField.value)
       return
     const ok = await startDateField.commit(value)
@@ -348,6 +357,11 @@
   function closeDueDate() {
     dueDateOpen = false
     void tick().then(() => dueDateTrigger?.focus())
+  }
+
+  function closeStartDate() {
+    startDateOpen = false
+    void tick().then(() => startDateTrigger?.focus())
   }
 
   function onDueDateKeydown(e: KeyboardEvent) {
@@ -362,6 +376,21 @@
       e.preventDefault()
       e.stopPropagation()
       closeDueDate()
+    }
+  }
+
+  function onStartDateKeydown(e: KeyboardEvent) {
+    if (!startDateOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'Enter') {
+        e.preventDefault()
+        startDateOpen = true
+      }
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      closeStartDate()
     }
   }
 
@@ -752,16 +781,96 @@
         >
           Start day
         </h3>
-        <input
-          id="task-start-date-input"
-          type="date"
-          aria-labelledby="task-start-date-label"
-          bind:value={startDateDraft}
+        <button
+          id="task-start-date-trigger"
+          bind:this={startDateTrigger}
+          type="button"
+          onclick={() => {
+            startDateOpen = !startDateOpen
+          }}
+          onkeydown={onStartDateKeydown}
           disabled={startDateField.pending}
-          aria-busy={startDateField.pending}
-          onchange={(e) => void commitStartDate(e.currentTarget.value)}
-          class="w-full min-w-0 rounded border border-surface-card-border bg-surface-card px-2 py-1.5 font-label-sm text-type-xs text-text-primary transition-colors hover:bg-hover focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 disabled:cursor-not-allowed disabled:opacity-50"
-        />
+          aria-haspopup="dialog"
+          aria-expanded={startDateOpen}
+          aria-labelledby="task-start-date-label task-start-date-trigger"
+          class="flex w-full items-center justify-between gap-1 rounded border border-surface-card-border bg-surface-card px-2 py-1.5 font-label-sm text-type-xs text-text-primary transition-colors hover:bg-hover disabled:opacity-50"
+        >
+          <span class="flex min-w-0 items-center gap-1.5">
+            <span
+              class="material-symbols-outlined shrink-0 text-icon-sm {startDateField.value
+                ? 'text-accent-secondary-start'
+                : 'text-text-muted'}"
+              aria-hidden="true">event</span
+            >
+            <span class="truncate">{startDateField.value || 'Set date…'}</span>
+          </span>
+          <span
+            class="material-symbols-outlined shrink-0 text-icon-sm text-text-muted"
+            aria-hidden="true">expand_more</span
+          >
+        </button>
+        <Popover
+          open={startDateOpen}
+          onClose={closeStartDate}
+          anchor={startDateTrigger}
+          matchWidth
+          class="rounded border border-surface-popover-border bg-surface-popover shadow-lg"
+        >
+          {#snippet content()}
+            <div
+              transition:fly={{ y: -4, duration: motionDuration(100) }}
+              role="dialog"
+              aria-label="Start day options"
+            >
+              <div class="border-b border-surface-card-border p-2">
+                <input
+                  type="date"
+                  aria-label="Custom start day"
+                  class="w-full rounded border border-surface-card-border bg-surface-card px-2 py-1 font-label-sm text-type-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40"
+                  value={startDateDraft}
+                  oninput={(e) => (startDateDraft = e.currentTarget.value)}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      if (startDateDraft) void commitStartDate(startDateDraft)
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      closeStartDate()
+                    }
+                  }}
+                />
+              </div>
+              {#each startDatePresets as preset (preset.label)}
+                <button
+                  type="button"
+                  class="w-full px-3 py-1.5 text-left font-label-sm text-type-sm transition-colors hover:bg-hover {startDateField.value ===
+                  preset.value
+                    ? 'font-label-sm-bold text-accent-primary-start'
+                    : 'text-text-primary'}"
+                  onclick={() => void commitStartDate(preset.value)}
+                >
+                  {preset.label}
+                  <span class="ml-1 text-type-2xs text-text-muted"
+                    >{preset.value}</span
+                  >
+                </button>
+              {/each}
+              {#if startDateField.value}
+                <div class="border-t border-surface-card-border">
+                  <button
+                    type="button"
+                    class="w-full px-3 py-1.5 text-left font-label-sm text-type-sm text-text-muted transition-colors hover:bg-hover"
+                    onclick={() => void commitStartDate('')}
+                  >
+                    Clear start day
+                  </button>
+                </div>
+              {/if}
+            </div>
+          {/snippet}
+        </Popover>
       </section>
     </div>
 
@@ -1191,6 +1300,7 @@
         fileDate={task.file_date ?? ''}
         {ctx}
         onCommentsChanged={onMetaChanged}
+        layout={commentLayout}
       />
     </div>
   </section>

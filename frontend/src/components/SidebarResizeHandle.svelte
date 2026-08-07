@@ -10,6 +10,13 @@
     onDragStart?: () => void
     /** Fired when a pointer drag ends (commit or cancel). */
     onDragEnd?: () => void
+    /**
+     * Which edge of the resizable pane the handle sits on.
+     * `start` (default): left sidebar — drag right grows width.
+     * `end`: right pane — drag left grows width.
+     */
+    edge?: 'start' | 'end'
+    ariaLabel?: string
   }
 
   let {
@@ -20,7 +27,9 @@
     onWidthChange,
     onWidthCommit,
     onDragStart,
-    onDragEnd
+    onDragEnd,
+    edge = 'start',
+    ariaLabel = 'Resize sidebar (drag, double-click to reset, or use arrow keys)'
   }: Props = $props()
 
   let handleEl: HTMLButtonElement
@@ -28,6 +37,11 @@
 
   function clamp(px: number): number {
     return Math.max(min, Math.min(max, px))
+  }
+
+  /** Signed delta applied to width: end edge inverts so drag-toward-center shrinks. */
+  function widthDelta(clientDelta: number): number {
+    return edge === 'end' ? -clientDelta : clientDelta
   }
 
   function handlePointerDown(e: PointerEvent) {
@@ -39,14 +53,14 @@
     const startWidth = width
 
     function onMove(ev: PointerEvent) {
-      const delta = ev.clientX - startX
+      const delta = widthDelta(ev.clientX - startX)
       onWidthChange(clamp(startWidth + delta))
     }
     function onUp(ev: PointerEvent) {
       handleEl.releasePointerCapture(ev.pointerId)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
-      const delta = ev.clientX - startX
+      const delta = widthDelta(ev.clientX - startX)
       const finalWidth = clamp(startWidth + delta)
       dragging = false
       onDragEnd?.()
@@ -62,13 +76,16 @@
 
   function handleKeyDown(e: KeyboardEvent) {
     const step = e.shiftKey ? 32 : 8
+    // End edge: ArrowLeft grows (handle moves left), ArrowRight shrinks.
+    const leftStep = edge === 'end' ? step : -step
+    const rightStep = edge === 'end' ? -step : step
     let newWidth: number
     switch (e.key) {
       case 'ArrowLeft':
-        newWidth = clamp(width - step)
+        newWidth = clamp(width + leftStep)
         break
       case 'ArrowRight':
-        newWidth = clamp(width + step)
+        newWidth = clamp(width + rightStep)
         break
       case 'Home':
         newWidth = min
@@ -91,7 +108,7 @@
 <button
   type="button"
   bind:this={handleEl}
-  aria-label="Resize sidebar (drag, double-click to reset, or use arrow keys)"
+  aria-label={ariaLabel}
   title="Drag to resize · Double-click to reset · Arrow keys to nudge"
   tabindex="0"
   onpointerdown={handlePointerDown}
@@ -99,6 +116,7 @@
   onkeydown={handleKeyDown}
   class="sidebar-resize-handle"
   class:dragging
+  class:edge-end={edge === 'end'}
   style="touch-action: none; flex-shrink: 0;"
 ></button>
 
@@ -117,6 +135,10 @@
     position: relative;
     -webkit-appearance: none;
     appearance: none;
+  }
+  /* In-flow right-pane handle stays below app chrome (sidebar handle is z-45). */
+  .sidebar-resize-handle.edge-end {
+    z-index: 10;
   }
   .sidebar-resize-handle:hover,
   .sidebar-resize-handle.dragging {

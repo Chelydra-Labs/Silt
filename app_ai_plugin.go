@@ -31,6 +31,7 @@ import (
 	"silt/backend/config"
 	"silt/backend/plugins"
 	"strings"
+	"time"
 )
 
 // PluginAIChatMessage is one chat message crossing the plugin→service boundary.
@@ -127,12 +128,8 @@ const maxPluginAIAuditKindLen = 64
 // (the key resolve ignores its error and the return is a value copy), so the
 // returned done is always balanced by exactly one caller defer.
 func (a *App) withAIPreflight(pluginID, sessionToken, which string) (ai.AIProvider, string, func(), error) {
+	// Phase 1: session + capability under vault RLock (no sleep).
 	a.vaultMu.RLock()
-	// Reject new AI calls once a vault close/switch has begun. The check and
-	// the vaultClosingWG.Add below share this RLock hold, so they are atomic
-	// w.r.t. CloseVault/SwitchVault's closing=true + Wait (taken under the
-	// write lock) — no TOCTOU window where a call slips through after the
-	// drain returns (#452).
 	if a.closing {
 		a.vaultMu.RUnlock()
 		return ai.AIProvider{}, "", nil, vaultClosingError()
@@ -145,21 +142,47 @@ func (a *App) withAIPreflight(pluginID, sessionToken, which string) (ai.AIProvid
 		a.vaultMu.RUnlock()
 		return ai.AIProvider{}, "", nil, err
 	}
-	if a.rateLimiter != nil && !a.rateLimiter.allow(a.vaultPath, pluginID) {
+	vaultPath := a.vaultPath
+	a.vaultMu.RUnlock()
+
+	// Phase 2: rate limit OUTSIDE vaultMu — allowOrWait may sleep up to
+	// aiRateLimitMaxWait and must not stall vault close/switch.
+	if a.rateLimiter != nil {
+		if _, ok := a.rateLimiter.allowOrWait(vaultPath, pluginID, aiRateLimitMaxWait); !ok {
+			a.recordRateLimited(pluginID)
+			rps, burst := resolvePluginRatelimit(vaultPath, pluginID)
+			retryMs := int(a.rateLimiter.timeUntilAllow(vaultPath, pluginID) / time.Millisecond)
+			if retryMs < 1 {
+				retryMs = int(aiRateLimitMaxWait / time.Millisecond)
+			}
+			return ai.AIProvider{}, "", nil, fmt.Errorf(
+				"plugin %q AI rate limit exceeded (max %.1f rps, burst %d); %s=%d",
+				pluginID, rps, burst, aiRateLimitRetryAfterKey, retryMs,
+			)
+		}
+	}
+
+	// Phase 3: re-check closing + drain Add under one RLock hold (atomic w.r.t.
+	// CloseVault/SwitchVault's closing=true + Wait — #452). Re-validate session
+	// so a revoked token cannot slip through after the wait.
+	a.vaultMu.RLock()
+	if a.closing {
 		a.vaultMu.RUnlock()
-		a.recordRateLimited(pluginID)
-		rps, burst := resolvePluginRatelimit(a.vaultPath, pluginID)
-		return ai.AIProvider{}, "", nil, fmt.Errorf("plugin %q AI rate limit exceeded (max %.1f rps, burst %d); retry after a short delay", pluginID, rps, burst)
+		return ai.AIProvider{}, "", nil, vaultClosingError()
+	}
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		a.vaultMu.RUnlock()
+		return ai.AIProvider{}, "", nil, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapAI); err != nil {
+		a.vaultMu.RUnlock()
+		return ai.AIProvider{}, "", nil, err
 	}
 	a.configMu.RLock()
 	p := aiConfigBlock(a.cfg.AI, which)
 	useKeyring := a.aiUseKeyringLocked()
 	user := a.aiKeyringUser(which)
 	a.configMu.RUnlock()
-	// All gates passed: this call will issue HTTP and outlive the RLock. Add
-	// to the vault-close drain so CloseVault/SwitchVault wait for it before
-	// teardown (#452). The returned done func balances this Add; the caller
-	// defers it on the success path.
 	a.vaultClosingWG.Add(1)
 	a.vaultMu.RUnlock()
 	key, _ := a.resolveAIKeyUnlocked(user, useKeyring, p.APIKey)

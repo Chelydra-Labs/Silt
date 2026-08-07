@@ -27,6 +27,11 @@
     fileDate: string
     ctx: PluginContext
     onCommentsChanged?: () => void
+    /**
+     * drawer: bounded scrollable list + sticky composer for the inspector.
+     * inline: unbounded list for the narrow sub-editor sidebar.
+     */
+    layout?: 'inline' | 'drawer'
   }
 
   let {
@@ -36,8 +41,11 @@
     page,
     fileDate,
     ctx,
-    onCommentsChanged
+    onCommentsChanged,
+    layout = 'inline'
   }: Props = $props()
+
+  let isDrawerLayout = $derived(layout === 'drawer')
 
   interface Comment {
     id: string
@@ -554,8 +562,11 @@
 <section
   aria-labelledby="comment-thread-heading"
   class="pt-3 border-t border-surface-card-border"
+  class:flex={isDrawerLayout}
+  class:flex-col={isDrawerLayout}
+  data-comment-layout={layout}
 >
-  <div class="flex items-center gap-2 mb-2">
+  <div class="flex items-center gap-2 mb-2 flex-shrink-0">
     <h3
       id="comment-thread-heading"
       class="text-type-sm font-label-sm-bold text-text-primary"
@@ -590,7 +601,14 @@
       No comments yet. Start the conversation.
     </p>
   {:else}
-    <ul class="flex flex-col gap-2">
+    <ul
+      class="flex flex-col gap-2"
+      class:max-h-[min(40vh,24rem)]={isDrawerLayout}
+      class:overflow-y-auto={isDrawerLayout}
+      class:custom-scrollbar={isDrawerLayout}
+      aria-label={isDrawerLayout ? 'Comments' : undefined}
+      data-testid={isDrawerLayout ? 'comment-list-scroll' : undefined}
+    >
       {#each comments as c (c.key)}
         <li class="flex flex-col gap-2">
           {@render commentArticle(c, false)}
@@ -608,7 +626,18 @@
     </ul>
   {/if}
 
-  <div class="mt-2 flex flex-col gap-1.5">
+  <div
+    class="mt-2 flex flex-col gap-1.5"
+    class:sticky={isDrawerLayout}
+    class:bottom-0={isDrawerLayout}
+    class:z-10={isDrawerLayout}
+    class:pt-2={isDrawerLayout}
+    class:border-t={isDrawerLayout}
+    class:border-surface-card-border={isDrawerLayout}
+    class:bg-surface-card={isDrawerLayout}
+    class:flex-shrink-0={isDrawerLayout}
+    data-testid={isDrawerLayout ? 'comment-composer-sticky' : undefined}
+  >
     <label for="comment-composer-{taskId}" class="sr-only">Comment text</label>
     <textarea
       id="comment-composer-{taskId}"

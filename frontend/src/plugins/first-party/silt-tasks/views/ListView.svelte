@@ -19,6 +19,17 @@
   import TaskEditDrawer from '../components/TaskEditDrawer.svelte'
   import TaskSubEditorModal from '../components/TaskSubEditorModal.svelte'
   import BlockedDoneGuard from '../components/BlockedDoneGuard.svelte'
+  import SidebarResizeHandle from '../../../../components/SidebarResizeHandle.svelte'
+  import {
+    canFitInspectorSplit,
+    clampInspectorPaneWidth,
+    DEFAULT_INSPECTOR_PANE_WIDTH,
+    loadInspectorPaneWidth,
+    maxInspectorPaneWidthForHost,
+    MIN_INSPECTOR_PANE_WIDTH,
+    onTasksSettingsChanged,
+    persistInspectorPaneWidth
+  } from '../settings'
   import {
     coerceTaskRow,
     formatEstimateSum,
@@ -72,7 +83,15 @@
   let showCompleted = $state(false)
 
   let selectedTask = $state<TaskDetail | null>(null)
+  let selectedFilteredOut = $state(false)
   let subEditorTask = $state<TaskDetail | null>(null)
+  let hostEl = $state<HTMLDivElement | null>(null)
+  let hostWidth = $state(0)
+  /** False until the host has a measured width — avoids overlay→pane flash. */
+  let hostMeasured = $state(false)
+  let paneWidth = $state(loadInspectorPaneWidth())
+  /** Inspector sidebar popover/dialog busy — blocks J/K while open. */
+  let inspectorBusy = $state(false)
   // DONE-on-blocked guard (#302): shared hook owns pending state + blocker
   // fetch. ListView attaches the item so confirmBlockedDone can hand it to
   // commitMarkDown. On a fetch failure ListView surfaces markDownError + an
@@ -167,7 +186,12 @@
       doneItems = (doneRes.rows as unknown as CompletedTaskItem[]) ?? []
       if (selectedTask) {
         const fresh = openItems.find((i) => i.id === selectedTask!.id)
-        if (fresh) selectedTask = fresh
+        if (fresh) {
+          selectedTask = fresh
+          selectedFilteredOut = false
+        } else {
+          selectedFilteredOut = true
+        }
       }
       // Backend truncated only fires at maxPluginQueryRows (5000), not SQL LIMIT.
       // Signal intentional design caps so the footer is useful.
@@ -189,6 +213,54 @@
       nowTick++
     }, 60_000)
   })
+
+  // Measure the list host (not window) so narrow hub panes fall back to overlay.
+  $effect(() => {
+    const el = hostEl
+    if (!el) return
+    const applyWidth = (w: number) => {
+      hostWidth = w
+      hostMeasured = true
+    }
+    if (typeof ResizeObserver === 'undefined') {
+      applyWidth(el.clientWidth)
+      return
+    }
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width ?? el.clientWidth
+      applyWidth(w)
+    })
+    ro.observe(el)
+    applyWidth(el.clientWidth)
+    return () => ro.disconnect()
+  })
+
+  // Re-read persisted pane width after async settings hydrate / config reload.
+  $effect(() => {
+    return onTasksSettingsChanged(() => {
+      paneWidth = loadInspectorPaneWidth()
+    })
+  })
+
+  let usePane = $derived(
+    !!selectedTask && hostMeasured && canFitInspectorSplit(hostWidth)
+  )
+  /** Defer mounting either inspector shell until host width is known. */
+  let inspectorReady = $derived(!!selectedTask && hostMeasured)
+  let paneMaxForHost = $derived(maxInspectorPaneWidthForHost(hostWidth))
+  let effectivePaneWidth = $derived(
+    Math.min(clampInspectorPaneWidth(paneWidth), paneMaxForHost)
+  )
+
+  function setPaneWidth(w: number) {
+    paneWidth = Math.min(clampInspectorPaneWidth(w), paneMaxForHost)
+  }
+
+  function commitPaneWidth(w: number) {
+    const next = Math.min(clampInspectorPaneWidth(w), paneMaxForHost)
+    paneWidth = next
+    void persistInspectorPaneWidth(next)
+  }
 
   // Must be declared before the reload $effect so day-boundary ticks
   // re-subscribe and re-query date filters (overdue/today/upcoming).
@@ -434,13 +506,98 @@
     blockedGuard.dismiss()
   }
 
-  function openDrawer(item: TaskDetail) {
+  function selectTask(item: TaskDetail) {
+    if (selectedTask?.id === item.id) {
+      selectedTask = null
+      selectedFilteredOut = false
+      return
+    }
     selectedTask = item
+    selectedFilteredOut = false
   }
 
   function openSubEditor(item: TaskDetail) {
     subEditorTask = item
   }
+
+  // Rendered open-task order for J/K and prev/next (matches section layout).
+  let flatOpenOrder = $derived.by((): TaskDetail[] => {
+    if (hubGroupBy === 'dueDate') {
+      return [...overdue, ...todayItems, ...upcoming, ...later, ...undated]
+    }
+    if (hubGroupBy === 'none') {
+      return sortRows(filteredOpen)
+    }
+    const out: TaskDetail[] = []
+    for (const g of groupedSections) {
+      if (collapsedSections.has(g.key)) continue
+      out.push(...g.items)
+    }
+    return out
+  })
+
+  let selectedIndex = $derived(
+    selectedTask
+      ? flatOpenOrder.findIndex((t) => t.id === selectedTask!.id)
+      : -1
+  )
+  // Off-order selection (filtered out OR collapsed section) still allows
+  // jumping into the visible order so buttons and J/K stay aligned.
+  let hasPrevTask = $derived(
+    flatOpenOrder.length > 0 && (selectedIndex > 0 || selectedIndex < 0)
+  )
+  let hasNextTask = $derived(
+    flatOpenOrder.length > 0 &&
+      (selectedIndex < 0 || selectedIndex < flatOpenOrder.length - 1)
+  )
+
+  function goPrevTask() {
+    if (flatOpenOrder.length === 0) return
+    if (selectedIndex < 0) {
+      // Not in rendered order: K jumps to the last visible task.
+      selectedTask = flatOpenOrder[flatOpenOrder.length - 1]
+      selectedFilteredOut = false
+      return
+    }
+    if (selectedIndex <= 0) return
+    selectedTask = flatOpenOrder[selectedIndex - 1]
+    selectedFilteredOut = false
+  }
+
+  function goNextTask() {
+    if (flatOpenOrder.length === 0) return
+    if (selectedIndex < 0) {
+      // Not in rendered order: J jumps to the first visible task.
+      selectedTask = flatOpenOrder[0]
+      selectedFilteredOut = false
+      return
+    }
+    if (selectedIndex >= flatOpenOrder.length - 1) return
+    selectedTask = flatOpenOrder[selectedIndex + 1]
+    selectedFilteredOut = false
+  }
+
+  function onListTraversalKeydown(e: KeyboardEvent) {
+    if (!selectedTask || inspectorBusy) return
+    const key = e.key
+    if (key !== 'j' && key !== 'J' && key !== 'k' && key !== 'K') return
+    const t = e.target
+    if (t instanceof HTMLElement) {
+      const tag = t.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (t.isContentEditable) return
+      if (t.closest('[role="dialog"], [role="listbox"], [role="menu"]')) return
+    }
+    e.preventDefault()
+    if (key === 'j' || key === 'J') goNextTask()
+    else goPrevTask()
+  }
+
+  $effect(() => {
+    if (!selectedTask) return
+    window.addEventListener('keydown', onListTraversalKeydown)
+    return () => window.removeEventListener('keydown', onListTraversalKeydown)
+  })
 
   // Repaint on any block mutation (created/mutated/rescheduled from any
   // surface). Debounced so a burst of block:changed events triggers one reload.
@@ -621,12 +778,15 @@
 {#snippet taskRow(item: TaskDetail, groupKey: string)}
   <div
     class="tasks-list-row group relative flex min-h-12 items-center gap-3 overflow-hidden rounded-lg border border-transparent px-3 py-2 pl-3.5 transition-all hover:border-surface-card-border hover:bg-hover hover:shadow-sm focus-within:border-border-focus focus-within:bg-hover"
+    class:tasks-selected={selectedTask?.id === item.id}
     class:tasks-focused={focusedRowId === item.id}
     class:tasks-drag-over={dragOverId === item.id}
     class:tasks-dragging={draggingId === item.id}
     data-block-id={item.id}
     data-group-key={groupKey}
     data-status={item.status}
+    data-task-hit
+    aria-current={selectedTask?.id === item.id ? 'true' : undefined}
     role="listitem"
     ondragover={(e) => onRowDragOver(e, item, groupKey)}
     ondrop={(e) => onRowDrop(e, item, groupKey)}
@@ -657,7 +817,7 @@
       aria-label="Mark done"
     ></button>
     <button
-      onclick={() => openDrawer(item)}
+      onclick={() => selectTask(item)}
       onkeydown={(e) => {
         if (e.key === 'Enter' && e.shiftKey) {
           e.preventDefault()
@@ -743,7 +903,11 @@
   </div>
 {/snippet}
 
-<div class="flex-1 flex flex-col min-h-0 overflow-hidden" data-tasks-view>
+<div
+  bind:this={hostEl}
+  class="flex-1 flex flex-col min-h-0 overflow-hidden"
+  data-tasks-view
+>
   {#if markDownError}
     <ErrorBanner
       message={`Couldn't mark task done: ${markDownError}`}
@@ -775,274 +939,315 @@
   <!-- aria-live region for manual-order drag announcements (#426) -->
   <div class="sr-only" aria-live="polite">{liveMessage}</div>
 
-  <div
-    class="mx-auto flex-1 w-full max-w-5xl overflow-y-auto px-3 py-5 space-y-7 custom-scrollbar sm:px-5 lg:px-6"
-  >
-    {#if loading}
+  <div class="flex flex-1 min-h-0 overflow-hidden">
+    <div class="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
       <div
-        class="skeleton-container"
-        data-testid="tasks-loading"
-        aria-busy="true"
-        aria-label="Loading tasks"
+        class="mx-auto flex-1 w-full max-w-5xl overflow-y-auto px-3 py-5 space-y-7 custom-scrollbar sm:px-5 lg:px-6"
       >
-        {#each Array(4) as _, skelIdx (skelIdx)}
-          <div class="skeleton-row">
-            <div class="skeleton-circle"></div>
-            <div class="skeleton-text title"></div>
-            <div class="skeleton-badge"></div>
-          </div>
-        {/each}
-      </div>
-    {:else if errorMsg}
-      <div class="text-error" data-testid="tasks-error">
-        Failed to load: {errorMsg}
-      </div>
-    {:else if filteredOpen.length === 0 && doneItems.length === 0}
-      {#if hasActiveListFilters}
-        <div
-          class="text-text-muted py-10 text-center font-body-md"
-          data-testid="tasks-empty-filtered"
-        >
-          No tasks match the current filters or scope. Clear filters or widen
-          the scope to see more.
-        </div>
-      {:else}
-        <div
-          class="text-text-muted py-10 text-center font-body-md"
-          data-testid="tasks-empty"
-        >
-          No tasks yet. Type below or use
-          <kbd>Ctrl+Shift+N</kbd> to quickly capture one.
-        </div>
-      {/if}
-    {:else}
-      {#if filteredOpen.length === 0}
-        {#if hasActiveListFilters}
+        {#if loading}
           <div
-            class="text-center py-12 px-4 rounded-xl border border-dashed border-surface-panel-border bg-surface-panel/10 max-w-md mx-auto my-8 select-none"
-            data-testid="tasks-open-empty-filtered"
+            class="skeleton-container"
+            data-testid="tasks-loading"
+            aria-busy="true"
+            aria-label="Loading tasks"
           >
-            <span
-              class="material-symbols-outlined text-text-muted text-5xl mb-2"
-              aria-hidden="true">filter_list_off</span
-            >
-            <h3 class="font-headline-md text-text-primary mb-1">
-              No open tasks match
-            </h3>
-            <p class="text-text-muted text-type-md font-body-md">
-              Nothing open matches the current filters or scope. Clear filters
-              or widen the scope — completed tasks below may still be relevant.
-            </p>
-          </div>
-        {:else}
-          <div
-            class="text-center py-12 px-4 rounded-xl border border-dashed border-surface-panel-border bg-surface-panel/10 max-w-md mx-auto my-8 select-none"
-          >
-            <span
-              class="material-symbols-outlined text-accent-primary-start text-5xl mb-2"
-              aria-hidden="true">celebrate</span
-            >
-            <h3 class="font-headline-md text-text-primary mb-1">
-              All caught up!
-            </h3>
-            <p class="text-text-muted text-type-md font-body-md">
-              You have no active tasks. Add one in the box below or use
-              <kbd
-                class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-surface-panel-border font-mono text-type-xs"
-                >Ctrl+Shift+N</kbd
-              > to capture a new task.
-            </p>
-          </div>
-        {/if}
-      {/if}
-
-      {#if hubGroupBy === 'dueDate'}
-        {#each [{ key: 'overdue', label: 'Overdue', list: overdue, tone: 'error' }, { key: 'today', label: 'Today', list: todayItems, tone: 'primary' }, { key: 'upcoming', label: 'Upcoming', list: upcoming, tone: 'muted' }, { key: 'later', label: 'Later', list: later, tone: 'muted' }, { key: 'undated', label: 'No Date', list: undated, tone: 'muted' }] as group (group.key)}
-          {#if group.list.length > 0}
-            <section aria-label={group.label} data-group={group.key}>
-              <h2
-                class="font-label-sm-bold uppercase tracking-widest text-type-xs mb-2 flex items-center gap-2"
-                class:text-error={group.tone === 'error'}
-                class:text-accent-primary-start={group.tone === 'primary'}
-                class:text-text-muted={group.tone === 'muted'}
-              >
-                {group.label}
-                <span
-                  class="text-text-muted/60"
-                  aria-live="polite"
-                  data-testid="tasks-group-count"
-                >
-                  {group.list.length}
-                </span>
-                {#if sectionEstimateLabel(group.list)}
-                  <span
-                    class="text-text-muted/60 normal-case tracking-normal font-label-sm"
-                    data-testid="tasks-group-estimate"
-                  >
-                    · {sectionEstimateLabel(group.list)}
-                  </span>
-                {/if}
-              </h2>
-              <div
-                class="space-y-1 rounded-xl border border-surface-panel-border/60 bg-surface-panel/20 p-1"
-              >
-                {#each group.list as item (item.id)}
-                  <div animate:flip={{ duration: 200, easing: cubicOut }}>
-                    {@render taskRow(item, group.key)}
-                  </div>
-                {/each}
-              </div>
-            </section>
-          {/if}
-        {/each}
-      {:else if hubGroupBy === 'none'}
-        {#if filteredOpen.length > 0}
-          <div
-            class="space-y-1 rounded-xl border border-surface-panel-border/60 bg-surface-panel/20 p-1"
-            data-group="all"
-            aria-label="All Tasks"
-          >
-            {#each sortRows(filteredOpen) as item (item.id)}
-              <div animate:flip={{ duration: 200, easing: cubicOut }}>
-                {@render taskRow(item, 'all')}
+            {#each Array(4) as _, skelIdx (skelIdx)}
+              <div class="skeleton-row">
+                <div class="skeleton-circle"></div>
+                <div class="skeleton-text title"></div>
+                <div class="skeleton-badge"></div>
               </div>
             {/each}
           </div>
-        {/if}
-      {:else}
-        {#each groupedSections as group (group.key)}
-          <section aria-label={group.label} data-group={group.key}>
-            <h2
-              class="font-label-sm-bold uppercase tracking-widest text-type-xs mb-2 flex items-center gap-2 text-text-muted"
+        {:else if errorMsg}
+          <div class="text-error" data-testid="tasks-error">
+            Failed to load: {errorMsg}
+          </div>
+        {:else if filteredOpen.length === 0 && doneItems.length === 0}
+          {#if hasActiveListFilters}
+            <div
+              class="text-text-muted py-10 text-center font-body-md"
+              data-testid="tasks-empty-filtered"
             >
-              <button
-                type="button"
-                onclick={() => toggleSection(group.key)}
-                aria-expanded={!collapsedSections.has(group.key)}
-                aria-controls={`tasks-group-${group.key}`}
-                class="flex items-center gap-2 bg-transparent border-none p-0 cursor-pointer uppercase tracking-widest text-type-xs font-label-sm-bold text-text-muted hover:text-text-primary"
-                data-testid={`tasks-group-toggle-${group.key}`}
-              >
-                {#if collapsedSections.has(group.key)}
-                  <span class="material-symbols-outlined text-icon-sm"
-                    >chevron_right</span
-                  >
-                {:else}
-                  <span class="material-symbols-outlined text-icon-sm"
-                    >expand_more</span
-                  >
-                {/if}
-                {group.label}
-                <span class="text-text-muted/60" aria-hidden="true"
-                  >{group.items.length}</span
-                >
-                {#if sectionEstimateLabel(group.items)}
-                  <span
-                    class="text-text-muted/60 normal-case tracking-normal font-label-sm"
-                    data-testid="tasks-group-estimate"
-                    aria-hidden="true"
-                  >
-                    · {sectionEstimateLabel(group.items)}
-                  </span>
-                {/if}
-              </button>
-            </h2>
-            {#if !collapsedSections.has(group.key)}
+              No tasks match the current filters or scope. Clear filters or
+              widen the scope to see more.
+            </div>
+          {:else}
+            <div
+              class="text-text-muted py-10 text-center font-body-md"
+              data-testid="tasks-empty"
+            >
+              No tasks yet. Type below or use
+              <kbd>Ctrl+Shift+N</kbd> to quickly capture one.
+            </div>
+          {/if}
+        {:else}
+          {#if filteredOpen.length === 0}
+            {#if hasActiveListFilters}
               <div
-                id={`tasks-group-${group.key}`}
-                class="space-y-1 rounded-xl border border-surface-panel-border/60 bg-surface-panel/20 p-1"
+                class="text-center py-12 px-4 rounded-xl border border-dashed border-surface-panel-border bg-surface-panel/10 max-w-md mx-auto my-8 select-none"
+                data-testid="tasks-open-empty-filtered"
               >
-                {#each group.items as item (item.id)}
+                <span
+                  class="material-symbols-outlined text-text-muted text-5xl mb-2"
+                  aria-hidden="true">filter_list_off</span
+                >
+                <h3 class="font-headline-md text-text-primary mb-1">
+                  No open tasks match
+                </h3>
+                <p class="text-text-muted text-type-md font-body-md">
+                  Nothing open matches the current filters or scope. Clear
+                  filters or widen the scope — completed tasks below may still
+                  be relevant.
+                </p>
+              </div>
+            {:else}
+              <div
+                class="text-center py-12 px-4 rounded-xl border border-dashed border-surface-panel-border bg-surface-panel/10 max-w-md mx-auto my-8 select-none"
+              >
+                <span
+                  class="material-symbols-outlined text-accent-primary-start text-5xl mb-2"
+                  aria-hidden="true">celebrate</span
+                >
+                <h3 class="font-headline-md text-text-primary mb-1">
+                  All caught up!
+                </h3>
+                <p class="text-text-muted text-type-md font-body-md">
+                  You have no active tasks. Add one in the box below or use
+                  <kbd
+                    class="px-1.5 py-0.5 rounded bg-hover text-text-primary border border-surface-panel-border font-mono text-type-xs"
+                    >Ctrl+Shift+N</kbd
+                  > to capture a new task.
+                </p>
+              </div>
+            {/if}
+          {/if}
+
+          {#if hubGroupBy === 'dueDate'}
+            {#each [{ key: 'overdue', label: 'Overdue', list: overdue, tone: 'error' }, { key: 'today', label: 'Today', list: todayItems, tone: 'primary' }, { key: 'upcoming', label: 'Upcoming', list: upcoming, tone: 'muted' }, { key: 'later', label: 'Later', list: later, tone: 'muted' }, { key: 'undated', label: 'No Date', list: undated, tone: 'muted' }] as group (group.key)}
+              {#if group.list.length > 0}
+                <section aria-label={group.label} data-group={group.key}>
+                  <h2
+                    class="font-label-sm-bold uppercase tracking-widest text-type-xs mb-2 flex items-center gap-2"
+                    class:text-error={group.tone === 'error'}
+                    class:text-accent-primary-start={group.tone === 'primary'}
+                    class:text-text-muted={group.tone === 'muted'}
+                  >
+                    {group.label}
+                    <span
+                      class="text-text-muted/60"
+                      aria-live="polite"
+                      data-testid="tasks-group-count"
+                    >
+                      {group.list.length}
+                    </span>
+                    {#if sectionEstimateLabel(group.list)}
+                      <span
+                        class="text-text-muted/60 normal-case tracking-normal font-label-sm"
+                        data-testid="tasks-group-estimate"
+                      >
+                        · {sectionEstimateLabel(group.list)}
+                      </span>
+                    {/if}
+                  </h2>
+                  <div
+                    class="space-y-1 rounded-xl border border-surface-panel-border/60 bg-surface-panel/20 p-1"
+                  >
+                    {#each group.list as item (item.id)}
+                      <div animate:flip={{ duration: 200, easing: cubicOut }}>
+                        {@render taskRow(item, group.key)}
+                      </div>
+                    {/each}
+                  </div>
+                </section>
+              {/if}
+            {/each}
+          {:else if hubGroupBy === 'none'}
+            {#if filteredOpen.length > 0}
+              <div
+                class="space-y-1 rounded-xl border border-surface-panel-border/60 bg-surface-panel/20 p-1"
+                data-group="all"
+                aria-label="All Tasks"
+              >
+                {#each sortRows(filteredOpen) as item (item.id)}
                   <div animate:flip={{ duration: 200, easing: cubicOut }}>
-                    {@render taskRow(item, group.key)}
+                    {@render taskRow(item, 'all')}
                   </div>
                 {/each}
               </div>
             {/if}
-          </section>
-        {/each}
-      {/if}
-
-      {#if filteredDone.length > 0}
-        <section aria-label="Completed" data-group="completed">
-          <h2
-            class="font-label-sm-bold uppercase tracking-widest text-type-xs mb-2 flex items-center gap-2 text-text-muted"
-          >
-            <button
-              type="button"
-              onclick={() => (showCompleted = !showCompleted)}
-              aria-expanded={showCompleted}
-              aria-controls="tasks-completed-list"
-              class="flex items-center gap-2 bg-transparent border-none p-0 cursor-pointer uppercase tracking-widest text-type-xs font-label-sm-bold text-text-muted hover:text-text-primary"
-              data-testid="tasks-completed-toggle"
-            >
-              {#if showCompleted}
-                <span class="material-symbols-outlined text-icon-sm"
-                  >expand_more</span
+          {:else}
+            {#each groupedSections as group (group.key)}
+              <section aria-label={group.label} data-group={group.key}>
+                <h2
+                  class="font-label-sm-bold uppercase tracking-widest text-type-xs mb-2 flex items-center gap-2 text-text-muted"
                 >
-              {:else}
-                <span class="material-symbols-outlined text-icon-sm"
-                  >chevron_right</span
-                >
-              {/if}
-              Completed
-              <span class="text-text-muted/60" aria-hidden="true"
-                >{filteredDone.length}</span
-              >
-            </button>
-          </h2>
-          {#if showCompleted}
-            <div
-              id="tasks-completed-list"
-              class="space-y-1 opacity-60"
-              data-testid="tasks-completed-list"
-            >
-              {#each filteredDone as item (item.id)}
-                <div
-                  class="flex items-center gap-3 px-3 py-2 rounded-lg"
-                  data-block-id={item.id}
-                >
-                  <span
-                    class="w-5 h-5 rounded todo-check-done flex-shrink-0"
-                    aria-hidden="true"
-                  ></span>
-                  <div class="flex-1 min-w-0">
-                    <div
-                      class="text-text-muted text-sm font-body-md truncate line-through"
-                    >
-                      {item.clean_content}
-                    </div>
-                    {#if item.notebook !== STANDALONE_TASKS_NOTEBOOK}
-                      <div
-                        class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm"
-                      >
-                        {item.notebook} › {item.section} › {item.page}
-                      </div>
-                    {/if}
-                  </div>
-                  <span
-                    class="text-type-2xs text-text-muted font-label-sm flex-shrink-0"
-                    >{item.file_date}</span
+                  <button
+                    type="button"
+                    onclick={() => toggleSection(group.key)}
+                    aria-expanded={!collapsedSections.has(group.key)}
+                    aria-controls={`tasks-group-${group.key}`}
+                    class="flex items-center gap-2 bg-transparent border-none p-0 cursor-pointer uppercase tracking-widest text-type-xs font-label-sm-bold text-text-muted hover:text-text-primary"
+                    data-testid={`tasks-group-toggle-${group.key}`}
                   >
-                </div>
-              {/each}
-            </div>
+                    {#if collapsedSections.has(group.key)}
+                      <span class="material-symbols-outlined text-icon-sm"
+                        >chevron_right</span
+                      >
+                    {:else}
+                      <span class="material-symbols-outlined text-icon-sm"
+                        >expand_more</span
+                      >
+                    {/if}
+                    {group.label}
+                    <span class="text-text-muted/60" aria-hidden="true"
+                      >{group.items.length}</span
+                    >
+                    {#if sectionEstimateLabel(group.items)}
+                      <span
+                        class="text-text-muted/60 normal-case tracking-normal font-label-sm"
+                        data-testid="tasks-group-estimate"
+                        aria-hidden="true"
+                      >
+                        · {sectionEstimateLabel(group.items)}
+                      </span>
+                    {/if}
+                  </button>
+                </h2>
+                {#if !collapsedSections.has(group.key)}
+                  <div
+                    id={`tasks-group-${group.key}`}
+                    class="space-y-1 rounded-xl border border-surface-panel-border/60 bg-surface-panel/20 p-1"
+                  >
+                    {#each group.items as item (item.id)}
+                      <div animate:flip={{ duration: 200, easing: cubicOut }}>
+                        {@render taskRow(item, group.key)}
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </section>
+            {/each}
           {/if}
-        </section>
-      {/if}
-      {#if openTruncated || doneTruncated}
-        <p
-          class="text-text-muted text-type-sm font-body-md border-t border-surface-panel-border pt-3 mt-6"
-          role="status"
-          aria-live="polite"
-          data-testid="tasks-truncated-notice"
-        >
-          Showing the first
-          {filteredOpen.length + filteredDone.length}
-          tasks — there are more below the display limit. Complete or reschedule some
-          to surface them.
-        </p>
-      {/if}
+
+          {#if filteredDone.length > 0}
+            <section aria-label="Completed" data-group="completed">
+              <h2
+                class="font-label-sm-bold uppercase tracking-widest text-type-xs mb-2 flex items-center gap-2 text-text-muted"
+              >
+                <button
+                  type="button"
+                  onclick={() => (showCompleted = !showCompleted)}
+                  aria-expanded={showCompleted}
+                  aria-controls="tasks-completed-list"
+                  class="flex items-center gap-2 bg-transparent border-none p-0 cursor-pointer uppercase tracking-widest text-type-xs font-label-sm-bold text-text-muted hover:text-text-primary"
+                  data-testid="tasks-completed-toggle"
+                >
+                  {#if showCompleted}
+                    <span class="material-symbols-outlined text-icon-sm"
+                      >expand_more</span
+                    >
+                  {:else}
+                    <span class="material-symbols-outlined text-icon-sm"
+                      >chevron_right</span
+                    >
+                  {/if}
+                  Completed
+                  <span class="text-text-muted/60" aria-hidden="true"
+                    >{filteredDone.length}</span
+                  >
+                </button>
+              </h2>
+              {#if showCompleted}
+                <div
+                  id="tasks-completed-list"
+                  class="space-y-1 opacity-60"
+                  data-testid="tasks-completed-list"
+                >
+                  {#each filteredDone as item (item.id)}
+                    <div
+                      class="flex items-center gap-3 px-3 py-2 rounded-lg"
+                      data-block-id={item.id}
+                    >
+                      <span
+                        class="w-5 h-5 rounded todo-check-done flex-shrink-0"
+                        aria-hidden="true"
+                      ></span>
+                      <div class="flex-1 min-w-0">
+                        <div
+                          class="text-text-muted text-sm font-body-md truncate line-through"
+                        >
+                          {item.clean_content}
+                        </div>
+                        {#if item.notebook !== STANDALONE_TASKS_NOTEBOOK}
+                          <div
+                            class="text-type-2xs text-text-muted uppercase tracking-widest font-label-sm"
+                          >
+                            {item.notebook} › {item.section} › {item.page}
+                          </div>
+                        {/if}
+                      </div>
+                      <span
+                        class="text-type-2xs text-text-muted font-label-sm flex-shrink-0"
+                        >{item.file_date}</span
+                      >
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </section>
+          {/if}
+          {#if openTruncated || doneTruncated}
+            <p
+              class="text-text-muted text-type-sm font-body-md border-t border-surface-panel-border pt-3 mt-6"
+              role="status"
+              aria-live="polite"
+              data-testid="tasks-truncated-notice"
+            >
+              Showing the first
+              {filteredOpen.length + filteredDone.length}
+              tasks — there are more below the display limit. Complete or reschedule
+              some to surface them.
+            </p>
+          {/if}
+        {/if}
+      </div>
+    </div>
+
+    {#if inspectorReady && usePane}
+      <SidebarResizeHandle
+        edge="end"
+        width={effectivePaneWidth}
+        min={MIN_INSPECTOR_PANE_WIDTH}
+        max={paneMaxForHost}
+        defaultWidth={Math.min(DEFAULT_INSPECTOR_PANE_WIDTH, paneMaxForHost)}
+        onWidthChange={setPaneWidth}
+        onWidthCommit={commitPaneWidth}
+        ariaLabel="Resize task inspector"
+      />
+      <div
+        class="flex-shrink-0 h-full overflow-hidden"
+        style="width: {effectivePaneWidth}px"
+        data-testid="tasks-inspector-pane"
+      >
+        <TaskEditDrawer
+          variant="pane"
+          task={selectedTask}
+          filteredOut={selectedFilteredOut}
+          {ctx}
+          onMetaChanged={reload}
+          onOpenSubEditor={() => selectedTask && (subEditorTask = selectedTask)}
+          onClose={() => {
+            selectedTask = null
+            selectedFilteredOut = false
+          }}
+          onPrevTask={goPrevTask}
+          onNextTask={goNextTask}
+          {hasPrevTask}
+          {hasNextTask}
+          bind:busy={inspectorBusy}
+        />
+      </div>
     {/if}
   </div>
 
@@ -1062,13 +1267,25 @@
   </div>
 </div>
 
-<TaskEditDrawer
-  task={selectedTask}
-  {ctx}
-  onMetaChanged={reload}
-  onOpenSubEditor={() => selectedTask && (subEditorTask = selectedTask)}
-  onClose={() => (selectedTask = null)}
-/>
+{#if inspectorReady && !usePane}
+  <TaskEditDrawer
+    variant="overlay"
+    task={selectedTask}
+    filteredOut={selectedFilteredOut}
+    {ctx}
+    onMetaChanged={reload}
+    onOpenSubEditor={() => selectedTask && (subEditorTask = selectedTask)}
+    onClose={() => {
+      selectedTask = null
+      selectedFilteredOut = false
+    }}
+    onPrevTask={goPrevTask}
+    onNextTask={goNextTask}
+    {hasPrevTask}
+    {hasNextTask}
+    bind:busy={inspectorBusy}
+  />
+{/if}
 {#if subEditorTask}
   <TaskSubEditorModal
     blockId={subEditorTask.id}
@@ -1091,16 +1308,34 @@
 />
 
 <style>
-  .tasks-focused {
+  /* Persistent inspector selection (distinct from deep-link flash). */
+  .tasks-selected {
     background: color-mix(
       in srgb,
       var(--color-accent-primary-glow) 100%,
       transparent
     );
     box-shadow: 0 0 0 1px var(--color-accent-primary-start) inset;
+  }
+  /* Temporary deep-link / focus-jump flash. */
+  .tasks-focused {
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow) 70%,
+      transparent
+    );
+    box-shadow: 0 0 0 1px var(--color-accent-secondary-start) inset;
     transition:
       background 600ms ease-out,
       box-shadow 600ms ease-out;
+  }
+  .tasks-selected.tasks-focused {
+    background: color-mix(
+      in srgb,
+      var(--color-accent-primary-glow) 100%,
+      transparent
+    );
+    box-shadow: 0 0 0 1px var(--color-accent-primary-start) inset;
   }
   .tasks-list-row::before {
     content: '';

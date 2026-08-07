@@ -41,6 +41,55 @@ import { formatAIError } from '../../shared/formatAIError'
 export const MAX_ITERATIONS = 8
 /** Tool result bodies above this many bytes are truncated for the model. */
 export const TOOL_RESULT_MAX_BYTES = 10 * 1024
+/** Host AI rate-limit retries per complete() call (after host wait already ran). */
+export const HOST_RATE_LIMIT_MAX_RETRIES = 2
+/** Cap total extra wait from host rate-limit retries per complete() call. */
+export const HOST_RATE_LIMIT_MAX_WAIT_MS = 10_000
+/**
+ * Key embedded in host AI rate-limit errors (`key=N`). MUST match
+ * `aiRateLimitRetryAfterKey` in plugin_ratelimit.go.
+ */
+export const HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY = 'retry_after_ms'
+
+/** Parse host rate-limit errors that embed `retry_after_ms=N`. */
+export function parseHostRateLimitRetryMs(err: unknown): number | null {
+  const msg =
+    err instanceof Error ? err.message : typeof err === 'string' ? err : ''
+  if (!msg || !/AI rate limit exceeded/i.test(msg)) return null
+  const re = new RegExp(`${HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY}=(\\d+)`, 'i')
+  const m = msg.match(re)
+  if (m) {
+    const n = Number(m[1])
+    if (Number.isFinite(n) && n > 0)
+      return Math.min(n, HOST_RATE_LIMIT_MAX_WAIT_MS)
+  }
+  // Legacy message without ms — short default cooldown.
+  return 1000
+}
+
+function sleepAbortError(signal?: AbortSignal): Error {
+  const reason = signal?.reason
+  if (reason instanceof Error) return reason
+  return new DOMException('Aborted', 'AbortError')
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(sleepAbortError(signal))
+      return
+    }
+    const t = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(t)
+      reject(sleepAbortError(signal))
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
 
 /** Fired when a tool stages a destructive op awaiting user confirmation. */
 export interface StagingEvent {
@@ -466,23 +515,44 @@ export async function runAgent(
         }
       }
       iterations++
-      const stream = await raceAbort(
-        ctx.ai.complete({
-          // Providers receive a stable request snapshot; later tool-result
-          // appends must not mutate an earlier request retained by a test
-          // double or transport adapter.
-          messages: messages.map((message) => ({
-            ...message,
-            ...(message.tool_calls
-              ? { tool_calls: message.tool_calls.map((call) => ({ ...call })) }
-              : {})
-          })),
-          tools: buildToolCatalog(),
-          toolChoice: { mode: 'auto' },
-          stream: true
-        }),
-        opts.signal
-      )
+      const completeReq = {
+        // Providers receive a stable request snapshot; later tool-result
+        // appends must not mutate an earlier request retained by a test
+        // double or transport adapter.
+        messages: messages.map((message) => ({
+          ...message,
+          ...(message.tool_calls
+            ? { tool_calls: message.tool_calls.map((call) => ({ ...call })) }
+            : {})
+        })),
+        tools: buildToolCatalog(),
+        toolChoice: { mode: 'auto' as const },
+        stream: true as const
+      }
+      // Host rate limit: Go already waits up to ~3s; if still denied, cool down
+      // and retry a few times so a multi-turn tool loop does not fail the turn.
+      let stream!: PluginAIStream
+      let rateWaitedMs = 0
+      for (let attempt = 0; ; attempt++) {
+        try {
+          stream = (await raceAbort(
+            ctx.ai.complete(completeReq),
+            opts.signal
+          )) as PluginAIStream
+          break
+        } catch (err) {
+          const retryMs = parseHostRateLimitRetryMs(err)
+          if (
+            retryMs == null ||
+            attempt >= HOST_RATE_LIMIT_MAX_RETRIES ||
+            rateWaitedMs + retryMs > HOST_RATE_LIMIT_MAX_WAIT_MS
+          ) {
+            throw err
+          }
+          rateWaitedMs += retryMs
+          await sleep(retryMs, opts.signal)
+        }
+      }
       opts.onStream?.(stream)
 
       const { text, result } = await consumeStream(

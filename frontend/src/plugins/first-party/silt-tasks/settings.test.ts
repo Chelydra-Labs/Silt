@@ -23,7 +23,16 @@ import {
   preloadTasksSettings,
   reloadTasksSettings,
   loadWeekStart,
-  persistWeekStart
+  persistWeekStart,
+  loadInspectorPaneWidth,
+  persistInspectorPaneWidth,
+  canFitInspectorSplit,
+  maxInspectorPaneWidthForHost,
+  onTasksSettingsChanged,
+  DEFAULT_INSPECTOR_PANE_WIDTH,
+  MIN_INSPECTOR_PANE_WIDTH,
+  MAX_INSPECTOR_PANE_WIDTH,
+  MIN_LIST_MASTER_WIDTH
 } from './settings'
 import { SYSTEM_VIEWS } from './savedViews'
 import { getTaskWeekStart } from '../../../lib/taskWeekStart.svelte'
@@ -366,5 +375,58 @@ describe('week_start preference (#888)', () => {
     resolveOldReload({ week_start: 'monday' })
     await expect(oldReloadResult).resolves.toBe(false)
     expect(loadWeekStart()).toBe('sunday')
+  })
+})
+
+describe('inspector pane width (#910)', () => {
+  beforeEach(async () => {
+    mocks.updatePluginSetting.mockReset().mockResolvedValue(true)
+    await setTasksSettings({})
+  })
+
+  it('defaults when unset and clamps on load', async () => {
+    expect(loadInspectorPaneWidth()).toBe(DEFAULT_INSPECTOR_PANE_WIDTH)
+    await setTasksSettings({ inspector_pane_width: 200 })
+    expect(loadInspectorPaneWidth()).toBe(MIN_INSPECTOR_PANE_WIDTH)
+    await setTasksSettings({ inspector_pane_width: 9999 })
+    expect(loadInspectorPaneWidth()).toBe(MAX_INSPECTOR_PANE_WIDTH)
+    await setTasksSettings({ inspector_pane_width: 560.7 })
+    expect(loadInspectorPaneWidth()).toBe(561)
+  })
+
+  it('persist clamps and writes via updatePluginSetting', async () => {
+    await persistInspectorPaneWidth(100)
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'inspector_pane_width',
+      MIN_INSPECTOR_PANE_WIDTH
+    )
+    mocks.updatePluginSetting.mockClear()
+    await persistInspectorPaneWidth(900)
+    expect(mocks.updatePluginSetting).toHaveBeenCalledWith(
+      'inspector_pane_width',
+      MAX_INSPECTOR_PANE_WIDTH
+    )
+  })
+
+  it('canFitInspectorSplit uses master + handle + pane min', () => {
+    const need = MIN_LIST_MASTER_WIDTH + 4 + MIN_INSPECTOR_PANE_WIDTH
+    expect(canFitInspectorSplit(need)).toBe(true)
+    expect(canFitInspectorSplit(need - 1)).toBe(false)
+  })
+
+  it('maxInspectorPaneWidthForHost leaves room for the master list', () => {
+    expect(maxInspectorPaneWidthForHost(0)).toBe(MAX_INSPECTOR_PANE_WIDTH)
+    // host 900 → budget 900 - 420 - 4 = 476
+    expect(maxInspectorPaneWidthForHost(900)).toBe(476)
+    // wide host still caps at absolute max
+    expect(maxInspectorPaneWidthForHost(2000)).toBe(MAX_INSPECTOR_PANE_WIDTH)
+  })
+
+  it('onTasksSettingsChanged fires after init/reload', async () => {
+    const seen: number[] = []
+    const unsub = onTasksSettingsChanged(() => seen.push(1))
+    await setTasksSettings({ inspector_pane_width: 500 })
+    expect(seen.length).toBeGreaterThanOrEqual(1)
+    unsub()
   })
 })

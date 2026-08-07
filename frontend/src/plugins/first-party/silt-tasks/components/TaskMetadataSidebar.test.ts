@@ -153,7 +153,7 @@ describe('TaskMetadataSidebar', () => {
     expect(screen.getByLabelText('Add a tag')).toBeTruthy()
   })
 
-  it('exposes Start day as a labelled local date input', () => {
+  it('exposes Start day as a popover trigger matching Due date', () => {
     render(TaskMetadataSidebar, {
       props: {
         task: makeTask({ start_date: '2026-07-08' }),
@@ -161,9 +161,14 @@ describe('TaskMetadataSidebar', () => {
       }
     })
 
-    const input = screen.getByLabelText('Start day') as HTMLInputElement
-    expect(input.type).toBe('date')
-    expect(input.value).toBe('2026-07-08')
+    const trigger = document.getElementById(
+      'task-start-date-trigger'
+    ) as HTMLButtonElement
+    expect(trigger).toBeTruthy()
+    expect(trigger.tagName).toBe('BUTTON')
+    expect(trigger).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(trigger.textContent).toContain('2026-07-08')
+    expect(document.getElementById('task-start-date-input')).toBeNull()
   })
 
   it('sets Start day without inferring due date or duration', async () => {
@@ -177,15 +182,17 @@ describe('TaskMetadataSidebar', () => {
         ctx: makeCtx({
           setTaskStartDate,
           setTaskDueDate,
-          setTaskEstimate
+          setTaskEstimate,
+          today: '2026-07-09'
         }),
         onMetaChanged
       }
     })
 
-    await fireEvent.change(screen.getByLabelText('Start day'), {
-      target: { value: '2026-07-09' }
-    })
+    await fireEvent.click(
+      document.getElementById('task-start-date-trigger') as HTMLElement
+    )
+    await fireEvent.click(screen.getByText('Today'))
     await flush()
 
     expect(setTaskStartDate).toHaveBeenCalledWith('task-1', '2026-07-09')
@@ -194,7 +201,7 @@ describe('TaskMetadataSidebar', () => {
     expect(onMetaChanged).toHaveBeenCalled()
   })
 
-  it('clears Start day with an empty local date', async () => {
+  it('clears Start day via Clear start day', async () => {
     const setTaskStartDate = vi.fn().mockResolvedValue(true)
     render(TaskMetadataSidebar, {
       props: {
@@ -203,12 +210,51 @@ describe('TaskMetadataSidebar', () => {
       }
     })
 
-    await fireEvent.change(screen.getByLabelText('Start day'), {
-      target: { value: '' }
-    })
+    await fireEvent.click(
+      document.getElementById('task-start-date-trigger') as HTMLElement
+    )
+    await fireEvent.click(screen.getByText('Clear start day'))
     await flush()
 
     expect(setTaskStartDate).toHaveBeenCalledWith('task-1', '')
+  })
+
+  it('closes open date popovers when the task identity changes', async () => {
+    // Host remounts the sidebar on task.id change ({#key task.id} in
+    // TaskEditDrawer). Simulate that by unmount + mount with a new task.
+    const first = render(TaskMetadataSidebar, {
+      props: {
+        task: makeTask({ id: 'task-1' }),
+        ctx: makeCtx()
+      }
+    })
+
+    const trigger = document.getElementById(
+      'task-start-date-trigger'
+    ) as HTMLButtonElement
+    await fireEvent.click(trigger)
+    await flush()
+    expect(
+      screen.getByRole('dialog', { name: 'Start day options' })
+    ).toBeTruthy()
+
+    first.unmount()
+    cleanup()
+    render(TaskMetadataSidebar, {
+      props: {
+        task: makeTask({ id: 'task-2', clean_content: 'Other task' }),
+        ctx: makeCtx()
+      }
+    })
+    await flush()
+
+    const nextTrigger = document.getElementById(
+      'task-start-date-trigger'
+    ) as HTMLButtonElement
+    expect(nextTrigger.getAttribute('aria-expanded')).toBe('false')
+    expect(
+      screen.queryByRole('dialog', { name: 'Start day options' })
+    ).toBeNull()
   })
 
   it('rolls Start day back when the write is rejected', async () => {
@@ -218,16 +264,19 @@ describe('TaskMetadataSidebar', () => {
     render(TaskMetadataSidebar, {
       props: {
         task: makeTask({ start_date: '2026-07-08' }),
-        ctx: makeCtx({ setTaskStartDate })
+        ctx: makeCtx({ setTaskStartDate, today: '2026-07-09' })
       }
     })
 
-    const input = screen.getByLabelText('Start day') as HTMLInputElement
-    await fireEvent.change(input, { target: { value: '2026-07-09' } })
+    const trigger = document.getElementById(
+      'task-start-date-trigger'
+    ) as HTMLButtonElement
+    await fireEvent.click(trigger)
+    await fireEvent.click(screen.getByText('Today'))
     await flush()
 
     expect(setTaskStartDate).toHaveBeenCalledWith('task-1', '2026-07-09')
-    expect(input.value).toBe('2026-07-08')
+    expect(trigger.textContent).toContain('2026-07-08')
     expect(screen.getByTestId('task-meta-error')).toHaveTextContent(
       "Couldn't save: start date rejected"
     )
