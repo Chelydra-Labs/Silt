@@ -208,8 +208,9 @@ func (a *App) ReloadTypes() error {
 // that begin AFTER the listener attaches). Returns
 // {active: bool, processed: uint64, total: uint64}; all-zero with active=false
 // when no worker is running (no vault open) or the worker is idle between
-// batches. Two atomic loads under a brief RLock snapshot of the worker
-// pointer — cheap enough to call on every dashboard mount.
+// batches. One atomic pointer load under a brief RLock snapshot of the worker
+// pointer — the snapshot is swapped as a single value, so the read can never
+// observe a torn (total, processed) pair.
 func (a *App) GetTypesReprojectionStatus() map[string]any {
 	a.vaultMu.RLock()
 	w := a.reprojectWorker
@@ -221,12 +222,18 @@ func (a *App) GetTypesReprojectionStatus() map[string]any {
 			"total":     uint64(0),
 		}
 	}
-	total := w.progressTotal.Load()
-	processed := w.progressProcessed.Load()
+	p := w.progress.Load()
+	if p == nil {
+		return map[string]any{
+			"active":    false,
+			"processed": uint64(0),
+			"total":     uint64(0),
+		}
+	}
 	return map[string]any{
-		"active":    total > 0,
-		"processed": processed,
-		"total":     total,
+		"active":    p.total > 0,
+		"processed": p.processed,
+		"total":     p.total,
 	}
 }
 

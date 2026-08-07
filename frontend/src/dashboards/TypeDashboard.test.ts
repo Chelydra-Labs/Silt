@@ -458,11 +458,12 @@ describe('TypeDashboard', () => {
       expect(screen.queryByTestId('reprojection-progress')).toBeNull()
     })
 
-    it('renders the progress region + role=status when a batch is running', async () => {
+    it('renders the progress region + a role=status live region when a batch is running', async () => {
       // Seed the cold-state read as already-active so the store mounts active
       // without needing to fire the event (the live event path is covered by
-      // reprojectionStatus.test.ts). The progress region must surface a
-      // role=status live region and the native progress bar.
+      // reprojectionStatus.test.ts). The region surfaces a native progress bar
+      // and a stable role=status announcement; the changing count is aria-hidden
+      // so screen readers do not re-announce every throttled update.
       appMocks.GetTypesReprojectionStatus.mockResolvedValue({
         active: true,
         processed: 4,
@@ -470,15 +471,13 @@ describe('TypeDashboard', () => {
       })
       await mount()
       const region = await screen.findByTestId('reprojection-progress')
-      expect(region).toHaveAttribute('role', 'status')
-      expect(region).toHaveAttribute('aria-live', 'polite')
-      // Native progress bar exposes itself as a progressbar role.
+      expect(within(region).getByRole('status')).toBeInTheDocument()
       expect(
         within(region).getByRole('progressbar', {
-          name: 'Reprojecting typed pages'
+          name: 'Rebuilding type index'
         })
       ).toBeInTheDocument()
-      // The "processed/total" copy is present and polite-live.
+      // The "processed/total" copy is present (sighted).
       expect(region.textContent).toMatch(/4\/10/)
     })
 
@@ -491,7 +490,7 @@ describe('TypeDashboard', () => {
       await mount()
       await screen.findByTestId('reprojection-progress')
       const refreshBtn = screen.getByRole('button', {
-        name: /Refresh|Reprojecting/
+        name: /Refresh|Updating/
       })
       expect(refreshBtn).toBeDisabled()
     })

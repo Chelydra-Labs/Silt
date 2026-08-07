@@ -47,7 +47,7 @@ type projectionReprojectWorker struct {
 	app *App
 
 	wake chan struct{} // buffered=1; non-blocking signal
-	stop chan struct{} // closed to request drain + exit
+	stop chan struct{} // closed to request exit; any pending enqueue is dropped (the next vault open's backfill covers it)
 	done chan struct{} // closed when goroutine has exited
 
 	// startOnce / stopOnce make start and stopAndJoin idempotent. stop on a
@@ -65,15 +65,23 @@ type projectionReprojectWorker struct {
 	epoch     atomic.Uint64
 	processed atomic.Uint64
 
-	// progressTotal / progressProcessed back both the live progress event
-	// emits AND the GetTypesReprojectionStatus cold-state read. Set together
-	// at the start of a non-empty batch (runOneBatch), advanced per locator,
-	// and reset to 0 on completion / mid-batch abandon. total==0 is the idle
+	// progress is the atomic snapshot backing both the live progress event
+	// emits AND the GetTypesReprojectionStatus cold-state read. Swapped as a
+	// single pointer so the read observes a consistent (total, processed)
+	// pair — never a torn read across two independent atomics. Set at the
+	// start of a non-empty batch (runOneBatch), advanced per locator, and
+	// cleared to nil on completion / mid-batch abandon. nil is the idle
 	// signal: GetTypesReprojectionStatus reports active=false, and the
-	// dashboard hides the progress region. Read with a single atomic load —
-	// no lock is taken on this hot path.
-	progressTotal     atomic.Uint64
-	progressProcessed atomic.Uint64
+	// dashboard hides the progress region. One atomic load on the read path.
+	progress atomic.Pointer[reprojectionProgress]
+}
+
+// reprojectionProgress is the value type for projectionReprojectWorker.progress.
+// Page counts always fit comfortably in uint64; a zero struct is unreachable
+// (idle is represented by a nil pointer, not a zeroed value).
+type reprojectionProgress struct {
+	total     uint64
+	processed uint64
 }
 
 // newProjectionReprojectWorker constructs an idle worker. done is pre-closed
@@ -256,16 +264,14 @@ func (w *projectionReprojectWorker) runOneBatch() {
 
 	// Progress setup. A no-op batch (no locators) emits nothing — churning
 	// start/done for an empty set would flicker the dashboard progress region
-	// on every coalesced no-op wake. The atomics stay at 0 so the cold-state
-	// read continues to report idle.
+	// on every coalesced no-op wake. The progress pointer is already nil
+	// (the prior batch's completion or mid-batch abandon cleared it), so the
+	// cold-state read continues to report idle.
 	total := uint64(len(locators))
 	if total == 0 {
-		w.progressTotal.Store(0)
-		w.progressProcessed.Store(0)
 		return
 	}
-	w.progressTotal.Store(total)
-	w.progressProcessed.Store(0)
+	w.progress.Store(&reprojectionProgress{total: total, processed: 0})
 	w.app.emit(EventTypesReprojectionProgress, map[string]any{
 		"state":     "running",
 		"processed": uint64(0),
@@ -288,14 +294,13 @@ func (w *projectionReprojectWorker) runOneBatch() {
 		w.app.vaultMu.RUnlock()
 		if closed {
 			// Reset progress without a "done" emit — the batch was abandoned,
-			// not completed. The next open starts fresh from 0.
-			w.progressTotal.Store(0)
-			w.progressProcessed.Store(0)
+			// not completed. The next open starts fresh (nil = idle).
+			w.progress.Store(nil)
 			return
 		}
 		w.reprojectOneLocator(dbMgr, vaultPath, spacesPerTab, loc)
 		done := uint64(i + 1)
-		w.progressProcessed.Store(done)
+		w.progress.Store(&reprojectionProgress{total: total, processed: done})
 		if done == total || (step > 0 && done%step == 0) {
 			w.app.emit(EventTypesReprojectionProgress, map[string]any{
 				"state":     "running",
@@ -310,8 +315,7 @@ func (w *projectionReprojectWorker) runOneBatch() {
 		"processed": total,
 		"total":     total,
 	})
-	w.progressTotal.Store(0)
-	w.progressProcessed.Store(0)
+	w.progress.Store(nil)
 }
 
 // reprojectOneLocator is the per-page step shared with the prior

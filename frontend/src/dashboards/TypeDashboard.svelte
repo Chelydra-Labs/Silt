@@ -6,6 +6,7 @@
   // debounce + grouping shape, minus the plugin context.
   import { SvelteSet } from 'svelte/reactivity'
   import { onMount, onDestroy, untrack } from 'svelte'
+  import { fade } from 'svelte/transition'
   import { Events } from '@wailsio/runtime'
   import {
     ListTypes,
@@ -362,7 +363,13 @@
       await loadTypes()
       await reload()
     } finally {
-      refreshing = false
+      // ReloadTypes only enqueues; the worker wakes asynchronously and emits
+      // `running` a moment later, so clearing `refreshing` immediately would
+      // re-enable the button for the brief window before reprojection.active
+      // flips. Hold the guard briefly: a non-empty batch hands the disabled
+      // state off to reprojection.active; an empty batch (no pages) releases
+      // it here.
+      setTimeout(() => (refreshing = false), 400)
     }
   }
 
@@ -560,7 +567,7 @@
             class:spinning={reprojection.active}
             aria-hidden="true">sync</span
           >
-          {reprojection.active ? 'Reprojecting…' : 'Refresh'}
+          {reprojection.active ? 'Updating…' : 'Refresh'}
         </button>
         <button
           type="button"
@@ -589,18 +596,24 @@
     {#if reprojection.active}
       <div
         class="reprojection-progress"
-        role="status"
-        aria-live="polite"
         data-testid="reprojection-progress"
+        in:fade={{ duration: 150 }}
       >
         <progress
           value={reprojection.processed}
           max={reprojection.total || 1}
-          aria-label="Reprojecting typed pages"
+          aria-label="Rebuilding type index"
         ></progress>
-        <span class="reprojection-text">
-          Reprojecting types… {reprojection.processed}/{reprojection.total}
+        <!-- The numeric count changes on every throttled emit; keep it
+             sighted-only (aria-hidden) so screen readers do not re-announce it
+             per update. The stable sr-only status below carries the single
+             start announcement. -->
+        <span class="reprojection-text" aria-hidden="true">
+          Rebuilding index… {reprojection.processed}/{reprojection.total}
         </span>
+        <span class="sr-only" role="status" aria-live="polite"
+          >Rebuilding type index</span
+        >
       </div>
     {/if}
     {#if typeLoadErrors.length > 0}
@@ -916,14 +929,11 @@
     gap: 0.5rem;
     padding: 0.65rem 0.75rem;
     border-radius: 0.5rem;
-    border: 1px solid
-      color-mix(in srgb, var(--color-error, #c62828) 35%, transparent);
-    background: color-mix(
-      in srgb,
-      var(--color-error, #c62828) 10%,
-      transparent
-    );
-    color: var(--color-error, #c62828);
+    /* Canonical themeable error family (matches PropertiesBody's .banner.error)
+       instead of a hand-rolled color-mix wash with a hardcoded fallback hex. */
+    border: 1px solid var(--color-error-border);
+    background: var(--color-error-bg);
+    color: var(--color-error-fg);
     font-size: var(--text-type-sm);
     font-family: var(--font-body, sans-serif);
   }

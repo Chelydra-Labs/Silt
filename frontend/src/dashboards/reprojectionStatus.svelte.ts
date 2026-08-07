@@ -29,6 +29,9 @@ export function createReprojectionStatus(): ReprojectionStatus {
   let active = $state(false)
   let processed = $state(0)
   let total = $state(0)
+  // Set true by the first live progress event; lets seed() avoid clobbering a
+  // fresher event with the stale snapshot captured during its IPC round-trip.
+  let eventReceived = false
 
   function apply(
     state: string | undefined,
@@ -48,12 +51,13 @@ export function createReprojectionStatus(): ReprojectionStatus {
         total?: number
       } | null
       if (!res) return
+      // A live event that arrived while this IPC was in flight is strictly
+      // fresher than the snapshot captured at call time — don't let the stale
+      // seed clobber it (the race window is small but real for fast batches).
+      if (eventReceived) return
       const t = typeof res.total === 'number' ? res.total : 0
       total = t
       processed = typeof res.processed === 'number' ? res.processed : 0
-      // Trust the backend's active flag (total>0 at the source) over a
-      // derived check so a race where the event lands between seed and the
-      // first event doesn't resurrect a stale active state.
       active = res.active === true
     } catch {
       // Cold-state read is best-effort — a transient IPC failure leaves the
@@ -62,8 +66,10 @@ export function createReprojectionStatus(): ReprojectionStatus {
   }
 
   function attach(): () => void {
+    eventReceived = false
     void seed()
     const off = Events.On(EventName.EventTypesReprojectionProgress, (event) => {
+      eventReceived = true
       const data = (event?.data ?? {}) as {
         state?: string
         processed?: number

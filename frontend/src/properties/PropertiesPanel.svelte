@@ -111,7 +111,12 @@
     }
   }
 
-  // Esc listener bound only while the panel is open.
+  // Esc listener bound only while the panel is open. Intentionally BUBBLE
+  // phase (no capture flag): the blocking PropertiesEditModal registers its
+  // own Esc handler in CAPTURE phase and calls stopPropagation, so when both
+  // are mounted (modal open over the peek) the modal's handler wins and the
+  // peek's does not also fire. Do not "modernize" this to capture without
+  // coordinating with the modal — it would break the single-close contract.
   $effect(() => {
     if (!open) return
     window.addEventListener('keydown', onWindowKeydown)

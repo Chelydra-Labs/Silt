@@ -174,6 +174,12 @@ export function createPageTypeController(
     // only shows the skeleton when `loading && values.length === 0`.
     // mismatched clears ONLY on locator change (see lastLocator rationale).
     if (locatorChanged) {
+      // A page switch ends any in-flight focused-edit session: the modal
+      // edits one page's properties, so navigating away closes it (the
+      // peek is non-blocking and intentionally follows the active page).
+      // Without this the modal would stay mounted over the wiped info/values
+      // below and briefly paint empty fields during the re-fetch.
+      closeModal()
       info = EMPTY_INFO
       values = []
       mismatched = []

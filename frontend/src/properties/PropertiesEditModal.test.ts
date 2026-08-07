@@ -68,7 +68,7 @@ describe('PropertiesEditModal', () => {
     render(PropertiesEditModal, { props: baseProps() })
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveAttribute('aria-modal', 'true')
-    expect(dialog).toHaveAttribute('aria-label', 'Edit page properties')
+    expect(dialog).toHaveAttribute('aria-label', 'Edit properties')
   })
 
   it('does not render when closed', () => {
@@ -76,7 +76,27 @@ describe('PropertiesEditModal', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('moves focus to the type <select> on open (first editable control)', async () => {
+  it('moves focus to the first value field on open when fields exist', async () => {
+    const values: PagePropertyValue[] = [
+      {
+        name: 'title',
+        label: 'Title',
+        type: 'text',
+        value: 'Dune',
+        isSet: true,
+        required: false
+      }
+    ]
+    render(PropertiesEditModal, {
+      props: baseProps({ values, types: [{ id: 'book', name: 'Book' }] })
+    })
+    const firstField = document.getElementById('prop-title') as HTMLInputElement
+    await waitFor(() => {
+      expect(document.activeElement).toBe(firstField)
+    })
+  })
+
+  it('falls back to the type <select> on open when there are no fields', async () => {
     render(PropertiesEditModal, {
       props: baseProps({ types: [{ id: 'book', name: 'Book' }] })
     })

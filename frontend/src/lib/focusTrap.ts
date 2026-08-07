@@ -10,6 +10,13 @@
 // (ConfirmDialog/ChoiceDialog/NamePromptDialog/BlockPickerModal/
 // TaskSubEditorModal) is tracked separately and governed by
 // docs/decisions/0009-modal-primitive.md.
+//
+// Known gaps (intentional — no current consumer trips them):
+//  - Positive `tabindex` elements are returned in DOM order, not tabindex-
+//    value order. The spec's sequential-focus order ranks by tabindex value,
+//    but every dialog here uses tabindex 0/-1 only, so DOM order is correct.
+//  - `querySelectorAll` does not pierce shadow boundaries. None of the
+//    consumed dialogs host a shadow-DOM web component with focusables today.
 
 // Spec-aligned candidate set for sequential focus (HTML "tabindex focus flag"
 // + "actually focusable" proxies). Includes the native form controls +

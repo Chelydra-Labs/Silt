@@ -76,6 +76,37 @@ describe('createReprojectionStatus', () => {
     dispose()
   })
 
+  it('a live event landing during seed does not get clobbered by the stale seed', async () => {
+    // H1 race guard: the seed IPC captures an idle snapshot, but a running
+    // event lands before the seed's resolver runs. The guard must keep the
+    // live (running) state and NOT let the stale idle seed overwrite it.
+    let resolveSeed!: (v: unknown) => void
+    appMocks.GetTypesReprojectionStatus.mockReturnValue(
+      new Promise((r) => {
+        resolveSeed = r as (v: unknown) => void
+      })
+    )
+    const status = createReprojectionStatus()
+    const dispose = status.attach()
+    await tick()
+
+    // Event arrives while the seed IPC is still pending.
+    eventsHandlers[PROGRESS_EVENT]?.({
+      data: { state: 'running', processed: 4, total: 9 }
+    })
+    await tick()
+    expect(status.active).toBe(true)
+    expect(status.processed).toBe(4)
+
+    // Now the stale seed resolves with idle — it must NOT clobber the live state.
+    resolveSeed({ active: false, processed: 0, total: 0 })
+    await tick()
+    expect(status.active).toBe(true)
+    expect(status.processed).toBe(4)
+    expect(status.total).toBe(9)
+    dispose()
+  })
+
   it('a running progress event sets active + counts', async () => {
     const status = createReprojectionStatus()
     const dispose = status.attach()

@@ -18,6 +18,13 @@
     TypeDef
   } from './types'
 
+  // Honor prefers-reduced-motion: 0-duration transitions are visual no-ops but
+  // the modal still mounts/unmounts normally (no separate code path). Mirrors
+  // the peek (PropertiesPanel) so both surfaces agree.
+  const reduceMotion =
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
   interface Props {
     open: boolean
     info: PageTypeInfo
@@ -83,12 +90,22 @@
     await tick()
     const surface = surfaceRef
     if (!surface) return
-    // Land on the type <select> — the first editable control and a sensible
-    // starting point for both typed (Tab forward to fields) and untyped (pick a
-    // type) pages. Skip it when the roster is empty (select is disabled and
-    // unfocusable) and focus the surface so focus is at least inside the modal;
-    // Tab then reaches the Create/Restore recovery buttons. Fall back to the
-    // surface if the select is absent entirely.
+    // This is a focused property-EDIT session, so land on the first property
+    // value field when one exists. Fall back to the type <select> when the page
+    // is untyped / has no fields (so the user can pick a type), then to the
+    // surface container so focus is at least inside the modal.
+    // The first property VALUE control. PropertyField also gives the field's
+    // <label> and warning ids like `prop-<name>-label` / `-warn`, which sort
+    // before the control and are not focusable — so match only form controls.
+    // Falls back to the type <select> when the page is untyped / has no scalar
+    // control first, then the surface container.
+    const firstField = surface.querySelector<
+      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+    >('input[id^="prop-"], select[id^="prop-"], textarea[id^="prop-"]')
+    if (firstField) {
+      firstField.focus()
+      return
+    }
     const typeSelect = surface.querySelector<HTMLElement>(
       '[aria-label="Page type"]'
     )
@@ -125,7 +142,7 @@
 {#if open}
   <div
     class="modal-overlay"
-    transition:fade={{ duration: 120 }}
+    transition:fade={{ duration: reduceMotion ? 0 : 120 }}
     data-focus-trap
   >
     <!-- Full-size click-to-close sentinel (tabindex="-1" so it stays out of the
@@ -140,10 +157,10 @@
     ></button>
     <div
       bind:this={surfaceRef}
-      transition:fly={{ y: 16, duration: 160 }}
+      transition:fly={{ y: 16, duration: reduceMotion ? 0 : 160 }}
       role="dialog"
       aria-modal="true"
-      aria-label="Edit page properties"
+      aria-label="Edit properties"
       tabindex="-1"
       class="modal-surface"
     >
@@ -197,8 +214,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    /* Translucent dim (~50%) so the user retains some document context per
-       #873's open question, while still obscuring the editor underneath. */
+    /* Translucent dim so the user retains some document context while the
+       editor is obscured. 0.5 (heavier than the 0.4 used by the small confirm
+       dialogs) is intentional: this surface covers the full editor column, so
+       a stronger scrim reads as deliberate focus rather than a transient
+       popover. */
     background: rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(2px);
   }
