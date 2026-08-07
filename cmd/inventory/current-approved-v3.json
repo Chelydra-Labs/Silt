@@ -353,6 +353,10 @@
         "signature": "GetType(id string) (types.TypeDef, error)"
       },
       {
+        "name": "GetTypesReprojectionStatus",
+        "signature": "GetTypesReprojectionStatus() map[string]any"
+      },
+      {
         "name": "GetUnlinkedMentionsPaged",
         "signature": "GetUnlinkedMentionsPaged(notebook, section, page, cursor, scanCursor string, limit int) (db.UnlinkedMentionsResult, error)"
       },
@@ -1117,6 +1121,7 @@
       "themes:changed",
       "types:changed",
       "types:projection-error",
+      "types:reprojection:progress",
       "update:download:progress",
       "vault:archive:progress",
       "vault:closing",
@@ -1200,6 +1205,8 @@
       "frontend/src/dashboards/TypeDashboard.test.ts",
       "frontend/src/dashboards/dashboardSettings.test.ts",
       "frontend/src/dashboards/dashboardSettings.ts",
+      "frontend/src/dashboards/reprojectionStatus.svelte.ts",
+      "frontend/src/dashboards/reprojectionStatus.test.ts",
       "frontend/src/lib/devModeInspect.test.ts",
       "frontend/src/lib/devModeInspect.ts",
       "frontend/src/lib/editor/blockDepthDom.test.ts",
@@ -1243,7 +1250,8 @@
       "frontend/src/plugins/shared/ai-chat/navigateEvidence.test.ts",
       "frontend/src/properties/PageLinkField.svelte",
       "frontend/src/properties/PageLinkField.test.ts",
-      "frontend/src/properties/PropertiesPanel.svelte",
+      "frontend/src/properties/PropertiesBody.svelte",
+      "frontend/src/properties/PropertiesEditModal.test.ts",
       "frontend/src/properties/PropertiesPanel.test.ts",
       "frontend/src/properties/PropertiesPanelCore.test.ts",
       "frontend/src/properties/PropertyField.svelte",
@@ -1314,6 +1322,8 @@
       "frontend/src/dashboards/TypeDashboard.svelte",
       "frontend/src/dashboards/TypeDashboard.test.ts",
       "frontend/src/dashboards/dashboardSettings.test.ts",
+      "frontend/src/dashboards/reprojectionStatus.svelte.ts",
+      "frontend/src/dashboards/reprojectionStatus.test.ts",
       "frontend/src/lib/editor/blockDepthDom.test.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
       "frontend/src/lib/editor/spellcheck/customDictionary.svelte.test.ts",
@@ -1384,6 +1394,7 @@
       "themes:changed",
       "types:changed",
       "types:projection-error",
+      "types:reprojection:progress",
       "update:download:progress",
       "vault:archive:progress",
       "vault:closing",
