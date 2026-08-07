@@ -272,6 +272,22 @@ describe('TaskMetadataSidebar', () => {
     expect(screen.queryAllByTestId('task-activity-disclosure')).toHaveLength(0)
   })
 
+  it('wires the responsive container + field-pairs so the narrow modal sidebar stacks to one column', () => {
+    const { container } = render(TaskMetadataSidebar, {
+      props: { task: makeTask(), ctx: makeCtx() }
+    })
+
+    // The sidebar root is a container (container-type: inline-size) and the date
+    // pair + Essentials [Owner | Priority] pair carry .field-pair, which the
+    // @container (max-width: 360px) rule collapses to one column inside the 320px
+    // sub-editor modal aside. jsdom can't evaluate container queries, so this
+    // guards the mechanism's presence rather than the computed geometry.
+    expect(container.querySelector('.task-metadata-sidebar')).toBeTruthy()
+    expect(
+      container.querySelectorAll('.field-pair').length
+    ).toBeGreaterThanOrEqual(2)
+  })
+
   it('an optimistic status edit calls ctx.updateBlockState', async () => {
     const updateBlockState = vi
       .fn()
