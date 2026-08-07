@@ -94,6 +94,7 @@ interface CommentThreadProps {
   fileDate: string
   ctx: PluginContext
   onCommentsChanged?: () => void
+  layout?: 'inline' | 'drawer'
 }
 
 function makeCtx(overrides: Partial<PluginContext> = {}): PluginContext {
@@ -166,6 +167,24 @@ describe('CommentThread', () => {
     mount()
     await flush()
     expect(await screen.findByTestId('comment-empty-state')).toBeInTheDocument()
+  })
+
+  it('drawer layout bounds the comment list and marks the composer sticky', async () => {
+    const ctx = makeCtx({
+      fetchSubtree: vi.fn().mockResolvedValue([
+        makeBlock({
+          id: 'c1',
+          clean_text: 'One',
+          author: 'a',
+          timestamp: '2026-07-01T09:00:00'
+        })
+      ])
+    })
+    mount({ ctx, layout: 'drawer' })
+    await flush()
+    const list = await screen.findByTestId('comment-list-scroll')
+    expect(list.className).toMatch(/max-h-/)
+    expect(screen.getByTestId('comment-composer-sticky')).toBeInTheDocument()
   })
 
   it('renders comments from fetchSubtree (NOTE blocks with author/timestamp)', async () => {

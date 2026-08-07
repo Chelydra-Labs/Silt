@@ -634,7 +634,7 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     const setTaskStartDate = vi.fn().mockResolvedValue(true)
     render(TaskSubEditorModal, {
       ...BASE_PROPS,
-      ctx: makeCtx({ setTaskStartDate }),
+      ctx: makeCtx({ setTaskStartDate, today: '2026-07-09' }),
       onClose: () => {}
     })
     await vi.waitFor(() =>
@@ -643,9 +643,10 @@ describe('TaskSubEditorModal — metadata sidebar (#780 / #826)', () => {
     await vi.waitFor(() => expect(mocks.sqliteQuery).toHaveBeenCalled())
     await flush()
 
-    await fireEvent.change(screen.getByLabelText('Start day'), {
-      target: { value: '2026-07-09' }
-    })
+    await fireEvent.click(
+      document.getElementById('task-start-date-trigger') as HTMLElement
+    )
+    await fireEvent.click(screen.getByText('Today'))
     await flush()
 
     expect(setTaskStartDate).toHaveBeenCalledWith('task-1', '2026-07-09')
