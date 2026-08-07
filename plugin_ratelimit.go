@@ -41,6 +41,11 @@ const maxPluginFetchBurst = 100
 // at first-party refill rates (~125ms/token at 8 rps).
 const aiRateLimitMaxWait = 3 * time.Second
 
+// aiRateLimitRetryAfterKey is the key embedded in host AI rate-limit errors so
+// first-party clients can parse a cooldown. MUST stay in lockstep with
+// HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY in silt-ai-agent/agent-loop.ts.
+const aiRateLimitRetryAfterKey = "retry_after_ms"
+
 // tokenBucket is a standard token-bucket rate limiter. tokens refill at rps
 // up to burst capacity. allow() consumes one token if available.
 type tokenBucket struct {

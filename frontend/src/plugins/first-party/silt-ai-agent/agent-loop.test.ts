@@ -11,6 +11,7 @@ import {
   buildSystemPrompt,
   createAgentSession,
   MAX_ITERATIONS,
+  HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY,
   parseHostRateLimitRetryMs,
   runAgent,
   truncateToolResult,
@@ -230,10 +231,12 @@ describe('agent-loop', () => {
   })
 
   it('parseHostRateLimitRetryMs reads retry_after_ms from host errors', () => {
+    // Pin the cross-boundary key (must match aiRateLimitRetryAfterKey in Go).
+    expect(HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY).toBe('retry_after_ms')
     expect(
       parseHostRateLimitRetryMs(
         new Error(
-          'plugin "silt-ai-agent" AI rate limit exceeded (max 8.0 rps, burst 40); retry_after_ms=250'
+          `plugin "silt-ai-agent" AI rate limit exceeded (max 8.0 rps, burst 40); ${HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY}=250`
         )
       )
     ).toBe(250)

@@ -45,13 +45,19 @@ export const TOOL_RESULT_MAX_BYTES = 10 * 1024
 export const HOST_RATE_LIMIT_MAX_RETRIES = 2
 /** Cap total extra wait from host rate-limit retries per complete() call. */
 export const HOST_RATE_LIMIT_MAX_WAIT_MS = 10_000
+/**
+ * Key embedded in host AI rate-limit errors (`key=N`). MUST match
+ * `aiRateLimitRetryAfterKey` in plugin_ratelimit.go.
+ */
+export const HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY = 'retry_after_ms'
 
 /** Parse host rate-limit errors that embed `retry_after_ms=N`. */
 export function parseHostRateLimitRetryMs(err: unknown): number | null {
   const msg =
     err instanceof Error ? err.message : typeof err === 'string' ? err : ''
   if (!msg || !/AI rate limit exceeded/i.test(msg)) return null
-  const m = msg.match(/retry_after_ms=(\d+)/i)
+  const re = new RegExp(`${HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY}=(\\d+)`, 'i')
+  const m = msg.match(re)
   if (m) {
     const n = Number(m[1])
     if (Number.isFinite(n) && n > 0)

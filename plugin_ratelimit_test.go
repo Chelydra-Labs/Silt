@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -158,5 +160,18 @@ func TestHostDefaultRatelimit_FirstParty(t *testing.T) {
 	rps, burst = hostDefaultRatelimit("third-party-x")
 	if rps != defaultPluginFetchRPS || burst != defaultPluginFetchBurst {
 		t.Fatalf("third-party got %v/%v", rps, burst)
+	}
+}
+
+// Pins the host→plugin retry_after key so a rename cannot silently break the
+// silt-ai-agent parser (HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY in agent-loop.ts).
+func TestAIRateLimitRetryAfterKey_Contract(t *testing.T) {
+	if aiRateLimitRetryAfterKey != "retry_after_ms" {
+		t.Fatalf("aiRateLimitRetryAfterKey = %q, want retry_after_ms (keep in sync with agent-loop.ts)", aiRateLimitRetryAfterKey)
+	}
+	msg := fmt.Sprintf("plugin %q AI rate limit exceeded (max %.1f rps, burst %d); %s=%d",
+		"silt-ai-agent", 8.0, 40, aiRateLimitRetryAfterKey, 250)
+	if !strings.Contains(msg, "retry_after_ms=250") {
+		t.Fatalf("formatted error missing contract token: %q", msg)
 	}
 }

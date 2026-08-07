@@ -156,8 +156,8 @@ func (a *App) withAIPreflight(pluginID, sessionToken, which string) (ai.AIProvid
 				retryMs = int(aiRateLimitMaxWait / time.Millisecond)
 			}
 			return ai.AIProvider{}, "", nil, fmt.Errorf(
-				"plugin %q AI rate limit exceeded (max %.1f rps, burst %d); retry_after_ms=%d",
-				pluginID, rps, burst, retryMs,
+				"plugin %q AI rate limit exceeded (max %.1f rps, burst %d); %s=%d",
+				pluginID, rps, burst, aiRateLimitRetryAfterKey, retryMs,
 			)
 		}
 	}
