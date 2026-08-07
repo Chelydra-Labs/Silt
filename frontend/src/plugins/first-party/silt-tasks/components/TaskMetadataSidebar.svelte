@@ -602,7 +602,7 @@
           type="button"
           onclick={onClose}
           aria-label="Close detail panel"
-          class="shrink-0 rounded p-1 text-text-muted transition-colors hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start"
+          class="shrink-0 rounded border-l border-surface-card-border p-1 pl-1.5 ml-0.5 text-text-muted transition-colors hover:bg-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start"
         >
           <span class="material-symbols-outlined" aria-hidden="true">close</span
           >
@@ -647,11 +647,13 @@
     <div class="field-pair grid grid-cols-2 gap-2">
       <section class="min-w-0">
         <h3
+          id="task-due-date-label"
           class="mb-1 font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
         >
           Due date
         </h3>
         <button
+          id="task-due-date-trigger"
           bind:this={dueDateTrigger}
           type="button"
           onclick={() => {
@@ -661,6 +663,7 @@
           disabled={dueDateField.pending}
           aria-haspopup="dialog"
           aria-expanded={dueDateOpen}
+          aria-labelledby="task-due-date-label task-due-date-trigger"
           class="flex w-full items-center justify-between gap-1 rounded border border-surface-card-border bg-surface-card px-2 py-1.5 font-label-sm text-type-xs text-text-primary transition-colors hover:bg-hover disabled:opacity-50"
         >
           <span class="flex min-w-0 items-center gap-1.5">
@@ -929,35 +932,43 @@
               >
             {/if}
           </span>
-          <div class="ml-auto flex items-center gap-1.5">
-            <label
-              for="task-estimate-input"
-              class="font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
+          <div class="ml-auto flex flex-col items-end gap-0.5">
+            <div class="flex items-center gap-1.5">
+              <label
+                for="task-estimate-input"
+                class="font-label-sm-bold text-type-2xs uppercase tracking-widest text-text-muted"
+              >
+                Estimate
+              </label>
+              <input
+                id="task-estimate-input"
+                type="text"
+                data-testid="task-estimate-input"
+                class="w-28 rounded-sm border border-surface-card-border bg-surface-card px-2 py-0.5 text-right text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimateField.pending
+                  ? 'opacity-50'
+                  : ''}"
+                placeholder="—"
+                value={estimateField.value}
+                oninput={(e) => (estimateField.value = e.currentTarget.value)}
+                readonly={estimateField.pending}
+                aria-busy={estimateField.pending}
+                aria-invalid={estimateInvalid}
+                aria-describedby="task-estimate-hint"
+                onblur={() => void commitEstimate()}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void commitEstimate()
+                  }
+                }}
+              />
+            </div>
+            <p
+              id="task-estimate-hint"
+              class="font-label-sm text-type-2xs text-text-muted"
             >
-              Estimate
-            </label>
-            <input
-              id="task-estimate-input"
-              type="text"
-              data-testid="task-estimate-input"
-              class="w-28 rounded-sm border border-surface-card-border bg-surface-card px-2 py-0.5 text-right text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-primary-start/40 {estimateField.pending
-                ? 'opacity-50'
-                : ''}"
-              placeholder="—"
-              value={estimateField.value}
-              oninput={(e) => (estimateField.value = e.currentTarget.value)}
-              readonly={estimateField.pending}
-              aria-busy={estimateField.pending}
-              aria-invalid={estimateInvalid}
-              aria-describedby="task-estimate-hint"
-              onblur={() => void commitEstimate()}
-              onkeydown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  void commitEstimate()
-                }
-              }}
-            />
+              Try 30m, 2h, 1d, or 2.5d
+            </p>
           </div>
         </div>
         <input
@@ -982,12 +993,6 @@
             style="width: {progressState}%"
           ></div>
         </div>
-        <p
-          id="task-estimate-hint"
-          class="mt-2 font-label-sm text-type-2xs text-text-muted"
-        >
-          Try 30m, 2h, 1d, or 2.5d
-        </p>
       </section>
 
       <section>

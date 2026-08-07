@@ -584,6 +584,28 @@ describe('TaskEditDrawer — information architecture and keyboard flow', () => 
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('does not light-dismiss the drawer while a nested popover is open', async () => {
+    const onClose = vi.fn()
+    render(TaskEditDrawer, {
+      props: { task: makeTask(), ctx: makeCtx(), onClose }
+    })
+
+    // Open the due-date popover.
+    await fireEvent.click(screen.getByRole('button', { name: /2026-07-15/ }))
+    expect(
+      screen.getByRole('dialog', { name: 'Due date options' })
+    ).toBeTruthy()
+
+    // A mousedown fully outside the drawer AND the popover must NOT close the
+    // drawer while the popover is open — the sidebarBusy guard holds so the
+    // user doesn't lose the drawer mid-date-edit. (The popover closes itself.)
+    const outside = document.createElement('button')
+    document.body.appendChild(outside)
+    await fireEvent.mouseDown(outside)
+    expect(onClose).not.toHaveBeenCalled()
+    outside.remove()
+  })
+
   it('keeps title, status, due date, start day, pin, and close in one sticky header', () => {
     render(TaskEditDrawer, {
       props: { task: makeTask(), ctx: makeCtx(), onClose: () => {} }
