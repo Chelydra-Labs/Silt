@@ -54,6 +54,10 @@
     onCreateType?: () => void
     /** Restore the shipped example types (Book, Meeting). */
     onRestoreExamples?: () => void
+    /** How management actions render. Peek collapses Create/Restore/Remove
+     *  behind a more_vert menu so the 32vh header stays single-row; modal
+     *  keeps the full inline chips. Default inline is the safe fallback. */
+    actionsLayout?: 'inline' | 'menu'
     /** Trailing header control — the surface's close affordance, rendered at
      *  the end of the type-select header row (mirrors the peek's layout). */
     trailing?: Snippet
@@ -76,10 +80,100 @@
     onError,
     onCreateType,
     onRestoreExamples,
+    actionsLayout = 'inline',
     trailing
   }: Props = $props()
 
   let typeSelectRef = $state<HTMLSelectElement | null>(null)
+
+  // Peek overflow menu (actionsLayout === 'menu'). Mirrors GeneralTab's vault
+  // more_vert pattern: menu-button ARIA, arrow-key roving, Esc closes the menu
+  // and returns focus to the trigger without dismissing the peek.
+  let actionsMenuOpen = $state(false)
+  let menuItemRefs: HTMLButtonElement[] = $state([])
+  let menuWrapper = $state<HTMLDivElement | null>(null)
+  let menuTriggerBtn = $state<HTMLButtonElement | null>(null)
+
+  function toggleActionsMenu(): void {
+    actionsMenuOpen = !actionsMenuOpen
+  }
+
+  function closeActionsMenu(restoreFocus = false): void {
+    if (!actionsMenuOpen) return
+    actionsMenuOpen = false
+    if (restoreFocus) menuTriggerBtn?.focus()
+  }
+
+  function runMenuAction(action: () => void): void {
+    closeActionsMenu()
+    action()
+  }
+
+  function handleMenuOutsideClick(e: MouseEvent): void {
+    if (actionsLayout !== 'menu' || !actionsMenuOpen) return
+    if (menuWrapper && !menuWrapper.contains(e.target as Node)) {
+      closeActionsMenu()
+    }
+  }
+
+  function handleMenuTriggerKeydown(e: KeyboardEvent): void {
+    if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      actionsMenuOpen = true
+      queueMicrotask(() => menuItemRefs[0]?.focus())
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      actionsMenuOpen = true
+      queueMicrotask(() => {
+        const items = menuItemRefs.filter(Boolean)
+        items[items.length - 1]?.focus()
+      })
+    } else if (e.key === 'Escape' && actionsMenuOpen) {
+      // Window capture handler also covers this; keep local stop so a
+      // synthetic keydown on the trigger never reaches the peek.
+      e.preventDefault()
+      e.stopPropagation()
+      closeActionsMenu(true)
+    }
+  }
+
+  function handleMenuItemKeydown(e: KeyboardEvent, index: number): void {
+    const items = menuItemRefs.filter(Boolean)
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      items[(index + 1) % items.length]?.focus()
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      items[(index - 1 + items.length) % items.length]?.focus()
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      items[0]?.focus()
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      items[items.length - 1]?.focus()
+    } else if (e.key === 'Escape') {
+      // First Esc closes only the menu; peek stays open. stopPropagation keeps
+      // the key from bubbling to the panel when focus is on a menuitem.
+      e.preventDefault()
+      e.stopPropagation()
+      closeActionsMenu(true)
+    }
+  }
+
+  // Capture-phase + stopImmediatePropagation so we beat the peek's bubble-
+  // phase window Esc listener (including when the event target is window
+  // itself — stopPropagation alone would not skip same-target bubble handlers).
+  $effect(() => {
+    if (actionsLayout !== 'menu' || !actionsMenuOpen) return
+    const onKeydown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      closeActionsMenu(true)
+    }
+    window.addEventListener('keydown', onKeydown, true)
+    return () => window.removeEventListener('keydown', onKeydown, true)
+  })
 
   // Local mirror of the most recent field/type-switch failure so the aria-live
   // banner appears immediately on rejection in an isolated render. The external
@@ -266,8 +360,10 @@
   let selectDisabled = $derived(typesLoading || types.length === 0)
 </script>
 
+<svelte:window onclick={handleMenuOutsideClick} />
+
 <header class="header">
-  <div class="title-group">
+  <div class="title-group" class:title-group-menu={actionsLayout === 'menu'}>
     <span class="material-symbols-outlined type-icon" aria-hidden="true">
       {hasType && info.type.icon ? info.type.icon : 'label'}
     </span>
@@ -294,42 +390,119 @@
         >expand_more</span
       >
     </div>
-    <div class="actions">
-      {#if isUnknownType}
-        <!--
-          The <select> can't clear a bogus raw ref: info.type.id is already
-          '' so picking "No type" wouldn't fire a change. Surface an explicit
-          Remove-type action for the unknown case only.
-        -->
+    {#if actionsLayout === 'menu'}
+      <!-- Peek: collapse management chips so the 32vh header stays one row. -->
+      <div class="actions-menu" bind:this={menuWrapper}>
         <button
           type="button"
-          class="action danger"
-          onclick={() => handleChooseType('')}
+          bind:this={menuTriggerBtn}
+          class="menu-trigger"
+          onclick={toggleActionsMenu}
+          onkeydown={handleMenuTriggerKeydown}
+          aria-haspopup="menu"
+          aria-expanded={actionsMenuOpen}
+          aria-label="Type actions"
+          title="Type actions"
         >
           <span
             class="material-symbols-outlined text-icon-sm"
-            aria-hidden="true">remove_circle_outline</span
+            aria-hidden="true">more_vert</span
           >
-          Remove type
         </button>
-      {/if}
-      <button type="button" class="action" onclick={() => onCreateType?.()}>
-        <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
-          >add_circle</span
+        {#if actionsMenuOpen}
+          <div role="menu" aria-label="Type actions" class="actions-menu-panel">
+            <button
+              type="button"
+              bind:this={menuItemRefs[0]}
+              role="menuitem"
+              class="menu-item"
+              onclick={() => runMenuAction(() => onCreateType?.())}
+              onkeydown={(e) => handleMenuItemKeydown(e, 0)}
+            >
+              <span
+                class="material-symbols-outlined text-icon-sm"
+                aria-hidden="true">add_circle</span
+              >
+              Create type…
+            </button>
+            <button
+              type="button"
+              bind:this={menuItemRefs[1]}
+              role="menuitem"
+              class="menu-item"
+              onclick={() => runMenuAction(() => onRestoreExamples?.())}
+              onkeydown={(e) => handleMenuItemKeydown(e, 1)}
+            >
+              <span
+                class="material-symbols-outlined text-icon-sm"
+                aria-hidden="true">restart_alt</span
+              >
+              Restore examples
+            </button>
+            {#if isUnknownType}
+              <!--
+                The <select> can't clear a bogus raw ref: info.type.id is already
+                '' so picking "No type" wouldn't fire a change. Surface an explicit
+                Remove-type action for the unknown case only.
+              -->
+              <button
+                type="button"
+                bind:this={menuItemRefs[2]}
+                role="menuitem"
+                class="menu-item danger"
+                onclick={() => runMenuAction(() => handleChooseType(''))}
+                onkeydown={(e) => handleMenuItemKeydown(e, 2)}
+              >
+                <span
+                  class="material-symbols-outlined text-icon-sm"
+                  aria-hidden="true">remove_circle_outline</span
+                >
+                Remove type
+              </button>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <div class="actions">
+        {#if isUnknownType}
+          <!--
+            The <select> can't clear a bogus raw ref: info.type.id is already
+            '' so picking "No type" wouldn't fire a change. Surface an explicit
+            Remove-type action for the unknown case only.
+          -->
+          <button
+            type="button"
+            class="action danger"
+            onclick={() => handleChooseType('')}
+          >
+            <span
+              class="material-symbols-outlined text-icon-sm"
+              aria-hidden="true">remove_circle_outline</span
+            >
+            Remove type
+          </button>
+        {/if}
+        <button type="button" class="action" onclick={() => onCreateType?.()}>
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true">add_circle</span
+          >
+          Create type…
+        </button>
+        <button
+          type="button"
+          class="action"
+          onclick={() => onRestoreExamples?.()}
         >
-        Create type…
-      </button>
-      <button
-        type="button"
-        class="action"
-        onclick={() => onRestoreExamples?.()}
-      >
-        <span class="material-symbols-outlined text-icon-sm" aria-hidden="true"
-          >restart_alt</span
-        >
-        Restore examples
-      </button>
-    </div>
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            aria-hidden="true">restart_alt</span
+          >
+          Restore examples
+        </button>
+      </div>
+    {/if}
   </div>
 
   {@render trailing?.()}
@@ -421,6 +594,18 @@
     min-width: 0;
     flex-wrap: wrap;
   }
+  /* Peek menu layout: keep select + ⋮ on one row so management chips no longer
+     wrap the header and eat the 32vh form factor. */
+  .title-group-menu {
+    flex-wrap: nowrap;
+    flex: 1 1 auto;
+  }
+  .title-group-menu .type-select-wrap {
+    min-width: 0;
+  }
+  .title-group-menu .type-select {
+    max-width: min(20rem, 100%);
+  }
   .type-icon {
     font-size: var(--text-type-md);
     color: var(--color-text-muted);
@@ -498,6 +683,73 @@
   }
   .action.danger:hover {
     color: var(--color-status-danger);
+    background: var(--color-error-bg);
+  }
+  .actions-menu {
+    position: relative;
+    flex: 0 0 auto;
+  }
+  .menu-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.2rem;
+    border: 0;
+    border-radius: 0.3rem;
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+  }
+  .menu-trigger:hover {
+    background: var(--color-hover);
+    color: var(--color-text-primary);
+  }
+  .menu-trigger:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .actions-menu-panel {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    margin-top: 0.2rem;
+    z-index: 20;
+    min-width: 11rem;
+    padding: 0.25rem 0;
+    border-radius: 0.5rem;
+    border: 1px solid var(--color-surface-popover-border);
+    background: var(--color-surface-popover);
+    box-shadow: var(--shadow-lg);
+  }
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.4rem 0.65rem;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-primary);
+    font-size: var(--text-type-sm);
+    text-align: left;
+    cursor: pointer;
+  }
+  .menu-item:hover,
+  .menu-item:focus-visible {
+    background: var(--color-hover);
+    outline: none;
+  }
+  .menu-item .material-symbols-outlined {
+    color: var(--color-text-muted);
+  }
+  .menu-item.danger {
+    color: var(--color-status-danger);
+  }
+  .menu-item.danger .material-symbols-outlined {
+    color: var(--color-status-danger);
+  }
+  .menu-item.danger:hover,
+  .menu-item.danger:focus-visible {
     background: var(--color-error-bg);
   }
   .banner {

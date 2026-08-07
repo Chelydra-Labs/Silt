@@ -471,27 +471,31 @@ describe('PropertiesPanel', () => {
     })
   })
 
-  it('fires onCreateType when the Create type button is clicked', async () => {
+  it('fires onCreateType from the type-actions overflow menu', async () => {
     const onCreateType = vi.fn()
     render(PropertiesPanel, {
       props: baseProps({ info: untypedInfo, onCreateType })
     })
-    await fireEvent.click(screen.getByRole('button', { name: /Create type/i }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Type actions' }))
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: /Create type/i })
+    )
     expect(onCreateType).toHaveBeenCalledOnce()
   })
 
-  it('fires onRestoreExamples when the Restore examples button is clicked', async () => {
+  it('fires onRestoreExamples from the type-actions overflow menu', async () => {
     const onRestoreExamples = vi.fn()
     render(PropertiesPanel, {
       props: baseProps({ info: untypedInfo, onRestoreExamples })
     })
+    await fireEvent.click(screen.getByRole('button', { name: 'Type actions' }))
     await fireEvent.click(
-      screen.getByRole('button', { name: /Restore examples/i })
+      screen.getByRole('menuitem', { name: /Restore examples/i })
     )
     expect(onRestoreExamples).toHaveBeenCalledOnce()
   })
 
-  it('keeps Create type + Restore examples reachable when the roster is empty (select disabled)', () => {
+  it('keeps Create type + Restore examples reachable via menu when the roster is empty (select disabled)', async () => {
     render(PropertiesPanel, {
       props: baseProps({ info: untypedInfo, types: [] })
     })
@@ -500,15 +504,35 @@ describe('PropertiesPanel', () => {
     }) as HTMLSelectElement
     // Nothing to pick — the select is disabled with a "No types defined"
     // sentinel so the user understands the empty state, but the two
-    // escape-hatch buttons stay live so they can recover.
+    // escape-hatch menuitems stay live so they can recover.
     expect(select.disabled).toBe(true)
     expect(select.querySelector('option')?.textContent).toMatch(
       /No types defined/i
     )
-    expect(screen.getByRole('button', { name: /Create type/i })).toBeEnabled()
+    await fireEvent.click(screen.getByRole('button', { name: 'Type actions' }))
+    expect(screen.getByRole('menuitem', { name: /Create type/i })).toBeEnabled()
     expect(
-      screen.getByRole('button', { name: /Restore examples/i })
+      screen.getByRole('menuitem', { name: /Restore examples/i })
     ).toBeEnabled()
+  })
+
+  it('closes the type-actions menu on Escape without dismissing the peek', async () => {
+    const onClose = vi.fn()
+    render(PropertiesPanel, {
+      props: baseProps({ info: untypedInfo, onClose })
+    })
+    const trigger = screen.getByRole('button', { name: 'Type actions' })
+    await fireEvent.click(trigger)
+    expect(screen.getByRole('menu', { name: 'Type actions' })).toBeTruthy()
+
+    // Esc while the menu is open must collapse only the menu — the peek's
+    // window-Esc handler must not also fire on the first press.
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => {
+      expect(screen.queryByRole('menu', { name: 'Type actions' })).toBeNull()
+    })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Page properties' })).toBeTruthy()
   })
 
   it('focuses the native <select> when typeMenuRequest bumps on open', async () => {
@@ -567,7 +591,7 @@ describe('PropertiesPanel', () => {
     expect(screen.queryByText(/This type has no properties/i)).toBeNull()
   })
 
-  it('shows an "Unrecognized type" message + Remove type button for a bogus type ref', async () => {
+  it('shows an "Unrecognized type" message + Remove type menuitem for a bogus type ref', async () => {
     const unknownInfo: PageTypeInfo = {
       typeId: '',
       type: { id: '', name: '' },
@@ -584,8 +608,11 @@ describe('PropertiesPanel', () => {
 
     // The bogus ref can't be cleared via the <select> (info.type.id is
     // already '' so picking "No type" wouldn't fire a change), so an
-    // explicit Remove-type action shows for the unknown case.
-    await fireEvent.click(screen.getByRole('button', { name: /Remove type/i }))
+    // explicit Remove-type action lives in the overflow menu.
+    await fireEvent.click(screen.getByRole('button', { name: 'Type actions' }))
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: /Remove type/i })
+    )
     expect(appMocks.SetPageType).toHaveBeenCalledWith(
       'Work',
       'Projects',
