@@ -16,6 +16,11 @@ export type TranscriptSegment =
       callCount: number
       resultCount: number
     }
+  | {
+      kind: 'evidence-group'
+      id: string
+      items: EvidenceEntry[]
+    }
 
 function isToolActivity(entry: AIChatEntry): entry is ToolActivityItem {
   return entry.kind === 'tool-call' || entry.kind === 'tool-result'
@@ -53,8 +58,9 @@ export function filterTranscriptForBusyDisplay(
 /**
  * Collapse tool-call / tool-result entries into activity groups for display.
  * Evidence between a call and result (production search path) does not split
- * the group; evidence is emitted as its own segments after the group so source
- * cards stay visible. Controller transcript shape is unchanged (#845).
+ * the group; multi-source evidence is emitted as one collapsible evidence-group
+ * after the tool activity so a wall of cards does not dominate the drawer
+ * (#845, #915). Controller transcript shape is unchanged.
  */
 export function groupTranscript(
   transcript: AIChatEntry[]
@@ -69,9 +75,16 @@ export function groupTranscript(
       continue
     }
     if (isToolRunTransparent(entry)) {
-      // Evidence outside a tool run (or before any tool) stays a normal card.
-      segments.push({ kind: 'entry', entry })
-      i++
+      // Consecutive evidence outside a tool run: group when 2+ so lone cards
+      // stay simple and multi-source runs collapse (#915).
+      const run: EvidenceEntry[] = []
+      let j = i
+      while (j < transcript.length && isToolRunTransparent(transcript[j])) {
+        run.push(transcript[j] as EvidenceEntry)
+        j++
+      }
+      pushEvidenceSegments(segments, run)
+      i = j
       continue
     }
 
@@ -110,12 +123,27 @@ export function groupTranscript(
         resultCount
       })
     }
-    for (const ev of evidenceInRun) {
-      segments.push({ kind: 'entry', entry: ev })
-    }
+    pushEvidenceSegments(segments, evidenceInRun)
     i = j
   }
   return segments
+}
+
+/** One card when a single source; collapsible group when two or more. */
+function pushEvidenceSegments(
+  segments: TranscriptSegment[],
+  items: EvidenceEntry[]
+): void {
+  if (items.length === 0) return
+  if (items.length === 1) {
+    segments.push({ kind: 'entry', entry: items[0] })
+    return
+  }
+  segments.push({
+    kind: 'evidence-group',
+    id: `evidence-group-${items[0].id}`,
+    items
+  })
 }
 
 export function toolActivitySummaryLabel(
@@ -131,4 +159,9 @@ export function toolActivitySummaryLabel(
   }
   if (parts.length === 0) return 'Tool activity'
   return `Tool activity · ${parts.join(', ')}`
+}
+
+export function evidenceGroupSummaryLabel(count: number): string {
+  if (count === 1) return '1 source'
+  return `${count} sources`
 }

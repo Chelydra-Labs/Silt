@@ -11,6 +11,7 @@
   import { renderChatMarkdown } from './renderChatMarkdown'
   import { isSafeLinkHref } from '../../../lib/editor/converters/validate'
   import {
+    evidenceGroupSummaryLabel,
     filterTranscriptForBusyDisplay,
     groupTranscript,
     toolActivitySummaryLabel
@@ -418,6 +419,52 @@
                     {/if}
                   </div>
                 {/if}
+              {/each}
+            </div>
+          {/if}
+        </article>
+      {:else if segment.kind === 'evidence-group'}
+        {@const group = segment}
+        <article class="utility-card evidence-group">
+          <button
+            type="button"
+            class="utility-summary"
+            aria-expanded={expanded[group.id] ?? false}
+            aria-controls={`${group.id}-details`}
+            onclick={() => toggleExpanded(group.id)}
+          >
+            <span
+              class="tool-glyph material-symbols-outlined"
+              aria-hidden="true">menu_book</span
+            >
+            <span class="utility-copy">
+              <strong>{evidenceGroupSummaryLabel(group.items.length)}</strong>
+            </span>
+            <span class="material-symbols-outlined" aria-hidden="true"
+              >{expanded[group.id] ? 'expand_less' : 'expand_more'}</span
+            >
+          </button>
+          {#if expanded[group.id]}
+            <div id={`${group.id}-details`} class="evidence-group-body">
+              {#each group.items as entry (entry.id)}
+                <article class="evidence-card nested">
+                  <span class="citation-index">{entry.citationIndex}</span>
+                  <div class="evidence-copy">
+                    <span class="entry-label">Source</span>
+                    <strong>{entry.title}</strong>
+                    {#if entry.excerpt}<p>{entry.excerpt}</p>{/if}
+                  </div>
+                  <button
+                    type="button"
+                    class="icon-button"
+                    aria-label={`Open source ${entry.citationIndex}: ${entry.title}`}
+                    onclick={() => onNavigateEvidence(entry.target)}
+                  >
+                    <span class="material-symbols-outlined" aria-hidden="true"
+                      >arrow_outward</span
+                    >
+                  </button>
+                </article>
               {/each}
             </div>
           {/if}
@@ -869,6 +916,17 @@
     gap: 0.75rem;
     padding: 0.75rem;
     border-left: 3px solid var(--color-accent-secondary-start);
+  }
+  .evidence-card.nested {
+    border-radius: 0.5rem;
+    animation: none;
+  }
+  .evidence-group-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.45rem 0.5rem 0.55rem;
+    border-top: 1px solid var(--color-surface-panel-border);
   }
   .citation-index {
     display: grid;
