@@ -507,6 +507,8 @@ describe('CalendarView — Calendar display mode (#425)', () => {
     expect(dialog).toHaveAttribute('aria-modal', 'false')
     expect(dialog.textContent).toContain('Click me')
     expect(navHandler).not.toHaveBeenCalled()
+    expect(chip).toHaveAttribute('aria-current', 'true')
+    expect(chip.hasAttribute('data-task-hit')).toBe(true)
 
     window.removeEventListener('navigate-to-block', navHandler)
   })

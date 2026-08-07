@@ -880,6 +880,8 @@ describe('BoardView — dimension-aware Board (#421)', () => {
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveAttribute('aria-modal', 'false')
     expect(dialog.textContent).toContain('Open me')
+    expect(card.getAttribute('aria-current')).toBe('true')
+    expect(card.hasAttribute('data-task-hit')).toBe(true)
   })
 
   // --- Optimistic + revert ----------------------------------------------
