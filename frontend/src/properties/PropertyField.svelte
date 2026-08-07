@@ -517,7 +517,12 @@
     padding: 0.05rem;
     border-radius: 0.25rem;
     cursor: pointer;
-    opacity: 0.4;
+    /* Resting opacity stays low so a grid of set fields reads as glanceable
+       reference (not a row of × marks), but is high enough to be scannable,
+       and focus-within reveals it for keyboard users tabbing into the
+       control — the old hover-only rule hid it whenever the mouse wasn't
+       over the field, which is the common case in the peek. */
+    opacity: 0.5;
     transition:
       opacity 120ms var(--transition-standard),
       color 120ms var(--transition-standard);
@@ -526,6 +531,7 @@
     font-size: var(--text-icon-sm);
   }
   .field:hover .clear-btn,
+  .field:focus-within .clear-btn,
   .clear-btn:focus-visible {
     opacity: 1;
   }
@@ -554,6 +560,10 @@
     padding: 0.3rem 0.5rem;
     font-size: var(--text-type-sm);
     line-height: 1.4;
+    transition: background-color 120ms var(--transition-standard);
+  }
+  .input:hover:not(:disabled) {
+    background: var(--color-hover);
   }
   .input:focus-visible {
     outline: 2px solid var(--color-border-focus);
@@ -639,11 +649,25 @@
     min-width: 5rem;
   }
   .warn {
+    margin: 0;
     font-size: var(--text-type-2xs);
     color: var(--color-status-warn);
+    /* Inline alert tied to its field (left rule + faint warn wash) so the
+       notice reads as connected to the input in the dense peek grid, not as
+       a stray colored line. */
+    padding: 0.1rem 0.35rem;
+    border-left: 2px solid var(--color-status-warn);
+    border-radius: 0 0.2rem 0.2rem 0;
+    background: color-mix(in oklch, var(--color-status-warn) 12%, transparent);
   }
   .mismatched .input,
   .mismatched .switch {
     border-color: var(--color-status-warn);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .clear-btn,
+    .input {
+      transition: none;
+    }
   }
 </style>
