@@ -58,7 +58,7 @@ standard Search surface remains separate, and **Escape** closes the AI drawer.
 | “Embedding model not configured” | Set embedding model on Settings → AI |
 | Empty / weak answers | Rebuild index; raise hybrid weight toward semantic; check notebook scope |
 | Dimension / model change | Rebuild index (vec0 dimensions are fixed per model); model changes auto-trigger rebuild on open |
-| Streaming fails (native Google/Anthropic) | Use OpenAI-compatible or local chat for streaming; non-stream fallback still works |
+| Token-by-token streaming feels chunky (native Google/Anthropic) | Host buffers those providers into one delta; use OpenAI-compatible/local for true SSE |
 | Index slow on large vaults | Narrow notebook scope; indexing is always-on and incremental (page edits, deletes, and external file changes debounce into the vector index — no auto-re-embed toggle) |
 
 ## Related

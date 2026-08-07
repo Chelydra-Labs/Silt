@@ -909,10 +909,10 @@ additionally surface in-progress tool-call fragments on `stream.toolDeltas`
 and via the `ai:complete:tool-delta` event. Reference consumer:
 `silt-ai-agent` ([docs/plugins/silt-ai-agent.md](./plugins/silt-ai-agent.md)).
 
-**Streaming (`stream: true`, #226).** Supported for OpenAI-compatible and local
-(Ollama `/v1`) chat endpoints. Native Google/Anthropic reject streaming with a
-`bad-request` error — fall back to non-stream `complete` or use an
-OpenAI-compatible endpoint. When streaming:
+**Streaming (`stream: true`, #226).** OpenAI-compatible and local (Ollama `/v1`)
+chat endpoints use true SSE. Native Google/Anthropic have no SSE path in v1;
+the host buffers a non-stream completion and emits it as a single delta so
+`stream: true` still works (the agent loop always streams). When streaming:
 
 ```ts
 const stream = await ctx.ai.complete({
