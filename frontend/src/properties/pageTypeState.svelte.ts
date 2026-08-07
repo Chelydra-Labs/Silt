@@ -369,19 +369,39 @@ export function createPageTypeController(
 
   function attach(): () => void {
     void loadTypes()
-    // Debounce so a burst of type-file / page-content changes coalesces into
-    // one reload + refresh (mirrors the templates store's handler).
+    // Debounce so a burst of type-file / page-content / projection-error
+    // events coalesces into one reload + refresh (mirrors the templates
+    // store's handler). Projection-error also coalesces its toast so a bulk
+    // schema break does not stack identical notifications.
     let timer: ReturnType<typeof setTimeout> | null = null
-    const scheduleRefresh = (reloadTypes: boolean) => {
+    let pendingReloadTypes = false
+    let pendingProjectionErrorToast = false
+    const scheduleRefresh = (opts: {
+      reloadTypes?: boolean
+      notifyProjectionError?: boolean
+    }) => {
+      if (opts.reloadTypes) pendingReloadTypes = true
+      if (opts.notifyProjectionError) pendingProjectionErrorToast = true
       if (timer !== null) clearTimeout(timer)
       timer = setTimeout(() => {
         timer = null
+        const reloadTypes = pendingReloadTypes
+        const notify = pendingProjectionErrorToast
+        pendingReloadTypes = false
+        pendingProjectionErrorToast = false
         if (reloadTypes) void loadTypes()
         void refresh()
+        if (notify) {
+          pushNotification({
+            kind: 'info',
+            message:
+              'A recent edit is being re-indexed. Type dashboards may be briefly stale; refreshing.'
+          })
+        }
       }, 100)
     }
     const offChanged = Events.On(EventName.EventTypesChanged, () => {
-      scheduleRefresh(true)
+      scheduleRefresh({ reloadTypes: true })
     })
     // External/sync/second-window frontmatter edits emit block:changed (not
     // types:changed). Refresh the open panel so a subsequent edit does not
@@ -403,7 +423,7 @@ export function createPageTypeController(
           return
         }
       }
-      scheduleRefresh(false)
+      scheduleRefresh({})
     })
     // A failed post-write re-parse leaves the type dashboard stale until the
     // next scan. The write itself succeeded, so this is a polite status, not
@@ -412,13 +432,7 @@ export function createPageTypeController(
     const offProjectionError = Events.On(
       EventName.EventTypesProjectionError,
       () => {
-        void loadTypes()
-        void refresh()
-        pushNotification({
-          kind: 'info',
-          message:
-            'A recent edit is being re-indexed. Type dashboards may be briefly stale; refreshing.'
-        })
+        scheduleRefresh({ reloadTypes: true, notifyProjectionError: true })
       }
     )
     return () => {
@@ -426,6 +440,8 @@ export function createPageTypeController(
         clearTimeout(timer)
         timer = null
       }
+      pendingReloadTypes = false
+      pendingProjectionErrorToast = false
       offChanged()
       offBlockChanged()
       offProjectionError()
