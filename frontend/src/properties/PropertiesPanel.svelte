@@ -37,6 +37,10 @@
     core?: PageCoreMetadata
     onCommitCore?: (update: CoreFieldUpdate) => Promise<void>
     onClose: () => void
+    /** Open the blocking properties edit modal (#873). Optional so the panel
+     *  stays mountable in isolation (tests); when provided, an "expand to
+     *  dialog" affordance renders beside the close button. */
+    onOpenModal?: () => void
     /** After a successful type switch / property commit (re-fetches values). */
     onChanged: () => void
     /** Keep-and-flag names from a type switch (renders inline field warnings). */
@@ -64,6 +68,7 @@
     core = undefined,
     onCommitCore = undefined,
     onClose,
+    onOpenModal,
     onChanged,
     onMismatched,
     onError,
@@ -137,17 +142,33 @@
       {onRestoreExamples}
     >
       {#snippet trailing()}
-        <button
-          type="button"
-          class="close"
-          onclick={onClose}
-          aria-label="Close properties"
-        >
-          <span
-            class="material-symbols-outlined text-icon-md"
-            aria-hidden="true">close</span
+        <div class="trailing-actions">
+          {#if onOpenModal}
+            <button
+              type="button"
+              class="expand"
+              onclick={onOpenModal}
+              aria-label="Edit all properties in dialog"
+              title="Edit all properties in dialog"
+            >
+              <span
+                class="material-symbols-outlined text-icon-md"
+                aria-hidden="true">open_in_full</span
+              >
+            </button>
+          {/if}
+          <button
+            type="button"
+            class="close"
+            onclick={onClose}
+            aria-label="Close properties"
           >
-        </button>
+            <span
+              class="material-symbols-outlined text-icon-md"
+              aria-hidden="true">close</span
+            >
+          </button>
+        </div>
       {/snippet}
     </PropertiesBody>
   </div>
@@ -165,8 +186,15 @@
     color: var(--color-text-primary);
     outline: none;
   }
-  /* The close control is authored in this shell (via the trailing snippet) so
-     its style lives here, not in PropertiesBody. */
+  /* The close + expand controls are authored in this shell (via the trailing
+     snippet) so their styles live here, not in PropertiesBody. */
+  .trailing-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    flex: 0 0 auto;
+  }
+  .expand,
   .close {
     display: inline-flex;
     align-items: center;
@@ -176,12 +204,13 @@
     cursor: pointer;
     border-radius: 0.3rem;
     padding: 0.2rem;
-    flex: 0 0 auto;
   }
+  .expand:hover,
   .close:hover {
     color: var(--color-text-primary);
     background: var(--color-hover);
   }
+  .expand:focus-visible,
   .close:focus-visible {
     outline: 2px solid var(--color-border-focus);
     outline-offset: 1px;

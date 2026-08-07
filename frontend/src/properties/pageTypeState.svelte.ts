@@ -68,6 +68,10 @@ export interface PageTypeController {
   /** Per-file load errors from ListTypes (broken type YAML). Empty when clean. */
   readonly typeLoadErrors: TypeLoadError[]
   readonly panelOpen: boolean
+  /** Blocking edit modal open flag (#873). Independent of the non-blocking
+   *  peek `panelOpen` — both surfaces read the same reactive data; the modal's
+   *  translucent backdrop covers the peek while open. */
+  readonly modalOpen: boolean
   readonly heroValue: string
   /** Type-independent core metadata (#867). Always defined (EMPTY_CORE when
    *  no page is active). The panel renders this as a Core section above the
@@ -79,6 +83,10 @@ export interface PageTypeController {
   open: () => void
   close: () => void
   toggle: () => void
+  /** Open the blocking properties edit modal (#873). */
+  openModal: () => void
+  /** Close the blocking properties edit modal. */
+  closeModal: () => void
   /** Keep-and-flag warnings from a type switch (surfaces them on the fields). */
   setMismatched: (names: string[]) => void
   setError: (message: string) => void
@@ -107,6 +115,9 @@ export function createPageTypeController(
   let typesLoading = $state(false)
   let typeLoadErrors = $state<TypeLoadError[]>([])
   let panelOpen = $state(false)
+  // Blocking edit modal flag (#873). The peek (panelOpen) stays non-blocking;
+  // the modal is a separate, focused-edit surface that reuses the same data.
+  let modalOpen = $state(false)
   // Core metadata (#867). Always defined — EMPTY_CORE when no page is active
   // or before the first fetch lands. Wiped on locator change so a stale prior
   // page's core fields never paint over the new page.
@@ -252,6 +263,14 @@ export function createPageTypeController(
 
   function toggle(): void {
     panelOpen = !panelOpen
+  }
+
+  function openModal(): void {
+    modalOpen = true
+  }
+
+  function closeModal(): void {
+    modalOpen = false
   }
 
   function requestTypeMenu(): void {
@@ -435,6 +454,9 @@ export function createPageTypeController(
     get panelOpen() {
       return panelOpen
     },
+    get modalOpen() {
+      return modalOpen
+    },
     get typeMenuRequest() {
       return typeMenuRequest
     },
@@ -452,6 +474,8 @@ export function createPageTypeController(
     open,
     close,
     toggle,
+    openModal,
+    closeModal,
     requestTypeMenu,
     setMismatched,
     setError,
