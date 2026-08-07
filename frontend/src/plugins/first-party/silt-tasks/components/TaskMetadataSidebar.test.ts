@@ -219,6 +219,44 @@ describe('TaskMetadataSidebar', () => {
     expect(setTaskStartDate).toHaveBeenCalledWith('task-1', '')
   })
 
+  it('closes open date popovers when the task identity changes', async () => {
+    // Host remounts the sidebar on task.id change ({#key task.id} in
+    // TaskEditDrawer). Simulate that by unmount + mount with a new task.
+    const first = render(TaskMetadataSidebar, {
+      props: {
+        task: makeTask({ id: 'task-1' }),
+        ctx: makeCtx()
+      }
+    })
+
+    const trigger = document.getElementById(
+      'task-start-date-trigger'
+    ) as HTMLButtonElement
+    await fireEvent.click(trigger)
+    await flush()
+    expect(
+      screen.getByRole('dialog', { name: 'Start day options' })
+    ).toBeTruthy()
+
+    first.unmount()
+    cleanup()
+    render(TaskMetadataSidebar, {
+      props: {
+        task: makeTask({ id: 'task-2', clean_content: 'Other task' }),
+        ctx: makeCtx()
+      }
+    })
+    await flush()
+
+    const nextTrigger = document.getElementById(
+      'task-start-date-trigger'
+    ) as HTMLButtonElement
+    expect(nextTrigger.getAttribute('aria-expanded')).toBe('false')
+    expect(
+      screen.queryByRole('dialog', { name: 'Start day options' })
+    ).toBeNull()
+  })
+
   it('rolls Start day back when the write is rejected', async () => {
     const setTaskStartDate = vi
       .fn()

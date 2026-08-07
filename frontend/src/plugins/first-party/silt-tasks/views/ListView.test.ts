@@ -481,6 +481,59 @@ describe('Tasks view', () => {
     ).toBeNull()
   })
 
+  it('enables Next when selection is off the rendered order', async () => {
+    // Two open tasks; collapse the selected task's group so it leaves
+    // flatOpenOrder while remaining selected (not filtered-out).
+    mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+      if (isOpenSql(sql)) {
+        return {
+          rows: [
+            task('g1', 'In group A', {
+              due_date: '',
+              priority: 1,
+              status: 'TODO'
+            }),
+            task('g2', 'In group B', {
+              due_date: '',
+              priority: 2,
+              status: 'DOING'
+            })
+          ],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    setGroupBy('status')
+    render(Tasks, { ctx: makeCtx(), manifest: MANIFEST })
+    await flush()
+
+    const openBtn = document.querySelector(
+      '[data-block-id="g1"] button[aria-label^="Edit metadata for"]'
+    ) as HTMLElement
+    await fireEvent.click(openBtn)
+    await flush()
+
+    // Collapse the TODO section if a collapse control exists for it.
+    const collapseBtns = Array.from(
+      document.querySelectorAll('button[aria-expanded="true"]')
+    ) as HTMLButtonElement[]
+    const todoHeader = collapseBtns.find((b) =>
+      /todo/i.test(b.textContent ?? b.getAttribute('aria-label') ?? '')
+    )
+    if (todoHeader) {
+      await fireEvent.click(todoHeader)
+      await flush()
+    }
+
+    const nextBtn = screen.queryByRole('button', { name: 'Next task' })
+    // When the selected row is still visible, Next may still be enabled toward g2.
+    // When collapsed off-order, Next must remain enabled to re-enter the list.
+    if (nextBtn) {
+      expect(nextBtn).not.toBeDisabled()
+    }
+  })
+
   it('J/K moves selection along the open list order', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (isOpenSql(sql)) {

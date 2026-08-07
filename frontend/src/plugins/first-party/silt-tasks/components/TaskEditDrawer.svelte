@@ -205,16 +205,20 @@
     data-testid="task-edit-drawer-scroll"
   >
     {#if task}
-      <TaskMetadataSidebar
-        {task}
-        {ctx}
-        {onMetaChanged}
-        {onClose}
-        stickyPrimary
-        commentLayout="drawer"
-        headingId="task-edit-drawer-title"
-        bind:busy={sidebarBusy}
-      />
+      <!-- Remount on task identity change so open popovers / blocked-done UI
+           cannot stick to the newly selected task. -->
+      {#key task.id}
+        <TaskMetadataSidebar
+          {task}
+          {ctx}
+          {onMetaChanged}
+          {onClose}
+          stickyPrimary
+          commentLayout="drawer"
+          headingId="task-edit-drawer-title"
+          bind:busy={sidebarBusy}
+        />
+      {/key}
     {/if}
   </div>
 

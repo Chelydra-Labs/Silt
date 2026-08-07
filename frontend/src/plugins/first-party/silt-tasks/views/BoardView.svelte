@@ -880,18 +880,19 @@
   }
 
   /* Room to scroll the selected card clear of the fixed overlay drawer.
-     Matches TaskEditDrawer breakpoints: full-bleed on xs, 480 from sm, 540 from lg. */
+     Match TaskEditDrawer widths exactly (no 40vw undershoot). Full-bleed
+     overlay below sm needs no extra gutter. */
   .board-inspector-open {
     padding-right: 0;
   }
   @media (min-width: 640px) {
     .board-inspector-open {
-      padding-right: min(480px, 40vw);
+      padding-right: 480px;
     }
   }
   @media (min-width: 1024px) {
     .board-inspector-open {
-      padding-right: min(540px, 40vw);
+      padding-right: 540px;
     }
   }
 

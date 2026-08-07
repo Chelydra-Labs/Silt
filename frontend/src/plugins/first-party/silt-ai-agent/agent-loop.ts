@@ -61,7 +61,7 @@ export function parseHostRateLimitRetryMs(err: unknown): number | null {
   return 1000
 }
 
-function abortError(signal?: AbortSignal): Error {
+function sleepAbortError(signal?: AbortSignal): Error {
   const reason = signal?.reason
   if (reason instanceof Error) return reason
   return new DOMException('Aborted', 'AbortError')
@@ -70,7 +70,7 @@ function abortError(signal?: AbortSignal): Error {
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(abortError(signal))
+      reject(sleepAbortError(signal))
       return
     }
     const t = setTimeout(() => {
@@ -79,7 +79,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms)
     const onAbort = () => {
       clearTimeout(t)
-      reject(abortError(signal))
+      reject(sleepAbortError(signal))
     }
     signal?.addEventListener('abort', onAbort, { once: true })
   })

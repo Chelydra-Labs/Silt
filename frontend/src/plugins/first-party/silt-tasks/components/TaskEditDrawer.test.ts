@@ -713,6 +713,36 @@ describe('TaskEditDrawer — scroll reset on task switch', () => {
     // so its scrollTop reflects the reset the task-switch effect applied.
     expect(screen.getByTestId('task-edit-drawer-scroll').scrollTop).toBe(0)
   })
+
+  it('closes open metadata popovers when switching tasks', async () => {
+    const ctx = makeCtx()
+    const { rerender } = render(TaskEditDrawer, {
+      props: { task: makeTask({ id: 'task-a' }), ctx, onClose: () => {} }
+    })
+    const trigger = document.getElementById(
+      'task-start-date-trigger'
+    ) as HTMLButtonElement
+    await fireEvent.click(trigger)
+    await tick()
+    expect(
+      screen.getByRole('dialog', { name: 'Start day options' })
+    ).toBeTruthy()
+
+    await rerender({
+      task: makeTask({ id: 'task-b', clean_content: 'Other' }),
+      ctx,
+      onClose: () => {}
+    })
+    await tick()
+
+    expect(
+      screen.queryByRole('dialog', { name: 'Start day options' })
+    ).toBeNull()
+    const nextTrigger = document.getElementById(
+      'task-start-date-trigger'
+    ) as HTMLButtonElement
+    expect(nextTrigger.getAttribute('aria-expanded')).toBe('false')
+  })
 })
 
 describe('TaskEditDrawer — variant + light-dismiss', () => {

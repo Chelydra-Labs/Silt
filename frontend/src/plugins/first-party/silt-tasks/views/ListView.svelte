@@ -541,23 +541,20 @@
       ? flatOpenOrder.findIndex((t) => t.id === selectedTask!.id)
       : -1
   )
-  // When the selected task is filtered out (index -1), still allow jumping
-  // into the visible order so keyboard triage is not stranded.
+  // Off-order selection (filtered out OR collapsed section) still allows
+  // jumping into the visible order so buttons and J/K stay aligned.
   let hasPrevTask = $derived(
-    flatOpenOrder.length > 0 &&
-      (selectedIndex > 0 || (selectedIndex < 0 && selectedFilteredOut))
+    flatOpenOrder.length > 0 && (selectedIndex > 0 || selectedIndex < 0)
   )
   let hasNextTask = $derived(
     flatOpenOrder.length > 0 &&
-      (selectedIndex < 0
-        ? selectedFilteredOut
-        : selectedIndex < flatOpenOrder.length - 1)
+      (selectedIndex < 0 || selectedIndex < flatOpenOrder.length - 1)
   )
 
   function goPrevTask() {
     if (flatOpenOrder.length === 0) return
     if (selectedIndex < 0) {
-      // Filtered-out: K jumps to the last visible task.
+      // Not in rendered order: K jumps to the last visible task.
       selectedTask = flatOpenOrder[flatOpenOrder.length - 1]
       selectedFilteredOut = false
       return
@@ -570,7 +567,7 @@
   function goNextTask() {
     if (flatOpenOrder.length === 0) return
     if (selectedIndex < 0) {
-      // Filtered-out: J jumps to the first visible task.
+      // Not in rendered order: J jumps to the first visible task.
       selectedTask = flatOpenOrder[0]
       selectedFilteredOut = false
       return
