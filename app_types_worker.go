@@ -64,6 +64,16 @@ type projectionReprojectWorker struct {
 
 	epoch     atomic.Uint64
 	processed atomic.Uint64
+
+	// progressTotal / progressProcessed back both the live progress event
+	// emits AND the GetTypesReprojectionStatus cold-state read. Set together
+	// at the start of a non-empty batch (runOneBatch), advanced per locator,
+	// and reset to 0 on completion / mid-batch abandon. total==0 is the idle
+	// signal: GetTypesReprojectionStatus reports active=false, and the
+	// dashboard hides the progress region. Read with a single atomic load —
+	// no lock is taken on this hot path.
+	progressTotal     atomic.Uint64
+	progressProcessed atomic.Uint64
 }
 
 // newProjectionReprojectWorker constructs an idle worker. done is pre-closed
@@ -244,7 +254,32 @@ func (w *projectionReprojectWorker) runOneBatch() {
 		return
 	}
 
-	for _, loc := range locators {
+	// Progress setup. A no-op batch (no locators) emits nothing — churning
+	// start/done for an empty set would flicker the dashboard progress region
+	// on every coalesced no-op wake. The atomics stay at 0 so the cold-state
+	// read continues to report idle.
+	total := uint64(len(locators))
+	if total == 0 {
+		w.progressTotal.Store(0)
+		w.progressProcessed.Store(0)
+		return
+	}
+	w.progressTotal.Store(total)
+	w.progressProcessed.Store(0)
+	w.app.emit(EventTypesReprojectionProgress, map[string]any{
+		"state":     "running",
+		"processed": uint64(0),
+		"total":     total,
+	})
+	// Throttle intermediate emits so a 10k-page vault does not fire an event
+	// per page. ~20 updates over the run (or every 25 for small batches) is
+	// smooth without flooding the IPC channel.
+	step := total / 20
+	if step < 25 {
+		step = 25
+	}
+
+	for i, loc := range locators {
 		// Re-check liveness before each locator so a vault close racing
 		// mid-batch abandons the remainder cleanly — the db handle may
 		// already be nil by the time we reach a later locator.
@@ -252,10 +287,31 @@ func (w *projectionReprojectWorker) runOneBatch() {
 		closed := w.app.vaultPath == "" || w.app.db == nil
 		w.app.vaultMu.RUnlock()
 		if closed {
+			// Reset progress without a "done" emit — the batch was abandoned,
+			// not completed. The next open starts fresh from 0.
+			w.progressTotal.Store(0)
+			w.progressProcessed.Store(0)
 			return
 		}
 		w.reprojectOneLocator(dbMgr, vaultPath, spacesPerTab, loc)
+		done := uint64(i + 1)
+		w.progressProcessed.Store(done)
+		if done == total || (step > 0 && done%step == 0) {
+			w.app.emit(EventTypesReprojectionProgress, map[string]any{
+				"state":     "running",
+				"processed": done,
+				"total":     total,
+			})
+		}
 	}
+
+	w.app.emit(EventTypesReprojectionProgress, map[string]any{
+		"state":     "done",
+		"processed": total,
+		"total":     total,
+	})
+	w.progressTotal.Store(0)
+	w.progressProcessed.Store(0)
 }
 
 // reprojectOneLocator is the per-page step shared with the prior

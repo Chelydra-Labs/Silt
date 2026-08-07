@@ -7,7 +7,11 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { onMount, onDestroy, untrack } from 'svelte'
   import { Events } from '@wailsio/runtime'
-  import { ListTypes, QueryPagesByType } from '../../bindings/silt/app.js'
+  import {
+    ListTypes,
+    QueryPagesByType,
+    ReloadTypes
+  } from '../../bindings/silt/app.js'
   import { coerceIPCError } from '../lib/ipcError'
   import { EventName } from '../generated/enums'
   import { trailingDebounce } from '../plugins/first-party/silt-tasks/debounce'
@@ -22,6 +26,7 @@
   import TypeDashboardFilters from './TypeDashboardFilters.svelte'
   import TypeDashboardTable from './TypeDashboardTable.svelte'
   import TypeDashboardBoard from './TypeDashboardBoard.svelte'
+  import { createReprojectionStatus } from './reprojectionStatus.svelte'
   import {
     PAGE_COLUMN_KEY,
     binByProperty,
@@ -71,6 +76,14 @@
   let typesLoading = $state(true)
   let typesError = $state('')
   let typeLoadErrors = $state<TypeLoadError[]>([])
+
+  // Live reprojection progress (#885). The worker emits
+  // types:reprojection:progress as a batch advances; the store also seeds
+  // from the cold-state IPC binding so a freshly mounted dashboard catches
+  // an already-running pass. active drives both the Refresh-button disabled
+  // state and the non-blocking progress region.
+  const reprojection = createReprojectionStatus()
+  let refreshing = $state(false)
 
   // #900 reserved-property migration notice (vault-open rename of created/aliases).
   const RENAME_NOTICE = 'reserved_prop_rename_v1_notice'
@@ -334,6 +347,25 @@
     }
   }
 
+  // Manual refresh (#885): ReloadTypes invalidates the cache + enqueues a full
+  // reprojection. The progress region lights up via the reprojection store's
+  // event subscription. Refreshing is gated on the worker NOT already running
+  // so a second click can't stack a redundant batch behind the live one.
+  async function refreshTypes(): Promise<void> {
+    if (refreshing || reprojection.active) return
+    refreshing = true
+    try {
+      await ReloadTypes()
+      // types:changed fires from ReloadTypes, but the dashboard's external-
+      // edit listener covers the re-fetch — call loadTypes/reload directly so
+      // the surface updates immediately regardless of event timing.
+      await loadTypes()
+      await reload()
+    } finally {
+      refreshing = false
+    }
+  }
+
   onMount(() => {
     void loadTypes()
     // The type set can change while the dashboard is mounted (a type file is
@@ -344,8 +376,10 @@
       void loadTypes()
       void reload()
     })
+    const detachReprojection = reprojection.attach()
     return () => {
       offTypesChanged()
+      detachReprojection()
     }
   })
 
@@ -516,6 +550,20 @@
       <div class="title-actions">
         <button
           type="button"
+          class="action-btn refresh-btn"
+          onclick={() => void refreshTypes()}
+          disabled={refreshing || reprojection.active}
+          aria-label="Refresh types"
+        >
+          <span
+            class="material-symbols-outlined text-icon-sm"
+            class:spinning={reprojection.active}
+            aria-hidden="true">sync</span
+          >
+          {reprojection.active ? 'Reprojecting…' : 'Refresh'}
+        </button>
+        <button
+          type="button"
           class="new-type-btn"
           onclick={() => onCreateType?.()}
         >
@@ -538,6 +586,23 @@
       renames={renameList}
       onDismiss={dismissRenameNotice}
     />
+    {#if reprojection.active}
+      <div
+        class="reprojection-progress"
+        role="status"
+        aria-live="polite"
+        data-testid="reprojection-progress"
+      >
+        <progress
+          value={reprojection.processed}
+          max={reprojection.total || 1}
+          aria-label="Reprojecting typed pages"
+        ></progress>
+        <span class="reprojection-text">
+          Reprojecting types… {reprojection.processed}/{reprojection.total}
+        </span>
+      </div>
+    {/if}
     {#if typeLoadErrors.length > 0}
       <div
         class="load-errors"
@@ -823,6 +888,28 @@
   .notices:empty {
     display: none;
   }
+  .reprojection-progress {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--color-surface-panel-border);
+    background: var(--color-surface-panel);
+    color: var(--color-text-primary);
+    font-size: var(--text-type-sm);
+    font-family: var(--font-body, sans-serif);
+  }
+  .reprojection-progress progress {
+    flex: 1 1 auto;
+    min-width: 8rem;
+    height: 0.5rem;
+    accent-color: var(--color-accent-primary-start);
+  }
+  .reprojection-text {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
   .load-errors {
     display: flex;
     align-items: flex-start;
@@ -847,6 +934,50 @@
   }
   .title-actions {
     margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.35rem 0.65rem;
+    border: 1px solid var(--color-surface-panel-border);
+    background: var(--color-surface-app);
+    color: var(--color-text-primary);
+    border-radius: 0.375rem;
+    font-family: var(--font-body, sans-serif);
+    font-size: var(--text-type-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background 120ms var(--transition-standard),
+      color 120ms var(--transition-standard);
+  }
+  .refresh-btn:hover:not(:disabled) {
+    background: var(--color-hover);
+  }
+  .refresh-btn:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 1px;
+  }
+  .refresh-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .refresh-btn .spinning {
+    animation: spin 1.1s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .refresh-btn .spinning {
+      animation: none;
+    }
   }
   .new-type-btn {
     display: inline-flex;

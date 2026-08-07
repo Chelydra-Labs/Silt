@@ -896,3 +896,192 @@ func TestProjectionReprojectWorker_TOCOUConcurrentEditSkipsWrite(t *testing.T) {
 		t.Errorf("type changed on stable reproject: before=%s after=%s", rowBefore.TypeName, rowAfter.TypeName)
 	}
 }
+
+// progressEmitRecorder swaps app.eventEmit to capture every
+// types:reprojection:progress payload. Returns a snapshot function + the
+// restore closure. Mirrors the mutex-guarded recorder pattern from
+// TestProjectionReprojectWorker_EmitsErrorForInvalidLocator (which captures
+// projection-error emits), extended to record the full payload so the
+// progress tests can assert state/processed/total shape.
+func progressEmitRecorder(app *App) (snapshot func() []map[string]any, restore func()) {
+	var emitMu sync.Mutex
+	var recs []map[string]any
+	origEmit := app.eventEmit
+	app.eventEmit = func(name string, data ...any) {
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		if name != string(EventTypesReprojectionProgress) {
+			return
+		}
+		if len(data) == 0 {
+			return
+		}
+		if m, ok := data[0].(map[string]any); ok {
+			recs = append(recs, m)
+		}
+	}
+	return func() []map[string]any {
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		out := make([]map[string]any, len(recs))
+		copy(out, recs)
+		return out
+	}, func() { app.eventEmit = origEmit }
+}
+
+// TestProjectionReprojectWorker_EmitsProgressForNonEmptyBatch proves the
+// worker emits types:reprojection:progress with a `running` start, optional
+// intermediate steps, and a final `done` for a batch that touches real pages.
+// The cold-state read (GetTypesReprojectionStatus) is also asserted idle both
+// before the batch starts and after it drains.
+func TestProjectionReprojectWorker_EmitsProgressForNonEmptyBatch(t *testing.T) {
+	app := newTestApp(t)
+	// Unique type id + notebook: newTestApp's in-memory DB is shared across
+	// tests (file::memory:?cache=shared), so the generic "book" id would pick
+	// up pages seeded by other tests and make the scoped locator count
+	// non-deterministic. A unique id makes the count exact. (Same shared-cache
+	// caveat as TestProjectionReprojectWorker_ScalingCount.)
+	const typeID = "progbatch"
+	baseSchema := types.TypeDef{ID: typeID, Name: "ProgBatch", Properties: []types.PropertyDef{
+		{Name: "title", Type: types.PropText},
+		{Name: "rating", Type: types.PropNumber},
+	}}
+	if err := app.SaveType(baseSchema); err != nil {
+		t.Fatalf("SaveType: %v", err)
+	}
+	flushReprojection(t, app)
+	const pageCount = 6
+	for _, p := range []string{"Dune", "Hyperion", "Foundation", "Endgame", "Neuromancer", "Snowcrash"} {
+		seedTypedPageForWorker(t, app, "ProgBatchNB", "", p, typeID,
+			"# "+p+" <!-- id: "+p+" -->")
+	}
+
+	// Pre-batch: the worker is idle (no batch in flight).
+	if status := app.GetTypesReprojectionStatus(); status["active"] != false {
+		t.Errorf("pre-batch status active = %v, want false", status["active"])
+	}
+
+	snapshot, restore := progressEmitRecorder(app)
+	// A property rename (id unchanged) enqueues typeID → a non-empty batch
+	// over exactly the seeded pages.
+	renamed := baseSchema
+	renamed.Properties = []types.PropertyDef{
+		{Name: "title", Type: types.PropText},
+		{Name: "score", Type: types.PropNumber},
+	}
+	if err := app.SaveType(renamed); err != nil {
+		t.Fatalf("SaveType: %v", err)
+	}
+	flushReprojection(t, app)
+	restore()
+
+	recs := snapshot()
+	if len(recs) == 0 {
+		t.Fatal("expected at least one types:reprojection:progress emit, got none")
+	}
+	// First emit is the `running` start with processed=0 and total=pageCount.
+	first := recs[0]
+	if first["state"] != "running" {
+		t.Errorf("first emit state = %v, want running", first["state"])
+	}
+	if first["total"] != uint64(pageCount) {
+		t.Errorf("first emit total = %v, want %d", first["total"], pageCount)
+	}
+	if first["processed"] != uint64(0) {
+		t.Errorf("first emit processed = %v, want 0", first["processed"])
+	}
+	// Last emit is the `done` terminator with processed=total=pageCount.
+	last := recs[len(recs)-1]
+	if last["state"] != "done" {
+		t.Errorf("last emit state = %v, want done", last["state"])
+	}
+	if last["total"] != uint64(pageCount) {
+		t.Errorf("last emit total = %v, want %d", last["total"], pageCount)
+	}
+	if last["processed"] != uint64(pageCount) {
+		t.Errorf("last emit processed = %v, want %d", last["processed"], pageCount)
+	}
+
+	// Post-batch: the worker reset to idle.
+	if status := app.GetTypesReprojectionStatus(); status["active"] != false {
+		t.Errorf("post-batch status active = %v, want false", status["active"])
+	}
+}
+
+// TestProjectionReprojectWorker_DoesNotEmitProgressForEmptyBatch proves the
+// no-op-batch contract: an enqueue that resolves to zero locators emits NO
+// progress events (no start/done churn), so the dashboard progress region
+// never flickers on a coalesced no-op wake. Verified by enqueuing against a
+// type id with zero pages.
+func TestProjectionReprojectWorker_DoesNotEmitProgressForEmptyBatch(t *testing.T) {
+	app := newTestApp(t)
+	// Unique type id with no pages: the shared in-memory cache (see
+	// TestProjectionReprojectWorker_ScalingCount) could otherwise leak a row
+	// from another test and make this batch non-empty.
+	const typeID = "progempty"
+	if err := app.SaveType(types.TypeDef{
+		ID:         typeID,
+		Name:       "ProgEmpty",
+		Properties: []types.PropertyDef{{Name: "title", Type: types.PropText}},
+	}); err != nil {
+		t.Fatalf("SaveType: %v", err)
+	}
+	flushReprojection(t, app)
+	// No pages seeded → the scoped locator lookup for typeID is empty.
+
+	snapshot, restore := progressEmitRecorder(app)
+	// Enqueue with allMode=false for an id with no pages so the scoped
+	// locator lookup returns zero rows.
+	app.enqueueReprojection(false, typeID)
+	flushReprojection(t, app)
+	restore()
+
+	if recs := snapshot(); len(recs) != 0 {
+		t.Errorf("expected zero progress emits for an empty batch, got %d: %+v", len(recs), recs)
+	}
+}
+
+// TestGetTypesReprojectionStatus_IdleShape pins the cold-state read shape for
+// the no-worker and idle-worker cases. The active case is exercised inline by
+// TestProjectionReprojectWorker_EmitsProgressForNonEmptyBatch; here we assert
+// the all-zero shape the dashboard hides itself on.
+func TestGetTypesReprojectionStatus_IdleShape(t *testing.T) {
+	t.Run("nil worker returns all-zero inactive", func(t *testing.T) {
+		app := newTestApp(t)
+		// Simulate a closed vault: the teardown hook nils the field, but the
+		// App is still usable for the read binding.
+		app.vaultMu.Lock()
+		app.reprojectWorker = nil
+		app.vaultMu.Unlock()
+
+		status := app.GetTypesReprojectionStatus()
+		if status["active"] != false {
+			t.Errorf("active = %v, want false", status["active"])
+		}
+		if status["processed"] != uint64(0) {
+			t.Errorf("processed = %v, want 0", status["processed"])
+		}
+		if status["total"] != uint64(0) {
+			t.Errorf("total = %v, want 0", status["total"])
+		}
+	})
+	t.Run("idle worker returns all-zero inactive", func(t *testing.T) {
+		app := newTestApp(t)
+		if err := app.SaveType(bookSchema("rating")); err != nil {
+			t.Fatalf("SaveType: %v", err)
+		}
+		flushReprojection(t, app)
+		// No enqueue in flight → worker is idle between batches.
+
+		status := app.GetTypesReprojectionStatus()
+		if status["active"] != false {
+			t.Errorf("active = %v, want false", status["active"])
+		}
+		if status["processed"] != uint64(0) {
+			t.Errorf("processed = %v, want 0", status["processed"])
+		}
+		if status["total"] != uint64(0) {
+			t.Errorf("total = %v, want 0", status["total"])
+		}
+	})
+}

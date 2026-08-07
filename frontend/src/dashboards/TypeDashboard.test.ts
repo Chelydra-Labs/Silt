@@ -72,7 +72,11 @@ const MOVIE_TYPE = {
 const appMocks = vi.hoisted(() =>
   createAppIpcMocks({
     ListTypes: vi.fn(),
-    QueryPagesByType: vi.fn()
+    QueryPagesByType: vi.fn(),
+    ReloadTypes: vi.fn().mockResolvedValue(undefined),
+    GetTypesReprojectionStatus: vi
+      .fn()
+      .mockResolvedValue({ active: false, processed: 0, total: 0 })
   })
 )
 vi.mock('$silt-app', () => appMocks)
@@ -94,6 +98,12 @@ import TypeDashboard from './TypeDashboard.svelte'
 beforeEach(() => {
   appMocks.ListTypes.mockReset()
   appMocks.QueryPagesByType.mockReset()
+  appMocks.ReloadTypes.mockReset().mockResolvedValue(undefined)
+  appMocks.GetTypesReprojectionStatus.mockReset().mockResolvedValue({
+    active: false,
+    processed: 0,
+    total: 0
+  })
   appMocks.ListTypes.mockResolvedValue({ types: [BOOK_TYPE] })
   appMocks.QueryPagesByType.mockResolvedValue(BOOK_ROWS)
   for (const k of Object.keys(eventsHandlers)) delete eventsHandlers[k]
@@ -423,6 +433,88 @@ describe('TypeDashboard', () => {
       await tick()
       expect(listRadio).toHaveAttribute('aria-checked', 'true')
       expect(boardRadio).toHaveAttribute('aria-checked', 'false')
+    })
+  })
+
+  describe('refresh + reprojection progress (#885)', () => {
+    it('renders a Refresh button in the header', async () => {
+      await mount()
+      expect(
+        screen.getByRole('button', { name: 'Refresh types' })
+      ).toBeInTheDocument()
+    })
+
+    it('clicking Refresh calls ReloadTypes', async () => {
+      await mount()
+      const refreshBtn = screen.getByRole('button', { name: 'Refresh types' })
+      await fireEvent.click(refreshBtn)
+      await waitFor(() => {
+        expect(appMocks.ReloadTypes).toHaveBeenCalledTimes(1)
+      })
+    })
+
+    it('hides the progress region while idle', async () => {
+      await mount()
+      expect(screen.queryByTestId('reprojection-progress')).toBeNull()
+    })
+
+    it('renders the progress region + role=status when a batch is running', async () => {
+      // Seed the cold-state read as already-active so the store mounts active
+      // without needing to fire the event (the live event path is covered by
+      // reprojectionStatus.test.ts). The progress region must surface a
+      // role=status live region and the native progress bar.
+      appMocks.GetTypesReprojectionStatus.mockResolvedValue({
+        active: true,
+        processed: 4,
+        total: 10
+      })
+      await mount()
+      const region = await screen.findByTestId('reprojection-progress')
+      expect(region).toHaveAttribute('role', 'status')
+      expect(region).toHaveAttribute('aria-live', 'polite')
+      // Native progress bar exposes itself as a progressbar role.
+      expect(
+        within(region).getByRole('progressbar', {
+          name: 'Reprojecting typed pages'
+        })
+      ).toBeInTheDocument()
+      // The "processed/total" copy is present and polite-live.
+      expect(region.textContent).toMatch(/4\/10/)
+    })
+
+    it('disables the Refresh button while a reprojection is active', async () => {
+      appMocks.GetTypesReprojectionStatus.mockResolvedValue({
+        active: true,
+        processed: 1,
+        total: 5
+      })
+      await mount()
+      await screen.findByTestId('reprojection-progress')
+      const refreshBtn = screen.getByRole('button', {
+        name: /Refresh|Reprojecting/
+      })
+      expect(refreshBtn).toBeDisabled()
+    })
+
+    it('clears the progress region when the done event lands', async () => {
+      await mount()
+      expect(screen.queryByTestId('reprojection-progress')).toBeNull()
+
+      // Fire a running event → region appears.
+      eventsHandlers['types:reprojection:progress']?.({
+        data: { state: 'running', processed: 1, total: 3 }
+      })
+      await waitFor(() => {
+        expect(screen.getByTestId('reprojection-progress')).toBeInTheDocument()
+      })
+
+      // Fire the done event → region hides (active=false).
+      eventsHandlers['types:reprojection:progress']?.({
+        data: { state: 'done', processed: 3, total: 3 }
+      })
+      await waitFor(() => {
+        expect(screen.queryByTestId('reprojection-progress')).toBeNull()
+      })
     })
   })
 })
