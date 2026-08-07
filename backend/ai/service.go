@@ -161,10 +161,15 @@ type ToolDef struct {
 // Google when the provider supplies an opaque id); Google falls back to the
 // function name when no id is present. Arguments is the raw JSON object bytes
 // (unwrapped from OpenAI's stringified form).
+//
+// ThoughtSignature is opaque provider baggage (Gemini 3+ thought signatures on
+// functionCall parts). It must be echoed unchanged on multi-turn tool loops;
+// other providers leave it empty. Never log the full blob.
 type ToolCall struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Arguments        json.RawMessage `json:"arguments,omitempty"`
+	ThoughtSignature string          `json:"thought_signature,omitempty"`
 }
 
 // normalizeToolArguments enforces the unified ToolCall contract at every
