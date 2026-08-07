@@ -51,9 +51,9 @@ const (
 
 	// Emitted by the reprojection worker as a batch progresses so the type
 	// dashboard can show a non-blocking progress indicator. Payload is
-	// map[string]any{"state": "running"|"done", "processed": uint64,
-	// "total": uint64}. A "running" emit carries the current processed count;
-	// the final "done" emit signals the batch completed.
+	// TypesReprojectionProgressEvent{State: "running"|"done", Processed, Total}.
+	// A "running" emit carries the current processed count; the final "done"
+	// emit signals the batch completed.
 	EventTypesReprojectionProgress EventName = "types:reprojection:progress"
 
 	// Themes (singular vs plural is intentional — see the doc comment above).

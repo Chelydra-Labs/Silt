@@ -354,7 +354,7 @@
       },
       {
         "name": "GetTypesReprojectionStatus",
-        "signature": "GetTypesReprojectionStatus() map[string]any"
+        "signature": "GetTypesReprojectionStatus() TypesReprojectionStatus"
       },
       {
         "name": "GetUnlinkedMentionsPaged",
