@@ -538,6 +538,17 @@ export async function runAgent(
       // burns the whole budget on search/read and the user only sees the
       // iteration-limit banner — even when vault_data already had the answer.
       const forceFinalAnswer = iterations === MAX_ITERATIONS && hadToolResults
+      if (forceFinalAnswer) {
+        // Explicit steer so providers that ignore toolChoice=none still stop
+        // searching and synthesize from prior <vault_data> turns.
+        messages.push({
+          role: 'user',
+          content:
+            'Tool budget reached. Answer the user now using only the tool ' +
+            'results already in this conversation. Do not call tools. If the ' +
+            'notes contain the answer, state it clearly and cite the relevant note.'
+        })
+      }
       const completeReq = {
         // Providers receive a stable request snapshot; later tool-result
         // appends must not mutate an earlier request retained by a test
@@ -605,12 +616,13 @@ export async function runAgent(
       if (calls.length === 0 || forceFinalAnswer) {
         // Voluntary stop, or reserved wrap-up turn (ignore any stray tool_calls).
         opts.onDone?.(lastText)
+        const emptyForced = forceFinalAnswer && !lastText.trim()
         return {
           text: lastText,
           iterations,
           cancelled: false,
-          // Cap flag only when we forced wrap-up after tool use (not a clean stop).
-          hitIterationCap: forceFinalAnswer,
+          // Hard-stop banner only when wrap-up produced nothing useful.
+          hitIterationCap: emptyForced,
           forcedFinalAnswer: forceFinalAnswer || undefined
         }
       }

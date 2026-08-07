@@ -237,15 +237,50 @@ describe('agent-loop', () => {
     )
     expect(res.iterations).toBe(MAX_ITERATIONS)
     expect(res.forcedFinalAnswer).toBe(true)
-    expect(res.hitIterationCap).toBe(true)
+    // Successful wrap-up is not a hard stop (banner only when text empty).
+    expect(res.hitIterationCap).toBe(false)
     expect(res.text).toBe('Use MUOPT to change the plant for reports.')
-    // Last complete: no tools catalog, toolChoice none.
-    const lastReq = completeReqs[completeReqs.length - 1]
+    // Last complete: no tools catalog, toolChoice none + synthesis nudge.
+    const lastReq = completeReqs[completeReqs.length - 1] as {
+      toolChoice?: { mode: string }
+      tools?: unknown[]
+      messages: Array<{ role?: string; content?: string }>
+    }
     expect(lastReq.toolChoice).toEqual({ mode: 'none' })
     expect(lastReq.tools).toBeUndefined()
+    const nudge = lastReq.messages.find(
+      (m) =>
+        m.role === 'user' &&
+        typeof m.content === 'string' &&
+        /Tool budget reached/i.test(m.content)
+    )
+    expect(nudge).toBeTruthy()
     // Earlier turns still offered tools.
     expect(completeReqs[0].toolChoice).toEqual({ mode: 'auto' })
     expect(completeReqs[0].tools).toBeDefined()
+  })
+
+  it('marks hitIterationCap only when forced wrap-up text is empty', async () => {
+    registerTool({
+      name: 'loop',
+      description: 'always called',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => ({ content: 'data' })
+    })
+    const ctx = mockCtx((n) => {
+      if (n < MAX_ITERATIONS) {
+        return mockStream({
+          content: '',
+          model: 'm',
+          tool_calls: [{ id: `tc${n}`, name: 'loop', arguments: {} }]
+        })
+      }
+      return mockStream({ content: '', model: 'm' })
+    })
+    const res = await runAgent(ctx, 'go', [])
+    expect(res.forcedFinalAnswer).toBe(true)
+    expect(res.hitIterationCap).toBe(true)
+    expect(res.text).toBe('')
   })
 
   it('buildSystemPrompt steers the model to stop once vault_data is enough', () => {

@@ -641,6 +641,138 @@ describe('Tasks view', () => {
     }
   })
 
+  it('keeps one TaskEditDrawer instance across the overlay↔pane threshold (#919)', async () => {
+    // Controllable ResizeObserver so we can flip host width across the
+    // canFitInspectorSplit threshold (864px) without a real layout engine.
+    const observed = new Map<Element, ResizeObserverCallback>()
+    const OrigRO = globalThis.ResizeObserver
+    class MockRO {
+      private cb: ResizeObserverCallback
+      constructor(cb: ResizeObserverCallback) {
+        this.cb = cb
+      }
+      observe(el: Element) {
+        observed.set(el, this.cb)
+        const w = (el as HTMLElement).clientWidth || 0
+        this.cb(
+          [
+            { target: el, contentRect: { width: w } }
+          ] as unknown as ResizeObserverEntry[],
+          this as unknown as ResizeObserver
+        )
+      }
+      unobserve(el: Element) {
+        observed.delete(el)
+      }
+      disconnect() {
+        observed.clear()
+      }
+    }
+    globalThis.ResizeObserver = MockRO as unknown as typeof ResizeObserver
+
+    let hostWidth = 1200
+    const fireHostWidth = (el: HTMLElement, w: number) => {
+      hostWidth = w
+      const cb = observed.get(el)
+      cb?.(
+        [
+          { target: el, contentRect: { width: w } }
+        ] as unknown as ResizeObserverEntry[],
+        {} as ResizeObserver
+      )
+    }
+
+    try {
+      mocks.sqliteQuery.mockImplementation(async (sql: string) => {
+        if (isOpenSql(sql)) {
+          return {
+            rows: [task('flip1', 'Threshold flip task')],
+            truncated: false
+          }
+        }
+        return { rows: [], truncated: false }
+      })
+
+      const { container } = render(Tasks, {
+        ctx: makeCtx(),
+        manifest: MANIFEST
+      })
+      await flush()
+
+      const host = container.querySelector(
+        '[data-tasks-view]'
+      ) as HTMLElement | null
+      expect(host).toBeTruthy()
+      Object.defineProperty(host!, 'clientWidth', {
+        configurable: true,
+        get: () => hostWidth
+      })
+      fireHostWidth(host!, 1200)
+      await flush()
+
+      const bodyBtn = document.querySelector(
+        '[data-block-id="flip1"] button[aria-label^="Edit metadata for"]'
+      ) as HTMLElement
+      await fireEvent.click(bodyBtn)
+      await flush()
+      await new Promise((r) => setTimeout(r, 20))
+      await flush()
+
+      const drawer = document.querySelector(
+        '[data-testid="task-edit-drawer"]'
+      ) as HTMLElement | null
+      expect(drawer).toBeTruthy()
+      expect(drawer?.getAttribute('data-variant')).toBe('pane')
+      expect(
+        document.querySelector('[data-testid="tasks-inspector-pane"]')
+      ).toBeTruthy()
+
+      // Simulate mid-edit scroll position; must survive the threshold flip.
+      const scroll = document.querySelector(
+        '[data-testid="task-edit-drawer-scroll"]'
+      ) as HTMLElement | null
+      expect(scroll).toBeTruthy()
+      scroll!.scrollTop = 37
+
+      // Narrow below split threshold → overlay; same drawer node.
+      fireHostWidth(host!, 700)
+      await flush()
+      await tick()
+
+      const afterNarrow = document.querySelector(
+        '[data-testid="task-edit-drawer"]'
+      ) as HTMLElement | null
+      expect(afterNarrow).toBe(drawer)
+      expect(afterNarrow?.getAttribute('data-variant')).toBe('overlay')
+      expect(
+        document.querySelector('[data-testid="tasks-inspector-pane"]')
+      ).toBeNull()
+      expect(
+        (
+          document.querySelector(
+            '[data-testid="task-edit-drawer-scroll"]'
+          ) as HTMLElement
+        ).scrollTop
+      ).toBe(37)
+
+      // Wide again → pane; still the same instance.
+      fireHostWidth(host!, 1200)
+      await flush()
+      await tick()
+
+      const afterWide = document.querySelector(
+        '[data-testid="task-edit-drawer"]'
+      ) as HTMLElement | null
+      expect(afterWide).toBe(drawer)
+      expect(afterWide?.getAttribute('data-variant')).toBe('pane')
+      expect(
+        document.querySelector('[data-testid="tasks-inspector-pane"]')
+      ).toBeTruthy()
+    } finally {
+      globalThis.ResizeObserver = OrigRO
+    }
+  })
+
   it('clicking the pencil affordance opens the sub-editor modal', async () => {
     mocks.sqliteQuery.mockImplementation(async (sql: string) => {
       if (isOpenSql(sql))

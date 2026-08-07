@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"silt/backend/parser"
 	"silt/backend/templates"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -225,7 +226,14 @@ func scaffoldTemplateFrontmatter(notebook, section, page, date, created string, 
 	b.WriteString("tags: []\n")
 	if bind, ok := templateTypeBindings[templateID]; ok {
 		fmt.Fprintf(&b, "type: %s\n", strconv.Quote(bind.typeID))
-		for placeholder, prop := range bind.props {
+		// Stable key order so multi-prop bindings stay byte-deterministic.
+		placeholders := make([]string, 0, len(bind.props))
+		for placeholder := range bind.props {
+			placeholders = append(placeholders, placeholder)
+		}
+		sort.Strings(placeholders)
+		for _, placeholder := range placeholders {
+			prop := bind.props[placeholder]
 			val := ""
 			if vars != nil {
 				val = strings.TrimSpace(vars[placeholder])
