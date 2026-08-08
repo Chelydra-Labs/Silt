@@ -112,13 +112,17 @@ func TestWireAudit_UnknownToolAndMalformedOuterParamsNoSchemaAudit(t *testing.T)
 	cfg := Config{Enabled: true, HTTPEnabled: true, HTTPPort: freePort(t)}
 	h, aud, cs := startHTTPHost(t, bridge, cfg)
 
-	// Unknown tool via SDK (session already initialized).
+	// Unknown tool via SDK (session already initialized) — not audited at all.
+	beforeUnknown := auditLen(aud)
 	_, err := cs.CallTool(context.Background(), &mcpsdk.CallToolParams{
 		Name:      "no_such_tool_wire",
 		Arguments: map[string]any{},
 	})
 	if err == nil {
 		t.Fatal("expected JSON-RPC error for unknown tool")
+	}
+	if got := auditLen(aud); got != beforeUnknown {
+		t.Fatalf("unknown tool grew audit %d→%d: %+v", beforeUnknown, got, aud.Entries)
 	}
 	if got := countOutcome(aud, "no_such_tool_wire", OutcomeRejectedSchema); got != 0 {
 		t.Fatalf("unknown tool audited as rejected_schema: %+v", aud.Entries)

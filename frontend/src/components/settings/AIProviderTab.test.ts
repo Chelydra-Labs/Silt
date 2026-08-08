@@ -1810,6 +1810,40 @@ describe('AIProviderTab', () => {
       expect(table).not.toHaveTextContent('search_blocks')
     })
 
+    it('filters MCP activity by tool name substring', async () => {
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(mcpActivitySummary())
+      await screen.findByText('create_page')
+      const tool = screen.getByLabelText(
+        /Filter MCP activity by tool name/i
+      ) as HTMLInputElement
+      await fireEvent.input(tool, { target: { value: 'create' } })
+      const table = screen.getByRole('table', {
+        name: /Recent local MCP tool calls/i
+      })
+      expect(table).toHaveTextContent('create_page')
+      expect(table).not.toHaveTextContent('search_blocks')
+    })
+
+    it('shows filter-empty message and still offers Clear log', async () => {
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(mcpActivitySummary())
+      await screen.findByText('create_page')
+      const tool = screen.getByLabelText(
+        /Filter MCP activity by tool name/i
+      ) as HTMLInputElement
+      await fireEvent.input(tool, { target: { value: 'no-such-tool-xyz' } })
+      expect(
+        await screen.findByText(/No calls match the current filters/i)
+      ).toBeInTheDocument()
+      // Clear stays available whenever loaded audit has rows.
+      expect(
+        screen.getByRole('button', { name: /Clear log/i })
+      ).toBeInTheDocument()
+    })
+
     it('Clear log calls ClearMCPAudit and empties the MCP table', async () => {
       render(AIProviderTab)
       await ready()
@@ -1839,6 +1873,19 @@ describe('AIProviderTab', () => {
       await waitFor(() =>
         expect(screen.getByText('create_page')).toBeInTheDocument()
       )
+    })
+
+    it('keeps rows and shows clear error when ClearMCPAudit rejects', async () => {
+      mocks.ClearMCPAudit.mockRejectedValueOnce(new Error('permission denied'))
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(mcpActivitySummary())
+      await screen.findByText('create_page')
+      await fireEvent.click(screen.getByRole('button', { name: /Clear log/i }))
+      const message = await screen.findByText(/Failed to clear audit log/i)
+      expect(message.textContent).toContain('permission denied')
+      // Rows remain visible after a failed clear.
+      expect(screen.getByText('create_page')).toBeInTheDocument()
     })
   })
 })

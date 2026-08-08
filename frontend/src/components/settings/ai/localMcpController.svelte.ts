@@ -64,7 +64,10 @@ export function createLocalMcpController() {
   let auditOpen = $state(false)
   let audit = $state<MCPAuditEntry[]>([])
   let auditState = $state<MCPAuditLoadState>('idle')
+  /** Load failure (hides table until retry). Distinct from clearError. */
   let auditError = $state<string | null>(null)
+  /** Clear failure — keep rows visible; banner only. */
+  let clearError = $state<string | null>(null)
   let outcomeFilter = $state('all')
   let toolQuery = $state('')
 
@@ -258,6 +261,7 @@ export function createLocalMcpController() {
   async function loadAudit() {
     auditState = 'loading'
     auditError = null
+    clearError = null
     try {
       audit = toPlainAudit(await GetMCPAudit())
       auditState = 'ready'
@@ -269,14 +273,15 @@ export function createLocalMcpController() {
   }
 
   async function clearAudit() {
+    clearError = null
     try {
       await ClearMCPAudit()
       audit = []
       auditError = null
       auditState = 'ready'
     } catch (e) {
-      auditError = e instanceof Error ? e.message : String(e)
-      auditState = 'error'
+      // Keep existing rows; surface clear failure separately from load errors.
+      clearError = e instanceof Error ? e.message : String(e)
     }
   }
 
@@ -312,6 +317,7 @@ export function createLocalMcpController() {
   function auditSummary(): string {
     if (auditState === 'loading') return 'Loading…'
     if (auditState === 'error') return 'Failed to load'
+    if (clearError) return 'Clear failed'
     if (audit.length === 0) return 'No activity yet'
     const filtered = filteredAudit()
     if (filtered.length === audit.length) {
@@ -377,6 +383,9 @@ export function createLocalMcpController() {
     },
     get auditError() {
       return auditError
+    },
+    get clearError() {
+      return clearError
     },
     get outcomeFilter() {
       return outcomeFilter

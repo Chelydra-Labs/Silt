@@ -751,14 +751,51 @@
                         aria-label="Filter MCP activity by tool name"
                       />
                     </label>
-                    <button
-                      type="button"
-                      class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
-                      onclick={() => void mcp.loadAudit()}
-                    >
-                      Refresh
-                    </button>
+                    <div class="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
+                        onclick={() => void mcp.loadAudit()}
+                      >
+                        Refresh
+                      </button>
+                      {#if mcp.audit.length > 0}
+                        <button
+                          type="button"
+                          onclick={() => void mcp.clearAudit()}
+                          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted font-label-sm-bold hover:text-error hover:border-error/50 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+                        >
+                          <span
+                            class="material-symbols-outlined text-icon-md"
+                            aria-hidden="true">delete_sweep</span
+                          >
+                          Clear log
+                        </button>
+                      {/if}
+                    </div>
                   </div>
+
+                  {#if mcp.clearError}
+                    <div
+                      class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
+                      role="alert"
+                    >
+                      <span
+                        class="material-symbols-outlined text-icon-lg"
+                        aria-hidden="true">error</span
+                      >
+                      <span class="flex-1"
+                        >Failed to clear audit log: {mcp.clearError}</span
+                      >
+                      <button
+                        type="button"
+                        onclick={() => void mcp.clearAudit()}
+                        class="text-type-xs font-label-sm-bold underline bg-transparent border-none cursor-pointer text-error"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  {/if}
 
                   {#if mcp.auditState === 'loading'}
                     <div
@@ -851,18 +888,30 @@
                                   <span
                                     class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-accent-primary-glow/20 border border-accent-primary-start text-accent-primary-start font-label-sm-bold text-type-2xs"
                                   >
+                                    <span
+                                      class="material-symbols-outlined text-type-2xs"
+                                      aria-hidden="true">check_circle</span
+                                    >
                                     ok
                                   </span>
                                 {:else if entry.outcome === 'error'}
                                   <span
                                     class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-status-danger/10 text-status-danger font-label-sm-bold text-type-2xs"
                                   >
+                                    <span
+                                      class="material-symbols-outlined text-type-2xs"
+                                      aria-hidden="true">error</span
+                                    >
                                     {entry.outcome}
                                   </span>
                                 {:else}
                                   <span
                                     class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-status-warn/15 text-status-warn font-label-sm-bold text-type-2xs"
                                   >
+                                    <span
+                                      class="material-symbols-outlined text-type-2xs"
+                                      aria-hidden="true">warning</span
+                                    >
                                     {entry.outcome ?? '—'}
                                   </span>
                                 {/if}
@@ -881,19 +930,6 @@
                           {/each}
                         </tbody>
                       </table>
-                    </div>
-                    <div class="flex justify-end">
-                      <button
-                        type="button"
-                        onclick={() => void mcp.clearAudit()}
-                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted font-label-sm-bold hover:text-error hover:border-error/50 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
-                      >
-                        <span
-                          class="material-symbols-outlined text-icon-md"
-                          aria-hidden="true">delete_sweep</span
-                        >
-                        Clear log
-                      </button>
                     </div>
                   {/if}
                 </div>

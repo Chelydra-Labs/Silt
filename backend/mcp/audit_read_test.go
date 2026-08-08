@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func writeAuditLines(t *testing.T, vault string, entries []AuditEntry) {
@@ -90,6 +89,26 @@ func TestClearAuditLog_EmptiesFile(t *testing.T) {
 	}
 }
 
+func TestReadAuditLog_LimitCap(t *testing.T) {
+	vault := t.TempDir()
+	writeAuditLines(t, vault, []AuditEntry{
+		{TS: "2026-01-01T00:00:00Z", Tool: "a", Outcome: "ok", Vault: "v"},
+		{TS: "2026-01-01T00:00:01Z", Tool: "b", Outcome: "ok", Vault: "v"},
+		{TS: "2026-01-01T00:00:02Z", Tool: "c", Outcome: "ok", Vault: "v"},
+	})
+	got, err := ReadAuditLog(vault, 2)
+	if err != nil {
+		t.Fatalf("ReadAuditLog: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len=%d want 2: %+v", len(got), got)
+	}
+	// Newest-first: last two lines are b then c on disk → c, b after reverse.
+	if got[0].Tool != "c" || got[1].Tool != "b" {
+		t.Fatalf("want newest-first [c,b], got %+v", got)
+	}
+}
+
 func TestFileAuditor_ClearThenRecord(t *testing.T) {
 	vault := t.TempDir()
 	fa, err := newFileAuditor(vault)
@@ -98,8 +117,7 @@ func TestFileAuditor_ClearThenRecord(t *testing.T) {
 	}
 	defer fa.Close()
 	fa.Record(AuditEntry{Tool: "search_blocks", Outcome: "ok", Vault: "v"})
-	// Ensure write flushed via close/reopen path in Clear.
-	time.Sleep(5 * time.Millisecond)
+	// Clear serializes under the same mutex as Record (no sleep needed).
 	if err := fa.Clear(); err != nil {
 		t.Fatalf("Clear: %v", err)
 	}
