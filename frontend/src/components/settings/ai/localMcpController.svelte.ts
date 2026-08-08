@@ -1,11 +1,14 @@
 // Reactive controller for Settings → AI → Local MCP. Owns IPC and state so
 // AIProviderTab stays layout-only (same pattern as aiProviderController).
+import { SvelteDate } from 'svelte/reactivity'
 import {
+  ClearMCPAudit,
   GetCloseToTray,
   GetLocalMCPConfig,
   GetLocalMCPInstallHint,
   GetLocalMCPStatus,
   GetLocalMCPToken,
+  GetMCPAudit,
   SetCloseToTray,
   SetLocalMCPConfig
 } from '../../../../bindings/silt/app.js' // settings/ai → frontend root
@@ -18,6 +21,26 @@ export type LocalMCPStatus = {
 }
 
 export type LocalMCPInstallNote = { title: string; body: string }
+
+export type MCPAuditEntry = {
+  ts?: string
+  client?: string
+  tool?: string
+  vault?: string
+  outcome?: string
+  error?: string
+  args?: Record<string, unknown>
+}
+
+export type MCPAuditLoadState = 'idle' | 'loading' | 'ready' | 'error'
+
+const MCP_OUTCOMES = [
+  'ok',
+  'error',
+  'denied',
+  'rejected',
+  'rejected_schema'
+] as const
 
 export function createLocalMcpController() {
   let enabled = $state(false)
@@ -36,6 +59,14 @@ export function createLocalMcpController() {
   let tokenCopiedTimer: ReturnType<typeof setTimeout> | null = null
   // True after a successful Copy token until we best-effort clear the clipboard.
   let clipboardHoldsToken = false
+
+  // MCP activity viewer (#886) — lazy-load on <details> expand.
+  let auditOpen = $state(false)
+  let audit = $state<MCPAuditEntry[]>([])
+  let auditState = $state<MCPAuditLoadState>('idle')
+  let auditError = $state<string | null>(null)
+  let outcomeFilter = $state('all')
+  let toolQuery = $state('')
 
   function clearTokenFromMemory() {
     token = ''
@@ -205,6 +236,90 @@ export function createLocalMcpController() {
     ]
   }
 
+  function toPlainAudit(raw: unknown): MCPAuditEntry[] {
+    if (!Array.isArray(raw)) return []
+    return raw.map((row) => {
+      const r = row as Record<string, unknown>
+      return {
+        ts: typeof r.ts === 'string' ? r.ts : undefined,
+        client: typeof r.client === 'string' ? r.client : undefined,
+        tool: typeof r.tool === 'string' ? r.tool : undefined,
+        vault: typeof r.vault === 'string' ? r.vault : undefined,
+        outcome: typeof r.outcome === 'string' ? r.outcome : undefined,
+        error: typeof r.error === 'string' ? r.error : undefined,
+        args:
+          r.args && typeof r.args === 'object' && !Array.isArray(r.args)
+            ? (r.args as Record<string, unknown>)
+            : undefined
+      }
+    })
+  }
+
+  async function loadAudit() {
+    auditState = 'loading'
+    auditError = null
+    try {
+      audit = toPlainAudit(await GetMCPAudit())
+      auditState = 'ready'
+    } catch (e) {
+      audit = []
+      auditState = 'error'
+      auditError = e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  async function clearAudit() {
+    try {
+      await ClearMCPAudit()
+      audit = []
+      auditError = null
+      auditState = 'ready'
+    } catch (e) {
+      auditError = e instanceof Error ? e.message : String(e)
+      auditState = 'error'
+    }
+  }
+
+  function formatAuditTime(ts: string | undefined): string {
+    if (!ts) return '—'
+    const d = new SvelteDate(ts)
+    if (Number.isNaN(d.getTime())) return ts
+    return d.toLocaleString()
+  }
+
+  function formatArgs(args: Record<string, unknown> | undefined): string {
+    if (!args || Object.keys(args).length === 0) return '—'
+    try {
+      return JSON.stringify(args)
+    } catch {
+      return '—'
+    }
+  }
+
+  function filteredAudit(): MCPAuditEntry[] {
+    const q = toolQuery.trim().toLowerCase()
+    return audit.filter((e) => {
+      if (outcomeFilter !== 'all' && (e.outcome ?? '') !== outcomeFilter) {
+        return false
+      }
+      if (q && !(e.tool ?? '').toLowerCase().includes(q)) {
+        return false
+      }
+      return true
+    })
+  }
+
+  function auditSummary(): string {
+    if (auditState === 'loading') return 'Loading…'
+    if (auditState === 'error') return 'Failed to load'
+    if (audit.length === 0) return 'No activity yet'
+    const filtered = filteredAudit()
+    if (filtered.length === audit.length) {
+      return `${audit.length} call${audit.length === 1 ? '' : 's'}`
+    }
+    return `${filtered.length} of ${audit.length} calls`
+  }
+
   function destroy() {
     // Closing Settings must not leave the bearer on the clipboard after Copy.
     clearTokenFromMemory()
@@ -248,6 +363,42 @@ export function createLocalMcpController() {
     get trayPrompt() {
       return trayPrompt
     },
+    get auditOpen() {
+      return auditOpen
+    },
+    set auditOpen(v: boolean) {
+      auditOpen = v
+    },
+    get audit() {
+      return audit
+    },
+    get auditState() {
+      return auditState
+    },
+    get auditError() {
+      return auditError
+    },
+    get outcomeFilter() {
+      return outcomeFilter
+    },
+    set outcomeFilter(v: string) {
+      outcomeFilter = v
+    },
+    get toolQuery() {
+      return toolQuery
+    },
+    set toolQuery(v: string) {
+      toolQuery = v
+    },
+    get outcomes() {
+      return MCP_OUTCOMES
+    },
+    get filteredAudit() {
+      return filteredAudit()
+    },
+    get auditSummary() {
+      return auditSummary()
+    },
     refresh,
     save,
     acceptTray,
@@ -256,6 +407,10 @@ export function createLocalMcpController() {
     copyToken,
     copyHint,
     installNotes,
+    loadAudit,
+    clearAudit,
+    formatAuditTime,
+    formatArgs,
     destroy
   }
 }

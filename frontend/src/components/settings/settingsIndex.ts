@@ -251,6 +251,19 @@ const CORE_INDEX: SettingsIndexEntry[] = [
     anchorId: 'ai-local-mcp'
   },
   {
+    label: 'MCP activity log',
+    keywords: [
+      'mcp',
+      'audit',
+      'activity',
+      'rejected_schema',
+      'tools/call',
+      'history'
+    ],
+    sectionId: 'ai',
+    anchorId: 'ai-mcp-activity'
+  },
+  {
     label: 'Answer Style',
     keywords: [
       'ai',

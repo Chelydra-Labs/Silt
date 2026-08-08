@@ -118,7 +118,11 @@ const mocks = vi.hoisted(() => {
     }),
     GetLocalMCPInstallHint: vi.fn().mockResolvedValue('# sample'),
     GetLocalMCPToken: vi.fn().mockResolvedValue(''),
-    SetLocalMCPConfig: vi.fn().mockResolvedValue(undefined)
+    SetLocalMCPConfig: vi.fn().mockResolvedValue(undefined),
+    // MCP activity viewer (#886)
+    mcpAuditState: [] as Array<Record<string, unknown>>,
+    GetMCPAudit: vi.fn(),
+    ClearMCPAudit: vi.fn()
   }
 })
 
@@ -142,7 +146,9 @@ vi.mock('$silt-app', () =>
     GetLocalMCPStatus: mocks.GetLocalMCPStatus,
     GetLocalMCPInstallHint: mocks.GetLocalMCPInstallHint,
     GetLocalMCPToken: mocks.GetLocalMCPToken,
-    SetLocalMCPConfig: mocks.SetLocalMCPConfig
+    SetLocalMCPConfig: mocks.SetLocalMCPConfig,
+    GetMCPAudit: mocks.GetMCPAudit,
+    ClearMCPAudit: mocks.ClearMCPAudit
   })
 )
 
@@ -205,6 +211,37 @@ describe('AIProviderTab', () => {
     mocks.GetAIAudit.mockReset()
     mocks.ClearAIAudit.mockReset()
     mocks.UpdatePluginSetting.mockReset()
+    mocks.GetMCPAudit.mockReset()
+    mocks.ClearMCPAudit.mockReset()
+    mocks.mcpAuditState = [
+      {
+        ts: '2026-01-01T12:00:00Z',
+        tool: 'search_blocks',
+        outcome: 'ok',
+        vault: 'abc',
+        args: { query_len: 3 }
+      },
+      {
+        ts: '2026-01-01T12:01:00Z',
+        tool: 'create_page',
+        outcome: 'denied',
+        vault: 'abc',
+        error: 'write tools disabled'
+      },
+      {
+        ts: '2026-01-01T12:02:00Z',
+        tool: 'search_blocks',
+        outcome: 'rejected_schema',
+        vault: 'abc',
+        error: 'missing required field'
+      }
+    ]
+    mocks.GetMCPAudit.mockImplementation(async () =>
+      structuredClone(mocks.mcpAuditState)
+    )
+    mocks.ClearMCPAudit.mockImplementation(async () => {
+      mocks.mcpAuditState = []
+    })
     // Default happy-path resolutions; individual tests override.
     mocks.GetAIProviderConfig.mockResolvedValue(
       structuredClone(mocks.configState)
@@ -1738,6 +1775,70 @@ describe('AIProviderTab', () => {
       } finally {
         vi.unstubAllGlobals()
       }
+    })
+
+    function mcpActivitySummary() {
+      return screen.getByText('MCP activity', { exact: true })
+    }
+
+    it('expanding MCP activity loads the audit log via GetMCPAudit', async () => {
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(mcpActivitySummary())
+      await waitFor(() => expect(mocks.GetMCPAudit).toHaveBeenCalled())
+      expect(await screen.findByText('create_page')).toBeInTheDocument()
+      expect(screen.getAllByText('search_blocks').length).toBeGreaterThan(0)
+      expect(
+        screen.getByRole('table', { name: /Recent local MCP tool calls/i })
+      ).toHaveTextContent('denied')
+    })
+
+    it('filters MCP activity by outcome', async () => {
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(mcpActivitySummary())
+      await screen.findByText('create_page')
+      const outcome = screen.getByLabelText(
+        /Filter MCP activity by outcome/i
+      ) as HTMLSelectElement
+      await fireEvent.change(outcome, { target: { value: 'denied' } })
+      const table = screen.getByRole('table', {
+        name: /Recent local MCP tool calls/i
+      })
+      expect(table).toHaveTextContent('create_page')
+      expect(table).not.toHaveTextContent('rejected_schema')
+      expect(table).not.toHaveTextContent('search_blocks')
+    })
+
+    it('Clear log calls ClearMCPAudit and empties the MCP table', async () => {
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(mcpActivitySummary())
+      await screen.findByText('create_page')
+      await fireEvent.click(screen.getByRole('button', { name: /Clear log/i }))
+      await waitFor(() => expect(mocks.ClearMCPAudit).toHaveBeenCalled())
+      await waitFor(() =>
+        expect(
+          screen.getByText(/No activity recorded yet/i)
+        ).toBeInTheDocument()
+      )
+      expect(screen.queryByText('create_page')).toBeNull()
+    })
+
+    it('shows MCP audit error banner when GetMCPAudit rejects', async () => {
+      mocks.GetMCPAudit.mockRejectedValue(new Error('disk locked'))
+      render(AIProviderTab)
+      await ready()
+      await fireEvent.click(mcpActivitySummary())
+      const message = await screen.findByText(/Failed to load audit log/i)
+      expect(message.textContent).toContain('disk locked')
+      mocks.GetMCPAudit.mockImplementation(async () =>
+        structuredClone(mocks.mcpAuditState)
+      )
+      await fireEvent.click(screen.getByRole('button', { name: /Retry/i }))
+      await waitFor(() =>
+        expect(screen.getByText('create_page')).toBeInTheDocument()
+      )
     })
   })
 })
