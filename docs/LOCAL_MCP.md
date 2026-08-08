@@ -157,6 +157,16 @@ message (e.g. "missing required field `query`"). It is not a JSON-RPC error;
 unknown tools and malformed outer parameters are the JSON-RPC-error cases.
 Clients can treat any `isError` result uniformly when surfacing tool failures.
 
+### Activity viewer
+
+Settings → **AI** → **Local MCP** → **MCP activity** shows the redacted audit
+log in-app (newest first). Expand the section to load; filter by outcome or
+tool name; refresh or clear the log. Clear empties
+`<vault>/.system/logs/mcp-audit.jsonl` (and coordinates with a live host writer
+so appends cannot race the truncate). The table shows timestamp, tool, outcome,
+sanitized error text, and redacted args metadata — **never note body content**.
+IPC: `GetMCPAudit` / `ClearMCPAudit` (vault must be open).
+
 ## Config (`config.yaml`)
 
 ```yaml

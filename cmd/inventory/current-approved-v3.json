@@ -61,6 +61,10 @@
         "signature": "ClearEditorStaging() error"
       },
       {
+        "name": "ClearMCPAudit",
+        "signature": "ClearMCPAudit() error"
+      },
+      {
         "name": "ClearNavNotebookOrder",
         "signature": "ClearNavNotebookOrder() error"
       },
@@ -279,6 +283,10 @@
       {
         "name": "GetLocalMCPToken",
         "signature": "GetLocalMCPToken() string"
+      },
+      {
+        "name": "GetMCPAudit",
+        "signature": "GetMCPAudit() ([]mcp.AuditEntry, error)"
       },
       {
         "name": "GetNavOrder",
