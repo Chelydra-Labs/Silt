@@ -12,6 +12,7 @@ import { clearTools } from './tool-registry'
 import { registerP0Tools, registerP1Tools, registerP2Tools } from './tools'
 import { cleanupExpired } from './staging'
 import { resetAIChatDrawer } from '../../shared/ai-chat/drawer.svelte'
+import { startAgentEmbedIndex, stopAgentEmbedIndex } from './embed_lifecycle'
 
 export const manifest: PluginManifest = {
   id: 'silt-ai-agent',
@@ -44,12 +45,16 @@ export default {
       .catch((e) => {
         console.warn('silt-ai-agent: schema migration failed:', e)
       })
+    // Agent-owned vec0 for hybrid search_notes (when RAG on).
+    startAgentEmbedIndex(ctx)
   },
   onVaultClose() {
+    stopAgentEmbedIndex()
     resetAIChatDrawer()
     clearTools()
   },
   onShutdown() {
+    stopAgentEmbedIndex()
     resetAIChatDrawer()
     clearTools()
   }

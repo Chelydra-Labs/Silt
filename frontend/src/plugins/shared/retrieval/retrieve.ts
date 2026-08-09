@@ -4,8 +4,9 @@
 // fusion algorithm (fuseHybrid) is in hybrid.ts; the vector index is INJECTED
 // via VectorSearchFn so each plugin owns its plugin.db storage and there is no
 // process-global index state shared across plugins. silt-ai-qa injects its own
-// vectorSearch; silt-ai-agent injects one that probes its (optional) index and
-// otherwise falls open to FTS.
+// vectorSearch; silt-ai-agent injects a fn over its agent-owned vec0 index
+// (shared embed-index helpers, separate plugin.db instance) and fails open to
+// FTS when the vector side is empty or errors.
 
 import type { PluginContext } from '../../sdk'
 import { asString } from '../../../lib/asString'

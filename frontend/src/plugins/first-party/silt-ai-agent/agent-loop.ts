@@ -32,9 +32,10 @@ import {
   type UiLocationSnapshot
 } from '../../ui-location'
 import {
-  buildToolCatalog,
+  buildToolCatalogFrom,
   dispatchTool,
   getTools,
+  type AgentToolDef,
   type StagedPreview,
   type ToolResult,
   type ToolEvidence
@@ -44,6 +45,22 @@ import { UNTRUSTED_CONTENT_SECURITY } from './security'
 import { formatAIError } from '../../shared/formatAIError'
 
 export const MAX_ITERATIONS = 8
+/** Max non-duplicate search_notes dispatches per turn before forced synthesis. */
+export const MAX_SEARCH_NOTES_PER_TURN = 3
+/** Default Q&A catalog (read-only retrieval); expands on write intent. */
+export const QA_TOOL_NAMES = [
+  'search_notes',
+  'read_blocks',
+  'query_tasks',
+  'get_backlinks'
+] as const
+
+// Write/organize intent for full catalog at turn start. Prefer multi-word
+// phrases; avoid bare verbs that dominate Q&A ("write a summary", "what did I
+// delete", "update me on…").
+const WRITE_INTENT_RE =
+  /\b((create|add|make) (a |the |new )?(note|task|page|block)|add note|new note|make a note|draft (a |the )?note|save (this|it|to)|put this|please rename|rename( tag| the| this)?|retitle|add tag|extract (and save|to)|organize (my |the )?notes|edit (the |this |my )?(note|task|block|page|title)|modify (the |this |my )?(note|task|block|page)|update (my |the |a |this )?(notes?|task|block|page|title)|delete (the |this |a )?(note|task|block|page|tag)|fix (the |this |a )?(typo|note|task|title)|change (the |this |a )?(title|note|task)|move this|write (a |the )?(note|task) to)\b/i
+
 /** Tool result bodies above this many bytes are truncated for the model. */
 export const TOOL_RESULT_MAX_BYTES = 10 * 1024
 /** Host AI rate-limit retries per complete() call (after host wait already ran). */
@@ -182,19 +199,76 @@ export interface AgentRunResult {
   forcedFinalAnswer?: boolean
 }
 
+/** Detect write/organize intent so the turn starts with the full tool catalog. */
+export function detectWriteIntent(userMessage: string): boolean {
+  return WRITE_INTENT_RE.test(userMessage)
+}
+
+/** Keys whose string values are case-folded for anti-thrash (free-text query). */
+const CASEFOLD_ARG_KEYS = new Set(['query', 'q', 'text', 'content', 'type'])
+
 /**
- * Build the system prompt from the registered tool catalog + UI location
- * snapshot (#678 general chat, #680 page/block/tabs). Pass `location` from
- * run start so mid-run navigation is ignored for the turn.
+ * Normalize a single string for fingerprinting. Case-fold only when the parent
+ * key is free-text (query/type); preserve case for path keys (notebook,
+ * section, page, block_id) so filesystem-sensitive filters stay distinct.
+ */
+function normalizeArgString(s: string, caseFold: boolean): string {
+  const t = s.trim().replace(/\s+/g, ' ')
+  return caseFold ? t.toLowerCase() : t
+}
+
+/**
+ * Normalize tool args for duplicate fingerprinting: deep-sort keys; collapse
+ * whitespace; case-fold free-text fields only (not path/id keys).
+ */
+export function normalizeToolArgs(value: unknown, parentKey?: string): unknown {
+  if (typeof value === 'string') {
+    const caseFold =
+      parentKey == null || CASEFOLD_ARG_KEYS.has(parentKey.toLowerCase())
+    return normalizeArgString(value, caseFold)
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => normalizeToolArgs(v, parentKey))
+  }
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    const out: Record<string, unknown> = {}
+    for (const k of Object.keys(obj).sort()) {
+      out[k] = normalizeToolArgs(obj[k], k)
+    }
+    return out
+  }
+  return value
+}
+
+export function toolCallFingerprint(
+  name: string,
+  args: Record<string, unknown>
+): string {
+  return `${name}:${JSON.stringify(normalizeToolArgs(args))}`
+}
+
+/**
+ * Build the system prompt from the turn's tool list + UI location snapshot
+ * (#678 general chat, #680 page/block/tabs). Pass the same tools offered to
+ * complete() so prompt and catalog stay in lockstep.
  */
 export function buildSystemPrompt(
   ctx: PluginContext,
-  location?: UiLocationSnapshot
+  location?: UiLocationSnapshot,
+  toolsForTurn?: AgentToolDef[]
 ): string {
-  const tools = getTools()
+  const tools = toolsForTurn ?? getTools()
   const toolLines = tools.length
     ? tools.map((t) => `- ${t.name}: ${t.description}`).join('\n')
     : '- (no tools registered)'
+  const qaOnly =
+    toolsForTurn != null &&
+    toolsForTurn.every((t) =>
+      (QA_TOOL_NAMES as readonly string[]).includes(t.name)
+    ) &&
+    toolsForTurn.length > 0 &&
+    toolsForTurn.length <= QA_TOOL_NAMES.length
   const raw =
     location ??
     (typeof ctx.getUiLocation === 'function'
@@ -209,6 +283,23 @@ export function buildSystemPrompt(
     ...(raw.blockId ? { blockId: raw.blockId } : {}),
     openTabs: raw.openTabs ?? []
   }
+  const useToolsLine = qaOnly
+    ? 'Use the available tools to search and read notes.'
+    : 'Use the available tools to search, read, create, and organize notes.'
+  const writePolicy = qaOnly
+    ? [
+        'WRITE POLICY: This turn offers read-only vault tools. Answer from search',
+        'and read results. If the user later asks to change the vault, write tools',
+        'may become available on a subsequent turn.'
+      ]
+    : [
+        'WRITE POLICY: Prefer read-only tools first. Direct-write tools (create_note,',
+        'update_block, extract_and_save) apply immediately as single reversible edits.',
+        'Destructive bulk ops (rename_tag) are staged and require user confirmation',
+        'before any vault mutation.',
+        'For page-relative writes ("this page", "here"), target the Current page from',
+        'UI LOCATION unless the user names a different path.'
+      ]
   return [
     'You are Silt AI Agent, a general-purpose assistant with first-class access',
     "to the user's Silt note vault via tools.",
@@ -218,24 +309,17 @@ export function buildSystemPrompt(
     "When the user's notes may answer the question, prefer searching and reading",
     'the vault (and the current page from UI LOCATION) and ground answers in',
     'that material when applicable.',
-    'Use the available tools to search, read, create, and organize notes.',
+    useToolsLine,
     '',
-    'TOOL BUDGET: Prefer one focused search_notes (and read_blocks only if the',
-    'snippet is incomplete), then answer. Do not keep calling tools once',
-    '<vault_data> already contains enough to answer. Avoid re-running nearly',
-    'the same query with minor wording changes. When you have enough',
-    'information, answer the user directly without calling more tools.',
+    'AFTER EACH TOOL RESULT: If <vault_data> already answers the user, respond',
+    'with the answer and cite locations — do not call more tools. If not, name',
+    'one missing fact and call at most one targeted tool.',
     '',
     formatUiLocationForPrompt(loc),
     '',
     UNTRUSTED_CONTENT_SECURITY,
     '',
-    'WRITE POLICY: Prefer read-only tools first. Direct-write tools (create_note,',
-    'update_block, extract_and_save) apply immediately as single reversible edits.',
-    'Destructive bulk ops (rename_tag) are staged and require user confirmation',
-    'before any vault mutation.',
-    'For page-relative writes ("this page", "here"), target the Current page from',
-    'UI LOCATION unless the user names a different path.',
+    ...writePolicy,
     '',
     'Available tools:',
     toolLines
@@ -511,7 +595,16 @@ export async function runAgent(
     typeof ctx.getUiLocation === 'function'
       ? ctx.getUiLocation()
       : captureUiLocation()
-  const systemPrompt = buildSystemPrompt(ctx, location)
+  // Q&A subset by default; full catalog when the user message shows write intent.
+  const mode: 'qa' | 'full' = detectWriteIntent(userMessage) ? 'full' : 'qa'
+  const allTools = getTools()
+  const toolsForMode = (): AgentToolDef[] => {
+    if (mode === 'full') return allTools
+    const qaSet = new Set<string>(QA_TOOL_NAMES)
+    return allTools.filter((t) => qaSet.has(t.name))
+  }
+  let toolsForTurn = toolsForMode()
+  const systemPrompt = buildSystemPrompt(ctx, location, toolsForTurn)
   const messages: PluginAIChatMessage[] = [
     { role: 'system', content: systemPrompt },
     ...chatHistory,
@@ -522,6 +615,10 @@ export async function runAgent(
   let lastText = ''
   /** True once we have fed at least one tool result into `messages`. */
   let hadToolResults = false
+  /** Non-duplicate search_notes handler invocations this turn. */
+  let searchNotesDispatchCount = 0
+  /** Fingerprints of tool calls already dispatched this turn. */
+  const seenToolFingerprints = new Set<string>()
   try {
     while (iterations < MAX_ITERATIONS) {
       if (cancelled()) {
@@ -533,11 +630,11 @@ export async function runAgent(
         }
       }
       iterations++
-      // Reserve the final iteration for synthesis when the model has been
-      // tool-calling. Without this, a model that never voluntarily stops
-      // burns the whole budget on search/read and the user only sees the
-      // iteration-limit banner — even when vault_data already had the answer.
-      const forceFinalAnswer = iterations === MAX_ITERATIONS && hadToolResults
+      // Forced synthesis: hard iteration ceiling OR search_notes budget.
+      const forceFinalAnswer =
+        (iterations === MAX_ITERATIONS && hadToolResults) ||
+        (searchNotesDispatchCount >= MAX_SEARCH_NOTES_PER_TURN &&
+          hadToolResults)
       if (forceFinalAnswer) {
         // Explicit steer so providers that ignore toolChoice=none still stop
         // searching and synthesize from prior <vault_data> turns.
@@ -549,6 +646,7 @@ export async function runAgent(
             'notes contain the answer, state it clearly and cite the relevant note.'
         })
       }
+      toolsForTurn = toolsForMode()
       const completeReq = {
         // Providers receive a stable request snapshot; later tool-result
         // appends must not mutate an earlier request retained by a test
@@ -565,7 +663,7 @@ export async function runAgent(
               toolChoice: { mode: 'none' as const }
             }
           : {
-              tools: buildToolCatalog(),
+              tools: buildToolCatalogFrom(toolsForTurn),
               toolChoice: { mode: 'auto' as const }
             }),
         stream: true as const
@@ -654,21 +752,49 @@ export async function runAgent(
             if (opts.signal?.aborted) {
               res = { content: '', error: 'Cancelled before tool completed.' }
             } else {
-              opts.onToolCall?.({
-                id: call.id,
-                name: call.name,
-                args: call.arguments
-              })
-              void ctx.ai.auditEvent?.({
-                kind: 'tool_call',
-                tool: call.name,
-                tool_call_id: call.id,
-                status: 'start'
-              })
-              res = await raceAbort(
-                dispatchTool(ctx, call.name, call.arguments),
-                opts.signal
-              )
+              const args = call.arguments ?? {}
+              const fp = toolCallFingerprint(call.name, args)
+              // Dup guard before handler: same normalized name+args → error.
+              if (seenToolFingerprints.has(fp)) {
+                res = {
+                  content: '',
+                  error:
+                    'Duplicate tool call with the same arguments. Answer from existing evidence or change your approach/arguments.'
+                }
+              } else if (
+                call.name === 'search_notes' &&
+                searchNotesDispatchCount >= MAX_SEARCH_NOTES_PER_TURN
+              ) {
+                // Parallel multi-search blast: enforce budget before dispatch.
+                seenToolFingerprints.add(fp)
+                res = {
+                  content: '',
+                  error:
+                    `Search budget reached (max ${MAX_SEARCH_NOTES_PER_TURN} ` +
+                    'search_notes per turn). Answer from existing evidence or ' +
+                    'stop calling search_notes.'
+                }
+              } else {
+                seenToolFingerprints.add(fp)
+                if (call.name === 'search_notes') {
+                  searchNotesDispatchCount++
+                }
+                opts.onToolCall?.({
+                  id: call.id,
+                  name: call.name,
+                  args
+                })
+                void ctx.ai.auditEvent?.({
+                  kind: 'tool_call',
+                  tool: call.name,
+                  tool_call_id: call.id,
+                  status: 'start'
+                })
+                res = await raceAbort(
+                  dispatchTool(ctx, call.name, args),
+                  opts.signal
+                )
+              }
             }
           } catch (error: unknown) {
             const message =
@@ -769,6 +895,10 @@ export async function runAgent(
           content: toolMessage
         })
         hadToolResults = true
+        // Catalog mode is fixed at turn start (write-intent → full, else Q&A).
+        // Mid-turn expand after a write cannot fire from Q&A mode (write tools
+        // are not offered), so we do not flip mode here — start a new turn
+        // with create/edit language if the user needs write tools.
       }
     }
     // Exited without a final answer (e.g. last iteration had no prior tools

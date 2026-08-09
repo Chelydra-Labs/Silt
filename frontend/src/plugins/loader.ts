@@ -194,7 +194,9 @@ export async function loadPlugins(
       // Agent tools are filtered by RAG at register time; re-apply when the
       // agent is reused across a RAG-only feature flip (#632).
       if (id === AI_PLUGIN_AGENT) {
-        reconcileAgentTools()
+        // Rebuild ctx so RAG flip can start/stop the agent embed index.
+        const tok = sessionTokens.get(id) ?? ''
+        reconcileAgentTools(makePluginContext(id, tok))
       }
       continue
     }

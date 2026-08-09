@@ -6,9 +6,11 @@
 // defs in a module-scoped Map keyed by name, so re-registering on the next
 // vault open replaces cleanly.
 
+import type { PluginContext } from '../../sdk'
 import type { AgentToolDef } from './tool-registry'
 import { registerTool, unregisterTool } from './tool-registry'
 import { getAIAvailability } from '../../shared/ai-chat/availability'
+import { reconcileAgentEmbedIndex } from './embed_lifecycle'
 import { getBacklinksToolDef, handleGetBacklinks } from './tools/get_backlinks'
 import { createNoteToolDef, handleCreateNote } from './tools/create_note'
 import { createTaskToolDef, handleCreateTask } from './tools/create_task'
@@ -107,11 +109,13 @@ export function registerP2Tools(): void {
  * Re-apply RAG gating against the current ai.features flags. Safe to call
  * when the agent plugin is carried over across loadPlugins without re-init
  * (e.g. master AI stays on while Semantic search flips).
+ * Pass `ctx` when available so the agent embed index can start/stop with RAG.
  */
-export function reconcileAgentTools(): void {
+export function reconcileAgentTools(ctx?: PluginContext): void {
   registerP0Tools()
   registerP1Tools()
   registerP2Tools()
+  if (ctx) reconcileAgentEmbedIndex(ctx)
 }
 
 // Re-export so callers (e.g. tests, index wiring) don't need the per-tool

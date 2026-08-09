@@ -14,7 +14,8 @@ plugin-owned; answers and evidence render in the shared typed transcript.
 
 1. **Indexes** note blocks with an embedding model into a per-plugin SQLite
    store (`sqlite-vec`). Markdown remains the source of truth; the index is a
-   re-derivable cache.
+   re-derivable cache. Index schema/helpers are shared with the AI agent’s own
+   hybrid index (separate `plugin.db` per plugin — not a shared database).
 2. **Retrieves** relevant passages with **hybrid search**: keyword (FTS5) +
    semantic (vector), fused with weighted Reciprocal Rank Fusion.
 3. **Answers** via your configured chat model, with inline `[n]` citations that

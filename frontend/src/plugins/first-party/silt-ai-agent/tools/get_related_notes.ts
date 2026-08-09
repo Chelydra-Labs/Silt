@@ -1,13 +1,11 @@
 // Agent tool #602 — get_related_notes.
 //
 // Semantic "more like this": given a source block, embed its content and rank
-// other blocks by cosine similarity. The agent does not maintain a vec0 index
-// today (Phase 4 noted this), so the primary path is on-demand: gather a
-// candidate pool (recent + FTS-recalled), embed the misses via ctx.ai.embed,
-// and rank by cosine similarity computed in JS. Each computed vector is
-// cached in plugin.db keyed by (block_id, content_hash) so subsequent runs
-// reuse the work — a real vec0 + vec_distance_cosine index can replace the
-// cache table later without changing this tool's contract.
+// other blocks by cosine similarity. This tool uses on-demand embed + the
+// block_vectors cache in plugin.db (not the hybrid vec0 index that
+// search_notes maintains). Path: gather candidates (recent + FTS), embed
+// misses via ctx.ai.embed, rank by cosine in JS. Cache key is
+// (block_id, content_hash).
 //
 // The shared ranking pipeline lives in ./_embedding; this file is the thin
 // tool wrapper (param validation, source lookup, output formatting).
