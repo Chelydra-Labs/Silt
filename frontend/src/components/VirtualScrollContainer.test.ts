@@ -22,7 +22,17 @@ const mocks = vi.hoisted(() => ({
   },
   toggleFocusMode: vi.fn(() => Promise.resolve(true)),
   toggleFormatToolbar: vi.fn(() => Promise.resolve(true)),
-  onToggleViewMode: vi.fn()
+  onToggleViewMode: vi.fn(),
+  findBar: {
+    open: false,
+    replaceOpen: false,
+    openFind: vi.fn(),
+    openReplace: vi.fn(),
+    close: vi.fn(() => {
+      mocks.findBar.open = false
+      mocks.findBar.replaceOpen = false
+    })
+  }
 }))
 
 vi.mock('$silt-app', () =>
@@ -63,11 +73,28 @@ vi.mock('./editor/EditorUtilityBar.svelte', () => ({
 vi.mock('./editor/MarkdownSourceViewer.svelte', () => ({
   default: MarkdownSourceViewerStub
 }))
+// Real FindBar needs a full TipTap editor; VSC tests only care about mount gates
+// and viewMode → close wiring.
+vi.mock('./editor/FindBar.svelte', () => import('./EmptyStub.stub.svelte'))
 
 vi.mock('../settings/store.svelte.ts', () => ({
   settings: mocks.settings,
   toggleFocusMode: mocks.toggleFocusMode,
   toggleFormatToolbar: mocks.toggleFormatToolbar
+}))
+
+vi.mock('../lib/editor/search/findBarState.svelte', () => ({
+  findBarState: {
+    get open() {
+      return mocks.findBar.open
+    },
+    get replaceOpen() {
+      return mocks.findBar.replaceOpen
+    },
+    openFind: () => mocks.findBar.openFind(),
+    openReplace: () => mocks.findBar.openReplace(),
+    close: () => mocks.findBar.close()
+  }
 }))
 
 import VirtualScrollContainer from './VirtualScrollContainer.svelte'
@@ -87,6 +114,11 @@ describe('VirtualScrollContainer editor chrome', () => {
     mocks.toggleFocusMode.mockClear()
     mocks.toggleFormatToolbar.mockClear()
     mocks.onToggleViewMode.mockClear()
+    mocks.findBar.close.mockClear()
+    mocks.findBar.openFind.mockClear()
+    mocks.findBar.openReplace.mockClear()
+    mocks.findBar.open = false
+    mocks.findBar.replaceOpen = false
     mocks.settings.config.ui.show_format_toolbar = true
     mocks.settings.config.editor.focus_mode = false
     mocks.settings.config.editor.show_word_count = false
@@ -683,6 +715,27 @@ describe('Edit↔Source caret restoration (#331)', () => {
     expect(
       (globalThis as unknown as Record<string, unknown>).__tiptapStubSelection
     ).toBeUndefined()
+  })
+})
+
+describe('VirtualScrollContainer find bar viewMode (#884)', () => {
+  beforeEach(() => {
+    mocks.findBar.close.mockClear()
+    mocks.findBar.open = false
+    mocks.findBar.replaceOpen = false
+  })
+  afterEach(() => cleanup())
+
+  it('closes the find bar when switching Edit ↔ Source', async () => {
+    mocks.findBar.open = true
+    const { rerender } = render(VirtualScrollContainer, {
+      props: baseProps()
+    })
+    // Initial mount with open find in edit — no mode change yet.
+    expect(mocks.findBar.close).not.toHaveBeenCalled()
+
+    await rerender({ ...baseProps(), viewMode: 'source' })
+    expect(mocks.findBar.close).toHaveBeenCalled()
   })
 })
 

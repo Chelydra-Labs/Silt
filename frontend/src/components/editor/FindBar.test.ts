@@ -101,4 +101,73 @@ describe('FindBar', () => {
     expect(setText).toHaveBeenCalledTimes(1)
     expect(setText).toHaveBeenCalledWith('baz bar baz')
   })
+
+  it('Source target: next/prev cycle selection and single replace updates range', async () => {
+    findBarMock.findBarState.setReplaceOpen(true)
+    let text = 'aa bb aa'
+    const listeners = new Set<() => void>()
+    const setSelection = vi.fn()
+    const replaceRange = vi.fn((from: number, to: number, rep: string) => {
+      text = text.slice(0, from) + rep + text.slice(to)
+      for (const cb of listeners) cb()
+    })
+    const sourceTarget = {
+      getText: () => text,
+      getCaret: () => 0,
+      setSelection,
+      replaceRange,
+      setText: vi.fn(),
+      subscribe: (cb: () => void) => {
+        listeners.add(cb)
+        return () => listeners.delete(cb)
+      }
+    }
+
+    const { getByLabelText } = render(FindBar, {
+      props: { sourceTarget, onClose: vi.fn() }
+    })
+
+    const findInput = getByLabelText('Find')
+    await fireEvent.input(findInput, { target: { value: 'aa' } })
+
+    // First match selected on apply (caret at 0 → index 0).
+    expect(setSelection).toHaveBeenCalledWith(0, 2)
+    setSelection.mockClear()
+
+    await fireEvent.click(getByLabelText('Next match (Enter)'))
+    expect(setSelection).toHaveBeenCalledWith(6, 8)
+    setSelection.mockClear()
+
+    await fireEvent.click(getByLabelText('Previous match (Shift+Enter)'))
+    expect(setSelection).toHaveBeenCalledWith(0, 2)
+
+    const replaceInput = getByLabelText('Replace with')
+    await fireEvent.input(replaceInput, { target: { value: 'XX' } })
+    await fireEvent.click(getByLabelText('Replace selected match'))
+    expect(replaceRange).toHaveBeenCalledWith(0, 2, 'XX')
+    expect(text.startsWith('XX')).toBe(true)
+  })
+
+  it('Esc on find input calls onClose', async () => {
+    const onClose = vi.fn()
+    const editor = {
+      isEditable: true,
+      on: vi.fn(),
+      off: vi.fn(),
+      commands: {
+        setSearchQuery: vi.fn(),
+        findNextInPage: vi.fn(),
+        findPrevInPage: vi.fn(),
+        replaceNextInPage: vi.fn(),
+        replaceAllInPage: vi.fn()
+      }
+    } as never
+
+    const { getByLabelText } = render(FindBar, {
+      props: { editor, onClose }
+    })
+    const findInput = getByLabelText('Find')
+    await fireEvent.keyDown(findInput, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
 })

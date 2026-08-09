@@ -1497,4 +1497,92 @@ describe('MarkdownSourceViewer editor registry (#884)', () => {
     expect(mocks.savePageMarkdown).toHaveBeenCalled()
     expect(handle.isDirty()).toBe(false)
   })
+
+  it('flush returns false while conflict is pending', async () => {
+    mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
+    const { rerender } = render(MarkdownSourceViewer, {
+      props: {
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    const ta = (await waitFor(() =>
+      screen.getByRole('textbox', { name: /markdown source/i })
+    )) as HTMLTextAreaElement
+    await waitFor(() => expect(ta.value).toBe(FETCH_BODY))
+
+    await fireEvent.input(ta, { target: { value: '# Local dirty' } })
+    await rerender({
+      blocks: [mkBlock('# Remote'), mkBlock('remote body')],
+      filePath: 'Work/Page.md',
+      notebook: 'Work',
+      section: 'Sec',
+      page: 'Page'
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /keep mine/i })).toBeTruthy()
+    )
+
+    const handle = getEditor(editorKey('Work', 'Sec', 'Page'))!
+    expect(handle.isDirty()).toBe(true)
+    const ok = await handle.flush()
+    expect(ok).toBe(false)
+    expect(mocks.savePageMarkdown).not.toHaveBeenCalled()
+  })
+
+  it('flush returns false when save fails and stays dirty', async () => {
+    mocks.savePageMarkdown.mockRejectedValue(new Error('disk full'))
+    render(MarkdownSourceViewer, {
+      props: {
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    const ta = (await waitFor(() =>
+      screen.getByRole('textbox', { name: /markdown source/i })
+    )) as HTMLTextAreaElement
+    await waitFor(() => expect(ta.value).toBe(FETCH_BODY))
+
+    await fireEvent.input(ta, { target: { value: FETCH_BODY + '\nx' } })
+    const handle = getEditor(editorKey('Work', 'Sec', 'Page'))!
+    const ok = await handle.flush()
+    expect(ok).toBe(false)
+    expect(handle.isDirty()).toBe(true)
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(/disk full/i)
+    )
+  })
+
+  it('forceExternalReload reseeds from disk and clears dirty', async () => {
+    mocks.fetchPageMarkdown
+      .mockResolvedValueOnce(FETCH_BODY)
+      .mockResolvedValueOnce('# After global replace')
+    render(MarkdownSourceViewer, {
+      props: {
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    const ta = (await waitFor(() =>
+      screen.getByRole('textbox', { name: /markdown source/i })
+    )) as HTMLTextAreaElement
+    await waitFor(() => expect(ta.value).toBe(FETCH_BODY))
+
+    await fireEvent.input(ta, { target: { value: '# Stale local' } })
+    const handle = getEditor(editorKey('Work', 'Sec', 'Page'))!
+    expect(handle.isDirty()).toBe(true)
+
+    handle.forceExternalReload()
+    await waitFor(() => expect(ta.value).toBe('# After global replace'))
+    expect(handle.isDirty()).toBe(false)
+  })
 })

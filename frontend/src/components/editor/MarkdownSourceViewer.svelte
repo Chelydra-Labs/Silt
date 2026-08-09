@@ -147,6 +147,29 @@
     }
   }
 
+  /** Scroll so the line containing `offset` is visible (Find next/prev). */
+  function scrollTextareaOffsetIntoView(
+    el: HTMLTextAreaElement,
+    offset: number
+  ): void {
+    const style = getComputedStyle(el)
+    const fontSize = parseFloat(style.fontSize) || 14
+    const lineHeightRaw = parseFloat(style.lineHeight)
+    const lineHeight =
+      Number.isFinite(lineHeightRaw) && lineHeightRaw > 0
+        ? lineHeightRaw
+        : fontSize * 1.4
+    const paddingTop = parseFloat(style.paddingTop) || 0
+    const linesBefore =
+      el.value.slice(0, Math.max(0, offset)).split('\n').length - 1
+    const targetTop = linesBefore * lineHeight + paddingTop
+    const viewTop = el.scrollTop
+    const viewBottom = viewTop + el.clientHeight
+    if (targetTop < viewTop || targetTop + lineHeight > viewBottom) {
+      el.scrollTop = Math.max(0, targetTop - el.clientHeight / 3)
+    }
+  }
+
   /** Boundary: seed/reload/external replacement starts a fresh history. */
   function seedBuffer(value: string): void {
     buffer = value
@@ -415,6 +438,9 @@
           textareaEl.selectionStart = a
           textareaEl.selectionEnd = b
         }
+        // Textareas do not scroll the caret into view on setSelectionRange;
+        // approximate line from offset so Find next/prev is visible on long notes.
+        scrollTextareaOffsetIntoView(textareaEl, a)
       },
       replaceRange: (from, to, text) => {
         const next = buffer.slice(0, from) + text + buffer.slice(to)
