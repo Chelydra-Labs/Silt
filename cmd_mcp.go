@@ -175,29 +175,14 @@ func discoverMCPEndpoint() string {
 // surface changes mid-session (e.g. write grant toggled), clients should
 // reconnect — see docs/LOCAL_MCP.md.
 func runStdioProxy(ctx context.Context, remote *mcpsdk.ClientSession) int {
-	local := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "silt", Version: appVersion}, nil)
-
-	// Mirror remote tools at startup (client discovers via tools/list).
-	tools, err := remote.ListTools(ctx, nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "silt mcp: list tools: %v\n", err)
-		return 1
-	}
-	for _, t := range tools.Tools {
-		tool := t // capture
-		local.AddTool(tool, func(ctx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			// Always forward the registered tool name — the local list is the
-			// filter. Clients that need a refreshed surface reconnect (docs).
-			params := &mcpsdk.CallToolParams{
-				Name:      tool.Name,
-				Arguments: req.Params.Arguments,
-			}
-			return remote.CallTool(ctx, params)
-		})
-	}
-
-	if err := local.Run(ctx, &mcpsdk.StdioTransport{}); err != nil && ctx.Err() == nil {
-		fmt.Fprintf(os.Stderr, "silt mcp: stdio: %v\n", err)
+	err := mcp.RunStdioProxy(ctx, remote, mcp.StdioProxyOptions{
+		Name:    "silt",
+		Version: appVersion,
+		Reader:  os.Stdin,
+		Writer:  os.Stdout,
+	})
+	if err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "silt mcp: %v\n", err)
 		return 1
 	}
 	return 0
