@@ -116,15 +116,24 @@ export function clearTools(): void {
 }
 
 /**
- * Map the registry to the PluginAIToolDef shape ctx.ai.complete consumes
+ * Map tool defs to the PluginAIToolDef shape ctx.ai.complete consumes
  * (name/description/parameters only — the handler stays host-side).
  */
-export function buildToolCatalog(): PluginAIToolDef[] {
-  return getTools().map((t) => ({
+export function buildToolCatalogFrom(
+  toolsList: AgentToolDef[]
+): PluginAIToolDef[] {
+  return toolsList.map((t) => ({
     name: t.name,
     description: t.description,
     parameters: t.parameters
   }))
+}
+
+/**
+ * Map the full registry to the PluginAIToolDef shape ctx.ai.complete consumes.
+ */
+export function buildToolCatalog(): PluginAIToolDef[] {
+  return buildToolCatalogFrom(getTools())
 }
 
 /**

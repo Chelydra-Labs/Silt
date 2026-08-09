@@ -11,6 +11,7 @@ import {
   buildSystemPrompt,
   createAgentSession,
   MAX_ITERATIONS,
+  MAX_SEARCH_NOTES_PER_TURN,
   HOST_AI_RATE_LIMIT_RETRY_AFTER_KEY,
   parseHostRateLimitRetryMs,
   runAgent,
@@ -286,9 +287,165 @@ describe('agent-loop', () => {
   it('buildSystemPrompt steers the model to stop once vault_data is enough', () => {
     const ctx = mockCtx(() => mockStream({ content: '', model: 'm' }))
     const prompt = buildSystemPrompt(ctx)
-    expect(prompt).toMatch(/TOOL BUDGET/i)
-    expect(prompt).toMatch(/Do not keep calling tools/i)
-    expect(prompt).toMatch(/answer the user directly/i)
+    expect(prompt).toMatch(/AFTER EACH TOOL RESULT/i)
+    expect(prompt).toMatch(/do not call more tools/i)
+    expect(prompt).toMatch(/at most one targeted tool/i)
+  })
+
+  it(`forces final answer after ${MAX_SEARCH_NOTES_PER_TURN} search_notes dispatches`, async () => {
+    let searchCalls = 0
+    registerTool({
+      name: 'search_notes',
+      description: 'search',
+      parameters: {
+        type: 'object',
+        required: ['query'],
+        properties: { query: { type: 'string' } }
+      },
+      handler: async (_ctx, args) => {
+        searchCalls++
+        return { content: `hit for ${String(args.query)}` }
+      }
+    })
+    const completeReqs: Array<{
+      toolChoice?: { mode: string }
+      tools?: unknown[]
+    }> = []
+    const ctx = mockCtx((n) => {
+      // Keep requesting search_notes with distinct queries until forced wrap-up.
+      if (n <= MAX_SEARCH_NOTES_PER_TURN) {
+        return mockStream({
+          content: '',
+          model: 'm',
+          tool_calls: [
+            {
+              id: `tc${n}`,
+              name: 'search_notes',
+              arguments: { query: `q${n}` }
+            }
+          ]
+        })
+      }
+      return mockStream({ content: 'Answer from vault.', model: 'm' }, [
+        'Answer from vault.'
+      ])
+    })
+    const origComplete = ctx.ai.complete.bind(ctx.ai)
+    ctx.ai.complete = ((req: unknown) => {
+      completeReqs.push(req as (typeof completeReqs)[0])
+      return origComplete(req as never)
+    }) as typeof ctx.ai.complete
+
+    const res = await runAgent(ctx, 'what is the plant screen?', [])
+    expect(searchCalls).toBe(MAX_SEARCH_NOTES_PER_TURN)
+    expect(res.forcedFinalAnswer).toBe(true)
+    expect(res.iterations).toBeLessThan(MAX_ITERATIONS)
+    expect(res.text).toBe('Answer from vault.')
+    const lastReq = completeReqs[completeReqs.length - 1]
+    expect(lastReq.toolChoice).toEqual({ mode: 'none' })
+  })
+
+  it('blocks duplicate tool calls with the same normalized arguments', async () => {
+    let handlerCalls = 0
+    registerTool({
+      name: 'search_notes',
+      description: 'search',
+      parameters: {
+        type: 'object',
+        required: ['query'],
+        properties: { query: { type: 'string' } }
+      },
+      handler: async () => {
+        handlerCalls++
+        return { content: 'first hit' }
+      }
+    })
+    const toolMessages: string[] = []
+    // Iter 1: two parallel dups (Foo / foo). Iter 2: answer.
+    const ctx = mockCtx((n) => {
+      if (n === 1) {
+        return mockStream({
+          content: '',
+          model: 'm',
+          tool_calls: [
+            { id: 'a', name: 'search_notes', arguments: { query: 'Foo' } },
+            { id: 'b', name: 'search_notes', arguments: { query: 'foo' } }
+          ]
+        })
+      }
+      return mockStream({ content: 'done', model: 'm' }, ['done'])
+    })
+    const res = await runAgent(ctx, 'find foo', [], {
+      onToolMessage: (m) => toolMessages.push(m.content)
+    })
+    expect(handlerCalls).toBe(1)
+    expect(toolMessages.some((t) => /Duplicate tool call/i.test(t))).toBe(true)
+    expect(res.text).toBe('done')
+  })
+
+  it('default Q&A catalog excludes write tools; write intent gets full catalog', async () => {
+    registerTool({
+      name: 'search_notes',
+      description: 's',
+      parameters: {
+        type: 'object',
+        required: ['query'],
+        properties: { query: { type: 'string' } }
+      },
+      handler: async () => ({ content: 'ok' })
+    })
+    registerTool({
+      name: 'create_note',
+      description: 'c',
+      parameters: {
+        type: 'object',
+        properties: {
+          page: { type: 'string' },
+          content: { type: 'string' }
+        },
+        required: ['page', 'content']
+      },
+      handler: async () => ({ content: 'created' })
+    })
+    registerTool({
+      name: 'read_blocks',
+      description: 'r',
+      parameters: {
+        type: 'object',
+        properties: { block_ids: { type: 'array' } },
+        required: ['block_ids']
+      },
+      handler: async () => ({ content: 'blocks' })
+    })
+
+    const qaTools: string[][] = []
+    const writeTools: string[][] = []
+    const ctxQa = mockCtx(() =>
+      mockStream({ content: 'answer', model: 'm' }, ['answer'])
+    )
+    const origQa = ctxQa.ai.complete.bind(ctxQa.ai)
+    ctxQa.ai.complete = ((req: unknown) => {
+      const r = req as { tools?: { name: string }[] }
+      qaTools.push((r.tools ?? []).map((t) => t.name))
+      return origQa(req as never)
+    }) as typeof ctxQa.ai.complete
+    await runAgent(ctxQa, 'what is in my notes about plants?', [])
+    expect(qaTools[0]).toContain('search_notes')
+    expect(qaTools[0]).toContain('read_blocks')
+    expect(qaTools[0]).not.toContain('create_note')
+
+    const ctxWrite = mockCtx(() =>
+      mockStream({ content: 'ok', model: 'm' }, ['ok'])
+    )
+    const origW = ctxWrite.ai.complete.bind(ctxWrite.ai)
+    ctxWrite.ai.complete = ((req: unknown) => {
+      const r = req as { tools?: { name: string }[] }
+      writeTools.push((r.tools ?? []).map((t) => t.name))
+      return origW(req as never)
+    }) as typeof ctxWrite.ai.complete
+    await runAgent(ctxWrite, 'create a note about the meeting', [])
+    expect(writeTools[0]).toContain('create_note')
+    expect(writeTools[0]).toContain('search_notes')
   })
 
   it('stops when the abort signal is already aborted', async () => {
