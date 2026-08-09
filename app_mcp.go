@@ -215,6 +215,12 @@ func (b mcpBridge) SetTaskDueDate(ctx context.Context, blockID, dueDate string) 
 	return b.app.SetTaskDueDate(blockID, dueDate)
 }
 
+func (b mcpBridge) UpdateBlockState(ctx context.Context, blockID, status string) error {
+	_ = ctx
+	_, err := b.app.UpdateBlockState(blockID, status)
+	return err
+}
+
 func (b mcpBridge) ResolveBlock(ctx context.Context, blockID string) (mcp.BlockRefResult, error) {
 	_ = ctx
 	ref, err := b.app.ResolveBlockReference(blockID)
@@ -236,7 +242,8 @@ func (b mcpBridge) ResolveBlock(ctx context.Context, blockID string) (mcp.BlockR
 	if !ref.Exists {
 		return out, nil
 	}
-	// Embed flag is best-effort on the same vault snapshot as the resolve.
+	// Embed flag is best-effort: content resolve already succeeded; a transient
+	// index read failure must not turn a successful get_block into an error.
 	b.app.vaultMu.RLock()
 	defer b.app.vaultMu.RUnlock()
 	if b.app.db == nil {
@@ -244,18 +251,14 @@ func (b mcpBridge) ResolveBlock(ctx context.Context, blockID string) (mcp.BlockR
 	}
 	b.app.wg.Add(1)
 	defer b.app.wg.Done()
-	var embedded bool
-	if err := b.app.coordinator.WithDBReadResult(func() error {
+	_ = b.app.coordinator.WithDBReadResult(func() error {
 		got, qerr := b.app.db.HasInboundEmbed(blockID)
 		if qerr != nil {
 			return qerr
 		}
-		embedded = got
+		out.Embedded = got
 		return nil
-	}); err != nil {
-		return out, err
-	}
-	out.Embedded = embedded
+	})
 	return out, nil
 }
 

@@ -25,6 +25,7 @@ SQLite is a cache.
 3. `read_page` / `read_blocks`, or `get_block` / `get_backlinks` / `get_page_metadata` when you need a single block, inbound links, or typed properties.
 4. Answer with citations.
 5. Only after confirmation: prefer `append_to_page`, `insert_under_heading`, or `create_task`; use `create_page` + `update_blocks` only when a full-page rewrite is required.
+6. If `insert_under_heading` returns ambiguous/not-found `candidates`, retry with a full `A::B` path from that list.
 
 ## Errors
 

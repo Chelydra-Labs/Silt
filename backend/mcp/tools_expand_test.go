@@ -75,6 +75,25 @@ func TestTools_AppendToPage(t *testing.T) {
 		t.Fatal("expected ok audit")
 	}
 
+	// TASK append
+	res, err = cs.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "append_to_page",
+		Arguments: map[string]any{
+			"notebook": "Work", "section": "", "page": "Home",
+			"type": "TASK", "text": "todo item",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("TASK append: %s", toolText(t, res))
+	}
+	blocks = bridge.pages[key]
+	if len(blocks) < 1 || blocks[len(blocks)-1].Type != parser.BlockTask {
+		t.Fatalf("expected last block TASK: %+v", blocks)
+	}
+
 	// write denied
 	cs2, aud2 := connectTools(t, bridge, Config{Enabled: true, WriteEnabled: false})
 	res, err = cs2.CallTool(ctx, &mcpsdk.CallToolParams{
@@ -171,7 +190,7 @@ func TestTools_InsertUnderHeading(t *testing.T) {
 		t.Fatalf("candidates: %s", txt)
 	}
 
-	// not found
+	// not found — structured candidates teach the model available paths
 	res, err = cs.CallTool(ctx, &mcpsdk.CallToolParams{
 		Name: "insert_under_heading",
 		Arguments: map[string]any{
@@ -182,8 +201,12 @@ func TestTools_InsertUnderHeading(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.IsError || !strings.Contains(toolText(t, res), "not found") {
-		t.Fatalf("not found: %s", toolText(t, res))
+	if !res.IsError {
+		t.Fatal("expected not found")
+	}
+	nf := toolText(t, res)
+	if !strings.Contains(nf, "not found") || !strings.Contains(nf, "candidates") || !strings.Contains(nf, "Meeting") {
+		t.Fatalf("not found candidates: %s", nf)
 	}
 
 	// write denied
@@ -271,16 +294,17 @@ func TestTools_CreateTask(t *testing.T) {
 		t.Fatal("expected denied audit")
 	}
 
-	// page override + due via SetTaskDueDate (CreateBlock has no due field)
+	// page override + due + non-default status
 	key := "Work\x00\x00Inbox"
 	bridge.pages = map[string][]parser.ParsedBlock{key: {}}
 	before := bridge.createBlockN
 	dueBefore := len(bridge.setDueCalls)
+	stateBefore := len(bridge.setStateCalls)
 	res, err = cs.CallTool(ctx, &mcpsdk.CallToolParams{
 		Name: "create_task",
 		Arguments: map[string]any{
 			"text": "on page", "notebook": "Work", "section": "", "page": "Inbox",
-			"due": "2026-08-01",
+			"due": "2026-08-01", "status": "DOING",
 		},
 	})
 	if err != nil {
@@ -298,6 +322,48 @@ func TestTools_CreateTask(t *testing.T) {
 	if len(bridge.setDueCalls) != dueBefore+1 || bridge.setDueCalls[dueBefore].Due != "2026-08-01" {
 		t.Fatalf("expected page-path SetTaskDueDate: %+v", bridge.setDueCalls)
 	}
+	if len(bridge.setStateCalls) != stateBefore+1 || bridge.setStateCalls[stateBefore].Status != "DOING" {
+		t.Fatalf("expected page-path UpdateBlockState DOING: %+v", bridge.setStateCalls)
+	}
+
+	// standalone due + status forwarded to CreateStandaloneTask
+	res, err = cs.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "create_task",
+		Arguments: map[string]any{
+			"text": "standalone meta", "due": "2026-09-01", "status": "DONE",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("standalone meta: %s", toolText(t, res))
+	}
+	if bridge.lastStandalone.Due != "2026-09-01" || bridge.lastStandalone.Status != "DONE" {
+		t.Fatalf("standalone args: %+v", bridge.lastStandalone)
+	}
+
+	// invalid due / status rejected before bridge write
+	res, err = cs.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name:      "create_task",
+		Arguments: map[string]any{"text": "bad", "due": "not-a-date"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(toolText(t, res), "YYYY-MM-DD") {
+		t.Fatalf("invalid due: %s", toolText(t, res))
+	}
+	res, err = cs.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name:      "create_task",
+		Arguments: map[string]any{"text": "bad", "status": "BOGUS"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(toolText(t, res), "TODO") {
+		t.Fatalf("invalid status: %s", toolText(t, res))
+	}
 }
 
 func TestTools_GetBacklinks(t *testing.T) {
@@ -306,8 +372,11 @@ func TestTools_GetBacklinks(t *testing.T) {
 		backlinks: db.BacklinksResult{
 			Results: []db.Backlink{
 				{Kind: db.BacklinkPageLink, SourceNotebook: "A", SourcePage: "P", Snippet: "see [[T]]"},
+				{Kind: db.BacklinkBlockRef, SourceNotebook: "B", SourcePage: "Q", Snippet: "((uuid))"},
+				{Kind: db.BacklinkEmbed, SourceNotebook: "C", SourcePage: "R", Snippet: "{{embed:x}}"},
 			},
-			HasMore: false,
+			Cursor:  "next-cursor",
+			HasMore: true,
 		},
 	}
 	cs, _ := connectTools(t, bridge, Config{Enabled: true})
@@ -316,7 +385,7 @@ func TestTools_GetBacklinks(t *testing.T) {
 	res, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{
 		Name: "get_backlinks",
 		Arguments: map[string]any{
-			"notebook": "T", "section": "", "page": "Target",
+			"notebook": "T", "section": "", "page": "Target", "limit": 99,
 		},
 	})
 	if err != nil {
@@ -325,8 +394,16 @@ func TestTools_GetBacklinks(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("backlinks: %s", toolText(t, res))
 	}
-	if !strings.Contains(toolText(t, res), "see [[T]]") {
-		t.Fatalf("payload: %s", toolText(t, res))
+	txt := toolText(t, res)
+	if !strings.Contains(txt, "see [[T]]") {
+		t.Fatalf("payload: %s", txt)
+	}
+	// kinds distinguished in JSON (linkKind field)
+	if !strings.Contains(txt, "page") || !strings.Contains(txt, "block-ref") || !strings.Contains(txt, "embed") {
+		t.Fatalf("expected all kinds: %s", txt)
+	}
+	if !strings.Contains(txt, "next-cursor") || !strings.Contains(txt, "has_more") {
+		t.Fatalf("expected pagination fields: %s", txt)
 	}
 
 	// empty ok

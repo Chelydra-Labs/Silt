@@ -41,15 +41,17 @@ type fakeBridge struct {
 	setTypeLast    setTypeCall
 	setTypeFlagged []string
 	// Surgical write / read expansion (#795–#799).
-	createBlockN  int
-	standaloneN   int
-	standaloneIDs []string
-	setOwnerCalls []setOwnerCall
-	setTagsCalls  []setTagsCall
-	setDueCalls   []setDueCall
-	blocksByID    map[string]BlockRefResult
-	backlinks     db.BacklinksResult
-	backlinksErr  error
+	createBlockN   int
+	standaloneN    int
+	standaloneIDs  []string
+	setOwnerCalls  []setOwnerCall
+	setTagsCalls   []setTagsCall
+	setDueCalls    []setDueCall
+	setStateCalls  []setStateCall
+	blocksByID     map[string]BlockRefResult
+	backlinks      db.BacklinksResult
+	backlinksErr   error
+	lastStandalone struct{ Title, Due, Status string }
 }
 
 type setOwnerCall struct {
@@ -63,6 +65,10 @@ type setTagsCall struct {
 
 type setDueCall struct {
 	BlockID, Due string
+}
+
+type setStateCall struct {
+	BlockID, Status string
 }
 
 // setPropCall / setTypeCall capture the last (notebook, section, page, ...)
@@ -202,8 +208,8 @@ func (f *fakeBridge) CreateBlock(ctx context.Context, afterID, notebook, section
 
 func (f *fakeBridge) CreateStandaloneTask(ctx context.Context, title, dueDate, status string) (string, error) {
 	_ = ctx
-	_, _ = dueDate, status
 	f.standaloneN++
+	f.lastStandalone = struct{ Title, Due, Status string }{title, dueDate, status}
 	id := fmt.Sprintf("task-%d", f.standaloneN)
 	f.standaloneIDs = append(f.standaloneIDs, id)
 	if f.blocksByID == nil {
@@ -231,6 +237,12 @@ func (f *fakeBridge) SetTaskTags(ctx context.Context, blockID string, tags []str
 func (f *fakeBridge) SetTaskDueDate(ctx context.Context, blockID, dueDate string) error {
 	_ = ctx
 	f.setDueCalls = append(f.setDueCalls, setDueCall{blockID, dueDate})
+	return nil
+}
+
+func (f *fakeBridge) UpdateBlockState(ctx context.Context, blockID, status string) error {
+	_ = ctx
+	f.setStateCalls = append(f.setStateCalls, setStateCall{blockID, status})
 	return nil
 }
 
@@ -894,10 +906,12 @@ func TestRedactArgs_NoBodies(t *testing.T) {
 		"text":      "should not appear",
 		"blocks":    []any{1, 2, 3},
 		"block_ids": []string{"id-a", "id-b"},
+		"tags":      []any{"secret-tag", "other"},
+		"heading":   strings.Repeat("H", 200),
 	})
 	raw, _ := json.Marshal(m)
 	s := string(raw)
-	if strings.Contains(s, "secret note") || strings.Contains(s, "should not") {
+	if strings.Contains(s, "secret note") || strings.Contains(s, "should not") || strings.Contains(s, "secret-tag") {
 		t.Fatalf("leaked body: %s", s)
 	}
 	if m["notebook"] != "Work" {
@@ -905,6 +919,12 @@ func TestRedactArgs_NoBodies(t *testing.T) {
 	}
 	if m["blocks_count"] != 3 {
 		t.Fatalf("blocks_count: %v", m["blocks_count"])
+	}
+	if m["tags_count"] != 2 {
+		t.Fatalf("tags_count: %v", m["tags_count"])
+	}
+	if m["heading_len"] != 200 {
+		t.Fatalf("heading_len: %v", m["heading_len"])
 	}
 	ids, ok := m["block_ids"].([]string)
 	if !ok || len(ids) != 2 || ids[0] != "id-a" {

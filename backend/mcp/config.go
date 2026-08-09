@@ -293,8 +293,10 @@ type Config struct {
 	// HTTPPort is the loopback TCP port (127.0.0.1 only). 0 = ephemeral.
 	// Default DefaultHTTPPort when HTTPEnabled and unset (0 with enabled).
 	HTTPPort int `yaml:"http_port" json:"http_port"`
-	// WriteEnabled grants create_page / update_blocks. Read tools are always
-	// available when the host is running. Default false.
+	// WriteEnabled grants mutating tools (create_page, append_to_page,
+	// insert_under_heading, create_task, update_blocks, set_page_property,
+	// set_page_type). Read tools are always available when the host is running.
+	// Default false.
 	WriteEnabled bool `yaml:"write_enabled" json:"write_enabled"`
 }
 

@@ -677,7 +677,16 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		matches := matchHeadings(blocks, heading)
 		if len(matches) == 0 {
 			env.record("insert_under_heading", "error", "heading not found", args)
-			return toolErr(fmt.Sprintf("heading %q not found on page", heading))
+			body := map[string]any{
+				"ok": false, "error": "heading not found", "heading": heading,
+				"candidates": headingCandidatePaths(blocks, 20),
+			}
+			b, _ := json.Marshal(body)
+			return &mcp.CallToolResult{
+				IsError:           true,
+				Content:           []mcp.Content{&mcp.TextContent{Text: string(b)}},
+				StructuredContent: body,
+			}, body, nil
 		}
 		if len(matches) > 1 {
 			cands := make([]string, 0, len(matches))
@@ -719,8 +728,9 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		Page     string   `json:"page,omitempty" jsonschema:"optional page — when set, create TASK on that page instead of standalone store"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "create_task",
-		Description: "Create a TASK (default TODO) in the standalone task store, or on a page when notebook+page are set. Optional due/owner/tags. Requires write grant. Confirm before edits.",
+		Name: "create_task",
+		Description: "Create a TASK (default TODO) in the standalone task store, or on a page when notebook+page are set. " +
+			"Optional due (YYYY-MM-DD), owner, tags, status (TODO|DOING|DONE). Status applies on both paths. Requires write grant.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in createTaskIn) (*mcp.CallToolResult, any, error) {
 		args := map[string]any{
 			"text": in.Text, "due": in.Due, "owner": in.Owner, "status": in.Status,
@@ -746,9 +756,29 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 			env.record("create_task", "error", "text too large", args)
 			return toolErr(fmt.Sprintf("text exceeds %d runes", MaxBlockTextRunes))
 		}
-		status := strings.TrimSpace(in.Status)
+		due := strings.TrimSpace(in.Due)
+		if due != "" {
+			if len(due) != 10 || due[4] != '-' || due[7] != '-' {
+				env.record("create_task", "error", "invalid due", args)
+				return toolErr("due must be YYYY-MM-DD")
+			}
+			// Cheap shape check; App still validates parse on write.
+			for _, i := range []int{0, 1, 2, 3, 5, 6, 8, 9} {
+				if due[i] < '0' || due[i] > '9' {
+					env.record("create_task", "error", "invalid due", args)
+					return toolErr("due must be YYYY-MM-DD")
+				}
+			}
+		}
+		status := strings.ToUpper(strings.TrimSpace(in.Status))
 		if status == "" {
 			status = "TODO"
+		}
+		switch status {
+		case "TODO", "DOING", "DONE":
+		default:
+			env.record("create_task", "error", "invalid status", args)
+			return toolErr(`status must be TODO, DOING, or DONE`)
 		}
 		var id string
 		var err error
@@ -769,36 +799,59 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 			}
 			id, err = env.bridge.CreateBlock(ctx, "", in.Notebook, in.Section, in.Page, string(parser.BlockTask), title)
 		} else {
-			id, err = env.bridge.CreateStandaloneTask(ctx, title, strings.TrimSpace(in.Due), status)
+			id, err = env.bridge.CreateStandaloneTask(ctx, title, due, status)
 		}
 		if err != nil {
 			env.record("create_task", "error", err.Error(), args)
 			return toolErr(err.Error())
 		}
-		// Page-scoped CreateBlock has no due field; apply after mint (standalone
-		// already baked due into CreateStandaloneTask — skip double-write).
+		// Partial-meta failures include id so clients can recover without re-create.
+		metaFail := func(field string, merr error) (*mcp.CallToolResult, any, error) {
+			env.record("create_task", "error", merr.Error(), args)
+			body := map[string]any{
+				"ok": false, "id": id, "failed_field": field, "error": merr.Error(),
+			}
+			b, _ := json.Marshal(body)
+			return &mcp.CallToolResult{
+				IsError:           true,
+				Content:           []mcp.Content{&mcp.TextContent{Text: string(b)}},
+				StructuredContent: body,
+			}, body, nil
+		}
+		// Page-scoped CreateBlock always mints TODO; apply due/status after.
 		if pageOverride {
-			if due := strings.TrimSpace(in.Due); due != "" {
+			if due != "" {
 				if derr := env.bridge.SetTaskDueDate(ctx, id, due); derr != nil {
-					env.record("create_task", "error", derr.Error(), args)
-					return toolErr(fmt.Sprintf("task created (%s) but set due failed: %v", id, derr))
+					return metaFail("due", derr)
+				}
+			}
+			if status != "TODO" {
+				if serr := env.bridge.UpdateBlockState(ctx, id, status); serr != nil {
+					return metaFail("status", serr)
 				}
 			}
 		}
 		if owner := strings.TrimSpace(in.Owner); owner != "" {
 			if oerr := env.bridge.SetTaskOwner(ctx, id, owner); oerr != nil {
-				env.record("create_task", "error", oerr.Error(), args)
-				return toolErr(fmt.Sprintf("task created (%s) but set owner failed: %v", id, oerr))
+				return metaFail("owner", oerr)
 			}
 		}
 		if len(in.Tags) > 0 {
 			if terr := env.bridge.SetTaskTags(ctx, id, in.Tags); terr != nil {
-				env.record("create_task", "error", terr.Error(), args)
-				return toolErr(fmt.Sprintf("task created (%s) but set tags failed: %v", id, terr))
+				return metaFail("tags", terr)
 			}
 		}
 		env.record("create_task", "ok", "", args)
-		out := map[string]any{"ok": true, "id": id}
+		out := map[string]any{"ok": true, "id": id, "status": status}
+		if due != "" {
+			out["due"] = due
+		}
+		if owner := strings.TrimSpace(in.Owner); owner != "" {
+			out["owner"] = owner
+		}
+		if len(in.Tags) > 0 {
+			out["tags"] = in.Tags
+		}
 		if pageOverride {
 			out["notebook"] = in.Notebook
 			out["section"] = in.Section
@@ -815,8 +868,9 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		Limit    int    `json:"limit,omitempty" jsonschema:"page size (default 50, max 50)"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "get_backlinks",
-		Description: "List inbound page-links, block-refs, and embeds targeting a page (paged). Read-only.",
+		Name: "get_backlinks",
+		Description: "List inbound references to a page (paged; default/max limit 50). " +
+			"Each result has linkKind page|block-ref|embed plus source location. Read-only.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getBacklinksIn) (*mcp.CallToolResult, any, error) {
 		args := map[string]any{
 			"notebook": in.Notebook, "section": in.Section, "page": in.Page,

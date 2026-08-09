@@ -50,6 +50,9 @@ type Bridge interface {
 	SetTaskTags(ctx context.Context, blockID string, tags []string) error
 	// SetTaskDueDate sets or clears (empty) [due:: YYYY-MM-DD] on an existing task.
 	SetTaskDueDate(ctx context.Context, blockID, dueDate string) error
+	// UpdateBlockState sets task status (TODO|DOING|DONE). Used after page-scoped
+	// create_task when the client requests a non-default status.
+	UpdateBlockState(ctx context.Context, blockID, status string) error
 	// ResolveBlock looks up a block UUID (Exists=false when missing, not error)
 	// and sets Embedded when any inbound embed references the id.
 	ResolveBlock(ctx context.Context, blockID string) (BlockRefResult, error)

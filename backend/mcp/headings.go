@@ -25,10 +25,32 @@ func matchHeadings(blocks []parser.ParsedBlock, heading string) []headingMatch {
 	fullPath := strings.Contains(want, "::")
 	wantLower := strings.ToLower(want)
 
+	var matches []headingMatch
+	for _, h := range listHeadingPaths(blocks) {
+		ok := false
+		if fullPath {
+			ok = strings.ToLower(h.Path) == wantLower
+		} else {
+			// Leaf is the last :: segment.
+			leaf := h.Path
+			if i := strings.LastIndex(leaf, "::"); i >= 0 {
+				leaf = leaf[i+2:]
+			}
+			ok = strings.ToLower(leaf) == wantLower
+		}
+		if ok {
+			matches = append(matches, h)
+		}
+	}
+	return matches
+}
+
+// listHeadingPaths returns every HEADER on the page with its hierarchical path.
+// Used for match + not-found candidate lists (teach-the-model errors).
+func listHeadingPaths(blocks []parser.ParsedBlock) []headingMatch {
 	// stack[i] is the CleanText of the open header at depth i+1 (markdown # = 1).
 	var stack []string
-	var matches []headingMatch
-
+	var out []headingMatch
 	for _, b := range blocks {
 		if b.Type != parser.BlockHeader {
 			continue
@@ -47,18 +69,27 @@ func matchHeadings(blocks []parser.ParsedBlock, heading string) []headingMatch {
 		}
 		leaf := strings.TrimSpace(b.CleanText)
 		stack = append(stack, leaf)
-		path := strings.Join(stack, "::")
-		pathLower := strings.ToLower(path)
-		leafLower := strings.ToLower(leaf)
-		ok := false
-		if fullPath {
-			ok = pathLower == wantLower
-		} else {
-			ok = leafLower == wantLower
+		out = append(out, headingMatch{ID: b.ID, Path: strings.Join(stack, "::")})
+	}
+	return out
+}
+
+// headingCandidatePaths returns up to max unique HEADER paths for error payloads.
+func headingCandidatePaths(blocks []parser.ParsedBlock, max int) []string {
+	if max <= 0 {
+		max = 20
+	}
+	seen := map[string]bool{}
+	var paths []string
+	for _, h := range listHeadingPaths(blocks) {
+		if h.Path == "" || seen[h.Path] {
+			continue
 		}
-		if ok {
-			matches = append(matches, headingMatch{ID: b.ID, Path: path})
+		seen[h.Path] = true
+		paths = append(paths, h.Path)
+		if len(paths) >= max {
+			break
 		}
 	}
-	return matches
+	return paths
 }

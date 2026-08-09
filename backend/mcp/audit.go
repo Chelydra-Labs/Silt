@@ -271,6 +271,29 @@ func RedactArgs(args map[string]any) map[string]any {
 			} else {
 				out[k+"_present"] = true
 			}
+		case "heading":
+			// Heading paths are identifiers but can be long free text; cap audit bulk.
+			if s, ok := v.(string); ok {
+				const maxHeadingAudit = 120
+				r := []rune(s)
+				if len(r) > maxHeadingAudit {
+					out["heading"] = string(r[:maxHeadingAudit]) + "…"
+					out["heading_len"] = len(r)
+				} else {
+					out["heading"] = s
+				}
+			} else {
+				out["heading_present"] = true
+			}
+		case "tags":
+			switch t := v.(type) {
+			case []string:
+				out["tags_count"] = len(t)
+			case []any:
+				out["tags_count"] = len(t)
+			default:
+				out["tags_present"] = true
+			}
 		case "blocks":
 			switch b := v.(type) {
 			case []any:
