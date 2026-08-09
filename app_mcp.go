@@ -320,7 +320,8 @@ func (a *App) GetLocalMCPToken() string {
 
 // GetMCPAudit returns redacted MCP tool-call audit entries for the open vault
 // (newest first). Source is <vault>/.system/logs/mcp-audit.jsonl — on-demand
-// read, not an in-memory ring. Empty when the log file is missing.
+// read, not an in-memory ring. Empty when the log file is missing. Coordinates
+// with a live fileAuditor when the host is running (same class as ClearMCPAudit).
 func (a *App) GetMCPAudit() ([]mcp.AuditEntry, error) {
 	a.vaultMu.RLock()
 	vp := a.vaultPath
@@ -328,7 +329,8 @@ func (a *App) GetMCPAudit() ([]mcp.AuditEntry, error) {
 	if vp == "" {
 		return nil, fmt.Errorf("no vault open")
 	}
-	return mcp.ReadAuditLog(vp, 0)
+	h := a.ensureMCPHost()
+	return h.ReadAudit(vp, 0)
 }
 
 // ClearMCPAudit empties the vault MCP audit log on disk. Coordinates with a

@@ -6,9 +6,27 @@
     clearSearch
   } from '../../lib/editor/search/searchExtension'
   import { findBarState } from '../../lib/editor/search/findBarState.svelte'
+  import {
+    findSourceMatches,
+    expandReplace,
+    replaceAllSource,
+    type SourceMatch,
+    type SourceSearchTarget
+  } from '../../lib/editor/search/sourceSearch'
 
-  // The active tab's TipTap editor. FindBar operates on the live doc.
-  let { editor, onClose }: { editor?: Editor; onClose: () => void } = $props()
+  // Dual backend: TipTap (Edit) or SourceSearchTarget (Source). Exactly one
+  // should be set by VirtualScrollContainer for the active view mode (#884).
+  let {
+    editor,
+    sourceTarget,
+    onClose
+  }: {
+    editor?: Editor
+    sourceTarget?: SourceSearchTarget | null
+    onClose: () => void
+  } = $props()
+
+  const hasBackend = $derived(!!editor || !!sourceTarget)
 
   // User inputs.
   let query = $state('')
@@ -17,20 +35,70 @@
   let wholeWord = $state(false)
   let regexp = $state(false)
 
-  // Projections of the editor's match decorations, refreshed on every editor
-  // update / selection change (typing, navigation, doc edit).
+  // Projections of match state, refreshed on query change / doc edit / nav.
   let matchCount = $state(0)
   let activeIndex = $state(-1)
   let lastReplaceMessage = $state('')
   let inputEl = $state<HTMLInputElement | null>(null)
 
+  // Source-mode match list (TipTap keeps decorations inside the editor).
+  let sourceMatches = $state<SourceMatch[]>([])
+
+  function sourceOpts() {
+    return { caseSensitive, wholeWord, regexp }
+  }
+
   function refreshCounts(): void {
+    if (sourceTarget) {
+      matchCount = sourceMatches.length
+      // activeIndex is owned by source navigation; clamp if list shrank.
+      if (matchCount === 0) activeIndex = -1
+      else if (activeIndex >= matchCount) activeIndex = matchCount - 1
+      return
+    }
     if (!editor || !editor.isEditable) return
     matchCount = getMatchCount(editor)
     activeIndex = getActiveMatchIndex(editor)
   }
 
+  function selectSourceMatch(index: number, matches = sourceMatches): void {
+    if (!sourceTarget || matches.length === 0) return
+    const i = ((index % matches.length) + matches.length) % matches.length
+    activeIndex = i
+    const m = matches[i]
+    sourceTarget.setSelection(m.from, m.to)
+  }
+
+  function applySourceQuery(preferCaret = true): void {
+    if (!sourceTarget) return
+    const text = sourceTarget.getText()
+    // Local list first — reading $state after writing it in the same effect
+    // would re-subscribe and loop (effect_update_depth_exceeded).
+    const matches = findSourceMatches(text, query, sourceOpts())
+    sourceMatches = matches
+    matchCount = matches.length
+    if (!query || matchCount === 0) {
+      activeIndex = -1
+      return
+    }
+    if (preferCaret) {
+      const caret = sourceTarget.getCaret()
+      // Prefer first match at/after caret; wrap to 0.
+      let idx = matches.findIndex((m) => m.from >= caret)
+      if (idx < 0) idx = 0
+      selectSourceMatch(idx, matches)
+    } else if (activeIndex >= 0 && activeIndex < matchCount) {
+      selectSourceMatch(activeIndex, matches)
+    } else {
+      selectSourceMatch(0, matches)
+    }
+  }
+
   function applyQuery(): void {
+    if (sourceTarget) {
+      applySourceQuery(true)
+      return
+    }
     if (!editor) return
     editor.commands.setSearchQuery({
       search: query,
@@ -51,6 +119,8 @@
     void caseSensitive
     void wholeWord
     void regexp
+    void sourceTarget
+    void editor
     applyQuery()
   })
 
@@ -68,6 +138,15 @@
     }
   })
 
+  // Source buffer edits while Find is open — re-scan without resetting caret
+  // preference every keystroke beyond re-finding from current active.
+  $effect(() => {
+    if (!sourceTarget) return
+    return sourceTarget.subscribe(() => {
+      applySourceQuery(false)
+    })
+  })
+
   function handleKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       e.preventDefault()
@@ -78,7 +157,13 @@
       if (findBarState.replaceOpen) doReplaceAll()
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (!editor || !query) return
+      if (!query) return
+      if (sourceTarget) {
+        if (e.shiftKey) prev()
+        else next()
+        return
+      }
+      if (!editor) return
       if (e.shiftKey) editor.commands.findPrevInPage()
       else editor.commands.findNextInPage()
       refreshCounts()
@@ -86,21 +171,81 @@
   }
 
   function next(): void {
+    if (sourceTarget) {
+      if (sourceMatches.length === 0) return
+      selectSourceMatch(activeIndex < 0 ? 0 : activeIndex + 1)
+      refreshCounts()
+      return
+    }
     editor?.commands.findNextInPage()
     refreshCounts()
   }
   function prev(): void {
+    if (sourceTarget) {
+      if (sourceMatches.length === 0) return
+      selectSourceMatch(
+        activeIndex < 0 ? sourceMatches.length - 1 : activeIndex - 1
+      )
+      refreshCounts()
+      return
+    }
     editor?.commands.findPrevInPage()
     refreshCounts()
   }
   function doReplace(): void {
-    if (!editor || matchCount === 0) return
+    if (matchCount === 0) return
+    if (sourceTarget) {
+      if (activeIndex < 0 || activeIndex >= sourceMatches.length) return
+      const m = sourceMatches[activeIndex]
+      const text = sourceTarget.getText()
+      const matchText = text.slice(m.from, m.to)
+      let groups: string[] = []
+      if (regexp) {
+        try {
+          const flags = caseSensitive ? '' : 'i'
+          const body = wholeWord ? `\\b(?:${query})\\b` : query
+          const re = new RegExp(body, flags)
+          const exec = re.exec(matchText)
+          if (exec) {
+            groups = []
+            for (let i = 1; i < exec.length; i++) groups.push(exec[i] ?? '')
+          }
+        } catch {
+          groups = []
+        }
+      }
+      const rep = expandReplace(replaceValue, matchText, groups)
+      sourceTarget.replaceRange(m.from, m.to, rep)
+      // Re-scan; stay near the replacement point.
+      applySourceQuery(true)
+      inputEl?.focus()
+      return
+    }
+    if (!editor) return
     editor.commands.replaceNextInPage()
     refreshCounts()
     inputEl?.focus()
   }
   function doReplaceAll(): void {
-    if (!editor || matchCount === 0) return
+    if (matchCount === 0) return
+    if (sourceTarget) {
+      const before = matchCount
+      const { text, count } = replaceAllSource(
+        sourceTarget.getText(),
+        query,
+        replaceValue,
+        sourceOpts()
+      )
+      if (count > 0) sourceTarget.setText(text)
+      applySourceQuery(true)
+      lastReplaceMessage = `Replaced ${before} match${before === 1 ? '' : 'es'}`
+      window.setTimeout(() => {
+        lastReplaceMessage = ''
+      }, 2500)
+      inputEl?.focus()
+      return
+    }
+    if (!editor) return
     const before = matchCount
     editor.commands.replaceAllInPage()
     refreshCounts()
@@ -122,9 +267,9 @@
     inputEl?.select()
   }
 
-  // Focus when mounted.
+  // Focus when mounted with a backend.
   $effect(() => {
-    if (editor) focusInput()
+    if (hasBackend) focusInput()
   })
 
   const status = $derived(
@@ -201,7 +346,7 @@
         aria-label="Previous match (Shift+Enter)"
         aria-keyshortcuts="Shift+Enter"
         title="Previous match"
-        disabled={!editor || matchCount === 0}
+        disabled={!hasBackend || matchCount === 0}
         onclick={prev}>↑</button
       >
       <button
@@ -210,7 +355,7 @@
         aria-label="Next match (Enter)"
         aria-keyshortcuts="Enter"
         title="Next match"
-        disabled={!editor || matchCount === 0}
+        disabled={!hasBackend || matchCount === 0}
         onclick={next}>↓</button
       >
     </div>
@@ -241,7 +386,7 @@
         class="action-btn"
         aria-label="Replace selected match"
         title="Replace this match"
-        disabled={!editor || matchCount === 0}
+        disabled={!hasBackend || matchCount === 0}
         onclick={doReplace}>Replace</button
       >
       <button
@@ -250,7 +395,7 @@
         aria-label="Replace all matches"
         aria-keyshortcuts="Alt+Enter"
         title="Replace all"
-        disabled={!editor || matchCount === 0}
+        disabled={!hasBackend || matchCount === 0}
         onclick={doReplaceAll}>All</button
       >
       {#if lastReplaceMessage}

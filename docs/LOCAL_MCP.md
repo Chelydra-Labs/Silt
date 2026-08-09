@@ -163,8 +163,12 @@ Settings → **AI** → **Local MCP** → **MCP activity** shows the redacted au
 log in-app (newest first). Expand the section to load; filter by outcome or
 tool name; refresh or clear the log. Clear empties
 `<vault>/.system/logs/mcp-audit.jsonl` (and coordinates with a live host writer
-so appends cannot race the truncate). The table shows timestamp, tool, outcome,
-sanitized error text, and redacted args metadata — **never note body content**.
+so appends cannot race the truncate). When the host is running, `GetMCPAudit`
+reads under the same live `fileAuditor` mutex as Record/Clear, so concurrent
+append+read does not tear lines from this process; corrupt or torn lines are
+still skipped at parse time. The log is best-effort observability (no fsync per
+entry). The table shows timestamp, tool, outcome, sanitized error text, and
+redacted args metadata — **never note body content**.
 IPC: `GetMCPAudit` / `ClearMCPAudit` (vault must be open).
 
 ## Config (`config.yaml`)

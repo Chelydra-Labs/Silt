@@ -21,6 +21,11 @@
     ReleaseFocusLock,
     RefreshFocusLock
   } from '../../../bindings/silt/app.js'
+  import {
+    registerEditor,
+    editorKey
+  } from '../../lib/editor/editorRegistry.svelte'
+  import type { SourceSearchTarget } from '../../lib/editor/search/sourceSearch'
 
   // MarkdownSourceViewer — editable Source mode (#660) with optional read-only
   // Shiki highlight (#171/#194). Seeds from on-disk body via FetchPageMarkdown;
@@ -31,6 +36,9 @@
   // `.value=` rerender, so every user edit (typing, paste, selection
   // replacement, Tab/Shift-Tab) is recorded here; seed/reload/external
   // replacement are explicit boundaries.
+  //
+  // Editor registry (#884): registers the same flush/reload handle TipTap uses
+  // so menu Save / Ctrl+S and global replace work while TipTap is unmounted.
 
   interface Props {
     blocks: ParsedBlock[]
@@ -41,6 +49,8 @@
     onBlocksSaved?: (blocks: ParsedBlock[]) => void
     /** When true (default), body is an editable textarea with debounced save. */
     editable?: boolean
+    /** FindBar bind target for Source-mode in-page find (#884). */
+    sourceSearchTarget?: SourceSearchTarget | null
   }
 
   let {
@@ -50,7 +60,9 @@
     section = '',
     page = '',
     onBlocksSaved,
-    editable = true
+    editable = true,
+    // eslint-disable-next-line no-useless-assignment -- $bindable out-param for parent FindBar
+    sourceSearchTarget = $bindable<SourceSearchTarget | null>(null)
   }: Props = $props()
 
   function reconstructMarkdown(source: ParsedBlock[]): string {
@@ -101,6 +113,12 @@
   let pendingPreSelection: SourceHistorySelection | null = null
 
   let textareaEl = $state<HTMLTextAreaElement | null>(null)
+  // FindBar subscribers — notified after buffer mutations (not reactive UI).
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive listener set
+  const searchListeners = new Set<() => void>()
+  function notifySearchListeners(): void {
+    for (const cb of searchListeners) cb()
+  }
   let lineCount = $derived(Math.max(1, buffer.split('\n').length))
   let canUndo = $derived.by(() => {
     void historyVersion
@@ -129,6 +147,29 @@
     }
   }
 
+  /** Scroll so the line containing `offset` is visible (Find next/prev). */
+  function scrollTextareaOffsetIntoView(
+    el: HTMLTextAreaElement,
+    offset: number
+  ): void {
+    const style = getComputedStyle(el)
+    const fontSize = parseFloat(style.fontSize) || 14
+    const lineHeightRaw = parseFloat(style.lineHeight)
+    const lineHeight =
+      Number.isFinite(lineHeightRaw) && lineHeightRaw > 0
+        ? lineHeightRaw
+        : fontSize * 1.4
+    const paddingTop = parseFloat(style.paddingTop) || 0
+    const linesBefore =
+      el.value.slice(0, Math.max(0, offset)).split('\n').length - 1
+    const targetTop = linesBefore * lineHeight + paddingTop
+    const viewTop = el.scrollTop
+    const viewBottom = viewTop + el.clientHeight
+    if (targetTop < viewTop || targetTop + lineHeight > viewBottom) {
+      el.scrollTop = Math.max(0, targetTop - el.clientHeight / 3)
+    }
+  }
+
   /** Boundary: seed/reload/external replacement starts a fresh history. */
   function seedBuffer(value: string): void {
     buffer = value
@@ -140,6 +181,7 @@
       selection: { start: 0, end: 0, direction: 'forward' }
     })
     bumpHistory()
+    notifySearchListeners()
     // Drop any in-flight save so we don't write a stale buffer back.
     if (saveTimer) {
       clearTimeout(saveTimer)
@@ -306,8 +348,14 @@
     }, 500)
   }
 
-  async function flushSave(): Promise<void> {
-    if (!editable || !notebook || !page || !dirty || conflictPending) return
+  /** Persist dirty buffer. Returns true only when clean after the attempt. */
+  async function flushSave(): Promise<boolean> {
+    if (!editable || !notebook || !page) {
+      // Can't save — clean is success for menu Save; dirty is failure.
+      return !dirty
+    }
+    if (conflictPending) return false
+    if (!dirty) return true
     const md = buffer
     savePhase = 'saving'
     try {
@@ -324,16 +372,107 @@
           if (savePhase === 'saved') savePhase = 'idle'
           savedClearTimer = null
         }, 2000)
-      } else {
-        savePhase = 'idle'
+        saveError = null
+        onBlocksSaved?.(saved)
+        return true
       }
+      savePhase = 'idle'
       saveError = null
       onBlocksSaved?.(saved)
+      // User typed during save — still dirty.
+      return false
     } catch (e) {
       saveError = e instanceof Error ? e.message : String(e)
       savePhase = 'error'
+      return false
     }
   }
+
+  // Menu Save / Ctrl+S and global replace coordinate through the same registry
+  // TipTap uses (#884). TipTap is unmounted in Source, so without this handle
+  // those paths are silent no-ops on dirty Source buffers.
+  $effect(() => {
+    if (!editable || !notebook || !page) return
+    const key = editorKey(notebook, section, page)
+    return registerEditor({
+      key,
+      isDirty: () => dirty || conflictPending,
+      flush: async () => {
+        if (saveTimer) {
+          clearTimeout(saveTimer)
+          saveTimer = null
+        }
+        if (conflictPending) return false
+        if (!dirty) return true
+        return await flushSave()
+      },
+      forceExternalReload: () => {
+        reloadFromDisk()
+      },
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
+    })
+  })
+
+  // Expose textarea buffer ops to FindBar while editable Source is mounted.
+  $effect(() => {
+    if (!editable) {
+      sourceSearchTarget = null
+      return
+    }
+    sourceSearchTarget = {
+      getText: () => buffer,
+      getCaret: () => textareaEl?.selectionStart ?? 0,
+      setSelection: (from, to) => {
+        if (!textareaEl) return
+        textareaEl.focus()
+        const len = textareaEl.value.length
+        const a = Math.max(0, Math.min(from, len))
+        const b = Math.max(0, Math.min(to, len))
+        try {
+          textareaEl.setSelectionRange(a, b, 'forward')
+        } catch {
+          textareaEl.selectionStart = a
+          textareaEl.selectionEnd = b
+        }
+        // Textareas do not scroll the caret into view on setSelectionRange;
+        // approximate line from offset so Find next/prev is visible on long notes.
+        scrollTextareaOffsetIntoView(textareaEl, a)
+      },
+      replaceRange: (from, to, text) => {
+        const next = buffer.slice(0, from) + text + buffer.slice(to)
+        const caret = from + text.length
+        commitUserEdit(next, {
+          start: caret,
+          end: caret,
+          direction: 'forward'
+        })
+      },
+      setText: (text) => {
+        const caret = Math.min(
+          textareaEl?.selectionStart ?? text.length,
+          text.length
+        )
+        commitUserEdit(text, {
+          start: caret,
+          end: caret,
+          direction: 'forward'
+        })
+      },
+      subscribe: (cb) => {
+        searchListeners.add(cb)
+        return () => {
+          searchListeners.delete(cb)
+        }
+      }
+    }
+    return () => {
+      sourceSearchTarget = null
+    }
+  })
 
   function keepMine(): void {
     conflictPending = false
@@ -419,6 +558,7 @@
     markDirtyAndSchedule()
     history.push({ value: nextValue, selection }, opts)
     bumpHistory()
+    notifySearchListeners()
     queueMicrotask(() => restoreSelection(selection))
   }
 
@@ -587,6 +727,7 @@
   function applyHistoryEntry(entry: SourceHistoryEntry): void {
     buffer = entry.value
     markDirtyAndSchedule()
+    notifySearchListeners()
     queueMicrotask(() => {
       if (!textareaEl) return
       restoreSelection(entry.selection)

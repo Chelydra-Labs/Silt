@@ -2,8 +2,12 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -183,5 +187,106 @@ func TestHost_ClearAudit_WhenStopped(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("want empty, got %+v", got)
+	}
+}
+
+func TestFileAuditor_ConcurrentRecordAndRead(t *testing.T) {
+	vault := t.TempDir()
+	fa, err := newFileAuditor(vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fa.Close()
+
+	const writers = 4
+	const perWriter = 50
+	var wg sync.WaitGroup
+	wg.Add(writers + 2)
+	for w := 0; w < writers; w++ {
+		w := w
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perWriter; i++ {
+				fa.Record(AuditEntry{
+					Tool:    fmt.Sprintf("tool-%d", w),
+					Outcome: "ok",
+					Vault:   "v",
+				})
+			}
+		}()
+	}
+	var sawTool atomic.Bool
+	for r := 0; r < 2; r++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perWriter*2; i++ {
+				entries, err := fa.Read(0)
+				if err != nil {
+					t.Errorf("Read: %v", err)
+					return
+				}
+				for _, e := range entries {
+					if e.Tool == "" || e.Outcome == "" {
+						t.Errorf("invalid entry: %+v", e)
+						return
+					}
+					if strings.HasPrefix(e.Tool, "tool-") {
+						sawTool.Store(true)
+					}
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	final, err := fa.Read(0)
+	if err != nil {
+		t.Fatalf("final Read: %v", err)
+	}
+	if len(final) == 0 {
+		t.Fatal("expected recorded entries after concurrent write")
+	}
+	for _, e := range final {
+		if e.Tool == "" || e.Outcome == "" {
+			t.Fatalf("invalid final entry: %+v", e)
+		}
+	}
+	if !sawTool.Load() {
+		found := false
+		for _, e := range final {
+			if strings.HasPrefix(e.Tool, "tool-") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("never saw recorded tools: %+v", final)
+		}
+	}
+}
+
+func TestHost_ReadAudit_WithFileAuditor(t *testing.T) {
+	vault := t.TempDir()
+	h := NewHost(Options{Keyring: nil, Version: "test"})
+	bridge := &fakeBridge{path: vault}
+	if err := h.Start(bridge, Config{Enabled: true, HTTPEnabled: true, HTTPPort: freePort(t)}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer h.Stop()
+
+	h.mu.RLock()
+	aud := h.audit
+	h.mu.RUnlock()
+	if aud == nil {
+		t.Fatal("expected auditor")
+	}
+	aud.Record(AuditEntry{Tool: "search_blocks", Outcome: "ok", Vault: "v"})
+
+	got, err := h.ReadAudit(vault, 0)
+	if err != nil {
+		t.Fatalf("ReadAudit: %v", err)
+	}
+	if len(got) != 1 || got[0].Tool != "search_blocks" {
+		t.Fatalf("ReadAudit: %+v", got)
 	}
 }

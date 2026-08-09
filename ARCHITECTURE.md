@@ -753,8 +753,9 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   client input. A non-decodable payload records presence + byte length only.
   Rotation is non-atomic best-effort by design (observability, not a
   durability-critical store). Settings loads the log on demand via
-  `GetMCPAudit` / clears via `ClearMCPAudit` (coordinates with the live
-  `fileAuditor` when the host is running).
+  `GetMCPAudit` / clears via `ClearMCPAudit` (both coordinate with the live
+  `fileAuditor` mutex when the host is running — read and clear are safe
+  concurrent with Record; the log remains best-effort with no fsync).
   Settings UI: Settings → AI → Local MCP (config + **MCP activity** viewer).
   User docs: `docs/LOCAL_MCP.md`. Optional portable Skill (workflow guidance
   only, not a second protocol): `integrations/silt-agent/SKILL.md`.
@@ -1084,7 +1085,7 @@ Each tab carries a `viewMode: 'edit' | 'source'` on its `TabEntry` (`frontend/sr
 
 **Persistence.** `viewMode` seeds from the per-vault `editor.default_view_mode` when a tab is created, survives navigation within a session, and persists across restarts on `TabRef.view_mode` in the vault `config.yaml` (the per-vault UI tier — never SQLite; §0 rule 4). Only `"source"` is written (absence = Edit); `normalize()` collapses any other value to `""`. `GetOpenTabs`/`SetOpenTabs` round-trip it as part of the existing `TabRef`.
 
-**Source view.** `MarkdownSourceViewer.svelte` is an **editable** raw-markdown surface (textarea + line gutter + "Copy as Markdown"). The buffer seeds from on-disk body via `FetchPageMarkdown` (reconstructed block `raw_text` is fallback only); debounced writes go through `SavePageMarkdown` (preserves YAML frontmatter, atomic write + re-index, returns the re-parsed block list). Dirty buffers block auto-save on external block refreshes until the user chooses Keep mine / Reload; clean buffers re-fetch. Focus lease is acquired while Source is mounted (same TTL path as Edit). When `editable={false}`, the viewer falls back to a read-only Shiki-highlighted `<pre>` (tests / future read-only hosts).
+**Source view.** `MarkdownSourceViewer.svelte` is an **editable** raw-markdown surface (textarea + line gutter + "Copy as Markdown"). The buffer seeds from on-disk body via `FetchPageMarkdown` (reconstructed block `raw_text` is fallback only); debounced writes go through `SavePageMarkdown` (preserves YAML frontmatter, atomic write + re-index, returns the re-parsed block list). Dirty buffers block auto-save on external block refreshes until the user chooses Keep mine / Reload; clean buffers re-fetch. Focus lease is acquired while Source is mounted (same TTL path as Edit). While editable Source is mounted it registers with the editor reconciliation registry (`editorRegistry.svelte.ts`) under the same page key as TipTap, so menu Save / Ctrl+S and global replace can flush or force-reload the Source buffer while TipTap is unmounted. When `editable={false}`, the viewer falls back to a read-only Shiki-highlighted `<pre>` (tests / future read-only hosts).
 
 **Editor teardown in Source view.** The Edit/Source switch lives in `VirtualScrollContainer`: Source mode renders only `MarkdownSourceViewer` and does **not** mount `TipTapEditor`, so a tab held in Source view pays no ProseMirror memory cost (Svelte destroys the editor + NodeViews + listeners on the switch; it rebuilds from `blocks` on return to Edit after Source saves). Lifecycle safety: `TipTapEditor.onDestroy` flushes the pending save and releases the focus lease, and `hasFirstEdit` is container-scoped so edit-to-pin can't double-fire across a remount. See `docs/editor-memory-profiling.md` for the cost model.
 
@@ -1183,12 +1184,17 @@ id is a node attr) so they need no filter. The decoration set rebuilds only on
 doc/selection/query change (the official invalidation strategy — not every
 transaction). `FindBar.svelte` is a `role="toolbar"` overlay with a `1 of N`
 counter (aria-live), prev/next, toggles, Esc-to-close. `getMatchCount` /
-`getActiveMatchIndex` read the decoration set for the counter.
+`getActiveMatchIndex` read the decoration set for the counter. In **Source**
+mode the same FindBar chrome drives `sourceSearch.ts` over the textarea buffer
+(character offsets + `SourceSearchTarget` from `MarkdownSourceViewer`); Edit↔Source
+closes the bar so it never keeps a stale backend.
 
 **In-page find & replace (Ctrl+H)** — extends FindBar with a replace row.
 `replaceNextInPage` / `replaceAllInPage` proxy to `prosemirror-search`'s
 commands; Replace All iterates matches in reverse in ONE transaction (one undo
-step). Regex capture-group substitution (`$1`/`$&`) works in-page.
+step). Regex capture-group substitution (`$1`/`$&`) works in-page. Source mode
+uses `replaceAllSource` / `expandReplace` and a single `setText` history entry
+for Replace All.
 
 **Global search enhancements (Ctrl+Shift+F)** —
 `SearchBlocksPaged(query, offset, limit, SearchFilters)` adds parameterized

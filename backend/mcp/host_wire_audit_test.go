@@ -187,25 +187,7 @@ func TestSchemaAudit_ViaStdioProxyPath(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Local server mirrors remote tools and forwards CallTool — same shape as
-	// runStdioProxy in cmd_mcp.go.
-	local := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "silt-stdio-test", Version: "test"}, nil)
-	tools, err := remote.ListTools(ctx, nil)
-	if err != nil {
-		t.Fatalf("ListTools: %v", err)
-	}
-	for _, tool := range tools.Tools {
-		tool := tool
-		local.AddTool(tool, func(ctx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-			params := &mcpsdk.CallToolParams{
-				Name:      tool.Name,
-				Arguments: req.Params.Arguments,
-			}
-			return remote.CallTool(ctx, params)
-		})
-	}
-
-	// Bidirectional pipes: client ↔ local proxy server.
+	// Bidirectional pipes: client ↔ local proxy server (shared RunStdioProxy).
 	c2sR, c2sW := io.Pipe()
 	s2cR, s2cW := io.Pipe()
 	t.Cleanup(func() {
@@ -217,9 +199,11 @@ func TestSchemaAudit_ViaStdioProxyPath(t *testing.T) {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		serverErr <- local.Run(ctx, &mcpsdk.IOTransport{
-			Reader: c2sR,
-			Writer: s2cW,
+		serverErr <- RunStdioProxy(ctx, remote, StdioProxyOptions{
+			Name:    "silt-stdio-test",
+			Version: "test",
+			Reader:  c2sR,
+			Writer:  s2cW,
 		})
 	}()
 
