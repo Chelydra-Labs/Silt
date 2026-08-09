@@ -147,21 +147,55 @@ prose in the transcript.
 ## Semantic search / RAG degrade
 
 Semantic tools (`search_notes`, `get_related_notes`, `suggest_link_targets`)
-register only when **Settings → AI → Semantic search** is on. Hybrid retrieval
-can continue if only keyword *or* only semantic fails: the run proceeds with
-the healthy side, and a `search_degraded` audit event is recorded (visible
-under Settings → AI activity / Search settings). Stale index banners also
-surface when the embedding model or index format changes.
+register only when **Settings → AI → Semantic search** is on.
+
+### `search_notes` hybrid retrieval
+
+`search_notes` runs **true hybrid** retrieval (keyword FTS ∥ dense vectors)
+with default `hybrid_weight` **0.6**, matching AI Q&A. The vector channel uses
+an **agent-owned** sqlite-vec (`vec0`) index in this plugin’s `plugin.db`,
+built with the same shared embed-index helpers as `silt-ai-qa` (isolated
+in-memory state — not a process-global registry, not QA’s database).
+
+- On vault open (when RAG is on): migrate + ensure index ready; rebuild if
+  empty. Incremental updates subscribe to `block:changed` (and `editor:save`
+  when available), debounced ~2s.
+- On vault close / shutdown: unsubscribe and reset agent index process state.
+- One-sided FTS or vector failure **fails open** to the healthy side and
+  records a `search_degraded` audit event.
+- **Gated semantic fallback:** if hybrid returns zero passages and the agent
+  index is **not warm** (no dimensions / zero chunks), a last-resort
+  candidate+cosine path may run once. If the index is warm and both channels
+  are empty → honest “no matches” (no fallback thrash).
+- Snippets (~280 chars) are often enough; the tool description steers the
+  model to call `read_blocks` only when a snippet is incomplete.
+
+`get_related_notes` / `suggest_link_targets` keep their existing embed paths.
+RAG-off still unregisters all three via `RAG_TOOL_NAMES`.
 
 ## The agent loop
 
 - **User-invoked.** Nothing runs until you send a message — no background
   polling, no auto-run on note open.
-- **Bounded.** A turn allows up to **8 iterations**. The last iteration is
-  reserved for a forced text answer (`toolChoice: none`) when the model has
-  already used tools but never voluntarily stopped — so vault hits still get
-  a synthesis instead of only an iteration-cap banner. The hard stop message
-  appears only when that wrap-up still produces no text.
+- **Bounded.** A turn allows up to **8 iterations** (`MAX_ITERATIONS`). The
+  last iteration is reserved for a forced text answer (`toolChoice: none`)
+  when the model has already used tools but never voluntarily stopped.
+- **Search budget.** At most **3** `search_notes` dispatches per turn
+  (`MAX_SEARCH_NOTES_PER_TURN`). After the third non-duplicate search (with
+  prior tool results), the loop forces the same wrap-up path early — so
+  simple Q&A does not burn all eight iterations re-searching.
+- **Duplicate guard.** Identical tool name + normalized args (trim,
+  case-fold strings, collapse whitespace, stable JSON key order) short-circuit
+  before the handler with an instructive error. Near-duplicates like
+  `Foo` / `foo` count as the same call.
+- **Q&A tool subset.** Default catalog for a turn is read-only:
+  `search_notes`, `read_blocks`, `query_tasks`, `get_backlinks` (∩ registered /
+  RAG gate). Write/organize intent in the user message starts the turn with
+  the **full** catalog; a successful write tool mid-turn also expands to full.
+  System prompt lists the same tools as the `complete` catalog.
+- **Sufficiency.** After each tool result, if `<vault_data>` already answers,
+  the model should respond and stop — not call more tools.
+- **Hard stop banner** appears only when forced wrap-up still produces no text.
 - **Transparent.** Tool calls and results collapse into a compact activity
   disclosure; multi-source evidence collapses into an **“N sources”** group
   (expand to open any citation). The chat still shows what the agent did
@@ -206,7 +240,8 @@ the "no unsolicited writes" invariant while letting the agent act. See
   endpoint** when a semantic tool runs.
 - **Local** endpoints (Ollama on this machine) keep data on-device.
   **Cloud** endpoints process content under that provider's policy.
-- The staging-token table and the embedding cache live only under
+- The staging-token table and the agent **vec0 hybrid index** (chunks +
+  embeddings) live only under
   `<vault>/.system/plugins/silt-ai-agent/data/plugin.db` and are **deleted
   on uninstall**.
 - The agent has **no raw-SQL tool**. It reads via typed SDK helpers
@@ -219,12 +254,14 @@ the "no unsolicited writes" invariant while letting the agent act. See
 
 | Symptom | Fix |
 |---|---|
-| Agent calls the wrong tool / loops on the same call | Use a larger or tool-advertised model; rephrase the goal; the 8-iteration cap stops runaway loops |
-| Semantic tools return empty | Enable Semantic search + set embedding model in Settings → AI |
+| Agent calls the wrong tool / loops on the same call | Use a larger or tool-advertised model; rephrase the goal; dup guard + 3-search budget + 8-iteration cap stop runaway loops |
+| Semantic tools return empty | Enable Semantic search + set embedding model in Settings → AI; wait for agent index warm-up after first enable |
+| Hybrid search feels keyword-only | Confirm Semantic search is on; cold index fails open to FTS until rebuild finishes |
 | "Chat model not configured" | Settings → AI → set chat model |
 | Tool result truncated in chat | Tool bodies cap at 10 KB for the model; the agent re-queries with a narrower call when it needs more |
 | Staged op shows "expired" | Tokens live 5 minutes — re-run the request and confirm promptly |
-| Agent hit the iteration cap with no answer | Rare after the forced wrap-up turn; rephrase toward a narrower goal, or split into two turns. If you only see a long tool trail then a good answer, the model used the full tool budget before synthesizing — that is expected. |
+| Agent hit the iteration cap with no answer | Rare after forced wrap-up (search budget or iter 8); rephrase toward a narrower goal, or split into two turns. A long tool trail then a good answer means the model used its retrieval budget before synthesizing — expected. |
+| Write tools missing on a Q&A turn | Default catalog is read-only; include create/edit language in the request, or start a new turn that asks to change the vault |
 
 ## Related
 
