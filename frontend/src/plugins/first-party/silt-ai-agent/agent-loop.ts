@@ -56,9 +56,10 @@ export const QA_TOOL_NAMES = [
 ] as const
 
 // Write/organize intent for full catalog at turn start. Prefer multi-word
-// phrases where bare verbs are common in Q&A ("update me on…", "what tag").
+// phrases; avoid bare verbs that dominate Q&A ("write a summary", "what did I
+// delete", "update me on…").
 const WRITE_INTENT_RE =
-  /\b(create|rename|extract|organize|draft|delete|write|add note|new note|make a note|save (this|it|to)|put this|edit|modify|update (the |a |this |my )?(note|task|block|page|title)|rename tag|add tag|retitle)\b/i
+  /\b(create (a |the |new )?(note|task|page|block)|add note|new note|make a note|draft (a |the )?note|save (this|it|to)|put this|rename( tag)?|retitle|add tag|extract (and save|to)|organize (my |the )?notes|edit (the |this |my )?(note|task|block|page|title)|modify (the |this |my )?(note|task|block|page)|update (the |a |this |my )?(note|task|block|page|title)|delete (the |this |a )?(note|task|block|page|tag)|fix (the |this |a )?(typo|note|task|title)|change (the |this |a )?(title|note|task)|move this|write (a |the )?(note|task) to)\b/i
 
 /** Tool result bodies above this many bytes are truncated for the model. */
 export const TOOL_RESULT_MAX_BYTES = 10 * 1024
@@ -744,6 +745,19 @@ export async function runAgent(
                   content: '',
                   error:
                     'Duplicate tool call with the same arguments. Answer from existing evidence or change your approach/arguments.'
+                }
+              } else if (
+                call.name === 'search_notes' &&
+                searchNotesDispatchCount >= MAX_SEARCH_NOTES_PER_TURN
+              ) {
+                // Parallel multi-search blast: enforce budget before dispatch.
+                seenToolFingerprints.add(fp)
+                res = {
+                  content: '',
+                  error:
+                    `Search budget reached (max ${MAX_SEARCH_NOTES_PER_TURN} ` +
+                    'search_notes per turn). Answer from existing evidence or ' +
+                    'stop calling search_notes.'
                 }
               } else {
                 seenToolFingerprints.add(fp)

@@ -421,6 +421,57 @@ describe('agent-loop', () => {
     expect(lastReq.toolChoice).toEqual({ mode: 'none' })
   })
 
+  it('caps parallel search_notes batch at MAX_SEARCH_NOTES_PER_TURN', async () => {
+    let handlerCalls = 0
+    registerTool({
+      name: 'search_notes',
+      description: 'search',
+      parameters: {
+        type: 'object',
+        required: ['query'],
+        properties: { query: { type: 'string' } }
+      },
+      handler: async () => {
+        handlerCalls++
+        return { content: 'hit' }
+      }
+    })
+    const toolMessages: string[] = []
+    // One model turn with 5 distinct searches — only 3 should run.
+    const ctx = mockCtx((n) => {
+      if (n === 1) {
+        return mockStream({
+          content: '',
+          model: 'm',
+          tool_calls: [1, 2, 3, 4, 5].map((i) => ({
+            id: `tc${i}`,
+            name: 'search_notes',
+            arguments: { query: `q${i}` }
+          }))
+        })
+      }
+      return mockStream({ content: 'done', model: 'm' }, ['done'])
+    })
+    await runAgent(ctx, 'find many things', [], {
+      onToolMessage: (m) => toolMessages.push(m.content)
+    })
+    expect(handlerCalls).toBe(MAX_SEARCH_NOTES_PER_TURN)
+    expect(toolMessages.some((t) => /Search budget reached/i.test(t))).toBe(
+      true
+    )
+  })
+
+  it('detectWriteIntent accepts create phrases and rejects Q&A false positives', async () => {
+    const { detectWriteIntent } = await import('./agent-loop')
+    expect(detectWriteIntent('create a note about the meeting')).toBe(true)
+    expect(detectWriteIntent('fix the typo on this page')).toBe(true)
+    expect(detectWriteIntent('change the title of my note')).toBe(true)
+    expect(detectWriteIntent('write a summary of my notes')).toBe(false)
+    expect(detectWriteIntent('what did I delete last week')).toBe(false)
+    expect(detectWriteIntent('update me on the project')).toBe(false)
+    expect(detectWriteIntent('what is in my notes about plants')).toBe(false)
+  })
+
   it('blocks duplicate tool calls with the same normalized arguments', async () => {
     let handlerCalls = 0
     registerTool({

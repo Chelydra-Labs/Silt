@@ -160,12 +160,18 @@ AI Q&A and the agent are enabled with Semantic search, each maintains its own
 index (double embed cost on large vaults is expected in v1).
 
 - On vault open (when RAG is on): migrate + ensure index ready; **rebuild if
-  empty or the embedding model/dimensions no longer match** durable meta.
-  Incremental updates subscribe to `block:changed` (and `editor:save` when
-  available), debounced ~2s. Full rebuild is non-blocking; the index is not
-  treated as “warm” until rebuild finishes (or an existing matching index is
-  confirmed).
-- On vault close / shutdown: unsubscribe and reset agent index process state.
+  empty, interrupted, or the embedding model no longer matches** durable meta.
+  All mutations (rebuild, page index, page drop) share one serialized job
+  queue. Incremental updates subscribe to `block:changed` / `editor:save`
+  (debounced ~2s); empty pages drop vectors (delete/orphan heal).
+- Full rebuild is non-blocking on the job chain; while it runs, vector search
+  returns empty so hybrid is pure FTS. Durable `rebuild_in_progress` meta
+  forces a rebuild after stop/crash mid-rebuild — a partial index is never
+  marked warm.
+- On vault close / shutdown / RAG-off: bump generation (cancel in-flight jobs),
+  unsubscribe, reset process state.
+- Reconcile with a new PluginContext while already started **swaps ctx** without
+  tearing down the index (no stop/restart storm on settings toggles).
 - One-sided FTS or vector failure **fails open** to the healthy side and
   records a `search_degraded` audit event (vector errors are not swallowed).
 - **Gated semantic fallback:** if hybrid returns zero passages and the agent
@@ -186,9 +192,11 @@ index (double embed cost on large vaults is expected in v1).
   last iteration is reserved for a forced text answer (`toolChoice: none`)
   when the model has already used tools but never voluntarily stopped.
 - **Search budget.** At most **3** `search_notes` dispatches per turn
-  (`MAX_SEARCH_NOTES_PER_TURN`). After the third non-duplicate search (with
-  prior tool results), the loop forces the same wrap-up path early — so
-  simple Q&A does not burn all eight iterations re-searching.
+  (`MAX_SEARCH_NOTES_PER_TURN`), including parallel multi-call batches in one
+  model turn (extras get a budget error without running). After the third
+  non-duplicate search (with prior tool results), the loop forces the same
+  wrap-up path early — so simple Q&A does not burn all eight iterations
+  re-searching.
 - **Duplicate guard.** Identical tool name + normalized args (trim,
   case-fold strings, collapse whitespace, stable JSON key order) short-circuit
   before the handler with an instructive error. Near-duplicates like
