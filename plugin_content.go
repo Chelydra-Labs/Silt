@@ -28,20 +28,10 @@ type PluginCreateBlockOp struct {
 	NewID    string `json:"newId,omitempty"` // for create: pre-minted UUID (caller captures it)
 }
 
-// PluginCreateBlock creates a single block after `afterID` (or at the end of the
-// page identified by notebook/section/page when afterID is empty). type must be
-// TASK, NOTE, or HEADER. New TASK blocks receive Normal priority. The new
-// block's UUID is the pre-minted NewID carried in the op so the caller gets
-// back the exact id that lands on disk.
-// Returns the new block's UUID.
-// Gated by content-mutate (#156). Session-token verified (#151).
-func (a *App) PluginCreateBlock(pluginID, sessionToken, afterID, notebook, section, page, blockType, text string) (string, error) {
-	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
-		return "", err
-	}
-	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
-		return "", err
-	}
+// CreateBlock creates a block after afterID (empty = page end). No plugin session.
+// type must be TASK, NOTE, or HEADER. New TASK blocks receive Normal priority.
+// Shared by PluginCreateBlock and Local MCP (ungated App core).
+func (a *App) CreateBlock(afterID, notebook, section, page, blockType, text string) (string, error) {
 	if a.db == nil {
 		return "", fmt.Errorf("vault database not loaded")
 	}
@@ -68,6 +58,20 @@ func (a *App) PluginCreateBlock(pluginID, sessionToken, afterID, notebook, secti
 		return "", err
 	}
 	return newID, nil
+}
+
+// PluginCreateBlock creates a single block after `afterID` (or at the end of the
+// page identified by notebook/section/page when afterID is empty).
+// Returns the new block's UUID.
+// Gated by content-mutate (#156). Session-token verified (#151).
+func (a *App) PluginCreateBlock(pluginID, sessionToken, afterID, notebook, section, page, blockType, text string) (string, error) {
+	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return "", err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return "", err
+	}
+	return a.CreateBlock(afterID, notebook, section, page, blockType, text)
 }
 
 // PluginDeleteBlock removes a block by UUID from its source file and re-indexes.
@@ -281,6 +285,9 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 					FileDate:  time.Now().Format("2006-01-02"),
 				}
 				if r.blockType == parser.BlockTask {
+					// Default TODO so GFM checkbox renders; callers that need
+					// DOING/DONE use UpdateBlockState after mint.
+					nb.Status = "TODO"
 					nb.Priority = parser.DefaultTaskPriority
 				}
 				mutated = insertAfter(mutated, r.op.AfterID, nb)

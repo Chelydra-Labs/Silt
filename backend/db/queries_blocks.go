@@ -117,6 +117,28 @@ func (dm *DatabaseManager) GetBlockReference(blockID string) (parser.BlockRefere
 	return ref, nil
 }
 
+// HasInboundEmbed reports whether any block_references row targets blockID
+// with kind=embed ({{embed:uuid}} inbound). Used by MCP get_block.
+func (dm *DatabaseManager) HasInboundEmbed(blockID string) (bool, error) {
+	db, release, err := dm.handle()
+	if err != nil {
+		return false, ErrDBClosed
+	}
+	defer release()
+	var one int
+	err = db.QueryRow(
+		`SELECT 1 FROM block_references WHERE target_block_id = ? AND kind = 'embed' LIMIT 1`,
+		blockID,
+	).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // FetchPageBlocks returns a flat ordered list of all blocks for a page.
 // A page is a single file; all blocks share the same (notebook, section,
 // page) and are ordered by line_number. Each block carries its own file_date.

@@ -40,7 +40,37 @@ type Bridge interface {
 	// do not fit the new schema (kept verbatim on disk). Empty on a clear or
 	// when every value validates.
 	SetPageType(ctx context.Context, notebook, section, page, typeName string) ([]string, error)
+	// CreateBlock inserts a block after afterID (empty = page end). Page must
+	// already exist (callers check PageExists). Returns the new block UUID.
+	CreateBlock(ctx context.Context, afterID, notebook, section, page, blockType, text string) (id string, err error)
+	// CreateStandaloneTask appends a TASK to the vault standalone task store
+	// (.silt/tasks.md). dueDate is YYYY-MM-DD or empty; status defaults at App.
+	CreateStandaloneTask(ctx context.Context, title, dueDate, status string) (id string, err error)
+	SetTaskOwner(ctx context.Context, blockID, owner string) error
+	SetTaskTags(ctx context.Context, blockID string, tags []string) error
+	// SetTaskDueDate sets or clears (empty) [due:: YYYY-MM-DD] on an existing task.
+	SetTaskDueDate(ctx context.Context, blockID, dueDate string) error
+	// ResolveBlock looks up a block UUID (Exists=false when missing, not error)
+	// and sets Embedded when any inbound embed references the id.
+	ResolveBlock(ctx context.Context, blockID string) (BlockRefResult, error)
+	GetBacklinksPaged(ctx context.Context, notebook, section, page, cursor string, limit int) (db.BacklinksResult, error)
 	VaultPath() string
+}
+
+// BlockRefResult is the get_block payload: ResolveBlockReference fields plus
+// whether any {{embed:uuid}} targets this id.
+type BlockRefResult struct {
+	ID         string `json:"id"`
+	CleanText  string `json:"clean_text"`
+	RawText    string `json:"raw_text"`
+	Type       string `json:"type"`
+	Notebook   string `json:"notebook"`
+	Section    string `json:"section"`
+	Page       string `json:"page"`
+	FileDate   string `json:"file_date"`
+	Exists     bool   `json:"exists"`
+	LineNumber int    `json:"line_number"`
+	Embedded   bool   `json:"embedded"`
 }
 
 // PropertyValue mirrors the app layer's PagePropertyValue so the MCP host can

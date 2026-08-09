@@ -40,6 +40,29 @@ type fakeBridge struct {
 	setTypeErr     error
 	setTypeLast    setTypeCall
 	setTypeFlagged []string
+	// Surgical write / read expansion (#795–#799).
+	createBlockN  int
+	standaloneN   int
+	standaloneIDs []string
+	setOwnerCalls []setOwnerCall
+	setTagsCalls  []setTagsCall
+	setDueCalls   []setDueCall
+	blocksByID    map[string]BlockRefResult
+	backlinks     db.BacklinksResult
+	backlinksErr  error
+}
+
+type setOwnerCall struct {
+	BlockID, Owner string
+}
+
+type setTagsCall struct {
+	BlockID string
+	Tags    []string
+}
+
+type setDueCall struct {
+	BlockID, Due string
 }
 
 // setPropCall / setTypeCall capture the last (notebook, section, page, ...)
@@ -141,6 +164,93 @@ func (f *fakeBridge) SetPageType(ctx context.Context, notebook, section, page, t
 	f.setTypeN++
 	f.setTypeLast = setTypeCall{notebook, section, page, typeName}
 	return f.setTypeFlagged, f.setTypeErr
+}
+
+func (f *fakeBridge) CreateBlock(ctx context.Context, afterID, notebook, section, page, blockType, text string) (string, error) {
+	_ = ctx
+	f.createBlockN++
+	key := notebook + "\x00" + section + "\x00" + page
+	if f.pages == nil {
+		f.pages = map[string][]parser.ParsedBlock{}
+	}
+	id := fmt.Sprintf("new-%d", f.createBlockN)
+	bt := parser.BlockType(strings.ToUpper(blockType))
+	if bt == "" {
+		bt = parser.BlockNote
+	}
+	nb := parser.ParsedBlock{ID: id, Type: bt, RawText: text, CleanText: text}
+	blocks := f.pages[key]
+	if afterID == "" {
+		f.pages[key] = append(blocks, nb)
+		return id, nil
+	}
+	inserted := false
+	out := make([]parser.ParsedBlock, 0, len(blocks)+1)
+	for _, b := range blocks {
+		out = append(out, b)
+		if b.ID == afterID {
+			out = append(out, nb)
+			inserted = true
+		}
+	}
+	if !inserted {
+		out = append(out, nb)
+	}
+	f.pages[key] = out
+	return id, nil
+}
+
+func (f *fakeBridge) CreateStandaloneTask(ctx context.Context, title, dueDate, status string) (string, error) {
+	_ = ctx
+	_, _ = dueDate, status
+	f.standaloneN++
+	id := fmt.Sprintf("task-%d", f.standaloneN)
+	f.standaloneIDs = append(f.standaloneIDs, id)
+	if f.blocksByID == nil {
+		f.blocksByID = map[string]BlockRefResult{}
+	}
+	f.blocksByID[id] = BlockRefResult{
+		ID: id, Exists: true, Type: string(parser.BlockTask),
+		CleanText: title, RawText: title, Page: "tasks",
+	}
+	return id, nil
+}
+
+func (f *fakeBridge) SetTaskOwner(ctx context.Context, blockID, owner string) error {
+	_ = ctx
+	f.setOwnerCalls = append(f.setOwnerCalls, setOwnerCall{blockID, owner})
+	return nil
+}
+
+func (f *fakeBridge) SetTaskTags(ctx context.Context, blockID string, tags []string) error {
+	_ = ctx
+	f.setTagsCalls = append(f.setTagsCalls, setTagsCall{blockID, tags})
+	return nil
+}
+
+func (f *fakeBridge) SetTaskDueDate(ctx context.Context, blockID, dueDate string) error {
+	_ = ctx
+	f.setDueCalls = append(f.setDueCalls, setDueCall{blockID, dueDate})
+	return nil
+}
+
+func (f *fakeBridge) ResolveBlock(ctx context.Context, blockID string) (BlockRefResult, error) {
+	_ = ctx
+	if f.blocksByID != nil {
+		if r, ok := f.blocksByID[blockID]; ok {
+			return r, nil
+		}
+	}
+	return BlockRefResult{ID: blockID, Exists: false}, nil
+}
+
+func (f *fakeBridge) GetBacklinksPaged(ctx context.Context, notebook, section, page, cursor string, limit int) (db.BacklinksResult, error) {
+	_, _, _, _, _ = ctx, notebook, section, page, cursor
+	_ = limit
+	if f.backlinksErr != nil {
+		return db.BacklinksResult{}, f.backlinksErr
+	}
+	return f.backlinks, nil
 }
 
 func freePort(t *testing.T) int {

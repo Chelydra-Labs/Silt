@@ -190,6 +190,80 @@ func (b mcpBridge) SetPageType(ctx context.Context, notebook, section, page, typ
 	return b.app.SetPageType(notebook, section, page, typeName)
 }
 
+func (b mcpBridge) CreateBlock(ctx context.Context, afterID, notebook, section, page, blockType, text string) (string, error) {
+	_ = ctx
+	return b.app.CreateBlock(afterID, notebook, section, page, blockType, text)
+}
+
+func (b mcpBridge) CreateStandaloneTask(ctx context.Context, title, dueDate, status string) (string, error) {
+	_ = ctx
+	return b.app.CreateStandaloneTask(title, dueDate, status)
+}
+
+func (b mcpBridge) SetTaskOwner(ctx context.Context, blockID, owner string) error {
+	_ = ctx
+	return b.app.SetTaskOwner(blockID, owner)
+}
+
+func (b mcpBridge) SetTaskTags(ctx context.Context, blockID string, tags []string) error {
+	_ = ctx
+	return b.app.SetTaskTags(blockID, tags)
+}
+
+func (b mcpBridge) SetTaskDueDate(ctx context.Context, blockID, dueDate string) error {
+	_ = ctx
+	return b.app.SetTaskDueDate(blockID, dueDate)
+}
+
+func (b mcpBridge) ResolveBlock(ctx context.Context, blockID string) (mcp.BlockRefResult, error) {
+	_ = ctx
+	ref, err := b.app.ResolveBlockReference(blockID)
+	if err != nil {
+		return mcp.BlockRefResult{}, err
+	}
+	out := mcp.BlockRefResult{
+		ID:         ref.ID,
+		CleanText:  ref.CleanText,
+		RawText:    ref.RawText,
+		Type:       ref.Type,
+		Notebook:   ref.Notebook,
+		Section:    ref.Section,
+		Page:       ref.Page,
+		FileDate:   ref.FileDate,
+		Exists:     ref.Exists,
+		LineNumber: ref.LineNumber,
+	}
+	if !ref.Exists {
+		return out, nil
+	}
+	// Embed flag is best-effort on the same vault snapshot as the resolve.
+	b.app.vaultMu.RLock()
+	defer b.app.vaultMu.RUnlock()
+	if b.app.db == nil {
+		return out, nil
+	}
+	b.app.wg.Add(1)
+	defer b.app.wg.Done()
+	var embedded bool
+	if err := b.app.coordinator.WithDBReadResult(func() error {
+		got, qerr := b.app.db.HasInboundEmbed(blockID)
+		if qerr != nil {
+			return qerr
+		}
+		embedded = got
+		return nil
+	}); err != nil {
+		return out, err
+	}
+	out.Embedded = embedded
+	return out, nil
+}
+
+func (b mcpBridge) GetBacklinksPaged(ctx context.Context, notebook, section, page, cursor string, limit int) (db.BacklinksResult, error) {
+	_ = ctx
+	return b.app.GetBacklinksPaged(notebook, section, page, cursor, limit)
+}
+
 // ensureMCPHost returns the MCP host, constructing it once if missing
 // (tests that build a bare App). Serialized so concurrent GetLocalMCP*
 // getters cannot race the write against syncMCPHostLocked.

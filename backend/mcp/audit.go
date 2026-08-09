@@ -320,6 +320,13 @@ var schemaIDKeys = map[string]bool{
 	"page":     true,
 	"property": true,
 	"type":     true,
+	"id":       true,
+	"block_id": true,
+	"heading":  true,
+	"owner":    true,
+	"status":   true,
+	"cursor":   true,
+	"due":      true,
 }
 
 // schemaKnownKeys are the remaining keys declared by a tool input schema. Their
@@ -337,6 +344,9 @@ var schemaKnownKeys = map[string]bool{
 	"markdown": true,
 	"blocks":   true,
 	"value":    true,
+	"text":     true,
+	"tags":     true,
+	"title":    true,
 }
 
 // redactSchemaArgs decodes raw wire arguments from a rejected tools/call into a
