@@ -59,6 +59,20 @@ export function setAgentIndexWarmForTests(warm: boolean | null): void {
   warmOverride = warm
 }
 
+/**
+ * Test hook: force the mid-rebuild vector-search guard without running a real
+ * rebuild. Pass null to clear (restore production flag state via stop/start).
+ */
+export function setAgentFullRebuildInProgressForTests(
+  inProgress: boolean | null
+): void {
+  if (inProgress === null) {
+    fullRebuildInProgress = false
+    return
+  }
+  fullRebuildInProgress = inProgress
+}
+
 /** Reset process flags for tests (does not touch durable plugin.db). */
 export function resetAgentEmbedLifecycleForTests(): void {
   stopAgentEmbedIndex()
@@ -300,13 +314,10 @@ export function startAgentEmbedIndex(ctx: PluginContext): void {
           await agentIndex.metaSet(ctx, META_REBUILD_COMPLETE, '1')
           fullRebuildCompleted = true
         } finally {
-          if (isCurrent(gen)) {
-            fullRebuildInProgress = false
-          } else {
-            // Stopped mid-rebuild: leave META_REBUILD_IN_PROGRESS=1 so next
-            // start forces a full rebuild. Clear in-memory flag only.
-            fullRebuildInProgress = false
-          }
+          // Always clear the in-memory flag. If stop() bumped generation mid-
+          // rebuild, durable META_REBUILD_IN_PROGRESS stays '1' so the next
+          // start forces a full rebuild (partial index is never marked warm).
+          fullRebuildInProgress = false
         }
       } else if (isCurrent(gen)) {
         await agentIndex.metaSet(ctx, META_REBUILD_COMPLETE, '1')

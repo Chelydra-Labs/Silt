@@ -39,6 +39,7 @@ import {
   isAgentIndexWarm,
   reconcileAgentEmbedIndex,
   resetAgentEmbedLifecycleForTests,
+  setAgentFullRebuildInProgressForTests,
   setAgentIndexWarmForTests,
   setAgentVectorSearchForTests,
   startAgentEmbedIndex,
@@ -162,23 +163,23 @@ describe('embed_lifecycle', () => {
 
   it('getAgentVectorSearch returns [] while full rebuild in progress', async () => {
     setAgentVectorSearchForTests(null)
-    // Force override path off; simulate rebuild flag via warm path —
-    // use production fn after setting rebuild via start with slow job is hard;
-    // instead verify override + isAgentFullRebuildInProgress export.
-    // Direct: when override null and fullRebuildInProgress, returns [].
-    // We can't set the private flag easily; test via setAgentVectorSearchForTests
-    // is separate. Production path is covered by isAgentFullRebuildInProgress
-    // after start with empty index briefly.
+    setAgentFullRebuildInProgressForTests(true)
+    expect(isAgentFullRebuildInProgress()).toBe(true)
     const ctx = mockCtx()
-    startAgentEmbedIndex(ctx)
-    // During async rebuild start, flag may flip true briefly
-    await new Promise((r) => setTimeout(r, 5))
-    // If still rebuilding, vector search returns []
-    if (isAgentFullRebuildInProgress()) {
-      const hits = await getAgentVectorSearch()(ctx, 'q', 3)
-      expect(hits).toEqual([])
-    }
-    stopAgentEmbedIndex()
+    // Production path (no override): mid-rebuild must not hit vec0 / half-built index.
+    const hits = await getAgentVectorSearch()(ctx, 'q', 3)
+    expect(hits).toEqual([])
+    // pluginDb must not have been queried for KNN while rebuild flag is set
+    const query = ctx.pluginDb.query as ReturnType<typeof vi.fn>
+    expect(
+      query.mock.calls.some(
+        (c) =>
+          typeof c[0] === 'string' &&
+          (c[0].includes('MATCH') || c[0].includes('embeddings'))
+      )
+    ).toBe(false)
+    setAgentFullRebuildInProgressForTests(null)
+    expect(isAgentFullRebuildInProgress()).toBe(false)
   })
 
   it('isAgentIndexWarm respects test override', async () => {
