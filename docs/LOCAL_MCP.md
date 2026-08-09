@@ -78,11 +78,24 @@ automatically, so no client-side version configuration is needed.
 | `search_blocks` / `search_notes` | read | FTS, bounded page size |
 | `read_page` / `read_blocks` | read | Structured blocks or markdown |
 | `list_notebooks` | read | Navigation tree |
+| `get_backlinks` | read | Inbound page-links, block-refs, and embeds for a page (paged, default/max 50) |
+| `get_block` | read | Resolve block UUID → text/type/location; `embedded` if any inbound embed; missing → `exists=false` (not an error) |
 | `create_page` | write grant | Empty page |
-| `update_blocks` | write grant | Identity-preserving page replace |
+| `append_to_page` | write grant | Append one block to an existing page end (prefer over `update_blocks` for single adds) |
+| `insert_under_heading` | write grant | Insert one block after a unique HEADER; bare leaf or `A::B` path; ambiguous/not-found → candidates |
+| `create_task` | write grant | Standalone TASK (`.silt/tasks.md`) or page override; optional due/owner/tags/status |
+| `update_blocks` | write grant | Identity-preserving full-page replace (prefer surgical tools for single-block adds) |
 | `get_page_metadata` | read | Page type, schema-merged properties, raw frontmatter |
 | `set_page_property` | write grant | Single typed property; schema-validated — invalid values rejected before any file I/O |
 | `set_page_type` | write grant | Assign or clear (empty type) a page's note type; mismatches kept on disk and returned as flagged (no rejection) |
+
+### Surgical writes
+
+Prefer these over `update_blocks` when adding a single block:
+
+- **`append_to_page`** — end of page; `type` defaults to `NOTE` (`TASK` / `HEADER` allowed).
+- **`insert_under_heading`** — immediately after a HEADER. Use `Meeting::Notes` when leaf names collide. Ambiguous or missing headings return structured `candidates` paths.
+- **`create_task`** — default store `.silt/tasks.md`; pass `notebook`+`page` for a page-scoped TASK. `status` is `TODO`|`DOING`|`DONE` on both paths; page path applies non-TODO status after mint. Meta failures return `{id, failed_field}` so clients do not re-create.
 
 ### Typed-properties tools
 

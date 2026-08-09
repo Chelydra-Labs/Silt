@@ -301,6 +301,22 @@ func (a *App) PluginUpdateTaskMeta(pluginID, sessionToken, blockID string, pin i
 	return true, nil
 }
 
+// SetTaskDueDate rewrites a task's [due:: YYYY-MM-DD] inline token on disk.
+// Empty dueDate clears the token. Shared by PluginSetTaskDueDate and Local MCP.
+func (a *App) SetTaskDueDate(blockID, dueDate string) error {
+	// "" clears the token; a non-empty value must be a valid YYYY-MM-DD so a
+	// malformed date can never reach disk. Validated up front (before the lock
+	// mutateTaskBlock takes) to preserve the early-rejection behavior.
+	if dueDate != "" {
+		if _, derr := time.Parse("2006-01-02", dueDate); derr != nil {
+			return fmt.Errorf("invalid dueDate %q (want YYYY-MM-DD or empty to clear)", dueDate)
+		}
+	}
+	return a.mutateTaskBlock(blockID, "SetTaskDueDate", func(b *parser.ParsedBlock) {
+		b.DueDate = dueDate
+	})
+}
+
 // PluginSetTaskDueDate rewrites a task's [due:: YYYY-MM-DD] inline token on
 // disk atomically (#293). Pass the empty string to clear the due date. This
 // is the mutation surface behind calendar drag-and-drop rescheduling: drop a
@@ -316,22 +332,7 @@ func (a *App) PluginSetTaskDueDate(pluginID, sessionToken, blockID, dueDate stri
 	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return false, err
 	}
-	// "" clears the token; a non-empty value must be a valid YYYY-MM-DD so a
-	// malformed date can never reach disk. Validated up front (before the lock
-	// mutateTaskBlock takes) to preserve the early-rejection behavior.
-	if dueDate != "" {
-		if _, derr := time.Parse("2006-01-02", dueDate); derr != nil {
-			return false, fmt.Errorf("invalid dueDate %q (want YYYY-MM-DD or empty to clear)", dueDate)
-		}
-	}
-	// Delegate the canonical write chain to mutateTaskBlock (#476): retires a
-	// ~135-line inline duplicate. mutateTaskBlock's emit-on-failure path
-	// (fileDate fallback, emit after locks release) is byte-for-byte the same
-	// pattern this function already used, so the refactor is behavior-preserving
-	// for due-date writes and adds focus-lock protection (#444) for free.
-	if err := a.mutateTaskBlock(blockID, "PluginSetTaskDueDate", func(b *parser.ParsedBlock) {
-		b.DueDate = dueDate
-	}); err != nil {
+	if err := a.SetTaskDueDate(blockID, dueDate); err != nil {
 		return false, err
 	}
 	return true, nil

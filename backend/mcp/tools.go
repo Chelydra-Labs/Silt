@@ -367,7 +367,7 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "update_blocks",
-		Description: "Identity-preserving update of an existing page's blocks. Prefer keeping existing block ids. Fails if the page does not exist — use create_page first. Requires write grant. Confirm before edits. No delete/move/bulk tools exist.",
+		Description: "Identity-preserving full-page block replace. Prefer append_to_page or insert_under_heading for single-block adds. Keep existing block ids. Fails if the page does not exist — use create_page first. Requires write grant. Confirm before edits. No delete/move/bulk tools exist.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in updateBlocksIn) (*mcp.CallToolResult, any, error) {
 		blockIDs := make([]string, 0, len(in.Blocks))
 		for _, b := range in.Blocks {
@@ -546,5 +546,383 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 			result["flagged"] = flagged
 		}
 		return toolJSON(result)
+	})
+
+	type appendToPageIn struct {
+		Notebook string `json:"notebook" jsonschema:"notebook name"`
+		Section  string `json:"section" jsonschema:"section path (empty for root)"`
+		Page     string `json:"page" jsonschema:"page name without .md"`
+		Type     string `json:"type,omitempty" jsonschema:"TASK|NOTE|HEADER (default NOTE)"`
+		Text     string `json:"text" jsonschema:"block body text"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "append_to_page",
+		Description: "Append one block to the end of an existing page. Prefer this over update_blocks for single-block adds. Requires write grant. Confirm before edits.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in appendToPageIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "type": in.Type, "text": in.Text}
+		if !env.writeOK() {
+			env.record("append_to_page", "denied", "write not granted", args)
+			return toolErr("write tools are disabled — enable write grant in Silt Settings → AI → Local MCP")
+		}
+		if env.bridge == nil {
+			env.record("append_to_page", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		if strings.TrimSpace(in.Notebook) == "" || strings.TrimSpace(in.Page) == "" {
+			env.record("append_to_page", "error", "missing path", args)
+			return toolErr("notebook and page are required")
+		}
+		text := in.Text
+		if strings.TrimSpace(text) == "" {
+			env.record("append_to_page", "error", "empty text", args)
+			return toolErr("text is required")
+		}
+		if utf8.RuneCountInString(text) > MaxBlockTextRunes {
+			env.record("append_to_page", "error", "text too large", args)
+			return toolErr(fmt.Sprintf("text exceeds %d runes", MaxBlockTextRunes))
+		}
+		bt := strings.ToUpper(strings.TrimSpace(in.Type))
+		if bt == "" {
+			bt = string(parser.BlockNote)
+		}
+		if bt != string(parser.BlockTask) && bt != string(parser.BlockNote) && bt != string(parser.BlockHeader) {
+			env.record("append_to_page", "error", "bad type", args)
+			return toolErr(fmt.Sprintf("invalid type %q (want TASK, NOTE, or HEADER)", in.Type))
+		}
+		exists, exErr := env.bridge.PageExists(ctx, in.Notebook, in.Section, in.Page)
+		if exErr != nil {
+			env.record("append_to_page", "error", exErr.Error(), args)
+			return toolErr(exErr.Error())
+		}
+		if !exists {
+			env.record("append_to_page", "error", "page does not exist", args)
+			return toolErr("page does not exist; use create_page first")
+		}
+		id, err := env.bridge.CreateBlock(ctx, "", in.Notebook, in.Section, in.Page, bt, text)
+		if err != nil {
+			env.record("append_to_page", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		env.record("append_to_page", "ok", "", args)
+		return toolJSON(map[string]any{
+			"ok": true, "id": id,
+			"notebook": in.Notebook, "section": in.Section, "page": in.Page,
+		})
+	})
+
+	type insertUnderHeadingIn struct {
+		Notebook string `json:"notebook" jsonschema:"notebook name"`
+		Section  string `json:"section" jsonschema:"section path (empty for root)"`
+		Page     string `json:"page" jsonschema:"page name without .md"`
+		Heading  string `json:"heading" jsonschema:"HEADER leaf name or A::B path (case-insensitive)"`
+		Type     string `json:"type,omitempty" jsonschema:"TASK|NOTE|HEADER (default NOTE)"`
+		Text     string `json:"text" jsonschema:"block body text"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "insert_under_heading",
+		Description: "Insert one block immediately after a unique HEADER on an existing page. Use heading path A::B when leaf names collide. Prefer this over update_blocks for section-scoped adds. Requires write grant.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in insertUnderHeadingIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{
+			"notebook": in.Notebook, "section": in.Section, "page": in.Page,
+			"heading": in.Heading, "type": in.Type, "text": in.Text,
+		}
+		if !env.writeOK() {
+			env.record("insert_under_heading", "denied", "write not granted", args)
+			return toolErr("write tools are disabled — enable write grant in Silt Settings → AI → Local MCP")
+		}
+		if env.bridge == nil {
+			env.record("insert_under_heading", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		if strings.TrimSpace(in.Notebook) == "" || strings.TrimSpace(in.Page) == "" {
+			env.record("insert_under_heading", "error", "missing path", args)
+			return toolErr("notebook and page are required")
+		}
+		heading := strings.TrimSpace(in.Heading)
+		if heading == "" {
+			env.record("insert_under_heading", "error", "missing heading", args)
+			return toolErr("heading is required")
+		}
+		text := in.Text
+		if strings.TrimSpace(text) == "" {
+			env.record("insert_under_heading", "error", "empty text", args)
+			return toolErr("text is required")
+		}
+		if utf8.RuneCountInString(text) > MaxBlockTextRunes {
+			env.record("insert_under_heading", "error", "text too large", args)
+			return toolErr(fmt.Sprintf("text exceeds %d runes", MaxBlockTextRunes))
+		}
+		bt := strings.ToUpper(strings.TrimSpace(in.Type))
+		if bt == "" {
+			bt = string(parser.BlockNote)
+		}
+		if bt != string(parser.BlockTask) && bt != string(parser.BlockNote) && bt != string(parser.BlockHeader) {
+			env.record("insert_under_heading", "error", "bad type", args)
+			return toolErr(fmt.Sprintf("invalid type %q (want TASK, NOTE, or HEADER)", in.Type))
+		}
+		exists, exErr := env.bridge.PageExists(ctx, in.Notebook, in.Section, in.Page)
+		if exErr != nil {
+			env.record("insert_under_heading", "error", exErr.Error(), args)
+			return toolErr(exErr.Error())
+		}
+		if !exists {
+			env.record("insert_under_heading", "error", "page does not exist", args)
+			return toolErr("page does not exist; use create_page first")
+		}
+		blocks, err := env.bridge.FetchPageBlocks(ctx, in.Notebook, in.Section, in.Page)
+		if err != nil {
+			env.record("insert_under_heading", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		matches := matchHeadings(blocks, heading)
+		if len(matches) == 0 {
+			env.record("insert_under_heading", "error", "heading not found", args)
+			body := map[string]any{
+				"ok": false, "error": "heading not found", "heading": heading,
+				"candidates": headingCandidatePaths(blocks, 20),
+			}
+			b, _ := json.Marshal(body)
+			return &mcp.CallToolResult{
+				IsError:           true,
+				Content:           []mcp.Content{&mcp.TextContent{Text: string(b)}},
+				StructuredContent: body,
+			}, body, nil
+		}
+		if len(matches) > 1 {
+			cands := make([]string, 0, len(matches))
+			for _, m := range matches {
+				cands = append(cands, m.Path)
+			}
+			env.record("insert_under_heading", "error", "ambiguous heading", args)
+			body := map[string]any{
+				"ok": false, "error": "ambiguous heading", "candidates": cands,
+			}
+			b, _ := json.Marshal(body)
+			return &mcp.CallToolResult{
+				IsError:           true,
+				Content:           []mcp.Content{&mcp.TextContent{Text: string(b)}},
+				StructuredContent: body,
+			}, body, nil
+		}
+		id, err := env.bridge.CreateBlock(ctx, matches[0].ID, in.Notebook, in.Section, in.Page, bt, text)
+		if err != nil {
+			env.record("insert_under_heading", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		env.record("insert_under_heading", "ok", "", args)
+		return toolJSON(map[string]any{
+			"ok": true, "id": id,
+			"notebook": in.Notebook, "section": in.Section, "page": in.Page,
+			"heading_path": matches[0].Path,
+		})
+	})
+
+	type createTaskIn struct {
+		Text     string   `json:"text" jsonschema:"task title / body"`
+		Due      string   `json:"due,omitempty" jsonschema:"optional due date YYYY-MM-DD"`
+		Owner    string   `json:"owner,omitempty" jsonschema:"optional task owner"`
+		Tags     []string `json:"tags,omitempty" jsonschema:"optional tags"`
+		Status   string   `json:"status,omitempty" jsonschema:"optional status (default TODO)"`
+		Notebook string   `json:"notebook,omitempty" jsonschema:"optional page notebook (page override)"`
+		Section  string   `json:"section,omitempty" jsonschema:"optional page section"`
+		Page     string   `json:"page,omitempty" jsonschema:"optional page — when set, create TASK on that page instead of standalone store"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "create_task",
+		Description: "Create a TASK (default TODO) in the standalone task store, or on a page when notebook+page are set. " +
+			"Optional due (YYYY-MM-DD), owner, tags, status (TODO|DOING|DONE). Status applies on both paths. Requires write grant.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in createTaskIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{
+			"text": in.Text, "due": in.Due, "owner": in.Owner, "status": in.Status,
+			"notebook": in.Notebook, "section": in.Section, "page": in.Page,
+		}
+		if len(in.Tags) > 0 {
+			args["tags"] = in.Tags
+		}
+		if !env.writeOK() {
+			env.record("create_task", "denied", "write not granted", args)
+			return toolErr("write tools are disabled — enable write grant in Silt Settings → AI → Local MCP")
+		}
+		if env.bridge == nil {
+			env.record("create_task", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		title := strings.TrimSpace(in.Text)
+		if title == "" {
+			env.record("create_task", "error", "empty text", args)
+			return toolErr("text is required")
+		}
+		if utf8.RuneCountInString(in.Text) > MaxBlockTextRunes {
+			env.record("create_task", "error", "text too large", args)
+			return toolErr(fmt.Sprintf("text exceeds %d runes", MaxBlockTextRunes))
+		}
+		due := strings.TrimSpace(in.Due)
+		if due != "" {
+			if len(due) != 10 || due[4] != '-' || due[7] != '-' {
+				env.record("create_task", "error", "invalid due", args)
+				return toolErr("due must be YYYY-MM-DD")
+			}
+			// Cheap shape check; App still validates parse on write.
+			for _, i := range []int{0, 1, 2, 3, 5, 6, 8, 9} {
+				if due[i] < '0' || due[i] > '9' {
+					env.record("create_task", "error", "invalid due", args)
+					return toolErr("due must be YYYY-MM-DD")
+				}
+			}
+		}
+		status := strings.ToUpper(strings.TrimSpace(in.Status))
+		if status == "" {
+			status = "TODO"
+		}
+		switch status {
+		case "TODO", "DOING", "DONE":
+		default:
+			env.record("create_task", "error", "invalid status", args)
+			return toolErr(`status must be TODO, DOING, or DONE`)
+		}
+		var id string
+		var err error
+		pageOverride := strings.TrimSpace(in.Page) != "" || strings.TrimSpace(in.Notebook) != ""
+		if pageOverride {
+			if strings.TrimSpace(in.Notebook) == "" || strings.TrimSpace(in.Page) == "" {
+				env.record("create_task", "error", "incomplete page path", args)
+				return toolErr("notebook and page are both required for page override")
+			}
+			exists, exErr := env.bridge.PageExists(ctx, in.Notebook, in.Section, in.Page)
+			if exErr != nil {
+				env.record("create_task", "error", exErr.Error(), args)
+				return toolErr(exErr.Error())
+			}
+			if !exists {
+				env.record("create_task", "error", "page does not exist", args)
+				return toolErr("page does not exist; use create_page first")
+			}
+			id, err = env.bridge.CreateBlock(ctx, "", in.Notebook, in.Section, in.Page, string(parser.BlockTask), title)
+		} else {
+			id, err = env.bridge.CreateStandaloneTask(ctx, title, due, status)
+		}
+		if err != nil {
+			env.record("create_task", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		// Partial-meta failures include id so clients can recover without re-create.
+		metaFail := func(field string, merr error) (*mcp.CallToolResult, any, error) {
+			env.record("create_task", "error", merr.Error(), args)
+			body := map[string]any{
+				"ok": false, "id": id, "failed_field": field, "error": merr.Error(),
+			}
+			b, _ := json.Marshal(body)
+			return &mcp.CallToolResult{
+				IsError:           true,
+				Content:           []mcp.Content{&mcp.TextContent{Text: string(b)}},
+				StructuredContent: body,
+			}, body, nil
+		}
+		// Page-scoped CreateBlock always mints TODO; apply due/status after.
+		if pageOverride {
+			if due != "" {
+				if derr := env.bridge.SetTaskDueDate(ctx, id, due); derr != nil {
+					return metaFail("due", derr)
+				}
+			}
+			if status != "TODO" {
+				if serr := env.bridge.UpdateBlockState(ctx, id, status); serr != nil {
+					return metaFail("status", serr)
+				}
+			}
+		}
+		if owner := strings.TrimSpace(in.Owner); owner != "" {
+			if oerr := env.bridge.SetTaskOwner(ctx, id, owner); oerr != nil {
+				return metaFail("owner", oerr)
+			}
+		}
+		if len(in.Tags) > 0 {
+			if terr := env.bridge.SetTaskTags(ctx, id, in.Tags); terr != nil {
+				return metaFail("tags", terr)
+			}
+		}
+		env.record("create_task", "ok", "", args)
+		out := map[string]any{"ok": true, "id": id, "status": status}
+		if due != "" {
+			out["due"] = due
+		}
+		if owner := strings.TrimSpace(in.Owner); owner != "" {
+			out["owner"] = owner
+		}
+		if len(in.Tags) > 0 {
+			out["tags"] = in.Tags
+		}
+		if pageOverride {
+			out["notebook"] = in.Notebook
+			out["section"] = in.Section
+			out["page"] = in.Page
+		}
+		return toolJSON(out)
+	})
+
+	type getBacklinksIn struct {
+		Notebook string `json:"notebook" jsonschema:"target notebook"`
+		Section  string `json:"section" jsonschema:"target section"`
+		Page     string `json:"page" jsonschema:"target page"`
+		Cursor   string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor"`
+		Limit    int    `json:"limit,omitempty" jsonschema:"page size (default 50, max 50)"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_backlinks",
+		Description: "List inbound references to a page (paged; default/max limit 50). " +
+			"Each result has linkKind page|block-ref|embed plus source location. Read-only.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getBacklinksIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{
+			"notebook": in.Notebook, "section": in.Section, "page": in.Page,
+			"cursor": in.Cursor, "limit": in.Limit,
+		}
+		if env.bridge == nil {
+			env.record("get_backlinks", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		if strings.TrimSpace(in.Notebook) == "" || strings.TrimSpace(in.Page) == "" {
+			env.record("get_backlinks", "error", "missing path", args)
+			return toolErr("notebook and page are required")
+		}
+		limit := in.Limit
+		if limit <= 0 {
+			limit = 50
+		}
+		if limit > MaxSearchLimit {
+			limit = MaxSearchLimit
+		}
+		res, err := env.bridge.GetBacklinksPaged(ctx, in.Notebook, in.Section, in.Page, in.Cursor, limit)
+		if err != nil {
+			env.record("get_backlinks", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		env.record("get_backlinks", "ok", "", args)
+		return toolJSON(res)
+	})
+
+	type getBlockIn struct {
+		ID string `json:"id" jsonschema:"block UUID"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_block",
+		Description: "Resolve a block by UUID (text, type, location, embed inbound flag). Missing ids return exists=false (not an error). Read-only.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getBlockIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{"id": in.ID}
+		if env.bridge == nil {
+			env.record("get_block", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		id := strings.TrimSpace(in.ID)
+		if id == "" {
+			env.record("get_block", "error", "missing id", args)
+			return toolErr("id is required")
+		}
+		res, err := env.bridge.ResolveBlock(ctx, id)
+		if err != nil {
+			env.record("get_block", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		env.record("get_block", "ok", "", args)
+		return toolJSON(res)
 	})
 }

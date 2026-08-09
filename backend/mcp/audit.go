@@ -271,6 +271,22 @@ func RedactArgs(args map[string]any) map[string]any {
 			} else {
 				out[k+"_present"] = true
 			}
+		case "heading":
+			// Heading paths are identifiers but can be long free text; cap audit bulk.
+			if s, ok := v.(string); ok {
+				storeCappedHeading(out, s)
+			} else {
+				out["heading_present"] = true
+			}
+		case "tags":
+			switch t := v.(type) {
+			case []string:
+				out["tags_count"] = len(t)
+			case []any:
+				out["tags_count"] = len(t)
+			default:
+				out["tags_present"] = true
+			}
 		case "blocks":
 			switch b := v.(type) {
 			case []any:
@@ -309,17 +325,44 @@ func RedactArgs(args map[string]any) map[string]any {
 	return out
 }
 
+// maxHeadingAuditRunes caps heading strings in both handler and schema-reject
+// audit paths. Headings are free-form (unlike notebook/id/status) and must not
+// bloat the local audit log when a client sends an oversized value.
+const maxHeadingAuditRunes = 120
+
+// storeCappedHeading writes heading (and heading_len when truncated) into out.
+// Shared by RedactArgs and redactSchemaArgs so the two paths cannot drift.
+func storeCappedHeading(out map[string]any, s string) {
+	r := []rune(s)
+	if len(r) > maxHeadingAuditRunes {
+		out["heading"] = string(r[:maxHeadingAuditRunes]) + "…"
+		out["heading_len"] = len(r)
+		return
+	}
+	out["heading"] = s
+}
+
 // schemaIDKeys are the structural identifier keys whose string value is safe to
 // persist verbatim in a rejected_schema audit row. They are short, non-content
 // identifiers (vault path and property/type names) — the same keys handler-level
 // audit treats as safe. A non-string value in one of these slots is reduced to
 // a type marker so a wrong-typed value is never logged.
+//
+// "heading" is listed so the key is recognized, but redactSchemaArgs applies
+// storeCappedHeading (not verbatim) because headings are free-form text.
 var schemaIDKeys = map[string]bool{
 	"notebook": true,
 	"section":  true,
 	"page":     true,
 	"property": true,
 	"type":     true,
+	"id":       true,
+	"block_id": true,
+	"heading":  true,
+	"owner":    true,
+	"status":   true,
+	"cursor":   true,
+	"due":      true,
 }
 
 // schemaKnownKeys are the remaining keys declared by a tool input schema. Their
@@ -337,6 +380,9 @@ var schemaKnownKeys = map[string]bool{
 	"markdown": true,
 	"blocks":   true,
 	"value":    true,
+	"text":     true,
+	"tags":     true,
+	"title":    true,
 }
 
 // redactSchemaArgs decodes raw wire arguments from a rejected tools/call into a
@@ -364,7 +410,12 @@ func redactSchemaArgs(raw json.RawMessage) map[string]any {
 		switch {
 		case schemaIDKeys[k]:
 			if s, ok := v.(string); ok {
-				out[k] = s
+				// heading is free-form; cap like RedactArgs. Other ID keys stay verbatim.
+				if k == "heading" {
+					storeCappedHeading(out, s)
+				} else {
+					out[k] = s
+				}
 			} else if v != nil {
 				out[k+"_type"] = jsonTypeName(v)
 			}

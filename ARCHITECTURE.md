@@ -733,10 +733,12 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
    clobber a live peer’s record (PID alive **and** `/health` serves `silt-mcp`)
    so crash+PID-reuse can reclaim discovery. Host `Start`/`Stop` are serialized
    on an internal `startMu` (outside the status `mu`) so bind/Shutdown cannot
-   interleave. **Tools (v1):**
-  read — `search_blocks`/`search_notes`, `read_page`/`read_blocks`,
-  `list_notebooks`, `get_page_metadata`; write (grant) — `create_page`,
-  `update_blocks`, `set_page_property`, `set_page_type`. No delete/move/bulk.
+   interleave. **Tools:**
+   read — `search_blocks`/`search_notes`, `read_page`/`read_blocks`,
+   `list_notebooks`, `get_page_metadata`, `get_backlinks`, `get_block`;
+   write (grant) — `create_page`, `append_to_page`, `insert_under_heading`,
+   `create_task`, `update_blocks`, `set_page_property`, `set_page_type`.
+   No delete/move/bulk.
   **Lifecycle:** start on vault open when enabled; stop on vault close/switch
   and `ServiceShutdown`; close-to-tray keeps MCP.
   **Audit:** `<vault>/.system/logs/mcp-audit.jsonl` — one redacted record per

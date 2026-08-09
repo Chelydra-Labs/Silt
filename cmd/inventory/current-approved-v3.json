@@ -109,6 +109,10 @@
         "signature": "CopyVault(destPath string) (vault.CopyResult, error)"
       },
       {
+        "name": "CreateBlock",
+        "signature": "CreateBlock(afterID, notebook, section, page, blockType, text string) (string, error)"
+      },
+      {
         "name": "CreateNotebook",
         "signature": "CreateNotebook(name string) error"
       },
@@ -1003,6 +1007,10 @@
       {
         "name": "SetTaskBlockedBy",
         "signature": "SetTaskBlockedBy(blockID string, depIDs []string) error"
+      },
+      {
+        "name": "SetTaskDueDate",
+        "signature": "SetTaskDueDate(blockID, dueDate string) error"
       },
       {
         "name": "SetTaskOrder",

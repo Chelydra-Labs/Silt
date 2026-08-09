@@ -92,6 +92,24 @@ func TestRedactSchemaArgs_Allowlist(t *testing.T) {
 			leaks: []string{"free-text-search-secret"},
 		},
 		{
+			// heading is free-form: must match RedactArgs 120-rune cap on the
+			// rejected_schema path (schemaIDKeys alone would store it verbatim).
+			name: "long heading capped like handler path",
+			raw:  `{"notebook":"N","page":"P","heading":"` + strings.Repeat("H", 200) + `"}`,
+			want: map[string]any{
+				"notebook": "N", "page": "P",
+				"heading":     strings.Repeat("H", maxHeadingAuditRunes) + "…",
+				"heading_len": 200,
+			},
+			// Full 200-H run must not appear; truncated prefix is intentional.
+			leaks: []string{strings.Repeat("H", 200)},
+		},
+		{
+			name: "short heading persisted verbatim",
+			raw:  `{"heading":"Meeting::Notes"}`,
+			want: map[string]any{"heading": "Meeting::Notes"},
+		},
+		{
 			name:  "malformed JSON records presence + bytes only",
 			raw:   `{not valid json`,
 			want:  map[string]any{"args_present": true, "args_bytes": 15},
