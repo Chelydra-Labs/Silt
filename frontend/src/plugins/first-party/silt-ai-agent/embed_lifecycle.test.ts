@@ -129,6 +129,9 @@ describe('embed_lifecycle', () => {
     expect(getAgentEmbedGeneration()).toBe(gen)
     // ctx1 migrate was from first start; second start should not re-migrate immediately
     expect(migrate1.mock.calls.length).toBe(callsBefore)
+    // Fresh ctx re-binds event subscriptions (ctx.on called on both)
+    expect(ctx1.on).toHaveBeenCalled()
+    expect(ctx2.on).toHaveBeenCalled()
     stopAgentEmbedIndex()
   })
 

@@ -287,54 +287,84 @@ export function createEmbedIndex(): EmbedIndex {
 
     for (let i = 0; i < chunks.length; i += BATCH) {
       const batch = chunks.slice(i, i + BATCH)
-      const res = await ctx.ai.embed({
-        texts: batch.map((c) => c.text),
-        taskType: 'RETRIEVAL_DOCUMENT'
-      })
-      model = res.model || model
-      dims = res.dimensions || dims
-      if (!dims && res.embeddings[0]) dims = res.embeddings[0].length
-      if (!dims) throw new Error('embedding provider returned zero dimensions')
-      await ensureVecTable(ctx, dims)
+      /** Chunk ids written in this batch — rolled back if the batch fails mid-way. */
+      const writtenIds: string[] = []
+      try {
+        const res = await ctx.ai.embed({
+          texts: batch.map((c) => c.text),
+          taskType: 'RETRIEVAL_DOCUMENT'
+        })
+        model = res.model || model
+        dims = res.dimensions || dims
+        if (!dims && res.embeddings[0]) dims = res.embeddings[0].length
+        if (!dims)
+          throw new Error('embedding provider returned zero dimensions')
+        await ensureVecTable(ctx, dims)
 
-      const now = new Date().toISOString()
-      for (let j = 0; j < batch.length; j++) {
-        const c = batch[j]
-        const vec = res.embeddings[j]
-        if (!vec) continue
-        await ctx.pluginDb.exec(
-          `INSERT INTO chunks(chunk_id, block_id, notebook, section, page, line_number, text, content_hash, model, updated_at)
-           VALUES(?,?,?,?,?,?,?,?,?,?)
-           ON CONFLICT(chunk_id) DO UPDATE SET
-             block_id=excluded.block_id, notebook=excluded.notebook,
-             section=excluded.section, page=excluded.page,
-             line_number=excluded.line_number, text=excluded.text,
-             content_hash=excluded.content_hash, model=excluded.model,
-             updated_at=excluded.updated_at`,
-          [
-            c.chunkId,
-            c.blockId,
-            c.notebook,
-            c.section,
-            c.page,
-            c.lineNumber,
-            c.text,
-            c.contentHash,
-            model,
-            now
-          ]
-        )
-        try {
-          await ctx.pluginDb.exec(`DELETE FROM embeddings WHERE chunk_id = ?`, [
-            c.chunkId
-          ])
-        } catch {
-          /* first insert */
+        const now = new Date().toISOString()
+        for (let j = 0; j < batch.length; j++) {
+          const c = batch[j]
+          const vec = res.embeddings[j]
+          if (!vec) continue
+          await ctx.pluginDb.exec(
+            `INSERT INTO chunks(chunk_id, block_id, notebook, section, page, line_number, text, content_hash, model, updated_at)
+             VALUES(?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(chunk_id) DO UPDATE SET
+               block_id=excluded.block_id, notebook=excluded.notebook,
+               section=excluded.section, page=excluded.page,
+               line_number=excluded.line_number, text=excluded.text,
+               content_hash=excluded.content_hash, model=excluded.model,
+               updated_at=excluded.updated_at`,
+            [
+              c.chunkId,
+              c.blockId,
+              c.notebook,
+              c.section,
+              c.page,
+              c.lineNumber,
+              c.text,
+              c.contentHash,
+              model,
+              now
+            ]
+          )
+          writtenIds.push(c.chunkId)
+          try {
+            await ctx.pluginDb.exec(
+              `DELETE FROM embeddings WHERE chunk_id = ?`,
+              [c.chunkId]
+            )
+          } catch {
+            /* first insert */
+          }
+          await ctx.pluginDb.exec(
+            `INSERT INTO embeddings(chunk_id, embedding) VALUES(?, vec_f32(?))`,
+            [c.chunkId, vecLiteral(vec)]
+          )
         }
-        await ctx.pluginDb.exec(
-          `INSERT INTO embeddings(chunk_id, embedding) VALUES(?, vec_f32(?))`,
-          [c.chunkId, vecLiteral(vec)]
-        )
+      } catch (err) {
+        // Roll back this batch's chunk rows so a retry re-embeds them instead
+        // of treating partial hashes as up-to-date (stale/missing vectors).
+        if (writtenIds.length > 0) {
+          const ph = writtenIds.map(() => '?').join(',')
+          try {
+            await ctx.pluginDb.exec(
+              `DELETE FROM chunks WHERE chunk_id IN (${ph})`,
+              writtenIds
+            )
+          } catch {
+            /* best-effort */
+          }
+          try {
+            await ctx.pluginDb.exec(
+              `DELETE FROM embeddings WHERE chunk_id IN (${ph})`,
+              writtenIds
+            )
+          } catch {
+            /* table may be missing */
+          }
+        }
+        throw err
       }
       done = Math.min(total, i + batch.length)
       onProgress?.({

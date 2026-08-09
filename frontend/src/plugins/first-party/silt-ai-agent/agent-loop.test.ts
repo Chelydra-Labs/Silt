@@ -464,12 +464,46 @@ describe('agent-loop', () => {
   it('detectWriteIntent accepts create phrases and rejects Q&A false positives', async () => {
     const { detectWriteIntent } = await import('./agent-loop')
     expect(detectWriteIntent('create a note about the meeting')).toBe(true)
+    expect(detectWriteIntent('add a page for the meeting')).toBe(true)
+    expect(detectWriteIntent('add a block under the header')).toBe(true)
+    expect(detectWriteIntent('create a task for tomorrow')).toBe(true)
+    expect(detectWriteIntent('update my notes with the decision')).toBe(true)
+    expect(detectWriteIntent('please rename the tag')).toBe(true)
     expect(detectWriteIntent('fix the typo on this page')).toBe(true)
     expect(detectWriteIntent('change the title of my note')).toBe(true)
     expect(detectWriteIntent('write a summary of my notes')).toBe(false)
     expect(detectWriteIntent('what did I delete last week')).toBe(false)
     expect(detectWriteIntent('update me on the project')).toBe(false)
     expect(detectWriteIntent('what is in my notes about plants')).toBe(false)
+  })
+
+  it('normalizeToolArgs case-folds query but preserves path case', async () => {
+    const { normalizeToolArgs, toolCallFingerprint } =
+      await import('./agent-loop')
+    const a = normalizeToolArgs({
+      query: 'Foo',
+      notebook: 'Work',
+      section: 'Notes',
+      page: 'Decisions'
+    }) as Record<string, string>
+    expect(a.query).toBe('foo')
+    expect(a.notebook).toBe('Work')
+    expect(a.section).toBe('Notes')
+    expect(a.page).toBe('Decisions')
+    // Same query different notebook case → distinct fingerprints
+    const fp1 = toolCallFingerprint('search_notes', {
+      query: 'plants',
+      notebook: 'Work'
+    })
+    const fp2 = toolCallFingerprint('search_notes', {
+      query: 'plants',
+      notebook: 'work'
+    })
+    expect(fp1).not.toBe(fp2)
+    // Same query case variants still collide
+    expect(toolCallFingerprint('search_notes', { query: 'Foo' })).toBe(
+      toolCallFingerprint('search_notes', { query: 'foo' })
+    )
   })
 
   it('blocks duplicate tool calls with the same normalized arguments', async () => {

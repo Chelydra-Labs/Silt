@@ -203,14 +203,37 @@ function onBlockChanged(payload: unknown): void {
   schedulePageIndex(asString(p.notebook), asString(p.section), asString(p.page))
 }
 
+/** Ctx that currently owns event subscriptions (may differ after reconcile). */
+let subscribedCtx: PluginContext | null = null
+
+function clearSubscriptions(): void {
+  for (const off of unsubs) {
+    try {
+      off()
+    } catch {
+      /* ignore */
+    }
+  }
+  unsubs = []
+  subscribedCtx = null
+}
+
+/**
+ * Bind block:changed / editor:save on the current PluginContext.
+ * Re-binds when loader passes a fresh ctx on RAG reconcile (ctx.on is
+ * plugin-id scoped today, but we re-subscribe so a future ctx-scoped bus
+ * cannot leave the index without listeners).
+ */
 function ensureSubscriptions(ctx: PluginContext): void {
-  if (unsubs.length > 0) return
+  if (subscribedCtx === ctx && unsubs.length > 0) return
+  clearSubscriptions()
   unsubs.push(ctx.on('block:changed', onBlockChanged))
   try {
     unsubs.push(ctx.on('editor:save', onBlockChanged))
   } catch {
     /* event may be unregistered on older hosts */
   }
+  subscribedCtx = ctx
 }
 
 /**
@@ -310,14 +333,7 @@ export function stopAgentEmbedIndex(): void {
     debounceTimer = null
   }
   pendingPages.clear()
-  for (const off of unsubs) {
-    try {
-      off()
-    } catch {
-      /* ignore */
-    }
-  }
-  unsubs = []
+  clearSubscriptions()
   activeCtx = null
   started = false
   fullRebuildInProgress = false

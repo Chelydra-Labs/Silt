@@ -59,7 +59,7 @@ export const QA_TOOL_NAMES = [
 // phrases; avoid bare verbs that dominate Q&A ("write a summary", "what did I
 // delete", "update me on…").
 const WRITE_INTENT_RE =
-  /\b(create (a |the |new )?(note|task|page|block)|add note|new note|make a note|draft (a |the )?note|save (this|it|to)|put this|rename( tag)?|retitle|add tag|extract (and save|to)|organize (my |the )?notes|edit (the |this |my )?(note|task|block|page|title)|modify (the |this |my )?(note|task|block|page)|update (the |a |this |my )?(note|task|block|page|title)|delete (the |this |a )?(note|task|block|page|tag)|fix (the |this |a )?(typo|note|task|title)|change (the |this |a )?(title|note|task)|move this|write (a |the )?(note|task) to)\b/i
+  /\b((create|add|make) (a |the |new )?(note|task|page|block)|add note|new note|make a note|draft (a |the )?note|save (this|it|to)|put this|please rename|rename( tag| the| this)?|retitle|add tag|extract (and save|to)|organize (my |the )?notes|edit (the |this |my )?(note|task|block|page|title)|modify (the |this |my )?(note|task|block|page)|update (my |the |a |this )?(notes?|task|block|page|title)|delete (the |this |a )?(note|task|block|page|tag)|fix (the |this |a )?(typo|note|task|title)|change (the |this |a )?(title|note|task)|move this|write (a |the )?(note|task) to)\b/i
 
 /** Tool result bodies above this many bytes are truncated for the model. */
 export const TOOL_RESULT_MAX_BYTES = 10 * 1024
@@ -204,22 +204,37 @@ export function detectWriteIntent(userMessage: string): boolean {
   return WRITE_INTENT_RE.test(userMessage)
 }
 
+/** Keys whose string values are case-folded for anti-thrash (free-text query). */
+const CASEFOLD_ARG_KEYS = new Set(['query', 'q', 'text', 'content', 'type'])
+
 /**
- * Normalize tool args for duplicate fingerprinting: deep-sort keys; string
- * values trim + lower-case + collapse whitespace; stable JSON.
+ * Normalize a single string for fingerprinting. Case-fold only when the parent
+ * key is free-text (query/type); preserve case for path keys (notebook,
+ * section, page, block_id) so filesystem-sensitive filters stay distinct.
  */
-export function normalizeToolArgs(value: unknown): unknown {
+function normalizeArgString(s: string, caseFold: boolean): string {
+  const t = s.trim().replace(/\s+/g, ' ')
+  return caseFold ? t.toLowerCase() : t
+}
+
+/**
+ * Normalize tool args for duplicate fingerprinting: deep-sort keys; collapse
+ * whitespace; case-fold free-text fields only (not path/id keys).
+ */
+export function normalizeToolArgs(value: unknown, parentKey?: string): unknown {
   if (typeof value === 'string') {
-    return value.trim().toLowerCase().replace(/\s+/g, ' ')
+    const caseFold =
+      parentKey == null || CASEFOLD_ARG_KEYS.has(parentKey.toLowerCase())
+    return normalizeArgString(value, caseFold)
   }
   if (Array.isArray(value)) {
-    return value.map(normalizeToolArgs)
+    return value.map((v) => normalizeToolArgs(v, parentKey))
   }
   if (value && typeof value === 'object') {
     const obj = value as Record<string, unknown>
     const out: Record<string, unknown> = {}
     for (const k of Object.keys(obj).sort()) {
-      out[k] = normalizeToolArgs(obj[k])
+      out[k] = normalizeToolArgs(obj[k], k)
     }
     return out
   }
