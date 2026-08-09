@@ -735,23 +735,29 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
    on an internal `startMu` (outside the status `mu`) so bind/Shutdown cannot
    interleave. **Tools (v1):**
   read — `search_blocks`/`search_notes`, `read_page`/`read_blocks`,
-  `list_notebooks`; write (grant) — `create_page`, `update_blocks`. No
-  delete/move/bulk. **Lifecycle:** start on vault open when enabled; stop on
-  vault close/switch and `ServiceShutdown`; close-to-tray keeps MCP.
+  `list_notebooks`, `get_page_metadata`; write (grant) — `create_page`,
+  `update_blocks`, `set_page_property`, `set_page_type`. No delete/move/bulk.
+  **Lifecycle:** start on vault open when enabled; stop on vault close/switch
+  and `ServiceShutdown`; close-to-tray keeps MCP.
   **Audit:** `<vault>/.system/logs/mcp-audit.jsonl` — one redacted record per
-  attempted `tools/call`. A server-level receiving middleware observes SDK
-  input validation that runs **before** any tool handler, so an argument
-  rejected for shape (missing required field, wrong type, malformed JSON) is
-  still audited as `rejected_schema` — distinct from handler-level `rejected`
-  (a schema-aware write the bridge turned down). The full outcome taxonomy is
-  `ok` | `error` | `denied` | `rejected` | `rejected_schema`; arguments are
-  redacted the same way on every path (identifiers preserved, body content
-  never persisted; a non-decodable payload records presence + byte length
-  only). Rotation is non-atomic best-effort by design (observability, not a
-  durability-critical store).
-  Settings UI: Settings → AI → Local MCP. User docs: `docs/LOCAL_MCP.md`.
-  Optional portable Skill (workflow guidance only, not a second protocol):
-  `integrations/silt-agent/SKILL.md`.
+  attempted `tools/call` that reaches the MCP layer (transport-auth, unknown
+  tool, and malformed outer params are not audited — see `docs/LOCAL_MCP.md`).
+  A server-level receiving middleware observes SDK input validation that runs
+  **before** any tool handler, so an argument rejected for shape (missing
+  required field, wrong type, malformed JSON) is still audited as
+  `rejected_schema` — distinct from handler-level `rejected` (a schema-aware
+  write the bridge turned down). The full outcome taxonomy is
+  `ok` | `error` | `denied` | `rejected` | `rejected_schema`. Handler paths use
+  `RedactArgs` (identifiers preserved, body fields → lengths); `rejected_schema`
+  uses a stricter allowlist (`redactSchemaArgs`) because args are untrusted
+  client input. A non-decodable payload records presence + byte length only.
+  Rotation is non-atomic best-effort by design (observability, not a
+  durability-critical store). Settings loads the log on demand via
+  `GetMCPAudit` / clears via `ClearMCPAudit` (coordinates with the live
+  `fileAuditor` when the host is running).
+  Settings UI: Settings → AI → Local MCP (config + **MCP activity** viewer).
+  User docs: `docs/LOCAL_MCP.md`. Optional portable Skill (workflow guidance
+  only, not a second protocol): `integrations/silt-agent/SKILL.md`.
 
 
 **Unified AI surface + enablement (#632).** AI chat has one right-side drawer,

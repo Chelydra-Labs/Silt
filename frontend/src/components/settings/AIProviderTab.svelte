@@ -227,6 +227,13 @@
       void ai.loadAudit()
     }
   })
+
+  // MCP activity lazy-load on expand (#886).
+  $effect(() => {
+    if (mcp.auditOpen && mcp.auditState === 'idle') {
+      void mcp.loadAudit()
+    }
+  })
 </script>
 
 <div class="max-w-4xl mx-auto w-full h-full min-h-0 flex flex-col">
@@ -679,6 +686,254 @@
                   </details>
                 {/each}
               </div>
+
+              <!-- MCP activity viewer (#886) -->
+              <details
+                id="ai-mcp-activity"
+                bind:open={mcp.auditOpen}
+                class="group bg-surface-panel/10 border border-surface-panel-border rounded-xl"
+              >
+                <summary
+                  class="flex items-center justify-between p-3 cursor-pointer select-none focus:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary-start rounded-xl"
+                >
+                  <div class="flex items-center gap-2.5 min-w-0">
+                    <span
+                      class="material-symbols-outlined text-icon-lg text-text-muted"
+                      aria-hidden="true">history</span
+                    >
+                    <div class="text-left min-w-0">
+                      <span
+                        class="text-type-sm font-semibold text-text-primary block"
+                        >MCP activity</span
+                      >
+                      <span class="text-type-2xs text-text-muted block mt-0.5"
+                        >{mcp.auditSummary}</span
+                      >
+                    </div>
+                  </div>
+                  <span
+                    class="material-symbols-outlined text-icon-lg text-text-muted transition-transform group-open:rotate-180 shrink-0"
+                    aria-hidden="true">expand_more</span
+                  >
+                </summary>
+                <div
+                  class="px-3 pb-3 border-t border-surface-panel-border/30 pt-3 space-y-3"
+                >
+                  <div
+                    class="flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:items-end"
+                  >
+                    <label class="flex flex-col gap-0.5 min-w-0 sm:min-w-36">
+                      <span
+                        class="text-type-2xs font-label-sm-bold text-text-muted uppercase tracking-wider"
+                        >Outcome</span
+                      >
+                      <select
+                        class="bg-surface-panel border border-surface-panel-border rounded-md px-2 py-1.5 text-type-xs text-text-primary cursor-pointer"
+                        bind:value={mcp.outcomeFilter}
+                        aria-label="Filter MCP activity by outcome"
+                      >
+                        <option value="all">All</option>
+                        {#each mcp.outcomes as o (o)}
+                          <option value={o}>{o}</option>
+                        {/each}
+                      </select>
+                    </label>
+                    <label class="flex flex-col gap-0.5 flex-1 min-w-0">
+                      <span
+                        class="text-type-2xs font-label-sm-bold text-text-muted uppercase tracking-wider"
+                        >Tool</span
+                      >
+                      <input
+                        type="search"
+                        class="bg-surface-panel border border-surface-panel-border rounded-md px-2 py-1.5 text-type-xs text-text-primary"
+                        placeholder="Filter by tool name"
+                        bind:value={mcp.toolQuery}
+                        aria-label="Filter MCP activity by tool name"
+                      />
+                    </label>
+                    <div class="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        class="px-3 py-1.5 rounded-md bg-surface-panel text-text-primary text-type-xs border border-surface-panel-border cursor-pointer"
+                        onclick={() => void mcp.loadAudit()}
+                      >
+                        Refresh
+                      </button>
+                      {#if mcp.audit.length > 0}
+                        <button
+                          type="button"
+                          onclick={() => void mcp.clearAudit()}
+                          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-panel border border-surface-panel-border text-text-muted font-label-sm-bold hover:text-error hover:border-error/50 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary-start/60"
+                        >
+                          <span
+                            class="material-symbols-outlined text-icon-md"
+                            aria-hidden="true">delete_sweep</span
+                          >
+                          Clear log
+                        </button>
+                      {/if}
+                    </div>
+                  </div>
+
+                  {#if mcp.clearError}
+                    <div
+                      class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
+                      role="alert"
+                    >
+                      <span
+                        class="material-symbols-outlined text-icon-lg"
+                        aria-hidden="true">error</span
+                      >
+                      <span class="flex-1"
+                        >Failed to clear audit log: {mcp.clearError}</span
+                      >
+                      <button
+                        type="button"
+                        onclick={() => void mcp.clearAudit()}
+                        class="text-type-xs font-label-sm-bold underline bg-transparent border-none cursor-pointer text-error"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  {/if}
+
+                  {#if mcp.auditState === 'loading'}
+                    <div
+                      class="text-text-muted text-type-sm font-body-md animate-pulse py-2"
+                    >
+                      Loading audit log…
+                    </div>
+                  {:else if mcp.auditError}
+                    <div
+                      class="flex items-start gap-2 p-3 rounded-lg bg-error-bg border border-error-border text-error text-type-sm font-body-md"
+                      role="alert"
+                    >
+                      <span
+                        class="material-symbols-outlined text-icon-lg"
+                        aria-hidden="true">error</span
+                      >
+                      <span class="flex-1"
+                        >Failed to load audit log: {mcp.auditError}</span
+                      >
+                      <button
+                        type="button"
+                        onclick={() => void mcp.loadAudit()}
+                        class="text-type-xs font-label-sm-bold underline bg-transparent border-none cursor-pointer text-error"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  {:else if mcp.filteredAudit.length === 0}
+                    <p
+                      class="text-text-muted text-type-sm font-body-md py-2 m-0"
+                    >
+                      {mcp.audit.length === 0
+                        ? 'No activity recorded yet.'
+                        : 'No calls match the current filters.'}
+                    </p>
+                  {:else}
+                    <div class="overflow-x-auto">
+                      <table
+                        class="w-full text-type-xs font-body-md border-collapse"
+                      >
+                        <caption class="sr-only">
+                          Recent local MCP tool calls
+                        </caption>
+                        <thead>
+                          <tr
+                            class="text-left text-text-muted border-b border-surface-panel-border"
+                          >
+                            <th
+                              scope="col"
+                              class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-type-2xs"
+                              >When</th
+                            >
+                            <th
+                              scope="col"
+                              class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-type-2xs"
+                              >Tool</th
+                            >
+                            <th
+                              scope="col"
+                              class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-type-2xs"
+                              >Outcome</th
+                            >
+                            <th
+                              scope="col"
+                              class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-type-2xs"
+                              >Error</th
+                            >
+                            <th
+                              scope="col"
+                              class="py-2 pr-3 font-label-sm-bold uppercase tracking-wider text-type-2xs"
+                              >Args</th
+                            >
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {#each mcp.filteredAudit as entry, i (`${entry.ts ?? ''}:${entry.tool ?? ''}:${i}`)}
+                            <tr
+                              class="border-b border-surface-panel-border/50 text-text-primary"
+                            >
+                              <td
+                                class="py-1.5 pr-3 whitespace-nowrap"
+                                title={entry.ts}
+                                >{mcp.formatAuditTime(entry.ts)}</td
+                              >
+                              <td class="py-1.5 pr-3 font-mono"
+                                >{entry.tool ?? '—'}</td
+                              >
+                              <td class="py-1.5 pr-3">
+                                {#if entry.outcome === 'ok'}
+                                  <span
+                                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-accent-primary-glow/20 border border-accent-primary-start text-accent-primary-start font-label-sm-bold text-type-2xs"
+                                  >
+                                    <span
+                                      class="material-symbols-outlined text-type-2xs"
+                                      aria-hidden="true">check_circle</span
+                                    >
+                                    ok
+                                  </span>
+                                {:else if entry.outcome === 'error'}
+                                  <span
+                                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-status-danger/10 text-status-danger font-label-sm-bold text-type-2xs"
+                                  >
+                                    <span
+                                      class="material-symbols-outlined text-type-2xs"
+                                      aria-hidden="true">error</span
+                                    >
+                                    {entry.outcome}
+                                  </span>
+                                {:else}
+                                  <span
+                                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-status-warn/15 text-status-warn font-label-sm-bold text-type-2xs"
+                                  >
+                                    <span
+                                      class="material-symbols-outlined text-type-2xs"
+                                      aria-hidden="true">warning</span
+                                    >
+                                    {entry.outcome ?? '—'}
+                                  </span>
+                                {/if}
+                              </td>
+                              <td
+                                class="py-1.5 pr-3 text-text-muted max-w-40 truncate"
+                                title={entry.error ?? ''}
+                                >{entry.error || '—'}</td
+                              >
+                              <td
+                                class="py-1.5 pr-3 font-mono text-text-muted max-w-48 truncate"
+                                title={mcp.formatArgs(entry.args)}
+                                >{mcp.formatArgs(entry.args)}</td
+                              >
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
+                  {/if}
+                </div>
+              </details>
             </div>
 
             {#if mcp.error}

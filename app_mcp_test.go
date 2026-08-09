@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -72,4 +75,110 @@ func TestSyncMCPHostLocked_NoDeadlockUnderExclusiveVaultMu(t *testing.T) {
 	}
 	// Cleanup host if it started.
 	app.stopMCPHost()
+}
+
+func TestGetMCPAudit_NoVault(t *testing.T) {
+	app := &App{}
+	if _, err := app.GetMCPAudit(); err == nil {
+		t.Fatal("expected error with no vault")
+	}
+	if err := app.ClearMCPAudit(); err == nil {
+		t.Fatal("expected clear error with no vault")
+	}
+}
+
+func TestGetMCPAudit_AndClear(t *testing.T) {
+	app := newTestApp(t)
+	path := mcp.AuditLogPath(app.vaultPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.NewEncoder(f).Encode(mcp.AuditEntry{
+		TS: "2026-01-01T00:00:00Z", Tool: "search_blocks", Outcome: "ok", Vault: "v",
+	})
+	_ = f.Close()
+
+	entries, err := app.GetMCPAudit()
+	if err != nil {
+		t.Fatalf("GetMCPAudit: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Tool != "search_blocks" {
+		t.Fatalf("entries=%+v", entries)
+	}
+
+	if err := app.ClearMCPAudit(); err != nil {
+		t.Fatalf("ClearMCPAudit: %v", err)
+	}
+	entries, err = app.GetMCPAudit()
+	if err != nil {
+		t.Fatalf("GetMCPAudit after clear: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("want empty after clear, got %+v", entries)
+	}
+}
+
+func TestClearMCPAudit_WithRunningHost(t *testing.T) {
+	app := newTestApp(t)
+	// Seed on disk before the host opens fileAuditor (append mode keeps lines).
+	path := mcp.AuditLogPath(app.vaultPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.NewEncoder(f).Encode(mcp.AuditEntry{
+		TS: "2026-01-01T00:00:00Z", Tool: "search_blocks", Outcome: "ok", Vault: "v",
+	})
+	_ = f.Close()
+
+	// Enable MCP so a fileAuditor is attached over the seeded file.
+	if err := app.SetLocalMCPConfig(true, true, false, 0); err != nil {
+		t.Fatalf("SetLocalMCPConfig: %v", err)
+	}
+	defer app.stopMCPHost()
+
+	entries, err := app.GetMCPAudit()
+	if err != nil {
+		t.Fatalf("GetMCPAudit before clear: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Tool != "search_blocks" {
+		t.Fatalf("want seeded entry before clear, got %+v", entries)
+	}
+
+	// Clear through IPC (coordinates with live auditor under its mutex).
+	if err := app.ClearMCPAudit(); err != nil {
+		t.Fatalf("ClearMCPAudit: %v", err)
+	}
+	entries, err = app.GetMCPAudit()
+	if err != nil {
+		t.Fatalf("GetMCPAudit after clear: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("want empty after clear with live host, got %+v", entries)
+	}
+
+	// Stop host and append a new line — read path still works without writer.
+	app.stopMCPHost()
+	f, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.NewEncoder(f).Encode(mcp.AuditEntry{
+		TS: "2026-01-01T00:01:00Z", Tool: "read_page", Outcome: "ok", Vault: "v",
+	})
+	_ = f.Close()
+	entries, err = app.GetMCPAudit()
+	if err != nil {
+		t.Fatalf("GetMCPAudit after re-seed: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Tool != "read_page" {
+		t.Fatalf("want post-clear disk entry, got %+v", entries)
+	}
 }

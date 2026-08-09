@@ -247,6 +247,32 @@ func (h *Host) Start(bridge Bridge, cfg Config) error {
 	return nil
 }
 
+// ClearAudit empties the MCP audit log. When a live fileAuditor is attached it
+// clears under that writer's mutex (safe concurrent with Record). Otherwise it
+// truncates the on-disk JSONL for vaultPath (host stopped or MemoryAuditor).
+// vaultPath is required when the host is not running a fileAuditor.
+func (h *Host) ClearAudit(vaultPath string) error {
+	h.mu.RLock()
+	aud := h.audit
+	if vaultPath == "" && h.bridge != nil {
+		vaultPath = h.bridge.VaultPath()
+	}
+	h.mu.RUnlock()
+
+	if fa, ok := aud.(*fileAuditor); ok {
+		return fa.Clear()
+	}
+	if m, ok := aud.(*MemoryAuditor); ok {
+		m.mu.Lock()
+		m.Entries = nil
+		m.mu.Unlock()
+	}
+	if vaultPath == "" {
+		return errors.New("empty vault path")
+	}
+	return ClearAuditLog(vaultPath)
+}
+
 // Stop drains and closes the HTTP listener and clears the discovery endpoint
 // file. Safe when not running. Prefer Start's internal stopLocked(false) for restarts.
 func (h *Host) Stop() {

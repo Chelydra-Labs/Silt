@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -115,6 +116,91 @@ func (a *fileAuditor) Close() {
 		_ = a.f.Close()
 		a.f = nil
 	}
+}
+
+// Clear empties the on-disk log and reopens the append handle under the same
+// mutex as Record, so a concurrent tools/call cannot race a user clear.
+func (a *fileAuditor) Clear() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.f != nil {
+		_ = a.f.Close()
+		a.f = nil
+	}
+	if err := os.WriteFile(a.path, []byte{}, 0o600); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(a.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	a.f = f
+	return nil
+}
+
+// AuditLogPath is the vault-relative path of the MCP audit JSONL file.
+func AuditLogPath(vaultPath string) string {
+	return filepath.Join(vaultPath, ".system", "logs", "mcp-audit.jsonl")
+}
+
+// ReadAuditLog loads up to limit entries from the vault MCP audit JSONL.
+// Corrupt lines are skipped. Results are newest-first for the activity viewer.
+// A missing file yields an empty slice (not an error). limit <= 0 uses the
+// rotation cap (maxMCPAuditLogLines).
+func ReadAuditLog(vaultPath string, limit int) ([]AuditEntry, error) {
+	if vaultPath == "" {
+		return nil, errors.New("empty vault path")
+	}
+	if limit <= 0 || limit > maxMCPAuditLogLines {
+		limit = maxMCPAuditLogLines
+	}
+	path := AuditLogPath(vaultPath)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []AuditEntry{}, nil
+		}
+		return nil, err
+	}
+	raw := strings.TrimRight(string(data), "\n")
+	if raw == "" {
+		return []AuditEntry{}, nil
+	}
+	lines := strings.Split(raw, "\n")
+	parsed := make([]AuditEntry, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var e AuditEntry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			continue
+		}
+		parsed = append(parsed, e)
+	}
+	if len(parsed) > limit {
+		parsed = parsed[len(parsed)-limit:]
+	}
+	// Newest first for Settings activity UI.
+	for i, j := 0, len(parsed)-1; i < j; i, j = i+1, j-1 {
+		parsed[i], parsed[j] = parsed[j], parsed[i]
+	}
+	return parsed, nil
+}
+
+// ClearAuditLog truncates the on-disk MCP audit file when no live fileAuditor
+// holds the handle (host stopped or MemoryAuditor fallback). Creates the logs
+// dir if needed so a subsequent Record can append.
+func ClearAuditLog(vaultPath string) error {
+	if vaultPath == "" {
+		return errors.New("empty vault path")
+	}
+	path := AuditLogPath(vaultPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte{}, 0o600)
 }
 
 // truncateMCPAuditLog keeps the last keepLines of path (best-effort).
