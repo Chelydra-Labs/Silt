@@ -138,33 +138,38 @@ func (a *fileAuditor) Clear() error {
 	return nil
 }
 
-// AuditLogPath is the vault-relative path of the MCP audit JSONL file.
-func AuditLogPath(vaultPath string) string {
-	return filepath.Join(vaultPath, ".system", "logs", "mcp-audit.jsonl")
-}
-
-// ReadAuditLog loads up to limit entries from the vault MCP audit JSONL.
-// Corrupt lines are skipped. Results are newest-first for the activity viewer.
-// A missing file yields an empty slice (not an error). limit <= 0 uses the
-// rotation cap (maxMCPAuditLogLines).
-func ReadAuditLog(vaultPath string, limit int) ([]AuditEntry, error) {
-	if vaultPath == "" {
-		return nil, errors.New("empty vault path")
-	}
+// Read loads audit entries under the same mutex as Record/Clear so concurrent
+// append+read does not tear the last line from this process's writer.
+func (a *fileAuditor) Read(limit int) ([]AuditEntry, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if limit <= 0 || limit > maxMCPAuditLogLines {
 		limit = maxMCPAuditLogLines
 	}
-	path := AuditLogPath(vaultPath)
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(a.path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []AuditEntry{}, nil
 		}
 		return nil, err
 	}
+	return parseAuditLogBytes(data, limit), nil
+}
+
+// AuditLogPath is the vault-relative path of the MCP audit JSONL file.
+func AuditLogPath(vaultPath string) string {
+	return filepath.Join(vaultPath, ".system", "logs", "mcp-audit.jsonl")
+}
+
+// parseAuditLogBytes decodes JSONL audit bytes: skips corrupt lines, keeps the
+// newest `limit` entries, returns newest-first.
+func parseAuditLogBytes(data []byte, limit int) []AuditEntry {
+	if limit <= 0 || limit > maxMCPAuditLogLines {
+		limit = maxMCPAuditLogLines
+	}
 	raw := strings.TrimRight(string(data), "\n")
 	if raw == "" {
-		return []AuditEntry{}, nil
+		return []AuditEntry{}
 	}
 	lines := strings.Split(raw, "\n")
 	parsed := make([]AuditEntry, 0, len(lines))
@@ -186,7 +191,30 @@ func ReadAuditLog(vaultPath string, limit int) ([]AuditEntry, error) {
 	for i, j := 0, len(parsed)-1; i < j; i, j = i+1, j-1 {
 		parsed[i], parsed[j] = parsed[j], parsed[i]
 	}
-	return parsed, nil
+	return parsed
+}
+
+// ReadAuditLog loads up to limit entries from the vault MCP audit JSONL.
+// Corrupt lines are skipped. Results are newest-first for the activity viewer.
+// A missing file yields an empty slice (not an error). limit <= 0 uses the
+// rotation cap (maxMCPAuditLogLines). Prefer Host.ReadAudit when a live
+// fileAuditor may be appending.
+func ReadAuditLog(vaultPath string, limit int) ([]AuditEntry, error) {
+	if vaultPath == "" {
+		return nil, errors.New("empty vault path")
+	}
+	if limit <= 0 || limit > maxMCPAuditLogLines {
+		limit = maxMCPAuditLogLines
+	}
+	path := AuditLogPath(vaultPath)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []AuditEntry{}, nil
+		}
+		return nil, err
+	}
+	return parseAuditLogBytes(data, limit), nil
 }
 
 // ClearAuditLog truncates the on-disk MCP audit file when no live fileAuditor

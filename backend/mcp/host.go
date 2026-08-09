@@ -273,6 +273,26 @@ func (h *Host) ClearAudit(vaultPath string) error {
 	return ClearAuditLog(vaultPath)
 }
 
+// ReadAudit loads audit entries. When a live fileAuditor is attached, reads
+// under that writer's mutex (safe concurrent with Record/Clear). Otherwise
+// reads the on-disk JSONL for vaultPath.
+func (h *Host) ReadAudit(vaultPath string, limit int) ([]AuditEntry, error) {
+	h.mu.RLock()
+	aud := h.audit
+	if vaultPath == "" && h.bridge != nil {
+		vaultPath = h.bridge.VaultPath()
+	}
+	h.mu.RUnlock()
+
+	if fa, ok := aud.(*fileAuditor); ok {
+		return fa.Read(limit)
+	}
+	if vaultPath == "" {
+		return nil, errors.New("empty vault path")
+	}
+	return ReadAuditLog(vaultPath, limit)
+}
+
 // Stop drains and closes the HTTP listener and clears the discovery endpoint
 // file. Safe when not running. Prefer Start's internal stopLocked(false) for restarts.
 func (h *Host) Stop() {
