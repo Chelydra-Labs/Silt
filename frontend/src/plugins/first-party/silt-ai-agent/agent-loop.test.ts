@@ -20,7 +20,7 @@ import {
   TOOL_RESULT_MAX_BYTES,
   type StagingEvent
 } from './agent-loop'
-import { clearTools, registerTool } from './tool-registry'
+import { clearTools, getTools, registerTool } from './tool-registry'
 import { stageOperation } from './staging'
 
 function mockStream(
@@ -290,6 +290,82 @@ describe('agent-loop', () => {
     expect(prompt).toMatch(/AFTER EACH TOOL RESULT/i)
     expect(prompt).toMatch(/do not call more tools/i)
     expect(prompt).toMatch(/at most one targeted tool/i)
+  })
+
+  it('buildSystemPrompt with Q&A tools omits create/organize and lists only subset', () => {
+    registerTool({
+      name: 'search_notes',
+      description: 'search vault',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => ({ content: '' })
+    })
+    registerTool({
+      name: 'read_blocks',
+      description: 'read blocks',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => ({ content: '' })
+    })
+    registerTool({
+      name: 'create_note',
+      description: 'create',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => ({ content: '' })
+    })
+    const ctx = mockCtx(() => mockStream({ content: '', model: 'm' }))
+    const qaTools = getTools().filter((t) =>
+      (['search_notes', 'read_blocks'] as string[]).includes(t.name)
+    )
+    const prompt = buildSystemPrompt(ctx, undefined, qaTools)
+    expect(prompt).toMatch(/search_notes/)
+    expect(prompt).toMatch(/read_blocks/)
+    expect(prompt).not.toMatch(/create_note/)
+    expect(prompt).toMatch(/search and read notes/i)
+    expect(prompt).not.toMatch(/create, and organize/i)
+    expect(prompt).toMatch(/read-only vault tools/i)
+  })
+
+  it('empty first search still fingerprints — identical retry is blocked', async () => {
+    let handlerCalls = 0
+    registerTool({
+      name: 'search_notes',
+      description: 'search',
+      parameters: {
+        type: 'object',
+        required: ['query'],
+        properties: { query: { type: 'string' } }
+      },
+      handler: async () => {
+        handlerCalls++
+        return { content: 'No matching notes found.' }
+      }
+    })
+    const toolMessages: string[] = []
+    const ctx = mockCtx((n) => {
+      if (n === 1) {
+        return mockStream({
+          content: '',
+          model: 'm',
+          tool_calls: [
+            { id: 'a', name: 'search_notes', arguments: { query: 'same' } }
+          ]
+        })
+      }
+      if (n === 2) {
+        return mockStream({
+          content: '',
+          model: 'm',
+          tool_calls: [
+            { id: 'b', name: 'search_notes', arguments: { query: 'same' } }
+          ]
+        })
+      }
+      return mockStream({ content: 'done', model: 'm' }, ['done'])
+    })
+    await runAgent(ctx, 'find same', [], {
+      onToolMessage: (m) => toolMessages.push(m.content)
+    })
+    expect(handlerCalls).toBe(1)
+    expect(toolMessages.some((t) => /Duplicate tool call/i.test(t))).toBe(true)
   })
 
   it(`forces final answer after ${MAX_SEARCH_NOTES_PER_TURN} search_notes dispatches`, async () => {

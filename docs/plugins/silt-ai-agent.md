@@ -155,23 +155,28 @@ register only when **Settings → AI → Semantic search** is on.
 with default `hybrid_weight` **0.6**, matching AI Q&A. The vector channel uses
 an **agent-owned** sqlite-vec (`vec0`) index in this plugin’s `plugin.db`,
 built with the same shared embed-index helpers as `silt-ai-qa` (isolated
-in-memory state — not a process-global registry, not QA’s database).
+in-memory state — not a process-global registry, not QA’s database). When both
+AI Q&A and the agent are enabled with Semantic search, each maintains its own
+index (double embed cost on large vaults is expected in v1).
 
-- On vault open (when RAG is on): migrate + ensure index ready; rebuild if
-  empty. Incremental updates subscribe to `block:changed` (and `editor:save`
-  when available), debounced ~2s.
+- On vault open (when RAG is on): migrate + ensure index ready; **rebuild if
+  empty or the embedding model/dimensions no longer match** durable meta.
+  Incremental updates subscribe to `block:changed` (and `editor:save` when
+  available), debounced ~2s. Full rebuild is non-blocking; the index is not
+  treated as “warm” until rebuild finishes (or an existing matching index is
+  confirmed).
 - On vault close / shutdown: unsubscribe and reset agent index process state.
 - One-sided FTS or vector failure **fails open** to the healthy side and
-  records a `search_degraded` audit event.
+  records a `search_degraded` audit event (vector errors are not swallowed).
 - **Gated semantic fallback:** if hybrid returns zero passages and the agent
-  index is **not warm** (no dimensions / zero chunks), a last-resort
-  candidate+cosine path may run once. If the index is warm and both channels
-  are empty → honest “no matches” (no fallback thrash).
+  index is **not warm**, a last-resort candidate+cosine path may run once. If
+  the index is warm and both channels are empty → honest “no matches”.
 - Snippets (~280 chars) are often enough; the tool description steers the
   model to call `read_blocks` only when a snippet is incomplete.
 
-`get_related_notes` / `suggest_link_targets` keep their existing embed paths.
-RAG-off still unregisters all three via `RAG_TOOL_NAMES`.
+`get_related_notes` / `suggest_link_targets` keep on-demand embed + cache paths
+(not the hybrid vec0 index). RAG-off still unregisters all three via
+`RAG_TOOL_NAMES`.
 
 ## The agent loop
 
@@ -190,9 +195,11 @@ RAG-off still unregisters all three via `RAG_TOOL_NAMES`.
   `Foo` / `foo` count as the same call.
 - **Q&A tool subset.** Default catalog for a turn is read-only:
   `search_notes`, `read_blocks`, `query_tasks`, `get_backlinks` (∩ registered /
-  RAG gate). Write/organize intent in the user message starts the turn with
-  the **full** catalog; a successful write tool mid-turn also expands to full.
-  System prompt lists the same tools as the `complete` catalog.
+  RAG gate). Write/organize intent in the **user message at turn start** opens
+  the **full** catalog for that turn. Catalog mode does not flip mid-turn
+  (write tools are not offered in Q&A mode, so a mid-turn expand cannot fire).
+  If you need writes after a pure Q&A turn, start a new message with create/edit
+  language. System prompt lists the same tools as the `complete` catalog.
 - **Sufficiency.** After each tool result, if `<vault_data>` already answers,
   the model should respond and stop — not call more tools.
 - **Hard stop banner** appears only when forced wrap-up still produces no text.

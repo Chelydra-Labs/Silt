@@ -55,17 +55,10 @@ export const QA_TOOL_NAMES = [
   'get_backlinks'
 ] as const
 
+// Write/organize intent for full catalog at turn start. Prefer multi-word
+// phrases where bare verbs are common in Q&A ("update me on…", "what tag").
 const WRITE_INTENT_RE =
-  /\b(create|update|rename|extract|organize|draft|delete|write|add note|new note|edit|modify|tag)\b/i
-
-const WRITE_TOOL_SUCCESS = new Set([
-  'create_note',
-  'create_task',
-  'update_block',
-  'update_task',
-  'extract_and_save',
-  'rename_tag'
-])
+  /\b(create|rename|extract|organize|draft|delete|write|add note|new note|make a note|save (this|it|to)|put this|edit|modify|update (the |a |this |my )?(note|task|block|page|title)|rename tag|add tag|retitle)\b/i
 
 /** Tool result bodies above this many bytes are truncated for the model. */
 export const TOOL_RESULT_MAX_BYTES = 10 * 1024
@@ -587,7 +580,7 @@ export async function runAgent(
       ? ctx.getUiLocation()
       : captureUiLocation()
   // Q&A subset by default; full catalog when the user message shows write intent.
-  let mode: 'qa' | 'full' = detectWriteIntent(userMessage) ? 'full' : 'qa'
+  const mode: 'qa' | 'full' = detectWriteIntent(userMessage) ? 'full' : 'qa'
   const allTools = getTools()
   const toolsForMode = (): AgentToolDef[] => {
     if (mode === 'full') return allTools
@@ -873,23 +866,10 @@ export async function runAgent(
           content: toolMessage
         })
         hadToolResults = true
-        // Expand to full catalog after a successful write (multi-step writes).
-        if (
-          mode === 'qa' &&
-          !res.error &&
-          !res.isStaged &&
-          WRITE_TOOL_SUCCESS.has(call.name)
-        ) {
-          mode = 'full'
-        }
-        if (
-          mode === 'qa' &&
-          call.name === 'rename_tag' &&
-          !res.error &&
-          toolMessage.includes('vault_data')
-        ) {
-          mode = 'full'
-        }
+        // Catalog mode is fixed at turn start (write-intent → full, else Q&A).
+        // Mid-turn expand after a write cannot fire from Q&A mode (write tools
+        // are not offered), so we do not flip mode here — start a new turn
+        // with create/edit language if the user needs write tools.
       }
     }
     // Exited without a final answer (e.g. last iteration had no prior tools

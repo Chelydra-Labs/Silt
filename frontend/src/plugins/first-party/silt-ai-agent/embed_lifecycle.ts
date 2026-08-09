@@ -4,6 +4,8 @@
 import type { PluginContext } from '../../sdk'
 import { asString } from '../../../lib/asString'
 import { getAIAvailability } from '../../shared/ai-chat/availability'
+import { embeddingProviderNeedsSetup } from '../../../settings/ai-setup'
+import { settings } from '../../../settings/store.svelte'
 import {
   createEmbedIndex,
   type EmbedIndexSettings
@@ -28,6 +30,10 @@ const pendingPages = new Map<
   { notebook: string; section: string; page: string }
 >()
 let indexChain: Promise<void> = Promise.resolve()
+/** True while a full rebuild is in flight — index is not "warm" for fallback gating. */
+let fullRebuildInProgress = false
+/** Set after a successful full rebuild (or confirmed up-to-date index) this session. */
+let fullRebuildCompleted = false
 
 /** Test hook: override vector search without touching plugin.db. */
 let vectorSearchOverride: VectorSearchFn | null = null
@@ -42,26 +48,54 @@ export function setAgentIndexWarmForTests(warm: boolean | null): void {
   warmOverride = warm
 }
 
-export function getAgentVectorSearch(): VectorSearchFn {
-  if (vectorSearchOverride) return vectorSearchOverride
-  return async (ctx, query, topK, queryVec) => {
-    try {
-      return await agentIndex.vectorSearch(ctx, query, topK, queryVec)
-    } catch {
-      // Fail open to FTS when plugin.db / vec0 is unavailable (tests, cold start).
-      return []
-    }
-  }
+/** Reset process flags for tests (does not touch durable plugin.db). */
+export function resetAgentEmbedLifecycleForTests(): void {
+  stopAgentEmbedIndex()
+  vectorSearchOverride = null
+  warmOverride = null
+  fullRebuildInProgress = false
+  fullRebuildCompleted = false
+  indexChain = Promise.resolve()
 }
 
+/**
+ * Vector search for hybridRetrieve. Errors propagate so the shared pipeline
+ * can fail-open to FTS and emit onDegraded / search_degraded (do not swallow).
+ */
+export function getAgentVectorSearch(): VectorSearchFn {
+  if (vectorSearchOverride) return vectorSearchOverride
+  return (ctx, query, topK, queryVec) =>
+    agentIndex.vectorSearch(ctx, query, topK, queryVec)
+}
+
+/**
+ * Warm = durable index has dims+chunks AND we are not mid full-rebuild AND
+ * (this session completed a rebuild or confirmed the existing index is current).
+ * Partial backfill must not skip semantic fallback.
+ */
 export async function isAgentIndexWarm(ctx: PluginContext): Promise<boolean> {
   if (warmOverride !== null) return warmOverride
+  if (fullRebuildInProgress) return false
   try {
     const info = await agentIndex.getIndexInfo(ctx)
-    return info.dimensions > 0 && info.chunkCount > 0
+    if (!(info.dimensions > 0 && info.chunkCount > 0)) return false
+    // Existing durable index from a prior session counts as warm once start
+    // has confirmed it (fullRebuildCompleted) or after rebuild finishes.
+    return fullRebuildCompleted
   } catch {
     return false
   }
+}
+
+function configuredEmbedModel(): string {
+  return String(settings.config?.ai?.embedding?.model ?? '').trim()
+}
+
+function embedConfigured(): boolean {
+  return !embeddingProviderNeedsSetup(
+    settings.config?.ai?.embedding as
+      { provider_type?: string; model?: string; has_key?: boolean } | undefined
+  )
 }
 
 function pageKey(notebook: string, section: string, page: string): string {
@@ -125,6 +159,7 @@ function onBlockChanged(payload: unknown): void {
 /**
  * Start agent embed index when RAG is on. Non-blocking; errors are logged.
  * Idempotent while already started for the same session.
+ * Rebuilds when empty or embedding model/dim no longer matches durable meta.
  */
 export function startAgentEmbedIndex(ctx: PluginContext): void {
   if (!getAIAvailability().ragEnabled) return
@@ -132,6 +167,8 @@ export function startAgentEmbedIndex(ctx: PluginContext): void {
   stopAgentEmbedIndex()
   activeCtx = ctx
   started = true
+  fullRebuildInProgress = false
+  fullRebuildCompleted = false
 
   unsubs.push(ctx.on('block:changed', onBlockChanged))
   // editor:save if the host emits it (optional freshness signal).
@@ -143,13 +180,39 @@ export function startAgentEmbedIndex(ctx: PluginContext): void {
 
   void (async () => {
     try {
+      if (!embedConfigured()) {
+        console.warn(
+          'silt-ai-agent: embed index skipped — configure a search model in Settings → AI'
+        )
+        return
+      }
       await agentIndex.migrateIndex(ctx)
       await agentIndex.ensureIndexReady(ctx)
+      const model = configuredEmbedModel()
       const info = await agentIndex.getIndexInfo(ctx)
-      if (info.chunkCount === 0) {
-        await agentIndex.rebuildIndex(ctx, DEFAULT_SETTINGS)
+      const mustRebuild =
+        info.chunkCount === 0 ||
+        (await agentIndex.needsFullRebuildForModel(
+          ctx,
+          model,
+          info.dimensions || undefined
+        ))
+      if (mustRebuild) {
+        fullRebuildInProgress = true
+        try {
+          await agentIndex.rebuildIndex(ctx, DEFAULT_SETTINGS)
+          if (activeCtx === ctx) {
+            fullRebuildCompleted = true
+          }
+        } finally {
+          if (activeCtx === ctx) fullRebuildInProgress = false
+        }
+      } else if (activeCtx === ctx) {
+        // Durable index matches configured model — treat as warm.
+        fullRebuildCompleted = true
       }
     } catch (e) {
+      fullRebuildInProgress = false
       console.warn('silt-ai-agent: embed index start failed:', e)
     }
   })()
@@ -172,6 +235,8 @@ export function stopAgentEmbedIndex(): void {
   unsubs = []
   activeCtx = null
   started = false
+  fullRebuildInProgress = false
+  fullRebuildCompleted = false
   agentIndex.resetIndexState()
 }
 
@@ -192,4 +257,9 @@ export function agentVectorSearchDirect(
   queryVec?: number[]
 ): Promise<RankedHit[]> {
   return agentIndex.vectorSearch(ctx, query, topK, queryVec)
+}
+
+/** Test/diagnostics: whether a full rebuild is currently running. */
+export function isAgentFullRebuildInProgress(): boolean {
+  return fullRebuildInProgress
 }

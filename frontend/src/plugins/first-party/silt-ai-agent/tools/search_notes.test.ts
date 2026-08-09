@@ -61,8 +61,10 @@ function makeCtx(opts: {
 
 beforeEach(() => {
   clearTools()
-  setAgentVectorSearchForTests(null)
-  setAgentIndexWarmForTests(null)
+  // Default empty vector side (no plugin.db in unit mocks). Tests that need
+  // real throws or hits override via setAgentVectorSearchForTests.
+  setAgentVectorSearchForTests(async () => [])
+  setAgentIndexWarmForTests(false)
 })
 afterEach(() => {
   clearTools()
@@ -435,5 +437,43 @@ describe('search_notes', () => {
     const res = await dispatchTool(ctx, 'search_notes', { query: 'hi' })
     expect(res.error).toBeUndefined()
     expect(res.content).toContain('b9')
+  })
+
+  it('vector throw with FTS hits fails open and audits search_degraded', async () => {
+    setAgentIndexWarmForTests(true)
+    setAgentVectorSearchForTests(async () => {
+      throw new Error('vec0 unavailable')
+    })
+    const auditEvent = vi.fn()
+    const embed = mockEmbed([1, 0], [[0.9, 0.1]])
+    const ctx = {
+      fullTextSearch: vi.fn(async () => ({
+        rows: [
+          {
+            id: 'fts1',
+            notebook: 'Work',
+            section: 'Notes',
+            page: 'P',
+            clean_content: 'keyword hit about durability'
+          }
+        ],
+        truncated: false
+      })),
+      ai: { embed, auditEvent },
+      sqliteQuery: vi.fn(async () => ({ rows: [], truncated: false }))
+    } as unknown as PluginContext
+
+    const res = await handleSearchNotes(ctx, { query: 'durability' })
+    expect(res.error).toBeUndefined()
+    expect(res.content).toContain('fts1')
+    expect(res.content).toMatch(/Retrieval degraded \(vector\)/i)
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'search_degraded',
+        tool: 'search_notes',
+        side: 'vector',
+        status: 'degraded'
+      })
+    )
   })
 })
