@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PluginContext } from '../../../sdk'
 import { clearTools, dispatchTool, registerTool } from '../tool-registry'
-import { searchNotesToolDef, handleSearchNotes } from './search_notes'
+import {
+  setAgentIndexWarmForTests,
+  setAgentVectorSearchForTests
+} from '../embed_lifecycle'
+import {
+  searchNotesToolDef,
+  handleSearchNotes,
+  AGENT_SEARCH_HYBRID_WEIGHT
+} from './search_notes'
 
 function mockEmbed(queryVec: number[], passageVecs: number[][]) {
   let passageIdx = 0
@@ -51,8 +59,16 @@ function makeCtx(opts: {
   } as unknown as PluginContext
 }
 
-beforeEach(() => clearTools())
-afterEach(() => clearTools())
+beforeEach(() => {
+  clearTools()
+  setAgentVectorSearchForTests(null)
+  setAgentIndexWarmForTests(null)
+})
+afterEach(() => {
+  clearTools()
+  setAgentVectorSearchForTests(null)
+  setAgentIndexWarmForTests(null)
+})
 
 describe('search_notes', () => {
   it('formats fused results with block id, location, snippet, score', async () => {
@@ -202,7 +218,47 @@ describe('search_notes', () => {
     expect(res.content).toMatch(/no matching notes/i)
   })
 
-  it('falls back to semantic ranking when FTS is empty', async () => {
+  it('description documents hybrid search and read_blocks guidance', () => {
+    expect(searchNotesToolDef.description).toMatch(/hybrid/i)
+    expect(searchNotesToolDef.description).toMatch(/read_blocks/i)
+    expect(AGENT_SEARCH_HYBRID_WEIGHT).toBe(0.6)
+  })
+
+  it('returns vector-only hits when FTS is empty and agent index is warm', async () => {
+    setAgentIndexWarmForTests(true)
+    setAgentVectorSearchForTests(async () => [
+      {
+        blockId: 'vec1',
+        notebook: 'Work',
+        section: 'Notes',
+        page: 'DB',
+        lineNumber: 1,
+        text: 'vector-only hit about durability',
+        score: 0.2
+      }
+    ])
+    const embed = mockEmbed([1, 0], [[0.95, 0.05]])
+    const ctx = makeCtx({ ftsRows: [], embed })
+    const res = await handleSearchNotes(ctx, { query: 'durability' })
+    expect(res.error).toBeUndefined()
+    expect(res.content).toContain('vec1')
+    expect(res.content).toContain('durability')
+    expect(res.content).not.toMatch(/semantic fallback/i)
+  })
+
+  it('skips semantic fallback when warm index returns no hits', async () => {
+    setAgentIndexWarmForTests(true)
+    setAgentVectorSearchForTests(async () => [])
+    const embed = mockEmbed([1, 0], [[0.95, 0.05]])
+    const ctx = makeCtx({ ftsRows: [], embed })
+    const res = await handleSearchNotes(ctx, { query: 'nothing' })
+    expect(res.content).toMatch(/no matching notes/i)
+    expect(res.content).not.toMatch(/semantic fallback/i)
+  })
+
+  it('falls back to semantic ranking when FTS is empty and index is cold', async () => {
+    setAgentIndexWarmForTests(false)
+    setAgentVectorSearchForTests(async () => [])
     const auditEvent = vi.fn()
     const embed = mockEmbed([1, 0], [[0.95, 0.05]])
     const ctx = {
@@ -244,6 +300,8 @@ describe('search_notes', () => {
   })
 
   it('caps semantic-fallback passage text so long notes stay in budget', async () => {
+    setAgentIndexWarmForTests(false)
+    setAgentVectorSearchForTests(async () => [])
     const longBody = `${'database durability word '.repeat(80)}END`
     expect(longBody.length).toBeGreaterThan(500)
     const embed = mockEmbed([1, 0], [[0.99, 0.01]])
@@ -286,6 +344,8 @@ describe('search_notes', () => {
   })
 
   it('degrades with audit when semantic fallback embed fails', async () => {
+    setAgentIndexWarmForTests(false)
+    setAgentVectorSearchForTests(async () => [])
     // embedOne swallows provider errors → empty vector → semanticFallback
     // throws so the outer path can emit search_degraded (not silent no-results).
     const auditEvent = vi.fn()
@@ -320,6 +380,8 @@ describe('search_notes', () => {
   })
 
   it('degrades to no-results when semantic fallback throws', async () => {
+    setAgentIndexWarmForTests(false)
+    setAgentVectorSearchForTests(async () => [])
     const auditEvent = vi.fn()
     const ctx = {
       fullTextSearch: vi.fn(async () => ({ rows: [], truncated: false })),

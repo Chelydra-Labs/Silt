@@ -1,9 +1,7 @@
 // Agent tool #597 — search_notes.
 //
-// Hybrid retrieval exposed to the agent. Primary channel is FTS5 (via shared
-// hybridRetrieve). When FTS returns nothing, a semantic fallback ranks recent
-// + keyword-recalled candidates by cosine similarity (same path as
-// get_related_notes) so a single empty FTS channel cannot zero the tool.
+// True hybrid FTS ∥ agent-owned vec0 (hybrid_weight 0.6). Semantic fallback
+// runs only when hybrid returns empty AND the agent index is not warm.
 
 import type { PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
@@ -14,19 +12,24 @@ import {
 } from '../../../shared/retrieval/retrieve'
 import {
   trimToBudget,
-  type RankedHit,
   type RetrievedPassage
 } from '../../../shared/retrieval/hybrid'
 import type { ToolResult } from '../tool-registry'
+import { getAgentVectorSearch, isAgentIndexWarm } from '../embed_lifecycle'
 import { breadcrumb, clampInt } from './_util'
 import { embedOne, gatherCandidates, rankCandidates } from './_embedding'
+
+/** Match QA default hybrid weight (vector side of weighted RRF). */
+export const AGENT_SEARCH_HYBRID_WEIGHT = 0.6
 
 export const searchNotesToolDef = {
   name: 'search_notes',
   description:
-    'Search the note vault by keyword and meaning. Returns ranked blocks ' +
-    'with block_id, location, snippet, and score. Use filters to narrow to a ' +
-    'notebook, section, or block type.',
+    'Hybrid search over the note vault (keyword FTS + semantic vectors). ' +
+    'Returns ranked blocks with block_id, location, score, and a short snippet. ' +
+    'Snippets are often enough to answer — call read_blocks only when a snippet ' +
+    'is incomplete. Stop searching once you have enough evidence. ' +
+    'Optional filters narrow to a notebook, section, or block type.',
   parameters: {
     type: 'object',
     required: ['query'],
@@ -63,12 +66,8 @@ interface SearchFilters {
   type?: string
 }
 
-/** No agent vec0 index — hybrid primary path is pure FTS (+ embed rerank). */
-const emptyVectorSearch: VectorSearchFn = (): Promise<RankedHit[]> =>
-  Promise.resolve([])
-
 const SEMANTIC_MIN_SCORE = 0.5
-/** Shared tool→model context budget (primary FTS path + semantic fallback). */
+/** Shared tool→model context budget (primary hybrid path + semantic fallback). */
 const MAX_CONTEXT_CHARS = 32_000
 /** Per-passage cap on fallback text so one long note cannot blow the budget. */
 const FALLBACK_PASSAGE_CHARS = 500
@@ -85,12 +84,11 @@ export async function handleSearchNotes(
   const filters = normalizeFilters(args.filters)
 
   let degradedNote = ''
+  const vectorSearch: VectorSearchFn = getAgentVectorSearch()
   const opts: RetrieveOptions = {
     top_k: topK,
-    hybrid_weight: 0, // primary: pure FTS recall
+    hybrid_weight: AGENT_SEARCH_HYBRID_WEIGHT,
     min_score: 0,
-    // Bound tool→model context: agent multi-turn history grows fast; 100k was
-    // a quiet chat-token burner. Align with a generous QA-scale budget.
     max_context_chars: MAX_CONTEXT_CHARS,
     rerank_enabled: true,
     filterPassages:
@@ -110,40 +108,41 @@ export async function handleSearchNotes(
 
   let passages: RetrievedPassage[]
   try {
-    passages = await hybridRetrieve(ctx, query, opts, emptyVectorSearch)
+    passages = await hybridRetrieve(ctx, query, opts, vectorSearch)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     return { content: '', error: `search failed: ${msg}` }
   }
 
-  // Semantic fallback when FTS (and rerank) produced nothing.
-  // Embed/provider failures degrade to no-results (not a tool error) so the
-  // agent loop can continue — FTS already returned empty.
+  // Gated semantic fallback: only when hybrid empty AND index not warm.
   if (passages.length === 0) {
-    try {
-      passages = await semanticFallback(ctx, query, topK, filters)
-      if (passages.length > 0) {
-        degradedNote =
-          'Keyword search returned no matches; results are from semantic fallback.'
+    const warm = await isAgentIndexWarm(ctx)
+    if (!warm) {
+      try {
+        passages = await semanticFallback(ctx, query, topK, filters)
+        if (passages.length > 0) {
+          degradedNote =
+            'Keyword search returned no matches; results are from semantic fallback.'
+          void ctx.ai.auditEvent?.({
+            kind: 'search_degraded',
+            tool: 'search_notes',
+            side: 'fts',
+            status: 'degraded',
+            message: 'fts_empty_semantic_fallback'
+          })
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        degradedNote = `Semantic fallback unavailable: ${msg}`
         void ctx.ai.auditEvent?.({
           kind: 'search_degraded',
           tool: 'search_notes',
-          side: 'fts',
+          side: 'vector',
           status: 'degraded',
-          message: 'fts_empty_semantic_fallback'
+          message: msg
         })
+        passages = []
       }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      degradedNote = `Semantic fallback unavailable: ${msg}`
-      void ctx.ai.auditEvent?.({
-        kind: 'search_degraded',
-        tool: 'search_notes',
-        side: 'vector',
-        status: 'degraded',
-        message: msg
-      })
-      passages = []
     }
   }
 
@@ -185,7 +184,7 @@ export async function handleSearchNotes(
 
 /**
  * Rank recent + FTS-keyword candidates by cosine similarity to the query.
- * Used only when the primary FTS channel returns no passages.
+ * Used only when hybrid is empty and the agent vec0 index is not warm.
  */
 async function semanticFallback(
   ctx: PluginContext,
@@ -193,9 +192,6 @@ async function semanticFallback(
   topK: number,
   filters: SearchFilters
 ): Promise<RetrievedPassage[]> {
-  // Non-empty query already validated by the caller. Empty vector means the
-  // embedding provider failed or returned unusable data — surface that so the
-  // outer catch can emit search_degraded instead of a silent no-results.
   const queryVec = await embedOne(ctx, query, 'RETRIEVAL_QUERY')
   if (queryVec.length === 0) {
     throw new Error('embedding provider unavailable or returned empty vector')
@@ -237,7 +233,6 @@ async function semanticFallback(
     passages = await filterPassages(ctx, passages, { type: filters.type })
     passages = passages.map((p, i) => ({ ...p, citeIndex: i + 1 }))
   }
-  // Same char budget as hybridRetrieve — drop lowest-score hits if needed.
   return trimToBudget(passages, MAX_CONTEXT_CHARS)
 }
 
@@ -251,11 +246,6 @@ function normalizeFilters(raw: unknown): SearchFilters {
   }
 }
 
-/**
- * Apply notebook/section (field) + type (resolved via one query) filters to the
- * fused candidate set. Runs before rerank so out-of-scope text is never embedded
- * and cannot displace in-scope hits from top_k.
- */
 async function filterPassages(
   ctx: PluginContext,
   passages: RetrievedPassage[],
