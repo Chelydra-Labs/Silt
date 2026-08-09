@@ -9,6 +9,7 @@
   import OutlinePanel from './editor/OutlinePanel.svelte'
   import FindBar from './editor/FindBar.svelte'
   import { findBarState } from '../lib/editor/search/findBarState.svelte'
+  import type { SourceSearchTarget } from '../lib/editor/search/sourceSearch'
   import type { ParsedBlock } from '../lib/editor'
   import {
     snapshotEditCaret,
@@ -87,6 +88,8 @@
 
   // Editor bindings
   let editorInstance = $state<Editor | null>(null)
+  // Source-mode FindBar target — bound from MarkdownSourceViewer (#884).
+  let sourceSearchTarget = $state<SourceSearchTarget | null>(null)
   // eslint-disable-next-line svelte/no-unnecessary-state-wrap -- bindable-style reassignment from editor
   let activeMarks = $state(new SvelteSet<string>())
 
@@ -484,6 +487,10 @@
       pendingCaretReapply = null
       caretRestoreGen++
     }
+    // Drop FindBar when switching Edit↔Source so it never keeps a stale backend.
+    if (prevViewMode !== cur && findBarState.open) {
+      findBarState.close()
+    }
     prevViewMode = cur
   })
 
@@ -571,8 +578,13 @@
 <div
   class="flex-1 flex flex-col min-h-0 h-full overflow-hidden bg-surface-app relative"
 >
-  {#if viewMode === 'edit' && findBarState.open}
+  {#if findBarState.open && viewMode === 'edit'}
     <FindBar editor={editorInstance!} onClose={() => findBarState.close()} />
+  {:else if findBarState.open && viewMode === 'source'}
+    <FindBar
+      sourceTarget={sourceSearchTarget}
+      onClose={() => findBarState.close()}
+    />
   {/if}
   {#if showEditorUtilityBar}
     <EditorUtilityBar
@@ -655,6 +667,7 @@
                 {section}
                 {page}
                 filePath="{notebook}/{section}/{page}.md"
+                bind:sourceSearchTarget
                 onBlocksSaved={(saved) => {
                   blocks = saved
                 }}

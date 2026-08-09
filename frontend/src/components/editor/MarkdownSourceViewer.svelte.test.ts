@@ -66,6 +66,11 @@ vi.mock('$silt-app', () =>
 
 import MarkdownSourceViewer from './MarkdownSourceViewer.svelte'
 import type { ParsedBlock } from '../../lib/editor/types'
+import {
+  getEditor,
+  editorKey,
+  _resetEditorRegistryForTests
+} from '../../lib/editor/editorRegistry.svelte'
 
 function mkBlock(
   text: string,
@@ -1421,4 +1426,75 @@ describe('MarkdownSourceViewer revalidation fixes', () => {
     await waitFor(() => expect(ta.value).toBe(expected))
     return ta
   }
+})
+
+describe('MarkdownSourceViewer editor registry (#884)', () => {
+  beforeEach(() => {
+    mocks.highlight.mockReset()
+    mocks.savePageMarkdown.mockReset()
+    mocks.fetchPageMarkdown.mockReset()
+    mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
+    mocks.AcquireFocusLock.mockClear()
+    mocks.ReleaseFocusLock.mockClear()
+    mocks.RefreshFocusLock.mockClear()
+    _resetEditorRegistryForTests()
+  })
+  afterEach(() => {
+    cleanup()
+    _resetEditorRegistryForTests()
+  })
+
+  it('registers a clean handle on mount and unregisters on unmount', async () => {
+    const { unmount } = render(MarkdownSourceViewer, {
+      props: {
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    await waitFor(() =>
+      screen.getByRole('textbox', { name: /markdown source/i })
+    )
+    const key = editorKey('Work', 'Sec', 'Page')
+    const handle = getEditor(key)
+    expect(handle).toBeDefined()
+    expect(handle!.isDirty()).toBe(false)
+
+    unmount()
+    expect(getEditor(key)).toBeUndefined()
+  })
+
+  it('marks dirty on type and flush saves then returns true', async () => {
+    mocks.savePageMarkdown.mockResolvedValue([
+      mkBlock('# From disk'),
+      mkBlock('Fetched body content')
+    ])
+    render(MarkdownSourceViewer, {
+      props: {
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    const ta = (await waitFor(() =>
+      screen.getByRole('textbox', { name: /markdown source/i })
+    )) as HTMLTextAreaElement
+    await waitFor(() => expect(ta.value).toBe(FETCH_BODY))
+
+    const key = editorKey('Work', 'Sec', 'Page')
+    const handle = getEditor(key)!
+    expect(handle.isDirty()).toBe(false)
+
+    await fireEvent.input(ta, { target: { value: FETCH_BODY + '\nextra' } })
+    expect(handle.isDirty()).toBe(true)
+
+    const ok = await handle.flush()
+    expect(ok).toBe(true)
+    expect(mocks.savePageMarkdown).toHaveBeenCalled()
+    expect(handle.isDirty()).toBe(false)
+  })
 })

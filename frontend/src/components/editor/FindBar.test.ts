@@ -67,4 +67,38 @@ describe('FindBar', () => {
     await fireEvent.keyDown(window, { key: 'Enter', altKey: true })
     expect(replaceAllInPage).toHaveBeenCalledTimes(1)
   })
+
+  it('Source target: Alt+Enter replace-all rewrites buffer once (#884)', async () => {
+    let text = 'foo bar foo'
+    const listeners = new Set<() => void>()
+    const setText = vi.fn((next: string) => {
+      text = next
+      for (const cb of listeners) cb()
+    })
+    const sourceTarget = {
+      getText: () => text,
+      getCaret: () => 0,
+      setSelection: vi.fn(),
+      replaceRange: vi.fn(),
+      setText,
+      subscribe: (cb: () => void) => {
+        listeners.add(cb)
+        return () => listeners.delete(cb)
+      }
+    }
+
+    const { getByLabelText } = render(FindBar, {
+      props: { sourceTarget, onClose: vi.fn() }
+    })
+
+    const findInput = getByLabelText('Find')
+    await fireEvent.input(findInput, { target: { value: 'foo' } })
+    const replaceInput = getByLabelText('Replace with')
+    await fireEvent.input(replaceInput, { target: { value: 'baz' } })
+    replaceInput.focus()
+    await fireEvent.keyDown(replaceInput, { key: 'Enter', altKey: true })
+
+    expect(setText).toHaveBeenCalledTimes(1)
+    expect(setText).toHaveBeenCalledWith('baz bar baz')
+  })
 })
