@@ -108,13 +108,18 @@ describe('query_tasks', () => {
     ])
     const res = await handleQueryTasks(ctx, {})
     expect(res.error).toBeUndefined()
+    // Citation header must match assignEvidenceIndices shape (`[n] block <id>`).
+    expect(res.content).toContain('[1] block t1')
     expect(res.content).toContain('Ship the agent tools')
-    expect(res.content).toContain('t1')
     expect(res.content).toContain('DOING')
     expect(res.content).toContain('2026-07-20')
     expect(res.content).toContain('chris')
     expect(res.content).toContain('Work > Sprint > Sprint 41')
     expect(res.content).toContain('blocked: yes')
+    expect(res.evidence?.[0]).toMatchObject({
+      citationIndex: 1,
+      blockId: 't1'
+    })
   })
 
   it('reports a clean empty message when no tasks match', async () => {

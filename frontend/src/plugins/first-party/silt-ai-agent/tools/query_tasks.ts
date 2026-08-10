@@ -202,9 +202,11 @@ function formatTask(index: number, t: TaskRow): string {
     t.priority != null ? `priority: ${t.priority}` : 'no priority',
     t.is_blocked ? 'blocked: yes' : 'blocked: no'
   ].join(' | ')
+  // Lead with `[n] block <id>` so assignEvidenceIndices can remap global
+  // citation markers the same way as other retrieval tools (#925).
   return [
-    `[${index}] ${title || '(untitled task)'}`,
-    `    id: ${t.id}`,
+    `[${index}] block ${t.id}`,
+    `    ${title || '(untitled task)'}`,
     `    ${meta}`,
     `    location: ${breadcrumb(t.notebook, t.section, t.page)}`
   ].join('\n')

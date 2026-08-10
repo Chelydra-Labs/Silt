@@ -771,6 +771,55 @@ describe('agent-loop', () => {
     )
   })
 
+  it('assignEvidenceIndices remaps query_tasks after another retrieval tool', () => {
+    const next = { value: 1 }
+    const search = assignEvidenceIndices(
+      {
+        content: '[1] block aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        evidence: [
+          {
+            citationIndex: 1,
+            blockId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+          }
+        ]
+      },
+      next
+    )
+    const tasks = assignEvidenceIndices(
+      {
+        content:
+          '2 task(s):\n\n' +
+          '[1] block bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\n' +
+          '    First task\n' +
+          '    status: TODO\n\n' +
+          '[2] block cccccccc-cccc-cccc-cccc-cccccccccccc\n' +
+          '    Second task\n' +
+          '    status: DOING',
+        evidence: [
+          {
+            citationIndex: 1,
+            blockId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+          },
+          {
+            citationIndex: 2,
+            blockId: 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+          }
+        ]
+      },
+      next
+    )
+    expect(search.evidence?.map((e) => e.citationIndex)).toEqual([1])
+    expect(tasks.evidence?.map((e) => e.citationIndex)).toEqual([2, 3])
+    expect(tasks.content).toContain(
+      '[2] block bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+    )
+    expect(tasks.content).toContain(
+      '[3] block cccccccc-cccc-cccc-cccc-cccccccccccc'
+    )
+    expect(tasks.content).not.toMatch(/^\[1\] block /m)
+    expect(next.value).toBe(4)
+  })
+
   it('assignEvidenceIndices remaps get_backlinks dash+tag format across tools', () => {
     const next = { value: 1 }
     const related = assignEvidenceIndices(
