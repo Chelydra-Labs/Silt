@@ -632,7 +632,10 @@ async function materializeToolMessage(
       })
       return `Error: staged operation "${op.kind}" has no commit handler.`
     }
-    const committed = await raceAbort(tool.commit(ctx, op.params), signal)
+    const committed = await raceAbort(
+      tool.commit(ctx, op.params, signal),
+      signal
+    )
     if (committed.error) {
       opts.onStagingOutcome?.(token, 'failed')
       void ctx.ai.auditEvent?.({

@@ -1485,6 +1485,85 @@ describe('agent-loop staging', () => {
     expect(commitCalls).toEqual([{ ids: ['b1', 'b2'] }])
   })
 
+  it('forwards run AbortSignal into staged commit handlers', async () => {
+    const seenSignals: Array<AbortSignal | undefined> = []
+    let commitEntered!: () => void
+    const commitStarted = new Promise<void>((resolve) => {
+      commitEntered = resolve
+    })
+    registerTool({
+      name: 'extract_and_save',
+      description: 'stage then extract',
+      parameters: {
+        type: 'object',
+        properties: {
+          source_block_ids: { type: 'array', items: { type: 'string' } }
+        }
+      },
+      async handler(_ctx, args) {
+        const token = await stageOpForTest(_ctx, 'extract_and_save', args)
+        return {
+          content: '',
+          isStaged: true,
+          stagedToken: token,
+          stagedPreview: {
+            kind: 'extract_and_save',
+            summary: 'Extract to page',
+            severity: 'danger'
+          }
+        }
+      },
+      async commit(_ctx, _params, signal) {
+        seenSignals.push(signal)
+        commitEntered()
+        // Simulate nested model/write work that polls the run signal.
+        await new Promise((r) => setTimeout(r, 40))
+        if (signal?.aborted) {
+          return { content: '', error: 'Cancelled before tool completed.' }
+        }
+        return { content: 'extracted' }
+      }
+    })
+
+    const ac = new AbortController()
+    const ctx = mockCtxWithDb((n) => {
+      if (n === 1) {
+        return mockStream({
+          content: '',
+          model: 'm',
+          tool_calls: [
+            {
+              id: 'tc1',
+              name: 'extract_and_save',
+              arguments: { source_block_ids: ['src-1'] }
+            }
+          ]
+        })
+      }
+      return mockStream({ content: 'done.', model: 'm' })
+    })
+
+    const session = createAgentSession(ctx)
+    const p = session.run('extract', [], {
+      signal: ac.signal,
+      onStaging: (e) => {
+        // Confirm first so commit starts with a live signal, then abort mid-commit.
+        queueMicrotask(() => session.resolveStaging(e.token, true))
+      }
+    })
+    await commitStarted
+    expect(seenSignals).toHaveLength(1)
+    // Session chains opts.signal → run.controller.signal; commit must receive
+    // the run signal (not undefined), which aborts when the caller aborts.
+    expect(seenSignals[0]).toBeDefined()
+    expect(seenSignals[0]?.aborted).toBe(false)
+    ac.abort()
+    const res = await p
+
+    expect(seenSignals[0]?.aborted).toBe(true)
+    expect(res.cancelled).toBe(true)
+  })
+
   it('on reject: surfaces "rejected by user" to the model', async () => {
     const commitCalls: unknown[] = []
     registerTool({

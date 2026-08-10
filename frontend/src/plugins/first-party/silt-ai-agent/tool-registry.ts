@@ -73,14 +73,16 @@ export interface StagedPreview {
 
 /**
  * The commit half of a staged tool. After confirmOperation redeems the token,
- * the agent loop calls commit(ctx, params) to execute the real write.
+ * the agent loop calls commit(ctx, params, signal?) to execute the real write.
  * `params` is the operation payload stored alongside the token at stage time,
  * NOT the model's args — so the model cannot mutate the staged op between
- * staging and confirmation.
+ * staging and confirmation. `signal` is the run AbortSignal so long commits
+ * (e.g. extract_and_save nested model call) honor Stop after confirm.
  */
 export type StagedCommit = (
   ctx: PluginContext,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  signal?: AbortSignal
 ) => Promise<ToolResult>
 
 /**
