@@ -771,6 +771,52 @@ describe('agent-loop', () => {
     )
   })
 
+  it('assignEvidenceIndices remaps get_backlinks dash+tag format across tools', () => {
+    const next = { value: 1 }
+    const related = assignEvidenceIndices(
+      {
+        content: '[1] block aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        evidence: [
+          {
+            citationIndex: 1,
+            blockId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+          }
+        ]
+      },
+      next
+    )
+    const backlinks = assignEvidenceIndices(
+      {
+        content:
+          '2 reference(s):\n' +
+          '- [1] [backlink] block bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb (Page A): snip\n' +
+          '- [2] [embed] block cccccccc-cccc-cccc-cccc-cccccccccccc (Page B): snip',
+        evidence: [
+          {
+            citationIndex: 1,
+            blockId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+          },
+          {
+            citationIndex: 2,
+            blockId: 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+          }
+        ]
+      },
+      next
+    )
+    expect(related.evidence?.map((e) => e.citationIndex)).toEqual([1])
+    expect(backlinks.evidence?.map((e) => e.citationIndex)).toEqual([2, 3])
+    expect(backlinks.content).toContain(
+      '- [2] [backlink] block bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+    )
+    expect(backlinks.content).toContain(
+      '- [3] [embed] block cccccccc-cccc-cccc-cccc-cccccccccccc'
+    )
+    // Local [1]/[2] must not remain after global remap.
+    expect(backlinks.content).not.toMatch(/^- \[1\] /m)
+    expect(next.value).toBe(4)
+  })
+
   it('assignEvidenceIndices leaves empty evidence alone', () => {
     const next = { value: 1 }
     const out = assignEvidenceIndices({ content: 'none' }, next)
@@ -813,6 +859,37 @@ describe('agent-loop', () => {
     expect(tools[2].content).toContain('<vault_data')
     expect(tools[4].content).toContain('<vault_data')
     expect(out.find((m) => m.role === 'system')?.content).toBe('sys')
+  })
+
+  it('compactAgentMessages digests get_backlinks rounds with block ids', () => {
+    const id = '11111111-1111-1111-1111-111111111111'
+    const msgs: PluginAIChatMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'u1' }
+    ]
+    for (let r = 0; r < 5; r++) {
+      msgs.push({
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          { id: `b${r}`, name: 'get_backlinks', arguments: { target: id } }
+        ]
+      })
+      msgs.push({
+        role: 'tool',
+        tool_call_id: `b${r}`,
+        content:
+          `<vault_data tool="get_backlinks">\n` +
+          `1 reference(s):\n` +
+          `- [1] [backlink] block ${id} (Page): snip\n` +
+          `</vault_data>`
+      })
+    }
+    const out = compactAgentMessages(msgs)
+    const tools = out.filter((m) => m.role === 'tool')
+    expect(tools[0].content).toBe(`get_backlinks ok blocks=${id}`)
+    expect(tools[1].content).toBe(`get_backlinks ok blocks=${id}`)
+    expect(tools[2].content).toContain('<vault_data')
   })
 
   it('truncates Unicode results by UTF-8 bytes without splitting a code point', () => {

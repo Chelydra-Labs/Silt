@@ -164,6 +164,24 @@ describe('tool-registry', () => {
     expect(validateArgs(schema, { mode: 'a', n: 5, target: {} }).ok).toBe(false)
   })
 
+  it('validateArgs rejects array elements that fail items schema', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        source_block_ids: { type: 'array', items: { type: 'string' } }
+      }
+    }
+    expect(validateArgs(schema, { source_block_ids: ['a', 'b'] }).ok).toBe(true)
+    const bad = validateArgs(schema, {
+      source_block_ids: ['ok', 123, null]
+    })
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) {
+      expect(bad.error).toMatch(/source_block_ids\[1\]/)
+      expect(bad.error).toMatch(/expected string/)
+    }
+  })
+
   it('refuses mutators in read_only mode', async () => {
     const handler = vi.fn(async () => ({ content: 'wrote' }))
     registerTool({

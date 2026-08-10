@@ -239,6 +239,14 @@ function validateValue(
     }
   }
 
+  // Array element types via items (one level; e.g. source_block_ids: string[]).
+  if (Array.isArray(value) && decl.items) {
+    for (let i = 0; i < value.length; i++) {
+      const check = validateValue(decl.items, value[i], `${label}[${i}]`)
+      if (!check.ok) return check
+    }
+  }
+
   // One level of nested object properties + required (e.g. create target).
   if (
     value &&

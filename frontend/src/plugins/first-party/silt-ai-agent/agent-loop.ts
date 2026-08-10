@@ -421,9 +421,10 @@ function digestToolMessage(content: string): string {
   }
   const toolMatch = content.match(/<vault_data tool="([^"]+)">/)
   const name = toolMatch?.[1] ?? 'tool'
+  // Match `block <uuid>` and `block_<uuid>` style ids used by tool formatters.
   const blockIds = [
     ...content.matchAll(
-      /\bblock\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi
+      /\bblock[_\s]+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi
     )
   ].map((m) => m[1])
   const unique = [...new Set(blockIds)].slice(0, 5)
@@ -433,8 +434,10 @@ function digestToolMessage(content: string): string {
 
 /**
  * Remap local citation markers to a run-global index sequence.
- * Only rewrites structured tool citation headers (`[n] block …` at line start),
- * not free-text `[n]` inside vault snippets (footnotes, prose).
+ * Only rewrites structured tool citation headers at line start:
+ *   `[n] block …`
+ *   `- [n] [backlink] block …` (list bullet + optional type tag)
+ * Free-text `[n]` inside vault snippets (footnotes, prose) is left alone.
  */
 export function assignEvidenceIndices(
   res: ToolResult,
@@ -454,9 +457,12 @@ export function assignEvidenceIndices(
   // Higher indices first so [1] does not clobber [10].
   const pairs = [...oldToNew.entries()].sort((a, b) => b[0] - a[0])
   for (const [oldIdx, neu] of pairs) {
-    // Tool formatters emit `[n] block <uuid>` (or similar) at line start.
-    const re = new RegExp(`(^|\\n)\\[${oldIdx}\\](?=\\s+block\\b)`, 'gi')
-    content = content.replace(re, `$1[${neu}]`)
+    // Optional list bullet + optional `[type]` tag before `block`.
+    const re = new RegExp(
+      `(^|\\n)((?:[-*]\\s+)?)\\[${oldIdx}\\](?=\\s+(?:\\[[^\\]]+\\]\\s+)?block\\b)`,
+      'gi'
+    )
+    content = content.replace(re, `$1$2[${neu}]`)
   }
   return { ...res, content, evidence }
 }
