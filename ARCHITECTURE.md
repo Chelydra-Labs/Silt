@@ -681,7 +681,8 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
 - **AI providers** (#216, #218, #479, #632) — `GetAIProviderConfig` (key-scrubbed
   read; emits `has_key` flags + `features`, never the raw secret),
   `UpdateAIProviderConfig` (provider type / base URL / model / tuning — never
-  the key), `UpdateAIFeatures` (product enablement: master AI, RAG, summaries),
+   the key), `UpdateAIFeatures` (product enablement: master AI, RAG, summaries,
+   agent vault writes `agent_writes`: read_only|confirm|auto),
   `SetAIAPIKey` / `ClearAIAPIKey` (dedicated key surface: routes to the OS
   keyring when `use_keyring` + reachable, else plaintext config), `SetUseKeyring`
   (toggles keyring storage + opportunistically migrates plaintext keys),
@@ -706,8 +707,10 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `ai:complete:error:<pluginID>` (#635) so argument fragments are not on a
   global bus. The `ctx.ai.complete` SDK wrapper strips reasoning tags — see
   `frontend/src/plugins/stripReasoning.ts`. The agent is **user-invoked only**,
-  tool calls are **transparent**, and **destructive ops are staged** behind a
-   single-use confirmation token. See `docs/plugins/silt-ai-agent.md`.
+   tool calls are **transparent**, and vault mutations follow
+   `ai.features.agent_writes` (read_only / confirm / auto) with bulk ops
+   (`rename_tag`, `extract_and_save`) always staged behind a single-use
+   confirmation token. See `docs/plugins/silt-ai-agent.md`.
 
 - **Local MCP host** (#687) — Go package `backend/mcp` runs an in-process
   **generic MCP server** (official `github.com/modelcontextprotocol/go-sdk`

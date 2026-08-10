@@ -58,6 +58,8 @@ export interface ConfirmationEntry extends EntryBase {
   summary: string
   details?: string
   affectedCount?: number
+  /** Bulk/irreversible vs single reversible edit (default danger for legacy). */
+  severity?: 'normal' | 'danger'
   state?: 'pending' | 'confirmed' | 'rejected' | 'failed'
 }
 

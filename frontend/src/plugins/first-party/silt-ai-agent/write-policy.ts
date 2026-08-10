@@ -50,6 +50,12 @@ export function filterToolsForWritePolicy(
   return tools.filter((t) => !isMutatingTool(t.name))
 }
 
+function clip(s: string, max = 240): string {
+  const t = s.trim()
+  if (t.length <= max) return t
+  return `${t.slice(0, max - 1)}…`
+}
+
 /** Short human summary for the staging card when dispatch stages a mutator. */
 export function previewForMutation(
   toolName: string,
@@ -61,10 +67,13 @@ export function previewForMutation(
       const notebook = str(args.notebook)
       const section = str(args.section)
       const path = [notebook, section, page].filter(Boolean).join('/')
+      const body = str(args.content)
       return {
         kind: 'create_note',
         summary: path ? `Create note on ${path}` : 'Create a note',
-        affectedCount: 1
+        details: body ? clip(body) : undefined,
+        affectedCount: 1,
+        severity: 'normal'
       }
     }
     case 'create_task': {
@@ -74,23 +83,35 @@ export function previewForMutation(
       return {
         kind: 'create_task',
         summary: `Create task: ${short}`,
-        affectedCount: 1
+        details: title && title.length > 60 ? clip(title) : undefined,
+        affectedCount: 1,
+        severity: 'normal'
       }
     }
     case 'update_block': {
       const id = str(args.block_id) || str(args.id)
+      const body = str(args.content)
       return {
         kind: 'update_block',
         summary: id ? `Update block ${id}` : 'Update a block',
-        affectedCount: 1
+        details: body ? clip(body) : undefined,
+        affectedCount: 1,
+        severity: 'normal'
       }
     }
     case 'update_task': {
       const id = str(args.task_id) || str(args.block_id) || str(args.id)
+      const bits: string[] = []
+      if (args.status != null) bits.push(`status=${str(args.status)}`)
+      if (args.due != null) bits.push(`due=${str(args.due)}`)
+      if (args.title != null) bits.push(`title=${clip(str(args.title), 80)}`)
+      if (args.owner != null) bits.push(`owner=${str(args.owner)}`)
       return {
         kind: 'update_task',
         summary: id ? `Update task ${id}` : 'Update a task',
-        affectedCount: 1
+        details: bits.length > 0 ? bits.join('\n') : undefined,
+        affectedCount: 1,
+        severity: 'normal'
       }
     }
     case 'extract_and_save': {
@@ -101,12 +122,20 @@ export function previewForMutation(
             .filter(Boolean)
             .join('/')
         : ''
+      const ids = Array.isArray(args.source_block_ids)
+        ? args.source_block_ids.length
+        : 0
       return {
         kind: 'extract_and_save',
         summary: path
           ? `Extract ${mode} → ${path}`
           : `Extract ${mode} to a new note`,
-        affectedCount: 1
+        details:
+          ids > 0
+            ? `Mode: ${mode}\nSource blocks: ${ids}\nContent is generated after you confirm.`
+            : `Mode: ${mode}\nContent is generated after you confirm.`,
+        affectedCount: 1,
+        severity: 'danger'
       }
     }
     case 'rename_tag': {
@@ -117,11 +146,13 @@ export function previewForMutation(
         summary:
           oldTag && newTag
             ? `Rename tag #${oldTag} → #${newTag}`
-            : 'Rename a tag'
+            : 'Rename a tag',
+        details: 'Rewrites the hashtag across matching blocks in the vault.',
+        severity: 'danger'
       }
     }
     default:
-      return { kind: toolName, summary: toolName }
+      return { kind: toolName, summary: toolName, severity: 'danger' }
   }
 }
 

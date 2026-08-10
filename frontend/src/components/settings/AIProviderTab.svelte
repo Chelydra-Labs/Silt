@@ -512,8 +512,9 @@
                     class="text-text-muted text-type-xs font-label-sm block"
                   >
                     Controls whether the AI agent can create or edit notes and
-                    tasks. Bulk tag rename and multi-block extract always need
-                    Confirm, even when writes apply automatically.
+                    tasks. Default is Confirm writes. Bulk tag rename and
+                    multi-block extract always need Confirm, even when single
+                    edits apply automatically.
                   </span>
                 </div>
                 <select
@@ -535,7 +536,8 @@
                     >Read only — search and read only</option
                   >
                   <option value="confirm"
-                    >Confirm writes — ask before each change</option
+                    >Confirm writes (recommended default) — ask before each
+                    change</option
                   >
                   <option value="auto"
                     >Apply automatically — single edits apply; bulk still

@@ -10,6 +10,7 @@
 import type { PluginAIToolDef, PluginContext } from '../../sdk'
 import {
   type AgentWritesMode,
+  isMutatingTool,
   previewForMutation,
   shouldStageTool
 } from './write-policy'
@@ -63,6 +64,11 @@ export interface StagedPreview {
   details?: string
   /** Optional count of affected targets, for the dialog headline. */
   affectedCount?: number
+  /**
+   * UX severity: bulk/irreversible ops use danger styling; single reversible
+   * edits use a neutral "approve change" card under default confirm mode.
+   */
+  severity?: 'normal' | 'danger'
 }
 
 /**
@@ -284,15 +290,7 @@ export async function dispatchTool(
   const signal = opts?.signal
 
   // Mutating tools are refused entirely in read_only (not staged).
-  if (
-    mode === 'read_only' &&
-    (name === 'create_note' ||
-      name === 'create_task' ||
-      name === 'update_block' ||
-      name === 'update_task' ||
-      name === 'rename_tag' ||
-      name === 'extract_and_save')
-  ) {
+  if (mode === 'read_only' && isMutatingTool(name)) {
     return {
       content: '',
       error: 'Vault writes are disabled (Agent vault writes is Read only).'

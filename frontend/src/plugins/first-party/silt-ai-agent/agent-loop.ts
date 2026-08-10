@@ -431,7 +431,11 @@ function digestToolMessage(content: string): string {
   return `${name} ok${idPart}`
 }
 
-/** Remap local [n] citation markers to a run-global index sequence. */
+/**
+ * Remap local citation markers to a run-global index sequence.
+ * Only rewrites structured tool citation headers (`[n] block …` at line start),
+ * not free-text `[n]` inside vault snippets (footnotes, prose).
+ */
 export function assignEvidenceIndices(
   res: ToolResult,
   nextCiteIndex: { value: number }
@@ -439,17 +443,20 @@ export function assignEvidenceIndices(
   if (!res.evidence?.length) return res
   const oldToNew = new Map<number, number>()
   const evidence = res.evidence.map((e, i) => {
-    const oldIdx = e.citationIndex || i + 1
+    const raw = e.citationIndex
+    const oldIdx =
+      typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : i + 1
     const neu = nextCiteIndex.value++
     oldToNew.set(oldIdx, neu)
     return { ...e, citationIndex: neu }
   })
   let content = res.content
-  // Rewrite higher indices first so [1] does not clobber [10].
+  // Higher indices first so [1] does not clobber [10].
   const pairs = [...oldToNew.entries()].sort((a, b) => b[0] - a[0])
   for (const [oldIdx, neu] of pairs) {
-    const re = new RegExp(`\\[${oldIdx}\\]`, 'g')
-    content = content.replace(re, `[${neu}]`)
+    // Tool formatters emit `[n] block <uuid>` (or similar) at line start.
+    const re = new RegExp(`(^|\\n)\\[${oldIdx}\\](?=\\s+block\\b)`, 'gi')
+    content = content.replace(re, `$1[${neu}]`)
   }
   return { ...res, content, evidence }
 }

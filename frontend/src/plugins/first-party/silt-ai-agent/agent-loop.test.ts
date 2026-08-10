@@ -8,6 +8,7 @@ import type {
   PluginContext
 } from '../../sdk'
 import {
+  assignEvidenceIndices,
   buildSystemPrompt,
   compactAgentMessages,
   createAgentSession,
@@ -723,6 +724,60 @@ describe('agent-loop', () => {
     expect(closes).toHaveLength(1)
   })
 
+  it('assignEvidenceIndices remaps structured citation headers only', () => {
+    const next = { value: 5 }
+    const out = assignEvidenceIndices(
+      {
+        content:
+          '[1] block aaaa\nsee footnote [1] in prose\n[2] block bbbb\n[10] block cccc',
+        evidence: [
+          { citationIndex: 1, blockId: 'aaaa' },
+          { citationIndex: 2, blockId: 'bbbb' },
+          { citationIndex: 10, blockId: 'cccc' }
+        ]
+      },
+      next
+    )
+    expect(out.evidence?.map((e) => e.citationIndex)).toEqual([5, 6, 7])
+    expect(next.value).toBe(8)
+    expect(out.content).toContain('[5] block aaaa')
+    expect(out.content).toContain('[6] block bbbb')
+    expect(out.content).toContain('[7] block cccc')
+    // Free-text [1] in a snippet line must not be rewritten.
+    expect(out.content).toContain('see footnote [1] in prose')
+  })
+
+  it('assignEvidenceIndices chains across tools without colliding indices', () => {
+    const next = { value: 1 }
+    const a = assignEvidenceIndices(
+      {
+        content: '[1] block aaaa',
+        evidence: [{ citationIndex: 1, blockId: 'aaaa' }]
+      },
+      next
+    )
+    const b = assignEvidenceIndices(
+      {
+        content: '[1] block bbbb',
+        evidence: [{ citationIndex: 1, blockId: 'bbbb' }]
+      },
+      next
+    )
+    expect(a.evidence?.[0].citationIndex).toBe(1)
+    expect(b.evidence?.[0].citationIndex).toBe(2)
+    expect(b.content).toContain('[2] block bbbb')
+    expect(a.evidence?.[0].citationIndex).not.toBe(
+      b.evidence?.[0].citationIndex
+    )
+  })
+
+  it('assignEvidenceIndices leaves empty evidence alone', () => {
+    const next = { value: 1 }
+    const out = assignEvidenceIndices({ content: 'none' }, next)
+    expect(out.evidence).toBeUndefined()
+    expect(next.value).toBe(1)
+  })
+
   it('compactAgentMessages digests tool rounds older than the last 3', () => {
     const msgs: PluginAIChatMessage[] = [
       { role: 'system', content: 'sys' },
@@ -1088,6 +1143,58 @@ describe('agent-loop', () => {
     expect(res.cancelled).toBe(true)
     expect(partial).toHaveLength(2)
     expect(partial.every((message) => message.error)).toBe(true)
+  })
+
+  it('dispatches mutators serially (second starts after first finishes)', async () => {
+    const order: string[] = []
+    let firstDone = false
+    // Non-mutating tools still go through serial path when mixed with mutators
+    // only for mutators — use two mutators with auto mode so handlers run.
+    registerTool({
+      name: 'create_note',
+      description: 'create',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => {
+        order.push('create_start')
+        await new Promise((r) => setTimeout(r, 40))
+        firstDone = true
+        order.push('create_end')
+        return { content: 'created' }
+      },
+      commit: async () => ({ content: 'created' })
+    })
+    registerTool({
+      name: 'update_block',
+      description: 'update',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => {
+        order.push(firstDone ? 'update_after' : 'update_overlap')
+        return { content: 'updated' }
+      },
+      commit: async () => ({ content: 'updated' })
+    })
+    const ctx = mockCtx((n) =>
+      n === 1
+        ? mockStream({
+            content: '',
+            model: 'm',
+            tool_calls: [
+              { id: 'c1', name: 'create_note', arguments: { page: 'P' } },
+              { id: 'u1', name: 'update_block', arguments: { block_id: 'b' } }
+            ]
+          })
+        : mockStream({ content: 'done', model: 'm' })
+    )
+    const wp = await import('./write-policy')
+    const spy = vi.spyOn(wp, 'readAgentWritesMode').mockReturnValue('auto')
+    // shouldStageTool must also respect auto — spy is enough if agent-loop
+    // calls through the module export (same binding).
+    try {
+      await runAgent(ctx, 'create a note and update the block', [])
+      expect(order).toEqual(['create_start', 'create_end', 'update_after'])
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
 

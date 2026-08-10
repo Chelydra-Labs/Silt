@@ -205,5 +205,48 @@ describe('tool-registry', () => {
     expect(res.stagedToken).toBeTruthy()
     expect(handler).not.toHaveBeenCalled()
     expect(stageOperation).toHaveBeenCalled()
+    expect(res.stagedPreview?.severity).toBe('normal')
+  })
+
+  it('auto mode runs create_note directly but stages extract_and_save', async () => {
+    stageOperation.mockClear()
+    const createHandler = vi.fn(async () => ({ content: 'created' }))
+    const extractHandler = vi.fn(async () => ({ content: 'extracted' }))
+    registerTool({
+      name: 'create_note',
+      description: 'write',
+      parameters: { type: 'object', properties: {} },
+      handler: createHandler,
+      commit: createHandler
+    })
+    registerTool({
+      name: 'extract_and_save',
+      description: 'extract',
+      parameters: { type: 'object', properties: {} },
+      handler: extractHandler,
+      commit: extractHandler
+    })
+    const direct = await dispatchTool(
+      noopCtx,
+      'create_note',
+      { page: 'P' },
+      { mode: 'auto' }
+    )
+    expect(direct.isStaged).toBeFalsy()
+    expect(direct.content).toBe('created')
+    expect(createHandler).toHaveBeenCalled()
+    expect(stageOperation).not.toHaveBeenCalled()
+
+    stageOperation.mockClear()
+    const staged = await dispatchTool(
+      noopCtx,
+      'extract_and_save',
+      { mode: 'summary' },
+      { mode: 'auto' }
+    )
+    expect(staged.isStaged).toBe(true)
+    expect(extractHandler).not.toHaveBeenCalled()
+    expect(stageOperation).toHaveBeenCalled()
+    expect(staged.stagedPreview?.severity).toBe('danger')
   })
 })

@@ -115,16 +115,25 @@ marker). SQL is parameterized throughout — the agent has no raw-SQL tool.
 
 ## Write policy & untrusted content
 
-- **Direct writes** (`create_note`, `create_task`, `update_block`,
-  `update_task`, `extract_and_save`) apply immediately as single reversible
-  markdown edits, and each emits a redacted `tool_result` audit event (the
-  mutated block's UUID) traceable in the per-plugin `ai.log`.
-- **Staged / destructive** ops (`rename_tag`) pause for explicit confirmation
-  in the drawer before any vault mutation.
+Vault mutations follow **Settings → AI → Agent vault writes**
+(`ai.features.agent_writes`; default **confirm** when unset):
+
+| Mode | Behavior |
+|---|---|
+| **read_only** | Mutating tools are omitted from the catalog and refused if called. |
+| **confirm** (default) | Every mutator stages for Confirm/Reject before any vault write. |
+| **auto** | Single-edit tools (`create_note`, `create_task`, `update_block`, `update_task`) apply immediately as reversible markdown edits; **rename_tag** and **extract_and_save** still always require Confirm. |
+
+- Successful writes emit a redacted `tool_result` audit event (block UUID only)
+  in the per-plugin `ai.log`. Failed extract parses write nothing (no salvage).
+- Mutators run **serially** within a turn; read tools may still batch in parallel.
+- This control is separate from Local MCP `write_enabled` (Settings → AI → Local MCP).
 - Tool results that contain vault text are wrapped in
-  `<vault_data tool="…">…</vault_data>` so the model treats them as data, not
-  instructions. The system prompt also forbids acting on embedded commands
-  found inside tool output.
+  `<vault_data tool="…">…</vault_data>` with breakout-safe body neutralization so
+  the model treats them as data, not instructions. The system prompt also forbids
+  acting on embedded commands found inside tool output.
+- Long chats automatically digest older tool-result bodies (last few tool rounds
+  stay full); there is no user setting for this.
 
 Tool-calling works best on models that advertise tool/function support.
 Small local models may misroute calls; the structural arg-validation in the
@@ -141,7 +150,7 @@ The shared Silt AI drawer shows a structured activity line while a run is live
 | **Thinking…** | Model is planning or writing prose |
 | **Running \<tool\>…** | Friendly label for the active tool (e.g. “Searching notes…”) |
 | **Reviewing results…** | Tool results returned; model is synthesizing |
-| **Waiting for your confirmation…** | Staged destructive op needs Confirm/Reject |
+| **Waiting for your confirmation…** | Staged vault write needs Confirm/Reject |
 | **Applying changes…** | Confirmed staged write is committing |
 | **Done** | Run finished successfully |
 | **Something went wrong** / error text | Terminal failure (also uses `role="alert"`) |

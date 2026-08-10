@@ -252,6 +252,7 @@ export function createAgentCapability(): AIChatCapability {
               summary: event.preview.summary,
               details: event.preview.details,
               affectedCount: event.preview.affectedCount,
+              severity: event.preview.severity ?? 'danger',
               state: 'pending'
             })
           )
