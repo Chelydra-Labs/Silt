@@ -27,21 +27,42 @@ export function isFirstPartyAIPlugin(pluginId: string): boolean {
   return FIRST_PARTY_AI.has(pluginId)
 }
 
+export type AgentWritesMode = 'read_only' | 'confirm' | 'auto'
+
 export interface AIFeaturesSnapshot {
   enabled: boolean
   rag_enabled: boolean
   summaries_enabled: boolean
+  /** Agent vault mutation policy (#924). Missing/invalid → confirm. */
+  agent_writes: AgentWritesMode
+}
+
+export function normalizeAgentWritesMode(value: unknown): AgentWritesMode {
+  if (value === 'read_only' || value === 'confirm' || value === 'auto') {
+    return value
+  }
+  return 'confirm'
 }
 
 /** Read feature flags from the reactive settings store (defaults all off). */
 export function readAIFeatures(): AIFeaturesSnapshot {
   const f = (
-    settings.config?.ai as { features?: AIFeaturesSnapshot } | undefined
+    settings.config?.ai as
+      | {
+          features?: {
+            enabled?: boolean
+            rag_enabled?: boolean
+            summaries_enabled?: boolean
+            agent_writes?: string
+          }
+        }
+      | undefined
   )?.features
   return {
     enabled: f?.enabled === true,
     rag_enabled: f?.rag_enabled === true,
-    summaries_enabled: f?.summaries_enabled === true
+    summaries_enabled: f?.summaries_enabled === true,
+    agent_writes: normalizeAgentWritesMode(f?.agent_writes)
   }
 }
 

@@ -38,6 +38,7 @@
       enabled?: boolean
       rag_enabled?: boolean
       summaries_enabled?: boolean
+      agent_writes?: string
     }) => Promise<void>
   }
 
@@ -61,21 +62,26 @@
   })
 
   // Features live on AIPublicConfig after Phase 2; cast for partial type caches.
-  const features = $derived(
-    (
+  const features = $derived.by(() => {
+    const f = (
       ai.config as {
         features?: {
           enabled?: boolean
           rag_enabled?: boolean
           summaries_enabled?: boolean
+          agent_writes?: string
         }
       } | null
-    )?.features ?? {
-      enabled: false,
-      rag_enabled: false,
-      summaries_enabled: false
+    )?.features
+    const aw = f?.agent_writes
+    return {
+      enabled: f?.enabled === true,
+      rag_enabled: f?.rag_enabled === true,
+      summaries_enabled: f?.summaries_enabled === true,
+      agent_writes:
+        aw === 'read_only' || aw === 'confirm' || aw === 'auto' ? aw : 'confirm'
     }
-  )
+  })
 
   // Fine-tuning modules embed on this page when their feature flag is on.
   // Contexts use the live session token when the plugin is loaded.
@@ -486,6 +492,56 @@
                       summaries_enabled: e.currentTarget.checked
                     })}
                 />
+              </div>
+
+              <div
+                id="ai-agent-writes"
+                class="flex flex-col gap-2 pt-1"
+                class:opacity-50={features.enabled !== true}
+              >
+                <div class="space-y-0.5 min-w-0">
+                  <label
+                    id="ai-agent-writes-label"
+                    for="ai-agent-writes-select"
+                    class="text-text-primary text-type-sm font-semibold block"
+                  >
+                    Agent vault writes
+                  </label>
+                  <span
+                    id="ai-agent-writes-help"
+                    class="text-text-muted text-type-xs font-label-sm block"
+                  >
+                    Controls whether the AI agent can create or edit notes and
+                    tasks. Bulk tag rename and multi-block extract always need
+                    Confirm, even when writes apply automatically.
+                  </span>
+                </div>
+                <select
+                  id="ai-agent-writes-select"
+                  class="bg-surface-input border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-sm max-w-md disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-labelledby="ai-agent-writes-label"
+                  aria-describedby="ai-agent-writes-help"
+                  title={features.enabled !== true
+                    ? 'Enable AI first'
+                    : undefined}
+                  disabled={ai.featuresSaving || features.enabled !== true}
+                  value={features.agent_writes}
+                  onchange={(e) =>
+                    void ai.updateFeatures({
+                      agent_writes: e.currentTarget.value
+                    })}
+                >
+                  <option value="read_only"
+                    >Read only — search and read only</option
+                  >
+                  <option value="confirm"
+                    >Confirm writes — ask before each change</option
+                  >
+                  <option value="auto"
+                    >Apply automatically — single edits apply; bulk still
+                    confirms</option
+                  >
+                </select>
               </div>
             </div>
 

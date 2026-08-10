@@ -32,9 +32,19 @@ const UpdateAIFeatures = (
       enabled?: boolean
       rag_enabled?: boolean
       summaries_enabled?: boolean
+      agent_writes?: string
     }) => Promise<void>
   }
 ).UpdateAIFeatures
+
+export type AgentWritesMode = 'read_only' | 'confirm' | 'auto'
+
+export function normalizeAgentWrites(value: unknown): AgentWritesMode {
+  if (value === 'read_only' || value === 'confirm' || value === 'auto') {
+    return value
+  }
+  return 'confirm'
+}
 import { loadConfig } from '../../../settings/store.svelte'
 import { loadPlugins } from '../../../plugins/loader'
 import { getActiveLocation } from '../../../plugins/location.svelte'
@@ -225,18 +235,20 @@ export function createAIProviderController() {
       config = toPlain(await GetAIProviderConfig())
       if (config) {
         // Ensure features object exists for older snapshots / partial mocks.
-        const cfg = config as {
+        const cfg = config as unknown as {
           features?: {
             enabled: boolean
             rag_enabled: boolean
             summaries_enabled: boolean
+            agent_writes: string
           }
         }
         if (!cfg.features) {
           cfg.features = {
             enabled: false,
             rag_enabled: false,
-            summaries_enabled: false
+            summaries_enabled: false,
+            agent_writes: 'confirm'
           }
         }
         // Sync-by-default if providers match type, url, and key status.
@@ -263,6 +275,7 @@ export function createAIProviderController() {
     enabled?: boolean
     rag_enabled?: boolean
     summaries_enabled?: boolean
+    agent_writes?: string
   }): Promise<void> {
     if (!config) return
     featuresSaving = true
@@ -273,6 +286,7 @@ export function createAIProviderController() {
           enabled?: boolean
           rag_enabled?: boolean
           summaries_enabled?: boolean
+          agent_writes?: string
         }
       }
     ).features
@@ -281,7 +295,10 @@ export function createAIProviderController() {
       enabled: patch.enabled ?? features?.enabled ?? false,
       rag_enabled: patch.rag_enabled ?? features?.rag_enabled ?? false,
       summaries_enabled:
-        patch.summaries_enabled ?? features?.summaries_enabled ?? false
+        patch.summaries_enabled ?? features?.summaries_enabled ?? false,
+      agent_writes: normalizeAgentWrites(
+        patch.agent_writes ?? features?.agent_writes
+      )
     }
     if (!next.enabled) {
       next.rag_enabled = false

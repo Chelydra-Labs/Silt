@@ -331,6 +331,21 @@ const CORE_INDEX: SettingsIndexEntry[] = [
     anchorId: 'ai-search-tuning'
   },
   {
+    label: 'Agent vault writes',
+    keywords: [
+      'agent writes',
+      'confirm',
+      'read only',
+      'apply automatically',
+      'vault mutations',
+      'hitl',
+      'staging',
+      'write policy'
+    ],
+    sectionId: 'ai',
+    anchorId: 'ai-agent-writes'
+  },
+  {
     label: 'Note summaries',
     keywords: ['banner', 'auto_on_open', 'facets', 'summary length'],
     sectionId: 'ai',

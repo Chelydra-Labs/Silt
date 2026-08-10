@@ -119,11 +119,12 @@ type AIPublicConfig struct {
 	KeyringUnusableFor []string                `json:"keyring_unusable_for,omitempty"`
 }
 
-// AIFeaturesPatch is the input to UpdateAIFeatures (#632).
+// AIFeaturesPatch is the input to UpdateAIFeatures (#632, #924).
 type AIFeaturesPatch struct {
-	Enabled          *bool `json:"enabled,omitempty"`
-	RAGEnabled       *bool `json:"rag_enabled,omitempty"`
-	SummariesEnabled *bool `json:"summaries_enabled,omitempty"`
+	Enabled          *bool   `json:"enabled,omitempty"`
+	RAGEnabled       *bool   `json:"rag_enabled,omitempty"`
+	SummariesEnabled *bool   `json:"summaries_enabled,omitempty"`
+	AgentWrites      *string `json:"agent_writes,omitempty"`
 }
 
 // AIProbeResult is the outcome of a Test Connection call. On failure, Kind is
@@ -227,6 +228,13 @@ func (a *App) UpdateAIFeatures(patch AIFeaturesPatch) error {
 	}
 	if patch.SummariesEnabled != nil {
 		f.SummariesEnabled = *patch.SummariesEnabled
+	}
+	if patch.AgentWrites != nil {
+		aw := strings.TrimSpace(*patch.AgentWrites)
+		if !config.IsValidAgentWrites(aw) {
+			return fmt.Errorf(`agent_writes must be "read_only", "confirm", or "auto"`)
+		}
+		f.AgentWrites = aw
 	}
 	next.AI.Features = f
 	wasOn := a.cfg.AI.Features.Enabled
