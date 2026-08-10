@@ -41,7 +41,16 @@ import {
   type ToolEvidence
 } from './tool-registry'
 import { confirmOperation, rejectOperation } from './staging'
-import { UNTRUSTED_CONTENT_SECURITY } from './security'
+import {
+  neutralizeVaultDataMarkers,
+  UNTRUSTED_CONTENT_SECURITY
+} from './security'
+import {
+  filterToolsForWritePolicy,
+  isMutatingTool,
+  readAgentWritesMode,
+  type AgentWritesMode
+} from './write-policy'
 import { formatAIError } from '../../shared/formatAIError'
 
 export const MAX_ITERATIONS = 8
@@ -256,12 +265,14 @@ export function toolCallFingerprint(
 export function buildSystemPrompt(
   ctx: PluginContext,
   location?: UiLocationSnapshot,
-  toolsForTurn?: AgentToolDef[]
+  toolsForTurn?: AgentToolDef[],
+  writeMode?: AgentWritesMode
 ): string {
   const tools = toolsForTurn ?? getTools()
   const toolLines = tools.length
     ? tools.map((t) => `- ${t.name}: ${t.description}`).join('\n')
     : '- (no tools registered)'
+  const mode = writeMode ?? readAgentWritesMode()
   const qaOnly =
     toolsForTurn != null &&
     toolsForTurn.every((t) =>
@@ -286,20 +297,7 @@ export function buildSystemPrompt(
   const useToolsLine = qaOnly
     ? 'Use the available tools to search and read notes.'
     : 'Use the available tools to search, read, create, and organize notes.'
-  const writePolicy = qaOnly
-    ? [
-        'WRITE POLICY: This turn offers read-only vault tools. Answer from search',
-        'and read results. If the user later asks to change the vault, write tools',
-        'may become available on a subsequent turn.'
-      ]
-    : [
-        'WRITE POLICY: Prefer read-only tools first. Direct-write tools (create_note,',
-        'update_block, extract_and_save) apply immediately as single reversible edits.',
-        'Destructive bulk ops (rename_tag) are staged and require user confirmation',
-        'before any vault mutation.',
-        'For page-relative writes ("this page", "here"), target the Current page from',
-        'UI LOCATION unless the user names a different path.'
-      ]
+  const writePolicy = buildWritePolicyLines(mode, qaOnly)
   return [
     'You are Silt AI Agent, a general-purpose assistant with first-class access',
     "to the user's Silt note vault via tools.",
@@ -326,19 +324,134 @@ export function buildSystemPrompt(
   ].join('\n')
 }
 
+function buildWritePolicyLines(
+  mode: AgentWritesMode,
+  qaOnly: boolean
+): string[] {
+  const modeLine = `WRITE POLICY (active mode: ${mode}):`
+  if (mode === 'read_only' || qaOnly) {
+    return [
+      modeLine,
+      mode === 'read_only'
+        ? 'Vault writes are disabled (Read only). Answer from search and read results only.'
+        : 'This turn offers read-only vault tools. Answer from search and read results.',
+      'If the user asks to change the vault while writes are off, explain the setting',
+      'rather than inventing a write. Bulk rename_tag and extract_and_save always require',
+      'user confirmation when writes are enabled.'
+    ]
+  }
+  if (mode === 'auto') {
+    return [
+      modeLine,
+      'Single-edit writes (create_note, create_task, update_block, update_task) may apply',
+      'immediately. Bulk rename_tag and extract_and_save always stage for user confirmation',
+      'before any vault mutation.',
+      'For page-relative writes ("this page", "here"), target the Current page from',
+      'UI LOCATION unless the user names a different path.'
+    ]
+  }
+  // confirm (default)
+  return [
+    modeLine,
+    'All vault-mutating tools stage for user confirmation before applying.',
+    'Bulk rename_tag and extract_and_save always require confirmation.',
+    'For page-relative writes ("this page", "here"), target the Current page from',
+    'UI LOCATION unless the user names a different path.'
+  ]
+}
+
 /**
  * Wrap vault-derived tool content in hard delimiters so the model can
  * distinguish untrusted data from instructions (defense-in-depth beyond the
- * system-prompt SECURITY lines).
+ * system-prompt SECURITY lines). Body markers are neutralized so note text
+ * cannot close the wrapper early.
  */
 export function wrapUntrustedToolResult(
   toolName: string,
   content: string
 ): string {
-  const body = truncateToolResult(content)
-  // Angle-bracket vault_data tags are unambiguous delimiters for untrusted
-  // note content so the model cannot confuse them with system instructions.
+  const body = neutralizeVaultDataMarkers(truncateToolResult(content))
   return `<vault_data tool="${toolName}">\n${body}\n</vault_data>`
+}
+
+export { neutralizeVaultDataMarkers }
+
+/** Keep the last N tool-result rounds in full; digest older tool messages. */
+export const HISTORY_FULL_TOOL_ROUNDS = 3
+
+/**
+ * Compact chat history before each complete(): keep system + prose; replace
+ * tool-role bodies older than the last HISTORY_FULL_TOOL_ROUNDS tool rounds
+ * with a one-line digest (tool name + ok/error + block ids when present).
+ */
+export function compactAgentMessages(
+  messages: PluginAIChatMessage[]
+): PluginAIChatMessage[] {
+  // A tool round = consecutive tool messages after an assistant tool_calls turn.
+  const toolRoundStarts: number[] = []
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]
+    if (m.role !== 'tool') continue
+    const prev = messages[i - 1]
+    if (!prev || prev.role !== 'tool') {
+      toolRoundStarts.push(i)
+    }
+  }
+  if (toolRoundStarts.length <= HISTORY_FULL_TOOL_ROUNDS) {
+    return messages.map((m) => ({ ...m }))
+  }
+  const keepFrom =
+    toolRoundStarts[toolRoundStarts.length - HISTORY_FULL_TOOL_ROUNDS]
+
+  return messages.map((m, i) => {
+    if (m.role !== 'tool' || i >= keepFrom) {
+      return { ...m }
+    }
+    const content = typeof m.content === 'string' ? m.content : ''
+    const digest = digestToolMessage(content)
+    return { ...m, content: digest }
+  })
+}
+
+function digestToolMessage(content: string): string {
+  const err = content.match(/^Error:\s*(.+)/s)
+  if (err) {
+    const short = err[1].trim().slice(0, 80)
+    return `tool error: ${short}`
+  }
+  const toolMatch = content.match(/<vault_data tool="([^"]+)">/)
+  const name = toolMatch?.[1] ?? 'tool'
+  const blockIds = [
+    ...content.matchAll(
+      /\bblock\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi
+    )
+  ].map((m) => m[1])
+  const unique = [...new Set(blockIds)].slice(0, 5)
+  const idPart = unique.length > 0 ? ` blocks=${unique.join(',')}` : ''
+  return `${name} ok${idPart}`
+}
+
+/** Remap local [n] citation markers to a run-global index sequence. */
+export function assignEvidenceIndices(
+  res: ToolResult,
+  nextCiteIndex: { value: number }
+): ToolResult {
+  if (!res.evidence?.length) return res
+  const oldToNew = new Map<number, number>()
+  const evidence = res.evidence.map((e, i) => {
+    const oldIdx = e.citationIndex || i + 1
+    const neu = nextCiteIndex.value++
+    oldToNew.set(oldIdx, neu)
+    return { ...e, citationIndex: neu }
+  })
+  let content = res.content
+  // Rewrite higher indices first so [1] does not clobber [10].
+  const pairs = [...oldToNew.entries()].sort((a, b) => b[0] - a[0])
+  for (const [oldIdx, neu] of pairs) {
+    const re = new RegExp(`\\[${oldIdx}\\]`, 'g')
+    content = content.replace(re, `[${neu}]`)
+  }
+  return { ...res, content, evidence }
 }
 
 /** Truncate a tool result body to TOOL_RESULT_MAX_BYTES with a marker. */
@@ -595,16 +708,21 @@ export async function runAgent(
     typeof ctx.getUiLocation === 'function'
       ? ctx.getUiLocation()
       : captureUiLocation()
+  const writeMode = readAgentWritesMode()
   // Q&A subset by default; full catalog when the user message shows write intent.
   const mode: 'qa' | 'full' = detectWriteIntent(userMessage) ? 'full' : 'qa'
   const allTools = getTools()
   const toolsForMode = (): AgentToolDef[] => {
-    if (mode === 'full') return allTools
-    const qaSet = new Set<string>(QA_TOOL_NAMES)
-    return allTools.filter((t) => qaSet.has(t.name))
+    const base =
+      mode === 'full'
+        ? allTools
+        : allTools.filter((t) =>
+            (QA_TOOL_NAMES as readonly string[]).includes(t.name)
+          )
+    return filterToolsForWritePolicy(base, writeMode)
   }
   let toolsForTurn = toolsForMode()
-  const systemPrompt = buildSystemPrompt(ctx, location, toolsForTurn)
+  const systemPrompt = buildSystemPrompt(ctx, location, toolsForTurn, writeMode)
   const messages: PluginAIChatMessage[] = [
     { role: 'system', content: systemPrompt },
     ...chatHistory,
@@ -619,6 +737,8 @@ export async function runAgent(
   let searchNotesDispatchCount = 0
   /** Fingerprints of tool calls already dispatched this turn. */
   const seenToolFingerprints = new Set<string>()
+  /** Run-global citation indices across tool results (#925). */
+  const nextCiteIndex = { value: 1 }
   try {
     while (iterations < MAX_ITERATIONS) {
       if (cancelled()) {
@@ -647,11 +767,12 @@ export async function runAgent(
         })
       }
       toolsForTurn = toolsForMode()
+      const compacted = compactAgentMessages(messages)
       const completeReq = {
         // Providers receive a stable request snapshot; later tool-result
         // appends must not mutate an earlier request retained by a test
         // double or transport adapter.
-        messages: messages.map((message) => ({
+        messages: compacted.map((message) => ({
           ...message,
           ...(message.tool_calls
             ? { tool_calls: message.tool_calls.map((call) => ({ ...call })) }
@@ -734,104 +855,123 @@ export async function runAgent(
       })
       opts.onAssistantToolCalls?.(calls, lastText)
 
-      // Dispatch all requested tools in parallel; surface each to the UX.
-      // Staged results are NOT fed to the model — they pause the loop until
-      // the UX resolves them (onStaging + awaitStaging), then their commit
-      // outcome (or a "rejected" message) becomes the tool message.
-      // Tool handlers cannot be preempted mid-IPC: dispatchTool has no signal
-      // parameter. raceAbort only abandons the caller's wait; an in-flight
-      // mutation may still complete. The pre-dispatch gate below prevents
-      // starting new mutations after Stop.
-      const results = await Promise.allSettled(
-        calls.map(async (call) => {
-          // Pre-dispatch gate: if the run was already cancelled (Stop pressed
-          // during the model call), do NOT start the tool — direct-write tools
-          // would otherwise mutate the vault after the user stopped.
-          let res: ToolResult
-          try {
-            if (opts.signal?.aborted) {
-              res = { content: '', error: 'Cancelled before tool completed.' }
-            } else {
-              const args = call.arguments ?? {}
-              const fp = toolCallFingerprint(call.name, args)
-              // Dup guard before handler: same normalized name+args → error.
-              if (seenToolFingerprints.has(fp)) {
-                res = {
-                  content: '',
-                  error:
-                    'Duplicate tool call with the same arguments. Answer from existing evidence or change your approach/arguments.'
-                }
-              } else if (
-                call.name === 'search_notes' &&
-                searchNotesDispatchCount >= MAX_SEARCH_NOTES_PER_TURN
-              ) {
-                // Parallel multi-search blast: enforce budget before dispatch.
-                seenToolFingerprints.add(fp)
-                res = {
-                  content: '',
-                  error:
-                    `Search budget reached (max ${MAX_SEARCH_NOTES_PER_TURN} ` +
-                    'search_notes per turn). Answer from existing evidence or ' +
-                    'stop calling search_notes.'
-                }
-              } else {
-                seenToolFingerprints.add(fp)
-                if (call.name === 'search_notes') {
-                  searchNotesDispatchCount++
-                }
-                opts.onToolCall?.({
-                  id: call.id,
-                  name: call.name,
-                  args
-                })
-                void ctx.ai.auditEvent?.({
-                  kind: 'tool_call',
-                  tool: call.name,
-                  tool_call_id: call.id,
-                  status: 'start'
-                })
-                res = await raceAbort(
-                  dispatchTool(ctx, call.name, args),
-                  opts.signal
-                )
+      // Dispatch reads in parallel batches; mutators serially (#924). Staged
+      // results pause via awaitStaging; commit outcome becomes the tool message.
+      // raceAbort abandons the wait on Stop; pre-dispatch gate blocks new work.
+      type CallOutcome = {
+        call: (typeof calls)[number]
+        res: ToolResult & { truncated?: boolean }
+      }
+
+      const dispatchOne = async (
+        call: (typeof calls)[number]
+      ): Promise<CallOutcome> => {
+        let res: ToolResult
+        try {
+          if (opts.signal?.aborted) {
+            res = { content: '', error: 'Cancelled before tool completed.' }
+          } else {
+            const args = call.arguments ?? {}
+            const fp = toolCallFingerprint(call.name, args)
+            if (seenToolFingerprints.has(fp)) {
+              res = {
+                content: '',
+                error:
+                  'Duplicate tool call with the same arguments. Answer from existing evidence or change your approach/arguments.'
               }
+            } else if (
+              call.name === 'search_notes' &&
+              searchNotesDispatchCount >= MAX_SEARCH_NOTES_PER_TURN
+            ) {
+              seenToolFingerprints.add(fp)
+              res = {
+                content: '',
+                error:
+                  `Search budget reached (max ${MAX_SEARCH_NOTES_PER_TURN} ` +
+                  'search_notes per turn). Answer from existing evidence or ' +
+                  'stop calling search_notes.'
+              }
+            } else {
+              seenToolFingerprints.add(fp)
+              if (call.name === 'search_notes') {
+                searchNotesDispatchCount++
+              }
+              opts.onToolCall?.({
+                id: call.id,
+                name: call.name,
+                args
+              })
+              void ctx.ai.auditEvent?.({
+                kind: 'tool_call',
+                tool: call.name,
+                tool_call_id: call.id,
+                status: 'start'
+              })
+              res = await raceAbort(
+                dispatchTool(ctx, call.name, args, {
+                  mode: writeMode,
+                  signal: opts.signal
+                }),
+                opts.signal
+              )
+              res = assignEvidenceIndices(res, nextCiteIndex)
             }
-          } catch (error: unknown) {
-            const message =
-              isAbortError(error) || cancelled()
-                ? 'Cancelled before tool completed.'
-                : formatAIError(error)
-            res = { content: '', error: message }
           }
-          // The dispatch callback must never reject: a thrown UX/visible
-          // callback would otherwise drop this call's tool message and leave
-          // the assistant tool_call without a result (a provider protocol
-          // error on the next turn). Convert any such throw into the result.
-          const visible = visibleToolResult(res)
-          void ctx.ai.auditEvent?.({
-            kind: 'tool_call',
-            tool: call.name,
-            tool_call_id: call.id,
-            status: visible.error
-              ? 'error'
-              : visible.isStaged
-                ? 'staged'
-                : 'ok',
-            // Do not send raw args/content — server redacts, but keep payload lean.
-            staged: Boolean(visible.isStaged)
-          })
-          try {
-            opts.onToolResult?.({
-              id: call.id,
-              name: call.name,
-              result: visible
-            })
-          } catch {
-            /* a UX callback error must not abort the tool-result protocol */
-          }
-          return { call, res: visible }
+        } catch (error: unknown) {
+          const message =
+            isAbortError(error) || cancelled()
+              ? 'Cancelled before tool completed.'
+              : formatAIError(error)
+          res = { content: '', error: message }
+        }
+        const visible = visibleToolResult(res)
+        void ctx.ai.auditEvent?.({
+          kind: 'tool_call',
+          tool: call.name,
+          tool_call_id: call.id,
+          status: visible.error ? 'error' : visible.isStaged ? 'staged' : 'ok',
+          staged: Boolean(visible.isStaged)
         })
-      )
+        try {
+          opts.onToolResult?.({
+            id: call.id,
+            name: call.name,
+            result: visible
+          })
+        } catch {
+          /* a UX callback error must not abort the tool-result protocol */
+        }
+        return { call, res: visible }
+      }
+
+      const settleOne = async (
+        call: (typeof calls)[number]
+      ): Promise<PromiseSettledResult<CallOutcome>> => {
+        try {
+          return { status: 'fulfilled', value: await dispatchOne(call) }
+        } catch (reason) {
+          return { status: 'rejected', reason }
+        }
+      }
+
+      const results: PromiseSettledResult<CallOutcome>[] = []
+      let callIdx = 0
+      while (callIdx < calls.length) {
+        if (!isMutatingTool(calls[callIdx].name)) {
+          const batch: (typeof calls)[number][] = []
+          while (
+            callIdx < calls.length &&
+            !isMutatingTool(calls[callIdx].name)
+          ) {
+            batch.push(calls[callIdx++])
+          }
+          results.push(
+            ...(await Promise.allSettled(batch.map((c) => dispatchOne(c))))
+          )
+        } else {
+          results.push(await settleOne(calls[callIdx++]))
+        }
+      }
       if (cancelled()) {
         // Promise.allSettled has only waited for the abort races, not for
         // underlying tools that ignored the signal. Report what each call

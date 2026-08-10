@@ -11,7 +11,7 @@ import type { PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
 import type { AgentToolDef, ToolResult } from '../tool-registry'
 import { stageOperation } from '../staging'
-import { breadcrumb, clampInt } from './_util'
+import { auditWrite, breadcrumb, clampInt } from './_util'
 
 // --- list_tags ------------------------------------------------------------
 
@@ -230,11 +230,13 @@ export async function commitRenameTag(
     !isValidTagPath(oldTag) ||
     !isValidTagPath(newTag)
   ) {
+    auditWrite(ctx, 'rename_tag', 'error')
     return { content: '', error: 'staged rename_tag params were malformed' }
   }
 
   const { rows } = await queryExactTag(ctx, oldTag)
   if (rows.length === 0) {
+    auditWrite(ctx, 'rename_tag', 'ok')
     return {
       content: `No blocks carry tag #${oldTag}; nothing renamed.`
     }
@@ -268,11 +270,13 @@ export async function commitRenameTag(
 
   const summary = `Renamed #${oldTag} → #${newTag} in ${renamed} block${renamed === 1 ? '' : 's'}.`
   if (failed.length > 0) {
+    auditWrite(ctx, 'rename_tag', 'error')
     return {
       content: `${summary} ${failed.length} block(s) failed: ${failed.join(', ')}`,
       error: `mutateBlock failed for ${failed.length} block(s)`
     }
   }
+  auditWrite(ctx, 'rename_tag', 'ok')
   return { content: summary }
 }
 

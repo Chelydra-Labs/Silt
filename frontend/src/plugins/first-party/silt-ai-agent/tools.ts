@@ -51,32 +51,52 @@ export const RAG_TOOL_NAMES = new Set([
   'suggest_link_targets'
 ])
 
+// Mutators register commit = handler so dispatch can stage without running the
+// write; materializeToolMessage calls commit after user confirm (#924).
 const P0_TOOLS: AgentToolDef[] = [
   { ...searchNotesToolDef, handler: handleSearchNotes },
   { ...readBlocksToolDef, handler: handleReadBlocks },
   { ...getBacklinksToolDef, handler: handleGetBacklinks },
   { ...queryTasksToolDef, handler: handleQueryTasks },
-  { ...createNoteToolDef, handler: handleCreateNote },
-  { ...createTaskToolDef, handler: handleCreateTask }
+  {
+    ...createNoteToolDef,
+    handler: handleCreateNote,
+    commit: handleCreateNote
+  },
+  {
+    ...createTaskToolDef,
+    handler: handleCreateTask,
+    commit: handleCreateTask
+  }
 ]
 
-/** P1 tools (#602–#604). rename_tag is staged and carries its commit half. */
+/** P1 tools (#602–#604). rename_tag stages in its handler; commit applies. */
 const P1_TOOLS: AgentToolDef[] = [
   { ...getRelatedNotesToolDef, handler: handleGetRelatedNotes },
-  { ...updateBlockToolDef, handler: handleUpdateBlock },
-  { ...updateTaskToolDef, handler: handleUpdateTask },
+  {
+    ...updateBlockToolDef,
+    handler: handleUpdateBlock,
+    commit: handleUpdateBlock
+  },
+  {
+    ...updateTaskToolDef,
+    handler: handleUpdateTask,
+    commit: handleUpdateTask
+  },
   listTagsTool,
   findUntaggedTool,
-  // rename_tag is also exported with handler/commit wired; the explicit form
-  // below documents the staged-tool contract inline for readers of this file.
   { ...renameTagToolDef, handler: handleRenameTag, commit: commitRenameTag }
 ]
 
-/** P2 tools (#606–#608). All read-only or write-only-to-a-new-note. */
+/** P2 tools (#606–#608). extract_and_save always confirms; commit writes. */
 const P2_TOOLS: AgentToolDef[] = [
   { ...getVaultStatisticsToolDef, handler: handleGetVaultStatistics },
   { ...suggestLinkTargetsToolDef, handler: handleSuggestLinkTargets },
-  { ...extractAndSaveToolDef, handler: handleExtractAndSave }
+  {
+    ...extractAndSaveToolDef,
+    handler: handleExtractAndSave,
+    commit: handleExtractAndSave
+  }
 ]
 
 function registerFiltered(tools: AgentToolDef[]): void {

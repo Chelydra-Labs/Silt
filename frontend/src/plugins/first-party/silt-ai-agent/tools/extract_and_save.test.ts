@@ -250,8 +250,8 @@ describe('extract_and_save', () => {
     expect(user).toContain('</vault_data>')
   })
 
-  it('falls back to a salvage block when the model returns non-JSON', async () => {
-    const { ctx, createBlock } = makeCtx({
+  it('returns error and writes nothing when the model returns non-JSON', async () => {
+    const { ctx, createBlock, createPage } = makeCtx({
       sources: SOURCES,
       completeContent: 'Sorry, I could not extract anything.'
     })
@@ -260,17 +260,13 @@ describe('extract_and_save', () => {
       mode: 'flashcards',
       target: TARGET
     })
-    // Did not crash; wrote exactly one salvage block carrying the raw text.
-    expect(createBlock).toHaveBeenCalledTimes(1)
-    const text = (createBlock.mock.calls[0][0] as { text: string }).text
-    expect(text).toMatch(/extraction failed/i)
-    expect(text).toContain('Sorry, I could not extract anything.')
-    // Warning surfaced to the agent.
-    expect(res.content).toMatch(/⚠/)
+    expect(res.error).toMatch(/not JSON|did not match/i)
+    expect(createBlock).not.toHaveBeenCalled()
+    expect(createPage).not.toHaveBeenCalled()
   })
 
-  it('falls back when ctx.ai.complete throws', async () => {
-    const { ctx, createBlock } = makeCtx({
+  it('returns error and writes nothing when ctx.ai.complete throws', async () => {
+    const { ctx, createBlock, createPage } = makeCtx({
       sources: SOURCES,
       completeError: new Error('model unreachable')
     })
@@ -279,11 +275,31 @@ describe('extract_and_save', () => {
       mode: 'summary',
       target: TARGET
     })
-    expect(createBlock).toHaveBeenCalledTimes(1)
-    const text = (createBlock.mock.calls[0][0] as { text: string }).text
-    expect(text).toMatch(/extraction call failed/i)
-    expect(text).toContain('model unreachable')
-    expect(res.content).toMatch(/⚠/)
+    expect(res.error).toMatch(/extraction call failed/)
+    expect(res.error).toContain('model unreachable')
+    expect(createBlock).not.toHaveBeenCalled()
+    expect(createPage).not.toHaveBeenCalled()
+  })
+
+  it('aborts before write when signal is already aborted', async () => {
+    const { ctx, createBlock, createPage } = makeCtx({
+      sources: SOURCES,
+      completeContent: JSON.stringify({ summary: 'ok.' })
+    })
+    const ac = new AbortController()
+    ac.abort()
+    const res = await handleExtractAndSave(
+      ctx,
+      {
+        source_block_ids: ['src-1'],
+        mode: 'summary',
+        target: TARGET
+      },
+      ac.signal
+    )
+    expect(res.error).toMatch(/Cancelled/)
+    expect(createBlock).not.toHaveBeenCalled()
+    expect(createPage).not.toHaveBeenCalled()
   })
 
   it('reads source blocks via parameterized IN (no interpolation)', async () => {
@@ -340,15 +356,14 @@ describe('extract_and_save', () => {
 
   it('parseExtraction handles ```json fenced responses', () => {
     const parsed = parseExtraction('```json\n{"summary":"hi"}\n```', 'summary')
-    expect(parsed.salvaged).toBe(false)
+    expect(parsed.error).toBeUndefined()
     expect(parsed.blocks).toEqual(['hi'])
   })
 
-  it('parseExtraction returns salvaged:true on invalid JSON', () => {
+  it('parseExtraction returns error on invalid JSON', () => {
     const parsed = parseExtraction('not json at all', 'summary')
-    expect(parsed.salvaged).toBe(true)
     expect(parsed.blocks).toEqual([])
-    expect(parsed.warning).toMatch(/not JSON/i)
+    expect(parsed.error).toMatch(/not JSON/i)
   })
 
   it('parseExtraction drops items missing required fields', () => {
@@ -381,19 +396,19 @@ describe('extract_and_save', () => {
     expect(parsed.blocks[0]).toContain('…[truncated]')
   })
 
-  it('caps salvaged raw model output before writing it', async () => {
-    const { ctx, createBlock } = makeCtx({
+  it('does not write when model output is non-JSON (no salvage)', async () => {
+    const { ctx, createBlock, createPage } = makeCtx({
       sources: SOURCES,
       completeContent: 'not json ' + 'x'.repeat(20_000)
     })
-    await handleExtractAndSave(ctx, {
+    const res = await handleExtractAndSave(ctx, {
       source_block_ids: ['src-1'],
       mode: 'summary',
       target: TARGET
     })
-    const text = (createBlock.mock.calls[0][0] as { text: string }).text
-    expect(text.length).toBeLessThan(8_300)
-    expect(text).toContain('…[truncated]')
+    expect(res.error).toBeTruthy()
+    expect(createBlock).not.toHaveBeenCalled()
+    expect(createPage).not.toHaveBeenCalled()
   })
 
   it('emits a tool_result audit event on success', async () => {

@@ -157,8 +157,24 @@ export async function handleQueryTasks(
   }
 
   const lines = tasks.map((t, i) => formatTask(i + 1, t))
+  const evidence = tasks
+    .map((t, i) =>
+      t.id
+        ? {
+            citationIndex: i + 1,
+            blockId: t.id,
+            notebook: t.notebook,
+            section: t.section,
+            page: t.page,
+            snippet: (t.clean_content ?? '').slice(0, 200),
+            title: breadcrumb(t.notebook, t.section, t.page)
+          }
+        : null
+    )
+    .filter((e): e is NonNullable<typeof e> => e != null)
   return {
-    content: `${tasks.length} task(s):\n\n${lines.join('\n\n')}`
+    content: `${tasks.length} task(s):\n\n${lines.join('\n\n')}`,
+    ...(evidence.length > 0 ? { evidence } : {})
   }
 }
 

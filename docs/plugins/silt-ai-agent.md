@@ -59,20 +59,26 @@ the same data via `ctx.getUiLocation()`.
 ### Tool catalog
 
 Fifteen tools, registered in three tiers. Most are read-only and run inline.
-Three tiers of write safety apply:
+Write safety is controlled by **Settings → AI → Agent vault writes**
+(`ai.features.agent_writes`):
 
-- **Read-only** — query the vault and return text; no mutation.
-- **Direct write** — append or rewrite markdown. These are *not* staged: each is
-  a single, reversible edit (markdown is the source of truth and each change is
-  one undo step). `extract_and_save` only ever writes to a brand-new page, so
-  source blocks are never touched. `create_task` / `update_task` route task
-  structured fields (status, owner, due, priority, tags, recurrence, …) through
-  the dedicated SDK setters, not the prose — `update_block` remains prose-only.
-  A `status: DONE` on a recurring task spawns the next instance; `update_task`
-  returns the spawned instance's id directly from the transition.
-- **Staged (destructive)** — `rename_tag` rewrites the hashtag token across
-  every matching block in one shot, so it routes through the confirmation gate
-  in **Safety model** below before any block is touched.
+| Mode | Behavior |
+|---|---|
+| **read_only** | Mutating tools are omitted from the catalog and refused if called. |
+| **confirm** (default) | All mutators stage for HITL confirmation before any vault write. |
+| **auto** | Single-edit writes (`create_note`, `create_task`, `update_block`, `update_task`) run immediately; **rename_tag** and **extract_and_save** always confirm. |
+
+- **Read-only** — query the vault and return text; no mutation. Retrieval tools
+  (`search_notes`, `read_blocks`, `get_backlinks`, `query_tasks`,
+  `get_related_notes`, `suggest_link_targets`) attach structured **evidence**
+  with citation indices for the shared drawer.
+- **Mutating** — `create_*` / `update_*` / `extract_and_save` / `rename_tag`.
+  In confirm mode the harness stages them (commit runs the real handler after
+  you approve). `extract_and_save` never salvages failed model output into the
+  vault — parse/model errors return an error and write nothing. Mutators
+  dispatch **serially**; read tools may still run in parallel batches.
+- **Always confirm** — bulk `rename_tag` and nested-model `extract_and_save`
+  require confirmation even in **auto**.
 
 | Tier | Tool | Safety | Parameters |
 |---|---|---|---|
@@ -80,17 +86,17 @@ Three tiers of write safety apply:
 | | `read_blocks` | read-only | `block_ids` (req, max 20), `include_context?` (default true — parent + siblings) |
 | | `get_backlinks` | read-only | `target` (req, UUID or page path), `include_embeds?` (default true), `max_results?` (1–100, default 20) |
 | | `query_tasks` | read-only | `status?`, `owner?`, `priority_min?` (1–3), `due_before?`, `due_after?`, `tags?`, `notebook?`, `is_blocked?`, `limit?` (1–50, default 20) |
-| | `create_note` | direct write | `page` (req), `content` (req), `notebook?` (default = active), `section?`, `tags?` |
-| | `create_task` | direct write | `text` (req), `due?`, `owner?`, `priority?` (1–3), `tags?`, `notebook?`/`section?`/`page?`/`after?` (omit for a standalone task in `.silt/tasks.md`) |
+| | `create_note` | mutate (confirm/auto) | `page` (req), `content` (req), `notebook?` (default = active), `section?`, `tags?` |
+| | `create_task` | mutate (confirm/auto) | `text` (req), `due?`, `owner?`, `priority?` (1–3), `tags?`, `notebook?`/`section?`/`page?`/`after?` (omit for a standalone task in `.silt/tasks.md`) |
 | **P1** | `get_related_notes` | read-only | `block_id` (req), `top_k?` (1–50, default 10), `min_score?` (0–1, default 0.5) |
-| | `update_block` | direct write | `block_id` (req), `content` (req), `tags?` (TASK → `setTaskTags`; else folded as `#hashtags`) |
-| | `update_task` | direct write | `task_id` (req), `status?` (TODO/DOING/DONE), `due?`, `owner?`, `priority?` (1–3), `tags?`, `recurrence?`, `estimate?`, `blocked_by?`, `title?` (only supplied fields change; empty clears) |
+| | `update_block` | mutate (confirm/auto) | `block_id` (req), `content` (req), `tags?` (TASK → `setTaskTags`; else folded as `#hashtags`) |
+| | `update_task` | mutate (confirm/auto) | `task_id` (req), `status?` (TODO/DOING/DONE), `due?`, `owner?`, `priority?` (1–3), `tags?`, `recurrence?`, `estimate?`, `blocked_by?`, `title?` (only supplied fields change; empty clears) |
 | | `list_tags` | read-only | _(none)_ — tag paths with usage counts, top 200 |
 | | `find_untagged` | read-only | `scope?` (notebook), `limit?` (1–100, default 20) — TASK blocks with no tags |
-| | `rename_tag` | **staged** | `old_tag` (req), `new_tag` (req) — bulk `#hashtag` rewrite |
+| | `rename_tag` | **always staged** | `old_tag` (req), `new_tag` (req) — bulk `#hashtag` rewrite |
 | **P2** | `get_vault_statistics` | read-only | `scope?` (notebook) — block/task counts, orphans, stale tasks, top tags, recent edits |
 | | `suggest_link_targets` | read-only | `block_id` (req), `max_suggestions?` (1–20, default 5) — excludes already-linked targets |
-| | `extract_and_save` | direct write | `source_block_ids` (req, max 20), `mode` (req: `summary`\|`flashcards`\|`qa_pairs`\|`action_items`), `target` (req: `{notebook, page, section?}`) |
+| | `extract_and_save` | **always staged** | `source_block_ids` (req, max 20), `mode` (req: `summary`\|`flashcards`\|`qa_pairs`\|`action_items`), `target` (req: `{notebook, page, section?}`) |
 
 Required parameters are marked `(req)`; others are optional. Every tool result
 fed to the model is capped at 10 KB (larger bodies carry a visible `[… truncated]`
@@ -204,10 +210,15 @@ index (double embed cost on large vaults is expected in v1).
 - **Q&A tool subset.** Default catalog for a turn is read-only:
   `search_notes`, `read_blocks`, `query_tasks`, `get_backlinks` (∩ registered /
   RAG gate). Write/organize intent in the **user message at turn start** opens
-  the **full** catalog for that turn. Catalog mode does not flip mid-turn
-  (write tools are not offered in Q&A mode, so a mid-turn expand cannot fire).
-  If you need writes after a pure Q&A turn, start a new message with create/edit
-  language. System prompt lists the same tools as the `complete` catalog.
+  the **full** catalog for that turn (then filtered by `agent_writes`). Catalog
+  mode does not flip mid-turn. System prompt lists the same tools as the
+  `complete` catalog and states the active write mode.
+- **History budget.** Before each model call, tool-result messages older than
+  the last **3** tool rounds are compacted to a one-line digest so long turns
+  stay within context.
+- **Untrusted wrap.** Tool bodies are wrapped in `<vault_data tool="…">…</vault_data>`;
+  any `vault_data` markers inside the body are neutralized so note text cannot
+  close the wrapper early.
 - **Sufficiency.** After each tool result, if `<vault_data>` already answers,
   the model should respond and stop — not call more tools.
 - **Hard stop banner** appears only when forced wrap-up still produces no text.
@@ -224,15 +235,14 @@ index (double embed cost on large vaults is expected in v1).
 
 ## Safety model
 
-Destructive operations — today `rename_tag`, and future delete / merge /
-bulk-rewrite tools — cannot be undone from the model's side, so the agent
-**stages** them rather than executing directly:
+Vault mutations follow `agent_writes` (above). When staging applies, the agent
+**stages** rather than executing directly:
 
-1. The tool returns a **preview** ("Rename tag #work → #project across 17
-   blocks") plus a **single-use token**.
+1. Dispatch (or the tool handler for `rename_tag`) returns a **preview** plus a
+   **single-use token**.
 2. The loop pauses; the chat surfaces a confirm dialog. The model does not
    see the staged payload — it only learns the outcome after you resolve.
-3. **Confirm** redeems the token and runs the tool's commit half against
+3. **Confirm** redeems the token and runs the tool's **commit** half against
    the **stored** parameters (the model cannot mutate the op between
    staging and confirmation). **Reject** marks the token consumed and feeds
    "rejected by user" back to the model so it can re-plan.
