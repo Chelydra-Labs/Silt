@@ -22,3 +22,5 @@ Curated, user-facing help articles shipped with the AI agent. The
 5. When product docs under `docs/` change, update the curated excerpt here
    (do not auto-import eng docs wholesale).
 6. Run agent unit tests (`search_product_docs` / corpus search) after edits.
+7. Prefer covering real user how-tos (slash commands, tables, toolbar paths)
+   with current UI labels from the app — not engineering SPECS dumps.

@@ -100,5 +100,45 @@ describe('shipped product-docs corpus', () => {
     const templates = searchProductDocs('page templates custom')
     expect(templates.length).toBeGreaterThan(0)
     expect(templates.some((h) => h.docId === 'templates')).toBe(true)
+
+    const tableSlash = searchProductDocs(
+      'how to create a table using a slash command'
+    )
+    expect(tableSlash.length).toBeGreaterThan(0)
+    expect(
+      tableSlash.some(
+        (h) =>
+          h.docId === 'tables' ||
+          h.docId === 'slash-commands' ||
+          /table/i.test(h.excerpt + h.displayTitle)
+      )
+    ).toBe(true)
+    expect(tableSlash[0].excerpt + tableSlash[0].displayTitle).toMatch(
+      /table|slash|\/\s*|3×3|Custom table/i
+    )
+
+    const goldens: Array<{ q: string; docId: string }> = [
+      {
+        q: 'how do wiki links and backlinks work',
+        docId: 'wiki-links-and-backlinks'
+      },
+      { q: 'tasks hub board calendar list view', docId: 'tasks-hub' },
+      {
+        q: 'page properties assign type Ctrl',
+        docId: 'page-properties-and-types'
+      },
+      { q: 'link external folder linked notebook', docId: 'linked-notebooks' },
+      { q: 'attach file image attachments folder', docId: 'attachments' },
+      { q: 'search vault vs semantic search AI', docId: 'search-and-find' },
+      { q: 'preview tab pin double click page', docId: 'navigation-and-tabs' }
+    ]
+    for (const { q, docId } of goldens) {
+      const hits = searchProductDocs(q)
+      expect(hits.length, q).toBeGreaterThan(0)
+      expect(
+        hits.some((h) => h.docId === docId),
+        `${q} → expect ${docId}, got ${hits.map((h) => h.docId).join(',')}`
+      ).toBe(true)
+    }
   })
 })
