@@ -318,7 +318,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: true,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       })
       render(AIProviderTab)
@@ -347,7 +348,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: true,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       })
       render(AIProviderTab)
@@ -371,7 +373,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: true,
           rag_enabled: true,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       })
       render(AIProviderTab)
@@ -391,7 +394,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: true,
           rag_enabled: false,
-          summaries_enabled: true
+          summaries_enabled: true,
+          agent_writes: 'confirm'
         }
       })
       render(AIProviderTab)
@@ -454,7 +458,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: true,
           rag_enabled: true,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         },
         embedding: {
           provider_type: 'openai-compatible',
@@ -619,7 +624,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: false,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       }
       mocks.GetAIProviderConfig.mockResolvedValue(
@@ -660,7 +666,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: false,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       }
       mocks.GetAIProviderConfig.mockResolvedValue(
@@ -701,7 +708,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: false,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       }
       mocks.GetAIProviderConfig.mockResolvedValue(

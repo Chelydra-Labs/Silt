@@ -15,7 +15,12 @@ const { mockAvailability } = vi.hoisted(() => ({
     chatReady: true,
     embedReady: false,
     drawerAvailable: true,
-    features: { enabled: true, rag_enabled: false, summaries_enabled: false }
+    features: {
+      enabled: true,
+      rag_enabled: false,
+      summaries_enabled: false,
+      agent_writes: 'confirm'
+    }
   }
 }))
 

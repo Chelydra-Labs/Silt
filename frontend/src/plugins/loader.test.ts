@@ -233,7 +233,8 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
         features: {
           enabled: true,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         },
         chat: {},
         embedding: {}
@@ -262,7 +263,8 @@ describe('plugin loader loadersReady signal (#326 item 5)', () => {
         features: {
           enabled: false,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       }
     }
