@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { buildCorpusFromRaw } from './loadCorpus'
+import {
+  buildCorpusFromRaw,
+  loadProductDocCorpus,
+  resetProductDocCorpusCache
+} from './loadCorpus'
 import { NO_MATCH_MESSAGE, searchProductDocs } from './searchProductDocs'
 
 const SAMPLE = {
@@ -75,5 +79,26 @@ describe('searchProductDocs', () => {
 describe('NO_MATCH_MESSAGE', () => {
   it('is the stable empty-result copy', () => {
     expect(NO_MATCH_MESSAGE).toBe('No matching Silt help topics.')
+  })
+})
+
+describe('shipped product-docs corpus', () => {
+  it('loads real articles via import.meta.glob and answers golden queries', () => {
+    resetProductDocCorpusCache()
+    const sections = loadProductDocCorpus()
+    expect(sections.length).toBeGreaterThan(5)
+    expect(sections.every((s) => s.helpId.startsWith('help:'))).toBe(true)
+
+    const enable = searchProductDocs('how to enable AI settings')
+    expect(enable.length).toBeGreaterThan(0)
+    expect(enable[0].displayTitle).toMatch(/Silt help:/i)
+
+    const backup = searchProductDocs('export vault backup archive')
+    expect(backup.length).toBeGreaterThan(0)
+    expect(backup[0].docId).toBe('backup')
+
+    const templates = searchProductDocs('page templates custom')
+    expect(templates.length).toBeGreaterThan(0)
+    expect(templates.some((h) => h.docId === 'templates')).toBe(true)
   })
 })

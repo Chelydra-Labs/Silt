@@ -83,7 +83,8 @@ export interface StagedPreview {
  * `params` is the operation payload stored alongside the token at stage time,
  * NOT the model's args — so the model cannot mutate the staged op between
  * staging and confirmation. `signal` is the run AbortSignal so long commits
- * (e.g. extract_and_save nested model call) honor Stop after confirm.
+ * (e.g. extract_and_save applyBlocks batch) honor Stop after confirm.
+ * Nested model work for extract runs in the stage handler, not commit.
  */
 export type StagedCommit = (
   ctx: PluginContext,

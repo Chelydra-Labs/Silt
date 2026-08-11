@@ -321,7 +321,7 @@ describe('agent-loop', () => {
     expect(prompt).toMatch(/search_notes/)
     expect(prompt).toMatch(/read_blocks/)
     expect(prompt).not.toMatch(/create_note/)
-    expect(prompt).toMatch(/search and read notes/i)
+    expect(prompt).toMatch(/search product help and read notes/i)
     expect(prompt).not.toMatch(/create, and organize/i)
     expect(prompt).toMatch(/read-only vault tools/i)
   })

@@ -5,7 +5,8 @@ import {
   commitExtractAndSave,
   extractAndSaveToolDef,
   handleExtractAndSave,
-  parseExtraction
+  parseExtraction,
+  previewDetails
 } from './extract_and_save'
 
 interface SourceBlock {
@@ -31,6 +32,8 @@ function makeCtx(opts: {
   auditEvent?: ReturnType<typeof vi.fn>
   applyBlocksOk?: boolean
   applyBlocksImpl?: ReturnType<typeof vi.fn>
+  /** When true, target page already exists before commit (no cleanup delete). */
+  pageExists?: boolean
 }): {
   ctx: PluginContext
   complete: ReturnType<typeof vi.fn>
@@ -45,13 +48,25 @@ function makeCtx(opts: {
   const sqliteCalls: { sql: string; params: unknown[] }[] = []
   const sqliteQuery = vi.fn(async (sql: string, params?: unknown[]) => {
     sqliteCalls.push({ sql, params: [...(params ?? [])] })
-    if (sql.toLowerCase().includes('where id in (')) {
+    const lower = sql.toLowerCase()
+    if (lower.includes('where id in (')) {
       const ids = (params ?? []) as string[]
       const rows = ids
         .map((id) => srcById.get(id))
         .filter((b): b is SourceBlock => b !== undefined)
         .map((b) => ({ id: b.id, clean_content: b.clean_content }))
       return { rows, truncated: false }
+    }
+    // targetPageExists probes files then blocks by notebook/section/page.
+    if (
+      (lower.includes('from files') || lower.includes('from blocks')) &&
+      lower.includes('notebook = ?') &&
+      lower.includes('page = ?')
+    ) {
+      return {
+        rows: opts.pageExists ? [{ ok: 1 }] : [],
+        truncated: false
+      }
     }
     return { rows: [], truncated: false }
   })
@@ -476,10 +491,11 @@ describe('extract_and_save commit (commitExtractAndSave)', () => {
     expect(applyBlocks).not.toHaveBeenCalled()
   })
 
-  it('cleans up page when applyBlocks fails after createPage', async () => {
+  it('cleans up minted page when applyBlocks fails after createPage', async () => {
     const { ctx, createPage, deletePage, applyBlocks } = makeCtx({
       sources: SOURCES,
-      applyBlocksOk: false
+      applyBlocksOk: false,
+      pageExists: false
     })
     const res = await commitExtractAndSave(ctx, frozen)
     expect(res.error).toMatch(/failed to write/)
@@ -488,17 +504,90 @@ describe('extract_and_save commit (commitExtractAndSave)', () => {
     expect(deletePage).toHaveBeenCalledWith('Work', 'Notes', 'Distilled')
   })
 
-  it('cleans up page when applyBlocks throws mid-write', async () => {
+  it('cleans up minted page when applyBlocks throws mid-write', async () => {
     const applyBlocks = vi.fn(async () => {
       throw new Error('disk full')
     })
     const { ctx, deletePage } = makeCtx({
       sources: SOURCES,
-      applyBlocksImpl: applyBlocks
+      applyBlocksImpl: applyBlocks,
+      pageExists: false
     })
     const res = await commitExtractAndSave(ctx, frozen)
     expect(res.error).toMatch(/disk full/)
     expect(deletePage).toHaveBeenCalledWith('Work', 'Notes', 'Distilled')
+  })
+
+  it('does not delete pre-existing target page when apply fails', async () => {
+    const { ctx, deletePage, createPage } = makeCtx({
+      sources: SOURCES,
+      applyBlocksOk: false,
+      pageExists: true
+    })
+    const res = await commitExtractAndSave(ctx, frozen)
+    expect(res.error).toMatch(/failed to write/)
+    expect(createPage).toHaveBeenCalled()
+    expect(deletePage).not.toHaveBeenCalled()
+  })
+
+  it('aborts after createPage before apply and cleans up only minted pages', async () => {
+    let applyCalled = false
+    const applyBlocks = vi.fn(async () => {
+      applyCalled = true
+      return true
+    })
+    const deletePage = vi.fn(async () => true)
+    const sqliteQuery = vi.fn(async (sql: string) => {
+      const lower = sql.toLowerCase()
+      if (lower.includes('from files') && lower.includes('notebook')) {
+        return { rows: [], truncated: false }
+      }
+      return { rows: [], truncated: false }
+    })
+    const ac = new AbortController()
+    const ctx = {
+      sqliteQuery,
+      createPage: vi.fn(async () => {
+        ac.abort()
+        return 'page-uuid'
+      }),
+      createBlock: vi.fn(),
+      applyBlocks,
+      deletePage,
+      ai: { complete: vi.fn(), embed: vi.fn() }
+    } as unknown as PluginContext
+
+    const res = await commitExtractAndSave(ctx, frozen, ac.signal)
+    expect(res.error).toMatch(/Cancelled/)
+    expect(applyCalled).toBe(false)
+    expect(deletePage).toHaveBeenCalledWith('Work', 'Notes', 'Distilled')
+  })
+
+  it('does not delete pre-existing page on abort after createPage no-op', async () => {
+    const deletePage = vi.fn(async () => true)
+    const applyBlocks = vi.fn(async () => true)
+    const ac = new AbortController()
+    const ctx = {
+      sqliteQuery: vi.fn(async (sql: string) => {
+        if (sql.toLowerCase().includes('from files')) {
+          return { rows: [{ ok: 1 }], truncated: false }
+        }
+        return { rows: [], truncated: false }
+      }),
+      createPage: vi.fn(async () => {
+        ac.abort()
+        return 'page-uuid'
+      }),
+      createBlock: vi.fn(),
+      applyBlocks,
+      deletePage,
+      ai: { complete: vi.fn(), embed: vi.fn() }
+    } as unknown as PluginContext
+
+    const res = await commitExtractAndSave(ctx, frozen, ac.signal)
+    expect(res.error).toMatch(/Cancelled/)
+    expect(applyBlocks).not.toHaveBeenCalled()
+    expect(deletePage).not.toHaveBeenCalled()
   })
 
   it('emits tool_result audit on successful commit', async () => {
@@ -513,6 +602,19 @@ describe('extract_and_save commit (commitExtractAndSave)', () => {
         status: 'ok'
       })
     )
+  })
+})
+
+describe('previewDetails', () => {
+  it('includes block count header and truncation footer when long', () => {
+    const short = previewDetails(['hello'])
+    expect(short).toMatch(/^1 block to write:/)
+    expect(short).toContain('hello')
+
+    const longBody = 'x'.repeat(2_000)
+    const long = previewDetails([longBody, longBody])
+    expect(long).toMatch(/^2 blocks to write:/)
+    expect(long).toMatch(/preview truncated \(2 blocks total\)/)
   })
 })
 

@@ -51,9 +51,9 @@ export function handleSearchProductDocs(
 
   const lines = hits.map((h, i) => {
     const idx = i + 1
-    const heading = h.sectionHeading ? ` (${h.sectionHeading})` : ''
+    // displayTitle already includes "Silt help: Title › Section" when sectioned.
     return [
-      `[${idx}] ${h.displayTitle}${heading}`,
+      `[${idx}] ${h.displayTitle}`,
       `    ${h.excerpt.replace(/\n/g, '\n    ')}`
     ].join('\n')
   })

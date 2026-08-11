@@ -80,8 +80,13 @@ Write safety is controlled by **Settings → AI → Agent vault writes**
   `extract_and_save` runs the nested model **before** Confirm, freezes the
   rendered blocks in the staging token, shows a content preview, and commits
   only that frozen payload (no second model call). Parse/model errors stage
-  nothing and write nothing. Commit uses a single-page `applyBlocks` batch.
-  Mutators dispatch **serially**; read tools may still run in parallel batches.
+  nothing and write nothing. Commit uses `createPage` + a single-page
+  `applyBlocks` batch (not a multi-API database transaction). On failure after
+  minting a **new** empty page, the tool best-effort deletes that page; it
+  never deletes a target page that already existed. Nested extraction polls
+  Stop around `ctx.ai.complete` but cannot cancel an in-flight nested HTTP
+  call until the host supports abort on complete. Mutators dispatch
+  **serially**; read tools may still run in parallel batches.
 - **Always confirm** — bulk `rename_tag` and nested-model `extract_and_save`
   require confirmation even in **auto**.
 
@@ -119,6 +124,9 @@ notes, not the public internet, not SPECS/ARCHITECTURE).
   `frontend/src/plugins/first-party/silt-ai-agent/product-docs/` — markdown
   articles with YAML `id`/`title` frontmatter and `##` sections. See that
   folder’s `README.md` for how to add or update an article.
+- **Retrieval** is offline keyword ranking over section chunks (not embeddings
+  / semantic search). Keep articles short so tool results stay under the 10 KB
+  tool-result wrap.
 - **Empty results** return the fixed copy `No matching Silt help topics.` The
   model is instructed not to invent detailed UI paths when help misses.
 - **Sources** appear in the drawer as **Silt help** (distinct from vault

@@ -111,6 +111,35 @@ describe('ChatShell', () => {
     browserMocks.OpenURL.mockReset()
   })
 
+  it('renders product-help evidence without a navigate control (#928)', () => {
+    const value = props([
+      evidenceEntry({
+        id: 'help-ev',
+        role: 'assistant',
+        citationIndex: 1,
+        title: 'Silt help: Getting started › Enable AI',
+        excerpt: 'Turn on Enable AI under Settings → AI.',
+        target: {
+          blockId: 'help:getting-started#enable-ai',
+          sourceKind: 'product_help'
+        }
+      })
+    ])
+    const { getByText, getByLabelText, queryByRole } = render(ChatShell, {
+      props: value
+    })
+    expect(getByText('Silt help')).toBeInTheDocument()
+    expect(
+      getByText('Silt help: Getting started › Enable AI')
+    ).toBeInTheDocument()
+    expect(
+      getByLabelText('Shipped product help (not a vault note)')
+    ).toBeInTheDocument()
+    expect(
+      queryByRole('button', { name: /Open source 1:/i })
+    ).not.toBeInTheDocument()
+  })
+
   it('renders every result kind and navigates evidence', async () => {
     const value = props(everyEntry())
     const { getByText, getByRole } = render(ChatShell, {

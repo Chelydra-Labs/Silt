@@ -163,6 +163,8 @@ describe('RAG tool gating (#632)', () => {
     }
     expect(names.has('read_blocks')).toBe(true)
     expect(names.has('query_tasks')).toBe(true)
+    // Product help is offline keyword search — not RAG-gated (#928).
+    expect(names.has('search_product_docs')).toBe(true)
   })
 
   it('registers embedding tools when RAG is on', () => {

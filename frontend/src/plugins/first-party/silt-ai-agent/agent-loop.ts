@@ -296,7 +296,7 @@ export function buildSystemPrompt(
     openTabs: raw.openTabs ?? []
   }
   const useToolsLine = qaOnly
-    ? 'Use the available tools to search and read notes.'
+    ? 'Use the available tools to search product help and read notes.'
     : 'Use the available tools to search, read, create, and organize notes.'
   const writePolicy = buildWritePolicyLines(mode, qaOnly)
   return [

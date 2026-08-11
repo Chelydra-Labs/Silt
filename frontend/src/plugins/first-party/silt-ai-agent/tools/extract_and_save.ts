@@ -197,12 +197,17 @@ function pagePathOf(target: TargetSpec): string {
     .join('/')
 }
 
-function previewDetails(blocks: string[]): string {
+/** Build confirm-card details: header + clipped bodies + truncation footer. */
+export function previewDetails(blocks: string[]): string {
+  const n = blocks.length
+  const header = `${n} block${n === 1 ? '' : 's'} to write:`
   const joined = blocks
     .map((b, i) => `--- block ${i + 1} ---\n${b}`)
     .join('\n\n')
-  if (joined.length <= PREVIEW_DETAILS_MAX) return joined
-  return `${joined.slice(0, PREVIEW_DETAILS_MAX - 1)}…`
+  const body = `${header}\n\n${joined}`
+  if (body.length <= PREVIEW_DETAILS_MAX) return body
+  const keep = Math.max(0, PREVIEW_DETAILS_MAX - 40)
+  return `${body.slice(0, keep)}…\n\n…preview truncated (${n} block${n === 1 ? '' : 's'} total).`
 }
 
 /**
@@ -412,13 +417,17 @@ export async function commitExtractAndSave(
     return cancelledResult()
   }
 
-  let pageCreated = false
+  // createPage is idempotent (no-op when the page file already exists). Only
+  // delete on failure when *we* minted a new empty page — never wipe a
+  // pre-existing target the user already had.
+  const existedBefore = await targetPageExists(ctx, target)
+  let mintedNewPage = false
   try {
     await ctx.createPage(target.notebook, target.section, target.page)
-    pageCreated = true
+    mintedNewPage = !existedBefore
 
     if (signal?.aborted) {
-      await cleanupEmptyPage(ctx, target, pageCreated)
+      await cleanupMintedPage(ctx, target, mintedNewPage)
       auditWrite(ctx, 'extract_and_save', 'error')
       return cancelledResult()
     }
@@ -434,7 +443,7 @@ export async function commitExtractAndSave(
 
     const ok = await ctx.applyBlocks(ops)
     if (!ok) {
-      await cleanupEmptyPage(ctx, target, pageCreated)
+      await cleanupMintedPage(ctx, target, mintedNewPage)
       auditWrite(ctx, 'extract_and_save', 'error')
       return {
         content: '',
@@ -442,7 +451,7 @@ export async function commitExtractAndSave(
       }
     }
   } catch (e: unknown) {
-    await cleanupEmptyPage(ctx, target, pageCreated)
+    await cleanupMintedPage(ctx, target, mintedNewPage)
     if (signal?.aborted) {
       auditWrite(ctx, 'extract_and_save', 'error')
       return cancelledResult()
@@ -465,13 +474,44 @@ export async function commitExtractAndSave(
   }
 }
 
-/** Best-effort remove a page we just created if the batch write never landed. */
-async function cleanupEmptyPage(
+/**
+ * True when the target page already has an index row (file existed before
+ * this commit). Empty newly-created pages may still appear after createPage
+ * indexes frontmatter-only scaffolds — callers must check *before* createPage.
+ */
+export async function targetPageExists(
+  ctx: PluginContext,
+  target: TargetSpec
+): Promise<boolean> {
+  try {
+    // Prefer files table (one row per page path) when present.
+    const { rows: fileRows } = await ctx.sqliteQuery(
+      'SELECT 1 AS ok FROM files WHERE notebook = ? AND section = ? AND page = ? LIMIT 1',
+      [target.notebook, target.section, target.page]
+    )
+    if (fileRows.length > 0) return true
+  } catch {
+    // Older indexes or restricted schemas: fall through to blocks probe.
+  }
+  try {
+    const { rows } = await ctx.sqliteQuery(
+      'SELECT 1 AS ok FROM blocks WHERE notebook = ? AND section = ? AND page = ? LIMIT 1',
+      [target.notebook, target.section, target.page]
+    )
+    return rows.length > 0
+  } catch {
+    // Fail closed: assume exists so we never delete on cleanup.
+    return true
+  }
+}
+
+/** Best-effort remove a page *we* just minted if the batch write never landed. */
+async function cleanupMintedPage(
   ctx: PluginContext,
   target: TargetSpec,
-  pageCreated: boolean
+  mintedNewPage: boolean
 ): Promise<void> {
-  if (!pageCreated) return
+  if (!mintedNewPage) return
   if (typeof ctx.deletePage !== 'function') return
   try {
     await ctx.deletePage(target.notebook, target.section, target.page)

@@ -552,7 +552,9 @@
             bind:this={confirmationEl}
             role="alertdialog"
             aria-labelledby={`confirmation-title-${entry.id}`}
-            aria-describedby={`confirmation-summary-${entry.id}`}
+            aria-describedby={entry.details
+              ? `confirmation-summary-${entry.id} confirmation-details-${entry.id}`
+              : `confirmation-summary-${entry.id}`}
             tabindex="-1"
             onkeydown={(event) => onConfirmationKeydown(event, entry)}
           >
@@ -573,7 +575,11 @@
             {#if entry.affectedCount != null}
               <p class="muted-copy">{entry.affectedCount} items affected</p>
             {/if}
-            {#if entry.details}<pre>{entry.details}</pre>{/if}
+            {#if entry.details}
+              <pre
+                id={`confirmation-details-${entry.id}`}
+                class="confirmation-details">{entry.details}</pre>
+            {/if}
             <p class="muted-copy confirmation-hint">
               Reject or Stop to cancel. Escape rejects while this card is open.
             </p>
@@ -1067,6 +1073,12 @@
     line-height: 1.5;
   }
   .proposal-card pre,
+  .confirmation-card pre,
+  .confirmation-details {
+    max-height: min(40vh, 22rem);
+    overflow: auto;
+  }
+
   .confirmation-card pre {
     margin-top: 0.65rem;
     border-radius: 0.5rem;
