@@ -128,8 +128,28 @@ export async function handleFindUntagged(
       `    ${snippet}`
     ].join('\n')
   })
+  const evidence = rows
+    .map((r, i) => {
+      const id = asString(r.id)
+      if (!id) return null
+      const body = asString(r.clean_content).trim()
+      const notebook = asString(r.notebook)
+      const section = asString(r.section)
+      const page = asString(r.page)
+      return {
+        citationIndex: i + 1,
+        blockId: id,
+        notebook,
+        section,
+        page,
+        snippet: body.slice(0, 200),
+        title: breadcrumb(notebook, section, page)
+      }
+    })
+    .filter((e): e is NonNullable<typeof e> => e != null)
   return {
-    content: `${rows.length} untagged task(s):\n\n${lines.join('\n\n')}`
+    content: `${rows.length} untagged task(s):\n\n${lines.join('\n\n')}`,
+    ...(evidence.length > 0 ? { evidence } : {})
   }
 }
 

@@ -308,7 +308,15 @@ export async function dispatchTool(
   }
 
   try {
-    if (shouldStageTool(name, mode) && tool.commit) {
+    if (shouldStageTool(name, mode)) {
+      // Fail closed: a classified mutator without commit must never fall
+      // through to a direct handler write under confirm (or always-confirm).
+      if (!tool.commit) {
+        return {
+          content: '',
+          error: `tool "${name}" cannot be staged (missing commit handler)`
+        }
+      }
       // rename_tag's handler already stages (preview count + token).
       if (name === 'rename_tag') {
         return await tool.handler(ctx, argsJson, signal)

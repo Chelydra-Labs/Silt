@@ -226,6 +226,28 @@ describe('tool-registry', () => {
     expect(res.stagedPreview?.severity).toBe('normal')
   })
 
+  it('refuses commit-less mutators in confirm mode instead of writing directly', async () => {
+    stageOperation.mockClear()
+    const handler = vi.fn(async () => ({ content: 'wrote' }))
+    // Classified mutator without commit — must fail closed, not fall through.
+    registerTool({
+      name: 'create_note',
+      description: 'write',
+      parameters: { type: 'object', properties: {} },
+      handler
+    })
+    const res = await dispatchTool(
+      noopCtx,
+      'create_note',
+      { page: 'P' },
+      { mode: 'confirm' }
+    )
+    expect(res.error).toMatch(/missing commit handler/)
+    expect(res.isStaged).toBeFalsy()
+    expect(handler).not.toHaveBeenCalled()
+    expect(stageOperation).not.toHaveBeenCalled()
+  })
+
   it('auto mode runs create_note directly but stages extract_and_save', async () => {
     stageOperation.mockClear()
     const createHandler = vi.fn(async () => ({ content: 'created' }))
