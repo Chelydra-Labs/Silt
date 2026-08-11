@@ -198,6 +198,7 @@ export function createAgentCapability(): AIChatCapability {
                 citationIndex: evidence.citationIndex,
                 target: {
                   blockId: evidence.blockId,
+                  sourceKind: evidence.sourceKind,
                   notebook: evidence.notebook,
                   section: evidence.section,
                   page: evidence.page

@@ -135,7 +135,16 @@ vi.mock('./tools/extract_and_save', () => ({
     description: 'd',
     parameters: { type: 'object', properties: {} }
   },
-  handleExtractAndSave: vi.fn()
+  handleExtractAndSave: vi.fn(),
+  commitExtractAndSave: vi.fn()
+}))
+vi.mock('./tools/search_product_docs', () => ({
+  searchProductDocsToolDef: {
+    name: 'search_product_docs',
+    description: 'd',
+    parameters: { type: 'object', properties: {} }
+  },
+  handleSearchProductDocs: vi.fn()
 }))
 
 describe('RAG tool gating (#632)', () => {
@@ -154,6 +163,8 @@ describe('RAG tool gating (#632)', () => {
     }
     expect(names.has('read_blocks')).toBe(true)
     expect(names.has('query_tasks')).toBe(true)
+    // Product help is offline keyword search — not RAG-gated (#928).
+    expect(names.has('search_product_docs')).toBe(true)
   })
 
   it('registers embedding tools when RAG is on', () => {

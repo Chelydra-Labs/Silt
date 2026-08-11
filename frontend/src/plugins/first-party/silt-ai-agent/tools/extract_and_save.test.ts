@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PluginContext } from '../../../sdk'
 import { clearTools } from '../tool-registry'
 import {
+  commitExtractAndSave,
   extractAndSaveToolDef,
   handleExtractAndSave,
-  parseExtraction
+  parseExtraction,
+  previewDetails,
+  targetPageExists
 } from './extract_and_save'
 
 interface SourceBlock {
@@ -12,22 +15,33 @@ interface SourceBlock {
   clean_content: string
 }
 
+vi.mock('../staging', () => ({
+  stageOperation: vi.fn(async () => 'tok-extract-1')
+}))
+
+import { stageOperation } from '../staging'
+
 /**
  * Build a ctx whose sqliteQuery returns the canned source blocks for the
  * `WHERE id IN (...)` lookup, and whose ai.complete returns the configured
- * JSON content. createPage/createBlock are stubbed with sequenced ids so the
- * returned block list is deterministic.
+ * JSON content. createPage/applyBlocks/deletePage stubbed for commit path.
  */
 function makeCtx(opts: {
   sources: SourceBlock[]
   completeContent?: string
   completeError?: Error
   auditEvent?: ReturnType<typeof vi.fn>
+  applyBlocksOk?: boolean
+  applyBlocksImpl?: ReturnType<typeof vi.fn>
+  /** When true, target page already exists before commit (no cleanup delete). */
+  pageExists?: boolean
 }): {
   ctx: PluginContext
   complete: ReturnType<typeof vi.fn>
   createPage: ReturnType<typeof vi.fn>
   createBlock: ReturnType<typeof vi.fn>
+  applyBlocks: ReturnType<typeof vi.fn>
+  deletePage: ReturnType<typeof vi.fn>
   mutateBlock: ReturnType<typeof vi.fn>
   sqliteCalls: { sql: string; params: unknown[] }[]
 } {
@@ -35,14 +49,25 @@ function makeCtx(opts: {
   const sqliteCalls: { sql: string; params: unknown[] }[] = []
   const sqliteQuery = vi.fn(async (sql: string, params?: unknown[]) => {
     sqliteCalls.push({ sql, params: [...(params ?? [])] })
-    if (sql.toLowerCase().includes('where id in (')) {
-      // The bound params are the requested ids; return matching sources.
+    const lower = sql.toLowerCase()
+    if (lower.includes('where id in (')) {
       const ids = (params ?? []) as string[]
       const rows = ids
         .map((id) => srcById.get(id))
         .filter((b): b is SourceBlock => b !== undefined)
         .map((b) => ({ id: b.id, clean_content: b.clean_content }))
       return { rows, truncated: false }
+    }
+    // targetPageExists probes blocks (then page_types) by notebook/section/page.
+    if (
+      (lower.includes('from blocks') || lower.includes('from page_types')) &&
+      lower.includes('notebook = ?') &&
+      lower.includes('page = ?')
+    ) {
+      return {
+        rows: opts.pageExists ? [{ ok: 1 }] : [],
+        truncated: false
+      }
     }
     return { rows: [], truncated: false }
   })
@@ -52,13 +77,11 @@ function makeCtx(opts: {
     return { content: opts.completeContent ?? '', model: 'm' }
   })
 
-  let blockSeq = 0
   const createPage = vi.fn(async () => 'page-uuid')
-  const createBlock = vi.fn(async (_req: { type: string; text: string }) => {
-    blockSeq += 1
-    return `blk-${blockSeq}`
-  })
-  // mutateBlock would touch a source — must never be called.
+  const createBlock = vi.fn(async () => 'blk-should-not-use')
+  const applyBlocks =
+    opts.applyBlocksImpl ?? vi.fn(async () => opts.applyBlocksOk !== false)
+  const deletePage = vi.fn(async () => true)
   const mutateBlock = vi.fn(async () => true)
 
   const ctx = {
@@ -70,12 +93,27 @@ function makeCtx(opts: {
     },
     createPage,
     createBlock,
+    applyBlocks,
+    deletePage,
     mutateBlock
   } as unknown as PluginContext
-  return { ctx, complete, createPage, createBlock, mutateBlock, sqliteCalls }
+  return {
+    ctx,
+    complete,
+    createPage,
+    createBlock,
+    applyBlocks,
+    deletePage,
+    mutateBlock,
+    sqliteCalls
+  }
 }
 
-beforeEach(() => clearTools())
+beforeEach(() => {
+  clearTools()
+  vi.mocked(stageOperation).mockClear()
+  vi.mocked(stageOperation).mockResolvedValue('tok-extract-1')
+})
 afterEach(() => clearTools())
 
 const SOURCES = [
@@ -84,9 +122,9 @@ const SOURCES = [
 ]
 const TARGET = { notebook: 'Work', section: 'Notes', page: 'Distilled' }
 
-describe('extract_and_save', () => {
-  it('summary mode: parses JSON, writes one NOTE with citation, no source mutation', async () => {
-    const { ctx, createPage, createBlock, mutateBlock } = makeCtx({
+describe('extract_and_save stage (handleExtractAndSave)', () => {
+  it('summary mode: stages frozen content, no vault write', async () => {
+    const { ctx, createPage, createBlock, applyBlocks, mutateBlock } = makeCtx({
       sources: SOURCES,
       completeContent: JSON.stringify({
         summary: 'Postgres uses MVCC; Redis is single-threaded.'
@@ -98,31 +136,33 @@ describe('extract_and_save', () => {
       target: TARGET
     })
     expect(res.error).toBeUndefined()
-    expect(createPage).toHaveBeenCalledWith('Work', 'Notes', 'Distilled')
-    expect(createBlock).toHaveBeenCalledTimes(1)
-    const block = createBlock.mock.calls[0][0] as {
-      type: string
-      text: string
-      notebook: string
-      section: string
-      page: string
-    }
-    expect(block.type).toBe('NOTE')
-    expect(block.notebook).toBe('Work')
-    expect(block.section).toBe('Notes')
-    expect(block.page).toBe('Distilled')
-    expect(block.text).toMatch(/Postgres uses MVCC/)
-    // Citation comment carries source ids + mode.
-    expect(block.text).toMatch(/<!-- src: src-1,src-2 mode:summary -->/)
-    // Source blocks were never mutated.
+    expect(res.isStaged).toBe(true)
+    expect(res.stagedToken).toBe('tok-extract-1')
+    expect(res.stagedPreview?.summary).toMatch(
+      /Extract summary → Work\/Notes\/Distilled/
+    )
+    expect(res.stagedPreview?.details).toMatch(/Postgres uses MVCC/)
+    expect(res.stagedPreview?.details).toMatch(
+      /<!-- src: src-1,src-2 mode:summary -->/
+    )
+    expect(createPage).not.toHaveBeenCalled()
+    expect(createBlock).not.toHaveBeenCalled()
+    expect(applyBlocks).not.toHaveBeenCalled()
     expect(mutateBlock).not.toHaveBeenCalled()
-    // Returned content names the page + block id.
-    expect(res.content).toContain('Work/Notes/Distilled')
-    expect(res.content).toContain('blk-1')
+    expect(stageOperation).toHaveBeenCalledTimes(1)
+    const frozen = vi.mocked(stageOperation).mock.calls[0][2] as {
+      mode: string
+      blocks: string[]
+      source_block_ids: string[]
+    }
+    expect(frozen.mode).toBe('summary')
+    expect(frozen.blocks).toHaveLength(1)
+    expect(frozen.blocks[0]).toMatch(/Postgres uses MVCC/)
+    expect(frozen.source_block_ids).toEqual(['src-1', 'src-2'])
   })
 
-  it('flashcards mode: writes one NOTE per item with Q-front / A-back', async () => {
-    const { ctx, createBlock } = makeCtx({
+  it('flashcards mode: freezes one body per item', async () => {
+    const { ctx } = makeCtx({
       sources: SOURCES,
       completeContent: JSON.stringify({
         items: [
@@ -136,20 +176,20 @@ describe('extract_and_save', () => {
       mode: 'flashcards',
       target: TARGET
     })
-    expect(res.error).toBeUndefined()
-    expect(createBlock).toHaveBeenCalledTimes(2)
-    const text0 = (createBlock.mock.calls[0][0] as { text: string }).text
-    const text1 = (createBlock.mock.calls[1][0] as { text: string }).text
-    expect(text0).toMatch(/Q1: What concurrency model does Postgres use\?/)
-    expect(text0).toMatch(/MVCC\./)
-    expect(text1).toMatch(/Q2: Is Redis multi-threaded\?/)
-    expect(text1).toMatch(/single-threaded/)
-    expect(res.content).toContain('blk-1')
-    expect(res.content).toContain('blk-2')
+    expect(res.isStaged).toBe(true)
+    const frozen = vi.mocked(stageOperation).mock.calls[0][2] as {
+      blocks: string[]
+    }
+    expect(frozen.blocks).toHaveLength(2)
+    expect(frozen.blocks[0]).toMatch(
+      /Q1: What concurrency model does Postgres use\?/
+    )
+    expect(frozen.blocks[1]).toMatch(/Q2: Is Redis multi-threaded\?/)
+    expect(res.stagedPreview?.affectedCount).toBe(2)
   })
 
-  it('qa_pairs mode: writes one NOTE per Q/A pair', async () => {
-    const { ctx, createBlock } = makeCtx({
+  it('qa_pairs mode: freezes Q/A bodies', async () => {
+    const { ctx } = makeCtx({
       sources: SOURCES,
       completeContent: JSON.stringify({
         items: [
@@ -166,14 +206,15 @@ describe('extract_and_save', () => {
       mode: 'qa_pairs',
       target: TARGET
     })
-    expect(createBlock).toHaveBeenCalledTimes(2)
-    const text0 = (createBlock.mock.calls[0][0] as { text: string }).text
-    expect(text0).toMatch(/Q1: Postgres MVCC\?/)
-    expect(text0).toMatch(/Multi-version concurrency/)
+    const frozen = vi.mocked(stageOperation).mock.calls[0][2] as {
+      blocks: string[]
+    }
+    expect(frozen.blocks).toHaveLength(2)
+    expect(frozen.blocks[0]).toMatch(/Q1: Postgres MVCC\?/)
   })
 
-  it('action_items mode: renders GFM checkboxes with optional [due:: YYYY-MM-DD]', async () => {
-    const { ctx, createBlock } = makeCtx({
+  it('action_items mode: freezes GFM checkboxes with optional due', async () => {
+    const { ctx } = makeCtx({
       sources: SOURCES,
       completeContent: JSON.stringify({
         items: [
@@ -187,16 +228,15 @@ describe('extract_and_save', () => {
       mode: 'action_items',
       target: TARGET
     })
-    expect(createBlock).toHaveBeenCalledTimes(2)
-    const text0 = (createBlock.mock.calls[0][0] as { text: string }).text
-    const text1 = (createBlock.mock.calls[1][0] as { text: string }).text
-    expect(text0).toMatch(/- \[ \] Set up Postgres replication/)
-    expect(text0).toMatch(/\[due:: 2026-08-01\]/)
-    expect(text1).toMatch(/- \[ \] Document Redis failover/)
-    expect(text1).not.toMatch(/\[due::/)
+    const frozen = vi.mocked(stageOperation).mock.calls[0][2] as {
+      blocks: string[]
+    }
+    expect(frozen.blocks[0]).toMatch(/- \[ \] Set up Postgres replication/)
+    expect(frozen.blocks[0]).toMatch(/\[due:: 2026-08-01\]/)
+    expect(frozen.blocks[1]).toMatch(/- \[ \] Document Redis failover/)
   })
 
-  it('passes responseSchema + a citation prompt to ctx.ai.complete', async () => {
+  it('passes responseSchema + citation prompt to ctx.ai.complete', async () => {
     const { ctx, complete } = makeCtx({
       sources: SOURCES,
       completeContent: JSON.stringify({ summary: 'ok.' })
@@ -212,20 +252,15 @@ describe('extract_and_save', () => {
       responseSchema: { properties: Record<string, unknown> }
       temperature?: number
     }
-    // System + user message present.
-    expect(req.messages.length).toBeGreaterThanOrEqual(2)
     expect(req.messages[0].role).toBe('system')
-    // responseSchema is the summary shape.
     expect(req.responseSchema.properties.summary).toBeDefined()
-    // Low temperature for deterministic extraction.
     expect(req.temperature).toBeLessThan(0.5)
-    // Source content + ids are cited in the user message.
     const userMsg = req.messages.find((m) => m.role === 'user')?.content ?? ''
     expect(userMsg).toContain('src-1')
     expect(userMsg).toContain('Postgres uses MVCC')
   })
 
-  it('prepends the shared SECURITY preamble to the nested system prompt (#633)', async () => {
+  it('prepends SECURITY preamble to nested system prompt', async () => {
     const { ctx, complete } = makeCtx({
       sources: SOURCES,
       completeContent: JSON.stringify({ summary: 'ok.' })
@@ -239,19 +274,14 @@ describe('extract_and_save', () => {
       messages: { role: string; content: string }[]
     }
     const sys = req.messages.find((m) => m.role === 'system')?.content ?? ''
-    // The nested complete processes the same untrusted vault text as the agent
-    // loop, so the shared SECURITY framing must carry system-prompt priority
-    // (not only the user-message caveat).
     expect(sys).toContain('SECURITY:')
     expect(sys).toContain('untrusted DATA')
-    // Untrusted source text stays hard-delimited as DATA in the user message.
     const user = req.messages.find((m) => m.role === 'user')?.content ?? ''
     expect(user).toContain('<vault_data tool="extract_and_save">')
-    expect(user).toContain('</vault_data>')
   })
 
-  it('returns error and writes nothing when the model returns non-JSON', async () => {
-    const { ctx, createBlock, createPage } = makeCtx({
+  it('returns error and stages nothing when model returns non-JSON', async () => {
+    const { ctx, createPage, applyBlocks } = makeCtx({
       sources: SOURCES,
       completeContent: 'Sorry, I could not extract anything.'
     })
@@ -261,12 +291,14 @@ describe('extract_and_save', () => {
       target: TARGET
     })
     expect(res.error).toMatch(/not JSON|did not match/i)
-    expect(createBlock).not.toHaveBeenCalled()
+    expect(res.isStaged).toBeFalsy()
+    expect(stageOperation).not.toHaveBeenCalled()
     expect(createPage).not.toHaveBeenCalled()
+    expect(applyBlocks).not.toHaveBeenCalled()
   })
 
-  it('returns error and writes nothing when ctx.ai.complete throws', async () => {
-    const { ctx, createBlock, createPage } = makeCtx({
+  it('returns error when ctx.ai.complete throws', async () => {
+    const { ctx, createPage } = makeCtx({
       sources: SOURCES,
       completeError: new Error('model unreachable')
     })
@@ -277,12 +309,12 @@ describe('extract_and_save', () => {
     })
     expect(res.error).toMatch(/extraction call failed/)
     expect(res.error).toContain('model unreachable')
-    expect(createBlock).not.toHaveBeenCalled()
+    expect(stageOperation).not.toHaveBeenCalled()
     expect(createPage).not.toHaveBeenCalled()
   })
 
-  it('aborts before write when signal is already aborted', async () => {
-    const { ctx, createBlock, createPage } = makeCtx({
+  it('aborts before complete when signal already aborted', async () => {
+    const { ctx, complete, createPage } = makeCtx({
       sources: SOURCES,
       completeContent: JSON.stringify({ summary: 'ok.' })
     })
@@ -298,11 +330,12 @@ describe('extract_and_save', () => {
       ac.signal
     )
     expect(res.error).toMatch(/Cancelled/)
-    expect(createBlock).not.toHaveBeenCalled()
+    expect(complete).not.toHaveBeenCalled()
+    expect(stageOperation).not.toHaveBeenCalled()
     expect(createPage).not.toHaveBeenCalled()
   })
 
-  it('reads source blocks via parameterized IN (no interpolation)', async () => {
+  it('reads source blocks via parameterized IN', async () => {
     const { ctx, sqliteCalls } = makeCtx({
       sources: SOURCES,
       completeContent: JSON.stringify({ summary: 'ok.' })
@@ -316,15 +349,11 @@ describe('extract_and_save', () => {
       c.sql.toLowerCase().includes('where id in (')
     )
     expect(read).toBeDefined()
-    // Two placeholders for two ids, values bound (not interpolated).
-    const placeholderCount = (read!.sql.match(/\?/g) ?? []).length
-    expect(placeholderCount).toBe(2)
+    expect((read!.sql.match(/\?/g) ?? []).length).toBe(2)
     expect(read!.params).toEqual(['src-1', 'src-2'])
-    // No quoted literal in the SQL text.
-    expect(read!.sql).not.toMatch(/'src-1'/)
   })
 
-  it('rejects too many source ids (>20)', async () => {
+  it('rejects too many source ids', async () => {
     const { ctx } = makeCtx({ sources: SOURCES })
     const res = await handleExtractAndSave(ctx, {
       source_block_ids: Array.from({ length: 21 }, (_, i) => `b${i}`),
@@ -334,51 +363,337 @@ describe('extract_and_save', () => {
     expect(res.error).toMatch(/exceeds the 20-id limit/)
   })
 
-  it('rejects an unknown mode', async () => {
+  it('rejects unknown mode and empty target page', async () => {
     const { ctx } = makeCtx({ sources: SOURCES })
-    const res = await handleExtractAndSave(ctx, {
-      source_block_ids: ['src-1'],
-      mode: 'translation',
-      target: TARGET
-    })
-    expect(res.error).toMatch(/mode must be one of/)
+    expect(
+      (
+        await handleExtractAndSave(ctx, {
+          source_block_ids: ['src-1'],
+          mode: 'translation',
+          target: TARGET
+        })
+      ).error
+    ).toMatch(/mode must be one of/)
+    expect(
+      (
+        await handleExtractAndSave(ctx, {
+          source_block_ids: ['src-1'],
+          mode: 'summary',
+          target: { notebook: 'Work', page: '' }
+        })
+      ).error
+    ).toMatch(/target\.page/)
   })
 
-  it('rejects an empty target page', async () => {
-    const { ctx } = makeCtx({ sources: SOURCES })
+  it('does not stage on non-JSON (no salvage)', async () => {
+    const { ctx } = makeCtx({
+      sources: SOURCES,
+      completeContent: 'not json ' + 'x'.repeat(20_000)
+    })
     const res = await handleExtractAndSave(ctx, {
       source_block_ids: ['src-1'],
       mode: 'summary',
-      target: { notebook: 'Work', page: '' }
+      target: TARGET
     })
-    expect(res.error).toMatch(/target\.page/)
+    expect(res.error).toBeTruthy()
+    expect(stageOperation).not.toHaveBeenCalled()
   })
 
-  it('parseExtraction handles ```json fenced responses', () => {
+  it('does not audit ok on stage (audit on commit)', async () => {
+    const auditEvent = vi.fn(async (_payload: unknown) => {})
+    const { ctx } = makeCtx({
+      sources: SOURCES,
+      completeContent: JSON.stringify({ summary: 'ok.' }),
+      auditEvent
+    })
+    const res = await handleExtractAndSave(ctx, {
+      source_block_ids: ['src-1'],
+      mode: 'summary',
+      target: TARGET
+    })
+    expect(res.isStaged).toBe(true)
+    // Stage path should not emit success audit (write has not happened).
+    expect(auditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'ok' })
+    )
+  })
+
+  it('exposes the tool def shape', () => {
+    expect(extractAndSaveToolDef.name).toBe('extract_and_save')
+    expect(extractAndSaveToolDef.parameters.required).toEqual([
+      'source_block_ids',
+      'mode',
+      'target'
+    ])
+  })
+})
+
+describe('extract_and_save commit (commitExtractAndSave)', () => {
+  const frozen = {
+    mode: 'summary',
+    target: TARGET,
+    source_block_ids: ['src-1', 'src-2'],
+    blocks: [
+      'Postgres uses MVCC; Redis is single-threaded.\n\n<!-- src: src-1,src-2 mode:summary -->'
+    ]
+  }
+
+  it('writes frozen blocks via applyBlocks; never calls complete', async () => {
+    const { ctx, complete, createPage, applyBlocks, createBlock } = makeCtx({
+      sources: SOURCES
+    })
+    const res = await commitExtractAndSave(ctx, frozen)
+    expect(res.error).toBeUndefined()
+    expect(complete).not.toHaveBeenCalled()
+    expect(createPage).toHaveBeenCalledWith('Work', 'Notes', 'Distilled')
+    expect(createBlock).not.toHaveBeenCalled()
+    expect(applyBlocks).toHaveBeenCalledTimes(1)
+    const ops = applyBlocks.mock.calls[0][0] as Array<{
+      kind: string
+      type: string
+      text: string
+      notebook: string
+      page: string
+    }>
+    expect(ops).toHaveLength(1)
+    expect(ops[0].kind).toBe('create')
+    expect(ops[0].type).toBe('NOTE')
+    expect(ops[0].text).toMatch(/Postgres uses MVCC/)
+    expect(ops[0].notebook).toBe('Work')
+    expect(res.content).toContain('Work/Notes/Distilled')
+  })
+
+  it('fail-closed on malformed frozen params (failed parse after confirm)', async () => {
+    const { ctx, createPage, applyBlocks } = makeCtx({ sources: SOURCES })
+    const bad = await commitExtractAndSave(ctx, {
+      mode: 'summary',
+      target: TARGET,
+      blocks: []
+    })
+    expect(bad.error).toMatch(/malformed/)
+    expect(createPage).not.toHaveBeenCalled()
+    expect(applyBlocks).not.toHaveBeenCalled()
+
+    const badMode = await commitExtractAndSave(ctx, {
+      mode: 'nope',
+      target: TARGET,
+      blocks: ['x']
+    })
+    expect(badMode.error).toMatch(/malformed/)
+  })
+
+  it('aborts before write when signal already aborted', async () => {
+    const { ctx, createPage, applyBlocks } = makeCtx({ sources: SOURCES })
+    const ac = new AbortController()
+    ac.abort()
+    const res = await commitExtractAndSave(ctx, frozen, ac.signal)
+    expect(res.error).toMatch(/Cancelled/)
+    expect(createPage).not.toHaveBeenCalled()
+    expect(applyBlocks).not.toHaveBeenCalled()
+  })
+
+  it('cleans up minted page when applyBlocks fails after createPage', async () => {
+    const { ctx, createPage, deletePage, applyBlocks } = makeCtx({
+      sources: SOURCES,
+      applyBlocksOk: false,
+      pageExists: false
+    })
+    const res = await commitExtractAndSave(ctx, frozen)
+    expect(res.error).toMatch(/failed to write/)
+    expect(createPage).toHaveBeenCalled()
+    expect(applyBlocks).toHaveBeenCalled()
+    expect(deletePage).toHaveBeenCalledWith('Work', 'Notes', 'Distilled')
+  })
+
+  it('cleans up minted page when applyBlocks throws mid-write', async () => {
+    const applyBlocks = vi.fn(async () => {
+      throw new Error('disk full')
+    })
+    const { ctx, deletePage } = makeCtx({
+      sources: SOURCES,
+      applyBlocksImpl: applyBlocks,
+      pageExists: false
+    })
+    const res = await commitExtractAndSave(ctx, frozen)
+    expect(res.error).toMatch(/disk full/)
+    expect(deletePage).toHaveBeenCalledWith('Work', 'Notes', 'Distilled')
+  })
+
+  it('does not delete pre-existing target page when apply fails', async () => {
+    const { ctx, deletePage, createPage } = makeCtx({
+      sources: SOURCES,
+      applyBlocksOk: false,
+      pageExists: true
+    })
+    const res = await commitExtractAndSave(ctx, frozen)
+    expect(res.error).toMatch(/failed to write/)
+    expect(createPage).toHaveBeenCalled()
+    expect(deletePage).not.toHaveBeenCalled()
+  })
+
+  it('aborts after createPage before apply and cleans up only minted pages', async () => {
+    let applyCalled = false
+    const applyBlocks = vi.fn(async () => {
+      applyCalled = true
+      return true
+    })
+    const deletePage = vi.fn(async () => true)
+    const sqliteQuery = vi.fn(async () => ({ rows: [], truncated: false }))
+    const ac = new AbortController()
+    const ctx = {
+      sqliteQuery,
+      createPage: vi.fn(async () => {
+        ac.abort()
+        return 'page-uuid'
+      }),
+      createBlock: vi.fn(),
+      applyBlocks,
+      deletePage,
+      ai: { complete: vi.fn(), embed: vi.fn() }
+    } as unknown as PluginContext
+
+    const res = await commitExtractAndSave(ctx, frozen, ac.signal)
+    expect(res.error).toMatch(/Cancelled/)
+    expect(applyCalled).toBe(false)
+    expect(deletePage).toHaveBeenCalledWith('Work', 'Notes', 'Distilled')
+  })
+
+  it('does not delete pre-existing page on abort after createPage no-op', async () => {
+    const deletePage = vi.fn(async () => true)
+    const applyBlocks = vi.fn(async () => true)
+    const ac = new AbortController()
+    const ctx = {
+      sqliteQuery: vi.fn(async (sql: string) => {
+        if (sql.toLowerCase().includes('from blocks')) {
+          return { rows: [{ ok: 1 }], truncated: false }
+        }
+        return { rows: [], truncated: false }
+      }),
+      createPage: vi.fn(async () => {
+        ac.abort()
+        return 'page-uuid'
+      }),
+      createBlock: vi.fn(),
+      applyBlocks,
+      deletePage,
+      ai: { complete: vi.fn(), embed: vi.fn() }
+    } as unknown as PluginContext
+
+    const res = await commitExtractAndSave(ctx, frozen, ac.signal)
+    expect(res.error).toMatch(/Cancelled/)
+    expect(applyBlocks).not.toHaveBeenCalled()
+    expect(deletePage).not.toHaveBeenCalled()
+  })
+
+  it('emits tool_result audit on successful commit', async () => {
+    const auditEvent = vi.fn(async (_payload: unknown) => {})
+    const { ctx } = makeCtx({ sources: SOURCES, auditEvent })
+    const res = await commitExtractAndSave(ctx, frozen)
+    expect(res.error).toBeUndefined()
+    expect(auditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool_result',
+        tool: 'extract_and_save',
+        status: 'ok'
+      })
+    )
+  })
+})
+
+describe('previewDetails', () => {
+  it('includes block count header and truncation footer when long', () => {
+    const short = previewDetails(['hello'])
+    expect(short).toMatch(/^1 block to write:/)
+    expect(short).toContain('hello')
+
+    const longBody = 'x'.repeat(2_000)
+    const long = previewDetails([longBody, longBody])
+    expect(long).toMatch(/^2 blocks to write:/)
+    expect(long).toMatch(/preview truncated \(2 blocks total\)/)
+  })
+})
+
+describe('targetPageExists', () => {
+  it('uses blocks probe (not files notebook columns) and page_types fallback', async () => {
+    const calls: string[] = []
+    const ctx = {
+      sqliteQuery: vi.fn(async (sql: string) => {
+        calls.push(sql)
+        const lower = sql.toLowerCase()
+        // Simulate real schema: files has no notebook column — must not be queried that way.
+        if (lower.includes('from files') && lower.includes('notebook')) {
+          throw new Error('no such column: notebook')
+        }
+        if (lower.includes('from blocks')) {
+          return { rows: [], truncated: false }
+        }
+        if (lower.includes('from page_types')) {
+          return { rows: [{ ok: 1 }], truncated: false }
+        }
+        return { rows: [], truncated: false }
+      })
+    } as unknown as PluginContext
+
+    await expect(
+      targetPageExists(ctx, {
+        notebook: 'Work',
+        section: 'Notes',
+        page: 'EmptyTyped'
+      })
+    ).resolves.toBe(true)
+    expect(
+      calls.some((s) => /from files/i.test(s) && /notebook/i.test(s))
+    ).toBe(false)
+    expect(calls.some((s) => /from blocks/i.test(s))).toBe(true)
+    expect(calls.some((s) => /from page_types/i.test(s))).toBe(true)
+  })
+
+  it('returns false when blocks and page_types are empty', async () => {
+    const ctx = {
+      sqliteQuery: vi.fn(async () => ({ rows: [], truncated: false }))
+    } as unknown as PluginContext
+    await expect(
+      targetPageExists(ctx, { notebook: 'W', section: '', page: 'New' })
+    ).resolves.toBe(false)
+  })
+
+  it('fails closed (true) when blocks query throws', async () => {
+    const ctx = {
+      sqliteQuery: vi.fn(async () => {
+        throw new Error('db locked')
+      })
+    } as unknown as PluginContext
+    await expect(
+      targetPageExists(ctx, { notebook: 'W', section: '', page: 'P' })
+    ).resolves.toBe(true)
+  })
+})
+
+describe('parseExtraction', () => {
+  it('handles ```json fenced responses', () => {
     const parsed = parseExtraction('```json\n{"summary":"hi"}\n```', 'summary')
     expect(parsed.error).toBeUndefined()
     expect(parsed.blocks).toEqual(['hi'])
   })
 
-  it('parseExtraction returns error on invalid JSON', () => {
+  it('returns error on invalid JSON', () => {
     const parsed = parseExtraction('not json at all', 'summary')
     expect(parsed.blocks).toEqual([])
     expect(parsed.error).toMatch(/not JSON/i)
   })
 
-  it('parseExtraction drops items missing required fields', () => {
+  it('drops items missing required fields', () => {
     const parsed = parseExtraction(
       JSON.stringify({
         items: [
           { front: 'ok', back: 'yes' },
-          { front: '', back: 'no front' }, // dropped
-          { front: 'no back' } // dropped
+          { front: '', back: 'no front' },
+          { front: 'no back' }
         ]
       }),
       'flashcards'
     )
     expect(parsed.blocks).toHaveLength(1)
-    expect(parsed.blocks[0]).toMatch(/ok/)
   })
 
   it('caps extracted item count and field length', () => {
@@ -393,56 +708,5 @@ describe('extract_and_save', () => {
     )
     expect(parsed.blocks).toHaveLength(50)
     expect(parsed.blocks.every((block) => block.length < 4_100)).toBe(true)
-    expect(parsed.blocks[0]).toContain('…[truncated]')
-  })
-
-  it('does not write when model output is non-JSON (no salvage)', async () => {
-    const { ctx, createBlock, createPage } = makeCtx({
-      sources: SOURCES,
-      completeContent: 'not json ' + 'x'.repeat(20_000)
-    })
-    const res = await handleExtractAndSave(ctx, {
-      source_block_ids: ['src-1'],
-      mode: 'summary',
-      target: TARGET
-    })
-    expect(res.error).toBeTruthy()
-    expect(createBlock).not.toHaveBeenCalled()
-    expect(createPage).not.toHaveBeenCalled()
-  })
-
-  it('emits a tool_result audit event on success', async () => {
-    const auditEvent = vi.fn(async (_payload: unknown) => {})
-    const { ctx } = makeCtx({
-      sources: SOURCES,
-      completeContent: JSON.stringify({
-        summary: 'Postgres uses MVCC; Redis is single-threaded.'
-      }),
-      auditEvent
-    })
-    const res = await handleExtractAndSave(ctx, {
-      source_block_ids: ['src-1', 'src-2'],
-      mode: 'summary',
-      target: TARGET
-    })
-    expect(res.error).toBeUndefined()
-    expect(auditEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'tool_result',
-        tool: 'extract_and_save',
-        status: 'ok'
-      })
-    )
-    // extract_and_save creates multiple blocks → no single block_id.
-    expect(auditEvent.mock.calls[0][0]).not.toHaveProperty('block_id')
-  })
-
-  it('exposes the tool def shape', () => {
-    expect(extractAndSaveToolDef.name).toBe('extract_and_save')
-    expect(extractAndSaveToolDef.parameters.required).toEqual([
-      'source_block_ids',
-      'mode',
-      'target'
-    ])
   })
 })

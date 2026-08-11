@@ -321,7 +321,7 @@ describe('agent-loop', () => {
     expect(prompt).toMatch(/search_notes/)
     expect(prompt).toMatch(/read_blocks/)
     expect(prompt).not.toMatch(/create_note/)
-    expect(prompt).toMatch(/search and read notes/i)
+    expect(prompt).toMatch(/search product help and read notes/i)
     expect(prompt).not.toMatch(/create, and organize/i)
     expect(prompt).toMatch(/read-only vault tools/i)
   })
@@ -971,9 +971,18 @@ describe('agent-loop', () => {
     const prompt = buildSystemPrompt(ctx)
     expect(prompt).toMatch(/general-purpose assistant/i)
     expect(prompt).toMatch(/do not refuse solely because/i)
-    expect(prompt).toMatch(/prefer searching and reading/i)
+    expect(prompt).toMatch(/prefer vault tools/i)
     expect(prompt).not.toMatch(/only answer about Silt/i)
     expect(prompt).not.toMatch(/refuse.*non-vault/i)
+  })
+
+  it('buildSystemPrompt prefers search_product_docs for Silt how-to (#928)', () => {
+    const ctx = mockCtx(() => mockStream({ content: '', model: 'm' }))
+    const prompt = buildSystemPrompt(ctx)
+    expect(prompt).toMatch(/search_product_docs/)
+    expect(prompt).toMatch(/how-to-use-Silt|product, UI, setup/i)
+    expect(prompt).toMatch(/do not fabricate detailed UI paths/i)
+    expect(prompt).toMatch(/not a substitute for the user's notes/i)
   })
 
   it('buildSystemPrompt includes UI location snapshot (#680)', () => {

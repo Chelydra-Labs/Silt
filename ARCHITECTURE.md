@@ -706,11 +706,14 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   `ai:complete:tool-delta:<pluginID>`, `ai:complete:done:<pluginID>`,
   `ai:complete:error:<pluginID>` (#635) so argument fragments are not on a
   global bus. The `ctx.ai.complete` SDK wrapper strips reasoning tags — see
-  `frontend/src/plugins/stripReasoning.ts`. The agent is **user-invoked only**,
+  `frontend/src/plugins/stripReasoning.ts`.    The agent is **user-invoked only**,
    tool calls are **transparent**, and vault mutations follow
    `ai.features.agent_writes` (read_only / confirm / auto) with bulk ops
    (`rename_tag`, `extract_and_save`) always staged behind a single-use
-   confirmation token. See `docs/plugins/silt-ai-agent.md`.
+   confirmation token. `extract_and_save` freezes rendered content at stage
+   time (preview before commit). The agent may also search a shipped offline
+   product-help corpus (`search_product_docs`); vault Q&A does not. See
+   `docs/plugins/silt-ai-agent.md`.
 
 - **Local MCP host** (#687) — Go package `backend/mcp` runs an in-process
   **generic MCP server** (official `github.com/modelcontextprotocol/go-sdk`

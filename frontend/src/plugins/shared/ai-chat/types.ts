@@ -2,9 +2,18 @@ export type ChatRole = 'user' | 'assistant' | 'system'
 
 export interface EvidenceTarget {
   blockId: string
+  /** Vault block (default) vs shipped product help (non-navigable). */
+  sourceKind?: 'vault' | 'product_help'
   notebook?: string
   section?: string
   page?: string
+}
+
+/** True when evidence points at product help, not a vault block. */
+export function isProductHelpTarget(target: EvidenceTarget): boolean {
+  return (
+    target.sourceKind === 'product_help' || target.blockId.startsWith('help:')
+  )
 }
 
 interface EntryBase {

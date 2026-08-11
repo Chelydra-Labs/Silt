@@ -248,10 +248,21 @@ describe('tool-registry', () => {
     expect(stageOperation).not.toHaveBeenCalled()
   })
 
-  it('auto mode runs create_note directly but stages extract_and_save', async () => {
+  it('auto mode runs create_note directly but handler-stages extract_and_save', async () => {
     stageOperation.mockClear()
     const createHandler = vi.fn(async () => ({ content: 'created' }))
-    const extractHandler = vi.fn(async () => ({ content: 'extracted' }))
+    // extract stages inside its handler (frozen payload), like rename_tag.
+    const extractHandler = vi.fn(async () => ({
+      content: '',
+      isStaged: true,
+      stagedToken: 'tok-e',
+      stagedPreview: {
+        kind: 'extract_and_save',
+        summary: 'Extract summary → Work/P',
+        details: 'frozen body',
+        severity: 'danger' as const
+      }
+    }))
     registerTool({
       name: 'create_note',
       description: 'write',
@@ -285,8 +296,10 @@ describe('tool-registry', () => {
       { mode: 'auto' }
     )
     expect(staged.isStaged).toBe(true)
-    expect(extractHandler).not.toHaveBeenCalled()
-    expect(stageOperation).toHaveBeenCalled()
+    expect(extractHandler).toHaveBeenCalled()
+    // Dispatch must not double-stage; handler owns stageOperation.
+    expect(stageOperation).not.toHaveBeenCalled()
     expect(staged.stagedPreview?.severity).toBe('danger')
+    expect(staged.stagedPreview?.details).toContain('frozen body')
   })
 })
