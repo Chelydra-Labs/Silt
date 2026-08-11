@@ -6,7 +6,8 @@ import {
   extractAndSaveToolDef,
   handleExtractAndSave,
   parseExtraction,
-  previewDetails
+  previewDetails,
+  targetPageExists
 } from './extract_and_save'
 
 interface SourceBlock {
@@ -57,9 +58,9 @@ function makeCtx(opts: {
         .map((b) => ({ id: b.id, clean_content: b.clean_content }))
       return { rows, truncated: false }
     }
-    // targetPageExists probes files then blocks by notebook/section/page.
+    // targetPageExists probes blocks (then page_types) by notebook/section/page.
     if (
-      (lower.includes('from files') || lower.includes('from blocks')) &&
+      (lower.includes('from blocks') || lower.includes('from page_types')) &&
       lower.includes('notebook = ?') &&
       lower.includes('page = ?')
     ) {
@@ -537,13 +538,7 @@ describe('extract_and_save commit (commitExtractAndSave)', () => {
       return true
     })
     const deletePage = vi.fn(async () => true)
-    const sqliteQuery = vi.fn(async (sql: string) => {
-      const lower = sql.toLowerCase()
-      if (lower.includes('from files') && lower.includes('notebook')) {
-        return { rows: [], truncated: false }
-      }
-      return { rows: [], truncated: false }
-    })
+    const sqliteQuery = vi.fn(async () => ({ rows: [], truncated: false }))
     const ac = new AbortController()
     const ctx = {
       sqliteQuery,
@@ -569,7 +564,7 @@ describe('extract_and_save commit (commitExtractAndSave)', () => {
     const ac = new AbortController()
     const ctx = {
       sqliteQuery: vi.fn(async (sql: string) => {
-        if (sql.toLowerCase().includes('from files')) {
+        if (sql.toLowerCase().includes('from blocks')) {
           return { rows: [{ ok: 1 }], truncated: false }
         }
         return { rows: [], truncated: false }
@@ -615,6 +610,62 @@ describe('previewDetails', () => {
     const long = previewDetails([longBody, longBody])
     expect(long).toMatch(/^2 blocks to write:/)
     expect(long).toMatch(/preview truncated \(2 blocks total\)/)
+  })
+})
+
+describe('targetPageExists', () => {
+  it('uses blocks probe (not files notebook columns) and page_types fallback', async () => {
+    const calls: string[] = []
+    const ctx = {
+      sqliteQuery: vi.fn(async (sql: string) => {
+        calls.push(sql)
+        const lower = sql.toLowerCase()
+        // Simulate real schema: files has no notebook column — must not be queried that way.
+        if (lower.includes('from files') && lower.includes('notebook')) {
+          throw new Error('no such column: notebook')
+        }
+        if (lower.includes('from blocks')) {
+          return { rows: [], truncated: false }
+        }
+        if (lower.includes('from page_types')) {
+          return { rows: [{ ok: 1 }], truncated: false }
+        }
+        return { rows: [], truncated: false }
+      })
+    } as unknown as PluginContext
+
+    await expect(
+      targetPageExists(ctx, {
+        notebook: 'Work',
+        section: 'Notes',
+        page: 'EmptyTyped'
+      })
+    ).resolves.toBe(true)
+    expect(
+      calls.some((s) => /from files/i.test(s) && /notebook/i.test(s))
+    ).toBe(false)
+    expect(calls.some((s) => /from blocks/i.test(s))).toBe(true)
+    expect(calls.some((s) => /from page_types/i.test(s))).toBe(true)
+  })
+
+  it('returns false when blocks and page_types are empty', async () => {
+    const ctx = {
+      sqliteQuery: vi.fn(async () => ({ rows: [], truncated: false }))
+    } as unknown as PluginContext
+    await expect(
+      targetPageExists(ctx, { notebook: 'W', section: '', page: 'New' })
+    ).resolves.toBe(false)
+  })
+
+  it('fails closed (true) when blocks query throws', async () => {
+    const ctx = {
+      sqliteQuery: vi.fn(async () => {
+        throw new Error('db locked')
+      })
+    } as unknown as PluginContext
+    await expect(
+      targetPageExists(ctx, { notebook: 'W', section: '', page: 'P' })
+    ).resolves.toBe(true)
   })
 })
 

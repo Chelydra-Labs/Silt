@@ -475,33 +475,40 @@ export async function commitExtractAndSave(
 }
 
 /**
- * True when the target page already has an index row (file existed before
- * this commit). Empty newly-created pages may still appear after createPage
- * indexes frontmatter-only scaffolds — callers must check *before* createPage.
+ * True when the target page already appears in the core index (before
+ * createPage). Uses `blocks` (and `page_types` when present) — not `files`,
+ * which is keyed by absolute path only and has no notebook/section/page
+ * columns.
+ *
+ * Callers must check *before* createPage. Fail closed (assume exists) on
+ * query errors so cleanup never deletes on a DB fault.
  */
 export async function targetPageExists(
   ctx: PluginContext,
   target: TargetSpec
 ): Promise<boolean> {
-  try {
-    // Prefer files table (one row per page path) when present.
-    const { rows: fileRows } = await ctx.sqliteQuery(
-      'SELECT 1 AS ok FROM files WHERE notebook = ? AND section = ? AND page = ? LIMIT 1',
-      [target.notebook, target.section, target.page]
-    )
-    if (fileRows.length > 0) return true
-  } catch {
-    // Older indexes or restricted schemas: fall through to blocks probe.
-  }
+  const params = [target.notebook, target.section, target.page]
   try {
     const { rows } = await ctx.sqliteQuery(
       'SELECT 1 AS ok FROM blocks WHERE notebook = ? AND section = ? AND page = ? LIMIT 1',
-      [target.notebook, target.section, target.page]
+      params
     )
-    return rows.length > 0
+    if (rows.length > 0) return true
   } catch {
     // Fail closed: assume exists so we never delete on cleanup.
     return true
+  }
+  // Typed empty pages may have a page_types row with no content blocks yet.
+  try {
+    const { rows } = await ctx.sqliteQuery(
+      'SELECT 1 AS ok FROM page_types WHERE notebook = ? AND section = ? AND page = ? LIMIT 1',
+      params
+    )
+    return rows.length > 0
+  } catch {
+    // page_types may be absent on older indexes — treat as non-existent only
+    // when blocks also had no row (already checked).
+    return false
   }
 }
 
