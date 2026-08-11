@@ -115,6 +115,7 @@ export function previewForMutation(
       }
     }
     case 'extract_and_save': {
+      // Handler-stage owns the real content preview; this is dispatch fallback only.
       const mode = str(args.mode) || 'extract'
       const target = args.target as Record<string, unknown> | undefined
       const path = target
@@ -122,19 +123,26 @@ export function previewForMutation(
             .filter(Boolean)
             .join('/')
         : ''
+      const blockCount = Array.isArray(args.blocks) ? args.blocks.length : 0
       const ids = Array.isArray(args.source_block_ids)
         ? args.source_block_ids.length
         : 0
+      const detailsParts: string[] = [`Mode: ${mode}`]
+      if (ids > 0) detailsParts.push(`Source blocks: ${ids}`)
+      if (blockCount > 0) {
+        detailsParts.push(`${blockCount} extracted block(s) ready to write.`)
+      } else {
+        detailsParts.push(
+          'Confirm writes the staged extraction to the target page.'
+        )
+      }
       return {
         kind: 'extract_and_save',
         summary: path
           ? `Extract ${mode} → ${path}`
           : `Extract ${mode} to a new note`,
-        details:
-          ids > 0
-            ? `Mode: ${mode}\nSource blocks: ${ids}\nContent is generated after you confirm.`
-            : `Mode: ${mode}\nContent is generated after you confirm.`,
-        affectedCount: 1,
+        details: detailsParts.join('\n'),
+        affectedCount: blockCount > 0 ? blockCount : 1,
         severity: 'danger'
       }
     }

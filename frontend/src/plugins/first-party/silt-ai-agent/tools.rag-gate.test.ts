@@ -135,7 +135,16 @@ vi.mock('./tools/extract_and_save', () => ({
     description: 'd',
     parameters: { type: 'object', properties: {} }
   },
-  handleExtractAndSave: vi.fn()
+  handleExtractAndSave: vi.fn(),
+  commitExtractAndSave: vi.fn()
+}))
+vi.mock('./tools/search_product_docs', () => ({
+  searchProductDocsToolDef: {
+    name: 'search_product_docs',
+    description: 'd',
+    parameters: { type: 'object', properties: {} }
+  },
+  handleSearchProductDocs: vi.fn()
 }))
 
 describe('RAG tool gating (#632)', () => {

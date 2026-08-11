@@ -1,27 +1,23 @@
-// Agent tool #608 — extract_and_save.
+// Agent tool #608 / #935 — extract_and_save.
 //
-// Composes read_blocks + ctx.ai.complete (responseSchema-constrained) +
-// create_note to turn a set of source blocks into a new structured note.
+// Stage-after-parse (like rename_tag): nested complete + parse run in the
+// handler; Confirm commits a frozen block payload (no second model call).
+// Commit uses createPage + applyBlocks for a single-page batch write.
+//
 // Four modes, each with its own JSON schema:
 //   - 'summary'       → { summary: string }
 //   - 'flashcards'    → { items: [{ front, back }] }
 //   - 'qa_pairs'      → { items: [{ question, answer }] }
 //   - 'action_items'  → { items: [{ title, due_date? }] }
 //
-// The model output is parsed and rendered into a fresh NOTE block per item
-// (or a single block for summary). Each block carries a citation back to its
-// source block_ids via a trailing `<!-- src: uuid,uuid -->` comment so a
-// reader (or the agent in a later turn) can trace where the content came
-// from.
-//
-// Failure handling: if the model returns malformed JSON or errors, the tool
-// returns an error result and writes NOTHING (no salvage-to-vault). Sources
-// are NEVER mutated — only a successful parse creates the target page.
+// Failure handling: malformed JSON / model errors stage nothing and write
+// nothing. Sources are NEVER mutated.
 
 import type { PluginAIChatMessage, PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
 import { auditWrite } from './_util'
 import type { ToolResult } from '../tool-registry'
+import { stageOperation } from '../staging'
 import {
   neutralizeVaultDataMarkers,
   UNTRUSTED_CONTENT_SECURITY
@@ -184,6 +180,35 @@ function cancelledResult(): ToolResult {
   return { content: '', error: 'Cancelled before tool completed.' }
 }
 
+const PREVIEW_DETAILS_MAX = 1_200
+
+/** Frozen payload stored at stage time; commit never re-runs the model. */
+export interface FrozenExtractPayload {
+  mode: ExtractionMode
+  target: TargetSpec
+  source_block_ids: string[]
+  /** Fully rendered NOTE bodies including citation trailer. */
+  blocks: string[]
+}
+
+function pagePathOf(target: TargetSpec): string {
+  return [target.notebook, target.section, target.page]
+    .filter((s) => s.length > 0)
+    .join('/')
+}
+
+function previewDetails(blocks: string[]): string {
+  const joined = blocks
+    .map((b, i) => `--- block ${i + 1} ---\n${b}`)
+    .join('\n\n')
+  if (joined.length <= PREVIEW_DETAILS_MAX) return joined
+  return `${joined.slice(0, PREVIEW_DETAILS_MAX - 1)}…`
+}
+
+/**
+ * Stage half: validate → read sources → nested complete → parse → freeze
+ * rendered blocks in a staging token. No vault writes.
+ */
 export async function handleExtractAndSave(
   ctx: PluginContext,
   args: Record<string, unknown>,
@@ -245,7 +270,6 @@ export async function handleExtractAndSave(
     }
   }
   const foundIds = sources.map((s) => s.id)
-  // Neutralize vault_data markers so source text cannot close the wrapper early.
   const sourceDigest = neutralizeVaultDataMarkers(
     renderSourcesForPrompt(sources)
   )
@@ -255,11 +279,8 @@ export async function handleExtractAndSave(
     return cancelledResult()
   }
 
-  // --- 3. Run the structured extraction ------------------------------------
-  // Prepend the shared untrusted-content preamble to the system prompt so the
-  // framing carries system-level priority (not only the user-message caveat),
-  // and hard-delimit the source blocks as DATA (mirrors agent-loop
-  // wrapUntrustedToolResult) (#633).
+  // --- 3. Nested structured extraction (before confirm) ---------------------
+  // ctx.ai.complete has no AbortSignal today; poll signal around the call.
   const messages: PluginAIChatMessage[] = [
     {
       role: 'system',
@@ -295,7 +316,7 @@ export async function handleExtractAndSave(
     return cancelledResult()
   }
 
-  // --- 4. Parse → block bodies (fail closed: no vault write on bad parse) --
+  // --- 4. Parse → freeze bodies (fail closed: nothing staged on bad parse) --
   const parsed = parseExtraction(rawContent, mode)
   if (parsed.blocks.length === 0) {
     auditWrite(ctx, 'extract_and_save', 'error')
@@ -307,38 +328,155 @@ export async function handleExtractAndSave(
     }
   }
 
-  // --- 5. Save to the new page (write only here, never to sources) ---------
+  const citation = `<!-- src: ${foundIds.join(',')} mode:${mode} -->`
+  const frozenBlocks = parsed.blocks.map((body) => `${body}\n\n${citation}`)
+  const path = pagePathOf(target)
+
+  const frozen: FrozenExtractPayload = {
+    mode,
+    target,
+    source_block_ids: foundIds,
+    blocks: frozenBlocks
+  }
+
+  const token = await stageOperation(
+    ctx,
+    'extract_and_save',
+    frozen as unknown as Record<string, unknown>
+  )
+
+  return {
+    content: '',
+    isStaged: true,
+    stagedToken: token,
+    stagedPreview: {
+      kind: 'extract_and_save',
+      summary: `Extract ${mode} → ${path} (${frozenBlocks.length} block${frozenBlocks.length === 1 ? '' : 's'})`,
+      details: previewDetails(frozenBlocks),
+      affectedCount: frozenBlocks.length,
+      severity: 'danger'
+    }
+  }
+}
+
+/**
+ * Commit half: write frozen blocks only. Never calls ctx.ai.complete.
+ * Uses createPage + applyBlocks for a single-page batch write (#935).
+ */
+export async function commitExtractAndSave(
+  ctx: PluginContext,
+  params: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<ToolResult> {
+  const mode = asString(params.mode) as ExtractionMode
+  if (!MODE_CONFIGS[mode]) {
+    auditWrite(ctx, 'extract_and_save', 'error')
+    return {
+      content: '',
+      error: 'staged extract_and_save params were malformed (mode)'
+    }
+  }
+  const target = normalizeTarget(params.target)
+  if (typeof target === 'string') {
+    auditWrite(ctx, 'extract_and_save', 'error')
+    return {
+      content: '',
+      error: `staged extract_and_save params were malformed: ${target}`
+    }
+  }
+  const rawBlocks = params.blocks
+  if (!Array.isArray(rawBlocks) || rawBlocks.length === 0) {
+    auditWrite(ctx, 'extract_and_save', 'error')
+    return {
+      content: '',
+      error: 'staged extract_and_save params were malformed (blocks)'
+    }
+  }
+  const blocks = rawBlocks
+    .map((b) => asString(b).trim())
+    .filter((s) => s.length > 0)
+  if (blocks.length === 0) {
+    auditWrite(ctx, 'extract_and_save', 'error')
+    return {
+      content: '',
+      error: 'staged extract_and_save params were malformed (empty blocks)'
+    }
+  }
+
+  const sourceIds = Array.isArray(params.source_block_ids)
+    ? params.source_block_ids.map((x) => asString(x)).filter(Boolean)
+    : []
+
   if (signal?.aborted) {
     auditWrite(ctx, 'extract_and_save', 'error')
     return cancelledResult()
   }
 
-  await ctx.createPage(target.notebook, target.section, target.page)
-  const citation = `<!-- src: ${foundIds.join(',')} mode:${mode} -->`
-  const createdBlockIds: string[] = []
-  for (const body of parsed.blocks) {
+  let pageCreated = false
+  try {
+    await ctx.createPage(target.notebook, target.section, target.page)
+    pageCreated = true
+
     if (signal?.aborted) {
+      await cleanupEmptyPage(ctx, target, pageCreated)
       auditWrite(ctx, 'extract_and_save', 'error')
       return cancelledResult()
     }
-    const text = `${body}\n\n${citation}`
-    const id = await ctx.createBlock({
-      type: 'NOTE',
+
+    const ops = blocks.map((text) => ({
+      kind: 'create' as const,
+      type: 'NOTE' as const,
       text,
       notebook: target.notebook,
       section: target.section,
       page: target.page
-    })
-    createdBlockIds.push(id)
+    }))
+
+    const ok = await ctx.applyBlocks(ops)
+    if (!ok) {
+      await cleanupEmptyPage(ctx, target, pageCreated)
+      auditWrite(ctx, 'extract_and_save', 'error')
+      return {
+        content: '',
+        error: 'failed to write extracted blocks to the target page'
+      }
+    }
+  } catch (e: unknown) {
+    await cleanupEmptyPage(ctx, target, pageCreated)
+    if (signal?.aborted) {
+      auditWrite(ctx, 'extract_and_save', 'error')
+      return cancelledResult()
+    }
+    const msg = e instanceof Error ? e.message : asString(e)
+    auditWrite(ctx, 'extract_and_save', 'error')
+    return { content: '', error: `extract commit failed: ${msg}` }
   }
 
-  const pagePath = [target.notebook, target.section, target.page]
-    .filter((s) => s.length > 0)
-    .join('/')
-  const head = `Extracted ${mode} from ${foundIds.length} source block(s) → ${pagePath} (${createdBlockIds.length} block(s)).`
+  if (signal?.aborted) {
+    // Batch already applied — cannot unwrite without risking user data.
+    // Signal after successful write is treated as success (content is complete).
+  }
+
+  const path = pagePathOf(target)
+  const head = `Extracted ${mode} from ${sourceIds.length || '?'} source block(s) → ${path} (${blocks.length} block(s)).`
   auditWrite(ctx, 'extract_and_save', 'ok')
   return {
-    content: `${head}\nCreated block(s): ${createdBlockIds.join(', ')}`
+    content: `${head}\nWrote ${blocks.length} block(s) via atomic page batch.`
+  }
+}
+
+/** Best-effort remove a page we just created if the batch write never landed. */
+async function cleanupEmptyPage(
+  ctx: PluginContext,
+  target: TargetSpec,
+  pageCreated: boolean
+): Promise<void> {
+  if (!pageCreated) return
+  if (typeof ctx.deletePage !== 'function') return
+  try {
+    await ctx.deletePage(target.notebook, target.section, target.page)
+  } catch {
+    // Best-effort; leave orphan empty page rather than throw past the error path.
   }
 }
 

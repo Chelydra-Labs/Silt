@@ -144,6 +144,21 @@ describe('navigateEvidence (#875)', () => {
     })
   })
 
+  it('does not navigate for product-help evidence targets (#928)', () => {
+    const handler = vi.fn()
+    window.addEventListener('navigate-to-block', handler)
+    dispatchNavigateEvidence({
+      blockId: 'help:getting-started#enable-ai',
+      sourceKind: 'product_help'
+    })
+    dispatchNavigateEvidence({
+      blockId: 'help:backup',
+      sourceKind: 'vault' // still blocked by help: prefix
+    })
+    expect(handler).not.toHaveBeenCalled()
+    window.removeEventListener('navigate-to-block', handler)
+  })
+
   it('forwards optional locator fields when present (not only blockId)', () => {
     // Regression: the drawer used to drop notebook/section/page at dispatch.
     const target: EvidenceTarget = {

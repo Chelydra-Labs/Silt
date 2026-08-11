@@ -40,7 +40,13 @@ export interface ToolResult {
 /** Structured retrieval metadata kept alongside the model-facing text. */
 export interface ToolEvidence {
   citationIndex: number
+  /**
+   * Vault block UUID, or a synthetic help id (`help:…`) when
+   * sourceKind is product_help.
+   */
   blockId: string
+  /** Defaults to vault when omitted. */
+  sourceKind?: 'vault' | 'product_help'
   notebook?: string
   section?: string
   page?: string
@@ -317,8 +323,9 @@ export async function dispatchTool(
           error: `tool "${name}" cannot be staged (missing commit handler)`
         }
       }
-      // rename_tag's handler already stages (preview count + token).
-      if (name === 'rename_tag') {
+      // rename_tag / extract_and_save stage inside the handler (richer preview
+      // / frozen payload). Other mutators stage raw args at dispatch.
+      if (name === 'rename_tag' || name === 'extract_and_save') {
         return await tool.handler(ctx, argsJson, signal)
       }
       // Other mutators: stage at dispatch; commit runs the real handler later.

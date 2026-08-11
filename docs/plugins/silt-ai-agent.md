@@ -30,11 +30,12 @@ configured chat + embedding models.
 3. **Answers** in plain prose when no further tool use is needed, streamed
    live into the chat.
 
-The agent is a **general-purpose assistant** with vault tools: it answers
-non-vault questions directly when tools are unnecessary, and **prefers the
-notebook** (search/read tools + current page) when notes are relevant. This
-differs from **AI Q&A** (`silt-ai-qa`), which answers only from retrieved
-excerpts with citations.
+The agent is a **general-purpose assistant** with vault tools and shipped
+product help: it answers non-vault questions directly when tools are
+unnecessary, **prefers `search_product_docs`** for Silt product/UI/setup
+how-tos, and **prefers the notebook** (search/read tools + current page) when
+personal notes are relevant. This differs from **AI Q&A** (`silt-ai-qa`), which
+answers only from vault excerpts with citations and never indexes product help.
 
 The agent **never writes unsolicited**. Read-only tools run inline; any
 destructive operation is staged behind a confirmation gate (see **Safety
@@ -58,7 +59,7 @@ the same data via `ctx.getUiLocation()`.
 
 ### Tool catalog
 
-Fifteen tools, registered in three tiers. Most are read-only and run inline.
+Sixteen tools, registered in three tiers. Most are read-only and run inline.
 Write safety is controlled by **Settings → AI → Agent vault writes**
 (`ai.features.agent_writes`):
 
@@ -68,21 +69,26 @@ Write safety is controlled by **Settings → AI → Agent vault writes**
 | **confirm** (default) | All mutators stage for HITL confirmation before any vault write. |
 | **auto** | Single-edit writes (`create_note`, `create_task`, `update_block`, `update_task`) run immediately; **rename_tag** and **extract_and_save** always confirm. |
 
-- **Read-only** — query the vault and return text; no mutation. Retrieval tools
-  (`search_notes`, `read_blocks`, `get_backlinks`, `query_tasks`,
-  `get_related_notes`, `suggest_link_targets`) attach structured **evidence**
-  with citation indices for the shared drawer.
+- **Read-only** — query the vault or shipped product help; no mutation.
+  Retrieval tools (`search_notes`, `search_product_docs`, `read_blocks`,
+  `get_backlinks`, `query_tasks`, `get_related_notes`, `suggest_link_targets`)
+  attach structured **evidence** with citation indices for the shared drawer.
+  Product-help sources are labeled **Silt help** and are not navigable vault
+  blocks.
 - **Mutating** — `create_*` / `update_*` / `extract_and_save` / `rename_tag`.
-  In confirm mode the harness stages them (commit runs the real handler after
-  you approve). `extract_and_save` never salvages failed model output into the
-  vault — parse/model errors return an error and write nothing. Mutators
-  dispatch **serially**; read tools may still run in parallel batches.
+  In confirm mode the harness stages them (commit runs after you approve).
+  `extract_and_save` runs the nested model **before** Confirm, freezes the
+  rendered blocks in the staging token, shows a content preview, and commits
+  only that frozen payload (no second model call). Parse/model errors stage
+  nothing and write nothing. Commit uses a single-page `applyBlocks` batch.
+  Mutators dispatch **serially**; read tools may still run in parallel batches.
 - **Always confirm** — bulk `rename_tag` and nested-model `extract_and_save`
   require confirmation even in **auto**.
 
 | Tier | Tool | Safety | Parameters |
 |---|---|---|---|
 | **P0** | `search_notes` | read-only | `query` (req), `top_k?` (1–50, default 10), `filters?` `{notebook?, section?, type?}` |
+| | `search_product_docs` | read-only | `query` (req), `top_k?` (1–10, default 5) — shipped Silt help (not vault notes; not RAG-gated) |
 | | `read_blocks` | read-only | `block_ids` (req, max 20), `include_context?` (default true — parent + siblings) |
 | | `get_backlinks` | read-only | `target` (req, UUID or page path), `include_embeds?` (default true), `max_results?` (1–100, default 20) |
 | | `query_tasks` | read-only | `status?`, `owner?`, `priority_min?` (1–3), `due_before?`, `due_after?`, `tags?`, `notebook?`, `is_blocked?`, `limit?` (1–50, default 20) |
@@ -96,11 +102,29 @@ Write safety is controlled by **Settings → AI → Agent vault writes**
 | | `rename_tag` | **always staged** | `old_tag` (req), `new_tag` (req) — bulk `#hashtag` rewrite |
 | **P2** | `get_vault_statistics` | read-only | `scope?` (notebook) — block/task counts, orphans, stale tasks, top tags, recent edits |
 | | `suggest_link_targets` | read-only | `block_id` (req), `max_suggestions?` (1–20, default 5) — excludes already-linked targets |
-| | `extract_and_save` | **always staged** | `source_block_ids` (req, max 20), `mode` (req: `summary`\|`flashcards`\|`qa_pairs`\|`action_items`), `target` (req: `{notebook, page, section?}`) |
+| | `extract_and_save` | **always staged** (preview then commit) | `source_block_ids` (req, max 20), `mode` (req: `summary`\|`flashcards`\|`qa_pairs`\|`action_items`), `target` (req: `{notebook, page, section?}`) |
 
 Required parameters are marked `(req)`; others are optional. Every tool result
 fed to the model is capped at 10 KB (larger bodies carry a visible `[… truncated]`
 marker). SQL is parameterized throughout — the agent has no raw-SQL tool.
+
+### Ask Silt how to use Silt (`search_product_docs`)
+
+When you ask how to enable AI, use templates, back up a vault, or similar
+product questions, the agent can call **`search_product_docs`**. That tool
+searches a **curated offline help corpus** shipped with the app (not your
+notes, not the public internet, not SPECS/ARCHITECTURE).
+
+- **Corpus location (maintainers):**
+  `frontend/src/plugins/first-party/silt-ai-agent/product-docs/` — markdown
+  articles with YAML `id`/`title` frontmatter and `##` sections. See that
+  folder’s `README.md` for how to add or update an article.
+- **Empty results** return the fixed copy `No matching Silt help topics.` The
+  model is instructed not to invent detailed UI paths when help misses.
+- **Sources** appear in the drawer as **Silt help** (distinct from vault
+  passages) and do not navigate to a note.
+- **Vault Q&A** (`silt-ai-qa`) is unchanged: it still answers only from vault
+  excerpts and does not load this corpus.
 
 ## Setup
 
@@ -217,11 +241,12 @@ index (double embed cost on large vaults is expected in v1).
   before the handler with an instructive error. Near-duplicates like
   `Foo` / `foo` count as the same call.
 - **Q&A tool subset.** Default catalog for a turn is read-only:
-  `search_notes`, `read_blocks`, `query_tasks`, `get_backlinks` (∩ registered /
-  RAG gate). Write/organize intent in the **user message at turn start** opens
-  the **full** catalog for that turn (then filtered by `agent_writes`). Catalog
-  mode does not flip mid-turn. System prompt lists the same tools as the
-  `complete` catalog and states the active write mode.
+  `search_notes`, `search_product_docs`, `read_blocks`, `query_tasks`,
+  `get_backlinks` (∩ registered / RAG gate). Write/organize intent in the
+  **user message at turn start** opens the **full** catalog for that turn
+  (then filtered by `agent_writes`). Catalog mode does not flip mid-turn.
+  System prompt lists the same tools as the `complete` catalog, states the
+  active write mode, and steers product how-tos to `search_product_docs`.
 - **History budget.** Before each model call, tool-result messages older than
   the last **3** tool rounds are compacted to a one-line digest so long turns
   stay within context.

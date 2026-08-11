@@ -4,10 +4,12 @@
   import type {
     AIChatEntry,
     ConfirmationEntry,
+    EvidenceEntry,
     EvidenceTarget,
     ToolCallEntry,
     ToolResultEntry
   } from './types'
+  import { isProductHelpTarget } from './types'
   import { renderChatMarkdown } from './renderChatMarkdown'
   import { isSafeLinkHref } from '../../../lib/editor/converters/validate'
   import {
@@ -296,6 +298,36 @@
     </div>
   {/if}
 
+  {#snippet evidenceCard(entry: EvidenceEntry, nested: boolean)}
+    {@const help = isProductHelpTarget(entry.target)}
+    <article class="evidence-card" class:nested>
+      <span class="citation-index">{entry.citationIndex}</span>
+      <div class="evidence-copy">
+        <span class="entry-label">{help ? 'Silt help' : 'Source'}</span>
+        <strong>{entry.title}</strong>
+        {#if entry.excerpt}<p>{entry.excerpt}</p>{/if}
+      </div>
+      {#if help}
+        <span
+          class="help-badge material-symbols-outlined"
+          title="Shipped product help"
+          aria-label="Shipped product help (not a vault note)">menu_book</span
+        >
+      {:else}
+        <button
+          type="button"
+          class="icon-button"
+          aria-label={`Open source ${entry.citationIndex}: ${entry.title}`}
+          onclick={() => onNavigateEvidence(entry.target)}
+        >
+          <span class="material-symbols-outlined" aria-hidden="true"
+            >arrow_outward</span
+          >
+        </button>
+      {/if}
+    </article>
+  {/snippet}
+
   <div
     class="transcript"
     bind:this={transcriptEl}
@@ -447,24 +479,7 @@
           {#if expanded[group.id]}
             <div id={`${group.id}-details`} class="evidence-group-body">
               {#each group.items as entry (entry.id)}
-                <article class="evidence-card nested">
-                  <span class="citation-index">{entry.citationIndex}</span>
-                  <div class="evidence-copy">
-                    <span class="entry-label">Source</span>
-                    <strong>{entry.title}</strong>
-                    {#if entry.excerpt}<p>{entry.excerpt}</p>{/if}
-                  </div>
-                  <button
-                    type="button"
-                    class="icon-button"
-                    aria-label={`Open source ${entry.citationIndex}: ${entry.title}`}
-                    onclick={() => onNavigateEvidence(entry.target)}
-                  >
-                    <span class="material-symbols-outlined" aria-hidden="true"
-                      >arrow_outward</span
-                    >
-                  </button>
-                </article>
+                {@render evidenceCard(entry, true)}
               {/each}
             </div>
           {/if}
@@ -494,25 +509,7 @@
           {/if}
         </article>
       {:else if segment.entry.kind === 'evidence'}
-        {@const entry = segment.entry}
-        <article class="evidence-card">
-          <span class="citation-index">{entry.citationIndex}</span>
-          <div class="evidence-copy">
-            <span class="entry-label">Source</span>
-            <strong>{entry.title}</strong>
-            {#if entry.excerpt}<p>{entry.excerpt}</p>{/if}
-          </div>
-          <button
-            type="button"
-            class="icon-button"
-            aria-label={`Open source ${entry.citationIndex}: ${entry.title}`}
-            onclick={() => onNavigateEvidence(entry.target)}
-          >
-            <span class="material-symbols-outlined" aria-hidden="true"
-              >arrow_outward</span
-            >
-          </button>
-        </article>
+        {@render evidenceCard(segment.entry, false)}
       {:else if segment.entry.kind === 'proposal'}
         {@const entry = segment.entry}
         <article class="proposal-card">
@@ -924,6 +921,13 @@
     padding: 0.75rem;
     border-left: 3px solid var(--color-accent-secondary-start);
   }
+  .help-badge {
+    color: var(--text-muted, #888);
+    font-size: 1.1rem;
+    padding: 0.25rem;
+    user-select: none;
+  }
+
   .evidence-card.nested {
     border-radius: 0.5rem;
     animation: none;

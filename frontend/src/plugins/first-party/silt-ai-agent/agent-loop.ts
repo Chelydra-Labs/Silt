@@ -59,6 +59,7 @@ export const MAX_SEARCH_NOTES_PER_TURN = 3
 /** Default Q&A catalog (read-only retrieval); expands on write intent. */
 export const QA_TOOL_NAMES = [
   'search_notes',
+  'search_product_docs',
   'read_blocks',
   'query_tasks',
   'get_backlinks'
@@ -304,9 +305,14 @@ export function buildSystemPrompt(
     'Answer general knowledge and non-vault questions directly when vault tools',
     'are unnecessary — do not refuse solely because a topic is outside Silt',
     'product docs or outside the vault.',
-    "When the user's notes may answer the question, prefer searching and reading",
-    'the vault (and the current page from UI LOCATION) and ground answers in',
-    'that material when applicable.',
+    'For Silt product, UI, setup, or how-to-use-Silt questions, call',
+    'search_product_docs before inventing steps; ground answers in those',
+    'excerpts and cite Silt help sources. If it returns no useful hits, say',
+    'help does not cover the topic — give only cautious general guidance and',
+    'do not fabricate detailed UI paths.',
+    "When the user's personal notes may answer the question, prefer vault tools",
+    '(search_notes, read_blocks, etc., and the current page from UI LOCATION).',
+    "Product help is not a substitute for the user's notes.",
     useToolsLine,
     '',
     'AFTER EACH TOOL RESULT: If <vault_data> already answers the user, respond',

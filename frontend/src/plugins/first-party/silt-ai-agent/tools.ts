@@ -41,8 +41,13 @@ import {
 } from './tools/suggest_link_targets'
 import {
   extractAndSaveToolDef,
-  handleExtractAndSave
+  handleExtractAndSave,
+  commitExtractAndSave
 } from './tools/extract_and_save'
+import {
+  searchProductDocsToolDef,
+  handleSearchProductDocs
+} from './tools/search_product_docs'
 
 /** Tools that need embeddings / RAG; omitted from the catalog when RAG is off. */
 export const RAG_TOOL_NAMES = new Set([
@@ -53,8 +58,10 @@ export const RAG_TOOL_NAMES = new Set([
 
 // Mutators register commit = handler so dispatch can stage without running the
 // write; materializeToolMessage calls commit after user confirm (#924).
+// extract_and_save / rename_tag stage inside their handlers (frozen payload).
 const P0_TOOLS: AgentToolDef[] = [
   { ...searchNotesToolDef, handler: handleSearchNotes },
+  { ...searchProductDocsToolDef, handler: handleSearchProductDocs },
   { ...readBlocksToolDef, handler: handleReadBlocks },
   { ...getBacklinksToolDef, handler: handleGetBacklinks },
   { ...queryTasksToolDef, handler: handleQueryTasks },
@@ -95,7 +102,7 @@ const P2_TOOLS: AgentToolDef[] = [
   {
     ...extractAndSaveToolDef,
     handler: handleExtractAndSave,
-    commit: handleExtractAndSave
+    commit: commitExtractAndSave
   }
 ]
 
