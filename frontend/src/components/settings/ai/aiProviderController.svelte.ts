@@ -25,6 +25,14 @@ import {
   ClearAIAudit
 } from '../../../../bindings/silt/app.js'
 import * as appBindings from '../../../../bindings/silt/app.js'
+import { loadConfig } from '../../../settings/store.svelte'
+import { loadPlugins } from '../../../plugins/loader'
+import { getActiveLocation } from '../../../plugins/location.svelte'
+import { normalizeAgentWritesMode } from '../../../plugins/shared/ai-chat/availability'
+import type * as main from '../../../../bindings/silt/models.js'
+import type * as aiTypes from '../../../../bindings/silt/backend/ai/models.js'
+import { AIProviderType } from '../../../generated/enums'
+
 // Binding regenerated with Phase 2; typed loosely so partial IDE caches don't block.
 const UpdateAIFeatures = (
   appBindings as unknown as {
@@ -36,21 +44,6 @@ const UpdateAIFeatures = (
     }) => Promise<void>
   }
 ).UpdateAIFeatures
-
-export type AgentWritesMode = 'read_only' | 'confirm' | 'auto'
-
-export function normalizeAgentWrites(value: unknown): AgentWritesMode {
-  if (value === 'read_only' || value === 'confirm' || value === 'auto') {
-    return value
-  }
-  return 'confirm'
-}
-import { loadConfig } from '../../../settings/store.svelte'
-import { loadPlugins } from '../../../plugins/loader'
-import { getActiveLocation } from '../../../plugins/location.svelte'
-import type * as main from '../../../../bindings/silt/models.js'
-import type * as aiTypes from '../../../../bindings/silt/backend/ai/models.js'
-import { AIProviderType } from '../../../generated/enums'
 
 export type Which = 'chat' | 'embedding'
 // ProviderType is sourced from the Go AIProviderType enum via cmd/genenums so
@@ -296,7 +289,7 @@ export function createAIProviderController() {
       rag_enabled: patch.rag_enabled ?? features?.rag_enabled ?? false,
       summaries_enabled:
         patch.summaries_enabled ?? features?.summaries_enabled ?? false,
-      agent_writes: normalizeAgentWrites(
+      agent_writes: normalizeAgentWritesMode(
         patch.agent_writes ?? features?.agent_writes
       )
     }
