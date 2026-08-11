@@ -149,7 +149,9 @@ describe('get_backlinks', () => {
       target: UUID,
       include_embeds: false
     })
-    expect((res.content.match(/^- \[backlink\]/gm) ?? []).length).toBe(20)
+    expect((res.content.match(/^- \[\d+\] \[backlink\]/gm) ?? []).length).toBe(
+      20
+    )
     const batchCall = (
       ctx.sqliteQuery as ReturnType<typeof vi.fn>
     ).mock.calls.find((call) => String(call[0]).includes('raw_content LIKE'))

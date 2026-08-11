@@ -59,7 +59,8 @@ const mocks = vi.hoisted(() => {
     features: {
       enabled: false,
       rag_enabled: false,
-      summaries_enabled: false
+      summaries_enabled: false,
+      agent_writes: 'confirm'
     }
   }
   return {
@@ -317,7 +318,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: true,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       })
       render(AIProviderTab)
@@ -346,7 +348,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: true,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       })
       render(AIProviderTab)
@@ -370,7 +373,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: true,
           rag_enabled: true,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       })
       render(AIProviderTab)
@@ -390,7 +394,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: true,
           rag_enabled: false,
-          summaries_enabled: true
+          summaries_enabled: true,
+          agent_writes: 'confirm'
         }
       })
       render(AIProviderTab)
@@ -453,7 +458,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: true,
           rag_enabled: true,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         },
         embedding: {
           provider_type: 'openai-compatible',
@@ -489,7 +495,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: true,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       })
       render(AIProviderTab)
@@ -500,6 +507,36 @@ describe('AIProviderTab', () => {
       await waitFor(() => {
         expect(mocks.UpdateAIFeatures).toHaveBeenCalledWith({
           rag_enabled: true
+        })
+      })
+    })
+
+    it('renders Agent vault writes select disabled when AI is off', async () => {
+      render(AIProviderTab)
+      await ready()
+      const select = screen.getByLabelText(/Agent vault writes/i)
+      expect(select).toBeDisabled()
+      expect(select).toHaveValue('confirm')
+    })
+
+    it('calls UpdateAIFeatures when Agent vault writes changes', async () => {
+      mocks.GetAIProviderConfig.mockResolvedValue({
+        ...structuredClone(mocks.configState),
+        features: {
+          enabled: true,
+          rag_enabled: false,
+          summaries_enabled: false,
+          agent_writes: 'confirm'
+        }
+      })
+      render(AIProviderTab)
+      await ready()
+      const select = screen.getByLabelText(/Agent vault writes/i)
+      expect(select).not.toBeDisabled()
+      await fireEvent.change(select, { target: { value: 'read_only' } })
+      await waitFor(() => {
+        expect(mocks.UpdateAIFeatures).toHaveBeenCalledWith({
+          agent_writes: 'read_only'
         })
       })
     })
@@ -587,7 +624,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: false,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       }
       mocks.GetAIProviderConfig.mockResolvedValue(
@@ -628,7 +666,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: false,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       }
       mocks.GetAIProviderConfig.mockResolvedValue(
@@ -669,7 +708,8 @@ describe('AIProviderTab', () => {
         features: {
           enabled: false,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         }
       }
       mocks.GetAIProviderConfig.mockResolvedValue(

@@ -140,6 +140,39 @@ func TestNormalizeAIConfig(t *testing.T) {
 			t.Errorf("embedding block should drop reasoning_effort, got %+v", out.Embedding.ReasoningEffort)
 		}
 	})
+	t.Run("AgentWritesEmptyDefaultsToConfirm", func(t *testing.T) {
+		out := NormalizeAIConfig(AIConfig{})
+		if out.Features.AgentWrites != AgentWritesConfirm {
+			t.Errorf("empty agent_writes → confirm; got %q", out.Features.AgentWrites)
+		}
+	})
+	t.Run("AgentWritesInvalidDefaultsToConfirm", func(t *testing.T) {
+		out := NormalizeAIConfig(AIConfig{Features: AIFeaturesConfig{AgentWrites: "maybe"}})
+		if out.Features.AgentWrites != AgentWritesConfirm {
+			t.Errorf("invalid agent_writes → confirm; got %q", out.Features.AgentWrites)
+		}
+	})
+	t.Run("AgentWritesValidPreserved", func(t *testing.T) {
+		for _, mode := range []string{AgentWritesReadOnly, AgentWritesConfirm, AgentWritesAuto} {
+			out := NormalizeAIConfig(AIConfig{Features: AIFeaturesConfig{AgentWrites: mode}})
+			if out.Features.AgentWrites != mode {
+				t.Errorf("expected %q preserved, got %q", mode, out.Features.AgentWrites)
+			}
+		}
+	})
+}
+
+func TestIsValidAgentWrites(t *testing.T) {
+	for _, v := range []string{AgentWritesReadOnly, AgentWritesConfirm, AgentWritesAuto} {
+		if !IsValidAgentWrites(v) {
+			t.Errorf("expected %q valid", v)
+		}
+	}
+	for _, v := range []string{"", "auto ", "AUTO", "write", "readonly"} {
+		if IsValidAgentWrites(v) {
+			t.Errorf("expected %q invalid", v)
+		}
+	}
 }
 
 // TestIsValidAIReasoningEffort locks the documented enum so a value added to

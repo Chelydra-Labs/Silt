@@ -8,6 +8,13 @@
 // the model never reaches tool code.
 
 import type { PluginAIToolDef, PluginContext } from '../../sdk'
+import {
+  type AgentWritesMode,
+  isMutatingTool,
+  previewForMutation,
+  shouldStageTool
+} from './write-policy'
+import { stageOperation } from './staging'
 
 /** Result returned by an agent tool handler. */
 export interface ToolResult {
@@ -57,18 +64,25 @@ export interface StagedPreview {
   details?: string
   /** Optional count of affected targets, for the dialog headline. */
   affectedCount?: number
+  /**
+   * UX severity: bulk/irreversible ops use danger styling; single reversible
+   * edits use a neutral "approve change" card under default confirm mode.
+   */
+  severity?: 'normal' | 'danger'
 }
 
 /**
  * The commit half of a staged tool. After confirmOperation redeems the token,
- * the agent loop calls commit(ctx, params) to execute the real write.
+ * the agent loop calls commit(ctx, params, signal?) to execute the real write.
  * `params` is the operation payload stored alongside the token at stage time,
  * NOT the model's args — so the model cannot mutate the staged op between
- * staging and confirmation.
+ * staging and confirmation. `signal` is the run AbortSignal so long commits
+ * (e.g. extract_and_save nested model call) honor Stop after confirm.
  */
 export type StagedCommit = (
   ctx: PluginContext,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  signal?: AbortSignal
 ) => Promise<ToolResult>
 
 /**
@@ -85,7 +99,8 @@ export interface AgentToolDef {
   parameters: Record<string, unknown>
   handler: (
     ctx: PluginContext,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    signal?: AbortSignal
   ) => Promise<ToolResult>
   /** Optional: present on destructive (staged) tools. */
   commit?: StagedCommit
@@ -136,45 +151,114 @@ export function buildToolCatalog(): PluginAIToolDef[] {
   return buildToolCatalogFrom(getTools())
 }
 
+type PropDecl = {
+  type?: string | string[]
+  enum?: unknown[]
+  minimum?: number
+  maximum?: number
+  properties?: Record<string, PropDecl>
+  required?: string[]
+  items?: PropDecl
+}
+
 /**
- * Structural JSON-Schema-ish validation. For sprint 41 a lightweight check
- * suffices (per PLAN.md): verify every entry in `schema.required` is present,
- * and every property declared in `schema.properties` has a matching JS type.
- * A full validator can replace this later without changing the call sites.
+ * Structural JSON-Schema-ish validation: required fields, types, enum,
+ * min/max on numbers, and one level of nested object properties/required.
  */
 export function validateArgs(
   schema: Record<string, unknown>,
   args: Record<string, unknown>
 ): { ok: true } | { ok: false; error: string } {
+  return validateObjectShape(schema as PropDecl, args, '')
+}
+
+function validateObjectShape(
+  schema: PropDecl,
+  args: Record<string, unknown>,
+  pathPrefix: string
+): { ok: true } | { ok: false; error: string } {
   const required = Array.isArray(schema.required) ? schema.required : []
   for (const r of required) {
     if (typeof r !== 'string') continue
     if (!(r in args)) {
-      return { ok: false, error: `missing required parameter "${r}"` }
+      const label = pathPrefix ? `${pathPrefix}.${r}` : r
+      return { ok: false, error: `missing required parameter "${label}"` }
     }
   }
-  const props =
-    (schema.properties as
-      Record<string, { type?: string | string[] }> | undefined) ?? {}
+  const props = schema.properties ?? {}
   for (const [key, decl] of Object.entries(props)) {
     if (!(key in args)) continue
-    const value = args[key]
-    const expected = decl?.type
-    if (!expected) continue
+    const label = pathPrefix ? `${pathPrefix}.${key}` : key
+    const check = validateValue(decl, args[key], label)
+    if (!check.ok) return check
+  }
+  return { ok: true }
+}
+
+function validateValue(
+  decl: PropDecl | undefined,
+  value: unknown,
+  label: string
+): { ok: true } | { ok: false; error: string } {
+  if (!decl) return { ok: true }
+
+  if (Array.isArray(decl.enum) && decl.enum.length > 0) {
+    if (!decl.enum.some((e) => Object.is(e, value))) {
+      return {
+        ok: false,
+        error: `parameter "${label}" must be one of ${decl.enum.map(String).join(', ')} (got ${JSON.stringify(value)})`
+      }
+    }
+  }
+
+  const expected = decl.type
+  if (expected) {
     const types = Array.isArray(expected) ? expected : [expected]
     const actual = jsTypeOf(value)
-    // JSON Schema's "number" subsumes "integer": an integer value satisfies a
-    // number param. "integer" stays strict (rejects floats).
     const matches =
       types.includes(actual) ||
       (actual === 'integer' && types.includes('number'))
     if (!matches) {
       return {
         ok: false,
-        error: `parameter "${key}" expected ${types.join('|')}, got ${actual}`
+        error: `parameter "${label}" expected ${types.join('|')}, got ${actual}`
       }
     }
   }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (typeof decl.minimum === 'number' && value < decl.minimum) {
+      return {
+        ok: false,
+        error: `parameter "${label}" must be >= ${decl.minimum} (got ${value})`
+      }
+    }
+    if (typeof decl.maximum === 'number' && value > decl.maximum) {
+      return {
+        ok: false,
+        error: `parameter "${label}" must be <= ${decl.maximum} (got ${value})`
+      }
+    }
+  }
+
+  // Array element types via items (one level; e.g. source_block_ids: string[]).
+  if (Array.isArray(value) && decl.items) {
+    for (let i = 0; i < value.length; i++) {
+      const check = validateValue(decl.items, value[i], `${label}[${i}]`)
+      if (!check.ok) return check
+    }
+  }
+
+  // One level of nested object properties + required (e.g. create target).
+  if (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    decl.properties
+  ) {
+    return validateObjectShape(decl, value as Record<string, unknown>, label)
+  }
+
   return { ok: true }
 }
 
@@ -188,16 +272,20 @@ function jsTypeOf(v: unknown): string {
   return t
 }
 
+export interface DispatchToolOpts {
+  mode?: AgentWritesMode
+  signal?: AbortSignal
+}
+
 /**
- * Look up `name`, validate `argsJson` against its schema, and invoke the
- * handler. Any failure (unknown tool, malformed args, handler throw) is
- * caught and returned as `{ content: '', error }` so the loop can feed the
- * error back to the model instead of crashing.
+ * Look up `name`, validate `argsJson` against its schema, apply write policy,
+ * and invoke the handler (or stage). Failures return `{ content: '', error }`.
  */
 export async function dispatchTool(
   ctx: PluginContext,
   name: string,
-  argsJson: Record<string, unknown>
+  argsJson: Record<string, unknown>,
+  opts?: DispatchToolOpts
 ): Promise<ToolResult> {
   const tool = tools.get(name)
   if (!tool) {
@@ -207,8 +295,42 @@ export async function dispatchTool(
   if (!v.ok) {
     return { content: '', error: v.error }
   }
+
+  const mode = opts?.mode ?? 'confirm'
+  const signal = opts?.signal
+
+  // Mutating tools are refused entirely in read_only (not staged).
+  if (mode === 'read_only' && isMutatingTool(name)) {
+    return {
+      content: '',
+      error: 'Vault writes are disabled (Agent vault writes is Read only).'
+    }
+  }
+
   try {
-    return await tool.handler(ctx, argsJson)
+    if (shouldStageTool(name, mode)) {
+      // Fail closed: a classified mutator without commit must never fall
+      // through to a direct handler write under confirm (or always-confirm).
+      if (!tool.commit) {
+        return {
+          content: '',
+          error: `tool "${name}" cannot be staged (missing commit handler)`
+        }
+      }
+      // rename_tag's handler already stages (preview count + token).
+      if (name === 'rename_tag') {
+        return await tool.handler(ctx, argsJson, signal)
+      }
+      // Other mutators: stage at dispatch; commit runs the real handler later.
+      const token = await stageOperation(ctx, name, argsJson)
+      return {
+        content: '',
+        isStaged: true,
+        stagedToken: token,
+        stagedPreview: previewForMutation(name, argsJson)
+      }
+    }
+    return await tool.handler(ctx, argsJson, signal)
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e)
     return { content: '', error: message }

@@ -87,13 +87,19 @@ export async function handleGetBacklinks(
     return { content: 'No backlinks or embeds found.' }
   }
 
-  const lines = refs.map((r) => {
+  const lines = refs.map((r, i) => {
     const preview =
       r.snippet.length > 200 ? `${r.snippet.slice(0, 200)}…` : r.snippet
-    return `- [${r.type}] block ${r.source_id} (${r.source_page}): ${preview}`
+    return `- [${i + 1}] [${r.type}] block ${r.source_id} (${r.source_page}): ${preview}`
   })
   return {
-    content: `${refs.length} reference(s):\n${lines.join('\n')}`
+    content: `${refs.length} reference(s):\n${lines.join('\n')}`,
+    evidence: refs.map((r, i) => ({
+      citationIndex: i + 1,
+      blockId: r.source_id,
+      snippet: r.snippet.slice(0, 200),
+      title: r.source_page
+    }))
   }
 }
 

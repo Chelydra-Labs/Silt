@@ -14,16 +14,18 @@
 // reader (or the agent in a later turn) can trace where the content came
 // from.
 //
-// Failure handling: if the model returns malformed JSON or the schema doesn't
-// validate, the tool returns the raw model response as a NOTE block plus a
-// warning, rather than discarding the work entirely. Sources are NEVER
-// mutated — only the new page receives writes.
+// Failure handling: if the model returns malformed JSON or errors, the tool
+// returns an error result and writes NOTHING (no salvage-to-vault). Sources
+// are NEVER mutated — only a successful parse creates the target page.
 
 import type { PluginAIChatMessage, PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
 import { auditWrite } from './_util'
 import type { ToolResult } from '../tool-registry'
-import { UNTRUSTED_CONTENT_SECURITY } from '../security'
+import {
+  neutralizeVaultDataMarkers,
+  UNTRUSTED_CONTENT_SECURITY
+} from '../security'
 
 export const extractAndSaveToolDef = {
   name: 'extract_and_save',
@@ -64,7 +66,6 @@ const MAX_SOURCE_IDS = 20
 const MAX_EXTRACTED_ITEMS = 50
 const MAX_FIELD_LENGTH = 2_000
 const MAX_SUMMARY_LENGTH = 4_000
-const MAX_SALVAGE_LENGTH = 8_000
 const TRUNCATION_MARKER = '…[truncated]'
 
 type ExtractionMode = 'summary' | 'flashcards' | 'qa_pairs' | 'action_items'
@@ -175,15 +176,18 @@ interface SourceBlock {
 interface ParsedExtraction {
   /** Rendered block bodies (one per item, post-mode formatting). */
   blocks: string[]
-  /** Flag set when the parse was lossy (raw text salvaged into a single block). */
-  salvaged: boolean
-  /** Diagnostic carried to the user when salvaged. */
-  warning?: string
+  /** Diagnostic when parse failed (no vault write). */
+  error?: string
+}
+
+function cancelledResult(): ToolResult {
+  return { content: '', error: 'Cancelled before tool completed.' }
 }
 
 export async function handleExtractAndSave(
   ctx: PluginContext,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  signal?: AbortSignal
 ): Promise<ToolResult> {
   // --- 1. Validate + normalize args -----------------------------------------
   const rawIds = args.source_block_ids
@@ -226,6 +230,11 @@ export async function handleExtractAndSave(
     return { content: '', error: target }
   }
 
+  if (signal?.aborted) {
+    auditWrite(ctx, 'extract_and_save', 'error')
+    return cancelledResult()
+  }
+
   // --- 2. Read source blocks (read-only) ------------------------------------
   const sources = await fetchSourceBlocks(ctx, ids)
   if (sources.length === 0) {
@@ -236,7 +245,15 @@ export async function handleExtractAndSave(
     }
   }
   const foundIds = sources.map((s) => s.id)
-  const sourceDigest = renderSourcesForPrompt(sources)
+  // Neutralize vault_data markers so source text cannot close the wrapper early.
+  const sourceDigest = neutralizeVaultDataMarkers(
+    renderSourcesForPrompt(sources)
+  )
+
+  if (signal?.aborted) {
+    auditWrite(ctx, 'extract_and_save', 'error')
+    return cancelledResult()
+  }
 
   // --- 3. Run the structured extraction ------------------------------------
   // Prepend the shared untrusted-content preamble to the system prompt so the
@@ -256,8 +273,7 @@ export async function handleExtractAndSave(
         `Return JSON matching the schema. Do not include prose outside the JSON.`
     }
   ]
-  let rawContent = ''
-  let modelError: string | null = null
+  let rawContent: string
   try {
     const res = await ctx.ai.complete({
       messages,
@@ -266,49 +282,45 @@ export async function handleExtractAndSave(
     })
     rawContent = res.content ?? ''
   } catch (e: unknown) {
-    modelError = e instanceof Error ? e.message : asString(e)
-  }
-
-  // --- 4. Parse → block bodies ---------------------------------------------
-  let parsed: ParsedExtraction
-  if (modelError) {
-    parsed = {
-      blocks: [],
-      salvaged: true,
-      warning: `extraction call failed: ${modelError}`
+    const modelError = e instanceof Error ? e.message : asString(e)
+    auditWrite(ctx, 'extract_and_save', 'error')
+    return {
+      content: '',
+      error: `extraction call failed: ${modelError}`
     }
-  } else {
-    parsed = parseExtraction(rawContent, mode)
   }
 
-  // Salvage path: model returned nothing parseable (or the call itself
-  // failed). Drop a single NOTE carrying the diagnostic + raw response so
-  // the user's call still produced a page and the agent can retry with a
-  // follow-up turn. The body prefers the specific error message when set.
+  if (signal?.aborted) {
+    auditWrite(ctx, 'extract_and_save', 'error')
+    return cancelledResult()
+  }
+
+  // --- 4. Parse → block bodies (fail closed: no vault write on bad parse) --
+  const parsed = parseExtraction(rawContent, mode)
   if (parsed.blocks.length === 0) {
-    const detail = truncate(
-      parsed.warning ??
-        `model output did not match the ${mode} schema; raw response saved as a block`,
-      MAX_FIELD_LENGTH
-    )
-    const raw = rawContent.trim()
-    const rawBlock =
-      raw.length > 0
-        ? `\n\nRaw model response:\n\n${truncate(raw, MAX_SALVAGE_LENGTH)}`
-        : ''
-    const salvagedBody = `> ⚠ extraction failed (${mode}): ${detail}${rawBlock}`
-    parsed = {
-      blocks: [salvagedBody],
-      salvaged: true,
-      warning: detail
+    auditWrite(ctx, 'extract_and_save', 'error')
+    return {
+      content: '',
+      error:
+        parsed.error ??
+        `model output did not match the ${mode} schema; nothing was written`
     }
   }
 
   // --- 5. Save to the new page (write only here, never to sources) ---------
+  if (signal?.aborted) {
+    auditWrite(ctx, 'extract_and_save', 'error')
+    return cancelledResult()
+  }
+
   await ctx.createPage(target.notebook, target.section, target.page)
   const citation = `<!-- src: ${foundIds.join(',')} mode:${mode} -->`
   const createdBlockIds: string[] = []
   for (const body of parsed.blocks) {
+    if (signal?.aborted) {
+      auditWrite(ctx, 'extract_and_save', 'error')
+      return cancelledResult()
+    }
     const text = `${body}\n\n${citation}`
     const id = await ctx.createBlock({
       type: 'NOTE',
@@ -324,10 +336,9 @@ export async function handleExtractAndSave(
     .filter((s) => s.length > 0)
     .join('/')
   const head = `Extracted ${mode} from ${foundIds.length} source block(s) → ${pagePath} (${createdBlockIds.length} block(s)).`
-  const tail = parsed.salvaged && parsed.warning ? `\n⚠ ${parsed.warning}` : ''
   auditWrite(ctx, 'extract_and_save', 'ok')
   return {
-    content: `${head}${tail}\nCreated block(s): ${createdBlockIds.join(', ')}`
+    content: `${head}\nCreated block(s): ${createdBlockIds.join(', ')}`
   }
 }
 
@@ -389,8 +400,8 @@ function normalizeTarget(raw: unknown): string | TargetSpec {
 /**
  * Parse the model's response into block bodies per the mode's shape. Tolerates
  * both `{...}` JSON and JSON wrapped in ```json fenced code blocks. On any
- * parse / validation failure returns `{ blocks: [], salvaged: true }` so the
- * caller can fall back to dumping the raw text.
+ * parse / validation failure returns `{ blocks: [], error }` — caller must not
+ * write to the vault.
  */
 export function parseExtraction(
   raw: string,
@@ -400,8 +411,7 @@ export function parseExtraction(
   if (!jsonText) {
     return {
       blocks: [],
-      salvaged: true,
-      warning: 'model response was not JSON'
+      error: 'model response was not JSON'
     }
   }
   let data: unknown
@@ -410,16 +420,14 @@ export function parseExtraction(
   } catch (e) {
     return {
       blocks: [],
-      salvaged: true,
-      warning: `JSON parse failed: ${e instanceof Error ? e.message : asString(e)}`
+      error: `JSON parse failed: ${e instanceof Error ? e.message : asString(e)}`
     }
   }
   const obj = data as Record<string, unknown>
   if (obj === null || typeof obj !== 'object') {
     return {
       blocks: [],
-      salvaged: true,
-      warning: 'model response did not decode to a JSON object'
+      error: 'model response did not decode to a JSON object'
     }
   }
 
@@ -428,13 +436,11 @@ export function parseExtraction(
     if (!summary) {
       return {
         blocks: [],
-        salvaged: true,
-        warning: 'summary missing or empty'
+        error: 'summary missing or empty'
       }
     }
     return {
-      blocks: [truncate(summary, MAX_SUMMARY_LENGTH)],
-      salvaged: false
+      blocks: [truncate(summary, MAX_SUMMARY_LENGTH)]
     }
   }
 
@@ -442,8 +448,7 @@ export function parseExtraction(
   if (!items || items.length === 0) {
     return {
       blocks: [],
-      salvaged: true,
-      warning: 'items missing or empty'
+      error: 'items missing or empty'
     }
   }
   const blocks = items
@@ -453,11 +458,10 @@ export function parseExtraction(
   if (blocks.length === 0) {
     return {
       blocks: [],
-      salvaged: true,
-      warning: 'no items produced a renderable block'
+      error: 'no items produced a renderable block'
     }
   }
-  return { blocks, salvaged: false }
+  return { blocks }
 }
 
 /** Render one extracted item to a NOTE body string per the mode. */

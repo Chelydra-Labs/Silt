@@ -133,9 +133,17 @@ describe('find_untagged', () => {
     expect(calls[0].sql).toMatch(/type = 'TASK'/)
     expect(calls[0].sql).toMatch(/NOT IN \(SELECT block_id FROM tags\)/)
     expect(calls[0].params[calls[0].params.length - 1]).toBe(20)
-    expect(res.content).toContain('t1')
+    expect(res.content).toContain('[1] block t1')
     expect(res.content).toContain('Work > Sprint > Backlog')
     expect(res.content).toContain('untriaged bug')
+    expect(res.evidence?.[0]).toMatchObject({
+      citationIndex: 1,
+      blockId: 't1',
+      notebook: 'Work',
+      section: 'Sprint',
+      page: 'Backlog',
+      title: 'Work > Sprint > Backlog'
+    })
   })
 
   it('scopes by notebook when scope is provided', async () => {

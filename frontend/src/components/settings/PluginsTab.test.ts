@@ -181,7 +181,8 @@ describe('PluginsTab first-party AI managed enablement', () => {
         features: {
           enabled: true,
           rag_enabled: false,
-          summaries_enabled: false
+          summaries_enabled: false,
+          agent_writes: 'confirm'
         } as never,
         chat: { model: 'm', provider_type: 'local' }
       },

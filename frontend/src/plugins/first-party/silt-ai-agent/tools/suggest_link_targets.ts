@@ -131,7 +131,16 @@ export async function handleSuggestLinkTargets(
   return {
     content:
       `${top.length} link suggestion(s) for block ${sourceId} ` +
-      `(existing references excluded):\n\n${lines.join('\n\n')}`
+      `(existing references excluded):\n\n${lines.join('\n\n')}`,
+    evidence: top.map((s, i) => ({
+      citationIndex: i + 1,
+      blockId: s.block.id,
+      notebook: s.block.notebook,
+      section: s.block.section,
+      page: s.block.page,
+      snippet: s.block.clean_content.slice(0, 200),
+      title: breadcrumb(s.block.notebook, s.block.section, s.block.page)
+    }))
   }
 }
 

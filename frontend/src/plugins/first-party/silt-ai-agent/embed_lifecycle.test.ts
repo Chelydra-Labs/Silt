@@ -8,7 +8,12 @@ vi.mock('../../shared/ai-chat/availability', () => ({
     chatReady: true,
     embedReady: true,
     drawerAvailable: true,
-    features: { enabled: true, rag_enabled: true, summaries_enabled: false }
+    features: {
+      enabled: true,
+      rag_enabled: true,
+      summaries_enabled: false,
+      agent_writes: 'confirm'
+    }
   }))
 }))
 
@@ -98,7 +103,12 @@ beforeEach(() => {
     chatReady: true,
     embedReady: true,
     drawerAvailable: true,
-    features: { enabled: true, rag_enabled: true, summaries_enabled: false }
+    features: {
+      enabled: true,
+      rag_enabled: true,
+      summaries_enabled: false,
+      agent_writes: 'confirm'
+    }
   } as ReturnType<typeof getAIAvailability>)
 })
 
@@ -200,7 +210,12 @@ describe('embed_lifecycle', () => {
       chatReady: true,
       embedReady: true,
       drawerAvailable: true,
-      features: { enabled: true, rag_enabled: false, summaries_enabled: false }
+      features: {
+        enabled: true,
+        rag_enabled: false,
+        summaries_enabled: false,
+        agent_writes: 'confirm'
+      }
     } as ReturnType<typeof getAIAvailability>)
     expect(() => reconcileAgentEmbedIndex(ctx)).not.toThrow()
   })

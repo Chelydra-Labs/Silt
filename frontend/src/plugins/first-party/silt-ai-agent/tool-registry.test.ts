@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PluginContext } from '../../sdk'
 import {
   buildToolCatalog,
@@ -10,7 +10,17 @@ import {
   validateArgs
 } from './tool-registry'
 
-const noopCtx = {} as PluginContext
+const stageOperation = vi.hoisted(() =>
+  vi.fn(async () => 'tok1234567890abcdef1234567890ab')
+)
+
+vi.mock('./staging', () => ({
+  stageOperation
+}))
+
+const noopCtx = {
+  pluginDb: { exec: vi.fn(), query: vi.fn() }
+} as unknown as PluginContext
 
 afterEach(() => {
   clearTools()
@@ -120,5 +130,163 @@ describe('tool-registry', () => {
     expect(validateArgs(schema, { x: 5 }).ok).toBe(true)
     expect(validateArgs(schema, { x: 5.5 }).ok).toBe(false)
     expect(validateArgs(schema, {}).ok).toBe(false)
+  })
+
+  it('validateArgs enforces enum, min/max, and nested required', () => {
+    const schema = {
+      type: 'object',
+      required: ['mode', 'n', 'target'],
+      properties: {
+        mode: { type: 'string', enum: ['a', 'b'] },
+        n: { type: 'integer', minimum: 1, maximum: 10 },
+        target: {
+          type: 'object',
+          properties: {
+            page: { type: 'string' }
+          },
+          required: ['page']
+        }
+      }
+    }
+    expect(
+      validateArgs(schema, {
+        mode: 'a',
+        n: 5,
+        target: { page: 'p' }
+      }).ok
+    ).toBe(true)
+    expect(
+      validateArgs(schema, { mode: 'z', n: 5, target: { page: 'p' } }).ok
+    ).toBe(false)
+    expect(
+      validateArgs(schema, { mode: 'a', n: 0, target: { page: 'p' } }).ok
+    ).toBe(false)
+    expect(validateArgs(schema, { mode: 'a', n: 5, target: {} }).ok).toBe(false)
+  })
+
+  it('validateArgs rejects array elements that fail items schema', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        source_block_ids: { type: 'array', items: { type: 'string' } }
+      }
+    }
+    expect(validateArgs(schema, { source_block_ids: ['a', 'b'] }).ok).toBe(true)
+    const bad = validateArgs(schema, {
+      source_block_ids: ['ok', 123, null]
+    })
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) {
+      expect(bad.error).toMatch(/source_block_ids\[1\]/)
+      expect(bad.error).toMatch(/expected string/)
+    }
+  })
+
+  it('refuses mutators in read_only mode', async () => {
+    const handler = vi.fn(async () => ({ content: 'wrote' }))
+    registerTool({
+      name: 'create_note',
+      description: 'write',
+      parameters: { type: 'object', properties: {} },
+      handler,
+      commit: handler
+    })
+    const res = await dispatchTool(
+      noopCtx,
+      'create_note',
+      {},
+      {
+        mode: 'read_only'
+      }
+    )
+    expect(res.error).toMatch(/Vault writes are disabled/)
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('stages mutators with commit in confirm mode without calling handler', async () => {
+    stageOperation.mockClear()
+    const handler = vi.fn(async () => ({ content: 'wrote' }))
+    registerTool({
+      name: 'create_note',
+      description: 'write',
+      parameters: { type: 'object', properties: {} },
+      handler,
+      commit: handler
+    })
+    const res = await dispatchTool(
+      noopCtx,
+      'create_note',
+      { page: 'P' },
+      { mode: 'confirm' }
+    )
+    expect(res.isStaged).toBe(true)
+    expect(res.stagedToken).toBeTruthy()
+    expect(handler).not.toHaveBeenCalled()
+    expect(stageOperation).toHaveBeenCalled()
+    expect(res.stagedPreview?.severity).toBe('normal')
+  })
+
+  it('refuses commit-less mutators in confirm mode instead of writing directly', async () => {
+    stageOperation.mockClear()
+    const handler = vi.fn(async () => ({ content: 'wrote' }))
+    // Classified mutator without commit — must fail closed, not fall through.
+    registerTool({
+      name: 'create_note',
+      description: 'write',
+      parameters: { type: 'object', properties: {} },
+      handler
+    })
+    const res = await dispatchTool(
+      noopCtx,
+      'create_note',
+      { page: 'P' },
+      { mode: 'confirm' }
+    )
+    expect(res.error).toMatch(/missing commit handler/)
+    expect(res.isStaged).toBeFalsy()
+    expect(handler).not.toHaveBeenCalled()
+    expect(stageOperation).not.toHaveBeenCalled()
+  })
+
+  it('auto mode runs create_note directly but stages extract_and_save', async () => {
+    stageOperation.mockClear()
+    const createHandler = vi.fn(async () => ({ content: 'created' }))
+    const extractHandler = vi.fn(async () => ({ content: 'extracted' }))
+    registerTool({
+      name: 'create_note',
+      description: 'write',
+      parameters: { type: 'object', properties: {} },
+      handler: createHandler,
+      commit: createHandler
+    })
+    registerTool({
+      name: 'extract_and_save',
+      description: 'extract',
+      parameters: { type: 'object', properties: {} },
+      handler: extractHandler,
+      commit: extractHandler
+    })
+    const direct = await dispatchTool(
+      noopCtx,
+      'create_note',
+      { page: 'P' },
+      { mode: 'auto' }
+    )
+    expect(direct.isStaged).toBeFalsy()
+    expect(direct.content).toBe('created')
+    expect(createHandler).toHaveBeenCalled()
+    expect(stageOperation).not.toHaveBeenCalled()
+
+    stageOperation.mockClear()
+    const staged = await dispatchTool(
+      noopCtx,
+      'extract_and_save',
+      { mode: 'summary' },
+      { mode: 'auto' }
+    )
+    expect(staged.isStaged).toBe(true)
+    expect(extractHandler).not.toHaveBeenCalled()
+    expect(stageOperation).toHaveBeenCalled()
+    expect(staged.stagedPreview?.severity).toBe('danger')
   })
 })

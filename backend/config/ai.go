@@ -29,9 +29,28 @@ type AIConfig struct {
 	UseKeyring *bool `yaml:"use_keyring,omitempty" json:"use_keyring,omitempty"`
 }
 
+// Agent vault-write policy modes (#924). Missing/invalid values normalize to
+// AgentWritesConfirm so greenfield and upgraded vaults default to HITL.
+const (
+	AgentWritesReadOnly = "read_only"
+	AgentWritesConfirm  = "confirm"
+	AgentWritesAuto     = "auto"
+)
+
+// IsValidAgentWrites reports whether s is a recognized agent_writes mode.
+func IsValidAgentWrites(s string) bool {
+	switch s {
+	case AgentWritesReadOnly, AgentWritesConfirm, AgentWritesAuto:
+		return true
+	default:
+		return false
+	}
+}
+
 // AIFeaturesConfig is the product-level AI enablement model (#632).
-// Defaults are all false (opt-in). NormalizeAIConfig clamps dependents when
-// master is off so impossible combinations cannot persist.
+// Defaults are all false (opt-in) except AgentWrites, which normalizes to
+// "confirm" when empty. NormalizeAIConfig clamps dependents when master is off
+// so impossible combinations cannot persist.
 type AIFeaturesConfig struct {
 	// Enabled is the master "Enable AI" switch: agent drawer, writing assistant.
 	Enabled bool `yaml:"enabled" json:"enabled"`
@@ -40,6 +59,9 @@ type AIFeaturesConfig struct {
 	RAGEnabled bool `yaml:"rag_enabled" json:"rag_enabled"`
 	// SummariesEnabled gates the note-summary banner. Requires Enabled.
 	SummariesEnabled bool `yaml:"summaries_enabled" json:"summaries_enabled"`
+	// AgentWrites is the agent vault-mutation policy (#924):
+	// "read_only" | "confirm" | "auto". Empty/invalid → "confirm".
+	AgentWrites string `yaml:"agent_writes,omitempty" json:"agent_writes"`
 }
 
 // First-party AI plugin IDs driven by AIFeaturesConfig (not plugins.disabled).
@@ -154,6 +176,12 @@ func NormalizeAIConfig(ai AIConfig) AIConfig {
 		ai.Features.RAGEnabled = false
 		ai.Features.SummariesEnabled = false
 	}
+	// Agent write policy: missing/invalid → confirm (safer default; #924).
+	aw := strings.TrimSpace(ai.Features.AgentWrites)
+	if !IsValidAgentWrites(aw) {
+		aw = AgentWritesConfirm
+	}
+	ai.Features.AgentWrites = aw
 	ai.LocalMCP = mcp.NormalizeConfig(ai.LocalMCP)
 	return ai
 }

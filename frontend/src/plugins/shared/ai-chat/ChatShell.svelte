@@ -546,9 +546,12 @@
         </article>
       {:else if segment.entry.kind === 'confirmation'}
         {@const entry = segment.entry}
+        {@const isDanger = (entry.severity ?? 'danger') === 'danger'}
         {#if (entry.state ?? 'pending') === 'pending'}
           <div
             class="confirmation-card"
+            class:confirmation-danger={isDanger}
+            class:confirmation-normal={!isDanger}
             bind:this={confirmationEl}
             role="alertdialog"
             aria-labelledby={`confirmation-title-${entry.id}`}
@@ -558,13 +561,14 @@
           >
             <div class="proposal-heading">
               <span
-                class="danger-glyph material-symbols-outlined"
-                aria-hidden="true">warning</span
+                class="material-symbols-outlined"
+                class:danger-glyph={isDanger}
+                aria-hidden="true">{isDanger ? 'warning' : 'edit_note'}</span
               >
               <div>
                 <span class="entry-label">Your approval is required</span>
                 <h3 id={`confirmation-title-${entry.id}`}>
-                  Review destructive change
+                  {isDanger ? 'Review bulk change' : 'Approve vault change'}
                 </h3>
               </div>
             </div>
@@ -573,6 +577,9 @@
               <p class="muted-copy">{entry.affectedCount} items affected</p>
             {/if}
             {#if entry.details}<pre>{entry.details}</pre>{/if}
+            <p class="muted-copy confirmation-hint">
+              Reject or Stop to cancel. Escape rejects while this card is open.
+            </p>
             <div class="card-actions">
               <button
                 type="button"
@@ -582,9 +589,9 @@
               >
               <button
                 type="button"
-                class="danger-button"
+                class={isDanger ? 'danger-button' : 'primary-button'}
                 onclick={() => onConfirmStaging(entry.token)}
-                >Confirm {entry.operation}</button
+                >{isDanger ? `Confirm ${entry.operation}` : 'Approve'}</button
               >
             </div>
           </div>
@@ -1087,7 +1094,7 @@
     color: var(--color-text-primary);
     background: transparent;
   }
-  .confirmation-card {
+  .confirmation-card.confirmation-danger {
     border-color: var(--color-status-danger);
     background: color-mix(
       in srgb,
@@ -1095,8 +1102,17 @@
       var(--color-surface-card)
     );
   }
+  .confirmation-card.confirmation-normal {
+    border-top: 2px solid var(--color-accent-primary-start);
+  }
+  .confirmation-hint {
+    font-size: 0.75rem;
+  }
   .proposal-heading > .danger-glyph {
     color: var(--color-status-danger);
+  }
+  .proposal-heading > span:not(.danger-glyph) {
+    color: var(--color-accent-primary-start);
   }
   .danger-button,
   .stop-button {

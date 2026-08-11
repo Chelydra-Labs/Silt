@@ -1392,6 +1392,8 @@ ai:
     enabled: false            # master: agent drawer + writing assistant
     rag_enabled: false        # semantic search / Q&A index + agent retrieval tools
     summaries_enabled: false  # note summary banner
+    # Agent vault mutation policy (#924). Missing/invalid → confirm.
+    agent_writes: "confirm"   # "read_only" | "confirm" | "auto"
   chat:
     provider_type: "local"            # "local" | "openai-compatible"
     base_url: "http://localhost:11434" # local default = Ollama

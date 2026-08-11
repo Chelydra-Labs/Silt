@@ -279,6 +279,9 @@ describe('get_related_notes', () => {
     })
     expect(res.error).toBeUndefined()
     expect(res.content).toContain('block a')
+    expect(res.evidence?.length).toBeGreaterThan(0)
+    expect(res.evidence?.[0]?.blockId).toBe('a')
+    expect(res.evidence?.[0]?.citationIndex).toBe(1)
     // Only the source was embedded — the candidate came from the cache.
     expect(embed).toHaveBeenCalledTimes(1)
     // No cache write happened (no misses).
@@ -318,6 +321,7 @@ describe('get_related_notes', () => {
       min_score: 0.9
     })
     expect(res.content).toMatch(/no related blocks met/i)
+    expect(res.evidence).toBeUndefined()
   })
 
   it('exposes the tool def shape', () => {

@@ -25,6 +25,14 @@ import {
   ClearAIAudit
 } from '../../../../bindings/silt/app.js'
 import * as appBindings from '../../../../bindings/silt/app.js'
+import { loadConfig } from '../../../settings/store.svelte'
+import { loadPlugins } from '../../../plugins/loader'
+import { getActiveLocation } from '../../../plugins/location.svelte'
+import { normalizeAgentWritesMode } from '../../../plugins/shared/ai-chat/availability'
+import type * as main from '../../../../bindings/silt/models.js'
+import type * as aiTypes from '../../../../bindings/silt/backend/ai/models.js'
+import { AIProviderType } from '../../../generated/enums'
+
 // Binding regenerated with Phase 2; typed loosely so partial IDE caches don't block.
 const UpdateAIFeatures = (
   appBindings as unknown as {
@@ -32,15 +40,10 @@ const UpdateAIFeatures = (
       enabled?: boolean
       rag_enabled?: boolean
       summaries_enabled?: boolean
+      agent_writes?: string
     }) => Promise<void>
   }
 ).UpdateAIFeatures
-import { loadConfig } from '../../../settings/store.svelte'
-import { loadPlugins } from '../../../plugins/loader'
-import { getActiveLocation } from '../../../plugins/location.svelte'
-import type * as main from '../../../../bindings/silt/models.js'
-import type * as aiTypes from '../../../../bindings/silt/backend/ai/models.js'
-import { AIProviderType } from '../../../generated/enums'
 
 export type Which = 'chat' | 'embedding'
 // ProviderType is sourced from the Go AIProviderType enum via cmd/genenums so
@@ -225,18 +228,20 @@ export function createAIProviderController() {
       config = toPlain(await GetAIProviderConfig())
       if (config) {
         // Ensure features object exists for older snapshots / partial mocks.
-        const cfg = config as {
+        const cfg = config as unknown as {
           features?: {
             enabled: boolean
             rag_enabled: boolean
             summaries_enabled: boolean
+            agent_writes: string
           }
         }
         if (!cfg.features) {
           cfg.features = {
             enabled: false,
             rag_enabled: false,
-            summaries_enabled: false
+            summaries_enabled: false,
+            agent_writes: 'confirm'
           }
         }
         // Sync-by-default if providers match type, url, and key status.
@@ -263,6 +268,7 @@ export function createAIProviderController() {
     enabled?: boolean
     rag_enabled?: boolean
     summaries_enabled?: boolean
+    agent_writes?: string
   }): Promise<void> {
     if (!config) return
     featuresSaving = true
@@ -273,6 +279,7 @@ export function createAIProviderController() {
           enabled?: boolean
           rag_enabled?: boolean
           summaries_enabled?: boolean
+          agent_writes?: string
         }
       }
     ).features
@@ -281,7 +288,10 @@ export function createAIProviderController() {
       enabled: patch.enabled ?? features?.enabled ?? false,
       rag_enabled: patch.rag_enabled ?? features?.rag_enabled ?? false,
       summaries_enabled:
-        patch.summaries_enabled ?? features?.summaries_enabled ?? false
+        patch.summaries_enabled ?? features?.summaries_enabled ?? false,
+      agent_writes: normalizeAgentWritesMode(
+        patch.agent_writes ?? features?.agent_writes
+      )
     }
     if (!next.enabled) {
       next.rag_enabled = false

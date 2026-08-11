@@ -417,7 +417,8 @@ describe('ChatShell', () => {
         role: 'system',
         token: 'stage-token',
         operation: 'delete blocks',
-        summary: 'Delete two blocks'
+        summary: 'Delete two blocks',
+        severity: 'danger'
       })
     ])
     const { getByRole } = render(ChatShell, { props: value })
@@ -426,12 +427,31 @@ describe('ChatShell', () => {
     const confirm = getByRole('button', { name: 'Confirm delete blocks' })
 
     await waitFor(() => expect(reject).toHaveFocus())
+    expect(getByRole('heading', { name: /Review bulk change/i })).toBeTruthy()
     await fireEvent.keyDown(reject, { key: 'Tab', shiftKey: true })
     expect(confirm).toHaveFocus()
     await fireEvent.keyDown(confirm, { key: 'Tab' })
     expect(reject).toHaveFocus()
     await fireEvent.keyDown(dialog, { key: 'Escape' })
     expect(value.onRejectStaging).toHaveBeenCalledWith('stage-token')
+  })
+
+  it('uses neutral approve copy for normal-severity confirmations', async () => {
+    const value = props([
+      confirmationEntry({
+        id: 'confirmation-2',
+        role: 'system',
+        token: 'stage-token-2',
+        operation: 'create note',
+        summary: 'Create note on Work/P',
+        details: 'Hello body',
+        severity: 'normal'
+      })
+    ])
+    const { getByRole, getByText } = render(ChatShell, { props: value })
+    expect(getByRole('heading', { name: /Approve vault change/i })).toBeTruthy()
+    expect(getByRole('button', { name: 'Approve' })).toBeTruthy()
+    expect(getByText('Hello body')).toBeTruthy()
   })
 
   it('sticks to new entries until the user scrolls away', async () => {

@@ -1303,3 +1303,39 @@ func TestValidateAITools_AcceptsValidSchema(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// #924: agent_writes patch validates enum and persists via UpdateAIFeatures.
+func TestUpdateAIFeatures_AgentWrites(t *testing.T) {
+	app := newTestApp(t)
+	app.configMu.Lock()
+	app.cfg.AI.Features.Enabled = true
+	app.cfg.AI.Features.AgentWrites = config.AgentWritesConfirm
+	app.configMu.Unlock()
+
+	auto := config.AgentWritesAuto
+	if err := app.UpdateAIFeatures(AIFeaturesPatch{AgentWrites: &auto}); err != nil {
+		t.Fatalf("UpdateAIFeatures auto: %v", err)
+	}
+	app.configMu.RLock()
+	got := app.cfg.AI.Features.AgentWrites
+	app.configMu.RUnlock()
+	if got != config.AgentWritesAuto {
+		t.Fatalf("AgentWrites after patch = %q, want %q", got, config.AgentWritesAuto)
+	}
+
+	bad := "maybe"
+	if err := app.UpdateAIFeatures(AIFeaturesPatch{AgentWrites: &bad}); err == nil {
+		t.Fatal("expected error for invalid agent_writes")
+	}
+	app.configMu.RLock()
+	still := app.cfg.AI.Features.AgentWrites
+	app.configMu.RUnlock()
+	if still != config.AgentWritesAuto {
+		t.Fatalf("invalid patch must not change AgentWrites; got %q", still)
+	}
+
+	ro := config.AgentWritesReadOnly
+	if err := app.UpdateAIFeatures(AIFeaturesPatch{AgentWrites: &ro}); err != nil {
+		t.Fatalf("UpdateAIFeatures read_only: %v", err)
+	}
+}

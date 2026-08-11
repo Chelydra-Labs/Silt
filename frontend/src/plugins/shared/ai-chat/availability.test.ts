@@ -74,6 +74,7 @@ describe('AI availability matrix', () => {
     expect(a.summariesEnabled).toBe(false)
     expect(a.drawerAvailable).toBe(false)
     expect(a.chatReady).toBe(false)
+    expect(a.features.agent_writes).toBe('confirm')
   })
 
   it('master AI enables drawer even when chat is not ready', () => {

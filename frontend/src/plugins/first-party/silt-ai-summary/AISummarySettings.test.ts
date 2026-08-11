@@ -10,7 +10,11 @@ const { mockSettings } = vi.hoisted(() => ({
       plugins: { disabled: [], plugin_settings: {} },
       ai: {
         chat: { model: 'qwen3:30b', provider_type: 'local' },
-        features: { enabled: true, summaries_enabled: true }
+        features: {
+          enabled: true,
+          summaries_enabled: true,
+          agent_writes: 'confirm'
+        }
       }
     }
   }
