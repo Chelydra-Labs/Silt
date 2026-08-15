@@ -14,6 +14,7 @@
 // nothing. Sources are NEVER mutated.
 
 import type { PluginAIChatMessage, PluginContext } from '../../../sdk'
+import { AIErrorKind } from '../../../../generated/enums'
 import { asString } from '../../../../lib/asString'
 import { auditWrite } from './_util'
 import type { ToolResult } from '../tool-registry'
@@ -180,6 +181,12 @@ function cancelledResult(): ToolResult {
   return { content: '', error: 'Cancelled before tool completed.' }
 }
 
+/** Host cancel is PluginAIError (`name` + `code: 'canceled'`), not AbortError. */
+function isCanceledAIError(err: unknown): boolean {
+  if (err == null || typeof err !== 'object') return false
+  return (err as { code?: unknown }).code === AIErrorKind.ErrCanceled
+}
+
 const PREVIEW_DETAILS_MAX = 1_200
 
 /** Frozen payload stored at stage time; commit never re-runs the model. */
@@ -285,7 +292,7 @@ export async function handleExtractAndSave(
   }
 
   // --- 3. Nested structured extraction (before confirm) ---------------------
-  // ctx.ai.complete has no AbortSignal today; poll signal around the call.
+  // Pass the run signal so Stop cancels the in-flight host complete.
   const messages: PluginAIChatMessage[] = [
     {
       role: 'system',
@@ -304,12 +311,16 @@ export async function handleExtractAndSave(
     const res = await ctx.ai.complete({
       messages,
       responseSchema: cfg.responseSchema,
-      temperature: 0.2
+      temperature: 0.2,
+      signal
     })
     rawContent = res.content ?? ''
   } catch (e: unknown) {
-    const modelError = e instanceof Error ? e.message : asString(e)
     auditWrite(ctx, 'extract_and_save', 'error')
+    if (signal?.aborted || isCanceledAIError(e)) {
+      return cancelledResult()
+    }
+    const modelError = e instanceof Error ? e.message : asString(e)
     return {
       content: '',
       error: `extraction call failed: ${modelError}`
@@ -342,6 +353,11 @@ export async function handleExtractAndSave(
     target,
     source_block_ids: foundIds,
     blocks: frozenBlocks
+  }
+
+  if (signal?.aborted) {
+    auditWrite(ctx, 'extract_and_save', 'error')
+    return cancelledResult()
   }
 
   const token = await stageOperation(
