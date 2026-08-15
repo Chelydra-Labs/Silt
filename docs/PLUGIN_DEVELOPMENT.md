@@ -892,9 +892,18 @@ model — use sparingly), `temperature`, `maxTokens`, `reasoningEffort`
 (`'none'`/`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'` — controls
 thinking on reasoning-capable models; not all providers support every value),
 `stream` (when `true`, returns a {@link PluginAIStream} handle — see below),
+`signal` (optional `AbortSignal`; SDK-only, not sent over IPC),
 `responseSchema` (a raw JSON Schema; native Google/Anthropic return a
 conforming JSON object, OpenAI-compatible providers fall back to prompt-only
 JSON). Per-call overrides are merged over the user's provider config.
+
+**Abort (`signal`).** Pass an `AbortSignal` to cancel an in-flight complete.
+The SDK binds it to the host stream cancel path (`PluginAICancelStream`).
+On a non-stream call the public return type is still a buffered
+`PluginAICompleteResult`; the host uses the stream session so Stop can
+cancel mid-flight. Abort rejects with `PluginAIError` `code: 'canceled'`.
+A pre-aborted signal rejects without starting a host call. Native
+`stream: true` is still a buffered `Complete` (ctx cancel, not SSE).
 
 **Tool-calling (#595).** A plugin that wants to expose tools to the model
 passes `tools` (`PluginAIToolDef[]` — name / description / JSON-Schema
@@ -928,6 +937,7 @@ for await (const delta of stream) {
 }
 const final = await stream.result() // reasoning-stripped full content
 // stream.cancel() aborts the upstream request
+// or pass signal: controller.signal on the complete() call
 ```
 
 Deltas arrive via Wails events (`ai:complete:delta` / `done` / `error`) keyed

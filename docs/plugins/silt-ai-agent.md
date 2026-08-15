@@ -83,10 +83,11 @@ Write safety is controlled by **Settings → AI → Agent vault writes**
   nothing and write nothing. Commit uses `createPage` + a single-page
   `applyBlocks` batch (not a multi-API database transaction). On failure after
   minting a **new** empty page, the tool best-effort deletes that page; it
-  never deletes a target page that already existed. Nested extraction polls
-  Stop around `ctx.ai.complete` but cannot cancel an in-flight nested HTTP
-  call until the host supports abort on complete. Mutators dispatch
-  **serially**; read tools may still run in parallel batches.
+   never deletes a target page that already existed. Nested extraction
+   passes the run Stop signal into `ctx.ai.complete`, so an in-flight
+   nested call aborts promptly; nothing is staged or written until Confirm.
+   Mutators dispatch **serially**; read tools may still run in parallel
+   batches.
 - **Always confirm** — bulk `rename_tag` and nested-model `extract_and_save`
   require confirmation even in **auto**.
 

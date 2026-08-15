@@ -705,8 +705,12 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
   **owner-scoped** events `ai:complete:delta:<pluginID>`,
   `ai:complete:tool-delta:<pluginID>`, `ai:complete:done:<pluginID>`,
   `ai:complete:error:<pluginID>` (#635) so argument fragments are not on a
-  global bus. The `ctx.ai.complete` SDK wrapper strips reasoning tags — see
-  `frontend/src/plugins/stripReasoning.ts`.    The agent is **user-invoked only**,
+   global bus. Optional `AbortSignal` on `ctx.ai.complete` is SDK-only (not
+   IPC); cancel reuses `PluginAICancelStream`. A non-stream call with a
+   signal still returns a buffered result; the host uses the stream session
+   so Stop can abort mid-flight (audit is stream-start + one terminal row).
+   The `ctx.ai.complete` SDK wrapper strips reasoning tags — see
+   `frontend/src/plugins/stripReasoning.ts`.    The agent is **user-invoked only**,
    tool calls are **transparent**, and vault mutations follow
    `ai.features.agent_writes` (read_only / confirm / auto) with bulk ops
    (`rename_tag`, `extract_and_save`) always staged behind a single-use
