@@ -798,7 +798,7 @@ export function makePluginContext(
                 unbind()
               }
             }
-            void stream.result().finally(unbind)
+            void stream.result().then(unbind, unbind)
             return stream
           } catch (err) {
             throw normalizeAIError(err)
