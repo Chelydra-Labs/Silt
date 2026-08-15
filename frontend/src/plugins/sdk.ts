@@ -695,12 +695,16 @@ export interface PluginAIApi {
    * - Default (`stream` omitted/false): returns a buffered
    *   {@link PluginAICompleteResult} (Sprint 20 path).
    * - `stream: true` (#226): returns a {@link PluginAIStream} async-iterable of
-   *   content deltas plus `cancel()`. Native Google/Anthropic providers reject
-   *   streaming; use OpenAI-compatible or local endpoints.
+   *   content deltas plus `cancel()`. Native Google/Anthropic have no SSE path;
+   *   the host buffers a non-stream `Complete` and emits it as a single delta.
+   * - Optional `signal` aborts the in-flight host request. On a non-stream
+   *   call the SDK still returns {@link PluginAICompleteResult}; cancel uses
+   *   the stream session under the hood. `AbortSignal` is SDK-only (not IPC).
    *
    * Rejections are normalized to a {@link PluginAIError} carrying `code`
    * set to a normalized kind: 'unauthorized', 'rate-limited', 'model-missing',
-   * 'timeout', 'unreachable', 'bad-request', 'forbidden', 'server', or 'unknown'.
+   * 'timeout', 'unreachable', 'bad-request', 'forbidden', 'server',
+   * 'canceled', or 'unknown'.
    */
   complete: {
     (req: PluginAICompleteRequest & { stream: true }): Promise<PluginAIStream>
@@ -746,6 +750,13 @@ export interface PluginAICompleteRequest {
    *  Not all providers support every value. */
   reasoningEffort?: string
   stream?: boolean
+  /**
+   * Abort the in-flight completion. Not sent over IPC — the SDK binds it to
+   * the host stream cancel path. When set on a non-stream request, the SDK
+   * uses that path internally and still returns {@link PluginAICompleteResult}.
+   * Abort rejects with {@link PluginAIError} `code: 'canceled'`.
+   */
+  signal?: AbortSignal
   /** Ask native providers (Google, Anthropic) to return a JSON object
    *  conforming to this JSON Schema. Ignored by OpenAI-compatible providers
    *  (prompt-only JSON is the universal fallback). The schema is a raw JSON
