@@ -74,6 +74,7 @@ import { Events } from '@wailsio/runtime'
 import { getActiveLocation } from './location.svelte'
 import { subscribe } from './events'
 import type {
+  PluginAICompleteRequest,
   PluginAICompleteResult,
   PluginAIEmbedResult,
   PluginAIStream,
@@ -144,6 +145,32 @@ function normalizeAIError(err: unknown): NormalizedAIError {
   out.name = 'PluginAIError'
   out.code = AIErrorKind.ErrUnknown
   return out
+}
+
+function canceledAIError(): NormalizedAIError {
+  return normalizeAIError({
+    code: AIErrorKind.ErrCanceled,
+    message: 'canceled'
+  })
+}
+
+/** Bind a run AbortSignal to an in-flight stream. Cancel is best-effort and
+ *  idempotent. Returns an unbind so callers can drop the listener on settle. */
+function bindAbortToStream(
+  stream: PluginAIStream,
+  signal: AbortSignal
+): () => void {
+  const cancelStream = () => {
+    void stream.cancel().catch(() => {
+      /* abort result is authoritative */
+    })
+  }
+  if (signal.aborted) {
+    cancelStream()
+    return () => {}
+  }
+  signal.addEventListener('abort', cancelStream, { once: true })
+  return () => signal.removeEventListener('abort', cancelStream)
 }
 
 /**
@@ -703,39 +730,27 @@ export function makePluginContext(
     // capability + rate-limited + audit-logged exactly like fetch above. The
     // Go-side AIError surfaces over IPC as a rejection the caller can branch on.
     // Streaming (#226): stream:true returns PluginAIStream (async-iterable).
+    // Optional AbortSignal uses the stream cancel path; non-stream + signal
+    // still returns a buffered PluginAICompleteResult.
     ai: {
-      complete: (async (req: {
-        messages: {
-          role: string
-          content: string
-          tool_calls?: unknown[]
-          tool_call_id?: string
-        }[]
-        model?: string
-        temperature?: number
-        maxTokens?: number
-        reasoningEffort?: string
-        stream?: boolean
-        responseSchema?: Record<string, unknown>
-        tools?: {
-          name: string
-          description?: string
-          parameters?: Record<string, unknown>
-        }[]
-        toolChoice?: { mode: string; toolName?: string }
-      }) => {
+      complete: (async (req: PluginAICompleteRequest) => {
         // Wails bindings type response_schema as json.RawMessage and tools as
         // generated structs; plain objects are correct on the wire (Wails
         // JSON-serializes the envelope). Cast the envelope via unknown — not
         // `as never` (bottom-type assignability hides real mistakes).
         type AICompleteInput = Parameters<typeof PluginAIComplete>[2]
+        const wantsStream = req.stream === true
+        const cancelableBuffered = !wantsStream && req.signal != null
+        if (req.signal?.aborted) {
+          throw canceledAIError()
+        }
         const input = {
           messages: req.messages,
           model: req.model ?? '',
           temperature: req.temperature,
           max_tokens: req.maxTokens,
           reasoning_effort: req.reasoningEffort,
-          stream: req.stream ?? false,
+          stream: wantsStream || cancelableBuffered,
           // Pass the schema object directly — NOT JSON.stringify'd. Wails
           // JSON-serializes the whole struct for IPC, so a plain object becomes
           // a JSON object on the wire, which Go's json.RawMessage captures as
@@ -753,7 +768,7 @@ export function makePluginContext(
             : undefined
         } as unknown as AICompleteInput
 
-        if (req.stream) {
+        if (wantsStream || cancelableBuffered) {
           try {
             const start = (await PluginAIComplete(
               pluginID,
@@ -767,12 +782,24 @@ export function makePluginContext(
                 message: 'stream start returned no stream_id'
               })
             }
-            return createAIStream(
+            const stream = createAIStream(
               streamId,
               pluginID,
               sessionToken ?? '',
               start?.model ?? ''
             )
+            const unbind = req.signal
+              ? bindAbortToStream(stream, req.signal)
+              : () => {}
+            if (cancelableBuffered) {
+              try {
+                return await stream.result()
+              } finally {
+                unbind()
+              }
+            }
+            void stream.result().then(unbind, unbind)
+            return stream
           } catch (err) {
             throw normalizeAIError(err)
           }
@@ -1004,11 +1031,21 @@ function createAIStream(
     cleanup()
   })
 
+  // Fail-safe: if cancel is requested and no terminal event arrives within
+  // a short window, settle the stream as cancelled so iterators/`result()`
+  // cannot hang forever. Happy-path cancel settles on ai:complete:error
+  // with kind canceled; this timer is last resort only.
+  let cancelTimer: ReturnType<typeof setTimeout> | null = null
+
   let cleaned = false
   function cleanup() {
     if (cleaned) return
     cleaned = true
     closed = true
+    if (cancelTimer) {
+      clearTimeout(cancelTimer)
+      cancelTimer = null
+    }
     try {
       offDelta?.()
     } catch {
@@ -1042,11 +1079,6 @@ function createAIStream(
     /* best-effort — producer has a ready-wait timeout fallback */
   })
 
-  // Fail-safe: if cancel is requested and no terminal event arrives within
-  // a short window, settle the stream as cancelled so iterators/`result()`
-  // cannot hang forever.
-  let cancelTimer: ReturnType<typeof setTimeout> | null = null
-
   const stream: PluginAIStream = {
     streamId,
     toolDeltas,
@@ -1061,7 +1093,7 @@ function createAIStream(
         cancelTimer = setTimeout(() => {
           if (finalResult || finalError) return
           const err = normalizeAIError({
-            code: AIErrorKind.ErrTimeout,
+            code: AIErrorKind.ErrCanceled,
             message: 'stream cancelled'
           })
           finalError = err

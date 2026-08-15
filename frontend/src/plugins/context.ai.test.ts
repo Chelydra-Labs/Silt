@@ -527,6 +527,152 @@ describe('ctx.ai.complete stream (#226)', () => {
   })
 })
 
+describe('ctx.ai.complete AbortSignal', () => {
+  beforeEach(() => {
+    mocks.pluginAIComplete.mockClear()
+    mocks.pluginAICancelStream.mockClear()
+    mocks.pluginAIStreamReady.mockClear()
+    mocks.eventHandlers.clear()
+    mocks.eventsOn.mockClear()
+  })
+
+  it('rejects a pre-aborted signal without starting a host call', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    const ctx = makePluginContext('p', 'tok')
+    await expect(
+      ctx.ai.complete({
+        messages: [{ role: 'user', content: 'x' }],
+        signal: ac.signal
+      })
+    ).rejects.toMatchObject({
+      name: 'PluginAIError',
+      code: AIErrorKind.ErrCanceled
+    })
+    expect(mocks.pluginAIComplete).not.toHaveBeenCalled()
+    expect(mocks.pluginAICancelStream).not.toHaveBeenCalled()
+  })
+
+  it('non-stream + signal uses the stream host path and cancels promptly', async () => {
+    mocks.pluginAIComplete.mockResolvedValueOnce({
+      stream_id: 'sid-abort',
+      model: 'm'
+    } as never)
+    const ac = new AbortController()
+    const ctx = makePluginContext('p', 'tok')
+    const pending = ctx.ai.complete({
+      messages: [{ role: 'user', content: 'x' }],
+      signal: ac.signal
+    })
+    await Promise.resolve()
+    expect(mocks.pluginAIComplete).toHaveBeenCalledTimes(1)
+    const input = mocks.pluginAIComplete.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >
+    expect(input.stream).toBe(true)
+    expect(input).not.toHaveProperty('signal')
+
+    ac.abort()
+    await Promise.resolve()
+    expect(mocks.pluginAICancelStream).toHaveBeenCalledWith(
+      'p',
+      'tok',
+      'sid-abort'
+    )
+
+    mocks.emitEvent('ai:complete:error:p', {
+      stream_id: 'sid-abort',
+      kind: AIErrorKind.ErrCanceled,
+      message: 'canceled'
+    })
+    await expect(pending).rejects.toMatchObject({
+      name: 'PluginAIError',
+      code: AIErrorKind.ErrCanceled
+    })
+  })
+
+  it('non-stream + signal + responseSchema still returns a buffered result', async () => {
+    mocks.pluginAIComplete.mockResolvedValueOnce({
+      stream_id: 'sid-schema',
+      model: 'm'
+    } as never)
+    const ac = new AbortController()
+    const ctx = makePluginContext('p', 'tok')
+    const pending = ctx.ai.complete({
+      messages: [{ role: 'user', content: 'x' }],
+      responseSchema: {
+        type: 'object',
+        properties: { summary: { type: 'string' } }
+      },
+      signal: ac.signal
+    })
+    await Promise.resolve()
+    const input = mocks.pluginAIComplete.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >
+    expect(input.stream).toBe(true)
+    expect(input.response_schema).toEqual({
+      type: 'object',
+      properties: { summary: { type: 'string' } }
+    })
+    mocks.emitEvent('ai:complete:done:p', {
+      stream_id: 'sid-schema',
+      content: '{"summary":"ok"}',
+      model: 'm'
+    })
+    const res = await pending
+    expect(res).toMatchObject({ content: '{"summary":"ok"}', model: 'm' })
+    expect('streamId' in res).toBe(false)
+    expect(mocks.pluginAICancelStream).not.toHaveBeenCalled()
+  })
+
+  it('stream + signal abort calls PluginAICancelStream and rejects canceled', async () => {
+    mocks.pluginAIComplete.mockResolvedValueOnce({
+      stream_id: 'sid-stream-sig',
+      model: 'm'
+    } as never)
+    const ac = new AbortController()
+    const ctx = makePluginContext('p', 'tok')
+    const stream = await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true,
+      signal: ac.signal
+    })
+    ac.abort()
+    await Promise.resolve()
+    expect(mocks.pluginAICancelStream).toHaveBeenCalledWith(
+      'p',
+      'tok',
+      'sid-stream-sig'
+    )
+    mocks.emitEvent('ai:complete:error:p', {
+      stream_id: 'sid-stream-sig',
+      kind: AIErrorKind.ErrCanceled,
+      message: 'canceled'
+    })
+    await expect(stream.result()).rejects.toMatchObject({
+      name: 'PluginAIError',
+      code: AIErrorKind.ErrCanceled
+    })
+  })
+
+  it('non-stream without signal still uses the blocking host path', async () => {
+    const ctx = makePluginContext('p')
+    const res = await ctx.ai.complete({
+      messages: [{ role: 'user', content: 'x' }]
+    })
+    expect(res).toMatchObject({ content: 'pong', model: 'qwen3:30b-a3b' })
+    const input = mocks.pluginAIComplete.mock.calls[0][2] as Record<
+      string,
+      unknown
+    >
+    expect(input.stream).toBe(false)
+    expect(mocks.pluginAICancelStream).not.toHaveBeenCalled()
+  })
+})
+
 describe('ctx.ai.embed', () => {
   beforeEach(() => mocks.pluginAIEmbed.mockClear())
 

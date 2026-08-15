@@ -820,12 +820,16 @@ export interface PluginAIToolCall {
   thought_signature?: string;
 }
 
-// PluginAICompleteRequest gains optional tools + tool_choice
+// PluginAICompleteRequest gains optional tools + tool_choice + signal
 interface PluginAICompleteRequest {
   messages: PluginAIChatMessage[];
   tools?: PluginAIToolDef[];
   toolChoice?: PluginAIToolChoice;
   responseSchema?: Record<string, unknown>;
+  // SDK-only AbortSignal — not sent over IPC. When set on a non-stream
+  // call, the host uses the stream cancel path and still returns a
+  // buffered PluginAICompleteResult. Abort rejects with code 'canceled'.
+  signal?: AbortSignal;
   // ...model/temperature/max_tokens/stream fields
 }
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { AIErrorKind } from '../../../../generated/enums'
 import type { PluginContext } from '../../../sdk'
 import { clearTools } from '../tool-registry'
 import {
@@ -333,6 +334,111 @@ describe('extract_and_save stage (handleExtractAndSave)', () => {
     expect(complete).not.toHaveBeenCalled()
     expect(stageOperation).not.toHaveBeenCalled()
     expect(createPage).not.toHaveBeenCalled()
+  })
+
+  it('forwards the run signal into nested complete and omits stream', async () => {
+    const { ctx, complete } = makeCtx({
+      sources: SOURCES,
+      completeContent: JSON.stringify({ summary: 'ok.' })
+    })
+    const ac = new AbortController()
+    await handleExtractAndSave(
+      ctx,
+      {
+        source_block_ids: ['src-1'],
+        mode: 'summary',
+        target: TARGET
+      },
+      ac.signal
+    )
+    expect(complete).toHaveBeenCalledTimes(1)
+    const req = complete.mock.calls[0][0] as {
+      signal?: AbortSignal
+      stream?: boolean
+    }
+    expect(req.signal).toBe(ac.signal)
+    expect(req.stream).toBeUndefined()
+  })
+
+  it('aborts during nested complete without staging or vault writes', async () => {
+    const ac = new AbortController()
+    const complete = vi.fn((req: { signal?: AbortSignal }) => {
+      return new Promise<never>((_resolve, reject) => {
+        const onAbort = () => {
+          const err = Object.assign(new Error('canceled'), {
+            name: 'PluginAIError',
+            code: AIErrorKind.ErrCanceled
+          })
+          reject(err)
+        }
+        if (req.signal?.aborted) {
+          onAbort()
+          return
+        }
+        req.signal?.addEventListener('abort', onAbort, { once: true })
+      })
+    })
+    const createPage = vi.fn(async () => 'page-uuid')
+    const applyBlocks = vi.fn(async () => true)
+    const deletePage = vi.fn(async () => true)
+    const sqliteQuery = vi.fn(async (sql: string, _params?: unknown[]) => {
+      const lower = sql.toLowerCase()
+      if (lower.includes('where id in (')) {
+        return {
+          rows: [{ id: 'src-1', clean_content: 'Postgres uses MVCC.' }],
+          truncated: false
+        }
+      }
+      return { rows: [], truncated: false }
+    })
+    const ctx = {
+      sqliteQuery,
+      ai: { complete, embed: vi.fn() },
+      createPage,
+      applyBlocks,
+      deletePage
+    } as unknown as PluginContext
+
+    const pending = handleExtractAndSave(
+      ctx,
+      {
+        source_block_ids: ['src-1'],
+        mode: 'summary',
+        target: TARGET
+      },
+      ac.signal
+    )
+    await vi.waitFor(() => expect(complete).toHaveBeenCalled())
+    ac.abort()
+    const res = await pending
+    expect(res.error).toBe('Cancelled before tool completed.')
+    expect(res.isStaged).toBeFalsy()
+    expect(stageOperation).not.toHaveBeenCalled()
+    expect(createPage).not.toHaveBeenCalled()
+    expect(applyBlocks).not.toHaveBeenCalled()
+    expect(deletePage).not.toHaveBeenCalled()
+  })
+
+  it('maps canceled PluginAIError to cancelled copy, not a generic model error', async () => {
+    const err = Object.assign(new Error('canceled'), {
+      name: 'PluginAIError',
+      code: AIErrorKind.ErrCanceled
+    })
+    const { ctx, createPage, applyBlocks, deletePage } = makeCtx({
+      sources: SOURCES,
+      completeError: err
+    })
+    const res = await handleExtractAndSave(ctx, {
+      source_block_ids: ['src-1'],
+      mode: 'summary',
+      target: TARGET
+    })
+    expect(res.error).toBe('Cancelled before tool completed.')
+    expect(res.error).not.toMatch(/extraction call failed/)
+    expect(stageOperation).not.toHaveBeenCalled()
+    expect(createPage).not.toHaveBeenCalled()
+    expect(applyBlocks).not.toHaveBeenCalled()
+    expect(deletePage).not.toHaveBeenCalled()
   })
 
   it('reads source blocks via parameterized IN', async () => {
