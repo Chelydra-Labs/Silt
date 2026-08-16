@@ -4,6 +4,7 @@
     OPEN_TASKS_FOR_PAGE_EVENT,
     type OpenTasksForPageDetail
   } from './openTasksForPage'
+  import { OPEN_PAGE_HISTORY_EVENT } from './openPageHistory'
   import FormatToolbar from './FormatToolbar.svelte'
   import { settings } from '../../settings/store.svelte'
   import { isSystemDark } from '../../lib/systemTheme.svelte'
@@ -44,6 +45,20 @@
       })
     )
   }
+
+  function openPageHistory(): void {
+    if (!pageLocator) return
+    window.dispatchEvent(
+      new CustomEvent(OPEN_PAGE_HISTORY_EVENT, {
+        detail: {
+          notebook: pageLocator.notebook,
+          section: pageLocator.section,
+          page: pageLocator.page,
+          nonce: freshNonce()
+        }
+      })
+    )
+  }
 </script>
 
 <div class="unified-utility-bar">
@@ -54,18 +69,31 @@
     {#if showFormatting}
       <span class="page-action-divider" aria-hidden="true"></span>
     {/if}
-    <button
-      type="button"
-      class="page-action font-label-sm text-type-sm"
-      class:solo={!showFormatting}
-      onclick={openTasksForPage}
-      aria-label="Open tasks on this page"
-      title="Open tasks on this page"
-    >
-      <span class="material-symbols-outlined" aria-hidden="true">checklist</span
+    <div class="page-actions" class:solo={!showFormatting}>
+      <button
+        type="button"
+        class="page-action font-label-sm text-type-sm"
+        onclick={openTasksForPage}
+        aria-label="Open tasks on this page"
+        title="Open tasks on this page"
       >
-      <span>Page tasks</span>
-    </button>
+        <span class="material-symbols-outlined" aria-hidden="true"
+          >checklist</span
+        >
+        <span>Page tasks</span>
+      </button>
+      <button
+        type="button"
+        class="page-action font-label-sm text-type-sm"
+        onclick={openPageHistory}
+        aria-label="Open page history"
+        title="Page history"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">history</span
+        >
+        <span>Page history</span>
+      </button>
+    </div>
   {/if}
 </div>
 
@@ -125,7 +153,14 @@
     );
   }
 
-  .page-action.solo {
+  .page-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+
+  .page-actions.solo {
     margin-left: auto;
   }
 

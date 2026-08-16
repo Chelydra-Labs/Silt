@@ -68,6 +68,7 @@
   import { getAIAvailability } from './plugins/shared/ai-chat/availability'
   import AIChatDrawer from './plugins/shared/ai-chat/AIChatDrawer.svelte'
   import TaskEditorModalHost from './components/editor/TaskEditorModalHost.svelte'
+  import PageHistoryModalHost from './components/editor/PageHistoryModalHost.svelte'
   import {
     aiChatDrawer,
     toggleAIChatDrawer
@@ -1320,6 +1321,7 @@
         </div>
         <AIChatDrawer />
         <TaskEditorModalHost />
+        <PageHistoryModalHost />
       </div>
     </div>
   {/if}

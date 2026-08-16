@@ -3,6 +3,7 @@ import {
   RevealPageInOS
 } from '../../../bindings/silt/app.js'
 import { copyPagePath, copyPageReference, copyText } from '../pageActions'
+import { OPEN_PAGE_HISTORY_EVENT } from '../../components/editor/openPageHistory'
 import { findNotebook, isLinkedNotebook, type DeleteTarget } from './navActions'
 import { pageNodeId, sectionNodeId } from './navTree'
 import { navigationActionError } from './useNavCrud.svelte'
@@ -200,6 +201,26 @@ export function useSidebarContextMenu(deps: UseSidebarContextMenuDeps) {
     contextMenu = null
   }
 
+  function handleContextPageHistory() {
+    const ref = contextMenuPageRef
+    contextMenu = null
+    if (!ref) return
+    const nonce =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `page-history-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    window.dispatchEvent(
+      new CustomEvent(OPEN_PAGE_HISTORY_EVENT, {
+        detail: {
+          notebook: ref.notebook,
+          section: ref.section,
+          page: ref.page,
+          nonce
+        }
+      })
+    )
+  }
+
   function openChildSectionPrompt() {
     if (!contextMenu || contextMenu.level !== 'section' || contextUnavailable)
       return
@@ -241,7 +262,8 @@ export function useSidebarContextMenu(deps: UseSidebarContextMenuDeps) {
     handleContextCopyPage,
     handleContextCopyNotebook,
     openDuplicatePrompt,
-    openChildSectionPrompt
+    openChildSectionPrompt,
+    handleContextPageHistory
   }
 }
 

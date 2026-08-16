@@ -183,4 +183,14 @@ describe('settingsIndex — searchSettings matcher', () => {
     expect(entry).toBeDefined()
     expect(entry?.anchorId).toBe('editor-typography')
   })
+
+  it('resolves Capture page history to Editor → Preferences', () => {
+    const results = searchSettings('snapshot')
+    const entry = results.find((e) => e.label === 'Capture page history')
+    expect(entry).toBeDefined()
+    expect(entry?.sectionId).toBe('editor')
+    expect(entry?.anchorId).toBe('editor-preferences')
+    const validIds = new Set(getSettingsSections().map((s) => s.id))
+    expect(validIds.has(entry!.sectionId)).toBe(true)
+  })
 })

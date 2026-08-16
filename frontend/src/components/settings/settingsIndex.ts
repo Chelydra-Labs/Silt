@@ -171,6 +171,12 @@ const CORE_INDEX: SettingsIndexEntry[] = [
     sectionId: 'editor',
     anchorId: 'editor-preferences'
   },
+  {
+    label: 'Capture page history',
+    keywords: ['version', 'history', 'snapshot', 'backup', 'restore', 'undo'],
+    sectionId: 'editor',
+    anchorId: 'editor-preferences'
+  },
 
   // Appearance
   {

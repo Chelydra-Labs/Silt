@@ -1742,6 +1742,45 @@ describe('Sidebar', () => {
     ).toBeInTheDocument()
   })
 
+  it('opens page history for the context-menu page', async () => {
+    const listener = vi.fn()
+    window.addEventListener('silt:open-page-history', listener)
+    mocks.getNavigationPreferences.mockResolvedValue({
+      expanded_sections: [{ notebook: 'Work', path: 'Journal' }],
+      recent_pages: [],
+      favorites: []
+    })
+    render(Sidebar, {
+      props: {
+        activeNotebook: 'Work',
+        activeSection: 'Journal',
+        activePage: 'Daily',
+        activeView: 'notes',
+        collapsed: false,
+        onSelectNotebook: () => {},
+        onSelectSection: () => {},
+        onSelectPage: () => {},
+        onPinPage: () => {},
+        onSelectView: () => {}
+      }
+    })
+    await flush()
+    await fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Daily' }))
+    await fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Page history' })
+    )
+    expect(listener).toHaveBeenCalledTimes(1)
+    const event = listener.mock.calls[0][0] as CustomEvent
+    expect(event.detail).toEqual({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      nonce: expect.any(String)
+    })
+    expect(screen.queryByRole('menuitem', { name: 'Page history' })).toBeNull()
+    window.removeEventListener('silt:open-page-history', listener)
+  })
+
   it('copies page path and shortest reference with canonical nested identity', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })
@@ -1858,6 +1897,9 @@ describe('Sidebar', () => {
     await flush()
     await fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Plan' }))
     expect(screen.getByRole('menuitem', { name: /Duplicate/ })).toBeDisabled()
+    expect(
+      screen.getByRole('menuitem', { name: 'Page history' })
+    ).toBeDisabled()
     expect(screen.getByRole('menuitem', { name: /Reveal/ })).toBeDisabled()
     expect(
       screen.getByRole('menuitem', { name: 'Copy Page Path' })

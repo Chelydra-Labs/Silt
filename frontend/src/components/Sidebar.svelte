@@ -272,6 +272,7 @@
   const handleContextCopyNotebook = menu.handleContextCopyNotebook
   const openDuplicatePrompt = menu.openDuplicatePrompt
   const openChildSectionPrompt = menu.openChildSectionPrompt
+  const handleContextPageHistory = menu.handleContextPageHistory
 
   function shortcutSuffix(
     action: Parameters<typeof shortcutBinding>[0]
@@ -511,6 +512,18 @@
         >file_copy</span
       >
       Duplicate…
+    </button>
+    <button
+      type="button"
+      onclick={handleContextPageHistory}
+      role="menuitem"
+      disabled={contextUnavailable}
+      aria-disabled={contextUnavailable}
+    >
+      <span class="material-symbols-outlined text-icon-md" aria-hidden="true"
+        >history</span
+      >
+      Page history
     </button>
     <button
       type="button"
