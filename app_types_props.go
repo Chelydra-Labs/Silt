@@ -178,7 +178,11 @@ func resolvePageTypeSchema(meta parser.FileMetadata, typesDir string) (typeID st
 // schema version N under vaultMu.RLock could otherwise be written under a
 // schema version N+1 hot-reloaded in between. It receives the freshly-read
 // on-disk content; a non-nil error aborts the write before disk is touched.
-func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page string, revalidate func(currentContent string) error, edit func(currentContent string) (string, error)) error {
+//
+// reason is the page-history capture source (editor / mcp / plugin). Capture
+// runs after a successful edit and before the atomic write, matching every
+// other qualifying overwrite path.
+func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page, reason string, revalidate func(currentContent string) error, edit func(currentContent string) (string, error)) error {
 	var writeErr error
 	a.coordinator.LockFileWrite(filePath, func() {
 		contentBytes, err := os.ReadFile(filePath)
@@ -202,6 +206,7 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 			writeErr = err
 			return
 		}
+		a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 		a.tracker.RegisterWrite(filePath)
 		writeFn := parser.WriteFileAtomic
 		if a.frontmatterWriteAtomic != nil {
@@ -352,6 +357,10 @@ func (a *App) getPagePropertiesLocked(notebook, section, page string) ([]PagePro
 // source-only-FK design: it runs only at WRITE time; a target deleted later
 // stays silently inert (no back-write, no two-way linking).
 func (a *App) SetPageProperty(notebook, section, page, property string, value any) error {
+	return a.setPagePropertyWithReason(notebook, section, page, property, value, historyReasonEditor)
+}
+
+func (a *App) setPagePropertyWithReason(notebook, section, page, property string, value any, reason string) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	a.wg.Add(1)
@@ -398,7 +407,7 @@ func (a *App) SetPageProperty(notebook, section, page, property string, value an
 			return err
 		}
 	}
-	return a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page,
+	return a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, reason,
 		// Re-validate against the live schema INSIDE the file lock. The earlier
 		// types.ValidateValue ran under vaultMu.RLock against schema version N;
 		// a hot-reload between that check and the file lock could otherwise see
@@ -544,6 +553,10 @@ func parseRelationRef(ref string) (notebook, section, page string, exact bool) {
 // data is lost across a type switch. An empty typeName clears the type and
 // returns a nil mismatched list.
 func (a *App) SetPageType(notebook, section, page, typeName string) ([]string, error) {
+	return a.setPageTypeWithReason(notebook, section, page, typeName, historyReasonEditor)
+}
+
+func (a *App) setPageTypeWithReason(notebook, section, page, typeName, reason string) ([]string, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	a.wg.Add(1)
@@ -559,7 +572,7 @@ func (a *App) SetPageType(notebook, section, page, typeName string) ([]string, e
 		if err != nil {
 			return nil, err
 		}
-		return nil, a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, nil, func(currentContent string) (string, error) {
+		return nil, a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, reason, nil, func(currentContent string) (string, error) {
 			return parser.ClearFrontmatterField(currentContent, "type")
 		})
 	}
@@ -608,7 +621,7 @@ func (a *App) SetPageType(notebook, section, page, typeName string) ([]string, e
 		return nil
 	}
 
-	writeErr := a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, revalidate, func(currentContent string) (string, error) {
+	writeErr := a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, reason, revalidate, func(currentContent string) (string, error) {
 		return parser.SetFrontmatterField(currentContent, "type", typeID)
 	})
 	if writeErr != nil {
@@ -693,7 +706,7 @@ func (a *App) TurnIntoPage(ctx context.Context, notebook, section, page, typeNam
 	// One edit pass: type rewrite + every orphan clear. writePageFrontmatterEdit
 	// only touches disk after edit returns, so a failure leaves the file byte-
 	// identical (type NOT switched, orphans NOT cleared).
-	writeErr := a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, revalidate, func(currentContent string) (string, error) {
+	writeErr := a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, historyReasonEditor, revalidate, func(currentContent string) (string, error) {
 		content := currentContent
 		var e error
 		if clearType {
@@ -749,7 +762,7 @@ func (a *App) ClearPageProperty(notebook, section, page, property string) error 
 	if !ok {
 		return fmt.Errorf("unknown property %q for type %q", property, td.ID)
 	}
-	return a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, nil, func(currentContent string) (string, error) {
+	return a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, historyReasonEditor, nil, func(currentContent string) (string, error) {
 		return parser.ClearFrontmatterField(currentContent, pdef.Name)
 	})
 }
@@ -845,7 +858,7 @@ func (a *App) SetPageCoreMetadata(notebook, section, page string, update CoreFie
 	if err != nil {
 		return err
 	}
-	return a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, nil, func(currentContent string) (string, error) {
+	return a.writePageFrontmatterEdit(filePath, source, meta.Notebook, meta.Section, meta.Page, historyReasonEditor, nil, func(currentContent string) (string, error) {
 		content := currentContent
 		var e error
 		if update.Date != nil {

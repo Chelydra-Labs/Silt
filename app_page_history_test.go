@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -595,6 +596,96 @@ func TestPageHistory_LinkedRootStoresOutsideVault(t *testing.T) {
 	vaultHist := filepath.Join(app.vaultPath, ".system", "history")
 	if _, err := os.Stat(vaultHist); !os.IsNotExist(err) {
 		t.Fatalf("linked capture wrote vault history at %s (err=%v)", vaultHist, err)
+	}
+}
+
+func TestPageHistory_FrontmatterEditCaptures(t *testing.T) {
+	app := newTestApp(t)
+	writeBookPage(t, app)
+	enablePageHistory(t, app, 50, 0)
+	if err := app.SetPageProperty("Books", "", "Dune", "rating", 4); err != nil {
+		t.Fatalf("SetPageProperty: %v", err)
+	}
+	list, err := app.ListPageVersions("Books", "", "Dune")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("List len=%d, want 1", len(list))
+	}
+	if list[0].Source != historyReasonEditor {
+		t.Fatalf("source = %q, want %q", list[0].Source, historyReasonEditor)
+	}
+	got, err := app.GetPageVersion("Books", "", "Dune", list[0].ID)
+	if err != nil {
+		t.Fatalf("GetPageVersion: %v", err)
+	}
+	if strings.Contains(got, "rating:") {
+		t.Fatalf("preview should be the pre-edit body, got %q", got)
+	}
+	if !strings.Contains(got, "# Dune") {
+		t.Fatalf("preview missing page body, got %q", got)
+	}
+}
+
+func TestPageHistory_MCPSetPagePropertyBypassesInterval(t *testing.T) {
+	app := newTestApp(t)
+	writeBookPage(t, app)
+	enablePageHistory(t, app, 50, 300)
+	bridge := newMetaBridge(app)
+	if err := bridge.SetPageProperty(context.Background(), "Books", "", "Dune", "rating", "4"); err != nil {
+		t.Fatalf("SetPageProperty 1: %v", err)
+	}
+	if err := bridge.SetPageProperty(context.Background(), "Books", "", "Dune", "rating", "5"); err != nil {
+		t.Fatalf("SetPageProperty 2: %v", err)
+	}
+	list, err := app.ListPageVersions("Books", "", "Dune")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) < 2 {
+		t.Fatalf("MCP frontmatter writes should bypass interval, got %d versions", len(list))
+	}
+	for _, v := range list {
+		if v.Source != historyReasonMCP {
+			t.Fatalf("source = %q, want %q", v.Source, historyReasonMCP)
+		}
+	}
+}
+
+func TestPageHistory_MCPSetPageTypeCaptures(t *testing.T) {
+	app := newTestApp(t)
+	writeBookPage(t, app)
+	if err := app.SaveType(meetingTypeSchema()); err != nil {
+		t.Fatalf("SaveType(meeting): %v", err)
+	}
+	enablePageHistory(t, app, 50, 300)
+	bridge := newMetaBridge(app)
+	if _, err := bridge.SetPageType(context.Background(), "Books", "", "Dune", "meeting"); err != nil {
+		t.Fatalf("SetPageType: %v", err)
+	}
+	list, err := app.ListPageVersions("Books", "", "Dune")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+	if list[0].Source != historyReasonMCP {
+		t.Fatalf("source = %q, want %q", list[0].Source, historyReasonMCP)
+	}
+}
+
+func TestPageHistory_InvalidFrontmatterEditDoesNotCapture(t *testing.T) {
+	app := newTestApp(t)
+	writeBookPage(t, app)
+	enablePageHistory(t, app, 50, 0)
+	if err := app.SetPageProperty("Books", "", "Dune", "status", "bogusoption"); err == nil {
+		t.Fatal("invalid SetPageProperty should error")
+	}
+	list, err := app.ListPageVersions("Books", "", "Dune")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("rejected write captured %d versions", len(list))
 	}
 }
 

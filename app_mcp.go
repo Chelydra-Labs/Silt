@@ -153,7 +153,7 @@ func (b mcpBridge) GetPageMetadata(ctx context.Context, notebook, section, page 
 
 // SetPageProperty writes a single typed property. The MCP tool receives value
 // as a string (the SDK decodes JSON into the tool struct's string field), so it
-// is coerced to the property's Go type before delegating to App.SetPageProperty.
+// is coerced to the property's Go type before delegating with historyReasonMCP.
 // The App validates (structural + relation-target) BEFORE any file I/O, so an
 // invalid value leaves the file byte-identical — this method must not write or
 // cache anything before that validation runs.
@@ -177,7 +177,7 @@ func (b mcpBridge) SetPageProperty(ctx context.Context, notebook, section, page,
 			coerced = c
 		}
 	}
-	return b.app.SetPageProperty(notebook, section, page, property, coerced)
+	return b.app.setPagePropertyWithReason(notebook, section, page, property, coerced, historyReasonMCP)
 }
 
 // SetPageType assigns (empty typeName clears) the page's note type. The returned
@@ -187,7 +187,7 @@ func (b mcpBridge) SetPageProperty(ctx context.Context, notebook, section, page,
 // no coerce), so a non-empty list is informational, not a write failure.
 func (b mcpBridge) SetPageType(ctx context.Context, notebook, section, page, typeName string) ([]string, error) {
 	_ = ctx
-	return b.app.SetPageType(notebook, section, page, typeName)
+	return b.app.setPageTypeWithReason(notebook, section, page, typeName, historyReasonMCP)
 }
 
 func (b mcpBridge) CreateBlock(ctx context.Context, afterID, notebook, section, page, blockType, text string) (string, error) {
