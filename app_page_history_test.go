@@ -601,8 +601,8 @@ func TestPageHistory_LinkedRootStoresOutsideVault(t *testing.T) {
 
 func TestPageHistory_FrontmatterEditCaptures(t *testing.T) {
 	app := newTestApp(t)
-	writeBookPage(t, app)
 	enablePageHistory(t, app, 50, 0)
+	writeBookPage(t, app)
 	if err := app.SetPageProperty("Books", "", "Dune", "rating", 4); err != nil {
 		t.Fatalf("SetPageProperty: %v", err)
 	}
@@ -630,8 +630,8 @@ func TestPageHistory_FrontmatterEditCaptures(t *testing.T) {
 
 func TestPageHistory_MCPSetPagePropertyBypassesInterval(t *testing.T) {
 	app := newTestApp(t)
-	writeBookPage(t, app)
 	enablePageHistory(t, app, 50, 300)
+	writeBookPage(t, app)
 	bridge := newMetaBridge(app)
 	if err := bridge.SetPageProperty(context.Background(), "Books", "", "Dune", "rating", "4"); err != nil {
 		t.Fatalf("SetPageProperty 1: %v", err)
@@ -655,11 +655,11 @@ func TestPageHistory_MCPSetPagePropertyBypassesInterval(t *testing.T) {
 
 func TestPageHistory_MCPSetPageTypeCaptures(t *testing.T) {
 	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 300)
 	writeBookPage(t, app)
 	if err := app.SaveType(meetingTypeSchema()); err != nil {
 		t.Fatalf("SaveType(meeting): %v", err)
 	}
-	enablePageHistory(t, app, 50, 300)
 	bridge := newMetaBridge(app)
 	if _, err := bridge.SetPageType(context.Background(), "Books", "", "Dune", "meeting"); err != nil {
 		t.Fatalf("SetPageType: %v", err)
@@ -675,8 +675,8 @@ func TestPageHistory_MCPSetPageTypeCaptures(t *testing.T) {
 
 func TestPageHistory_InvalidFrontmatterEditDoesNotCapture(t *testing.T) {
 	app := newTestApp(t)
-	writeBookPage(t, app)
 	enablePageHistory(t, app, 50, 0)
+	writeBookPage(t, app)
 	if err := app.SetPageProperty("Books", "", "Dune", "status", "bogusoption"); err == nil {
 		t.Fatal("invalid SetPageProperty should error")
 	}
