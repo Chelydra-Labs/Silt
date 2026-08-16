@@ -148,6 +148,134 @@ func TestPageHistory_MCPBypassesInterval(t *testing.T) {
 	}
 }
 
+func TestPageHistory_EditorSaveAfterMCPCapturesAgentResult(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 300)
+	seedHistoryPage(t, app, "Work", "Journal", "AfterAgent", "# a\n")
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "AfterAgent.md")
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, _, _, _, err := parser.ParseFileContent(string(raw), "Work", "Journal", "AfterAgent", "2026-08-16", app.spacesPerTab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks[0].CleanText = "agent body"
+	if err := app.saveFileBlocksWithSource("Work", "Journal", "AfterAgent", blocks, historyReasonMCP); err != nil {
+		t.Fatalf("mcp save: %v", err)
+	}
+	savePageBody(t, app, "Work", "Journal", "AfterAgent", "# human after agent\n")
+	list, err := app.ListPageVersions("Work", "Journal", "AfterAgent")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var sawAgent bool
+	for _, v := range list {
+		body, err := app.GetPageVersion("Work", "Journal", "AfterAgent", v.ID)
+		if err != nil {
+			t.Fatalf("GetPageVersion: %v", err)
+		}
+		if strings.Contains(body, "agent body") {
+			sawAgent = true
+			break
+		}
+	}
+	if !sawAgent {
+		t.Fatal("editor save after MCP should snapshot the agent result")
+	}
+}
+
+func TestPageHistory_RestoreWhileDisabledKeepsLivePage(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "OffRestore", "# original\n")
+	savePageBody(t, app, "Work", "Journal", "OffRestore", "# edited\n")
+	list, err := app.ListPageVersions("Work", "Journal", "OffRestore")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+	oldID := list[0].ID
+	enablePageHistory(t, app, 50, 0)
+	cfg, err := app.GetSystemConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	cfg.Editor.AutoVersioningEnabled = &off
+	if err := app.SaveSystemConfig(cfg); err != nil {
+		t.Fatalf("disable history: %v", err)
+	}
+	if err := app.RestorePageVersion("Work", "Journal", "OffRestore", oldID); err != nil {
+		t.Fatalf("Restore while disabled: %v", err)
+	}
+	after, err := app.ListPageVersions("Work", "Journal", "OffRestore")
+	if err != nil {
+		t.Fatalf("List after restore: %v", err)
+	}
+	var sawLive bool
+	for _, v := range after {
+		body, err := app.GetPageVersion("Work", "Journal", "OffRestore", v.ID)
+		if err != nil {
+			t.Fatalf("GetPageVersion: %v", err)
+		}
+		if strings.Contains(body, "# edited") {
+			sawLive = true
+			break
+		}
+	}
+	if !sawLive {
+		t.Fatal("restore while disabled should keep a snapshot of the live page")
+	}
+}
+
+func TestPageHistory_NestedSectionRenameFollowsLocator(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Projects/Active", "Nested", "# first\n")
+	savePageBody(t, app, "Work", "Projects/Active", "Nested", "# second\n")
+	if err := app.RenamePage("Work", "Projects/Active", "Nested", "Renamed"); err != nil {
+		t.Fatalf("RenamePage nested: %v", err)
+	}
+	oldList, err := app.ListPageVersions("Work", "Projects/Active", "Nested")
+	if err != nil {
+		t.Fatalf("List old: %v", err)
+	}
+	if len(oldList) != 0 {
+		t.Fatalf("old nested locator still has %d versions", len(oldList))
+	}
+	newList, err := app.ListPageVersions("Work", "Projects/Active", "Renamed")
+	if err != nil {
+		t.Fatalf("List new: %v", err)
+	}
+	if len(newList) == 0 {
+		t.Fatal("nested rename lost history")
+	}
+	got, err := app.GetPageVersion("Work", "Projects/Active", "Renamed", newList[0].ID)
+	if err != nil {
+		t.Fatalf("GetPageVersion: %v", err)
+	}
+	if !strings.Contains(got, "# first") {
+		t.Fatalf("nested history body = %q", got)
+	}
+}
+
+func TestPageHistory_MCPCreateRecordsAgentReason(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 300)
+	seedHistoryPage(t, app, "Work", "Journal", "CreateMe", "# start\n")
+	if _, err := app.createBlockWithReason("", "Work", "Journal", "CreateMe", "NOTE", "agent note", historyReasonMCP); err != nil {
+		t.Fatalf("createBlockWithReason: %v", err)
+	}
+	list, err := app.ListPageVersions("Work", "Journal", "CreateMe")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+	if list[0].Source != historyReasonMCP {
+		t.Fatalf("create reason = %q, want %q", list[0].Source, historyReasonMCP)
+	}
+}
+
 func TestPageHistory_RestoreRoundTripBodyOnly(t *testing.T) {
 	app := newTestApp(t)
 	enablePageHistory(t, app, 50, 0)

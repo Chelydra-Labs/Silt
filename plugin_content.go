@@ -32,6 +32,10 @@ type PluginCreateBlockOp struct {
 // type must be TASK, NOTE, or HEADER. New TASK blocks receive Normal priority.
 // Shared by PluginCreateBlock and Local MCP (ungated App core).
 func (a *App) CreateBlock(afterID, notebook, section, page, blockType, text string) (string, error) {
+	return a.createBlockWithReason(afterID, notebook, section, page, blockType, text, historyReasonPlugin)
+}
+
+func (a *App) createBlockWithReason(afterID, notebook, section, page, blockType, text, reason string) (string, error) {
 	if a.db == nil {
 		return "", fmt.Errorf("vault database not loaded")
 	}
@@ -54,7 +58,7 @@ func (a *App) CreateBlock(afterID, notebook, section, page, blockType, text stri
 		Page:     page,
 		NewID:    newID,
 	}
-	if err := a.applyBlocksOps([]PluginCreateBlockOp{op}); err != nil {
+	if err := a.applyBlocksOps([]PluginCreateBlockOp{op}, reason); err != nil {
 		return "", err
 	}
 	return newID, nil
@@ -89,7 +93,7 @@ func (a *App) PluginDeleteBlock(pluginID, sessionToken, blockID string) error {
 	if blockID == "" {
 		return fmt.Errorf("blockId is required")
 	}
-	return a.applyBlocksOps([]PluginCreateBlockOp{{Kind: "delete", BlockID: blockID}})
+	return a.applyBlocksOps([]PluginCreateBlockOp{{Kind: "delete", BlockID: blockID}}, historyReasonPlugin)
 }
 
 // PluginMoveBlock moves a block within its page (after afterID) or to another
@@ -116,7 +120,7 @@ func (a *App) PluginMoveBlock(pluginID, sessionToken, blockID, afterID, notebook
 		Notebook: notebook,
 		Section:  section,
 		Page:     page,
-	}})
+	}}, historyReasonPlugin)
 }
 
 // PluginApplyBlocks applies a batch of create/delete/move ops, coalescing per-
@@ -136,13 +140,16 @@ func (a *App) PluginApplyBlocks(pluginID, sessionToken string, ops []PluginCreat
 	if len(ops) == 0 {
 		return nil
 	}
-	return a.applyBlocksOps(ops)
+	return a.applyBlocksOps(ops, historyReasonPlugin)
 }
 
 // applyBlocksOps is the shared engine for create/delete/move (single + bulk).
 // It groups ops by target page, fetches each page's blocks once, mutates the
 // slice, and writes each affected page exactly once through SaveFileBlocks.
-func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
+func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
+	if reason == "" {
+		reason = historyReasonPlugin
+	}
 	a.wg.Add(1)
 	defer a.wg.Done()
 
@@ -323,7 +330,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 				}
 			}
 		}
-		if err := a.saveFileBlocksWithSource(first.notebook, first.section, first.page, mutated, historyReasonPlugin); err != nil {
+		if err := a.saveFileBlocksWithSource(first.notebook, first.section, first.page, mutated, reason); err != nil {
 			return fmt.Errorf("save page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
 		// For cross-page moves, remove the block from its source page.
@@ -365,7 +372,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 				blockID := r.op.BlockID
 				var writeErr error
 				a.coordinator.LockFileWrite(origPath, func() {
-					writeErr = a.removeBlockFromSourcePage(origPath, r.origSource, sn, ss, sp, blockID)
+					writeErr = a.removeBlockFromSourcePage(origPath, r.origSource, sn, ss, sp, blockID, reason)
 				})
 				if writeErr != nil {
 					return fmt.Errorf("cross-page move: save source %s/%s/%s: %w", sn, ss, sp, writeErr)
@@ -391,7 +398,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 //
 // The file is rewritten with the remaining blocks (filtered from the DB
 // snapshot). The DB gets a single-row delete for the moved block only.
-func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, page, blockID string) error {
+func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, page, blockID, reason string) error {
 	// NOTE: the file write and DB delete are not atomic together — the file is
 	// rewritten first, then the DB row is deleted. If the process crashes
 	// between, the file won't have the block but the DB will still list it.
@@ -417,7 +424,10 @@ func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, pag
 		body = string(contentBytes)
 	}
 	newContent := parser.RenderFileContent(filtered, body, frontmatter, a.spacesPerTab)
-	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), historyReasonPlugin)
+	if reason == "" {
+		reason = historyReasonPlugin
+	}
+	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 	a.tracker.RegisterWrite(filePath)
 	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 		return fmt.Errorf("write source file: %w", err)

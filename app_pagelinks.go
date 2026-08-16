@@ -159,6 +159,7 @@ func (a *App) rewriteStaleInboundAfterRename(oldNB, oldSec, oldPage, newNB, newS
 			if total == 0 {
 				return
 			}
+			a.maybeCapturePageVersion(historyLoc(source, k.nb, k.sec, k.page), contentBytes, []byte(content), historyReasonRename)
 			a.tracker.RegisterWrite(filePath)
 			if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
 				return
@@ -297,6 +298,7 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldSource, oldNB, oldSec, oldPa
 			if total == 0 {
 				return
 			}
+			a.maybeCapturePageVersion(historyLoc(source, k.nb, k.sec, k.page), contentBytes, []byte(content), historyReasonRename)
 			a.tracker.RegisterWrite(filePath)
 			if journal != nil {
 				if _, exists := journal[filePath]; !exists {

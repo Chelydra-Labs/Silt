@@ -31,7 +31,7 @@ const (
 	systemDirName        = ".system"
 	pagesDirName         = "pages"
 	blobsDirName         = "blobs"
-	emptySectionName     = "_"
+	emptySectionName     = "__root__"
 	manifestExt          = ".jsonl"
 	blobExt              = ".md.gz"
 )
@@ -444,13 +444,17 @@ func readManifest(root string, loc Locator) ([]Entry, error) {
 		}
 		var raw manifestLine
 		if err := json.Unmarshal(line, &raw); err != nil {
-			return nil, fmt.Errorf("history manifest: %w", err)
+			// A torn append must not poison the rest of the page history.
+			continue
+		}
+		if strings.TrimSpace(raw.ID) == "" || strings.TrimSpace(raw.Hash) == "" {
+			continue
 		}
 		ts, err := time.Parse(time.RFC3339Nano, raw.TS)
 		if err != nil {
 			ts, err = time.Parse(time.RFC3339, raw.TS)
 			if err != nil {
-				return nil, fmt.Errorf("history manifest ts: %w", err)
+				continue
 			}
 		}
 		entries = append(entries, Entry{
@@ -670,13 +674,15 @@ func sanitizeSource(source string) (string, error) {
 }
 
 func sanitizeSegment(s string) (string, error) {
-	cleaned := strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r < 32 || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' {
-			return -1
+	var b strings.Builder
+	for _, r := range s {
+		if r < 32 || r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' || r == '%' {
+			fmt.Fprintf(&b, "%%%02X", r)
+			continue
 		}
-		return r
-	}, s)
-	cleaned = strings.TrimSpace(cleaned)
+		b.WriteRune(r)
+	}
+	cleaned := strings.TrimSpace(b.String())
 	for strings.HasPrefix(cleaned, "..") {
 		cleaned = strings.TrimSpace(strings.TrimPrefix(cleaned, ".."))
 	}

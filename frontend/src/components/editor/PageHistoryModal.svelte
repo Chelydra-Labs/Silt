@@ -31,7 +31,8 @@
     source: 'Source',
     mcp: 'Agent',
     plugin: 'Plugin',
-    restore: 'Restore'
+    restore: 'Restore',
+    rename: 'Rename'
   }
 
   const dtf = new Intl.DateTimeFormat(undefined, {

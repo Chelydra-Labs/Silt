@@ -23,6 +23,7 @@ const (
 	historyReasonMCP     = "mcp"
 	historyReasonPlugin  = "plugin"
 	historyReasonRestore = "restore"
+	historyReasonRename  = "rename"
 )
 
 // maybeCapturePageVersion snapshots prev (the on-disk bytes about to be
@@ -34,7 +35,11 @@ func (a *App) maybeCapturePageVersion(loc history.Locator, prev, incoming []byte
 		return
 	}
 	enabled, max, interval := a.pageHistorySettings()
-	if !enabled {
+	if reason == "" {
+		reason = historyReasonEditor
+	}
+	// Restore must stay reversible even when auto-capture is off.
+	if !enabled && reason != historyReasonRestore {
 		return
 	}
 	if len(prev) == 0 {
@@ -47,15 +52,13 @@ func (a *App) maybeCapturePageVersion(loc history.Locator, prev, incoming []byte
 	if root == "" {
 		return
 	}
-	if reason == "" {
-		reason = historyReasonEditor
-	}
 	if reason == historyReasonEditor || reason == historyReasonSource {
 		if interval > 0 {
 			last, ok, err := history.Last(root, loc)
 			if err != nil {
 				log.Printf("page history: last lookup failed: %v", err)
-			} else if ok && time.Since(last.Time) < time.Duration(interval)*time.Second {
+			} else if ok && editorSourceIntervalApplies(last.Source) &&
+				time.Since(last.Time) < time.Duration(interval)*time.Second {
 				return
 			}
 		}
@@ -94,8 +97,20 @@ func (a *App) historyRoot(source string) string {
 	return ""
 }
 
+func editorSourceIntervalApplies(source string) bool {
+	return source == historyReasonEditor || source == historyReasonSource
+}
+
+func historySection(section string) string {
+	sec, err := validateSectionPath(section, true)
+	if err != nil {
+		return sanitizeSectionPath(section)
+	}
+	return sec
+}
+
 func historyLoc(source, notebook, section, page string) history.Locator {
-	return history.Locator{Source: source, Notebook: notebook, Section: section, Page: page}
+	return history.Locator{Source: source, Notebook: notebook, Section: historySection(section), Page: page}
 }
 
 // PageVersionInfo is the IPC list row for one retained snapshot.
@@ -111,7 +126,11 @@ func (a *App) resolvePageHistory(notebook, section, page string) (loc history.Lo
 		return loc, "", "", "", "", "", "", fmt.Errorf("vault not loaded")
 	}
 	safeNotebook = sanitizePathSegment(notebook)
-	safeSection = sanitizePathSegment(section)
+	var secErr error
+	safeSection, secErr = validateSectionPath(section, true)
+	if secErr != nil {
+		return loc, "", "", "", "", "", "", invalidNavigationPath(secErr)
+	}
 	safePage = sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return loc, "", "", "", "", "", "", NewIPCError(CodeInvalidNavigationPath, "invalid path metadata")

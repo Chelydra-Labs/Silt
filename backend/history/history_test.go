@@ -241,15 +241,95 @@ func TestList_MissingIsEmpty(t *testing.T) {
 	}
 }
 
-func TestCapture_EmptySectionUsesUnderscore(t *testing.T) {
+func TestCapture_EmptySectionUsesRootSentinel(t *testing.T) {
 	root := t.TempDir()
 	loc := Locator{Source: "vault", Notebook: "Work", Section: "", Page: "Inbox"}
 	if skip, err := Capture(root, loc, []byte("root page"), "mcp", time.Now().UTC(), Options{}); err != nil || skip != "" {
 		t.Fatalf("Capture: skip=%q err=%v", skip, err)
 	}
-	man := filepath.Join(root, ".system", "history", "pages", "vault", "Work", "_", "Inbox.jsonl")
+	man := filepath.Join(root, ".system", "history", "pages", "vault", "Work", "__root__", "Inbox.jsonl")
 	if _, err := os.Stat(man); err != nil {
-		t.Fatalf("expected underscore section path %s: %v", man, err)
+		t.Fatalf("expected root sentinel path %s: %v", man, err)
+	}
+}
+
+func TestCapture_EmptySectionDistinctFromUnderscoreSection(t *testing.T) {
+	root := t.TempDir()
+	empty := Locator{Source: "vault", Notebook: "Work", Section: "", Page: "Same"}
+	named := Locator{Source: "vault", Notebook: "Work", Section: "_", Page: "Same"}
+	if skip, err := Capture(root, empty, []byte("empty-section"), "editor", time.Now().UTC(), Options{}); err != nil || skip != "" {
+		t.Fatalf("empty capture: skip=%q err=%v", skip, err)
+	}
+	if skip, err := Capture(root, named, []byte("underscore-section"), "editor", time.Now().UTC(), Options{}); err != nil || skip != "" {
+		t.Fatalf("named capture: skip=%q err=%v", skip, err)
+	}
+	emptyList, err := List(root, empty)
+	if err != nil || len(emptyList) != 1 {
+		t.Fatalf("empty list: %v len=%d", err, len(emptyList))
+	}
+	namedList, err := List(root, named)
+	if err != nil || len(namedList) != 1 {
+		t.Fatalf("named list: %v len=%d", err, len(namedList))
+	}
+	gotEmpty, _ := Read(root, empty, emptyList[0].ID)
+	gotNamed, _ := Read(root, named, namedList[0].ID)
+	if string(gotEmpty) != "empty-section" || string(gotNamed) != "underscore-section" {
+		t.Fatalf("aliased bodies: empty=%q named=%q", gotEmpty, gotNamed)
+	}
+}
+
+func TestCapture_ColonNameDistinctFromStripped(t *testing.T) {
+	root := t.TempDir()
+	colon := Locator{Source: "vault", Notebook: "Work", Section: "a:b", Page: "Note"}
+	plain := Locator{Source: "vault", Notebook: "Work", Section: "ab", Page: "Note"}
+	if skip, err := Capture(root, colon, []byte("colon"), "editor", time.Now().UTC(), Options{}); err != nil || skip != "" {
+		t.Fatalf("colon capture: skip=%q err=%v", skip, err)
+	}
+	if skip, err := Capture(root, plain, []byte("plain"), "editor", time.Now().UTC(), Options{}); err != nil || skip != "" {
+		t.Fatalf("plain capture: skip=%q err=%v", skip, err)
+	}
+	colonList, err := List(root, colon)
+	if err != nil || len(colonList) != 1 {
+		t.Fatalf("colon list: %v len=%d", err, len(colonList))
+	}
+	plainList, err := List(root, plain)
+	if err != nil || len(plainList) != 1 {
+		t.Fatalf("plain list: %v len=%d", err, len(plainList))
+	}
+	gotColon, _ := Read(root, colon, colonList[0].ID)
+	gotPlain, _ := Read(root, plain, plainList[0].ID)
+	if string(gotColon) != "colon" || string(gotPlain) != "plain" {
+		t.Fatalf("aliased bodies: colon=%q plain=%q", gotColon, gotPlain)
+	}
+}
+
+func TestReadManifest_SkipsMalformedLine(t *testing.T) {
+	root := t.TempDir()
+	loc := testLoc("Torn")
+	if skip, err := Capture(root, loc, []byte("good"), "editor", time.Now().UTC(), Options{}); err != nil || skip != "" {
+		t.Fatalf("Capture: skip=%q err=%v", skip, err)
+	}
+	man := filepath.Join(root, ".system", "history", "pages", "vault", "Work", "Journal", "Torn.jsonl")
+	f, err := os.OpenFile(man, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("{not-json\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	list, err := List(root, loc)
+	if err != nil {
+		t.Fatalf("List after torn line: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("List len=%d, want 1 surviving entry", len(list))
+	}
+	got, err := Read(root, loc, list[0].ID)
+	if err != nil || string(got) != "good" {
+		t.Fatalf("Read after torn line: %q err=%v", got, err)
 	}
 }
 

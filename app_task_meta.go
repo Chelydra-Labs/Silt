@@ -70,7 +70,7 @@ func (a *App) mutateTaskBlock(blockID, label, reason string, mutate func(*parser
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	safeSection := historySection(section)
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return fmt.Errorf("invalid file metadata for block %s", blockID)
@@ -336,7 +336,7 @@ func (a *App) setTaskOrders(ids []string, orders []int, reason string) error {
 		group := groups[fk]
 		first := group[0]
 		safeNotebook := sanitizePathSegment(first.loc.Notebook)
-		safeSection := sanitizePathSegment(first.loc.Section)
+		safeSection := historySection(first.loc.Section)
 		safePage := sanitizePathSegment(first.loc.Page)
 		if safeNotebook == "" || safePage == "" {
 			return fmt.Errorf("invalid file metadata for block %s", first.blockID)

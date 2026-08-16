@@ -41,7 +41,7 @@ func (a *App) FetchSubtree(blockID string) ([]parser.ParsedBlock, error) {
 	}
 
 	safeNotebook := sanitizePathSegment(loc.Notebook)
-	safeSection := sanitizePathSegment(loc.Section)
+	safeSection := historySection(loc.Section)
 	safePage := sanitizePathSegment(loc.Page)
 	if safeNotebook == "" || safePage == "" {
 		return nil, fmt.Errorf("invalid file metadata for block %s", blockID)
@@ -157,7 +157,7 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock, r
 		return false, fmt.Errorf("block %s is not a task", blockID)
 	}
 	safeNotebook := sanitizePathSegment(loc.Notebook)
-	safeSection := sanitizePathSegment(loc.Section)
+	safeSection := historySection(loc.Section)
 	safePage := sanitizePathSegment(loc.Page)
 	if safeNotebook == "" || safePage == "" {
 		return false, fmt.Errorf("invalid file metadata for block %s", blockID)
@@ -337,7 +337,7 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID, reaso
 		return "", fmt.Errorf("block %s is not a task", taskID)
 	}
 	safeNotebook := sanitizePathSegment(loc.Notebook)
-	safeSection := sanitizePathSegment(loc.Section)
+	safeSection := historySection(loc.Section)
 	safePage := sanitizePathSegment(loc.Page)
 	if safeNotebook == "" || safePage == "" {
 		return "", fmt.Errorf("invalid file metadata for block %s", taskID)

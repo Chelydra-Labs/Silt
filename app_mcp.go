@@ -192,7 +192,7 @@ func (b mcpBridge) SetPageType(ctx context.Context, notebook, section, page, typ
 
 func (b mcpBridge) CreateBlock(ctx context.Context, afterID, notebook, section, page, blockType, text string) (string, error) {
 	_ = ctx
-	return b.app.CreateBlock(afterID, notebook, section, page, blockType, text)
+	return b.app.createBlockWithReason(afterID, notebook, section, page, blockType, text, historyReasonMCP)
 }
 
 func (b mcpBridge) CreateStandaloneTask(ctx context.Context, title, dueDate, status string) (string, error) {
