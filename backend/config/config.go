@@ -20,7 +20,7 @@ import (
 const maxConfigYAMLBytes int64 = 256 << 10 // 256 KB
 
 // SystemConfig is the parsed contents of <vault>/.system/config.yaml. It
-// mirrors the schema documented in SPECS.md §9.1.
+// mirrors the schema documented in SPECS.md §10.1.
 type SystemConfig struct {
 	Notebooks NotebooksConfig   `yaml:"notebooks" json:"notebooks"`
 	Editor    EditorConfig      `yaml:"editor" json:"editor"`
@@ -84,6 +84,19 @@ type EditorConfig struct {
 	// line is held when TypewriterMode is on (#187). Default 0.5 (center,
 	// matching iA Writer). normalize() clamps to [0.1, 0.9].
 	TypewriterModeRatio *float64 `yaml:"typewriter_mode_ratio,omitempty" json:"typewriter_mode_ratio,omitempty"`
+	// AutoVersioningEnabled captures previous on-disk page markdown before a
+	// qualifying overwrite (SPECS §10.1). Default false — snapshots live in
+	// the vault and are not encrypted, so this stays opt-in.
+	AutoVersioningEnabled *bool `yaml:"auto_versioning_enabled,omitempty" json:"auto_versioning_enabled,omitempty"`
+	// MaxVersionsPerPage is the per-page retention cap. Default 50;
+	// normalize() clamps to [1, 500].
+	MaxVersionsPerPage int `yaml:"max_versions_per_page,omitempty" json:"max_versions_per_page,omitempty"`
+	// AutoVersioningMinIntervalSec is the minimum gap between editor/source
+	// captures for the same page. Default 300. 0 means every qualifying
+	// write. normalize() clamps to [0, 3600]. MCP/plugin/restore bypass this.
+	// No omitempty: 0 is a valid explicit value and must survive Save→Load
+	// over Defaults().
+	AutoVersioningMinIntervalSec int `yaml:"auto_versioning_min_interval_sec" json:"auto_versioning_min_interval_sec"`
 	// CustomDictionary is the per-vault list of user-added spellcheck words
 	// (#196). Lives in the YAML tier (ARCHITECTURE §0 rule 2 — per-vault UI
 	// prefs), NOT a separate file and NOT SQLite (it is user intent).

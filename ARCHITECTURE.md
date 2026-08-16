@@ -38,7 +38,7 @@ Companion documents: **SPECS.md** is the forward-looking product north star;
 
 ## Storage-of-Truth Tiers (Read First)
 
-Silt's persistent storage is layered into four tiers with **deliberate,
+Silt's persistent storage is layered into distinct tiers with **deliberate,
 non-overlapping responsibilities**. Every new feature MUST be designed
 against this map before writing code. Violating these tiers is a
 correctness regression, not a style choice.
@@ -52,6 +52,7 @@ correctness regression, not a style choice.
 | **User-global, pre-vault** | JSON | `<config>/silt/settings.json` | Settings that must be known before any vault is open: active theme id, dark/light/system mode, non-vault font preferences | `{"active_theme": "silt-graphite", "mode": "dark"}` |
 | **Working memory** | SQLite (WAL) | `<DataDir>/silt/indexes/<vault-key>/index.sqlite*` (per-user local DataDir; relocated OUT of the synced vault) | Re-derivable caches: block↔location projection, FTS5 search index, denormalized per-task caches (comments/links counts, pin, progress — all re-derived from markdown on re-index), file mtime/size for incremental re-index, typed-notes projection (`page_types`/`page_properties` — page→type membership + property values, re-derived from frontmatter `type:` + the type schema) | The `blocks` table, `blocks_fts` virtual table, `files` mtime cache, `page_types`/`page_properties` projection |
 | **Plugin-owned storage** | SQLite (WAL) | `<vault>/.system/plugins/<id>/data/plugin.db` | Per-plugin private data the plugin owns the schema for: working memory OR durable storage at the plugin's discretion (embeddings, content-hash caches, agent memory). The plugin decides durability semantics; data that must survive uninstall or be portable MUST round-trip through markdown. | A plugin's `vec0` vector index, a content-hash cache table |
+| **Page history** | gzip + JSONL | `<vault>/.system/history/` (linked: `<linkedRoot>/.system/history/`) | Opt-in previous-content snapshots of page markdown plus a per-page append-only manifest. Durable user recovery data — not reproducible working memory. Deleting `index.sqlite` must not delete it. Scanner skips leading-`.` dirs, so history is not indexed, not in nav, and not in FTS. | `.system/history/pages/vault/Work/_/Note.jsonl` + matching `.md.gz` blob |
 
 **The cardinal rules:**
 
@@ -98,8 +99,13 @@ correctness regression, not a style choice.
    storage — vector indexes, content-hash caches, agent memory). The boundary:
    data that must survive uninstall or be portable across vaults MUST
    round-trip through markdown; plugin-private caches need not. The plugin DB
-   is deleted on uninstall (see ADR
-   `docs/decisions/0001-plugin-storage-tier.md`).
+    is deleted on uninstall (see ADR
+    `docs/decisions/0001-plugin-storage-tier.md`).
+
+    **Page history is not working memory.** Opt-in snapshots under
+    `.system/history/` are durable user recovery data. They are not
+    reproducible from current markdown. Deleting `index.sqlite` must
+    leave them intact.
 
 5. **Settings can be stored in JSON** (the pre-vault / user-global
    tier), but only when the data must be available before a vault is

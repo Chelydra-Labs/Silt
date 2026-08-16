@@ -1205,7 +1205,21 @@ editor:
   # (default off; ratio clamped to [0.1, 0.9]).
   typewriter_mode: false
   typewriter_mode_ratio: 0.5
-  # Per-vault custom spellcheck words (a per-vault UI pref, so it lives here
+  # Opt-in page history. When true, qualifying overwrites snapshot the
+  # previous on-disk markdown under <vault>/.system/history/ (or the
+  # linked notebook's .system/history/) before the atomic write. Editor
+  # and Source captures honor auto_versioning_min_interval_sec (0 = every
+  # qualifying write) and skip unchanged SHA-256. MCP, plugin, and restore
+  # writes always capture when enabled (hash-skip still applies). History
+  # I/O never fails a page save. Snapshots are not a backup: they live in
+  # the vault, sync with it, and are not encrypted. Restore replaces the
+  # page body only and keeps the live frontmatter. Deleting a page leaves
+  # its history in place. max_versions_per_page is count-pruned oldest-first
+  # (clamped 1–500). See ARCHITECTURE.md storage tiers.
+  auto_versioning_enabled: false
+  max_versions_per_page: 50
+  auto_versioning_min_interval_sec: 300
+  # Per-vault custom spellcheck words (a per-vault UI pref, so it lives here)
   # in YAML). A linked notebook may carry its own co-located override
   # (arrays replace; §3.1). Import/export as UTF-8 one-word-per-line .txt
   # (# comments allowed; Hunspell personal-dictionary format).

@@ -1194,6 +1194,28 @@ func TestSaveSystemConfig_RejectsInvalid(t *testing.T) {
 	if err := app.SaveSystemConfig(cfg); err != nil {
 		t.Errorf("expected no error for valid hotkey, got %v", err)
 	}
+
+	cfg.Editor.MaxVersionsPerPage = 0
+	if err := app.SaveSystemConfig(cfg); err == nil {
+		t.Errorf("expected error for max_versions_per_page=0")
+	}
+	cfg.Editor.MaxVersionsPerPage = 501
+	if err := app.SaveSystemConfig(cfg); err == nil {
+		t.Errorf("expected error for max_versions_per_page=501")
+	}
+	cfg.Editor.MaxVersionsPerPage = 50
+	cfg.Editor.AutoVersioningMinIntervalSec = -1
+	if err := app.SaveSystemConfig(cfg); err == nil {
+		t.Errorf("expected error for auto_versioning_min_interval_sec=-1")
+	}
+	cfg.Editor.AutoVersioningMinIntervalSec = 3601
+	if err := app.SaveSystemConfig(cfg); err == nil {
+		t.Errorf("expected error for auto_versioning_min_interval_sec=3601")
+	}
+	cfg.Editor.AutoVersioningMinIntervalSec = 0
+	if err := app.SaveSystemConfig(cfg); err != nil {
+		t.Errorf("expected no error for auto_versioning_min_interval_sec=0, got %v", err)
+	}
 }
 
 func TestGetConfigLoadError_OneShot(t *testing.T) {
