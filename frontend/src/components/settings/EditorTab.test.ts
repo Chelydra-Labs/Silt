@@ -138,6 +138,9 @@ describe('EditorTab page history (#937)', () => {
       name: 'Capture page history'
     })
     expect(checkbox).toBeInTheDocument()
+    expect(checkbox).toHaveAccessibleDescription(
+      /not a substitute for Settings/
+    )
     expect(checkbox).not.toBeChecked()
     expect(
       screen.queryByLabelText('Versions to keep per page')

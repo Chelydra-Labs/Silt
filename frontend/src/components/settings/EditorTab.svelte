@@ -443,13 +443,17 @@
                   touch()
                 }}
                 type="checkbox"
+                aria-describedby="page-history-settings-help"
                 class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
               />
               <span class="text-text-primary text-type-md font-body-md">
                 Capture page history
               </span>
             </label>
-            <p class="text-text-muted text-type-sm font-body-md max-w-xl pl-6">
+            <p
+              id="page-history-settings-help"
+              class="text-text-muted text-type-sm font-body-md max-w-xl pl-6"
+            >
               Snapshots stay in this vault under
               <span class="font-mono">.system/history</span>. They sync with the
               vault, are not encrypted, and are not a substitute for Settings →

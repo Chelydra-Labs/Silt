@@ -25,7 +25,7 @@ import (
 // block.Owner -> RenderFileContent -> WriteFileAtomic -> re-parse ->
 // IndexFileBlocks -> emit block:changed.
 func (a *App) SetTaskOwner(blockID, owner string) error {
-	return a.setTaskOwner(blockID, owner)
+	return a.setTaskOwner(blockID, owner, historyReasonEditor)
 }
 
 // PluginSetTaskOwner is the plugin-SDK wrapper for SetTaskOwner, gated by the
@@ -33,7 +33,7 @@ func (a *App) SetTaskOwner(blockID, owner string) error {
 // PluginContext, never direct wailsjs bindings). Mirrors PluginSetTaskDueDate.
 func (a *App) PluginSetTaskOwner(pluginID, sessionToken, blockID, owner string) (bool, error) {
 	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
-		return a.setTaskOwner(blockID, owner)
+		return a.setTaskOwner(blockID, owner, historyReasonPlugin)
 	})
 }
 
@@ -46,7 +46,7 @@ func (a *App) PluginSetTaskOwner(pluginID, sessionToken, blockID, owner string) 
 // input validation (empty-title guard, tag dedupe) BEFORE calling; this
 // helper owns only the shared write path so a future cross-cutting guard
 // (e.g. focus-lock, #444) lands in exactly one place.
-func (a *App) mutateTaskBlock(blockID, label string, mutate func(*parser.ParsedBlock)) error {
+func (a *App) mutateTaskBlock(blockID, label, reason string, mutate func(*parser.ParsedBlock)) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
@@ -134,7 +134,7 @@ func (a *App) mutateTaskBlock(blockID, label string, mutate func(*parser.ParsedB
 				body = string(contentBytes)
 			}
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
-			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonEditor)
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
 			a.tracker.RegisterWrite(filePath)
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 				writeErr = err
@@ -187,8 +187,8 @@ func (a *App) mutateTaskBlock(blockID, label string, mutate func(*parser.ParsedB
 // setTaskOwner is the shared core for the app-level and plugin-level entry
 // points. Delegates the shared write-chain to mutateTaskBlock; see that
 // method for the chain.
-func (a *App) setTaskOwner(blockID, owner string) error {
-	return a.mutateTaskBlock(blockID, "SetTaskOwner", func(b *parser.ParsedBlock) { b.Owner = owner })
+func (a *App) setTaskOwner(blockID, owner, reason string) error {
+	return a.mutateTaskBlock(blockID, "SetTaskOwner", reason, func(b *parser.ParsedBlock) { b.Owner = owner })
 }
 
 // SetTaskOrder rewrites the [order:: N] inline token on a task block (#426).
@@ -198,14 +198,14 @@ func (a *App) setTaskOwner(blockID, owner string) error {
 // chain (same as SetTaskOwner); the row mapper caches the new value into
 // tasks.manual_order so the next query sees it without re-parsing markdown.
 func (a *App) SetTaskOrder(blockID string, order int) error {
-	return a.setTaskOrder(blockID, order)
+	return a.setTaskOrder(blockID, order, historyReasonEditor)
 }
 
 // PluginSetTaskOrder is the plugin-SDK wrapper for SetTaskOrder, gated by
 // the standard capability + session checks. Mirrors PluginSetTaskOwner.
 func (a *App) PluginSetTaskOrder(pluginID, sessionToken, blockID string, order int) (bool, error) {
 	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
-		return a.setTaskOrder(blockID, order)
+		return a.setTaskOrder(blockID, order, historyReasonPlugin)
 	})
 }
 
@@ -213,14 +213,14 @@ func (a *App) PluginSetTaskOrder(pluginID, sessionToken, blockID string, order i
 // points. Validates the input (negative order is a contract violation —
 // the token is 1-based; 0 is the "unset" sentinel and clears the token)
 // BEFORE entering the write chain so a rejection leaves the file untouched.
-func (a *App) setTaskOrder(blockID string, order int) error {
+func (a *App) setTaskOrder(blockID string, order int, reason string) error {
 	if order < 0 {
 		return fmt.Errorf("task order must be >= 0 (got %d)", order)
 	}
 	if order > 1_000_000 {
 		return fmt.Errorf("task order must be <= 1,000,000 (got %d)", order)
 	}
-	return a.mutateTaskBlock(blockID, "SetTaskOrder", func(b *parser.ParsedBlock) { b.ManualOrder = order })
+	return a.mutateTaskBlock(blockID, "SetTaskOrder", reason, func(b *parser.ParsedBlock) { b.ManualOrder = order })
 }
 
 // SetTaskOrders batch-renumbers [order:: N] tokens across one or more task
@@ -234,14 +234,14 @@ func (a *App) setTaskOrder(blockID string, order int) error {
 // ids and orders are parallel slices; ids[i] gets orders[i]. A negative or
 // >1,000,000 order is rejected up front for every entry before touching disk.
 func (a *App) SetTaskOrders(ids []string, orders []int) error {
-	return a.setTaskOrders(ids, orders)
+	return a.setTaskOrders(ids, orders, historyReasonEditor)
 }
 
 // PluginSetTaskOrders is the plugin-SDK wrapper for SetTaskOrders, gated by
 // the standard capability + session checks. Mirrors PluginSetTaskOrder.
 func (a *App) PluginSetTaskOrders(pluginID, sessionToken string, ids []string, orders []int) (bool, error) {
 	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
-		return a.setTaskOrders(ids, orders)
+		return a.setTaskOrders(ids, orders, historyReasonPlugin)
 	})
 }
 
@@ -250,7 +250,7 @@ func (a *App) PluginSetTaskOrders(pluginID, sessionToken string, ids []string, o
 // blocks for that file -> render -> WriteFileAtomic -> re-parse -> reindex).
 // Each file's write is atomic; a failure on file N does NOT roll back files
 // 1..N-1 (they're independent files in independent sections/notebooks).
-func (a *App) setTaskOrders(ids []string, orders []int) error {
+func (a *App) setTaskOrders(ids []string, orders []int, reason string) error {
 	if len(ids) != len(orders) {
 		return fmt.Errorf("ids and orders must have the same length (got %d and %d)", len(ids), len(orders))
 	}
@@ -407,7 +407,7 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 					body = string(contentBytes)
 				}
 				newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
-				a.maybeCapturePageVersion(historyLoc(first.loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonEditor)
+				a.maybeCapturePageVersion(historyLoc(first.loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
 				a.tracker.RegisterWrite(filePath)
 				if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 					writeErr = err
@@ -473,25 +473,25 @@ func (a *App) setTaskOrders(ids []string, orders []int) error {
 //
 // Follows the canonical write chain (same as SetTaskOwner).
 func (a *App) SetTaskPriority(blockID string, priority int) error {
-	return a.setTaskPriority(blockID, priority)
+	return a.setTaskPriority(blockID, priority, historyReasonEditor)
 }
 
 // PluginSetTaskPriority is the plugin-SDK wrapper for SetTaskPriority, gated
 // by the standard capability + session checks. Mirrors PluginSetTaskDueDate.
 func (a *App) PluginSetTaskPriority(pluginID, sessionToken, blockID string, priority int) (bool, error) {
 	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
-		return a.setTaskPriority(blockID, priority)
+		return a.setTaskPriority(blockID, priority, historyReasonPlugin)
 	})
 }
 
 // setTaskPriority is the shared core for the app-level and plugin-level entry
 // points. Delegates the shared write-chain to mutateTaskBlock; see that
 // method for the chain.
-func (a *App) setTaskPriority(blockID string, priority int) error {
+func (a *App) setTaskPriority(blockID string, priority int, reason string) error {
 	if err := validateTaskPriority(priority); err != nil {
 		return err
 	}
-	return a.mutateTaskBlock(blockID, "SetTaskPriority", func(b *parser.ParsedBlock) { b.Priority = priority })
+	return a.mutateTaskBlock(blockID, "SetTaskPriority", reason, func(b *parser.ParsedBlock) { b.Priority = priority })
 }
 
 // validateTaskPriority is shared by every IPC write that accepts ParsedBlock
@@ -538,14 +538,14 @@ func validateTaskBlockPriorities(blocks []parser.ParsedBlock) error {
 //
 // Follows the canonical write chain (same as SetTaskOwner).
 func (a *App) SetTaskTags(blockID string, tags []string) error {
-	return a.setTaskTags(blockID, tags)
+	return a.setTaskTags(blockID, tags, historyReasonEditor)
 }
 
 // PluginSetTaskTags is the plugin-SDK wrapper for SetTaskTags, gated by the
 // standard capability + session checks. Mirrors PluginSetTaskDueDate.
 func (a *App) PluginSetTaskTags(pluginID, sessionToken, blockID string, tags []string) (bool, error) {
 	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
-		return a.setTaskTags(blockID, tags)
+		return a.setTaskTags(blockID, tags, historyReasonPlugin)
 	})
 }
 
@@ -553,10 +553,10 @@ func (a *App) PluginSetTaskTags(pluginID, sessionToken, blockID string, tags []s
 // points. Delegates the shared write-chain to mutateTaskBlock; see that
 // method for the chain. The byte-surgery helpers (stripTagsFromCleanText,
 // appendTagsToCleanText) preserve every other byte of CleanText.
-func (a *App) setTaskTags(blockID string, tags []string) error {
+func (a *App) setTaskTags(blockID string, tags []string, reason string) error {
 	// Normalize (drop empties, de-dupe, strip leading #) before the write chain.
 	newTags := dedupeTags(tags)
-	return a.mutateTaskBlock(blockID, "SetTaskTags", func(b *parser.ParsedBlock) {
+	return a.mutateTaskBlock(blockID, "SetTaskTags", reason, func(b *parser.ParsedBlock) {
 		b.CleanText = rebuildTagSet(b.CleanText, newTags)
 	})
 }
@@ -575,14 +575,14 @@ func (a *App) setTaskTags(blockID string, tags []string) error {
 //
 // Follows the canonical write chain (same as SetTaskOwner).
 func (a *App) SetTaskTitle(blockID, title string) error {
-	return a.setTaskTitle(blockID, title)
+	return a.setTaskTitle(blockID, title, historyReasonEditor)
 }
 
 // PluginSetTaskTitle is the plugin-SDK wrapper for SetTaskTitle, gated by the
 // standard capability + session checks. Mirrors PluginSetTaskDueDate.
 func (a *App) PluginSetTaskTitle(pluginID, sessionToken, blockID, title string) (bool, error) {
 	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
-		return a.setTaskTitle(blockID, title)
+		return a.setTaskTitle(blockID, title, historyReasonPlugin)
 	})
 }
 
@@ -591,13 +591,13 @@ func (a *App) PluginSetTaskTitle(pluginID, sessionToken, blockID, title string) 
 // method for the chain. The byte-surgery helper (replaceTitleInCleanText)
 // tokenizes CleanText into hashtags, block-refs, and prose, then reassembles
 // the new title + preserved tokens.
-func (a *App) setTaskTitle(blockID, title string) error {
+func (a *App) setTaskTitle(blockID, title, reason string) error {
 	// SDK contract guard: an empty/whitespace title would silently strip all
 	// prose from the task. Reject before touching disk.
 	if strings.TrimSpace(title) == "" {
 		return fmt.Errorf("task title must not be empty")
 	}
-	return a.mutateTaskBlock(blockID, "SetTaskTitle", func(b *parser.ParsedBlock) {
+	return a.mutateTaskBlock(blockID, "SetTaskTitle", reason, func(b *parser.ParsedBlock) {
 		b.CleanText = replaceTitleInCleanText(b.CleanText, title)
 	})
 }

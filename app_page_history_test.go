@@ -291,6 +291,105 @@ func TestPageHistory_MissingVersion(t *testing.T) {
 	}
 }
 
+func TestPageHistory_PluginBypassesInterval(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 300)
+	seedHistoryPage(t, app, "Work", "Journal", "Plugin", "# a\n")
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "Plugin.md")
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, _, _, _, err := parser.ParseFileContent(string(raw), "Work", "Journal", "Plugin", "2026-08-16", app.spacesPerTab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks[0].CleanText = "b"
+	if err := app.saveFileBlocksWithSource("Work", "Journal", "Plugin", blocks, historyReasonPlugin); err != nil {
+		t.Fatalf("plugin save 1: %v", err)
+	}
+	raw, _ = os.ReadFile(filePath)
+	blocks, _, _, _, err = parser.ParseFileContent(string(raw), "Work", "Journal", "Plugin", "2026-08-16", app.spacesPerTab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks[0].CleanText = "c"
+	if err := app.saveFileBlocksWithSource("Work", "Journal", "Plugin", blocks, historyReasonPlugin); err != nil {
+		t.Fatalf("plugin save 2: %v", err)
+	}
+	list, err := app.ListPageVersions("Work", "Journal", "Plugin")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) < 2 {
+		t.Fatalf("plugin should bypass interval, got %d versions", len(list))
+	}
+	for _, v := range list {
+		if v.Source != historyReasonPlugin && v.Source != historyReasonEditor {
+			t.Fatalf("unexpected source %q", v.Source)
+		}
+	}
+}
+
+func TestPageHistory_MovePageFollowsLocator(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Movable", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Movable", "# second\n")
+	if err := app.MovePage("Work", "Journal", "Archive", "Movable"); err != nil {
+		t.Fatalf("MovePage: %v", err)
+	}
+	oldList, err := app.ListPageVersions("Work", "Journal", "Movable")
+	if err != nil {
+		t.Fatalf("List old: %v", err)
+	}
+	if len(oldList) != 0 {
+		t.Fatalf("old locator still has %d versions", len(oldList))
+	}
+	newList, err := app.ListPageVersions("Work", "Archive", "Movable")
+	if err != nil {
+		t.Fatalf("List new: %v", err)
+	}
+	if len(newList) == 0 {
+		t.Fatal("moved page lost history")
+	}
+}
+
+func TestPageHistory_LinkedRootStoresOutsideVault(t *testing.T) {
+	app := newTestApp(t)
+	ext := filepath.Join(t.TempDir(), "Ext")
+	if err := os.MkdirAll(filepath.Join(ext, "Journal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(ext, "Journal", "Linked.md"),
+		"---\nnotebook: Ext\nsection: Journal\npage: Linked\ndate: 2026-08-16\ntags: []\n---\n# first\n")
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	if ln.DisplayName != "Ext" {
+		t.Fatalf("DisplayName = %q, want Ext", ln.DisplayName)
+	}
+	enablePageHistory(t, app, 50, 0)
+	savePageBody(t, app, ln.DisplayName, "Journal", "Linked", "# second\n")
+
+	list, err := app.ListPageVersions(ln.DisplayName, "Journal", "Linked")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("List len=%d, want 1", len(list))
+	}
+	linkedHist := filepath.Join(ext, ".system", "history")
+	if _, err := os.Stat(linkedHist); err != nil {
+		t.Fatalf("linked history missing at %s: %v", linkedHist, err)
+	}
+	vaultHist := filepath.Join(app.vaultPath, ".system", "history")
+	if _, err := os.Stat(vaultHist); !os.IsNotExist(err) {
+		t.Fatalf("linked capture wrote vault history at %s (err=%v)", vaultHist, err)
+	}
+}
+
 func TestPageHistory_StoreIndependentOfDB(t *testing.T) {
 	root := t.TempDir()
 	loc := history.Locator{Source: "vault", Notebook: "Work", Section: "Journal", Page: "Solo"}

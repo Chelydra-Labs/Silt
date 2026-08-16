@@ -10,7 +10,7 @@
   function onOpen(event: Event): void {
     const detail = (event as CustomEvent<OpenPageHistoryDetail>).detail
     if (!detail?.notebook || !detail.page || !detail.nonce) return
-    target = detail
+    target = { ...detail, section: detail.section ?? '' }
   }
 
   $effect(() => {

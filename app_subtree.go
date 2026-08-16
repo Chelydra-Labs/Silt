@@ -106,7 +106,7 @@ func extractSubtree(blocks []parser.ParsedBlock, parentID string) []parser.Parse
 // through the PluginSaveSubtreeBlocks wrapper, which gates on
 // CapContentMutate (SPECS §8.3 — plugins never call App methods directly).
 func (a *App) SaveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (bool, error) {
-	return a.saveSubtreeBlocks(blockID, children)
+	return a.saveSubtreeBlocks(blockID, children, historyReasonEditor)
 }
 
 // PluginSaveSubtreeBlocks is the plugin-SDK wrapper for SaveSubtreeBlocks,
@@ -120,7 +120,7 @@ func (a *App) PluginSaveSubtreeBlocks(pluginID, sessionToken, blockID string, ch
 	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return false, err
 	}
-	return a.saveSubtreeBlocks(blockID, children)
+	return a.saveSubtreeBlocks(blockID, children, historyReasonPlugin)
 }
 
 // saveSubtreeBlocks is the shared core for the app-level and plugin-level entry
@@ -132,7 +132,7 @@ func (a *App) PluginSaveSubtreeBlocks(pluginID, sessionToken, blockID string, ch
 // because RenderFileContent re-serializes the full slice. Holds both
 // LockBlockWrite(parentID) and LockFileWrite(filePath) so the splice is atomic
 // and races no concurrent writer. Returns true when a write occurred.
-func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (bool, error) {
+func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock, reason string) (bool, error) {
 	if err := validateTaskBlockPriorities(children); err != nil {
 		return false, err
 	}
@@ -210,7 +210,7 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (
 				body = string(contentBytes)
 			}
 			newContent := parser.RenderFileContent(merged, body, frontmatter, a.spacesPerTab)
-			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonEditor)
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
 			a.tracker.RegisterWrite(filePath)
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 				writeErr = err
@@ -279,7 +279,7 @@ func (a *App) saveSubtreeBlocks(blockID string, children []parser.ParsedBlock) (
 // set, the parent must be a NOTE already in the task's sub-tree; the reply
 // is spliced immediately after that parent and its existing descendants.
 func (a *App) AppendTaskComment(taskID, text, author, ts, parentCommentID string) (string, error) {
-	return a.appendTaskComment(taskID, text, author, ts, parentCommentID)
+	return a.appendTaskComment(taskID, text, author, ts, parentCommentID, historyReasonEditor)
 }
 
 // PluginAppendTaskComment is the plugin-SDK wrapper for AppendTaskComment,
@@ -293,7 +293,7 @@ func (a *App) PluginAppendTaskComment(pluginID, sessionToken, taskID, text, auth
 	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return "", err
 	}
-	return a.appendTaskComment(taskID, text, author, ts, parentCommentID)
+	return a.appendTaskComment(taskID, text, author, ts, parentCommentID, historyReasonPlugin)
 }
 
 // appendTaskComment is the shared core for the app-level and plugin-level
@@ -308,7 +308,7 @@ func (a *App) PluginAppendTaskComment(pluginID, sessionToken, taskID, text, auth
 // parentCommentID empty → top-level NOTE child of the task (depth taskDepth+1).
 // parentCommentID set → nested reply under that NOTE (depth parentDepth+1),
 // inserted after the parent and its existing descendants inside the sub-tree.
-func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID string) (string, error) {
+func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID, reason string) (string, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
@@ -469,7 +469,7 @@ func (a *App) appendTaskComment(taskID, text, author, ts, parentCommentID string
 				body = string(contentBytes)
 			}
 			newContent := parser.RenderFileContent(merged, body, frontmatter, a.spacesPerTab)
-			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonEditor)
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
 			a.tracker.RegisterWrite(filePath)
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 				writeErr = err

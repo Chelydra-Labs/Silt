@@ -56,6 +56,9 @@
   let restoreError = $state('')
   let restoreTarget = $state<PageVersionRow | null>(null)
   let restoring = $state(false)
+  let previewedId = $state<string | null>(null)
+  let previewGen = 0
+  let statusMessage = $state('')
 
   let versioningEnabled = $derived(
     settings.config?.editor?.auto_versioning_enabled === true
@@ -97,11 +100,17 @@
         versions[0]?.id ??
         null
       selectedId = next
+      // Show the list before the first preview so a hung GetPageVersion
+      // cannot leave the picker stuck on “Loading versions…”.
+      listLoading = false
       if (next) {
         await loadPreview(next)
+        await tick()
+        listRef?.focus()
       } else {
         preview = ''
         previewError = ''
+        previewedId = null
       }
     } catch (e) {
       listError = e instanceof Error ? e.message : String(e)
@@ -114,15 +123,22 @@
   }
 
   async function loadPreview(versionID: string): Promise<void> {
+    const gen = ++previewGen
     previewLoading = true
     previewError = ''
     try {
-      preview = (await GetPageVersion(notebook, section, page, versionID)) ?? ''
+      const body =
+        (await GetPageVersion(notebook, section, page, versionID)) ?? ''
+      if (gen !== previewGen) return
+      preview = body
+      previewedId = versionID
     } catch (e) {
+      if (gen !== previewGen) return
       preview = ''
+      previewedId = null
       previewError = e instanceof Error ? e.message : String(e)
     } finally {
-      previewLoading = false
+      if (gen === previewGen) previewLoading = false
     }
   }
 
@@ -149,14 +165,30 @@
     })
   }
 
+  function canRestoreSelected(): boolean {
+    return (
+      !!selected &&
+      selected.id === previewedId &&
+      !previewLoading &&
+      !previewError &&
+      !restoring
+    )
+  }
+
   function openRestoreConfirm(): void {
-    if (!selected || restoring) return
+    if (!canRestoreSelected() || !selected) return
     restoreError = ''
     restoreTarget = selected
   }
 
   async function confirmRestore(): Promise<void> {
     if (!restoreTarget || restoring) return
+    if (restoreTarget.id !== previewedId) {
+      restoreTarget = null
+      restoreError =
+        'Preview is still loading. Select the version again, then restore.'
+      return
+    }
     const target = restoreTarget
     restoring = true
     restoreError = ''
@@ -165,6 +197,7 @@
       if (editor?.isDirty()) {
         const clean = await editor.flush()
         if (!clean) {
+          restoreTarget = null
           restoreError =
             "Couldn't save the current page before restoring. Fix the save error, then try again."
           return
@@ -175,6 +208,7 @@
       editor?.forceExternalReload()
       await RestorePageVersion(notebook, section, page, target.id)
       restoreTarget = null
+      statusMessage = `Restored version from ${formatTimestamp(target.timestamp)}. A snapshot of the previous page was kept.`
       await loadVersions(target.id)
     } catch (e) {
       restoreError = e instanceof Error ? e.message : String(e)
@@ -202,6 +236,10 @@
       onClose()
       return
     }
+    const inList = !!(e.target as HTMLElement | null)?.closest(
+      '[data-testid="page-history-list"]'
+    )
+    if (!inList) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       moveSelection(1)
@@ -210,6 +248,17 @@
     if (e.key === 'ArrowUp') {
       e.preventDefault()
       moveSelection(-1)
+      return
+    }
+    if (e.key === 'Home') {
+      e.preventDefault()
+      if (versions[0]) selectVersion(versions[0].id)
+      return
+    }
+    if (e.key === 'End') {
+      e.preventDefault()
+      const last = versions[versions.length - 1]
+      if (last) selectVersion(last.id)
       return
     }
     if (e.key === 'Enter') {
@@ -255,7 +304,8 @@
     bind:this={dialogRef}
     role="dialog"
     aria-modal="true"
-    aria-label="Page history"
+    aria-labelledby="page-history-title"
+    aria-describedby="page-history-path page-history-honesty"
     tabindex="-1"
     data-testid="page-history-modal"
     class="dialog-surface relative flex h-[min(36rem,calc(100vh-4rem))] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-surface-modal-border glass-palette glass-palette-strong shadow-2xl"
@@ -268,14 +318,25 @@
         aria-hidden="true">history</span
       >
       <div class="min-w-0 flex-1">
-        <h2 class="font-headline-md text-headline-md text-text-primary">
+        <h2
+          id="page-history-title"
+          class="font-headline-md text-headline-md text-text-primary"
+        >
           Page history
         </h2>
         <p
+          id="page-history-path"
           class="truncate text-type-xs font-body-md text-text-muted"
           title="{notebook}{section ? ` / ${section}` : ''} / {page}"
         >
           {notebook}{section ? ` / ${section}` : ''} / {page}
+        </p>
+        <p
+          id="page-history-honesty"
+          class="mt-1 text-type-2xs font-body-md text-text-muted"
+        >
+          Snapshots stay in this vault under .system/history. They sync with the
+          vault, are not encrypted, and are not a backup.
         </p>
       </div>
       <button
@@ -309,6 +370,16 @@
       </div>
     {/if}
 
+    {#if statusMessage}
+      <div
+        class="mx-5 mt-4 rounded-lg border border-surface-modal-border bg-surface-panel/40 px-3 py-2 text-type-sm font-body-md text-text-primary"
+        role="status"
+        data-testid="page-history-status"
+      >
+        {statusMessage}
+      </div>
+    {/if}
+
     {#if restoreError}
       <div
         class="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-error-border bg-error-bg px-3 py-2 text-type-sm font-body-md text-error"
@@ -327,8 +398,9 @@
         class="history-list custom-scrollbar"
         role="listbox"
         aria-label="Versions"
+        aria-busy={listLoading || undefined}
         tabindex="0"
-        aria-activedescendant={selectedId
+        aria-activedescendant={versions.length > 0 && selectedId
           ? `page-history-${selectedId}`
           : undefined}
         data-testid="page-history-list"
@@ -391,7 +463,7 @@
                 <span class="source-badge source-{version.source}">
                   {sourceLabel(version.source)}
                 </span>
-                {#if version.bytes > 0}
+                {#if Number.isFinite(version.bytes) && version.bytes >= 0}
                   <span class="version-bytes">{formatBytes(version.bytes)}</span
                   >
                 {/if}
@@ -404,77 +476,74 @@
         {/if}
       </div>
 
-      <section
-        class="history-preview"
-        aria-label="Version preview"
-        data-testid="page-history-preview"
-      >
-        {#if selected}
-          <div class="preview-toolbar">
-            <div class="min-w-0 flex-1">
-              <p class="truncate text-type-sm font-body-md text-text-primary">
-                {formatTimestamp(selected.timestamp)}
-              </p>
-              <p class="text-type-2xs font-label-sm text-text-muted">
-                {sourceLabel(selected.source)}
-                {#if selected.bytes > 0}
-                  · {formatBytes(selected.bytes)}
-                {/if}
-                · read-only
-              </p>
-            </div>
-            <button
-              type="button"
-              data-page-history-restore
-              data-testid="page-history-restore"
-              disabled={restoring}
-              onclick={openRestoreConfirm}
-              class="shrink-0 rounded-lg border border-status-danger/40 bg-status-danger/15 px-3 py-1.5 text-type-sm font-label-sm-bold text-status-danger transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Restore
-            </button>
-          </div>
-          {#if previewLoading}
-            <div
-              class="flex items-center gap-2 px-5 py-6 text-type-sm font-body-md text-text-muted"
-              role="status"
-            >
-              <span
-                class="material-symbols-outlined animate-spin text-icon-lg text-accent-primary-start"
-                aria-hidden="true">sync</span
+      {#if versions.length > 0 || listLoading || listError}
+        <section
+          class="history-preview"
+          aria-label="Version preview"
+          data-testid="page-history-preview"
+        >
+          {#if selected}
+            <div class="preview-toolbar">
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-type-sm font-body-md text-text-primary">
+                  {formatTimestamp(selected.timestamp)}
+                </p>
+                <p class="text-type-2xs font-label-sm text-text-muted">
+                  {sourceLabel(selected.source)}
+                  {#if Number.isFinite(selected.bytes) && selected.bytes >= 0}
+                    · {formatBytes(selected.bytes)}
+                  {/if}
+                  · read-only
+                </p>
+              </div>
+              <button
+                type="button"
+                data-page-history-restore
+                data-testid="page-history-restore"
+                disabled={!canRestoreSelected()}
+                onclick={openRestoreConfirm}
+                class="shrink-0 rounded-lg border border-status-danger/40 bg-status-danger/15 px-3 py-1.5 text-type-sm font-label-sm-bold text-status-danger transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
               >
-              Loading preview…
+                Restore
+              </button>
             </div>
-          {:else if previewError}
-            <p
-              class="px-5 py-6 text-type-sm font-body-md text-error"
-              role="alert"
-            >
-              {previewError}
+            {#if previewLoading}
+              <div
+                class="flex items-center gap-2 px-5 py-6 text-type-sm font-body-md text-text-muted"
+                role="status"
+              >
+                <span
+                  class="material-symbols-outlined animate-spin text-icon-lg text-accent-primary-start"
+                  aria-hidden="true">sync</span
+                >
+                Loading preview…
+              </div>
+            {:else if previewError}
+              <div
+                class="flex items-start gap-2 px-5 py-6 text-type-sm font-body-md text-error"
+                role="alert"
+              >
+                <span class="flex-1">{previewError}</span>
+                <button
+                  type="button"
+                  class="rounded-md border border-error-border bg-transparent px-2 py-1 text-type-xs font-label-sm-bold text-error hover:brightness-110"
+                  onclick={() => selectedId && void loadPreview(selectedId)}
+                >
+                  Retry
+                </button>
+              </div>
+            {:else}
+              <pre
+                class="preview-body custom-scrollbar"
+                data-testid="page-history-preview-body">{preview}</pre>
+            {/if}
+          {:else if !listLoading && versions.length > 0}
+            <p class="px-5 py-6 text-type-sm font-body-md text-text-muted">
+              Select a version to preview.
             </p>
-          {:else}
-            <pre
-              class="preview-body custom-scrollbar"
-              data-testid="page-history-preview-body">{preview}</pre>
           {/if}
-        {:else if !listLoading && versions.length > 0}
-          <p class="px-5 py-6 text-type-sm font-body-md text-text-muted">
-            Select a version to preview.
-          </p>
-        {:else if !listLoading}
-          <div
-            class="flex h-full flex-col items-center justify-center gap-2 px-6 text-center"
-          >
-            <span
-              class="material-symbols-outlined text-icon-2xl text-text-disabled"
-              aria-hidden="true">history</span
-            >
-            <p class="text-type-sm font-body-md text-text-muted">
-              Nothing to preview yet.
-            </p>
-          </div>
-        {/if}
-      </section>
+        </section>
+      {/if}
     </div>
   </div>
 </div>
@@ -485,9 +554,10 @@
     message="Replace this page with the version from {formatTimestamp(
       restoreTarget.timestamp
     )}? A snapshot of the current page will be kept."
-    confirmLabel="Restore"
+    confirmLabel={restoring ? 'Restoring…' : 'Restore'}
     cancelLabel="Cancel"
     destructive
+    busy={restoring}
     dataTestId="page-history-confirm"
     onConfirm={() => void confirmRestore()}
     onCancel={cancelRestore}

@@ -96,6 +96,10 @@ func (a *App) DistinctOwners(prefix string) ([]string, error) {
 // other transition (non-recurring, TODO/DOING, or an already-DONE no-op). The
 // frontend can chain off it directly instead of re-querying for the sibling.
 func (a *App) UpdateBlockState(blockID string, newState string) (string, error) {
+	return a.updateBlockStateWithReason(blockID, newState, historyReasonEditor)
+}
+
+func (a *App) updateBlockStateWithReason(blockID string, newState, reason string) (string, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	// Guard against a meaningless no-op that the frontend might interpret
@@ -241,7 +245,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) (string, error) 
 
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 
-			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonEditor)
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
 			a.tracker.RegisterWrite(filePath)
 
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
@@ -461,7 +465,7 @@ func (a *App) MutateBlock(blockID, newText string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	return a.writeBlockText(blockID, func(_ string) (string, error) {
+	return a.writeBlockText(blockID, historyReasonEditor, func(_ string) (string, error) {
 		return cleanText, nil
 	})
 }
@@ -477,7 +481,7 @@ func (a *App) MutateBlock(blockID, newText string) error {
 // the identical write path as a user edit (one on-disk format definition, one
 // reindex path, one block:changed emission). MutateBlock passes a constant
 // transform; PromoteUnlinkedMention passes the link-wrapping transform.
-func (a *App) writeBlockText(blockID string, transform func(currentClean string) (string, error)) error {
+func (a *App) writeBlockText(blockID, reason string, transform func(currentClean string) (string, error)) error {
 	var loc db.BlockLocation
 	err := a.coordinator.WithDBReadResult(func() error {
 		var e error
@@ -574,7 +578,7 @@ func (a *App) writeBlockText(blockID string, transform func(currentClean string)
 
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 
-			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonEditor)
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
 			a.tracker.RegisterWrite(filePath)
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 				writeErr = err

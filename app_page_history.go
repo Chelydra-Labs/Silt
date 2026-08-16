@@ -191,14 +191,6 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 	if root == "" || strings.TrimSpace(versionID) == "" {
 		return NewIPCError(CodeNavigationNotFound, "page version not found")
 	}
-	snapshot, err := history.Read(root, loc, versionID)
-	if err != nil {
-		if errors.Is(err, history.ErrNotFound) {
-			return NewIPCError(CodeNavigationNotFound, "page version not found")
-		}
-		return err
-	}
-	_, restoreBody := parser.SplitFrontmatter(string(snapshot))
 
 	a.wg.Add(1)
 	defer a.wg.Done()
@@ -220,6 +212,16 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 				}
 				return
 			}
+			snapshot, err := history.Read(root, loc, versionID)
+			if err != nil {
+				if errors.Is(err, history.ErrNotFound) {
+					writeErr = NewIPCError(CodeNavigationNotFound, "page version not found")
+				} else {
+					writeErr = err
+				}
+				return
+			}
+			_, restoreBody := parser.SplitFrontmatter(string(snapshot))
 			contentBytes, err := os.ReadFile(filePath)
 			if err != nil {
 				writeErr = fmt.Errorf("failed to read existing file: %w", err)

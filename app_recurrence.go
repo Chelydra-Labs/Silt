@@ -24,7 +24,7 @@ import (
 // block.Recurrence -> RenderFileContent -> WriteFileAtomic -> re-parse ->
 // IndexFileBlocks -> emit block:changed.
 func (a *App) SetTaskRecurrence(blockID, recurrenceRule string) error {
-	return a.setTaskRecurrence(blockID, recurrenceRule)
+	return a.setTaskRecurrence(blockID, recurrenceRule, historyReasonEditor)
 }
 
 // PluginSetTaskRecurrence is the plugin-SDK wrapper for SetTaskRecurrence,
@@ -32,14 +32,14 @@ func (a *App) SetTaskRecurrence(blockID, recurrenceRule string) error {
 // plugins go through PluginContext, never direct wailsjs bindings).
 func (a *App) PluginSetTaskRecurrence(pluginID, sessionToken, blockID, recurrenceRule string) (bool, error) {
 	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
-		return a.setTaskRecurrence(blockID, recurrenceRule)
+		return a.setTaskRecurrence(blockID, recurrenceRule, historyReasonPlugin)
 	})
 }
 
 // setTaskRecurrence is the shared core for the app-level and plugin-level
 // entry points. It is the direct analog of PluginSetTaskDueDate's body but
 // for the Recurrence field, with added grammar + due-date validation.
-func (a *App) setTaskRecurrence(blockID, recurrenceRule string) error {
+func (a *App) setTaskRecurrence(blockID, recurrenceRule, reason string) error {
 	// "" clears the token; a non-empty value must be valid recurrence grammar.
 	if recurrenceRule != "" {
 		if !recurrence.IsValid(recurrenceRule) {
@@ -149,7 +149,7 @@ func (a *App) setTaskRecurrence(blockID, recurrenceRule string) error {
 				body = string(contentBytes)
 			}
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
-			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonEditor)
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
 			a.tracker.RegisterWrite(filePath)
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 				writeErr = err

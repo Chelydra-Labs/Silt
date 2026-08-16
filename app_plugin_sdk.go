@@ -205,7 +205,9 @@ func (a *App) PluginMutateBlock(pluginID, sessionToken, blockID, newText string)
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return false, err
 	}
-	if err := a.MutateBlock(blockID, newText); err != nil {
+	if err := a.writeBlockText(blockID, historyReasonPlugin, func(_ string) (string, error) {
+		return newText, nil
+	}); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -227,7 +229,7 @@ func (a *App) PluginUpdateBlockState(pluginID, sessionToken, blockID, status str
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return PluginBlockStateResult{}, err
 	}
-	spawnedID, err := a.UpdateBlockState(blockID, status)
+	spawnedID, err := a.updateBlockStateWithReason(blockID, status, historyReasonPlugin)
 	if err != nil {
 		return PluginBlockStateResult{}, err
 	}
@@ -279,7 +281,7 @@ func (a *App) PluginUpdateTaskMeta(pluginID, sessionToken, blockID string, pin i
 	// emit-on-failure); mutateTaskBlock emits AFTER the locks release with a
 	// fileDate fallback (the round-3 emit-on-failure fix). It also inherits
 	// the focus-lock guard (#444) every other task-setter now shares.
-	if err := a.mutateTaskBlock(blockID, "PluginUpdateTaskMeta", func(b *parser.ParsedBlock) {
+	if err := a.mutateTaskBlock(blockID, "PluginUpdateTaskMeta", historyReasonPlugin, func(b *parser.ParsedBlock) {
 		if pin != -1 {
 			switch pin {
 			case -2:
@@ -312,7 +314,16 @@ func (a *App) SetTaskDueDate(blockID, dueDate string) error {
 			return fmt.Errorf("invalid dueDate %q (want YYYY-MM-DD or empty to clear)", dueDate)
 		}
 	}
-	return a.mutateTaskBlock(blockID, "SetTaskDueDate", func(b *parser.ParsedBlock) {
+	return a.setTaskDueDate(blockID, dueDate, historyReasonEditor)
+}
+
+func (a *App) setTaskDueDate(blockID, dueDate, reason string) error {
+	if dueDate != "" {
+		if _, derr := time.Parse("2006-01-02", dueDate); derr != nil {
+			return fmt.Errorf("invalid dueDate %q (want YYYY-MM-DD or empty to clear)", dueDate)
+		}
+	}
+	return a.mutateTaskBlock(blockID, "SetTaskDueDate", reason, func(b *parser.ParsedBlock) {
 		b.DueDate = dueDate
 	})
 }
@@ -332,7 +343,7 @@ func (a *App) PluginSetTaskDueDate(pluginID, sessionToken, blockID, dueDate stri
 	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return false, err
 	}
-	if err := a.SetTaskDueDate(blockID, dueDate); err != nil {
+	if err := a.setTaskDueDate(blockID, dueDate, historyReasonPlugin); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -356,7 +367,7 @@ func (a *App) PluginSetTaskStartDate(pluginID, sessionToken, blockID, startDate 
 			return false, fmt.Errorf("invalid startDate %q (want YYYY-MM-DD or empty to clear)", startDate)
 		}
 	}
-	if err := a.mutateTaskBlock(blockID, "PluginSetTaskStartDate", func(b *parser.ParsedBlock) {
+	if err := a.mutateTaskBlock(blockID, "PluginSetTaskStartDate", historyReasonPlugin, func(b *parser.ParsedBlock) {
 		b.StartDate = startDate
 	}); err != nil {
 		return false, err
@@ -381,7 +392,7 @@ func (a *App) PluginSetTaskEstimate(pluginID, sessionToken, blockID, estimate st
 			return false, fmt.Errorf("invalid estimate %q (want e.g. 30m, 2h, 1d, or empty to clear)", estimate)
 		}
 	}
-	if err := a.mutateTaskBlock(blockID, "PluginSetTaskEstimate", func(b *parser.ParsedBlock) {
+	if err := a.mutateTaskBlock(blockID, "PluginSetTaskEstimate", historyReasonPlugin, func(b *parser.ParsedBlock) {
 		b.Estimate = estimate
 	}); err != nil {
 		return false, err

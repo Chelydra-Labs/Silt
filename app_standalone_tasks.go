@@ -94,7 +94,7 @@ func (a *App) PluginCreateTask(pluginID, sessionToken, title, dueDate, status st
 	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return "", err
 	}
-	return a.CreateStandaloneTask(title, dueDate, status)
+	return a.createStandaloneTaskWithReason(title, dueDate, status, historyReasonPlugin)
 }
 
 // CreateStandaloneTask is the app-level (non-plugin) entry point for creating
@@ -103,6 +103,10 @@ func (a *App) PluginCreateTask(pluginID, sessionToken, title, dueDate, status st
 // — just as CreatePage / CreateNotebook are not. Same write path as
 // PluginCreateTask.
 func (a *App) CreateStandaloneTask(title, dueDate, status string) (string, error) {
+	return a.createStandaloneTaskWithReason(title, dueDate, status, historyReasonEditor)
+}
+
+func (a *App) createStandaloneTaskWithReason(title, dueDate, status, reason string) (string, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
@@ -197,7 +201,7 @@ func (a *App) CreateStandaloneTask(title, dueDate, status string) (string, error
 		}
 		newBlock.ManualOrder = existingTasks + 1
 		existing = append(existing, newBlock)
-		writeErr = a.writePageFileLocked(filePath, source, standaloneTasksNotebook, standaloneTasksSection, standaloneTasksPage, existing, historyReasonEditor)
+		writeErr = a.writePageFileLocked(filePath, source, standaloneTasksNotebook, standaloneTasksSection, standaloneTasksPage, existing, reason)
 	})
 	if writeErr != nil {
 		return "", writeErr

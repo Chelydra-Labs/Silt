@@ -14,6 +14,7 @@
     confirmLabel?: string
     cancelLabel?: string
     destructive?: boolean
+    busy?: boolean
     onConfirm: () => void
     onCancel: () => void
     dataTestId?: string
@@ -25,6 +26,7 @@
     confirmLabel = 'Confirm',
     cancelLabel = 'Cancel',
     destructive = false,
+    busy = false,
     onConfirm,
     onCancel,
     dataTestId
@@ -37,7 +39,7 @@
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
-      onCancel()
+      if (!busy) onCancel()
     }
   }
 
@@ -66,13 +68,16 @@
     tabindex="-1"
     aria-label={cancelLabel}
     class="absolute inset-0 cursor-default border-none bg-transparent p-0"
-    onclick={onCancel}
+    onclick={() => {
+      if (!busy) onCancel()
+    }}
   ></button>
   <div
     bind:this={dialogRef}
     role="dialog"
     aria-modal="true"
     aria-label={title}
+    aria-busy={busy || undefined}
     tabindex="-1"
     data-testid={dataTestId}
     class="dialog-surface relative w-full max-w-sm glass-palette glass-palette-strong border border-surface-modal-border rounded-xl shadow-2xl overflow-hidden"
@@ -86,17 +91,23 @@
     <div class="flex items-center justify-end gap-2 px-5 py-3">
       <button
         type="button"
-        onclick={onCancel}
+        onclick={() => {
+          if (!busy) onCancel()
+        }}
+        disabled={busy}
         data-testid={dataTestId ? `${dataTestId}-cancel` : undefined}
-        class="px-4 py-2 rounded-lg text-text-muted hover:text-text-primary font-label-sm-bold transition-colors border-none bg-transparent cursor-pointer"
+        class="px-4 py-2 rounded-lg text-text-muted hover:text-text-primary font-label-sm-bold transition-colors border-none bg-transparent cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
       >
         {cancelLabel}
       </button>
       <button
         type="button"
-        onclick={onConfirm}
+        onclick={() => {
+          if (!busy) onConfirm()
+        }}
+        disabled={busy}
         data-testid={dataTestId ? `${dataTestId}-confirm` : undefined}
-        class="px-4 py-2 rounded-lg font-label-sm-bold transition-all cursor-pointer border {destructive
+        class="px-4 py-2 rounded-lg font-label-sm-bold transition-all cursor-pointer border disabled:cursor-not-allowed disabled:opacity-50 {destructive
           ? 'bg-status-danger/20 border-status-danger/40 text-status-danger hover:brightness-110'
           : 'bg-accent-primary-start/20 border-accent-primary-start/40 text-text-primary hover:brightness-110'}"
       >

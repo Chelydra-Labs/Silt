@@ -197,27 +197,27 @@ func (b mcpBridge) CreateBlock(ctx context.Context, afterID, notebook, section, 
 
 func (b mcpBridge) CreateStandaloneTask(ctx context.Context, title, dueDate, status string) (string, error) {
 	_ = ctx
-	return b.app.CreateStandaloneTask(title, dueDate, status)
+	return b.app.createStandaloneTaskWithReason(title, dueDate, status, historyReasonMCP)
 }
 
 func (b mcpBridge) SetTaskOwner(ctx context.Context, blockID, owner string) error {
 	_ = ctx
-	return b.app.SetTaskOwner(blockID, owner)
+	return b.app.setTaskOwner(blockID, owner, historyReasonMCP)
 }
 
 func (b mcpBridge) SetTaskTags(ctx context.Context, blockID string, tags []string) error {
 	_ = ctx
-	return b.app.SetTaskTags(blockID, tags)
+	return b.app.setTaskTags(blockID, tags, historyReasonMCP)
 }
 
 func (b mcpBridge) SetTaskDueDate(ctx context.Context, blockID, dueDate string) error {
 	_ = ctx
-	return b.app.SetTaskDueDate(blockID, dueDate)
+	return b.app.setTaskDueDate(blockID, dueDate, historyReasonMCP)
 }
 
 func (b mcpBridge) UpdateBlockState(ctx context.Context, blockID, status string) error {
 	_ = ctx
-	_, err := b.app.UpdateBlockState(blockID, status)
+	_, err := b.app.updateBlockStateWithReason(blockID, status, historyReasonMCP)
 	return err
 }
 
