@@ -55,7 +55,7 @@ func (b mcpBridge) CreatePage(ctx context.Context, notebook, section, page, date
 
 func (b mcpBridge) UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock) error {
 	_ = ctx
-	return b.app.SaveFileBlocks(notebook, section, page, blocks)
+	return b.app.saveFileBlocksWithSource(notebook, section, page, blocks, historyReasonMCP)
 }
 
 func (b mcpBridge) PageExists(ctx context.Context, notebook, section, page string) (bool, error) {

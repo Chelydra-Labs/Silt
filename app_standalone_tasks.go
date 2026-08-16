@@ -197,7 +197,7 @@ func (a *App) CreateStandaloneTask(title, dueDate, status string) (string, error
 		}
 		newBlock.ManualOrder = existingTasks + 1
 		existing = append(existing, newBlock)
-		writeErr = a.writePageFileLocked(filePath, source, standaloneTasksNotebook, standaloneTasksSection, standaloneTasksPage, existing)
+		writeErr = a.writePageFileLocked(filePath, source, standaloneTasksNotebook, standaloneTasksSection, standaloneTasksPage, existing, historyReasonEditor)
 	})
 	if writeErr != nil {
 		return "", writeErr

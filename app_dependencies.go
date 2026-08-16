@@ -209,6 +209,7 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string) error {
 				body = string(contentBytes)
 			}
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonEditor)
 			a.tracker.RegisterWrite(filePath)
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 				writeErr = err

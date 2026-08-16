@@ -323,7 +323,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp) error {
 				}
 			}
 		}
-		if err := a.SaveFileBlocks(first.notebook, first.section, first.page, mutated); err != nil {
+		if err := a.saveFileBlocksWithSource(first.notebook, first.section, first.page, mutated, historyReasonPlugin); err != nil {
 			return fmt.Errorf("save page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
 		// For cross-page moves, remove the block from its source page.
@@ -417,6 +417,7 @@ func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, pag
 		body = string(contentBytes)
 	}
 	newContent := parser.RenderFileContent(filtered, body, frontmatter, a.spacesPerTab)
+	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), historyReasonPlugin)
 	a.tracker.RegisterWrite(filePath)
 	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 		return fmt.Errorf("write source file: %w", err)

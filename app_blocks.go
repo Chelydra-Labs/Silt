@@ -241,6 +241,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) (string, error) 
 
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonEditor)
 			a.tracker.RegisterWrite(filePath)
 
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
@@ -573,6 +574,7 @@ func (a *App) writeBlockText(blockID string, transform func(currentClean string)
 
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonEditor)
 			a.tracker.RegisterWrite(filePath)
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 				writeErr = err
@@ -619,7 +621,7 @@ func errPageMovedOrDeleted(filePath string) error {
 // Extracted from SaveFileBlocks so the cross-page source-removal path in
 // applyBlocksOps can do an atomic read-parse-filter-write under a single
 // LockFileWrite scope (#104 TOCTOU fix).
-func (a *App) writePageFileLocked(filePath, source, notebook, section, page string, blocks []parser.ParsedBlock) error {
+func (a *App) writePageFileLocked(filePath, source, notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to read existing file: %w", err)
@@ -635,6 +637,7 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 
 	newContent := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
 
+	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 	a.tracker.RegisterWrite(filePath)
 
 	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
@@ -651,6 +654,10 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 	return nil
 }
 func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error {
+	return a.saveFileBlocksWithSource(notebook, section, page, blocks, historyReasonEditor)
+}
+
+func (a *App) saveFileBlocksWithSource(notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
 	if err := validateTaskBlockPriorities(blocks); err != nil {
 		return err
 	}
@@ -714,7 +721,7 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 				}
 				return
 			}
-			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks)
+			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks, reason)
 		})
 	}) // LockBlocksWrite
 
@@ -862,6 +869,7 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 			}
 			newContent += body
 
+			a.maybeCapturePageVersion(historyLoc(source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonSource)
 			a.tracker.RegisterWrite(filePath)
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 				writeErr = err
