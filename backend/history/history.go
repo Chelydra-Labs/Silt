@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -183,7 +184,9 @@ func Relocate(root string, oldLoc, newLoc Locator) error {
 		return err
 	}
 	if _, err := os.Stat(newMan); err == nil {
-		return fmt.Errorf("history relocate: destination already exists")
+		return mergeRelocateLocked(root, oldLoc, newLoc, oldMan, oldBlobs, newBlobs)
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(newMan), 0o700); err != nil {
 		return err
@@ -202,6 +205,94 @@ func Relocate(root string, oldLoc, newLoc Locator) error {
 		}
 	}
 	return nil
+}
+
+func mergeRelocateLocked(root string, oldLoc, newLoc Locator, oldMan, oldBlobs, newBlobs string) error {
+	incoming, err := readManifest(root, oldLoc)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	dest, err := readManifest(root, newLoc)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if len(incoming) == 0 {
+		if _, berr := os.Stat(oldBlobs); os.IsNotExist(berr) {
+			return nil
+		}
+	}
+
+	merged := mergeEntries(dest, incoming)
+	if err := os.MkdirAll(newBlobs, 0o700); err != nil {
+		return err
+	}
+	if ents, rerr := os.ReadDir(oldBlobs); rerr == nil {
+		for _, ent := range ents {
+			if ent.IsDir() {
+				continue
+			}
+			src := filepath.Join(oldBlobs, ent.Name())
+			dst := filepath.Join(newBlobs, ent.Name())
+			if _, sterr := os.Stat(dst); sterr == nil {
+				_ = os.Remove(src)
+				continue
+			}
+			if err := os.Rename(src, dst); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(rerr) {
+		return rerr
+	}
+
+	var buf bytes.Buffer
+	for _, e := range merged {
+		b, err := json.Marshal(toLine(e))
+		if err != nil {
+			return err
+		}
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	newMan, err := manifestPath(root, newLoc)
+	if err != nil {
+		return err
+	}
+	if err := writeFileAtomic(newMan, buf.Bytes()); err != nil {
+		return err
+	}
+	_ = os.Remove(oldMan)
+	_ = os.RemoveAll(oldBlobs)
+	return nil
+}
+
+func mergeEntries(dest, incoming []Entry) []Entry {
+	seen := make(map[string]struct{}, len(dest)+len(incoming))
+	out := make([]Entry, 0, len(dest)+len(incoming))
+	for _, e := range dest {
+		if e.ID == "" {
+			continue
+		}
+		if _, ok := seen[e.ID]; ok {
+			continue
+		}
+		seen[e.ID] = struct{}{}
+		out = append(out, e)
+	}
+	for _, e := range incoming {
+		if e.ID == "" {
+			continue
+		}
+		if _, ok := seen[e.ID]; ok {
+			continue
+		}
+		seen[e.ID] = struct{}{}
+		out = append(out, e)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Time.Before(out[j].Time)
+	})
+	return out
 }
 
 func captureLocked(root string, loc Locator, prev []byte, reason string, now time.Time, opts Options) (string, error) {

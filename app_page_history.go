@@ -300,5 +300,12 @@ func (a *App) relocatePageHistory(source, oldNotebook, oldSection, oldPage, newN
 	newLoc := historyLoc(source, newNotebook, newSection, newPage)
 	if err := history.Relocate(root, oldLoc, newLoc); err != nil {
 		log.Printf("page history: relocate failed: %v", err)
+		return
+	}
+	_, max, _ := a.pageHistorySettings()
+	if max > 0 {
+		if err := history.Prune(root, newLoc, max); err != nil {
+			log.Printf("page history: prune after relocate failed: %v", err)
+		}
 	}
 }

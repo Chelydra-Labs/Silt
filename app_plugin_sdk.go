@@ -205,8 +205,19 @@ func (a *App) PluginMutateBlock(pluginID, sessionToken, blockID, newText string)
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return false, err
 	}
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.db == nil {
+		return false, fmt.Errorf("vault database not loaded")
+	}
+	// Block text is single-line; collapse any newlines to spaces.
+	cleanText := strings.ReplaceAll(newText, "\n", " ")
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
 	if err := a.writeBlockText(blockID, historyReasonPlugin, func(_ string) (string, error) {
-		return newText, nil
+		return cleanText, nil
 	}); err != nil {
 		return false, err
 	}

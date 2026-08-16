@@ -165,6 +165,68 @@ func TestRelocate_FollowsRename(t *testing.T) {
 	}
 }
 
+func TestRelocate_MergesWhenDestinationExists(t *testing.T) {
+	root := t.TempDir()
+	oldLoc := testLoc("Alive")
+	destLoc := testLoc("DeletedName")
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+
+	if skip, err := Capture(root, destLoc, []byte("deleted-v1"), "editor", now, Options{}); err != nil || skip != "" {
+		t.Fatalf("dest capture: skip=%q err=%v", skip, err)
+	}
+	if skip, err := Capture(root, oldLoc, []byte("alive-v1"), "editor", now.Add(time.Minute), Options{}); err != nil || skip != "" {
+		t.Fatalf("old capture: skip=%q err=%v", skip, err)
+	}
+
+	if err := Relocate(root, oldLoc, destLoc); err != nil {
+		t.Fatalf("Relocate merge: %v", err)
+	}
+
+	oldList, err := List(root, oldLoc)
+	if err != nil {
+		t.Fatalf("List old: %v", err)
+	}
+	if len(oldList) != 0 {
+		t.Fatalf("old locator still has %d entries", len(oldList))
+	}
+	merged, err := List(root, destLoc)
+	if err != nil {
+		t.Fatalf("List dest: %v", err)
+	}
+	if len(merged) != 2 {
+		t.Fatalf("merged List len=%d, want 2", len(merged))
+	}
+	got0, err := Read(root, destLoc, merged[0].ID)
+	if err != nil {
+		t.Fatalf("Read newest: %v", err)
+	}
+	got1, err := Read(root, destLoc, merged[1].ID)
+	if err != nil {
+		t.Fatalf("Read older: %v", err)
+	}
+	if string(got0) != "alive-v1" || string(got1) != "deleted-v1" {
+		t.Fatalf("merged bodies = %q, %q", got0, got1)
+	}
+
+	if err := Prune(root, destLoc, 1); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	pruned, err := List(root, destLoc)
+	if err != nil {
+		t.Fatalf("List after prune: %v", err)
+	}
+	if len(pruned) != 1 {
+		t.Fatalf("after prune List len=%d, want 1", len(pruned))
+	}
+	kept, err := Read(root, destLoc, pruned[0].ID)
+	if err != nil {
+		t.Fatalf("Read pruned: %v", err)
+	}
+	if string(kept) != "alive-v1" {
+		t.Fatalf("pruned body = %q, want newest", kept)
+	}
+}
+
 func TestList_MissingIsEmpty(t *testing.T) {
 	root := t.TempDir()
 	list, err := List(root, testLoc("Missing"))

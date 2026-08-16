@@ -107,11 +107,13 @@ func (a *App) renameSingleFile(prepare func() (renameSingleFileStrategy, error))
 		// Sweep residual inbound links that landed after the under-lock
 		// re-collect but before rewrite (narrow residual TOCTOU window).
 		s.staleSweep()
-		if err := s.reconcile(); err != nil {
-			return err
-		}
+		// File is already at the new path; history must follow even if
+		// nav reconcile fails (no rollback after renameStep).
 		if s.relocateHistory != nil {
 			s.relocateHistory()
+		}
+		if err := s.reconcile(); err != nil {
+			return err
 		}
 		return nil
 	}

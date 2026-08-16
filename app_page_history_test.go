@@ -259,6 +259,86 @@ func TestPageHistory_RenameFollowsLocator(t *testing.T) {
 	}
 }
 
+func TestPageHistory_RenameOntoRetainedHistory(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Taken", "# taken-first\n")
+	savePageBody(t, app, "Work", "Journal", "Taken", "# taken-second\n")
+	if err := app.DeletePage("Work", "Journal", "Taken"); err != nil {
+		t.Fatalf("DeletePage: %v", err)
+	}
+	seedHistoryPage(t, app, "Work", "Journal", "Alive", "# alive-first\n")
+	savePageBody(t, app, "Work", "Journal", "Alive", "# alive-second\n")
+	if err := app.RenamePage("Work", "Journal", "Alive", "Taken"); err != nil {
+		t.Fatalf("RenamePage onto retained history: %v", err)
+	}
+	oldList, err := app.ListPageVersions("Work", "Journal", "Alive")
+	if err != nil {
+		t.Fatalf("List old: %v", err)
+	}
+	if len(oldList) != 0 {
+		t.Fatalf("old locator still has %d versions", len(oldList))
+	}
+	merged, err := app.ListPageVersions("Work", "Journal", "Taken")
+	if err != nil {
+		t.Fatalf("List merged: %v", err)
+	}
+	if len(merged) < 2 {
+		t.Fatalf("rename onto retained history should merge, got %d versions", len(merged))
+	}
+	var sawTaken, sawAlive bool
+	for _, v := range merged {
+		body, err := app.GetPageVersion("Work", "Journal", "Taken", v.ID)
+		if err != nil {
+			t.Fatalf("GetPageVersion %s: %v", v.ID, err)
+		}
+		if strings.Contains(body, "taken-first") {
+			sawTaken = true
+		}
+		if strings.Contains(body, "alive-first") {
+			sawAlive = true
+		}
+	}
+	if !sawTaken || !sawAlive {
+		t.Fatalf("merged history missing bodies: taken=%v alive=%v", sawTaken, sawAlive)
+	}
+}
+
+func TestPluginMutateBlock_CollapsesNewlines(t *testing.T) {
+	app := newTestApp(t)
+	taskID := "55555555-5555-4555-8555-555555555555"
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "original text")
+	tok := registerTestSession(t, app, "test-plugin")
+
+	ok, err := app.PluginMutateBlock("test-plugin", tok, taskID, "line one\nline two")
+	if err != nil || !ok {
+		t.Fatalf("PluginMutateBlock: ok=%v err=%v", ok, err)
+	}
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "Daily.md")
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(content)
+	if strings.Contains(s, "line one\nline two") {
+		t.Fatalf("plugin mutate left raw newlines:\n%s", s)
+	}
+	if !strings.Contains(s, "line one line two") {
+		t.Fatalf("expected collapsed plugin text, got:\n%s", s)
+	}
+}
+
+func TestPluginMutateBlock_NoVaultReturnsError(t *testing.T) {
+	app := &App{pluginSessions: map[string]string{"tok": "test-plugin"}}
+	ok, err := app.PluginMutateBlock("test-plugin", "tok", "block-id", "text")
+	if err == nil || ok {
+		t.Fatalf("expected vault-not-loaded error, got ok=%v err=%v", ok, err)
+	}
+	if !strings.Contains(err.Error(), "vault database not loaded") {
+		t.Fatalf("error = %v, want vault database not loaded", err)
+	}
+}
+
 func TestPageHistory_FailOpenUnwritableHistory(t *testing.T) {
 	app := newTestApp(t)
 	seedHistoryPage(t, app, "Work", "Journal", "FailOpen", "# first\n")
