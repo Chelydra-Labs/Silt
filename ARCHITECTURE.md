@@ -544,6 +544,7 @@ type TaskQueryFilter struct {
 All bindings hang off the single Wails v3 service (`*App` registered via `application.NewServiceWithOptions`) and are
 auto-exposed to the frontend as JSON RPC. Grouped by domain:
 
+- **Page history** — `ListPageVersions`, `GetPageVersion` (markdown body only), `RestorePageVersion` (body-only restore through the normal save + reindex path; current frontmatter is preserved; pre-restore bytes are captured first). Opt-in snapshots live under `<vault>/.system/history/` (linked: `<linkedRoot>/.system/history/`).
 - **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `FetchPageMarkdown` / `SavePageMarkdown` (raw source body), `UpdateBlockState`
   (task-checkbox transition + atomic file rewrite + re-index; returns the spawned
   recurrence instance's UUID on a recurring TODO/DOING→DONE transition, `""`

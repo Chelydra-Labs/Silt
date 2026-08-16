@@ -849,47 +849,7 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 				writeErr = fmt.Errorf("failed to read existing file: %w", err)
 				return
 			}
-			frontmatter, _ := parser.SplitFrontmatter(string(contentBytes))
-			if frontmatter == "" {
-				// Match writePageFileLocked: quote the display names (not only
-				// sanitized path segments) so frontmatter stays user-facing.
-				today := time.Now().Format("2006-01-02")
-				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
-					strconv.Quote(notebook), strconv.Quote(section), strconv.Quote(page), strconv.Quote(today))
-			}
-
-			// Body is the user-edited source. Normalize to end with a single newline.
-			body := markdown
-			if body != "" && !strings.HasSuffix(body, "\n") {
-				body += "\n"
-			}
-			newContent := frontmatter
-			if !strings.HasSuffix(newContent, "\n") {
-				newContent += "\n"
-			}
-			newContent += body
-
-			a.maybeCapturePageVersion(historyLoc(source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), historyReasonSource)
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-				writeErr = err
-				return
-			}
-
-			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(
-				newContent, safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab,
-			)
-			if parseErr != nil {
-				writeErr = fmt.Errorf("parse after source save: %w", parseErr)
-				return
-			}
-			if idxErr := a.indexFile(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta, meta.Warnings...); idxErr != nil {
-				// Fail loud: disk write already landed, but search/graph would lag.
-				// Surface so the UI does not claim a fully successful save.
-				writeErr = fmt.Errorf("re-index after source save failed: %w", idxErr)
-				return
-			}
-			result = parsedBlocks
+			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, markdown, historyReasonSource)
 		})
 	}) // LockBlocksWrite
 
