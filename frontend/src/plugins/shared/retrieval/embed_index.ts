@@ -120,9 +120,7 @@ export interface EmbedIndexOptions {
 }
 
 /** Create an isolated embed-index instance (no process-global consumer state). */
-export function createEmbedIndex(
-  opts: EmbedIndexOptions = {}
-): EmbedIndex {
+export function createEmbedIndex(opts: EmbedIndexOptions = {}): EmbedIndex {
   let migrated = false
   let embedTableReady = false
   let currentDims = 0
