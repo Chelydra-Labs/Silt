@@ -875,6 +875,34 @@ func TestPageHistory_FrontmatterEditUsesPathLocator(t *testing.T) {
 	}
 }
 
+func TestPageHistory_FrontmatterEditSanitizesPageName(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	if err := app.SaveType(bookTypeSchema()); err != nil {
+		t.Fatalf("SaveType: %v", err)
+	}
+	content := "---\n" +
+		"notebook: \"Books\"\n" +
+		"section: \"\"\n" +
+		"page: \"AB\"\n" +
+		"date: \"2026-08-01\"\n" +
+		"tags: []\n" +
+		"type: \"book\"\n" +
+		"title: \"Slash\"\n" +
+		"---\n# Slash\n"
+	writeFile(t, filepath.Join(app.vaultPath, "Books", "AB.md"), content)
+	if err := app.SetPageProperty("Books", "", "A/B", "title", "Renamed"); err != nil {
+		t.Fatalf("SetPageProperty: %v", err)
+	}
+	list, err := app.ListPageVersions("Books", "", "A/B")
+	if err != nil {
+		t.Fatalf("List sanitized: %v", err)
+	}
+	if len(list) == 0 {
+		t.Fatal("frontmatter edit stored history under percent-encoded page name")
+	}
+}
+
 func TestPageHistory_InboundRewriteDoesNotCapture(t *testing.T) {
 	app := newTestApp(t)
 	seedHistoryPage(t, app, "Work", "Journal", "Hub", "# hub\nSee [[Work/Journal/Old]]\n")

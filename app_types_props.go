@@ -183,6 +183,15 @@ func resolvePageTypeSchema(meta parser.FileMetadata, typesDir string) (typeID st
 // runs after a successful edit and before the atomic write, matching every
 // other qualifying overwrite path.
 func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page, reason string, revalidate func(currentContent string) error, edit func(currentContent string) (string, error)) error {
+	safeNotebook := sanitizePathSegment(notebook)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return invalidNavigationPath(secErr)
+	}
+	safePage := sanitizePathSegment(page)
+	if safeNotebook == "" || safePage == "" {
+		return fmt.Errorf("invalid path metadata")
+	}
 	var writeErr error
 	a.coordinator.LockFileWrite(filePath, func() {
 		contentBytes, err := os.ReadFile(filePath)
@@ -192,7 +201,7 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 				writeErr = fmt.Errorf("%w: page no longer exists (moved or deleted)", ErrPageMovedOrDeleted)
 				return
 			}
-			writeErr = fmt.Errorf("read page file failed: %s/%s/%s", notebook, section, page)
+			writeErr = fmt.Errorf("read page file failed: %s/%s/%s", safeNotebook, safeSection, safePage)
 			return
 		}
 		if revalidate != nil {
@@ -206,7 +215,7 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 			writeErr = err
 			return
 		}
-		a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
+		a.maybeCapturePageVersion(historyLoc(source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
 		a.tracker.RegisterWrite(filePath)
 		writeFn := parser.WriteFileAtomic
 		if a.frontmatterWriteAtomic != nil {
