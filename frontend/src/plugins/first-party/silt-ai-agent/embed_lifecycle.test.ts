@@ -50,6 +50,7 @@ import {
   startAgentEmbedIndex,
   stopAgentEmbedIndex
 } from './embed_lifecycle'
+import { migrateSchema } from './db'
 
 function mockCtx(): PluginContext {
   const meta = new Map<string, string>()
@@ -244,5 +245,77 @@ describe('embed_lifecycle', () => {
     const hits = await getAgentVectorSearch()(mockCtx(), 'q', 3)
     expect(hits).toHaveLength(1)
     expect(hits[0].blockId).toBe('x')
+  })
+
+  /**
+   * Go-like pluginDb harness: user_version gates migrate (no-op when
+   * requested <= current) and applied SQL defines which tables exist.
+   */
+  function goLikeCtx(userVersion: number): {
+    ctx: PluginContext
+    appliedSql: string[]
+    userVersion: number
+  } {
+    const appliedSql: string[] = []
+    const state = { userVersion }
+    const tables = () =>
+      appliedSql.some((sql) => sql.includes('index_meta')) ? ['index_meta'] : []
+    const ctx = {
+      on: vi.fn(() => () => {}),
+      pluginDb: {
+        migrate: vi.fn(async (version: number, sql: string) => {
+          if (version <= state.userVersion) return
+          appliedSql.push(sql)
+          state.userVersion = version
+        }),
+        query: vi.fn(async (sql: string, params?: unknown[]) => {
+          if (sql.includes('index_meta')) {
+            if (!tables().includes('index_meta')) {
+              throw new Error(
+                'plugin db query: SQL logic error: no such table: index_meta (1)'
+              )
+            }
+            return { rows: [] }
+          }
+          if (sql.includes('COUNT(*)')) return { rows: [{ n: 0 }] }
+          void params
+          return { rows: [] }
+        }),
+        exec: vi.fn(async () => {})
+      }
+    } as unknown as PluginContext
+    return { ctx, appliedSql, userVersion: state.userVersion }
+  }
+
+  it('migrateSchema heals existing installs stamped at v1 (index_meta missing)', async () => {
+    // Existing install: staging v1 already stamped by an older build.
+    const { ctx, appliedSql } = goLikeCtx(1)
+    await migrateSchema(ctx)
+    expect(appliedSql).toHaveLength(1)
+    expect(appliedSql[0]).toContain('staging_tokens')
+    expect(appliedSql[0]).toContain('index_meta')
+    // index_meta reads succeed once v2 has applied
+    await expect(
+      ctx.pluginDb.query('SELECT value FROM index_meta WHERE key = ?', [
+        'model'
+      ])
+    ).resolves.toEqual({ rows: [] })
+  })
+
+  it('startAgentEmbedIndex migrates with version 2 covering both schemas', async () => {
+    const { ctx } = goLikeCtx(1)
+    startAgentEmbedIndex(ctx)
+    await new Promise((r) => setTimeout(r, 40))
+    const migrate = ctx.pluginDb.migrate as ReturnType<typeof vi.fn>
+    const calls = migrate.mock.calls.filter(
+      ([v]) => typeof v === 'number' && v > 1
+    )
+    expect(calls.length).toBeGreaterThan(0)
+    for (const [version, sql] of calls) {
+      expect(version).toBe(2)
+      expect(sql).toContain('staging_tokens')
+      expect(sql).toContain('index_meta')
+    }
+    stopAgentEmbedIndex()
   })
 })

@@ -7,7 +7,13 @@ import { chunksFromBlocks, type BlockInput, type ChunkRecord } from './chunk'
 import type { RankedHit } from './hybrid'
 
 const META_MIGRATION = 1
-const META_SQL = `
+
+/**
+ * Index tables owned by the embed-index schema. All statements use
+ * IF NOT EXISTS so a migration bundle that includes other schemas can
+ * re-apply this text idempotently (user_version is one counter per DB).
+ */
+export const INDEX_TABLES_SQL = `
 CREATE TABLE IF NOT EXISTS index_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -103,8 +109,20 @@ export interface EmbedIndex {
   ): Promise<{ model: string; dimensions: number; chunkCount: number }>
 }
 
+export interface EmbedIndexOptions {
+  /**
+   * Migration identity this instance stamps. Only override when the plugin
+   * DB has another schema owner folding this SQL into a higher version
+   * (e.g. silt-ai-agent v2); otherwise version 1 is correct (silt-ai-qa).
+   */
+  migrationVersion?: number
+  migrationSql?: string
+}
+
 /** Create an isolated embed-index instance (no process-global consumer state). */
-export function createEmbedIndex(): EmbedIndex {
+export function createEmbedIndex(
+  opts: EmbedIndexOptions = {}
+): EmbedIndex {
   let migrated = false
   let embedTableReady = false
   let currentDims = 0
@@ -117,7 +135,10 @@ export function createEmbedIndex(): EmbedIndex {
 
   async function migrateIndex(ctx: PluginContext): Promise<void> {
     if (migrated) return
-    await ctx.pluginDb.migrate(META_MIGRATION, META_SQL)
+    await ctx.pluginDb.migrate(
+      opts.migrationVersion ?? META_MIGRATION,
+      opts.migrationSql ?? INDEX_TABLES_SQL
+    )
     migrated = true
   }
 

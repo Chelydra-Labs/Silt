@@ -14,6 +14,7 @@ import {
   createEmbedIndex,
   type EmbedIndexSettings
 } from '../../shared/retrieval/embed_index'
+import { MIGRATION_V2, MIGRATION_V2_SQL } from './db'
 import type { RankedHit } from '../../shared/retrieval/hybrid'
 import type { VectorSearchFn } from '../../shared/retrieval/retrieve'
 
@@ -27,7 +28,13 @@ const META_REBUILD_IN_PROGRESS = 'rebuild_in_progress'
 /** Durable meta: "1" after a successful full rebuild or confirmed-current index. */
 const META_REBUILD_COMPLETE = 'rebuild_complete'
 
-const agentIndex = createEmbedIndex()
+// Single source of truth for the agent's migration is db.ts: this instance
+// must stamp the same v2 identity migrateSchema uses, or the Go host's
+// user_version check would no-op one of them and skip index tables.
+const agentIndex = createEmbedIndex({
+  migrationVersion: MIGRATION_V2,
+  migrationSql: MIGRATION_V2_SQL
+})
 
 let started = false
 let activeCtx: PluginContext | null = null
