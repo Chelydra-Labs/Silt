@@ -28,6 +28,8 @@ export interface EditorHandle {
    *  block update, bypassing the focused-edit guard. Only safe right after a
    *  flush synced the editor to disk, so there is nothing unsaved to clobber. */
   forceExternalReload: () => void
+  /** Drop a pending forceExternalReload if the out-of-band write failed. */
+  clearExternalReload: () => void
   /** Show an in-editor proposed-edit preview over a selection range (#543).
    *  No-op if the editor has no selection / is not mounted. Returns true if
    *  the preview was set. */

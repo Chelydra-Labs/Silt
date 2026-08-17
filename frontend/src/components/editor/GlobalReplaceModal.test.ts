@@ -391,6 +391,7 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
         return true
       },
       forceExternalReload: () => order.push('forceExternalReload'),
+      clearExternalReload: () => {},
       setProposedEdit: () => false,
       clearProposedEdit: () => {},
       hasProposal: () => false,
@@ -444,6 +445,7 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
       isDirty: () => true,
       flush: async () => false,
       forceExternalReload: vi.fn(),
+      clearExternalReload: vi.fn(),
       setProposedEdit: () => false,
       clearProposedEdit: () => {},
       hasProposal: () => false,

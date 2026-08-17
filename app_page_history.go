@@ -104,16 +104,17 @@ func editorSourceIntervalApplies(source string) bool {
 	return source == historyReasonEditor || source == historyReasonSource
 }
 
-func historySection(section string) string {
-	sec, err := validateSectionPath(section, true)
-	if err != nil {
-		return sanitizeSectionPath(section)
-	}
-	return sec
+func historySection(section string) (string, error) {
+	return validateSectionPath(section, true)
 }
 
 func historyLoc(source, notebook, section, page string) history.Locator {
-	return history.Locator{Source: source, Notebook: notebook, Section: historySection(section), Page: page}
+	sec, err := historySection(section)
+	if err != nil {
+		// Do not alias reserved/traversal sections onto notebook-root history.
+		return history.Locator{Source: source, Notebook: notebook, Section: section, Page: page}
+	}
+	return history.Locator{Source: source, Notebook: notebook, Section: sec, Page: page}
 }
 
 // PageVersionInfo is the IPC list row for one retained snapshot.
@@ -308,10 +309,15 @@ func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page,
 		newContent, notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab,
 	)
 	if parseErr != nil {
-		return nil, fmt.Errorf("parse after source save: %w", parseErr)
+		// File is already the source of truth. Returning an error here would
+		// make Restore/Save look failed while disk holds the new body, and
+		// skip block:changed — Edit mode would keep the old buffer.
+		log.Printf("page write: parse after save failed for %s/%s/%s (file saved; index will refresh on next scan): %v", notebook, section, page, parseErr)
+		return nil, nil
 	}
 	if idxErr := a.indexFile(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta, meta.Warnings...); idxErr != nil {
-		return nil, fmt.Errorf("re-index after source save failed: %w", idxErr)
+		log.Printf("page write: re-index after save failed for %s/%s/%s (file saved; index will refresh on next scan): %v", notebook, section, page, idxErr)
+		return parsedBlocks, nil
 	}
 	return parsedBlocks, nil
 }

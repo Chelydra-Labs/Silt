@@ -308,12 +308,16 @@
     )
   }
 
+  function blocksContentKey(source: ParsedBlock[]): string {
+    return source
+      .map((b) => `${b.id}\0${b.raw_text || b.clean_text || ''}`)
+      .join('\n')
+  }
+
   // Capture the initial blocks under untrack to signal that the one-shot
   // capture is intentional — the $effect below handles live reactivity (#64).
   const initialDoc = untrack(() => blocksToDoc(blocks))
-  const initialKey = untrack(
-    () => `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
-  )
+  const initialKey = untrack(() => blocksContentKey(blocks))
   let lastSyncedBlocksKey = $state(initialKey)
 
   // Read config-driven extension toggles at editor creation time (#168 Phase 3).
@@ -729,12 +733,12 @@
   let pendingExternalReload = false
 
   $effect(() => {
-    const key = `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
+    const key = blocksContentKey(blocks)
     if (!editorInstance || editorInstance.isDestroyed) return
-    // Restore / global-replace keep the same block IDs. The ID-set key would
-    // skip setContent and leave the pre-restore buffer on screen (the next
-    // keystroke then writes that buffer back over the restored file).
-    if (key === lastSyncedBlocksKey && !pendingExternalReload) return
+    // Fingerprint id+text so restore/replace with the same IDs still applies.
+    // A same-content echo (flush of the body already on screen) must not
+    // consume pendingExternalReload — that one-shot is for the restored body.
+    if (key === lastSyncedBlocksKey) return
     // Don't clobber the editor's content while the user is actively editing.
     // The editor is the source of truth until blur; external updates wait —
     // unless a flush-then-replace sequence (pendingExternalReload) has made
@@ -796,6 +800,9 @@
       },
       forceExternalReload: () => {
         pendingExternalReload = true
+      },
+      clearExternalReload: () => {
+        pendingExternalReload = false
       },
       setProposedEdit: (opts) => {
         if (!editorInstance || editorInstance.isDestroyed) return false

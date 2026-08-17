@@ -148,6 +148,9 @@ describe('PageHistoryModal', () => {
       forceExternalReload: () => {
         order.push('forceExternalReload')
       },
+      clearExternalReload: () => {
+        order.push('clearExternalReload')
+      },
       setProposedEdit: () => false,
       clearProposedEdit: () => {},
       hasProposal: () => false,
@@ -228,6 +231,7 @@ describe('PageHistoryModal', () => {
       isDirty: () => true,
       flush: async () => false,
       forceExternalReload: () => {},
+      clearExternalReload: () => {},
       setProposedEdit: () => false,
       clearProposedEdit: () => {},
       hasProposal: () => false,
@@ -246,6 +250,48 @@ describe('PageHistoryModal', () => {
       ).toBeTruthy()
     })
     expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
+  })
+
+  it('disarms forceExternalReload when restore fails', async () => {
+    const order: string[] = []
+    registerEditor({
+      key: 'Work\x00Journal\x00Daily',
+      isDirty: () => false,
+      flush: async () => true,
+      forceExternalReload: () => {
+        order.push('forceExternalReload')
+      },
+      clearExternalReload: () => {
+        order.push('clearExternalReload')
+      },
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
+    })
+    appMocks.RestorePageVersion.mockRejectedValue(new Error('disk full'))
+    renderModal()
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-restore')).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByTestId('page-history-restore'))
+    await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+    await waitFor(() => {
+      expect(order).toEqual(['forceExternalReload', 'clearExternalReload'])
+    })
+    expect(screen.getByText(/disk full/)).toBeTruthy()
+  })
+
+  it('lets keyboard users focus the preview pane', async () => {
+    renderModal()
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-preview-body')).toBeTruthy()
+    })
+    expect(screen.getByTestId('page-history-preview-body')).toHaveAttribute(
+      'tabindex',
+      '0'
+    )
   })
 
   it('keeps Restore disabled until the selected version has a preview', async () => {

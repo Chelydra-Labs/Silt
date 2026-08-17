@@ -227,6 +227,41 @@ func TestRelocate_MergesWhenDestinationExists(t *testing.T) {
 	}
 }
 
+func TestRelocate_MergesWhenDestBlobsExistWithoutManifest(t *testing.T) {
+	root := t.TempDir()
+	oldLoc := testLoc("Alive")
+	destLoc := testLoc("OrphanBlobs")
+	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	if skip, err := Capture(root, destLoc, []byte("dest-v1"), "editor", now, Options{}); err != nil || skip != "" {
+		t.Fatalf("dest capture: skip=%q err=%v", skip, err)
+	}
+	destMan, err := manifestPath(root, destLoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(destMan); err != nil {
+		t.Fatal(err)
+	}
+	if skip, err := Capture(root, oldLoc, []byte("alive-v1"), "editor", now.Add(time.Minute), Options{}); err != nil || skip != "" {
+		t.Fatalf("old capture: skip=%q err=%v", skip, err)
+	}
+	if err := Relocate(root, oldLoc, destLoc); err != nil {
+		t.Fatalf("Relocate: %v", err)
+	}
+	oldList, err := List(root, oldLoc)
+	if err != nil || len(oldList) != 0 {
+		t.Fatalf("old locator still has history: %v len=%d", err, len(oldList))
+	}
+	merged, err := List(root, destLoc)
+	if err != nil || len(merged) == 0 {
+		t.Fatalf("dest locator lost history: %v len=%d", err, len(merged))
+	}
+	got, err := Read(root, destLoc, merged[0].ID)
+	if err != nil || string(got) != "alive-v1" {
+		t.Fatalf("relocated body = %q err=%v", got, err)
+	}
+}
+
 func TestList_MissingIsEmpty(t *testing.T) {
 	root := t.TempDir()
 	list, err := List(root, testLoc("Missing"))

@@ -172,4 +172,33 @@ describe('TipTapEditor same-ID external reload', () => {
     expect(pmText(view.container)).not.toContain('before restore')
     view.unmount()
   })
+
+  it('applies a same-ID body change without forceExternalReload when unfocused', async () => {
+    const first = [
+      mkBlock('NOTE', { id: STABLE_ID, clean_text: 'before restore' })
+    ]
+    const view = render(TipTapEditor, {
+      props: {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        blocks: first,
+        onUpdate: () => {}
+      }
+    })
+    await waitFor(() => {
+      expect(view.container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+    await view.rerender({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      blocks: [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'after restore' })],
+      onUpdate: () => {}
+    })
+    await waitFor(() => {
+      expect(pmText(view.container)).toContain('after restore')
+    })
+    view.unmount()
+  })
 })

@@ -167,8 +167,7 @@ func Relocate(root string, oldLoc, newLoc Locator) error {
 	if err != nil {
 		return err
 	}
-	newMan, err := manifestPath(root, newLoc)
-	if err != nil {
+	if _, err := manifestPath(root, newLoc); err != nil {
 		return err
 	}
 	oldBlobs, err := blobDir(root, oldLoc)
@@ -187,28 +186,10 @@ func Relocate(root string, oldLoc, newLoc Locator) error {
 	} else if err != nil {
 		return err
 	}
-	if _, err := os.Stat(newMan); err == nil {
-		return mergeRelocateLocked(root, oldLoc, newLoc, oldMan, oldBlobs, newBlobs)
-	} else if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(newMan), 0o700); err != nil {
-		return err
-	}
-	if _, err := os.Stat(oldMan); err == nil {
-		if err := os.Rename(oldMan, newMan); err != nil {
-			return err
-		}
-	}
-	if _, err := os.Stat(oldBlobs); err == nil {
-		if err := os.MkdirAll(filepath.Dir(newBlobs), 0o700); err != nil {
-			return err
-		}
-		if err := os.Rename(oldBlobs, newBlobs); err != nil {
-			return err
-		}
-	}
-	return nil
+	// Always copy-then-commit: write the dest manifest only after blobs are
+	// in place, then delete the source. Dest blob-dir-without-manifest is
+	// treated as dest-exists (merge), same as a dest manifest.
+	return mergeRelocateLocked(root, oldLoc, newLoc, oldMan, oldBlobs, newBlobs)
 }
 
 func mergeRelocateLocked(root string, oldLoc, newLoc Locator, oldMan, oldBlobs, newBlobs string) error {
@@ -238,10 +219,9 @@ func mergeRelocateLocked(root string, oldLoc, newLoc Locator, oldMan, oldBlobs, 
 			src := filepath.Join(oldBlobs, ent.Name())
 			dst := filepath.Join(newBlobs, ent.Name())
 			if _, sterr := os.Stat(dst); sterr == nil {
-				_ = os.Remove(src)
 				continue
 			}
-			if err := os.Rename(src, dst); err != nil {
+			if err := copyFile(src, dst); err != nil {
 				return err
 			}
 		}
@@ -545,6 +525,33 @@ func versionID(now time.Time, hash string) string {
 		short = short[:12]
 	}
 	return now.UTC().Format("20060102T150405.000Z07:00") + "-" + short
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	ok := false
+	defer func() {
+		_ = out.Close()
+		if !ok {
+			_ = os.Remove(dst)
+		}
+	}()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		return err
+	}
+	ok = true
+	return nil
 }
 
 func writeFileAtomic(path string, content []byte) error {

@@ -207,7 +207,12 @@
       // Arm the focused-edit bypass before the write so block:changed
       // reloads the restored body instead of letting a dirty buffer win.
       editor?.forceExternalReload()
-      await RestorePageVersion(notebook, section, page, target.id)
+      try {
+        await RestorePageVersion(notebook, section, page, target.id)
+      } catch (err) {
+        editor?.clearExternalReload()
+        throw err
+      }
       restoreTarget = null
       statusMessage = `Restored version from ${formatTimestamp(target.timestamp)}. A snapshot of the previous page was kept.`
       await loadVersions(target.id)
@@ -535,8 +540,12 @@
                 </button>
               </div>
             {:else}
+              <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
               <pre
                 class="preview-body custom-scrollbar"
+                tabindex="0"
+                role="region"
+                aria-label="Version preview body"
                 data-testid="page-history-preview-body">{preview}</pre>
             {/if}
           {:else if !listLoading && versions.length > 0}

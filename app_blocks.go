@@ -136,7 +136,10 @@ func (a *App) updateBlockStateWithReason(blockID string, newState, reason string
 	// from user-editable YAML frontmatter. Section may be empty (a page living
 	// directly under its notebook).
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := historySection(section)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return "", invalidNavigationPath(secErr)
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return "", fmt.Errorf("invalid file metadata for block %s: notebook=%q section=%q page=%q", blockID, notebook, section, page)
@@ -494,7 +497,10 @@ func (a *App) writeBlockText(blockID, reason string, transform func(currentClean
 	notebook, section, page := loc.Notebook, loc.Section, loc.Page
 
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := historySection(section)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return invalidNavigationPath(secErr)
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return fmt.Errorf("invalid file metadata for block %s", blockID)
@@ -672,7 +678,10 @@ func (a *App) saveFileBlocksWithSource(notebook, section, page string, blocks []
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := historySection(section)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return invalidNavigationPath(secErr)
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return fmt.Errorf("invalid path metadata")
@@ -765,7 +774,10 @@ func (a *App) FetchPageMarkdown(notebook, section, page string) (string, error) 
 		return "", fmt.Errorf("vault database not loaded")
 	}
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := historySection(section)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return "", invalidNavigationPath(secErr)
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return "", fmt.Errorf("invalid path metadata")
@@ -808,7 +820,10 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := historySection(section)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return nil, invalidNavigationPath(secErr)
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return nil, fmt.Errorf("invalid path metadata")

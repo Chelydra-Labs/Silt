@@ -409,6 +409,7 @@
       forceExternalReload: () => {
         reloadFromDisk()
       },
+      clearExternalReload: () => {},
       setProposedEdit: () => false,
       clearProposedEdit: () => {},
       hasProposal: () => false,

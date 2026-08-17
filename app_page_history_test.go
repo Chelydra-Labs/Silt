@@ -836,6 +836,63 @@ func TestPageHistory_RootPageDoesNotCollideWithReservedSection(t *testing.T) {
 	}
 }
 
+func TestSaveFileBlocks_RejectsHistoryRootSentinel(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.SaveFileBlocks("Work", history.EmptySectionName, "Inbox", nil); err == nil {
+		t.Fatal("SaveFileBlocks accepted reserved empty-section sentinel")
+	}
+}
+
+func TestPageHistory_FrontmatterEditUsesPathLocator(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	writeBookPage(t, app)
+	filePath := filepath.Join(app.vaultPath, "Books", "Dune.md")
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := strings.Replace(string(raw), `section: ""`, `section: "Stale"`, 1)
+	if err := os.WriteFile(filePath, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.SetPageProperty("Books", "", "Dune", "rating", 4); err != nil {
+		t.Fatalf("SetPageProperty: %v", err)
+	}
+	pathList, err := app.ListPageVersions("Books", "", "Dune")
+	if err != nil {
+		t.Fatalf("List path locator: %v", err)
+	}
+	if len(pathList) == 0 {
+		t.Fatal("frontmatter edit stored history under YAML section, not the path locator")
+	}
+	staleList, err := app.ListPageVersions("Books", "Stale", "Dune")
+	if err != nil {
+		t.Fatalf("List stale locator: %v", err)
+	}
+	if len(staleList) != 0 {
+		t.Fatalf("history leaked to YAML section locator, got %d", len(staleList))
+	}
+}
+
+func TestPageHistory_InboundRewriteDoesNotCapture(t *testing.T) {
+	app := newTestApp(t)
+	seedHistoryPage(t, app, "Work", "Journal", "Hub", "# hub\nSee [[Work/Journal/Old]]\n")
+	seedHistoryPage(t, app, "Work", "Journal", "Old", "# old\n")
+	enablePageHistory(t, app, 50, 0)
+	savePageBody(t, app, "Work", "Journal", "Old", "# edited\n")
+	if err := app.RenamePage("Work", "Journal", "Old", "New"); err != nil {
+		t.Fatalf("RenamePage: %v", err)
+	}
+	hubList, err := app.ListPageVersions("Work", "Journal", "Hub")
+	if err != nil {
+		t.Fatalf("List hub: %v", err)
+	}
+	if len(hubList) != 0 {
+		t.Fatalf("inbound wiki-link rewrite captured hub history, got %d", len(hubList))
+	}
+}
+
 func TestPageHistory_StoreIndependentOfDB(t *testing.T) {
 	root := t.TempDir()
 	loc := history.Locator{Source: "vault", Notebook: "Work", Section: "Journal", Page: "Solo"}

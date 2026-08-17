@@ -149,7 +149,10 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string, reason string) e
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := historySection(section)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return invalidNavigationPath(secErr)
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return fmt.Errorf("invalid file metadata for block %s", blockID)
