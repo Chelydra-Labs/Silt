@@ -14,6 +14,7 @@ func Clone(cfg SystemConfig) SystemConfig {
 	out.Editor.SpellcheckLanguage = clonePtr(cfg.Editor.SpellcheckLanguage)
 	out.Editor.TypewriterMode = clonePtr(cfg.Editor.TypewriterMode)
 	out.Editor.TypewriterModeRatio = clonePtr(cfg.Editor.TypewriterModeRatio)
+	out.Editor.AutoVersioningEnabled = clonePtr(cfg.Editor.AutoVersioningEnabled)
 
 	out.Hotkeys = cloneStringMap(cfg.Hotkeys)
 	out.Plugins.Active = cloneStrings(cfg.Plugins.Active)

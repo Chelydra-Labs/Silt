@@ -107,6 +107,41 @@ describe('EditorUtilityBar (#202 — simplified)', () => {
     expect(
       screen.queryByRole('button', { name: 'Open tasks on this page' })
     ).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: 'Open page history' })
+    ).toBeNull()
+  })
+
+  it('dispatches a nonce-bearing page history event', async () => {
+    const listener = vi.fn()
+    window.addEventListener('silt:open-page-history', listener)
+    render(EditorUtilityBar, {
+      props: {
+        editor: null,
+        activeMarks: new Set<string>(),
+        pageLocator: {
+          source: 'vault',
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily'
+        }
+      }
+    })
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Open page history' })
+    )
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    const event = listener.mock.calls[0][0] as CustomEvent
+    expect(event.detail).toEqual({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      nonce: expect.any(String)
+    })
+    expect(event.detail.nonce).not.toBe('')
+    window.removeEventListener('silt:open-page-history', listener)
   })
 
   it('renders FormatToolbar when showFormatting is true', () => {

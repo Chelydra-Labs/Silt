@@ -83,6 +83,12 @@ func (a *App) SaveSystemConfig(cfg config.SystemConfig) error {
 	if cfg.Editor.AutoSaveDelayMs < 0 {
 		return fmt.Errorf("invalid config: editor.auto_save_delay_ms must be non-negative")
 	}
+	if cfg.Editor.MaxVersionsPerPage < 1 || cfg.Editor.MaxVersionsPerPage > 500 {
+		return fmt.Errorf("invalid config: editor.max_versions_per_page must be between 1 and 500")
+	}
+	if cfg.Editor.AutoVersioningMinIntervalSec < 0 || cfg.Editor.AutoVersioningMinIntervalSec > 3600 {
+		return fmt.Errorf("invalid config: editor.auto_versioning_min_interval_sec must be between 0 and 3600")
+	}
 	if err := config.ValidateHotkeys(cfg.Hotkeys); err != nil {
 		return err
 	}

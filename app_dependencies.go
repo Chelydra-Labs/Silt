@@ -35,7 +35,7 @@ var ErrUnknownDependency = errors.New("dependency target is not an indexed task 
 // block.BlockedBy -> RenderFileContent -> WriteFileAtomic -> re-parse ->
 // IndexFileBlocks -> emit block:changed.
 func (a *App) SetTaskBlockedBy(blockID string, depIDs []string) error {
-	return a.setTaskBlockedBy(blockID, depIDs)
+	return a.setTaskBlockedBy(blockID, depIDs, historyReasonEditor)
 }
 
 // PluginSetTaskBlockedBy is the plugin-SDK wrapper for SetTaskBlockedBy,
@@ -44,14 +44,14 @@ func (a *App) SetTaskBlockedBy(blockID string, depIDs []string) error {
 // PluginSetTaskRecurrence.
 func (a *App) PluginSetTaskBlockedBy(pluginID, sessionToken, blockID string, depIDs []string) (bool, error) {
 	return a.wrapPluginMutate(pluginID, sessionToken, func() error {
-		return a.setTaskBlockedBy(blockID, depIDs)
+		return a.setTaskBlockedBy(blockID, depIDs, historyReasonPlugin)
 	})
 }
 
 // setTaskBlockedBy is the shared core for the app-level and plugin-level entry
 // points. It validates + normalizes the dependency list, runs the cycle check
 // against the existing graph, then rewrites the token atomically.
-func (a *App) setTaskBlockedBy(blockID string, depIDs []string) error {
+func (a *App) setTaskBlockedBy(blockID string, depIDs []string, reason string) error {
 	// Normalize: drop empties, de-duplicate preserving order. The parser's
 	// ExtractRefs would do the same on the next re-index; doing it here keeps
 	// the cycle check and the rendered token in lockstep with what the user
@@ -149,7 +149,10 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string) error {
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return invalidNavigationPath(secErr)
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return fmt.Errorf("invalid file metadata for block %s", blockID)
@@ -209,6 +212,7 @@ func (a *App) setTaskBlockedBy(blockID string, depIDs []string) error {
 				body = string(contentBytes)
 			}
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
 			a.tracker.RegisterWrite(filePath)
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 				writeErr = err

@@ -12,7 +12,9 @@ const mocks = vi.hoisted(() => {
       line_height: 1.6,
       tab_indent_spaces: 4,
       auto_save_delay_ms: 500,
-      focus_highlight_ancestors: true
+      focus_highlight_ancestors: true,
+      auto_versioning_enabled: false,
+      max_versions_per_page: 50
     },
     parsing: {
       auto_inject_uuid: true,
@@ -116,5 +118,56 @@ describe('EditorTab font picker (#82)', () => {
     const combo = screen.getByRole('combobox', { name: 'Font family' })
     expect(combo.textContent).toContain('Theme default')
     expect(mocks.settings.dirty).toBe(true)
+  })
+})
+
+describe('EditorTab page history (#937)', () => {
+  beforeEach(() => {
+    mocks.settings.config.editor.auto_versioning_enabled = false
+    mocks.settings.config.editor.max_versions_per_page = 50
+    mocks.settings.dirty = false
+    mocks.saveConfig.mockClear()
+  })
+  afterEach(() => cleanup())
+
+  it('renders the Capture page history checkbox unchecked by default', async () => {
+    resetThemeState(false)
+    render(EditorTab)
+    await tick()
+    const checkbox = screen.getByRole('checkbox', {
+      name: 'Capture page history'
+    })
+    expect(checkbox).toBeInTheDocument()
+    expect(checkbox).toHaveAccessibleDescription(
+      /not a substitute for Settings/
+    )
+    expect(checkbox).not.toBeChecked()
+    expect(
+      screen.queryByLabelText('Versions to keep per page')
+    ).not.toBeInTheDocument()
+  })
+
+  it('checking Capture page history dirties the draft editor block', async () => {
+    resetThemeState(false)
+    render(EditorTab)
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Capture page history' })
+    )
+    await tick()
+    expect(mocks.settings.dirty).toBe(true)
+    expect(
+      screen.getByLabelText('Versions to keep per page')
+    ).toBeInTheDocument()
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(mocks.saveConfig).toHaveBeenCalledTimes(1)
+    expect(mocks.saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        editor: expect.objectContaining({
+          auto_versioning_enabled: true,
+          max_versions_per_page: 50
+        })
+      })
+    )
   })
 })

@@ -8,6 +8,8 @@ import (
 	goruntime "runtime"
 	"strings"
 	"time"
+
+	"silt/backend/history"
 )
 
 var updateLineIDRegex = regexp.MustCompile(`<!-- id: ([a-f0-9\-]{36}) -->`)
@@ -96,7 +98,7 @@ func validateSectionPath(s string, allowEmpty bool) (string, error) {
 	parts := strings.Split(s, "/")
 	for i, part := range parts {
 		part = strings.TrimSpace(part)
-		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, "\\") || strings.IndexFunc(part, func(r rune) bool { return r < 32 }) >= 0 {
+		if part == "" || part == "." || part == ".." || part == history.EmptySectionName || strings.ContainsAny(part, "\\") || strings.IndexFunc(part, func(r rune) bool { return r < 32 }) >= 0 {
 			return "", fmt.Errorf("invalid section path %q", s)
 		}
 		parts[i] = part

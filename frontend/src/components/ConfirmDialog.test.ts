@@ -59,6 +59,28 @@ describe('ConfirmDialog', () => {
     expect(onConfirm).not.toHaveBeenCalled()
   })
 
+  it('disables actions and ignores Escape while busy', async () => {
+    const onConfirm = vi.fn()
+    const onCancel = vi.fn()
+    render(ConfirmDialog, {
+      props: {
+        title: 'Restore?',
+        message: 'Working…',
+        confirmLabel: 'Restoring…',
+        busy: true,
+        dataTestId: 'busy',
+        onConfirm,
+        onCancel
+      }
+    })
+    expect(screen.getByTestId('busy-confirm')).toBeDisabled()
+    expect(screen.getByTestId('busy-cancel')).toBeDisabled()
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onCancel).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getByTestId('busy-confirm'))
+    expect(onConfirm).not.toHaveBeenCalled()
+  })
+
   it('calls onCancel on Escape', async () => {
     const onCancel = vi.fn()
     render(ConfirmDialog, {

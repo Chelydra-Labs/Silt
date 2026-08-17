@@ -55,7 +55,7 @@ func (b mcpBridge) CreatePage(ctx context.Context, notebook, section, page, date
 
 func (b mcpBridge) UpdateBlocks(ctx context.Context, notebook, section, page string, blocks []parser.ParsedBlock) error {
 	_ = ctx
-	return b.app.SaveFileBlocks(notebook, section, page, blocks)
+	return b.app.saveFileBlocksWithSource(notebook, section, page, blocks, historyReasonMCP)
 }
 
 func (b mcpBridge) PageExists(ctx context.Context, notebook, section, page string) (bool, error) {
@@ -153,7 +153,7 @@ func (b mcpBridge) GetPageMetadata(ctx context.Context, notebook, section, page 
 
 // SetPageProperty writes a single typed property. The MCP tool receives value
 // as a string (the SDK decodes JSON into the tool struct's string field), so it
-// is coerced to the property's Go type before delegating to App.SetPageProperty.
+// is coerced to the property's Go type before delegating with historyReasonMCP.
 // The App validates (structural + relation-target) BEFORE any file I/O, so an
 // invalid value leaves the file byte-identical — this method must not write or
 // cache anything before that validation runs.
@@ -177,7 +177,7 @@ func (b mcpBridge) SetPageProperty(ctx context.Context, notebook, section, page,
 			coerced = c
 		}
 	}
-	return b.app.SetPageProperty(notebook, section, page, property, coerced)
+	return b.app.setPagePropertyWithReason(notebook, section, page, property, coerced, historyReasonMCP)
 }
 
 // SetPageType assigns (empty typeName clears) the page's note type. The returned
@@ -187,37 +187,37 @@ func (b mcpBridge) SetPageProperty(ctx context.Context, notebook, section, page,
 // no coerce), so a non-empty list is informational, not a write failure.
 func (b mcpBridge) SetPageType(ctx context.Context, notebook, section, page, typeName string) ([]string, error) {
 	_ = ctx
-	return b.app.SetPageType(notebook, section, page, typeName)
+	return b.app.setPageTypeWithReason(notebook, section, page, typeName, historyReasonMCP)
 }
 
 func (b mcpBridge) CreateBlock(ctx context.Context, afterID, notebook, section, page, blockType, text string) (string, error) {
 	_ = ctx
-	return b.app.CreateBlock(afterID, notebook, section, page, blockType, text)
+	return b.app.createBlockWithReason(afterID, notebook, section, page, blockType, text, historyReasonMCP)
 }
 
 func (b mcpBridge) CreateStandaloneTask(ctx context.Context, title, dueDate, status string) (string, error) {
 	_ = ctx
-	return b.app.CreateStandaloneTask(title, dueDate, status)
+	return b.app.createStandaloneTaskWithReason(title, dueDate, status, historyReasonMCP)
 }
 
 func (b mcpBridge) SetTaskOwner(ctx context.Context, blockID, owner string) error {
 	_ = ctx
-	return b.app.SetTaskOwner(blockID, owner)
+	return b.app.setTaskOwner(blockID, owner, historyReasonMCP)
 }
 
 func (b mcpBridge) SetTaskTags(ctx context.Context, blockID string, tags []string) error {
 	_ = ctx
-	return b.app.SetTaskTags(blockID, tags)
+	return b.app.setTaskTags(blockID, tags, historyReasonMCP)
 }
 
 func (b mcpBridge) SetTaskDueDate(ctx context.Context, blockID, dueDate string) error {
 	_ = ctx
-	return b.app.SetTaskDueDate(blockID, dueDate)
+	return b.app.setTaskDueDate(blockID, dueDate, historyReasonMCP)
 }
 
 func (b mcpBridge) UpdateBlockState(ctx context.Context, blockID, status string) error {
 	_ = ctx
-	_, err := b.app.UpdateBlockState(blockID, status)
+	_, err := b.app.updateBlockStateWithReason(blockID, status, historyReasonMCP)
 	return err
 }
 

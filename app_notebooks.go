@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"silt/backend/history"
 	"silt/backend/monitor"
 	"silt/backend/parser"
 )
@@ -169,6 +170,9 @@ func (a *App) CreateSection(notebook, parentPath, name string) error {
 	safeName := sanitizePathSegment(name)
 	if safeName == "" || strings.ContainsAny(name, "/\\") {
 		return fmt.Errorf("section name must be one path segment")
+	}
+	if safeName == history.EmptySectionName {
+		return fmt.Errorf("section name %q is reserved", history.EmptySectionName)
 	}
 	notebookDir, err := a.resolveNotebookDir(safeNotebook, a.resolveSourceByName(safeNotebook))
 	if err != nil {

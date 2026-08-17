@@ -549,6 +549,9 @@ func (a *App) RenamePage(notebook, section, oldName, newName string) error {
 			reconcile: func() error {
 				return a.reconcileNavigationPage(safeNotebook, safeSection, safeOldPage, safeNewPage, false)
 			},
+			relocateHistory: func() {
+				a.relocatePageHistory(source, safeNotebook, safeSection, safeOldPage, safeNotebook, safeSection, safeNewPage)
+			},
 		}, nil
 	})
 }
@@ -644,6 +647,9 @@ func (a *App) MovePage(notebook, fromSection, toSection, page string) error {
 					log.Printf("MovePage: nav_order persist failed (file move succeeded): %v", err)
 				}
 				return nil
+			},
+			relocateHistory: func() {
+				a.relocatePageHistory(source, safeNotebook, safeFrom, safePage, safeNotebook, safeTo, safePage)
 			},
 		}, nil
 	})
@@ -776,6 +782,11 @@ func (a *App) RenameSection(notebook, oldName, newName string) error {
 			staleSweepFile: func(file renameFileSnapshot) {
 				a.rewriteStaleInboundAfterRename(safeNotebook, file.oldSection, file.page, safeNotebook, file.newSection, file.page)
 			},
+			relocateHistory: func(files []renameFileSnapshot) {
+				for _, file := range files {
+					a.relocatePageHistory(source, safeNotebook, file.oldSection, file.page, safeNotebook, file.newSection, file.page)
+				}
+			},
 			rollbackSource: source,
 			rollbackReconcileHookEnabled: func(configAttempted bool) bool {
 				return configAttempted && a.renameHooks != nil && a.renameHooks.reconcileSection != nil
@@ -904,6 +915,11 @@ func (a *App) RenameNotebook(oldName, newName string) error {
 			},
 			staleSweepFile: func(file renameFileSnapshot) {
 				a.rewriteStaleInboundAfterRename(safeOldNotebook, file.oldSection, file.page, safeNewNotebook, file.newSection, file.page)
+			},
+			relocateHistory: func(files []renameFileSnapshot) {
+				for _, file := range files {
+					a.relocatePageHistory("vault", safeOldNotebook, file.oldSection, file.page, safeNewNotebook, file.newSection, file.page)
+				}
 			},
 			rollbackSource: "vault",
 			rollbackReconcileHookEnabled: func(configAttempted bool) bool {

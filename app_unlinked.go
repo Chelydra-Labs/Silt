@@ -134,7 +134,7 @@ func (a *App) PromoteUnlinkedMention(sourceBlockID, targetNotebook, targetSectio
 	shortest := db.ShortestUniquePath(chosen, pages)
 
 	titleRE := db.WordBoundaryTitleRE(title)
-	return a.writeBlockText(sourceBlockID, func(currentClean string) (string, error) {
+	return a.writeBlockText(sourceBlockID, historyReasonEditor, func(currentClean string) (string, error) {
 		newText, ok := wrapFirstUnlinkedOccurrence(currentClean, titleRE, shortest)
 		if !ok {
 			return "", fmt.Errorf("title %q no longer appears as plain text in the block", title)

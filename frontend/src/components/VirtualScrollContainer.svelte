@@ -113,6 +113,7 @@
   )
 
   let blocks = $state<ParsedBlock[]>([])
+  let loadGen = 0
   let loading = $state(false)
   let loadError = $state('')
   let containerEl = $state<HTMLDivElement | null>(null)
@@ -243,6 +244,7 @@
   })
 
   async function loadPage(showLoader = true) {
+    const gen = ++loadGen
     if (showLoader) {
       loading = true
     }
@@ -252,16 +254,27 @@
     const reqPage = page
     try {
       const result = await FetchPageBlocks(reqNotebook, reqSection, reqPage)
-      if (notebook !== reqNotebook || page !== reqPage) {
+      if (gen !== loadGen) return
+      if (
+        notebook !== reqNotebook ||
+        section !== reqSection ||
+        page !== reqPage
+      ) {
         return
       }
       blocks = result || []
     } catch (e) {
-      if (notebook !== reqNotebook || page !== reqPage) return
+      if (gen !== loadGen) return
+      if (
+        notebook !== reqNotebook ||
+        section !== reqSection ||
+        page !== reqPage
+      )
+        return
       loadError = e instanceof Error ? e.message : String(e)
       console.error('[VSC] loadPage error:', loadError)
     } finally {
-      if (showLoader) {
+      if (showLoader && gen === loadGen) {
         loading = false
       }
     }

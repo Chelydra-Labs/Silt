@@ -2225,3 +2225,103 @@ func TestSave_DoesNotMutateCallerHotkeys(t *testing.T) {
 		t.Errorf("Save mutated caller's hotkeys map:\n got  %+v\n want %+v", cfg.Hotkeys, before)
 	}
 }
+
+// --- page auto-versioning config ---
+
+func TestDefaults_PageHistory(t *testing.T) {
+	d := Defaults()
+	if d.Editor.AutoVersioningEnabled == nil || *d.Editor.AutoVersioningEnabled != false {
+		t.Errorf("defaults auto_versioning_enabled should be *false, got %v", d.Editor.AutoVersioningEnabled)
+	}
+	if d.Editor.MaxVersionsPerPage != 50 {
+		t.Errorf("defaults max_versions_per_page should be 50, got %d", d.Editor.MaxVersionsPerPage)
+	}
+	if d.Editor.AutoVersioningMinIntervalSec != 300 {
+		t.Errorf("defaults auto_versioning_min_interval_sec should be 300, got %d", d.Editor.AutoVersioningMinIntervalSec)
+	}
+}
+
+func TestNormalize_PageHistory(t *testing.T) {
+	cfg := normalize(SystemConfig{})
+	if cfg.Editor.AutoVersioningEnabled == nil || *cfg.Editor.AutoVersioningEnabled != false {
+		t.Errorf("normalize auto_versioning_enabled nil → *false, got %v", cfg.Editor.AutoVersioningEnabled)
+	}
+	if cfg.Editor.MaxVersionsPerPage != 50 {
+		t.Errorf("normalize max_versions_per_page 0 → 50, got %d", cfg.Editor.MaxVersionsPerPage)
+	}
+	// 0 is a valid explicit interval (every qualifying write). Omitted keys
+	// keep 300 because Load decodes over Defaults().
+	if cfg.Editor.AutoVersioningMinIntervalSec != 0 {
+		t.Errorf("normalize interval 0 stays 0, got %d", cfg.Editor.AutoVersioningMinIntervalSec)
+	}
+
+	on := true
+	cfg = normalize(SystemConfig{Editor: EditorConfig{AutoVersioningEnabled: &on}})
+	if cfg.Editor.AutoVersioningEnabled == nil || *cfg.Editor.AutoVersioningEnabled != true {
+		t.Errorf("normalize should preserve explicit auto_versioning true, got %v", cfg.Editor.AutoVersioningEnabled)
+	}
+
+	cfg = normalize(SystemConfig{Editor: EditorConfig{MaxVersionsPerPage: 12}})
+	if cfg.Editor.MaxVersionsPerPage != 12 {
+		t.Errorf("normalize should preserve in-range max, got %d", cfg.Editor.MaxVersionsPerPage)
+	}
+	cfg = normalize(SystemConfig{Editor: EditorConfig{MaxVersionsPerPage: -3}})
+	if cfg.Editor.MaxVersionsPerPage != 50 {
+		t.Errorf("normalize max < 1 → 50, got %d", cfg.Editor.MaxVersionsPerPage)
+	}
+	cfg = normalize(SystemConfig{Editor: EditorConfig{MaxVersionsPerPage: 900}})
+	if cfg.Editor.MaxVersionsPerPage != 500 {
+		t.Errorf("normalize max > 500 → 500, got %d", cfg.Editor.MaxVersionsPerPage)
+	}
+
+	cfg = normalize(SystemConfig{Editor: EditorConfig{AutoVersioningMinIntervalSec: -10}})
+	if cfg.Editor.AutoVersioningMinIntervalSec != 0 {
+		t.Errorf("normalize interval < 0 → 0, got %d", cfg.Editor.AutoVersioningMinIntervalSec)
+	}
+	cfg = normalize(SystemConfig{Editor: EditorConfig{AutoVersioningMinIntervalSec: 7200}})
+	if cfg.Editor.AutoVersioningMinIntervalSec != 3600 {
+		t.Errorf("normalize interval > 3600 → 3600, got %d", cfg.Editor.AutoVersioningMinIntervalSec)
+	}
+	cfg = normalize(SystemConfig{Editor: EditorConfig{AutoVersioningMinIntervalSec: 120}})
+	if cfg.Editor.AutoVersioningMinIntervalSec != 120 {
+		t.Errorf("normalize should preserve in-range interval, got %d", cfg.Editor.AutoVersioningMinIntervalSec)
+	}
+}
+
+func TestPageHistory_RoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	original := Defaults()
+	on := true
+	original.Editor.AutoVersioningEnabled = &on
+	original.Editor.MaxVersionsPerPage = 25
+	original.Editor.AutoVersioningMinIntervalSec = 0
+
+	if err := Save(tmp, original); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Editor.AutoVersioningEnabled == nil || *loaded.Editor.AutoVersioningEnabled != true {
+		t.Errorf("auto_versioning_enabled round-trip: got %v", loaded.Editor.AutoVersioningEnabled)
+	}
+	if loaded.Editor.MaxVersionsPerPage != 25 {
+		t.Errorf("max_versions_per_page round-trip: got %d", loaded.Editor.MaxVersionsPerPage)
+	}
+	if loaded.Editor.AutoVersioningMinIntervalSec != 0 {
+		t.Errorf("auto_versioning_min_interval_sec round-trip: got %d", loaded.Editor.AutoVersioningMinIntervalSec)
+	}
+}
+
+func TestClone_PageHistoryPointerIndependence(t *testing.T) {
+	on := true
+	original := Defaults()
+	original.Editor.AutoVersioningEnabled = &on
+	cloned := Clone(original)
+	off := false
+	cloned.Editor.AutoVersioningEnabled = &off
+	if original.Editor.AutoVersioningEnabled == nil || *original.Editor.AutoVersioningEnabled != true {
+		t.Errorf("Clone must not alias AutoVersioningEnabled; original became %v", original.Editor.AutoVersioningEnabled)
+	}
+}

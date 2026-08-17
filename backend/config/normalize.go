@@ -348,6 +348,27 @@ func normalize(cfg SystemConfig) SystemConfig {
 		}
 		cfg.Editor.TypewriterModeRatio = float64Ptr(r)
 	}
+	// AutoVersioningEnabled: nil → false. Opt-in; snapshots sync with the vault.
+	if cfg.Editor.AutoVersioningEnabled == nil {
+		cfg.Editor.AutoVersioningEnabled = boolPtr(false)
+	}
+	// MaxVersionsPerPage: 0 (omitted key after a non-Defaults decode) → 50.
+	// Clamp to [1, 500] so a hand-edited YAML cannot unbounded-grow history.
+	if cfg.Editor.MaxVersionsPerPage < 1 {
+		cfg.Editor.MaxVersionsPerPage = 50
+	}
+	if cfg.Editor.MaxVersionsPerPage > 500 {
+		cfg.Editor.MaxVersionsPerPage = 500
+	}
+	// AutoVersioningMinIntervalSec: negative → 0 (every qualifying write);
+	// above 3600 → 3600. 0 is a valid explicit value, so omitted keys rely
+	// on Load decoding over Defaults() (300).
+	if cfg.Editor.AutoVersioningMinIntervalSec < 0 {
+		cfg.Editor.AutoVersioningMinIntervalSec = 0
+	}
+	if cfg.Editor.AutoVersioningMinIntervalSec > 3600 {
+		cfg.Editor.AutoVersioningMinIntervalSec = 3600
+	}
 	// CustomDictionary: the per-vault spellcheck word list (#196). Normalize
 	// to a non-nil, de-duplicated, trimmed, lowercased, sorted slice so the
 	// IPC layer never serializes null and lookups are deterministic. Case is

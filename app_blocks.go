@@ -96,6 +96,10 @@ func (a *App) DistinctOwners(prefix string) ([]string, error) {
 // other transition (non-recurring, TODO/DOING, or an already-DONE no-op). The
 // frontend can chain off it directly instead of re-querying for the sibling.
 func (a *App) UpdateBlockState(blockID string, newState string) (string, error) {
+	return a.updateBlockStateWithReason(blockID, newState, historyReasonEditor)
+}
+
+func (a *App) updateBlockStateWithReason(blockID string, newState, reason string) (string, error) {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	// Guard against a meaningless no-op that the frontend might interpret
@@ -132,7 +136,10 @@ func (a *App) UpdateBlockState(blockID string, newState string) (string, error) 
 	// from user-editable YAML frontmatter. Section may be empty (a page living
 	// directly under its notebook).
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return "", invalidNavigationPath(secErr)
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return "", fmt.Errorf("invalid file metadata for block %s: notebook=%q section=%q page=%q", blockID, notebook, section, page)
@@ -241,6 +248,7 @@ func (a *App) UpdateBlockState(blockID string, newState string) (string, error) 
 
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
 			a.tracker.RegisterWrite(filePath)
 
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
@@ -460,7 +468,7 @@ func (a *App) MutateBlock(blockID, newText string) error {
 	a.wg.Add(1)
 	defer a.wg.Done()
 
-	return a.writeBlockText(blockID, func(_ string) (string, error) {
+	return a.writeBlockText(blockID, historyReasonEditor, func(_ string) (string, error) {
 		return cleanText, nil
 	})
 }
@@ -476,7 +484,7 @@ func (a *App) MutateBlock(blockID, newText string) error {
 // the identical write path as a user edit (one on-disk format definition, one
 // reindex path, one block:changed emission). MutateBlock passes a constant
 // transform; PromoteUnlinkedMention passes the link-wrapping transform.
-func (a *App) writeBlockText(blockID string, transform func(currentClean string) (string, error)) error {
+func (a *App) writeBlockText(blockID, reason string, transform func(currentClean string) (string, error)) error {
 	var loc db.BlockLocation
 	err := a.coordinator.WithDBReadResult(func() error {
 		var e error
@@ -489,7 +497,10 @@ func (a *App) writeBlockText(blockID string, transform func(currentClean string)
 	notebook, section, page := loc.Notebook, loc.Section, loc.Page
 
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return invalidNavigationPath(secErr)
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return fmt.Errorf("invalid file metadata for block %s", blockID)
@@ -573,6 +584,7 @@ func (a *App) writeBlockText(blockID string, transform func(currentClean string)
 
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 
+			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
 			a.tracker.RegisterWrite(filePath)
 			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 				writeErr = err
@@ -619,7 +631,7 @@ func errPageMovedOrDeleted(filePath string) error {
 // Extracted from SaveFileBlocks so the cross-page source-removal path in
 // applyBlocksOps can do an atomic read-parse-filter-write under a single
 // LockFileWrite scope (#104 TOCTOU fix).
-func (a *App) writePageFileLocked(filePath, source, notebook, section, page string, blocks []parser.ParsedBlock) error {
+func (a *App) writePageFileLocked(filePath, source, notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to read existing file: %w", err)
@@ -635,6 +647,7 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 
 	newContent := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
 
+	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 	a.tracker.RegisterWrite(filePath)
 
 	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
@@ -651,6 +664,10 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 	return nil
 }
 func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.ParsedBlock) error {
+	return a.saveFileBlocksWithSource(notebook, section, page, blocks, historyReasonEditor)
+}
+
+func (a *App) saveFileBlocksWithSource(notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
 	if err := validateTaskBlockPriorities(blocks); err != nil {
 		return err
 	}
@@ -661,7 +678,10 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return invalidNavigationPath(secErr)
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return fmt.Errorf("invalid path metadata")
@@ -714,7 +734,7 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 				}
 				return
 			}
-			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks)
+			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks, reason)
 		})
 	}) // LockBlocksWrite
 
@@ -754,7 +774,10 @@ func (a *App) FetchPageMarkdown(notebook, section, page string) (string, error) 
 		return "", fmt.Errorf("vault database not loaded")
 	}
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return "", invalidNavigationPath(secErr)
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return "", fmt.Errorf("invalid path metadata")
@@ -797,7 +820,10 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
-	safeSection := sanitizePathSegment(section)
+	safeSection, secErr := historySection(section)
+	if secErr != nil {
+		return nil, invalidNavigationPath(secErr)
+	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
 		return nil, fmt.Errorf("invalid path metadata")
@@ -842,46 +868,7 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 				writeErr = fmt.Errorf("failed to read existing file: %w", err)
 				return
 			}
-			frontmatter, _ := parser.SplitFrontmatter(string(contentBytes))
-			if frontmatter == "" {
-				// Match writePageFileLocked: quote the display names (not only
-				// sanitized path segments) so frontmatter stays user-facing.
-				today := time.Now().Format("2006-01-02")
-				frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
-					strconv.Quote(notebook), strconv.Quote(section), strconv.Quote(page), strconv.Quote(today))
-			}
-
-			// Body is the user-edited source. Normalize to end with a single newline.
-			body := markdown
-			if body != "" && !strings.HasSuffix(body, "\n") {
-				body += "\n"
-			}
-			newContent := frontmatter
-			if !strings.HasSuffix(newContent, "\n") {
-				newContent += "\n"
-			}
-			newContent += body
-
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-				writeErr = err
-				return
-			}
-
-			parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(
-				newContent, safeNotebook, safeSection, safePage, fileOrDefaultDate(filePath), a.spacesPerTab,
-			)
-			if parseErr != nil {
-				writeErr = fmt.Errorf("parse after source save: %w", parseErr)
-				return
-			}
-			if idxErr := a.indexFile(source, meta.Notebook, meta.Section, meta.Page, parsedBlocks, meta, meta.Warnings...); idxErr != nil {
-				// Fail loud: disk write already landed, but search/graph would lag.
-				// Surface so the UI does not claim a fully successful save.
-				writeErr = fmt.Errorf("re-index after source save failed: %w", idxErr)
-				return
-			}
-			result = parsedBlocks
+			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, markdown, historyReasonSource)
 		})
 	}) // LockBlocksWrite
 

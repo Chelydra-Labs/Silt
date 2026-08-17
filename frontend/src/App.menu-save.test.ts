@@ -174,6 +174,7 @@ function registerFake(key: string, flush: () => Promise<boolean>): void {
       isDirty: () => true,
       flush,
       forceExternalReload: vi.fn(),
+      clearExternalReload: vi.fn(),
       setProposedEdit: () => false,
       clearProposedEdit: () => {},
       hasProposal: () => false,

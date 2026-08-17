@@ -38,7 +38,10 @@ type renameSingleFileStrategy struct {
 	staleSweep func()
 	// reconcile is the post-unlock navigation reconcile.
 	reconcile func() error
-	label     string
+	// relocateHistory moves path-keyed page history after a successful rename.
+	// Fail-open: a relocate error must not fail the rename.
+	relocateHistory func()
+	label           string
 }
 
 // renameSingleFile is the shared core for RenamePage and MovePage. It acquires
@@ -104,7 +107,15 @@ func (a *App) renameSingleFile(prepare func() (renameSingleFileStrategy, error))
 		// Sweep residual inbound links that landed after the under-lock
 		// re-collect but before rewrite (narrow residual TOCTOU window).
 		s.staleSweep()
-		return s.reconcile()
+		// File is already at the new path; history must follow even if
+		// nav reconcile fails (no rollback after renameStep).
+		if s.relocateHistory != nil {
+			s.relocateHistory()
+		}
+		if err := s.reconcile(); err != nil {
+			return err
+		}
+		return nil
 	}
 	return fmt.Errorf("%s: inbound lock set did not stabilize after concurrent link creates", s.label)
 }
@@ -143,6 +154,8 @@ type renameTreeStrategy struct {
 	reconcile func() error
 	// staleSweepFile is the post-unlock residual TOCTOU sweep per file.
 	staleSweepFile func(file renameFileSnapshot)
+	// relocateHistory moves path-keyed page history after a successful tree rename.
+	relocateHistory func(files []renameFileSnapshot)
 	// rollbackSource is the source arg to rollbackRename (resolved source for
 	// Section; literal "vault" for Notebook).
 	rollbackSource string
@@ -276,6 +289,9 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 		// Residual inbound sweep for each renamed page (post-unlock TOCTOU).
 		for _, file := range files {
 			s.staleSweepFile(file)
+		}
+		if s.relocateHistory != nil {
+			s.relocateHistory(files)
 		}
 		return nil
 	}

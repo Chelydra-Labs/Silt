@@ -321,6 +321,10 @@
         "signature": "GetPageType(notebook, section, page string) (PageTypeInfo, error)"
       },
       {
+        "name": "GetPageVersion",
+        "signature": "GetPageVersion(notebook, section, page, versionID string) (string, error)"
+      },
+      {
         "name": "GetPluginRegistry",
         "signature": "GetPluginRegistry() (parser.PluginRegistry, error)"
       },
@@ -423,6 +427,10 @@
       {
         "name": "ListNavigation",
         "signature": "ListNavigation() (parser.NavigationTree, error)"
+      },
+      {
+        "name": "ListPageVersions",
+        "signature": "ListPageVersions(notebook, section, page string) ([]PageVersionInfo, error)"
       },
       {
         "name": "ListPlugins",
@@ -873,6 +881,10 @@
         "signature": "RestoreExampleTypes(ctx context.Context) ([]string, error)"
       },
       {
+        "name": "RestorePageVersion",
+        "signature": "RestorePageVersion(notebook, section, page, versionID string) error"
+      },
+      {
         "name": "RevealNotebookInOS",
         "signature": "RevealNotebookInOS(notebook string) error"
       },
@@ -1184,6 +1196,8 @@
       "frontend/src/components/editor/GlobalReplaceModal.test.ts",
       "frontend/src/components/editor/MarkdownSourceViewer.svelte",
       "frontend/src/components/editor/MarkdownSourceViewer.svelte.test.ts",
+      "frontend/src/components/editor/PageHistoryModal.svelte",
+      "frontend/src/components/editor/PageHistoryModal.test.ts",
       "frontend/src/components/editor/PluginNoteBanners.test.ts",
       "frontend/src/components/editor/TaskBlockView.test.ts",
       "frontend/src/components/editor/controllers/useSuggests.svelte.ts",

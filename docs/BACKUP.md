@@ -63,3 +63,22 @@ Both exclude the reproducible search index (rebuilt on first open), and neither
 touches linked external notebooks.
 
 See `SPECS.md` §3.4 for the full `.silt-vault` format specification.
+
+## Page history is not a backup
+
+Opt-in page history (`Settings → Editor → Capture page history`) keeps
+previous versions of a page under `.system/history`. Those snapshots are
+included in a `.silt-vault` archive because `.system/` is archived. They
+are not a substitute for export or a copy of the vault on another disk:
+they live in the vault, sync with it, and are not encrypted. Pages larger
+than 1 MB are not snapshotted.
+
+**How to use it**
+
+1. Turn on **Capture page history** in Settings → Editor.
+2. Open **Page history** from the editor chrome or the page’s sidebar menu.
+3. Preview a version (read-only), then Restore if you want that body back.
+   The current page is snapshotted first so restore can be undone.
+
+Deleting a page leaves its history on disk. Trash still holds the latest
+file; older versions have no picker in this release.

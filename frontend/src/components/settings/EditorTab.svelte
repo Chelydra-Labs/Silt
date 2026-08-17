@@ -66,7 +66,10 @@
       draft.editor.font_size_px > 0 &&
       draft.editor.tab_indent_spaces > 0 &&
       draft.editor.line_height > 0 &&
-      draft.editor.auto_save_delay_ms >= 0
+      draft.editor.auto_save_delay_ms >= 0 &&
+      (draft.editor.max_versions_per_page == null ||
+        (draft.editor.max_versions_per_page >= 1 &&
+          draft.editor.max_versions_per_page <= 500))
   )
 
   let themeBodyFont = $derived(themeState.darkTokens['--font-body'] ?? '')
@@ -421,6 +424,78 @@
                 Typewriter mode (keep active line centered)
               </span>
             </label>
+          </div>
+
+          <div class="space-y-2.5 pt-1">
+            <label class="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                checked={draft.editor?.auto_versioning_enabled === true}
+                onchange={(e: Event) => {
+                  const enabled = (e.currentTarget as HTMLInputElement).checked
+                  const editor = draftEditor()
+                  editor.auto_versioning_enabled = enabled
+                  if (enabled) {
+                    const cur = editor.max_versions_per_page
+                    if (cur == null || cur < 1 || cur > 500) {
+                      editor.max_versions_per_page = 50
+                    }
+                  }
+                  touch()
+                }}
+                type="checkbox"
+                aria-describedby="page-history-settings-help"
+                class="w-4 h-4 accent-[var(--color-accent-primary-end)] cursor-pointer"
+              />
+              <span class="text-text-primary text-type-md font-body-md">
+                Capture page history
+              </span>
+            </label>
+            <p
+              id="page-history-settings-help"
+              class="text-text-muted text-type-sm font-body-md max-w-xl pl-6"
+            >
+              Snapshots stay in this vault under
+              <span class="font-mono">.system/history</span>. They sync with the
+              vault, are not encrypted, and are not a substitute for Settings →
+              General → Export vault…. Pages larger than 1 MB are not
+              snapshotted.
+            </p>
+            {#if draft.editor?.auto_versioning_enabled === true}
+              <label class="flex flex-col gap-1.5 max-w-xs pl-6">
+                <span
+                  class="text-text-muted text-type-2xs font-semibold uppercase tracking-wider"
+                  >Versions to keep per page</span
+                >
+                <input
+                  value={draft.editor?.max_versions_per_page ?? 50}
+                  oninput={(e: Event) => {
+                    const raw = (e.currentTarget as HTMLInputElement).value
+                    const n = Number(raw)
+                    if (!Number.isFinite(n)) return
+                    draftEditor().max_versions_per_page = Math.min(
+                      500,
+                      Math.max(1, Math.round(n))
+                    )
+                    touch()
+                  }}
+                  onblur={(e: Event) => {
+                    const el = e.currentTarget as HTMLInputElement
+                    const n = Number(el.value)
+                    const clamped = !Number.isFinite(n)
+                      ? 50
+                      : Math.min(500, Math.max(1, Math.round(n)))
+                    draftEditor().max_versions_per_page = clamped
+                    el.value = String(clamped)
+                    touch()
+                  }}
+                  type="number"
+                  min="1"
+                  max="500"
+                  step="1"
+                  class="bg-surface-panel border border-surface-panel-border rounded-lg px-3 py-2 text-text-primary text-type-md font-body-md outline-none focus:border-accent-primary-start transition-colors"
+                />
+              </label>
+            {/if}
           </div>
         </div>
       </div>
