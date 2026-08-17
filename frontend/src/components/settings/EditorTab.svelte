@@ -457,7 +457,8 @@
               Snapshots stay in this vault under
               <span class="font-mono">.system/history</span>. They sync with the
               vault, are not encrypted, and are not a substitute for Settings →
-              General → Export vault….
+              General → Export vault…. Pages larger than 1 MB are not
+              snapshotted.
             </p>
             {#if draft.editor?.auto_versioning_enabled === true}
               <label class="flex flex-col gap-1.5 max-w-xs pl-6">

@@ -440,7 +440,8 @@
               </button>
             {:else}
               <p class="text-type-sm font-body-md text-text-muted">
-                Snapshots appear after the next saved change to this page.
+                Snapshots appear after the next saved change to this page. Pages
+                larger than 1 MB are not snapshotted.
               </p>
             {/if}
           </div>

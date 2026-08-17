@@ -31,9 +31,13 @@ const (
 	systemDirName        = ".system"
 	pagesDirName         = "pages"
 	blobsDirName         = "blobs"
-	emptySectionName     = "__root__"
-	manifestExt          = ".jsonl"
-	blobExt              = ".md.gz"
+	// EmptySectionName is the on-disk stand-in for a notebook-root page
+	// (section == ""). CreateSection / validateSectionPath reject this
+	// segment so a real section cannot alias those snapshots.
+	EmptySectionName = "__root__"
+	emptySectionName = EmptySectionName
+	manifestExt      = ".jsonl"
+	blobExt          = ".md.gz"
 )
 
 // Skip reasons returned by Capture when no new version is stored.
@@ -668,6 +672,12 @@ func sanitizeSource(source string) (string, error) {
 	source = strings.TrimSpace(source)
 	if source == "" {
 		source = "vault"
+	}
+	// Linked roots already isolate storage via historyRoot. A vault-local
+	// linked:<id> would orphan snapshots on unlink/relink; keep one stable
+	// prefix on that root.
+	if strings.HasPrefix(source, "linked:") || strings.HasPrefix(source, "linked_") {
+		source = "linked"
 	}
 	source = strings.ReplaceAll(source, ":", "_")
 	return sanitizeSegment(source)

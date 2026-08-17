@@ -731,7 +731,10 @@
   $effect(() => {
     const key = `${blocks.map((b) => b.id).join(',')}:${blocks.length}`
     if (!editorInstance || editorInstance.isDestroyed) return
-    if (key === lastSyncedBlocksKey) return
+    // Restore / global-replace keep the same block IDs. The ID-set key would
+    // skip setContent and leave the pre-restore buffer on screen (the next
+    // keystroke then writes that buffer back over the restored file).
+    if (key === lastSyncedBlocksKey && !pendingExternalReload) return
     // Don't clobber the editor's content while the user is actively editing.
     // The editor is the source of truth until blur; external updates wait —
     // unless a flush-then-replace sequence (pendingExternalReload) has made

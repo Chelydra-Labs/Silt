@@ -223,7 +223,11 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 				if sn == "" || sp == "" {
 					return fmt.Errorf("op %d: create without afterId needs notebook + page", i)
 				}
-				r.notebook, r.section, r.page = sn, sanitizePathSegment(op.Section), sp
+				sec, secErr := validateSectionPath(op.Section, true)
+				if secErr != nil {
+					return fmt.Errorf("op %d: invalid section: %w", i, secErr)
+				}
+				r.notebook, r.section, r.page = sn, sec, sp
 				r.source = a.resolveSourceByName(r.notebook)
 			}
 		case "delete", "move":
@@ -238,7 +242,11 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 				tn := sanitizePathSegment(op.Notebook)
 				tp := sanitizePathSegment(op.Page)
 				if tn != "" && tp != "" {
-					r.notebook, r.section, r.page = tn, sanitizePathSegment(op.Section), tp
+					tsec, secErr := validateSectionPath(op.Section, true)
+					if secErr != nil {
+						return fmt.Errorf("op %d: invalid section: %w", i, secErr)
+					}
+					r.notebook, r.section, r.page = tn, tsec, tp
 					r.source = a.resolveSourceByName(r.notebook)
 				}
 			}
@@ -352,7 +360,10 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 					r.origSection != r.section ||
 					r.origPage != r.page) {
 				sn := sanitizePathSegment(r.origNotebook)
-				ss := sanitizePathSegment(r.origSection)
+				ss, secErr := validateSectionPath(r.origSection, true)
+				if secErr != nil {
+					return fmt.Errorf("cross-page move: invalid source section: %w", secErr)
+				}
 				sp := sanitizePathSegment(r.origPage)
 				origDir, dirErr := a.resolveNotebookDir(sn, r.origSource)
 				if dirErr != nil {

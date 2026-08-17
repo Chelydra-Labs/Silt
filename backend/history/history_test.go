@@ -339,9 +339,22 @@ func TestCapture_LinkedSourceIsFilesystemSafe(t *testing.T) {
 	if skip, err := Capture(root, loc, []byte("linked"), "plugin", time.Now().UTC(), Options{}); err != nil || skip != "" {
 		t.Fatalf("Capture: skip=%q err=%v", skip, err)
 	}
-	man := filepath.Join(root, ".system", "history", "pages", "linked_abc123", "Share", "Docs", "Note.jsonl")
+	man := filepath.Join(root, ".system", "history", "pages", "linked", "Share", "Docs", "Note.jsonl")
 	if _, err := os.Stat(man); err != nil {
 		t.Fatalf("expected linked source path %s: %v", man, err)
+	}
+}
+
+func TestCapture_LinkedSourceStableAcrossIDs(t *testing.T) {
+	root := t.TempDir()
+	first := Locator{Source: "linked:abc123", Notebook: "Share", Section: "Docs", Page: "Note"}
+	if skip, err := Capture(root, first, []byte("v1"), "plugin", time.Now().UTC(), Options{}); err != nil || skip != "" {
+		t.Fatalf("Capture first: skip=%q err=%v", skip, err)
+	}
+	second := Locator{Source: "linked:zzz999", Notebook: "Share", Section: "Docs", Page: "Note"}
+	list, err := List(root, second)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("List under new linked id: %v len=%d", err, len(list))
 	}
 }
 

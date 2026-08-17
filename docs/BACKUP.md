@@ -70,7 +70,8 @@ Opt-in page history (`Settings → Editor → Capture page history`) keeps
 previous versions of a page under `.system/history`. Those snapshots are
 included in a `.silt-vault` archive because `.system/` is archived. They
 are not a substitute for export or a copy of the vault on another disk:
-they live in the vault, sync with it, and are not encrypted.
+they live in the vault, sync with it, and are not encrypted. Pages larger
+than 1 MB are not snapshotted.
 
 **How to use it**
 

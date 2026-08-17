@@ -63,8 +63,11 @@ func (a *App) maybeCapturePageVersion(loc history.Locator, prev, incoming []byte
 			}
 		}
 	}
-	if _, err := history.Capture(root, loc, prev, reason, time.Now().UTC(), history.Options{MaxVersions: max}); err != nil {
+	skip, err := history.Capture(root, loc, prev, reason, time.Now().UTC(), history.Options{MaxVersions: max})
+	if err != nil {
 		log.Printf("page history: capture failed: %v", err)
+	} else if skip == history.SkipTooLarge {
+		log.Printf("page history: skipped %s/%s/%s: page exceeds 1 MiB", loc.Notebook, loc.Section, loc.Page)
 	}
 }
 
@@ -266,6 +269,9 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 		}
 	}
 	a.coordinator.ReleaseBlockMutexes(removed)
+	// Page-scoped emit so Edit-mode TipTap reloads even when IDs are unchanged
+	// or the restored body has no block IDs (empty / first version).
+	a.emitBlockChanged("", safeNotebook, safeSection, safePage, "")
 	for _, b := range result {
 		if b.ID != "" {
 			a.emitBlockChanged(b.ID, safeNotebook, safeSection, safePage, b.FileDate)

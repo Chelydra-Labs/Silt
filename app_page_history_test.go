@@ -689,6 +689,94 @@ func TestPageHistory_InvalidFrontmatterEditDoesNotCapture(t *testing.T) {
 	}
 }
 
+func TestPageHistory_RestoreEmitsPageScopedBlockChanged(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "EmitMe", "# original\n")
+	savePageBody(t, app, "Work", "Journal", "EmitMe", "# edited\n")
+	list, err := app.ListPageVersions("Work", "Journal", "EmitMe")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+	var got []parser.BlockChangedEvent
+	app.eventEmit = func(name string, data ...any) {
+		if name != string(EventBlockChanged) || len(data) == 0 {
+			return
+		}
+		if ev, ok := data[0].(parser.BlockChangedEvent); ok {
+			got = append(got, ev)
+		}
+	}
+	if err := app.RestorePageVersion("Work", "Journal", "EmitMe", list[0].ID); err != nil {
+		t.Fatalf("RestorePageVersion: %v", err)
+	}
+	var sawPageScoped bool
+	for _, ev := range got {
+		if ev.ID == "" && ev.Notebook == "Work" && ev.Section == "Journal" && ev.Page == "EmitMe" {
+			sawPageScoped = true
+			break
+		}
+	}
+	if !sawPageScoped {
+		t.Fatalf("restore did not emit page-scoped block:changed, got %+v", got)
+	}
+}
+
+func TestPageHistory_MCPCreateOnNestedSection(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 300)
+	seedHistoryPage(t, app, "Work", "Projects/Active", "Nested", "# start\n")
+	if _, err := app.createBlockWithReason("", "Work", "Projects/Active", "Nested", "NOTE", "agent note", historyReasonMCP); err != nil {
+		t.Fatalf("createBlockWithReason: %v", err)
+	}
+	list, err := app.ListPageVersions("Work", "Projects/Active", "Nested")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List nested: %v len=%d", err, len(list))
+	}
+	flat, err := app.ListPageVersions("Work", "ProjectsActive", "Nested")
+	if err != nil {
+		t.Fatalf("List flattened: %v", err)
+	}
+	if len(flat) != 0 {
+		t.Fatalf("MCP create wrote history under flattened section, got %d", len(flat))
+	}
+	live := filepath.Join(app.vaultPath, "Work", "Projects", "Active", "Nested.md")
+	if _, err := os.Stat(live); err != nil {
+		t.Fatalf("nested page missing after MCP create: %v", err)
+	}
+	wrong := filepath.Join(app.vaultPath, "Work", "ProjectsActive", "Nested.md")
+	if _, err := os.Stat(wrong); !os.IsNotExist(err) {
+		t.Fatalf("MCP create wrote flattened path %s", wrong)
+	}
+}
+
+func TestCreateSection_RejectsHistoryRootSentinel(t *testing.T) {
+	app := newTestApp(t)
+	if err := app.CreateSection("Work", "", history.EmptySectionName); err == nil {
+		t.Fatal("CreateSection accepted reserved empty-section sentinel")
+	}
+	if _, err := validateSectionPath(history.EmptySectionName, false); err == nil {
+		t.Fatal("validateSectionPath accepted reserved empty-section sentinel")
+	}
+	if _, err := validateSectionPath("Projects/"+history.EmptySectionName, true); err == nil {
+		t.Fatal("validateSectionPath accepted reserved sentinel as a nested segment")
+	}
+}
+
+func TestPageHistory_RootPageDoesNotCollideWithReservedSection(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "", "Inbox", "# root page\n")
+	savePageBody(t, app, "Work", "", "Inbox", "# edited\n")
+	if err := app.CreateSection("Work", "", history.EmptySectionName); err == nil {
+		t.Fatal("CreateSection accepted reserved sentinel after root-page history existed")
+	}
+	list, err := app.ListPageVersions("Work", "", "Inbox")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("root-page history: %v len=%d", err, len(list))
+	}
+}
+
 func TestPageHistory_StoreIndependentOfDB(t *testing.T) {
 	root := t.TempDir()
 	loc := history.Locator{Source: "vault", Notebook: "Work", Section: "Journal", Page: "Solo"}
