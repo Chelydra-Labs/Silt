@@ -199,10 +199,13 @@ func (a *App) PluginRawQuery(pluginID, sessionToken, sqlText string, params []an
 }
 
 // PluginMutateBlock wraps MutateBlock for the plugin SDK, returning success.
-// Session-token verified (#236) — a plugin cannot mutate another plugin's
-// blocks by spoofing the call without the SDK.
+// Session-token verified (#236). Gated by CapContentMutate — a third-party
+// plugin with only a session token must not rewrite vault block text.
 func (a *App) PluginMutateBlock(pluginID, sessionToken, blockID, newText string) (bool, error) {
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return false, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return false, err
 	}
 	a.vaultMu.RLock()
@@ -235,9 +238,13 @@ type PluginBlockStateResult struct {
 }
 
 // PluginUpdateBlockState wraps UpdateBlockState for the plugin SDK.
-// Session-token verified (#236).
+// Session-token verified (#236). Gated by CapContentMutate — same privilege
+// as every other Plugin* content writer.
 func (a *App) PluginUpdateBlockState(pluginID, sessionToken, blockID, status string) (PluginBlockStateResult, error) {
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return PluginBlockStateResult{}, err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return PluginBlockStateResult{}, err
 	}
 	spawnedID, err := a.updateBlockStateWithReason(blockID, status, historyReasonPlugin)

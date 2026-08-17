@@ -1055,6 +1055,9 @@ func TestPluginUpdateBlockState_WrapsUpdate(t *testing.T) {
 	taskID := "55555555-5555-5555-5555-555555555555"
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "do it")
 	tok := registerTestSession(t, app, "test-plugin")
+	if err := app.RequestCapability("test-plugin", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
 
 	result, err := app.PluginUpdateBlockState("test-plugin", tok, taskID, "DONE")
 	if err != nil || !result.Ok {
@@ -1064,6 +1067,29 @@ func TestPluginUpdateBlockState_WrapsUpdate(t *testing.T) {
 	_ = app.db.SQLDB().QueryRow("SELECT status FROM tasks WHERE block_id = ?", taskID).Scan(&status)
 	if status != "DONE" {
 		t.Errorf("expected status DONE, got %q", status)
+	}
+}
+
+func TestPluginUpdateBlockState_RequiresCapability(t *testing.T) {
+	app := newTestApp(t)
+	taskID := "55555555-5555-5555-5555-555555555555"
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "do it")
+	tok := registerTestSession(t, app, "third-party")
+
+	if result, err := app.PluginUpdateBlockState("third-party", tok, taskID, "DONE"); err == nil {
+		t.Fatalf("expected capability denial without content-mutate grant, got ok=%v", result.Ok)
+	}
+	var status string
+	_ = app.db.SQLDB().QueryRow("SELECT status FROM tasks WHERE block_id = ?", taskID).Scan(&status)
+	if status == "DONE" {
+		t.Fatal("denied PluginUpdateBlockState still changed task status")
+	}
+
+	if err := app.RequestCapability("third-party", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if result, err := app.PluginUpdateBlockState("third-party", tok, taskID, "DONE"); err != nil || !result.Ok {
+		t.Fatalf("PluginUpdateBlockState with grant: ok=%v err=%v", result.Ok, err)
 	}
 }
 

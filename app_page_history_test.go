@@ -10,6 +10,8 @@ import (
 
 	"silt/backend/history"
 	"silt/backend/parser"
+	"silt/backend/plugins"
+	"silt/backend/vault"
 )
 
 func enablePageHistory(t *testing.T, app *App, max, interval int) {
@@ -438,6 +440,9 @@ func TestPluginMutateBlock_CollapsesNewlines(t *testing.T) {
 	taskID := "55555555-5555-4555-8555-555555555555"
 	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "original text")
 	tok := registerTestSession(t, app, "test-plugin")
+	if err := app.RequestCapability("test-plugin", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
 
 	ok, err := app.PluginMutateBlock("test-plugin", tok, taskID, "line one\nline two")
 	if err != nil || !ok {
@@ -457,8 +462,62 @@ func TestPluginMutateBlock_CollapsesNewlines(t *testing.T) {
 	}
 }
 
+func TestPluginMutateBlock_RequiresCapability(t *testing.T) {
+	app := newTestApp(t)
+	taskID := "55555555-5555-4555-8555-555555555555"
+	writeSamplePage(t, app, "Work", "Journal", "Daily", "2026-06-13", taskID, "original text")
+	tok := registerTestSession(t, app, "third-party")
+
+	if ok, err := app.PluginMutateBlock("third-party", tok, taskID, "hijacked"); err == nil {
+		t.Fatalf("expected capability denial without content-mutate grant, got ok=%v", ok)
+	}
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "Daily.md")
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), "hijacked") {
+		t.Fatal("denied PluginMutateBlock still wrote the file")
+	}
+
+	if err := app.RequestCapability("third-party", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if ok, err := app.PluginMutateBlock("third-party", tok, taskID, "allowed"); err != nil || !ok {
+		t.Fatalf("PluginMutateBlock with grant: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestPluginPageWriters_RequireCapability(t *testing.T) {
+	app := newTestApp(t)
+	tok := registerTestSession(t, app, "third-party")
+	if _, err := app.PluginCreatePage("third-party", tok, "Work", "", "Hijack", "2026-06-13"); err == nil {
+		t.Fatal("expected PluginCreatePage capability denial")
+	}
+	if err := app.PluginCreateSection("third-party", tok, "Work", "HijackSec"); err == nil {
+		t.Fatal("expected PluginCreateSection capability denial")
+	}
+	if err := app.PluginCreateNotebook("third-party", tok, "HijackNB"); err == nil {
+		t.Fatal("expected PluginCreateNotebook capability denial")
+	}
+	if err := app.PluginDeletePage("third-party", tok, "Work", "Journal", "Daily"); err == nil {
+		t.Fatal("expected PluginDeletePage capability denial")
+	}
+	if err := app.PluginRenamePage("third-party", tok, "Work", "Journal", "Daily", "Stolen"); err == nil {
+		t.Fatal("expected PluginRenamePage capability denial")
+	}
+	if _, err := os.Stat(filepath.Join(app.vaultPath, "Work", "Hijack.md")); !os.IsNotExist(err) {
+		t.Fatal("denied PluginCreatePage still created a page")
+	}
+}
+
 func TestPluginMutateBlock_NoVaultReturnsError(t *testing.T) {
-	app := &App{pluginSessions: map[string]string{"tok": "test-plugin"}}
+	app := &App{
+		pluginSessions: map[string]string{"tok": "test-plugin"},
+		grants: vault.GrantsStore{
+			"test-plugin": {string(plugins.CapContentMutate): plugins.QualGranted},
+		},
+	}
 	ok, err := app.PluginMutateBlock("test-plugin", "tok", "block-id", "text")
 	if err == nil || ok {
 		t.Fatalf("expected vault-not-loaded error, got ok=%v err=%v", ok, err)

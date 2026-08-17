@@ -505,6 +505,9 @@ func (a *App) PluginCreatePage(pluginID, sessionToken, notebook, section, page, 
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return "", err
 	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return "", err
+	}
 	return a.CreatePage(notebook, section, page, dateStr)
 }
 
@@ -527,6 +530,9 @@ func (a *App) PluginCreateSection(pluginID, sessionToken, notebook, section stri
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return err
 	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return err
+	}
 	return a.CreateSection(notebook, "", section)
 }
 
@@ -534,6 +540,9 @@ func (a *App) PluginCreateSection(pluginID, sessionToken, notebook, section stri
 // Session-token verified (#236).
 func (a *App) PluginCreateNotebook(pluginID, sessionToken, name string) error {
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return err
 	}
 	return a.CreateNotebook(name)
@@ -545,6 +554,9 @@ func (a *App) PluginDeletePage(pluginID, sessionToken, notebook, section, page s
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
 		return err
 	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
+		return err
+	}
 	return a.DeletePage(notebook, section, page)
 }
 
@@ -552,6 +564,9 @@ func (a *App) PluginDeletePage(pluginID, sessionToken, notebook, section, page s
 // Session-token verified (#236).
 func (a *App) PluginRenamePage(pluginID, sessionToken, notebook, section, oldName, newName string) error {
 	if err := a.validatePluginSession(pluginID, sessionToken); err != nil {
+		return err
+	}
+	if err := a.requireGrant(pluginID, plugins.CapContentMutate); err != nil {
 		return err
 	}
 	return a.RenamePage(notebook, section, oldName, newName)
