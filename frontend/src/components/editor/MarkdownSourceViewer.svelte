@@ -93,6 +93,10 @@
   /** Fingerprint of blocks we just saved — skip false conflict on self-refresh. */
   let lastSelfSavedKey: string | null = null
   let seedSeq = 0
+  // Same contract as TipTap: arm before an out-of-band write, reseed only
+  // after the post-write blocks update. Immediate fetch would load the
+  // pre-restore file and can win if block:changed never changes blocksKey.
+  let pendingExternalReload = false
 
   // --- Local editing history (#861) --------------------------------------
   // One history per mounted viewer. Tab/Shift-Tab, paste, selection
@@ -241,6 +245,19 @@
     const key = blocksKey(next)
     if (lastBlocksKey === null) {
       lastBlocksKey = key
+      void seedFromDiskOrBlocks(next)
+      return
+    }
+    if (pendingExternalReload) {
+      pendingExternalReload = false
+      lastBlocksKey = key
+      conflictPending = false
+      saveError = null
+      dirty = false
+      if (saveTimer) {
+        clearTimeout(saveTimer)
+        saveTimer = null
+      }
       void seedFromDiskOrBlocks(next)
       return
     }
@@ -407,9 +424,12 @@
         return await flushSave()
       },
       forceExternalReload: () => {
-        reloadFromDisk()
+        pendingExternalReload = true
       },
-      clearExternalReload: () => {},
+      clearExternalReload: () => {
+        pendingExternalReload = false
+        seedSeq++
+      },
       setProposedEdit: () => false,
       clearProposedEdit: () => {},
       hasProposal: () => false,

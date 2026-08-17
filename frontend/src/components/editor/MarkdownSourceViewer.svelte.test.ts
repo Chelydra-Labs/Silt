@@ -109,7 +109,10 @@ describe('MarkdownSourceViewer', () => {
     mocks.RefreshFocusLock.mockClear()
     mocks.themeState.mode = 'dark'
   })
-  afterEach(() => cleanup())
+  afterEach(() => {
+    cleanup()
+    _resetEditorRegistryForTests()
+  })
 
   it('renders the plain markdown as a fallback before the highlighter resolves', () => {
     // Never-resolving highlighter simulates the lazy grammar load window.
@@ -1559,11 +1562,11 @@ describe('MarkdownSourceViewer editor registry (#884)', () => {
     )
   })
 
-  it('forceExternalReload reseeds from disk and clears dirty', async () => {
+  it('forceExternalReload reseeds from disk after the post-write blocks update', async () => {
     mocks.fetchPageMarkdown
       .mockResolvedValueOnce(FETCH_BODY)
-      .mockResolvedValueOnce('# After global replace')
-    render(MarkdownSourceViewer, {
+      .mockResolvedValueOnce('# After restore')
+    const view = render(MarkdownSourceViewer, {
       props: {
         blocks: BLOCKS,
         filePath: 'Work/Page.md',
@@ -1582,7 +1585,92 @@ describe('MarkdownSourceViewer editor registry (#884)', () => {
     expect(handle.isDirty()).toBe(true)
 
     handle.forceExternalReload()
-    await waitFor(() => expect(ta.value).toBe('# After global replace'))
+    expect(mocks.fetchPageMarkdown).toHaveBeenCalledTimes(1)
+
+    await view.rerender({
+      blocks: [mkBlock('# After restore', { clean: '# After restore' })],
+      filePath: 'Work/Page.md',
+      notebook: 'Work',
+      section: 'Sec',
+      page: 'Page'
+    })
+    await waitFor(() => expect(ta.value).toBe('# After restore'))
+    expect(mocks.fetchPageMarkdown).toHaveBeenCalledTimes(2)
     expect(handle.isDirty()).toBe(false)
+  })
+
+  it('forceExternalReload reseeds even when block ids and text stay the same', async () => {
+    const stable = [mkBlock('# Same ids', { clean: '# Same ids' })]
+    stable[0]!.id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    mocks.fetchPageMarkdown
+      .mockResolvedValueOnce(FETCH_BODY)
+      .mockResolvedValueOnce('# Restored body')
+    const view = render(MarkdownSourceViewer, {
+      props: {
+        blocks: stable,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    const ta = (await waitFor(() =>
+      screen.getByRole('textbox', { name: /markdown source/i })
+    )) as HTMLTextAreaElement
+    await waitFor(() => expect(ta.value).toBe(FETCH_BODY))
+
+    const handle = getEditor(editorKey('Work', 'Sec', 'Page'))!
+    handle.forceExternalReload()
+    expect(mocks.fetchPageMarkdown).toHaveBeenCalledTimes(1)
+
+    await view.rerender({
+      blocks: [
+        {
+          ...stable[0]!,
+          raw_text: '# Same ids',
+          clean_text: '# Same ids'
+        }
+      ],
+      filePath: 'Work/Page.md',
+      notebook: 'Work',
+      section: 'Sec',
+      page: 'Page'
+    })
+    await waitFor(() => expect(ta.value).toBe('# Restored body'))
+    expect(mocks.fetchPageMarkdown).toHaveBeenCalledTimes(2)
+  })
+
+  it('clearExternalReload cancels a pending seed so a failed restore keeps the buffer', async () => {
+    mocks.fetchPageMarkdown
+      .mockResolvedValueOnce(FETCH_BODY)
+      .mockResolvedValueOnce('# Should not apply')
+    const view = render(MarkdownSourceViewer, {
+      props: {
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    const ta = (await waitFor(() =>
+      screen.getByRole('textbox', { name: /markdown source/i })
+    )) as HTMLTextAreaElement
+    await waitFor(() => expect(ta.value).toBe(FETCH_BODY))
+
+    const handle = getEditor(editorKey('Work', 'Sec', 'Page'))!
+    handle.forceExternalReload()
+    handle.clearExternalReload()
+
+    await view.rerender({
+      blocks: BLOCKS,
+      filePath: 'Work/Page.md',
+      notebook: 'Work',
+      section: 'Sec',
+      page: 'Page'
+    })
+    await tick()
+    expect(ta.value).toBe(FETCH_BODY)
+    expect(mocks.fetchPageMarkdown).toHaveBeenCalledTimes(1)
   })
 })
