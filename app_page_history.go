@@ -443,7 +443,15 @@ func (a *App) collectDeletedHistory(root, wantSource string, livePath func(histo
 			log.Printf("page history: skip leftover with invalid locator %q/%q/%q", loc.Notebook, loc.Section, loc.Page)
 			continue
 		}
+		_, resolvedRoot, liveFile, _, _, _, _, rerr := a.resolvePageHistory(safe.Notebook, safe.Section, safe.Page)
+		if rerr == nil && resolvedRoot != "" && resolvedRoot != root {
+			log.Printf("page history: skip leftover %q/%q/%q — name now resolves to a different store", safe.Notebook, safe.Section, safe.Page)
+			continue
+		}
 		p := livePath(safe)
+		if rerr == nil && liveFile != "" {
+			p = liveFile
+		}
 		if !isPathWithinRoot(p, root) {
 			log.Printf("page history: skip leftover outside history root %q/%q/%q", safe.Notebook, safe.Section, safe.Page)
 			continue
@@ -506,7 +514,7 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 		return NewIPCError(CodeNavigationNotFound, "page not found")
 	}
 	if destRoot != origRoot {
-		return NewIPCError(CodeInvalidNavigationPath, "restore that snapshot in the same notebook it came from")
+		return NewIPCError(CodeInvalidNavigationPath, "restore that snapshot in the same vault or linked notebook it came from")
 	}
 	destNotebookDir, err := a.resolveNotebookDir(destNB, destSource)
 	if err != nil {
@@ -562,6 +570,10 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 			writeErr = historyReadError(rerr)
 			return
 		}
+		if err := os.MkdirAll(filepath.Dir(destFile), 0755); err != nil {
+			writeErr = historyWriteError(err)
+			return
+		}
 		needRelocate := destLoc != origLoc && !history.SameStore(origRoot, origLoc, destLoc)
 		if needRelocate {
 			leftover, lerr := history.List(origRoot, origLoc)
@@ -578,10 +590,6 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 				return
 			}
 		}
-		if err := os.MkdirAll(filepath.Dir(destFile), 0755); err != nil {
-			writeErr = historyWriteError(err)
-			return
-		}
 		// Remapped snapshot supplies frontmatter (type/tags/created/…). Skip
 		// capture: there is no live file, and a synthetic prev would evict a
 		// real version at the cap.
@@ -597,7 +605,10 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 
 	_ = result
 	a.emitBlockChanged("", destNB, destSec, destPg, "")
-	return a.reconcileNavigationPage(destNB, destSec, destPg, destPg, false)
+	if err := a.reconcileNavigationPage(destNB, destSec, destPg, destPg, false); err != nil {
+		log.Printf("page history: restore reconcile failed for %s/%s/%s: %v", destNB, destSec, destPg, err)
+	}
+	return nil
 }
 
 // remapSnapshotIdentity keeps snapshot frontmatter (type, tags, created, …)

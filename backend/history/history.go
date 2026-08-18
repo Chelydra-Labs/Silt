@@ -111,8 +111,6 @@ func List(root string, loc Locator) ([]Entry, error) {
 // manifest. Unreadable files are skipped (fail open). A missing pages
 // directory is an empty result.
 func ListManifests(root string) ([]Locator, error) {
-	mu.Lock()
-	defer mu.Unlock()
 	pages := filepath.Join(root, systemDirName, historyDirName, pagesDirName)
 	absPages, err := filepath.Abs(pages)
 	if err != nil {
@@ -387,8 +385,12 @@ func mergeRelocateLocked(root string, oldLoc, newLoc Locator, oldMan, oldBlobs, 
 	if err := writeFileAtomic(newMan, buf.Bytes()); err != nil {
 		return err
 	}
-	_ = os.Remove(oldMan)
-	_ = os.RemoveAll(oldBlobs)
+	if err := os.Remove(oldMan); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.RemoveAll(oldBlobs); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 

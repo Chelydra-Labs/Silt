@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1620,6 +1621,90 @@ func TestRestoreDeletedPageVersion_DestIOHidesPath(t *testing.T) {
 	if ipc.Code == CodeNavigationUnavailable && ipc.Message != "could not write the page" {
 		t.Fatalf("dest I/O message = %q", ipc.Message)
 	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", list[0].ID, "", "", ""); err != nil {
+		t.Fatalf("leftover should stay restorable after dest I/O failure: %v", err)
+	}
+}
+
+func TestRestoreDeletedPageVersion_ConcurrentDestOccupancy(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "GoneA", "# a1\n")
+	savePageBody(t, app, "Work", "Journal", "GoneA", "# a2\n")
+	seedHistoryPage(t, app, "Work", "Journal", "GoneB", "# b1\n")
+	savePageBody(t, app, "Work", "Journal", "GoneB", "# b2\n")
+	listA, err := app.ListPageVersions("Work", "Journal", "GoneA")
+	if err != nil || len(listA) == 0 {
+		t.Fatalf("List A: %v", err)
+	}
+	listB, err := app.ListPageVersions("Work", "Journal", "GoneB")
+	if err != nil || len(listB) == 0 {
+		t.Fatalf("List B: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "GoneA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.DeletePage("Work", "Journal", "GoneB"); err != nil {
+		t.Fatal(err)
+	}
+	var (
+		wg   sync.WaitGroup
+		errA error
+		errB error
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		errA = app.RestoreDeletedPageVersion("Work", "Journal", "GoneA", listA[0].ID, "Work", "Journal", "Taken")
+	}()
+	go func() {
+		defer wg.Done()
+		errB = app.RestoreDeletedPageVersion("Work", "Journal", "GoneB", listB[0].ID, "Work", "Journal", "Taken")
+	}()
+	wg.Wait()
+	if (errA == nil) == (errB == nil) {
+		t.Fatalf("expected exactly one dest occupant to succeed, a=%v b=%v", errA, errB)
+	}
+	fail := errA
+	if errB != nil {
+		fail = errB
+	}
+	var ipc *IPCError
+	if !errors.As(fail, &ipc) || ipc.Code != CodePageExists {
+		t.Fatalf("losing restore err = %v", fail)
+	}
+}
+
+func TestRestoreDeletedPageVersion_EmitsPageScopedBlockChanged(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	var got []parser.BlockChangedEvent
+	app.eventEmit = func(name string, data ...any) {
+		if name != string(EventBlockChanged) || len(data) == 0 {
+			return
+		}
+		if ev, ok := data[0].(parser.BlockChangedEvent); ok {
+			got = append(got, ev)
+		}
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", list[0].ID, "", "", ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	for _, ev := range got {
+		if ev.ID == "" && ev.Notebook == "Work" && ev.Section == "Journal" && ev.Page == "Gone" {
+			return
+		}
+	}
+	t.Fatalf("deleted restore did not emit page-scoped block:changed, got %+v", got)
 }
 
 func TestHistoryWriteError_HidesPath(t *testing.T) {

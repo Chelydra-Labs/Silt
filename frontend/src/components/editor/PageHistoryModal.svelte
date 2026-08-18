@@ -206,6 +206,11 @@
 
   function expandHunk(index: number): void {
     expandedHunks = { ...expandedHunks, [index]: true }
+    void tick().then(() => {
+      document
+        .querySelector<HTMLElement>('[data-testid="page-history-compare"]')
+        ?.focus()
+    })
   }
 
   function readPreferSplit(): boolean {
@@ -275,6 +280,7 @@
 
   function selectVersion(id: string): void {
     if (selectedId === id) return
+    statusMessage = ''
     selectedId = id
     expandedHunks = {}
     void loadPreview(id)
@@ -352,6 +358,7 @@
   }
 
   function choosePane(mode: HistoryPane): void {
+    statusMessage = ''
     if (mode === 'preview') {
       compareGen += 1
       paneMode = 'preview'
@@ -412,7 +419,8 @@
     paneMode = 'compare'
     try {
       const editor = getEditor(editorKey(notebook, section, page))
-      const fromEditor = editor?.getMarkdown?.()
+      const fromEditor =
+        editor?.isDirty() === true ? editor.getMarkdown?.() : null
       const body =
         fromEditor != null
           ? fromEditor
@@ -753,6 +761,7 @@
 
     {#if restoreError}
       <div
+        id="page-history-restore-error"
         class="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-error-border bg-error-bg px-3 py-2 text-type-sm font-body-md text-error"
         role="alert"
       >
@@ -796,6 +805,10 @@
               type="text"
               autocomplete="off"
               aria-label="Restore as notebook"
+              aria-invalid={restoreAs && restoreError ? true : undefined}
+              aria-describedby={restoreAs && restoreError
+                ? 'page-history-restore-error'
+                : undefined}
               data-testid="page-history-dest-notebook"
               readonly={source === 'linked'}
             />
@@ -807,6 +820,10 @@
               type="text"
               autocomplete="off"
               aria-label="Restore as section"
+              aria-invalid={restoreAs && restoreError ? true : undefined}
+              aria-describedby={restoreAs && restoreError
+                ? 'page-history-restore-error'
+                : undefined}
               data-testid="page-history-dest-section"
             />
           </label>
@@ -818,6 +835,10 @@
               type="text"
               autocomplete="off"
               aria-label="Restore as page"
+              aria-invalid={restoreAs && restoreError ? true : undefined}
+              aria-describedby={restoreAs && restoreError
+                ? 'page-history-restore-error'
+                : undefined}
               data-testid="page-history-dest-page"
             />
           </label>

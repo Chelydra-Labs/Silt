@@ -478,6 +478,67 @@ describe('PageHistoryModal', () => {
     )
   })
 
+  it('toggles split and unified compare layout', async () => {
+    renderModal()
+    await openCompare()
+    await fireEvent.click(screen.getByTestId('page-history-layout-unified'))
+    expect(screen.getByTestId('page-history-layout-unified')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    await fireEvent.click(screen.getByTestId('page-history-layout-split'))
+    expect(screen.getByTestId('page-history-layout-split')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+  })
+
+  it('clears the restore status when another version is selected', async () => {
+    renderModal()
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-restore')).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByTestId('page-history-restore'))
+    await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-status')).toBeTruthy()
+    })
+    const options = screen.getAllByRole('option')
+    expect(options.length).toBeGreaterThan(1)
+    await fireEvent.click(options[1])
+    await waitFor(() => {
+      expect(screen.queryByTestId('page-history-status')).toBeNull()
+    })
+  })
+
+  it('uses disk markdown when a registered editor is clean', async () => {
+    registerEditor({
+      key: 'Work\x00Journal\x00Daily',
+      isDirty: () => false,
+      flush: async () => true,
+      getMarkdown: () => '  # Title',
+      forceExternalReload: () => {},
+      clearExternalReload: () => {},
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
+    })
+    appMocks.GetPageVersion.mockResolvedValue('# Title')
+    appMocks.FetchPageMarkdown.mockResolvedValue('# Title')
+    renderModal()
+    await openCompare()
+    expect(appMocks.FetchPageMarkdown).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Daily'
+    )
+    expect(screen.getByTestId('page-history-diff-summary')).toHaveTextContent(
+      /No body changes/
+    )
+  })
+
   it('compares a dirty buffer without persisting it', async () => {
     const flush = vi.fn(async () => {
       throw new Error('flush should not run')

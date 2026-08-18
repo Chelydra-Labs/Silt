@@ -3,6 +3,7 @@ package core
 import (
 	"database/sql"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -194,6 +195,17 @@ func (e errSentinel) Error() string { return string(e) }
 
 // TestReleaseFileMutex_EntryDeleted verifies that after ReleaseFileMutex the
 // ioMu map no longer holds an entry for the path (the eviction actually ran).
+func TestNormalizeFileLockPath_FoldsCaseOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("case-folded lock keys are Windows-only")
+	}
+	a := NormalizeFileLockPath(`C:\Vault\Work\Taken.md`)
+	b := NormalizeFileLockPath(`C:\Vault\Work\taken.md`)
+	if a != b {
+		t.Fatalf("windows lock keys differ: %q vs %q", a, b)
+	}
+}
+
 func TestReleaseFileMutex_EntryDeleted(t *testing.T) {
 	ec := newTestCoordinator(t)
 	path := filepath.Join(t.TempDir(), "file-a.md")
