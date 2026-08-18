@@ -1009,6 +1009,7 @@ func TestDeletedPageHistory_ListAndRestore(t *testing.T) {
 	enablePageHistory(t, app, 50, 0)
 	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
 	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	seedHistoryPage(t, app, "Work", "Journal", "Daily", "# live\n")
 	list, err := app.ListPageVersions("Work", "Journal", "Gone")
 	if err != nil || len(list) == 0 {
 		t.Fatalf("List: %v len=%d", err, len(list))

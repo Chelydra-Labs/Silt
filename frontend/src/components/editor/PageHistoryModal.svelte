@@ -474,9 +474,12 @@
           const ipc = coerceIPCError(err)
           if (ipc.code === IPCErrorCode.CodePageExists) {
             restoreTarget = null
+            const firstCollision = !restoreAs
             restoreAs = true
-            destNotebook = destNotebook.trim() || notebook
-            destSection = destSection.trim() || section
+            if (firstCollision) {
+              destNotebook = destNotebook.trim() || notebook
+              destSection = destSection.trim() || section
+            }
             destPage = suggestRestoredPageName(destPage.trim() || page)
             restoreError =
               ipc.message ||
@@ -821,99 +824,102 @@
     {/if}
 
     <div class="history-split min-h-0 flex-1">
-      <div
-        bind:this={listRef}
-        class="history-list custom-scrollbar"
-        role="listbox"
-        aria-label="Versions"
-        aria-busy={listLoading || undefined}
-        tabindex="0"
-        aria-activedescendant={versions.length > 0 && selectedId
-          ? versionOptionId(selectedId)
-          : undefined}
-        data-testid="page-history-list"
-      >
-        {#if listLoading}
-          <div
-            class="flex items-center gap-2 px-4 py-6 text-type-sm font-body-md text-text-muted"
-            role="status"
-          >
-            <span
-              class="material-symbols-outlined animate-spin text-icon-lg text-accent-primary-start"
-              aria-hidden="true">sync</span
-            >
-            Loading versions…
-          </div>
-        {:else if versions.length === 0 && !listError}
-          <div
-            class="flex flex-col items-start gap-2 px-4 py-6"
-            role="status"
-            data-testid="page-history-empty"
-          >
-            <p class="text-type-md font-body-md text-text-primary">
-              No versions yet
+      {#if !listLoading && versions.length === 0 && !listError}
+        <div
+          class="history-list custom-scrollbar flex flex-col items-start gap-2 px-4 py-6"
+          role="status"
+          data-testid="page-history-empty"
+        >
+          <p class="text-type-md font-body-md text-text-primary">
+            No versions yet
+          </p>
+          {#if !versioningEnabled}
+            <p class="text-type-sm font-body-md text-text-muted">
+              Turn on Capture page history in Settings → Editor to start saving
+              snapshots.
             </p>
-            {#if !versioningEnabled}
-              <p class="text-type-sm font-body-md text-text-muted">
-                Turn on Capture page history in Settings → Editor to start
-                saving snapshots.
-              </p>
-              <button
-                type="button"
-                class="mt-1 rounded-lg border border-accent-primary-start/40 bg-accent-primary-start/15 px-3 py-1.5 text-type-sm font-label-sm-bold text-text-primary transition-all hover:brightness-110"
-                onclick={openEditorSettings}
-              >
-                Open Editor settings
-              </button>
-            {:else}
-              <p class="text-type-sm font-body-md text-text-muted">
-                Snapshots appear after the next saved change to this page. Pages
-                larger than 1 MB are not snapshotted.
-              </p>
-            {/if}
-            {#if !deleted}
-              <button
-                type="button"
-                class="mt-1 rounded-lg border border-surface-modal-border bg-transparent px-3 py-1.5 text-type-sm font-label-sm-bold text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
-                data-testid="page-history-empty-deleted"
-                onclick={openDeletedPages}
-              >
-                Deleted pages
-              </button>
-            {/if}
-          </div>
-        {:else}
-          {#each versions as version, idx (version.id)}
             <button
               type="button"
-              role="option"
-              id={versionOptionId(version.id)}
-              data-version-id={version.id}
-              aria-selected={selectedId === version.id}
-              tabindex="-1"
-              class="version-row"
-              class:selected={selectedId === version.id}
-              onclick={() => selectVersion(version.id)}
+              class="mt-1 rounded-lg border border-accent-primary-start/40 bg-accent-primary-start/15 px-3 py-1.5 text-type-sm font-label-sm-bold text-text-primary transition-all hover:brightness-110"
+              onclick={openEditorSettings}
             >
-              <span class="version-time"
-                >{formatTimestamp(version.timestamp)}</span
-              >
-              <span class="version-meta">
-                <span class="source-badge source-{version.source}">
-                  {sourceLabel(version.source)}
-                </span>
-                {#if Number.isFinite(version.bytes) && version.bytes >= 0}
-                  <span class="version-bytes">{formatBytes(version.bytes)}</span
-                  >
-                {/if}
-              </span>
-              {#if idx === 0}
-                <span class="sr-only">Newest</span>
-              {/if}
+              Open Editor settings
             </button>
-          {/each}
-        {/if}
-      </div>
+          {:else}
+            <p class="text-type-sm font-body-md text-text-muted">
+              Snapshots appear after the next saved change to this page. Pages
+              larger than 1 MB are not snapshotted.
+            </p>
+          {/if}
+          {#if !deleted}
+            <button
+              type="button"
+              class="mt-1 rounded-lg border border-surface-modal-border bg-transparent px-3 py-1.5 text-type-sm font-label-sm-bold text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+              data-testid="page-history-empty-deleted"
+              onclick={openDeletedPages}
+            >
+              Deleted pages
+            </button>
+          {/if}
+        </div>
+      {:else}
+        <div
+          bind:this={listRef}
+          class="history-list custom-scrollbar"
+          role="listbox"
+          aria-label="Versions"
+          aria-busy={listLoading || undefined}
+          tabindex="0"
+          aria-activedescendant={versions.length > 0 && selectedId
+            ? versionOptionId(selectedId)
+            : undefined}
+          data-testid="page-history-list"
+        >
+          {#if listLoading}
+            <div
+              class="flex items-center gap-2 px-4 py-6 text-type-sm font-body-md text-text-muted"
+              role="status"
+            >
+              <span
+                class="material-symbols-outlined animate-spin text-icon-lg text-accent-primary-start"
+                aria-hidden="true">sync</span
+              >
+              Loading versions…
+            </div>
+          {:else}
+            {#each versions as version, idx (version.id)}
+              <button
+                type="button"
+                role="option"
+                id={versionOptionId(version.id)}
+                data-version-id={version.id}
+                aria-selected={selectedId === version.id}
+                tabindex="-1"
+                class="version-row"
+                class:selected={selectedId === version.id}
+                onclick={() => selectVersion(version.id)}
+              >
+                <span class="version-time"
+                  >{formatTimestamp(version.timestamp)}</span
+                >
+                <span class="version-meta">
+                  <span class="source-badge source-{version.source}">
+                    {sourceLabel(version.source)}
+                  </span>
+                  {#if Number.isFinite(version.bytes) && version.bytes >= 0}
+                    <span class="version-bytes"
+                      >{formatBytes(version.bytes)}</span
+                    >
+                  {/if}
+                </span>
+                {#if idx === 0}
+                  <span class="sr-only">Newest</span>
+                {/if}
+              </button>
+            {/each}
+          {/if}
+        </div>
+      {/if}
 
       {#if versions.length > 0 || listLoading || listError}
         <section
@@ -963,11 +969,6 @@
                   >
                     Preview
                   </button>
-                  {#if deleted}
-                    <span id="page-history-compare-unavailable" class="sr-only">
-                      No current page to compare
-                    </span>
-                  {/if}
                   <button
                     type="button"
                     role="radio"
@@ -993,6 +994,11 @@
                     Compare
                   </button>
                 </div>
+                {#if deleted}
+                  <span id="page-history-compare-unavailable" class="sr-only">
+                    No current page to compare
+                  </span>
+                {/if}
                 <button
                   type="button"
                   data-page-history-restore

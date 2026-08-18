@@ -348,6 +348,10 @@ describe('PageHistoryModal', () => {
       screen.getByText(/Turn on Capture page history in Settings → Editor/)
     ).toBeTruthy()
     expect(screen.getByTestId('page-history-empty-deleted')).toBeTruthy()
+    expect(screen.queryByRole('listbox', { name: 'Versions' })).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Open Editor settings' })
+    ).toBeTruthy()
   })
 
   it('does not show the empty-history copy when the list fails', async () => {
@@ -613,6 +617,43 @@ describe('PageHistoryModal', () => {
         )
       })
       expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
+    })
+
+    it('keeps a cleared restore-as section after a second collision', async () => {
+      appMocks.RestoreDeletedPageVersion.mockRejectedValueOnce(
+        new Error(
+          JSON.stringify({
+            code: 'page_exists',
+            message: 'a page already exists at that location'
+          })
+        )
+      )
+      renderDeleted()
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore')).toBeTruthy()
+      })
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore-as')).toBeTruthy()
+      })
+      await fireEvent.input(screen.getByLabelText('Restore as section'), {
+        target: { value: '' }
+      })
+      appMocks.RestoreDeletedPageVersion.mockRejectedValueOnce(
+        new Error(
+          JSON.stringify({
+            code: 'page_exists',
+            message: 'restoring here would overwrite an existing page'
+          })
+        )
+      )
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(screen.getByLabelText('Restore as page')).toHaveValue('Daily 3')
+      })
+      expect(screen.getByLabelText('Restore as section')).toHaveValue('')
     })
 
     it('navigates to the restore-as destination after success', async () => {

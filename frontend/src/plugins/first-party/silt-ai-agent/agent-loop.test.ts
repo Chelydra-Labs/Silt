@@ -107,11 +107,16 @@ describe('agent-loop', () => {
     const toolCalls: { name: string }[] = []
     const toolResults: { content: string }[] = []
     const chunks: string[] = []
-    const res = await runAgent(ctx, 'what did you find?', [], {
-      onToolCall: (c) => toolCalls.push(c),
-      onToolResult: (r) => toolResults.push(r.result),
-      onAssistantText: (_chunk) => chunks.push(_chunk)
-    })
+    const res = await runAgent(
+      ctx,
+      'edit this note and tell me what you find',
+      [],
+      {
+        onToolCall: (c) => toolCalls.push(c),
+        onToolResult: (r) => toolResults.push(r.result),
+        onAssistantText: (_chunk) => chunks.push(_chunk)
+      }
+    )
 
     expect(res.cancelled).toBe(false)
     expect(res.hitIterationCap).toBe(false)
@@ -1169,7 +1174,7 @@ describe('agent-loop', () => {
     )
     const session = createAgentSession(ctx)
     let staged = false
-    const run = session.run('stage it', [], {
+    const run = session.run('edit this note', [], {
       onStaging: () => {
         staged = true
         session.cancel()
@@ -1283,7 +1288,7 @@ describe('agent-loop', () => {
         : mockStream({ content: 'done', model: 'm' })
     )
 
-    const res = await runAgent(ctx, 'run both', [], {
+    const res = await runAgent(ctx, 'edit this note', [], {
       onToolMessage: (message) => messages.push(message)
     })
 
@@ -1536,7 +1541,7 @@ describe('agent-loop staging', () => {
     // Capture tool messages by intercepting the second iteration's messages.
     // We approximate by reading the staging events and asserting the flow.
     const session = createAgentSession(ctx)
-    const p = session.run('delete b1 and b2', [], {
+    const p = session.run('delete this page', [], {
       onStaging: (e) => {
         stagingEvents.push(e)
         // Simulate the UX confirming immediately.
@@ -1684,7 +1689,7 @@ describe('agent-loop staging', () => {
     // messages the second iteration saw via a spy on ctx.ai.complete.
     const completeSpy = ctx.ai.complete as ReturnType<typeof vi.fn>
     const session = createAgentSession(ctx)
-    await session.run('delete bx', [], {
+    await session.run('delete this page', [], {
       onStaging: (e) => {
         queueMicrotask(() => session.resolveStaging(e.token, false))
       }
@@ -1740,7 +1745,7 @@ describe('agent-loop staging', () => {
     })
     const completeSpy = ctx.ai.complete as ReturnType<typeof vi.fn>
 
-    await runAgent(ctx, 'delete bx', [])
+    await runAgent(ctx, 'delete this page', [])
 
     const secondCallMessages = (
       completeSpy.mock.calls[1][0] as { messages: PluginAIChatMessage[] }
