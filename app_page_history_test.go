@@ -1462,7 +1462,7 @@ func TestRestoreDeletedPageVersion_RefusesLiveSource(t *testing.T) {
 	}
 	err = app.RestoreDeletedPageVersion("Work", "Journal", "Alive", list[0].ID, "Work", "Journal", "Copy")
 	var ipc *IPCError
-	if !errors.As(err, &ipc) || ipc.Code != CodePageExists {
+	if !errors.As(err, &ipc) || ipc.Code != CodePageStillExists {
 		t.Fatalf("live source err = %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Journal", "Copy.md")); !os.IsNotExist(statErr) {
@@ -1572,11 +1572,20 @@ func TestRestoreDeletedPageVersion_RelocateFailureSurfaces(t *testing.T) {
 	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationUnavailable {
 		t.Fatalf("relocate err = %v", err)
 	}
-	if !strings.Contains(ipc.Message, "history did not move") {
+	if !strings.Contains(ipc.Message, "could not move the snapshot history") {
 		t.Fatalf("relocate message = %q", ipc.Message)
 	}
-	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Archive", "Restored.md")); statErr != nil {
-		t.Fatalf("dest page missing after relocate failure: %v", statErr)
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Archive", "Restored.md")); !os.IsNotExist(statErr) {
+		t.Fatal("dest page written before relocate succeeded")
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "", "", ""); err != nil {
+		t.Fatalf("in-place restore after relocate failure: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Journal", "MoveMe.md")); statErr != nil {
+		t.Fatalf("in-place page missing: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Archive", "Restored.md")); !os.IsNotExist(statErr) {
+		t.Fatal("relocate-failure dest appeared after in-place restore")
 	}
 }
 

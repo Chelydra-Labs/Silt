@@ -42,8 +42,12 @@ const (
 	CodeCapabilityDenied IPCErrorCode = "capability_denied"
 	// CodePageExists: CreatePageFromTemplate refused to write because the
 	// target page path already exists (no clobber; #652). Frontend offers
-	// rename or open-existing.
-	CodePageExists            IPCErrorCode = "page_exists"
+	// rename or open-existing. Deleted restore uses this only for dest occupancy.
+	CodePageExists IPCErrorCode = "page_exists"
+	// CodePageStillExists: RestoreDeletedPageVersion refused because the
+	// original live file is still on disk. Frontend should open live page
+	// history, not Restore as….
+	CodePageStillExists       IPCErrorCode = "page_still_exists"
 	CodeInvalidNavigationPath IPCErrorCode = "invalid_navigation_path"
 	CodeNavigationNotFound    IPCErrorCode = "navigation_not_found"
 	CodeNavigationConflict    IPCErrorCode = "navigation_conflict"

@@ -423,6 +423,7 @@
         if (!dirty) return true
         return await flushSave()
       },
+      getMarkdown: () => buffer,
       forceExternalReload: () => {
         pendingExternalReload = true
       },

@@ -412,18 +412,11 @@
     paneMode = 'compare'
     try {
       const editor = getEditor(editorKey(notebook, section, page))
-      if (editor?.isDirty()) {
-        const clean = await editor.flush()
-        if (!clean) {
-          if (gen !== compareGen) return
-          paneMode = 'preview'
-          liveReady = false
-          compareError =
-            "Couldn't save the current page before comparing. Fix the save error, then try again."
-          return
-        }
-      }
-      const body = await fetchPageMarkdown(notebook, section, page)
+      const fromEditor = editor?.getMarkdown?.()
+      const body =
+        fromEditor != null
+          ? fromEditor
+          : await fetchPageMarkdown(notebook, section, page)
       if (gen !== compareGen) return
       liveBody = body
       liveReady = true
@@ -472,6 +465,13 @@
           )
         } catch (err) {
           const ipc = coerceIPCError(err)
+          if (ipc.code === IPCErrorCode.CodePageStillExists) {
+            restoreTarget = null
+            restoreError =
+              ipc.message ||
+              'That page still exists. Restore it from page history instead.'
+            return
+          }
           if (ipc.code === IPCErrorCode.CodePageExists) {
             restoreTarget = null
             const firstCollision = !restoreAs
@@ -530,6 +530,8 @@
       compareLoading = false
       liveReady = false
       liveBody = ''
+      compareError = ''
+      restoreError = ''
       await loadVersions(target.id)
     } catch (e) {
       restoreError = coerceIPCError(e).message

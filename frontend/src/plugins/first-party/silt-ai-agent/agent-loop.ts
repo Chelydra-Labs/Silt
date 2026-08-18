@@ -300,6 +300,14 @@ export function buildSystemPrompt(
     ) &&
     toolsForTurn.length > 0 &&
     toolsForTurn.length <= QA_TOOL_NAMES.length
+  const restoreOnly =
+    !qaOnly &&
+    toolsForTurn != null &&
+    toolsForTurn.length > 0 &&
+    toolsForTurn.some((t) => t.name === 'restore_page_version') &&
+    toolsForTurn.every((t) =>
+      (RESTORE_TOOL_NAMES as readonly string[]).includes(t.name)
+    )
   const raw =
     location ??
     (typeof ctx.getUiLocation === 'function'
@@ -316,8 +324,10 @@ export function buildSystemPrompt(
   }
   const useToolsLine = qaOnly
     ? 'Use the available tools to search product help and read notes.'
-    : 'Use the available tools to search, read, create, and organize notes.'
-  const writePolicy = buildWritePolicyLines(mode, qaOnly)
+    : restoreOnly
+      ? 'Use the available tools to search, read notes, and restore a page version.'
+      : 'Use the available tools to search, read, create, and organize notes.'
+  const writePolicy = buildWritePolicyLines(mode, qaOnly, restoreOnly)
   return [
     'You are Silt AI Agent, a general-purpose assistant with first-class access',
     "to the user's Silt note vault via tools.",
@@ -351,9 +361,17 @@ export function buildSystemPrompt(
 
 function buildWritePolicyLines(
   mode: AgentWritesMode,
-  qaOnly: boolean
+  qaOnly: boolean,
+  restoreOnly = false
 ): string[] {
   const modeLine = `WRITE POLICY (active mode: ${mode}):`
+  if (restoreOnly && mode !== 'read_only') {
+    return [
+      modeLine,
+      'This turn can restore a page version (host-confirmed) and read notes.',
+      'Do not create, edit, or organize notes this turn.'
+    ]
+  }
   if (mode === 'read_only' || qaOnly) {
     return [
       modeLine,

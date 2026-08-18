@@ -15,7 +15,7 @@ export const restorePageVersionToolDef = {
   description:
     'Replace the live page body with a stored snapshot. Keeps current frontmatter ' +
     'and snapshots the pre-restore body so the restore can be undone. ' +
-    'Use list_page_versions then get_page_version first. Only call after the user confirms.',
+    'Use list_page_versions then get_page_version first. Mutating; the host confirms before applying.',
   parameters: {
     type: 'object',
     required: ['notebook', 'page', 'version_id'],

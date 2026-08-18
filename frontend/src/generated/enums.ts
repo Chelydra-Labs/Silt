@@ -58,6 +58,7 @@ export const IPCErrorCode = {
   CodeVaultClosing: 'vault_closing',
   CodeCapabilityDenied: 'capability_denied',
   CodePageExists: 'page_exists',
+  CodePageStillExists: 'page_still_exists',
   CodeInvalidNavigationPath: 'invalid_navigation_path',
   CodeNavigationNotFound: 'navigation_not_found',
   CodeNavigationConflict: 'navigation_conflict',
@@ -80,6 +81,7 @@ export const IPCErrorCodeNames = [
   'CodeNavigationReveal',
   'CodeNavigationUnavailable',
   'CodePageExists',
+  'CodePageStillExists',
   'CodeVaultClosing'
 ] as const
 

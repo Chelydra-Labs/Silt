@@ -331,6 +331,29 @@ describe('agent-loop', () => {
     expect(prompt).toMatch(/read-only vault tools/i)
   })
 
+  it('buildSystemPrompt with restore tools does not advertise the write catalog', () => {
+    registerTool({
+      name: 'search_notes',
+      description: 'search vault',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => ({ content: '' })
+    })
+    registerTool({
+      name: 'restore_page_version',
+      description: 'restore',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => ({ content: '' })
+    })
+    const ctx = mockCtx(() => mockStream({ content: '', model: 'm' }))
+    const restoreTools = getTools().filter((t) =>
+      (['search_notes', 'restore_page_version'] as string[]).includes(t.name)
+    )
+    const prompt = buildSystemPrompt(ctx, undefined, restoreTools)
+    expect(prompt).toMatch(/restore a page version/i)
+    expect(prompt).not.toMatch(/create, and organize/i)
+    expect(prompt).toMatch(/host-confirmed/i)
+  })
+
   it('empty first search still fingerprints — identical retry is blocked', async () => {
     let handlerCalls = 0
     registerTool({

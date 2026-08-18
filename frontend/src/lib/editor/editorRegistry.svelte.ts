@@ -24,6 +24,8 @@ export interface EditorHandle {
   isDirty: () => boolean
   /** Flush the pending autosave; resolves true if the editor is clean after. */
   flush: () => Promise<boolean>
+  /** Current page body (no frontmatter) without persisting. Null if unavailable. */
+  getMarkdown?: () => string | null
   /** Force the editor to reload from its blocks prop on the next external
    *  block update, bypassing the focused-edit guard. Only safe right after a
    *  flush synced the editor to disk, so there is nothing unsaved to clobber. */

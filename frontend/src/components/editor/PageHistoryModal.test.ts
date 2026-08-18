@@ -478,11 +478,15 @@ describe('PageHistoryModal', () => {
     )
   })
 
-  it('blocks Compare when a dirty buffer cannot be flushed', async () => {
+  it('compares a dirty buffer without persisting it', async () => {
+    const flush = vi.fn(async () => {
+      throw new Error('flush should not run')
+    })
     registerEditor({
       key: 'Work\x00Journal\x00Daily',
       isDirty: () => true,
-      flush: async () => false,
+      flush,
+      getMarkdown: () => '# unsaved draft',
       forceExternalReload: () => {},
       clearExternalReload: () => {},
       setProposedEdit: () => false,
@@ -492,18 +496,31 @@ describe('PageHistoryModal', () => {
       verifySelectionText: () => false
     })
     renderModal()
+    await openCompare()
+    expect(flush).not.toHaveBeenCalled()
+    expect(appMocks.FetchPageMarkdown).not.toHaveBeenCalled()
+    expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
+    expect(screen.getByTestId('page-history-compare')).toBeTruthy()
+  })
+
+  it('clears a compare error after a successful restore', async () => {
+    appMocks.FetchPageMarkdown.mockRejectedValueOnce(
+      new Error('Could not read the current page.')
+    )
+    renderModal()
     await waitFor(() => {
       expect(screen.getByTestId('page-history-pane-compare')).not.toBeDisabled()
     })
     await fireEvent.click(screen.getByTestId('page-history-pane-compare'))
     await waitFor(() => {
-      expect(
-        screen.getByText(/Couldn't save the current page before comparing/)
-      ).toBeTruthy()
+      expect(screen.getByTestId('page-history-compare-error')).toBeTruthy()
     })
-    expect(appMocks.FetchPageMarkdown).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('page-history-compare')).toBeNull()
-    expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getByTestId('page-history-restore'))
+    await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+    await waitFor(() => {
+      expect(appMocks.RestorePageVersion).toHaveBeenCalled()
+    })
+    expect(screen.queryByTestId('page-history-compare-error')).toBeNull()
   })
 
   it('opens deleted pages from the live modal header', async () => {
@@ -654,6 +671,30 @@ describe('PageHistoryModal', () => {
         expect(screen.getByLabelText('Restore as page')).toHaveValue('Daily 3')
       })
       expect(screen.getByLabelText('Restore as section')).toHaveValue('')
+    })
+
+    it('does not open Restore as… when the original page still exists', async () => {
+      appMocks.RestoreDeletedPageVersion.mockRejectedValueOnce(
+        new Error(
+          JSON.stringify({
+            code: 'page_still_exists',
+            message:
+              'that page still exists; restore it from page history instead'
+          })
+        )
+      )
+      renderDeleted()
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore')).toBeTruthy()
+      })
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          /restore it from page history instead/
+        )
+      })
+      expect(screen.queryByTestId('page-history-restore-as')).toBeNull()
     })
 
     it('navigates to the restore-as destination after success', async () => {
