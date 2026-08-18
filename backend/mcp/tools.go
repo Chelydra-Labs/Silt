@@ -1011,7 +1011,7 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "restore_page_version",
-		Description: "Replace the live page body with a stored snapshot. Keeps current frontmatter and snapshots the pre-restore body so the restore is reversible. Requires write grant.",
+		Description: "Replace the live page body with a stored snapshot. Keeps current frontmatter and snapshots the pre-restore body so the restore is reversible. Requires write grant. Confirm with the user before restoring.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in restorePageVersionIn) (*mcp.CallToolResult, any, error) {
 		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "version_id": in.VersionID}
 		if !env.writeOK() {

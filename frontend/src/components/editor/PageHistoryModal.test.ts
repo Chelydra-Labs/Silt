@@ -611,6 +611,100 @@ describe('PageHistoryModal', () => {
       window.removeEventListener('navigate-to-page', navigated)
     })
 
+    it('surfaces a generic restore failure without opening Restore as…', async () => {
+      appMocks.RestoreDeletedPageVersion.mockRejectedValueOnce(
+        new Error('snapshot store read failed')
+      )
+      renderDeleted()
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore')).toBeTruthy()
+      })
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          /snapshot store read failed/
+        )
+      })
+      expect(screen.queryByTestId('page-history-restore-as')).toBeNull()
+    })
+
+    it('disables Restore when restore-as dest fields are cleared', async () => {
+      appMocks.RestoreDeletedPageVersion.mockRejectedValueOnce(
+        new Error(
+          JSON.stringify({
+            code: 'page_exists',
+            message: 'restoring here would overwrite an existing page'
+          })
+        )
+      )
+      renderDeleted()
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore')).toBeTruthy()
+      })
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore-as')).toBeTruthy()
+      })
+      await fireEvent.input(screen.getByLabelText('Restore as page'), {
+        target: { value: '' }
+      })
+      expect(screen.getByTestId('page-history-restore')).toBeDisabled()
+    })
+
+    it('keeps a year suffix when suggesting a restore-as name', async () => {
+      appMocks.RestoreDeletedPageVersion.mockRejectedValueOnce(
+        new Error(
+          JSON.stringify({
+            code: 'page_exists',
+            message: 'restoring here would overwrite an existing page'
+          })
+        )
+      )
+      render(PageHistoryModal, {
+        props: {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Budget 2026',
+          deleted: true,
+          onClose: vi.fn()
+        }
+      })
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore')).toBeTruthy()
+      })
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(screen.getByLabelText('Restore as page')).toHaveValue(
+          'Budget 2026 2'
+        )
+      })
+    })
+
+    it('routes header close and backdrop to onBack in deleted mode', async () => {
+      const onClose = vi.fn()
+      const onBack = vi.fn()
+      render(PageHistoryModal, {
+        props: {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          deleted: true,
+          onBack,
+          onClose
+        }
+      })
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-preview-body')).toBeTruthy()
+      })
+      const closers = screen.getAllByLabelText('Close page history')
+      await fireEvent.click(closers[0])
+      expect(onBack).toHaveBeenCalledTimes(1)
+      expect(onClose).not.toHaveBeenCalled()
+    })
+
     it('routes Esc to onBack instead of closing the stack', async () => {
       const onClose = vi.fn()
       const onBack = vi.fn()

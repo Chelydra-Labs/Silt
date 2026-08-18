@@ -282,10 +282,16 @@
     selectVersion(versions[next].id)
   }
 
+  function versionOptionId(id: string): string {
+    return `page-history-${encodeURIComponent(id)}`
+  }
+
   function scrollSelectedIntoView(): void {
     queueMicrotask(() => {
       if (!listRef || !selectedId) return
-      const el = listRef.querySelector(`[data-version-id="${selectedId}"]`)
+      const el = listRef.querySelector(
+        `[data-version-id="${CSS.escape(selectedId)}"]`
+      )
       el?.scrollIntoView?.({ block: 'nearest' })
     })
   }
@@ -310,9 +316,13 @@
     const raw = name.trim() || 'Page'
     const numbered = /^(.*?)(?:\s+(\d+))$/.exec(raw)
     if (!numbered) return `${raw} 2`
-    const base = numbered[1].trim() || 'Page'
     const n = Number(numbered[2])
-    return `${base} ${Number.isFinite(n) ? n + 1 : 2}`
+    // Only increment small collision suffixes ("Daily 2" → "Daily 3").
+    // Years and other meaningful numbers stay ("Budget 2026" → "Budget 2026 2").
+    if (Number.isFinite(n) && n >= 2 && n < 100) {
+      return `${numbered[1].trim() || 'Page'} ${n + 1}`
+    }
+    return `${raw} 2`
   }
 
   function restoreDestination(): {
@@ -528,17 +538,21 @@
     window.dispatchEvent(new CustomEvent('open-settings', { detail: 'editor' }))
   }
 
+  function dismissHistory(): void {
+    if (deleted && onBack && !restoring) {
+      onBack()
+      return
+    }
+    onClose()
+  }
+
   function handleKeydown(e: KeyboardEvent): void {
     // ConfirmDialog owns Esc / Tab while it is open.
     if (restoreTarget) return
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
-      if (deleted && onBack && !restoring) {
-        onBack()
-        return
-      }
-      onClose()
+      dismissHistory()
       return
     }
     const inList = !!(e.target as HTMLElement | null)?.closest(
@@ -567,8 +581,6 @@
       return
     }
     if (e.key === 'Enter') {
-      const target = e.target as HTMLElement | null
-      if (target?.closest('[data-page-history-restore]')) return
       if (versions.length === 0) return
       e.preventDefault()
       if (selectedId) void loadPreview(selectedId)
@@ -612,7 +624,7 @@
     tabindex="-1"
     aria-label="Close page history"
     class="absolute inset-0 cursor-default border-none bg-transparent p-0"
-    onclick={onClose}
+    onclick={dismissHistory}
   ></button>
 
   <div
@@ -678,7 +690,7 @@
         <button
           type="button"
           aria-label="Close page history"
-          onclick={onClose}
+          onclick={dismissHistory}
           class="flex h-8 w-8 items-center justify-center rounded-lg border-none bg-transparent text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
         >
           <span
@@ -800,7 +812,7 @@
         aria-busy={listLoading || undefined}
         tabindex="0"
         aria-activedescendant={versions.length > 0 && selectedId
-          ? `page-history-${selectedId}`
+          ? versionOptionId(selectedId)
           : undefined}
         data-testid="page-history-list"
       >
@@ -858,7 +870,7 @@
             <button
               type="button"
               role="option"
-              id={`page-history-${version.id}`}
+              id={versionOptionId(version.id)}
               data-version-id={version.id}
               aria-selected={selectedId === version.id}
               tabindex="-1"
@@ -934,6 +946,11 @@
                   >
                     Preview
                   </button>
+                  {#if deleted}
+                    <span id="page-history-compare-unavailable" class="sr-only">
+                      No current page to compare
+                    </span>
+                  {/if}
                   <button
                     type="button"
                     role="radio"
@@ -949,14 +966,6 @@
                     class:active={paneMode === 'compare'}
                     onclick={() => choosePane('compare')}
                   >
-                    {#if deleted}
-                      <span
-                        id="page-history-compare-unavailable"
-                        class="sr-only"
-                      >
-                        No current page to compare
-                      </span>
-                    {/if}
                     {#if compareLoading}
                       <span
                         class="material-symbols-outlined animate-spin text-icon-xs"

@@ -101,6 +101,17 @@ func (a *App) historyRoot(source string) string {
 	return ""
 }
 
+func historyReadError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, history.ErrNotFound) {
+		return NewIPCError(CodeNavigationNotFound, "page version not found")
+	}
+	log.Printf("page history: snapshot store read failed: %v", err)
+	return NewIPCError(CodeNavigationUnavailable, "snapshot store read failed")
+}
+
 func editorSourceIntervalApplies(source string) bool {
 	return source == historyReasonEditor || source == historyReasonSource
 }
@@ -194,10 +205,7 @@ func (a *App) GetPageVersion(notebook, section, page, versionID string) (string,
 	}
 	raw, err := history.Read(root, loc, versionID)
 	if err != nil {
-		if errors.Is(err, history.ErrNotFound) {
-			return "", NewIPCError(CodeNavigationNotFound, "page version not found")
-		}
-		return "", err
+		return "", historyReadError(err)
 	}
 	_, body := parser.SplitFrontmatter(string(raw))
 	return body, nil
@@ -238,11 +246,7 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 			}
 			snapshot, err := history.Read(root, loc, versionID)
 			if err != nil {
-				if errors.Is(err, history.ErrNotFound) {
-					writeErr = NewIPCError(CodeNavigationNotFound, "page version not found")
-				} else {
-					writeErr = err
-				}
+				writeErr = historyReadError(err)
 				return
 			}
 			_, restoreBody := parser.SplitFrontmatter(string(snapshot))
@@ -404,7 +408,11 @@ func (a *App) collectDeletedHistory(root, wantSource string, livePath func(histo
 			log.Printf("page history: stat live path %s: %v (listing leftover anyway)", p, err)
 		}
 		entries, err := history.List(root, loc)
-		if err != nil || len(entries) == 0 {
+		if err != nil {
+			log.Printf("page history: list leftover %s/%s/%s: %v", loc.Notebook, loc.Section, loc.Page, err)
+			continue
+		}
+		if len(entries) == 0 {
 			continue
 		}
 		latest := entries[0]
@@ -464,10 +472,7 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 
 	snapshot, err := history.Read(origRoot, origLoc, versionID)
 	if err != nil {
-		if errors.Is(err, history.ErrNotFound) {
-			return NewIPCError(CodeNavigationNotFound, "page version not found")
-		}
-		return err
+		return historyReadError(err)
 	}
 	remapped, err := remapSnapshotIdentity(snapshot, destNB, destSec, destPg)
 	if err != nil {

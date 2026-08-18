@@ -62,14 +62,16 @@ export const QA_TOOL_NAMES = [
   'search_product_docs',
   'read_blocks',
   'query_tasks',
-  'get_backlinks'
+  'get_backlinks',
+  'list_page_versions',
+  'get_page_version'
 ] as const
 
 // Write/organize intent for full catalog at turn start. Prefer multi-word
 // phrases; avoid bare verbs that dominate Q&A ("write a summary", "what did I
 // delete", "update me on…").
 const WRITE_INTENT_RE =
-  /\b((create|add|make) (a |the |new )?(note|task|page|block)|add note|new note|make a note|draft (a |the )?note|save (this|it|to)|put this|please rename|rename( tag| the| this)?|retitle|add tag|extract (and save|to)|organize (my |the )?notes|edit (the |this |my )?(note|task|block|page|title)|modify (the |this |my )?(note|task|block|page)|update (my |the |a |this )?(notes?|task|block|page|title)|delete (the |this |a )?(note|task|block|page|tag)|fix (the |this |a )?(typo|note|task|title)|change (the |this |a )?(title|note|task)|move this|write (a |the )?(note|task) to)\b/i
+  /\b((create|add|make) (a |the |new )?(note|task|page|block)|add note|new note|make a note|draft (a |the )?note|save (this|it|to)|put this|please rename|rename( tag| the| this)?|retitle|add tag|extract (and save|to)|organize (my |the )?notes|edit (the |this |my )?(note|task|block|page|title)|modify (the |this |my )?(note|task|block|page)|update (my |the |a |this )?(notes?|task|block|page|title)|delete (the |this |a )?(note|task|block|page|tag)|fix (the |this |a )?(typo|note|task|title)|change (the |this |a )?(title|note|task)|move this|write (a |the )?(note|task) to|restore (the |this |a |yesterday's )?(page |note )?(version|history)|revert (my |the |this )?(changes|version|page|note)|undo (my |the |this )?(changes|edit|restore)|roll back|(earlier|previous|old) version|version history)\b/i
 
 /** Tool result bodies above this many bytes are truncated for the model. */
 export const TOOL_RESULT_MAX_BYTES = 10 * 1024

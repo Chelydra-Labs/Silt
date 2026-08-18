@@ -1405,3 +1405,23 @@ func TestDeletedPageHistory_CaptureOffLeftovers(t *testing.T) {
 		t.Fatalf("restore leftovers: %v", err)
 	}
 }
+
+func TestHistoryReadError_HidesPath(t *testing.T) {
+	leaked := &os.PathError{Op: "open", Path: `C:\secret\vault\.system\history\x.gz`, Err: os.ErrPermission}
+	err := historyReadError(leaked)
+	if err == nil {
+		t.Fatal("expected mapped error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, `C:\`) || strings.Contains(msg, ".system") || strings.Contains(msg, "secret") {
+		t.Fatalf("leaked path: %s", msg)
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationUnavailable {
+		t.Fatalf("mapped err = %v", err)
+	}
+	notFound := historyReadError(history.ErrNotFound)
+	if !errors.As(notFound, &ipc) || ipc.Code != CodeNavigationNotFound {
+		t.Fatalf("not-found mapping = %v", notFound)
+	}
+}

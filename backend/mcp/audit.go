@@ -351,18 +351,19 @@ func storeCappedHeading(out map[string]any, s string) {
 // "heading" is listed so the key is recognized, but redactSchemaArgs applies
 // storeCappedHeading (not verbatim) because headings are free-form text.
 var schemaIDKeys = map[string]bool{
-	"notebook": true,
-	"section":  true,
-	"page":     true,
-	"property": true,
-	"type":     true,
-	"id":       true,
-	"block_id": true,
-	"heading":  true,
-	"owner":    true,
-	"status":   true,
-	"cursor":   true,
-	"due":      true,
+	"notebook":   true,
+	"section":    true,
+	"page":       true,
+	"property":   true,
+	"type":       true,
+	"id":         true,
+	"block_id":   true,
+	"version_id": true,
+	"heading":    true,
+	"owner":      true,
+	"status":     true,
+	"cursor":     true,
+	"due":        true,
 }
 
 // schemaKnownKeys are the remaining keys declared by a tool input schema. Their

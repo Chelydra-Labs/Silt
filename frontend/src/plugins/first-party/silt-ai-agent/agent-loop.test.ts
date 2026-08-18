@@ -473,6 +473,10 @@ describe('agent-loop', () => {
     expect(detectWriteIntent('please rename the tag')).toBe(true)
     expect(detectWriteIntent('fix the typo on this page')).toBe(true)
     expect(detectWriteIntent('change the title of my note')).toBe(true)
+    expect(detectWriteIntent("restore yesterday's version of Daily")).toBe(true)
+    expect(detectWriteIntent('revert my changes')).toBe(true)
+    expect(detectWriteIntent('undo my changes')).toBe(true)
+    expect(detectWriteIntent('show version history')).toBe(true)
     expect(detectWriteIntent('write a summary of my notes')).toBe(false)
     expect(detectWriteIntent('what did I delete last week')).toBe(false)
     expect(detectWriteIntent('update me on the project')).toBe(false)
@@ -609,6 +613,52 @@ describe('agent-loop', () => {
     await runAgent(ctxWrite, 'create a note about the meeting', [])
     expect(writeTools[0]).toContain('create_note')
     expect(writeTools[0]).toContain('search_notes')
+  })
+
+  it('restore phrasing yields the full catalog including history tools', async () => {
+    for (const name of [
+      'search_notes',
+      'list_page_versions',
+      'get_page_version',
+      'restore_page_version',
+      'create_note'
+    ]) {
+      registerTool({
+        name,
+        description: name,
+        parameters: { type: 'object', properties: {} },
+        handler: async () => ({ content: '' })
+      })
+    }
+    const qaTools: string[][] = []
+    const restoreTools: string[][] = []
+    const ctxQa = mockCtx(() =>
+      mockStream({ content: 'answer', model: 'm' }, ['answer'])
+    )
+    const origQa = ctxQa.ai.complete.bind(ctxQa.ai)
+    ctxQa.ai.complete = ((req: unknown) => {
+      const r = req as { tools?: { name: string }[] }
+      qaTools.push((r.tools ?? []).map((t) => t.name))
+      return origQa(req as never)
+    }) as typeof ctxQa.ai.complete
+    await runAgent(ctxQa, 'what is in my notes about plants?', [])
+    expect(qaTools[0]).toContain('list_page_versions')
+    expect(qaTools[0]).toContain('get_page_version')
+    expect(qaTools[0]).not.toContain('restore_page_version')
+
+    const ctxRestore = mockCtx(() =>
+      mockStream({ content: 'ok', model: 'm' }, ['ok'])
+    )
+    const origR = ctxRestore.ai.complete.bind(ctxRestore.ai)
+    ctxRestore.ai.complete = ((req: unknown) => {
+      const r = req as { tools?: { name: string }[] }
+      restoreTools.push((r.tools ?? []).map((t) => t.name))
+      return origR(req as never)
+    }) as typeof ctxRestore.ai.complete
+    await runAgent(ctxRestore, "restore yesterday's version of Daily", [])
+    expect(restoreTools[0]).toContain('restore_page_version')
+    expect(restoreTools[0]).toContain('list_page_versions')
+    expect(restoreTools[0]).toContain('create_note')
   })
 
   it('stops when the abort signal is already aborted', async () => {

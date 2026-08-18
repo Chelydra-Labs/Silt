@@ -320,4 +320,44 @@ describe('tool-registry', () => {
     expect(staged.stagedPreview?.severity).toBe('danger')
     expect(staged.stagedPreview?.details).toContain('frozen body')
   })
+
+  it('stages restore_page_version before writing in confirm and auto', async () => {
+    stageOperation.mockClear()
+    const handler = vi.fn(async () => ({ content: 'restored' }))
+    registerTool({
+      name: 'restore_page_version',
+      description: 'restore',
+      parameters: {
+        type: 'object',
+        required: ['notebook', 'page', 'version_id'],
+        properties: {
+          notebook: { type: 'string' },
+          page: { type: 'string' },
+          version_id: { type: 'string' }
+        }
+      },
+      handler,
+      commit: handler
+    })
+    const args = {
+      notebook: 'Work',
+      page: 'Daily',
+      version_id: 'v-old'
+    }
+    const confirm = await dispatchTool(noopCtx, 'restore_page_version', args, {
+      mode: 'confirm'
+    })
+    expect(confirm.isStaged).toBe(true)
+    expect(confirm.stagedPreview?.severity).toBe('danger')
+    expect(handler).not.toHaveBeenCalled()
+    expect(stageOperation).toHaveBeenCalled()
+
+    stageOperation.mockClear()
+    const auto = await dispatchTool(noopCtx, 'restore_page_version', args, {
+      mode: 'auto'
+    })
+    expect(auto.isStaged).toBe(true)
+    expect(handler).not.toHaveBeenCalled()
+    expect(stageOperation).toHaveBeenCalled()
+  })
 })

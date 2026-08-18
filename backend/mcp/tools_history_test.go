@@ -239,3 +239,63 @@ func TestTool_History_NoVaultAndMissingVersion(t *testing.T) {
 		t.Fatalf("restore should be attempted then fail, n=%d", bridge.restoreN)
 	}
 }
+
+func TestTool_History_MissingArgsAndListError(t *testing.T) {
+	bridge := &fakeBridge{
+		path:            t.TempDir(),
+		listVersionsErr: errors.New("list failed"),
+	}
+	cs, _ := connectTools(t, bridge, Config{Enabled: true, WriteEnabled: true})
+	ctx := context.Background()
+
+	res, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name:      "list_page_versions",
+		Arguments: map[string]any{"notebook": "Work", "section": "", "page": "X"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(toolText(t, res), "list failed") {
+		t.Fatalf("list error: %s", toolText(t, res))
+	}
+
+	cases := []struct {
+		name string
+		tool string
+		args map[string]any
+		want string
+	}{
+		{
+			name: "blank version_id get",
+			tool: "get_page_version",
+			args: map[string]any{"notebook": "Work", "section": "", "page": "X", "version_id": ""},
+			want: "version_id is required",
+		},
+		{
+			name: "blank version_id restore",
+			tool: "restore_page_version",
+			args: map[string]any{"notebook": "Work", "section": "", "page": "X", "version_id": "  "},
+			want: "version_id is required",
+		},
+		{
+			name: "missing page restore",
+			tool: "restore_page_version",
+			args: map[string]any{"notebook": "Work", "section": "", "page": "", "version_id": "v1"},
+			want: "notebook and page are required",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := cs.CallTool(ctx, &mcpsdk.CallToolParams{
+				Name:      tc.tool,
+				Arguments: tc.args,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !res.IsError || !strings.Contains(toolText(t, res), tc.want) {
+				t.Fatalf("%s: %s", tc.name, toolText(t, res))
+			}
+		})
+	}
+}
