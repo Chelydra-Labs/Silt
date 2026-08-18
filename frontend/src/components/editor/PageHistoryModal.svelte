@@ -149,7 +149,11 @@
   function formatDiffSummary(diff: {
     addedLines: number
     removedLines: number
+    tooLarge?: boolean
   }): string {
+    if (diff.tooLarge) {
+      return 'This comparison is too large to show.'
+    }
     if (diff.addedLines === 0 && diff.removedLines === 0) {
       return 'No body changes. Frontmatter is not compared.'
     }

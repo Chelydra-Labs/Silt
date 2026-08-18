@@ -116,6 +116,16 @@ func sanitizeDeletedLocator(loc history.Locator) (history.Locator, bool) {
 	return history.Locator{Source: loc.Source, Notebook: nb, Section: sec, Page: pg}, true
 }
 
+func historyWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if os.IsNotExist(err) {
+		return NewIPCError(CodeNavigationNotFound, "page not found")
+	}
+	return NewIPCError(CodeNavigationUnavailable, "could not write the page")
+}
+
 func historyFileError(err error) error {
 	if err == nil {
 		return nil
@@ -336,7 +346,8 @@ func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page,
 	}
 	a.tracker.RegisterWrite(filePath)
 	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-		return nil, err
+		log.Printf("page write: atomic write failed for %s/%s/%s: %v", notebook, section, page, err)
+		return nil, historyWriteError(err)
 	}
 	parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(
 		newContent, notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab,

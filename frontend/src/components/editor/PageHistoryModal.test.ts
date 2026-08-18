@@ -35,6 +35,7 @@ vi.mock('../../settings/store.svelte', () => ({
 
 import PageHistoryModal from './PageHistoryModal.svelte'
 import { OPEN_DELETED_PAGE_HISTORY_EVENT } from './openDeletedPageHistory'
+import { COMPARE_MAX_CHARS } from '../../lib/editor/pageDiff'
 
 const VERSIONS = [
   {
@@ -454,6 +455,23 @@ describe('PageHistoryModal', () => {
       /No body changes\. Frontmatter is not compared/
     )
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('does not announce no-change when the compare is too large', async () => {
+    const huge = 'x'.repeat(COMPARE_MAX_CHARS + 1)
+    appMocks.GetPageVersion.mockResolvedValue(huge)
+    appMocks.FetchPageMarkdown.mockResolvedValue(`${huge}y`)
+    renderModal()
+    await openCompare()
+    expect(screen.getByTestId('page-history-diff-summary')).toHaveTextContent(
+      /too large to show/
+    )
+    expect(
+      screen.getByTestId('page-history-diff-summary')
+    ).not.toHaveTextContent(/No body changes/)
+    expect(screen.getByTestId('page-history-compare')).toHaveTextContent(
+      /too large to show/
+    )
   })
 
   it('blocks Compare when a dirty buffer cannot be flushed', async () => {

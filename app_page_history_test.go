@@ -1503,6 +1503,25 @@ func TestRestoreDeletedPageVersion_DestIOHidesPath(t *testing.T) {
 	}
 }
 
+func TestHistoryWriteError_HidesPath(t *testing.T) {
+	leaked := &os.PathError{Op: "rename", Path: `C:\secret\vault\Work\Journal\Daily.md`, Err: os.ErrPermission}
+	err := historyWriteError(leaked)
+	if err == nil {
+		t.Fatal("expected mapped error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, `C:\`) || strings.Contains(msg, "Daily.md") || strings.Contains(msg, "secret") {
+		t.Fatalf("leaked path: %s", msg)
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationUnavailable {
+		t.Fatalf("mapped err = %v", err)
+	}
+	if ipc.Message != "could not write the page" {
+		t.Fatalf("write message = %q", ipc.Message)
+	}
+}
+
 func TestHistoryReadError_HidesPath(t *testing.T) {
 	leaked := &os.PathError{Op: "open", Path: `C:\secret\vault\.system\history\x.gz`, Err: os.ErrPermission}
 	err := historyReadError(leaked)
