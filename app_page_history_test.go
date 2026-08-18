@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1082,8 +1083,8 @@ func TestDeletedPageHistory_OccupiedDestRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = app.RestoreDeletedPageVersion("Work", "Journal", "OldGone", list[0].ID, "Work", "Journal", "Taken")
-	if err == nil {
+	restoreErr := app.RestoreDeletedPageVersion("Work", "Journal", "OldGone", list[0].ID, "Work", "Journal", "Taken")
+	if restoreErr == nil {
 		t.Fatal("expected occupied dest error")
 	}
 	after, err := os.ReadFile(filepath.Join(app.vaultPath, "Work", "Journal", "Taken.md"))
@@ -1092,6 +1093,56 @@ func TestDeletedPageHistory_OccupiedDestRefuses(t *testing.T) {
 	}
 	if string(before) != string(after) {
 		t.Fatal("occupied dest was overwritten")
+	}
+	var ipc *IPCError
+	if !errors.As(restoreErr, &ipc) || ipc.Code != CodePageExists {
+		t.Fatalf("occupied dest err = %v", restoreErr)
+	}
+}
+
+func TestDeletedPageHistory_MissingVersionAndPartialDest(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", "missing", "", "", ""); err == nil {
+		t.Fatal("expected missing version error")
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", "v", "Work", "", ""); err == nil {
+		t.Fatal("expected partial dest error")
+	}
+}
+
+func TestDeletedPageHistory_RefuseCrossRoot(t *testing.T) {
+	app := newTestApp(t)
+	ext := filepath.Join(t.TempDir(), "Ext")
+	if err := os.MkdirAll(filepath.Join(ext, "Journal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(ext, "Journal", "Linked.md"),
+		"---\nnotebook: Ext\nsection: Journal\npage: Linked\ndate: 2026-08-16\ntags: []\n---\n# first\n")
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	enablePageHistory(t, app, 50, 0)
+	savePageBody(t, app, ln.DisplayName, "Journal", "Linked", "# second\n")
+	list, err := app.ListPageVersions(ln.DisplayName, "Journal", "Linked")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+	if err := app.DeletePage(ln.DisplayName, "Journal", "Linked"); err != nil {
+		t.Fatal(err)
+	}
+	err = app.RestoreDeletedPageVersion(ln.DisplayName, "Journal", "Linked", list[0].ID, "Work", "Journal", "FromLinked")
+	if err == nil {
+		t.Fatal("expected cross-root refuse")
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Journal", "FromLinked.md")); !os.IsNotExist(statErr) {
+		t.Fatal("cross-root restore wrote a vault page")
 	}
 }
 

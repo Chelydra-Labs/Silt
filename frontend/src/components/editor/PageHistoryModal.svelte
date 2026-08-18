@@ -100,6 +100,7 @@
   let destNotebook = $state('')
   let destSection = $state('')
   let destPage = $state('')
+  let destPageRef = $state<HTMLInputElement | null>(null)
 
   let versioningEnabled = $derived(
     settings.config?.editor?.auto_versioning_enabled === true
@@ -306,8 +307,12 @@
   }
 
   function suggestRestoredPageName(name: string): string {
-    const base = name.trim() || 'Page'
-    return `${base} 2`
+    const raw = name.trim() || 'Page'
+    const numbered = /^(.*?)(?:\s+(\d+))$/.exec(raw)
+    if (!numbered) return `${raw} 2`
+    const base = numbered[1].trim() || 'Page'
+    const n = Number(numbered[2])
+    return `${base} ${Number.isFinite(n) ? n + 1 : 2}`
   }
 
   function restoreDestination(): {
@@ -448,14 +453,14 @@
           const ipc = coerceIPCError(err)
           if (ipc.code === IPCErrorCode.CodePageExists) {
             restoreTarget = null
-            if (!restoreAs) {
-              restoreAs = true
-              destNotebook = notebook
-              destSection = section
-              destPage = suggestRestoredPageName(page)
-            }
+            restoreAs = true
+            destNotebook = destNotebook.trim() || notebook
+            destSection = destSection.trim() || section
+            destPage = suggestRestoredPageName(destPage.trim() || page)
             restoreError =
-              ipc.message || 'A page already exists at that location.'
+              ipc.message ||
+              'Restoring here would overwrite an existing page. Choose a different location.'
+            void tick().then(() => destPageRef?.focus())
             return
           }
           throw err
@@ -770,6 +775,7 @@
           <label class="restore-as-field">
             <span>Page</span>
             <input
+              bind:this={destPageRef}
               bind:value={destPage}
               type="text"
               autocomplete="off"
@@ -831,6 +837,16 @@
                 Snapshots appear after the next saved change to this page. Pages
                 larger than 1 MB are not snapshotted.
               </p>
+            {/if}
+            {#if !deleted}
+              <button
+                type="button"
+                class="mt-1 rounded-lg border border-surface-modal-border bg-transparent px-3 py-1.5 text-type-sm font-label-sm-bold text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+                data-testid="page-history-empty-deleted"
+                onclick={openDeletedPages}
+              >
+                Deleted pages
+              </button>
             {/if}
           </div>
         {:else}
@@ -894,6 +910,9 @@
                   role="radiogroup"
                   aria-label="History pane"
                   aria-busy={compareLoading || undefined}
+                  aria-describedby={deleted
+                    ? 'page-history-compare-unavailable'
+                    : undefined}
                   tabindex="-1"
                   data-testid="page-history-pane"
                   onkeydown={onPaneKeydown}
@@ -920,14 +939,20 @@
                     aria-disabled={deleted || !previewReady}
                     disabled={deleted ||
                       (!previewReady && paneMode !== 'compare')}
-                    title={deleted
-                      ? 'Compare is unavailable for deleted pages'
-                      : undefined}
+                    title={deleted ? 'No current page to compare' : undefined}
                     tabindex={paneMode === 'compare' ? 0 : -1}
                     class="pane-switch-btn"
                     class:active={paneMode === 'compare'}
                     onclick={() => choosePane('compare')}
                   >
+                    {#if deleted}
+                      <span
+                        id="page-history-compare-unavailable"
+                        class="sr-only"
+                      >
+                        No current page to compare
+                      </span>
+                    {/if}
                     {#if compareLoading}
                       <span
                         class="material-symbols-outlined animate-spin text-icon-xs"
@@ -1196,7 +1221,7 @@
     message={deleted
       ? restoreAs
         ? `Recreate this page as ${formatLocatorPath(destNotebook.trim(), destSection.trim(), destPage.trim())} from the version from ${formatTimestamp(restoreTarget.timestamp)}?`
-        : `Recreate this page from the version from ${formatTimestamp(restoreTarget.timestamp)}?`
+        : `Recreate ${formatLocatorPath(notebook, section, page)} from the version from ${formatTimestamp(restoreTarget.timestamp)}?`
       : `Replace this page with the version from ${formatTimestamp(
           restoreTarget.timestamp
         )}? A snapshot of the current page will be kept.`}

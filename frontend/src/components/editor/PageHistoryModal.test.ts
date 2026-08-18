@@ -346,6 +346,25 @@ describe('PageHistoryModal', () => {
     expect(
       screen.getByText(/Turn on Capture page history in Settings → Editor/)
     ).toBeTruthy()
+    expect(screen.getByTestId('page-history-empty-deleted')).toBeTruthy()
+  })
+
+  it('treats a failed live-page fetch as a compare error', async () => {
+    appMocks.FetchPageMarkdown.mockRejectedValueOnce(
+      new Error('Could not read the current page.')
+    )
+    renderModal()
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-pane-compare')).not.toBeDisabled()
+    })
+    await fireEvent.click(screen.getByTestId('page-history-pane-compare'))
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('page-history-compare-error')
+      ).toHaveTextContent(/Could not read the current page/)
+    })
+    expect(screen.queryByTestId('page-history-compare')).toBeNull()
+    expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
   })
 
   async function openCompare() {
@@ -529,6 +548,20 @@ describe('PageHistoryModal', () => {
       expect(
         screen.getByText(/a page already exists at that location/)
       ).toBeTruthy()
+      expect(screen.getByLabelText('Restore as page')).toHaveValue('Daily 2')
+      appMocks.RestoreDeletedPageVersion.mockRejectedValueOnce(
+        new Error(
+          JSON.stringify({
+            code: 'page_exists',
+            message: 'restoring here would overwrite an existing page'
+          })
+        )
+      )
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(screen.getByLabelText('Restore as page')).toHaveValue('Daily 3')
+      })
       await fireEvent.click(screen.getByTestId('page-history-restore'))
       await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
       await waitFor(() => {
@@ -539,10 +572,43 @@ describe('PageHistoryModal', () => {
           'v-new',
           'Work',
           'Journal',
-          'Daily 2'
+          'Daily 3'
         )
       })
       expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
+    })
+
+    it('navigates to the restore-as destination after success', async () => {
+      const navigated = vi.fn()
+      window.addEventListener('navigate-to-page', navigated)
+      appMocks.RestoreDeletedPageVersion.mockRejectedValueOnce(
+        new Error(
+          JSON.stringify({
+            code: 'page_exists',
+            message: 'restoring here would overwrite an existing page'
+          })
+        )
+      )
+      renderDeleted()
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore')).toBeTruthy()
+      })
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore-as')).toBeTruthy()
+      })
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(navigated).toHaveBeenCalled()
+      })
+      expect(navigated.mock.calls[0][0].detail).toMatchObject({
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily 2'
+      })
+      window.removeEventListener('navigate-to-page', navigated)
     })
 
     it('disables Compare for deleted pages', async () => {

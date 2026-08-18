@@ -76,6 +76,13 @@
     return `${n} ${n === 1 ? 'version' : 'versions'}`
   }
 
+  function formatBytes(n: number): string {
+    if (!Number.isFinite(n) || n < 0) return ''
+    if (n < 1024) return `${n} B`
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`
+  }
+
   function filterRows(list: DeletedPageRow[], raw: string): DeletedPageRow[] {
     const q = raw.trim().toLowerCase()
     if (!q) return list
@@ -170,9 +177,22 @@
       onClose()
       return
     }
-    const inList = !!(e.target as HTMLElement | null)?.closest(
+    const target = e.target as HTMLElement | null
+    const inSearch = target === searchRef
+    const inList = !!target?.closest(
       '[data-testid="deleted-page-history-list"]'
     )
+    if (inSearch && (e.key === 'ArrowDown' || e.key === 'Enter')) {
+      if (filtered.length === 0) return
+      e.preventDefault()
+      if (!selectedKey && filtered[0]) selectRow(rowKey(filtered[0]))
+      if (e.key === 'Enter') {
+        openSelected()
+        return
+      }
+      listRef?.focus()
+      return
+    }
     if (!inList) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
@@ -407,6 +427,9 @@
                 </span>
                 <span>{formatTimestamp(row.latestTimestamp)}</span>
                 <span>{formatVersionCount(row.versionCount)}</span>
+                {#if Number.isFinite(row.latestBytes) && row.latestBytes >= 0}
+                  <span>{formatBytes(row.latestBytes)}</span>
+                {/if}
               </span>
             </button>
           {/each}

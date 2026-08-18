@@ -344,9 +344,13 @@ func (a *App) ListDeletedPageHistory() ([]DeletedPageHistory, error) {
 		return nil, fmt.Errorf("vault not loaded")
 	}
 	var out []DeletedPageHistory
-	out = append(out, a.collectDeletedHistory(a.vaultPath, "vault", func(loc history.Locator) string {
+	vaultRows, err := a.collectDeletedHistory(a.vaultPath, "vault", func(loc history.Locator) string {
 		return filepath.Join(a.vaultPath, loc.Notebook, loc.Section, loc.Page+".md")
-	})...)
+	})
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, vaultRows...)
 
 	a.configMu.RLock()
 	linked := append([]config.LinkedNotebook(nil), a.cfg.LinkedNotebooks...)
@@ -356,9 +360,14 @@ func (a *App) ListDeletedPageHistory() ([]DeletedPageHistory, error) {
 			continue
 		}
 		root := ln.RootPath
-		out = append(out, a.collectDeletedHistory(root, "linked", func(loc history.Locator) string {
+		rows, lerr := a.collectDeletedHistory(root, "linked", func(loc history.Locator) string {
 			return filepath.Join(root, loc.Section, loc.Page+".md")
-		})...)
+		})
+		if lerr != nil {
+			log.Printf("page history: list linked manifests failed: %v", lerr)
+			continue
+		}
+		out = append(out, rows...)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].LatestTimestamp == out[j].LatestTimestamp {
@@ -375,11 +384,10 @@ func (a *App) ListDeletedPageHistory() ([]DeletedPageHistory, error) {
 	return out, nil
 }
 
-func (a *App) collectDeletedHistory(root, wantSource string, livePath func(history.Locator) string) []DeletedPageHistory {
+func (a *App) collectDeletedHistory(root, wantSource string, livePath func(history.Locator) string) ([]DeletedPageHistory, error) {
 	locs, err := history.ListManifests(root)
 	if err != nil {
-		log.Printf("page history: list manifests failed: %v", err)
-		return nil
+		return nil, err
 	}
 	var out []DeletedPageHistory
 	for _, loc := range locs {
@@ -389,8 +397,8 @@ func (a *App) collectDeletedHistory(root, wantSource string, livePath func(histo
 		p := livePath(loc)
 		if _, err := os.Stat(p); err == nil {
 			continue
-		} else if !os.IsNotExist(err) {
-			continue
+		} else if err != nil && !os.IsNotExist(err) {
+			log.Printf("page history: stat live path %s: %v (listing leftover anyway)", p, err)
 		}
 		entries, err := history.List(root, loc)
 		if err != nil || len(entries) == 0 {
@@ -407,7 +415,7 @@ func (a *App) collectDeletedHistory(root, wantSource string, livePath func(histo
 			LatestBytes:     latest.Bytes,
 		})
 	}
-	return out
+	return out, nil
 }
 
 // RestoreDeletedPageVersion recreates a missing page from a retained snapshot.
@@ -419,8 +427,12 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	if a.vaultPath == "" || a.db == nil {
 		return fmt.Errorf("vault not loaded")
 	}
-	if strings.TrimSpace(destNotebook) == "" && strings.TrimSpace(destPage) == "" {
+	destNBIn := strings.TrimSpace(destNotebook)
+	destPageIn := strings.TrimSpace(destPage)
+	if destNBIn == "" && destPageIn == "" {
 		destNotebook, destSection, destPage = notebook, section, page
+	} else if destNBIn == "" || destPageIn == "" {
+		return NewIPCError(CodeInvalidNavigationPath, "restore destination needs both a notebook and a page name")
 	}
 	origLoc, origRoot, _, _, _, _, _, err := a.resolvePageHistory(notebook, section, page)
 	if err != nil {
@@ -436,6 +448,9 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	if destRoot == "" {
 		return NewIPCError(CodeNavigationNotFound, "page not found")
 	}
+	if destRoot != origRoot {
+		return NewIPCError(CodeInvalidNavigationPath, "restore that snapshot in the same notebook it came from")
+	}
 
 	snapshot, err := history.Read(origRoot, origLoc, versionID)
 	if err != nil {
@@ -446,14 +461,11 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	}
 	_, restoreBody := parser.SplitFrontmatter(string(snapshot))
 
+	occupiedMsg := "restoring here would overwrite an existing page; choose a different location"
 	if _, err := os.Stat(destFile); err == nil {
-		return NewIPCError(CodePageExists, "a page already exists at that location")
+		return NewIPCError(CodePageExists, occupiedMsg)
 	} else if !os.IsNotExist(err) {
 		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(destFile), 0755); err != nil {
-		return fmt.Errorf("failed to create parent directory: %w", err)
 	}
 
 	today := time.Now().Format("2006-01-02")
@@ -468,10 +480,14 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	var writeErr error
 	a.coordinator.LockFileWrite(destFile, func() {
 		if _, err := os.Stat(destFile); err == nil {
-			writeErr = NewIPCError(CodePageExists, "a page already exists at that location")
+			writeErr = NewIPCError(CodePageExists, occupiedMsg)
 			return
 		} else if !os.IsNotExist(err) {
 			writeErr = err
+			return
+		}
+		if err := os.MkdirAll(filepath.Dir(destFile), 0755); err != nil {
+			writeErr = fmt.Errorf("failed to create parent directory: %w", err)
 			return
 		}
 		result, writeErr = a.writePageMarkdownLocked(
@@ -484,10 +500,8 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 		return writeErr
 	}
 
-	if destLoc != origLoc || destRoot != origRoot {
-		if destRoot == origRoot {
-			a.relocatePageHistory(destSource, origLoc.Notebook, origLoc.Section, origLoc.Page, destNB, destSec, destPg)
-		}
+	if destLoc != origLoc {
+		a.relocatePageHistory(destSource, origLoc.Notebook, origLoc.Section, origLoc.Page, destNB, destSec, destPg)
 	}
 
 	_ = result
