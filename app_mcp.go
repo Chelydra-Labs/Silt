@@ -267,6 +267,34 @@ func (b mcpBridge) GetBacklinksPaged(ctx context.Context, notebook, section, pag
 	return b.app.GetBacklinksPaged(notebook, section, page, cursor, limit)
 }
 
+func (b mcpBridge) ListPageVersions(ctx context.Context, notebook, section, page string) ([]mcp.PageVersionInfo, error) {
+	_ = ctx
+	rows, err := b.app.ListPageVersions(notebook, section, page)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]mcp.PageVersionInfo, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, mcp.PageVersionInfo{
+			ID:        r.ID,
+			Timestamp: r.Timestamp,
+			Source:    r.Source,
+			Bytes:     r.Bytes,
+		})
+	}
+	return out, nil
+}
+
+func (b mcpBridge) GetPageVersion(ctx context.Context, notebook, section, page, versionID string) (string, error) {
+	_ = ctx
+	return b.app.GetPageVersion(notebook, section, page, versionID)
+}
+
+func (b mcpBridge) RestorePageVersion(ctx context.Context, notebook, section, page, versionID string) error {
+	_ = ctx
+	return b.app.RestorePageVersion(notebook, section, page, versionID)
+}
+
 // ensureMCPHost returns the MCP host, constructing it once if missing
 // (tests that build a bare App). Serialized so concurrent GetLocalMCP*
 // getters cannot race the write against syncMCPHostLocked.

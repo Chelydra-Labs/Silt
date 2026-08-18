@@ -480,6 +480,36 @@ export interface PluginContext {
     oldName: string,
     newName: string
   ) => Promise<boolean>
+  /**
+   * List retained page-history snapshots newest-first. Empty when none exist.
+   * Session-checked; not gated by content-mutate.
+   */
+  listPageVersions: (
+    notebook: string,
+    section: string,
+    page: string
+  ) => Promise<
+    Array<{ id: string; timestamp: string; source: string; bytes: number }>
+  >
+  /**
+   * Read a stored snapshot body (no frontmatter). Does not mutate the live page.
+   */
+  getPageVersion: (
+    notebook: string,
+    section: string,
+    page: string,
+    versionId: string
+  ) => Promise<string>
+  /**
+   * Replace the live page body with a stored snapshot. Keeps current
+   * frontmatter and snapshots the pre-restore body. Gated by content-mutate.
+   */
+  restorePageVersion: (
+    notebook: string,
+    section: string,
+    page: string,
+    versionId: string
+  ) => Promise<boolean>
 
   // --- Plugin file I/O (#108) — capability-gated (read-files / write-files) ---
 

@@ -15,7 +15,8 @@ export const MUTATING_TOOLS = new Set([
   'update_block',
   'update_task',
   'rename_tag',
-  'extract_and_save'
+  'extract_and_save',
+  'restore_page_version'
 ])
 
 /** Always require confirmation even in auto mode (bulk / nested-model writes). */
@@ -143,6 +144,22 @@ export function previewForMutation(
           : `Extract ${mode} to a new note`,
         details: detailsParts.join('\n'),
         affectedCount: blockCount > 0 ? blockCount : 1,
+        severity: 'danger'
+      }
+    }
+    case 'restore_page_version': {
+      const notebook = str(args.notebook)
+      const section = str(args.section)
+      const page = str(args.page)
+      const id = str(args.version_id)
+      const path = [notebook, section, page].filter(Boolean).join('/')
+      return {
+        kind: 'restore_page_version',
+        summary: path
+          ? `Restore ${path} to version ${id || '…'}`
+          : 'Restore a page version',
+        details: id ? `Version ${id}` : undefined,
+        affectedCount: 1,
         severity: 'danger'
       }
     }

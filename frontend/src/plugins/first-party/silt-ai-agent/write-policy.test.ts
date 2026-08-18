@@ -87,5 +87,14 @@ describe('write-policy', () => {
     expect(
       previewForMutation('update_block', { block_id: 'abc' }).summary
     ).toContain('abc')
+    expect(isMutatingTool('restore_page_version')).toBe(true)
+    expect(
+      previewForMutation('restore_page_version', {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        version_id: 'v-old'
+      }).summary
+    ).toContain('Work/Journal/Daily')
   })
 })

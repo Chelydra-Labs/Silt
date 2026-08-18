@@ -15,6 +15,13 @@ const mocks = vi.hoisted(() => ({
   pluginSetTaskOrder: vi.fn(() => Promise.resolve(true)),
   pluginSetTaskStartDate: vi.fn(() => Promise.resolve(true)),
   getPluginSettingsForNotebook: vi.fn(() => Promise.resolve({})),
+  pluginListPageVersions: vi.fn(
+    (): Promise<
+      Array<{ id: string; timestamp: string; source: string; bytes: number }>
+    > => Promise.resolve([])
+  ),
+  pluginGetPageVersion: vi.fn(() => Promise.resolve('')),
+  pluginRestorePageVersion: vi.fn(() => Promise.resolve()),
   getActiveLocation: vi.fn(() => ({
     notebook: 'Work',
     section: 'Journal',
@@ -30,7 +37,10 @@ vi.mock('$silt-app', () =>
     PluginUpdateTaskMeta: mocks.pluginUpdateTaskMeta,
     PluginSetTaskOrder: mocks.pluginSetTaskOrder,
     PluginSetTaskStartDate: mocks.pluginSetTaskStartDate,
-    GetPluginSettingsForNotebook: mocks.getPluginSettingsForNotebook
+    GetPluginSettingsForNotebook: mocks.getPluginSettingsForNotebook,
+    PluginListPageVersions: mocks.pluginListPageVersions,
+    PluginGetPageVersion: mocks.pluginGetPageVersion,
+    PluginRestorePageVersion: mocks.pluginRestorePageVersion
   })
 )
 
@@ -263,5 +273,59 @@ describe('makePluginContext — openSettings dispatches open-settings event', ()
     expect(events).toHaveLength(2)
     expect(events[0].detail).toBe('ai')
     expect(events[1].detail).toBe('')
+  })
+})
+
+describe('makePluginContext — page history wrappers', () => {
+  it('threads session token through list/get/restore', async () => {
+    mocks.pluginListPageVersions.mockResolvedValueOnce([
+      {
+        id: 'v1',
+        timestamp: '2026-08-16T18:00:00Z',
+        source: 'editor',
+        bytes: 12
+      }
+    ])
+    mocks.pluginGetPageVersion.mockResolvedValueOnce('# body')
+    const ctx = makePluginContext('hist-plugin', 'tok-hist')
+    await expect(
+      ctx.listPageVersions('Work', 'Journal', 'Daily')
+    ).resolves.toEqual([
+      {
+        id: 'v1',
+        timestamp: '2026-08-16T18:00:00Z',
+        source: 'editor',
+        bytes: 12
+      }
+    ])
+    expect(mocks.pluginListPageVersions).toHaveBeenCalledWith(
+      'hist-plugin',
+      'tok-hist',
+      'Work',
+      'Journal',
+      'Daily'
+    )
+    await expect(
+      ctx.getPageVersion('Work', 'Journal', 'Daily', 'v1')
+    ).resolves.toBe('# body')
+    expect(mocks.pluginGetPageVersion).toHaveBeenCalledWith(
+      'hist-plugin',
+      'tok-hist',
+      'Work',
+      'Journal',
+      'Daily',
+      'v1'
+    )
+    await expect(
+      ctx.restorePageVersion('Work', 'Journal', 'Daily', 'v1')
+    ).resolves.toBe(true)
+    expect(mocks.pluginRestorePageVersion).toHaveBeenCalledWith(
+      'hist-plugin',
+      'tok-hist',
+      'Work',
+      'Journal',
+      'Daily',
+      'v1'
+    )
   })
 })

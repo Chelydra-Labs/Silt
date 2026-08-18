@@ -68,7 +68,10 @@ import {
   PluginResolveAsset,
   PluginVaultScratchDir,
   PluginReadPluginAsset,
-  PluginListNavigation
+  PluginListNavigation,
+  PluginListPageVersions,
+  PluginGetPageVersion,
+  PluginRestorePageVersion
 } from '../../bindings/silt/app.js'
 import { Events } from '@wailsio/runtime'
 import { getActiveLocation } from './location.svelte'
@@ -544,6 +547,39 @@ export function makePluginContext(
         notebook,
         section,
         page
+      ).then(() => true),
+    listPageVersions: (notebook, section, page) =>
+      PluginListPageVersions(
+        pluginID,
+        sessionToken ?? '',
+        notebook,
+        section,
+        page
+      ).then((rows) =>
+        (rows ?? []).map((r) => ({
+          id: r.id,
+          timestamp: r.timestamp,
+          source: r.source,
+          bytes: r.bytes
+        }))
+      ),
+    getPageVersion: (notebook, section, page, versionId) =>
+      PluginGetPageVersion(
+        pluginID,
+        sessionToken ?? '',
+        notebook,
+        section,
+        page,
+        versionId
+      ).then((body) => (typeof body === 'string' ? body : '')),
+    restorePageVersion: (notebook, section, page, versionId) =>
+      PluginRestorePageVersion(
+        pluginID,
+        sessionToken ?? '',
+        notebook,
+        section,
+        page,
+        versionId
       ).then(() => true),
     renamePage: (notebook, section, oldName, newName) =>
       PluginRenamePage(

@@ -107,6 +107,16 @@ await ctx.setTaskTags(uuid, ['work/sprint-4', 'urgent'])  // surgical #hashtag r
 await ctx.setTaskTitle(uuid, 'Ship the v2 theme editor')  // tags + tokens preserved
 ```
 
+### Page history
+
+`listPageVersions(notebook, section, page)` returns retained snapshots newest-first (`id`, `timestamp`, `source`, `bytes`). An empty list means no snapshots — not an error. `getPageVersion(...)` returns the stored markdown body (no frontmatter) and does not mutate the live page. `restorePageVersion(...)` replaces the live body, keeps current frontmatter, and snapshots the pre-restore bytes so the restore is reversible. Restore is gated by `content-mutate`; list/preview need only a valid session.
+
+```ts
+const versions = await ctx.listPageVersions(notebook, section, page)
+const body = await ctx.getPageVersion(notebook, section, page, versions[0].id)
+await ctx.restorePageVersion(notebook, section, page, versions[0].id)
+```
+
 ### Navigating to a block
 
 To open a block (e.g. when a user clicks a result), dispatch a window event — no SDK call needed:

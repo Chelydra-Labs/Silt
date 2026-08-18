@@ -932,3 +932,73 @@ func TestPageHistory_StoreIndependentOfDB(t *testing.T) {
 		t.Fatalf("List: %v len=%d", err, len(list))
 	}
 }
+
+func TestPluginPageHistory_SessionAndRestoreGrant(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Agent", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Agent", "# second\n")
+
+	tok := registerTestSession(t, app, "third-party")
+	if _, err := app.PluginListPageVersions("spoofed", tok, "Work", "Journal", "Agent"); err == nil {
+		t.Fatal("expected session mismatch on list")
+	}
+
+	list, err := app.PluginListPageVersions("third-party", tok, "Work", "Journal", "Agent")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) == 0 {
+		t.Fatal("expected leftover versions")
+	}
+	body, err := app.PluginGetPageVersion("third-party", tok, "Work", "Journal", "Agent", list[0].ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !strings.Contains(body, "first") {
+		t.Fatalf("preview body = %q", body)
+	}
+
+	if err := app.PluginRestorePageVersion("third-party", tok, "Work", "Journal", "Agent", list[0].ID); err == nil {
+		t.Fatal("expected capability denial without content-mutate")
+	}
+	got, err := app.FetchPageMarkdown("Work", "Journal", "Agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "first") && !strings.Contains(got, "second") {
+		t.Fatal("denied restore still wrote the live page")
+	}
+
+	if err := app.RequestCapability("third-party", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if err := app.PluginRestorePageVersion("third-party", tok, "Work", "Journal", "Agent", list[0].ID); err != nil {
+		t.Fatalf("restore with grant: %v", err)
+	}
+	got, err = app.FetchPageMarkdown("Work", "Journal", "Agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "first") {
+		t.Fatalf("restored body = %q", got)
+	}
+}
+
+func TestPluginPageHistory_NoVault(t *testing.T) {
+	app := &App{
+		pluginSessions: map[string]string{"tok": "test-plugin"},
+		grants: vault.GrantsStore{
+			"test-plugin": {string(plugins.CapContentMutate): plugins.QualGranted},
+		},
+	}
+	if _, err := app.PluginListPageVersions("test-plugin", "tok", "Work", "", "X"); err == nil {
+		t.Fatal("expected no-vault error")
+	}
+	if _, err := app.PluginGetPageVersion("test-plugin", "tok", "Work", "", "X", "v"); err == nil {
+		t.Fatal("expected no-vault error")
+	}
+	if err := app.PluginRestorePageVersion("test-plugin", "tok", "Work", "", "X", "v"); err == nil {
+		t.Fatal("expected no-vault error")
+	}
+}

@@ -925,4 +925,116 @@ func registerTools(s *mcp.Server, env *toolEnv) {
 		env.record("get_block", "ok", "", args)
 		return toolJSON(res)
 	})
+
+	type listPageVersionsIn struct {
+		Notebook string `json:"notebook" jsonschema:"notebook name"`
+		Section  string `json:"section" jsonschema:"section path (may be empty for root pages)"`
+		Page     string `json:"page" jsonschema:"page name without .md"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "list_page_versions",
+		Description: "List retained page-history snapshots newest-first (id, timestamp, source, bytes). Empty when no snapshots exist. Read-only.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listPageVersionsIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page}
+		if env.bridge == nil {
+			env.record("list_page_versions", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		if strings.TrimSpace(in.Notebook) == "" || strings.TrimSpace(in.Page) == "" {
+			env.record("list_page_versions", "error", "missing path", args)
+			return toolErr("notebook and page are required")
+		}
+		rows, err := env.bridge.ListPageVersions(ctx, in.Notebook, in.Section, in.Page)
+		if err != nil {
+			env.record("list_page_versions", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		if rows == nil {
+			rows = []PageVersionInfo{}
+		}
+		env.record("list_page_versions", "ok", "", args)
+		return toolJSON(map[string]any{
+			"notebook": in.Notebook,
+			"section":  in.Section,
+			"page":     in.Page,
+			"versions": rows,
+		})
+	})
+
+	type getPageVersionIn struct {
+		Notebook  string `json:"notebook" jsonschema:"notebook name"`
+		Section   string `json:"section" jsonschema:"section path (may be empty for root pages)"`
+		Page      string `json:"page" jsonschema:"page name without .md"`
+		VersionID string `json:"version_id" jsonschema:"version id from list_page_versions"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_page_version",
+		Description: "Read a stored page-history snapshot as markdown body (no frontmatter). Does not mutate the live page. Read-only.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getPageVersionIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "version_id": in.VersionID}
+		if env.bridge == nil {
+			env.record("get_page_version", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		if strings.TrimSpace(in.Notebook) == "" || strings.TrimSpace(in.Page) == "" {
+			env.record("get_page_version", "error", "missing path", args)
+			return toolErr("notebook and page are required")
+		}
+		if strings.TrimSpace(in.VersionID) == "" {
+			env.record("get_page_version", "error", "missing version", args)
+			return toolErr("version_id is required")
+		}
+		body, err := env.bridge.GetPageVersion(ctx, in.Notebook, in.Section, in.Page, in.VersionID)
+		if err != nil {
+			env.record("get_page_version", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		runes := []rune(body)
+		if len(runes) > MaxBlockTextRunes*4 {
+			body = string(runes[:MaxBlockTextRunes*4]) + "\n…[truncated]"
+		}
+		env.record("get_page_version", "ok", "", args)
+		return toolJSON(map[string]any{
+			"notebook":   in.Notebook,
+			"section":    in.Section,
+			"page":       in.Page,
+			"version_id": in.VersionID,
+			"markdown":   body,
+		})
+	})
+
+	type restorePageVersionIn struct {
+		Notebook  string `json:"notebook" jsonschema:"notebook name"`
+		Section   string `json:"section" jsonschema:"section path (may be empty for root pages)"`
+		Page      string `json:"page" jsonschema:"page name without .md"`
+		VersionID string `json:"version_id" jsonschema:"version id from list_page_versions"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "restore_page_version",
+		Description: "Replace the live page body with a stored snapshot. Keeps current frontmatter and snapshots the pre-restore body so the restore is reversible. Requires write grant.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in restorePageVersionIn) (*mcp.CallToolResult, any, error) {
+		args := map[string]any{"notebook": in.Notebook, "section": in.Section, "page": in.Page, "version_id": in.VersionID}
+		if !env.writeOK() {
+			env.record("restore_page_version", "denied", "write not granted", args)
+			return toolErr("write tools are disabled — enable write grant in Silt Settings → AI → Local MCP")
+		}
+		if env.bridge == nil {
+			env.record("restore_page_version", "error", "no vault", args)
+			return toolErr("no vault open")
+		}
+		if strings.TrimSpace(in.Notebook) == "" || strings.TrimSpace(in.Page) == "" {
+			env.record("restore_page_version", "error", "missing path", args)
+			return toolErr("notebook and page are required")
+		}
+		if strings.TrimSpace(in.VersionID) == "" {
+			env.record("restore_page_version", "error", "missing version", args)
+			return toolErr("version_id is required")
+		}
+		if err := env.bridge.RestorePageVersion(ctx, in.Notebook, in.Section, in.Page, in.VersionID); err != nil {
+			env.record("restore_page_version", "error", err.Error(), args)
+			return toolErr(err.Error())
+		}
+		env.record("restore_page_version", "ok", "", args)
+		return toolJSON(map[string]any{"ok": true})
+	})
 }

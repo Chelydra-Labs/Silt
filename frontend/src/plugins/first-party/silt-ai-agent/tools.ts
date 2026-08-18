@@ -48,6 +48,18 @@ import {
   searchProductDocsToolDef,
   handleSearchProductDocs
 } from './tools/search_product_docs'
+import {
+  listPageVersionsToolDef,
+  handleListPageVersions
+} from './tools/list_page_versions'
+import {
+  getPageVersionToolDef,
+  handleGetPageVersion
+} from './tools/get_page_version'
+import {
+  restorePageVersionToolDef,
+  handleRestorePageVersion
+} from './tools/restore_page_version'
 
 /** Tools that need embeddings / RAG; omitted from the catalog when RAG is off. */
 export const RAG_TOOL_NAMES = new Set([
@@ -92,7 +104,14 @@ const P1_TOOLS: AgentToolDef[] = [
   },
   listTagsTool,
   findUntaggedTool,
-  { ...renameTagToolDef, handler: handleRenameTag, commit: commitRenameTag }
+  { ...renameTagToolDef, handler: handleRenameTag, commit: commitRenameTag },
+  { ...listPageVersionsToolDef, handler: handleListPageVersions },
+  { ...getPageVersionToolDef, handler: handleGetPageVersion },
+  {
+    ...restorePageVersionToolDef,
+    handler: handleRestorePageVersion,
+    commit: handleRestorePageVersion
+  }
 ]
 
 /** P2 tools (#606–#608). extract_and_save always confirms; commit writes. */

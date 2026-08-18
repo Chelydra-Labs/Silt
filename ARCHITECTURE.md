@@ -544,7 +544,7 @@ type TaskQueryFilter struct {
 All bindings hang off the single Wails v3 service (`*App` registered via `application.NewServiceWithOptions`) and are
 auto-exposed to the frontend as JSON RPC. Grouped by domain:
 
-- **Page history** — `ListPageVersions`, `GetPageVersion` (markdown body only), `RestorePageVersion` (body-only restore through the normal save + reindex path; current frontmatter is preserved; pre-restore bytes are captured first). Opt-in snapshots live under `<vault>/.system/history/` (linked: `<linkedRoot>/.system/history/`).
+- **Page history** — `ListPageVersions`, `GetPageVersion` (markdown body only), `RestorePageVersion` (body-only restore through the normal save + reindex path; current frontmatter is preserved; pre-restore bytes are captured first). Plugin wrappers: `PluginListPageVersions` / `PluginGetPageVersion` / `PluginRestorePageVersion` (restore is `content-mutate`). Opt-in snapshots live under `<vault>/.system/history/` (linked: `<linkedRoot>/.system/history/`).
 - **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `FetchPageMarkdown` / `SavePageMarkdown` (raw source body), `UpdateBlockState`
   (task-checkbox transition + atomic file rewrite + re-index; returns the spawned
   recurrence instance's UUID on a recurring TODO/DOING→DONE transition, `""`
@@ -752,9 +752,11 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
    on an internal `startMu` (outside the status `mu`) so bind/Shutdown cannot
    interleave. **Tools:**
    read — `search_blocks`/`search_notes`, `read_page`/`read_blocks`,
-   `list_notebooks`, `get_page_metadata`, `get_backlinks`, `get_block`;
+   `list_notebooks`, `get_page_metadata`, `get_backlinks`, `get_block`,
+   `list_page_versions`, `get_page_version`;
    write (grant) — `create_page`, `append_to_page`, `insert_under_heading`,
-   `create_task`, `update_blocks`, `set_page_property`, `set_page_type`.
+   `create_task`, `update_blocks`, `set_page_property`, `set_page_type`,
+   `restore_page_version`.
    No delete/move/bulk.
   **Lifecycle:** start on vault open when enabled; stop on vault close/switch
   and `ServiceShutdown`; close-to-tray keeps MCP.
