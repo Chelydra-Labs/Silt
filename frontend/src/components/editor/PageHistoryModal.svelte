@@ -8,6 +8,12 @@
   import { trapFocus } from '../../lib/focusTrap'
   import { settings } from '../../settings/store.svelte'
   import { editorKey, getEditor } from '../../lib/editor/editorRegistry.svelte'
+  import { fetchPageMarkdown } from '../../lib/editor/pageMarkdown'
+  import {
+    diffPageBodies,
+    type DiffHunk,
+    type WordPart
+  } from '../../lib/editor/pageDiff'
   import ConfirmDialog from '../ConfirmDialog.svelte'
 
   interface PageVersionRow {
@@ -16,6 +22,14 @@
     source: string
     bytes: number
   }
+
+  interface DiffLine {
+    text: string
+    parts?: WordPart[]
+  }
+
+  type HistoryPane = 'preview' | 'compare'
+  type DiffLayout = 'split' | 'unified'
 
   interface Props {
     notebook: string
@@ -61,10 +75,34 @@
   let previewGen = 0
   let statusMessage = $state('')
 
+  let paneMode = $state<HistoryPane>('preview')
+  let layoutOverride = $state<DiffLayout | null>(null)
+  let preferSplit = $state(true)
+  let liveBody = $state('')
+  let compareLoading = $state(false)
+  let compareError = $state('')
+  let compareGen = 0
+  let expandedHunks = $state<Record<number, boolean>>({})
+
   let versioningEnabled = $derived(
     settings.config?.editor?.auto_versioning_enabled === true
   )
   let selected = $derived(versions.find((v) => v.id === selectedId) ?? null)
+  let previewReady = $derived(
+    !!selected &&
+      selected.id === previewedId &&
+      !previewLoading &&
+      !previewError
+  )
+  let layout = $derived<DiffLayout>(
+    layoutOverride ?? (preferSplit ? 'split' : 'unified')
+  )
+  let pageDiff = $derived(
+    paneMode === 'compare' && previewReady
+      ? diffPageBodies(preview, liveBody)
+      : null
+  )
+  let diffSummary = $derived(pageDiff ? formatDiffSummary(pageDiff) : '')
 
   function sourceLabel(source: string): string {
     return SOURCE_LABELS[source] ?? source
@@ -81,6 +119,73 @@
     if (n < 1024) return `${n} B`
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
     return `${(n / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  function formatLineCount(n: number, verb: string): string {
+    return `${n} ${n === 1 ? 'line' : 'lines'} ${verb}`
+  }
+
+  function formatDiffSummary(diff: {
+    addedLines: number
+    removedLines: number
+  }): string {
+    if (diff.addedLines === 0 && diff.removedLines === 0) {
+      return 'No changes. This version matches the current page.'
+    }
+    const parts: string[] = []
+    if (diff.addedLines > 0) {
+      parts.push(formatLineCount(diff.addedLines, 'added'))
+    }
+    if (diff.removedLines > 0) {
+      parts.push(formatLineCount(diff.removedLines, 'removed'))
+    }
+    return parts.join(', ')
+  }
+
+  function splitBodyLines(text: string): string[] {
+    if (text === '') return []
+    const parts = text.split('\n')
+    if (parts[parts.length - 1] === '') parts.pop()
+    return parts
+  }
+
+  function linesFromWords(words: WordPart[]): DiffLine[] {
+    const lines: DiffLine[] = [{ text: '', parts: [] }]
+    for (const word of words) {
+      const segs = word.text.split('\n')
+      segs.forEach((seg, i) => {
+        if (i > 0) lines.push({ text: '', parts: [] })
+        const line = lines[lines.length - 1]
+        line.text += seg
+        if (seg !== '' || segs.length === 1) {
+          line.parts = [...(line.parts ?? []), { text: seg, kind: word.kind }]
+        }
+      })
+    }
+    if (lines.length > 1 && lines[lines.length - 1].text === '') lines.pop()
+    return lines
+  }
+
+  function sideLines(hunk: DiffHunk, side: 'previous' | 'current'): DiffLine[] {
+    const words = side === 'previous' ? hunk.previousWords : hunk.currentWords
+    const text = side === 'previous' ? hunk.previous : hunk.current
+    if (hunk.kind === 'replace' && words && words.length > 0) {
+      return linesFromWords(words)
+    }
+    return splitBodyLines(text).map((line) => ({ text: line }))
+  }
+
+  function hunkCollapsed(hunk: DiffHunk, index: number): boolean {
+    return hunk.kind === 'equal' && !!hunk.collapsed && !expandedHunks[index]
+  }
+
+  function expandHunk(index: number): void {
+    expandedHunks = { ...expandedHunks, [index]: true }
+  }
+
+  function readPreferSplit(): boolean {
+    if (typeof window.matchMedia !== 'function') return true
+    return !window.matchMedia('(max-width: 720px)').matches
   }
 
   async function loadVersions(preferId?: string | null): Promise<void> {
@@ -146,6 +251,7 @@
   function selectVersion(id: string): void {
     if (selectedId === id) return
     selectedId = id
+    expandedHunks = {}
     void loadPreview(id)
     scrollSelectedIntoView()
   }
@@ -174,6 +280,89 @@
       !previewError &&
       !restoring
     )
+  }
+
+  function choosePane(mode: HistoryPane): void {
+    if (mode === 'preview') {
+      compareGen += 1
+      paneMode = 'preview'
+      compareLoading = false
+      return
+    }
+    if (paneMode === 'compare' || compareLoading) return
+    void enterCompare()
+  }
+
+  function onPaneKeydown(e: KeyboardEvent): void {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return
+    const canOpen = previewReady && !compareLoading
+    const options: HistoryPane[] = canOpen
+      ? ['preview', 'compare']
+      : ['preview']
+    const current = paneMode
+    let idx = options.indexOf(current)
+    if (idx < 0) idx = 0
+    if (e.key === 'Home') idx = 0
+    else if (e.key === 'End') idx = options.length - 1
+    else if (e.key === 'ArrowRight') idx = (idx + 1) % options.length
+    else idx = (idx - 1 + options.length) % options.length
+    e.preventDefault()
+    const next = options[idx]
+    choosePane(next)
+    const root = e.currentTarget as HTMLElement
+    root.querySelector<HTMLElement>(`[data-history-pane="${next}"]`)?.focus()
+  }
+
+  function chooseLayout(next: DiffLayout): void {
+    layoutOverride = next
+  }
+
+  function onLayoutKeydown(e: KeyboardEvent): void {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return
+    const options: DiffLayout[] = ['split', 'unified']
+    let idx = options.indexOf(layout)
+    if (idx < 0) idx = 0
+    if (e.key === 'Home') idx = 0
+    else if (e.key === 'End') idx = options.length - 1
+    else if (e.key === 'ArrowRight') idx = (idx + 1) % options.length
+    else idx = (idx - 1 + options.length) % options.length
+    e.preventDefault()
+    chooseLayout(options[idx])
+    const root = e.currentTarget as HTMLElement
+    root
+      .querySelector<HTMLElement>(`[data-diff-layout="${options[idx]}"]`)
+      ?.focus()
+  }
+
+  async function enterCompare(): Promise<void> {
+    if (!previewReady || !selected || compareLoading) return
+    const gen = ++compareGen
+    compareLoading = true
+    compareError = ''
+    paneMode = 'compare'
+    try {
+      const editor = getEditor(editorKey(notebook, section, page))
+      if (editor?.isDirty()) {
+        const clean = await editor.flush()
+        if (!clean) {
+          if (gen !== compareGen) return
+          paneMode = 'preview'
+          compareError =
+            "Couldn't save the current page before comparing. Fix the save error, then try again."
+          return
+        }
+      }
+      const body = await fetchPageMarkdown(notebook, section, page)
+      if (gen !== compareGen) return
+      liveBody = body
+      expandedHunks = {}
+    } catch (e) {
+      if (gen !== compareGen) return
+      paneMode = 'preview'
+      compareError = e instanceof Error ? e.message : String(e)
+    } finally {
+      if (gen === compareGen) compareLoading = false
+    }
   }
 
   function openRestoreConfirm(): void {
@@ -215,6 +404,10 @@
       }
       restoreTarget = null
       statusMessage = `Restored version from ${formatTimestamp(target.timestamp)}. A snapshot of the previous page was kept.`
+      compareGen += 1
+      paneMode = 'preview'
+      compareLoading = false
+      liveBody = ''
       await loadVersions(target.id)
     } catch (e) {
       restoreError = e instanceof Error ? e.message : String(e)
@@ -279,10 +472,20 @@
   onMount(() => {
     previouslyFocused = document.activeElement as HTMLElement | null
     window.addEventListener('keydown', handleKeydown, true)
+    preferSplit = readPreferSplit()
+    const mq =
+      typeof window.matchMedia === 'function'
+        ? window.matchMedia('(max-width: 720px)')
+        : null
+    const onViewport = () => {
+      preferSplit = readPreferSplit()
+    }
+    mq?.addEventListener('change', onViewport)
     void tick().then(() => dialogRef?.focus())
     void loadVersions()
     return () => {
       window.removeEventListener('keydown', handleKeydown, true)
+      mq?.removeEventListener('change', onViewport)
       if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
     }
   })
@@ -314,7 +517,8 @@
     aria-describedby="page-history-path page-history-honesty"
     tabindex="-1"
     data-testid="page-history-modal"
-    class="dialog-surface relative flex h-[min(36rem,calc(100vh-4rem))] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-surface-modal-border glass-palette glass-palette-strong shadow-2xl"
+    class="dialog-surface relative flex h-[min(36rem,calc(100vh-4rem))] w-full flex-col overflow-hidden rounded-xl border border-surface-modal-border glass-palette glass-palette-strong shadow-2xl"
+    class:is-comparing={paneMode === 'compare'}
   >
     <header
       class="flex items-center gap-3 border-b border-surface-modal-border px-5 py-3.5"
@@ -395,6 +599,19 @@
           >error</span
         >
         <span class="flex-1">{restoreError}</span>
+      </div>
+    {/if}
+
+    {#if compareError}
+      <div
+        class="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-error-border bg-error-bg px-3 py-2 text-type-sm font-body-md text-error"
+        role="alert"
+        data-testid="page-history-compare-error"
+      >
+        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
+          >error</span
+        >
+        <span class="flex-1">{compareError}</span>
       </div>
     {/if}
 
@@ -486,7 +703,9 @@
       {#if versions.length > 0 || listLoading || listError}
         <section
           class="history-preview"
-          aria-label="Version preview"
+          aria-label={paneMode === 'compare'
+            ? 'Compare with current page'
+            : 'Version preview'}
           data-testid="page-history-preview"
         >
           {#if selected}
@@ -503,18 +722,260 @@
                   · read-only
                 </p>
               </div>
-              <button
-                type="button"
-                data-page-history-restore
-                data-testid="page-history-restore"
-                disabled={!canRestoreSelected()}
-                onclick={openRestoreConfirm}
-                class="shrink-0 rounded-lg border border-status-danger/40 bg-status-danger/15 px-3 py-1.5 text-type-sm font-label-sm-bold text-status-danger transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Restore
-              </button>
+              <div class="preview-toolbar-actions">
+                <div
+                  class="pane-switch"
+                  role="radiogroup"
+                  aria-label="History pane"
+                  aria-busy={compareLoading || undefined}
+                  tabindex="-1"
+                  data-testid="page-history-pane"
+                  onkeydown={onPaneKeydown}
+                >
+                  <button
+                    type="button"
+                    role="radio"
+                    data-history-pane="preview"
+                    data-testid="page-history-pane-preview"
+                    aria-checked={paneMode === 'preview'}
+                    tabindex={paneMode === 'preview' ? 0 : -1}
+                    class="pane-switch-btn"
+                    class:active={paneMode === 'preview'}
+                    onclick={() => choosePane('preview')}
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    data-history-pane="compare"
+                    data-testid="page-history-pane-compare"
+                    aria-checked={paneMode === 'compare'}
+                    aria-disabled={!previewReady}
+                    disabled={!previewReady && paneMode !== 'compare'}
+                    tabindex={paneMode === 'compare' ? 0 : -1}
+                    class="pane-switch-btn"
+                    class:active={paneMode === 'compare'}
+                    onclick={() => choosePane('compare')}
+                  >
+                    {#if compareLoading}
+                      <span
+                        class="material-symbols-outlined animate-spin text-icon-xs"
+                        aria-hidden="true">sync</span
+                      >
+                    {/if}
+                    Compare
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  data-page-history-restore
+                  data-testid="page-history-restore"
+                  disabled={!canRestoreSelected()}
+                  onclick={openRestoreConfirm}
+                  class="shrink-0 rounded-lg border border-status-danger/40 bg-status-danger/15 px-3 py-1.5 text-type-sm font-label-sm-bold text-status-danger transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Restore
+                </button>
+              </div>
             </div>
-            {#if previewLoading}
+            {#if paneMode === 'compare'}
+              {#if compareLoading || (previewLoading && !pageDiff)}
+                <div
+                  class="flex items-center gap-2 px-5 py-6 text-type-sm font-body-md text-text-muted"
+                  role="status"
+                >
+                  <span
+                    class="material-symbols-outlined animate-spin text-icon-lg text-accent-primary-start"
+                    aria-hidden="true">sync</span
+                  >
+                  Loading comparison…
+                </div>
+              {:else if previewError}
+                <div
+                  class="flex items-start gap-2 px-5 py-6 text-type-sm font-body-md text-error"
+                  role="alert"
+                >
+                  <span class="flex-1">{previewError}</span>
+                  <button
+                    type="button"
+                    class="rounded-md border border-error-border bg-transparent px-2 py-1 text-type-xs font-label-sm-bold text-error hover:brightness-110"
+                    onclick={() => selectedId && void loadPreview(selectedId)}
+                  >
+                    Retry
+                  </button>
+                </div>
+              {:else if pageDiff}
+                <div class="compare-chrome">
+                  <p
+                    class="compare-summary"
+                    role="status"
+                    aria-live="polite"
+                    data-testid="page-history-diff-summary"
+                  >
+                    {diffSummary}
+                  </p>
+                  <div
+                    class="pane-switch"
+                    role="radiogroup"
+                    aria-label="Diff layout"
+                    tabindex="-1"
+                    data-testid="page-history-layout"
+                    onkeydown={onLayoutKeydown}
+                  >
+                    <button
+                      type="button"
+                      role="radio"
+                      data-diff-layout="split"
+                      data-testid="page-history-layout-split"
+                      aria-checked={layout === 'split'}
+                      tabindex={layout === 'split' ? 0 : -1}
+                      class="pane-switch-btn"
+                      class:active={layout === 'split'}
+                      onclick={() => chooseLayout('split')}
+                    >
+                      Split
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      data-diff-layout="unified"
+                      data-testid="page-history-layout-unified"
+                      aria-checked={layout === 'unified'}
+                      tabindex={layout === 'unified' ? 0 : -1}
+                      class="pane-switch-btn"
+                      class:active={layout === 'unified'}
+                      onclick={() => chooseLayout('unified')}
+                    >
+                      Unified
+                    </button>
+                  </div>
+                </div>
+                <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                <div
+                  class="diff-scroll custom-scrollbar"
+                  tabindex="0"
+                  role="region"
+                  aria-label="Page difference"
+                  data-testid="page-history-compare"
+                >
+                  <div
+                    class="diff-board"
+                    class:is-split={layout === 'split'}
+                    data-testid="page-history-diff"
+                  >
+                    {#if layout === 'split'}
+                      <div class="diff-col-head old">Version</div>
+                      <div class="diff-col-head new">Current page</div>
+                    {:else}
+                      <div class="diff-legend">
+                        <span>Version</span>
+                        <span class="diff-legend-sep" aria-hidden="true">·</span
+                        >
+                        <span>Current page</span>
+                      </div>
+                    {/if}
+                    {#each pageDiff.hunks as hunk, hunkIndex (hunkIndex)}
+                      {#if hunkCollapsed(hunk, hunkIndex)}
+                        <button
+                          type="button"
+                          class="diff-expand"
+                          onclick={() => expandHunk(hunkIndex)}
+                        >
+                          {hunk.hiddenLines ?? 0} unchanged
+                          {hunk.hiddenLines === 1 ? 'line' : 'lines'}
+                        </button>
+                      {:else}
+                        {@const oldLines = sideLines(hunk, 'previous')}
+                        {@const newLines = sideLines(hunk, 'current')}
+                        <div
+                          class="diff-side old"
+                          class:is-empty={oldLines.length === 0}
+                          class:is-dup={hunk.kind === 'equal'}
+                          data-kind={hunk.kind === 'add'
+                            ? 'empty'
+                            : hunk.kind === 'equal'
+                              ? 'equal'
+                              : 'remove'}
+                        >
+                          {#each oldLines as line, lineIndex (`o-${hunkIndex}-${lineIndex}`)}
+                            <div
+                              class="diff-line"
+                              class:remove={hunk.kind !== 'equal'}
+                            >
+                              {#if hunk.kind !== 'equal'}
+                                <span class="sr-only">Removed</span>
+                                <span class="diff-gutter" aria-hidden="true"
+                                  >−</span
+                                >
+                              {:else}
+                                <span class="diff-gutter" aria-hidden="true"
+                                ></span>
+                              {/if}
+                              <span class="diff-text">
+                                {#if line.parts}
+                                  {#each line.parts as part, partIndex (`op-${lineIndex}-${partIndex}`)}
+                                    {#if part.kind === 'remove'}
+                                      <span class="word-remove"
+                                        >{part.text}</span
+                                      >
+                                    {:else}
+                                      {part.text}
+                                    {/if}
+                                  {/each}
+                                {:else}
+                                  {line.text}
+                                {/if}
+                              </span>
+                            </div>
+                          {/each}
+                        </div>
+                        <div
+                          class="diff-side new"
+                          class:is-empty={newLines.length === 0}
+                          class:is-dup={hunk.kind === 'equal'}
+                          data-kind={hunk.kind === 'remove'
+                            ? 'empty'
+                            : hunk.kind === 'equal'
+                              ? 'equal'
+                              : 'add'}
+                        >
+                          {#each newLines as line, lineIndex (`n-${hunkIndex}-${lineIndex}`)}
+                            <div
+                              class="diff-line"
+                              class:add={hunk.kind !== 'equal'}
+                            >
+                              {#if hunk.kind !== 'equal'}
+                                <span class="sr-only">Added</span>
+                                <span class="diff-gutter" aria-hidden="true"
+                                  >+</span
+                                >
+                              {:else}
+                                <span class="diff-gutter" aria-hidden="true"
+                                ></span>
+                              {/if}
+                              <span class="diff-text">
+                                {#if line.parts}
+                                  {#each line.parts as part, partIndex (`np-${lineIndex}-${partIndex}`)}
+                                    {#if part.kind === 'add'}
+                                      <span class="word-add">{part.text}</span>
+                                    {:else}
+                                      {part.text}
+                                    {/if}
+                                  {/each}
+                                {:else}
+                                  {line.text}
+                                {/if}
+                              </span>
+                            </div>
+                          {/each}
+                        </div>
+                      {/if}
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            {:else if previewLoading}
               <div
                 class="flex items-center gap-2 px-5 py-6 text-type-sm font-body-md text-text-muted"
                 role="status"
@@ -576,6 +1037,15 @@
 {/if}
 
 <style>
+  .dialog-surface {
+    max-width: 56rem;
+    transition: max-width 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .dialog-surface.is-comparing {
+    max-width: 72rem;
+  }
+
   .dialog-surface:focus-visible {
     outline: 2px solid var(--color-border-focus);
     outline-offset: 2px;
@@ -694,9 +1164,72 @@
   .preview-toolbar {
     display: flex;
     align-items: center;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
     padding: 10px 16px;
     border-bottom: 1px solid var(--color-surface-modal-border);
+  }
+
+  .preview-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .pane-switch {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--color-surface-modal-border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-surface-panel) 45%, transparent);
+  }
+
+  .pane-switch-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 28px;
+    padding: 0 10px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: var(--text-type-xs);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition:
+      background 120ms ease,
+      color 120ms ease,
+      border-color 120ms ease;
+  }
+
+  .pane-switch-btn:hover:not(:disabled) {
+    background: var(--color-hover);
+    color: var(--color-text-primary);
+  }
+
+  .pane-switch-btn.active {
+    border-color: color-mix(
+      in srgb,
+      var(--color-accent-primary-start) 30%,
+      transparent
+    );
+    background: var(--color-accent-primary-glow);
+    color: var(--color-accent-primary-start);
+  }
+
+  .pane-switch-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .pane-switch-btn:focus-visible {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: 1px;
   }
 
   .preview-body {
@@ -711,6 +1244,181 @@
     font-size: var(--text-type-sm);
     line-height: 1.55;
     color: var(--color-text-primary);
+  }
+
+  .compare-chrome {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--color-surface-modal-border);
+  }
+
+  .compare-summary {
+    margin: 0;
+    flex: 1;
+    min-width: 0;
+    font-size: var(--text-type-sm);
+    font-weight: 600;
+    color: var(--color-text-primary);
+  }
+
+  .diff-scroll {
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
+  }
+
+  .diff-scroll:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: -2px;
+  }
+
+  .diff-board {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+    font-size: var(--text-type-sm);
+    line-height: 1.55;
+    color: var(--color-text-primary);
+  }
+
+  .diff-board.is-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .diff-col-head,
+  .diff-legend {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 8px 16px;
+    background: color-mix(
+      in srgb,
+      var(--color-surface-editor) 92%,
+      var(--color-surface-modal)
+    );
+    border-bottom: 1px solid var(--color-surface-modal-border);
+    color: var(--color-text-muted);
+    font-size: var(--text-type-2xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .diff-board.is-split .diff-col-head.old {
+    border-right: 1px solid var(--color-surface-modal-border);
+  }
+
+  .diff-legend {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .diff-legend-sep {
+    color: var(--color-text-disabled);
+  }
+
+  .diff-side {
+    min-width: 0;
+  }
+
+  .diff-board.is-split .diff-side.old {
+    border-right: 1px solid var(--color-surface-modal-border);
+  }
+
+  .diff-board:not(.is-split) .diff-side.is-empty,
+  .diff-board:not(.is-split) .diff-side.new.is-dup {
+    display: none;
+  }
+
+  .diff-side.is-empty {
+    min-height: 1.55em;
+    background: color-mix(in srgb, var(--color-surface-panel) 28%, transparent);
+  }
+
+  .diff-line {
+    display: grid;
+    grid-template-columns: 1.25rem minmax(0, 1fr);
+    column-gap: 8px;
+    padding: 0 12px 0 8px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .diff-line.remove {
+    background: color-mix(in srgb, var(--color-status-danger) 10%, transparent);
+  }
+
+  .diff-line.add {
+    background: color-mix(
+      in srgb,
+      var(--color-status-success) 10%,
+      transparent
+    );
+  }
+
+  .diff-gutter {
+    user-select: none;
+    text-align: center;
+    font-weight: 700;
+  }
+
+  .diff-line.remove .diff-gutter {
+    color: var(--color-status-danger);
+  }
+
+  .diff-line.add .diff-gutter {
+    color: var(--color-status-success);
+  }
+
+  .word-add {
+    border-radius: 2px;
+    background: color-mix(
+      in srgb,
+      var(--color-status-success) 16%,
+      transparent
+    );
+  }
+
+  .word-remove {
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--color-status-danger) 16%, transparent);
+  }
+
+  .diff-expand {
+    width: 100%;
+    padding: 6px 16px;
+    border: none;
+    border-top: 1px dashed var(--color-surface-modal-border);
+    border-bottom: 1px dashed var(--color-surface-modal-border);
+    background: color-mix(in srgb, var(--color-surface-panel) 40%, transparent);
+    color: var(--color-text-muted);
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+    font-size: var(--text-type-xs);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    text-align: center;
+  }
+
+  .diff-board.is-split .diff-expand {
+    grid-column: 1 / -1;
+  }
+
+  .diff-expand:hover {
+    background: var(--color-hover);
+    color: var(--color-text-primary);
+  }
+
+  .diff-expand:focus-visible {
+    outline: 2px solid var(--color-accent-primary-start);
+    outline-offset: -2px;
   }
 
   @media (max-width: 720px) {

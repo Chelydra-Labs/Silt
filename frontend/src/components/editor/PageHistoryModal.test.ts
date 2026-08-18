@@ -15,7 +15,8 @@ const appMocks = vi.hoisted(() =>
   createAppIpcMocks({
     ListPageVersions: vi.fn(),
     GetPageVersion: vi.fn(),
-    RestorePageVersion: vi.fn()
+    RestorePageVersion: vi.fn(),
+    FetchPageMarkdown: vi.fn()
   })
 )
 
@@ -67,6 +68,7 @@ beforeEach(() => {
       id === 'v-old' ? '# older body' : '# newest body'
   )
   appMocks.RestorePageVersion.mockReset().mockResolvedValue(undefined)
+  appMocks.FetchPageMarkdown.mockReset().mockResolvedValue('# live body')
   _resetEditorRegistryForTests()
 })
 
@@ -341,5 +343,103 @@ describe('PageHistoryModal', () => {
     expect(
       screen.getByText(/Turn on Capture page history in Settings → Editor/)
     ).toBeTruthy()
+  })
+
+  async function openCompare() {
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-pane-compare')).not.toBeDisabled()
+    })
+    await fireEvent.click(screen.getByTestId('page-history-pane-compare'))
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-compare')).toBeTruthy()
+    })
+  }
+
+  it('does not call RestorePageVersion when opening Compare', async () => {
+    renderModal()
+    await openCompare()
+    expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
+  })
+
+  it('loads the selected version and the live page when opening Compare', async () => {
+    renderModal()
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-preview-body')).toHaveTextContent(
+        '# newest body'
+      )
+    })
+    expect(appMocks.GetPageVersion).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Daily',
+      'v-new'
+    )
+    const versionCalls = appMocks.GetPageVersion.mock.calls.length
+    await openCompare()
+    expect(appMocks.FetchPageMarkdown).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Daily'
+    )
+    expect(appMocks.GetPageVersion).toHaveBeenCalled()
+    expect(appMocks.GetPageVersion.mock.calls.length).toBe(versionCalls)
+    expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
+  })
+
+  it('restores from Compare through ConfirmDialog and RestorePageVersion once', async () => {
+    renderModal()
+    await openCompare()
+    expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getByTestId('page-history-restore'))
+    expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+    await waitFor(() => {
+      expect(appMocks.RestorePageVersion).toHaveBeenCalledTimes(1)
+      expect(appMocks.RestorePageVersion).toHaveBeenCalledWith(
+        'Work',
+        'Journal',
+        'Daily',
+        'v-new'
+      )
+    })
+  })
+
+  it('shows an empty-diff status when the version matches the current page', async () => {
+    appMocks.GetPageVersion.mockResolvedValue('# same body')
+    appMocks.FetchPageMarkdown.mockResolvedValue('# same body')
+    renderModal()
+    await openCompare()
+    expect(screen.getByTestId('page-history-diff-summary')).toHaveTextContent(
+      /No changes\. This version matches the current page/
+    )
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('blocks Compare when a dirty buffer cannot be flushed', async () => {
+    registerEditor({
+      key: 'Work\x00Journal\x00Daily',
+      isDirty: () => true,
+      flush: async () => false,
+      forceExternalReload: () => {},
+      clearExternalReload: () => {},
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
+    })
+    renderModal()
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-pane-compare')).not.toBeDisabled()
+    })
+    await fireEvent.click(screen.getByTestId('page-history-pane-compare'))
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Couldn't save the current page before comparing/)
+      ).toBeTruthy()
+    })
+    expect(appMocks.FetchPageMarkdown).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('page-history-compare')).toBeNull()
+    expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
   })
 })

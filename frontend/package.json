@@ -89,6 +89,7 @@
     "@tiptap/starter-kit": "3.29.2",
     "@wailsio/runtime": "3.0.0-beta.5",
     "culori": "^4.0.2",
+    "diff": "^9.0.0",
     "dompurify": "^3.4.12",
     "katex": "^0.18.0",
     "marked": "^18.0.9",
