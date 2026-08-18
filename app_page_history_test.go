@@ -1406,6 +1406,73 @@ func TestDeletedPageHistory_CaptureOffLeftovers(t *testing.T) {
 	}
 }
 
+func TestDeletedPageHistory_SkipsEncodedTraversalLocator(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	outside := filepath.Join(filepath.Dir(app.vaultPath), "secret.md")
+	writeFile(t, outside, "secret")
+	t.Cleanup(func() { _ = os.Remove(outside) })
+	planted := filepath.Join(app.vaultPath, ".system", "history", "pages", "vault", "%2E%2E", "%2E%2E", "secret.jsonl")
+	if err := os.MkdirAll(filepath.Dir(planted), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, planted, `{"id":"v-evil","ts":"2026-08-16T18:00:00.000000000Z","hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":1,"source":"editor"}`+"\n")
+	orphans, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range orphans {
+		if o.Page == "secret" || strings.Contains(o.Notebook, "..") || strings.Contains(o.Section, "..") {
+			t.Fatalf("listed planted locator: %+v", o)
+		}
+	}
+}
+
+func TestListPageVersions_HidesStorePath(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Daily", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Daily", "# second\n")
+	man := filepath.Join(app.vaultPath, ".system", "history", "pages", "vault", "Work", "Journal", "Daily.jsonl")
+	if err := os.WriteFile(man, []byte(strings.Repeat("x", 2<<20+64)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := app.ListPageVersions("Work", "Journal", "Daily")
+	if err == nil {
+		t.Fatal("expected list error")
+	}
+	if strings.Contains(err.Error(), app.vaultPath) || strings.Contains(err.Error(), man) {
+		t.Fatalf("leaked path: %v", err)
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationUnavailable {
+		t.Fatalf("list err = %v", err)
+	}
+}
+
+func TestRestoreDeletedPageVersion_RefusesLiveSource(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Alive", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Alive", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Alive")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "Alive", list[0].ID, "Work", "Journal", "Copy")
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodePageExists {
+		t.Fatalf("live source err = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Journal", "Copy.md")); !os.IsNotExist(statErr) {
+		t.Fatal("live-source restore wrote dest")
+	}
+	after, err := app.ListPageVersions("Work", "Journal", "Alive")
+	if err != nil || len(after) == 0 {
+		t.Fatalf("live page history moved: %v", err)
+	}
+}
+
 func TestHistoryReadError_HidesPath(t *testing.T) {
 	leaked := &os.PathError{Op: "open", Path: `C:\secret\vault\.system\history\x.gz`, Err: os.ErrPermission}
 	err := historyReadError(leaked)

@@ -101,6 +101,21 @@ func (a *App) historyRoot(source string) string {
 	return ""
 }
 
+// sanitizeDeletedLocator rejects on-disk locators that would not pass
+// resolvePageHistory (encoded traversal, control chars, absolute segments).
+func sanitizeDeletedLocator(loc history.Locator) (history.Locator, bool) {
+	nb := sanitizePathSegment(loc.Notebook)
+	pg := sanitizePathSegment(loc.Page)
+	if nb == "" || pg == "" || nb != loc.Notebook || pg != loc.Page {
+		return history.Locator{}, false
+	}
+	sec, err := validateSectionPath(loc.Section, true)
+	if err != nil || sec != loc.Section {
+		return history.Locator{}, false
+	}
+	return history.Locator{Source: loc.Source, Notebook: nb, Section: sec, Page: pg}, true
+}
+
 func historyReadError(err error) error {
 	if err == nil {
 		return nil
@@ -178,7 +193,7 @@ func (a *App) ListPageVersions(notebook, section, page string) ([]PageVersionInf
 	}
 	entries, err := history.List(root, loc)
 	if err != nil {
-		return nil, err
+		return nil, historyReadError(err)
 	}
 	out := make([]PageVersionInfo, 0, len(entries))
 	for _, e := range entries {
@@ -355,7 +370,7 @@ func (a *App) ListDeletedPageHistory() ([]DeletedPageHistory, error) {
 		return filepath.Join(a.vaultPath, loc.Notebook, loc.Section, loc.Page+".md")
 	})
 	if err != nil {
-		return nil, err
+		return nil, historyReadError(err)
 	}
 	out = append(out, vaultRows...)
 
@@ -401,7 +416,16 @@ func (a *App) collectDeletedHistory(root, wantSource string, livePath func(histo
 		if loc.Source != wantSource {
 			continue
 		}
-		p := livePath(loc)
+		safe, ok := sanitizeDeletedLocator(loc)
+		if !ok {
+			log.Printf("page history: skip leftover with invalid locator %q/%q/%q", loc.Notebook, loc.Section, loc.Page)
+			continue
+		}
+		p := livePath(safe)
+		if !isPathWithinRoot(p, root) {
+			log.Printf("page history: skip leftover outside history root %q/%q/%q", safe.Notebook, safe.Section, safe.Page)
+			continue
+		}
 		if _, err := os.Stat(p); err == nil {
 			continue
 		} else if err != nil && !os.IsNotExist(err) {
@@ -417,10 +441,10 @@ func (a *App) collectDeletedHistory(root, wantSource string, livePath func(histo
 		}
 		latest := entries[0]
 		out = append(out, DeletedPageHistory{
-			Notebook:        loc.Notebook,
-			Section:         loc.Section,
-			Page:            loc.Page,
-			Source:          loc.Source,
+			Notebook:        safe.Notebook,
+			Section:         safe.Section,
+			Page:            safe.Page,
+			Source:          safe.Source,
 			VersionCount:    len(entries),
 			LatestTimestamp: latest.Time.UTC().Format(time.RFC3339),
 			LatestBytes:     latest.Bytes,
@@ -430,8 +454,8 @@ func (a *App) collectDeletedHistory(root, wantSource string, livePath func(histo
 }
 
 // RestoreDeletedPageVersion recreates a missing page from a retained snapshot.
-// Empty destNotebook+destPage restore at the original locator. If the dest
-// file already exists the call fails without writing.
+// Empty destNotebook+destPage restore at the original locator. If the source
+// live file or dest file already exists the call fails without writing.
 func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, destNotebook, destSection, destPage string) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -445,7 +469,7 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	} else if destNBIn == "" || destPageIn == "" {
 		return NewIPCError(CodeInvalidNavigationPath, "restore destination needs both a notebook and a page name")
 	}
-	origLoc, origRoot, _, _, _, _, _, err := a.resolvePageHistory(notebook, section, page)
+	origLoc, origRoot, origFile, _, _, _, _, err := a.resolvePageHistory(notebook, section, page)
 	if err != nil {
 		return err
 	}
@@ -468,6 +492,11 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	}
 	if !isCreationPathWithinRoot(destFile, destNotebookDir) {
 		return fmt.Errorf("path escapes notebook root")
+	}
+	if _, err := os.Stat(origFile); err == nil {
+		return NewIPCError(CodePageExists, "that page still exists; restore it from page history instead")
+	} else if !os.IsNotExist(err) {
+		return historyReadError(err)
 	}
 
 	snapshot, err := history.Read(origRoot, origLoc, versionID)
