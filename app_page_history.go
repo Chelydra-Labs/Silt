@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -320,6 +321,178 @@ func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page,
 		return parsedBlocks, nil
 	}
 	return parsedBlocks, nil
+}
+
+// DeletedPageHistory is one orphan locator that still has retained snapshots.
+type DeletedPageHistory struct {
+	Notebook        string `json:"notebook"`
+	Section         string `json:"section"`
+	Page            string `json:"page"`
+	Source          string `json:"source"`
+	VersionCount    int    `json:"versionCount"`
+	LatestTimestamp string `json:"latestTimestamp"`
+	LatestBytes     int    `json:"latestBytes"`
+}
+
+const maxDeletedPageHistory = 500
+
+// ListDeletedPageHistory returns leftover snapshots whose live .md is gone.
+func (a *App) ListDeletedPageHistory() ([]DeletedPageHistory, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" || a.db == nil {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+	var out []DeletedPageHistory
+	out = append(out, a.collectDeletedHistory(a.vaultPath, "vault", func(loc history.Locator) string {
+		return filepath.Join(a.vaultPath, loc.Notebook, loc.Section, loc.Page+".md")
+	})...)
+
+	a.configMu.RLock()
+	linked := append([]config.LinkedNotebook(nil), a.cfg.LinkedNotebooks...)
+	a.configMu.RUnlock()
+	for _, ln := range linked {
+		if strings.TrimSpace(ln.RootPath) == "" {
+			continue
+		}
+		root := ln.RootPath
+		out = append(out, a.collectDeletedHistory(root, "linked", func(loc history.Locator) string {
+			return filepath.Join(root, loc.Section, loc.Page+".md")
+		})...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].LatestTimestamp == out[j].LatestTimestamp {
+			return out[i].Notebook+out[i].Section+out[i].Page < out[j].Notebook+out[j].Section+out[j].Page
+		}
+		return out[i].LatestTimestamp > out[j].LatestTimestamp
+	})
+	if len(out) > maxDeletedPageHistory {
+		out = out[:maxDeletedPageHistory]
+	}
+	if out == nil {
+		out = []DeletedPageHistory{}
+	}
+	return out, nil
+}
+
+func (a *App) collectDeletedHistory(root, wantSource string, livePath func(history.Locator) string) []DeletedPageHistory {
+	locs, err := history.ListManifests(root)
+	if err != nil {
+		log.Printf("page history: list manifests failed: %v", err)
+		return nil
+	}
+	var out []DeletedPageHistory
+	for _, loc := range locs {
+		if loc.Source != wantSource {
+			continue
+		}
+		p := livePath(loc)
+		if _, err := os.Stat(p); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			continue
+		}
+		entries, err := history.List(root, loc)
+		if err != nil || len(entries) == 0 {
+			continue
+		}
+		latest := entries[0]
+		out = append(out, DeletedPageHistory{
+			Notebook:        loc.Notebook,
+			Section:         loc.Section,
+			Page:            loc.Page,
+			Source:          loc.Source,
+			VersionCount:    len(entries),
+			LatestTimestamp: latest.Time.UTC().Format(time.RFC3339),
+			LatestBytes:     latest.Bytes,
+		})
+	}
+	return out
+}
+
+// RestoreDeletedPageVersion recreates a missing page from a retained snapshot.
+// Empty destNotebook+destPage restore at the original locator. If the dest
+// file already exists the call fails without writing.
+func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, destNotebook, destSection, destPage string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" || a.db == nil {
+		return fmt.Errorf("vault not loaded")
+	}
+	if strings.TrimSpace(destNotebook) == "" && strings.TrimSpace(destPage) == "" {
+		destNotebook, destSection, destPage = notebook, section, page
+	}
+	origLoc, origRoot, _, _, _, _, _, err := a.resolvePageHistory(notebook, section, page)
+	if err != nil {
+		return err
+	}
+	if origRoot == "" || strings.TrimSpace(versionID) == "" {
+		return NewIPCError(CodeNavigationNotFound, "page version not found")
+	}
+	destLoc, destRoot, destFile, destSource, destNB, destSec, destPg, err := a.resolvePageHistory(destNotebook, destSection, destPage)
+	if err != nil {
+		return err
+	}
+	if destRoot == "" {
+		return NewIPCError(CodeNavigationNotFound, "page not found")
+	}
+
+	snapshot, err := history.Read(origRoot, origLoc, versionID)
+	if err != nil {
+		if errors.Is(err, history.ErrNotFound) {
+			return NewIPCError(CodeNavigationNotFound, "page version not found")
+		}
+		return err
+	}
+	_, restoreBody := parser.SplitFrontmatter(string(snapshot))
+
+	if _, err := os.Stat(destFile); err == nil {
+		return NewIPCError(CodePageExists, "a page already exists at that location")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(destFile), 0755); err != nil {
+		return fmt.Errorf("failed to create parent directory: %w", err)
+	}
+
+	today := time.Now().Format("2006-01-02")
+	createdStr := time.Now().Format("2006-01-02T15:04:05")
+	scaffold := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ncreated: %s\ntags: []\n---\n",
+		strconv.Quote(destNotebook), strconv.Quote(destSection), strconv.Quote(destPage), strconv.Quote(today), strconv.Quote(createdStr))
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var result []parser.ParsedBlock
+	var writeErr error
+	a.coordinator.LockFileWrite(destFile, func() {
+		if _, err := os.Stat(destFile); err == nil {
+			writeErr = NewIPCError(CodePageExists, "a page already exists at that location")
+			return
+		} else if !os.IsNotExist(err) {
+			writeErr = err
+			return
+		}
+		result, writeErr = a.writePageMarkdownLocked(
+			destFile, destSource, destNB, destSec, destPg,
+			destNotebook, destSection, destPage,
+			[]byte(scaffold), restoreBody, historyReasonRestore,
+		)
+	})
+	if writeErr != nil {
+		return writeErr
+	}
+
+	if destLoc != origLoc || destRoot != origRoot {
+		if destRoot == origRoot {
+			a.relocatePageHistory(destSource, origLoc.Notebook, origLoc.Section, origLoc.Page, destNB, destSec, destPg)
+		}
+	}
+
+	_ = result
+	a.emitBlockChanged("", destNB, destSec, destPg, "")
+	return a.reconcileNavigationPage(destNB, destSec, destPg, destPg, false)
 }
 
 func (a *App) relocatePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage string) {

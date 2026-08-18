@@ -107,6 +107,112 @@ func List(root string, loc Locator) ([]Entry, error) {
 	return entries, nil
 }
 
+// ListManifests walks .system/history/pages for every page that has a
+// manifest. Unreadable files are skipped (fail open). A missing pages
+// directory is an empty result.
+func ListManifests(root string) ([]Locator, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	pages := filepath.Join(root, systemDirName, historyDirName, pagesDirName)
+	absPages, err := filepath.Abs(pages)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(absPages); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []Locator
+	walkErr := filepath.WalkDir(absPages, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(d.Name()), manifestExt) {
+			return nil
+		}
+		rel, err := filepath.Rel(absPages, path)
+		if err != nil {
+			return nil
+		}
+		loc, err := locatorFromRel(rel)
+		if err != nil {
+			return nil
+		}
+		out = append(out, loc)
+		return nil
+	})
+	if walkErr != nil {
+		return out, walkErr
+	}
+	return out, nil
+}
+
+func locatorFromRel(rel string) (Locator, error) {
+	rel = filepath.ToSlash(rel)
+	rel = strings.TrimSuffix(rel, manifestExt)
+	parts := strings.Split(rel, "/")
+	if len(parts) < 4 {
+		return Locator{}, fmt.Errorf("history: short manifest path %q", rel)
+	}
+	source := unescapeSegment(parts[0])
+	notebook := unescapeSegment(parts[1])
+	page := unescapeSegment(parts[len(parts)-1])
+	secParts := parts[2 : len(parts)-1]
+	section := ""
+	if len(secParts) == 1 && secParts[0] == emptySectionName {
+		section = ""
+	} else {
+		decoded := make([]string, 0, len(secParts))
+		for _, p := range secParts {
+			if p == "" || p == emptySectionName {
+				continue
+			}
+			decoded = append(decoded, unescapeSegment(p))
+		}
+		section = strings.Join(decoded, "/")
+	}
+	if source == "" || notebook == "" || page == "" {
+		return Locator{}, fmt.Errorf("history: invalid manifest path %q", rel)
+	}
+	return Locator{Source: source, Notebook: notebook, Section: section, Page: page}, nil
+}
+
+func unescapeSegment(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == '%' && i+2 < len(s) {
+			var v byte
+			ok := true
+			for _, c := range []byte{s[i+1], s[i+2]} {
+				v <<= 4
+				switch {
+				case c >= '0' && c <= '9':
+					v |= c - '0'
+				case c >= 'a' && c <= 'f':
+					v |= c - 'a' + 10
+				case c >= 'A' && c <= 'F':
+					v |= c - 'A' + 10
+				default:
+					ok = false
+				}
+			}
+			if ok {
+				b.WriteByte(v)
+				i += 3
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
 // Last returns the newest stored entry (manifest last line).
 func Last(root string, loc Locator) (Entry, bool, error) {
 	mu.Lock()

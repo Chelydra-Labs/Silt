@@ -16,6 +16,7 @@ const appMocks = vi.hoisted(() =>
     ListPageVersions: vi.fn(),
     GetPageVersion: vi.fn(),
     RestorePageVersion: vi.fn(),
+    RestoreDeletedPageVersion: vi.fn(),
     FetchPageMarkdown: vi.fn()
   })
 )
@@ -33,6 +34,7 @@ vi.mock('../../settings/store.svelte', () => ({
 }))
 
 import PageHistoryModal from './PageHistoryModal.svelte'
+import { OPEN_DELETED_PAGE_HISTORY_EVENT } from './openDeletedPageHistory'
 
 const VERSIONS = [
   {
@@ -68,6 +70,7 @@ beforeEach(() => {
       id === 'v-old' ? '# older body' : '# newest body'
   )
   appMocks.RestorePageVersion.mockReset().mockResolvedValue(undefined)
+  appMocks.RestoreDeletedPageVersion.mockReset().mockResolvedValue(undefined)
   appMocks.FetchPageMarkdown.mockReset().mockResolvedValue('# live body')
   _resetEditorRegistryForTests()
 })
@@ -441,5 +444,116 @@ describe('PageHistoryModal', () => {
     expect(appMocks.FetchPageMarkdown).not.toHaveBeenCalled()
     expect(screen.queryByTestId('page-history-compare')).toBeNull()
     expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
+  })
+
+  it('opens deleted pages from the live modal header', async () => {
+    const onClose = vi.fn()
+    const seen = vi.fn()
+    window.addEventListener(OPEN_DELETED_PAGE_HISTORY_EVENT, seen)
+    renderModal(onClose)
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-deleted-pages')).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByTestId('page-history-deleted-pages'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(seen).toHaveBeenCalled()
+    window.removeEventListener(OPEN_DELETED_PAGE_HISTORY_EVENT, seen)
+  })
+
+  describe('deleted mode', () => {
+    function renderDeleted(onClose = vi.fn()) {
+      return render(PageHistoryModal, {
+        props: {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          deleted: true,
+          onClose
+        }
+      })
+    }
+
+    it('restores with RestoreDeletedPageVersion and empty dest', async () => {
+      const onClose = vi.fn()
+      const navigated = vi.fn()
+      window.addEventListener('navigate-to-page', navigated)
+      renderDeleted(onClose)
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore')).toBeTruthy()
+      })
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(appMocks.RestoreDeletedPageVersion).toHaveBeenCalledWith(
+          'Work',
+          'Journal',
+          'Daily',
+          'v-new',
+          '',
+          '',
+          ''
+        )
+      })
+      expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
+      expect(navigated).toHaveBeenCalled()
+      const detail = navigated.mock.calls[0][0].detail
+      expect(detail).toMatchObject({
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily'
+      })
+      expect(onClose).toHaveBeenCalledTimes(1)
+      window.removeEventListener('navigate-to-page', navigated)
+    })
+
+    it('shows Restore as… after page_exists and retries with dest fields', async () => {
+      appMocks.RestoreDeletedPageVersion.mockRejectedValueOnce(
+        new Error(
+          JSON.stringify({
+            code: 'page_exists',
+            message: 'a page already exists at that location'
+          })
+        )
+      )
+      renderDeleted()
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore')).toBeTruthy()
+      })
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore-as')).toBeTruthy()
+      })
+      expect(screen.getByLabelText('Restore as page')).toHaveValue('Daily 2')
+      expect(screen.getByLabelText('Restore as notebook')).toHaveValue('Work')
+      expect(
+        screen.getByText(/a page already exists at that location/)
+      ).toBeTruthy()
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(appMocks.RestoreDeletedPageVersion).toHaveBeenLastCalledWith(
+          'Work',
+          'Journal',
+          'Daily',
+          'v-new',
+          'Work',
+          'Journal',
+          'Daily 2'
+        )
+      })
+      expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
+    })
+
+    it('disables Compare for deleted pages', async () => {
+      renderDeleted()
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-preview-body')).toBeTruthy()
+      })
+      expect(screen.getByTestId('page-history-pane-compare')).toBeDisabled()
+      await fireEvent.click(screen.getByTestId('page-history-pane-compare'))
+      expect(screen.queryByTestId('page-history-compare')).toBeNull()
+      expect(appMocks.FetchPageMarkdown).not.toHaveBeenCalled()
+    })
   })
 })

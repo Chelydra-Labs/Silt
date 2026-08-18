@@ -413,6 +413,10 @@
         "signature": "LinkNotebook(folderPath string) (config.LinkedNotebook, error)"
       },
       {
+        "name": "ListDeletedPageHistory",
+        "signature": "ListDeletedPageHistory() ([]DeletedPageHistory, error)"
+      },
+      {
         "name": "ListDomainPacks",
         "signature": "ListDomainPacks() ([]spellcheck.DomainPackInfo, error)"
       },
@@ -889,6 +893,10 @@
         "signature": "ResolveTypeID(ref string) (string, error)"
       },
       {
+        "name": "RestoreDeletedPageVersion",
+        "signature": "RestoreDeletedPageVersion(notebook, section, page, versionID, destNotebook, destSection, destPage string) error"
+      },
+      {
         "name": "RestoreExampleTypes",
         "signature": "RestoreExampleTypes(ctx context.Context) ([]string, error)"
       },
@@ -1204,6 +1212,8 @@
       "frontend/src/components/TitleBar.svelte",
       "frontend/src/components/VirtualScrollContainer.svelte",
       "frontend/src/components/VirtualScrollContainer.test.ts",
+      "frontend/src/components/editor/DeletedPageHistoryModal.svelte",
+      "frontend/src/components/editor/DeletedPageHistoryModal.test.ts",
       "frontend/src/components/editor/EmbedBlockNodeView.svelte",
       "frontend/src/components/editor/GlobalReplaceModal.svelte",
       "frontend/src/components/editor/GlobalReplaceModal.test.ts",

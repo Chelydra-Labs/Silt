@@ -3,7 +3,8 @@
   import {
     ListPageVersions,
     GetPageVersion,
-    RestorePageVersion
+    RestorePageVersion,
+    RestoreDeletedPageVersion
   } from '../../../bindings/silt/app.js'
   import { trapFocus } from '../../lib/focusTrap'
   import { settings } from '../../settings/store.svelte'
@@ -14,6 +15,9 @@
     type DiffHunk,
     type WordPart
   } from '../../lib/editor/pageDiff'
+  import { coerceIPCError } from '../../lib/ipcError'
+  import { IPCErrorCode } from '../../generated/enums'
+  import { openDeletedPageHistory } from './openDeletedPageHistory'
   import ConfirmDialog from '../ConfirmDialog.svelte'
 
   interface PageVersionRow {
@@ -35,10 +39,19 @@
     notebook: string
     section: string
     page: string
+    deleted?: boolean
+    onBack?: () => void
     onClose: () => void
   }
 
-  let { notebook, section, page, onClose }: Props = $props()
+  let {
+    notebook,
+    section,
+    page,
+    deleted = false,
+    onBack,
+    onClose
+  }: Props = $props()
 
   const SOURCE_LABELS: Record<string, string> = {
     editor: 'Editor',
@@ -83,6 +96,10 @@
   let compareError = $state('')
   let compareGen = 0
   let expandedHunks = $state<Record<number, boolean>>({})
+  let restoreAs = $state(false)
+  let destNotebook = $state('')
+  let destSection = $state('')
+  let destPage = $state('')
 
   let versioningEnabled = $derived(
     settings.config?.editor?.auto_versioning_enabled === true
@@ -273,13 +290,43 @@
   }
 
   function canRestoreSelected(): boolean {
-    return (
-      !!selected &&
-      selected.id === previewedId &&
-      !previewLoading &&
-      !previewError &&
-      !restoring
-    )
+    if (
+      !selected ||
+      selected.id !== previewedId ||
+      previewLoading ||
+      previewError ||
+      restoring
+    ) {
+      return false
+    }
+    if (deleted && restoreAs) {
+      return destNotebook.trim() !== '' && destPage.trim() !== ''
+    }
+    return true
+  }
+
+  function suggestRestoredPageName(name: string): string {
+    const base = name.trim() || 'Page'
+    return `${base} 2`
+  }
+
+  function restoreDestination(): {
+    notebook: string
+    section: string
+    page: string
+  } {
+    if (restoreAs && destNotebook.trim() && destPage.trim()) {
+      return {
+        notebook: destNotebook.trim(),
+        section: destSection.trim(),
+        page: destPage.trim()
+      }
+    }
+    return { notebook, section, page }
+  }
+
+  function formatLocatorPath(nb: string, sec: string, pg: string): string {
+    return sec ? `${nb} / ${sec} / ${pg}` : `${nb} / ${pg}`
   }
 
   function choosePane(mode: HistoryPane): void {
@@ -289,13 +336,13 @@
       compareLoading = false
       return
     }
-    if (paneMode === 'compare' || compareLoading) return
+    if (deleted || paneMode === 'compare' || compareLoading) return
     void enterCompare()
   }
 
   function onPaneKeydown(e: KeyboardEvent): void {
     if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return
-    const canOpen = previewReady && !compareLoading
+    const canOpen = !deleted && previewReady && !compareLoading
     const options: HistoryPane[] = canOpen
       ? ['preview', 'compare']
       : ['preview']
@@ -335,7 +382,7 @@
   }
 
   async function enterCompare(): Promise<void> {
-    if (!previewReady || !selected || compareLoading) return
+    if (deleted || !previewReady || !selected || compareLoading) return
     const gen = ++compareGen
     compareLoading = true
     compareError = ''
@@ -383,6 +430,51 @@
     restoring = true
     restoreError = ''
     try {
+      if (deleted) {
+        const dest = restoreAs
+          ? [destNotebook.trim(), destSection.trim(), destPage.trim()]
+          : ['', '', '']
+        try {
+          await RestoreDeletedPageVersion(
+            notebook,
+            section,
+            page,
+            target.id,
+            dest[0],
+            dest[1],
+            dest[2]
+          )
+        } catch (err) {
+          const ipc = coerceIPCError(err)
+          if (ipc.code === IPCErrorCode.CodePageExists) {
+            restoreTarget = null
+            if (!restoreAs) {
+              restoreAs = true
+              destNotebook = notebook
+              destSection = section
+              destPage = suggestRestoredPageName(page)
+            }
+            restoreError =
+              ipc.message || 'A page already exists at that location.'
+            return
+          }
+          throw err
+        }
+        restoreTarget = null
+        const destLoc = restoreDestination()
+        window.dispatchEvent(
+          new CustomEvent('navigate-to-page', {
+            detail: {
+              notebook: destLoc.notebook,
+              section: destLoc.section,
+              page: destLoc.page
+            }
+          })
+        )
+        onClose()
+        return
+      }
+
       const editor = getEditor(editorKey(notebook, section, page))
       if (editor?.isDirty()) {
         const clean = await editor.flush()
@@ -414,6 +506,11 @@
     } finally {
       restoring = false
     }
+  }
+
+  function openDeletedPages(): void {
+    onClose()
+    openDeletedPageHistory()
   }
 
   function cancelRestore(): void {
@@ -532,7 +629,7 @@
           id="page-history-title"
           class="font-headline-md text-headline-md text-text-primary"
         >
-          Page history
+          {deleted ? 'Deleted page history' : 'Page history'}
         </h2>
         <p
           id="page-history-path"
@@ -549,16 +646,38 @@
           vault, are not encrypted, and are not a backup.
         </p>
       </div>
-      <button
-        type="button"
-        aria-label="Close page history"
-        onclick={onClose}
-        class="flex h-8 w-8 items-center justify-center rounded-lg border-none bg-transparent text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
-      >
-        <span class="material-symbols-outlined text-icon-lg" aria-hidden="true"
-          >close</span
+      <div class="flex shrink-0 items-center gap-1">
+        {#if deleted && onBack}
+          <button
+            type="button"
+            data-testid="page-history-back"
+            onclick={onBack}
+            class="rounded-lg border-none bg-transparent px-2.5 py-1.5 text-type-xs font-label-sm-bold text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+          >
+            Back
+          </button>
+        {:else if !deleted}
+          <button
+            type="button"
+            data-testid="page-history-deleted-pages"
+            onclick={openDeletedPages}
+            class="rounded-lg border-none bg-transparent px-2.5 py-1.5 text-type-xs font-label-sm-bold text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+          >
+            Deleted pages
+          </button>
+        {/if}
+        <button
+          type="button"
+          aria-label="Close page history"
+          onclick={onClose}
+          class="flex h-8 w-8 items-center justify-center rounded-lg border-none bg-transparent text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
         >
-      </button>
+          <span
+            class="material-symbols-outlined text-icon-lg"
+            aria-hidden="true">close</span
+          >
+        </button>
+      </div>
     </header>
 
     {#if listError}
@@ -612,6 +731,53 @@
           >error</span
         >
         <span class="flex-1">{compareError}</span>
+      </div>
+    {/if}
+
+    {#if deleted && restoreAs}
+      <div
+        class="restore-as mx-5 mt-4 rounded-lg border border-surface-modal-border bg-surface-panel/40 px-3 py-3"
+        data-testid="page-history-restore-as"
+      >
+        <p class="mb-2 text-type-sm font-label-sm-bold text-text-primary">
+          Restore as…
+        </p>
+        <p class="mb-3 text-type-xs font-body-md text-text-muted">
+          A page already exists at that location. Choose another name or place
+          in this vault.
+        </p>
+        <div class="restore-as-fields">
+          <label class="restore-as-field">
+            <span>Notebook</span>
+            <input
+              bind:value={destNotebook}
+              type="text"
+              autocomplete="off"
+              aria-label="Restore as notebook"
+              data-testid="page-history-dest-notebook"
+            />
+          </label>
+          <label class="restore-as-field">
+            <span>Section</span>
+            <input
+              bind:value={destSection}
+              type="text"
+              autocomplete="off"
+              aria-label="Restore as section"
+              data-testid="page-history-dest-section"
+            />
+          </label>
+          <label class="restore-as-field">
+            <span>Page</span>
+            <input
+              bind:value={destPage}
+              type="text"
+              autocomplete="off"
+              aria-label="Restore as page"
+              data-testid="page-history-dest-page"
+            />
+          </label>
+        </div>
       </div>
     {/if}
 
@@ -751,8 +917,12 @@
                     data-history-pane="compare"
                     data-testid="page-history-pane-compare"
                     aria-checked={paneMode === 'compare'}
-                    aria-disabled={!previewReady}
-                    disabled={!previewReady && paneMode !== 'compare'}
+                    aria-disabled={deleted || !previewReady}
+                    disabled={deleted ||
+                      (!previewReady && paneMode !== 'compare')}
+                    title={deleted
+                      ? 'Compare is unavailable for deleted pages'
+                      : undefined}
                     tabindex={paneMode === 'compare' ? 0 : -1}
                     class="pane-switch-btn"
                     class:active={paneMode === 'compare'}
@@ -1022,10 +1192,14 @@
 
 {#if restoreTarget}
   <ConfirmDialog
-    title="Restore this version?"
-    message="Replace this page with the version from {formatTimestamp(
-      restoreTarget.timestamp
-    )}? A snapshot of the current page will be kept."
+    title={deleted ? 'Restore this deleted page?' : 'Restore this version?'}
+    message={deleted
+      ? restoreAs
+        ? `Recreate this page as ${formatLocatorPath(destNotebook.trim(), destSection.trim(), destPage.trim())} from the version from ${formatTimestamp(restoreTarget.timestamp)}?`
+        : `Recreate this page from the version from ${formatTimestamp(restoreTarget.timestamp)}?`
+      : `Replace this page with the version from ${formatTimestamp(
+          restoreTarget.timestamp
+        )}? A snapshot of the current page will be kept.`}
     confirmLabel={restoring ? 'Restoring…' : 'Restore'}
     cancelLabel="Cancel"
     destructive
@@ -1159,6 +1333,42 @@
       var(--color-surface-editor) 55%,
       transparent
     );
+  }
+
+  .restore-as-fields {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .restore-as-field {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .restore-as-field span {
+    color: var(--color-text-muted);
+    font-size: var(--text-type-2xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .restore-as-field input {
+    width: 100%;
+    border: 1px solid var(--color-surface-panel-border);
+    border-radius: 8px;
+    background: var(--color-surface-panel);
+    padding: 6px 10px;
+    color: var(--color-text-primary);
+    font-size: var(--text-type-sm);
+    outline: none;
+  }
+
+  .restore-as-field input:focus-visible {
+    border-color: var(--color-accent-primary-start);
   }
 
   .preview-toolbar {
@@ -1430,6 +1640,10 @@
     .history-list {
       border-right: none;
       border-bottom: 1px solid var(--color-surface-modal-border);
+    }
+
+    .restore-as-fields {
+      grid-template-columns: 1fr;
     }
   }
 </style>

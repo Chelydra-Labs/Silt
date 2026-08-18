@@ -12,6 +12,7 @@
   import FontSelect from './FontSelect.svelte'
   import SpellcheckPackManager from './spellcheck/SpellcheckPackManager.svelte'
   import { DATE_FORMATS } from '../../lib/dateFormat'
+  import { openDeletedPageHistory } from '../editor/openDeletedPageHistory'
 
   interface Props {
     ringAnchor?: string | null
@@ -458,8 +459,17 @@
               <span class="font-mono">.system/history</span>. They sync with the
               vault, are not encrypted, and are not a substitute for Settings →
               General → Export vault…. Pages larger than 1 MB are not
-              snapshotted.
+              snapshotted. Deleting a page leaves its snapshots; browse them
+              below.
             </p>
+            <button
+              type="button"
+              data-testid="browse-deleted-pages"
+              onclick={() => openDeletedPageHistory()}
+              class="ml-6 mt-1 cursor-pointer rounded-lg border border-surface-panel-border bg-surface-panel px-3 py-1.5 text-type-sm font-label-sm-bold text-text-primary transition-colors hover:border-accent-primary-start hover:text-text-primary"
+            >
+              Browse deleted pages
+            </button>
             {#if draft.editor?.auto_versioning_enabled === true}
               <label class="flex flex-col gap-1.5 max-w-xs pl-6">
                 <span

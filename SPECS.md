@@ -1213,10 +1213,12 @@ editor:
   # writes always capture when enabled (hash-skip still applies). History
    # I/O never fails a page save. Pages larger than 1 MiB are not snapshotted
    # (the save still succeeds). Snapshots are not a backup: they live in
-   # the vault, sync with it, and are not encrypted. Restore replaces the
-   # page body only and keeps the live frontmatter. Deleting a page leaves
-   # its history in place. max_versions_per_page is count-pruned oldest-first
-   # (clamped 1–500). See ARCHITECTURE.md storage tiers.
+    # the vault, sync with it, and are not encrypted. Restore replaces the
+    # page body only and keeps the live frontmatter. Deleting a page leaves
+    # its history in place; leftover snapshots are browsable and can recreate
+    # the page at the old locator or a chosen free one. Trash still holds the
+    # latest file. max_versions_per_page is count-pruned oldest-first
+    # (clamped 1–500). See ARCHITECTURE.md storage tiers.
   auto_versioning_enabled: false
   max_versions_per_page: 50
   auto_versioning_min_interval_sec: 300

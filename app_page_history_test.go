@@ -1002,3 +1002,231 @@ func TestPluginPageHistory_NoVault(t *testing.T) {
 		t.Fatal("expected no-vault error")
 	}
 }
+
+func TestDeletedPageHistory_ListAndRestore(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+	oldID := list[len(list)-1].ID
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatalf("DeletePage: %v", err)
+	}
+
+	orphans, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatalf("ListDeleted: %v", err)
+	}
+	found := false
+	for _, o := range orphans {
+		if o.Notebook == "Work" && o.Section == "Journal" && o.Page == "Gone" {
+			found = true
+			if o.VersionCount < 1 {
+				t.Fatalf("orphan versions=%d", o.VersionCount)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("deleted page missing from orphans: %+v", orphans)
+	}
+
+	live, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range live {
+		if o.Notebook == "Work" && o.Page == "Daily" {
+			t.Fatal("live page must not appear in deleted list")
+		}
+	}
+
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", oldID, "", "", ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	body, err := app.FetchPageMarkdown("Work", "Journal", "Gone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "first") {
+		t.Fatalf("restored body = %q", body)
+	}
+	after, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range after {
+		if o.Notebook == "Work" && o.Section == "Journal" && o.Page == "Gone" {
+			t.Fatal("restored page still listed as deleted")
+		}
+	}
+}
+
+func TestDeletedPageHistory_OccupiedDestRefuses(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "OldGone", "# old-first\n")
+	savePageBody(t, app, "Work", "Journal", "OldGone", "# old-second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "OldGone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "OldGone"); err != nil {
+		t.Fatal(err)
+	}
+	seedHistoryPage(t, app, "Work", "Journal", "Taken", "# taken\n")
+	before, err := os.ReadFile(filepath.Join(app.vaultPath, "Work", "Journal", "Taken.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "OldGone", list[0].ID, "Work", "Journal", "Taken")
+	if err == nil {
+		t.Fatal("expected occupied dest error")
+	}
+	after, err := os.ReadFile(filepath.Join(app.vaultPath, "Work", "Journal", "Taken.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("occupied dest was overwritten")
+	}
+}
+
+func TestDeletedPageHistory_RestoreAsRelocates(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "MoveMe", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "MoveMe", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "MoveMe")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "MoveMe"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "Work", "Archive", "Restored"); err != nil {
+		t.Fatalf("restore-as: %v", err)
+	}
+	body, err := app.FetchPageMarkdown("Work", "Archive", "Restored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "first") && !strings.Contains(body, "second") {
+		t.Fatalf("restore-as body = %q", body)
+	}
+	orphans, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range orphans {
+		if o.Page == "MoveMe" {
+			t.Fatal("original locator still in deleted list after relocate")
+		}
+	}
+}
+
+func TestDeletedPageHistory_LinkedDeleteStillLists(t *testing.T) {
+	app := newTestApp(t)
+	ext := filepath.Join(t.TempDir(), "Ext")
+	if err := os.MkdirAll(filepath.Join(ext, "Journal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(ext, "Journal", "Linked.md"),
+		"---\nnotebook: Ext\nsection: Journal\npage: Linked\ndate: 2026-08-16\ntags: []\n---\n# first\n")
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	enablePageHistory(t, app, 50, 0)
+	savePageBody(t, app, ln.DisplayName, "Journal", "Linked", "# second\n")
+	if err := app.DeletePage(ln.DisplayName, "Journal", "Linked"); err != nil {
+		t.Fatalf("DeletePage linked: %v", err)
+	}
+	orphans, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, o := range orphans {
+		if o.Page == "Linked" && o.Source == "linked" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("linked delete missing from orphans: %+v", orphans)
+	}
+}
+
+func TestDeletedPageHistory_TrashUnchanged(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "TrashMe", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "TrashMe", "# second\n")
+	if err := app.DeletePage("Work", "Journal", "TrashMe"); err != nil {
+		t.Fatal(err)
+	}
+	trash := filepath.Join(app.vaultPath, ".system", "trash")
+	if _, err := os.Stat(trash); err != nil {
+		t.Fatalf("trash missing: %v", err)
+	}
+	found := false
+	err := filepath.Walk(trash, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(path, "TrashMe.md") {
+			found = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("DeletePage no longer moved the latest file to trash")
+	}
+}
+
+func TestDeletedPageHistory_CaptureOffLeftovers(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "OffLater", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "OffLater", "# second\n")
+	if err := app.DeletePage("Work", "Journal", "OffLater"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := app.GetSystemConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	cfg.Editor.AutoVersioningEnabled = &off
+	if err := app.SaveSystemConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	orphans, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	list, err := app.ListPageVersions("Work", "Journal", "OffLater")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("leftover list: %v len=%d", err, len(list))
+	}
+	id = list[0].ID
+	found := false
+	for _, o := range orphans {
+		if o.Page == "OffLater" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("capture-off leftovers missing from deleted list")
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "OffLater", id, "", "", ""); err != nil {
+		t.Fatalf("restore leftovers: %v", err)
+	}
+}
