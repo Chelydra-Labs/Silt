@@ -54,6 +54,10 @@
     return `${row.notebook}::${row.section}::${row.page}::${row.source}`
   }
 
+  function optionId(row: DeletedPageRow): string {
+    return `deleted-page-${encodeURIComponent(rowKey(row))}`
+  }
+
   function locatorPath(row: DeletedPageRow): string {
     return row.section
       ? `${row.notebook} / ${row.section} / ${row.page}`
@@ -375,9 +379,7 @@
         aria-label="Deleted pages"
         aria-busy={listLoading || undefined}
         tabindex="0"
-        aria-activedescendant={filtered.length > 0 && selectedKey
-          ? `deleted-page-${selectedKey}`
-          : undefined}
+        aria-activedescendant={selected ? optionId(selected) : undefined}
         data-testid="deleted-page-history-list"
       >
         {#if listLoading}
@@ -412,7 +414,7 @@
             <button
               type="button"
               role="option"
-              id={`deleted-page-${rowKey(row)}`}
+              id={optionId(row)}
               data-deleted-key={rowKey(row)}
               aria-selected={selectedKey === rowKey(row)}
               tabindex="-1"

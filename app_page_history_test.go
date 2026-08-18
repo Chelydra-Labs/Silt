@@ -1122,7 +1122,16 @@ func TestDeletedPageHistory_MissingVersionAndPartialDest(t *testing.T) {
 func TestDeletedPageHistory_SanitizeDestFrontmatter(t *testing.T) {
 	app := newTestApp(t)
 	enablePageHistory(t, app, 50, 0)
-	seedHistoryPage(t, app, "Work", "Journal", "OldGone", "# first\n")
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "OldGone.md")
+	content := "---\nnotebook: Work\nsection: Journal\npage: OldGone\ndate: 2026-01-15\ncreated: \"2026-01-15T09:30:00\"\ntags: [work, planning]\ntype: \"book\"\n---\n# first\n"
+	writeFile(t, filePath, content)
+	blocks, _, _, _, err := parser.ParseFileContent(content, "Work", "Journal", "OldGone", "2026-01-15", app.spacesPerTab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.SaveFileBlocks("Work", "Journal", "OldGone", blocks); err != nil {
+		t.Fatal(err)
+	}
 	savePageBody(t, app, "Work", "Journal", "OldGone", "# second\n")
 	list, err := app.ListPageVersions("Work", "Journal", "OldGone")
 	if err != nil || len(list) == 0 {
@@ -1139,17 +1148,30 @@ func TestDeletedPageHistory_SanitizeDestFrontmatter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), `page: "Q1/Q2 recap"`) {
+	got := string(raw)
+	if strings.Contains(got, `page: "Q1/Q2 recap"`) {
 		t.Fatal("frontmatter kept the raw dest page name")
 	}
-	if !strings.Contains(string(raw), `page: "Q1Q2 recap"`) {
+	if !strings.Contains(got, `page: "Q1Q2 recap"`) {
 		t.Fatalf("frontmatter page missing sanitized name:\n%s", raw)
 	}
-	blocks, err := app.FetchPageBlocks("Work", "Journal", safePage)
+	if !strings.Contains(got, `created: "2026-01-15T09:30:00"`) {
+		t.Fatalf("restore dropped snapshot created:\n%s", raw)
+	}
+	if !strings.Contains(got, "work") || !strings.Contains(got, "planning") {
+		t.Fatalf("restore dropped snapshot tags:\n%s", raw)
+	}
+	if !strings.Contains(got, `type: "book"`) && !strings.Contains(got, "type: book") {
+		t.Fatalf("restore dropped snapshot type:\n%s", raw)
+	}
+	if !strings.Contains(got, "date: 2026-01-15") && !strings.Contains(got, `date: "2026-01-15"`) {
+		t.Fatalf("restore dropped snapshot date:\n%s", raw)
+	}
+	indexed, err := app.FetchPageBlocks("Work", "Journal", safePage)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(blocks) == 0 {
+	if len(indexed) == 0 {
 		t.Fatal("indexed blocks missing for sanitized dest")
 	}
 }

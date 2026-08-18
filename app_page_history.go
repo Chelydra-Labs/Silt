@@ -251,7 +251,7 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 				writeErr = fmt.Errorf("failed to read existing file: %w", err)
 				return
 			}
-			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, restoreBody, historyReasonRestore)
+			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, restoreBody, historyReasonRestore, false)
 		})
 	})
 	if writeErr != nil {
@@ -284,7 +284,7 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 
 // writePageMarkdownLocked replaces a page body while preserving current
 // frontmatter. The caller MUST already hold LockFileWrite for filePath.
-func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page, displayNotebook, displaySection, displayPage string, contentBytes []byte, markdown, reason string) ([]parser.ParsedBlock, error) {
+func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page, displayNotebook, displaySection, displayPage string, contentBytes []byte, markdown, reason string, skipCapture bool) ([]parser.ParsedBlock, error) {
 	frontmatter, _ := parser.SplitFrontmatter(string(contentBytes))
 	if frontmatter == "" {
 		today := time.Now().Format("2006-01-02")
@@ -302,7 +302,9 @@ func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page,
 	}
 	newContent += body
 
-	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
+	if !skipCapture {
+		a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
+	}
 	a.tracker.RegisterWrite(filePath)
 	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 		return nil, err
@@ -467,7 +469,11 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 		}
 		return err
 	}
-	_, restoreBody := parser.SplitFrontmatter(string(snapshot))
+	remapped, err := remapSnapshotIdentity(snapshot, destNB, destSec, destPg)
+	if err != nil {
+		return err
+	}
+	_, restoreBody := parser.SplitFrontmatter(string(remapped))
 
 	occupiedMsg := "restoring here would overwrite an existing page; choose a different location"
 	if _, err := os.Stat(destFile); err == nil {
@@ -493,12 +499,13 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 			writeErr = fmt.Errorf("failed to create parent directory: %w", err)
 			return
 		}
-		// Empty prev skips capture: there is no live file to snapshot, and a
-		// frontmatter-only scaffold would evict a real version at the cap.
+		// Remapped snapshot supplies frontmatter (type/tags/created/…). Skip
+		// capture: there is no live file, and a synthetic prev would evict a
+		// real version at the cap.
 		result, writeErr = a.writePageMarkdownLocked(
 			destFile, destSource, destNB, destSec, destPg,
 			destNB, destSec, destPg,
-			nil, restoreBody, historyReasonRestore,
+			remapped, restoreBody, historyReasonRestore, true,
 		)
 	})
 	if writeErr != nil {
@@ -512,6 +519,31 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	_ = result
 	a.emitBlockChanged("", destNB, destSec, destPg, "")
 	return a.reconcileNavigationPage(destNB, destSec, destPg, destPg, false)
+}
+
+// remapSnapshotIdentity keeps snapshot frontmatter (type, tags, created, …)
+// and rewrites only the path identity to the sanitized dest. Snapshots with
+// no frontmatter are left unchanged so writePageMarkdownLocked can mint.
+func remapSnapshotIdentity(snapshot []byte, notebook, section, page string) ([]byte, error) {
+	content := string(snapshot)
+	fm, _ := parser.SplitFrontmatter(content)
+	if fm == "" {
+		return snapshot, nil
+	}
+	var err error
+	content, err = parser.SetFrontmatterField(content, "notebook", notebook)
+	if err != nil {
+		return nil, err
+	}
+	content, err = parser.SetFrontmatterField(content, "section", section)
+	if err != nil {
+		return nil, err
+	}
+	content, err = parser.SetFrontmatterField(content, "page", page)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(content), nil
 }
 
 func (a *App) relocatePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage string) {

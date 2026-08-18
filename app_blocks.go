@@ -868,7 +868,7 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 				writeErr = fmt.Errorf("failed to read existing file: %w", err)
 				return
 			}
-			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, markdown, historyReasonSource)
+			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, markdown, historyReasonSource, false)
 		})
 	}) // LockBlocksWrite
 

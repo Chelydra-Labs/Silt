@@ -80,6 +80,26 @@ afterEach(() => {
 })
 
 describe('DeletedPageHistoryModal', () => {
+  it('uses space-safe option ids for aria-activedescendant', async () => {
+    appMocks.ListDeletedPageHistory.mockResolvedValue([
+      {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'My Idea',
+        source: 'vault',
+        versionCount: 2,
+        latestTimestamp: '2026-08-16T18:00:00Z',
+        latestBytes: 80
+      }
+    ])
+    render(DeletedPageHistoryModal, { props: { onClose: vi.fn() } })
+    const option = await screen.findByRole('option', { name: /My Idea/ })
+    expect(option.id).toMatch(/^deleted-page-/)
+    expect(option.id).not.toMatch(/\s/)
+    const listbox = screen.getByTestId('deleted-page-history-list')
+    expect(listbox.getAttribute('aria-activedescendant')).toBe(option.id)
+  })
+
   it('filters rows from the search field', async () => {
     render(DeletedPageHistoryModal, { props: { onClose: vi.fn() } })
     await waitFor(() => {
