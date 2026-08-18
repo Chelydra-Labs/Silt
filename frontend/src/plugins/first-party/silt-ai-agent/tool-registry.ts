@@ -297,7 +297,7 @@ export async function dispatchTool(
   argsJson: Record<string, unknown>,
   opts?: DispatchToolOpts
 ): Promise<ToolResult> {
-  if (opts?.allowed && !opts.allowed.has(name) && isMutatingTool(name)) {
+  if (opts?.allowed && !opts.allowed.has(name)) {
     return { content: '', error: `tool "${name}" is not available this turn` }
   }
   const tool = tools.get(name)

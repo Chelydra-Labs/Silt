@@ -83,6 +83,7 @@ import type {
   PluginAIStream,
   PluginAIToolCallDelta
 } from './sdk'
+import { editorKey, getEditor } from '../lib/editor/editorRegistry.svelte'
 import {
   registerSlashCommand,
   unregisterSlashCommand
@@ -572,15 +573,32 @@ export function makePluginContext(
         page,
         versionId
       ).then((body) => (typeof body === 'string' ? body : '')),
-    restorePageVersion: (notebook, section, page, versionId) =>
-      PluginRestorePageVersion(
-        pluginID,
-        sessionToken ?? '',
-        notebook,
-        section,
-        page,
-        versionId
-      ).then(() => true),
+    restorePageVersion: async (notebook, section, page, versionId) => {
+      const editor = getEditor(editorKey(notebook, section, page))
+      if (editor?.isDirty()) {
+        const clean = await editor.flush()
+        if (!clean) {
+          throw new Error(
+            "Couldn't save the current page before restoring. Fix the save error, then try again."
+          )
+        }
+      }
+      editor?.forceExternalReload()
+      try {
+        await PluginRestorePageVersion(
+          pluginID,
+          sessionToken ?? '',
+          notebook,
+          section,
+          page,
+          versionId
+        )
+      } catch (err) {
+        editor?.clearExternalReload()
+        throw err
+      }
+      return true
+    },
     renamePage: (notebook, section, oldName, newName) =>
       PluginRenamePage(
         pluginID,

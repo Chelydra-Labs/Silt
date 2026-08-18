@@ -130,6 +130,63 @@ func TestPrune_OldestFirstAndRemainingReadable(t *testing.T) {
 	}
 }
 
+func TestRelocate_SameFileDoesNotDelete(t *testing.T) {
+	root := t.TempDir()
+	oldLoc := testLoc("Gone")
+	newLoc := testLoc("gone")
+	body := []byte("keep this snapshot")
+	if skip, err := Capture(root, oldLoc, body, "editor", time.Now().UTC(), Options{}); err != nil || skip != "" {
+		t.Fatalf("Capture: skip=%q err=%v", skip, err)
+	}
+	oldMan, err := manifestPath(root, oldLoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newMan, err := manifestPath(root, newLoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fa, errA := os.Stat(oldMan)
+	fb, errB := os.Stat(newMan)
+	folds := errA == nil && errB == nil && os.SameFile(fa, fb)
+
+	if err := Relocate(root, oldLoc, newLoc); err != nil {
+		t.Fatalf("Relocate: %v", err)
+	}
+
+	oldList, err := List(root, oldLoc)
+	if err != nil {
+		t.Fatalf("List old: %v", err)
+	}
+	newList, err := List(root, newLoc)
+	if err != nil {
+		t.Fatalf("List new: %v", err)
+	}
+	if folds {
+		if len(oldList) == 0 && len(newList) == 0 {
+			t.Fatal("case-fold Relocate deleted the manifest")
+		}
+		id := oldList[0].ID
+		if len(oldList) == 0 {
+			id = newList[0].ID
+		}
+		got, rerr := Read(root, oldLoc, id)
+		if rerr != nil {
+			got, rerr = Read(root, newLoc, id)
+		}
+		if rerr != nil || !bytes.Equal(got, body) {
+			t.Fatalf("case-fold history unreadable: %v", rerr)
+		}
+		return
+	}
+	if len(oldList) != 0 {
+		t.Fatalf("old locator still has %d entries", len(oldList))
+	}
+	if len(newList) != 1 {
+		t.Fatalf("new locator List len=%d, want 1", len(newList))
+	}
+}
+
 func TestRelocate_FollowsRename(t *testing.T) {
 	root := t.TempDir()
 	oldLoc := testLoc("OldName")

@@ -1473,6 +1473,112 @@ func TestRestoreDeletedPageVersion_RefusesLiveSource(t *testing.T) {
 	}
 }
 
+func TestRestoreDeletedPageVersion_CaseOnlyDestKeepsHistory(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", list[0].ID, "Work", "Journal", "gone"); err != nil {
+		t.Fatalf("case-only restore-as: %v", err)
+	}
+	blobRoot := filepath.Join(app.vaultPath, ".system", "history", "blobs")
+	var blobs int
+	err = filepath.Walk(blobRoot, func(_ string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info != nil && !info.IsDir() {
+			blobs++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk blobs: %v", err)
+	}
+	if blobs == 0 {
+		t.Fatal("case-only restore-as deleted snapshot blobs")
+	}
+	afterGone, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil {
+		t.Fatalf("List Gone: %v", err)
+	}
+	afterGoneFold, err := app.ListPageVersions("Work", "Journal", "gone")
+	if err != nil {
+		t.Fatalf("List gone: %v", err)
+	}
+	if len(afterGone) == 0 && len(afterGoneFold) == 0 {
+		t.Fatal("case-only restore-as left no readable history")
+	}
+}
+
+func TestRestoreDeletedPageVersion_RefusesConsumedLeftover(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "MoveMe", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "MoveMe", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "MoveMe")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "MoveMe"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "Work", "Archive", "Restored"); err != nil {
+		t.Fatalf("first restore-as: %v", err)
+	}
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "Work", "Archive", "Copy")
+	if err == nil {
+		t.Fatal("expected second restore-as to fail")
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationNotFound {
+		t.Fatalf("second restore-as err = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Archive", "Copy.md")); !os.IsNotExist(statErr) {
+		t.Fatal("second restore-as wrote a duplicate page")
+	}
+}
+
+func TestRestoreDeletedPageVersion_RelocateFailureSurfaces(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "MoveMe", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "MoveMe", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "MoveMe")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "MoveMe"); err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(app.vaultPath, ".system", "history", "pages", "vault", "Work")
+	if err := os.MkdirAll(blocked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(blocked, "Archive"), "not-a-directory")
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "Work", "Archive", "Restored")
+	if err == nil {
+		t.Fatal("expected relocate failure")
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationUnavailable {
+		t.Fatalf("relocate err = %v", err)
+	}
+	if !strings.Contains(ipc.Message, "history did not move") {
+		t.Fatalf("relocate message = %q", ipc.Message)
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Archive", "Restored.md")); statErr != nil {
+		t.Fatalf("dest page missing after relocate failure: %v", statErr)
+	}
+}
+
 func TestRestoreDeletedPageVersion_DestIOHidesPath(t *testing.T) {
 	app := newTestApp(t)
 	enablePageHistory(t, app, 50, 0)
@@ -1500,6 +1606,9 @@ func TestRestoreDeletedPageVersion_DestIOHidesPath(t *testing.T) {
 	}
 	if ipc.Code != CodeNavigationUnavailable && ipc.Code != CodeNavigationNotFound {
 		t.Fatalf("dest I/O code = %s", ipc.Code)
+	}
+	if ipc.Code == CodeNavigationUnavailable && ipc.Message != "could not write the page" {
+		t.Fatalf("dest I/O message = %q", ipc.Message)
 	}
 }
 

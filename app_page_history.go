@@ -123,6 +123,7 @@ func historyWriteError(err error) error {
 	if os.IsNotExist(err) {
 		return NewIPCError(CodeNavigationNotFound, "page not found")
 	}
+	log.Printf("page history: page write failed: %v", err)
 	return NewIPCError(CodeNavigationUnavailable, "could not write the page")
 }
 
@@ -534,7 +535,7 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	if _, err := os.Stat(destFile); err == nil {
 		return NewIPCError(CodePageExists, occupiedMsg)
 	} else if !os.IsNotExist(err) {
-		return historyFileError(err)
+		return historyWriteError(err)
 	}
 
 	a.wg.Add(1)
@@ -554,11 +555,22 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 			writeErr = NewIPCError(CodePageExists, occupiedMsg)
 			return
 		} else if !os.IsNotExist(err) {
-			writeErr = historyFileError(err)
+			writeErr = historyWriteError(err)
 			return
 		}
+		if destLoc != origLoc && !history.SameStore(origRoot, origLoc, destLoc) {
+			leftover, lerr := history.List(origRoot, origLoc)
+			if lerr != nil {
+				writeErr = historyReadError(lerr)
+				return
+			}
+			if len(leftover) == 0 {
+				writeErr = NewIPCError(CodeNavigationNotFound, "those snapshots were already restored")
+				return
+			}
+		}
 		if err := os.MkdirAll(filepath.Dir(destFile), 0755); err != nil {
-			writeErr = historyFileError(err)
+			writeErr = historyWriteError(err)
 			return
 		}
 		// Remapped snapshot supplies frontmatter (type/tags/created/…). Skip
@@ -572,8 +584,8 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 		if writeErr != nil {
 			return
 		}
-		if destLoc != origLoc {
-			a.relocatePageHistory(destSource, origLoc.Notebook, origLoc.Section, origLoc.Page, destNB, destSec, destPg)
+		if destLoc != origLoc && !history.SameStore(origRoot, origLoc, destLoc) {
+			writeErr = a.relocatePageHistory(destSource, origLoc.Notebook, origLoc.Section, origLoc.Page, destNB, destSec, destPg)
 		}
 	})
 	if writeErr != nil {
@@ -610,16 +622,16 @@ func remapSnapshotIdentity(snapshot []byte, notebook, section, page string) ([]b
 	return []byte(content), nil
 }
 
-func (a *App) relocatePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage string) {
+func (a *App) relocatePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage string) error {
 	root := a.historyRoot(source)
 	if root == "" {
-		return
+		return nil
 	}
 	oldLoc := historyLoc(source, oldNotebook, oldSection, oldPage)
 	newLoc := historyLoc(source, newNotebook, newSection, newPage)
 	if err := history.Relocate(root, oldLoc, newLoc); err != nil {
 		log.Printf("page history: relocate failed: %v", err)
-		return
+		return NewIPCError(CodeNavigationUnavailable, "restored, but the snapshot history did not move")
 	}
 	_, max, _ := a.pageHistorySettings()
 	if max > 0 {
@@ -627,4 +639,5 @@ func (a *App) relocatePageHistory(source, oldNotebook, oldSection, oldPage, newN
 			log.Printf("page history: prune after relocate failed: %v", err)
 		}
 	}
+	return nil
 }

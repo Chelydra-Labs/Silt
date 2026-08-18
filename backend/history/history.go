@@ -273,7 +273,8 @@ func Relocate(root string, oldLoc, newLoc Locator) error {
 	if err != nil {
 		return err
 	}
-	if _, err := manifestPath(root, newLoc); err != nil {
+	newMan, err := manifestPath(root, newLoc)
+	if err != nil {
 		return err
 	}
 	oldBlobs, err := blobDir(root, oldLoc)
@@ -283,6 +284,9 @@ func Relocate(root string, oldLoc, newLoc Locator) error {
 	newBlobs, err := blobDir(root, newLoc)
 	if err != nil {
 		return err
+	}
+	if sameExistingPath(oldMan, newMan) || sameExistingPath(oldBlobs, newBlobs) {
+		return nil
 	}
 	if _, err := os.Stat(oldMan); os.IsNotExist(err) {
 		// Nothing to move; still try blobs in case of a partial prior write.
@@ -298,7 +302,43 @@ func Relocate(root string, oldLoc, newLoc Locator) error {
 	return mergeRelocateLocked(root, oldLoc, newLoc, oldMan, oldBlobs, newBlobs)
 }
 
+// SameStore reports whether two locators resolve to the same on-disk
+// manifest (byte-identical path, or the same file on a case-insensitive volume).
+func SameStore(root string, a, b Locator) bool {
+	am, err := manifestPath(root, a)
+	if err != nil {
+		return false
+	}
+	bm, err := manifestPath(root, b)
+	if err != nil {
+		return false
+	}
+	if am == bm {
+		return true
+	}
+	return sameExistingPath(am, bm)
+}
+
+func sameExistingPath(a, b string) bool {
+	if a == b {
+		return true
+	}
+	fa, errA := os.Stat(a)
+	fb, errB := os.Stat(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return os.SameFile(fa, fb)
+}
+
 func mergeRelocateLocked(root string, oldLoc, newLoc Locator, oldMan, oldBlobs, newBlobs string) error {
+	newMan, err := manifestPath(root, newLoc)
+	if err != nil {
+		return err
+	}
+	if sameExistingPath(oldMan, newMan) || sameExistingPath(oldBlobs, newBlobs) {
+		return nil
+	}
 	incoming, err := readManifest(root, oldLoc)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -343,10 +383,6 @@ func mergeRelocateLocked(root string, oldLoc, newLoc Locator, oldMan, oldBlobs, 
 		}
 		buf.Write(b)
 		buf.WriteByte('\n')
-	}
-	newMan, err := manifestPath(root, newLoc)
-	if err != nil {
-		return err
 	}
 	if err := writeFileAtomic(newMan, buf.Bytes()); err != nil {
 		return err

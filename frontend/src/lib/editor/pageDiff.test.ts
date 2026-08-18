@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { COMPARE_MAX_CHARS, CONTEXT_LINES, diffPageBodies } from './pageDiff'
+import {
+  COMPARE_MAX_CHARS,
+  COMPARE_MAX_LINES,
+  CONTEXT_LINES,
+  diffPageBodies
+} from './pageDiff'
 
 describe('diffPageBodies', () => {
   it('returns a single equal hunk for identical bodies', () => {
@@ -69,6 +74,16 @@ describe('diffPageBodies', () => {
   it('marks oversized bodies as too large to compare', () => {
     const huge = 'x'.repeat(COMPARE_MAX_CHARS + 1)
     const d = diffPageBodies(huge, `${huge}y`)
+    expect(d.tooLarge).toBe(true)
+    expect(d.hunks).toHaveLength(0)
+  })
+
+  it('marks high line-count bodies as too large to compare', () => {
+    const huge = Array.from(
+      { length: COMPARE_MAX_LINES + 1 },
+      (_, i) => `L${i}`
+    ).join('\n')
+    const d = diffPageBodies(huge, `${huge}\nextra`)
     expect(d.tooLarge).toBe(true)
     expect(d.hunks).toHaveLength(0)
   })

@@ -10,6 +10,10 @@ export const WORD_DIFF_MAX_CHARS = 4000
 export const WORD_DIFF_MAX_LINES = 50
 /** Skip rendering a full compare when both sides are this large. */
 export const COMPARE_MAX_CHARS = 200_000
+/** Skip Myers when either side has more lines than this. */
+export const COMPARE_MAX_LINES = 8000
+/** Abort jsdiff when the edit distance would exceed this. */
+export const COMPARE_MAX_EDIT_LENGTH = 4000
 
 export type DiffKind = 'equal' | 'add' | 'remove' | 'replace'
 
@@ -106,11 +110,19 @@ function shouldWordDiff(previous: string, current: string): boolean {
 export function diffPageBodies(previous: string, current: string): PageDiff {
   if (
     previous.length > COMPARE_MAX_CHARS ||
-    current.length > COMPARE_MAX_CHARS
+    current.length > COMPARE_MAX_CHARS ||
+    lineCount(previous) > COMPARE_MAX_LINES ||
+    lineCount(current) > COMPARE_MAX_LINES
   ) {
     return { hunks: [], addedLines: 0, removedLines: 0, tooLarge: true }
   }
-  const changes = diffLines(previous, current, { stripTrailingCr: true })
+  const changes = diffLines(previous, current, {
+    stripTrailingCr: true,
+    maxEditLength: COMPARE_MAX_EDIT_LENGTH
+  })
+  if (!changes) {
+    return { hunks: [], addedLines: 0, removedLines: 0, tooLarge: true }
+  }
   const hunks: DiffHunk[] = []
   let addedLines = 0
   let removedLines = 0

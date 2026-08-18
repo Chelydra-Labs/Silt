@@ -384,4 +384,25 @@ describe('tool-registry', () => {
     expect(res.isStaged).toBeFalsy()
     expect(handler).not.toHaveBeenCalled()
   })
+
+  it('refuses a non-mutating tool outside the turn catalog', async () => {
+    const handler = vi.fn(async () => ({ content: 'stats' }))
+    registerTool({
+      name: 'get_vault_statistics',
+      description: 'stats',
+      parameters: { type: 'object', properties: {} },
+      handler
+    })
+    const res = await dispatchTool(
+      noopCtx,
+      'get_vault_statistics',
+      {},
+      {
+        mode: 'confirm',
+        allowed: new Set(['search_notes'])
+      }
+    )
+    expect(res.error).toMatch(/not available this turn/)
+    expect(handler).not.toHaveBeenCalled()
+  })
 })
