@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CONTEXT_LINES, diffPageBodies } from './pageDiff'
+import { COMPARE_MAX_CHARS, CONTEXT_LINES, diffPageBodies } from './pageDiff'
 
 describe('diffPageBodies', () => {
   it('returns a single equal hunk for identical bodies', () => {
@@ -45,14 +45,32 @@ describe('diffPageBodies', () => {
     expect(d.removedLines).toBe(0)
   })
 
-  it('collapses equal runs longer than CONTEXT_LINES', () => {
+  it('keeps context lines and collapses only the middle of a long equal run', () => {
     const block = Array.from(
-      { length: CONTEXT_LINES + 2 },
+      { length: CONTEXT_LINES * 2 + 4 },
       (_, i) => `L${i}`
     ).join('\n')
     const d = diffPageBodies(`${block}\n`, `${block}\n`)
-    expect(d.hunks[0].collapsed).toBe(true)
-    expect(d.hunks[0].hiddenLines).toBeGreaterThan(CONTEXT_LINES)
+    expect(d.hunks[0].collapsed).toBeUndefined()
+    const mid = d.hunks.find((h) => h.collapsed)
+    expect(mid?.hiddenLines).toBe(4)
+    expect(d.hunks[d.hunks.length - 1].collapsed).toBeUndefined()
+  })
+
+  it('skips word-diff on huge replace hunks', () => {
+    const prev = `${'a'.repeat(3000)}\n`
+    const next = `${'b'.repeat(3000)}\n`
+    const d = diffPageBodies(prev, next)
+    const rep = d.hunks.find((h) => h.kind === 'replace')
+    expect(rep?.previousWords).toBeUndefined()
+    expect(rep?.currentWords).toBeUndefined()
+  })
+
+  it('marks oversized bodies as too large to compare', () => {
+    const huge = 'x'.repeat(COMPARE_MAX_CHARS + 1)
+    const d = diffPageBodies(huge, `${huge}y`)
+    expect(d.tooLarge).toBe(true)
+    expect(d.hunks).toHaveLength(0)
   })
 
   it('diffs empty vs text as a single add', () => {

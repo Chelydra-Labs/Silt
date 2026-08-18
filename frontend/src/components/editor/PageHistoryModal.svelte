@@ -40,6 +40,7 @@
     section: string
     page: string
     deleted?: boolean
+    source?: string
     onBack?: () => void
     onClose: () => void
   }
@@ -49,6 +50,7 @@
     section,
     page,
     deleted = false,
+    source = '',
     onBack,
     onClose
   }: Props = $props()
@@ -115,8 +117,9 @@
   let layout = $derived<DiffLayout>(
     layoutOverride ?? (preferSplit ? 'split' : 'unified')
   )
+  let liveReady = $state(false)
   let pageDiff = $derived(
-    paneMode === 'compare' && previewReady
+    paneMode === 'compare' && previewReady && liveReady
       ? diffPageBodies(preview, liveBody)
       : null
   )
@@ -148,7 +151,7 @@
     removedLines: number
   }): string {
     if (diff.addedLines === 0 && diff.removedLines === 0) {
-      return 'No changes. This version matches the current page.'
+      return 'No body changes. Frontmatter is not compared.'
     }
     const parts: string[] = []
     if (diff.addedLines > 0) {
@@ -237,7 +240,7 @@
         previewedId = null
       }
     } catch (e) {
-      listError = e instanceof Error ? e.message : String(e)
+      listError = coerceIPCError(e).message
       versions = []
       selectedId = null
       preview = ''
@@ -260,7 +263,7 @@
       if (gen !== previewGen) return
       preview = ''
       previewedId = null
-      previewError = e instanceof Error ? e.message : String(e)
+      previewError = coerceIPCError(e).message
     } finally {
       if (gen === previewGen) previewLoading = false
     }
@@ -349,6 +352,7 @@
       compareGen += 1
       paneMode = 'preview'
       compareLoading = false
+      liveReady = false
       return
     }
     if (deleted || paneMode === 'compare' || compareLoading) return
@@ -409,6 +413,7 @@
         if (!clean) {
           if (gen !== compareGen) return
           paneMode = 'preview'
+          liveReady = false
           compareError =
             "Couldn't save the current page before comparing. Fix the save error, then try again."
           return
@@ -417,11 +422,13 @@
       const body = await fetchPageMarkdown(notebook, section, page)
       if (gen !== compareGen) return
       liveBody = body
+      liveReady = true
       expandedHunks = {}
     } catch (e) {
       if (gen !== compareGen) return
       paneMode = 'preview'
-      compareError = e instanceof Error ? e.message : String(e)
+      liveReady = false
+      compareError = coerceIPCError(e).message
     } finally {
       if (gen === compareGen) compareLoading = false
     }
@@ -514,10 +521,11 @@
       compareGen += 1
       paneMode = 'preview'
       compareLoading = false
+      liveReady = false
       liveBody = ''
       await loadVersions(target.id)
     } catch (e) {
-      restoreError = e instanceof Error ? e.message : String(e)
+      restoreError = coerceIPCError(e).message
     } finally {
       restoring = false
     }
@@ -622,7 +630,9 @@
   <button
     type="button"
     tabindex="-1"
-    aria-label="Close page history"
+    aria-label={deleted && onBack
+      ? 'Back to deleted pages'
+      : 'Close page history'}
     class="absolute inset-0 cursor-default border-none bg-transparent p-0"
     onclick={dismissHistory}
   ></button>
@@ -689,7 +699,9 @@
         {/if}
         <button
           type="button"
-          aria-label="Close page history"
+          aria-label={deleted && onBack
+            ? 'Back to deleted pages'
+            : 'Close page history'}
           onclick={dismissHistory}
           class="flex h-8 w-8 items-center justify-center rounded-lg border-none bg-transparent text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
         >
@@ -776,6 +788,7 @@
               autocomplete="off"
               aria-label="Restore as notebook"
               data-testid="page-history-dest-notebook"
+              readonly={source === 'linked'}
             />
           </label>
           <label class="restore-as-field">
@@ -827,7 +840,7 @@
             >
             Loading versions…
           </div>
-        {:else if versions.length === 0}
+        {:else if versions.length === 0 && !listError}
           <div
             class="flex flex-col items-start gap-2 px-4 py-6"
             role="status"
@@ -957,7 +970,8 @@
                     data-history-pane="compare"
                     data-testid="page-history-pane-compare"
                     aria-checked={paneMode === 'compare'}
-                    aria-disabled={deleted || !previewReady}
+                    aria-disabled={deleted ||
+                      (!previewReady && paneMode !== 'compare')}
                     disabled={deleted ||
                       (!previewReady && paneMode !== 'compare')}
                     title={deleted ? 'No current page to compare' : undefined}
@@ -1073,7 +1087,14 @@
                     class:is-split={layout === 'split'}
                     data-testid="page-history-diff"
                   >
-                    {#if layout === 'split'}
+                    {#if pageDiff.tooLarge}
+                      <p
+                        class="px-1 py-4 text-type-sm font-body-md text-text-muted"
+                      >
+                        This comparison is too large to show. Use Preview
+                        instead.
+                      </p>
+                    {:else if layout === 'split'}
                       <div class="diff-col-head old">Version</div>
                       <div class="diff-col-head new">Current page</div>
                     {:else}
@@ -1143,6 +1164,10 @@
                           class="diff-side new"
                           class:is-empty={newLines.length === 0}
                           class:is-dup={hunk.kind === 'equal'}
+                          aria-hidden={layout === 'split' &&
+                          hunk.kind === 'equal'
+                            ? true
+                            : undefined}
                           data-kind={hunk.kind === 'remove'
                             ? 'empty'
                             : hunk.kind === 'equal'

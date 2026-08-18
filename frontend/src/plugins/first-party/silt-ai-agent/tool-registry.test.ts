@@ -360,4 +360,28 @@ describe('tool-registry', () => {
     expect(handler).not.toHaveBeenCalled()
     expect(stageOperation).toHaveBeenCalled()
   })
+
+  it('refuses restore_page_version when it is outside the turn catalog', async () => {
+    const handler = vi.fn(async () => ({ content: 'restored' }))
+    registerTool({
+      name: 'restore_page_version',
+      description: 'restore',
+      parameters: { type: 'object', properties: {} },
+      handler,
+      commit: handler
+    })
+    const res = await dispatchTool(
+      noopCtx,
+      'restore_page_version',
+      {
+        notebook: 'Work',
+        page: 'Daily',
+        version_id: 'v-old'
+      },
+      { mode: 'confirm', allowed: new Set(['search_notes']) }
+    )
+    expect(res.error).toMatch(/not available this turn/)
+    expect(res.isStaged).toBeFalsy()
+    expect(handler).not.toHaveBeenCalled()
+  })
 })

@@ -116,6 +116,16 @@ func sanitizeDeletedLocator(loc history.Locator) (history.Locator, bool) {
 	return history.Locator{Source: loc.Source, Notebook: nb, Section: sec, Page: pg}, true
 }
 
+func historyFileError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if os.IsNotExist(err) {
+		return NewIPCError(CodeNavigationNotFound, "page not found")
+	}
+	return historyReadError(err)
+}
+
 func historyReadError(err error) error {
 	if err == nil {
 		return nil
@@ -255,7 +265,7 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 				if os.IsNotExist(err) {
 					writeErr = NewIPCError(CodeNavigationNotFound, "page not found")
 				} else {
-					writeErr = err
+					writeErr = historyFileError(err)
 				}
 				return
 			}
@@ -267,7 +277,7 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 			_, restoreBody := parser.SplitFrontmatter(string(snapshot))
 			contentBytes, err := os.ReadFile(filePath)
 			if err != nil {
-				writeErr = fmt.Errorf("failed to read existing file: %w", err)
+				writeErr = historyFileError(err)
 				return
 			}
 			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, restoreBody, historyReasonRestore, false)
@@ -513,7 +523,7 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	if _, err := os.Stat(destFile); err == nil {
 		return NewIPCError(CodePageExists, occupiedMsg)
 	} else if !os.IsNotExist(err) {
-		return err
+		return historyFileError(err)
 	}
 
 	a.wg.Add(1)
@@ -521,16 +531,23 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 
 	var result []parser.ParsedBlock
 	var writeErr error
-	a.coordinator.LockFileWrite(destFile, func() {
+	a.coordinator.LockPathsWrite([]string{origFile, destFile}, func() {
+		if _, err := os.Stat(origFile); err == nil {
+			writeErr = NewIPCError(CodePageExists, "that page still exists; restore it from page history instead")
+			return
+		} else if !os.IsNotExist(err) {
+			writeErr = historyFileError(err)
+			return
+		}
 		if _, err := os.Stat(destFile); err == nil {
 			writeErr = NewIPCError(CodePageExists, occupiedMsg)
 			return
 		} else if !os.IsNotExist(err) {
-			writeErr = err
+			writeErr = historyFileError(err)
 			return
 		}
 		if err := os.MkdirAll(filepath.Dir(destFile), 0755); err != nil {
-			writeErr = fmt.Errorf("failed to create parent directory: %w", err)
+			writeErr = historyFileError(err)
 			return
 		}
 		// Remapped snapshot supplies frontmatter (type/tags/created/…). Skip
@@ -541,13 +558,15 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 			destNB, destSec, destPg,
 			remapped, restoreBody, historyReasonRestore, true,
 		)
+		if writeErr != nil {
+			return
+		}
+		if destLoc != origLoc {
+			a.relocatePageHistory(destSource, origLoc.Notebook, origLoc.Section, origLoc.Page, destNB, destSec, destPg)
+		}
 	})
 	if writeErr != nil {
 		return writeErr
-	}
-
-	if destLoc != origLoc {
-		a.relocatePageHistory(destSource, origLoc.Notebook, origLoc.Section, origLoc.Page, destNB, destSec, destPg)
 	}
 
 	_ = result

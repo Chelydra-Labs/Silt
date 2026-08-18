@@ -473,10 +473,20 @@ describe('agent-loop', () => {
     expect(detectWriteIntent('please rename the tag')).toBe(true)
     expect(detectWriteIntent('fix the typo on this page')).toBe(true)
     expect(detectWriteIntent('change the title of my note')).toBe(true)
-    expect(detectWriteIntent("restore yesterday's version of Daily")).toBe(true)
-    expect(detectWriteIntent('revert my changes')).toBe(true)
-    expect(detectWriteIntent('undo my changes')).toBe(true)
-    expect(detectWriteIntent('show version history')).toBe(true)
+    const { detectCatalogMode } = await import('./agent-loop')
+    expect(detectCatalogMode("restore yesterday's version of Daily")).toBe(
+      'restore'
+    )
+    expect(detectCatalogMode('restore this page')).toBe('restore')
+    expect(detectCatalogMode('restore Daily')).toBe('restore')
+    expect(detectCatalogMode('please restore it')).toBe('restore')
+    expect(detectCatalogMode('revert my changes')).toBe('restore')
+    expect(detectCatalogMode('undo my changes')).toBe('restore')
+    expect(detectCatalogMode('show version history')).toBe('qa')
+    expect(detectCatalogMode('is this an old version')).toBe('qa')
+    expect(detectWriteIntent("restore yesterday's version of Daily")).toBe(
+      false
+    )
     expect(detectWriteIntent('write a summary of my notes')).toBe(false)
     expect(detectWriteIntent('what did I delete last week')).toBe(false)
     expect(detectWriteIntent('update me on the project')).toBe(false)
@@ -658,7 +668,7 @@ describe('agent-loop', () => {
     await runAgent(ctxRestore, "restore yesterday's version of Daily", [])
     expect(restoreTools[0]).toContain('restore_page_version')
     expect(restoreTools[0]).toContain('list_page_versions')
-    expect(restoreTools[0]).toContain('create_note')
+    expect(restoreTools[0]).not.toContain('create_note')
   })
 
   it('stops when the abort signal is already aborted', async () => {
@@ -1603,7 +1613,7 @@ describe('agent-loop staging', () => {
     })
 
     const session = createAgentSession(ctx)
-    const p = session.run('extract', [], {
+    const p = session.run('extract and save', [], {
       signal: ac.signal,
       onStaging: (e) => {
         // Confirm first so commit starts with a live signal, then abort mid-commit.

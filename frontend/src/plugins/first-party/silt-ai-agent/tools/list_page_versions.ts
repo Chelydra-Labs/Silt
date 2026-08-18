@@ -12,8 +12,7 @@ export const listPageVersionsToolDef = {
   description:
     'List retained page-history snapshots for a page, newest first. ' +
     'Each row has id, timestamp, source (editor/source/mcp/plugin/restore/rename), and bytes. ' +
-    'An empty list means no snapshots — not an error. Use get_page_version to preview a body ' +
-    'and restore_page_version only after the user confirms.',
+    'An empty list means no snapshots — not an error. Use get_page_version to preview a body.',
   parameters: {
     type: 'object',
     required: ['notebook', 'page'],

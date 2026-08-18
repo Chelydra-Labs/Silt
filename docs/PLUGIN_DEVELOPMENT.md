@@ -315,8 +315,9 @@ clear error.
 ### 7.2 Content-mutate capability (#156)
 
 Block CRUD operations (`createBlock`, `deleteBlock`, `moveBlock`,
-`applyBlocks`) are gated by the `content-mutate` capability. A plugin that
-mutates blocks must declare it in the manifest:
+`applyBlocks`) and `restorePageVersion` are gated by the `content-mutate`
+capability. A plugin that mutates blocks or restores page history must declare
+it in the manifest:
 
 ```json
 {

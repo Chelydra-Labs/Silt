@@ -1473,6 +1473,36 @@ func TestRestoreDeletedPageVersion_RefusesLiveSource(t *testing.T) {
 	}
 }
 
+func TestRestoreDeletedPageVersion_DestIOHidesPath(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(app.vaultPath, "Work", "Blocked")
+	writeFile(t, blocked, "not-a-directory")
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "Gone", list[0].ID, "Work", "Blocked", "Copy")
+	if err == nil {
+		t.Fatal("expected dest I/O error")
+	}
+	if strings.Contains(err.Error(), app.vaultPath) || strings.Contains(err.Error(), blocked) {
+		t.Fatalf("leaked path: %v", err)
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) {
+		t.Fatalf("dest I/O err = %v", err)
+	}
+	if ipc.Code != CodeNavigationUnavailable && ipc.Code != CodeNavigationNotFound {
+		t.Fatalf("dest I/O code = %s", ipc.Code)
+	}
+}
+
 func TestHistoryReadError_HidesPath(t *testing.T) {
 	leaked := &os.PathError{Op: "open", Path: `C:\secret\vault\.system\history\x.gz`, Err: os.ErrPermission}
 	err := historyReadError(leaked)

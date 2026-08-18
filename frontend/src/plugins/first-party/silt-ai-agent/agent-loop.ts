@@ -67,11 +67,21 @@ export const QA_TOOL_NAMES = [
   'get_page_version'
 ] as const
 
+/** Q&A plus restore — used when the user asks to restore/revert without other writes. */
+export const RESTORE_TOOL_NAMES = [
+  ...QA_TOOL_NAMES,
+  'restore_page_version'
+] as const
+
+export type AgentCatalogMode = 'qa' | 'restore' | 'full'
+
 // Write/organize intent for full catalog at turn start. Prefer multi-word
 // phrases; avoid bare verbs that dominate Q&A ("write a summary", "what did I
-// delete", "update me on…").
+// delete", "update me on…"). Restore/revert is a separate catalog.
 const WRITE_INTENT_RE =
-  /\b((create|add|make) (a |the |new )?(note|task|page|block)|add note|new note|make a note|draft (a |the )?note|save (this|it|to)|put this|please rename|rename( tag| the| this)?|retitle|add tag|extract (and save|to)|organize (my |the )?notes|edit (the |this |my )?(note|task|block|page|title)|modify (the |this |my )?(note|task|block|page)|update (my |the |a |this )?(notes?|task|block|page|title)|delete (the |this |a )?(note|task|block|page|tag)|fix (the |this |a )?(typo|note|task|title)|change (the |this |a )?(title|note|task)|move this|write (a |the )?(note|task) to|restore (the |this |a |yesterday's )?(page |note )?(version|history)|revert (my |the |this )?(changes|version|page|note)|undo (my |the |this )?(changes|edit|restore)|roll back|(earlier|previous|old) version|version history)\b/i
+  /\b((create|add|make) (a |the |new )?(note|task|page|block)|add note|new note|make a note|draft (a |the )?note|save (this|it|to)|put this|please rename|rename( tag| the| this)?|retitle|add tag|extract (and save|to)|organize (my |the )?notes|edit (the |this |my )?(note|task|block|page|title)|modify (the |this |my )?(note|task|block|page)|update (my |the |a |this )?(notes?|task|block|page|title)|delete (the |this |a )?(note|task|block|page|tag)|fix (the |this |a )?(typo|note|task|title)|change (the |this |a )?(title|note|task)|move this|write (a |the )?(note|task) to)\b/i
+
+const RESTORE_INTENT_RE = /\b(restore|revert|undo|roll back)\b/i
 
 /** Tool result bodies above this many bytes are truncated for the model. */
 export const TOOL_RESULT_MAX_BYTES = 10 * 1024
@@ -213,7 +223,14 @@ export interface AgentRunResult {
 
 /** Detect write/organize intent so the turn starts with the full tool catalog. */
 export function detectWriteIntent(userMessage: string): boolean {
-  return WRITE_INTENT_RE.test(userMessage)
+  return detectCatalogMode(userMessage) === 'full'
+}
+
+/** Q&A, restore-only, or full write catalog for this user message. */
+export function detectCatalogMode(userMessage: string): AgentCatalogMode {
+  if (WRITE_INTENT_RE.test(userMessage)) return 'full'
+  if (RESTORE_INTENT_RE.test(userMessage)) return 'restore'
+  return 'qa'
 }
 
 /** Keys whose string values are case-folded for anti-thrash (free-text query). */
@@ -734,15 +751,19 @@ export async function runAgent(
       : captureUiLocation()
   const writeMode = readAgentWritesMode()
   // Q&A subset by default; full catalog when the user message shows write intent.
-  const mode: 'qa' | 'full' = detectWriteIntent(userMessage) ? 'full' : 'qa'
+  const mode = detectCatalogMode(userMessage)
   const allTools = getTools()
   const toolsForMode = (): AgentToolDef[] => {
-    const base =
+    const allowed =
       mode === 'full'
+        ? null
+        : mode === 'restore'
+          ? (RESTORE_TOOL_NAMES as readonly string[])
+          : (QA_TOOL_NAMES as readonly string[])
+    const base =
+      allowed == null
         ? allTools
-        : allTools.filter((t) =>
-            (QA_TOOL_NAMES as readonly string[]).includes(t.name)
-          )
+        : allTools.filter((t) => allowed.includes(t.name))
     return filterToolsForWritePolicy(base, writeMode)
   }
   let toolsForTurn = toolsForMode()
@@ -934,7 +955,8 @@ export async function runAgent(
               res = await raceAbort(
                 dispatchTool(ctx, call.name, args, {
                   mode: writeMode,
-                  signal: opts.signal
+                  signal: opts.signal,
+                  allowed: new Set(toolsForTurn.map((t) => t.name))
                 }),
                 opts.signal
               )

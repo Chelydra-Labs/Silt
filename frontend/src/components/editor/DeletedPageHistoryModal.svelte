@@ -3,6 +3,7 @@
   import { ListDeletedPageHistory } from '../../../bindings/silt/app.js'
   import { trapFocus } from '../../lib/focusTrap'
   import { asString } from '../../lib/asString'
+  import { coerceIPCError } from '../../lib/ipcError'
   import PageHistoryModal from './PageHistoryModal.svelte'
 
   interface DeletedPageRow {
@@ -137,7 +138,7 @@
       await tick()
       searchRef?.focus()
     } catch (e) {
-      listError = e instanceof Error ? e.message : String(e)
+      listError = coerceIPCError(e).message
       rows = []
       selectedKey = null
     } finally {
@@ -260,6 +261,7 @@
     notebook={opened.notebook}
     section={opened.section}
     page={opened.page}
+    source={opened.source}
     deleted
     onBack={() => {
       opened = null
@@ -393,7 +395,7 @@
             >
             Loading deleted pages…
           </div>
-        {:else if filtered.length === 0}
+        {:else if filtered.length === 0 && !listError}
           <div
             class="flex flex-col items-start gap-2 px-4 py-6"
             data-testid="deleted-page-history-empty"

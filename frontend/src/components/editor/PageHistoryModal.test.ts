@@ -349,6 +349,25 @@ describe('PageHistoryModal', () => {
     expect(screen.getByTestId('page-history-empty-deleted')).toBeTruthy()
   })
 
+  it('does not show the empty-history copy when the list fails', async () => {
+    appMocks.ListPageVersions.mockRejectedValueOnce(
+      new Error(
+        JSON.stringify({
+          code: 'navigation_unavailable',
+          message: 'snapshot store read failed'
+        })
+      )
+    )
+    renderModal()
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /snapshot store read failed/
+      )
+    })
+    expect(screen.queryByTestId('page-history-empty')).toBeNull()
+    expect(screen.queryByText('No versions yet')).toBeNull()
+  })
+
   it('treats a failed live-page fetch as a compare error', async () => {
     appMocks.FetchPageMarkdown.mockRejectedValueOnce(
       new Error('Could not read the current page.')
@@ -432,7 +451,7 @@ describe('PageHistoryModal', () => {
     renderModal()
     await openCompare()
     expect(screen.getByTestId('page-history-diff-summary')).toHaveTextContent(
-      /No changes\. This version matches the current page/
+      /No body changes\. Frontmatter is not compared/
     )
     expect(screen.queryByRole('alert')).toBeNull()
   })
@@ -613,7 +632,12 @@ describe('PageHistoryModal', () => {
 
     it('surfaces a generic restore failure without opening Restore as…', async () => {
       appMocks.RestoreDeletedPageVersion.mockRejectedValueOnce(
-        new Error('snapshot store read failed')
+        new Error(
+          JSON.stringify({
+            code: 'navigation_unavailable',
+            message: 'snapshot store read failed'
+          })
+        )
       )
       renderDeleted()
       await waitFor(() => {
@@ -699,7 +723,7 @@ describe('PageHistoryModal', () => {
       await waitFor(() => {
         expect(screen.getByTestId('page-history-preview-body')).toBeTruthy()
       })
-      const closers = screen.getAllByLabelText('Close page history')
+      const closers = screen.getAllByLabelText('Back to deleted pages')
       await fireEvent.click(closers[0])
       expect(onBack).toHaveBeenCalledTimes(1)
       expect(onClose).not.toHaveBeenCalled()
