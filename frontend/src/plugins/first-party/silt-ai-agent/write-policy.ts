@@ -2,7 +2,7 @@
 //
 // Modes come from ai.features.agent_writes (Settings). Mutating tools are
 // either refused (read_only), staged for HITL (confirm / always-confirm set),
-// or run immediately (auto, except bulk rename + extract).
+// or run immediately (auto, except bulk rename, extract, and page restore).
 
 import { readAIFeatures } from '../../shared/ai-chat/availability'
 import type { AgentToolDef, StagedPreview } from './tool-registry'
@@ -20,7 +20,11 @@ export const MUTATING_TOOLS = new Set([
 ])
 
 /** Always require confirmation even in auto mode (bulk / nested-model writes). */
-export const ALWAYS_CONFIRM_TOOLS = new Set(['rename_tag', 'extract_and_save'])
+export const ALWAYS_CONFIRM_TOOLS = new Set([
+  'rename_tag',
+  'extract_and_save',
+  'restore_page_version'
+])
 
 export function isMutatingTool(name: string): boolean {
   return MUTATING_TOOLS.has(name)

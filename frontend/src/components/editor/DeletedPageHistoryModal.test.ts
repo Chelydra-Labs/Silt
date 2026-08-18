@@ -123,6 +123,42 @@ describe('DeletedPageHistoryModal', () => {
     expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
   })
 
+  it('shows a Retry control when the deleted list fails to load', async () => {
+    appMocks.ListDeletedPageHistory.mockRejectedValueOnce(
+      new Error('could not list deleted pages')
+    )
+    render(DeletedPageHistoryModal, { props: { onClose: vi.fn() } })
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /could not list deleted pages/
+      )
+    })
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: /Gone/ })).toBeTruthy()
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('returns focus to search after Back from a nested page', async () => {
+    render(DeletedPageHistoryModal, { props: { onClose: vi.fn() } })
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: /Gone/ })).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByRole('option', { name: /Gone/ }))
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-back')).toBeTruthy()
+    })
+    await fireEvent.click(screen.getByTestId('page-history-back'))
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search deleted pages')).toBe(
+        document.activeElement
+      )
+    })
+    expect(screen.getByRole('option', { name: /Gone/ })).toBeTruthy()
+  })
+
   it('dispatches silt:open-deleted-page-history from the helper', () => {
     const seen = vi.fn()
     window.addEventListener(OPEN_DELETED_PAGE_HISTORY_EVENT, seen)

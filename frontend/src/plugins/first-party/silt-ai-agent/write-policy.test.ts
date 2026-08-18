@@ -42,6 +42,7 @@ describe('write-policy', () => {
     expect(isMutatingTool('search_notes')).toBe(false)
     expect(MUTATING_TOOLS.has('extract_and_save')).toBe(true)
     expect(ALWAYS_CONFIRM_TOOLS.has('rename_tag')).toBe(true)
+    expect(ALWAYS_CONFIRM_TOOLS.has('restore_page_version')).toBe(true)
   })
 
   it('shouldStageTool matrix', () => {
@@ -50,6 +51,7 @@ describe('write-policy', () => {
     expect(shouldStageTool('create_note', 'auto')).toBe(false)
     expect(shouldStageTool('rename_tag', 'auto')).toBe(true)
     expect(shouldStageTool('extract_and_save', 'auto')).toBe(true)
+    expect(shouldStageTool('restore_page_version', 'auto')).toBe(true)
     expect(shouldStageTool('search_notes', 'confirm')).toBe(false)
   })
 

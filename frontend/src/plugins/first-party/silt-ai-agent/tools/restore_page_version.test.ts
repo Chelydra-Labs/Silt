@@ -26,7 +26,12 @@ describe('restore_page_version', () => {
   it('surfaces restore errors', async () => {
     const ctx = {
       restorePageVersion: vi.fn(async () => {
-        throw new Error('page version not found')
+        throw new Error(
+          JSON.stringify({
+            code: 'navigation_not_found',
+            message: 'page version not found'
+          })
+        )
       })
     } as unknown as PluginContext
     const res = await handleRestorePageVersion(ctx, {

@@ -534,6 +534,10 @@
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
+      if (deleted && onBack && !restoring) {
+        onBack()
+        return
+      }
       onClose()
       return
     }
@@ -1046,6 +1050,7 @@
                     </button>
                   </div>
                 </div>
+                <!-- Keyboard-scrollable region: role=region is correct; tabindex lets the pane receive focus. -->
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
                 <div
                   class="diff-scroll custom-scrollbar"
@@ -1196,6 +1201,7 @@
                 </button>
               </div>
             {:else}
+              <!-- Keyboard-scrollable region: role=region is correct; tabindex lets the pane receive focus. -->
               <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
               <pre
                 class="preview-body custom-scrollbar"

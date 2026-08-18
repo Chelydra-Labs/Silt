@@ -288,8 +288,9 @@ func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page,
 	frontmatter, _ := parser.SplitFrontmatter(string(contentBytes))
 	if frontmatter == "" {
 		today := time.Now().Format("2006-01-02")
-		frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
-			strconv.Quote(displayNotebook), strconv.Quote(displaySection), strconv.Quote(displayPage), strconv.Quote(today))
+		createdStr := time.Now().Format("2006-01-02T15:04:05")
+		frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ncreated: %s\ntags: []\n---\n",
+			strconv.Quote(displayNotebook), strconv.Quote(displaySection), strconv.Quote(displayPage), strconv.Quote(today), strconv.Quote(createdStr))
 	}
 	body := markdown
 	if body != "" && !strings.HasSuffix(body, "\n") {
@@ -451,6 +452,13 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	if destRoot != origRoot {
 		return NewIPCError(CodeInvalidNavigationPath, "restore that snapshot in the same notebook it came from")
 	}
+	destNotebookDir, err := a.resolveNotebookDir(destNB, destSource)
+	if err != nil {
+		return err
+	}
+	if !isCreationPathWithinRoot(destFile, destNotebookDir) {
+		return fmt.Errorf("path escapes notebook root")
+	}
 
 	snapshot, err := history.Read(origRoot, origLoc, versionID)
 	if err != nil {
@@ -467,11 +475,6 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-
-	today := time.Now().Format("2006-01-02")
-	createdStr := time.Now().Format("2006-01-02T15:04:05")
-	scaffold := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ncreated: %s\ntags: []\n---\n",
-		strconv.Quote(destNotebook), strconv.Quote(destSection), strconv.Quote(destPage), strconv.Quote(today), strconv.Quote(createdStr))
 
 	a.wg.Add(1)
 	defer a.wg.Done()
@@ -490,10 +493,12 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 			writeErr = fmt.Errorf("failed to create parent directory: %w", err)
 			return
 		}
+		// Empty prev skips capture: there is no live file to snapshot, and a
+		// frontmatter-only scaffold would evict a real version at the cap.
 		result, writeErr = a.writePageMarkdownLocked(
 			destFile, destSource, destNB, destSec, destPg,
-			destNotebook, destSection, destPage,
-			[]byte(scaffold), restoreBody, historyReasonRestore,
+			destNB, destSec, destPg,
+			nil, restoreBody, historyReasonRestore,
 		)
 	})
 	if writeErr != nil {

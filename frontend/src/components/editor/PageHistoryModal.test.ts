@@ -611,6 +611,27 @@ describe('PageHistoryModal', () => {
       window.removeEventListener('navigate-to-page', navigated)
     })
 
+    it('routes Esc to onBack instead of closing the stack', async () => {
+      const onClose = vi.fn()
+      const onBack = vi.fn()
+      render(PageHistoryModal, {
+        props: {
+          notebook: 'Work',
+          section: 'Journal',
+          page: 'Daily',
+          deleted: true,
+          onBack,
+          onClose
+        }
+      })
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-preview-body')).toBeTruthy()
+      })
+      await fireEvent.keyDown(window, { key: 'Escape' })
+      expect(onBack).toHaveBeenCalledTimes(1)
+      expect(onClose).not.toHaveBeenCalled()
+    })
+
     it('disables Compare for deleted pages', async () => {
       renderDeleted()
       await waitFor(() => {

@@ -121,6 +121,24 @@ describe('tool-registry', () => {
     expect(res.error).toBe('kaboom')
   })
 
+  it('coerces Wails IPC error envelopes in dispatch catch', async () => {
+    registerTool({
+      name: 'boom-ipc',
+      description: 'throws envelope',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => {
+        throw new Error(
+          JSON.stringify({
+            code: 'navigation_not_found',
+            message: 'page version not found'
+          })
+        )
+      }
+    })
+    const res = await dispatchTool(noopCtx, 'boom-ipc', {})
+    expect(res.error).toBe('page version not found')
+  })
+
   it('validateArgs accepts integer for integer type and rejects mismatch', () => {
     const schema = {
       type: 'object',

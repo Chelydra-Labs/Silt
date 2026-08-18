@@ -8,6 +8,7 @@
 // the model never reaches tool code.
 
 import type { PluginAIToolDef, PluginContext } from '../../sdk'
+import { coerceIPCError } from '../../../lib/ipcError'
 import {
   type AgentWritesMode,
   isMutatingTool,
@@ -340,7 +341,6 @@ export async function dispatchTool(
     }
     return await tool.handler(ctx, argsJson, signal)
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : String(e)
-    return { content: '', error: message }
+    return { content: '', error: coerceIPCError(e).message }
   }
 }

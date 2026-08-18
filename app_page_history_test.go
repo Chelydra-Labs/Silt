@@ -1108,11 +1108,113 @@ func TestDeletedPageHistory_MissingVersionAndPartialDest(t *testing.T) {
 	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", "missing", "", "", ""); err == nil {
-		t.Fatal("expected missing version error")
+	err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", "missing", "", "", "")
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationNotFound {
+		t.Fatalf("missing version err = %v", err)
 	}
-	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", "v", "Work", "", ""); err == nil {
-		t.Fatal("expected partial dest error")
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "Gone", "v", "Work", "", "")
+	if !errors.As(err, &ipc) || ipc.Code != CodeInvalidNavigationPath {
+		t.Fatalf("partial dest err = %v", err)
+	}
+}
+
+func TestDeletedPageHistory_SanitizeDestFrontmatter(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "OldGone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "OldGone", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "OldGone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "OldGone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "OldGone", list[0].ID, "Work", "Journal", "Q1/Q2 recap"); err != nil {
+		t.Fatalf("restore-as: %v", err)
+	}
+	safePage := "Q1Q2 recap"
+	raw, err := os.ReadFile(filepath.Join(app.vaultPath, "Work", "Journal", safePage+".md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `page: "Q1/Q2 recap"`) {
+		t.Fatal("frontmatter kept the raw dest page name")
+	}
+	if !strings.Contains(string(raw), `page: "Q1Q2 recap"`) {
+		t.Fatalf("frontmatter page missing sanitized name:\n%s", raw)
+	}
+	blocks, err := app.FetchPageBlocks("Work", "Journal", safePage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) == 0 {
+		t.Fatal("indexed blocks missing for sanitized dest")
+	}
+}
+
+func TestDeletedPageHistory_RestoreDoesNotAddSyntheticVersion(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 2, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Cap", "# v0\n")
+	savePageBody(t, app, "Work", "Journal", "Cap", "# v1\n")
+	savePageBody(t, app, "Work", "Journal", "Cap", "# v2\n")
+	before, err := app.ListPageVersions("Work", "Journal", "Cap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("pre-delete versions = %d", len(before))
+	}
+	oldestID := before[len(before)-1].ID
+	if err := app.DeletePage("Work", "Journal", "Cap"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Cap", before[0].ID, "", "", ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	after, err := app.ListPageVersions("Work", "Journal", "Cap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("restore changed version count %d → %d", len(before), len(after))
+	}
+	foundOldest := false
+	for _, v := range after {
+		if v.Source == historyReasonRestore {
+			t.Fatal("recreate captured a synthetic restore snapshot")
+		}
+		if v.ID == oldestID {
+			foundOldest = true
+		}
+	}
+	if !foundOldest {
+		t.Fatal("oldest real snapshot was evicted")
+	}
+}
+
+func TestDeletedPageHistory_RecreateMissingNotebookDir(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(app.vaultPath, "Work")); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", list[0].ID, "", "", ""); err != nil {
+		t.Fatalf("restore after notebook dir gone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(app.vaultPath, "Work", "Journal", "Gone.md")); err != nil {
+		t.Fatalf("recreated page missing: %v", err)
 	}
 }
 

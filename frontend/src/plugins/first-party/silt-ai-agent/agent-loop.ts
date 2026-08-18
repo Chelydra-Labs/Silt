@@ -350,8 +350,8 @@ function buildWritePolicyLines(
     return [
       modeLine,
       'Single-edit writes (create_note, create_task, update_block, update_task) may apply',
-      'immediately. Bulk rename_tag and extract_and_save always stage for user confirmation',
-      'before any vault mutation.',
+      'immediately. restore_page_version, rename_tag, and extract_and_save always stage',
+      'for user confirmation before any vault mutation.',
       'For page-relative writes ("this page", "here"), target the Current page from',
       'UI LOCATION unless the user names a different path.'
     ]

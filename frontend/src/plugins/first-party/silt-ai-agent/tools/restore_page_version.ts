@@ -5,6 +5,7 @@
 
 import type { PluginContext } from '../../../sdk'
 import { asString } from '../../../../lib/asString'
+import { coerceIPCError } from '../../../../lib/ipcError'
 import { auditWrite } from './_util'
 import type { ToolResult } from '../tool-registry'
 import { breadcrumb } from './_util'
@@ -55,7 +56,7 @@ export async function handleRestorePageVersion(
     auditWrite(ctx, 'restore_page_version', 'error')
     return {
       content: '',
-      error: e instanceof Error ? e.message : String(e)
+      error: coerceIPCError(e).message
     }
   }
   auditWrite(ctx, 'restore_page_version', 'ok')

@@ -257,7 +257,10 @@
     section={opened.section}
     page={opened.page}
     deleted
-    onBack={() => (opened = null)}
+    onBack={() => {
+      opened = null
+      void tick().then(() => searchRef?.focus())
+    }}
     {onClose}
   />
 {:else}

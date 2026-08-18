@@ -437,6 +437,11 @@ await ctx.createSection('Work', 'NewSection')
 await ctx.createNotebook('Personal')
 await ctx.deletePage('Work', 'Projects', 'OldPage')
 await ctx.renamePage('Work', 'Projects', 'OldName', 'NewName')
+
+// Page history (list/preview: session; restore: content-mutate)
+const versions = await ctx.listPageVersions('Work', 'Journal', 'Daily')
+const body = await ctx.getPageVersion('Work', 'Journal', 'Daily', versions[0].id)
+await ctx.restorePageVersion('Work', 'Journal', 'Daily', versions[0].id)
 ```
 
 ### 8.4 File I/O (#108)
