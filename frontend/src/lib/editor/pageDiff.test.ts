@@ -94,4 +94,17 @@ describe('diffPageBodies', () => {
     expect(d.addedLines).toBe(1)
     expect(d.hunks.some((h) => h.kind === 'add')).toBe(true)
   })
+
+  it('treats empty vs empty as no changes', () => {
+    const d = diffPageBodies('', '')
+    expect(d.addedLines).toBe(0)
+    expect(d.removedLines).toBe(0)
+    expect(d.tooLarge).toBeUndefined()
+  })
+
+  it('treats a missing trailing newline as the same line', () => {
+    const d = diffPageBodies('hello', 'hello\n')
+    expect(d.addedLines).toBe(0)
+    expect(d.removedLines).toBe(0)
+  })
 })

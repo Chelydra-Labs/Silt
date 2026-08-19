@@ -1641,6 +1641,83 @@ func TestRestoreDeletedPageVersion_DestIOHidesPath(t *testing.T) {
 	}
 }
 
+func TestRestoreDeletedPageVersion_DestLeftoverIsOccupied(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Taken", "# dest1\n")
+	savePageBody(t, app, "Work", "Journal", "Taken", "# dest2\n")
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# orig1\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# orig2\n")
+	listOrig, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil || len(listOrig) == 0 {
+		t.Fatalf("List orig: %v", err)
+	}
+	listDest, err := app.ListPageVersions("Work", "Journal", "Taken")
+	if err != nil || len(listDest) == 0 {
+		t.Fatalf("List dest: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "Taken"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "Gone", listOrig[0].ID, "Work", "Journal", "Taken")
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodePageHistoryExists {
+		t.Fatalf("restore-as onto dest leftover: %v", err)
+	}
+	stillDest, err := app.ListPageVersions("Work", "Journal", "Taken")
+	if err != nil || len(stillDest) == 0 {
+		t.Fatalf("dest leftover vanished: %v len=%d", err, len(stillDest))
+	}
+	if stillDest[0].ID != listDest[0].ID {
+		t.Fatalf("dest leftover mutated: got %s want %s", stillDest[0].ID, listDest[0].ID)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", listOrig[0].ID, "", "", ""); err != nil {
+		t.Fatalf("orig leftover should stay restorable: %v", err)
+	}
+}
+
+func TestPageHistory_RestoreWriteFailureAtCapKeepsOldest(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 2, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Capped", "# v0\n")
+	savePageBody(t, app, "Work", "Journal", "Capped", "# v1\n")
+	savePageBody(t, app, "Work", "Journal", "Capped", "# v2\n")
+	savePageBody(t, app, "Work", "Journal", "Capped", "# v3\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Capped")
+	if err != nil || len(list) != 2 {
+		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+	oldest := list[len(list)-1].ID
+	atomicPageWrite = func(string, []byte) error {
+		return os.ErrPermission
+	}
+	err = app.RestorePageVersion("Work", "Journal", "Capped", oldest)
+	atomicPageWrite = parser.WriteFileAtomic
+	if err == nil {
+		t.Fatal("expected restore write failure")
+	}
+	after, err := app.ListPageVersions("Work", "Journal", "Capped")
+	if err != nil {
+		t.Fatalf("List after failed restore: %v", err)
+	}
+	var stillOldest bool
+	for _, e := range after {
+		if e.ID == oldest {
+			stillOldest = true
+			break
+		}
+	}
+	if !stillOldest {
+		t.Fatalf("oldest snapshot evicted after failed restore, got %+v", after)
+	}
+	if err := app.RestorePageVersion("Work", "Journal", "Capped", oldest); err != nil {
+		t.Fatalf("retry restore of oldest: %v", err)
+	}
+}
+
 func TestRestoreDeletedPageVersion_WriteFailureAfterRelocateRollsBack(t *testing.T) {
 	app := newTestApp(t)
 	enablePageHistory(t, app, 50, 0)

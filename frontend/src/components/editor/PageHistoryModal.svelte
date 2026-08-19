@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
+  import { Events } from '@wailsio/runtime'
   import {
     ListPageVersions,
     GetPageVersion,
@@ -16,7 +17,7 @@
     type WordPart
   } from '../../lib/editor/pageDiff'
   import { coerceIPCError } from '../../lib/ipcError'
-  import { IPCErrorCode } from '../../generated/enums'
+  import { EventName, IPCErrorCode } from '../../generated/enums'
   import { openDeletedPageHistory } from './openDeletedPageHistory'
   import ConfirmDialog from '../ConfirmDialog.svelte'
 
@@ -480,7 +481,10 @@
               'That page still exists. Restore it from page history instead.'
             return
           }
-          if (ipc.code === IPCErrorCode.CodePageExists) {
+          if (
+            ipc.code === IPCErrorCode.CodePageExists ||
+            ipc.code === IPCErrorCode.CodePageHistoryExists
+          ) {
             restoreTarget = null
             const firstCollision = !restoreAs
             restoreAs = true
@@ -627,9 +631,24 @@
     mq?.addEventListener('change', onViewport)
     void tick().then(() => dialogRef?.focus())
     void loadVersions()
+    const offReload = Events.On(EventName.EventPageExternalReload, (event) => {
+      const ev = event?.data as
+        { notebook?: string; section?: string; page?: string } | undefined
+      if (!ev?.notebook || ev.page == null) return
+      if (
+        ev.notebook !== notebook ||
+        (ev.section ?? '') !== section ||
+        ev.page !== page
+      ) {
+        return
+      }
+      if (paneMode !== 'compare') return
+      void enterCompare()
+    })
     return () => {
       window.removeEventListener('keydown', handleKeydown, true)
       mq?.removeEventListener('change', onViewport)
+      offReload?.()
       if (previouslyFocused?.isConnected) previouslyFocused.focus?.()
     }
   })

@@ -106,8 +106,15 @@ function shouldWordDiff(previous: string, current: string): boolean {
   )
 }
 
+function withTerminatingNewline(text: string): string {
+  if (text === '' || text.endsWith('\n')) return text
+  return `${text}\n`
+}
+
 /** Compare two page bodies (no frontmatter). */
 export function diffPageBodies(previous: string, current: string): PageDiff {
+  previous = withTerminatingNewline(previous)
+  current = withTerminatingNewline(current)
   if (
     previous.length > COMPARE_MAX_CHARS ||
     current.length > COMPARE_MAX_CHARS ||

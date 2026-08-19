@@ -128,6 +128,44 @@ describe('AutosaveManager', () => {
     expect(deps.onStateChange).toHaveBeenCalledWith(true, 'disk full')
   })
 
+  it('cancelPending() drops a queued debounce', async () => {
+    const { SaveFileBlocks } = await import('$silt-app')
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.trigger()
+    autosave.cancelPending()
+    await vi.advanceTimersByTimeAsync(150)
+
+    expect(SaveFileBlocks).not.toHaveBeenCalled()
+  })
+
+  it('cancelPending() treats an in-flight save as stale', async () => {
+    const { SaveFileBlocks } = await import('$silt-app')
+    let resolveSave!: () => void
+    vi.mocked(SaveFileBlocks).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve
+        }) as never
+    )
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(SaveFileBlocks).toHaveBeenCalledTimes(1)
+
+    autosave.cancelPending()
+    resolveSave()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(deps.onUpdate).not.toHaveBeenCalled()
+    const stateCalls = (deps.onStateChange as ReturnType<typeof vi.fn>).mock
+      .calls
+    expect(stateCalls.some((c) => c[0] === false)).toBe(false)
+  })
+
   it('markClean() resets state', () => {
     const deps = makeDeps()
     const autosave = new AutosaveManager(deps)

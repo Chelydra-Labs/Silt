@@ -221,6 +221,30 @@ describe('tool-registry', () => {
     expect(handler).not.toHaveBeenCalled()
   })
 
+  it('refuses restore_page_version in read_only mode', async () => {
+    const handler = vi.fn(async () => ({ content: 'restored' }))
+    registerTool({
+      name: 'restore_page_version',
+      description: 'restore',
+      parameters: { type: 'object', properties: {} },
+      handler,
+      commit: handler
+    })
+    const res = await dispatchTool(
+      noopCtx,
+      'restore_page_version',
+      {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        version_id: 'v-old'
+      },
+      { mode: 'read_only' }
+    )
+    expect(res.error).toMatch(/Vault writes are disabled/)
+    expect(handler).not.toHaveBeenCalled()
+  })
+
   it('stages mutators with commit in confirm mode without calling handler', async () => {
     stageOperation.mockClear()
     const handler = vi.fn(async () => ({ content: 'wrote' }))

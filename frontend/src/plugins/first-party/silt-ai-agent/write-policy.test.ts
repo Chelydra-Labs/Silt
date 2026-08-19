@@ -59,11 +59,17 @@ describe('write-policy', () => {
     const tools = [
       { name: 'search_notes' },
       { name: 'create_note' },
-      { name: 'rename_tag' }
+      { name: 'rename_tag' },
+      { name: 'restore_page_version' }
     ] as AgentToolDef[]
     expect(
       filterToolsForWritePolicy(tools, 'confirm').map((t) => t.name)
-    ).toEqual(['search_notes', 'create_note', 'rename_tag'])
+    ).toEqual([
+      'search_notes',
+      'create_note',
+      'rename_tag',
+      'restore_page_version'
+    ])
     expect(
       filterToolsForWritePolicy(tools, 'read_only').map((t) => t.name)
     ).toEqual(['search_notes'])

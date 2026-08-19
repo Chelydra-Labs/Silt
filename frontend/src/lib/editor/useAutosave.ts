@@ -124,6 +124,19 @@ export class AutosaveManager {
     this.emit('idle', false, null)
   }
 
+  /** Drop a queued debounce and invalidate any in-flight save so it cannot
+   *  land as truth after an external reload (MCP/agent restore). */
+  cancelPending(): void {
+    if (this.timeout) {
+      clearTimeout(this.timeout)
+      this.timeout = null
+    }
+    this.saveQueued = false
+    this.saveGeneration++
+    this.clearSavingFloor()
+    this.clearSavedHold()
+  }
+
   private async save(): Promise<void> {
     if (this.pendingSave) {
       this.saveQueued = true
@@ -151,6 +164,7 @@ export class AutosaveManager {
           // unknown at this IPC boundary.
           updatedBlocks as unknown as BindingParsedBlock[]
         )
+        if (this.saveGeneration !== saveGen) return
         this.deps.onStateChange(false, null)
         // Min-display floor is non-blocking: flush/pendingSave complete after
         // IPC so unmount is not delayed; UI still holds "Saving…" briefly.
@@ -161,6 +175,7 @@ export class AutosaveManager {
           page: this.deps.getPage()
         })
       } catch (e) {
+        if (this.saveGeneration !== saveGen) return
         const msg = e instanceof Error ? e.message : String(e)
         console.error('AutosaveManager: SaveFileBlocks failed:', e)
         // Errors skip the min-display floor — fail-loud immediately.
@@ -172,6 +187,7 @@ export class AutosaveManager {
           action: { label: 'Retry', run: () => this.save() }
         })
       }
+      if (this.saveGeneration !== saveGen) return
       // onUpdate fires on both success and failure paths: the parent needs
       // current blocks for rendering regardless of persistence status. The
       // dirty flag tracks save state; a failed save leaves dirty=true so

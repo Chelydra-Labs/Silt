@@ -27,10 +27,10 @@ const (
 	historyReasonRename  = "rename"
 )
 
-// maybeCapturePageVersion snapshots prev (the on-disk bytes about to be
-// overwritten) when page history is enabled. It must be called under
-// LockFileWrite, before WriteFileAtomic. Errors are logged and never
-// returned — history I/O must not fail a page save.
+// maybeCapturePageVersion snapshots prev (the bytes being replaced) when
+// page history is enabled. Callers must hold LockFileWrite. Prefer calling
+// after a successful write so a failed write cannot evict a snapshot.
+// Errors are logged and never returned — history I/O must not fail a page save.
 func (a *App) maybeCapturePageVersion(loc history.Locator, prev, incoming []byte, reason string) {
 	if a == nil || a.vaultPath == "" {
 		return
@@ -262,7 +262,8 @@ func (a *App) GetPageVersion(notebook, section, page, versionID string) (string,
 }
 
 // RestorePageVersion replaces the live page body with a stored version.
-// Current frontmatter is preserved. The pre-restore bytes are captured first.
+// Current frontmatter is preserved. The pre-restore bytes are captured
+// after the write succeeds so a failed restore cannot evict a snapshot.
 func (a *App) RestorePageVersion(notebook, section, page, versionID string) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -361,13 +362,13 @@ func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page,
 	}
 	newContent += body
 
-	if !skipCapture {
-		a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
-	}
 	a.tracker.RegisterWrite(filePath)
 	if err := atomicPageWrite(filePath, []byte(newContent)); err != nil {
 		log.Printf("page write: atomic write failed for %s/%s/%s: %v", notebook, section, page, err)
 		return nil, historyWriteError(err)
+	}
+	if !skipCapture {
+		a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 	}
 	parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(
 		newContent, notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab,
@@ -560,10 +561,19 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	_, restoreBody := parser.SplitFrontmatter(string(remapped))
 
 	occupiedMsg := "restoring here would overwrite an existing page; choose a different location"
+	leftoverOccupiedMsg := "that name still has leftover page history; restore it in place or choose a different location"
+	needRelocate := destLoc != origLoc && !history.SameStore(origRoot, origLoc, destLoc)
 	if _, err := os.Stat(destFile); err == nil {
 		return NewIPCError(CodePageExists, occupiedMsg)
 	} else if !os.IsNotExist(err) {
 		return historyWriteError(err)
+	}
+	if needRelocate {
+		if occupied, lerr := destLeftoverOccupied(destRoot, destLoc); lerr != nil {
+			return historyReadError(lerr)
+		} else if occupied {
+			return NewIPCError(CodePageHistoryExists, leftoverOccupiedMsg)
+		}
 	}
 
 	a.wg.Add(1)
@@ -597,6 +607,13 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 		needRelocate := destLoc != origLoc && !history.SameStore(origRoot, origLoc, destLoc)
 		relocated := false
 		if needRelocate {
+			if occupied, lerr := destLeftoverOccupied(destRoot, destLoc); lerr != nil {
+				writeErr = historyReadError(lerr)
+				return
+			} else if occupied {
+				writeErr = NewIPCError(CodePageHistoryExists, leftoverOccupiedMsg)
+				return
+			}
 			leftover, lerr := history.List(origRoot, origLoc)
 			if lerr != nil {
 				writeErr = historyReadError(lerr)
@@ -665,6 +682,14 @@ func remapSnapshotIdentity(snapshot []byte, notebook, section, page string) ([]b
 		return nil, err
 	}
 	return []byte(content), nil
+}
+
+func destLeftoverOccupied(root string, loc history.Locator) (bool, error) {
+	entries, err := history.List(root, loc)
+	if err != nil {
+		return false, err
+	}
+	return len(entries) > 0, nil
 }
 
 func (a *App) relocatePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage string) error {

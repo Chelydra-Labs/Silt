@@ -23,6 +23,21 @@ const appMocks = vi.hoisted(() =>
 
 vi.mock('$silt-app', () => appMocks)
 
+const eventsMock = vi.hoisted(() => {
+  const handlers = new Map<string, (event: unknown) => void>()
+  return {
+    handlers,
+    On: vi.fn((name: string, cb: (event: unknown) => void) => {
+      handlers.set(name, cb)
+      return () => handlers.delete(name)
+    })
+  }
+})
+
+vi.mock('@wailsio/runtime', () => ({
+  Events: { On: eventsMock.On }
+}))
+
 const settingsMock = vi.hoisted(() => ({
   config: {
     editor: { auto_versioning_enabled: true }
@@ -74,6 +89,8 @@ beforeEach(() => {
   appMocks.RestoreDeletedPageVersion.mockReset().mockResolvedValue(undefined)
   appMocks.FetchPageMarkdown.mockReset().mockResolvedValue('# live body')
   _resetEditorRegistryForTests()
+  eventsMock.handlers.clear()
+  eventsMock.On.mockClear()
 })
 
 afterEach(() => {
@@ -432,6 +449,24 @@ describe('PageHistoryModal', () => {
     expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
   })
 
+  it('refreshes compare live body after page:external-reload', async () => {
+    renderModal()
+    await openCompare()
+    expect(screen.getByTestId('page-history-compare')).toHaveTextContent(
+      'live body'
+    )
+    appMocks.FetchPageMarkdown.mockResolvedValue('# restored body')
+    eventsMock.handlers.get('page:external-reload')?.({
+      data: { notebook: 'Work', section: 'Journal', page: 'Daily' }
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-compare')).toHaveTextContent(
+        'restored body'
+      )
+    })
+    expect(appMocks.FetchPageMarkdown).toHaveBeenCalledTimes(2)
+  })
+
   it('restores from Compare through ConfirmDialog and RestorePageVersion once', async () => {
     renderModal()
     await openCompare()
@@ -652,6 +687,28 @@ describe('PageHistoryModal', () => {
       })
       expect(onClose).toHaveBeenCalledTimes(1)
       window.removeEventListener('navigate-to-page', navigated)
+    })
+
+    it('shows Restore as… after page_history_exists leftover dest', async () => {
+      appMocks.RestoreDeletedPageVersion.mockRejectedValueOnce(
+        new Error(
+          JSON.stringify({
+            code: 'page_history_exists',
+            message:
+              'that name still has leftover page history; restore it in place or choose a different location'
+          })
+        )
+      )
+      renderDeleted()
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore')).toBeTruthy()
+      })
+      await fireEvent.click(screen.getByTestId('page-history-restore'))
+      await fireEvent.click(screen.getByTestId('page-history-confirm-confirm'))
+      await waitFor(() => {
+        expect(screen.getByTestId('page-history-restore-as')).toBeTruthy()
+      })
+      expect(screen.getByText(/leftover page history/)).toBeTruthy()
     })
 
     it('shows Restore as… after page_exists and retries with dest fields', async () => {

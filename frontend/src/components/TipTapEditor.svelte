@@ -800,6 +800,7 @@
       },
       forceExternalReload: () => {
         pendingExternalReload = true
+        autosave.cancelPending()
       },
       clearExternalReload: () => {
         pendingExternalReload = false

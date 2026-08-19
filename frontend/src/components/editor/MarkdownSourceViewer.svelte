@@ -425,6 +425,10 @@
       },
       forceExternalReload: () => {
         pendingExternalReload = true
+        if (saveTimer) {
+          clearTimeout(saveTimer)
+          saveTimer = null
+        }
       },
       clearExternalReload: () => {
         pendingExternalReload = false
