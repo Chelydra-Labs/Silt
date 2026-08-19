@@ -1828,6 +1828,68 @@ func TestPageHistory_InFlightSaveAbortedAfterRestore(t *testing.T) {
 	}
 }
 
+func TestPageWriteEpochKey_FoldsOnCaseInsensitiveOS(t *testing.T) {
+	folded := pageWriteEpochKey("Work", "Journal", "Race") ==
+		pageWriteEpochKey("work", "journal", "race")
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		if !folded {
+			t.Fatal("expected epoch keys to fold on this OS")
+		}
+		return
+	}
+	if folded {
+		t.Fatal("expected epoch keys to stay case-sensitive on this OS")
+	}
+}
+
+func TestPageHistory_InFlightSaveAbortedAfterCaseVariantRestore(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		t.Skip("case-variant restore vs canonical save is for case-insensitive volumes")
+	}
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Race", "# original\n")
+	savePageBody(t, app, "Work", "Journal", "Race", "# edited\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Race")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "Race.md")
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, _, _, _, err := parser.ParseFileContent(string(content), "Work", "Journal", "Race", "2026-08-16", app.spacesPerTab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) == 0 {
+		t.Fatal("expected blocks")
+	}
+	blocks[0].RawText = "# stale-save"
+	blocks[0].CleanText = "# stale-save"
+
+	afterPageWriteEpochSnapshot = func() {
+		if rerr := app.RestorePageVersion("work", "journal", "race", list[0].ID); rerr != nil {
+			t.Errorf("case-variant restore during in-flight save: %v", rerr)
+		}
+	}
+	t.Cleanup(func() { afterPageWriteEpochSnapshot = nil })
+
+	err = app.SaveFileBlocks("Work", "Journal", "Race", blocks)
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodePageWriteStale {
+		t.Fatalf("in-flight save after case-variant restore: %v", err)
+	}
+	got, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "stale-save") {
+		t.Fatalf("stale save committed after case-variant restore:\n%s", got)
+	}
+}
+
 func TestRestoreDeletedPageVersion_WriteFailureAfterRelocateRollsBack(t *testing.T) {
 	app := newTestApp(t)
 	enablePageHistory(t, app, 50, 0)

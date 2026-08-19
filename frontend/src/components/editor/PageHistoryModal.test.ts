@@ -467,6 +467,20 @@ describe('PageHistoryModal', () => {
     expect(appMocks.FetchPageMarkdown).toHaveBeenCalledTimes(2)
   })
 
+  it('refreshes compare after a case-variant page:external-reload', async () => {
+    renderModal()
+    await openCompare()
+    appMocks.FetchPageMarkdown.mockResolvedValue('# restored body')
+    eventsMock.handlers.get('page:external-reload')?.({
+      data: { notebook: 'work', section: 'journal', page: 'daily' }
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-compare')).toHaveTextContent(
+        'restored body'
+      )
+    })
+  })
+
   it('restarts compare fetch when page:external-reload arrives while loading', async () => {
     let resolveFirst!: (value: string) => void
     appMocks.FetchPageMarkdown.mockImplementationOnce(

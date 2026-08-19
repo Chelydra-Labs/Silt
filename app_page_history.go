@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -687,7 +688,11 @@ func remapSnapshotIdentity(snapshot []byte, notebook, section, page string) ([]b
 }
 
 func pageWriteEpochKey(notebook, section, page string) string {
-	return notebook + "\x00" + section + "\x00" + page
+	key := notebook + "\x00" + section + "\x00" + page
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.ToLower(key)
+	}
+	return key
 }
 
 func (a *App) snapshotPageWriteEpoch(notebook, section, page string) uint64 {

@@ -637,9 +637,9 @@
         { notebook?: string; section?: string; page?: string } | undefined
       if (!ev?.notebook || ev.page == null) return
       if (
-        ev.notebook !== notebook ||
-        (ev.section ?? '') !== section ||
-        ev.page !== page
+        ev.notebook.toLowerCase() !== notebook.toLowerCase() ||
+        (ev.section ?? '').toLowerCase() !== section.toLowerCase() ||
+        ev.page.toLowerCase() !== page.toLowerCase()
       ) {
         return
       }
