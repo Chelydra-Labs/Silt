@@ -539,7 +539,7 @@ describe('PageHistoryModal', () => {
     )
   })
 
-  it('compares a dirty buffer without persisting it', async () => {
+  it('compares last-saved disk content when the editor is dirty', async () => {
     const flush = vi.fn(async () => {
       throw new Error('flush should not run')
     })
@@ -547,7 +547,7 @@ describe('PageHistoryModal', () => {
       key: 'Work\x00Journal\x00Daily',
       isDirty: () => true,
       flush,
-      getMarkdown: () => '# unsaved draft',
+      getMarkdown: () => '  # Title',
       forceExternalReload: () => {},
       clearExternalReload: () => {},
       setProposedEdit: () => false,
@@ -556,12 +556,26 @@ describe('PageHistoryModal', () => {
       acceptProposedEdit: () => false,
       verifySelectionText: () => false
     })
+    appMocks.GetPageVersion.mockResolvedValue('# Title')
+    appMocks.FetchPageMarkdown.mockResolvedValue('# Title')
     renderModal()
     await openCompare()
     expect(flush).not.toHaveBeenCalled()
-    expect(appMocks.FetchPageMarkdown).not.toHaveBeenCalled()
+    expect(appMocks.FetchPageMarkdown).toHaveBeenCalledWith(
+      'Work',
+      'Journal',
+      'Daily'
+    )
     expect(appMocks.RestorePageVersion).not.toHaveBeenCalled()
-    expect(screen.getByTestId('page-history-compare')).toBeTruthy()
+    expect(screen.getByTestId('page-history-diff-summary')).toHaveTextContent(
+      /No body changes/
+    )
+    expect(screen.getByTestId('page-history-compare-saved')).toHaveTextContent(
+      /last saved page/
+    )
+    expect(screen.getByTestId('page-history-compare')).not.toHaveTextContent(
+      '  # Title'
+    )
   })
 
   it('clears a compare error after a successful restore', async () => {

@@ -118,6 +118,7 @@
     layoutOverride ?? (preferSplit ? 'split' : 'unified')
   )
   let liveReady = $state(false)
+  let compareFromSaved = $state(false)
   let pageDiff = $derived(
     paneMode === 'compare' && previewReady && liveReady
       ? diffPageBodies(preview, liveBody)
@@ -364,6 +365,7 @@
       paneMode = 'preview'
       compareLoading = false
       liveReady = false
+      compareFromSaved = false
       return
     }
     if (deleted || paneMode === 'compare' || compareLoading) return
@@ -419,20 +421,18 @@
     paneMode = 'compare'
     try {
       const editor = getEditor(editorKey(notebook, section, page))
-      const fromEditor =
-        editor?.isDirty() === true ? editor.getMarkdown?.() : null
-      const body =
-        fromEditor != null
-          ? fromEditor
-          : await fetchPageMarkdown(notebook, section, page)
+      const dirty = editor?.isDirty() === true
+      const body = await fetchPageMarkdown(notebook, section, page)
       if (gen !== compareGen) return
       liveBody = body
       liveReady = true
+      compareFromSaved = dirty
       expandedHunks = {}
     } catch (e) {
       if (gen !== compareGen) return
       paneMode = 'preview'
       liveReady = false
+      compareFromSaved = false
       compareError = coerceIPCError(e).message
     } finally {
       if (gen === compareGen) compareLoading = false
@@ -538,6 +538,7 @@
       compareLoading = false
       liveReady = false
       liveBody = ''
+      compareFromSaved = false
       compareError = ''
       restoreError = ''
       await loadVersions(target.id)
@@ -1069,6 +1070,11 @@
                     data-testid="page-history-diff-summary"
                   >
                     {diffSummary}
+                    {#if compareFromSaved}
+                      <span data-testid="page-history-compare-saved">
+                        Comparing the last saved page.
+                      </span>
+                    {/if}
                   </p>
                   <div
                     class="pane-switch"

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1623,6 +1624,88 @@ func TestRestoreDeletedPageVersion_DestIOHidesPath(t *testing.T) {
 	}
 	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", list[0].ID, "", "", ""); err != nil {
 		t.Fatalf("leftover should stay restorable after dest I/O failure: %v", err)
+	}
+}
+
+func TestRestoreDeletedPageVersion_WriteFailureAfterRelocateRollsBack(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "MoveMe", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "MoveMe", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "MoveMe")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "MoveMe"); err != nil {
+		t.Fatal(err)
+	}
+	destDir := filepath.Join(app.vaultPath, "Work", "Archive")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(destDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(destDir, 0o755) })
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "Work", "Archive", "Restored")
+	if err == nil {
+		if runtime.GOOS == "windows" {
+			t.Skip("dest dir chmod does not block owner writes on Windows")
+		}
+		t.Fatal("expected write failure after relocate")
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "", "", ""); err != nil {
+		t.Fatalf("leftover should return to orig after write failure: %v", err)
+	}
+}
+
+func TestDeletedPageHistory_SkipsIndeterminateLiveStat(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	journal := filepath.Join(app.vaultPath, "Work", "Journal")
+	if err := os.Chmod(journal, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(journal, 0o755) })
+	orphans, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := false
+	for _, o := range orphans {
+		if o.Notebook == "Work" && o.Page == "Gone" {
+			listed = true
+		}
+	}
+	if listed {
+		if runtime.GOOS == "windows" {
+			t.Skip("directory chmod does not hide children from the owner on Windows")
+		}
+		t.Fatal("indeterminate live stat listed a leftover")
+	}
+}
+
+func TestLiveStatError_HidesPath(t *testing.T) {
+	leaked := &os.PathError{Op: "stat", Path: `C:\secret\vault\Work\Journal\Daily.md`, Err: os.ErrPermission}
+	err := liveStatError(leaked)
+	if err == nil {
+		t.Fatal("expected mapped error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, `C:\`) || strings.Contains(msg, "Daily.md") || strings.Contains(msg, "secret") {
+		t.Fatalf("leaked path: %s", msg)
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationUnavailable {
+		t.Fatalf("mapped err = %v", err)
+	}
+	if ipc.Message != "could not check whether that page still exists" {
+		t.Fatalf("live stat message = %q", ipc.Message)
 	}
 }
 

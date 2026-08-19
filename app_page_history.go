@@ -116,6 +116,17 @@ func sanitizeDeletedLocator(loc history.Locator) (history.Locator, bool) {
 	return history.Locator{Source: loc.Source, Notebook: nb, Section: sec, Page: pg}, true
 }
 
+func liveStatError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if os.IsNotExist(err) {
+		return NewIPCError(CodeNavigationNotFound, "page not found")
+	}
+	log.Printf("page history: live page stat failed: %v", err)
+	return NewIPCError(CodeNavigationUnavailable, "could not check whether that page still exists")
+}
+
 func historyWriteError(err error) error {
 	if err == nil {
 		return nil
@@ -459,7 +470,8 @@ func (a *App) collectDeletedHistory(root, wantSource string, livePath func(histo
 		if _, err := os.Stat(p); err == nil {
 			continue
 		} else if err != nil && !os.IsNotExist(err) {
-			log.Printf("page history: stat live path %s: %v (listing leftover anyway)", p, err)
+			log.Printf("page history: skip leftover, live stat indeterminate %s: %v", p, err)
+			continue
 		}
 		entries, err := history.List(root, loc)
 		if err != nil {
@@ -526,7 +538,7 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	if _, err := os.Stat(origFile); err == nil {
 		return NewIPCError(CodePageStillExists, "that page still exists; restore it from page history instead")
 	} else if !os.IsNotExist(err) {
-		return historyReadError(err)
+		return liveStatError(err)
 	}
 
 	snapshot, err := history.Read(origRoot, origLoc, versionID)
@@ -556,7 +568,7 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 			writeErr = NewIPCError(CodePageStillExists, "that page still exists; restore it from page history instead")
 			return
 		} else if !os.IsNotExist(err) {
-			writeErr = historyFileError(err)
+			writeErr = liveStatError(err)
 			return
 		}
 		if _, err := os.Stat(destFile); err == nil {
@@ -575,6 +587,7 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 			return
 		}
 		needRelocate := destLoc != origLoc && !history.SameStore(origRoot, origLoc, destLoc)
+		relocated := false
 		if needRelocate {
 			leftover, lerr := history.List(origRoot, origLoc)
 			if lerr != nil {
@@ -589,6 +602,7 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 			if writeErr != nil {
 				return
 			}
+			relocated = true
 		}
 		// Remapped snapshot supplies frontmatter (type/tags/created/…). Skip
 		// capture: there is no live file, and a synthetic prev would evict a
@@ -598,6 +612,11 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 			destNB, destSec, destPg,
 			remapped, restoreBody, historyReasonRestore, true,
 		)
+		if writeErr != nil && relocated {
+			if backErr := a.relocatePageHistory(destSource, destNB, destSec, destPg, origLoc.Notebook, origLoc.Section, origLoc.Page); backErr != nil {
+				log.Printf("page history: relocate-back after write failure: %v", backErr)
+			}
+		}
 	})
 	if writeErr != nil {
 		return writeErr
