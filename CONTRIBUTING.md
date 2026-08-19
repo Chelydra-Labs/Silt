@@ -135,10 +135,14 @@ committed. Binding regeneration is now automatic:
   a manual step, so a newly-added Go method can never silently drift from the
   frontend imports a user has.
 
-If the `wails3` CLI is not on `PATH` (e.g. a brand-new machine that hasn't run
-`go install github.com/wailsapp/wails/v3/cmd/wails3@latest` yet), the script
-prints a one-line pointer and exits 0 — `npm install` is never blocked by an
-unrelated dev-tool install.
+If the `wails3` CLI is not on `PATH` (e.g. a brand-new machine that hasn't
+installed it at the `go.mod` pin yet), the script prints a one-line pointer
+and exits 0 — `npm install` is never blocked by an unrelated dev-tool
+install. Install the CLI from the module version, not `@latest`:
+
+```sh
+go install github.com/wailsapp/wails/v3/cmd/wails3@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)
+```
 
 You can also run `npm run generate` explicitly at any time to force a refresh
 (it calls the same script with the same skip-tolerant behavior).
