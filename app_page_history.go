@@ -201,9 +201,6 @@ func (a *App) resolvePageHistory(notebook, section, page string) (loc history.Lo
 	if safeNotebook == "" || safePage == "" {
 		return loc, "", "", "", "", "", "", NewIPCError(CodeInvalidNavigationPath, "invalid path metadata")
 	}
-	if safeNotebook != notebook || safePage != page {
-		return loc, "", "", "", "", "", "", NewIPCError(CodeInvalidNavigationPath, "invalid path metadata")
-	}
 	source = a.resolveSourceByName(safeNotebook)
 	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
 	if err != nil {

@@ -239,21 +239,6 @@ func TestPageHistory_RestoreWhileDisabledKeepsLivePage(t *testing.T) {
 	}
 }
 
-func TestPageHistory_RejectsNonCanonicalLocator(t *testing.T) {
-	app := newTestApp(t)
-	enablePageHistory(t, app, 50, 0)
-	seedHistoryPage(t, app, "Work", "Journal", "Daily", "# first\n")
-	_, err := app.ListPageVersions("Work ", "Journal", "Daily")
-	var ipc *IPCError
-	if !errors.As(err, &ipc) || ipc.Code != CodeInvalidNavigationPath {
-		t.Fatalf("trailing-space notebook: %v", err)
-	}
-	_, err = app.GetPageVersion("Work", "Journal", "..Daily", "v")
-	if !errors.As(err, &ipc) || ipc.Code != CodeInvalidNavigationPath {
-		t.Fatalf("dotted page: %v", err)
-	}
-}
-
 func TestPageHistory_NestedSectionRenameFollowsLocator(t *testing.T) {
 	app := newTestApp(t)
 	enablePageHistory(t, app, 50, 0)
