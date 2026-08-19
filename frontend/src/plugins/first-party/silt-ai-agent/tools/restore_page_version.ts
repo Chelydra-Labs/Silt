@@ -62,6 +62,6 @@ export async function handleRestorePageVersion(
   auditWrite(ctx, 'restore_page_version', 'ok')
   const loc = breadcrumb(notebook, section, page)
   return {
-    content: `Restored ${loc} to version ${versionId}. A snapshot of the previous page was kept.`
+    content: `Restored ${loc} to version ${versionId}. A snapshot of the previous page is kept when page history is on and the previous body was eligible to capture.`
   }
 }

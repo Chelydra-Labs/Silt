@@ -138,10 +138,21 @@ describe('AutosaveManager', () => {
     await vi.advanceTimersByTimeAsync(150)
     expect(SaveFileBlocks).not.toHaveBeenCalled()
 
+    expect(autosave.areWritesHeld()).toBe(true)
     autosave.releaseWrites()
+    expect(autosave.areWritesHeld()).toBe(false)
     autosave.trigger()
     await vi.advanceTimersByTimeAsync(150)
     expect(SaveFileBlocks).toHaveBeenCalledTimes(1)
+  })
+
+  it('holdWrites() releases after the timeout', async () => {
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+    autosave.holdWrites(50)
+    expect(autosave.areWritesHeld()).toBe(true)
+    await vi.advanceTimersByTimeAsync(60)
+    expect(autosave.areWritesHeld()).toBe(false)
   })
 
   it('cancelPending() drops a queued debounce', async () => {

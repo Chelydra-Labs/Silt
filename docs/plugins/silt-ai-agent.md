@@ -59,15 +59,15 @@ the same data via `ctx.getUiLocation()`.
 
 ### Tool catalog
 
-Sixteen tools, registered in three tiers. Most are read-only and run inline.
-Write safety is controlled by **Settings → AI → Agent vault writes**
-(`ai.features.agent_writes`):
+Nineteen tools, registered in three catalogs (`qa` / `restore` / `full`).
+Most are read-only and run inline. Write safety is controlled by
+**Settings → AI → Agent vault writes** (`ai.features.agent_writes`):
 
 | Mode | Behavior |
 |---|---|
 | **read_only** | Mutating tools are omitted from the catalog and refused if called. |
 | **confirm** (default) | All mutators stage for HITL confirmation before any vault write. |
-| **auto** | Single-edit writes (`create_note`, `create_task`, `update_block`, `update_task`) run immediately; **rename_tag** and **extract_and_save** always confirm. |
+| **auto** | Single-edit writes (`create_note`, `create_task`, `update_block`, `update_task`) run immediately; **rename_tag**, **extract_and_save**, and **restore_page_version** always confirm. |
 
 - **Read-only** — query the vault or shipped product help; no mutation.
   Retrieval tools (`search_notes`, `search_product_docs`, `read_blocks`,
@@ -88,8 +88,11 @@ Write safety is controlled by **Settings → AI → Agent vault writes**
    nested call aborts promptly; nothing is staged or written until Confirm.
    Mutators dispatch **serially**; read tools may still run in parallel
    batches.
-- **Always confirm** — bulk `rename_tag` and nested-model `extract_and_save`
-  require confirmation even in **auto**.
+- **Always confirm** — bulk `rename_tag`, nested-model `extract_and_save`,
+  and `restore_page_version` require confirmation even in **auto**.
+- **Restore catalog** — when the user asks to restore/revert a page version
+  (without other write intent), the turn offers Q&A tools plus
+  `restore_page_version` instead of the full mutator set.
 
 | Tier | Tool | Safety | Parameters |
 |---|---|---|---|
@@ -109,6 +112,9 @@ Write safety is controlled by **Settings → AI → Agent vault writes**
 | **P2** | `get_vault_statistics` | read-only | `scope?` (notebook) — block/task counts, orphans, stale tasks, top tags, recent edits |
 | | `suggest_link_targets` | read-only | `block_id` (req), `max_suggestions?` (1–20, default 5) — excludes already-linked targets |
 | | `extract_and_save` | **always staged** (preview then commit) | `source_block_ids` (req, max 20), `mode` (req: `summary`\|`flashcards`\|`qa_pairs`\|`action_items`), `target` (req: `{notebook, page, section?}`) |
+| | `list_page_versions` | read-only | `notebook`, `section`, `page` — retained snapshots newest-first |
+| | `get_page_version` | read-only | `notebook`, `section`, `page`, `version_id` — stored body (no frontmatter) |
+| | `restore_page_version` | **always staged** | `notebook`, `section`, `page`, `version_id` — live page only; leftover undelete is UI-only |
 
 Required parameters are marked `(req)`; others are optional. Every tool result
 fed to the model is capped at 10 KB (larger bodies carry a visible `[… truncated]`

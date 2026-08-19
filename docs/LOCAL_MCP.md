@@ -90,7 +90,7 @@ automatically, so no client-side version configuration is needed.
 | `get_page_metadata` | read | Page type, schema-merged properties, raw frontmatter |
 | `set_page_property` | write grant | Single typed property; schema-validated — invalid values rejected before any file I/O |
 | `set_page_type` | write grant | Assign or clear (empty type) a page's note type; mismatches kept on disk and returned as flagged (no rejection) |
-| `restore_page_version` | write grant | Replace live page body with a stored snapshot; keeps current frontmatter; snapshots pre-restore body |
+| `restore_page_version` | write grant | Replace a **live** page body with a stored snapshot; keeps current frontmatter; snapshots pre-restore body when eligible. Deleted leftovers cannot be undeleted via MCP — use Browse deleted pages / Restore as… |
 
 ### Surgical writes
 

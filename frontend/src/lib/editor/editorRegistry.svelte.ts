@@ -130,8 +130,10 @@ export function bindPageExternalReload(): () => void {
     const ev = event?.data as
       { notebook?: string; section?: string; page?: string } | undefined
     if (!ev?.notebook || ev.page == null) return
-    getEditor(
-      editorKey(ev.notebook, ev.section ?? '', ev.page)
+    getEditorForLocator(
+      ev.notebook,
+      ev.section ?? '',
+      ev.page
     )?.forceExternalReload()
   })
 }
@@ -142,5 +144,5 @@ export function _applyPageExternalReloadForTests(ev: {
   section: string
   page: string
 }): void {
-  getEditor(editorKey(ev.notebook, ev.section, ev.page))?.forceExternalReload()
+  getEditorForLocator(ev.notebook, ev.section, ev.page)?.forceExternalReload()
 }

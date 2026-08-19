@@ -21,6 +21,7 @@ describe('restore_page_version', () => {
     )
     expect(res.content).toContain('Restored')
     expect(res.content).toContain('v-old')
+    expect(res.content).not.toMatch(/was kept\.$/)
   })
 
   it('surfaces restore errors', async () => {

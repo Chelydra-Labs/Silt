@@ -34,6 +34,28 @@ describe('page external reload', () => {
     expect(forceExternalReload).toHaveBeenCalledTimes(1)
   })
 
+  it('applies page:external-reload to a case-variant registered editor', () => {
+    const forceExternalReload = vi.fn()
+    registerEditor({
+      key: editorKey('Work', 'Journal', 'Daily'),
+      isDirty: () => false,
+      flush: async () => true,
+      forceExternalReload,
+      clearExternalReload: () => {},
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
+    })
+    _applyPageExternalReloadForTests({
+      notebook: 'work',
+      section: 'journal',
+      page: 'daily'
+    })
+    expect(forceExternalReload).toHaveBeenCalledTimes(1)
+  })
+
   it('getEditorForLocator matches a case-variant locator', () => {
     const forceExternalReload = vi.fn()
     registerEditor({

@@ -123,6 +123,7 @@ export class AutosaveManager {
     }
     this.clearSavingFloor()
     this.clearSavedHold()
+    this.clearHoldTimer()
   }
 
   /** Mark the editor as clean (e.g. after loading new content). */
@@ -144,14 +145,33 @@ export class AutosaveManager {
     this.clearSavedHold()
   }
 
+  private holdTimer: ReturnType<typeof setTimeout> | null = null
+
   /** Suppress new saves until releaseWrites (armed external reload). */
-  holdWrites(): void {
+  holdWrites(timeoutMs = 8000): void {
     this.writesHeld = true
     this.cancelPending()
+    this.clearHoldTimer()
+    this.holdTimer = setTimeout(() => {
+      this.holdTimer = null
+      this.releaseWrites()
+    }, timeoutMs)
   }
 
   releaseWrites(): void {
+    this.clearHoldTimer()
     this.writesHeld = false
+  }
+
+  areWritesHeld(): boolean {
+    return this.writesHeld
+  }
+
+  private clearHoldTimer(): void {
+    if (this.holdTimer) {
+      clearTimeout(this.holdTimer)
+      this.holdTimer = null
+    }
   }
 
   private async save(): Promise<void> {

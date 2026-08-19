@@ -9,7 +9,7 @@
   } from '../../../bindings/silt/app.js'
   import { trapFocus } from '../../lib/focusTrap'
   import { settings } from '../../settings/store.svelte'
-  import { editorKey, getEditor } from '../../lib/editor/editorRegistry.svelte'
+  import { getEditorForLocator } from '../../lib/editor/editorRegistry.svelte'
   import { fetchPageMarkdown } from '../../lib/editor/pageMarkdown'
   import {
     diffPageBodies,
@@ -422,7 +422,7 @@
     compareError = ''
     paneMode = 'compare'
     try {
-      const editor = getEditor(editorKey(notebook, section, page))
+      const editor = getEditorForLocator(notebook, section, page)
       const dirty = editor?.isDirty() === true
       const body = await fetchPageMarkdown(notebook, section, page)
       if (gen !== compareGen) return
@@ -517,7 +517,7 @@
         return
       }
 
-      const editor = getEditor(editorKey(notebook, section, page))
+      const editor = getEditorForLocator(notebook, section, page)
       if (editor?.isDirty()) {
         const clean = await editor.flush()
         if (!clean) {
@@ -827,12 +827,20 @@
               autocomplete="off"
               aria-label="Restore as notebook"
               aria-invalid={restoreAs && restoreError ? true : undefined}
-              aria-describedby={restoreAs && restoreError
-                ? 'page-history-restore-error'
-                : undefined}
+              aria-describedby={[
+                source === 'linked' ? 'page-history-linked-notebook-hint' : '',
+                restoreAs && restoreError ? 'page-history-restore-error' : ''
+              ]
+                .filter(Boolean)
+                .join(' ') || undefined}
               data-testid="page-history-dest-notebook"
               readonly={source === 'linked'}
             />
+            {#if source === 'linked'}
+              <p id="page-history-linked-notebook-hint" class="restore-as-hint">
+                Linked leftovers must stay in this notebook.
+              </p>
+            {/if}
           </label>
           <label class="restore-as-field">
             <span>Section</span>
@@ -1505,6 +1513,13 @@
 
   .restore-as-field input:focus-visible {
     border-color: var(--color-accent-primary-start);
+  }
+
+  .restore-as-hint {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-type-xs);
+    line-height: 1.4;
   }
 
   .preview-toolbar {

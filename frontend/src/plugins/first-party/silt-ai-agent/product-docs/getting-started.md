@@ -31,5 +31,5 @@ Under **Settings → AI → Agent vault writes**:
 
 - **Read only** — agent cannot change notes.
 - **Confirm** (default) — writes need your approval in the chat.
-- **Auto** — small single edits apply immediately; bulk rename and extract
-  still always ask for Confirm.
+- **Auto** — small single edits apply immediately; bulk rename, extract,
+  and restore page version still always ask for Confirm.

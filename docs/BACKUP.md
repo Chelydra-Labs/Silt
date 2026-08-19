@@ -84,7 +84,9 @@ than 1 MB are not snapshotted.
    history → Deleted pages) finds leftover snapshots. Restore recreates the
    page at the old location, or Restore as… if that name is taken. Trash
    still holds the latest file.
-5. The in-app agent and Local MCP can list, preview, and restore versions
-   (`list_page_versions`, `get_page_version`, `restore_page_version`).
+  5. The in-app agent and Local MCP can list, preview, and restore versions
+    of a **live** page (`list_page_versions`, `get_page_version`,
+    `restore_page_version`). Recreating a deleted page from leftover
+    snapshots is UI-only: **Browse deleted pages** / **Restore as…**.
 
 Deleting a page leaves its history on disk. Snapshots are not a backup.

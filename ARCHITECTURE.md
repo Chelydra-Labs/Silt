@@ -720,8 +720,9 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
    `frontend/src/plugins/stripReasoning.ts`.    The agent is **user-invoked only**,
    tool calls are **transparent**, and vault mutations follow
    `ai.features.agent_writes` (read_only / confirm / auto) with bulk ops
-   (`rename_tag`, `extract_and_save`) always staged behind a single-use
-   confirmation token. `extract_and_save` freezes rendered content at stage
+   (`rename_tag`, `extract_and_save`, `restore_page_version`) always staged
+   behind a single-use confirmation token. Restore-only phrasing uses a
+   third catalog (`qa` / `restore` / `full`). `extract_and_save` freezes rendered content at stage
    time (preview before commit). The agent may also search a shipped offline
    product-help corpus (`search_product_docs`); vault Q&A does not. See
    `docs/plugins/silt-ai-agent.md`.
