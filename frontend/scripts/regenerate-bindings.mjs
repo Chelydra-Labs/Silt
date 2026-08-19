@@ -90,7 +90,7 @@ if (!hasWailsCli()) {
   console.log(
     '[regenerate-bindings] `wails3` CLI not found on PATH — skipping. ' +
       'The frontend/bindings/ stubs will be stale until you run ' +
-      '`go install github.com/wailsapp/wails/v3/cmd/wails3@latest` and ' +
+      '`go install github.com/wailsapp/wails/v3/cmd/wails3@$(go list -m -f \'{{.Version}}\' github.com/wailsapp/wails/v3)` and ' +
       're-run `npm run generate` (or `wails3 dev` / `wails3 build`).'
   )
   process.exit(0)
