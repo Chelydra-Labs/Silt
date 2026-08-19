@@ -167,9 +167,9 @@
   function scrollSelectedIntoView(): void {
     queueMicrotask(() => {
       if (!listRef || !selectedKey) return
-      const el = listRef.querySelector(
-        `[data-deleted-key="${CSS.escape(selectedKey)}"]`
-      )
+      const selected = filtered.find((r) => rowKey(r) === selectedKey)
+      if (!selected) return
+      const el = listRef.querySelector(`#${CSS.escape(optionId(selected))}`)
       el?.scrollIntoView?.({ block: 'nearest' })
     })
   }
@@ -417,7 +417,7 @@
               type="button"
               role="option"
               id={optionId(row)}
-              data-deleted-key={rowKey(row)}
+              data-deleted-key={optionId(row)}
               aria-selected={selectedKey === rowKey(row)}
               tabindex="-1"
               class="deleted-row"

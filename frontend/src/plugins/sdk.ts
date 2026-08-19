@@ -482,7 +482,7 @@ export interface PluginContext {
   ) => Promise<boolean>
   /**
    * List retained page-history snapshots newest-first. Empty when none exist.
-   * Session-checked; not gated by content-mutate.
+   * Gated by read-files (same bar as live file reads).
    */
   listPageVersions: (
     notebook: string,
@@ -493,6 +493,7 @@ export interface PluginContext {
   >
   /**
    * Read a stored snapshot body (no frontmatter). Does not mutate the live page.
+   * Gated by read-files.
    */
   getPageVersion: (
     notebook: string,

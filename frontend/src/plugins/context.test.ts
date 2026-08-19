@@ -362,6 +362,16 @@ describe('makePluginContext — page history wrappers', () => {
     )
   })
 
+  it('flushes a dirty editor registered under a case-variant locator', async () => {
+    const { flush, forceExternalReload } = registerDirtyEditor()
+    const ctx = makePluginContext('hist-plugin', 'tok-hist')
+    await expect(
+      ctx.restorePageVersion('work', 'journal', 'daily', 'v1')
+    ).resolves.toBe(true)
+    expect(flush).toHaveBeenCalled()
+    expect(forceExternalReload).toHaveBeenCalled()
+  })
+
   it('flushes a dirty editor and arms external reload before restore', async () => {
     const { flush, forceExternalReload, clearExternalReload } =
       registerDirtyEditor()

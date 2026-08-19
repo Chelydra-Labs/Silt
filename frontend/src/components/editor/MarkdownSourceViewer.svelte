@@ -99,6 +99,9 @@
   // after the post-write blocks update. Immediate fetch would load the
   // pre-restore file and can win if block:changed never changes blocksKey.
   let pendingExternalReload = false
+  /** Held until seedBuffer so a keystroke during the extra fetch cannot
+   *  schedule a save of the pre-restore buffer or trip Keep-mine. */
+  let forcedSeed = false
 
   // --- Local editing history (#861) --------------------------------------
   // One history per mounted viewer. Tab/Shift-Tab, paste, selection
@@ -182,6 +185,7 @@
     dirty = false
     saveError = null
     savePhase = 'idle'
+    forcedSeed = false
     history.reset({
       value,
       selection: { start: 0, end: 0, direction: 'forward' }
@@ -216,7 +220,7 @@
         // that raced with the user's first keystroke). Clobbering the
         // buffer now would silently destroy their work — fall through to
         // the conflict path so they can choose Keep mine or Reload.
-        if (dirty) {
+        if (dirty && !forcedSeed) {
           conflictPending = true
           return
         }
@@ -229,7 +233,7 @@
       }
     }
     if (seq !== seedSeq) return
-    if (dirty) {
+    if (dirty && !forcedSeed) {
       // Same protection on the fallback (reconstruct-from-blocks) path.
       conflictPending = true
       return
@@ -359,7 +363,7 @@
   }
 
   function scheduleSave(): void {
-    if (!editable || !notebook || !page || conflictPending) return
+    if (!editable || !notebook || !page || conflictPending || forcedSeed) return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       saveTimer = null
@@ -375,7 +379,7 @@
       // Can't save — clean is success for menu Save; dirty is failure.
       return !dirty
     }
-    if (conflictPending) return false
+    if (conflictPending || forcedSeed) return false
     if (!dirty) return true
     const md = buffer
     const gen = saveGeneration
@@ -407,6 +411,7 @@
     } catch (e) {
       if (gen !== saveGeneration) return false
       if (coerceIPCError(e).code === IPCErrorCode.CodePageWriteStale) {
+        savePhase = 'idle'
         return false
       }
       saveError = e instanceof Error ? e.message : String(e)
@@ -429,12 +434,13 @@
           clearTimeout(saveTimer)
           saveTimer = null
         }
-        if (conflictPending) return false
+        if (forcedSeed || conflictPending) return false
         if (!dirty) return true
         return await flushSave()
       },
       forceExternalReload: () => {
         pendingExternalReload = true
+        forcedSeed = true
         saveGeneration++
         if (saveTimer) {
           clearTimeout(saveTimer)
@@ -443,6 +449,7 @@
       },
       clearExternalReload: () => {
         pendingExternalReload = false
+        forcedSeed = false
         seedSeq++
       },
       setProposedEdit: () => false,

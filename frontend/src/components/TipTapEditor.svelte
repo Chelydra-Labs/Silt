@@ -744,7 +744,7 @@
     // unless a flush-then-replace sequence (pendingExternalReload) has made
     // the in-memory buffer stale and safe to overwrite.
     if (isFocused && !pendingExternalReload) return
-    pendingExternalReload = false
+    const reloading = pendingExternalReload
     lastSyncedBlocksKey = key
 
     suppressUpdate = true
@@ -754,6 +754,10 @@
     suppressUpdate = false
     // Reset save state — new content loaded, nothing is dirty (#167).
     autosave.markClean()
+    if (reloading) {
+      pendingExternalReload = false
+      autosave.releaseWrites()
+    }
   })
 
   // --- Auto-save (debounced, config-driven, same contract as legacy) --------
@@ -800,10 +804,11 @@
       },
       forceExternalReload: () => {
         pendingExternalReload = true
-        autosave.cancelPending()
+        autosave.holdWrites()
       },
       clearExternalReload: () => {
         pendingExternalReload = false
+        autosave.releaseWrites()
       },
       setProposedEdit: (opts) => {
         if (!editorInstance || editorInstance.isDestroyed) return false

@@ -83,7 +83,7 @@ import type {
   PluginAIStream,
   PluginAIToolCallDelta
 } from './sdk'
-import { editorKey, getEditor } from '../lib/editor/editorRegistry.svelte'
+import { getEditorForLocator } from '../lib/editor/editorRegistry.svelte'
 import {
   registerSlashCommand,
   unregisterSlashCommand
@@ -574,7 +574,7 @@ export function makePluginContext(
         versionId
       ).then((body) => (typeof body === 'string' ? body : '')),
     restorePageVersion: async (notebook, section, page, versionId) => {
-      const editor = getEditor(editorKey(notebook, section, page))
+      const editor = getEditorForLocator(notebook, section, page)
       if (editor?.isDirty()) {
         const clean = await editor.flush()
         if (!clean) {

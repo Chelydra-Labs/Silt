@@ -89,6 +89,23 @@ export function getEditor(key: string): EditorHandle | undefined {
   return editors.get(key)
 }
 
+/** Resolve an editor for a caller locator. Exact key first, then a
+ *  case-insensitive match so plugin restore can flush a tab registered
+ *  under the canonical triple when the caller passed a case variant. */
+export function getEditorForLocator(
+  notebook: string,
+  section: string,
+  page: string
+): EditorHandle | undefined {
+  const exact = editors.get(editorKey(notebook, section, page))
+  if (exact) return exact
+  const want = editorKey(notebook, section, page).toLowerCase()
+  for (const [key, handle] of editors) {
+    if (key.toLowerCase() === want) return handle
+  }
+  return undefined
+}
+
 /** All currently mounted editors (one per displayed tab). */
 export function getAllEditors(): EditorHandle[] {
   return [...editors.values()]

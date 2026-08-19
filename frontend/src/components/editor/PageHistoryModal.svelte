@@ -1186,91 +1186,94 @@
                       {:else}
                         {@const oldLines = sideLines(hunk, 'previous')}
                         {@const newLines = sideLines(hunk, 'current')}
-                        <div
-                          class="diff-side old"
-                          class:is-empty={oldLines.length === 0}
-                          class:is-dup={hunk.kind === 'equal'}
-                          data-kind={hunk.kind === 'add'
-                            ? 'empty'
-                            : hunk.kind === 'equal'
-                              ? 'equal'
-                              : 'remove'}
-                        >
-                          {#each oldLines as line, lineIndex (`o-${hunkIndex}-${lineIndex}`)}
-                            <div
-                              class="diff-line"
-                              class:remove={hunk.kind !== 'equal'}
-                            >
-                              {#if hunk.kind !== 'equal'}
-                                <span class="sr-only">Removed</span>
-                                <span class="diff-gutter" aria-hidden="true"
-                                  >−</span
-                                >
-                              {:else}
-                                <span class="diff-gutter" aria-hidden="true"
-                                ></span>
-                              {/if}
-                              <span class="diff-text">
-                                {#if line.parts}
-                                  {#each line.parts as part, partIndex (`op-${lineIndex}-${partIndex}`)}
-                                    {#if part.kind === 'remove'}
-                                      <span class="word-remove"
-                                        >{part.text}</span
-                                      >
-                                    {:else}
-                                      {part.text}
-                                    {/if}
-                                  {/each}
+                        <div id={`diff-hunk-${hunkIndex}`} class="diff-hunk">
+                          <div
+                            class="diff-side old"
+                            class:is-empty={oldLines.length === 0}
+                            class:is-dup={hunk.kind === 'equal'}
+                            data-kind={hunk.kind === 'add'
+                              ? 'empty'
+                              : hunk.kind === 'equal'
+                                ? 'equal'
+                                : 'remove'}
+                          >
+                            {#each oldLines as line, lineIndex (`o-${hunkIndex}-${lineIndex}`)}
+                              <div
+                                class="diff-line"
+                                class:remove={hunk.kind !== 'equal'}
+                              >
+                                {#if hunk.kind !== 'equal'}
+                                  <span class="sr-only">Removed</span>
+                                  <span class="diff-gutter" aria-hidden="true"
+                                    >−</span
+                                  >
                                 {:else}
-                                  {line.text}
+                                  <span class="diff-gutter" aria-hidden="true"
+                                  ></span>
                                 {/if}
-                              </span>
-                            </div>
-                          {/each}
-                        </div>
-                        <div
-                          class="diff-side new"
-                          class:is-empty={newLines.length === 0}
-                          class:is-dup={hunk.kind === 'equal'}
-                          aria-hidden={layout === 'split' &&
-                          hunk.kind === 'equal'
-                            ? true
-                            : undefined}
-                          data-kind={hunk.kind === 'remove'
-                            ? 'empty'
-                            : hunk.kind === 'equal'
-                              ? 'equal'
-                              : 'add'}
-                        >
-                          {#each newLines as line, lineIndex (`n-${hunkIndex}-${lineIndex}`)}
-                            <div
-                              class="diff-line"
-                              class:add={hunk.kind !== 'equal'}
-                            >
-                              {#if hunk.kind !== 'equal'}
-                                <span class="sr-only">Added</span>
-                                <span class="diff-gutter" aria-hidden="true"
-                                  >+</span
-                                >
-                              {:else}
-                                <span class="diff-gutter" aria-hidden="true"
-                                ></span>
-                              {/if}
-                              <span class="diff-text">
-                                {#if line.parts}
-                                  {#each line.parts as part, partIndex (`np-${lineIndex}-${partIndex}`)}
-                                    {#if part.kind === 'add'}
-                                      <span class="word-add">{part.text}</span>
-                                    {:else}
-                                      {part.text}
-                                    {/if}
-                                  {/each}
+                                <span class="diff-text">
+                                  {#if line.parts}
+                                    {#each line.parts as part, partIndex (`op-${lineIndex}-${partIndex}`)}
+                                      {#if part.kind === 'remove'}
+                                        <span class="word-remove"
+                                          >{part.text}</span
+                                        >
+                                      {:else}
+                                        {part.text}
+                                      {/if}
+                                    {/each}
+                                  {:else}
+                                    {line.text}
+                                  {/if}
+                                </span>
+                              </div>
+                            {/each}
+                          </div>
+                          <div
+                            class="diff-side new"
+                            class:is-empty={newLines.length === 0}
+                            class:is-dup={hunk.kind === 'equal'}
+                            aria-hidden={layout === 'split' &&
+                            hunk.kind === 'equal'
+                              ? true
+                              : undefined}
+                            data-kind={hunk.kind === 'remove'
+                              ? 'empty'
+                              : hunk.kind === 'equal'
+                                ? 'equal'
+                                : 'add'}
+                          >
+                            {#each newLines as line, lineIndex (`n-${hunkIndex}-${lineIndex}`)}
+                              <div
+                                class="diff-line"
+                                class:add={hunk.kind !== 'equal'}
+                              >
+                                {#if hunk.kind !== 'equal'}
+                                  <span class="sr-only">Added</span>
+                                  <span class="diff-gutter" aria-hidden="true"
+                                    >+</span
+                                  >
                                 {:else}
-                                  {line.text}
+                                  <span class="diff-gutter" aria-hidden="true"
+                                  ></span>
                                 {/if}
-                              </span>
-                            </div>
-                          {/each}
+                                <span class="diff-text">
+                                  {#if line.parts}
+                                    {#each line.parts as part, partIndex (`np-${lineIndex}-${partIndex}`)}
+                                      {#if part.kind === 'add'}
+                                        <span class="word-add">{part.text}</span
+                                        >
+                                      {:else}
+                                        {part.text}
+                                      {/if}
+                                    {/each}
+                                  {:else}
+                                    {line.text}
+                                  {/if}
+                                </span>
+                              </div>
+                            {/each}
+                          </div>
                         </div>
                       {/if}
                     {/each}
@@ -1616,6 +1619,10 @@
   .diff-scroll:focus-visible {
     outline: 2px solid var(--color-border-focus);
     outline-offset: -2px;
+  }
+
+  .diff-hunk {
+    display: contents;
   }
 
   .diff-board {

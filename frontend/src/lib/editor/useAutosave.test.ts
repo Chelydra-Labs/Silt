@@ -128,6 +128,22 @@ describe('AutosaveManager', () => {
     expect(deps.onStateChange).toHaveBeenCalledWith(true, 'disk full')
   })
 
+  it('holdWrites() no-ops trigger until releaseWrites', async () => {
+    const { SaveFileBlocks } = await import('$silt-app')
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.holdWrites()
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(SaveFileBlocks).not.toHaveBeenCalled()
+
+    autosave.releaseWrites()
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(SaveFileBlocks).toHaveBeenCalledTimes(1)
+  })
+
   it('cancelPending() drops a queued debounce', async () => {
     const { SaveFileBlocks } = await import('$silt-app')
     const deps = makeDeps()
@@ -161,6 +177,11 @@ describe('AutosaveManager', () => {
     const stateCalls = (deps.onStateChange as ReturnType<typeof vi.fn>).mock
       .calls
     expect(stateCalls.some((c) => c[0] === true && c[1])).toBe(false)
+    expect(deps.onSaveStateChange).toHaveBeenCalledWith({
+      phase: 'idle',
+      dirty: false,
+      error: null
+    })
   })
 
   it('cancelPending() treats an in-flight save as stale', async () => {

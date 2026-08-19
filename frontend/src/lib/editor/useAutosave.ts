@@ -70,6 +70,9 @@ export class AutosaveManager {
   /** Bumps on each in-flight save so a deferred "saved" emit is ignored if a
    *  newer save has started (min-display floor must not race). */
   private saveGeneration = 0
+  /** When set, trigger/flush/save no-op so a post-restore keystroke cannot
+   *  write the pre-reload buffer. Cleared after setContent + markClean. */
+  private writesHeld = false
   private deps: AutosaveDeps
 
   constructor(deps: AutosaveDeps) {
@@ -78,6 +81,7 @@ export class AutosaveManager {
 
   /** Schedule a debounced save. Call on every editor transaction. */
   trigger(): void {
+    if (this.writesHeld) return
     this.markDirty()
     if (this.timeout) {
       clearTimeout(this.timeout)
@@ -98,6 +102,7 @@ export class AutosaveManager {
 
   /** Flush any pending save immediately. Call on unmount or page change. */
   async flush(): Promise<void> {
+    if (this.writesHeld) return
     if (this.timeout) {
       clearTimeout(this.timeout)
       this.timeout = null
@@ -139,7 +144,18 @@ export class AutosaveManager {
     this.clearSavedHold()
   }
 
+  /** Suppress new saves until releaseWrites (armed external reload). */
+  holdWrites(): void {
+    this.writesHeld = true
+    this.cancelPending()
+  }
+
+  releaseWrites(): void {
+    this.writesHeld = false
+  }
+
   private async save(): Promise<void> {
+    if (this.writesHeld) return
     if (this.pendingSave) {
       this.saveQueued = true
       return
@@ -179,6 +195,8 @@ export class AutosaveManager {
       } catch (e) {
         if (this.saveGeneration !== saveGen) return
         if (coerceIPCError(e).code === IPCErrorCode.CodePageWriteStale) {
+          this.deps.onStateChange(false, null)
+          this.emit('idle', false, null)
           return
         }
         const msg = e instanceof Error ? e.message : String(e)
