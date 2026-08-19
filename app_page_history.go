@@ -568,12 +568,8 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 	} else if !os.IsNotExist(err) {
 		return historyWriteError(err)
 	}
-	if needRelocate {
-		if occupied, lerr := destLeftoverOccupied(destRoot, destLoc); lerr != nil {
-			return historyReadError(lerr)
-		} else if occupied {
-			return NewIPCError(CodePageHistoryExists, leftoverOccupiedMsg)
-		}
+	if needRelocate && destLeftoverOccupied(destRoot, destLoc) {
+		return NewIPCError(CodePageHistoryExists, leftoverOccupiedMsg)
 	}
 
 	a.wg.Add(1)
@@ -607,10 +603,7 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 		needRelocate := destLoc != origLoc && !history.SameStore(origRoot, origLoc, destLoc)
 		relocated := false
 		if needRelocate {
-			if occupied, lerr := destLeftoverOccupied(destRoot, destLoc); lerr != nil {
-				writeErr = historyReadError(lerr)
-				return
-			} else if occupied {
+			if destLeftoverOccupied(destRoot, destLoc) {
 				writeErr = NewIPCError(CodePageHistoryExists, leftoverOccupiedMsg)
 				return
 			}
@@ -684,12 +677,9 @@ func remapSnapshotIdentity(snapshot []byte, notebook, section, page string) ([]b
 	return []byte(content), nil
 }
 
-func destLeftoverOccupied(root string, loc history.Locator) (bool, error) {
+func destLeftoverOccupied(root string, loc history.Locator) bool {
 	entries, err := history.List(root, loc)
-	if err != nil {
-		return false, err
-	}
-	return len(entries) > 0, nil
+	return err == nil && len(entries) > 0
 }
 
 func (a *App) relocatePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage string) error {

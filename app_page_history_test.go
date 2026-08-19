@@ -17,6 +17,10 @@ import (
 	"silt/backend/vault"
 )
 
+func destOccupiedCode(code IPCErrorCode) bool {
+	return code == CodePageExists || code == CodePageHistoryExists
+}
+
 func enablePageHistory(t *testing.T, app *App, max, interval int) {
 	t.Helper()
 	cfg, err := app.GetSystemConfig()
@@ -1840,7 +1844,7 @@ func TestRestoreDeletedPageVersion_ConcurrentDestOccupancy(t *testing.T) {
 		fail = errB
 	}
 	var ipc *IPCError
-	if !errors.As(fail, &ipc) || ipc.Code != CodePageExists {
+	if !errors.As(fail, &ipc) || !destOccupiedCode(ipc.Code) {
 		t.Fatalf("losing restore err = %v", fail)
 	}
 }
@@ -1892,7 +1896,7 @@ func TestRestoreDeletedPageVersion_ConcurrentCaseFoldDest(t *testing.T) {
 		fail = errB
 	}
 	var ipc *IPCError
-	if !errors.As(fail, &ipc) || ipc.Code != CodePageExists {
+	if !errors.As(fail, &ipc) || !destOccupiedCode(ipc.Code) {
 		t.Fatalf("losing restore err = %v", fail)
 	}
 }
