@@ -52,8 +52,7 @@
     PageLinkSuggest,
     normalizePageLinkAlias,
     pageLinkSourceLabel,
-    blocksToDoc,
-    docToBlocks
+    blocksToDoc
   } from '../lib/editor'
   import type { ParsedBlock } from '../lib/editor'
   import TemplatePicker from '../templates/TemplatePicker.svelte'
@@ -798,16 +797,6 @@
       flush: async () => {
         await autosave.flush()
         return !unsavedChanges
-      },
-      getMarkdown: () => {
-        if (!editorInstance || editorInstance.isDestroyed) return null
-        const blocks = docToBlocks(editorInstance.getJSON())
-        return blocks
-          .map(
-            (b) =>
-              '  '.repeat(b.depth || 0) + (b.raw_text || b.clean_text || '')
-          )
-          .join('\n')
       },
       forceExternalReload: () => {
         pendingExternalReload = true

@@ -760,8 +760,10 @@ func TestPageHistory_RestoreEmitsPageScopedBlockChanged(t *testing.T) {
 	if err != nil || len(list) == 0 {
 		t.Fatalf("List: %v len=%d", err, len(list))
 	}
+	var names []string
 	var got []parser.BlockChangedEvent
 	app.eventEmit = func(name string, data ...any) {
+		names = append(names, name)
 		if name != string(EventBlockChanged) || len(data) == 0 {
 			return
 		}
@@ -781,6 +783,18 @@ func TestPageHistory_RestoreEmitsPageScopedBlockChanged(t *testing.T) {
 	}
 	if !sawPageScoped {
 		t.Fatalf("restore did not emit page-scoped block:changed, got %+v", got)
+	}
+	reloadAt, changedAt := -1, -1
+	for i, n := range names {
+		if n == string(EventPageExternalReload) && reloadAt < 0 {
+			reloadAt = i
+		}
+		if n == string(EventBlockChanged) && changedAt < 0 {
+			changedAt = i
+		}
+	}
+	if reloadAt < 0 || changedAt < 0 || reloadAt > changedAt {
+		t.Fatalf("expected page:external-reload before block:changed, got %v", names)
 	}
 }
 
@@ -1639,20 +1653,16 @@ func TestRestoreDeletedPageVersion_WriteFailureAfterRelocateRollsBack(t *testing
 	if err := app.DeletePage("Work", "Journal", "MoveMe"); err != nil {
 		t.Fatal(err)
 	}
-	destDir := filepath.Join(app.vaultPath, "Work", "Archive")
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		t.Fatal(err)
+	atomicPageWrite = func(string, []byte) error {
+		return os.ErrPermission
 	}
-	if err := os.Chmod(destDir, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(destDir, 0o755) })
 	err = app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "Work", "Archive", "Restored")
+	atomicPageWrite = parser.WriteFileAtomic
 	if err == nil {
-		if runtime.GOOS == "windows" {
-			t.Skip("dest dir chmod does not block owner writes on Windows")
-		}
 		t.Fatal("expected write failure after relocate")
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Archive", "Restored.md")); !os.IsNotExist(statErr) {
+		t.Fatal("dest page written despite injected write failure")
 	}
 	if err := app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "", "", ""); err != nil {
 		t.Fatalf("leftover should return to orig after write failure: %v", err)
@@ -1747,6 +1757,58 @@ func TestRestoreDeletedPageVersion_ConcurrentDestOccupancy(t *testing.T) {
 	wg.Wait()
 	if (errA == nil) == (errB == nil) {
 		t.Fatalf("expected exactly one dest occupant to succeed, a=%v b=%v", errA, errB)
+	}
+	fail := errA
+	if errB != nil {
+		fail = errB
+	}
+	var ipc *IPCError
+	if !errors.As(fail, &ipc) || ipc.Code != CodePageExists {
+		t.Fatalf("losing restore err = %v", fail)
+	}
+}
+
+func TestRestoreDeletedPageVersion_ConcurrentCaseFoldDest(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		t.Skip("mixed-case dest occupancy is for case-insensitive volumes")
+	}
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "GoneA", "# a1\n")
+	savePageBody(t, app, "Work", "Journal", "GoneA", "# a2\n")
+	seedHistoryPage(t, app, "Work", "Journal", "GoneB", "# b1\n")
+	savePageBody(t, app, "Work", "Journal", "GoneB", "# b2\n")
+	listA, err := app.ListPageVersions("Work", "Journal", "GoneA")
+	if err != nil || len(listA) == 0 {
+		t.Fatalf("List A: %v", err)
+	}
+	listB, err := app.ListPageVersions("Work", "Journal", "GoneB")
+	if err != nil || len(listB) == 0 {
+		t.Fatalf("List B: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "GoneA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.DeletePage("Work", "Journal", "GoneB"); err != nil {
+		t.Fatal(err)
+	}
+	var (
+		wg   sync.WaitGroup
+		errA error
+		errB error
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		errA = app.RestoreDeletedPageVersion("Work", "Journal", "GoneA", listA[0].ID, "Work", "Journal", "Taken")
+	}()
+	go func() {
+		defer wg.Done()
+		errB = app.RestoreDeletedPageVersion("Work", "Journal", "GoneB", listB[0].ID, "Work", "Journal", "taken")
+	}()
+	wg.Wait()
+	if (errA == nil) == (errB == nil) {
+		t.Fatalf("expected exactly one case-fold dest occupant to succeed, a=%v b=%v", errA, errB)
 	}
 	fail := errA
 	if errB != nil {

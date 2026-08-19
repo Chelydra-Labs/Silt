@@ -1135,13 +1135,19 @@
                       </p>
                     {:else if layout === 'split'}
                       <div class="diff-col-head old">Version</div>
-                      <div class="diff-col-head new">Current page</div>
+                      <div class="diff-col-head new">
+                        {compareFromSaved ? 'Last saved page' : 'Current page'}
+                      </div>
                     {:else}
                       <div class="diff-legend">
                         <span>Version</span>
                         <span class="diff-legend-sep" aria-hidden="true">·</span
                         >
-                        <span>Current page</span>
+                        <span
+                          >{compareFromSaved
+                            ? 'Last saved page'
+                            : 'Current page'}</span
+                        >
                       </div>
                     {/if}
                     {#each pageDiff.hunks as hunk, hunkIndex (hunkIndex)}

@@ -116,6 +116,9 @@ func sanitizeDeletedLocator(loc history.Locator) (history.Locator, bool) {
 	return history.Locator{Source: loc.Source, Notebook: nb, Section: sec, Page: pg}, true
 }
 
+// Swappable so restore-as tests can fail the dest write after Relocate.
+var atomicPageWrite = parser.WriteFileAtomic
+
 func liveStatError(err error) error {
 	if err == nil {
 		return nil
@@ -322,6 +325,11 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 		}
 	}
 	a.coordinator.ReleaseBlockMutexes(removed)
+	// Arm focused editors before block:changed so MCP/plugin restores
+	// cannot be undone by the next autosave.
+	a.emit(EventPageExternalReload, parser.BlockChangedEvent{
+		Notebook: safeNotebook, Section: safeSection, Page: safePage,
+	})
 	// Page-scoped emit so Edit-mode TipTap reloads even when IDs are unchanged
 	// or the restored body has no block IDs (empty / first version).
 	a.emitBlockChanged("", safeNotebook, safeSection, safePage, "")
@@ -357,7 +365,7 @@ func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page,
 		a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 	}
 	a.tracker.RegisterWrite(filePath)
-	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+	if err := atomicPageWrite(filePath, []byte(newContent)); err != nil {
 		log.Printf("page write: atomic write failed for %s/%s/%s: %v", notebook, section, page, err)
 		return nil, historyWriteError(err)
 	}
@@ -598,7 +606,7 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 				writeErr = NewIPCError(CodeNavigationNotFound, "those snapshots were already restored")
 				return
 			}
-			writeErr = a.relocatePageHistory(destSource, origLoc.Notebook, origLoc.Section, origLoc.Page, destNB, destSec, destPg)
+			writeErr = a.movePageHistory(destSource, origLoc.Notebook, origLoc.Section, origLoc.Page, destNB, destSec, destPg, false)
 			if writeErr != nil {
 				return
 			}
@@ -613,9 +621,13 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 			remapped, restoreBody, historyReasonRestore, true,
 		)
 		if writeErr != nil && relocated {
-			if backErr := a.relocatePageHistory(destSource, destNB, destSec, destPg, origLoc.Notebook, origLoc.Section, origLoc.Page); backErr != nil {
+			if backErr := a.movePageHistory(destSource, destNB, destSec, destPg, origLoc.Notebook, origLoc.Section, origLoc.Page, false); backErr != nil {
 				log.Printf("page history: relocate-back after write failure: %v", backErr)
 			}
+			return
+		}
+		if relocated {
+			a.prunePageHistory(destSource, destNB, destSec, destPg)
 		}
 	})
 	if writeErr != nil {
@@ -656,6 +668,10 @@ func remapSnapshotIdentity(snapshot []byte, notebook, section, page string) ([]b
 }
 
 func (a *App) relocatePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage string) error {
+	return a.movePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage, true)
+}
+
+func (a *App) movePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage string, prune bool) error {
 	root := a.historyRoot(source)
 	if root == "" {
 		return nil
@@ -666,11 +682,22 @@ func (a *App) relocatePageHistory(source, oldNotebook, oldSection, oldPage, newN
 		log.Printf("page history: relocate failed: %v", err)
 		return NewIPCError(CodeNavigationUnavailable, "could not move the snapshot history")
 	}
-	_, max, _ := a.pageHistorySettings()
-	if max > 0 {
-		if err := history.Prune(root, newLoc, max); err != nil {
-			log.Printf("page history: prune after relocate failed: %v", err)
-		}
+	if prune {
+		a.prunePageHistory(source, newNotebook, newSection, newPage)
 	}
 	return nil
+}
+
+func (a *App) prunePageHistory(source, notebook, section, page string) {
+	root := a.historyRoot(source)
+	if root == "" {
+		return
+	}
+	_, max, _ := a.pageHistorySettings()
+	if max <= 0 {
+		return
+	}
+	if err := history.Prune(root, historyLoc(source, notebook, section, page), max); err != nil {
+		log.Printf("page history: prune after relocate failed: %v", err)
+	}
 }

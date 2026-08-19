@@ -196,8 +196,8 @@ func (e errSentinel) Error() string { return string(e) }
 // TestReleaseFileMutex_EntryDeleted verifies that after ReleaseFileMutex the
 // ioMu map no longer holds an entry for the path (the eviction actually ran).
 func TestNormalizeFileLockPath_FoldsCaseOnWindows(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("case-folded lock keys are Windows-only")
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		t.Skip("case-folded lock keys are for case-insensitive volumes")
 	}
 	a := NormalizeFileLockPath(`C:\Vault\Work\Taken.md`)
 	b := NormalizeFileLockPath(`C:\Vault\Work\taken.md`)

@@ -516,7 +516,6 @@ describe('PageHistoryModal', () => {
       key: 'Work\x00Journal\x00Daily',
       isDirty: () => false,
       flush: async () => true,
-      getMarkdown: () => '  # Title',
       forceExternalReload: () => {},
       clearExternalReload: () => {},
       setProposedEdit: () => false,
@@ -547,7 +546,6 @@ describe('PageHistoryModal', () => {
       key: 'Work\x00Journal\x00Daily',
       isDirty: () => true,
       flush,
-      getMarkdown: () => '  # Title',
       forceExternalReload: () => {},
       clearExternalReload: () => {},
       setProposedEdit: () => false,
@@ -573,9 +571,7 @@ describe('PageHistoryModal', () => {
     expect(screen.getByTestId('page-history-compare-saved')).toHaveTextContent(
       /last saved page/
     )
-    expect(screen.getByTestId('page-history-compare')).not.toHaveTextContent(
-      '  # Title'
-    )
+    expect(screen.getByText('Last saved page')).toBeTruthy()
   })
 
   it('clears a compare error after a successful restore', async () => {

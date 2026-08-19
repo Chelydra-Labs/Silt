@@ -52,7 +52,7 @@
   )
 
   function rowKey(row: DeletedPageRow): string {
-    return `${row.notebook}::${row.section}::${row.page}::${row.source}`
+    return `${row.notebook}\x00${row.section}\x00${row.page}\x00${row.source}`
   }
 
   function optionId(row: DeletedPageRow): string {

@@ -14,6 +14,9 @@
 // affected editors AFTER writing so they show the replaced content instead
 // of a stale in-memory buffer.
 //
+import { Events } from '@wailsio/runtime'
+import { EventName } from '../../generated/enums'
+
 // Editors register on mount and unregister on destroy. Lookups are keyed by
 // the page triple (the same `\x00`-joined key the search/grouping code uses).
 
@@ -24,8 +27,6 @@ export interface EditorHandle {
   isDirty: () => boolean
   /** Flush the pending autosave; resolves true if the editor is clean after. */
   flush: () => Promise<boolean>
-  /** Current page body (no frontmatter) without persisting. Null if unavailable. */
-  getMarkdown?: () => string | null
   /** Force the editor to reload from its blocks prop on the next external
    *  block update, bypassing the focused-edit guard. Only safe right after a
    *  flush synced the editor to disk, so there is nothing unsaved to clobber. */
@@ -104,4 +105,25 @@ export function clearAllEditors(): void {
 /** Test-only: clear the registry between tests. */
 export function _resetEditorRegistryForTests(): void {
   editors.clear()
+}
+
+/** Arm forceExternalReload for a page after a Go-side restore (Local MCP). */
+export function bindPageExternalReload(): () => void {
+  return Events.On(EventName.EventPageExternalReload, (event) => {
+    const ev = event?.data as
+      { notebook?: string; section?: string; page?: string } | undefined
+    if (!ev?.notebook || ev.page == null) return
+    getEditor(
+      editorKey(ev.notebook, ev.section ?? '', ev.page)
+    )?.forceExternalReload()
+  })
+}
+
+/** Test helper: apply a page:external-reload payload to the registry. */
+export function _applyPageExternalReloadForTests(ev: {
+  notebook: string
+  section: string
+  page: string
+}): void {
+  getEditor(editorKey(ev.notebook, ev.section, ev.page))?.forceExternalReload()
 }

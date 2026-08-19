@@ -85,7 +85,7 @@ func NormalizeFileLockPath(path string) string {
 }
 
 func foldLockPath(path string) string {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		return strings.ToLower(path)
 	}
 	return path

@@ -88,6 +88,7 @@ export const IPCErrorCodeNames = [
 // EventName — generated from the Go const block. Do not edit by hand.
 export const EventName = {
   EventBlockChanged: 'block:changed',
+  EventPageExternalReload: 'page:external-reload',
   EventConfigChanged: 'config:changed',
   EventConfigError: 'config:error',
   EventLinkedConfigChanged: 'linked-config:changed',
@@ -151,6 +152,7 @@ export const EventNameNames = [
   'EventMenuSettings',
   'EventMenuToggleFormatToolbar',
   'EventMenuToggleSidebar',
+  'EventPageExternalReload',
   'EventPageLinksRewritten',
   'EventPluginsChanged',
   'EventSecurityEvent',
