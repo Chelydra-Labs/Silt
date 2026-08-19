@@ -414,8 +414,9 @@
       ?.focus()
   }
 
-  async function enterCompare(): Promise<void> {
-    if (deleted || !previewReady || !selected || compareLoading) return
+  async function enterCompare(opts?: { force?: boolean }): Promise<void> {
+    if (deleted || !previewReady || !selected) return
+    if (compareLoading && !opts?.force) return
     const gen = ++compareGen
     compareLoading = true
     compareError = ''
@@ -643,7 +644,7 @@
         return
       }
       if (paneMode !== 'compare') return
-      void enterCompare()
+      void enterCompare({ force: true })
     })
     return () => {
       window.removeEventListener('keydown', handleKeydown, true)
@@ -1174,6 +1175,9 @@
                         <button
                           type="button"
                           class="diff-expand"
+                          id={`diff-hunk-expand-${hunkIndex}`}
+                          aria-expanded="false"
+                          aria-controls={`diff-hunk-${hunkIndex}`}
                           onclick={() => expandHunk(hunkIndex)}
                         >
                           {hunk.hiddenLines ?? 0} unchanged

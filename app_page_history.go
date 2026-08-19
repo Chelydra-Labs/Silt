@@ -307,6 +307,9 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 				return
 			}
 			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, restoreBody, historyReasonRestore, false)
+			if writeErr == nil {
+				a.bumpPageWriteEpoch(safeNotebook, safeSection, safePage)
+			}
 		})
 	})
 	if writeErr != nil {
@@ -479,7 +482,7 @@ func (a *App) collectDeletedHistory(root, wantSource string, livePath func(histo
 		if _, err := os.Stat(p); err == nil {
 			continue
 		} else if err != nil && !os.IsNotExist(err) {
-			log.Printf("page history: skip leftover, live stat indeterminate %s: %v", p, err)
+			log.Printf("page history: skip leftover, live stat indeterminate %s/%s/%s: %v", safe.Notebook, safe.Section, safe.Page, err)
 			continue
 		}
 		entries, err := history.List(root, loc)
@@ -639,12 +642,18 @@ func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, dest
 		if relocated {
 			a.prunePageHistory(destSource, destNB, destSec, destPg)
 		}
+		if writeErr == nil {
+			a.bumpPageWriteEpoch(destNB, destSec, destPg)
+		}
 	})
 	if writeErr != nil {
 		return writeErr
 	}
 
 	_ = result
+	a.emit(EventPageExternalReload, parser.BlockChangedEvent{
+		Notebook: destNB, Section: destSec, Page: destPg,
+	})
 	a.emitBlockChanged("", destNB, destSec, destPg, "")
 	if err := a.reconcileNavigationPage(destNB, destSec, destPg, destPg, false); err != nil {
 		log.Printf("page history: restore reconcile failed for %s/%s/%s: %v", destNB, destSec, destPg, err)
@@ -676,6 +685,46 @@ func remapSnapshotIdentity(snapshot []byte, notebook, section, page string) ([]b
 	}
 	return []byte(content), nil
 }
+
+func pageWriteEpochKey(notebook, section, page string) string {
+	return notebook + "\x00" + section + "\x00" + page
+}
+
+func (a *App) snapshotPageWriteEpoch(notebook, section, page string) uint64 {
+	if a == nil {
+		return 0
+	}
+	a.pageWriteEpochMu.Lock()
+	defer a.pageWriteEpochMu.Unlock()
+	if a.pageWriteEpoch == nil {
+		return 0
+	}
+	return a.pageWriteEpoch[pageWriteEpochKey(notebook, section, page)]
+}
+
+func (a *App) bumpPageWriteEpoch(notebook, section, page string) {
+	if a == nil {
+		return
+	}
+	a.pageWriteEpochMu.Lock()
+	defer a.pageWriteEpochMu.Unlock()
+	if a.pageWriteEpoch == nil {
+		a.pageWriteEpoch = make(map[string]uint64)
+	}
+	a.pageWriteEpoch[pageWriteEpochKey(notebook, section, page)]++
+}
+
+func (a *App) rejectStalePageWrite(notebook, section, page string, snap uint64) error {
+	if a.snapshotPageWriteEpoch(notebook, section, page) != snap {
+		return NewIPCError(CodePageWriteStale, "the page was updated elsewhere; reload and try again")
+	}
+	return nil
+}
+
+// afterPageWriteEpochSnapshot runs after a save snapshots the page epoch and
+// before it waits on LockFileWrite. Tests use it to commit a restore while
+// the save is already in flight.
+var afterPageWriteEpochSnapshot func()
 
 func destLeftoverOccupied(root string, loc history.Locator) bool {
 	entries, err := history.List(root, loc)

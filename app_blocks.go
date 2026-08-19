@@ -647,12 +647,12 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 
 	newContent := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
 
-	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 	a.tracker.RegisterWrite(filePath)
 
-	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+	if err := atomicPageWrite(filePath, []byte(newContent)); err != nil {
 		return err
 	}
+	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 
 	parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
 	if err == nil {
@@ -720,9 +720,18 @@ func (a *App) saveFileBlocksWithSource(notebook, section, page string, blocks []
 		beforeIDs, _ = a.db.BlockIDsForPage(source, safeNotebook, safeSection, safePage)
 	})
 
+	epoch := a.snapshotPageWriteEpoch(safeNotebook, safeSection, safePage)
+	if hook := afterPageWriteEpochSnapshot; hook != nil {
+		hook()
+	}
+
 	var writeErr error
 	a.coordinator.LockBlocksWrite(blockIDs, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
+			if err := a.rejectStalePageWrite(safeNotebook, safeSection, safePage, epoch); err != nil {
+				writeErr = err
+				return
+			}
 			// After waiting for structural locks, refuse to recreate a path
 			// that rename/delete already moved away (#691). Fail closed on any
 			// Stat error (permission/transient) — do not write blindly.
@@ -848,10 +857,19 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 		beforeIDs, _ = a.db.BlockIDsForPage(source, safeNotebook, safeSection, safePage)
 	})
 
+	epoch := a.snapshotPageWriteEpoch(safeNotebook, safeSection, safePage)
+	if hook := afterPageWriteEpochSnapshot; hook != nil {
+		hook()
+	}
+
 	var result []parser.ParsedBlock
 	var writeErr error
 	a.coordinator.LockBlocksWrite(beforeIDs, func() {
 		a.coordinator.LockFileWrite(filePath, func() {
+			if err := a.rejectStalePageWrite(safeNotebook, safeSection, safePage, epoch); err != nil {
+				writeErr = err
+				return
+			}
 			// After waiting for structural locks, refuse to recreate a path
 			// that rename/delete already moved away (#691). Fail closed on any
 			// Stat error (permission/transient) — do not write blindly.

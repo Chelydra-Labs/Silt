@@ -51,7 +51,11 @@ const (
 	// CodePageHistoryExists: Restore-as refused because the dest name has
 	// leftover snapshots. Relocating would merge those onto the source
 	// locator; restore dest in place or pick another name.
-	CodePageHistoryExists     IPCErrorCode = "page_history_exists"
+	CodePageHistoryExists IPCErrorCode = "page_history_exists"
+	// CodePageWriteStale: SaveFileBlocks/SavePageMarkdown snapshotted a page
+	// write epoch, then a restore committed before the save acquired the
+	// file lock. The save must not overwrite the restored body.
+	CodePageWriteStale        IPCErrorCode = "page_write_stale"
 	CodeInvalidNavigationPath IPCErrorCode = "invalid_navigation_path"
 	CodeNavigationNotFound    IPCErrorCode = "navigation_not_found"
 	CodeNavigationConflict    IPCErrorCode = "navigation_conflict"

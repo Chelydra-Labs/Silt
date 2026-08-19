@@ -510,6 +510,7 @@ describe('agent-loop', () => {
     expect(detectCatalogMode('please restore it')).toBe('restore')
     expect(detectCatalogMode('revert my changes')).toBe('restore')
     expect(detectCatalogMode('undo my changes')).toBe('restore')
+    expect(detectCatalogMode('undo the task I marked done')).toBe('qa')
     expect(detectCatalogMode('show version history')).toBe('qa')
     expect(detectCatalogMode('is this an old version')).toBe('qa')
     expect(detectWriteIntent("restore yesterday's version of Daily")).toBe(

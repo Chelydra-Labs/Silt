@@ -25,6 +25,8 @@
     registerEditor,
     editorKey
   } from '../../lib/editor/editorRegistry.svelte'
+  import { coerceIPCError } from '../../lib/ipcError'
+  import { IPCErrorCode } from '../../generated/enums'
   import type { SourceSearchTarget } from '../../lib/editor/search/sourceSearch'
 
   // MarkdownSourceViewer — editable Source mode (#660) with optional read-only
@@ -366,6 +368,8 @@
   }
 
   /** Persist dirty buffer. Returns true only when clean after the attempt. */
+  let saveGeneration = 0
+
   async function flushSave(): Promise<boolean> {
     if (!editable || !notebook || !page) {
       // Can't save — clean is success for menu Save; dirty is failure.
@@ -374,9 +378,11 @@
     if (conflictPending) return false
     if (!dirty) return true
     const md = buffer
+    const gen = saveGeneration
     savePhase = 'saving'
     try {
       const saved = await savePageMarkdown(notebook, section, page, md)
+      if (gen !== saveGeneration) return false
       // Stamp before parent refresh so the blocks $effect can ignore self-saves
       // when the user typed during the IPC round-trip.
       lastSelfSavedKey = blocksKey(saved)
@@ -399,6 +405,10 @@
       // User typed during save — still dirty.
       return false
     } catch (e) {
+      if (gen !== saveGeneration) return false
+      if (coerceIPCError(e).code === IPCErrorCode.CodePageWriteStale) {
+        return false
+      }
       saveError = e instanceof Error ? e.message : String(e)
       savePhase = 'error'
       return false
@@ -425,6 +435,7 @@
       },
       forceExternalReload: () => {
         pendingExternalReload = true
+        saveGeneration++
         if (saveTimer) {
           clearTimeout(saveTimer)
           saveTimer = null

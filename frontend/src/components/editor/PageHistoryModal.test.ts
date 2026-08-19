@@ -467,6 +467,37 @@ describe('PageHistoryModal', () => {
     expect(appMocks.FetchPageMarkdown).toHaveBeenCalledTimes(2)
   })
 
+  it('restarts compare fetch when page:external-reload arrives while loading', async () => {
+    let resolveFirst!: (value: string) => void
+    appMocks.FetchPageMarkdown.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveFirst = resolve
+        })
+    )
+    renderModal()
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-pane-compare')).not.toBeDisabled()
+    })
+    await fireEvent.click(screen.getByTestId('page-history-pane-compare'))
+    await waitFor(() => {
+      expect(appMocks.FetchPageMarkdown).toHaveBeenCalledTimes(1)
+    })
+    appMocks.FetchPageMarkdown.mockResolvedValue('# restored-during-load')
+    eventsMock.handlers.get('page:external-reload')?.({
+      data: { notebook: 'Work', section: 'Journal', page: 'Daily' }
+    })
+    resolveFirst('# stale-in-flight')
+    await waitFor(() => {
+      expect(screen.getByTestId('page-history-compare')).toHaveTextContent(
+        'restored-during-load'
+      )
+    })
+    expect(screen.getByTestId('page-history-compare')).not.toHaveTextContent(
+      'stale-in-flight'
+    )
+  })
+
   it('restores from Compare through ConfirmDialog and RestorePageVersion once', async () => {
     renderModal()
     await openCompare()

@@ -964,6 +964,12 @@ func TestPluginPageHistory_SessionAndRestoreGrant(t *testing.T) {
 	if _, err := app.PluginListPageVersions("spoofed", tok, "Work", "Journal", "Agent"); err == nil {
 		t.Fatal("expected session mismatch on list")
 	}
+	if _, err := app.PluginListPageVersions("third-party", tok, "Work", "Journal", "Agent"); err == nil {
+		t.Fatal("expected read-files denial on list")
+	}
+	if err := app.RequestCapability("third-party", string(plugins.CapReadFiles), ""); err != nil {
+		t.Fatalf("grant read-files: %v", err)
+	}
 
 	list, err := app.PluginListPageVersions("third-party", tok, "Work", "Journal", "Agent")
 	if err != nil {
@@ -1010,7 +1016,10 @@ func TestPluginPageHistory_NoVault(t *testing.T) {
 	app := &App{
 		pluginSessions: map[string]string{"tok": "test-plugin"},
 		grants: vault.GrantsStore{
-			"test-plugin": {string(plugins.CapContentMutate): plugins.QualGranted},
+			"test-plugin": {
+				string(plugins.CapContentMutate): plugins.QualGranted,
+				string(plugins.CapReadFiles):     plugins.QualGranted,
+			},
 		},
 	}
 	if _, err := app.PluginListPageVersions("test-plugin", "tok", "Work", "", "X"); err == nil {
@@ -1722,6 +1731,103 @@ func TestPageHistory_RestoreWriteFailureAtCapKeepsOldest(t *testing.T) {
 	}
 }
 
+func TestPageHistory_SaveFileBlocksWriteFailureAtCapKeepsOldest(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 2, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Capped", "# v0\n")
+	savePageBody(t, app, "Work", "Journal", "Capped", "# v1\n")
+	savePageBody(t, app, "Work", "Journal", "Capped", "# v2\n")
+	savePageBody(t, app, "Work", "Journal", "Capped", "# v3\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Capped")
+	if err != nil || len(list) != 2 {
+		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+	oldest := list[len(list)-1].ID
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "Capped.md")
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, _, _, _, err := parser.ParseFileContent(string(content), "Work", "Journal", "Capped", "2026-08-16", app.spacesPerTab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) > 0 {
+		blocks[0].RawText = "# v4"
+		blocks[0].CleanText = "# v4"
+	}
+	atomicPageWrite = func(string, []byte) error {
+		return os.ErrPermission
+	}
+	err = app.SaveFileBlocks("Work", "Journal", "Capped", blocks)
+	atomicPageWrite = parser.WriteFileAtomic
+	if err == nil {
+		t.Fatal("expected SaveFileBlocks write failure")
+	}
+	after, err := app.ListPageVersions("Work", "Journal", "Capped")
+	if err != nil {
+		t.Fatalf("List after failed save: %v", err)
+	}
+	var stillOldest bool
+	for _, e := range after {
+		if e.ID == oldest {
+			stillOldest = true
+			break
+		}
+	}
+	if !stillOldest {
+		t.Fatalf("oldest snapshot evicted after failed blocks save, got %+v", after)
+	}
+}
+
+func TestPageHistory_InFlightSaveAbortedAfterRestore(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Race", "# original\n")
+	savePageBody(t, app, "Work", "Journal", "Race", "# edited\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Race")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "Race.md")
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, _, _, _, err := parser.ParseFileContent(string(content), "Work", "Journal", "Race", "2026-08-16", app.spacesPerTab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) == 0 {
+		t.Fatal("expected blocks")
+	}
+	blocks[0].RawText = "# stale-save"
+	blocks[0].CleanText = "# stale-save"
+
+	afterPageWriteEpochSnapshot = func() {
+		if rerr := app.RestorePageVersion("Work", "Journal", "Race", list[0].ID); rerr != nil {
+			t.Errorf("restore during in-flight save: %v", rerr)
+		}
+	}
+	t.Cleanup(func() { afterPageWriteEpochSnapshot = nil })
+
+	err = app.SaveFileBlocks("Work", "Journal", "Race", blocks)
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodePageWriteStale {
+		t.Fatalf("in-flight save after restore: %v", err)
+	}
+	got, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "stale-save") {
+		t.Fatalf("stale save committed after restore:\n%s", got)
+	}
+	if !strings.Contains(string(got), "original") {
+		t.Fatalf("restored body missing:\n%s", got)
+	}
+}
+
 func TestRestoreDeletedPageVersion_WriteFailureAfterRelocateRollsBack(t *testing.T) {
 	app := newTestApp(t)
 	enablePageHistory(t, app, 50, 0)
@@ -1913,8 +2019,10 @@ func TestRestoreDeletedPageVersion_EmitsPageScopedBlockChanged(t *testing.T) {
 	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
 		t.Fatal(err)
 	}
+	var names []string
 	var got []parser.BlockChangedEvent
 	app.eventEmit = func(name string, data ...any) {
+		names = append(names, name)
 		if name != string(EventBlockChanged) || len(data) == 0 {
 			return
 		}
@@ -1925,12 +2033,28 @@ func TestRestoreDeletedPageVersion_EmitsPageScopedBlockChanged(t *testing.T) {
 	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", list[0].ID, "", "", ""); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
+	var sawPageScoped bool
 	for _, ev := range got {
 		if ev.ID == "" && ev.Notebook == "Work" && ev.Section == "Journal" && ev.Page == "Gone" {
-			return
+			sawPageScoped = true
+			break
 		}
 	}
-	t.Fatalf("deleted restore did not emit page-scoped block:changed, got %+v", got)
+	if !sawPageScoped {
+		t.Fatalf("deleted restore did not emit page-scoped block:changed, got %+v", got)
+	}
+	reloadAt, changedAt := -1, -1
+	for i, n := range names {
+		if n == string(EventPageExternalReload) && reloadAt < 0 {
+			reloadAt = i
+		}
+		if n == string(EventBlockChanged) && changedAt < 0 {
+			changedAt = i
+		}
+	}
+	if reloadAt < 0 || changedAt < 0 || reloadAt > changedAt {
+		t.Fatalf("expected page:external-reload before block:changed, got %v", names)
+	}
 }
 
 func TestHistoryWriteError_HidesPath(t *testing.T) {

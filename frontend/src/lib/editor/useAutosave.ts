@@ -1,6 +1,8 @@
 import type { Editor } from 'svelte-tiptap'
 import { SaveFileBlocks } from '../../../bindings/silt/app.js'
 import type { ParsedBlock as BindingParsedBlock } from '../../../bindings/silt/backend/parser/models.js'
+import { IPCErrorCode } from '../../generated/enums'
+import { coerceIPCError } from '../ipcError'
 import { measureFrameBudget } from '../perf/frame-budget'
 import { docToBlocks } from './converters'
 import { pushNotification } from '../../notifications/store.svelte'
@@ -176,6 +178,9 @@ export class AutosaveManager {
         })
       } catch (e) {
         if (this.saveGeneration !== saveGen) return
+        if (coerceIPCError(e).code === IPCErrorCode.CodePageWriteStale) {
+          return
+        }
         const msg = e instanceof Error ? e.message : String(e)
         console.error('AutosaveManager: SaveFileBlocks failed:', e)
         // Errors skip the min-display floor — fail-loud immediately.

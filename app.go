@@ -65,9 +65,14 @@ type App struct {
 	coordinator       *core.ExecutionCoordinator
 	watcher           *monitor.DirectoryWatcher
 	tracker           *monitor.WriteTracker
-	vaultPath         string
-	spacesPerTab      int
-	wg                sync.WaitGroup
+	// pageWriteEpoch increments under LockFileWrite when an out-of-band
+	// restore commits, so an in-flight SaveFileBlocks/SavePageMarkdown that
+	// snapshotted the prior epoch aborts instead of reverting disk.
+	pageWriteEpoch   map[string]uint64
+	pageWriteEpochMu sync.Mutex
+	vaultPath        string
+	spacesPerTab     int
+	wg               sync.WaitGroup
 
 	// cfg is the parsed .system/config.yaml, the single source of truth for
 	// non-vault-path settings. configMu guards it; it is replaced wholesale on
