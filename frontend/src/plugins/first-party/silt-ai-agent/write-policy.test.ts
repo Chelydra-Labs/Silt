@@ -42,6 +42,7 @@ describe('write-policy', () => {
     expect(isMutatingTool('search_notes')).toBe(false)
     expect(MUTATING_TOOLS.has('extract_and_save')).toBe(true)
     expect(ALWAYS_CONFIRM_TOOLS.has('rename_tag')).toBe(true)
+    expect(ALWAYS_CONFIRM_TOOLS.has('restore_page_version')).toBe(true)
   })
 
   it('shouldStageTool matrix', () => {
@@ -50,6 +51,7 @@ describe('write-policy', () => {
     expect(shouldStageTool('create_note', 'auto')).toBe(false)
     expect(shouldStageTool('rename_tag', 'auto')).toBe(true)
     expect(shouldStageTool('extract_and_save', 'auto')).toBe(true)
+    expect(shouldStageTool('restore_page_version', 'auto')).toBe(true)
     expect(shouldStageTool('search_notes', 'confirm')).toBe(false)
   })
 
@@ -57,11 +59,17 @@ describe('write-policy', () => {
     const tools = [
       { name: 'search_notes' },
       { name: 'create_note' },
-      { name: 'rename_tag' }
+      { name: 'rename_tag' },
+      { name: 'restore_page_version' }
     ] as AgentToolDef[]
     expect(
       filterToolsForWritePolicy(tools, 'confirm').map((t) => t.name)
-    ).toEqual(['search_notes', 'create_note', 'rename_tag'])
+    ).toEqual([
+      'search_notes',
+      'create_note',
+      'rename_tag',
+      'restore_page_version'
+    ])
     expect(
       filterToolsForWritePolicy(tools, 'read_only').map((t) => t.name)
     ).toEqual(['search_notes'])
@@ -87,5 +95,14 @@ describe('write-policy', () => {
     expect(
       previewForMutation('update_block', { block_id: 'abc' }).summary
     ).toContain('abc')
+    expect(isMutatingTool('restore_page_version')).toBe(true)
+    expect(
+      previewForMutation('restore_page_version', {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        version_id: 'v-old'
+      }).summary
+    ).toContain('Work/Journal/Daily')
   })
 })

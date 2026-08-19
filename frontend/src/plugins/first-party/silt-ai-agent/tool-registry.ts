@@ -8,6 +8,7 @@
 // the model never reaches tool code.
 
 import type { PluginAIToolDef, PluginContext } from '../../sdk'
+import { coerceIPCError } from '../../../lib/ipcError'
 import {
   type AgentWritesMode,
   isMutatingTool,
@@ -282,6 +283,8 @@ function jsTypeOf(v: unknown): string {
 export interface DispatchToolOpts {
   mode?: AgentWritesMode
   signal?: AbortSignal
+  /** When set, names outside this turn's catalog are refused. */
+  allowed?: ReadonlySet<string>
 }
 
 /**
@@ -294,6 +297,9 @@ export async function dispatchTool(
   argsJson: Record<string, unknown>,
   opts?: DispatchToolOpts
 ): Promise<ToolResult> {
+  if (opts?.allowed && !opts.allowed.has(name)) {
+    return { content: '', error: `tool "${name}" is not available this turn` }
+  }
   const tool = tools.get(name)
   if (!tool) {
     return { content: '', error: `unknown tool "${name}"` }
@@ -340,7 +346,6 @@ export async function dispatchTool(
     }
     return await tool.handler(ctx, argsJson, signal)
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : String(e)
-    return { content: '', error: message }
+    return { content: '', error: coerceIPCError(e).message }
   }
 }

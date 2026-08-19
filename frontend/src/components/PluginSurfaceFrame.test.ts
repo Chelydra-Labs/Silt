@@ -80,6 +80,9 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
       'createNotebook',
       'deletePage',
       'renamePage',
+      'listPageVersions',
+      'getPageVersion',
+      'restorePageVersion',
       'readFile',
       'writeFile',
       'deleteFile',
@@ -104,6 +107,9 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
     // reachable (#355): the documented ctx.updatePluginSetting('dismissed_notes',
     // [...]) pattern runs through this bridge for sandboxed third-party banners.
     expect(allowedMethods.has('updatePluginSetting')).toBe(true)
+    expect(allowedMethods.has('listPageVersions')).toBe(true)
+    expect(allowedMethods.has('getPageVersion')).toBe(true)
+    expect(allowedMethods.has('restorePageVersion')).toBe(true)
   })
 
   it('callback/registration methods are pruned from allowedMethods (#516)', () => {
@@ -122,6 +128,13 @@ describe('PluginSurfaceFrame CSP (#149)', () => {
       'provideDecorations'
     ]) {
       expect(allowlistBlock).not.toContain(`'${method}'`)
+    }
+    for (const method of [
+      'listPageVersions',
+      'getPageVersion',
+      'restorePageVersion'
+    ]) {
+      expect(allowlistBlock).toContain(`'${method}'`)
     }
     expect(componentSource).toContain('registrationMethods')
     expect(componentSource).toContain('structured clone')

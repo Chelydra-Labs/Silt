@@ -173,6 +173,39 @@ describe('TipTapEditor same-ID external reload', () => {
     view.unmount()
   })
 
+  it('releases the write hold when restore matches the on-screen body', async () => {
+    const first = [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'same body' })]
+    const view = render(TipTapEditor, {
+      props: {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        blocks: first,
+        onUpdate: () => {}
+      }
+    })
+    await waitFor(() => {
+      expect(view.container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+    const handle = getEditor(editorKey('Work', 'Journal', 'Daily'))
+    expect(handle).toBeTruthy()
+    handle!.forceExternalReload()
+    await expect(handle!.flush()).resolves.toBe(false)
+
+    await view.rerender({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      blocks: [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'same body' })],
+      onUpdate: () => {}
+    })
+
+    await waitFor(async () => {
+      await expect(handle!.flush()).resolves.toBe(true)
+    })
+    view.unmount()
+  })
+
   it('applies a same-ID body change without forceExternalReload when unfocused', async () => {
     const first = [
       mkBlock('NOTE', { id: STABLE_ID, clean_text: 'before restore' })

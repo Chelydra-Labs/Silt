@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +16,10 @@ import (
 	"silt/backend/plugins"
 	"silt/backend/vault"
 )
+
+func destOccupiedCode(code IPCErrorCode) bool {
+	return code == CodePageExists || code == CodePageHistoryExists
+}
 
 func enablePageHistory(t *testing.T, app *App, max, interval int) {
 	t.Helper()
@@ -757,8 +764,10 @@ func TestPageHistory_RestoreEmitsPageScopedBlockChanged(t *testing.T) {
 	if err != nil || len(list) == 0 {
 		t.Fatalf("List: %v len=%d", err, len(list))
 	}
+	var names []string
 	var got []parser.BlockChangedEvent
 	app.eventEmit = func(name string, data ...any) {
+		names = append(names, name)
 		if name != string(EventBlockChanged) || len(data) == 0 {
 			return
 		}
@@ -778,6 +787,18 @@ func TestPageHistory_RestoreEmitsPageScopedBlockChanged(t *testing.T) {
 	}
 	if !sawPageScoped {
 		t.Fatalf("restore did not emit page-scoped block:changed, got %+v", got)
+	}
+	reloadAt, changedAt := -1, -1
+	for i, n := range names {
+		if n == string(EventPageExternalReload) && reloadAt < 0 {
+			reloadAt = i
+		}
+		if n == string(EventBlockChanged) && changedAt < 0 {
+			changedAt = i
+		}
+	}
+	if reloadAt < 0 || changedAt < 0 || reloadAt > changedAt {
+		t.Fatalf("expected page:external-reload before block:changed, got %v", names)
 	}
 }
 
@@ -930,5 +951,1209 @@ func TestPageHistory_StoreIndependentOfDB(t *testing.T) {
 	list, err := history.List(root, loc)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+}
+
+func TestPluginPageHistory_SessionAndRestoreGrant(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Agent", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Agent", "# second\n")
+
+	tok := registerTestSession(t, app, "third-party")
+	if _, err := app.PluginListPageVersions("spoofed", tok, "Work", "Journal", "Agent"); err == nil {
+		t.Fatal("expected session mismatch on list")
+	}
+	if _, err := app.PluginListPageVersions("third-party", tok, "Work", "Journal", "Agent"); err == nil {
+		t.Fatal("expected read-files denial on list")
+	}
+	if err := app.RequestCapability("third-party", string(plugins.CapReadFiles), ""); err != nil {
+		t.Fatalf("grant read-files: %v", err)
+	}
+
+	list, err := app.PluginListPageVersions("third-party", tok, "Work", "Journal", "Agent")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) == 0 {
+		t.Fatal("expected leftover versions")
+	}
+	body, err := app.PluginGetPageVersion("third-party", tok, "Work", "Journal", "Agent", list[0].ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !strings.Contains(body, "first") {
+		t.Fatalf("preview body = %q", body)
+	}
+
+	if err := app.PluginRestorePageVersion("third-party", tok, "Work", "Journal", "Agent", list[0].ID); err == nil {
+		t.Fatal("expected capability denial without content-mutate")
+	}
+	got, err := app.FetchPageMarkdown("Work", "Journal", "Agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "first") && !strings.Contains(got, "second") {
+		t.Fatal("denied restore still wrote the live page")
+	}
+
+	if err := app.RequestCapability("third-party", string(plugins.CapContentMutate), ""); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if err := app.PluginRestorePageVersion("third-party", tok, "Work", "Journal", "Agent", list[0].ID); err != nil {
+		t.Fatalf("restore with grant: %v", err)
+	}
+	got, err = app.FetchPageMarkdown("Work", "Journal", "Agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "first") {
+		t.Fatalf("restored body = %q", got)
+	}
+}
+
+func TestPluginPageHistory_NoVault(t *testing.T) {
+	app := &App{
+		pluginSessions: map[string]string{"tok": "test-plugin"},
+		grants: vault.GrantsStore{
+			"test-plugin": {
+				string(plugins.CapContentMutate): plugins.QualGranted,
+				string(plugins.CapReadFiles):     plugins.QualGranted,
+			},
+		},
+	}
+	if _, err := app.PluginListPageVersions("test-plugin", "tok", "Work", "", "X"); err == nil {
+		t.Fatal("expected no-vault error")
+	}
+	if _, err := app.PluginGetPageVersion("test-plugin", "tok", "Work", "", "X", "v"); err == nil {
+		t.Fatal("expected no-vault error")
+	}
+	if err := app.PluginRestorePageVersion("test-plugin", "tok", "Work", "", "X", "v"); err == nil {
+		t.Fatal("expected no-vault error")
+	}
+}
+
+func TestDeletedPageHistory_ListAndRestore(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	seedHistoryPage(t, app, "Work", "Journal", "Daily", "# live\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+	oldID := list[len(list)-1].ID
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatalf("DeletePage: %v", err)
+	}
+
+	orphans, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatalf("ListDeleted: %v", err)
+	}
+	found := false
+	for _, o := range orphans {
+		if o.Notebook == "Work" && o.Section == "Journal" && o.Page == "Gone" {
+			found = true
+			if o.VersionCount < 1 {
+				t.Fatalf("orphan versions=%d", o.VersionCount)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("deleted page missing from orphans: %+v", orphans)
+	}
+
+	live, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range live {
+		if o.Notebook == "Work" && o.Page == "Daily" {
+			t.Fatal("live page must not appear in deleted list")
+		}
+	}
+
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", oldID, "", "", ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	body, err := app.FetchPageMarkdown("Work", "Journal", "Gone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "first") {
+		t.Fatalf("restored body = %q", body)
+	}
+	after, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range after {
+		if o.Notebook == "Work" && o.Section == "Journal" && o.Page == "Gone" {
+			t.Fatal("restored page still listed as deleted")
+		}
+	}
+}
+
+func TestDeletedPageHistory_OccupiedDestRefuses(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "OldGone", "# old-first\n")
+	savePageBody(t, app, "Work", "Journal", "OldGone", "# old-second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "OldGone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "OldGone"); err != nil {
+		t.Fatal(err)
+	}
+	seedHistoryPage(t, app, "Work", "Journal", "Taken", "# taken\n")
+	before, err := os.ReadFile(filepath.Join(app.vaultPath, "Work", "Journal", "Taken.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreErr := app.RestoreDeletedPageVersion("Work", "Journal", "OldGone", list[0].ID, "Work", "Journal", "Taken")
+	if restoreErr == nil {
+		t.Fatal("expected occupied dest error")
+	}
+	after, err := os.ReadFile(filepath.Join(app.vaultPath, "Work", "Journal", "Taken.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("occupied dest was overwritten")
+	}
+	var ipc *IPCError
+	if !errors.As(restoreErr, &ipc) || ipc.Code != CodePageExists {
+		t.Fatalf("occupied dest err = %v", restoreErr)
+	}
+}
+
+func TestDeletedPageHistory_MissingVersionAndPartialDest(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", "missing", "", "", "")
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationNotFound {
+		t.Fatalf("missing version err = %v", err)
+	}
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "Gone", "v", "Work", "", "")
+	if !errors.As(err, &ipc) || ipc.Code != CodeInvalidNavigationPath {
+		t.Fatalf("partial dest err = %v", err)
+	}
+}
+
+func TestDeletedPageHistory_SanitizeDestFrontmatter(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "OldGone.md")
+	content := "---\nnotebook: Work\nsection: Journal\npage: OldGone\ndate: 2026-01-15\ncreated: \"2026-01-15T09:30:00\"\ntags: [work, planning]\ntype: \"book\"\n---\n# first\n"
+	writeFile(t, filePath, content)
+	blocks, _, _, _, err := parser.ParseFileContent(content, "Work", "Journal", "OldGone", "2026-01-15", app.spacesPerTab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.SaveFileBlocks("Work", "Journal", "OldGone", blocks); err != nil {
+		t.Fatal(err)
+	}
+	savePageBody(t, app, "Work", "Journal", "OldGone", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "OldGone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "OldGone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "OldGone", list[0].ID, "Work", "Journal", "Q1/Q2 recap"); err != nil {
+		t.Fatalf("restore-as: %v", err)
+	}
+	safePage := "Q1Q2 recap"
+	raw, err := os.ReadFile(filepath.Join(app.vaultPath, "Work", "Journal", safePage+".md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	if strings.Contains(got, `page: "Q1/Q2 recap"`) {
+		t.Fatal("frontmatter kept the raw dest page name")
+	}
+	if !strings.Contains(got, `page: "Q1Q2 recap"`) {
+		t.Fatalf("frontmatter page missing sanitized name:\n%s", raw)
+	}
+	if !strings.Contains(got, `created: "2026-01-15T09:30:00"`) {
+		t.Fatalf("restore dropped snapshot created:\n%s", raw)
+	}
+	if !strings.Contains(got, "work") || !strings.Contains(got, "planning") {
+		t.Fatalf("restore dropped snapshot tags:\n%s", raw)
+	}
+	if !strings.Contains(got, `type: "book"`) && !strings.Contains(got, "type: book") {
+		t.Fatalf("restore dropped snapshot type:\n%s", raw)
+	}
+	if !strings.Contains(got, "date: 2026-01-15") && !strings.Contains(got, `date: "2026-01-15"`) {
+		t.Fatalf("restore dropped snapshot date:\n%s", raw)
+	}
+	indexed, err := app.FetchPageBlocks("Work", "Journal", safePage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(indexed) == 0 {
+		t.Fatal("indexed blocks missing for sanitized dest")
+	}
+}
+
+func TestDeletedPageHistory_RestoreDoesNotAddSyntheticVersion(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 2, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Cap", "# v0\n")
+	savePageBody(t, app, "Work", "Journal", "Cap", "# v1\n")
+	savePageBody(t, app, "Work", "Journal", "Cap", "# v2\n")
+	before, err := app.ListPageVersions("Work", "Journal", "Cap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("pre-delete versions = %d", len(before))
+	}
+	oldestID := before[len(before)-1].ID
+	if err := app.DeletePage("Work", "Journal", "Cap"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Cap", before[0].ID, "", "", ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	after, err := app.ListPageVersions("Work", "Journal", "Cap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("restore changed version count %d → %d", len(before), len(after))
+	}
+	foundOldest := false
+	for _, v := range after {
+		if v.Source == historyReasonRestore {
+			t.Fatal("recreate captured a synthetic restore snapshot")
+		}
+		if v.ID == oldestID {
+			foundOldest = true
+		}
+	}
+	if !foundOldest {
+		t.Fatal("oldest real snapshot was evicted")
+	}
+}
+
+func TestDeletedPageHistory_RecreateMissingNotebookDir(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(app.vaultPath, "Work")); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", list[0].ID, "", "", ""); err != nil {
+		t.Fatalf("restore after notebook dir gone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(app.vaultPath, "Work", "Journal", "Gone.md")); err != nil {
+		t.Fatalf("recreated page missing: %v", err)
+	}
+}
+
+func TestDeletedPageHistory_RefuseCrossRoot(t *testing.T) {
+	app := newTestApp(t)
+	ext := filepath.Join(t.TempDir(), "Ext")
+	if err := os.MkdirAll(filepath.Join(ext, "Journal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(ext, "Journal", "Linked.md"),
+		"---\nnotebook: Ext\nsection: Journal\npage: Linked\ndate: 2026-08-16\ntags: []\n---\n# first\n")
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	enablePageHistory(t, app, 50, 0)
+	savePageBody(t, app, ln.DisplayName, "Journal", "Linked", "# second\n")
+	list, err := app.ListPageVersions(ln.DisplayName, "Journal", "Linked")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+	if err := app.DeletePage(ln.DisplayName, "Journal", "Linked"); err != nil {
+		t.Fatal(err)
+	}
+	err = app.RestoreDeletedPageVersion(ln.DisplayName, "Journal", "Linked", list[0].ID, "Work", "Journal", "FromLinked")
+	if err == nil {
+		t.Fatal("expected cross-root refuse")
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Journal", "FromLinked.md")); !os.IsNotExist(statErr) {
+		t.Fatal("cross-root restore wrote a vault page")
+	}
+}
+
+func TestDeletedPageHistory_RestoreAsRelocates(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "MoveMe", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "MoveMe", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "MoveMe")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "MoveMe"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "Work", "Archive", "Restored"); err != nil {
+		t.Fatalf("restore-as: %v", err)
+	}
+	body, err := app.FetchPageMarkdown("Work", "Archive", "Restored")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "first") && !strings.Contains(body, "second") {
+		t.Fatalf("restore-as body = %q", body)
+	}
+	orphans, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range orphans {
+		if o.Page == "MoveMe" {
+			t.Fatal("original locator still in deleted list after relocate")
+		}
+	}
+}
+
+func TestDeletedPageHistory_LinkedDeleteStillLists(t *testing.T) {
+	app := newTestApp(t)
+	ext := filepath.Join(t.TempDir(), "Ext")
+	if err := os.MkdirAll(filepath.Join(ext, "Journal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(ext, "Journal", "Linked.md"),
+		"---\nnotebook: Ext\nsection: Journal\npage: Linked\ndate: 2026-08-16\ntags: []\n---\n# first\n")
+	ln, err := app.LinkNotebook(ext)
+	if err != nil {
+		t.Fatalf("LinkNotebook: %v", err)
+	}
+	enablePageHistory(t, app, 50, 0)
+	savePageBody(t, app, ln.DisplayName, "Journal", "Linked", "# second\n")
+	if err := app.DeletePage(ln.DisplayName, "Journal", "Linked"); err != nil {
+		t.Fatalf("DeletePage linked: %v", err)
+	}
+	orphans, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, o := range orphans {
+		if o.Page == "Linked" && o.Source == "linked" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("linked delete missing from orphans: %+v", orphans)
+	}
+}
+
+func TestDeletedPageHistory_TrashUnchanged(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "TrashMe", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "TrashMe", "# second\n")
+	if err := app.DeletePage("Work", "Journal", "TrashMe"); err != nil {
+		t.Fatal(err)
+	}
+	trash := filepath.Join(app.vaultPath, ".system", "trash")
+	if _, err := os.Stat(trash); err != nil {
+		t.Fatalf("trash missing: %v", err)
+	}
+	found := false
+	err := filepath.Walk(trash, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(path, "TrashMe.md") {
+			found = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("DeletePage no longer moved the latest file to trash")
+	}
+}
+
+func TestDeletedPageHistory_CaptureOffLeftovers(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "OffLater", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "OffLater", "# second\n")
+	if err := app.DeletePage("Work", "Journal", "OffLater"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := app.GetSystemConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	cfg.Editor.AutoVersioningEnabled = &off
+	if err := app.SaveSystemConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	orphans, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	list, err := app.ListPageVersions("Work", "Journal", "OffLater")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("leftover list: %v len=%d", err, len(list))
+	}
+	id = list[0].ID
+	found := false
+	for _, o := range orphans {
+		if o.Page == "OffLater" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("capture-off leftovers missing from deleted list")
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "OffLater", id, "", "", ""); err != nil {
+		t.Fatalf("restore leftovers: %v", err)
+	}
+}
+
+func TestDeletedPageHistory_SkipsEncodedTraversalLocator(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	outside := filepath.Join(filepath.Dir(app.vaultPath), "secret.md")
+	writeFile(t, outside, "secret")
+	t.Cleanup(func() { _ = os.Remove(outside) })
+	planted := filepath.Join(app.vaultPath, ".system", "history", "pages", "vault", "%2E%2E", "%2E%2E", "secret.jsonl")
+	if err := os.MkdirAll(filepath.Dir(planted), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, planted, `{"id":"v-evil","ts":"2026-08-16T18:00:00.000000000Z","hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bytes":1,"source":"editor"}`+"\n")
+	orphans, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range orphans {
+		if o.Page == "secret" || strings.Contains(o.Notebook, "..") || strings.Contains(o.Section, "..") {
+			t.Fatalf("listed planted locator: %+v", o)
+		}
+	}
+}
+
+func TestListPageVersions_HidesStorePath(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Daily", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Daily", "# second\n")
+	man := filepath.Join(app.vaultPath, ".system", "history", "pages", "vault", "Work", "Journal", "Daily.jsonl")
+	if err := os.WriteFile(man, []byte(strings.Repeat("x", 2<<20+64)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := app.ListPageVersions("Work", "Journal", "Daily")
+	if err == nil {
+		t.Fatal("expected list error")
+	}
+	if strings.Contains(err.Error(), app.vaultPath) || strings.Contains(err.Error(), man) {
+		t.Fatalf("leaked path: %v", err)
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationUnavailable {
+		t.Fatalf("list err = %v", err)
+	}
+}
+
+func TestRestoreDeletedPageVersion_RefusesLiveSource(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Alive", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Alive", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Alive")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "Alive", list[0].ID, "Work", "Journal", "Copy")
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodePageStillExists {
+		t.Fatalf("live source err = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Journal", "Copy.md")); !os.IsNotExist(statErr) {
+		t.Fatal("live-source restore wrote dest")
+	}
+	after, err := app.ListPageVersions("Work", "Journal", "Alive")
+	if err != nil || len(after) == 0 {
+		t.Fatalf("live page history moved: %v", err)
+	}
+}
+
+func TestRestoreDeletedPageVersion_CaseOnlyDestKeepsHistory(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", list[0].ID, "Work", "Journal", "gone"); err != nil {
+		t.Fatalf("case-only restore-as: %v", err)
+	}
+	blobRoot := filepath.Join(app.vaultPath, ".system", "history", "blobs")
+	var blobs int
+	err = filepath.Walk(blobRoot, func(_ string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info != nil && !info.IsDir() {
+			blobs++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk blobs: %v", err)
+	}
+	if blobs == 0 {
+		t.Fatal("case-only restore-as deleted snapshot blobs")
+	}
+	afterGone, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil {
+		t.Fatalf("List Gone: %v", err)
+	}
+	afterGoneFold, err := app.ListPageVersions("Work", "Journal", "gone")
+	if err != nil {
+		t.Fatalf("List gone: %v", err)
+	}
+	if len(afterGone) == 0 && len(afterGoneFold) == 0 {
+		t.Fatal("case-only restore-as left no readable history")
+	}
+}
+
+func TestRestoreDeletedPageVersion_RefusesConsumedLeftover(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "MoveMe", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "MoveMe", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "MoveMe")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "MoveMe"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "Work", "Archive", "Restored"); err != nil {
+		t.Fatalf("first restore-as: %v", err)
+	}
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "Work", "Archive", "Copy")
+	if err == nil {
+		t.Fatal("expected second restore-as to fail")
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationNotFound {
+		t.Fatalf("second restore-as err = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Archive", "Copy.md")); !os.IsNotExist(statErr) {
+		t.Fatal("second restore-as wrote a duplicate page")
+	}
+}
+
+func TestRestoreDeletedPageVersion_RelocateFailureSurfaces(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "MoveMe", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "MoveMe", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "MoveMe")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "MoveMe"); err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(app.vaultPath, ".system", "history", "pages", "vault", "Work")
+	if err := os.MkdirAll(blocked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(blocked, "Archive"), "not-a-directory")
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "Work", "Archive", "Restored")
+	if err == nil {
+		t.Fatal("expected relocate failure")
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationUnavailable {
+		t.Fatalf("relocate err = %v", err)
+	}
+	if !strings.Contains(ipc.Message, "could not move the snapshot history") {
+		t.Fatalf("relocate message = %q", ipc.Message)
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Archive", "Restored.md")); !os.IsNotExist(statErr) {
+		t.Fatal("dest page written before relocate succeeded")
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "", "", ""); err != nil {
+		t.Fatalf("in-place restore after relocate failure: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Journal", "MoveMe.md")); statErr != nil {
+		t.Fatalf("in-place page missing: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Archive", "Restored.md")); !os.IsNotExist(statErr) {
+		t.Fatal("relocate-failure dest appeared after in-place restore")
+	}
+}
+
+func TestRestoreDeletedPageVersion_DestIOHidesPath(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(app.vaultPath, "Work", "Blocked")
+	writeFile(t, blocked, "not-a-directory")
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "Gone", list[0].ID, "Work", "Blocked", "Copy")
+	if err == nil {
+		t.Fatal("expected dest I/O error")
+	}
+	if strings.Contains(err.Error(), app.vaultPath) || strings.Contains(err.Error(), blocked) {
+		t.Fatalf("leaked path: %v", err)
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) {
+		t.Fatalf("dest I/O err = %v", err)
+	}
+	if ipc.Code != CodeNavigationUnavailable && ipc.Code != CodeNavigationNotFound {
+		t.Fatalf("dest I/O code = %s", ipc.Code)
+	}
+	if ipc.Code == CodeNavigationUnavailable && ipc.Message != "could not write the page" {
+		t.Fatalf("dest I/O message = %q", ipc.Message)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", list[0].ID, "", "", ""); err != nil {
+		t.Fatalf("leftover should stay restorable after dest I/O failure: %v", err)
+	}
+}
+
+func TestRestoreDeletedPageVersion_DestLeftoverIsOccupied(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Taken", "# dest1\n")
+	savePageBody(t, app, "Work", "Journal", "Taken", "# dest2\n")
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# orig1\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# orig2\n")
+	listOrig, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil || len(listOrig) == 0 {
+		t.Fatalf("List orig: %v", err)
+	}
+	listDest, err := app.ListPageVersions("Work", "Journal", "Taken")
+	if err != nil || len(listDest) == 0 {
+		t.Fatalf("List dest: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "Taken"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "Gone", listOrig[0].ID, "Work", "Journal", "Taken")
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodePageHistoryExists {
+		t.Fatalf("restore-as onto dest leftover: %v", err)
+	}
+	stillDest, err := app.ListPageVersions("Work", "Journal", "Taken")
+	if err != nil || len(stillDest) == 0 {
+		t.Fatalf("dest leftover vanished: %v len=%d", err, len(stillDest))
+	}
+	if stillDest[0].ID != listDest[0].ID {
+		t.Fatalf("dest leftover mutated: got %s want %s", stillDest[0].ID, listDest[0].ID)
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", listOrig[0].ID, "", "", ""); err != nil {
+		t.Fatalf("orig leftover should stay restorable: %v", err)
+	}
+}
+
+func TestPageHistory_RestoreWriteFailureAtCapKeepsOldest(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 2, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Capped", "# v0\n")
+	savePageBody(t, app, "Work", "Journal", "Capped", "# v1\n")
+	savePageBody(t, app, "Work", "Journal", "Capped", "# v2\n")
+	savePageBody(t, app, "Work", "Journal", "Capped", "# v3\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Capped")
+	if err != nil || len(list) != 2 {
+		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+	oldest := list[len(list)-1].ID
+	atomicPageWrite = func(string, []byte) error {
+		return os.ErrPermission
+	}
+	err = app.RestorePageVersion("Work", "Journal", "Capped", oldest)
+	atomicPageWrite = parser.WriteFileAtomic
+	if err == nil {
+		t.Fatal("expected restore write failure")
+	}
+	after, err := app.ListPageVersions("Work", "Journal", "Capped")
+	if err != nil {
+		t.Fatalf("List after failed restore: %v", err)
+	}
+	var stillOldest bool
+	for _, e := range after {
+		if e.ID == oldest {
+			stillOldest = true
+			break
+		}
+	}
+	if !stillOldest {
+		t.Fatalf("oldest snapshot evicted after failed restore, got %+v", after)
+	}
+	if err := app.RestorePageVersion("Work", "Journal", "Capped", oldest); err != nil {
+		t.Fatalf("retry restore of oldest: %v", err)
+	}
+}
+
+func TestPageHistory_SaveFileBlocksWriteFailureAtCapKeepsOldest(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 2, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Capped", "# v0\n")
+	savePageBody(t, app, "Work", "Journal", "Capped", "# v1\n")
+	savePageBody(t, app, "Work", "Journal", "Capped", "# v2\n")
+	savePageBody(t, app, "Work", "Journal", "Capped", "# v3\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Capped")
+	if err != nil || len(list) != 2 {
+		t.Fatalf("List: %v len=%d", err, len(list))
+	}
+	oldest := list[len(list)-1].ID
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "Capped.md")
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, _, _, _, err := parser.ParseFileContent(string(content), "Work", "Journal", "Capped", "2026-08-16", app.spacesPerTab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) > 0 {
+		blocks[0].RawText = "# v4"
+		blocks[0].CleanText = "# v4"
+	}
+	atomicPageWrite = func(string, []byte) error {
+		return os.ErrPermission
+	}
+	err = app.SaveFileBlocks("Work", "Journal", "Capped", blocks)
+	atomicPageWrite = parser.WriteFileAtomic
+	if err == nil {
+		t.Fatal("expected SaveFileBlocks write failure")
+	}
+	after, err := app.ListPageVersions("Work", "Journal", "Capped")
+	if err != nil {
+		t.Fatalf("List after failed save: %v", err)
+	}
+	var stillOldest bool
+	for _, e := range after {
+		if e.ID == oldest {
+			stillOldest = true
+			break
+		}
+	}
+	if !stillOldest {
+		t.Fatalf("oldest snapshot evicted after failed blocks save, got %+v", after)
+	}
+}
+
+func TestPageHistory_InFlightSaveAbortedAfterRestore(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Race", "# original\n")
+	savePageBody(t, app, "Work", "Journal", "Race", "# edited\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Race")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "Race.md")
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, _, _, _, err := parser.ParseFileContent(string(content), "Work", "Journal", "Race", "2026-08-16", app.spacesPerTab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) == 0 {
+		t.Fatal("expected blocks")
+	}
+	blocks[0].RawText = "# stale-save"
+	blocks[0].CleanText = "# stale-save"
+
+	afterPageWriteEpochSnapshot = func() {
+		if rerr := app.RestorePageVersion("Work", "Journal", "Race", list[0].ID); rerr != nil {
+			t.Errorf("restore during in-flight save: %v", rerr)
+		}
+	}
+	t.Cleanup(func() { afterPageWriteEpochSnapshot = nil })
+
+	err = app.SaveFileBlocks("Work", "Journal", "Race", blocks)
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodePageWriteStale {
+		t.Fatalf("in-flight save after restore: %v", err)
+	}
+	got, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "stale-save") {
+		t.Fatalf("stale save committed after restore:\n%s", got)
+	}
+	if !strings.Contains(string(got), "original") {
+		t.Fatalf("restored body missing:\n%s", got)
+	}
+}
+
+func TestPageWriteEpochKey_FoldsOnCaseInsensitiveOS(t *testing.T) {
+	folded := pageWriteEpochKey("Work", "Journal", "Race") ==
+		pageWriteEpochKey("work", "journal", "race")
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		if !folded {
+			t.Fatal("expected epoch keys to fold on this OS")
+		}
+		return
+	}
+	if folded {
+		t.Fatal("expected epoch keys to stay case-sensitive on this OS")
+	}
+}
+
+func TestPageHistory_InFlightSaveAbortedAfterCaseVariantRestore(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		t.Skip("case-variant restore vs canonical save is for case-insensitive volumes")
+	}
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Race", "# original\n")
+	savePageBody(t, app, "Work", "Journal", "Race", "# edited\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Race")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	filePath := filepath.Join(app.vaultPath, "Work", "Journal", "Race.md")
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks, _, _, _, err := parser.ParseFileContent(string(content), "Work", "Journal", "Race", "2026-08-16", app.spacesPerTab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) == 0 {
+		t.Fatal("expected blocks")
+	}
+	blocks[0].RawText = "# stale-save"
+	blocks[0].CleanText = "# stale-save"
+
+	afterPageWriteEpochSnapshot = func() {
+		if rerr := app.RestorePageVersion("work", "journal", "race", list[0].ID); rerr != nil {
+			t.Errorf("case-variant restore during in-flight save: %v", rerr)
+		}
+	}
+	t.Cleanup(func() { afterPageWriteEpochSnapshot = nil })
+
+	err = app.SaveFileBlocks("Work", "Journal", "Race", blocks)
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodePageWriteStale {
+		t.Fatalf("in-flight save after case-variant restore: %v", err)
+	}
+	got, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "stale-save") {
+		t.Fatalf("stale save committed after case-variant restore:\n%s", got)
+	}
+}
+
+func TestRestoreDeletedPageVersion_WriteFailureAfterRelocateRollsBack(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "MoveMe", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "MoveMe", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "MoveMe")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "MoveMe"); err != nil {
+		t.Fatal(err)
+	}
+	atomicPageWrite = func(string, []byte) error {
+		return os.ErrPermission
+	}
+	err = app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "Work", "Archive", "Restored")
+	atomicPageWrite = parser.WriteFileAtomic
+	if err == nil {
+		t.Fatal("expected write failure after relocate")
+	}
+	if _, statErr := os.Stat(filepath.Join(app.vaultPath, "Work", "Archive", "Restored.md")); !os.IsNotExist(statErr) {
+		t.Fatal("dest page written despite injected write failure")
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "MoveMe", list[0].ID, "", "", ""); err != nil {
+		t.Fatalf("leftover should return to orig after write failure: %v", err)
+	}
+}
+
+func TestDeletedPageHistory_SkipsIndeterminateLiveStat(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	journal := filepath.Join(app.vaultPath, "Work", "Journal")
+	if err := os.Chmod(journal, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(journal, 0o755) })
+	orphans, err := app.ListDeletedPageHistory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := false
+	for _, o := range orphans {
+		if o.Notebook == "Work" && o.Page == "Gone" {
+			listed = true
+		}
+	}
+	if listed {
+		if runtime.GOOS == "windows" {
+			t.Skip("directory chmod does not hide children from the owner on Windows")
+		}
+		t.Fatal("indeterminate live stat listed a leftover")
+	}
+}
+
+func TestLiveStatError_HidesPath(t *testing.T) {
+	leaked := &os.PathError{Op: "stat", Path: `C:\secret\vault\Work\Journal\Daily.md`, Err: os.ErrPermission}
+	err := liveStatError(leaked)
+	if err == nil {
+		t.Fatal("expected mapped error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, `C:\`) || strings.Contains(msg, "Daily.md") || strings.Contains(msg, "secret") {
+		t.Fatalf("leaked path: %s", msg)
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationUnavailable {
+		t.Fatalf("mapped err = %v", err)
+	}
+	if ipc.Message != "could not check whether that page still exists" {
+		t.Fatalf("live stat message = %q", ipc.Message)
+	}
+}
+
+func TestRestoreDeletedPageVersion_ConcurrentDestOccupancy(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "GoneA", "# a1\n")
+	savePageBody(t, app, "Work", "Journal", "GoneA", "# a2\n")
+	seedHistoryPage(t, app, "Work", "Journal", "GoneB", "# b1\n")
+	savePageBody(t, app, "Work", "Journal", "GoneB", "# b2\n")
+	listA, err := app.ListPageVersions("Work", "Journal", "GoneA")
+	if err != nil || len(listA) == 0 {
+		t.Fatalf("List A: %v", err)
+	}
+	listB, err := app.ListPageVersions("Work", "Journal", "GoneB")
+	if err != nil || len(listB) == 0 {
+		t.Fatalf("List B: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "GoneA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.DeletePage("Work", "Journal", "GoneB"); err != nil {
+		t.Fatal(err)
+	}
+	var (
+		wg   sync.WaitGroup
+		errA error
+		errB error
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		errA = app.RestoreDeletedPageVersion("Work", "Journal", "GoneA", listA[0].ID, "Work", "Journal", "Taken")
+	}()
+	go func() {
+		defer wg.Done()
+		errB = app.RestoreDeletedPageVersion("Work", "Journal", "GoneB", listB[0].ID, "Work", "Journal", "Taken")
+	}()
+	wg.Wait()
+	if (errA == nil) == (errB == nil) {
+		t.Fatalf("expected exactly one dest occupant to succeed, a=%v b=%v", errA, errB)
+	}
+	fail := errA
+	if errB != nil {
+		fail = errB
+	}
+	var ipc *IPCError
+	if !errors.As(fail, &ipc) || !destOccupiedCode(ipc.Code) {
+		t.Fatalf("losing restore err = %v", fail)
+	}
+}
+
+func TestRestoreDeletedPageVersion_ConcurrentCaseFoldDest(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		t.Skip("mixed-case dest occupancy is for case-insensitive volumes")
+	}
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "GoneA", "# a1\n")
+	savePageBody(t, app, "Work", "Journal", "GoneA", "# a2\n")
+	seedHistoryPage(t, app, "Work", "Journal", "GoneB", "# b1\n")
+	savePageBody(t, app, "Work", "Journal", "GoneB", "# b2\n")
+	listA, err := app.ListPageVersions("Work", "Journal", "GoneA")
+	if err != nil || len(listA) == 0 {
+		t.Fatalf("List A: %v", err)
+	}
+	listB, err := app.ListPageVersions("Work", "Journal", "GoneB")
+	if err != nil || len(listB) == 0 {
+		t.Fatalf("List B: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "GoneA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.DeletePage("Work", "Journal", "GoneB"); err != nil {
+		t.Fatal(err)
+	}
+	var (
+		wg   sync.WaitGroup
+		errA error
+		errB error
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		errA = app.RestoreDeletedPageVersion("Work", "Journal", "GoneA", listA[0].ID, "Work", "Journal", "Taken")
+	}()
+	go func() {
+		defer wg.Done()
+		errB = app.RestoreDeletedPageVersion("Work", "Journal", "GoneB", listB[0].ID, "Work", "Journal", "taken")
+	}()
+	wg.Wait()
+	if (errA == nil) == (errB == nil) {
+		t.Fatalf("expected exactly one case-fold dest occupant to succeed, a=%v b=%v", errA, errB)
+	}
+	fail := errA
+	if errB != nil {
+		fail = errB
+	}
+	var ipc *IPCError
+	if !errors.As(fail, &ipc) || !destOccupiedCode(ipc.Code) {
+		t.Fatalf("losing restore err = %v", fail)
+	}
+}
+
+func TestRestoreDeletedPageVersion_EmitsPageScopedBlockChanged(t *testing.T) {
+	app := newTestApp(t)
+	enablePageHistory(t, app, 50, 0)
+	seedHistoryPage(t, app, "Work", "Journal", "Gone", "# first\n")
+	savePageBody(t, app, "Work", "Journal", "Gone", "# second\n")
+	list, err := app.ListPageVersions("Work", "Journal", "Gone")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("List: %v", err)
+	}
+	if err := app.DeletePage("Work", "Journal", "Gone"); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	var got []parser.BlockChangedEvent
+	app.eventEmit = func(name string, data ...any) {
+		names = append(names, name)
+		if name != string(EventBlockChanged) || len(data) == 0 {
+			return
+		}
+		if ev, ok := data[0].(parser.BlockChangedEvent); ok {
+			got = append(got, ev)
+		}
+	}
+	if err := app.RestoreDeletedPageVersion("Work", "Journal", "Gone", list[0].ID, "", "", ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	var sawPageScoped bool
+	for _, ev := range got {
+		if ev.ID == "" && ev.Notebook == "Work" && ev.Section == "Journal" && ev.Page == "Gone" {
+			sawPageScoped = true
+			break
+		}
+	}
+	if !sawPageScoped {
+		t.Fatalf("deleted restore did not emit page-scoped block:changed, got %+v", got)
+	}
+	reloadAt, changedAt := -1, -1
+	for i, n := range names {
+		if n == string(EventPageExternalReload) && reloadAt < 0 {
+			reloadAt = i
+		}
+		if n == string(EventBlockChanged) && changedAt < 0 {
+			changedAt = i
+		}
+	}
+	if reloadAt < 0 || changedAt < 0 || reloadAt > changedAt {
+		t.Fatalf("expected page:external-reload before block:changed, got %v", names)
+	}
+}
+
+func TestHistoryWriteError_HidesPath(t *testing.T) {
+	leaked := &os.PathError{Op: "rename", Path: `C:\secret\vault\Work\Journal\Daily.md`, Err: os.ErrPermission}
+	err := historyWriteError(leaked)
+	if err == nil {
+		t.Fatal("expected mapped error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, `C:\`) || strings.Contains(msg, "Daily.md") || strings.Contains(msg, "secret") {
+		t.Fatalf("leaked path: %s", msg)
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationUnavailable {
+		t.Fatalf("mapped err = %v", err)
+	}
+	if ipc.Message != "could not write the page" {
+		t.Fatalf("write message = %q", ipc.Message)
+	}
+}
+
+func TestHistoryReadError_HidesPath(t *testing.T) {
+	leaked := &os.PathError{Op: "open", Path: `C:\secret\vault\.system\history\x.gz`, Err: os.ErrPermission}
+	err := historyReadError(leaked)
+	if err == nil {
+		t.Fatal("expected mapped error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, `C:\`) || strings.Contains(msg, ".system") || strings.Contains(msg, "secret") {
+		t.Fatalf("leaked path: %s", msg)
+	}
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodeNavigationUnavailable {
+		t.Fatalf("mapped err = %v", err)
+	}
+	notFound := historyReadError(history.ErrNotFound)
+	if !errors.As(notFound, &ipc) || ipc.Code != CodeNavigationNotFound {
+		t.Fatalf("not-found mapping = %v", notFound)
 	}
 }

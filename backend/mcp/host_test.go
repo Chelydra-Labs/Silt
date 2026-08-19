@@ -41,17 +41,24 @@ type fakeBridge struct {
 	setTypeLast    setTypeCall
 	setTypeFlagged []string
 	// Surgical write / read expansion (#795–#799).
-	createBlockN   int
-	standaloneN    int
-	standaloneIDs  []string
-	setOwnerCalls  []setOwnerCall
-	setTagsCalls   []setTagsCall
-	setDueCalls    []setDueCall
-	setStateCalls  []setStateCall
-	blocksByID     map[string]BlockRefResult
-	backlinks      db.BacklinksResult
-	backlinksErr   error
-	lastStandalone struct{ Title, Due, Status string }
+	createBlockN    int
+	standaloneN     int
+	standaloneIDs   []string
+	setOwnerCalls   []setOwnerCall
+	setTagsCalls    []setTagsCall
+	setDueCalls     []setDueCall
+	setStateCalls   []setStateCall
+	blocksByID      map[string]BlockRefResult
+	backlinks       db.BacklinksResult
+	backlinksErr    error
+	lastStandalone  struct{ Title, Due, Status string }
+	versions        map[string][]PageVersionInfo
+	versionBodies   map[string]string
+	listVersionsErr error
+	getVersionErr   error
+	restoreErr      error
+	restoreN        int
+	lastRestore     struct{ Notebook, Section, Page, VersionID string }
 }
 
 type setOwnerCall struct {
@@ -263,6 +270,50 @@ func (f *fakeBridge) GetBacklinksPaged(ctx context.Context, notebook, section, p
 		return db.BacklinksResult{}, f.backlinksErr
 	}
 	return f.backlinks, nil
+}
+
+func historyKey(notebook, section, page string) string {
+	return notebook + "\x00" + section + "\x00" + page
+}
+
+func (f *fakeBridge) ListPageVersions(ctx context.Context, notebook, section, page string) ([]PageVersionInfo, error) {
+	_ = ctx
+	if f.listVersionsErr != nil {
+		return nil, f.listVersionsErr
+	}
+	if f.versions == nil {
+		return []PageVersionInfo{}, nil
+	}
+	rows := f.versions[historyKey(notebook, section, page)]
+	if rows == nil {
+		return []PageVersionInfo{}, nil
+	}
+	return rows, nil
+}
+
+func (f *fakeBridge) GetPageVersion(ctx context.Context, notebook, section, page, versionID string) (string, error) {
+	_ = ctx
+	if f.getVersionErr != nil {
+		return "", f.getVersionErr
+	}
+	if f.versionBodies == nil {
+		return "", fmt.Errorf("page version not found")
+	}
+	body, ok := f.versionBodies[historyKey(notebook, section, page)+"\x00"+versionID]
+	if !ok {
+		return "", fmt.Errorf("page version not found")
+	}
+	return body, nil
+}
+
+func (f *fakeBridge) RestorePageVersion(ctx context.Context, notebook, section, page, versionID string) error {
+	_ = ctx
+	f.restoreN++
+	f.lastRestore = struct{ Notebook, Section, Page, VersionID string }{notebook, section, page, versionID}
+	if f.restoreErr != nil {
+		return f.restoreErr
+	}
+	return nil
 }
 
 func freePort(t *testing.T) int {

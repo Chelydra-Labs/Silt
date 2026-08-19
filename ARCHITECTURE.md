@@ -544,7 +544,7 @@ type TaskQueryFilter struct {
 All bindings hang off the single Wails v3 service (`*App` registered via `application.NewServiceWithOptions`) and are
 auto-exposed to the frontend as JSON RPC. Grouped by domain:
 
-- **Page history** — `ListPageVersions`, `GetPageVersion` (markdown body only), `RestorePageVersion` (body-only restore through the normal save + reindex path; current frontmatter is preserved; pre-restore bytes are captured first). Opt-in snapshots live under `<vault>/.system/history/` (linked: `<linkedRoot>/.system/history/`).
+- **Page history** — `ListPageVersions`, `GetPageVersion` (markdown body only), `RestorePageVersion` (body-only restore through the normal save + reindex path; current frontmatter is preserved; pre-restore bytes are captured first). `ListDeletedPageHistory` lists leftover snapshots whose live `.md` is missing. `RestoreDeletedPageVersion` recreates a missing page (refuses if the dest file exists; optional dest locator + history relocate). Plugin wrappers: `PluginListPageVersions` / `PluginGetPageVersion` (`read-files`) / `PluginRestorePageVersion` (`content-mutate`). Opt-in snapshots live under `<vault>/.system/history/` (linked: `<linkedRoot>/.system/history/`).
 - **Block I/O** — `FetchPageBlocks`, `SaveFileBlocks`, `FetchPageMarkdown` / `SavePageMarkdown` (raw source body), `UpdateBlockState`
   (task-checkbox transition + atomic file rewrite + re-index; returns the spawned
   recurrence instance's UUID on a recurring TODO/DOING→DONE transition, `""`
@@ -720,8 +720,9 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
    `frontend/src/plugins/stripReasoning.ts`.    The agent is **user-invoked only**,
    tool calls are **transparent**, and vault mutations follow
    `ai.features.agent_writes` (read_only / confirm / auto) with bulk ops
-   (`rename_tag`, `extract_and_save`) always staged behind a single-use
-   confirmation token. `extract_and_save` freezes rendered content at stage
+   (`rename_tag`, `extract_and_save`, `restore_page_version`) always staged
+   behind a single-use confirmation token. Restore-only phrasing uses a
+   third catalog (`qa` / `restore` / `full`). `extract_and_save` freezes rendered content at stage
    time (preview before commit). The agent may also search a shipped offline
    product-help corpus (`search_product_docs`); vault Q&A does not. See
    `docs/plugins/silt-ai-agent.md`.
@@ -752,9 +753,11 @@ auto-exposed to the frontend as JSON RPC. Grouped by domain:
    on an internal `startMu` (outside the status `mu`) so bind/Shutdown cannot
    interleave. **Tools:**
    read — `search_blocks`/`search_notes`, `read_page`/`read_blocks`,
-   `list_notebooks`, `get_page_metadata`, `get_backlinks`, `get_block`;
+   `list_notebooks`, `get_page_metadata`, `get_backlinks`, `get_block`,
+   `list_page_versions`, `get_page_version`;
    write (grant) — `create_page`, `append_to_page`, `insert_under_heading`,
-   `create_task`, `update_blocks`, `set_page_property`, `set_page_type`.
+   `create_task`, `update_blocks`, `set_page_property`, `set_page_type`,
+   `restore_page_version`.
    No delete/move/bulk.
   **Lifecycle:** start on vault open when enabled; stop on vault close/switch
   and `ServiceShutdown`; close-to-tray keeps MCP.

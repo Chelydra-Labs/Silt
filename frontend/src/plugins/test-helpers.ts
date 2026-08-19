@@ -75,6 +75,9 @@ export const v2CtxStubs: Pick<
   | 'readPluginAsset'
   | 'getNavigationTree'
   | 'addTaskComment'
+  | 'listPageVersions'
+  | 'getPageVersion'
+  | 'restorePageVersion'
 > = {
   getUiLocation: () => ({
     notebook: '',
@@ -174,5 +177,8 @@ export const v2CtxStubs: Pick<
   resolveAsset: () => Promise.resolve(''),
   readPluginAsset: () => Promise.resolve(''),
   getNavigationTree: () => Promise.resolve({ notebooks: [] }),
-  addTaskComment: () => Promise.resolve('')
+  addTaskComment: () => Promise.resolve(''),
+  listPageVersions: () => Promise.resolve([]),
+  getPageVersion: () => Promise.resolve(''),
+  restorePageVersion: () => Promise.resolve(true)
 }

@@ -58,6 +58,9 @@ export const IPCErrorCode = {
   CodeVaultClosing: 'vault_closing',
   CodeCapabilityDenied: 'capability_denied',
   CodePageExists: 'page_exists',
+  CodePageStillExists: 'page_still_exists',
+  CodePageHistoryExists: 'page_history_exists',
+  CodePageWriteStale: 'page_write_stale',
   CodeInvalidNavigationPath: 'invalid_navigation_path',
   CodeNavigationNotFound: 'navigation_not_found',
   CodeNavigationConflict: 'navigation_conflict',
@@ -80,12 +83,16 @@ export const IPCErrorCodeNames = [
   'CodeNavigationReveal',
   'CodeNavigationUnavailable',
   'CodePageExists',
+  'CodePageHistoryExists',
+  'CodePageStillExists',
+  'CodePageWriteStale',
   'CodeVaultClosing'
 ] as const
 
 // EventName — generated from the Go const block. Do not edit by hand.
 export const EventName = {
   EventBlockChanged: 'block:changed',
+  EventPageExternalReload: 'page:external-reload',
   EventConfigChanged: 'config:changed',
   EventConfigError: 'config:error',
   EventLinkedConfigChanged: 'linked-config:changed',
@@ -149,6 +156,7 @@ export const EventNameNames = [
   'EventMenuSettings',
   'EventMenuToggleFormatToolbar',
   'EventMenuToggleSidebar',
+  'EventPageExternalReload',
   'EventPageLinksRewritten',
   'EventPluginsChanged',
   'EventSecurityEvent',

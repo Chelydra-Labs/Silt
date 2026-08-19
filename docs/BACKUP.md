@@ -77,8 +77,16 @@ than 1 MB are not snapshotted.
 
 1. Turn on **Capture page history** in Settings → Editor.
 2. Open **Page history** from the editor chrome or the page’s sidebar menu.
-3. Preview a version (read-only), then Restore if you want that body back.
-   The current page is snapshotted first so restore can be undone.
+3. Preview a version (read-only), or Compare it with the current page, then
+   Restore if you want that body back. The current page is snapshotted first
+   so restore can be undone.
+4. After a delete, **Browse deleted pages** (Settings → Editor, or Page
+   history → Deleted pages) finds leftover snapshots. Restore recreates the
+   page at the old location, or Restore as… if that name is taken. Trash
+   still holds the latest file.
+  5. The in-app agent and Local MCP can list, preview, and restore versions
+    of a **live** page (`list_page_versions`, `get_page_version`,
+    `restore_page_version`). Recreating a deleted page from leftover
+    snapshots is UI-only: **Browse deleted pages** / **Restore as…**.
 
-Deleting a page leaves its history on disk. Trash still holds the latest
-file; older versions have no picker in this release.
+Deleting a page leaves its history on disk. Snapshots are not a backup.

@@ -80,6 +80,8 @@ automatically, so no client-side version configuration is needed.
 | `list_notebooks` | read | Navigation tree |
 | `get_backlinks` | read | Inbound page-links, block-refs, and embeds for a page (paged, default/max 50) |
 | `get_block` | read | Resolve block UUID → text/type/location; `embedded` if any inbound embed; missing → `exists=false` (not an error) |
+| `list_page_versions` | read | Retained page-history snapshots newest-first (`id`, `timestamp`, `source`, `bytes`); empty list when none |
+| `get_page_version` | read | Stored snapshot markdown body (no frontmatter); does not mutate the live page |
 | `create_page` | write grant | Empty page |
 | `append_to_page` | write grant | Append one block to an existing page end (prefer over `update_blocks` for single adds) |
 | `insert_under_heading` | write grant | Insert one block after a unique HEADER; bare leaf or `A::B` path; ambiguous/not-found → candidates |
@@ -88,6 +90,7 @@ automatically, so no client-side version configuration is needed.
 | `get_page_metadata` | read | Page type, schema-merged properties, raw frontmatter |
 | `set_page_property` | write grant | Single typed property; schema-validated — invalid values rejected before any file I/O |
 | `set_page_type` | write grant | Assign or clear (empty type) a page's note type; mismatches kept on disk and returned as flagged (no rejection) |
+| `restore_page_version` | write grant | Replace a **live** page body with a stored snapshot; keeps current frontmatter; snapshots pre-restore body when eligible. Deleted leftovers cannot be undeleted via MCP — use Browse deleted pages / Restore as… |
 
 ### Surgical writes
 

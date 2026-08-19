@@ -107,11 +107,16 @@ describe('agent-loop', () => {
     const toolCalls: { name: string }[] = []
     const toolResults: { content: string }[] = []
     const chunks: string[] = []
-    const res = await runAgent(ctx, 'what did you find?', [], {
-      onToolCall: (c) => toolCalls.push(c),
-      onToolResult: (r) => toolResults.push(r.result),
-      onAssistantText: (_chunk) => chunks.push(_chunk)
-    })
+    const res = await runAgent(
+      ctx,
+      'edit this note and tell me what you find',
+      [],
+      {
+        onToolCall: (c) => toolCalls.push(c),
+        onToolResult: (r) => toolResults.push(r.result),
+        onAssistantText: (_chunk) => chunks.push(_chunk)
+      }
+    )
 
     expect(res.cancelled).toBe(false)
     expect(res.hitIterationCap).toBe(false)
@@ -326,6 +331,29 @@ describe('agent-loop', () => {
     expect(prompt).toMatch(/read-only vault tools/i)
   })
 
+  it('buildSystemPrompt with restore tools does not advertise the write catalog', () => {
+    registerTool({
+      name: 'search_notes',
+      description: 'search vault',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => ({ content: '' })
+    })
+    registerTool({
+      name: 'restore_page_version',
+      description: 'restore',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => ({ content: '' })
+    })
+    const ctx = mockCtx(() => mockStream({ content: '', model: 'm' }))
+    const restoreTools = getTools().filter((t) =>
+      (['search_notes', 'restore_page_version'] as string[]).includes(t.name)
+    )
+    const prompt = buildSystemPrompt(ctx, undefined, restoreTools)
+    expect(prompt).toMatch(/restore a page version/i)
+    expect(prompt).not.toMatch(/create, and organize/i)
+    expect(prompt).toMatch(/host-confirmed/i)
+  })
+
   it('empty first search still fingerprints — identical retry is blocked', async () => {
     let handlerCalls = 0
     registerTool({
@@ -473,6 +501,21 @@ describe('agent-loop', () => {
     expect(detectWriteIntent('please rename the tag')).toBe(true)
     expect(detectWriteIntent('fix the typo on this page')).toBe(true)
     expect(detectWriteIntent('change the title of my note')).toBe(true)
+    const { detectCatalogMode } = await import('./agent-loop')
+    expect(detectCatalogMode("restore yesterday's version of Daily")).toBe(
+      'restore'
+    )
+    expect(detectCatalogMode('restore this page')).toBe('restore')
+    expect(detectCatalogMode('restore Daily')).toBe('restore')
+    expect(detectCatalogMode('please restore it')).toBe('restore')
+    expect(detectCatalogMode('revert my changes')).toBe('restore')
+    expect(detectCatalogMode('undo my changes')).toBe('restore')
+    expect(detectCatalogMode('undo the task I marked done')).toBe('qa')
+    expect(detectCatalogMode('show version history')).toBe('qa')
+    expect(detectCatalogMode('is this an old version')).toBe('qa')
+    expect(detectWriteIntent("restore yesterday's version of Daily")).toBe(
+      false
+    )
     expect(detectWriteIntent('write a summary of my notes')).toBe(false)
     expect(detectWriteIntent('what did I delete last week')).toBe(false)
     expect(detectWriteIntent('update me on the project')).toBe(false)
@@ -609,6 +652,52 @@ describe('agent-loop', () => {
     await runAgent(ctxWrite, 'create a note about the meeting', [])
     expect(writeTools[0]).toContain('create_note')
     expect(writeTools[0]).toContain('search_notes')
+  })
+
+  it('restore phrasing yields the full catalog including history tools', async () => {
+    for (const name of [
+      'search_notes',
+      'list_page_versions',
+      'get_page_version',
+      'restore_page_version',
+      'create_note'
+    ]) {
+      registerTool({
+        name,
+        description: name,
+        parameters: { type: 'object', properties: {} },
+        handler: async () => ({ content: '' })
+      })
+    }
+    const qaTools: string[][] = []
+    const restoreTools: string[][] = []
+    const ctxQa = mockCtx(() =>
+      mockStream({ content: 'answer', model: 'm' }, ['answer'])
+    )
+    const origQa = ctxQa.ai.complete.bind(ctxQa.ai)
+    ctxQa.ai.complete = ((req: unknown) => {
+      const r = req as { tools?: { name: string }[] }
+      qaTools.push((r.tools ?? []).map((t) => t.name))
+      return origQa(req as never)
+    }) as typeof ctxQa.ai.complete
+    await runAgent(ctxQa, 'what is in my notes about plants?', [])
+    expect(qaTools[0]).toContain('list_page_versions')
+    expect(qaTools[0]).toContain('get_page_version')
+    expect(qaTools[0]).not.toContain('restore_page_version')
+
+    const ctxRestore = mockCtx(() =>
+      mockStream({ content: 'ok', model: 'm' }, ['ok'])
+    )
+    const origR = ctxRestore.ai.complete.bind(ctxRestore.ai)
+    ctxRestore.ai.complete = ((req: unknown) => {
+      const r = req as { tools?: { name: string }[] }
+      restoreTools.push((r.tools ?? []).map((t) => t.name))
+      return origR(req as never)
+    }) as typeof ctxRestore.ai.complete
+    await runAgent(ctxRestore, "restore yesterday's version of Daily", [])
+    expect(restoreTools[0]).toContain('restore_page_version')
+    expect(restoreTools[0]).toContain('list_page_versions')
+    expect(restoreTools[0]).not.toContain('create_note')
   })
 
   it('stops when the abort signal is already aborted', async () => {
@@ -1109,7 +1198,7 @@ describe('agent-loop', () => {
     )
     const session = createAgentSession(ctx)
     let staged = false
-    const run = session.run('stage it', [], {
+    const run = session.run('edit this note', [], {
       onStaging: () => {
         staged = true
         session.cancel()
@@ -1223,7 +1312,7 @@ describe('agent-loop', () => {
         : mockStream({ content: 'done', model: 'm' })
     )
 
-    const res = await runAgent(ctx, 'run both', [], {
+    const res = await runAgent(ctx, 'edit this note', [], {
       onToolMessage: (message) => messages.push(message)
     })
 
@@ -1476,7 +1565,7 @@ describe('agent-loop staging', () => {
     // Capture tool messages by intercepting the second iteration's messages.
     // We approximate by reading the staging events and asserting the flow.
     const session = createAgentSession(ctx)
-    const p = session.run('delete b1 and b2', [], {
+    const p = session.run('delete this page', [], {
       onStaging: (e) => {
         stagingEvents.push(e)
         // Simulate the UX confirming immediately.
@@ -1553,7 +1642,7 @@ describe('agent-loop staging', () => {
     })
 
     const session = createAgentSession(ctx)
-    const p = session.run('extract', [], {
+    const p = session.run('extract and save', [], {
       signal: ac.signal,
       onStaging: (e) => {
         // Confirm first so commit starts with a live signal, then abort mid-commit.
@@ -1624,7 +1713,7 @@ describe('agent-loop staging', () => {
     // messages the second iteration saw via a spy on ctx.ai.complete.
     const completeSpy = ctx.ai.complete as ReturnType<typeof vi.fn>
     const session = createAgentSession(ctx)
-    await session.run('delete bx', [], {
+    await session.run('delete this page', [], {
       onStaging: (e) => {
         queueMicrotask(() => session.resolveStaging(e.token, false))
       }
@@ -1680,7 +1769,7 @@ describe('agent-loop staging', () => {
     })
     const completeSpy = ctx.ai.complete as ReturnType<typeof vi.fn>
 
-    await runAgent(ctx, 'delete bx', [])
+    await runAgent(ctx, 'delete this page', [])
 
     const secondCallMessages = (
       completeSpy.mock.calls[1][0] as { messages: PluginAIChatMessage[] }

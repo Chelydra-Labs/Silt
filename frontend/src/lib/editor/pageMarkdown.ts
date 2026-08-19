@@ -25,5 +25,8 @@ export async function fetchPageMarkdown(
   page: string
 ): Promise<string> {
   const result = await FetchPageMarkdown(notebook, section, page)
-  return typeof result === 'string' ? result : ''
+  if (typeof result !== 'string') {
+    throw new Error('Could not read the current page.')
+  }
+  return result
 }

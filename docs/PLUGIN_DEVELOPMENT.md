@@ -107,6 +107,16 @@ await ctx.setTaskTags(uuid, ['work/sprint-4', 'urgent'])  // surgical #hashtag r
 await ctx.setTaskTitle(uuid, 'Ship the v2 theme editor')  // tags + tokens preserved
 ```
 
+### Page history
+
+`listPageVersions(notebook, section, page)` returns retained snapshots newest-first (`id`, `timestamp`, `source`, `bytes`). An empty list means no snapshots — not an error. `getPageVersion(...)` returns the stored markdown body (no frontmatter) and does not mutate the live page. `restorePageVersion(...)` replaces the live body, keeps current frontmatter, and snapshots the pre-restore bytes so the restore is reversible. List/preview are gated by `read-files` (same bar as live file reads). Restore is gated by `content-mutate`.
+
+```ts
+const versions = await ctx.listPageVersions(notebook, section, page)
+const body = await ctx.getPageVersion(notebook, section, page, versions[0].id)
+await ctx.restorePageVersion(notebook, section, page, versions[0].id)
+```
+
 ### Navigating to a block
 
 To open a block (e.g. when a user clicks a result), dispatch a window event — no SDK call needed:
@@ -305,8 +315,9 @@ clear error.
 ### 7.2 Content-mutate capability (#156)
 
 Block CRUD operations (`createBlock`, `deleteBlock`, `moveBlock`,
-`applyBlocks`) are gated by the `content-mutate` capability. A plugin that
-mutates blocks must declare it in the manifest:
+`applyBlocks`) and `restorePageVersion` are gated by the `content-mutate`
+capability. A plugin that mutates blocks or restores page history must declare
+it in the manifest:
 
 ```json
 {
@@ -427,6 +438,11 @@ await ctx.createSection('Work', 'NewSection')
 await ctx.createNotebook('Personal')
 await ctx.deletePage('Work', 'Projects', 'OldPage')
 await ctx.renamePage('Work', 'Projects', 'OldName', 'NewName')
+
+// Page history (list/preview: read-files; restore: content-mutate)
+const versions = await ctx.listPageVersions('Work', 'Journal', 'Daily')
+const body = await ctx.getPageVersion('Work', 'Journal', 'Daily', versions[0].id)
+await ctx.restorePageVersion('Work', 'Journal', 'Daily', versions[0].id)
 ```
 
 ### 8.4 File I/O (#108)

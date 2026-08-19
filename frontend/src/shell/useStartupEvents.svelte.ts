@@ -19,6 +19,7 @@
 // Events.Off(name), which in Wails v3 nukes ALL listeners for a name.
 import { Events } from '@wailsio/runtime'
 import { EventName } from '../generated/enums'
+import { bindPageExternalReload } from '../lib/editor/editorRegistry.svelte'
 import {
   MarkFrontendReady,
   GetStartupEvents,
@@ -412,6 +413,7 @@ export function createStartupEvents(
     prevDisabled = deps.getSettings()?.plugins?.disabled ?? []
     deps.tabManager.initBaseline(deps.getSettings()?.ui?.open_tabs)
 
+    off.push(bindPageExternalReload())
     off.push(
       Events.On(EventName.EventConfigChanged, (ev) =>
         handleConfigChanged(ev as { data: SystemConfig })

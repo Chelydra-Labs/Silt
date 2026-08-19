@@ -57,6 +57,13 @@ type Bridge interface {
 	// and sets Embedded when any inbound embed references the id.
 	ResolveBlock(ctx context.Context, blockID string) (BlockRefResult, error)
 	GetBacklinksPaged(ctx context.Context, notebook, section, page, cursor string, limit int) (db.BacklinksResult, error)
+	// ListPageVersions returns retained snapshots newest-first. Missing
+	// history is an empty slice, not an error.
+	ListPageVersions(ctx context.Context, notebook, section, page string) ([]PageVersionInfo, error)
+	// GetPageVersion returns the stored markdown body (no frontmatter).
+	GetPageVersion(ctx context.Context, notebook, section, page, versionID string) (string, error)
+	// RestorePageVersion replaces the live page body with a stored version.
+	RestorePageVersion(ctx context.Context, notebook, section, page, versionID string) error
 	VaultPath() string
 }
 
@@ -113,3 +120,12 @@ const MaxBlocksRead = 200
 
 // MaxBlockTextRunes caps a single block body in write tools.
 const MaxBlockTextRunes = 32_000
+
+// PageVersionInfo is one retained snapshot row. Field names match the App
+// IPC contract so MCP clients see the same shape as ListPageVersions.
+type PageVersionInfo struct {
+	ID        string `json:"id"`
+	Timestamp string `json:"timestamp"`
+	Source    string `json:"source"`
+	Bytes     int    `json:"bytes"`
+}

@@ -25,6 +25,8 @@
     registerEditor,
     editorKey
   } from '../../lib/editor/editorRegistry.svelte'
+  import { coerceIPCError } from '../../lib/ipcError'
+  import { IPCErrorCode } from '../../generated/enums'
   import type { SourceSearchTarget } from '../../lib/editor/search/sourceSearch'
 
   // MarkdownSourceViewer — editable Source mode (#660) with optional read-only
@@ -97,6 +99,9 @@
   // after the post-write blocks update. Immediate fetch would load the
   // pre-restore file and can win if block:changed never changes blocksKey.
   let pendingExternalReload = false
+  /** Held until seedBuffer so a keystroke during the extra fetch cannot
+   *  schedule a save of the pre-restore buffer or trip Keep-mine. */
+  let forcedSeed = false
 
   // --- Local editing history (#861) --------------------------------------
   // One history per mounted viewer. Tab/Shift-Tab, paste, selection
@@ -180,6 +185,7 @@
     dirty = false
     saveError = null
     savePhase = 'idle'
+    forcedSeed = false
     history.reset({
       value,
       selection: { start: 0, end: 0, direction: 'forward' }
@@ -214,7 +220,7 @@
         // that raced with the user's first keystroke). Clobbering the
         // buffer now would silently destroy their work — fall through to
         // the conflict path so they can choose Keep mine or Reload.
-        if (dirty) {
+        if (dirty && !forcedSeed) {
           conflictPending = true
           return
         }
@@ -227,7 +233,7 @@
       }
     }
     if (seq !== seedSeq) return
-    if (dirty) {
+    if (dirty && !forcedSeed) {
       // Same protection on the fallback (reconstruct-from-blocks) path.
       conflictPending = true
       return
@@ -357,7 +363,7 @@
   }
 
   function scheduleSave(): void {
-    if (!editable || !notebook || !page || conflictPending) return
+    if (!editable || !notebook || !page || conflictPending || forcedSeed) return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       saveTimer = null
@@ -366,17 +372,21 @@
   }
 
   /** Persist dirty buffer. Returns true only when clean after the attempt. */
+  let saveGeneration = 0
+
   async function flushSave(): Promise<boolean> {
     if (!editable || !notebook || !page) {
       // Can't save — clean is success for menu Save; dirty is failure.
       return !dirty
     }
-    if (conflictPending) return false
+    if (conflictPending || forcedSeed) return false
     if (!dirty) return true
     const md = buffer
+    const gen = saveGeneration
     savePhase = 'saving'
     try {
       const saved = await savePageMarkdown(notebook, section, page, md)
+      if (gen !== saveGeneration) return false
       // Stamp before parent refresh so the blocks $effect can ignore self-saves
       // when the user typed during the IPC round-trip.
       lastSelfSavedKey = blocksKey(saved)
@@ -399,6 +409,11 @@
       // User typed during save — still dirty.
       return false
     } catch (e) {
+      if (gen !== saveGeneration) return false
+      if (coerceIPCError(e).code === IPCErrorCode.CodePageWriteStale) {
+        savePhase = 'idle'
+        return false
+      }
       saveError = e instanceof Error ? e.message : String(e)
       savePhase = 'error'
       return false
@@ -419,15 +434,22 @@
           clearTimeout(saveTimer)
           saveTimer = null
         }
-        if (conflictPending) return false
+        if (forcedSeed || conflictPending) return false
         if (!dirty) return true
         return await flushSave()
       },
       forceExternalReload: () => {
         pendingExternalReload = true
+        forcedSeed = true
+        saveGeneration++
+        if (saveTimer) {
+          clearTimeout(saveTimer)
+          saveTimer = null
+        }
       },
       clearExternalReload: () => {
         pendingExternalReload = false
+        forcedSeed = false
         seedSeq++
       },
       setProposedEdit: () => false,

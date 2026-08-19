@@ -68,7 +68,10 @@ import {
   PluginResolveAsset,
   PluginVaultScratchDir,
   PluginReadPluginAsset,
-  PluginListNavigation
+  PluginListNavigation,
+  PluginListPageVersions,
+  PluginGetPageVersion,
+  PluginRestorePageVersion
 } from '../../bindings/silt/app.js'
 import { Events } from '@wailsio/runtime'
 import { getActiveLocation } from './location.svelte'
@@ -80,6 +83,7 @@ import type {
   PluginAIStream,
   PluginAIToolCallDelta
 } from './sdk'
+import { getEditorForLocator } from '../lib/editor/editorRegistry.svelte'
 import {
   registerSlashCommand,
   unregisterSlashCommand
@@ -545,6 +549,56 @@ export function makePluginContext(
         section,
         page
       ).then(() => true),
+    listPageVersions: (notebook, section, page) =>
+      PluginListPageVersions(
+        pluginID,
+        sessionToken ?? '',
+        notebook,
+        section,
+        page
+      ).then((rows) =>
+        (rows ?? []).map((r) => ({
+          id: r.id,
+          timestamp: r.timestamp,
+          source: r.source,
+          bytes: r.bytes
+        }))
+      ),
+    getPageVersion: (notebook, section, page, versionId) =>
+      PluginGetPageVersion(
+        pluginID,
+        sessionToken ?? '',
+        notebook,
+        section,
+        page,
+        versionId
+      ).then((body) => (typeof body === 'string' ? body : '')),
+    restorePageVersion: async (notebook, section, page, versionId) => {
+      const editor = getEditorForLocator(notebook, section, page)
+      if (editor?.isDirty()) {
+        const clean = await editor.flush()
+        if (!clean) {
+          throw new Error(
+            "Couldn't save the current page before restoring. Fix the save error, then try again."
+          )
+        }
+      }
+      editor?.forceExternalReload()
+      try {
+        await PluginRestorePageVersion(
+          pluginID,
+          sessionToken ?? '',
+          notebook,
+          section,
+          page,
+          versionId
+        )
+      } catch (err) {
+        editor?.clearExternalReload()
+        throw err
+      }
+      return true
+    },
     renamePage: (notebook, section, oldName, newName) =>
       PluginRenamePage(
         pluginID,

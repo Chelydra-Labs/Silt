@@ -1,6 +1,8 @@
 import type { Editor } from 'svelte-tiptap'
 import { SaveFileBlocks } from '../../../bindings/silt/app.js'
 import type { ParsedBlock as BindingParsedBlock } from '../../../bindings/silt/backend/parser/models.js'
+import { IPCErrorCode } from '../../generated/enums'
+import { coerceIPCError } from '../ipcError'
 import { measureFrameBudget } from '../perf/frame-budget'
 import { docToBlocks } from './converters'
 import { pushNotification } from '../../notifications/store.svelte'
@@ -68,6 +70,9 @@ export class AutosaveManager {
   /** Bumps on each in-flight save so a deferred "saved" emit is ignored if a
    *  newer save has started (min-display floor must not race). */
   private saveGeneration = 0
+  /** When set, trigger/flush/save no-op so a post-restore keystroke cannot
+   *  write the pre-reload buffer. Cleared after setContent + markClean. */
+  private writesHeld = false
   private deps: AutosaveDeps
 
   constructor(deps: AutosaveDeps) {
@@ -76,6 +81,7 @@ export class AutosaveManager {
 
   /** Schedule a debounced save. Call on every editor transaction. */
   trigger(): void {
+    if (this.writesHeld) return
     this.markDirty()
     if (this.timeout) {
       clearTimeout(this.timeout)
@@ -96,6 +102,7 @@ export class AutosaveManager {
 
   /** Flush any pending save immediately. Call on unmount or page change. */
   async flush(): Promise<void> {
+    if (this.writesHeld) return
     if (this.timeout) {
       clearTimeout(this.timeout)
       this.timeout = null
@@ -116,6 +123,7 @@ export class AutosaveManager {
     }
     this.clearSavingFloor()
     this.clearSavedHold()
+    this.clearHoldTimer()
   }
 
   /** Mark the editor as clean (e.g. after loading new content). */
@@ -124,7 +132,50 @@ export class AutosaveManager {
     this.emit('idle', false, null)
   }
 
+  /** Drop a queued debounce and invalidate any in-flight save so it cannot
+   *  land as truth after an external reload (MCP/agent restore). */
+  cancelPending(): void {
+    if (this.timeout) {
+      clearTimeout(this.timeout)
+      this.timeout = null
+    }
+    this.saveQueued = false
+    this.saveGeneration++
+    this.clearSavingFloor()
+    this.clearSavedHold()
+  }
+
+  private holdTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** Suppress new saves until releaseWrites (armed external reload). */
+  holdWrites(timeoutMs = 8000): void {
+    this.writesHeld = true
+    this.cancelPending()
+    this.clearHoldTimer()
+    this.holdTimer = setTimeout(() => {
+      this.holdTimer = null
+      this.releaseWrites()
+    }, timeoutMs)
+  }
+
+  releaseWrites(): void {
+    this.clearHoldTimer()
+    this.writesHeld = false
+  }
+
+  areWritesHeld(): boolean {
+    return this.writesHeld
+  }
+
+  private clearHoldTimer(): void {
+    if (this.holdTimer) {
+      clearTimeout(this.holdTimer)
+      this.holdTimer = null
+    }
+  }
+
   private async save(): Promise<void> {
+    if (this.writesHeld) return
     if (this.pendingSave) {
       this.saveQueued = true
       return
@@ -151,6 +202,7 @@ export class AutosaveManager {
           // unknown at this IPC boundary.
           updatedBlocks as unknown as BindingParsedBlock[]
         )
+        if (this.saveGeneration !== saveGen) return
         this.deps.onStateChange(false, null)
         // Min-display floor is non-blocking: flush/pendingSave complete after
         // IPC so unmount is not delayed; UI still holds "Saving…" briefly.
@@ -161,6 +213,12 @@ export class AutosaveManager {
           page: this.deps.getPage()
         })
       } catch (e) {
+        if (this.saveGeneration !== saveGen) return
+        if (coerceIPCError(e).code === IPCErrorCode.CodePageWriteStale) {
+          this.deps.onStateChange(false, null)
+          this.emit('idle', false, null)
+          return
+        }
         const msg = e instanceof Error ? e.message : String(e)
         console.error('AutosaveManager: SaveFileBlocks failed:', e)
         // Errors skip the min-display floor — fail-loud immediately.
@@ -172,6 +230,7 @@ export class AutosaveManager {
           action: { label: 'Retry', run: () => this.save() }
         })
       }
+      if (this.saveGeneration !== saveGen) return
       // onUpdate fires on both success and failure paths: the parent needs
       // current blocks for rendering regardless of persistence status. The
       // dirty flag tracks save state; a failed save leaves dirty=true so

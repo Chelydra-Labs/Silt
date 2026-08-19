@@ -441,6 +441,7 @@
       // is voided — a user edit makes the buffer authoritative again and must
       // never be clobbered by a leaked pendingExternalReload (#345).
       pendingExternalReload = false
+      autosave.releaseWrites()
       slash.detectSlashCommand()
       isLastBlock = editorInstance
         ? editorInstance.state.doc.childCount <= 1
@@ -736,15 +737,23 @@
     const key = blocksContentKey(blocks)
     if (!editorInstance || editorInstance.isDestroyed) return
     // Fingerprint id+text so restore/replace with the same IDs still applies.
-    // A same-content echo (flush of the body already on screen) must not
-    // consume pendingExternalReload — that one-shot is for the restored body.
-    if (key === lastSyncedBlocksKey) return
+    // A same-content echo while not armed is a flush of the body already on
+    // screen — ignore it. Once forceExternalReload is armed, matching
+    // content still has to release the write hold (restore of the current
+    // body never changes the fingerprint).
+    if (key === lastSyncedBlocksKey) {
+      if (pendingExternalReload) {
+        pendingExternalReload = false
+        autosave.releaseWrites()
+      }
+      return
+    }
     // Don't clobber the editor's content while the user is actively editing.
     // The editor is the source of truth until blur; external updates wait —
     // unless a flush-then-replace sequence (pendingExternalReload) has made
     // the in-memory buffer stale and safe to overwrite.
     if (isFocused && !pendingExternalReload) return
-    pendingExternalReload = false
+    const reloading = pendingExternalReload
     lastSyncedBlocksKey = key
 
     suppressUpdate = true
@@ -754,6 +763,10 @@
     suppressUpdate = false
     // Reset save state — new content loaded, nothing is dirty (#167).
     autosave.markClean()
+    if (reloading) {
+      pendingExternalReload = false
+      autosave.releaseWrites()
+    }
   })
 
   // --- Auto-save (debounced, config-driven, same contract as legacy) --------
@@ -795,14 +808,17 @@
       key,
       isDirty: () => unsavedChanges,
       flush: async () => {
+        if (autosave.areWritesHeld()) return false
         await autosave.flush()
         return !unsavedChanges
       },
       forceExternalReload: () => {
         pendingExternalReload = true
+        autosave.holdWrites()
       },
       clearExternalReload: () => {
         pendingExternalReload = false
+        autosave.releaseWrites()
       },
       setProposedEdit: (opts) => {
         if (!editorInstance || editorInstance.isDestroyed) return false

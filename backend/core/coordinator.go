@@ -3,7 +3,9 @@ package core
 import (
 	"database/sql"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -74,12 +76,19 @@ func NormalizeFileLockPath(path string) string {
 	}
 	cleaned := filepath.Clean(path)
 	if filepath.IsAbs(cleaned) {
-		return cleaned
+		return foldLockPath(cleaned)
 	}
 	if abs, err := filepath.Abs(cleaned); err == nil {
-		return abs
+		return foldLockPath(abs)
 	}
-	return cleaned
+	return foldLockPath(cleaned)
+}
+
+func foldLockPath(path string) string {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.ToLower(path)
+	}
+	return path
 }
 
 // LockFileWrite runs task while holding the per-file write mutex for path,

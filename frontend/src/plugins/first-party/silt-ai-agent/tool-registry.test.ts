@@ -121,6 +121,24 @@ describe('tool-registry', () => {
     expect(res.error).toBe('kaboom')
   })
 
+  it('coerces Wails IPC error envelopes in dispatch catch', async () => {
+    registerTool({
+      name: 'boom-ipc',
+      description: 'throws envelope',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => {
+        throw new Error(
+          JSON.stringify({
+            code: 'navigation_not_found',
+            message: 'page version not found'
+          })
+        )
+      }
+    })
+    const res = await dispatchTool(noopCtx, 'boom-ipc', {})
+    expect(res.error).toBe('page version not found')
+  })
+
   it('validateArgs accepts integer for integer type and rejects mismatch', () => {
     const schema = {
       type: 'object',
@@ -198,6 +216,30 @@ describe('tool-registry', () => {
       {
         mode: 'read_only'
       }
+    )
+    expect(res.error).toMatch(/Vault writes are disabled/)
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('refuses restore_page_version in read_only mode', async () => {
+    const handler = vi.fn(async () => ({ content: 'restored' }))
+    registerTool({
+      name: 'restore_page_version',
+      description: 'restore',
+      parameters: { type: 'object', properties: {} },
+      handler,
+      commit: handler
+    })
+    const res = await dispatchTool(
+      noopCtx,
+      'restore_page_version',
+      {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        version_id: 'v-old'
+      },
+      { mode: 'read_only' }
     )
     expect(res.error).toMatch(/Vault writes are disabled/)
     expect(handler).not.toHaveBeenCalled()
@@ -301,5 +343,90 @@ describe('tool-registry', () => {
     expect(stageOperation).not.toHaveBeenCalled()
     expect(staged.stagedPreview?.severity).toBe('danger')
     expect(staged.stagedPreview?.details).toContain('frozen body')
+  })
+
+  it('stages restore_page_version before writing in confirm and auto', async () => {
+    stageOperation.mockClear()
+    const handler = vi.fn(async () => ({ content: 'restored' }))
+    registerTool({
+      name: 'restore_page_version',
+      description: 'restore',
+      parameters: {
+        type: 'object',
+        required: ['notebook', 'page', 'version_id'],
+        properties: {
+          notebook: { type: 'string' },
+          page: { type: 'string' },
+          version_id: { type: 'string' }
+        }
+      },
+      handler,
+      commit: handler
+    })
+    const args = {
+      notebook: 'Work',
+      page: 'Daily',
+      version_id: 'v-old'
+    }
+    const confirm = await dispatchTool(noopCtx, 'restore_page_version', args, {
+      mode: 'confirm'
+    })
+    expect(confirm.isStaged).toBe(true)
+    expect(confirm.stagedPreview?.severity).toBe('danger')
+    expect(handler).not.toHaveBeenCalled()
+    expect(stageOperation).toHaveBeenCalled()
+
+    stageOperation.mockClear()
+    const auto = await dispatchTool(noopCtx, 'restore_page_version', args, {
+      mode: 'auto'
+    })
+    expect(auto.isStaged).toBe(true)
+    expect(handler).not.toHaveBeenCalled()
+    expect(stageOperation).toHaveBeenCalled()
+  })
+
+  it('refuses restore_page_version when it is outside the turn catalog', async () => {
+    const handler = vi.fn(async () => ({ content: 'restored' }))
+    registerTool({
+      name: 'restore_page_version',
+      description: 'restore',
+      parameters: { type: 'object', properties: {} },
+      handler,
+      commit: handler
+    })
+    const res = await dispatchTool(
+      noopCtx,
+      'restore_page_version',
+      {
+        notebook: 'Work',
+        page: 'Daily',
+        version_id: 'v-old'
+      },
+      { mode: 'confirm', allowed: new Set(['search_notes']) }
+    )
+    expect(res.error).toMatch(/not available this turn/)
+    expect(res.isStaged).toBeFalsy()
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('refuses a non-mutating tool outside the turn catalog', async () => {
+    const handler = vi.fn(async () => ({ content: 'stats' }))
+    registerTool({
+      name: 'get_vault_statistics',
+      description: 'stats',
+      parameters: { type: 'object', properties: {} },
+      handler
+    })
+    const res = await dispatchTool(
+      noopCtx,
+      'get_vault_statistics',
+      {},
+      {
+        mode: 'confirm',
+        allowed: new Set(['search_notes'])
+      }
+    )
+    expect(res.error).toMatch(/not available this turn/)
+    expect(handler).not.toHaveBeenCalled()
   })
 })

@@ -295,8 +295,8 @@ type Config struct {
 	HTTPPort int `yaml:"http_port" json:"http_port"`
 	// WriteEnabled grants mutating tools (create_page, append_to_page,
 	// insert_under_heading, create_task, update_blocks, set_page_property,
-	// set_page_type). Read tools are always available when the host is running.
-	// Default false.
+	// set_page_type, restore_page_version). Read tools are always available
+	// when the host is running. Default false.
 	WriteEnabled bool `yaml:"write_enabled" json:"write_enabled"`
 }
 

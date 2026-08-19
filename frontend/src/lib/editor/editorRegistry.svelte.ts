@@ -14,6 +14,9 @@
 // affected editors AFTER writing so they show the replaced content instead
 // of a stale in-memory buffer.
 //
+import { Events } from '@wailsio/runtime'
+import { EventName } from '../../generated/enums'
+
 // Editors register on mount and unregister on destroy. Lookups are keyed by
 // the page triple (the same `\x00`-joined key the search/grouping code uses).
 
@@ -86,6 +89,23 @@ export function getEditor(key: string): EditorHandle | undefined {
   return editors.get(key)
 }
 
+/** Resolve an editor for a caller locator. Exact key first, then a
+ *  case-insensitive match so plugin restore can flush a tab registered
+ *  under the canonical triple when the caller passed a case variant. */
+export function getEditorForLocator(
+  notebook: string,
+  section: string,
+  page: string
+): EditorHandle | undefined {
+  const exact = editors.get(editorKey(notebook, section, page))
+  if (exact) return exact
+  const want = editorKey(notebook, section, page).toLowerCase()
+  for (const [key, handle] of editors) {
+    if (key.toLowerCase() === want) return handle
+  }
+  return undefined
+}
+
 /** All currently mounted editors (one per displayed tab). */
 export function getAllEditors(): EditorHandle[] {
   return [...editors.values()]
@@ -102,4 +122,27 @@ export function clearAllEditors(): void {
 /** Test-only: clear the registry between tests. */
 export function _resetEditorRegistryForTests(): void {
   editors.clear()
+}
+
+/** Arm forceExternalReload for a page after a Go-side restore (Local MCP). */
+export function bindPageExternalReload(): () => void {
+  return Events.On(EventName.EventPageExternalReload, (event) => {
+    const ev = event?.data as
+      { notebook?: string; section?: string; page?: string } | undefined
+    if (!ev?.notebook || ev.page == null) return
+    getEditorForLocator(
+      ev.notebook,
+      ev.section ?? '',
+      ev.page
+    )?.forceExternalReload()
+  })
+}
+
+/** Test helper: apply a page:external-reload payload to the registry. */
+export function _applyPageExternalReloadForTests(ev: {
+  notebook: string
+  section: string
+  page: string
+}): void {
+  getEditorForLocator(ev.notebook, ev.section, ev.page)?.forceExternalReload()
 }

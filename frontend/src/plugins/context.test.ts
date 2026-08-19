@@ -5,7 +5,7 @@
 // them exactly. Never hit real IPC — mock the Wails bindings (AGENTS.md
 // canonical pattern).
 
-import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   pluginUpdateTaskMeta: vi.fn(() => Promise.resolve(true)),
@@ -15,6 +15,13 @@ const mocks = vi.hoisted(() => ({
   pluginSetTaskOrder: vi.fn(() => Promise.resolve(true)),
   pluginSetTaskStartDate: vi.fn(() => Promise.resolve(true)),
   getPluginSettingsForNotebook: vi.fn(() => Promise.resolve({})),
+  pluginListPageVersions: vi.fn(
+    (): Promise<
+      Array<{ id: string; timestamp: string; source: string; bytes: number }>
+    > => Promise.resolve([])
+  ),
+  pluginGetPageVersion: vi.fn(() => Promise.resolve('')),
+  pluginRestorePageVersion: vi.fn(() => Promise.resolve()),
   getActiveLocation: vi.fn(() => ({
     notebook: 'Work',
     section: 'Journal',
@@ -30,7 +37,10 @@ vi.mock('$silt-app', () =>
     PluginUpdateTaskMeta: mocks.pluginUpdateTaskMeta,
     PluginSetTaskOrder: mocks.pluginSetTaskOrder,
     PluginSetTaskStartDate: mocks.pluginSetTaskStartDate,
-    GetPluginSettingsForNotebook: mocks.getPluginSettingsForNotebook
+    GetPluginSettingsForNotebook: mocks.getPluginSettingsForNotebook,
+    PluginListPageVersions: mocks.pluginListPageVersions,
+    PluginGetPageVersion: mocks.pluginGetPageVersion,
+    PluginRestorePageVersion: mocks.pluginRestorePageVersion
   })
 )
 
@@ -39,6 +49,11 @@ vi.mock('./location.svelte', () => ({
 }))
 
 import { makePluginContext } from './context'
+import {
+  editorKey,
+  registerEditor,
+  _resetEditorRegistryForTests
+} from '../lib/editor/editorRegistry.svelte'
 
 describe('makePluginContext — updateTaskMeta sentinel translation', () => {
   // F1 (#236): the SDK now threads pluginID + sessionToken through every
@@ -263,5 +278,134 @@ describe('makePluginContext — openSettings dispatches open-settings event', ()
     expect(events).toHaveLength(2)
     expect(events[0].detail).toBe('ai')
     expect(events[1].detail).toBe('')
+  })
+})
+
+describe('makePluginContext — page history wrappers', () => {
+  afterEach(() => {
+    _resetEditorRegistryForTests()
+    mocks.pluginRestorePageVersion.mockReset().mockResolvedValue(undefined)
+  })
+
+  function registerDirtyEditor(opts?: { flushOk?: boolean }): {
+    flush: ReturnType<typeof vi.fn>
+    forceExternalReload: ReturnType<typeof vi.fn>
+    clearExternalReload: ReturnType<typeof vi.fn>
+  } {
+    const flush = vi.fn(async () => opts?.flushOk !== false)
+    const forceExternalReload = vi.fn()
+    const clearExternalReload = vi.fn()
+    registerEditor({
+      key: editorKey('Work', 'Journal', 'Daily'),
+      isDirty: () => true,
+      flush,
+      forceExternalReload,
+      clearExternalReload,
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => true
+    })
+    return { flush, forceExternalReload, clearExternalReload }
+  }
+
+  it('threads session token through list/get/restore', async () => {
+    mocks.pluginListPageVersions.mockResolvedValueOnce([
+      {
+        id: 'v1',
+        timestamp: '2026-08-16T18:00:00Z',
+        source: 'editor',
+        bytes: 12
+      }
+    ])
+    mocks.pluginGetPageVersion.mockResolvedValueOnce('# body')
+    const ctx = makePluginContext('hist-plugin', 'tok-hist')
+    await expect(
+      ctx.listPageVersions('Work', 'Journal', 'Daily')
+    ).resolves.toEqual([
+      {
+        id: 'v1',
+        timestamp: '2026-08-16T18:00:00Z',
+        source: 'editor',
+        bytes: 12
+      }
+    ])
+    expect(mocks.pluginListPageVersions).toHaveBeenCalledWith(
+      'hist-plugin',
+      'tok-hist',
+      'Work',
+      'Journal',
+      'Daily'
+    )
+    await expect(
+      ctx.getPageVersion('Work', 'Journal', 'Daily', 'v1')
+    ).resolves.toBe('# body')
+    expect(mocks.pluginGetPageVersion).toHaveBeenCalledWith(
+      'hist-plugin',
+      'tok-hist',
+      'Work',
+      'Journal',
+      'Daily',
+      'v1'
+    )
+    await expect(
+      ctx.restorePageVersion('Work', 'Journal', 'Daily', 'v1')
+    ).resolves.toBe(true)
+    expect(mocks.pluginRestorePageVersion).toHaveBeenCalledWith(
+      'hist-plugin',
+      'tok-hist',
+      'Work',
+      'Journal',
+      'Daily',
+      'v1'
+    )
+  })
+
+  it('flushes a dirty editor registered under a case-variant locator', async () => {
+    const { flush, forceExternalReload } = registerDirtyEditor()
+    const ctx = makePluginContext('hist-plugin', 'tok-hist')
+    await expect(
+      ctx.restorePageVersion('work', 'journal', 'daily', 'v1')
+    ).resolves.toBe(true)
+    expect(flush).toHaveBeenCalled()
+    expect(forceExternalReload).toHaveBeenCalled()
+  })
+
+  it('flushes a dirty editor and arms external reload before restore', async () => {
+    const { flush, forceExternalReload, clearExternalReload } =
+      registerDirtyEditor()
+    const ctx = makePluginContext('hist-plugin', 'tok-hist')
+    await expect(
+      ctx.restorePageVersion('Work', 'Journal', 'Daily', 'v1')
+    ).resolves.toBe(true)
+    expect(flush).toHaveBeenCalled()
+    expect(forceExternalReload).toHaveBeenCalled()
+    expect(mocks.pluginRestorePageVersion).toHaveBeenCalled()
+    expect(clearExternalReload).not.toHaveBeenCalled()
+  })
+
+  it('fails restore when the dirty editor cannot flush', async () => {
+    const { flush, forceExternalReload } = registerDirtyEditor({
+      flushOk: false
+    })
+    const ctx = makePluginContext('hist-plugin', 'tok-hist')
+    await expect(
+      ctx.restorePageVersion('Work', 'Journal', 'Daily', 'v1')
+    ).rejects.toThrow(/save the current page/)
+    expect(flush).toHaveBeenCalled()
+    expect(forceExternalReload).not.toHaveBeenCalled()
+    expect(mocks.pluginRestorePageVersion).not.toHaveBeenCalled()
+  })
+
+  it('clears external reload when restore IPC fails', async () => {
+    const { forceExternalReload, clearExternalReload } = registerDirtyEditor()
+    mocks.pluginRestorePageVersion.mockRejectedValueOnce(new Error('nope'))
+    const ctx = makePluginContext('hist-plugin', 'tok-hist')
+    await expect(
+      ctx.restorePageVersion('Work', 'Journal', 'Daily', 'v1')
+    ).rejects.toThrow(/nope/)
+    expect(forceExternalReload).toHaveBeenCalled()
+    expect(clearExternalReload).toHaveBeenCalled()
   })
 })

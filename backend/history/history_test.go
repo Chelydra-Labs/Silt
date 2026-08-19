@@ -130,6 +130,63 @@ func TestPrune_OldestFirstAndRemainingReadable(t *testing.T) {
 	}
 }
 
+func TestRelocate_SameFileDoesNotDelete(t *testing.T) {
+	root := t.TempDir()
+	oldLoc := testLoc("Gone")
+	newLoc := testLoc("gone")
+	body := []byte("keep this snapshot")
+	if skip, err := Capture(root, oldLoc, body, "editor", time.Now().UTC(), Options{}); err != nil || skip != "" {
+		t.Fatalf("Capture: skip=%q err=%v", skip, err)
+	}
+	oldMan, err := manifestPath(root, oldLoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newMan, err := manifestPath(root, newLoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fa, errA := os.Stat(oldMan)
+	fb, errB := os.Stat(newMan)
+	folds := errA == nil && errB == nil && os.SameFile(fa, fb)
+
+	if err := Relocate(root, oldLoc, newLoc); err != nil {
+		t.Fatalf("Relocate: %v", err)
+	}
+
+	oldList, err := List(root, oldLoc)
+	if err != nil {
+		t.Fatalf("List old: %v", err)
+	}
+	newList, err := List(root, newLoc)
+	if err != nil {
+		t.Fatalf("List new: %v", err)
+	}
+	if folds {
+		if len(oldList) == 0 && len(newList) == 0 {
+			t.Fatal("case-fold Relocate deleted the manifest")
+		}
+		id := oldList[0].ID
+		if len(oldList) == 0 {
+			id = newList[0].ID
+		}
+		got, rerr := Read(root, oldLoc, id)
+		if rerr != nil {
+			got, rerr = Read(root, newLoc, id)
+		}
+		if rerr != nil || !bytes.Equal(got, body) {
+			t.Fatalf("case-fold history unreadable: %v", rerr)
+		}
+		return
+	}
+	if len(oldList) != 0 {
+		t.Fatalf("old locator still has %d entries", len(oldList))
+	}
+	if len(newList) != 1 {
+		t.Fatalf("new locator List len=%d, want 1", len(newList))
+	}
+}
+
 func TestRelocate_FollowsRename(t *testing.T) {
 	root := t.TempDir()
 	oldLoc := testLoc("OldName")
@@ -442,6 +499,59 @@ func TestConcurrentAppend(t *testing.T) {
 type errSkip struct{ s string }
 
 func (e errSkip) Error() string { return "skipped " + e.s }
+
+func TestListManifests_NestedRootAndEncoded(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now().UTC()
+	nested := Locator{Source: "vault", Notebook: "Work", Section: "Projects/Active", Page: "Nested"}
+	rootPage := Locator{Source: "vault", Notebook: "Books", Section: "", Page: "Dune"}
+	encoded := Locator{Source: "vault", Notebook: "Work", Section: "Journal", Page: "A/B"}
+	if _, err := Capture(root, nested, []byte("nested"), "editor", now, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Capture(root, rootPage, []byte("dune"), "editor", now, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Capture(root, encoded, []byte("slash"), "editor", now, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	// Unreadable leftover should not fail the walk.
+	junk := filepath.Join(root, ".system", "history", "pages", "vault", "Work", "not-a-manifest.txt")
+	if err := os.MkdirAll(filepath.Dir(junk), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(junk, []byte("nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	locs, err := ListManifests(root)
+	if err != nil {
+		t.Fatalf("ListManifests: %v", err)
+	}
+	want := map[string]Locator{
+		"Work|Projects/Active|Nested": nested,
+		"Books||Dune":                 rootPage,
+		"Work|Journal|A/B":            encoded,
+	}
+	if len(locs) != len(want) {
+		t.Fatalf("ListManifests len=%d, want %d (%+v)", len(locs), len(want), locs)
+	}
+	for _, loc := range locs {
+		key := loc.Notebook + "|" + loc.Section + "|" + loc.Page
+		got, ok := want[key]
+		if !ok {
+			t.Fatalf("unexpected locator %+v", loc)
+		}
+		if got.Source != loc.Source || got.Notebook != loc.Notebook || got.Section != loc.Section || got.Page != loc.Page {
+			t.Fatalf("locator %+v != %+v", loc, got)
+		}
+	}
+
+	empty, err := ListManifests(t.TempDir())
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("missing history dir: %v len=%d", err, len(empty))
+	}
+}
 
 func TestLast_MatchesNewest(t *testing.T) {
 	root := t.TempDir()

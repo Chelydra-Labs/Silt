@@ -1,6 +1,6 @@
 {
   "schema": "current-approved-v3",
-  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json",
+  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update ./cmd/inventory/current-approved-v3.json",
   "description": "Approved Wails v3 IPC surface snapshot. The CI parity gate fails on any missing/extra/changed *App method signature versus this file. Other sections (events, frontend imports) are tracked for review visibility and refreshed whenever the fixture is regenerated.",
   "inventory": {
     "methods": [
@@ -413,6 +413,10 @@
         "signature": "LinkNotebook(folderPath string) (config.LinkedNotebook, error)"
       },
       {
+        "name": "ListDeletedPageHistory",
+        "signature": "ListDeletedPageHistory() ([]DeletedPageHistory, error)"
+      },
+      {
         "name": "ListDomainPacks",
         "signature": "ListDomainPacks() ([]spellcheck.DomainPackInfo, error)"
       },
@@ -613,6 +617,10 @@
         "signature": "PluginFetch(pluginID, sessionToken string, input PluginFetchInput) (PluginFetchResult, error)"
       },
       {
+        "name": "PluginGetPageVersion",
+        "signature": "PluginGetPageVersion(pluginID, sessionToken, notebook, section, page, versionID string) (string, error)"
+      },
+      {
         "name": "PluginGetType",
         "signature": "PluginGetType(pluginID, sessionToken, id string) (types.TypeDef, error)"
       },
@@ -623,6 +631,10 @@
       {
         "name": "PluginListNavigation",
         "signature": "PluginListNavigation(pluginID, sessionToken string) (parser.NavigationTree, error)"
+      },
+      {
+        "name": "PluginListPageVersions",
+        "signature": "PluginListPageVersions(pluginID, sessionToken, notebook, section, page string) ([]PageVersionInfo, error)"
       },
       {
         "name": "PluginListTypes",
@@ -683,6 +695,10 @@
       {
         "name": "PluginResolveNotebookRoot",
         "signature": "PluginResolveNotebookRoot(pluginID, sessionToken, notebook string) (string, error)"
+      },
+      {
+        "name": "PluginRestorePageVersion",
+        "signature": "PluginRestorePageVersion(pluginID, sessionToken, notebook, section, page, versionID string) error"
       },
       {
         "name": "PluginSaveSubtreeBlocks",
@@ -875,6 +891,10 @@
       {
         "name": "ResolveTypeID",
         "signature": "ResolveTypeID(ref string) (string, error)"
+      },
+      {
+        "name": "RestoreDeletedPageVersion",
+        "signature": "RestoreDeletedPageVersion(notebook, section, page, versionID, destNotebook, destSection, destPage string) error"
       },
       {
         "name": "RestoreExampleTypes",
@@ -1139,6 +1159,7 @@
       "menu:toggle-format-toolbar",
       "menu:toggle-sidebar",
       "page-links:rewritten",
+      "page:external-reload",
       "plugins:changed",
       "security:event",
       "settings:fingerprint-mismatch",
@@ -1184,6 +1205,7 @@
       "frontend/src/components/TagsExplorer.svelte",
       "frontend/src/components/TipTapEditor.block-ref-suggest.test.ts",
       "frontend/src/components/TipTapEditor.context-menu.test.ts",
+      "frontend/src/components/TipTapEditor.external-reload.test.ts",
       "frontend/src/components/TipTapEditor.page-link-suggest.test.ts",
       "frontend/src/components/TipTapEditor.tag-suggest.test.ts",
       "frontend/src/components/TipTapEditor.template-insert.test.ts",
@@ -1191,6 +1213,8 @@
       "frontend/src/components/TitleBar.svelte",
       "frontend/src/components/VirtualScrollContainer.svelte",
       "frontend/src/components/VirtualScrollContainer.test.ts",
+      "frontend/src/components/editor/DeletedPageHistoryModal.svelte",
+      "frontend/src/components/editor/DeletedPageHistoryModal.test.ts",
       "frontend/src/components/editor/EmbedBlockNodeView.svelte",
       "frontend/src/components/editor/GlobalReplaceModal.svelte",
       "frontend/src/components/editor/GlobalReplaceModal.test.ts",
@@ -1320,6 +1344,7 @@
       "frontend/src/components/Sidebar.svelte",
       "frontend/src/components/TipTapEditor.block-ref-suggest.test.ts",
       "frontend/src/components/TipTapEditor.context-menu.test.ts",
+      "frontend/src/components/TipTapEditor.external-reload.test.ts",
       "frontend/src/components/TipTapEditor.page-link-suggest.test.ts",
       "frontend/src/components/TipTapEditor.tag-suggest.test.ts",
       "frontend/src/components/TipTapEditor.template-insert.test.ts",
@@ -1414,6 +1439,7 @@
       "menu:toggle-format-toolbar",
       "menu:toggle-sidebar",
       "page-links:rewritten",
+      "page:external-reload",
       "plugins:changed",
       "security:event",
       "settings:fingerprint-mismatch",
@@ -1433,6 +1459,6 @@
       "vault:moved",
       "vault:watch-coverage"
     ],
-    "plugin_method_count": 58
+    "plugin_method_count": 61
   }
 }

@@ -32,3 +32,14 @@ folder.
 | **Copy vault…** | Duplicate vault as another workspace here |
 | **Export vault…** | Portable backup or move to another machine |
 | **Import vault…** | Restore from a `.silt-vault` archive |
+
+## Page history (not a backup)
+
+Turn on **Capture page history** in Settings → Editor. Open **Page history**
+from the editor chrome to preview or Compare a version, then Restore a
+**live** page. After a delete, **Browse deleted pages** finds leftover
+snapshots; Restore recreates the page, or Restore as… if that name is taken.
+
+The in-app agent can list and preview versions and restore a live page
+(`restore_page_version` always asks for Confirm). Recreating a deleted page
+from leftovers is UI-only.

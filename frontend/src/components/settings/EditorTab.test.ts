@@ -170,4 +170,17 @@ describe('EditorTab page history (#937)', () => {
       })
     )
   })
+
+  it('Browse deleted pages dispatches silt:open-deleted-page-history', async () => {
+    const seen = vi.fn()
+    window.addEventListener('silt:open-deleted-page-history', seen)
+    resetThemeState(false)
+    render(EditorTab)
+    await tick()
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Browse deleted pages' })
+    )
+    expect(seen).toHaveBeenCalled()
+    window.removeEventListener('silt:open-deleted-page-history', seen)
+  })
 })

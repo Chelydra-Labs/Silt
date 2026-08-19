@@ -62,14 +62,27 @@ export const QA_TOOL_NAMES = [
   'search_product_docs',
   'read_blocks',
   'query_tasks',
-  'get_backlinks'
+  'get_backlinks',
+  'list_page_versions',
+  'get_page_version'
 ] as const
+
+/** Q&A plus restore — used when the user asks to restore/revert without other writes. */
+export const RESTORE_TOOL_NAMES = [
+  ...QA_TOOL_NAMES,
+  'restore_page_version'
+] as const
+
+export type AgentCatalogMode = 'qa' | 'restore' | 'full'
 
 // Write/organize intent for full catalog at turn start. Prefer multi-word
 // phrases; avoid bare verbs that dominate Q&A ("write a summary", "what did I
-// delete", "update me on…").
+// delete", "update me on…"). Restore/revert is a separate catalog.
 const WRITE_INTENT_RE =
   /\b((create|add|make) (a |the |new )?(note|task|page|block)|add note|new note|make a note|draft (a |the )?note|save (this|it|to)|put this|please rename|rename( tag| the| this)?|retitle|add tag|extract (and save|to)|organize (my |the )?notes|edit (the |this |my )?(note|task|block|page|title)|modify (the |this |my )?(note|task|block|page)|update (my |the |a |this )?(notes?|task|block|page|title)|delete (the |this |a )?(note|task|block|page|tag)|fix (the |this |a )?(typo|note|task|title)|change (the |this |a )?(title|note|task)|move this|write (a |the )?(note|task) to)\b/i
+
+const RESTORE_INTENT_RE =
+  /\b(restore|revert|roll[\s-]?back)\b|\bundo\b.{0,48}\b(version|snapshot|history|page|changes)\b/i
 
 /** Tool result bodies above this many bytes are truncated for the model. */
 export const TOOL_RESULT_MAX_BYTES = 10 * 1024
@@ -211,7 +224,14 @@ export interface AgentRunResult {
 
 /** Detect write/organize intent so the turn starts with the full tool catalog. */
 export function detectWriteIntent(userMessage: string): boolean {
-  return WRITE_INTENT_RE.test(userMessage)
+  return detectCatalogMode(userMessage) === 'full'
+}
+
+/** Q&A, restore-only, or full write catalog for this user message. */
+export function detectCatalogMode(userMessage: string): AgentCatalogMode {
+  if (WRITE_INTENT_RE.test(userMessage)) return 'full'
+  if (RESTORE_INTENT_RE.test(userMessage)) return 'restore'
+  return 'qa'
 }
 
 /** Keys whose string values are case-folded for anti-thrash (free-text query). */
@@ -281,6 +301,14 @@ export function buildSystemPrompt(
     ) &&
     toolsForTurn.length > 0 &&
     toolsForTurn.length <= QA_TOOL_NAMES.length
+  const restoreOnly =
+    !qaOnly &&
+    toolsForTurn != null &&
+    toolsForTurn.length > 0 &&
+    toolsForTurn.some((t) => t.name === 'restore_page_version') &&
+    toolsForTurn.every((t) =>
+      (RESTORE_TOOL_NAMES as readonly string[]).includes(t.name)
+    )
   const raw =
     location ??
     (typeof ctx.getUiLocation === 'function'
@@ -297,8 +325,10 @@ export function buildSystemPrompt(
   }
   const useToolsLine = qaOnly
     ? 'Use the available tools to search product help and read notes.'
-    : 'Use the available tools to search, read, create, and organize notes.'
-  const writePolicy = buildWritePolicyLines(mode, qaOnly)
+    : restoreOnly
+      ? 'Use the available tools to search, read notes, and restore a page version.'
+      : 'Use the available tools to search, read, create, and organize notes.'
+  const writePolicy = buildWritePolicyLines(mode, qaOnly, restoreOnly)
   return [
     'You are Silt AI Agent, a general-purpose assistant with first-class access',
     "to the user's Silt note vault via tools.",
@@ -332,9 +362,17 @@ export function buildSystemPrompt(
 
 function buildWritePolicyLines(
   mode: AgentWritesMode,
-  qaOnly: boolean
+  qaOnly: boolean,
+  restoreOnly = false
 ): string[] {
   const modeLine = `WRITE POLICY (active mode: ${mode}):`
+  if (restoreOnly && mode !== 'read_only') {
+    return [
+      modeLine,
+      'This turn can restore a page version (host-confirmed) and read notes.',
+      'Do not create, edit, or organize notes this turn.'
+    ]
+  }
   if (mode === 'read_only' || qaOnly) {
     return [
       modeLine,
@@ -350,8 +388,8 @@ function buildWritePolicyLines(
     return [
       modeLine,
       'Single-edit writes (create_note, create_task, update_block, update_task) may apply',
-      'immediately. Bulk rename_tag and extract_and_save always stage for user confirmation',
-      'before any vault mutation.',
+      'immediately. restore_page_version, rename_tag, and extract_and_save always stage',
+      'for user confirmation before any vault mutation.',
       'For page-relative writes ("this page", "here"), target the Current page from',
       'UI LOCATION unless the user names a different path.'
     ]
@@ -732,15 +770,19 @@ export async function runAgent(
       : captureUiLocation()
   const writeMode = readAgentWritesMode()
   // Q&A subset by default; full catalog when the user message shows write intent.
-  const mode: 'qa' | 'full' = detectWriteIntent(userMessage) ? 'full' : 'qa'
+  const mode = detectCatalogMode(userMessage)
   const allTools = getTools()
   const toolsForMode = (): AgentToolDef[] => {
-    const base =
+    const allowed =
       mode === 'full'
+        ? null
+        : mode === 'restore'
+          ? (RESTORE_TOOL_NAMES as readonly string[])
+          : (QA_TOOL_NAMES as readonly string[])
+    const base =
+      allowed == null
         ? allTools
-        : allTools.filter((t) =>
-            (QA_TOOL_NAMES as readonly string[]).includes(t.name)
-          )
+        : allTools.filter((t) => allowed.includes(t.name))
     return filterToolsForWritePolicy(base, writeMode)
   }
   let toolsForTurn = toolsForMode()
@@ -932,7 +974,8 @@ export async function runAgent(
               res = await raceAbort(
                 dispatchTool(ctx, call.name, args, {
                   mode: writeMode,
-                  signal: opts.signal
+                  signal: opts.signal,
+                  allowed: new Set(toolsForTurn.map((t) => t.name))
                 }),
                 opts.signal
               )

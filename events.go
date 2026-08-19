@@ -24,6 +24,10 @@ type EventName string
 const (
 	// Block / content mutations.
 	EventBlockChanged EventName = "block:changed"
+	// Page-scoped restore/replace from a path that cannot flush the editor
+	// first (Local MCP). Frontend arms forceExternalReload before applying
+	// the following block:changed so a focused buffer cannot overwrite disk.
+	EventPageExternalReload EventName = "page:external-reload"
 
 	// Configuration.
 	EventConfigChanged               EventName = "config:changed"

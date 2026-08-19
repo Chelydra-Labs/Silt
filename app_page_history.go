@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,10 +28,10 @@ const (
 	historyReasonRename  = "rename"
 )
 
-// maybeCapturePageVersion snapshots prev (the on-disk bytes about to be
-// overwritten) when page history is enabled. It must be called under
-// LockFileWrite, before WriteFileAtomic. Errors are logged and never
-// returned — history I/O must not fail a page save.
+// maybeCapturePageVersion snapshots prev (the bytes being replaced) when
+// page history is enabled. Callers must hold LockFileWrite. Prefer calling
+// after a successful write so a failed write cannot evict a snapshot.
+// Errors are logged and never returned — history I/O must not fail a page save.
 func (a *App) maybeCapturePageVersion(loc history.Locator, prev, incoming []byte, reason string) {
 	if a == nil || a.vaultPath == "" {
 		return
@@ -100,6 +102,67 @@ func (a *App) historyRoot(source string) string {
 	return ""
 }
 
+// sanitizeDeletedLocator rejects on-disk locators that would not pass
+// resolvePageHistory (encoded traversal, control chars, absolute segments).
+func sanitizeDeletedLocator(loc history.Locator) (history.Locator, bool) {
+	nb := sanitizePathSegment(loc.Notebook)
+	pg := sanitizePathSegment(loc.Page)
+	if nb == "" || pg == "" || nb != loc.Notebook || pg != loc.Page {
+		return history.Locator{}, false
+	}
+	sec, err := validateSectionPath(loc.Section, true)
+	if err != nil || sec != loc.Section {
+		return history.Locator{}, false
+	}
+	return history.Locator{Source: loc.Source, Notebook: nb, Section: sec, Page: pg}, true
+}
+
+// Swappable so restore-as tests can fail the dest write after Relocate.
+var atomicPageWrite = parser.WriteFileAtomic
+
+func liveStatError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if os.IsNotExist(err) {
+		return NewIPCError(CodeNavigationNotFound, "page not found")
+	}
+	log.Printf("page history: live page stat failed: %v", err)
+	return NewIPCError(CodeNavigationUnavailable, "could not check whether that page still exists")
+}
+
+func historyWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if os.IsNotExist(err) {
+		return NewIPCError(CodeNavigationNotFound, "page not found")
+	}
+	log.Printf("page history: page write failed: %v", err)
+	return NewIPCError(CodeNavigationUnavailable, "could not write the page")
+}
+
+func historyFileError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if os.IsNotExist(err) {
+		return NewIPCError(CodeNavigationNotFound, "page not found")
+	}
+	return historyReadError(err)
+}
+
+func historyReadError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, history.ErrNotFound) {
+		return NewIPCError(CodeNavigationNotFound, "page version not found")
+	}
+	log.Printf("page history: snapshot store read failed: %v", err)
+	return NewIPCError(CodeNavigationUnavailable, "snapshot store read failed")
+}
+
 func editorSourceIntervalApplies(source string) bool {
 	return source == historyReasonEditor || source == historyReasonSource
 }
@@ -166,7 +229,7 @@ func (a *App) ListPageVersions(notebook, section, page string) ([]PageVersionInf
 	}
 	entries, err := history.List(root, loc)
 	if err != nil {
-		return nil, err
+		return nil, historyReadError(err)
 	}
 	out := make([]PageVersionInfo, 0, len(entries))
 	for _, e := range entries {
@@ -193,17 +256,15 @@ func (a *App) GetPageVersion(notebook, section, page, versionID string) (string,
 	}
 	raw, err := history.Read(root, loc, versionID)
 	if err != nil {
-		if errors.Is(err, history.ErrNotFound) {
-			return "", NewIPCError(CodeNavigationNotFound, "page version not found")
-		}
-		return "", err
+		return "", historyReadError(err)
 	}
 	_, body := parser.SplitFrontmatter(string(raw))
 	return body, nil
 }
 
 // RestorePageVersion replaces the live page body with a stored version.
-// Current frontmatter is preserved. The pre-restore bytes are captured first.
+// Current frontmatter is preserved. The pre-restore bytes are captured
+// after the write succeeds so a failed restore cannot evict a snapshot.
 func (a *App) RestorePageVersion(notebook, section, page, versionID string) error {
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
@@ -231,26 +292,25 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 				if os.IsNotExist(err) {
 					writeErr = NewIPCError(CodeNavigationNotFound, "page not found")
 				} else {
-					writeErr = err
+					writeErr = historyFileError(err)
 				}
 				return
 			}
 			snapshot, err := history.Read(root, loc, versionID)
 			if err != nil {
-				if errors.Is(err, history.ErrNotFound) {
-					writeErr = NewIPCError(CodeNavigationNotFound, "page version not found")
-				} else {
-					writeErr = err
-				}
+				writeErr = historyReadError(err)
 				return
 			}
 			_, restoreBody := parser.SplitFrontmatter(string(snapshot))
 			contentBytes, err := os.ReadFile(filePath)
 			if err != nil {
-				writeErr = fmt.Errorf("failed to read existing file: %w", err)
+				writeErr = historyFileError(err)
 				return
 			}
-			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, restoreBody, historyReasonRestore)
+			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, restoreBody, historyReasonRestore, false)
+			if writeErr == nil {
+				a.bumpPageWriteEpoch(safeNotebook, safeSection, safePage)
+			}
 		})
 	})
 	if writeErr != nil {
@@ -270,6 +330,11 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 		}
 	}
 	a.coordinator.ReleaseBlockMutexes(removed)
+	// Arm focused editors before block:changed so MCP/plugin restores
+	// cannot be undone by the next autosave.
+	a.emit(EventPageExternalReload, parser.BlockChangedEvent{
+		Notebook: safeNotebook, Section: safeSection, Page: safePage,
+	})
 	// Page-scoped emit so Edit-mode TipTap reloads even when IDs are unchanged
 	// or the restored body has no block IDs (empty / first version).
 	a.emitBlockChanged("", safeNotebook, safeSection, safePage, "")
@@ -283,12 +348,13 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 
 // writePageMarkdownLocked replaces a page body while preserving current
 // frontmatter. The caller MUST already hold LockFileWrite for filePath.
-func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page, displayNotebook, displaySection, displayPage string, contentBytes []byte, markdown, reason string) ([]parser.ParsedBlock, error) {
+func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page, displayNotebook, displaySection, displayPage string, contentBytes []byte, markdown, reason string, skipCapture bool) ([]parser.ParsedBlock, error) {
 	frontmatter, _ := parser.SplitFrontmatter(string(contentBytes))
 	if frontmatter == "" {
 		today := time.Now().Format("2006-01-02")
-		frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
-			strconv.Quote(displayNotebook), strconv.Quote(displaySection), strconv.Quote(displayPage), strconv.Quote(today))
+		createdStr := time.Now().Format("2006-01-02T15:04:05")
+		frontmatter = fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ncreated: %s\ntags: []\n---\n",
+			strconv.Quote(displayNotebook), strconv.Quote(displaySection), strconv.Quote(displayPage), strconv.Quote(today), strconv.Quote(createdStr))
 	}
 	body := markdown
 	if body != "" && !strings.HasSuffix(body, "\n") {
@@ -300,10 +366,13 @@ func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page,
 	}
 	newContent += body
 
-	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 	a.tracker.RegisterWrite(filePath)
-	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
-		return nil, err
+	if err := atomicPageWrite(filePath, []byte(newContent)); err != nil {
+		log.Printf("page write: atomic write failed for %s/%s/%s: %v", notebook, section, page, err)
+		return nil, historyWriteError(err)
+	}
+	if !skipCapture {
+		a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 	}
 	parsedBlocks, meta, _, _, parseErr := parser.ParseFileContent(
 		newContent, notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab,
@@ -322,21 +391,382 @@ func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page,
 	return parsedBlocks, nil
 }
 
-func (a *App) relocatePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage string) {
+// DeletedPageHistory is one orphan locator that still has retained snapshots.
+type DeletedPageHistory struct {
+	Notebook        string `json:"notebook"`
+	Section         string `json:"section"`
+	Page            string `json:"page"`
+	Source          string `json:"source"`
+	VersionCount    int    `json:"versionCount"`
+	LatestTimestamp string `json:"latestTimestamp"`
+	LatestBytes     int    `json:"latestBytes"`
+}
+
+const maxDeletedPageHistory = 500
+
+// ListDeletedPageHistory returns leftover snapshots whose live .md is gone.
+func (a *App) ListDeletedPageHistory() ([]DeletedPageHistory, error) {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" || a.db == nil {
+		return nil, fmt.Errorf("vault not loaded")
+	}
+	var out []DeletedPageHistory
+	vaultRows, err := a.collectDeletedHistory(a.vaultPath, "vault", func(loc history.Locator) string {
+		return filepath.Join(a.vaultPath, loc.Notebook, loc.Section, loc.Page+".md")
+	})
+	if err != nil {
+		return nil, historyReadError(err)
+	}
+	out = append(out, vaultRows...)
+
+	a.configMu.RLock()
+	linked := append([]config.LinkedNotebook(nil), a.cfg.LinkedNotebooks...)
+	a.configMu.RUnlock()
+	for _, ln := range linked {
+		if strings.TrimSpace(ln.RootPath) == "" {
+			continue
+		}
+		root := ln.RootPath
+		rows, lerr := a.collectDeletedHistory(root, "linked", func(loc history.Locator) string {
+			return filepath.Join(root, loc.Section, loc.Page+".md")
+		})
+		if lerr != nil {
+			log.Printf("page history: list linked manifests failed: %v", lerr)
+			continue
+		}
+		out = append(out, rows...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].LatestTimestamp == out[j].LatestTimestamp {
+			return out[i].Notebook+out[i].Section+out[i].Page < out[j].Notebook+out[j].Section+out[j].Page
+		}
+		return out[i].LatestTimestamp > out[j].LatestTimestamp
+	})
+	if len(out) > maxDeletedPageHistory {
+		out = out[:maxDeletedPageHistory]
+	}
+	if out == nil {
+		out = []DeletedPageHistory{}
+	}
+	return out, nil
+}
+
+func (a *App) collectDeletedHistory(root, wantSource string, livePath func(history.Locator) string) ([]DeletedPageHistory, error) {
+	locs, err := history.ListManifests(root)
+	if err != nil {
+		return nil, err
+	}
+	var out []DeletedPageHistory
+	for _, loc := range locs {
+		if loc.Source != wantSource {
+			continue
+		}
+		safe, ok := sanitizeDeletedLocator(loc)
+		if !ok {
+			log.Printf("page history: skip leftover with invalid locator %q/%q/%q", loc.Notebook, loc.Section, loc.Page)
+			continue
+		}
+		_, resolvedRoot, liveFile, _, _, _, _, rerr := a.resolvePageHistory(safe.Notebook, safe.Section, safe.Page)
+		if rerr == nil && resolvedRoot != "" && resolvedRoot != root {
+			log.Printf("page history: skip leftover %q/%q/%q — name now resolves to a different store", safe.Notebook, safe.Section, safe.Page)
+			continue
+		}
+		p := livePath(safe)
+		if rerr == nil && liveFile != "" {
+			p = liveFile
+		}
+		if !isPathWithinRoot(p, root) {
+			log.Printf("page history: skip leftover outside history root %q/%q/%q", safe.Notebook, safe.Section, safe.Page)
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			continue
+		} else if err != nil && !os.IsNotExist(err) {
+			log.Printf("page history: skip leftover, live stat indeterminate %s/%s/%s: %v", safe.Notebook, safe.Section, safe.Page, err)
+			continue
+		}
+		entries, err := history.List(root, loc)
+		if err != nil {
+			log.Printf("page history: list leftover %s/%s/%s: %v", loc.Notebook, loc.Section, loc.Page, err)
+			continue
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		latest := entries[0]
+		out = append(out, DeletedPageHistory{
+			Notebook:        safe.Notebook,
+			Section:         safe.Section,
+			Page:            safe.Page,
+			Source:          safe.Source,
+			VersionCount:    len(entries),
+			LatestTimestamp: latest.Time.UTC().Format(time.RFC3339),
+			LatestBytes:     latest.Bytes,
+		})
+	}
+	return out, nil
+}
+
+// RestoreDeletedPageVersion recreates a missing page from a retained snapshot.
+// Empty destNotebook+destPage restore at the original locator. If the source
+// live file or dest file already exists the call fails without writing.
+func (a *App) RestoreDeletedPageVersion(notebook, section, page, versionID, destNotebook, destSection, destPage string) error {
+	a.vaultMu.RLock()
+	defer a.vaultMu.RUnlock()
+	if a.vaultPath == "" || a.db == nil {
+		return fmt.Errorf("vault not loaded")
+	}
+	destNBIn := strings.TrimSpace(destNotebook)
+	destPageIn := strings.TrimSpace(destPage)
+	if destNBIn == "" && destPageIn == "" {
+		destNotebook, destSection, destPage = notebook, section, page
+	} else if destNBIn == "" || destPageIn == "" {
+		return NewIPCError(CodeInvalidNavigationPath, "restore destination needs both a notebook and a page name")
+	}
+	origLoc, origRoot, origFile, _, _, _, _, err := a.resolvePageHistory(notebook, section, page)
+	if err != nil {
+		return err
+	}
+	if origRoot == "" || strings.TrimSpace(versionID) == "" {
+		return NewIPCError(CodeNavigationNotFound, "page version not found")
+	}
+	destLoc, destRoot, destFile, destSource, destNB, destSec, destPg, err := a.resolvePageHistory(destNotebook, destSection, destPage)
+	if err != nil {
+		return err
+	}
+	if destRoot == "" {
+		return NewIPCError(CodeNavigationNotFound, "page not found")
+	}
+	if destRoot != origRoot {
+		return NewIPCError(CodeInvalidNavigationPath, "restore that snapshot in the same vault or linked notebook it came from")
+	}
+	destNotebookDir, err := a.resolveNotebookDir(destNB, destSource)
+	if err != nil {
+		return err
+	}
+	if !isCreationPathWithinRoot(destFile, destNotebookDir) {
+		return fmt.Errorf("path escapes notebook root")
+	}
+	if _, err := os.Stat(origFile); err == nil {
+		return NewIPCError(CodePageStillExists, "that page still exists; restore it from page history instead")
+	} else if !os.IsNotExist(err) {
+		return liveStatError(err)
+	}
+
+	snapshot, err := history.Read(origRoot, origLoc, versionID)
+	if err != nil {
+		return historyReadError(err)
+	}
+	remapped, err := remapSnapshotIdentity(snapshot, destNB, destSec, destPg)
+	if err != nil {
+		return err
+	}
+	_, restoreBody := parser.SplitFrontmatter(string(remapped))
+
+	occupiedMsg := "restoring here would overwrite an existing page; choose a different location"
+	leftoverOccupiedMsg := "that name still has leftover page history; restore it in place or choose a different location"
+	needRelocate := destLoc != origLoc && !history.SameStore(origRoot, origLoc, destLoc)
+	if _, err := os.Stat(destFile); err == nil {
+		return NewIPCError(CodePageExists, occupiedMsg)
+	} else if !os.IsNotExist(err) {
+		return historyWriteError(err)
+	}
+	if needRelocate && destLeftoverOccupied(destRoot, destLoc) {
+		return NewIPCError(CodePageHistoryExists, leftoverOccupiedMsg)
+	}
+
+	a.wg.Add(1)
+	defer a.wg.Done()
+
+	var result []parser.ParsedBlock
+	var writeErr error
+	a.coordinator.LockPathsWrite([]string{origFile, destFile}, func() {
+		if _, err := os.Stat(origFile); err == nil {
+			writeErr = NewIPCError(CodePageStillExists, "that page still exists; restore it from page history instead")
+			return
+		} else if !os.IsNotExist(err) {
+			writeErr = liveStatError(err)
+			return
+		}
+		if _, err := os.Stat(destFile); err == nil {
+			writeErr = NewIPCError(CodePageExists, occupiedMsg)
+			return
+		} else if !os.IsNotExist(err) {
+			writeErr = historyWriteError(err)
+			return
+		}
+		if _, rerr := history.Read(origRoot, origLoc, versionID); rerr != nil {
+			writeErr = historyReadError(rerr)
+			return
+		}
+		if err := os.MkdirAll(filepath.Dir(destFile), 0755); err != nil {
+			writeErr = historyWriteError(err)
+			return
+		}
+		needRelocate := destLoc != origLoc && !history.SameStore(origRoot, origLoc, destLoc)
+		relocated := false
+		if needRelocate {
+			if destLeftoverOccupied(destRoot, destLoc) {
+				writeErr = NewIPCError(CodePageHistoryExists, leftoverOccupiedMsg)
+				return
+			}
+			leftover, lerr := history.List(origRoot, origLoc)
+			if lerr != nil {
+				writeErr = historyReadError(lerr)
+				return
+			}
+			if len(leftover) == 0 {
+				writeErr = NewIPCError(CodeNavigationNotFound, "those snapshots were already restored")
+				return
+			}
+			writeErr = a.movePageHistory(destSource, origLoc.Notebook, origLoc.Section, origLoc.Page, destNB, destSec, destPg, false)
+			if writeErr != nil {
+				return
+			}
+			relocated = true
+		}
+		// Remapped snapshot supplies frontmatter (type/tags/created/…). Skip
+		// capture: there is no live file, and a synthetic prev would evict a
+		// real version at the cap.
+		result, writeErr = a.writePageMarkdownLocked(
+			destFile, destSource, destNB, destSec, destPg,
+			destNB, destSec, destPg,
+			remapped, restoreBody, historyReasonRestore, true,
+		)
+		if writeErr != nil && relocated {
+			if backErr := a.movePageHistory(destSource, destNB, destSec, destPg, origLoc.Notebook, origLoc.Section, origLoc.Page, false); backErr != nil {
+				log.Printf("page history: relocate-back after write failure: %v", backErr)
+			}
+			return
+		}
+		if relocated {
+			a.prunePageHistory(destSource, destNB, destSec, destPg)
+		}
+		if writeErr == nil {
+			a.bumpPageWriteEpoch(destNB, destSec, destPg)
+		}
+	})
+	if writeErr != nil {
+		return writeErr
+	}
+
+	_ = result
+	a.emit(EventPageExternalReload, parser.BlockChangedEvent{
+		Notebook: destNB, Section: destSec, Page: destPg,
+	})
+	a.emitBlockChanged("", destNB, destSec, destPg, "")
+	if err := a.reconcileNavigationPage(destNB, destSec, destPg, destPg, false); err != nil {
+		log.Printf("page history: restore reconcile failed for %s/%s/%s: %v", destNB, destSec, destPg, err)
+	}
+	return nil
+}
+
+// remapSnapshotIdentity keeps snapshot frontmatter (type, tags, created, …)
+// and rewrites only the path identity to the sanitized dest. Snapshots with
+// no frontmatter are left unchanged so writePageMarkdownLocked can mint.
+func remapSnapshotIdentity(snapshot []byte, notebook, section, page string) ([]byte, error) {
+	content := string(snapshot)
+	fm, _ := parser.SplitFrontmatter(content)
+	if fm == "" {
+		return snapshot, nil
+	}
+	var err error
+	content, err = parser.SetFrontmatterField(content, "notebook", notebook)
+	if err != nil {
+		return nil, err
+	}
+	content, err = parser.SetFrontmatterField(content, "section", section)
+	if err != nil {
+		return nil, err
+	}
+	content, err = parser.SetFrontmatterField(content, "page", page)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(content), nil
+}
+
+func pageWriteEpochKey(notebook, section, page string) string {
+	key := notebook + "\x00" + section + "\x00" + page
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.ToLower(key)
+	}
+	return key
+}
+
+func (a *App) snapshotPageWriteEpoch(notebook, section, page string) uint64 {
+	if a == nil {
+		return 0
+	}
+	a.pageWriteEpochMu.Lock()
+	defer a.pageWriteEpochMu.Unlock()
+	if a.pageWriteEpoch == nil {
+		return 0
+	}
+	return a.pageWriteEpoch[pageWriteEpochKey(notebook, section, page)]
+}
+
+func (a *App) bumpPageWriteEpoch(notebook, section, page string) {
+	if a == nil {
+		return
+	}
+	a.pageWriteEpochMu.Lock()
+	defer a.pageWriteEpochMu.Unlock()
+	if a.pageWriteEpoch == nil {
+		a.pageWriteEpoch = make(map[string]uint64)
+	}
+	a.pageWriteEpoch[pageWriteEpochKey(notebook, section, page)]++
+}
+
+func (a *App) rejectStalePageWrite(notebook, section, page string, snap uint64) error {
+	if a.snapshotPageWriteEpoch(notebook, section, page) != snap {
+		return NewIPCError(CodePageWriteStale, "the page was updated elsewhere; reload and try again")
+	}
+	return nil
+}
+
+// afterPageWriteEpochSnapshot runs after a save snapshots the page epoch and
+// before it waits on LockFileWrite. Tests use it to commit a restore while
+// the save is already in flight.
+var afterPageWriteEpochSnapshot func()
+
+func destLeftoverOccupied(root string, loc history.Locator) bool {
+	entries, err := history.List(root, loc)
+	return err == nil && len(entries) > 0
+}
+
+func (a *App) relocatePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage string) error {
+	return a.movePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage, true)
+}
+
+func (a *App) movePageHistory(source, oldNotebook, oldSection, oldPage, newNotebook, newSection, newPage string, prune bool) error {
 	root := a.historyRoot(source)
 	if root == "" {
-		return
+		return nil
 	}
 	oldLoc := historyLoc(source, oldNotebook, oldSection, oldPage)
 	newLoc := historyLoc(source, newNotebook, newSection, newPage)
 	if err := history.Relocate(root, oldLoc, newLoc); err != nil {
 		log.Printf("page history: relocate failed: %v", err)
+		return NewIPCError(CodeNavigationUnavailable, "could not move the snapshot history")
+	}
+	if prune {
+		a.prunePageHistory(source, newNotebook, newSection, newPage)
+	}
+	return nil
+}
+
+func (a *App) prunePageHistory(source, notebook, section, page string) {
+	root := a.historyRoot(source)
+	if root == "" {
 		return
 	}
 	_, max, _ := a.pageHistorySettings()
-	if max > 0 {
-		if err := history.Prune(root, newLoc, max); err != nil {
-			log.Printf("page history: prune after relocate failed: %v", err)
-		}
+	if max <= 0 {
+		return
+	}
+	if err := history.Prune(root, historyLoc(source, notebook, section, page), max); err != nil {
+		log.Printf("page history: prune after relocate failed: %v", err)
 	}
 }

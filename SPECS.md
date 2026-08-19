@@ -793,7 +793,7 @@ export interface SiltPlugin {
 
 The active `notebook/section/page` from the navigator is bound into the context as LIVE reactive getters; reading them inside a Svelte reactive context (template, `$derived`, `$effect`) tracks navigation changes automatically. `sqliteQuery` is read-only (anything other than SELECT/WITH is rejected). `getPluginSettings` resolves per-active-notebook so a plugin rendering for a linked notebook sees the co-located overrides; writes still persist to the vault config via `updatePluginSetting`. See `docs/PLUGIN_DEVELOPMENT.md` for the full author guide.
 
-**v2 SDK.** The PluginContext was expanded with: a capability/permission model (`capabilities` in the manifest, per-vault grants in `config.yaml`); lifecycle hooks (`onVaultOpen`/`onVaultClose`/`onShutdown`); a typed event bus (`ctx.on`); content CRUD (`createBlock`/`deleteBlock`/`moveBlock` + page/section/notebook CRUD); file I/O (`readFile`/`writeFile`/`deleteFile`/`listDir` + scratch space); OS integration (`openInNativeHandler`/`openUrl`/pickers/clipboard/notify); network/fetch (Go-side proxy, `network` capability-gated); editor extension points (slash-command registry + generic `embedBlock` node); rendered UI surfaces (sandboxed iframe + postMessage bridge); a declarative settings schema (`settings` in the manifest, generated UI); and the AI surface (`ctx.ai.complete` / `ctx.ai.embed`). The AI surface carries optional `tools` / `tool_choice` and returns `tool_calls` (`PluginAIToolDef` / `PluginAIToolChoice` / `PluginAIToolCall`); `messages` supports a `tool` role (with `tool_call_id` / `tool_calls`) for multi-turn tool use. Every privileged binding is gated server-side by `requireGrant`; `exec` is deferred. See `docs/PLUGIN_DEVELOPMENT.md` §8 for the full surface.
+**v2 SDK.** The PluginContext was expanded with: a capability/permission model (`capabilities` in the manifest, per-vault grants in `config.yaml`); lifecycle hooks (`onVaultOpen`/`onVaultClose`/`onShutdown`); a typed event bus (`ctx.on`); content CRUD (`createBlock`/`deleteBlock`/`moveBlock` + page/section/notebook CRUD); page history (`listPageVersions` / `getPageVersion` / `restorePageVersion` — list/get are `read-files`, restore is `content-mutate`); file I/O (`readFile`/`writeFile`/`deleteFile`/`listDir` + scratch space); OS integration (`openInNativeHandler`/`openUrl`/pickers/clipboard/notify); network/fetch (Go-side proxy, `network` capability-gated); editor extension points (slash-command registry + generic `embedBlock` node); rendered UI surfaces (sandboxed iframe + postMessage bridge); a declarative settings schema (`settings` in the manifest, generated UI); and the AI surface (`ctx.ai.complete` / `ctx.ai.embed`). The AI surface carries optional `tools` / `tool_choice` and returns `tool_calls` (`PluginAIToolDef` / `PluginAIToolChoice` / `PluginAIToolCall`); `messages` supports a `tool` role (with `tool_call_id` / `tool_calls`) for multi-turn tool use. Every privileged binding is gated server-side by `requireGrant`; `exec` is deferred. See `docs/PLUGIN_DEVELOPMENT.md` §8 for the full surface.
 
 **AI tool-calling contract (#595).** The chat surface is provider-agnostic: the host maps the unified `tools` / `tool_choice` onto each provider's wire shape (OpenAI-compat functions, Anthropic `tool_use`, Google `functionDeclarations`) and decodes the model's tool invocations back into a single `tool_calls` result. The exact types a plugin consumes:
 
@@ -1213,10 +1213,12 @@ editor:
   # writes always capture when enabled (hash-skip still applies). History
    # I/O never fails a page save. Pages larger than 1 MiB are not snapshotted
    # (the save still succeeds). Snapshots are not a backup: they live in
-   # the vault, sync with it, and are not encrypted. Restore replaces the
-   # page body only and keeps the live frontmatter. Deleting a page leaves
-   # its history in place. max_versions_per_page is count-pruned oldest-first
-   # (clamped 1–500). See ARCHITECTURE.md storage tiers.
+    # the vault, sync with it, and are not encrypted. Restore replaces the
+    # page body only and keeps the live frontmatter. Deleting a page leaves
+    # its history in place; leftover snapshots are browsable and can recreate
+    # the page at the old locator or a chosen free one. Trash still holds the
+    # latest file. max_versions_per_page is count-pruned oldest-first
+    # (clamped 1–500). See ARCHITECTURE.md storage tiers.
   auto_versioning_enabled: false
   max_versions_per_page: 50
   auto_versioning_min_interval_sec: 300
