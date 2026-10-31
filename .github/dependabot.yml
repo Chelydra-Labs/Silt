@@ -1,5 +1,8 @@
 version: 2
 updates:
+  # Cooldown is the primary supply-chain control: a malicious or broken release
+  # is usually pulled within a day or two of publication, so holding updates
+  # back means upstream catches it before it reaches this repo.
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
@@ -7,6 +10,8 @@ updates:
     cooldown:
       default-days: 3
       semver-major-days: 7
+      semver-minor-days: 5
+      semver-patch-days: 3
     groups:
       patch:
         update-types:
@@ -22,6 +27,8 @@ updates:
     cooldown:
       default-days: 3
       semver-major-days: 7
+      semver-minor-days: 5
+      semver-patch-days: 3
     groups:
       patch:
         update-types:
@@ -29,14 +36,31 @@ updates:
       minor:
         update-types:
           - "minor"
+    # The Wails v3 Go module and the @wailsio/runtime npm package must stay on
+    # the same version (ADR 0004), and the bump has to absorb the Go toolchain
+    # floor and the GTK4/WebKitGTK 6.0 default. A grouped automatic bump cannot
+    # do that, so Wails moves only through the deliberate upgrade tracked in
+    # #982. Remove this rule once that lands. (Modern Dependabot also refuses
+    # grouped updates that mix package managers, so the cross-file PR was never
+    # a real possibility; this encodes the intent explicitly.)
+    ignore:
+      - dependency-name: "github.com/wailsapp/wails/v3"
 
+  # Actions run inside CI, so they get the longer cooldown. Grouping is limited
+  # to minor+patch: a major action bump becomes its own PR instead of riding
+  # along in a batch, so it gets reviewed on its own. Note this does not protect
+  # against a retagged release (version tags are mutable references);
+  # SHA-pinning the release-critical actions is a separate decision.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
     cooldown:
-      default-days: 3
+      default-days: 7
     groups:
       actions:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
