@@ -521,7 +521,9 @@ notebook, per-notebook plugin overrides live at
 carries its own config with it — not in the vault. The co-located file is
 READ-ONLY to Silt (user-authored); plugin settings continue to persist to the
 vault-scoped `config.yaml` via the atomic `UpdatePluginSetting` path. The
-co-located file is purely an override layer.
+co-located file is purely an override layer. This read-only rule is scoped to
+the co-located config file alone — it does not restrict page content, which
+remains fully editable in place (see the linked-notebook write paths above).
 
 Merge precedence: vault-scoped config.yaml is the baseline; a linked
 notebook's co-located file overlays it per-key (linked wins). Nested maps
