@@ -25,11 +25,11 @@ tool output after migration.
 ## Decision
 
 Upgrade to Wails v3 on a single migration branch. Pin the exact version
-in `go.mod`, `package.json` (`@wailsio/runtime` at the matching beta),
+in `go.mod`, `package.json` (`@wailsio/runtime` at the matching version),
 and CI (CLI installed from the `go.mod` pin). Current pin:
-`v3.0.0-beta.9` / `@wailsio/runtime` `3.0.0-beta.9`. Windows + Linux
-only; macOS is out of scope. Subsequent cooled-down beta bumps keep
-this architecture; they do not reopen the v2→v3 cutover.
+`v3.0.0` / `@wailsio/runtime` `3.0.0`. Windows + Linux only; macOS is out
+of scope. Wails v3.0 defaults to GTK4; use the `gtk3` build tag when a
+Linux environment needs the GTK3 compatibility stack.
 
 ### Key architectural decisions
 

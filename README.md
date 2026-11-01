@@ -98,7 +98,7 @@ Each concern in Silt has a single source of truth. Refer to these documents for 
 
 ### Prerequisites
 
-Ensure you have **Go (v1.26+)**, **Node.js (v22+)**, and the **Wails CLI** globally configured.
+Ensure you have **Go (v1.26.10+)**, **Node.js (v22+)**, and the **Wails CLI** globally configured.
 
 ### Setting Up a Local Build
 
