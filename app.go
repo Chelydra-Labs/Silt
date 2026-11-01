@@ -70,9 +70,16 @@ type App struct {
 	// snapshotted the prior epoch aborts instead of reverting disk.
 	pageWriteEpoch   map[string]uint64
 	pageWriteEpochMu sync.Mutex
-	vaultPath        string
-	spacesPerTab     int
-	wg               sync.WaitGroup
+	// pageLoadFingerprints holds the external-edit baseline per page file
+	// (#1005), keyed by NormalizeFileLockPath like pageWriteEpoch. Captured at
+	// the editor load points, re-checked inside LockFileWrite by the
+	// whole-page save funnels, refreshed by Silt's own writes. See
+	// app_conflict_fingerprint.go.
+	pageLoadFingerprints   map[string]FileFingerprint
+	pageLoadFingerprintsMu sync.RWMutex
+	vaultPath              string
+	spacesPerTab           int
+	wg                     sync.WaitGroup
 
 	// cfg is the parsed .system/config.yaml, the single source of truth for
 	// non-vault-path settings. configMu guards it; it is replaced wholesale on

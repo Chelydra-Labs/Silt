@@ -55,8 +55,17 @@ func (a *App) FetchPageBlocks(notebook, section, page string) ([]parser.ParsedBl
 	a.coordinator.WithDBRead(func() {
 		res, err = a.db.FetchPageBlocks(source, notebook, section, page)
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	return res, err
+	// Snapshot the on-disk baseline so a later whole-page save can refuse to
+	// clobber an external edit (#1005). Best-effort by design (see
+	// capturePageLoadFingerprint); the DB read stays the load's source of
+	// truth.
+	a.capturePageFingerprintByLocator(source, notebook, section, page)
+
+	return res, nil
 }
 
 // DistinctOwners returns the sorted, de-duplicated set of task owners in the
@@ -803,10 +812,14 @@ func (a *App) FetchPageMarkdown(notebook, section, page string) (string, error) 
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// An absent baseline still matters: an externally created file
+			// must conflict with a later save (#1005).
+			a.capturePageLoadFingerprint(filePath)
 			return "", nil
 		}
 		return "", fmt.Errorf("read page markdown: %w", err)
 	}
+	a.capturePageLoadFingerprint(filePath)
 	_, body := parser.SplitFrontmatter(string(contentBytes))
 	return body, nil
 }
