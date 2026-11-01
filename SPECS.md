@@ -55,11 +55,73 @@ Modern personal knowledge management (PKM) and task-management tools are fundame
 
 Silt is an uncompromised, local-first desktop application designed to bridge structured notebooks with daily chronological capture streams. It treats simple, human-readable Markdown text files on your local drive as the immutable database of record. Simultaneously, it uses a lightweight, compiled Go-based backend and an in-memory SQLite indexing cache to serve real-time multi-dimensional productivity views:
 
-The Document View: A seamless, virtualized infinite scrolling page of notes organized by days.
+The Document View: One virtualized, seamlessly scrolling document per Page.
+A Page is a focused topic rather than an unbounded daily journal — the
+temporal dimension is carried per block, in each block's `file_date`.
 
 The silt-tasks Plugin: A single unified Tasks hub exposing the same task set through three internal display modes — **List** (a time-horizon roll-up), **Board** (drag-and-drop status columns), and **Calendar** (a spatial month/week grid) — over one grouping-first engine.
 
 The Sovereign Principle: The local directory structure is the single source of truth. The application runtime acts strictly as a reactive viewport, transforming and writing text mutations safely back to disk without vendor lock-in.
+
+1.3 Requirement Priorities (the critical few)
+
+Two priorities govern every product decision: **(A) taking notes** and
+**(B) keeping and tracking actions/to-dos**. Everything Silt builds must
+serve one of them. The tiers below are the tie-breaker when effort or
+scope is contested; ADR `docs/decisions/0010-requirement-priorities.md`
+records the reasoning and the dissent.
+
+**Tier 0 — existential (never traded):**
+
+1. **The file is the product.** Canonical human-readable GFM on disk with
+   no app-private encoding; SQLite is always re-derivable. If Silt
+   disappears, notes and tasks remain readable in any text editor.
+2. **No unrecoverable loss on any write path.** Atomic/crash-safe saves,
+   visible save failures, recoverable destructive operations, and never
+   silently overwriting a file changed by another writer. This applies
+   uniformly across vault and linked roots.
+
+**Tier 1A — note-taking:**
+
+3. **Fast capture.** Typing never blocks on disk or IPC (16ms frame
+   budget, §7.2).
+4. **External folders editable in place** (§3.2) — including recovery and
+   conflict safety on those roots.
+5. **Round-trip fidelity.** Unrecognized/foreign markdown survives
+   parse → edit → save without normalization.
+6. **One retrieval surface over notes *and* tasks.** Full-text search plus
+   task-attribute filters, with a text query available where tasks are
+   filtered.
+7. **Attachments preserved; task ↔ note context reachable** (backlinks).
+
+**Tier 1B — task tracking:**
+
+8. **One-gesture capture** of a task from any surface.
+9. **Task metadata travels with the task** in plain text (status, dates,
+   owner, priority, order, dependencies).
+10. **Reversible destructive mutation.**
+11. **Overdue/today answerable at a glance** — a canonical list with
+    filters.
+12. **A rapid multi-dimension management surface.** Moving a task between
+    states, and reassigning owner/priority/tag, must be a direct
+    interaction — not a modal per task. Board is that surface today; the
+    requirement is the capability, not the specific view.
+13. **Dependency enforcement** — a blocked task must not be completable
+    silently.
+
+**Tier 2 — deliberate later:** Calendar view; recursive page-tree
+nesting (block-level indentation is Tier 1); recurrence authoring;
+dependency-authoring UX; AI-derived artifacts and semantic retrieval;
+plugin modularity; typed notes; themes; graph view.
+
+**Tier 3 / not now:** persistent generated-artifact surfaces (dashboards,
+agent views); semantic retrieval as a *required* path.
+
+**Explicitly not goals:** a fixed idle-RAM figure, a fixed large-vault
+ingest threshold, and byte-exact parity with every third-party renderer.
+The durable property is "no app-private syntax in the file"; the specific
+numbers and tool lists are not requirements.
+
 
 2. Technical Stack & Decoupled Architecture
 
