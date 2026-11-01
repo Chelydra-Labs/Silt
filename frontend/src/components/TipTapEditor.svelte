@@ -786,6 +786,20 @@
 
   let unsavedChanges = $state(false)
 
+  // Read-only while a conflict-grade hold is armed (#1005): the buffer was
+  // declared discardable (keep_theirs / cross-surface resolution) and the
+  // armed reload will replace whatever is typed here — accepting keystrokes
+  // would silently destroy them, so the surface refuses input and says why
+  // until the reload lands and releases the hold.
+  let conflictHold = $state(false)
+
+  $effect(() => {
+    const editor = editorInstance
+    if (!editor || editor.isDestroyed) return
+    const editable = !conflictHold
+    if (editor.isEditable !== editable) editor.setEditable(editable)
+  })
+
   const autosave = new AutosaveManager({
     getEditor: () => editorInstance,
     getNotebook: () => notebook,
@@ -797,7 +811,10 @@
     onStateChange: (dirty) => {
       unsavedChanges = dirty
     },
-    onSaveStateChange: (state) => onSaveStateChange?.(state)
+    onSaveStateChange: (state) => onSaveStateChange?.(state),
+    onConflictHoldChange: (held) => {
+      conflictHold = held
+    }
   })
 
   function triggerAutoSave(): void {
@@ -1019,6 +1036,12 @@
       <TableContextToolbar editor={editorInstance} />
     {/if}
     {#if $editorStore}
+      {#if conflictHold}
+        <p class="conflict-hold-notice" role="status">
+          This page has an unresolved change conflict. Editing here is disabled
+          until it's resolved.
+        </p>
+      {/if}
       <EditorContent editor={$editorStore} />
     {/if}
   {/if}
@@ -1535,6 +1558,12 @@
     width: 100%;
     max-width: var(--editor-measure, 70ch);
     margin-inline: auto;
+  }
+
+  .tiptap-editor-host .conflict-hold-notice {
+    margin: 0 0 8px;
+    font-size: 0.78rem;
+    color: var(--color-status-warning, #b8860b);
   }
 
   .tiptap-editor-host :global(.ProseMirror) {

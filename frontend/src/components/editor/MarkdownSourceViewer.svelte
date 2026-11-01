@@ -519,14 +519,18 @@
   // viewer must not save — the pending resolution decides what disk holds,
   // and a fresh-mount re-fetch would otherwise re-baseline straight over the
   // external version. `inherited` marks a latch this viewer did not raise
-  // itself; when it clears, the save-hold clears and the buffer re-seeds,
-  // keeping dirty edits for the honest "external change detected" offer.
-  // The latch key distinguishes HOW it cleared: same locator means a
-  // resolution (the owning surface settles its own state); a different
-  // locator means the parent superseded it after a rename/move — the backend
-  // stash stays keyed to the OLD path, so nothing can resolve it and the
-  // hold must release without discarding the user's dirty buffer.
-  let conflictLatchInherited = false
+  // itself; while inherited the surface is READ-ONLY with an inline notice —
+  // text typed here cannot reach the stash (a cross-funnel refusal keeps the
+  // owning surface's first stash) and would be silently destroyed by the
+  // unmount handoff, so the surface must not accept it (#1005). When the
+  // latch clears, the save-hold clears and the buffer re-seeds, keeping dirty
+  // edits for the honest "external change detected" offer. The latch key
+  // distinguishes HOW it cleared: same locator means a resolution (the owning
+  // surface settles its own state); a different locator means the parent
+  // superseded it after a rename/move — the backend stash stays keyed to the
+  // OLD path, so nothing can resolve it and the hold must release without
+  // discarding the user's dirty buffer.
+  let conflictLatchInherited = $state(false)
   let conflictLatchWasActive = false
   let conflictLatchKey = ''
 
@@ -750,6 +754,13 @@
     selection: SourceHistorySelection,
     opts: { coalesce?: boolean } = {}
   ): void {
+    if (conflictLatchInherited) {
+      // Read-only while another surface owns the conflict latch: a save from
+      // here would be refused cross-funnel and the text destroyed on unmount
+      // (#1005). The textarea is readonly for typing; FindBar edits route
+      // through here and must honor the same contract.
+      return
+    }
     buffer = nextValue
     markDirtyAndSchedule()
     history.push({ value: nextValue, selection }, opts)
@@ -1054,8 +1065,10 @@
     // fingerprint, and REPLACES this funnel's stash with the typed buffer
     // (same-funnel newest-wins), so any later resolution — from either
     // surface — replays or archives the typed text instead of losing it.
-    // For an inherited latch over an edit-origin stash this is a harmless
-    // no-op refusal (cross-funnel keeps the first stash).
+    // This only fires on the OWNING surface's latch (this viewer refused its
+    // own save); an inherited latch keeps the surface read-only, so its
+    // buffer never diverges and there is nothing to hand off — the catch
+    // below then treats any refusal as the expected outcome.
     if (saveRefused && dirty && notebook && page && buffer !== refusedBuffer) {
       void savePageMarkdown(notebook, section, page, buffer).catch((e) => {
         // The refusal itself is the expected handoff outcome; anything
@@ -1162,6 +1175,16 @@
       {/if}
     </div>
   </div>
+  {#if editable && conflictLatchInherited}
+    <!-- The non-owning surface under a live conflict: typing here cannot be
+         saved (the owning surface's stash is kept cross-funnel), so the
+         surface is read-only and says why, instead of accepting text it
+         would silently destroy (#1005). -->
+    <p class="conflict-hold-notice" role="status">
+      This page has an unresolved change conflict. Editing here is disabled
+      until it's resolved in the other view.
+    </p>
+  {/if}
   <div
     class="source-body"
     role={editable ? undefined : 'document'}
@@ -1178,6 +1201,7 @@
         class="source-code source-textarea"
         value={buffer}
         wrap="off"
+        readonly={conflictLatchInherited}
         onbeforeinput={onBeforeInput}
         oninput={onInput}
         onkeydown={onKeyDown}
@@ -1294,6 +1318,14 @@
   .copy-status--err,
   .save-status--err {
     color: var(--color-status-danger);
+  }
+
+  .conflict-hold-notice {
+    margin: 0;
+    padding: 4px 12px;
+    font-size: 0.72rem;
+    color: var(--color-status-warning, #b8860b);
+    border-bottom: 1px solid var(--color-surface-panel-border);
   }
 
   /* Single scroll owner: source-body scrolls vertically so line-numbers and

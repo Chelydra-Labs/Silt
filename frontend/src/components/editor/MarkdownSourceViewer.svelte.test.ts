@@ -481,8 +481,10 @@ describe('MarkdownSourceViewer', () => {
   // toggled views before resolving) must not save over the pending
   // resolution: the mount re-fetch would re-baseline straight past the
   // refusal. When the latch clears elsewhere, the hold clears and the buffer
-  // re-seeds — keeping dirty edits for the honest "external change" offer.
-  it('holds saves while the page-level conflict latch is set, then re-seeds when it clears', async () => {
+  // re-seeds. The non-owning surface is read-only under the latch (#1005):
+  // its saves would be refused cross-funnel, so typed text could never
+  // survive — the surface refuses input instead and re-seeds cleanly.
+  it('is read-only under the page-level conflict latch, then re-seeds when it clears', async () => {
     vi.useFakeTimers()
     mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
     mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Heading')])
@@ -499,7 +501,13 @@ describe('MarkdownSourceViewer', () => {
       })
       await vi.advanceTimersByTimeAsync(0)
       await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
-      const ta = screen.getByRole('textbox', { name: /markdown source/i })
+      const ta = screen.getByRole('textbox', {
+        name: /markdown source/i
+      }) as HTMLTextAreaElement
+      expect(ta).toHaveProperty('readOnly', true)
+      // A synthetic input event (jsdom does not enforce readonly on a
+      // programmatic value set) must not reach component state: no dirty
+      // handoff and no scheduled save ever fires.
       await fireEvent.input(ta, { target: { value: '# Typed during latch' } })
       await vi.advanceTimersByTimeAsync(500)
       await vi.advanceTimersByTimeAsync(0)
@@ -509,48 +517,63 @@ describe('MarkdownSourceViewer', () => {
       ).toBeTruthy()
 
       // Latch clears (resolved on another surface): the hold lifts and the
-      // dirty buffer raises the "external change detected" offer instead of
-      // silently clobbering or silently discarding.
+      // buffer re-seeds to the settled bytes — nothing was typed, so no
+      // "external change detected" offer is raised.
       mocks.fetchPageMarkdown.mockResolvedValue('# Settled on the other side')
       await rerender({ conflictActive: false })
       await vi.advanceTimersByTimeAsync(0)
-      await waitFor(() =>
-        expect(screen.getByText(/External change detected/)).toBeTruthy()
-      )
+      await waitFor(() => expect(ta.value).toBe('# Settled on the other side'))
+      expect(ta).toHaveProperty('readOnly', false)
       expect(mocks.savePageMarkdown).not.toHaveBeenCalled()
+      expect(screen.queryByText(/External change detected/)).toBeNull()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  // #1005 swap-back: a fresh mount inheriting the latch has refusedBuffer
-  // === null; text typed during the latch is NOT in the backend stash (that
-  // holds the pre-toggle refusal). keep_mine must flush it instead of
-  // silently discarding it via dirty = false.
+  // #1005 swap-back: after this surface's OWN refusal (refusedBuffer set),
+  // text typed during the latch is NOT in the backend stash (that holds the
+  // pre-toggle refusal). keep_mine must flush it instead of silently
+  // discarding it via dirty = false. The owning surface stays editable under
+  // its latch — only the inherited latch is read-only.
   it('keep_mine after a toggle flushes typed-during-latch text instead of discarding it', async () => {
     vi.useFakeTimers()
+    mocks.savePageMarkdown.mockImplementation(() =>
+      Promise.reject(
+        new Error(
+          '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
+        )
+      )
+    )
     mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
-    mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Heading')])
     try {
-      render(MarkdownSourceViewer, {
+      const { rerender } = render(MarkdownSourceViewer, {
         props: {
           blocks: BLOCKS,
           filePath: 'Work/Page.md',
           notebook: 'Work',
           section: 'Sec',
-          page: 'Page',
-          conflictActive: true
+          page: 'Page'
         }
       })
       await vi.advanceTimersByTimeAsync(0)
       await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
       const ta = screen.getByRole('textbox', { name: /markdown source/i })
+      // The owner refusal: this surface's own save is refused first…
+      await fireEvent.input(ta, { target: { value: '# My refused text' } })
+      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(0)
+      await screen.findByText(/Save held — this file changed on disk/)
+      // …then the parent latches the page-level banner (own latch: editable).
+      await rerender({ conflictActive: true })
+      expect(ta).toHaveProperty('readOnly', false)
+      // Typing continues under the OWN latch.
       await fireEvent.input(ta, {
         target: { value: '# Typed during the latch' }
       })
       await vi.advanceTimersByTimeAsync(500)
       await vi.advanceTimersByTimeAsync(0)
-      expect(mocks.savePageMarkdown).not.toHaveBeenCalled()
+      expect(mocks.savePageMarkdown).toHaveBeenCalledTimes(1)
 
       const handle = getEditorForLocator('Work', 'Sec', 'Page')
       expect(handle?.resolveExternalConflict).toBeTruthy()
@@ -2088,11 +2111,13 @@ describe('MarkdownSourceViewer editor registry (#884)', () => {
     }
   })
 
-  // #1005 blocker, inherited-latch half: a viewer mounted under an
-  // already-latched page (the toggle-back world) has refusedBuffer === null,
-  // so its typed text is not in the backend stash either — the same unmount
-  // handoff must carry it into the stash.
-  it('hands off typed-during-inherited-latch text on unmount', async () => {
+  // #1005, inherited-latch half: a viewer mounted under an already-latched
+  // page (the toggle-back world) does NOT own the conflict — its saves would
+  // be refused cross-funnel (the owning surface's stash is kept), so typed
+  // text could never reach disk or the stash and would be silently destroyed
+  // by the unmount handoff. The surface must therefore refuse the input
+  // entirely: readonly textarea, an inline notice, and no handoff save.
+  it('is read-only under an inherited latch and never drops typed text', async () => {
     vi.useFakeTimers()
     const refusal = () =>
       Promise.reject(
@@ -2116,19 +2141,63 @@ describe('MarkdownSourceViewer editor registry (#884)', () => {
       await vi.advanceTimersByTimeAsync(0)
       await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
       const ta = screen.getByRole('textbox', { name: /markdown source/i })
+      expect(ta).toHaveProperty('readOnly', true)
+      await screen.findByText(/Editing here is disabled/, undefined, {
+        timeout: 100
+      })
+
+      // Even a synthetic input event (jsdom does not enforce readonly) must
+      // not reach component state: no dirty state, and no handoff on unmount.
       await fireEvent.input(ta, {
         target: { value: '# Typed during an inherited latch' }
       })
+      await vi.advanceTimersByTimeAsync(0)
       unmount()
 
       await vi.advanceTimersByTimeAsync(0)
-      expect(mocks.savePageMarkdown).toHaveBeenCalledTimes(1)
-      expect(mocks.savePageMarkdown).toHaveBeenLastCalledWith(
-        'Work',
-        'Sec',
-        'Page',
-        '# Typed during an inherited latch'
-      )
+      expect(mocks.savePageMarkdown).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // The latch clear returns the surface to normal editing: readonly lifts
+  // with the inherited hold (the owning surface settled the conflict).
+  it('lifts the inherited-latch read-only when the conflict clears', async () => {
+    vi.useFakeTimers()
+    mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
+    mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Heading')])
+    try {
+      const { rerender } = render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page',
+          conflictActive: true
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
+      let ta = screen.getByRole('textbox', {
+        name: /markdown source/i
+      }) as HTMLTextAreaElement
+      expect(ta).toHaveProperty('readOnly', true)
+
+      await rerender({
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page',
+        conflictActive: false
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      ta = screen.getByRole('textbox', { name: /markdown source/i })
+      expect(ta).toHaveProperty('readOnly', false)
+      await fireEvent.input(ta, { target: { value: '# editing again' } })
+      expect(ta.value).toBe('# editing again')
     } finally {
       vi.useRealTimers()
     }

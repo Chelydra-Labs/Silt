@@ -44,6 +44,11 @@ export interface AutosaveDeps {
   onUpdate: (blocks: import('./types').ParsedBlock[]) => void
   onStateChange: (dirty: boolean, error: string | null) => void
   onSaveStateChange?: (state: SaveState) => void
+  /** Fired on conflict-grade hold TRANSITIONS only (arm/release). The editor
+   *  surface uses it to toggle read-only + a notice: keystrokes during the
+   *  hold are held-then-clobbered by the armed reload, so they must not be
+   *  accepted in the first place (#1005). */
+  onConflictHoldChange?: (held: boolean) => void
 }
 
 /** How long the transient "Saved" confirmation stays visible before idle. */
@@ -186,9 +191,11 @@ export class AutosaveManager {
    *  reload event is dropped the hold simply persists until teardown, which
    *  is safe. */
   holdWritesForConflict(): void {
+    const wasConflict = this.hold === 'conflict'
     this.hold = 'conflict'
     this.cancelPending()
     this.clearHoldTimer()
+    if (!wasConflict) this.deps.onConflictHoldChange?.(true)
   }
 
   /** Release a plain (#345-style) hold. A conflict hold is deliberately
@@ -201,8 +208,10 @@ export class AutosaveManager {
   /** Release any hold, including a conflict hold. Callers must be the armed
    *  reload landing, the explicit clear, or the resolution failure path. */
   forceReleaseWrites(): void {
+    const wasConflict = this.hold === 'conflict'
     this.clearHoldTimer()
     this.hold = 'none'
+    if (wasConflict) this.deps.onConflictHoldChange?.(false)
   }
 
   areWritesHeld(): boolean {
