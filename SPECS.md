@@ -59,7 +59,7 @@ The Document View: One virtualized, seamlessly scrolling document per Page.
 A Page is a focused topic rather than an unbounded daily journal — the
 temporal dimension is carried per block, in each block's `file_date`.
 
-The silt-tasks Plugin: A single unified Tasks hub exposing the same task set through three internal display modes — **List** (a time-horizon roll-up), **Board** (drag-and-drop status columns), and **Calendar** (a spatial month/week grid) — over one grouping-first engine.
+The silt-tasks Plugin: A single unified Tasks hub exposing the same task set through three internal display modes — **List** and **Board** (the Tier 1 core) plus **Calendar** (Tier 2) — over one grouping-first engine.
 
 The Sovereign Principle: The local directory structure is the single source of truth. The application runtime acts strictly as a reactive viewport, transforming and writing text mutations safely back to disk without vendor lock-in.
 
@@ -1004,9 +1004,11 @@ orchestration when AI is enabled.
 
 **The first-party dashboards are plugins.** The unified silt-tasks hub uses the exact same SDK as any third-party plugin — the UI contains no privileged custom code for it. The hub hosts three display modes over one grouping-first engine, all scoped to the active navigation level (vault / notebook / section / page), selectable from the hub header:
 
-- **List** — a time-horizon roll-up (Overdue / Today / Upcoming / Later / No Date), carrying unfinished tasks into the current day and giving undated tasks a first-class surface.
-- **Board** — drag-and-drop status columns; a status change writes the new checkbox state to the source markdown and re-indexes the block, and cards support manual reordering.
-- **Calendar** — tasks by start/due date with interactive timeline components and a month/week sub-layout.
+- **List** — a time-horizon roll-up (Overdue / Today / Upcoming / Later / No Date), carrying unfinished tasks into the current day and giving undated tasks a first-class surface. *(Tier 1A/1B core.)*
+- **Board** — drag-and-drop status columns; a status change writes the new checkbox state to the source markdown and re-indexes the block, and cards support manual reordering. *(Tier 1B — this is the rapid multi-dimension management workflow; the List's only status write is mark-done.)*
+- **Calendar** — tasks by start/due date with interactive timeline components and a month/week sub-layout. *(Tier 2 lens — fully supported, but does not veto a Tier 0/1 decision.)*
+
+Tier labels here are cross-references only; §1.3 remains the single source of truth for the tier model.
 
 **Page-scoped Tasks Hub intent.** Page chrome may open the existing hub for a
 specific source-qualified page using a locator containing the source,
