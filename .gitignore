@@ -47,6 +47,9 @@ distributions/
 # Local PR context / ad-hoc diffs
 *.diff
 
+# Local review-cycle evidence
+.review/
+
 # Local vaults (root-level dev vault only; must not match backend/vault/)
 /vault/
 

@@ -93,7 +93,7 @@ To hit our strict resource limits and keep the UI completely lag-free, Silt avoi
 
 2.1 Stack Blueprint
 
-Desktop Engine: Go (v1.26+). Handles system-level interactions, high-efficiency disk operations, directory indexing, config management, and AST parsing.
+Desktop Engine: Go (v1.26.10+; see `go.mod` for the authoritative minimum). Handles system-level interactions, high-efficiency disk operations, directory indexing, config management, and AST parsing.
 
 Application Shell Bridge: Wails Framework. Connects Go structures directly to platform-native WebKit engines (WebKit on macOS, WebKit2 on Linux, WebView2 on Windows) without bundled Node/V8 runtimes.
 
