@@ -12,9 +12,9 @@
 
 ---
 
-Silt is a simple, ultra-fast, local-first note-taking app designed to capture stream-of-consciousness thoughts and connect them. Like silt carried by water, your daily notes are fleeting deposits that slowly settle, accumulate, and connect—ultimately building a fertile, structured foundation of knowledge.
+Silt is a simple, ultra-fast, local-first note-taking app designed to capture stream-of-consciousness thoughts and connect them. Like silt carried by water, your notes are fleeting deposits that slowly settle, accumulate, and connect—ultimately building a fertile, structured foundation of knowledge.
 
-It bridges the gap between structured namespace notebooks and chronological daily streams. Silt treats human-readable plaintext Markdown files on your local drive as the absolute database of record, while utilizing a native desktop runtime cache to project your logs into a unified **Tasks** hub with List, Board, and Calendar display modes.
+It bridges the gap between structured namespace notebooks and free-flowing chronological capture. Capture is chronological and frictionless, but notes live in focused, topic-scoped Pages rather than one unbounded daily journal: each block carries its own date, so the temporal view and the topic view are both available over the same files. Silt treats human-readable plaintext Markdown files on your local drive as the absolute database of record, while utilizing a native desktop runtime cache to project your logs into a unified **Tasks** hub with List, Board, and Calendar display modes.
 
 ---
 
@@ -22,7 +22,7 @@ It bridges the gap between structured namespace notebooks and chronological dail
 
 Silt is built on the belief that your notes belong to you.
 1. **Local Flat-Files as Source of Truth:** Your data lives in plain Markdown (`.md`) files on your computer. If Silt disappears tomorrow, your notes remain fully readable in any text editor.
-2. **Speed and Efficiency:** No bloated Electron wrapper. Silt uses system-native WebKit engines via Wails, keeping idle memory allocation below 65MB RAM and input latency within a 16ms frame budget (60 FPS).
+2. **Speed and Efficiency:** No bloated Electron wrapper. Silt uses system-native WebKit engines via Wails to stay unobtrusive in the system tray, with input latency inside a 16ms frame budget (60 FPS).
 3. **Atomic Reliability:** An atomic staging and overwrite protocol prevents file corruption on power loss or crash.
 4. **Privacy-First:** Silt is completely local. It does not transfer any information to other networked systems, and contains no telemetry or automatic update checks.
 
