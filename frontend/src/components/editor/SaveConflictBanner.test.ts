@@ -29,6 +29,12 @@ describe('SaveConflictBanner', () => {
     // The banner must not promise a singular "other is discarded" framing:
     // every resolution preserves the losing version as a separate page.
     expect(text).toContain('separate page in the same folder')
+    // The alert region must carry ONLY the refusal sentence — the hints are
+    // served on focus via aria-describedby, so announcing them here too
+    // would double-speak ~40 extra words at every SR user.
+    for (const action of CONFLICT_RESOLUTIONS) {
+      expect(alert.textContent).not.toContain(action.hint)
+    }
   })
 
   it('offers the three resolutions and reports the chosen one', async () => {
@@ -80,11 +86,15 @@ describe('SaveConflictBanner', () => {
       error: 'vault closed',
       onResolve: () => {}
     })
-    expect(screen.getByRole('alert').textContent).toContain(
-      "Couldn't resolve the conflict"
-    )
+    // The failure paragraph is its OWN alert region (outside the refusal
+    // sentence), so the announcement fires when the error appears instead of
+    // re-reading the whole banner.
+    const alerts = screen.getAllByRole('alert')
     expect(
-      screen.getByRole('button', { name: 'Keep my changes' })
-    ).toBeTruthy()
+      alerts.some((a) =>
+        a.textContent?.includes("Couldn't resolve the conflict")
+      )
+    ).toBe(true)
+    expect(screen.getByRole('button', { name: 'Keep my changes' })).toBeTruthy()
   })
 })

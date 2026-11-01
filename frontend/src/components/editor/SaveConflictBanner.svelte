@@ -26,16 +26,22 @@
 
 <div
   class="border border-error-border bg-error-bg text-error rounded-lg px-4 py-3 flex flex-col gap-2 my-2"
-  role="alert"
   data-testid="save-conflict-banner"
 >
-  <p class="font-body-md">
+  <!-- The assertive region carries ONLY the one-sentence refusal: screen
+       readers announce a role="alert" element's entire text content on
+       insertion, so the hints (already served on focus via
+       aria-describedby), the error detail, and the busy text must live
+       outside it or every hint gets force-read twice. -->
+  <p class="font-body-md" role="alert">
     This page was changed by another app since Silt opened it, so your save was
     held. Pick what happens next — the version you don't keep is preserved as a
     separate page in the same folder.
   </p>
+  <!-- Own alert semantics: inserted only on failure, so the announcement
+       fires at the moment something actually went wrong. -->
   {#if error}
-    <p class="text-type-sm">
+    <p class="text-type-sm" role="alert">
       Couldn't resolve the conflict. Nothing was written — both versions are
       safe. Try again.
     </p>
@@ -62,8 +68,7 @@
     {/if}
   </div>
   {#each CONFLICT_RESOLUTIONS as action (action.key)}
-    <span id={`conflict-hint-${action.key}`} class="sr-only"
-      >{action.hint}</span
+    <span id={`conflict-hint-${action.key}`} class="sr-only">{action.hint}</span
     >
   {/each}
 </div>
