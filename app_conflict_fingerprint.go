@@ -27,6 +27,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	"silt/backend/core"
 	"silt/backend/parser"
@@ -49,14 +50,25 @@ type refusedPageWrite struct {
 
 // FileFingerprint is the load-time snapshot of one page file. Mtime/Ctime are
 // split into sec/nsec so the struct is comparable with == (time.Time is not).
+// CapturedAt records when this baseline was taken (capture or refresh) so the
+// check can distrust stat matches inside the raciness window below.
 type FileFingerprint struct {
-	Size      int64
-	MtimeSec  int64
-	MtimeNsec int64
-	CtimeSec  int64
-	CtimeNsec int64
-	SHA256    string
+	Size           int64
+	MtimeSec       int64
+	MtimeNsec      int64
+	CtimeSec       int64
+	CtimeNsec      int64
+	SHA256         string
+	CapturedAtSec  int64
+	CapturedAtNsec int64
 }
+
+// fingerprintRacyWindow is how long after a baseline capture a stat-equal file
+// remains distrusted. FAT/exFAT and SMB mounts — first-class linked-root
+// targets — have 1–2s mtime granularity, and ext3/tmpfs are jiffy-coarse, so
+// a same-size external rewrite within this window is invisible to the stat
+// fast path (git's "racily clean" problem). ~3s covers the coarsest targets.
+const fingerprintRacyWindow = 3 * time.Second
 
 // absentFileSize marks a fingerprint captured while the file did not exist.
 // Any later stat (size >= 0) then differs, and the hash arbiter ("") never
@@ -72,6 +84,13 @@ func fingerprintFromStat(info os.FileInfo) FileFingerprint {
 	return fp
 }
 
+// stampCaptureTime records when this baseline snapshot was taken. Every site
+// that stores a fingerprint (capture, post-write refresh, hash-match refresh)
+// must call this so the raciness window has an anchor.
+func (fp *FileFingerprint) stampCaptureTime(now time.Time) {
+	fp.CapturedAtSec, fp.CapturedAtNsec = now.Unix(), int64(now.Nanosecond())
+}
+
 // captureFileFingerprint stats + hashes the raw bytes of path. A missing file
 // snapshots as absent rather than an error: "did not exist at load" is a
 // meaningful baseline. Any other stat/read failure returns the error — the
@@ -80,7 +99,9 @@ func captureFileFingerprint(path string) (FileFingerprint, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return FileFingerprint{Size: absentFileSize, SHA256: ""}, nil
+			absent := FileFingerprint{Size: absentFileSize, SHA256: ""}
+			absent.stampCaptureTime(time.Now())
+			return absent, nil
 		}
 		return FileFingerprint{}, err
 	}
@@ -91,6 +112,7 @@ func captureFileFingerprint(path string) (FileFingerprint, error) {
 	}
 	sum := sha256.Sum256(data)
 	fp.SHA256 = hex.EncodeToString(sum[:])
+	fp.stampCaptureTime(time.Now())
 	return fp, nil
 }
 
@@ -180,7 +202,24 @@ func (a *App) refreshFingerprintAfterWrite(filePath string, written []byte) {
 	fp := fingerprintFromStat(info)
 	sum := sha256.Sum256(written)
 	fp.SHA256 = hex.EncodeToString(sum[:])
+	fp.stampCaptureTime(time.Now())
 	a.storePageLoadFingerprint(key, fp)
+}
+
+// statRacilyClean reports whether a stat-equal current stat could be hiding a
+// same-size external rewrite: the file's mtime is still within the raciness
+// window of the baseline's capture, so a coarse-granularity filesystem
+// (FAT/SMB 1–2s, ext3/tmpfs jiffy-coarse) may not have ticked its timestamps
+// past the baseline. Mirrors git's "racily clean" rule: until the window
+// elapses, only the hash arbiter can vouch for the bytes.
+func (fp FileFingerprint) statRacilyClean(cur FileFingerprint, now time.Time) bool {
+	captured := time.Unix(fp.CapturedAtSec, fp.CapturedAtNsec)
+	mtime := time.Unix(cur.MtimeSec, cur.MtimeNsec)
+	diff := mtime.Sub(captured)
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff < fingerprintRacyWindow
 }
 
 // checkExternalEditConflict is the pre-write gate for editor-derived
@@ -190,9 +229,11 @@ func (a *App) refreshFingerprintAfterWrite(filePath string, written []byte) {
 //
 //   - No baseline for the path (never loaded this session) → pass: legacy
 //     behavior, nothing to compare against.
-//   - Stat match → pass (happy path: one os.Stat, no read, no hash).
-//   - Stat drift → re-read + hash. Hash match → pass and refresh the stat
-//     (sync-client touch tolerance). Hash mismatch → refuse.
+//   - Stat match outside the raciness window → pass (happy path: one os.Stat,
+//     no read, no hash).
+//   - Stat drift, or a stat match still inside the raciness window → re-read
+//   - hash. Hash match → pass and refresh the stat (sync-client touch
+//     tolerance). Hash mismatch → refuse.
 //
 // A stat/read error refuses the save too (fail closed): writing over a file
 // whose state cannot be established is exactly the clobber risk this gate
@@ -220,11 +261,13 @@ func (a *App) checkExternalEditConflict(filePath string) error {
 		return errExternalEditConflictWrap(err)
 	}
 	cur := fingerprintFromStat(info)
-	if baseline.fingerprintStatEqual(cur) {
+	if baseline.fingerprintStatEqual(cur) && !baseline.statRacilyClean(cur, time.Now()) {
 		return nil
 	}
-	// Drift: the hash decides between a touch (sync client re-statting
-	// identical bytes) and a real external rewrite.
+	// Drift — or a stat match still inside the raciness window, where a
+	// coarse-granularity filesystem cannot distinguish a same-size external
+	// rewrite from the baseline: the hash decides between a touch (sync
+	// client re-statting identical bytes) and a real external rewrite.
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return errExternalEditConflictWrap(err)
@@ -234,6 +277,7 @@ func (a *App) checkExternalEditConflict(filePath string) error {
 	if cur.SHA256 == baseline.SHA256 {
 		// Same bytes, new stat — adopt the new stat so the next save's
 		// fast path matches again without re-reading the file.
+		cur.stampCaptureTime(time.Now())
 		a.storePageLoadFingerprint(key, cur)
 		return nil
 	}
@@ -262,4 +306,19 @@ func (a *App) popRefusedWrite(key string) (refusedPageWrite, bool) {
 		delete(a.refusedWrites, key)
 	}
 	return rw, ok
+}
+
+// restoreRefusedWriteIfAbsent puts a popped stash back only when no newer
+// refusal has replaced it meanwhile — a failed resolution must never clobber
+// a newer stashed buffer with an older one.
+func (a *App) restoreRefusedWriteIfAbsent(key string, rw refusedPageWrite) {
+	a.refusedWritesMu.Lock()
+	defer a.refusedWritesMu.Unlock()
+	if _, exists := a.refusedWrites[key]; exists {
+		return
+	}
+	if a.refusedWrites == nil {
+		a.refusedWrites = make(map[string]refusedPageWrite)
+	}
+	a.refusedWrites[key] = rw
 }

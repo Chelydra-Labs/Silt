@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"silt/backend/core"
 )
@@ -62,6 +63,13 @@ func BenchmarkExternalEditCheck(b *testing.B) {
 	path := filepath.Join(dir, "page.md")
 	content := []byte("---\npage: \"Bench\"\n---\n" + strings.Repeat("lorem ipsum ", 2000))
 	if err := os.WriteFile(path, content, 0o644); err != nil {
+		b.Fatal(err)
+	}
+	// Backdate mtime well past the raciness window: a file written moments
+	// before capture would (correctly) fall through to the hash arbiter on
+	// every check, and this sub-benchmark exists to pin the STAT fast path.
+	past := time.Now().Add(-1 * time.Hour)
+	if err := os.Chtimes(path, past, past); err != nil {
 		b.Fatal(err)
 	}
 	app := &App{}

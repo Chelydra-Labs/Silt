@@ -73,7 +73,10 @@ type App struct {
 	// pageLoadFingerprints holds the external-edit baseline per page file
 	// (#1005), keyed by NormalizeFileLockPath like pageWriteEpoch. Captured at
 	// the editor load points, re-checked inside LockFileWrite by the
-	// whole-page save funnels, refreshed by Silt's own writes. See
+	// whole-page save funnels, refreshed by Silt's own writes. Line-mutating
+	// setter funnels do NOT refresh it — their correctness depends on the
+	// block:changed → container FetchPageBlocks recapture loop re-baselining
+	// the page; do not remove that recapture without refreshing here. See
 	// app_conflict_fingerprint.go.
 	pageLoadFingerprints   map[string]FileFingerprint
 	pageLoadFingerprintsMu sync.RWMutex

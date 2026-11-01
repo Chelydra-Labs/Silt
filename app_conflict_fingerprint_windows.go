@@ -13,7 +13,10 @@ import (
 // and the hash is the arbiter.
 func statCtime(info os.FileInfo) (int64, int64) {
 	if d, ok := info.Sys().(*syscall.Win32FileAttributeData); ok {
-		return d.CreationTime.Unix(), int64(d.CreationTime.Nanosecond())
+		// base syscall.Filetime has Nanoseconds, not Unix/Nanosecond (those
+		// live on golang.org/x/sys/windows.Filetime).
+		ns := d.CreationTime.Nanoseconds()
+		return ns / 1e9, ns % 1e9
 	}
 	return 0, 0
 }

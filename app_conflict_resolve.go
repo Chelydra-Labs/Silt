@@ -47,61 +47,74 @@ var pageFrontmatterLine = regexp.MustCompile(`^[Pp]age[ \t]*:`)
 
 // ResolveExternalConflict is the IPC entry point (notebook, section, page,
 // resolution). All writes happen under LockFileWrite for the original path.
-func (a *App) ResolveExternalConflict(notebook, section, page, resolution string) error {
+// It returns the page name of the conflict copy it created (for the success
+// announcement), or an empty string when nothing was written.
+func (a *App) ResolveExternalConflict(notebook, section, page, resolution string) (string, error) {
 	switch resolution {
 	case conflictResolutionKeepMine, conflictResolutionKeepTheirs, conflictResolutionKeepBoth:
 	default:
-		return fmt.Errorf("invalid resolution %q (valid: keep_mine, keep_theirs, keep_both)", resolution)
+		return "", fmt.Errorf("invalid resolution %q (valid: keep_mine, keep_theirs, keep_both)", resolution)
 	}
 
 	a.vaultMu.RLock()
 	defer a.vaultMu.RUnlock()
 	if a.db == nil {
-		return fmt.Errorf("vault database not loaded")
+		return "", fmt.Errorf("vault database not loaded")
 	}
 
 	safeNotebook := sanitizePathSegment(notebook)
 	safeSection, secErr := historySection(section)
 	if secErr != nil {
-		return invalidNavigationPath(secErr)
+		return "", invalidNavigationPath(secErr)
 	}
 	safePage := sanitizePathSegment(page)
 	if safeNotebook == "" || safePage == "" {
-		return fmt.Errorf("invalid path metadata")
+		return "", fmt.Errorf("invalid path metadata")
 	}
 
 	source := a.resolveSourceByName(safeNotebook)
 	notebookDir, err := a.resolveNotebookDir(safeNotebook, source)
 	if err != nil {
-		return fmt.Errorf("resolve notebook dir: %w", err)
+		return "", fmt.Errorf("resolve notebook dir: %w", err)
 	}
 	filePath := filepath.Join(notebookDir, safeSection, safePage+".md")
 	if !isPathWithinRoot(filePath, notebookDir) {
-		return fmt.Errorf("path escapes notebook root")
+		return "", fmt.Errorf("path escapes notebook root")
 	}
 
 	a.wg.Add(1)
 	defer a.wg.Done()
 
+	// The stash is popped INSIDE LockFileWrite: a racing refused save that
+	// wins the lock first re-stashes the newest buffer, and the in-lock pop
+	// then replays that newest version. Popping outside the lock could
+	// replay an older buffer while the newer stash lands and gets orphaned.
 	key := core.NormalizeFileLockPath(filePath)
-	rw, ok := a.popRefusedWrite(key)
-	if !ok {
-		return wrapSentinelAsIPCError(CodeExternalEditConflict,
+	var conflictPage string
+	var resolveErr error
+	noStash := false
+	a.coordinator.LockFileWrite(filePath, func() {
+		rw, ok := a.popRefusedWrite(key)
+		if !ok {
+			noStash = true
+			return
+		}
+		conflictPage, resolveErr = a.resolveExternalConflictLocked(rw, filePath, resolution)
+		if resolveErr != nil {
+			// Restore the stash so the user can retry the resolution; the
+			// disk state is unchanged (every step below fails before writing
+			// when it fails at all). Only-if-absent: a newer refusal must
+			// never be clobbered by this older buffer.
+			a.restoreRefusedWriteIfAbsent(key, rw)
+		}
+	})
+	if noStash {
+		return "", wrapSentinelAsIPCError(CodeExternalEditConflict,
 			"no pending external-edit conflict for this page — retry the save",
 			errExternalEditConflict)
 	}
-
-	var conflictPage string
-	var resolveErr error
-	a.coordinator.LockFileWrite(filePath, func() {
-		conflictPage, resolveErr = a.resolveExternalConflictLocked(rw, filePath, resolution)
-	})
 	if resolveErr != nil {
-		// Restore the stash so the user can retry the resolution; the disk
-		// state is unchanged (every step below fails before writing when it
-		// fails at all).
-		a.storeRefusedWrite(key, rw)
-		return resolveErr
+		return "", resolveErr
 	}
 
 	// Emit after the lock releases so subscribers can re-fetch without
@@ -110,7 +123,7 @@ func (a *App) ResolveExternalConflict(notebook, section, page, resolution string
 	// written (suffix-aware), not a recomputed guess.
 	a.emitBlockChanged("", safeNotebook, safeSection, safePage, "")
 	a.emitBlockChanged("", safeNotebook, safeSection, conflictPage, "")
-	return nil
+	return conflictPage, nil
 }
 
 // conflictPageName is the conflict copy's page/file stem. Second resolution
@@ -180,8 +193,8 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 
 	// keep_mine / keep_both: archive theirs to the conflict copy, then replay
 	// my stashed save onto the original path.
-	archived := []byte(conflictCopyContent(theirs, conflictPage))
-	if err := a.writeConflictCopyLocked(sibling, rw.source, archived); err != nil {
+	archived := []byte(conflictCopyContent(theirs, conflictPage, rw.notebook, rw.section))
+	if err := a.writeConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section, archived); err != nil {
 		return "", err
 	}
 	if rw.isMarkdown {
@@ -201,15 +214,18 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 // writeConflictCopyLocked writes + indexes one conflict copy. The content is
 // user content (not Silt state), so it is registered with the tracker and
 // explicitly indexed — it must surface as a page immediately, not wait for
-// the watcher.
-func (a *App) writeConflictCopyLocked(siblingPath, source string, content []byte) error {
+// the watcher. notebook/section are the ORIGINAL page's safe locator: they
+// are the ParseFileContent defaults (and the minted frontmatter fallback),
+// so a copy of a frontmatter-less external version indexes under the same
+// notebook/section as its sibling instead of a junk `notebook=”` row.
+func (a *App) writeConflictCopyLocked(siblingPath, source, notebook, section string, content []byte) error {
 	a.tracker.RegisterWrite(siblingPath)
 	if err := atomicPageWrite(siblingPath, content); err != nil {
 		return fmt.Errorf("write conflict copy: %w", err)
 	}
 	conflictPage := strings.TrimSuffix(filepath.Base(siblingPath), ".md")
 	blocks, meta, _, _, perr := parser.ParseFileContent(string(content),
-		"", "", conflictPage, fileOrDefaultDate(siblingPath), a.spacesPerTab)
+		notebook, section, conflictPage, fileOrDefaultDate(siblingPath), a.spacesPerTab)
 	if perr != nil {
 		// The copy is safely on disk; a parse failure only delays indexing
 		// until the next scan. Never fail the resolution after the write.
@@ -225,13 +241,27 @@ func (a *App) writeConflictCopyLocked(siblingPath, source string, content []byte
 // conflictCopyContent returns theirs with the frontmatter `page:` rewritten to
 // the conflict name, so the copy indexes as its own page instead of colliding
 // with the original's (source, notebook, section, page) locator. The body is
-// byte-identical to theirs.
-func conflictCopyContent(theirs []byte, conflictPage string) string {
+// byte-identical to theirs. notebook/section (the original page's locator)
+// are minted only when theirs has no frontmatter to carry them — otherwise
+// the parse defaults handle missing keys.
+func conflictCopyContent(theirs []byte, conflictPage, notebook, section string) string {
 	frontmatter, body := parser.SplitFrontmatter(string(theirs))
 	if frontmatter == "" {
 		// No frontmatter to rewrite — mint a minimal block carrying the
-		// conflict identity; the body stays verbatim.
-		return "---\npage: " + strconv.Quote(conflictPage) + "\n---\n" + body
+		// conflict identity and its home locator (so a rescan keeps the copy
+		// in the same notebook/section as its sibling); the body stays
+		// verbatim.
+		var b strings.Builder
+		b.WriteString("---\n")
+		if notebook != "" {
+			b.WriteString("notebook: " + strconv.Quote(notebook) + "\n")
+		}
+		if section != "" {
+			b.WriteString("section: " + strconv.Quote(section) + "\n")
+		}
+		b.WriteString("page: " + strconv.Quote(conflictPage) + "\n---\n")
+		b.WriteString(body)
+		return b.String()
 	}
 	lines := strings.Split(strings.TrimSuffix(frontmatter, "\n"), "\n")
 	out := make([]string, 0, len(lines)+1)

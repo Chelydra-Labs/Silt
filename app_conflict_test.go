@@ -207,14 +207,17 @@ func testResolution(t *testing.T, resolution string) {
 	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
 		t.Fatalf("external write: %v", err)
 	}
-	if err := app.SaveFileBlocks(notebook, section, page, mine); err == nil {
-		t.Fatal("save must be refused before resolution")
-	} else {
-		requireConflict(t, err)
-	}
+	err := app.SaveFileBlocks(notebook, section, page, mine)
+	requireConflict(t, err)
 
-	if err := app.ResolveExternalConflict(notebook, section, page, resolution); err != nil {
-		t.Fatalf("ResolveExternalConflict(%s): %v", resolution, err)
+	// The resolution reports the conflict copy it created (named in the UI's
+	// success announcement).
+	copyPage, rerr := app.ResolveExternalConflict(notebook, section, page, resolution)
+	if rerr != nil {
+		t.Fatalf("ResolveExternalConflict(%s): %v", resolution, rerr)
+	}
+	if !strings.Contains(copyPage, ".conflict-") {
+		t.Fatalf("resolution must name the conflict copy, got %q", copyPage)
 	}
 
 	// Exactly one conflict sibling exists, carrying the loser's bytes.
@@ -407,7 +410,7 @@ func TestResolveExternalConflict_WithoutPendingRefusalFails(t *testing.T) {
 	blockID := "bbbbbbb3-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 	_ = seedConflictPage(t, app, notebook, section, page, blockID, "stable")
 
-	err := app.ResolveExternalConflict(notebook, section, page, "keep_mine")
+	_, err := app.ResolveExternalConflict(notebook, section, page, "keep_mine")
 	if err == nil {
 		t.Fatal("resolution without a pending refusal must fail")
 	}
@@ -423,7 +426,132 @@ func TestResolveExternalConflict_WithoutPendingRefusalFails(t *testing.T) {
 // Invalid resolution strings are rejected without touching anything.
 func TestResolveExternalConflict_RejectsUnknownResolution(t *testing.T) {
 	app := newTestApp(t)
-	if err := app.ResolveExternalConflict("NB", "", "P", "overwrite"); err == nil {
+	if _, err := app.ResolveExternalConflict("NB", "", "P", "overwrite"); err == nil {
 		t.Fatal("unknown resolution must be rejected")
+	}
+}
+
+// Racily-clean regression (#1005): a same-size external rewrite written
+// moments after the baseline capture cannot be distinguished from the baseline
+// by stat alone on coarse-timestamp filesystems (FAT/SMB 1–2s, ext3/tmpfs
+// jiffy-coarse) — the stat halves compare equal. The capture-time raciness
+// window must distrust that match and let the hash arbiter refuse the save.
+// Deterministic on every filesystem: the baseline is captured milliseconds
+// before the rewrite, so mtime is always inside the window.
+func TestExternalEdit_RacySameSizeRewriteRefuses(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "RacyStatNB", "", "RacyStat"
+	blockID := "cccccc1c-cccc-4ccc-8ccc-ccccccccccc1"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "stable text")
+
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+
+	// Same byte length, different content, immediately after the capture.
+	filePath := conflictPagePath(app, notebook, section, page)
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	rewritten := strings.Replace(string(raw), "stable text", "edited text", 1)
+	if len(rewritten) != len(string(raw)) {
+		t.Fatalf("test bug: rewrite changed the byte length")
+	}
+	if err := os.WriteFile(filePath, []byte(rewritten), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+
+	err = app.SaveFileBlocks(notebook, section, page, editBlocks(blocks, blockID, "stable text"))
+	requireConflict(t, err)
+
+	got, _ := os.ReadFile(filePath)
+	if !strings.Contains(string(got), "edited text") {
+		t.Fatalf("racily-clean external edit was clobbered: %q", string(got))
+	}
+}
+
+// A conflict copy of a frontmatter-less external version must surface as a
+// page under the ORIGINAL page's notebook/section (parse defaults + minted
+// fallback keys), not a junk `notebook=”` row that is invisible until a
+// restart.
+func TestResolveExternalConflict_FrontmatterLessCopySurfaces(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "FmlessNB", "", "NoFm"
+	blockID := "cccccc2c-cccc-4ccc-8ccc-ccccccccccc2"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "silt line")
+
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+
+	// External rewrite with NO frontmatter at all (script/hand-created file).
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "external line with no frontmatter\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	err := app.SaveFileBlocks(notebook, section, page, editBlocks(blocks, blockID, "my line"))
+	requireConflict(t, err)
+
+	if _, err := app.ResolveExternalConflict(notebook, section, page, "keep_mine"); err != nil {
+		t.Fatalf("ResolveExternalConflict: %v", err)
+	}
+
+	// The copy carries the sibling's home locator in its minted frontmatter…
+	sibling := findConflictSibling(t, app, notebook, section, page)
+	sibBytes, err := os.ReadFile(sibling)
+	if err != nil {
+		t.Fatalf("read sibling: %v", err)
+	}
+	sib := string(sibBytes)
+	if !strings.Contains(sib, "notebook: \"FmlessNB\"") {
+		t.Fatalf("copy must mint the original notebook, got %q", sib)
+	}
+	if !strings.Contains(sib, "external line with no frontmatter") {
+		t.Fatalf("copy must carry theirs' body verbatim, got %q", sib)
+	}
+
+	// …and is indexed under (notebook, section, siblingPage), so it surfaces
+	// as visible recovery without a rescan/restart.
+	siblingPage := strings.TrimSuffix(filepath.Base(sibling), ".md")
+	if idx, err := app.FetchPageBlocks(notebook, section, siblingPage); err != nil {
+		t.Fatalf("FetchPageBlocks sibling: %v", err)
+	} else if len(idx) == 0 {
+		t.Fatalf("frontmatter-less conflict copy %s is not indexed as a page", siblingPage)
+	}
+}
+
+// The resolution replays the NEWEST stashed buffer: a second refused save
+// replaces the first stash, and keep_mine must land the second version's
+// text (the in-lock pop ordering that makes a racing re-refusal safe).
+func TestResolveExternalConflict_ReplaysNewestStash(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "NewestNB", "", "Newest"
+	blockID := "cccccc3c-cccc-4ccc-8ccc-ccccccccccc3"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "original line")
+
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "---\nnotebook: \"NewestNB\"\npage: \"Newest\"\ntags: []\n---\nexternal line\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "first refused attempt")))
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "second refused attempt")))
+
+	if _, err := app.ResolveExternalConflict(notebook, section, page, "keep_mine"); err != nil {
+		t.Fatalf("ResolveExternalConflict: %v", err)
+	}
+
+	got, _ := os.ReadFile(filePath)
+	if !strings.Contains(string(got), "second refused attempt") {
+		t.Fatalf("resolution must replay the newest stashed buffer, got %q", string(got))
 	}
 }
