@@ -1113,3 +1113,129 @@ func TestResolveExternalConflict_SiblingLandedDespiteErrorIsSuccess(t *testing.T
 	}
 }
 
+// 7. Backend-authoritative conflict state (#1005): once a refused-write
+// stash exists for a path, the save funnels keep refusing even if a later
+// load re-captured the fingerprint to the external bytes. Without this, the
+// Source-viewer swap-back (refuse → toggle → remount seed re-baselines →
+// toggle back → unmount handoff) would land its flush mid-conflict and a
+// later keep_mine would demote the just-written text to the conflict copy.
+func TestExternalEdit_StashPendingRefusesDespiteRecapture(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "StashNB", "", "StashGate"
+	blockID := "dddddda1-dddd-4ddd-8ddd-ddddddddddda1"
+	_ = seedConflictPage(t, app, notebook, section, page, blockID, "original md line")
+
+	if _, err := app.FetchPageMarkdown(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageMarkdown: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "---\nnotebook: \"StashNB\"\npage: \"StashGate\"\ntags: []\n---\nexternal md body\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	_, err := app.SavePageMarkdown(notebook, section, page, "first refused body\n")
+	requireConflict(t, err)
+
+	// The swap-back remount's editor-facing seed: FetchPageMarkdown
+	// re-captures the baseline to the external bytes. The stash — not the
+	// fingerprint — is the conflict state, so the handoff save must still
+	// refuse and re-stash the newest buffer.
+	if _, err := app.FetchPageMarkdown(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageMarkdown recapture: %v", err)
+	}
+	_, err = app.SavePageMarkdown(notebook, section, page, "typed past the refusal\n")
+	requireConflict(t, err)
+	got, _ := os.ReadFile(filePath)
+	if !strings.Contains(string(got), "external md body") {
+		t.Fatalf("stash-pending save must not write mid-conflict, got %q", string(got))
+	}
+
+	// The re-stash replaced the older refused buffer (same-funnel
+	// newest-wins): keep_mine must replay the typed text.
+	if _, err := app.ResolveExternalConflict(notebook, section, page, "keep_mine"); err != nil {
+		t.Fatalf("ResolveExternalConflict: %v", err)
+	}
+	got, _ = os.ReadFile(filePath)
+	if !strings.Contains(string(got), "typed past the refusal") {
+		t.Fatalf("keep_mine must replay the newest stashed buffer, got %q", string(got))
+	}
+
+	// Resolution popped the stash — the funnel passes again.
+	if _, err := app.SavePageMarkdown(notebook, section, page, "post-resolution body\n"); err != nil {
+		t.Fatalf("post-resolution save must pass: %v", err)
+	}
+}
+
+// 8. Non-editor readers must not disarm the gate (#1005): an MCP read_page
+// (or plugin block fetch) between an external edit and the editor's next
+// save cannot re-baseline the fingerprint — only editor-facing loads adopt
+// bytes into a buffer, so only they may advance the baseline.
+func TestExternalEdit_NonEditorReaderDoesNotRebaseline(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "McpReadNB", "", "McpRead"
+	blockID := "dddddda2-dddd-4ddd-8ddd-ddddddddddda2"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "original line")
+
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "---\nnotebook: \"McpReadNB\"\npage: \"McpRead\"\ntags: []\n---\nexternal line\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+
+	// The MCP bridge routes read_page here; it must serve the read without
+	// moving the editor's baseline.
+	bridge := mcpBridge{app: app}
+	if _, err := bridge.FetchPageBlocks(t.Context(), notebook, section, page); err != nil {
+		t.Fatalf("bridge FetchPageBlocks: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "my unsaved text")))
+
+	// Same contract for the markdown reader plugins/MCP use.
+	if _, err := bridge.FetchPageMarkdown(t.Context(), notebook, section, page); err != nil {
+		t.Fatalf("bridge FetchPageMarkdown: %v", err)
+	}
+	_, err := app.SavePageMarkdown(notebook, section, page, "my source body\n")
+	requireConflict(t, err)
+}
+
+// 9. A pending refused-write stash refuses even read-modify-write
+// (plugin-block-ops-shaped) saves — a live conflict is never silently
+// written past — and the refusal must NOT stash the plugin payload over
+// the user's refused editor buffer (the stash's possible only copy outside
+// the backend).
+func TestExternalEdit_PluginRMWSaveRefusesWhileStashPending(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "RmwNB", "", "RmwPage"
+	blockID := "dddddda3-dddd-4ddd-8ddd-ddddddddddda3"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "original line")
+
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "---\nnotebook: \"RmwNB\"\npage: \"RmwPage\"\ntags: []\n---\nexternal line\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "my unsaved text")))
+
+	// The plugin RMW funnel (gateStashOnly): refused while the stash is
+	// live, without replacing it.
+	requireConflict(t, app.saveFileBlocksWithGate(notebook, section, page,
+		editBlocks(blocks, blockID, "plugin mutation"), historyReasonPlugin, gateStashOnly))
+
+	// keep_mine still replays the EDITOR's refused buffer — the plugin
+	// payload never evicted it.
+	if _, err := app.ResolveExternalConflict(notebook, section, page, "keep_mine"); err != nil {
+		t.Fatalf("ResolveExternalConflict: %v", err)
+	}
+	got, _ := os.ReadFile(filePath)
+	if !strings.Contains(string(got), "my unsaved text") {
+		t.Fatalf("keep_mine must replay the editor's stashed buffer, got %q", string(got))
+	}
+}

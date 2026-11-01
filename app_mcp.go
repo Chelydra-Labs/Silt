@@ -35,12 +35,16 @@ func (b mcpBridge) SearchBlocksPaged(ctx context.Context, query string, offset, 
 
 func (b mcpBridge) FetchPageBlocks(ctx context.Context, notebook, section, page string) ([]parser.ParsedBlock, error) {
 	_ = ctx
-	return b.app.FetchPageBlocks(notebook, section, page)
+	// captureNone: an MCP client reading a page must not re-baseline the
+	// external-edit fingerprint — the editor's baseline tracks the bytes the
+	// editor holds, and re-baselining here would let the editor's next save
+	// clobber an external edit the client just read (#1005).
+	return b.app.fetchPageBlocks(notebook, section, page, captureNone)
 }
 
 func (b mcpBridge) FetchPageMarkdown(ctx context.Context, notebook, section, page string) (string, error) {
 	_ = ctx
-	return b.app.FetchPageMarkdown(notebook, section, page)
+	return b.app.fetchPageMarkdown(notebook, section, page, captureNone)
 }
 
 func (b mcpBridge) ListNavigation(ctx context.Context) (parser.NavigationTree, error) {

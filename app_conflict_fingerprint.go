@@ -71,6 +71,12 @@ type FileFingerprint struct {
 // targets — have 1–2s mtime granularity, and ext3/tmpfs are jiffy-coarse, so
 // a same-size external rewrite within this window is invisible to the stat
 // fast path (git's "racily clean" problem). ~3s covers the coarsest targets.
+// NFS is a different gap: attribute caching (default `actimeo` 3–60s) can
+// serve a stale stat long past this window, letting the fast path pass with
+// no hash arbiter — same family as the Windows in-place-writer gap (see
+// app_conflict_fingerprint_windows.go). Vaults on NFS mounts should mount
+// with `noac` or a low `actimeo`; making the window configurable has not
+// been needed for the supported linked-root targets.
 const fingerprintRacyWindow = 3 * time.Second
 
 // absentFileSize marks a fingerprint captured while the file did not exist.
@@ -152,11 +158,15 @@ func (a *App) capturePageFingerprintByLocator(source, notebook, section, page st
 	a.capturePageLoadFingerprint(filePath)
 }
 
-// capturePageLoadFingerprint records the load baseline for filePath. Called at
-// the two editor load points (FetchPageBlocks / FetchPageMarkdown); every
-// reload recaptures, so the baseline is always "since the app last loaded this
-// page". Errors are swallowed: a failed capture must not break the load — it
-// only means no conflict protection until the next successful capture.
+// capturePageLoadFingerprint records the load baseline for filePath. Called
+// only from editor-facing loads (the webview's FetchPageBlocks /
+// FetchPageMarkdown — see pageLoadCapture); every editor reload recaptures,
+// so the baseline is always "since the editor last loaded this page".
+// Programmatic readers (MCP read_page, plugin block ops) must NOT recapture:
+// they do not adopt the bytes into any buffer, so re-baselining would disarm
+// the gate behind the editor's back. Errors are swallowed: a failed capture
+// must not break the load — it only means no conflict protection until the
+// next successful capture.
 func (a *App) capturePageLoadFingerprint(filePath string) {
 	if a == nil || filePath == "" {
 		return
@@ -230,6 +240,13 @@ func (fp FileFingerprint) statRacilyClean(cur FileFingerprint, now time.Time) bo
 // check must observe the same file state the write is about to act on, so an
 // edit landing between load and lock acquisition is still caught.
 //
+//   - A refused-write stash is pending for the path → refuse. The stash IS
+//     the conflict state: nothing backend-side should be able to disarm it
+//     by re-baselining (any load can recapture the fingerprint, so the
+//     fingerprint alone cannot be authoritative once a save has been
+//     refused). The funnels keep refusing — re-stashing same-funnel
+//     newest-wins, keeping the first stash cross-funnel — until
+//     ResolveExternalConflict settles it.
 //   - No baseline for the path (never loaded this session) → pass: legacy
 //     behavior, nothing to compare against.
 //   - Stat match outside the raciness window → pass (happy path: one os.Stat,
@@ -246,6 +263,9 @@ func (a *App) checkExternalEditConflict(filePath string) error {
 		return nil
 	}
 	key := core.NormalizeFileLockPath(filePath)
+	if err := a.externalEditStashRefusalKey(key, filePath); err != nil {
+		return err
+	}
 	baseline, ok := a.loadPageFingerprint(key)
 	if !ok {
 		return nil
@@ -317,6 +337,28 @@ func (a *App) popRefusedWrite(key string) (refusedPageWrite, bool) {
 		delete(a.refusedWrites, key)
 	}
 	return rw, ok
+}
+
+// refusedWritePending reports whether an unresolved refused save is stashed
+// for the path — the backend-authoritative conflict state the save funnels
+// refuse against (see checkExternalEditConflict).
+func (a *App) refusedWritePending(key string) bool {
+	a.refusedWritesMu.Lock()
+	defer a.refusedWritesMu.Unlock()
+	_, ok := a.refusedWrites[key]
+	return ok
+}
+
+// externalEditStashRefusalKey returns the typed external-edit refusal when a
+// pending refused-write stash makes the path's conflict live, or nil. Every
+// gated funnel consults it — including read-modify-write funnels that skip
+// the load-baseline half (see externalEditGateMode): a live stash is the
+// conflict state regardless of what the fingerprint says.
+func (a *App) externalEditStashRefusalKey(key, filePath string) error {
+	if a.refusedWritePending(key) {
+		return externalEditConflictError(filePath)
+	}
+	return nil
 }
 
 // restoreRefusedWriteIfAbsent puts a popped stash back only when no newer

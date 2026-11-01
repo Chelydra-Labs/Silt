@@ -284,7 +284,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 			return opOrder[pageOps[i].op.Kind] < opOrder[pageOps[j].op.Kind]
 		})
 		first := pageOps[0]
-		blocks, err := a.FetchPageBlocks(first.notebook, first.section, first.page)
+		blocks, err := a.fetchPageBlocks(first.notebook, first.section, first.page, captureNone)
 		if err != nil {
 			return fmt.Errorf("fetch page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
@@ -318,7 +318,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 						r.origSection != r.section ||
 						r.origPage != r.page)
 				if isCrossPage {
-					srcBlocks, srcErr := a.FetchPageBlocks(r.origNotebook, r.origSection, r.origPage)
+					srcBlocks, srcErr := a.fetchPageBlocks(r.origNotebook, r.origSection, r.origPage, captureNone)
 					if srcErr != nil {
 						return fmt.Errorf("cross-page move: fetch source page for block %s: %w", r.op.BlockID, srcErr)
 					}
@@ -338,7 +338,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 				}
 			}
 		}
-		if err := a.saveFileBlocksWithSource(first.notebook, first.section, first.page, mutated, reason); err != nil {
+		if err := a.saveFileBlocksWithGate(first.notebook, first.section, first.page, mutated, reason, gateStashOnly); err != nil {
 			return fmt.Errorf("save page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
 		// For cross-page moves, remove the block from its source page.
@@ -424,8 +424,10 @@ func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, pag
 	// This is acceptable: the DB is a re-derivable cache (§0 rule 4), so the
 	// next index rebuild (or the next SaveFileBlocks for this page) reconciles
 	// the file↔DB state automatically.
-	// Read current blocks from the DB (fresh snapshot).
-	srcBlocks, err := a.FetchPageBlocks(notebook, section, page)
+	// Read current blocks from the DB (fresh snapshot). captureNone: this
+	// runs inside LockFileWrite for a Silt-owned rewrite; the write below
+	// re-baselines any pre-existing fingerprint itself.
+	srcBlocks, err := a.fetchPageBlocks(notebook, section, page, captureNone)
 	if err != nil {
 		return fmt.Errorf("fetch source %s/%s/%s: %w", notebook, section, page, err)
 	}
@@ -451,9 +453,9 @@ func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, pag
 	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 		return fmt.Errorf("write source file: %w", err)
 	}
-	// The FetchPageBlocks above captured a load baseline for this path under
-	// the same lock — re-baseline to the bytes just written or the next
-	// whole-page save false-conflicts against this Silt-owned rewrite (#1005).
+	// Re-baseline to the bytes just written (only refreshes a baseline an
+	// editor load already created): otherwise the next whole-page save
+	// false-conflicts against this Silt-owned rewrite (#1005).
 	a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
 
 	// Targeted DB delete: remove ONLY the moved block from the SOURCE page.
