@@ -388,6 +388,14 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 				if writeErr != nil {
 					return fmt.Errorf("cross-page move: save source %s/%s/%s: %w", sn, ss, sp, writeErr)
 				}
+				// Whole-page signal for the rewritten source page (outside the
+				// file lock, like every emit here). The rewrite refreshed the
+				// fingerprint, so an editor still open on the source page must
+				// recapture buffer + baseline via its block:changed reload —
+				// otherwise its stale buffer's next autosave passes the gate
+				// and silently re-inserts the moved block (#1005; same
+				// contract as the rename link fanout).
+				a.emitBlockChanged("", sn, ss, sp, "")
 			}
 		}
 		for _, id := range createdIDs {
