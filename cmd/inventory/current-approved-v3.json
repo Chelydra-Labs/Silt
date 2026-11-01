@@ -1,6 +1,6 @@
 {
   "schema": "current-approved-v3",
-  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update ./cmd/inventory/current-approved-v3.json",
+  "regen_cmd": "go run -tags tools ./cmd/inventory/ -update cmd/inventory/current-approved-v3.json",
   "description": "Approved Wails v3 IPC surface snapshot. The CI parity gate fails on any missing/extra/changed *App method signature versus this file. Other sections (events, frontend imports) are tracked for review visibility and refreshed whenever the fixture is regenerated.",
   "inventory": {
     "methods": [
@@ -881,6 +881,10 @@
         "signature": "ResolveBlockReference(blockID string) (parser.BlockReference, error)"
       },
       {
+        "name": "ResolveExternalConflict",
+        "signature": "ResolveExternalConflict(notebook, section, page, resolution string) (string, error)"
+      },
+      {
         "name": "ResolvePageLink",
         "signature": "ResolvePageLink(target string) (parser.PageReference, error)"
       },
@@ -1223,6 +1227,7 @@
       "frontend/src/components/editor/PageHistoryModal.svelte",
       "frontend/src/components/editor/PageHistoryModal.test.ts",
       "frontend/src/components/editor/PluginNoteBanners.test.ts",
+      "frontend/src/components/editor/SaveConflictBanner.test.ts",
       "frontend/src/components/editor/TaskBlockView.test.ts",
       "frontend/src/components/editor/controllers/useSuggests.svelte.ts",
       "frontend/src/components/editor/controllers/useSuggests.test.ts",
@@ -1264,6 +1269,7 @@
       "frontend/src/lib/devModeInspect.test.ts",
       "frontend/src/lib/devModeInspect.ts",
       "frontend/src/lib/editor/blockDepthDom.test.ts",
+      "frontend/src/lib/editor/externalConflict.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
       "frontend/src/lib/editor/pageMarkdown.ts",
       "frontend/src/lib/editor/spellcheck/customDictionary.svelte.test.ts",
@@ -1354,6 +1360,8 @@
       "frontend/src/components/VirtualScrollContainer.svelte",
       "frontend/src/components/VirtualScrollContainer.test.ts",
       "frontend/src/components/editor/GlobalReplaceModal.test.ts",
+      "frontend/src/components/editor/PageHistoryModal.svelte",
+      "frontend/src/components/editor/PageHistoryModal.test.ts",
       "frontend/src/components/editor/SelectionBubble.svelte",
       "frontend/src/components/editor/SelectionBubble.test.ts",
       "frontend/src/components/editor/TaskBlockView.test.ts",
@@ -1380,6 +1388,7 @@
       "frontend/src/dashboards/reprojectionStatus.svelte.ts",
       "frontend/src/dashboards/reprojectionStatus.test.ts",
       "frontend/src/lib/editor/blockDepthDom.test.ts",
+      "frontend/src/lib/editor/editorRegistry.svelte.ts",
       "frontend/src/lib/editor/nodeview-test-harness.test.ts",
       "frontend/src/lib/editor/spellcheck/customDictionary.svelte.test.ts",
       "frontend/src/plugins/context.ai.test.ts",
