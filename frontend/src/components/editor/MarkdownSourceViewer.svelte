@@ -1046,6 +1046,27 @@
           })
       }
     }
+    // #1005: text typed under the refusal latch exists only in this buffer,
+    // and the view toggle that unmounts here destroys it. Re-flush through
+    // the save funnel: the still-external disk re-refuses and the backend
+    // REPLACES this funnel's stash with the typed buffer (same-funnel
+    // newest-wins), so any later resolution — from either surface —
+    // replays or archives the typed text instead of losing it. For an
+    // inherited latch over an edit-origin stash this is a harmless no-op
+    // refusal (cross-funnel keeps the first stash).
+    if (saveRefused && dirty && notebook && page && buffer !== refusedBuffer) {
+      void savePageMarkdown(notebook, section, page, buffer).catch((e) => {
+        // The refusal itself is the expected handoff outcome; anything
+        // else is a real flush failure.
+        const coerced = coerceIPCError(e)
+        if (coerced.code !== IPCErrorCode.CodeExternalEditConflict) {
+          console.error(
+            'MarkdownSourceViewer: refused-buffer handoff failed:',
+            e
+          )
+        }
+      })
+    }
     void releaseLock()
   })
 </script>

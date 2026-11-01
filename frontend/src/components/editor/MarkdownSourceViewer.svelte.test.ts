@@ -2030,4 +2030,107 @@ describe('MarkdownSourceViewer editor registry (#884)', () => {
     expect(ta.value).toBe(FETCH_BODY)
     expect(mocks.fetchPageMarkdown).toHaveBeenCalledTimes(1)
   })
+
+  // #1005 blocker: text typed after this surface's own refusal lives only
+  // in the component-local buffer — the view toggle destroys it. The unmount
+  // handoff re-flushes the typed buffer through the save funnel; the
+  // re-refusal replaces this funnel's backend stash (same-funnel
+  // newest-wins), so a later keep_mine replays the TYPED text.
+  it('hands off text typed after a refusal on unmount instead of dropping it', async () => {
+    vi.useFakeTimers()
+    const refusal = () =>
+      Promise.reject(
+        new Error(
+          '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
+        )
+      )
+    mocks.savePageMarkdown.mockImplementation(refusal)
+    mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
+    try {
+      const { rerender, unmount } = render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page'
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
+      const ta = screen.getByRole('textbox', { name: /markdown source/i })
+      // The refusal: the debounced save is refused and the parent latches.
+      await fireEvent.input(ta, { target: { value: '# My refused text' } })
+      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(0)
+      await screen.findByText(/Save held — this file changed on disk/)
+      await rerender({ conflictActive: true })
+      expect(mocks.savePageMarkdown).toHaveBeenCalledTimes(1)
+
+      // Typing continues under the latch; the toggle unmounts the viewer.
+      await fireEvent.input(ta, {
+        target: { value: '# My refused text plus typing' }
+      })
+      unmount()
+
+      // The typed buffer was handed off through the save funnel — the
+      // refusal it gets back is the stash-replacing handoff itself.
+      await vi.advanceTimersByTimeAsync(0)
+      expect(mocks.savePageMarkdown).toHaveBeenCalledTimes(2)
+      expect(mocks.savePageMarkdown).toHaveBeenLastCalledWith(
+        'Work',
+        'Sec',
+        'Page',
+        '# My refused text plus typing'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // #1005 blocker, inherited-latch half: a viewer mounted under an
+  // already-latched page (the toggle-back world) has refusedBuffer === null,
+  // so its typed text is not in the backend stash either — the same unmount
+  // handoff must carry it into the stash.
+  it('hands off typed-during-inherited-latch text on unmount', async () => {
+    vi.useFakeTimers()
+    const refusal = () =>
+      Promise.reject(
+        new Error(
+          '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
+        )
+      )
+    mocks.savePageMarkdown.mockImplementation(refusal)
+    mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
+    try {
+      const { unmount } = render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page',
+          conflictActive: true
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
+      const ta = screen.getByRole('textbox', { name: /markdown source/i })
+      await fireEvent.input(ta, {
+        target: { value: '# Typed during an inherited latch' }
+      })
+      unmount()
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(mocks.savePageMarkdown).toHaveBeenCalledTimes(1)
+      expect(mocks.savePageMarkdown).toHaveBeenLastCalledWith(
+        'Work',
+        'Sec',
+        'Page',
+        '# Typed during an inherited latch'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
