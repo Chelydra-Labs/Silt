@@ -19,6 +19,8 @@ updates:
       minor:
         update-types:
           - "minor"
+    ignore:
+      - dependency-name: "@wailsio/runtime"
 
   - package-ecosystem: "gomod"
     directory: "/"
@@ -38,11 +40,9 @@ updates:
           - "minor"
     # The Wails v3 Go module and the @wailsio/runtime npm package must stay on
     # the same version (ADR 0004), and the bump has to absorb the Go toolchain
-    # floor and the GTK4/WebKitGTK 6.0 default. A grouped automatic bump cannot
-    # do that, so Wails moves only through the deliberate upgrade tracked in
-    # #982. Remove this rule once that lands. (Modern Dependabot also refuses
-    # grouped updates that mix package managers, so the cross-file PR was never
-    # a real possibility; this encodes the intent explicitly.)
+    # floor and the GTK4/WebKitGTK 6.0 default. Dependabot cannot group updates
+    # across package managers, so both pins are excluded from automated bumps
+    # and must move together in a deliberate, coordinated upgrade.
     ignore:
       - dependency-name: "github.com/wailsapp/wails/v3"
 
