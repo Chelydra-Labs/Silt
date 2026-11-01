@@ -86,8 +86,9 @@ func (a *App) ResolveExternalConflict(notebook, section, page, resolution string
 	key := core.NormalizeFileLockPath(filePath)
 	rw, ok := a.popRefusedWrite(key)
 	if !ok {
-		return NewIPCError(CodeExternalEditConflict,
-			"no pending external-edit conflict for this page — retry the save")
+		return wrapSentinelAsIPCError(CodeExternalEditConflict,
+			"no pending external-edit conflict for this page — retry the save",
+			errExternalEditConflict)
 	}
 
 	var conflictPage string

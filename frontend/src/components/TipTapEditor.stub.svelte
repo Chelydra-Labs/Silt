@@ -124,6 +124,19 @@
   </button>
   <button
     type="button"
+    data-testid="tiptap-stub-emit-conflict"
+    onclick={() =>
+      onSaveStateChange?.({
+        phase: 'error',
+        dirty: true,
+        error: 'this page changed on disk since it was opened',
+        externalConflict: true
+      })}
+  >
+    emit conflict
+  </button>
+  <button
+    type="button"
     data-testid="tiptap-stub-emit-clean"
     onclick={() =>
       onSaveStateChange?.({ phase: 'idle', dirty: false, error: null })}

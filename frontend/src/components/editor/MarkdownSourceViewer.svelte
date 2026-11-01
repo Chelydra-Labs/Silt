@@ -977,8 +977,10 @@
     <span class="file-path" title={filePath}>{filePath}</span>
     <div class="header-actions">
       {#if saveRefused}
-        <span class="save-status save-status--err" role="alert" aria-live="assertive"
-          >Save held — this file changed on disk</span
+        <span
+          class="save-status save-status--err"
+          role="alert"
+          aria-live="assertive">Save held — this file changed on disk</span
         >
       {:else if conflictPending}
         <span class="save-status" role="status" aria-live="polite"

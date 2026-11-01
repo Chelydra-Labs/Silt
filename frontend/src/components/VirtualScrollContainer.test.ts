@@ -38,7 +38,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('$silt-app', () =>
   createAppIpcMocks({
     FetchPageBlocks: vi.fn(() => Promise.resolve([])),
-    RenamePage: vi.fn(() => Promise.resolve(undefined))
+    RenamePage: vi.fn(() => Promise.resolve(undefined)),
+    ResolveExternalConflict: vi.fn(() => Promise.resolve(undefined))
   })
 )
 vi.mock('@wailsio/runtime', () => ({
@@ -411,6 +412,58 @@ describe('VirtualScrollContainer editor chrome', () => {
     const toggle = actionButton('Toggle source view')
     expect(toggle).toHaveAttribute('aria-keyshortcuts', 'Ctrl+E')
     expect(toggle.getAttribute('title')).toContain('(Ctrl+E)')
+  })
+
+  // #1005: a refused whole-page save surfaces the conflict banner with the
+  // three resolutions; Keep mine calls ResolveExternalConflict on the page's
+  // locator (no mounted registry handle in the stubbed harness → the direct
+  // IPC fallback).
+  it('shows the external-edit conflict banner and resolves via IPC', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    render(VirtualScrollContainer, { props: baseProps() })
+
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-conflict'))
+
+    const banner = await screen.findByTestId('save-conflict-banner')
+    expect(banner).toHaveAttribute('role', 'alert')
+    expect(banner.textContent).toContain('PG.md')
+    for (const label of ['Keep mine', 'Keep theirs', 'Keep both']) {
+      expect(screen.getByRole('button', { name: label })).toBeTruthy()
+    }
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep mine' }))
+    await waitFor(() =>
+      expect(ResolveExternalConflict).toHaveBeenCalledWith(
+        'NB',
+        '',
+        'PG',
+        'keep_mine'
+      )
+    )
+
+    // The banner leaves with the error phase (resolution → autosave clean).
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-clean'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
+    )
+  })
+
+  it('keeps the conflict banner when resolution fails', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    vi.mocked(ResolveExternalConflict).mockRejectedValueOnce(
+      new Error('vault closed')
+    )
+    render(VirtualScrollContainer, { props: baseProps() })
+
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-conflict'))
+    await screen.findByTestId('save-conflict-banner')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep both' }))
+    await waitFor(() =>
+      expect(screen.getByText(/Resolution failed: vault closed/)).toBeTruthy()
+    )
+    // Actions stay offered for a retry.
+    expect(screen.getByRole('button', { name: 'Keep mine' })).toBeTruthy()
   })
 
   it('announces the view-mode button state via aria-pressed', () => {

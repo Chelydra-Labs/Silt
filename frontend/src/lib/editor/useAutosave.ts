@@ -1,5 +1,8 @@
 import type { Editor } from 'svelte-tiptap'
-import { ResolveExternalConflict, SaveFileBlocks } from '../../../bindings/silt/app.js'
+import {
+  ResolveExternalConflict,
+  SaveFileBlocks
+} from '../../../bindings/silt/app.js'
 import type { ParsedBlock as BindingParsedBlock } from '../../../bindings/silt/backend/parser/models.js'
 import { IPCErrorCode } from '../../generated/enums'
 import { coerceIPCError } from '../ipcError'
@@ -314,7 +317,12 @@ export class AutosaveManager {
     }
   }
 
-  private emit(phase: SavePhase, dirty: boolean, error: string | null, externalConflict = false): void {
+  private emit(
+    phase: SavePhase,
+    dirty: boolean,
+    error: string | null,
+    externalConflict = false
+  ): void {
     // A new non-saved phase supersedes any pending saved→idle revert.
     if (phase !== 'saved') this.clearSavedHold()
     // externalConflict is omitted when false so non-conflict states keep
@@ -342,7 +350,9 @@ export class AutosaveManager {
    * caller's armed reload (fresh FetchPageBlocks) replaces the content;
    * markClean clears the refusal surface in the meantime.
    */
-  async resolveExternalConflict(resolution: ExternalConflictResolution): Promise<void> {
+  async resolveExternalConflict(
+    resolution: ExternalConflictResolution
+  ): Promise<void> {
     if (resolution === 'keep_theirs') {
       // Held before the IPC: the backend's block:changed triggers a reload
       // that must not race a stale debounce firing mid-resolution.

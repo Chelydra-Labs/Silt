@@ -206,13 +206,31 @@ func (a *App) checkExternalEditConflict(filePath string) error {
 	if !ok {
 		return nil
 	}
-	cur, err := captureFileFingerprint(filePath)
+	// Fast path: stat only. The hash is read + computed solely on drift so
+	// the happy path costs one os.Stat (see BenchmarkExternalEditCheck).
+	info, err := os.Stat(filePath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			absent := FileFingerprint{Size: absentFileSize, SHA256: ""}
+			if baseline.fingerprintStatEqual(absent) {
+				return nil
+			}
+			return externalEditConflictError(filePath)
+		}
 		return errExternalEditConflictWrap(err)
 	}
+	cur := fingerprintFromStat(info)
 	if baseline.fingerprintStatEqual(cur) {
 		return nil
 	}
+	// Drift: the hash decides between a touch (sync client re-statting
+	// identical bytes) and a real external rewrite.
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return errExternalEditConflictWrap(err)
+	}
+	sum := sha256.Sum256(data)
+	cur.SHA256 = hex.EncodeToString(sum[:])
 	if cur.SHA256 == baseline.SHA256 {
 		// Same bytes, new stat — adopt the new stat so the next save's
 		// fast path matches again without re-reading the file.

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"silt/backend/core"
@@ -48,5 +49,43 @@ func BenchmarkSavePath_StatUnderLock(b *testing.B) {
 			_, sink = os.Stat(path)
 		}
 		_ = sink
+	})
+}
+
+// BenchmarkExternalEditCheck pins the fingerprint gate's cost on the autosave
+// path (#1005): the fast path (stat matches the load baseline → no read, no
+// hash) and the post-write refresh (one stat + one sha256 of the in-memory
+// bytes). Both must stay in the stat-cost ballpark; hashing is only ever hit
+// on stat drift.
+func BenchmarkExternalEditCheck(b *testing.B) {
+	dir := b.TempDir()
+	path := filepath.Join(dir, "page.md")
+	content := []byte("---\npage: \"Bench\"\n---\n" + strings.Repeat("lorem ipsum ", 2000))
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		b.Fatal(err)
+	}
+	app := &App{}
+	fp, err := captureFileFingerprint(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	key := core.NormalizeFileLockPath(path)
+	app.storePageLoadFingerprint(key, fp)
+
+	b.Run("check_stat_match", func(b *testing.B) {
+		b.ReportAllocs()
+		var sink error
+		for i := 0; i < b.N; i++ {
+			sink = app.checkExternalEditConflict(path)
+		}
+		if sink != nil {
+			b.Fatal(sink)
+		}
+	})
+	b.Run("refresh_after_write", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			app.refreshFingerprintAfterWrite(path, content)
+		}
 	})
 }

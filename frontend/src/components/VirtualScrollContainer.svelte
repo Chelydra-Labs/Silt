@@ -7,9 +7,7 @@
   import TipTapEditor from './TipTapEditor.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
   import SaveConflictBanner from './editor/SaveConflictBanner.svelte'
-  import {
-    getEditorForLocator
-  } from '../lib/editor/editorRegistry.svelte'
+  import { getEditorForLocator } from '../lib/editor/editorRegistry.svelte'
   import {
     resolveExternalConflict,
     type ExternalConflictResolution

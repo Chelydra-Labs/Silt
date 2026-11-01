@@ -9,7 +9,8 @@
 
 import { ResolveExternalConflict } from '../../../bindings/silt/app.js'
 
-export type ExternalConflictResolution = 'keep_mine' | 'keep_theirs' | 'keep_both'
+export type ExternalConflictResolution =
+  'keep_mine' | 'keep_theirs' | 'keep_both'
 
 /** Human summary of what each resolution does to disk. */
 export const CONFLICT_RESOLUTIONS: {

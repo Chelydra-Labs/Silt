@@ -33,8 +33,8 @@
 >
   <p class="font-body-md">
     “{page}.md” changed on disk since it was opened, so the save was held to
-    avoid overwriting it. Choose which version to keep — the other is saved as
-    a .conflict copy.
+    avoid overwriting it. Choose which version to keep — the other is saved as a
+    .conflict copy.
   </p>
   {#if error}
     <p class="text-type-sm">
@@ -42,7 +42,11 @@
       files on disk.
     </p>
   {/if}
-  <div class="flex flex-wrap gap-2" role="group" aria-label="Resolve external edit">
+  <div
+    class="flex flex-wrap gap-2"
+    role="group"
+    aria-label="Resolve external edit"
+  >
     {#each CONFLICT_RESOLUTIONS as action (action.key)}
       <button
         type="button"

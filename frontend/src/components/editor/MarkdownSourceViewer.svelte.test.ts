@@ -34,7 +34,8 @@ const mocks = vi.hoisted(() => ({
   fetchPageMarkdown: vi.fn(),
   AcquireFocusLock: vi.fn().mockResolvedValue(undefined),
   ReleaseFocusLock: vi.fn().mockResolvedValue(undefined),
-  RefreshFocusLock: vi.fn().mockResolvedValue(undefined)
+  RefreshFocusLock: vi.fn().mockResolvedValue(undefined),
+  resolveExternalConflict: vi.fn().mockResolvedValue(undefined)
 }))
 
 vi.mock('../../theme/store.svelte', () => ({ themeState: mocks.themeState }))
@@ -60,7 +61,9 @@ vi.mock('$silt-app', () =>
   createAppIpcMocks({
     AcquireFocusLock: (...args: unknown[]) => mocks.AcquireFocusLock(...args),
     ReleaseFocusLock: (...args: unknown[]) => mocks.ReleaseFocusLock(...args),
-    RefreshFocusLock: (...args: unknown[]) => mocks.RefreshFocusLock(...args)
+    RefreshFocusLock: (...args: unknown[]) => mocks.RefreshFocusLock(...args),
+    ResolveExternalConflict: (...args: unknown[]) =>
+      mocks.resolveExternalConflict(...args)
   })
 )
 
@@ -107,6 +110,8 @@ describe('MarkdownSourceViewer', () => {
     mocks.AcquireFocusLock.mockClear()
     mocks.ReleaseFocusLock.mockClear()
     mocks.RefreshFocusLock.mockClear()
+    mocks.resolveExternalConflict.mockReset()
+    mocks.resolveExternalConflict.mockResolvedValue(undefined)
     mocks.themeState.mode = 'dark'
   })
   afterEach(() => {
@@ -336,6 +341,119 @@ describe('MarkdownSourceViewer', () => {
         'Page',
         '# Edited\nline2'
       )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // #1005: a refused Source-mode save surfaces the banner; keep_mine settles
+  // it via ResolveExternalConflict and typed-past edits flush afterwards.
+  it('surfaces an external-edit refusal and resolves it (keep_mine)', async () => {
+    vi.useFakeTimers()
+    mocks.savePageMarkdown.mockImplementation(() =>
+      Promise.reject(
+        new Error(
+          '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
+        )
+      )
+    )
+    try {
+      const { rerender } = render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page'
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
+      const ta = screen.getByRole('textbox', { name: /markdown source/i })
+      await fireEvent.input(ta, { target: { value: '# My edit' } })
+      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(0)
+
+      const banner = await screen.findByTestId('save-conflict-banner')
+      expect(banner.textContent).toContain('Page.md')
+      expect(
+        screen.getByText(/Save held — this file changed on disk/)
+      ).toBeTruthy()
+
+      // Resolution succeeds → banner leaves, the buffer is clean, and a
+      // follow-up edit saves normally (baseline was refreshed).
+      mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Heading')])
+      await fireEvent.click(screen.getByRole('button', { name: 'Keep mine' }))
+      await waitFor(() =>
+        expect(mocks.resolveExternalConflict).toHaveBeenCalledWith(
+          'Work',
+          'Sec',
+          'Page',
+          'keep_mine'
+        )
+      )
+      await waitFor(() =>
+        expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
+      )
+
+      await fireEvent.input(ta, { target: { value: '# Post-resolution' } })
+      await vi.advanceTimersByTimeAsync(500)
+      expect(mocks.savePageMarkdown).toHaveBeenCalledWith(
+        'Work',
+        'Sec',
+        'Page',
+        '# Post-resolution'
+      )
+      void rerender
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // keep_theirs reloads from disk after the backend archived my version.
+  it('keep_theirs reloads the on-disk version after resolution', async () => {
+    vi.useFakeTimers()
+    mocks.savePageMarkdown.mockImplementation(() =>
+      Promise.reject(
+        new Error(
+          '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
+        )
+      )
+    )
+    mocks.fetchPageMarkdown
+      .mockResolvedValueOnce(FETCH_BODY)
+      .mockResolvedValueOnce('# Theirs from disk')
+    try {
+      render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page'
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
+      const ta = screen.getByRole('textbox', {
+        name: /markdown source/i
+      }) as HTMLTextAreaElement
+      await fireEvent.input(ta, { target: { value: '# My doomed edit' } })
+      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(0)
+      await screen.findByTestId('save-conflict-banner')
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Keep theirs' }))
+      await waitFor(() =>
+        expect(mocks.resolveExternalConflict).toHaveBeenCalledWith(
+          'Work',
+          'Sec',
+          'Page',
+          'keep_theirs'
+        )
+      )
+      await waitFor(() => expect(ta.value).toContain('# Theirs from disk'))
+      expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
     } finally {
       vi.useRealTimers()
     }
