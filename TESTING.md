@@ -76,21 +76,28 @@ this matrix records the intent of each area's coverage.
 | `backend/vault` | settings durability & theme persistence, vault move/copy/verify, archive manifest |
 | Frontend (Vitest) | editor smoke + converter/schema round-trip identity, sidebar/tabs/titlebar, theme store, plugin surfaces, standalone-tasks router, silt-tasks Board blocked-badge + DONE guard, silt-tasks List blocked-badge + guard, DependencyPicker, Task Sub-Editor Modal, a11y |
 
-## Benchmarks & budgets
+## Performance: requirements vs regression guards
 
-These are **hard regression gates** (run in the normal `-race` CI gate, skipped
-under `-short`), not aspirations.
+**Product requirements** — these block release and must not regress:
+
+- **UI frame budget (Tier 1A)** — no user input path blocks on disk or IPC;
+  the 16 ms / 60 FPS budget is the stated requirement (SPECS §1.3, §7.2).
+- **Atomic-write safety (Tier 0)** — a kill-mid-write recovers every committed
+  block via WAL replay, with zero stray `*.tmp` files
+  (`TestAtomicWrite_KillMidWriteRecoversViaWAL`).
+
+**CI regression guards** — run in the normal `-race` gate, skipped under
+`-short`. These detect slowdowns; they are **not** product promises and must
+not drive architecture decisions:
 
 - **Cold scan** — index 1,000 page files in under **450 ms**
   (`TestScanWorkspace_BudgetRegression`; baseline ~280 ms).
 - **Warm restart** — the on-disk WAL `files`-table diff for a 5,000-page vault
   stays well under budget (`BenchmarkWarmStart_5000Files`, ~48 ms/op).
-- **Atomic-write safety** — a kill-mid-write recovers every committed block via
-  WAL replay, with zero stray `*.tmp` files
-  (`TestAtomicWrite_KillMidWriteRecoversViaWAL`).
-- **UI frame budget** — a dev-only probe (`?perf=1`, `measureFrameBudget`)
-  instruments the three hottest paths — Board drag-settle, editor transaction,
-  theme-token injection — against the 16 ms / 60 FPS budget.
+
+The former **65 MB idle-memory target is withdrawn** and is not a gate. The
+meaningful memory property is that the footprint does not degrade over a long
+session, verified by profiling (see `docs/editor-memory-profiling.md`).
 
 ```sh
 go test -bench=. -count=3 ./backend/parser/   # cold scan
