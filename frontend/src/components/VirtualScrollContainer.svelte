@@ -6,6 +6,14 @@
   import { EventName } from '../generated/enums'
   import TipTapEditor from './TipTapEditor.svelte'
   import MarkdownSourceViewer from './editor/MarkdownSourceViewer.svelte'
+  import SaveConflictBanner from './editor/SaveConflictBanner.svelte'
+  import {
+    getEditorForLocator
+  } from '../lib/editor/editorRegistry.svelte'
+  import {
+    resolveExternalConflict,
+    type ExternalConflictResolution
+  } from '../lib/editor/externalConflict'
   import OutlinePanel from './editor/OutlinePanel.svelte'
   import FindBar from './editor/FindBar.svelte'
   import { findBarState } from '../lib/editor/search/findBarState.svelte'
@@ -58,6 +66,9 @@
       phase: 'idle' | 'pending' | 'saving' | 'saved' | 'error'
       dirty: boolean
       error: string | null
+      /** Error is the external-edit refusal (#1005) — show the conflict
+       *  banner with keep-mine/theirs/both actions. */
+      externalConflict?: boolean
     }) => void
   }
 
@@ -128,6 +139,36 @@
 
   // Editor status state
   let saveError = $state<string | null>(null)
+  // External-edit save refusal (#1005): the banner offers the three
+  // resolutions while the autosave stays in its error phase.
+  let saveConflict = $state(false)
+  let conflictBusy = $state(false)
+  let conflictError = $state<string | null>(null)
+
+  async function handleResolveConflict(
+    resolution: ExternalConflictResolution
+  ): Promise<void> {
+    conflictBusy = true
+    conflictError = null
+    try {
+      // Route through the mounted editor's handle when present: keep_theirs
+      // needs its armed-reload machinery to reseed the buffer safely.
+      const handle = getEditorForLocator(notebook, section, page)
+      if (handle?.resolveExternalConflict) {
+        await handle.resolveExternalConflict(resolution)
+      } else {
+        await resolveExternalConflict(notebook, section, page, resolution)
+      }
+      // Success clears the autosave error phase → saveConflict flips false
+      // via onSaveStateChange. Keep the local error clear too.
+      conflictError = null
+    } catch (e) {
+      conflictError = e instanceof Error ? e.message : String(e)
+    } finally {
+      conflictBusy = false
+    }
+  }
+
   let wordCount = $state(0)
   let showWordCount = $derived(
     settings.config?.editor?.show_word_count === true
@@ -656,6 +697,14 @@
           class:min-h-0={viewMode === 'source'}
           style="max-width: var(--editor-measure, 70ch);"
         >
+          {#if saveConflict}
+            <SaveConflictBanner
+              {page}
+              busy={conflictBusy}
+              error={conflictError}
+              onResolve={(r) => void handleResolveConflict(r)}
+            />
+          {/if}
           {#if loadError}
             <div
               class="text-error py-8 text-center font-body-md border border-error-border bg-error-bg rounded-lg flex flex-col items-center gap-3"
@@ -701,6 +750,8 @@
                 bind:wordCount
                 onSaveStateChange={(s) => {
                   saveError = s.error
+                  saveConflict = s.externalConflict === true
+                  if (!saveConflict) conflictError = null
                   onSaveStateChange?.(s)
                 }}
               />

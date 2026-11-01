@@ -28,6 +28,11 @@
   import { coerceIPCError } from '../../lib/ipcError'
   import { IPCErrorCode } from '../../generated/enums'
   import type { SourceSearchTarget } from '../../lib/editor/search/sourceSearch'
+  import {
+    resolveExternalConflict,
+    type ExternalConflictResolution
+  } from '../../lib/editor/externalConflict'
+  import SaveConflictBanner from './SaveConflictBanner.svelte'
 
   // MarkdownSourceViewer — editable Source mode (#660) with optional read-only
   // Shiki highlight (#171/#194). Seeds from on-disk body via FetchPageMarkdown;
@@ -81,6 +86,14 @@
   let dirty = $state(false)
   let saveError = $state<string | null>(null)
   let conflictPending = $state(false)
+  // External-edit save refusal (#1005): the backend stashed this buffer and
+  // refuses to overwrite the on-disk version until the user resolves.
+  let saveRefused = $state(false)
+  /** Buffer snapshot at the moment of the refusal — the version the backend
+   * stashed; typed-past edits are flushed after keep_mine/keep_both. */
+  let refusedBuffer: string | null = null
+  let conflictBusy = $state(false)
+  let conflictError = $state<string | null>(null)
   let savePhase = $state<'idle' | 'saving' | 'saved' | 'error'>('idle')
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let savedClearTimer: ReturnType<typeof setTimeout> | null = null
@@ -363,7 +376,15 @@
   }
 
   function scheduleSave(): void {
-    if (!editable || !notebook || !page || conflictPending || forcedSeed) return
+    if (
+      !editable ||
+      !notebook ||
+      !page ||
+      conflictPending ||
+      forcedSeed ||
+      saveRefused
+    )
+      return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       saveTimer = null
@@ -380,6 +401,9 @@
       return !dirty
     }
     if (conflictPending || forcedSeed) return false
+    // A refused save stays refused until the user resolves it (#1005); a
+    // retried flush would only re-refuse.
+    if (saveRefused) return false
     if (!dirty) return true
     const md = buffer
     const gen = saveGeneration
@@ -410,8 +434,18 @@
       return false
     } catch (e) {
       if (gen !== saveGeneration) return false
-      if (coerceIPCError(e).code === IPCErrorCode.CodePageWriteStale) {
+      const coerced = coerceIPCError(e)
+      if (coerced.code === IPCErrorCode.CodePageWriteStale) {
         savePhase = 'idle'
+        return false
+      }
+      if (coerced.code === IPCErrorCode.CodeExternalEditConflict) {
+        // Refused, not failed: remember the buffer the backend stashed so a
+        // later keep-mine knows whether the user typed past the refusal.
+        saveRefused = true
+        refusedBuffer = md
+        saveError = coerced.message
+        savePhase = 'error'
         return false
       }
       saveError = e instanceof Error ? e.message : String(e)
@@ -527,6 +561,9 @@
 
   function reloadFromDisk(): void {
     conflictPending = false
+    saveRefused = false
+    refusedBuffer = null
+    conflictError = null
     saveError = null
     savePhase = 'idle'
     // Reload discards local edits by explicit user choice. Clear dirty
@@ -541,6 +578,43 @@
     // Reload is an explicit history boundary: the user is discarding their
     // edits entirely, so the redo branch must not resurrect discarded text.
     void seedFromDiskOrBlocks(blocks)
+  }
+
+  /** Settle an external-edit save refusal (#1005). The losing version always
+   *  survives as a `.conflict-*` sibling written by the backend. */
+  async function resolveSaveConflict(
+    resolution: ExternalConflictResolution
+  ): Promise<void> {
+    conflictBusy = true
+    conflictError = null
+    try {
+      await resolveExternalConflict(notebook, section, page, resolution)
+      const typedPastRefusal =
+        refusedBuffer !== null && buffer !== refusedBuffer
+      saveRefused = false
+      refusedBuffer = null
+      conflictError = null
+      if (resolution === 'keep_theirs') {
+        // Discards the refused buffer by explicit choice; reloadFromDisk
+        // clears dirty/saveError and reseeds from the on-disk winner.
+        reloadFromDisk()
+        return
+      }
+      // keep_mine / keep_both: the backend wrote the stashed buffer. Typing
+      // that happened after the refusal is still unsaved — flush it now (the
+      // resolution refreshed the baseline, so the save passes).
+      saveError = null
+      if (typedPastRefusal) {
+        scheduleSave()
+      } else {
+        dirty = false
+        savePhase = 'idle'
+      }
+    } catch (e) {
+      conflictError = e instanceof Error ? e.message : String(e)
+    } finally {
+      conflictBusy = false
+    }
   }
 
   function announceHistory(msg: string): void {
@@ -884,8 +958,9 @@
     if (savedClearTimer) clearTimeout(savedClearTimer)
     if (saveTimer) {
       clearTimeout(saveTimer)
-      // Best-effort flush on unmount when dirty (not during conflict).
-      if (dirty && notebook && page && !conflictPending) {
+      // Best-effort flush on unmount when dirty (not during conflict; a
+      // refused save would only re-refuse #1005).
+      if (dirty && notebook && page && !conflictPending && !saveRefused) {
         void savePageMarkdown(notebook, section, page, buffer)
           .then((saved) => onBlocksSaved?.(saved))
           .catch((e) => {
@@ -901,7 +976,11 @@
   <div class="source-header">
     <span class="file-path" title={filePath}>{filePath}</span>
     <div class="header-actions">
-      {#if conflictPending}
+      {#if saveRefused}
+        <span class="save-status save-status--err" role="alert" aria-live="assertive"
+          >Save held — this file changed on disk</span
+        >
+      {:else if conflictPending}
         <span class="save-status" role="status" aria-live="polite"
           >External change detected</span
         >
@@ -977,6 +1056,14 @@
       {/if}
     </div>
   </div>
+  {#if saveRefused}
+    <SaveConflictBanner
+      {page}
+      busy={conflictBusy}
+      error={conflictError}
+      onResolve={(r) => void resolveSaveConflict(r)}
+    />
+  {/if}
   <div
     class="source-body"
     role={editable ? undefined : 'document'}

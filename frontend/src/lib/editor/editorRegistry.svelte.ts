@@ -55,6 +55,13 @@ export interface EditorHandle {
    *  Guards against stale PM positions when the user edits during AI
    *  streaming (#543 review fix). */
   verifySelectionText: (from: number, to: number, expected: string) => boolean
+  /** Resolve an external-edit save refusal (#1005): keep_mine / keep_theirs /
+   *  keep_both. Rejects if the resolution IPC fails — the caller's banner
+   *  keeps offering the actions. Optional so non-editor surfaces can register
+   *  without it. */
+  resolveExternalConflict?: (
+    resolution: 'keep_mine' | 'keep_theirs' | 'keep_both'
+  ) => Promise<void>
 }
 
 // Imperative handle registry — not UI-reactive state.

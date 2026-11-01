@@ -114,6 +114,9 @@
       phase: 'idle' | 'pending' | 'saving' | 'saved' | 'error'
       dirty: boolean
       error: string | null
+      /** Error is the external-edit refusal (#1005) — surface the
+       *  keep-mine/theirs/both actions instead of a retry. */
+      externalConflict?: boolean
     }) => void
     /** Fired once when the ProseMirror editor finishes its initial mount
      *  (onCreate). Lets the parent schedule post-readiness work such as
@@ -843,6 +846,23 @@
           return text === expected
         } catch {
           return false
+        }
+      },
+      resolveExternalConflict: async (resolution) => {
+        if (resolution === 'keep_theirs') {
+          // Arm BEFORE the IPC: the backend emits block:changed on
+          // resolution and the reload must land on an armed editor so the
+          // focused-edit guard lets the on-disk version replace my buffer
+          // (same ordering as the PageHistoryModal restore).
+          pendingExternalReload = true
+        }
+        try {
+          await autosave.resolveExternalConflict(resolution)
+        } catch (e) {
+          if (resolution === 'keep_theirs') {
+            pendingExternalReload = false
+          }
+          throw e
         }
       }
     })
