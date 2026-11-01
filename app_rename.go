@@ -335,6 +335,11 @@ func (a *App) rollbackRename(
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore inbound links %s: %w", path, err))
 			continue
 		}
+		// The forward fanout refreshed this baseline in-lock; the rollback
+		// must mirror it or an editor open on the page false-conflicts
+		// against the restored bytes (Silt's own write is never an external
+		// edit, #1005).
+		a.refreshFingerprintAfterWrite(path, entry.content)
 		if err := a.reindexFileContent(path, entry.source, entry.notebook, entry.section, entry.page, entry.content, false); err != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore inbound index %s: %w", path, err))
 		}
@@ -348,6 +353,8 @@ func (a *App) rollbackRename(
 		a.tracker.RegisterWrite(path)
 		if err := parser.WriteFileAtomic(path, file.oldContent); err != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore %s: %w", file.relPath, err))
+		} else {
+			a.refreshFingerprintAfterWrite(path, file.oldContent)
 		}
 	}
 	if err := os.Rename(newDir, oldDir); err != nil {

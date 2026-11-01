@@ -1214,6 +1214,59 @@ func TestRenameNotebook_UpdatesAllFiles(t *testing.T) {
 	}
 }
 
+// A failed section rename rolls inbound-link pages back to their pre-rename
+// bytes. The forward fanout refreshed those pages' baselines in-lock, so the
+// rollback must refresh them again — otherwise an editor open on the linking
+// page false-conflicts its next save against bytes Silt itself restored
+// (#1005: Silt's own write is never an external edit).
+func TestRenameSection_RollbackRefreshesInboundLinkBaseline(t *testing.T) {
+	app := newTestApp(t)
+	seedRenamePage(t, app, "RbNB", "Old/Child", "Page1")
+
+	linkerPath := filepath.Join(app.vaultPath, "RbNB", "Other", "Linker.md")
+	linkerContent := "---\nnotebook: \"RbNB\"\nsection: \"Other\"\npage: \"Linker\"\n---\nsee [[Old/Child/Page1]] please <!-- id: 22222222-2222-4222-8222-222222222222 -->\n"
+	writeFile(t, linkerPath, linkerContent)
+	blocks, meta, _, _, err := parser.ParseFileContent(linkerContent, "RbNB", "Other", "Linker", "2026-01-01", app.spacesPerTab)
+	if err != nil {
+		t.Fatalf("ParseFileContent linker: %v", err)
+	}
+	if err := app.db.IndexFileBlocks("vault", meta.Notebook, meta.Section, meta.Page, blocks, meta.Tags); err != nil {
+		t.Fatalf("IndexFileBlocks linker: %v", err)
+	}
+
+	// Editor open on the linking page — snapshots the load baseline.
+	linkerBlocks, err := app.FetchPageBlocks("RbNB", "Other", "Linker")
+	if err != nil {
+		t.Fatalf("FetchPageBlocks linker: %v", err)
+	}
+
+	// Fail the rename at nav reconcile — late enough that the forward pass
+	// already rewrote the inbound link (and refreshed its baseline), so the
+	// rollback's journal restore must run.
+	app.renameHooks = &renameHooks{reconcileSection: func(*App, string, string, string, bool) error {
+		return errors.New("injected reconcile failure")
+	}}
+	t.Cleanup(func() { app.renameHooks = nil })
+	if err := app.RenameSection("RbNB", "Old", "New"); err == nil {
+		t.Fatal("RenameSection should fail after injected reconcile failure")
+	}
+
+	// The linking page is back to its pre-rename bytes…
+	got, err := os.ReadFile(linkerPath)
+	if err != nil {
+		t.Fatalf("read linker: %v", err)
+	}
+	if !strings.Contains(string(got), "[[Old/Child/Page1]]") {
+		t.Fatalf("rollback must restore the pre-rename link, got:\n%s", string(got))
+	}
+
+	// …and the open editor's next save must PASS, not false-conflict against
+	// the restored bytes.
+	if err := app.SaveFileBlocks("RbNB", "Other", "Linker", linkerBlocks); err != nil {
+		t.Fatalf("save after rename rollback must not false-conflict: %v", err)
+	}
+}
+
 func TestRenameSection_RollsBackPostRenameWriteFailureAndRetries(t *testing.T) {
 	app := newTestApp(t)
 	seedRenamePage(t, app, "TestNB", "Old/Child", "Page1")
