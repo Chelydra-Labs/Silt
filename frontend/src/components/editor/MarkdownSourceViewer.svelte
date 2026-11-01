@@ -94,6 +94,8 @@
   let refusedBuffer: string | null = null
   let conflictBusy = $state(false)
   let conflictError = $state<string | null>(null)
+  /** Polite success announcement naming the created conflict copy (#1005). */
+  let conflictAnnouncement = $state('')
   let savePhase = $state<'idle' | 'saving' | 'saved' | 'error'>('idle')
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let savedClearTimer: ReturnType<typeof setTimeout> | null = null
@@ -588,12 +590,23 @@
     conflictBusy = true
     conflictError = null
     try {
-      await resolveExternalConflict(notebook, section, page, resolution)
+      const conflictPage = await resolveExternalConflict(
+        notebook,
+        section,
+        page,
+        resolution
+      )
       const typedPastRefusal =
         refusedBuffer !== null && buffer !== refusedBuffer
       saveRefused = false
       refusedBuffer = null
       conflictError = null
+      conflictAnnouncement = conflictPage
+        ? `Conflict resolved. The other version was saved as ${conflictPage}.md.`
+        : 'Conflict resolved. The kept-apart version is in the same folder as this page.'
+      // The banner just unmounted and took focus with it — hand focus back
+      // to the textarea so the user lands where editing continues.
+      textareaEl?.focus()
       if (resolution === 'keep_theirs') {
         // Discards the refused buffer by explicit choice; reloadFromDisk
         // clears dirty/saveError and reseeds from the on-disk winner.
@@ -977,20 +990,21 @@
     <span class="file-path" title={filePath}>{filePath}</span>
     <div class="header-actions">
       {#if saveRefused}
+        <!-- Visual echo only: the banner below carries role="alert", so this
+             header span must not announce too (double-speaking the
+             refusal). -->
         <span
-          class="save-status save-status--err"
-          role="alert"
-          aria-live="assertive">Save held — this file changed on disk</span
+          class="save-status save-status--err">Save held — this file changed on disk</span
         >
       {:else if conflictPending}
         <span class="save-status" role="status" aria-live="polite"
           >External change detected</span
         >
         <button type="button" class="conflict-btn" onclick={keepMine}>
-          Keep mine
+          Use my text
         </button>
         <button type="button" class="conflict-btn" onclick={reloadFromDisk}>
-          Reload
+          Reload file
         </button>
       {:else if saveError}
         <span
@@ -1060,7 +1074,6 @@
   </div>
   {#if saveRefused}
     <SaveConflictBanner
-      {page}
       busy={conflictBusy}
       error={conflictError}
       onResolve={(r) => void resolveSaveConflict(r)}
@@ -1103,6 +1116,9 @@
        explicit role so it does not collide with the copy/save status
        role="status" queries exercised by tests. -->
   <span class="sr-only" aria-live="polite">{historyStatus}</span>
+  <!-- Resolution confirmation (#1005): polite, and names the conflict copy so
+       the user knows where the kept-apart version went. -->
+  <span class="sr-only" aria-live="polite">{conflictAnnouncement}</span>
 </div>
 
 <style>

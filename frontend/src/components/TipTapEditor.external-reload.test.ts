@@ -40,7 +40,9 @@ if (
 
 const mocks = vi.hoisted(() => ({
   saveFileBlocks: vi.fn().mockResolvedValue(undefined),
-  resolveExternalConflict: vi.fn().mockResolvedValue(undefined),
+  resolveExternalConflict: vi
+    .fn()
+    .mockResolvedValue('Journal-2026-06-22.conflict-20260622-090000'),
   acquireFocusLock: vi.fn().mockResolvedValue(undefined),
   refreshFocusLock: vi.fn().mockResolvedValue(undefined),
   releaseFocusLock: vi.fn().mockResolvedValue(undefined),

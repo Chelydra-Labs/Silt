@@ -14,8 +14,6 @@
   } from '../../lib/editor/externalConflict'
 
   interface Props {
-    /** Page name (without .md) — names the file in the message. */
-    page: string
     /** True while a resolution IPC is in flight; disables the actions. */
     busy?: boolean
     /** Set when a resolution attempt failed; the actions stay offered. */
@@ -23,7 +21,7 @@
     onResolve: (resolution: ExternalConflictResolution) => void
   }
 
-  let { page, busy = false, error = null, onResolve }: Props = $props()
+  let { busy = false, error = null, onResolve }: Props = $props()
 </script>
 
 <div
@@ -32,18 +30,18 @@
   data-testid="save-conflict-banner"
 >
   <p class="font-body-md">
-    “{page}.md” changed on disk since it was opened, so the save was held to
-    avoid overwriting it. Choose which version to keep — the other is saved as a
-    .conflict copy.
+    This page was changed by another app since Silt opened it, so your save was
+    held. Pick what happens next — the version you don't keep is preserved as a
+    separate page in the same folder.
   </p>
   {#if error}
     <p class="text-type-sm">
-      Resolution failed: {error}. Try again, or recover both versions from the
-      files on disk.
+      Couldn't resolve the conflict. Nothing was written — both versions are
+      safe. Try again.
     </p>
   {/if}
   <div
-    class="flex flex-wrap gap-2"
+    class="flex flex-wrap gap-2 items-center"
     role="group"
     aria-label="Resolve external edit"
   >
@@ -54,9 +52,18 @@
         onclick={() => onResolve(action.key)}
         disabled={busy}
         title={action.hint}
+        aria-describedby={`conflict-hint-${action.key}`}
       >
         {action.label}
       </button>
     {/each}
+    {#if busy}
+      <span class="text-type-sm" role="status">Resolving…</span>
+    {/if}
   </div>
+  {#each CONFLICT_RESOLUTIONS as action (action.key)}
+    <span id={`conflict-hint-${action.key}`} class="sr-only"
+      >{action.hint}</span
+    >
+  {/each}
 </div>

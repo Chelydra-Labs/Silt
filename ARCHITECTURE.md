@@ -526,7 +526,12 @@ with the `WriteTracker` and explicitly indexed, so it surfaces as a real page
 rather than a watcher ghost) and settles the winner per the user's
 keep-mine / keep-theirs / keep-both choice. The rename/move path
 (`renameWriteFileAtomic`) bypasses the gate by design: moves are not content
-rewrites.
+rewrites. Inherent caveat: `LockFileWrite` serializes only Silt's own writers —
+an external write landing between the in-lock stat check and the atomic rename
+is still clobbered; closing that micro-race requires cross-process file
+locking, which is out of scope. Stat matches are also distrusted for ~3s after
+a baseline capture (git's "racily clean" rule), so same-size rewrites on
+coarse-timestamp filesystems (FAT/SMB) fall through to the hash arbiter.
 
 Destructive-operation asymmetry (Tier 0 obligation). Page/section delete inside
 a linked notebook removes the file in place and Silt never copies linked content

@@ -6,7 +6,9 @@ import type { AutosaveDeps } from './useAutosave'
 vi.mock('$silt-app', () =>
   createAppIpcMocks({
     SaveFileBlocks: vi.fn().mockResolvedValue(undefined),
-    ResolveExternalConflict: vi.fn().mockResolvedValue(undefined)
+    ResolveExternalConflict: vi
+      .fn()
+      .mockResolvedValue('Journal-2026-06-22.conflict-20260622-090000')
   })
 )
 
@@ -199,13 +201,16 @@ describe('AutosaveManager', () => {
     expect(still.phase).toBe('error')
     expect(still.externalConflict).toBe(true)
 
-    await autosave.resolveExternalConflict('keep_mine')
+    const copyPage = await autosave.resolveExternalConflict('keep_mine')
     expect(ResolveExternalConflict).toHaveBeenCalledWith(
       'Work',
       'Journal',
       '2026-06-22',
       'keep_mine'
     )
+    // The copy name flows back so the surface can announce where the
+    // kept-apart version landed.
+    expect(copyPage).toBe('Journal-2026-06-22.conflict-20260622-090000')
     const after = (
       deps.onSaveStateChange as unknown as ReturnType<typeof vi.fn>
     ).mock.calls.at(-1)![0] as {

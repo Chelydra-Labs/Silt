@@ -35,7 +35,9 @@ const mocks = vi.hoisted(() => ({
   AcquireFocusLock: vi.fn().mockResolvedValue(undefined),
   ReleaseFocusLock: vi.fn().mockResolvedValue(undefined),
   RefreshFocusLock: vi.fn().mockResolvedValue(undefined),
-  resolveExternalConflict: vi.fn().mockResolvedValue(undefined)
+  resolveExternalConflict: vi.fn().mockResolvedValue(
+    'Page.conflict-20260101-120000'
+  )
 }))
 
 vi.mock('../../theme/store.svelte', () => ({ themeState: mocks.themeState }))
@@ -111,7 +113,9 @@ describe('MarkdownSourceViewer', () => {
     mocks.ReleaseFocusLock.mockClear()
     mocks.RefreshFocusLock.mockClear()
     mocks.resolveExternalConflict.mockReset()
-    mocks.resolveExternalConflict.mockResolvedValue(undefined)
+    mocks.resolveExternalConflict.mockResolvedValue(
+      'Page.conflict-20260101-120000'
+    )
     mocks.themeState.mode = 'dark'
   })
   afterEach(() => {
@@ -375,7 +379,7 @@ describe('MarkdownSourceViewer', () => {
       await vi.advanceTimersByTimeAsync(0)
 
       const banner = await screen.findByTestId('save-conflict-banner')
-      expect(banner.textContent).toContain('Page.md')
+      expect(banner.textContent).toContain('changed by another app')
       expect(
         screen.getByText(/Save held — this file changed on disk/)
       ).toBeTruthy()
@@ -383,7 +387,9 @@ describe('MarkdownSourceViewer', () => {
       // Resolution succeeds → banner leaves, the buffer is clean, and a
       // follow-up edit saves normally (baseline was refreshed).
       mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Heading')])
-      await fireEvent.click(screen.getByRole('button', { name: 'Keep mine' }))
+      await fireEvent.click(
+        screen.getByRole('button', { name: 'Keep my changes' })
+      )
       await waitFor(() =>
         expect(mocks.resolveExternalConflict).toHaveBeenCalledWith(
           'Work',
@@ -395,6 +401,14 @@ describe('MarkdownSourceViewer', () => {
       await waitFor(() =>
         expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
       )
+      // The polite region confirms where the kept-apart version landed and
+      // focus returns to the textarea.
+      expect(
+        screen.getByText(
+          'Conflict resolved. The other version was saved as Page.conflict-20260101-120000.md.'
+        )
+      ).toBeTruthy()
+      expect(document.activeElement).toBe(ta)
 
       await fireEvent.input(ta, { target: { value: '# Post-resolution' } })
       await vi.advanceTimersByTimeAsync(500)
@@ -443,7 +457,9 @@ describe('MarkdownSourceViewer', () => {
       await vi.advanceTimersByTimeAsync(0)
       await screen.findByTestId('save-conflict-banner')
 
-      await fireEvent.click(screen.getByRole('button', { name: 'Keep theirs' }))
+      await fireEvent.click(
+        screen.getByRole('button', { name: 'Keep the other version' })
+      )
       await waitFor(() =>
         expect(mocks.resolveExternalConflict).toHaveBeenCalledWith(
           'Work',
@@ -488,13 +504,13 @@ describe('MarkdownSourceViewer', () => {
         page: 'Page'
       })
       await waitFor(() =>
-        expect(screen.getByRole('button', { name: /keep mine/i })).toBeTruthy()
+        expect(screen.getByRole('button', { name: /use my text/i })).toBeTruthy()
       )
       await vi.advanceTimersByTimeAsync(500)
       expect(mocks.savePageMarkdown).not.toHaveBeenCalled()
 
       // Keep mine allows save of local buffer.
-      await fireEvent.click(screen.getByRole('button', { name: /keep mine/i }))
+      await fireEvent.click(screen.getByRole('button', { name: /use my text/i }))
       await vi.advanceTimersByTimeAsync(500)
       expect(mocks.savePageMarkdown).toHaveBeenCalledWith(
         'Work',
@@ -571,7 +587,7 @@ describe('MarkdownSourceViewer', () => {
       resolveSave(savedBlocks)
       await vi.advanceTimersByTimeAsync(0)
       await waitFor(() => {
-        expect(screen.queryByRole('button', { name: /keep mine/i })).toBeNull()
+        expect(screen.queryByRole('button', { name: /use my text/i })).toBeNull()
       })
       expect((ta as HTMLTextAreaElement).value).toBe('# First save more')
     } finally {
@@ -940,9 +956,9 @@ describe('MarkdownSourceViewer editing history (#861)', () => {
       page: 'Page'
     })
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /keep mine/i })).toBeTruthy()
+      expect(screen.getByRole('button', { name: /use my text/i })).toBeTruthy()
     )
-    await fireEvent.click(screen.getByRole('button', { name: /keep mine/i }))
+    await fireEvent.click(screen.getByRole('button', { name: /use my text/i }))
     await tick()
     expect(ta.value).toBe('keepme')
     // History preserved: undo restores the seeded buffer.
@@ -1245,7 +1261,7 @@ describe('MarkdownSourceViewer editing history (#861)', () => {
       })
       await vi.advanceTimersByTimeAsync(0)
       await waitFor(() =>
-        expect(screen.queryByRole('button', { name: /keep mine/i })).toBeNull()
+        expect(screen.queryByRole('button', { name: /use my text/i })).toBeNull()
       )
       expect(ta.value).toBe(savedBody)
     } finally {
@@ -1313,7 +1329,7 @@ describe('MarkdownSourceViewer revalidation fixes', () => {
       expect(ta.value).toBe('# my new content')
       // Conflict surfaced so the user can make an informed choice.
       await waitFor(() =>
-        expect(screen.getByRole('button', { name: /keep mine/i })).toBeTruthy()
+        expect(screen.getByRole('button', { name: /use my text/i })).toBeTruthy()
       )
     } finally {
       vi.useRealTimers()
@@ -1370,7 +1386,7 @@ describe('MarkdownSourceViewer revalidation fixes', () => {
       await tick()
       expect(ta.value).toBe('# typed during reseed')
       await waitFor(() =>
-        expect(screen.getByRole('button', { name: /keep mine/i })).toBeTruthy()
+        expect(screen.getByRole('button', { name: /use my text/i })).toBeTruthy()
       )
     } finally {
       vi.useRealTimers()
@@ -1644,7 +1660,7 @@ describe('MarkdownSourceViewer editor registry (#884)', () => {
       page: 'Page'
     })
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /keep mine/i })).toBeTruthy()
+      expect(screen.getByRole('button', { name: /use my text/i })).toBeTruthy()
     )
 
     const handle = getEditor(editorKey('Work', 'Sec', 'Page'))!

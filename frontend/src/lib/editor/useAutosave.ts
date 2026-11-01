@@ -349,17 +349,21 @@ export class AutosaveManager {
    * discarded in favor of the on-disk version — writes are held and the
    * caller's armed reload (fresh FetchPageBlocks) replaces the content;
    * markClean clears the refusal surface in the meantime.
+   *
+   * Resolves to the created conflict copy's page name ('' when unavailable)
+   * so the caller can announce where the kept-apart version landed.
    */
   async resolveExternalConflict(
     resolution: ExternalConflictResolution
-  ): Promise<void> {
+  ): Promise<string> {
     if (resolution === 'keep_theirs') {
       // Held before the IPC: the backend's block:changed triggers a reload
       // that must not race a stale debounce firing mid-resolution.
       this.holdWrites()
     }
+    let conflictPage: string
     try {
-      await ResolveExternalConflict(
+      conflictPage = await ResolveExternalConflict(
         this.deps.getNotebook(),
         this.deps.getSection(),
         this.deps.getPage(),
@@ -370,5 +374,6 @@ export class AutosaveManager {
       throw e
     }
     this.markClean()
+    return conflictPage
   }
 }

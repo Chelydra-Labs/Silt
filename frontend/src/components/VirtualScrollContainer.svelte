@@ -137,11 +137,16 @@
 
   // Editor status state
   let saveError = $state<string | null>(null)
-  // External-edit save refusal (#1005): the banner offers the three
-  // resolutions while the autosave stays in its error phase.
+  // External-edit save refusal (#1005): LATCHED, like MSV's saveRefused —
+  // the transient SaveState flips to pending on every keystroke, so keying
+  // the banner off it directly would unmount/remount the banner (and re-fire
+  // its role="alert") while the user types through a re-refused save.
+  // Cleared only by a successful resolution, a landed save, or markClean.
   let saveConflict = $state(false)
   let conflictBusy = $state(false)
   let conflictError = $state<string | null>(null)
+  /** Polite success announcement naming the created conflict copy (#1005). */
+  let conflictAnnouncement = $state('')
 
   async function handleResolveConflict(
     resolution: ExternalConflictResolution
@@ -152,14 +157,29 @@
       // Route through the mounted editor's handle when present: keep_theirs
       // needs its armed-reload machinery to reseed the buffer safely.
       const handle = getEditorForLocator(notebook, section, page)
+      let conflictPage: string | void
       if (handle?.resolveExternalConflict) {
-        await handle.resolveExternalConflict(resolution)
+        conflictPage = await handle.resolveExternalConflict(resolution)
       } else {
-        await resolveExternalConflict(notebook, section, page, resolution)
+        conflictPage = await resolveExternalConflict(
+          notebook,
+          section,
+          page,
+          resolution
+        )
       }
-      // Success clears the autosave error phase → saveConflict flips false
-      // via onSaveStateChange. Keep the local error clear too.
+      // Success settles the latch here — the direct-IPC path (no mounted
+      // editor) has no autosave emission to clear it — and the polite
+      // region tells the user where the kept-apart version landed.
+      saveConflict = false
       conflictError = null
+      conflictAnnouncement = conflictPage
+        ? `Conflict resolved. The other version was saved as ${conflictPage}.md.`
+        : 'Conflict resolved. The kept-apart version is in the same folder as this page.'
+      // The banner just unmounted and took focus with it — park focus on
+      // the page title so keyboard users are not dropped to <body>.
+      await tick()
+      titleEl?.focus()
     } catch (e) {
       conflictError = e instanceof Error ? e.message : String(e)
     } finally {
@@ -211,10 +231,12 @@
     editorActionsManualOpen = false
     editorActionsHandleEl?.focus()
   }
-  // Bottom status pill stays open for save failures (fail-loud) or non-default
-  // zoom so the user can see/reset without hunting a collapsed control.
+  // Bottom status pill stays open for save failures (fail-loud), a held save
+  // (conflict latch — same fail-loud need, honest "held" wording), or
+  // non-default zoom so the user can see/reset without hunting a collapsed
+  // control.
   let editorStatusPinned = $derived(
-    !!saveError || noteZoom.factor !== NOTE_ZOOM_DEFAULT
+    !!saveError || saveConflict || noteZoom.factor !== NOTE_ZOOM_DEFAULT
   )
 
   $effect(() => {
@@ -697,7 +719,6 @@
         >
           {#if saveConflict}
             <SaveConflictBanner
-              {page}
               busy={conflictBusy}
               error={conflictError}
               onResolve={(r) => void handleResolveConflict(r)}
@@ -748,8 +769,18 @@
                 bind:wordCount
                 onSaveStateChange={(s) => {
                   saveError = s.error
-                  saveConflict = s.externalConflict === true
-                  if (!saveConflict) conflictError = null
+                  if (s.externalConflict === true) {
+                    saveConflict = true
+                  } else if (
+                    s.phase === 'saved' ||
+                    (s.phase === 'idle' && !s.dirty && !s.error)
+                  ) {
+                    // A landed save or an explicit markClean settles the
+                    // refusal; transient pending/saving states keep the
+                    // latch so the banner cannot flicker per keystroke.
+                    saveConflict = false
+                    conflictError = null
+                  }
                   onSaveStateChange?.(s)
                 }}
               />
@@ -898,11 +929,18 @@
 
   {#if viewMode === 'edit'}
     <!-- Persistent live region: a fresh-mount aria-live block can be missed by
-         screen readers, so the save-error text lives in a stable region. -->
+         screen readers, so the save-error text lives in a stable region. While
+         a conflict is latched the banner's own role="alert" speaks the message
+         — this region stays silent so it is not announced twice. -->
     <div class="sr-only" role="status" aria-live="assertive">
-      {saveError ?? ''}
+      {saveConflict ? '' : (saveError ?? '')}
     </div>
   {/if}
+  <!-- Resolution confirmation (edit or source mode): polite, and names the
+       conflict copy so the user knows where the kept-apart version went. -->
+  <div class="sr-only" role="status" aria-live="polite">
+    {conflictAnnouncement}
+  </div>
   <!-- Bottom status: word count always on when enabled. Zoom flyout only from
        the % control (not word count). Outside .note-page-zoom. -->
   {#if viewMode === 'edit' && showEditorUtilityBar}
@@ -911,10 +949,12 @@
       data-testid="editor-status-pill"
       aria-label="Editor status"
     >
-      {#if saveError}
+      {#if saveError || saveConflict}
         <div class="editor-status-pill__error">
           <span class="editor-status-pill__error-dot" aria-hidden="true"></span>
-          <span class="editor-status-pill__error-label">Save failed</span>
+          <span class="editor-status-pill__error-label"
+            >{saveConflict ? 'Save held' : 'Save failed'}</span
+          >
         </div>
         <div class="editor-status-pill__sep" aria-hidden="true"></div>
       {/if}

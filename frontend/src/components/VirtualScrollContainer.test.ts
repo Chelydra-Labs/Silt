@@ -415,23 +415,31 @@ describe('VirtualScrollContainer editor chrome', () => {
   })
 
   // #1005: a refused whole-page save surfaces the conflict banner with the
-  // three resolutions; Keep mine calls ResolveExternalConflict on the page's
-  // locator (no mounted registry handle in the stubbed harness → the direct
-  // IPC fallback).
+  // three resolutions; Keep my changes calls ResolveExternalConflict on the
+  // page's locator (no mounted registry handle in the stubbed harness → the
+  // direct IPC fallback), settles the latch, and announces the copy.
   it('shows the external-edit conflict banner and resolves via IPC', async () => {
     const { ResolveExternalConflict } = await import('$silt-app')
+    vi.mocked(ResolveExternalConflict).mockResolvedValueOnce(
+      'PG.conflict-20260101-120000'
+    )
     render(VirtualScrollContainer, { props: baseProps() })
 
     await fireEvent.click(screen.getByTestId('tiptap-stub-emit-conflict'))
 
     const banner = await screen.findByTestId('save-conflict-banner')
     expect(banner).toHaveAttribute('role', 'alert')
-    expect(banner.textContent).toContain('PG.md')
-    for (const label of ['Keep mine', 'Keep theirs', 'Keep both']) {
+    for (const label of [
+      'Keep my changes',
+      'Keep the other version',
+      'Keep both as pages'
+    ]) {
       expect(screen.getByRole('button', { name: label })).toBeTruthy()
     }
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep mine' }))
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Keep my changes' })
+    )
     await waitFor(() =>
       expect(ResolveExternalConflict).toHaveBeenCalledWith(
         'NB',
@@ -441,10 +449,22 @@ describe('VirtualScrollContainer editor chrome', () => {
       )
     )
 
-    // The banner leaves with the error phase (resolution → autosave clean).
-    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-clean'))
+    // Resolution success settles the latch on its own (the direct-IPC path
+    // has no autosave emission)…
     await waitFor(() =>
       expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
+    )
+    // …announces where the kept-apart version landed…
+    expect(
+      screen.getByText(
+        'Conflict resolved. The other version was saved as PG.conflict-20260101-120000.md.'
+      )
+    ).toBeTruthy()
+    // …and parks focus on the page title instead of dropping it to <body>.
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute('aria-label')).toBe(
+        'Page title'
+      )
     )
   })
 
@@ -458,12 +478,80 @@ describe('VirtualScrollContainer editor chrome', () => {
     await fireEvent.click(screen.getByTestId('tiptap-stub-emit-conflict'))
     await screen.findByTestId('save-conflict-banner')
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep both' }))
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Keep both as pages' })
+    )
     await waitFor(() =>
-      expect(screen.getByText(/Resolution failed: vault closed/)).toBeTruthy()
+      expect(
+        screen.getByText(/Couldn't resolve the conflict/)
+      ).toBeTruthy()
     )
     // Actions stay offered for a retry.
-    expect(screen.getByRole('button', { name: 'Keep mine' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Keep my changes' })
+    ).toBeTruthy()
+  })
+
+  // D1 regression: the banner is latched in VSC (like MSV's saveRefused), so
+  // keystroke-driven pending emissions cannot flicker it away while the
+  // re-refused save keeps the conflict alive.
+  it('keeps the conflict banner latched while typing through a refusal', async () => {
+    render(VirtualScrollContainer, { props: baseProps() })
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-conflict'))
+    await screen.findByTestId('save-conflict-banner')
+
+    // A keystroke flips the autosave to pending — the banner must stay.
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-dirty'))
+    expect(screen.getByTestId('save-conflict-banner')).toBeTruthy()
+    // The pinned pill stays too, labeled "held" (not "failed").
+    expect(screen.getByText('Save held')).toBeTruthy()
+
+    // A landed save (or markClean) is what settles the latch.
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-saved'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
+    )
+  })
+
+  // The banner's role="alert" already speaks the refusal; the persistent
+  // save-error live region must stay silent while the conflict is latched so
+  // screen readers do not hear the message twice.
+  it('suppresses the save-error live region while the conflict banner is shown', async () => {
+    render(VirtualScrollContainer, { props: baseProps() })
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-conflict'))
+    await screen.findByTestId('save-conflict-banner')
+    const live = document.querySelector('[aria-live="assertive"]')
+    expect(live?.textContent).not.toContain('changed on disk')
+  })
+
+  // D10 edge: a conflict that begins in edit mode must survive the switch to
+  // source view and stay resolvable there (TipTap is unmounted → no registry
+  // handle → the direct IPC fallback path).
+  it('keeps an edit-mode conflict resolvable after switching to source view', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    const { rerender } = render(VirtualScrollContainer, {
+      props: baseProps()
+    })
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-conflict'))
+    await screen.findByTestId('save-conflict-banner')
+
+    await rerender({ ...baseProps(), viewMode: 'source' })
+    expect(screen.getByTestId('save-conflict-banner')).toBeTruthy()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Keep both as pages' })
+    )
+    await waitFor(() =>
+      expect(ResolveExternalConflict).toHaveBeenCalledWith(
+        'NB',
+        '',
+        'PG',
+        'keep_both'
+      )
+    )
+    await waitFor(() =>
+      expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
+    )
   })
 
   it('announces the view-mode button state via aria-pressed', () => {

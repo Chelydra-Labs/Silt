@@ -857,7 +857,7 @@
           pendingExternalReload = true
         }
         try {
-          await autosave.resolveExternalConflict(resolution)
+          return await autosave.resolveExternalConflict(resolution)
         } catch (e) {
           if (resolution === 'keep_theirs') {
             pendingExternalReload = false
