@@ -115,6 +115,22 @@ This is the local-first contract: the user's files on disk *are* the
 product. The Svelte UI, the Go backend, and the SQLite index are all
 projections of those files, not the other way around.
 
+**Requirement priorities.** SPECS §1.3 (and ADR
+`docs/decisions/0010-requirement-priorities.md`) is the authoritative
+tie-breaker when effort or scope is contested. Two of its Tier 0 items are
+constants of this storage model and are not negotiable in any future
+change: **the file is the product** (canonical human-readable GFM, no
+app-private encoding, SQLite always re-derivable) and **no unrecoverable
+loss on any write path** (atomic/crash-safe saves, visible failures,
+recoverable destructive operations, never silently overwriting a file
+changed by another writer — uniformly across vault and linked roots).
+
+Storage format is settled: **markdown, not HTML or ODT.** The deciding
+constraints are this tier model and the linked-notebook workflow (Silt
+edits external Obsidian/OneDrive folders in place), not aesthetic
+preference. Any proposal to change the on-disk format must first show how
+Tier 0 items 1–2 continue to hold.
+
 **Non-note data.** Two categories of block content live outside the normal
 Notebook › Section › Page tree, both still plain markdown so the
 source-of-truth invariant holds:
@@ -488,6 +504,15 @@ lock still hold, so external (non-Silt) edits to the same file are reconciled
 by the existing diff/lease machinery once both sides land. A vault index must
 stay on a local disk regardless (WAL does not work on NFS/SMB — §3), so only
 the markdown crosses the mount.
+
+Destructive-operation asymmetry (Tier 0 obligation). Page/section delete inside
+a linked notebook removes the file in place and Silt never copies linked content
+into the vault trash — there is no recovery net for those roots, unlike vault
+deletes. Combined with the non-atomic rename caveat above, this makes recovery
+and no-silent-overwrite release gates for linked roots (SPECS §1.3, Tier 0):
+a destructive operation there must either be recoverable or explicitly
+confirmed, and an externally changed file must never be overwritten without
+surfacing the conflict. Richer conflict-resolution UX is Tier 2.
 
 Co-located per-notebook config. Per the storage-of-truth model, data
 attached to a notebook travels with the notebook. For a linked (external)
@@ -1240,8 +1265,9 @@ previews FTS5 matches grouped by page (before→after), with per-match + per-pag
 accept. Apply iterates accepted pages: `FetchPageBlocks` → replace in
 `clean_text`/`raw_text` → `SaveFileBlocks` (atomic, self-write-tracked,
 re-indexes). A session revert log records the original blocks per page;
-"Undo last" restores. Applies to in-vault pages; linked notebooks are
-Applies to in-vault pages; linked notebooks are read-only by design.
+"Undo last" restores. Applies to in-vault pages only; linked-notebook
+pages are excluded from bulk replace (they remain fully editable in place —
+see the linked-notebook section below).
 
 **Inline spellcheck** — `frontend/src/lib/editor/spellcheck/`:
 `dictionary.ts` wraps `typo-js` (pure-JS Hunspell, BSD). The default `en-US`
