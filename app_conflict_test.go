@@ -932,3 +932,172 @@ func TestResolveExternalConflict_MarkdownStash(t *testing.T) {
 		})
 	}
 }
+
+// 4f. The markdown funnel replays the NEWEST refused buffer, mirroring the
+// blocks funnel (4a): a second refused SavePageMarkdown replaces the first
+// stash, and keep_mine must land the second body. This is the backend
+// contract the Source viewer's unmount handoff rides on — the re-flushed
+// typed-past-the-refusal buffer must become the stash every resolution
+// path preserves (#1005).
+func TestResolveExternalConflict_MarkdownStashReplaysNewestRefusal(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "MdNewNB", "", "MdNewest"
+	blockID := "dddddd7d-dddd-4ddd-8ddd-dddddddddd7d"
+	_ = seedConflictPage(t, app, notebook, section, page, blockID, "original md line")
+
+	if _, err := app.FetchPageMarkdown(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageMarkdown: %v", err)
+	}
+
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "---\nnotebook: \"MdNewNB\"\npage: \"" + page + "\"\ntags: []\n---\nexternal md body\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	_, err := app.SavePageMarkdown(notebook, section, page, "first refused body\n")
+	requireConflict(t, err)
+	_, err = app.SavePageMarkdown(notebook, section, page, "second refused body with typing\n")
+	requireConflict(t, err)
+
+	if _, err := app.ResolveExternalConflict(notebook, section, page, "keep_mine"); err != nil {
+		t.Fatalf("ResolveExternalConflict: %v", err)
+	}
+	got, _ := os.ReadFile(filePath)
+	if !strings.Contains(string(got), "second refused body with typing") {
+		t.Fatalf("keep_mine must replay the newest markdown stash (the typed-past text), got %q", string(got))
+	}
+}
+
+// 4g. keep_theirs settle-failure rollback (the settle branch of
+// resolveExternalConflictLocked): when the original becomes unreadable
+// between the archive read and the settle read inside one lock section,
+// the sibling copy is rolled back and the stash is restored for a retry.
+// Reached only through the conflictReadCurrentVersion seam.
+func TestResolveExternalConflict_SettleFailureRollsBackSiblingAndRestoresStash(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "SettleNB", "", "Settled"
+	blockID := "dddddd8d-dddd-4ddd-8ddd-dddddddddd8d"
+	_ = seedConflictPage(t, app, notebook, section, page, blockID, "original line")
+
+	if _, err := app.FetchPageMarkdown(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageMarkdown: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "---\nnotebook: \"SettleNB\"\npage: \"Settled\"\ntags: []\n---\nexternal line\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	_, err := app.SavePageMarkdown(notebook, section, page, "my stashed body\n")
+	requireConflict(t, err)
+
+	// Fail the SECOND current-version read (the settle read); the archive
+	// read of theirs must still succeed.
+	reads := 0
+	origRead := conflictReadCurrentVersion
+	conflictReadCurrentVersion = func(name string) ([]byte, error) {
+		reads++
+		if reads >= 2 {
+			return nil, errors.New("injected settle read failure")
+		}
+		return origRead(name)
+	}
+	_, rerr := app.ResolveExternalConflict(notebook, section, page, "keep_theirs")
+	conflictReadCurrentVersion = origRead
+	if rerr == nil {
+		t.Fatal("settle read failure must surface as a resolution error")
+	}
+
+	// The ghost sibling is rolled back and the original still holds theirs.
+	matches, _ := filepath.Glob(filepath.Join(app.vaultPath, notebook, section, page+".conflict-*.md"))
+	if len(matches) != 0 {
+		t.Fatalf("failed keep_theirs settle must roll the sibling back, got %v", matches)
+	}
+	got, _ := os.ReadFile(filePath)
+	if string(got) != external {
+		t.Fatalf("original must still hold theirs after rollback, got %q", string(got))
+	}
+	// The stash survived for a retry — and the retry succeeds without
+	// minting a second sibling.
+	copyPage, retryErr := app.ResolveExternalConflict(notebook, section, page, "keep_theirs")
+	if retryErr != nil {
+		t.Fatalf("stash must survive the failed settle for retry: %v", retryErr)
+	}
+	if !strings.Contains(copyPage, ".conflict-") {
+		t.Fatalf("retry must name the conflict copy, got %q", copyPage)
+	}
+	sibling := findConflictSibling(t, app, notebook, section, page)
+	sibBytes, _ := os.ReadFile(sibling)
+	if !strings.Contains(string(sibBytes), "my stashed body") {
+		t.Fatalf("retry sibling must carry my stashed body, got %q", string(sibBytes))
+	}
+}
+
+// 4h. A sibling write whose atomic rename committed but reported a
+// durability error (POSIX directory fsync) is a LANDED copy: the
+// resolution must succeed instead of failing and minting a duplicate `-2`
+// sibling on the user's retry.
+func TestResolveExternalConflict_SiblingLandedDespiteErrorIsSuccess(t *testing.T) {
+	for _, tc := range []struct{ name, resolution string }{
+		{"keep_theirs", "keep_theirs"},
+		{"keep_mine", "keep_mine"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newTestApp(t)
+			notebook, section, page := "SibLandNB", "", "Sib"+tc.name
+			blockID := "dddddd9d-dddd-4ddd-8ddd-dddddddddd9d"
+			blocks := seedConflictPage(t, app, notebook, section, page, blockID, "original line")
+
+			if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+				t.Fatalf("FetchPageBlocks: %v", err)
+			}
+			filePath := conflictPagePath(app, notebook, section, page)
+			external := "---\nnotebook: \"SibLandNB\"\npage: \"" + page + "\"\ntags: []\n---\nexternal line\n"
+			if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+				t.Fatalf("external write: %v", err)
+			}
+			requireConflict(t, app.SaveFileBlocks(notebook, section, page,
+				editBlocks(blocks, blockID, "my edited line")))
+
+			// Fault every conflict-sibling write with a post-rename error —
+			// the write commits, then reports a durability failure.
+			origWrite := atomicPageWrite
+			atomicPageWrite = func(p string, content []byte) error {
+				if err := origWrite(p, content); err != nil {
+					return err
+				}
+				if strings.Contains(filepath.Base(p), ".conflict-") {
+					return errors.New("injected post-rename sibling fsync failure")
+				}
+				return nil
+			}
+			copyPage, rerr := app.ResolveExternalConflict(notebook, section, page, tc.resolution)
+			atomicPageWrite = origWrite
+			if rerr != nil {
+				t.Fatalf("landed sibling write must resolve as success, got: %v", rerr)
+			}
+			if !strings.Contains(copyPage, ".conflict-") {
+				t.Fatalf("resolution must name the conflict copy, got %q", copyPage)
+			}
+
+			// Exactly one sibling — the landed copy, no duplicate minted.
+			sibling := findConflictSibling(t, app, notebook, section, page)
+			sibBytes, _ := os.ReadFile(sibling)
+			origBytes, _ := os.ReadFile(filePath)
+			if tc.resolution == "keep_theirs" {
+				if !strings.Contains(string(origBytes), "external line") {
+					t.Fatalf("keep_theirs: original must keep theirs, got %q", string(origBytes))
+				}
+				if !strings.Contains(string(sibBytes), "my edited line") {
+					t.Fatalf("keep_theirs: landed sibling must carry mine, got %q", string(sibBytes))
+				}
+			} else {
+				if !strings.Contains(string(origBytes), "my edited line") {
+					t.Fatalf("keep_mine: original must carry mine, got %q", string(origBytes))
+				}
+				if !strings.Contains(string(sibBytes), "external line") {
+					t.Fatalf("keep_mine: landed sibling must carry theirs, got %q", string(sibBytes))
+				}
+			}
+		})
+	}
+}

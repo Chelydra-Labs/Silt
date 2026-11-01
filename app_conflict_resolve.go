@@ -47,6 +47,14 @@ const (
 // capitalization drift seen in hand-edited vaults).
 var pageFrontmatterLine = regexp.MustCompile(`^[Pp]age[ \t]*:`)
 
+// conflictReadCurrentVersion reads the on-disk "current version" of the
+// original page during a resolution (the archive read, the landed-guard
+// re-read, and the keep_theirs settle read). Package-level so tests can
+// fault-inject the settle read — the only way to reach its failure branch,
+// which would otherwise need the file to become unreadable between two
+// reads inside one lock section.
+var conflictReadCurrentVersion = os.ReadFile
+
 // ResolveExternalConflict is the IPC entry point (notebook, section, page,
 // resolution). All writes happen under LockFileWrite for the original path.
 // It returns the page name of the conflict copy it created (for the success
@@ -171,6 +179,18 @@ func uniqueConflictSibling(dir, page string, now time.Time) string {
 	}
 }
 
+// conflictSiblingLanded reports whether a conflict-sibling write that
+// reported an error nevertheless committed: the atomic writer swaps
+// content in via a single rename, so an existing file at the sibling path
+// IS the complete copy. Reporting failure then would send the caller down
+// the retry path, whose uniqueConflictSibling mints a duplicate `-2`
+// sibling for text that already landed on disk (never a loss, but a
+// confusing duplicate page).
+func conflictSiblingLanded(sibling string) bool {
+	_, err := os.Stat(sibling)
+	return err == nil
+}
+
 // resolveExternalConflictLocked performs one resolution and returns the page
 // name of the conflict copy it created. The caller holds LockFileWrite for
 // filePath. Precondition failures happen before any write; a failure in the
@@ -179,7 +199,7 @@ func uniqueConflictSibling(dir, page string, now time.Time) string {
 // unless the replay provably landed despite its error, in which case the
 // resolution is treated as the success it actually achieved.
 func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resolution string) (string, error) {
-	theirs, err := os.ReadFile(filePath)
+	theirs, err := conflictReadCurrentVersion(filePath)
 	if err != nil {
 		return "", fmt.Errorf("read current page version: %w", err)
 	}
@@ -195,11 +215,12 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 		if rw.isMarkdown {
 			_, werr := a.writePageMarkdownLocked(sibling, rw.source, rw.notebook, rw.section, conflictPage,
 				rw.notebook, rw.section, conflictPage, nil, rw.markdown, rw.reason, false)
-			if werr != nil {
+			if werr != nil && !conflictSiblingLanded(sibling) {
 				return "", werr
 			}
 		} else {
-			if werr := a.writePageFileLocked(sibling, rw.source, rw.notebook, rw.section, conflictPage, rw.blocks, rw.reason); werr != nil {
+			if werr := a.writePageFileLocked(sibling, rw.source, rw.notebook, rw.section, conflictPage, rw.blocks, rw.reason); werr != nil &&
+				!conflictSiblingLanded(sibling) {
 				return "", werr
 			}
 		}
@@ -216,7 +237,8 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 	// keep_mine / keep_both: archive theirs to the conflict copy, then replay
 	// my stashed save onto the original path.
 	archived := []byte(conflictCopyContent(theirs, conflictPage, rw.notebook, rw.section))
-	if err := a.writeConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section, archived); err != nil {
+	if err := a.writeConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section, archived); err != nil &&
+		!conflictSiblingLanded(sibling) {
 		return "", err
 	}
 	if err := a.replayMineLocked(rw, filePath, theirs); err != nil {
@@ -227,7 +249,7 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 		// lock the replay is the only writer, so a re-read that no longer
 		// equals theirs proves mine landed and the resolution actually
 		// succeeded — rolling back then would delete theirs for good (#1005).
-		current, readErr := os.ReadFile(filePath)
+		current, readErr := conflictReadCurrentVersion(filePath)
 		switch {
 		case readErr == nil && !bytes.Equal(current, theirs):
 			// Landed despite the reported error: adopt the on-disk bytes
@@ -254,7 +276,7 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 // (that is what made it "external"), so after keep_theirs the index and the
 // baseline must both adopt theirs or the next save would re-refuse forever.
 func (a *App) settleTheirsOnOriginalLocked(filePath, source, notebook, section, page string) error {
-	theirs, err := os.ReadFile(filePath)
+	theirs, err := conflictReadCurrentVersion(filePath)
 	if err != nil {
 		return fmt.Errorf("read current page version: %w", err)
 	}
