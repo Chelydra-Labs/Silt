@@ -71,6 +71,11 @@ serve one of them. The tiers below are the tie-breaker when effort or
 scope is contested; ADR `docs/decisions/0010-requirement-priorities.md`
 records the reasoning and the dissent.
 
+Tiers express **where effort goes and what must not regress** — not which
+features are allowed to exist, and not functional parity between features
+in the same family. A Tier 2 item may still ship and still be fully
+supported; it simply does not get to veto a Tier 0/1 decision.
+
 **Tier 0 — existential (never traded):**
 
 1. **The file is the product.** Canonical human-readable GFM on disk with
@@ -748,29 +753,83 @@ deletes preserve the current list and any in-progress draft.
 
 7.1 Atomic Staging & Overwrite Protocol
 
-Because your notes are stored directly on disk, Silt must guarantee data safety during unexpected app exits, power failures, or system crashes. The Go file-writing engine never directly modifies an active file. Instead, it follows a strict atomic update sequence:
+Because notes are stored directly on disk, Silt must guarantee data safety
+during unexpected exits, power failures, or system crashes. The Go writing
+engine (`parser.WriteFileAtomic`) never modifies an active file in place.
+Every write follows this sequence:
 
-[InMemory Modified Block Buffer]
-              │
-              ▼
-1. Create Scratch File: ".2026-06-13.md.tmp"
-              │
-              ▼
-2. Flush Buffer to Disk: Call OS file.Sync()
-              │
-              ▼
-3. Atomic Overwrite: Call OS os.Rename(".2026-06-13.md.tmp", "2026-06-13.md")
+[In-memory content]
+              |
+              v
+1. Stage: create a UNIQUE scratch file in the target's own directory via
+   os.CreateTemp ("<basename>.<random>.tmp"). Uniqueness is load-bearing —
+   two concurrent writers of the same page must never collide on a scratch
+   path.
+              |
+              v
+2. Flush: write the full buffer, then file.Sync() so bytes reach stable
+   storage before the rename becomes visible.
+              |
+              v
+3. Close: close the scratch handle before renaming (required on Windows).
+              |
+              v
+4. Atomic rename: os.Rename(scratch, target). On Windows this can fail
+   transiently with a sharing violation, so it is retried with a short
+   backoff before the write is reported as failed.
+              |
+              v
+5. Directory durability (POSIX): fsync the parent directory after a
+   successful rename. Without it, a crash immediately after the rename can
+   resurrect the pre-edit content. NTFS rename is already crash-safe, so
+   this step is skipped on Windows.
 
+The scratch file is removed on any failed step, so an aborted write never
+leaves a partial file visible at the target path. A crash during steps 1–3
+leaves the existing file untouched; a crash during step 4 leaves either the
+old or the new content, never a mixture.
 
-If a system crash occurs mid-write during steps 1 or 2, the current file on disk remains completely untouched and uncorrupted.
+7.1.1 Recovery and destructive operations (Tier 0)
 
-7.2 Non-Functional Performance Thresholds
+Atomic staging protects against torn writes. It does not protect against a
+semantically destructive operation, so per §1.3 Tier 0 every destructive
+path is either recoverable or explicitly confirmed:
 
-Startup Ingestion: The parser must boot, scan, token-analyze, and index a directory containing 1,000 markdown files into the SQLite database in under 450ms.
+- **Vault pages and sections move to `.system/trash/<timestamp>/<relPath>`**
+  rather than being unlinked, so a delete can be undone from disk.
+- **Linked-notebook pages are deleted in place.** The external folder is the
+  source of truth and Silt never copies linked content into the vault trash
+  (see ARCHITECTURE, "Destructive-operation asymmetry"). Recovery there is
+  the user's and the sync provider's responsibility, so destructive
+  operations on linked roots must be explicitly confirmed.
+- **Page history is opt-in durable recovery data**, not working memory:
+  deleting the SQLite index must never delete it.
+- **A file changed by another writer is never silently overwritten.**
+  Conflicts are surfaced as conflicts; last-writer-wins is not an accepted
+  resolution for a page Silt holds open.
 
-UI Frame Budget: To keep typing smooth, Svelte must complete inline shorthand processing and DOM updates within a 16ms render window (maintaining a locked 60 FPS).
+7.2 Non-Functional Performance Targets
 
-Memory Footprint: The application must maintain an idle memory footprint of less than 65MB RAM, ensuring Silt remains a lightweight utility running in your system tray.
+These are guardrails, not release gates. Per §1.3 only the frame budget is a
+stated requirement; the rest record the scale Silt is designed for and exist
+to catch regressions, not to drive architecture decisions.
+
+UI Frame Budget (requirement, Tier 1A): Svelte completes inline shorthand
+processing and DOM updates within a 16ms render window, and no user input
+path blocks on disk or IPC.
+
+Startup Ingestion (CI regression gate, not a product promise): a cold
+directory of 1,000 markdown files must scan, token-analyze, and index into
+SQLite in under 450ms. This is enforced by `TestScanWorkspace_BudgetRegression`
+in the normal `-race` CI gate (see ARCHITECTURE §9.1) so a regression is caught
+immediately; it exists to detect slowdowns, not to drive architecture.
+Incremental re-index and fsnotify-driven updates are what keep large vaults
+usable.
+
+Memory Footprint (guardrail): the idle footprint stays small enough that Silt
+is unobtrusive in the system tray. No specific megabyte figure is a
+requirement; the meaningful target is that it does not degrade over a long
+session, verified by profiling (see docs/editor-memory-profiling.md).
 
 7.3 Installation & Distribution Requirements
 
@@ -1398,8 +1457,9 @@ hotkeys:
 #
 # Global Replace previews matches grouped by page (before→after) with
 # per-match and per-page accept, then applies approved replacements and keeps
-# a session revert log. It applies to in-vault pages; linked notebooks are
-# read-only.
+# a session revert log. It applies to in-vault pages only; linked-notebook
+# pages are excluded from bulk replace (they remain fully editable in place,
+# and bulk rewriting an external synced folder is out of scope).
 
 # UI Preferences (per-vault)
 ui:
