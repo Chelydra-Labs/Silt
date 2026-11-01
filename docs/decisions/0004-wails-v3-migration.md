@@ -31,7 +31,7 @@ and CI (CLI installed from the `go.mod` pin). Current pin:
 of scope. Wails v3.0 defaults to GTK4; use the `gtk3` build tag when a
 Linux environment needs the GTK3 compatibility stack. The Wails v3.0.0
 release notes state that the GTK3 compatibility stack remains available
-through v3.1; it is planned to be removed in v3.1. Projects that still
+until v3.1; it is planned to be removed in v3.1. Projects that still
 require GTK3 must plan to migrate to GTK4 before upgrading to v3.1.
 
 ### Key architectural decisions
