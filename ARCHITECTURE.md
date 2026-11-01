@@ -505,6 +505,29 @@ by the existing diff/lease machinery once both sides land. A vault index must
 stay on a local disk regardless (WAL does not work on NFS/SMB — §3), so only
 the markdown crosses the mount.
 
+External-edit conflict detection (#1005). Atomic staging also does not stop a
+whole-page editor save from *semantically* clobbering an external edit: the
+save funnels (`SaveFileBlocks`, `SavePageMarkdown`) render the editor's buffer
+over whatever base the page had when loaded, so an external rewrite in between
+would be silently discarded. The load points (`FetchPageBlocks`,
+`FetchPageMarkdown`) therefore snapshot a per-file fingerprint — `{size,
+mtime, ctime, sha256}` of the RAW file bytes, keyed by normalized path — and
+the funnels re-check it inside `LockFileWrite` before writing: a stat match
+passes (one `os.Stat`, no hash on the happy path); stat drift re-reads +
+hashes, where a hash match passes and refreshes the stat (sync-client "touch"
+tolerance) and a mismatch refuses the save with the typed
+`external_edit_conflict` sentinel. The fingerprint never derives from parsed
+block IDs, so block-ID rewrites inside files cannot invalidate it (and an
+external ID-only rewrite is still detected). Every successful Silt write
+through the funnels re-baselines the fingerprint in the same lock. Resolution
+is refuse-first and keeps both versions: `ResolveExternalConflict` writes the
+losing version to a sibling `<page>.conflict-<YYYYMMDD-HHMMSS>.md` (registered
+with the `WriteTracker` and explicitly indexed, so it surfaces as a real page
+rather than a watcher ghost) and settles the winner per the user's
+keep-mine / keep-theirs / keep-both choice. The rename/move path
+(`renameWriteFileAtomic`) bypasses the gate by design: moves are not content
+rewrites.
+
 Destructive-operation asymmetry (Tier 0 obligation). Page/section delete inside
 a linked notebook removes the file in place and Silt never copies linked content
 into the vault trash — there is no recovery net for those roots, unlike vault
@@ -512,7 +535,8 @@ deletes. Combined with the non-atomic rename caveat above, this makes recovery
 and no-silent-overwrite release gates for linked roots (SPECS §1.3, Tier 0):
 a destructive operation there must either be recoverable or explicitly
 confirmed, and an externally changed file must never be overwritten without
-surfacing the conflict. Richer conflict-resolution UX is Tier 2.
+surfacing the conflict — now enforced by the conflict-detection mechanism
+above rather than deferred. Richer conflict-resolution UX is Tier 2.
 
 Co-located per-notebook config. Per the storage-of-truth model, data
 attached to a notebook travels with the notebook. For a linked (external)
