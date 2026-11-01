@@ -423,6 +423,44 @@ func TestResolveExternalConflict_WithoutPendingRefusalFails(t *testing.T) {
 	}
 }
 
+// keep_theirs without a stash (post-restart) is still disk-meaningful: theirs
+// is on the original path, so the call settles it — indexes theirs, refreshes
+// the baseline — and reports that nothing was written, instead of failing and
+// leaving the editor refusing forever against a stale baseline.
+func TestResolveExternalConflict_KeepTheirsWithoutStashSettlesBaseline(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "NoStashKT", "", "NoStashKT"
+	blockID := "bbbbbb4b-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "stable")
+
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	filePath := conflictPagePath(app, notebook, section, page)
+	external := "---\nnotebook: \"NoStashKT\"\npage: \"NoStashKT\"\ntags: []\n---\nexternal body\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+
+	copyPage, err := app.ResolveExternalConflict(notebook, section, page, "keep_theirs")
+	if err != nil {
+		t.Fatalf("keep_theirs without stash must settle, got: %v", err)
+	}
+	if copyPage != "" {
+		t.Fatalf("nothing was written, so no copy must be named, got %q", copyPage)
+	}
+
+	got, _ := os.ReadFile(filePath)
+	if string(got) != external {
+		t.Fatalf("keep_theirs without stash must not touch the file: %q", string(got))
+	}
+	// The baseline adopted theirs: the stale-buffer save that WAS refused now
+	// passes and lands instead of re-refusing forever.
+	if err := app.SaveFileBlocks(notebook, section, page, editBlocks(blocks, blockID, "after settle")); err != nil {
+		t.Fatalf("save after keep_theirs-without-stash must pass: %v", err)
+	}
+}
+
 // Invalid resolution strings are rejected without touching anything.
 func TestResolveExternalConflict_RejectsUnknownResolution(t *testing.T) {
 	app := newTestApp(t)
@@ -553,5 +591,75 @@ func TestResolveExternalConflict_ReplaysNewestStash(t *testing.T) {
 	got, _ := os.ReadFile(filePath)
 	if !strings.Contains(string(got), "second refused attempt") {
 		t.Fatalf("resolution must replay the newest stashed buffer, got %q", string(got))
+	}
+}
+
+// Markdown-stash resolutions (Source mode refused via SavePageMarkdown) take
+// the isMarkdown branches the blocks suite cannot reach: keep_mine replays
+// the stashed body through writePageMarkdownLocked, keep_theirs mints the
+// sibling from the stashed body (nil contentBytes → minted frontmatter).
+func TestResolveExternalConflict_MarkdownStash(t *testing.T) {
+	for _, resolution := range []string{"keep_mine", "keep_theirs"} {
+		t.Run(resolution, func(t *testing.T) {
+			app := newTestApp(t)
+			notebook, section, page := "MdResNB", "", "Md"+resolution
+			blockID := "dddddd1d-dddd-4ddd-8ddd-dddddddddddd"
+			_ = seedConflictPage(t, app, notebook, section, page, blockID, "original md line")
+
+			if _, err := app.FetchPageMarkdown(notebook, section, page); err != nil {
+				t.Fatalf("FetchPageMarkdown: %v", err)
+			}
+
+			filePath := conflictPagePath(app, notebook, section, page)
+			external := "---\nnotebook: \"MdResNB\"\npage: \"" + page + "\"\ntags: []\n---\nexternal md body\n"
+			if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+				t.Fatalf("external write: %v", err)
+			}
+			_, err := app.SavePageMarkdown(notebook, section, page, "my stashed body\n")
+			requireConflict(t, err)
+
+			copyPage, rerr := app.ResolveExternalConflict(notebook, section, page, resolution)
+			if rerr != nil {
+				t.Fatalf("ResolveExternalConflict(%s): %v", resolution, rerr)
+			}
+			if !strings.Contains(copyPage, ".conflict-") {
+				t.Fatalf("resolution must name the conflict copy, got %q", copyPage)
+			}
+
+			origBytes, _ := os.ReadFile(filePath)
+			sibling := findConflictSibling(t, app, notebook, section, page)
+			sibBytes, _ := os.ReadFile(sibling)
+
+			if resolution == "keep_theirs" {
+				if !strings.Contains(string(origBytes), "external md body") {
+					t.Fatalf("keep_theirs: original must keep theirs, got %q", string(origBytes))
+				}
+				if !strings.Contains(string(sibBytes), "my stashed body") {
+					t.Fatalf("keep_theirs: copy must carry my stashed body, got %q", string(sibBytes))
+				}
+			} else {
+				if !strings.Contains(string(origBytes), "my stashed body") {
+					t.Fatalf("keep_mine: original must carry my stashed body, got %q", string(origBytes))
+				}
+				if !strings.Contains(string(sibBytes), "external md body") {
+					t.Fatalf("keep_mine: copy must carry theirs, got %q", string(sibBytes))
+				}
+			}
+
+			// The sibling is indexed as its own page and the funnel passes
+			// again after the resolution re-baselined.
+			siblingPage := strings.TrimSuffix(filepath.Base(sibling), ".md")
+			if idx, err := app.FetchPageBlocks(notebook, section, siblingPage); err != nil {
+				t.Fatalf("FetchPageBlocks sibling: %v", err)
+			} else if len(idx) == 0 {
+				t.Fatalf("markdown conflict copy %s is not indexed as a page", siblingPage)
+			}
+			if _, err := app.FetchPageMarkdown(notebook, section, page); err != nil {
+				t.Fatalf("FetchPageMarkdown after resolution: %v", err)
+			}
+			if _, err := app.SavePageMarkdown(notebook, section, page, "post-resolution body\n"); err != nil {
+				t.Fatalf("post-resolution markdown save must pass: %v", err)
+			}
+		})
 	}
 }

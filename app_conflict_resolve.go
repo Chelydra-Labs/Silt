@@ -17,7 +17,8 @@ package main
 // The refused save's payload was stashed at refusal time (see
 // refusedPageWrite) — the editor never has to resend it. Without a stash
 // (e.g. the app restarted between refusal and click) the call fails loudly
-// instead of guessing.
+// instead of guessing, except keep_theirs: theirs is already on the original
+// path, so settling means indexing it and re-baselining — nothing to guess.
 
 import (
 	"fmt"
@@ -93,9 +94,21 @@ func (a *App) ResolveExternalConflict(notebook, section, page, resolution string
 	var conflictPage string
 	var resolveErr error
 	noStash := false
+	theirsSettled := false
 	a.coordinator.LockFileWrite(filePath, func() {
 		rw, ok := a.popRefusedWrite(key)
 		if !ok {
+			// keep_theirs without a stash (e.g. the app restarted between
+			// refusal and click) is still disk-meaningful: theirs is on the
+			// original path. Settle it — index theirs, re-baseline — so the
+			// next save passes instead of refusing forever against a stale
+			// baseline. The other resolutions genuinely need the stashed
+			// payload and keep failing loudly.
+			if resolution == conflictResolutionKeepTheirs {
+				theirsSettled = true
+				resolveErr = a.settleTheirsOnOriginalLocked(filePath, source, safeNotebook, safeSection, safePage)
+				return
+			}
 			noStash = true
 			return
 		}
@@ -103,7 +116,8 @@ func (a *App) ResolveExternalConflict(notebook, section, page, resolution string
 		if resolveErr != nil {
 			// Restore the stash so the user can retry the resolution; the
 			// disk state is unchanged (every step below fails before writing
-			// when it fails at all). Only-if-absent: a newer refusal must
+			// when it fails at all, and a mid-resolution failure rolls back
+			// its partial writes). Only-if-absent: a newer refusal must
 			// never be clobbered by this older buffer.
 			a.restoreRefusedWriteIfAbsent(key, rw)
 		}
@@ -115,6 +129,11 @@ func (a *App) ResolveExternalConflict(notebook, section, page, resolution string
 	}
 	if resolveErr != nil {
 		return "", resolveErr
+	}
+	if theirsSettled {
+		// Nothing was written ("" per the IPC contract); theirs was already
+		// the on-disk version, only the index and baseline caught up.
+		return "", nil
 	}
 
 	// Emit after the lock releases so subscribers can re-fetch without
@@ -148,8 +167,9 @@ func uniqueConflictSibling(dir, page string, now time.Time) string {
 
 // resolveExternalConflictLocked performs one resolution and returns the page
 // name of the conflict copy it created. The caller holds LockFileWrite for
-// filePath. Fails before any write when preconditions fail, so an error here
-// leaves disk (and the stash) untouched.
+// filePath. Precondition failures happen before any write; a failure in the
+// original-path replay (after the sibling landed) rolls the sibling back, so
+// an error still leaves disk (and the stash) without a half-applied state.
 func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resolution string) (string, error) {
 	theirs, err := os.ReadFile(filePath)
 	if err != nil {
@@ -175,53 +195,76 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 				return "", werr
 			}
 		}
-		// The external edit was never indexed (that is what made it
-		// "external"); index theirs now so app views match disk, then
-		// re-baseline the fingerprint to theirs.
-		blocks, meta, _, _, perr := parser.ParseFileContent(string(theirs),
-			rw.notebook, rw.section, rw.page, fileOrDefaultDate(filePath), a.spacesPerTab)
-		if perr != nil {
-			log.Printf("resolve conflict: parse theirs for %s/%s/%s failed (file kept; next scan indexes it): %v",
-				rw.notebook, rw.section, rw.page, perr)
-		} else if idxErr := a.indexFile(rw.source, meta.Notebook, meta.Section, meta.Page, blocks, meta, meta.Warnings...); idxErr != nil {
-			log.Printf("resolve conflict: index theirs for %s/%s/%s failed (file kept; next scan indexes it): %v",
-				rw.notebook, rw.section, rw.page, idxErr)
+		if err := a.settleTheirsOnOriginalLocked(filePath, rw.source, rw.notebook, rw.section, rw.page); err != nil {
+			return "", err
 		}
-		a.refreshFingerprintAfterWrite(filePath, theirs)
 		return conflictPage, nil
 	}
 
 	// keep_mine / keep_both: archive theirs to the conflict copy, then replay
 	// my stashed save onto the original path.
 	archived := []byte(conflictCopyContent(theirs, conflictPage, rw.notebook, rw.section))
-	if err := a.writeConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section, archived); err != nil {
+	siblingBlocks, err := a.writeConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section, archived)
+	if err != nil {
 		return "", err
 	}
-	if rw.isMarkdown {
-		_, werr := a.writePageMarkdownLocked(filePath, rw.source, rw.notebook, rw.section, rw.page,
-			rw.notebook, rw.section, rw.page, theirs, rw.markdown, rw.reason, false)
-		if werr != nil {
-			return "", werr
-		}
-	} else {
-		if werr := a.writePageFileLocked(filePath, rw.source, rw.notebook, rw.section, rw.page, rw.blocks, rw.reason); werr != nil {
-			return "", werr
-		}
+	if err := a.replayMineLocked(rw, filePath, theirs); err != nil {
+		// The sibling is already on disk and indexed, but the original-path
+		// write failed — remove it again so the reported error leaves no ghost
+		// duplicate and a retry does not mint -2, -3… siblings.
+		a.rollbackConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section, conflictPage, siblingBlocks)
+		return "", err
 	}
 	return conflictPage, nil
 }
 
-// writeConflictCopyLocked writes + indexes one conflict copy. The content is
+// settleTheirsOnOriginalLocked indexes the on-disk (their) version and
+// re-baselines the fingerprint to it. The external edit was never indexed
+// (that is what made it "external"), so after keep_theirs the index and the
+// baseline must both adopt theirs or the next save would re-refuse forever.
+// Indexing is best-effort: the file is kept either way and the next scan
+// indexes it.
+func (a *App) settleTheirsOnOriginalLocked(filePath, source, notebook, section, page string) error {
+	theirs, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("read current page version: %w", err)
+	}
+	blocks, meta, _, _, perr := parser.ParseFileContent(string(theirs),
+		notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
+	if perr != nil {
+		log.Printf("resolve conflict: parse theirs for %s/%s/%s failed (file kept; next scan indexes it): %v",
+			notebook, section, page, perr)
+	} else if idxErr := a.indexFile(source, meta.Notebook, meta.Section, meta.Page, blocks, meta, meta.Warnings...); idxErr != nil {
+		log.Printf("resolve conflict: index theirs for %s/%s/%s failed (file kept; next scan indexes it): %v",
+			notebook, section, page, idxErr)
+	}
+	a.refreshFingerprintAfterWrite(filePath, theirs)
+	return nil
+}
+
+// replayMineLocked writes my stashed save onto the original path — the
+// keep_mine / keep_both winner.
+func (a *App) replayMineLocked(rw refusedPageWrite, filePath string, theirs []byte) error {
+	if rw.isMarkdown {
+		_, werr := a.writePageMarkdownLocked(filePath, rw.source, rw.notebook, rw.section, rw.page,
+			rw.notebook, rw.section, rw.page, theirs, rw.markdown, rw.reason, false)
+		return werr
+	}
+	return a.writePageFileLocked(filePath, rw.source, rw.notebook, rw.section, rw.page, rw.blocks, rw.reason)
+}
+
+// writeConflictCopyLocked writes + indexes one conflict copy and returns the
+// blocks it indexed (nil when nothing was indexed). The content is
 // user content (not Silt state), so it is registered with the tracker and
 // explicitly indexed — it must surface as a page immediately, not wait for
 // the watcher. notebook/section are the ORIGINAL page's safe locator: they
 // are the ParseFileContent defaults (and the minted frontmatter fallback),
 // so a copy of a frontmatter-less external version indexes under the same
 // notebook/section as its sibling instead of a junk `notebook=”` row.
-func (a *App) writeConflictCopyLocked(siblingPath, source, notebook, section string, content []byte) error {
+func (a *App) writeConflictCopyLocked(siblingPath, source, notebook, section string, content []byte) ([]parser.ParsedBlock, error) {
 	a.tracker.RegisterWrite(siblingPath)
 	if err := atomicPageWrite(siblingPath, content); err != nil {
-		return fmt.Errorf("write conflict copy: %w", err)
+		return nil, fmt.Errorf("write conflict copy: %w", err)
 	}
 	conflictPage := strings.TrimSuffix(filepath.Base(siblingPath), ".md")
 	blocks, meta, _, _, perr := parser.ParseFileContent(string(content),
@@ -230,12 +273,34 @@ func (a *App) writeConflictCopyLocked(siblingPath, source, notebook, section str
 		// The copy is safely on disk; a parse failure only delays indexing
 		// until the next scan. Never fail the resolution after the write.
 		log.Printf("resolve conflict: parse copy %s failed: %v", siblingPath, perr)
-		return nil
+		return nil, nil
 	}
 	if idxErr := a.indexFile(source, meta.Notebook, meta.Section, meta.Page, blocks, meta, meta.Warnings...); idxErr != nil {
 		log.Printf("resolve conflict: index copy %s failed: %v", siblingPath, idxErr)
 	}
-	return nil
+	return blocks, nil
+}
+
+// rollbackConflictCopyLocked removes a conflict copy this resolution just
+// wrote + indexed, after the original-path replay failed underneath it — a
+// reported failure must not leave a persisted ghost. Best-effort: a removal
+// failure logs and leaves the copy (a duplicate page, never data loss); the
+// next vault scan reconciles the index with disk.
+func (a *App) rollbackConflictCopyLocked(sibling, source, notebook, section, conflictPage string, blocks []parser.ParsedBlock) {
+	if rmErr := os.Remove(sibling); rmErr != nil && !os.IsNotExist(rmErr) {
+		log.Printf("resolve conflict: rollback copy %s failed: %v", sibling, rmErr)
+		return
+	}
+	for _, b := range blocks {
+		if b.ID == "" {
+			continue
+		}
+		a.coordinator.WithDBWrite(func() {
+			if err := a.db.DeleteBlockFromPage(b.ID, source, notebook, section, conflictPage); err != nil {
+				log.Printf("resolve conflict: rollback index for copy %s: %v", sibling, err)
+			}
+		})
+	}
 }
 
 // conflictCopyContent returns theirs with the frontmatter `page:` rewritten to

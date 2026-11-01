@@ -76,8 +76,10 @@ type App struct {
 	// whole-page save funnels, refreshed by Silt's own writes. Line-mutating
 	// setter funnels do NOT refresh it — their correctness depends on the
 	// block:changed → container FetchPageBlocks recapture loop re-baselining
-	// the page; do not remove that recapture without refreshing here. See
-	// app_conflict_fingerprint.go.
+	// the page; do not remove that recapture without refreshing here (the
+	// whole-file writers outside the save funnels — rename link fanout,
+	// plugin cross-page move — DO refresh in-lock and emit a whole-page
+	// block:changed for the same reason). See app_conflict_fingerprint.go.
 	pageLoadFingerprints   map[string]FileFingerprint
 	pageLoadFingerprintsMu sync.RWMutex
 	// refusedWrites stashes the editor save each external-edit refusal

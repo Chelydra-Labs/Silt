@@ -163,10 +163,17 @@ func (a *App) rewriteStaleInboundAfterRename(oldNB, oldSec, oldPage, newNB, newS
 			if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
 				return
 			}
+			// Silt's own write is never an external edit — re-baseline inside
+			// the same lock (#1005), like the save funnels.
+			a.refreshFingerprintAfterWrite(filePath, []byte(content))
 			writeOK = true
 		})
 		if writeOK {
 			a.reindexFile(filePath, k.nb, k.sec, k.page)
+			// Whole-page signal so an editor open on this linking page
+			// recaptures its baseline and buffer instead of false-conflicting
+			// (or clobbering the rewrite) on its next autosave (#1005).
+			a.emitBlockChanged("", k.nb, k.sec, k.page, "")
 			rewritten++
 		}
 	}
@@ -310,6 +317,9 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldSource, oldNB, oldSec, oldPa
 				log.Printf("rewriteInboundPageLinks: write %s: %v", filePath, err)
 				return
 			}
+			// Same-lock re-baseline (#1005): this rewrite is Silt's own write,
+			// never an external edit.
+			a.refreshFingerprintAfterWrite(filePath, []byte(content))
 			writeOK = true
 		}
 		held := heldPaths != nil && heldPaths[core.NormalizeFileLockPath(filePath)]
@@ -325,6 +335,10 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldSource, oldNB, oldSec, oldPa
 			continue
 		}
 		a.reindexFile(filePath, k.nb, k.sec, k.page)
+		// Whole-page signal: an open editor on this linking page must
+		// recapture baseline + buffer rather than false-conflict on its next
+		// autosave (#1005).
+		a.emitBlockChanged("", k.nb, k.sec, k.page, "")
 		rewritten++
 	}
 	if rewritten > 0 || failed > 0 {

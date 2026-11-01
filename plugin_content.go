@@ -443,6 +443,10 @@ func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, pag
 	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
 		return fmt.Errorf("write source file: %w", err)
 	}
+	// The FetchPageBlocks above captured a load baseline for this path under
+	// the same lock — re-baseline to the bytes just written or the next
+	// whole-page save false-conflicts against this Silt-owned rewrite (#1005).
+	a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
 
 	// Targeted DB delete: remove ONLY the moved block from the SOURCE page.
 	// Page-scoped so it doesn't delete the block from the TARGET page where
