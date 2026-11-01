@@ -36,6 +36,11 @@ export interface EditorHandle {
   forceExternalReload: (opts?: { conflictHold?: boolean }) => void
   /** Drop a pending forceExternalReload if the out-of-band write failed. */
   clearExternalReload: () => void
+  /** Move focus into the owning editor surface (ProseMirror or the Source
+   *  textarea). Returns false when the surface has nothing focusable, so
+   *  callers can fall back (#1005: post-resolution focus must land in the
+   *  editor that owns the buffer, not the page chrome). */
+  focusEditor?: () => boolean
   /** Show an in-editor proposed-edit preview over a selection range (#543).
    *  No-op if the editor has no selection / is not mounted. Returns true if
    *  the preview was set. */

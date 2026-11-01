@@ -293,4 +293,47 @@ describe('TipTapEditor same-ID external reload', () => {
     expect(pmText(view.container)).toContain('their text')
     view.unmount()
   })
+
+  // #1005: an unrelated registry actor's clearExternalReload (history
+  // restore failure, MCP reload handler) must not void a conflict-grade arm
+  // — dropping pendingExternalReload would leave the held buffer savable on
+  // the next keystroke, over the version the user chose to keep.
+  it('clearExternalReload is a no-op while a conflict hold is armed', async () => {
+    const first = [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'my text' })]
+    const view = render(TipTapEditor, {
+      props: {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        blocks: first,
+        onUpdate: () => {}
+      }
+    })
+    await waitFor(() => {
+      expect(view.container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+    const handle = getEditor(editorKey('Work', 'Journal', 'Daily'))
+    expect(handle).toBeTruthy()
+
+    await handle!.resolveExternalConflict!('keep_theirs')
+    await expect(handle!.flush()).resolves.toBe(false)
+
+    // The unrelated clear must not release the armed reload…
+    handle!.clearExternalReload()
+    await expect(handle!.flush()).resolves.toBe(false)
+
+    // …so the post-resolution blocks still land and release the hold.
+    await view.rerender({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      blocks: [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'their text' })],
+      onUpdate: () => {}
+    })
+    await waitFor(async () => {
+      await expect(handle!.flush()).resolves.toBe(true)
+    })
+    expect(pmText(view.container)).toContain('their text')
+    view.unmount()
+  })
 })

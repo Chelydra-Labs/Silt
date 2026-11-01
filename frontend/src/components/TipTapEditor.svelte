@@ -838,8 +838,18 @@
         }
       },
       clearExternalReload: () => {
+        // A conflict-grade arm outlives a plain clear: only the armed
+        // reload landing or a failed resolution may release it — clearing
+        // the arm here would hand the next keystroke a savable stale
+        // buffer over the version the user chose to keep (#1005).
+        if (autosave.holdsForConflict()) return
         pendingExternalReload = false
         autosave.forceReleaseWrites()
+      },
+      focusEditor: () => {
+        if (!editorInstance || editorInstance.isDestroyed) return false
+        editorInstance.commands.focus()
+        return true
       },
       setProposedEdit: (opts) => {
         if (!editorInstance || editorInstance.isDestroyed) return false

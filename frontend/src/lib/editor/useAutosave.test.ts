@@ -313,6 +313,37 @@ describe('AutosaveManager', () => {
     expect(last.externalConflict).toBe(true)
   })
 
+  // #1005/#345: a conflict-grade hold must survive a LATER plain hold — an
+  // unrelated registry actor (history restore, global replace) calling
+  // forceExternalReload() during the resolve→reload window must not swap the
+  // hold for an 8s-valved plain one; that downgrade let the stale buffer save
+  // over the kept version.
+  it('holdWrites() does not downgrade an active conflict hold', async () => {
+    const { SaveFileBlocks } = await import('$silt-app')
+    vi.mocked(SaveFileBlocks).mockRejectedValueOnce(conflictError())
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(0)
+    await autosave.resolveExternalConflict('keep_theirs')
+
+    autosave.holdWrites()
+    expect(autosave.areWritesHeld()).toBe(true)
+    expect(autosave.holdsForConflict()).toBe(true)
+    // The plain hold's safety valve must not fire for the conflict hold.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(autosave.areWritesHeld()).toBe(true)
+    expect(autosave.holdsForConflict()).toBe(true)
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(SaveFileBlocks).toHaveBeenCalledTimes(1) // only the refused call
+
+    autosave.forceReleaseWrites()
+    expect(autosave.areWritesHeld()).toBe(false)
+  })
+
   it('holdWrites() no-ops trigger until releaseWrites', async () => {
     const { SaveFileBlocks } = await import('$silt-app')
     const deps = makeDeps()

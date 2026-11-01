@@ -81,14 +81,14 @@ export class AutosaveManager {
   /** Bumps on each in-flight save so a deferred "saved" emit is ignored if a
    *  newer save has started (min-display floor must not race). */
   private saveGeneration = 0
-  /** When set, trigger/flush/save no-op so a post-restore keystroke cannot
-   *  write the pre-reload buffer. Cleared after setContent + markClean. */
-  private writesHeld = false
-  /** A conflict-grade hold (keep_theirs / cross-surface resolution): the
-   *  buffer was explicitly declared discardable, so a keystroke must NOT
-   *  void it (#1005) — only the armed reload landing (or an explicit clear /
-   *  resolution failure) may release it. */
-  private conflictHold = false
+  /** Active write-hold grade. A conflict-grade hold outranks a plain one:
+   * only the armed reload landing, an explicit force-release, or a failed
+   * resolution may release it — never a timer, a keystroke, or a later
+   * plain hold. Plain holds (#345 armed reloads) expire on their safety
+   * valve; conflict holds (#1005 keep_theirs / cross-surface resolution)
+   * have no timer because the buffer they guard was explicitly declared
+   * discardable and only the resolution's reload may replace it. */
+  private hold: 'none' | 'plain' | 'conflict' = 'none'
   private deps: AutosaveDeps
 
   constructor(deps: AutosaveDeps) {
@@ -97,7 +97,7 @@ export class AutosaveManager {
 
   /** Schedule a debounced save. Call on every editor transaction. */
   trigger(): void {
-    if (this.writesHeld) return
+    if (this.hold !== 'none') return
     this.markDirty()
     if (this.timeout) {
       clearTimeout(this.timeout)
@@ -118,7 +118,7 @@ export class AutosaveManager {
 
   /** Flush any pending save immediately. Call on unmount or page change. */
   async flush(): Promise<void> {
-    if (this.writesHeld) return
+    if (this.hold !== 'none') return
     if (this.timeout) {
       clearTimeout(this.timeout)
       this.timeout = null
@@ -163,10 +163,13 @@ export class AutosaveManager {
 
   private holdTimer: ReturnType<typeof setTimeout> | null = null
 
-  /** Suppress new saves until releaseWrites (armed external reload). */
+  /** Arm a plain (#345-style) hold: suppress saves until releaseWrites or the
+   *  safety valve. Never downgrades an active conflict hold — a conflict
+   *  hold has no valve, and re-arming one here would let the discardable
+   *  buffer save over the version the user chose to keep (#1005). */
   holdWrites(timeoutMs = 8000): void {
-    this.writesHeld = true
-    this.conflictHold = false
+    if (this.hold === 'conflict') return
+    this.hold = 'plain'
     this.cancelPending()
     this.clearHoldTimer()
     this.holdTimer = setTimeout(() => {
@@ -176,14 +179,14 @@ export class AutosaveManager {
   }
 
   /** Conflict-grade hold (#1005): writes stay suppressed until the armed
-   *  reload lands, an explicit clearExternalReload, or a failed resolution —
+   *  reload lands, an explicit force-release, or a failed resolution —
    *  never a user keystroke and never a timer. The buffer was just declared
-   *  discardable (keep_theirs), so releasing early would let a stale-buffer
-   *  save clobber the version the user chose to keep; if the reload event
-   *  is dropped the hold simply persists until teardown, which is safe. */
+   *  discardable (keep_theirs / cross-surface), so releasing early would let
+   *  a stale-buffer save clobber the version the user chose to keep; if the
+   *  reload event is dropped the hold simply persists until teardown, which
+   *  is safe. */
   holdWritesForConflict(): void {
-    this.writesHeld = true
-    this.conflictHold = true
+    this.hold = 'conflict'
     this.cancelPending()
     this.clearHoldTimer()
   }
@@ -191,7 +194,7 @@ export class AutosaveManager {
   /** Release a plain (#345-style) hold. A conflict hold is deliberately
    *  kept: see holdWritesForConflict. */
   releaseWrites(): void {
-    if (this.conflictHold) return
+    if (this.hold !== 'plain') return
     this.forceReleaseWrites()
   }
 
@@ -199,19 +202,18 @@ export class AutosaveManager {
    *  reload landing, the explicit clear, or the resolution failure path. */
   forceReleaseWrites(): void {
     this.clearHoldTimer()
-    this.writesHeld = false
-    this.conflictHold = false
+    this.hold = 'none'
   }
 
   areWritesHeld(): boolean {
-    return this.writesHeld
+    return this.hold !== 'none'
   }
 
   /** True while a conflict-grade hold is active — the editor's onUpdate
    *  uses this to keep the armed reload (and the hold) alive across
    *  keystrokes instead of voiding it (#1005). */
   holdsForConflict(): boolean {
-    return this.conflictHold
+    return this.hold === 'conflict'
   }
 
   private clearHoldTimer(): void {
@@ -222,7 +224,7 @@ export class AutosaveManager {
   }
 
   private async save(): Promise<void> {
-    if (this.writesHeld) return
+    if (this.hold !== 'none') return
     if (this.pendingSave) {
       this.saveQueued = true
       return
