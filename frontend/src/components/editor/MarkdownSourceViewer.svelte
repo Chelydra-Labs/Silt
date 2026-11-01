@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy, onMount, untrack } from 'svelte'
   import type { ParsedBlock } from '../../lib/editor/types'
   import { themeState } from '../../theme/store.svelte'
   import {
@@ -32,7 +32,6 @@
     resolveExternalConflict,
     type ExternalConflictResolution
   } from '../../lib/editor/externalConflict'
-  import SaveConflictBanner from './SaveConflictBanner.svelte'
 
   // MarkdownSourceViewer — editable Source mode (#660) with optional read-only
   // Shiki highlight (#171/#194). Seeds from on-disk body via FetchPageMarkdown;
@@ -58,6 +57,14 @@
     editable?: boolean
     /** FindBar bind target for Source-mode in-page find (#884). */
     sourceSearchTarget?: SourceSearchTarget | null
+    /** True while the page-level conflict latch is set (#1005): the parent
+     *  renders the single resolution banner and this viewer's saves are
+     *  held — the pending resolution decides what disk holds. */
+    conflictActive?: boolean
+    /** Fired when this viewer's own save is refused (#1005) so the parent
+     *  can latch the page-level banner (it survives view toggles; a banner
+     *  inside this component would not). */
+    onSaveRefused?: () => void
   }
 
   let {
@@ -69,7 +76,9 @@
     onBlocksSaved,
     editable = true,
     // eslint-disable-next-line no-useless-assignment -- $bindable out-param for parent FindBar
-    sourceSearchTarget = $bindable<SourceSearchTarget | null>(null)
+    sourceSearchTarget = $bindable<SourceSearchTarget | null>(null),
+    conflictActive = false,
+    onSaveRefused
   }: Props = $props()
 
   function reconstructMarkdown(source: ParsedBlock[]): string {
@@ -87,15 +96,13 @@
   let saveError = $state<string | null>(null)
   let conflictPending = $state(false)
   // External-edit save refusal (#1005): the backend stashed this buffer and
-  // refuses to overwrite the on-disk version until the user resolves.
+  // refuses to overwrite the on-disk version until the user resolves. The
+  // resolution banner lives on the parent (page-level, view-toggle-proof);
+  // this flag only holds this viewer's own saves.
   let saveRefused = $state(false)
   /** Buffer snapshot at the moment of the refusal — the version the backend
    * stashed; typed-past edits are flushed after keep_mine/keep_both. */
   let refusedBuffer: string | null = null
-  let conflictBusy = $state(false)
-  let conflictError = $state<string | null>(null)
-  /** Polite success announcement naming the created conflict copy (#1005). */
-  let conflictAnnouncement = $state('')
   let savePhase = $state<'idle' | 'saving' | 'saved' | 'error'>('idle')
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let savedClearTimer: ReturnType<typeof setTimeout> | null = null
@@ -448,6 +455,9 @@
         refusedBuffer = md
         saveError = coerced.message
         savePhase = 'error'
+        // The parent owns the page-level banner (#1005) — its latch survives
+        // the view toggle that unmounts this component.
+        onSaveRefused?.()
         return false
       }
       saveError = e instanceof Error ? e.message : String(e)
@@ -458,7 +468,9 @@
 
   // Menu Save / Ctrl+S and global replace coordinate through the same registry
   // TipTap uses (#884). TipTap is unmounted in Source, so without this handle
-  // those paths are silent no-ops on dirty Source buffers.
+  // those paths are silent no-ops on dirty Source buffers. The
+  // resolveExternalConflict member lets the page-level conflict banner route
+  // source-mode resolutions through this surface's own stash/reseed logic.
   $effect(() => {
     if (!editable || !notebook || !page) return
     const key = editorKey(notebook, section, page)
@@ -492,8 +504,41 @@
       clearProposedEdit: () => {},
       hasProposal: () => false,
       acceptProposedEdit: () => false,
-      verifySelectionText: () => false
+      verifySelectionText: () => false,
+      resolveExternalConflict: (resolution) => resolveSaveConflict(resolution)
     })
+  })
+
+  // Page-level conflict latch (#1005): while the parent's latch is set this
+  // viewer must not save — the pending resolution decides what disk holds,
+  // and a fresh-mount re-fetch would otherwise re-baseline straight over the
+  // external version. `inherited` marks a latch this viewer did not raise
+  // itself; when it clears, the save-hold clears and the buffer re-seeds,
+  // keeping dirty edits for the honest "external change detected" offer.
+  let conflictLatchInherited = false
+  let conflictLatchWasActive = false
+  $effect(() => {
+    if (conflictActive) {
+      if (!conflictLatchWasActive) {
+        conflictLatchWasActive = true
+        conflictLatchInherited = !untrack(() => saveRefused)
+        saveRefused = true
+      }
+      return
+    }
+    if (!conflictLatchWasActive) return
+    conflictLatchWasActive = false
+    if (!conflictLatchInherited) return
+    conflictLatchInherited = false
+    saveRefused = false
+    refusedBuffer = null
+    saveError = null
+    savePhase = 'idle'
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    void seedFromDiskOrBlocks(blocks)
   })
 
   // Expose textarea buffer ops to FindBar while editable Source is mounted.
@@ -565,7 +610,6 @@
     conflictPending = false
     saveRefused = false
     refusedBuffer = null
-    conflictError = null
     saveError = null
     savePhase = 'idle'
     // Reload discards local edits by explicit user choice. Clear dirty
@@ -583,51 +627,40 @@
   }
 
   /** Settle an external-edit save refusal (#1005). The losing version always
-   *  survives as a `.conflict-*` sibling written by the backend. */
+   *  survives as a `.conflict-*` sibling written by the backend. Exposed on
+   *  the editor-registry handle so the page-level banner (rendered by the
+   *  container) routes resolutions through this surface — the stashed payload
+   *  is this buffer, and only this surface can reseed it safely. Throws when
+   *  the resolution IPC fails so the banner keeps offering the actions. */
   async function resolveSaveConflict(
     resolution: ExternalConflictResolution
-  ): Promise<void> {
-    conflictBusy = true
-    conflictError = null
-    try {
-      const conflictPage = await resolveExternalConflict(
-        notebook,
-        section,
-        page,
-        resolution
-      )
-      const typedPastRefusal =
-        refusedBuffer !== null && buffer !== refusedBuffer
-      saveRefused = false
-      refusedBuffer = null
-      conflictError = null
-      conflictAnnouncement = conflictPage
-        ? `Conflict resolved. The other version was saved as ${conflictPage}.md.`
-        : 'Conflict resolved. The kept-apart version is in the same folder as this page.'
-      // The banner just unmounted and took focus with it — hand focus back
-      // to the textarea so the user lands where editing continues.
-      textareaEl?.focus()
-      if (resolution === 'keep_theirs') {
-        // Discards the refused buffer by explicit choice; reloadFromDisk
-        // clears dirty/saveError and reseeds from the on-disk winner.
-        reloadFromDisk()
-        return
-      }
-      // keep_mine / keep_both: the backend wrote the stashed buffer. Typing
-      // that happened after the refusal is still unsaved — flush it now (the
-      // resolution refreshed the baseline, so the save passes).
-      saveError = null
-      if (typedPastRefusal) {
-        scheduleSave()
-      } else {
-        dirty = false
-        savePhase = 'idle'
-      }
-    } catch (e) {
-      conflictError = e instanceof Error ? e.message : String(e)
-    } finally {
-      conflictBusy = false
+  ): Promise<string> {
+    const typedPastRefusal = refusedBuffer !== null && buffer !== refusedBuffer
+    const conflictPage = await resolveExternalConflict(
+      notebook,
+      section,
+      page,
+      resolution
+    )
+    saveRefused = false
+    refusedBuffer = null
+    if (resolution === 'keep_theirs') {
+      // Discards the refused buffer by explicit choice; reloadFromDisk
+      // clears dirty/saveError and reseeds from the on-disk winner.
+      reloadFromDisk()
+      return conflictPage
     }
+    // keep_mine / keep_both: the backend wrote the stashed buffer. Typing
+    // that happened after the refusal is still unsaved — flush it now (the
+    // resolution refreshed the baseline, so the save passes).
+    saveError = null
+    if (typedPastRefusal) {
+      scheduleSave()
+    } else {
+      dirty = false
+      savePhase = 'idle'
+    }
+    return conflictPage
   }
 
   function announceHistory(msg: string): void {
@@ -993,8 +1026,8 @@
         <!-- Visual echo only: the banner below carries role="alert", so this
              header span must not announce too (double-speaking the
              refusal). -->
-        <span
-          class="save-status save-status--err">Save held — this file changed on disk</span
+        <span class="save-status save-status--err"
+          >Save held — this file changed on disk</span
         >
       {:else if conflictPending}
         <span class="save-status" role="status" aria-live="polite"
@@ -1072,13 +1105,6 @@
       {/if}
     </div>
   </div>
-  {#if saveRefused}
-    <SaveConflictBanner
-      busy={conflictBusy}
-      error={conflictError}
-      onResolve={(r) => void resolveSaveConflict(r)}
-    />
-  {/if}
   <div
     class="source-body"
     role={editable ? undefined : 'document'}
@@ -1116,9 +1142,6 @@
        explicit role so it does not collide with the copy/save status
        role="status" queries exercised by tests. -->
   <span class="sr-only" aria-live="polite">{historyStatus}</span>
-  <!-- Resolution confirmation (#1005): polite, and names the conflict copy so
-       the user knows where the kept-apart version went. -->
-  <span class="sr-only" aria-live="polite">{conflictAnnouncement}</span>
 </div>
 
 <style>

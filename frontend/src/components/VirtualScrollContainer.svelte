@@ -137,16 +137,41 @@
 
   // Editor status state
   let saveError = $state<string | null>(null)
-  // External-edit save refusal (#1005): LATCHED, like MSV's saveRefused —
-  // the transient SaveState flips to pending on every keystroke, so keying
-  // the banner off it directly would unmount/remount the banner (and re-fire
-  // its role="alert") while the user types through a re-refused save.
-  // Cleared only by a successful resolution, a landed save, or markClean.
+  // External-edit save refusal (#1005): LATCHED at the PAGE level — the one
+  // resolution banner lives here, outside any view-mode guard, so it survives
+  // Edit↔Source toggles (either surface's own banner would unmount with it
+  // and orphan the backend stash). The transient SaveState flips to pending
+  // on every keystroke, so keying the banner off it directly would
+  // unmount/remount the banner (and re-fire its role="alert") while the user
+  // types through a re-refused save. Cleared only by a successful resolution,
+  // a landed save, markClean, or the page locator changing underneath it.
   let saveConflict = $state(false)
+  // Which surface's save the pending conflict stashed: resolutions must
+  // route through the OWNING surface (its stash is that surface's buffer;
+  // only it can reseed safely — keep_mine flushes typed-past edits,
+  // keep_theirs reseeds from disk). Null while unlatched.
+  let conflictOrigin: 'edit' | 'source' | null = null
+  // Locator the latch was raised for: a rename/move repoints this container
+  // at a different file while the backend stash stays keyed to the OLD path
+  // — resolving then can never succeed, so the latch is superseded instead.
+  let conflictOriginKey = ''
   let conflictBusy = $state(false)
   let conflictError = $state<string | null>(null)
   /** Polite success announcement naming the created conflict copy (#1005). */
   let conflictAnnouncement = $state('')
+
+  function latchConflict(origin: 'edit' | 'source'): void {
+    saveConflict = true
+    conflictOrigin = origin
+    conflictOriginKey = `${notebook}\x00${section}\x00${page}`
+  }
+
+  function unlatchConflict(): void {
+    saveConflict = false
+    conflictOrigin = null
+    conflictOriginKey = ''
+    conflictError = null
+  }
 
   async function handleResolveConflict(
     resolution: ExternalConflictResolution
@@ -154,11 +179,17 @@
     conflictBusy = true
     conflictError = null
     try {
-      // Route through the mounted editor's handle when present: keep_theirs
-      // needs its armed-reload machinery to reseed the buffer safely.
+      // Route through the OWNING surface's handle when it is the mounted
+      // one: the stashed payload is that surface's buffer and only it can
+      // settle its own state (keep_mine flushes typed-past edits; keep_theirs
+      // reseeds). Cross-surface — the refusal happened in the other view
+      // before a toggle — resolves via direct IPC, then arms the mounted
+      // editor's conflict-grade reload so its stale buffer cannot save over
+      // the just-settled disk state before the reload replaces it.
       const handle = getEditorForLocator(notebook, section, page)
+      const mountedOrigin = viewMode === 'source' ? 'source' : 'edit'
       let conflictPage: string | void
-      if (handle?.resolveExternalConflict) {
+      if (handle?.resolveExternalConflict && conflictOrigin === mountedOrigin) {
         conflictPage = await handle.resolveExternalConflict(resolution)
       } else {
         conflictPage = await resolveExternalConflict(
@@ -167,12 +198,20 @@
           page,
           resolution
         )
+        if (mountedOrigin === 'edit') {
+          handle?.forceExternalReload({ conflictHold: true })
+        }
+        // Source mode relies on the block:changed → loadPage → blocks flow:
+        // the viewer reseeds when clean and raises its "external change
+        // detected" offer when dirty — honest either way.
       }
-      // Success settles the latch here — the direct-IPC path (no mounted
-      // editor) has no autosave emission to clear it — and the polite
-      // region tells the user where the kept-apart version landed.
-      saveConflict = false
-      conflictError = null
+      // Success settles the latch here — the direct-IPC path (no owning
+      // handle mounted) has no autosave emission to clear it — and the
+      // stale refusal error must not outlive the banner (the status pill
+      // would keep pulsing "Save failed" after a successful resolution).
+      // The polite region tells the user where the kept-apart version went.
+      unlatchConflict()
+      saveError = null
       conflictAnnouncement = conflictPage
         ? `Conflict resolved. The other version was saved as ${conflictPage}.md.`
         : 'Conflict resolved. The kept-apart version is in the same folder as this page.'
@@ -242,6 +281,21 @@
   $effect(() => {
     if (notebook && page) {
       untrack(() => {
+        // A rename/move repoints this container at a different file while
+        // the refused-write stash stays keyed to the OLD path — resolving
+        // against the new locator can never succeed, so the latch is
+        // superseded (fail-loud, not stuck-loud).
+        const key = `${notebook}\x00${section}\x00${page}`
+        if (
+          saveConflict &&
+          conflictOriginKey !== '' &&
+          conflictOriginKey !== key
+        ) {
+          unlatchConflict()
+          saveError = null
+          conflictAnnouncement =
+            'Save conflict cleared — this page was renamed or moved.'
+        }
         void loadPage(true)
       })
     }
@@ -749,6 +803,8 @@
                 {page}
                 filePath="{notebook}/{section}/{page}.md"
                 bind:sourceSearchTarget
+                conflictActive={saveConflict}
+                onSaveRefused={() => latchConflict('source')}
                 onBlocksSaved={(saved) => {
                   blocks = saved
                 }}
@@ -770,7 +826,7 @@
                 onSaveStateChange={(s) => {
                   saveError = s.error
                   if (s.externalConflict === true) {
-                    saveConflict = true
+                    latchConflict('edit')
                   } else if (
                     s.phase === 'saved' ||
                     (s.phase === 'idle' && !s.dirty && !s.error)
@@ -778,8 +834,7 @@
                     // A landed save or an explicit markClean settles the
                     // refusal; transient pending/saving states keep the
                     // latch so the banner cannot flicker per keystroke.
-                    saveConflict = false
-                    conflictError = null
+                    unlatchConflict()
                   }
                   onSaveStateChange?.(s)
                 }}

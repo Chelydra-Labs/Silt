@@ -428,7 +428,9 @@ describe('VirtualScrollContainer editor chrome', () => {
     await fireEvent.click(screen.getByTestId('tiptap-stub-emit-conflict'))
 
     const banner = await screen.findByTestId('save-conflict-banner')
-    expect(banner).toHaveAttribute('role', 'alert')
+    // The alert semantics live on the refusal sentence inside the banner
+    // (the hints/error/busy stay outside the assertive region).
+    expect(banner.querySelector('[role="alert"]')).toBeTruthy()
     for (const label of [
       'Keep my changes',
       'Keep the other version',
@@ -482,14 +484,10 @@ describe('VirtualScrollContainer editor chrome', () => {
       screen.getByRole('button', { name: 'Keep both as pages' })
     )
     await waitFor(() =>
-      expect(
-        screen.getByText(/Couldn't resolve the conflict/)
-      ).toBeTruthy()
+      expect(screen.getByText(/Couldn't resolve the conflict/)).toBeTruthy()
     )
     // Actions stay offered for a retry.
-    expect(
-      screen.getByRole('button', { name: 'Keep my changes' })
-    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Keep my changes' })).toBeTruthy()
   })
 
   // D1 regression: the banner is latched in VSC (like MSV's saveRefused), so
@@ -552,6 +550,73 @@ describe('VirtualScrollContainer editor chrome', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
     )
+  })
+
+  // #1005 cross-surface ownership: a Source-mode refusal latches the ONE
+  // page-level banner in VSC — the source surface renders no second banner
+  // and mirrors the latch so its own saves stay held — and the latch
+  // persists back into edit mode after a toggle.
+  it('latches the page-level banner for a source-mode refusal and keeps it across toggles', async () => {
+    const { rerender } = render(VirtualScrollContainer, {
+      props: { ...baseProps(), viewMode: 'source' }
+    })
+    await fireEvent.click(screen.getByTestId('msv-stub-emit-refused'))
+    await screen.findByTestId('save-conflict-banner')
+    expect(screen.getByTestId('markdown-source-stub')).toHaveAttribute(
+      'data-conflict-active',
+      'true'
+    )
+
+    // Toggle to edit: the latch (and its single banner) survive the switch.
+    await rerender({ ...baseProps(), viewMode: 'edit' })
+    expect(screen.getByTestId('save-conflict-banner')).toBeTruthy()
+  })
+
+  // #1005: a rename/move repoints the container at a new locator while the
+  // backend stash stays keyed to the OLD path — the latch must be superseded,
+  // not left pointing at a page whose resolution can never succeed.
+  it('supersedes a latched conflict when the page locator changes (rename)', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    vi.mocked(ResolveExternalConflict).mockClear()
+    const { rerender } = render(VirtualScrollContainer, { props: baseProps() })
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-conflict'))
+    await screen.findByTestId('save-conflict-banner')
+
+    // The parent repoints the tab after a successful rename.
+    await rerender({ ...baseProps(), page: 'Renamed' })
+    await waitFor(() =>
+      expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
+    )
+    expect(
+      screen.getByText(/Save conflict cleared — this page was renamed or moved/)
+    ).toBeTruthy()
+    // No resolution IPC fires against the new (stashless) locator.
+    expect(ResolveExternalConflict).not.toHaveBeenCalled()
+  })
+
+  // #1005: a successful resolution must clear the stale refusal error too —
+  // the direct-IPC path has no autosave emission, so without this the status
+  // pill keeps pulsing "Save failed" after the conflict is settled.
+  it('clears the stale save error when a direct-IPC resolution succeeds', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    vi.mocked(ResolveExternalConflict).mockResolvedValueOnce('')
+    const { rerender } = render(VirtualScrollContainer, { props: baseProps() })
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-conflict'))
+    await screen.findByTestId('save-conflict-banner')
+    expect(screen.getByText('Save held')).toBeTruthy()
+
+    // TipTap is unmounted in source view → the direct-IPC fallback path.
+    await rerender({ ...baseProps(), viewMode: 'source' })
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Keep the other version' })
+    )
+    await waitFor(() =>
+      expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
+    )
+    // Back in edit mode the pill must not resurrect the stale "Save failed".
+    await rerender({ ...baseProps(), viewMode: 'edit' })
+    expect(screen.queryByText('Save failed')).toBeNull()
+    expect(screen.queryByText('Save held')).toBeNull()
   })
 
   it('announces the view-mode button state via aria-pressed', () => {
