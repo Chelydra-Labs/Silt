@@ -24,11 +24,28 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 
 	"silt/backend/core"
+	"silt/backend/parser"
 )
+
+// refusedPageWrite remembers one editor save the external-edit gate refused,
+// so ResolveExternalConflict can replay it after preserving the external
+// version. A later refusal for the same path replaces an earlier one — the
+// newest buffer is the version worth keeping.
+type refusedPageWrite struct {
+	source     string
+	notebook   string // safe (sanitized) locator, as the save funnels compute it
+	section    string
+	page       string
+	blocks     []parser.ParsedBlock // SaveFileBlocks payload; nil for a markdown save
+	markdown   string               // SavePageMarkdown payload
+	isMarkdown bool
+	reason     string
+}
 
 // FileFingerprint is the load-time snapshot of one page file. Mtime/Ctime are
 // split into sec/nsec so the struct is comparable with == (time.Time is not).
@@ -164,4 +181,67 @@ func (a *App) refreshFingerprintAfterWrite(filePath string, written []byte) {
 	sum := sha256.Sum256(written)
 	fp.SHA256 = hex.EncodeToString(sum[:])
 	a.storePageLoadFingerprint(key, fp)
+}
+
+// checkExternalEditConflict is the pre-write gate for editor-derived
+// whole-page saves. The caller MUST hold LockFileWrite for filePath — the
+// check must observe the same file state the write is about to act on, so an
+// edit landing between load and lock acquisition is still caught.
+//
+//   - No baseline for the path (never loaded this session) → pass: legacy
+//     behavior, nothing to compare against.
+//   - Stat match → pass (happy path: one os.Stat, no read, no hash).
+//   - Stat drift → re-read + hash. Hash match → pass and refresh the stat
+//     (sync-client touch tolerance). Hash mismatch → refuse.
+//
+// A stat/read error refuses the save too (fail closed): writing over a file
+// whose state cannot be established is exactly the clobber risk this gate
+// exists to prevent.
+func (a *App) checkExternalEditConflict(filePath string) error {
+	if a == nil || filePath == "" {
+		return nil
+	}
+	key := core.NormalizeFileLockPath(filePath)
+	baseline, ok := a.loadPageFingerprint(key)
+	if !ok {
+		return nil
+	}
+	cur, err := captureFileFingerprint(filePath)
+	if err != nil {
+		return errExternalEditConflictWrap(err)
+	}
+	if baseline.fingerprintStatEqual(cur) {
+		return nil
+	}
+	if cur.SHA256 == baseline.SHA256 {
+		// Same bytes, new stat — adopt the new stat so the next save's
+		// fast path matches again without re-reading the file.
+		a.storePageLoadFingerprint(key, cur)
+		return nil
+	}
+	return externalEditConflictError(filePath)
+}
+
+// isExternalEditConflict reports whether err is the external-edit refusal.
+func isExternalEditConflict(err error) bool {
+	return errors.Is(err, errExternalEditConflict)
+}
+
+func (a *App) storeRefusedWrite(key string, rw refusedPageWrite) {
+	a.refusedWritesMu.Lock()
+	defer a.refusedWritesMu.Unlock()
+	if a.refusedWrites == nil {
+		a.refusedWrites = make(map[string]refusedPageWrite)
+	}
+	a.refusedWrites[key] = rw
+}
+
+func (a *App) popRefusedWrite(key string) (refusedPageWrite, bool) {
+	a.refusedWritesMu.Lock()
+	defer a.refusedWritesMu.Unlock()
+	rw, ok := a.refusedWrites[key]
+	if ok {
+		delete(a.refusedWrites, key)
+	}
+	return rw, ok
 }

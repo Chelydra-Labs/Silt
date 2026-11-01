@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"silt/backend/core"
 	"silt/backend/db"
 	"silt/backend/parser"
 	"silt/backend/recurrence"
@@ -661,6 +662,9 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 	if err := atomicPageWrite(filePath, []byte(newContent)); err != nil {
 		return err
 	}
+	// Silt's own write is never an external edit — re-baseline inside the
+	// same lock so the next save's fast path matches (#1005).
+	a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
 	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 
 	parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
@@ -750,6 +754,23 @@ func (a *App) saveFileBlocksWithSource(notebook, section, page string, blocks []
 				} else {
 					writeErr = err
 				}
+				return
+			}
+			// Editor-derived whole-page save: refuse to clobber an external
+			// edit (#1005). Stash the refused payload so the resolution IPC
+			// can replay it after preserving the on-disk version.
+			if err := a.checkExternalEditConflict(filePath); err != nil {
+				if isExternalEditConflict(err) {
+					a.storeRefusedWrite(core.NormalizeFileLockPath(filePath), refusedPageWrite{
+						source:   source,
+						notebook: safeNotebook,
+						section:  safeSection,
+						page:     safePage,
+						blocks:   blocks,
+						reason:   reason,
+					})
+				}
+				writeErr = err
 				return
 			}
 			writeErr = a.writePageFileLocked(filePath, source, safeNotebook, safeSection, safePage, blocks, reason)
@@ -892,6 +913,23 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 				} else {
 					writeErr = err
 				}
+				return
+			}
+			// Editor-derived whole-page save (Source mode): same external-edit
+			// refusal as the blocks funnel (#1005).
+			if err := a.checkExternalEditConflict(filePath); err != nil {
+				if isExternalEditConflict(err) {
+					a.storeRefusedWrite(core.NormalizeFileLockPath(filePath), refusedPageWrite{
+						source:     source,
+						notebook:   safeNotebook,
+						section:    safeSection,
+						page:       safePage,
+						markdown:   markdown,
+						isMarkdown: true,
+						reason:     historyReasonSource,
+					})
+				}
+				writeErr = err
 				return
 			}
 			contentBytes, err := os.ReadFile(filePath)

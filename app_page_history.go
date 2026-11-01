@@ -371,6 +371,10 @@ func (a *App) writePageMarkdownLocked(filePath, source, notebook, section, page,
 		log.Printf("page write: atomic write failed for %s/%s/%s: %v", notebook, section, page, err)
 		return nil, historyWriteError(err)
 	}
+	// Silt's own write is never an external edit — re-baseline inside the
+	// same lock (also covers restore paths routed through this helper) so
+	// the next editor save does not false-conflict against it (#1005).
+	a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
 	if !skipCapture {
 		a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 	}

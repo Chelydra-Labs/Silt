@@ -67,7 +67,8 @@ export const IPCErrorCode = {
   CodeNavigationUnavailable: 'navigation_unavailable',
   CodeNavigationDuplicate: 'navigation_duplicate',
   CodeNavigationReveal: 'navigation_reveal_failed',
-  CodeAmbiguousTarget: 'ambiguous_target'
+  CodeAmbiguousTarget: 'ambiguous_target',
+  CodeExternalEditConflict: 'external_edit_conflict'
 } as const
 
 export type IPCErrorCode = (typeof IPCErrorCode)[keyof typeof IPCErrorCode]
@@ -76,6 +77,7 @@ export const IPCErrorCodeNames = [
   'CodeAmbiguousTarget',
   'CodeBlockBeingEdited',
   'CodeCapabilityDenied',
+  'CodeExternalEditConflict',
   'CodeInvalidNavigationPath',
   'CodeNavigationConflict',
   'CodeNavigationDuplicate',

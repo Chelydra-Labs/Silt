@@ -77,9 +77,14 @@ type App struct {
 	// app_conflict_fingerprint.go.
 	pageLoadFingerprints   map[string]FileFingerprint
 	pageLoadFingerprintsMu sync.RWMutex
-	vaultPath              string
-	spacesPerTab           int
-	wg                     sync.WaitGroup
+	// refusedWrites stashes the editor save each external-edit refusal
+	// rejected (#1005), for ResolveExternalConflict to replay. Keyed by
+	// NormalizeFileLockPath; see refusedPageWrite.
+	refusedWrites   map[string]refusedPageWrite
+	refusedWritesMu sync.Mutex
+	vaultPath       string
+	spacesPerTab    int
+	wg              sync.WaitGroup
 
 	// cfg is the parsed .system/config.yaml, the single source of truth for
 	// non-vault-path settings. configMu guards it; it is replaced wholesale on
