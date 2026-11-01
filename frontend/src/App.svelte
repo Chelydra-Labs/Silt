@@ -139,6 +139,10 @@
   let activeNotebook = $state('')
   let activeSection = $state('')
   let activePage = $state('')
+  // Conflict-resolution in flight on the ACTIVE tab (#1005), reported by its
+  // VirtualScrollContainer. View-mode toggles are gated on it: unmounting a
+  // surface mid-resolution fires its unmount handoff against the settle.
+  let activeTabConflictBusy = $state(false)
   let activeView = $state('notes')
   const views = [
     { id: 'notes', label: 'Notes', icon: 'description' },
@@ -471,7 +475,13 @@
     },
     requestNavigationCreation: (kind) => void requestNavigationCreation(kind),
     openSettings: () => openSettings(),
-    toggleViewMode: (tabId) => tabManager.handleToggleViewMode(tabId),
+    toggleViewMode: (tabId) => {
+      // A view toggle unmounts a surface mid-resolution, firing its unmount
+      // handoff against the settle in flight (#1005) — gated while the
+      // active tab's resolution IPC is pending.
+      if (activeTabConflictBusy) return
+      tabManager.handleToggleViewMode(tabId)
+    },
     togglePropertiesPanel: () => pageType.toggle(),
     // Mirrors the {#if} that mounts <PropertiesPanel> (the editor-tab view);
     // see useGlobalHotkeyDispatch — toggling anywhere else is a silent no-op.
@@ -1123,9 +1133,15 @@
                       section={tab.section}
                       page={tab.page}
                       viewMode={tab.viewMode}
-                      onToggleViewMode={() =>
-                        tabManager.handleToggleViewMode(tab.id)}
+                      onToggleViewMode={() => {
+                        // Same gate as the hotkey path above (#1005).
+                        if (activeTabConflictBusy) return
+                        tabManager.handleToggleViewMode(tab.id)
+                      }}
                       isActive={tab.id === tabManager.activeTabId}
+                      onConflictBusyChange={(busy) => {
+                        activeTabConflictBusy = busy
+                      }}
                       targetBlockId={tab.id === tabManager.activeTabId
                         ? searchTargetBlockId
                         : ''}

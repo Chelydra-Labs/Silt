@@ -59,6 +59,10 @@
     onPageRenamed?: (newName: string) => void
     onFirstEdit?: () => void
     isActive?: boolean
+    /** Reports the ACTIVE tab's conflict-resolution busy state (#1005) so
+     *  the shell can gate view-mode toggles that would unmount a surface
+     *  mid-resolution (its unmount handoff could then race the settle). */
+    onConflictBusyChange?: (busy: boolean) => void
     /** Forwarded to TipTapEditor; surfaces save-state changes (#167, #546). */
     onSaveStateChange?: (state: {
       phase: 'idle' | 'pending' | 'saving' | 'saved' | 'error'
@@ -86,6 +90,7 @@
     onPageRenamed,
     onFirstEdit,
     isActive: _isActive = true,
+    onConflictBusyChange,
     onSaveStateChange
   }: Props = $props()
 
@@ -161,6 +166,11 @@
   let conflictAnnouncement = $state('')
 
   function latchConflict(origin: 'edit' | 'source'): void {
+    // First refusal wins: the backend keeps the FIRST cross-funnel stash,
+    // so the latch's origin must stay pinned to the surface that owns it —
+    // a re-refusal from the other surface (its autosave racing the latch)
+    // must not flip the origin and mislabel the resolution's winner.
+    if (saveConflict) return
     saveConflict = true
     conflictOrigin = origin
     conflictOriginKey = `${notebook}\x00${section}\x00${page}`
@@ -183,6 +193,11 @@
   $effect(() => {
     if (!saveConflict || conflictOrigin !== 'source') return
     if (viewMode === 'source') return
+    // conflictBusy participates so the effect re-runs when a resolution
+    // attempt ends without unlatching (IPC failure): the failure path just
+    // disarmed the arm it made, and the standing hold must come back or the
+    // edit surface's writes are unprotected while the banner offers retry.
+    if (conflictBusy) return
     const nb = notebook,
       sec = section,
       pg = page
@@ -200,6 +215,17 @@
         conflictHold: true
       })
     })
+  })
+
+  // Only the active container reports, and it re-reports on activation, so
+  // the shell's guard always reflects the tab a toggle would act on. The
+  // cleanup releases the flag if a busy container is destroyed (tab closed
+  // mid-resolution).
+  $effect(() => {
+    if (!_isActive) return
+    const busy = conflictBusy
+    onConflictBusyChange?.(busy)
+    return () => onConflictBusyChange?.(false)
   })
 
   async function handleResolveConflict(
@@ -883,20 +909,21 @@
                   if (s.externalConflict === true) {
                     latchConflict('edit')
                   } else if (
-                    s.phase === 'saved' ||
-                    (conflictOrigin !== 'source' &&
-                      s.phase === 'idle' &&
-                      !s.dirty &&
-                      !s.error)
+                    conflictOrigin !== 'source' &&
+                    (s.phase === 'saved' ||
+                      (s.phase === 'idle' && !s.dirty && !s.error))
                   ) {
                     // A landed save or an explicit markClean settles the
                     // refusal; transient pending/saving states keep the
                     // latch so the banner cannot flicker per keystroke.
-                    // Source-origin latches are exempt from the markClean
-                    // settle: a second external write markCleans the armed
-                    // editor too, and that unlatch would confiscate the
-                    // conflict — banner gone, stashed Source text
-                    // unreachable from any surface.
+                    // Source-origin latches are exempt from BOTH settles:
+                    // the stashed payload is the Source buffer and only a
+                    // resolution (or a locator supersede) may release it —
+                    // an edit-surface 'saved'/'markClean' unlatch would
+                    // confiscate the conflict, banner gone with the stashed
+                    // Source text unreachable from any surface (the backend
+                    // refuses cross-funnel saves while the stash is pending,
+                    // so a landed edit save here is not a settle).
                     unlatchConflict()
                   }
                   onSaveStateChange?.(s)
@@ -1003,11 +1030,20 @@
 
         <button
           type="button"
-          onclick={() => onToggleViewMode?.()}
+          onclick={() => {
+            // Disabled should suffice, but keep the guard explicit: a click
+            // dispatched at a still-mounted button during the resolution
+            // window must never unmount the surface (#1005).
+            if (conflictBusy) return
+            onToggleViewMode?.()
+          }}
+          disabled={conflictBusy}
           class="editor-float-actions__btn"
-          title={viewMode === 'edit'
-            ? `View Markdown Source (${viewModeHotkey})`
-            : `View Rich Text (${viewModeHotkey})`}
+          title={conflictBusy
+            ? 'Resolving save conflict…'
+            : viewMode === 'edit'
+              ? `View Markdown Source (${viewModeHotkey})`
+              : `View Rich Text (${viewModeHotkey})`}
           aria-label="Toggle source view"
           aria-pressed={viewMode === 'source'}
           aria-keyshortcuts={viewModeHotkey}
@@ -1312,6 +1348,17 @@
 
   .editor-float-actions__btn--on {
     color: var(--color-accent-primary-start);
+  }
+
+  /* Matches the zoom-pill convention: a disabled control reads inert, not
+     hoverable (the view toggle during an in-flight conflict resolution). */
+  .editor-float-actions__btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .editor-float-actions__btn:disabled:hover {
+    background: transparent;
   }
 
   .editor-float-actions__sep {

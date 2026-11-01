@@ -809,6 +809,140 @@ describe('VirtualScrollContainer editor chrome', () => {
     )
   })
 
+  // #1005 iter-4: the failed-resolution disarm must not strip the STANDING
+  // arm. The cross-surface arm and the standing arm share one hold slot; a
+  // rejected resolution cleared it and nothing re-armed — the edit surface's
+  // writes were unprotected while the banner kept offering retry.
+  it('re-establishes the standing arm after a failed cross-surface resolution', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    const forceExternalReload = vi.fn()
+    const clearExternalReload = vi.fn()
+    registerEditor({
+      key: editorKey('NB', '', 'PG'),
+      isDirty: () => false,
+      flush: async () => true,
+      forceExternalReload,
+      clearExternalReload,
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
+    })
+    let rejectResolve!: (e: Error) => void
+    vi.mocked(ResolveExternalConflict)
+      .mockReset()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectResolve = reject
+          }) as never
+      )
+      .mockResolvedValueOnce('PG.conflict-20260101-120000')
+
+    const { rerender } = render(VirtualScrollContainer, {
+      props: { ...baseProps(), viewMode: 'source' }
+    })
+    await fireEvent.click(screen.getByTestId('msv-stub-emit-refused'))
+    await screen.findByTestId('save-conflict-banner')
+    await rerender({ ...baseProps(), viewMode: 'edit' })
+    // Discard the standing arm's call so only the failure-path calls count.
+    forceExternalReload.mockClear()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Keep my changes' })
+    )
+    rejectResolve(new Error('vault closed'))
+    await waitFor(() =>
+      expect(clearExternalReload).toHaveBeenCalledWith({ conflict: true })
+    )
+
+    // The latch survived the failure, so the standing hold must come back —
+    // the edit surface is write-held again before the banner offers retry.
+    // Exactly two arms: the resolution path's arm-before-IPC, then the
+    // re-established standing arm (the failure cleared the shared slot).
+    await waitFor(() => expect(forceExternalReload).toHaveBeenCalledTimes(2))
+    expect(forceExternalReload).toHaveBeenLastCalledWith({
+      conflictHold: true
+    })
+    expect(screen.getByTestId('save-conflict-banner')).toBeTruthy()
+  })
+
+  // #1005 iter-4: a 'saved' emission from the edit surface must not settle
+  // a SOURCE-origin latch either. Only a resolution (or a locator supersede)
+  // releases a source-origin conflict; the backend refuses cross-funnel
+  // saves while the source stash is pending, so a landed edit save here is
+  // never a settle of that conflict.
+  it('keeps a source-origin conflict latched when the edit surface emits saved', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    vi.mocked(ResolveExternalConflict).mockResolvedValueOnce('')
+    const { rerender } = render(VirtualScrollContainer, {
+      props: { ...baseProps(), viewMode: 'source' }
+    })
+    await fireEvent.click(screen.getByTestId('msv-stub-emit-refused'))
+    await screen.findByTestId('save-conflict-banner')
+
+    await rerender({ ...baseProps(), viewMode: 'edit' })
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-saved'))
+    expect(screen.getByTestId('save-conflict-banner')).toBeTruthy()
+
+    // Only a resolution settles a source-origin latch.
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Keep the other version' })
+    )
+    await waitFor(() =>
+      expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
+    )
+  })
+
+  // #1005 iter-4: a view toggle during an in-flight resolution unmounts the
+  // source surface, whose onDestroy handoff then races the settle IPC —
+  // resolve-first ordering would let the flush overwrite the version the
+  // user just chose. The toggle must be inert until the resolution lands.
+  it('gates the view-mode toggle while a resolution is in flight', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    let settleResolve!: (v: string) => void
+    vi.mocked(ResolveExternalConflict)
+      .mockReset()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            settleResolve = resolve as (v: string) => void
+          }) as never
+      )
+    const onConflictBusyChange = vi.fn()
+    render(VirtualScrollContainer, {
+      props: {
+        ...baseProps(),
+        viewMode: 'source',
+        onConflictBusyChange
+      }
+    })
+    await fireEvent.click(screen.getByTestId('msv-stub-emit-refused'))
+    await screen.findByTestId('save-conflict-banner')
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Keep the other version' })
+    )
+    await waitFor(() => expect(onConflictBusyChange).toHaveBeenCalledWith(true))
+    const toggle = screen.getByRole('button', { name: 'Toggle source view' })
+    expect(toggle).toBeDisabled()
+    await fireEvent.click(toggle)
+    expect(mocks.onToggleViewMode).not.toHaveBeenCalled()
+
+    // The settle lands and the toggle works again.
+    settleResolve('')
+    await waitFor(() =>
+      expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
+    )
+    await waitFor(() =>
+      expect(onConflictBusyChange).toHaveBeenLastCalledWith(false)
+    )
+    expect(toggle).not.toBeDisabled()
+    await fireEvent.click(toggle)
+    expect(mocks.onToggleViewMode).toHaveBeenCalledTimes(1)
+  })
+
   // #1005 iter-3: a section-only move (page dragged to another section)
   // repoints the tab without touching notebook/page. The supersede check
   // used to read `section` inside untrack, so the effect never re-ran and
