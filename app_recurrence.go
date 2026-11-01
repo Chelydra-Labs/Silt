@@ -158,6 +158,10 @@ func (a *App) setTaskRecurrence(blockID, recurrenceRule, reason string) error {
 				writeErr = err
 				return
 			}
+			// Silt's own write is never an external edit — re-baseline in the
+			// same lock (#1005) so an autosave in the write→reload window does
+			// not false-conflict against this rewrite.
+			a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
 			didWrite = true
 			// Snapshot the mtime/size BEFORE IndexFileBlocks commits so the
 			// files row records the content just written, not whatever mtime a

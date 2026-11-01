@@ -70,6 +70,10 @@ func (a *App) ensureStandaloneTasksFile() (string, error) {
 		if err := parser.WriteFileAtomic(filePath, []byte(scaffold)); err != nil {
 			return "", fmt.Errorf("create standalone tasks file: %w", err)
 		}
+		// Silt's own write is never an external edit — keep any existing
+		// baseline honest (#1005); the append path rewrites through
+		// writePageFileLocked, which refreshes on its own.
+		a.refreshFingerprintAfterWrite(filePath, []byte(scaffold))
 	} else if err != nil {
 		return "", fmt.Errorf("stat standalone tasks file: %w", err)
 	}

@@ -71,15 +71,14 @@ type App struct {
 	pageWriteEpoch   map[string]uint64
 	pageWriteEpochMu sync.Mutex
 	// pageLoadFingerprints holds the external-edit baseline per page file
-	// (#1005), keyed by NormalizeFileLockPath like pageWriteEpoch. Captured at
-	// the editor load points, re-checked inside LockFileWrite by the
-	// whole-page save funnels, refreshed by Silt's own writes. Line-mutating
-	// setter funnels do NOT refresh it — their correctness depends on the
-	// block:changed → container FetchPageBlocks recapture loop re-baselining
-	// the page; do not remove that recapture without refreshing here (the
-	// whole-file writers outside the save funnels — rename link fanout,
-	// plugin cross-page move — DO refresh in-lock and emit a whole-page
-	// block:changed for the same reason). See app_conflict_fingerprint.go.
+	// (#1005), keyed by NormalizeFileLockPath like pageWriteEpoch. Captured
+	// ONLY by editor-facing loads (see pageLoadCapture in app_blocks.go:
+	// the webview fetches adopt bytes into an editor buffer; MCP/plugin
+	// readers must not re-baseline), re-checked inside LockFileWrite by the
+	// whole-page save funnels, and refreshed by Silt's own writes — the save
+	// funnels and every in-file writer (rename link fanout, plugin moves,
+	// line-mutating setters) re-baseline in-lock, so only a real external
+	// edit can drift the baseline. See app_conflict_fingerprint.go.
 	pageLoadFingerprints   map[string]FileFingerprint
 	pageLoadFingerprintsMu sync.RWMutex
 	// refusedWrites stashes the editor save each external-edit refusal
