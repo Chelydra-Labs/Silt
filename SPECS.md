@@ -806,17 +806,22 @@ path is either recoverable or explicitly confirmed:
   deleting the SQLite index must never delete it.
 - **A file changed by another writer is never silently overwritten.**
   Conflicts are surfaced as conflicts; last-writer-wins is not an accepted
-  resolution for a page Silt holds open. Implementation (#1005): the editor
-  load points snapshot a `{size, mtime, ctime, sha256}` fingerprint per page
-  file (raw bytes only, never parsed block IDs), and the whole-page save
-  funnels (`SaveFileBlocks`/`SavePageMarkdown`) re-check it inside the file
-  write lock — stat match passes, stat drift is arbitrated by content hash
-  (hash match = sync-client touch, passes and refreshes; mismatch = refuse).
+  resolution for a page Silt holds open. Implementation (#1005):
+  editor-facing loads snapshot a `{size, mtime, ctime, sha256}` fingerprint
+  per page file (raw bytes only, never parsed block IDs; programmatic
+  readers such as MCP `read_page` do not re-baseline), and the whole-page
+  save funnels (`SaveFileBlocks`/`SavePageMarkdown`) re-check it inside the
+  file write lock — stat match passes, stat drift is arbitrated by content
+  hash (hash match = sync-client touch, passes and refreshes; mismatch =
+  refuse).
   A refusal returns the typed `external_edit_conflict` sentinel and stashes
-  the refused payload; `ResolveExternalConflict(keep_mine | keep_theirs |
-  keep_both)` settles it by writing the losing version to a sibling
+  the refused payload; while that stash is live the save funnels keep
+  refusing (the backend, not the editor's UI state, owns the conflict).
+  `ResolveExternalConflict(keep_mine | keep_theirs | keep_both)` settles it
+  by writing the losing version to a sibling
   `<page>.conflict-<YYYYMMDD-HHMMSS>.md` that is registered and indexed as a
-  real page, so both versions always survive on disk.
+  real page, so both versions survive on disk whenever the refused buffer is
+  still stashed.
 
 7.2 Non-Functional Performance Targets
 

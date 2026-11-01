@@ -509,29 +509,47 @@ External-edit conflict detection (#1005). Atomic staging also does not stop a
 whole-page editor save from *semantically* clobbering an external edit: the
 save funnels (`SaveFileBlocks`, `SavePageMarkdown`) render the editor's buffer
 over whatever base the page had when loaded, so an external rewrite in between
-would be silently discarded. The load points (`FetchPageBlocks`,
-`FetchPageMarkdown`) therefore snapshot a per-file fingerprint — `{size,
-mtime, ctime, sha256}` of the RAW file bytes, keyed by normalized path — and
-the funnels re-check it inside `LockFileWrite` before writing: a stat match
-passes (one `os.Stat`, no hash on the happy path); stat drift re-reads +
+would be silently discarded. The editor-facing load points (the webview's
+`FetchPageBlocks`, `FetchPageMarkdown`) snapshot a per-file fingerprint —
+`{size, mtime, ctime, sha256}` of the RAW file bytes, keyed by normalized path
+— and the funnels re-check it inside `LockFileWrite` before writing: a stat
+match passes (one `os.Stat`, no hash on the happy path); stat drift re-reads +
 hashes, where a hash match passes and refreshes the stat (sync-client "touch"
 tolerance) and a mismatch refuses the save with the typed
-`external_edit_conflict` sentinel. The fingerprint never derives from parsed
-block IDs, so block-ID rewrites inside files cannot invalidate it (and an
-external ID-only rewrite is still detected). Every successful Silt write
-through the funnels re-baselines the fingerprint in the same lock. Resolution
-is refuse-first and keeps both versions: `ResolveExternalConflict` writes the
-losing version to a sibling `<page>.conflict-<YYYYMMDD-HHMMSS>.md` (registered
-with the `WriteTracker` and explicitly indexed, so it surfaces as a real page
-rather than a watcher ghost) and settles the winner per the user's
-keep-mine / keep-theirs / keep-both choice. The rename/move path
-(`renameWriteFileAtomic`) bypasses the gate by design: moves are not content
-rewrites. Inherent caveat: `LockFileWrite` serializes only Silt's own writers —
-an external write landing between the in-lock stat check and the atomic rename
-is still clobbered; closing that micro-race requires cross-process file
-locking, which is out of scope. Stat matches are also distrusted for ~3s after
-a baseline capture (git's "racily clean" rule), so same-size rewrites on
-coarse-timestamp filesystems (FAT/SMB) fall through to the hash arbiter.
+`external_edit_conflict` sentinel. Programmatic readers (MCP `read_page`,
+plugin block ops) fetch through the same code paths but must NOT re-baseline:
+only a load that adopts bytes into an editor buffer may advance the baseline,
+so a client reading externally edited bytes cannot disarm the editor's gate.
+The backend, not the UI latch, is authoritative about conflict state: a
+refused save stashes its payload keyed by path, and while that stash is live
+the funnels keep refusing — even after a later load re-captured the
+fingerprint — re-stashing same-funnel newest-wins and never replacing a stash
+from the other funnel, until the user resolves. The fingerprint never derives
+from parsed block IDs, so block-ID rewrites inside files cannot invalidate it
+(and an external ID-only rewrite is still detected). Every successful Silt
+write re-baselines the fingerprint in the same lock — the save funnels and the
+line-mutating setter funnels alike. Resolution is refuse-first and keeps both
+versions: `ResolveExternalConflict` writes the losing version to a sibling
+`<page>.conflict-<YYYYMMDD-HHMMSS>.md` (registered with the `WriteTracker`
+and explicitly indexed, so it surfaces as a real page rather than a watcher
+ghost; when a sibling write reports a durability error after its rename
+committed, the resolution indexes the landed copy itself) and settles the
+winner per the user's keep-mine / keep-theirs / keep-both choice. The
+rename/move path (`renameWriteFileAtomic`) bypasses the gate by design: moves
+are not content rewrites. Known caveats: `LockFileWrite` serializes only
+Silt's own writers — an external write landing between the in-lock stat check
+and the atomic rename is still clobbered; closing that micro-race requires
+cross-process file locking, which is out of scope. Stat matches are also
+distrusted for ~3s after a baseline capture (git's "racily clean" rule), so
+same-size rewrites on coarse-timestamp filesystems (FAT/SMB) fall through to
+the hash arbiter; on NFS, attribute caching (default `actimeo` 3–60s) can
+serve stale stat past that window — mount vault-bearing roots with `noac` or
+a low `actimeo`. Plugin whole-page saves split by shape: the MCP/plugin
+`UpdateBlocks` whole-page render runs the full gate, while the plugin
+block-ops read-modify-write (fetch current disk → mutate → save) is exempt
+from the load-baseline half by design — its base is current disk and
+`writePageFileLocked` re-anchors on disk inside the lock — but a pending
+refused-write stash still refuses it.
 
 Destructive-operation asymmetry (Tier 0 obligation). Page/section delete inside
 a linked notebook removes the file in place and Silt never copies linked content
