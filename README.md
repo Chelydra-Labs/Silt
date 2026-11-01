@@ -28,6 +28,29 @@ Silt is built on the belief that your notes belong to you.
 
 ---
 
+## 🎯 Priorities: notes and tasks, nothing else
+
+Silt optimizes for exactly two jobs: **taking notes** and **keeping and
+tracking actions/to-dos**. Every feature is expected to serve one of them.
+The tier list in [SPECS §1.3](SPECS.md) is the authoritative tie-breaker
+when scope or effort is contested, and
+[ADR 0010](docs/decisions/0010-requirement-priorities.md) records the
+reasoning.
+
+- **Non-negotiable:** your files on disk are the product (plain GFM, no
+  app-private encoding), and no write path may lose data unrecoverably.
+- **Notes:** fast capture, editing your existing folders in place, faithful
+  round-tripping, and one search surface over notes *and* tasks.
+- **Tasks:** one-gesture capture, metadata that travels with the task in
+  plain text, reversible changes, overdue/today at a glance, and a direct
+  way to move work between states.
+
+Deliberately **not** goals: a fixed idle-RAM number, a fixed large-vault
+ingest time, or byte-exact parity with every third-party renderer. The
+durable property is that the file contains no Silt-private syntax.
+
+---
+
 ## ✨ Key Features
 
 - **Notebook › Section › Page Structure** – Directly mapped to directories on your local drive. Silt starts completely blank; you create, open, or link notebooks.
