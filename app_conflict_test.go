@@ -1098,6 +1098,18 @@ func TestResolveExternalConflict_SiblingLandedDespiteErrorIsSuccess(t *testing.T
 					t.Fatalf("keep_mine: landed sibling must carry theirs, got %q", string(sibBytes))
 				}
 			}
+
+			// The writer's post-rename error skipped its parse+index tail and
+			// the watcher suppressed the self-write (RegisterWrite ran), so
+			// the resolution itself must index the landed copy — otherwise the
+			// announced conflict page is invisible until the next full scan.
+			siblingPage := strings.TrimSuffix(filepath.Base(sibling), ".md")
+			if idx, err := app.FetchPageBlocks(notebook, section, siblingPage); err != nil {
+				t.Fatalf("FetchPageBlocks landed sibling: %v", err)
+			} else if len(idx) == 0 {
+				t.Fatalf("landed sibling %s is not indexed as a page", siblingPage)
+			}
 		})
 	}
 }
+

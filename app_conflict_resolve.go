@@ -1,10 +1,11 @@
 package main
 
 // ResolveExternalConflict settles a whole-page save the external-edit gate
-// refused (#1005). Both versions always survive on disk: the loser is written
-// to a sibling conflict copy named `<page>.conflict-<YYYYMMDD-HHMMSS>.md` (the
-// Syncthing/Dropbox convention) that is registered and explicitly indexed so
-// it surfaces as a real page, not a watcher ghost.
+// refused (#1005). Both versions survive on disk whenever the refused buffer
+// is still stashed: the loser is written to a sibling conflict copy named
+// `<page>.conflict-<YYYYMMDD-HHMMSS>.md` (the Syncthing/Dropbox convention)
+// that is registered and explicitly indexed so it surfaces as a real page,
+// not a watcher ghost.
 //
 //	resolution      original path              conflict sibling
 //	keep_mine       my stashed editor save     theirs (from disk)
@@ -215,13 +216,19 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 		if rw.isMarkdown {
 			_, werr := a.writePageMarkdownLocked(sibling, rw.source, rw.notebook, rw.section, conflictPage,
 				rw.notebook, rw.section, conflictPage, nil, rw.markdown, rw.reason, false)
-			if werr != nil && !conflictSiblingLanded(sibling) {
-				return "", werr
+			if werr != nil {
+				if !conflictSiblingLanded(sibling) {
+					return "", werr
+				}
+				a.indexLandedConflictSiblingLocked(sibling, rw.source, rw.notebook, rw.section)
 			}
 		} else {
-			if werr := a.writePageFileLocked(sibling, rw.source, rw.notebook, rw.section, conflictPage, rw.blocks, rw.reason); werr != nil &&
-				!conflictSiblingLanded(sibling) {
-				return "", werr
+			werr := a.writePageFileLocked(sibling, rw.source, rw.notebook, rw.section, conflictPage, rw.blocks, rw.reason)
+			if werr != nil {
+				if !conflictSiblingLanded(sibling) {
+					return "", werr
+				}
+				a.indexLandedConflictSiblingLocked(sibling, rw.source, rw.notebook, rw.section)
 			}
 		}
 		if err := a.settleTheirsOnOriginalLocked(filePath, rw.source, rw.notebook, rw.section, rw.page); err != nil {
@@ -237,9 +244,11 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 	// keep_mine / keep_both: archive theirs to the conflict copy, then replay
 	// my stashed save onto the original path.
 	archived := []byte(conflictCopyContent(theirs, conflictPage, rw.notebook, rw.section))
-	if err := a.writeConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section, archived); err != nil &&
-		!conflictSiblingLanded(sibling) {
-		return "", err
+	if err := a.writeConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section, archived); err != nil {
+		if !conflictSiblingLanded(sibling) {
+			return "", err
+		}
+		a.indexLandedConflictSiblingLocked(sibling, rw.source, rw.notebook, rw.section)
 	}
 	if err := a.replayMineLocked(rw, filePath, theirs); err != nil {
 		// The sibling holds theirs' only surviving copy, so removing it is
@@ -339,6 +348,32 @@ func (a *App) writeConflictCopyLocked(siblingPath, source, notebook, section str
 		log.Printf("resolve conflict: index copy %s failed: %v", siblingPath, idxErr)
 	}
 	return nil
+}
+
+// indexLandedConflictSiblingLocked performs the parse+index tail a sibling
+// writer skipped when its atomic write reported a durability error after the
+// rename had already committed (the conflictSiblingLanded success path).
+// tracker.RegisterWrite ran before the error, so the watcher suppresses the
+// self-write event and nothing else re-indexes the copy — without this tail
+// the resolution reports success while its headline artifact stays invisible
+// until the next full scan. Best-effort, mirroring writeConflictCopyLocked:
+// the copy is safely on disk either way.
+func (a *App) indexLandedConflictSiblingLocked(sibling, source, notebook, section string) {
+	content, err := os.ReadFile(sibling)
+	if err != nil {
+		log.Printf("resolve conflict: read landed copy %s failed (next scan indexes it): %v", sibling, err)
+		return
+	}
+	conflictPage := strings.TrimSuffix(filepath.Base(sibling), ".md")
+	blocks, meta, _, _, perr := parser.ParseFileContent(string(content),
+		notebook, section, conflictPage, fileOrDefaultDate(sibling), a.spacesPerTab)
+	if perr != nil {
+		log.Printf("resolve conflict: parse landed copy %s failed (next scan indexes it): %v", sibling, perr)
+		return
+	}
+	if idxErr := a.indexFile(source, meta.Notebook, meta.Section, meta.Page, blocks, meta, meta.Warnings...); idxErr != nil {
+		log.Printf("resolve conflict: index landed copy %s failed (next scan indexes it): %v", sibling, idxErr)
+	}
 }
 
 // rollbackConflictCopyLocked removes a conflict copy a resolution wrote +
