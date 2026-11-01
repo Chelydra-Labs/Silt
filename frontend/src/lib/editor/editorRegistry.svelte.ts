@@ -92,7 +92,15 @@ export function editorKey(
   return `${notebook}\x00${section}\x00${page}`
 }
 
-/** Register a mounted editor. Returns an unregister function. */
+/** Register a mounted editor. Returns an unregister function.
+ *
+ *  Keyed by locator only (not tabId + locator, #345): with two tabs open on
+ *  the same page the second registration replaces the first, so a
+ *  conflict-resolution lookup (`resolveExternalConflict` /
+ *  `forceExternalReload`) routes through the LAST-registered tab's editor —
+ *  the other tab's dirty editor gets no write hold and re-refuses once
+ *  (transient banner + stash churn; converges on the next reload). Known
+ *  limitation; re-keying would touch every consumer of editorKey. */
 export function registerEditor(handle: EditorHandle): () => void {
   editors.set(handle.key, handle)
   return () => {
