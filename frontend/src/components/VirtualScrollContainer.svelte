@@ -186,8 +186,19 @@
     const nb = notebook,
       sec = section,
       pg = page
-    getEditorForLocator(nb, sec, pg)?.forceExternalReload({
-      conflictHold: true
+    const handle = getEditorForLocator(nb, sec, pg)
+    if (handle) {
+      handle.forceExternalReload({ conflictHold: true })
+      return
+    }
+    // The mounted TipTapEditor registers in its own $effect, and
+    // child-before-parent flush order is not contractual — when the lookup
+    // above missed, re-attempt after tick so the stash-protecting hold
+    // cannot silently never arm.
+    void tick().then(() => {
+      getEditorForLocator(nb, sec, pg)?.forceExternalReload({
+        conflictHold: true
+      })
     })
   })
 
@@ -210,14 +221,26 @@
       if (handle?.resolveExternalConflict && conflictOrigin === mountedOrigin) {
         conflictPage = await handle.resolveExternalConflict(resolution)
       } else {
-        conflictPage = await resolveExternalConflict(
-          notebook,
-          section,
-          page,
-          resolution
-        )
-        if (mountedOrigin === 'edit') {
-          handle?.forceExternalReload({ conflictHold: true })
+        // Arm BEFORE the IPC, mirroring the owning surface's registry
+        // ordering: the backend emits the post-settle block:changed before
+        // the resolve result is delivered, and the armed reload's landing
+        // releases the conflict hold. Arming only after the await would
+        // re-arm a hold the reload chain already released — with no reload
+        // coming, writes are silently held forever.
+        const armed = mountedOrigin === 'edit' ? handle : undefined
+        armed?.forceExternalReload({ conflictHold: true })
+        try {
+          conflictPage = await resolveExternalConflict(
+            notebook,
+            section,
+            page,
+            resolution
+          )
+        } catch (e) {
+          // The failed resolution must disarm the arm it just made; the
+          // plain clear deliberately cannot strip a conflict-grade hold.
+          armed?.clearExternalReload({ conflict: true })
+          throw e
         }
         // Source mode relies on the block:changed → loadPage → blocks flow:
         // the viewer reseeds when clean and raises its "external change
@@ -305,13 +328,19 @@
   )
 
   $effect(() => {
-    if (notebook && page) {
+    // `section` is read OUTSIDE untrack: a section-only move (page drag)
+    // repoints the tab without touching notebook/page, and both the
+    // supersede check and the reload below must re-run for it.
+    const nb = notebook
+    const sec = section
+    const pg = page
+    if (nb && pg) {
       untrack(() => {
         // A rename/move repoints this container at a different file while
         // the refused-write stash stays keyed to the OLD path — resolving
         // against the new locator can never succeed, so the latch is
         // superseded (fail-loud, not stuck-loud).
-        const key = `${notebook}\x00${section}\x00${page}`
+        const key = `${nb}\x00${sec}\x00${pg}`
         if (
           saveConflict &&
           conflictOriginKey !== '' &&
@@ -855,11 +884,19 @@
                     latchConflict('edit')
                   } else if (
                     s.phase === 'saved' ||
-                    (s.phase === 'idle' && !s.dirty && !s.error)
+                    (conflictOrigin !== 'source' &&
+                      s.phase === 'idle' &&
+                      !s.dirty &&
+                      !s.error)
                   ) {
                     // A landed save or an explicit markClean settles the
                     // refusal; transient pending/saving states keep the
                     // latch so the banner cannot flicker per keystroke.
+                    // Source-origin latches are exempt from the markClean
+                    // settle: a second external write markCleans the armed
+                    // editor too, and that unlatch would confiscate the
+                    // conflict — banner gone, stashed Source text
+                    // unreachable from any surface.
                     unlatchConflict()
                   }
                   onSaveStateChange?.(s)

@@ -837,12 +837,13 @@
           autosave.holdWrites()
         }
       },
-      clearExternalReload: () => {
+      clearExternalReload: (opts?: { conflict?: boolean }) => {
         // A conflict-grade arm outlives a plain clear: only the armed
         // reload landing or a failed resolution may release it — clearing
         // the arm here would hand the next keystroke a savable stale
-        // buffer over the version the user chose to keep (#1005).
-        if (autosave.holdsForConflict()) return
+        // buffer over the version the user chose to keep (#1005). The
+        // `conflict` opt-in is that failed-resolution path itself.
+        if (autosave.holdsForConflict() && !opts?.conflict) return
         pendingExternalReload = false
         autosave.forceReleaseWrites()
       },

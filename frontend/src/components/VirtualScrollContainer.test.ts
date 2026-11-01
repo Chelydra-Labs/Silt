@@ -11,6 +11,7 @@ import { waitFor } from '@testing-library/dom'
 import TipTapEditorStub from './TipTapEditor.stub.svelte'
 import EditorUtilityBarStub from './editor/EditorUtilityBar.stub.svelte'
 import MarkdownSourceViewerStub from './editor/MarkdownSourceViewer.stub.svelte'
+import SectionMoveHarness from './VirtualScrollContainer.sectionMove.stub.svelte'
 
 const mocks = vi.hoisted(() => ({
   settings: {
@@ -704,6 +705,164 @@ describe('VirtualScrollContainer editor chrome', () => {
     // region rather than on the pill itself.
     const live = document.querySelector('[aria-live="assertive"]')
     expect(live?.textContent).toContain('disk full')
+  })
+
+  // #1005 iter-3: a source-origin latch must not be settled by the edit
+  // surface's idle-clean emission. A second external write while latched
+  // markCleans the armed editor (its reload effect), and that unlatch
+  // confiscated the conflict — banner gone with the stashed Source text
+  // unreachable from any surface.
+  it('keeps a source-origin conflict latched when the edit surface emits idle-clean', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    vi.mocked(ResolveExternalConflict).mockResolvedValueOnce('')
+    const { rerender } = render(VirtualScrollContainer, {
+      props: { ...baseProps(), viewMode: 'source' }
+    })
+    await fireEvent.click(screen.getByTestId('msv-stub-emit-refused'))
+    await screen.findByTestId('save-conflict-banner')
+
+    await rerender({ ...baseProps(), viewMode: 'edit' })
+    // The armed reload of a second external write lands as markClean →
+    // idle-clean: the banner must survive it.
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-clean'))
+    expect(screen.getByTestId('save-conflict-banner')).toBeTruthy()
+
+    // Only a resolution settles a source-origin latch.
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Keep the other version' })
+    )
+    await waitFor(() =>
+      expect(ResolveExternalConflict).toHaveBeenCalledWith(
+        'NB',
+        '',
+        'PG',
+        'keep_theirs'
+      )
+    )
+    await waitFor(() =>
+      expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
+    )
+  })
+
+  // #1005 iter-3: cross-surface resolution must arm the mounted editor
+  // BEFORE the IPC — the backend emits the post-settle block:changed before
+  // the resolve result is delivered, and the armed reload's landing releases
+  // the conflict hold. Arming only after the await re-arms a hold the reload
+  // chain already released: silent permanent write-death.
+  it('arms the mounted editor before the resolution IPC and disarms on failure', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    const forceExternalReload = vi.fn()
+    const clearExternalReload = vi.fn()
+    registerEditor({
+      key: editorKey('NB', '', 'PG'),
+      isDirty: () => false,
+      flush: async () => true,
+      forceExternalReload,
+      clearExternalReload,
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
+    })
+    let rejectResolve!: (e: Error) => void
+    vi.mocked(ResolveExternalConflict)
+      .mockReset()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectResolve = reject
+          }) as never
+      )
+      .mockResolvedValueOnce('PG.conflict-20260101-120000')
+
+    const { rerender } = render(VirtualScrollContainer, {
+      props: { ...baseProps(), viewMode: 'source' }
+    })
+    await fireEvent.click(screen.getByTestId('msv-stub-emit-refused'))
+    await screen.findByTestId('save-conflict-banner')
+    await rerender({ ...baseProps(), viewMode: 'edit' })
+    // Discard the standing arm's call so only the resolution-path arm counts.
+    forceExternalReload.mockClear()
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Keep my changes' })
+    )
+    // Armed BEFORE the IPC: the resolve promise is still pending here.
+    expect(ResolveExternalConflict).toHaveBeenCalledTimes(1)
+    expect(forceExternalReload).toHaveBeenCalledWith({ conflictHold: true })
+
+    // The failure disarms the arm it made (a plain clear cannot strip a
+    // conflict-grade hold).
+    rejectResolve(new Error('vault closed'))
+    await waitFor(() =>
+      expect(clearExternalReload).toHaveBeenCalledWith({ conflict: true })
+    )
+    expect(screen.getByTestId('save-conflict-banner')).toBeTruthy()
+
+    // A retry succeeds and settles the latch.
+    const retry = screen.getByRole('button', { name: 'Keep my changes' })
+    await waitFor(() => expect(retry).not.toBeDisabled())
+    await fireEvent.click(retry)
+    await waitFor(() =>
+      expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
+    )
+  })
+
+  // #1005 iter-3: a section-only move (page dragged to another section)
+  // repoints the tab without touching notebook/page. The supersede check
+  // used to read `section` inside untrack, so the effect never re-ran and
+  // the latch stuck on a locator whose stash no path can resolve. The
+  // pass-through harness is required: rerendering the container directly
+  // replaces its whole props object and re-runs the effect regardless.
+  it('supersedes a latched conflict when only the section changes (move)', async () => {
+    const { ResolveExternalConflict } = await import('$silt-app')
+    vi.mocked(ResolveExternalConflict).mockClear()
+    const { rerender } = render(SectionMoveHarness, { props: {} })
+    await fireEvent.click(screen.getByTestId('tiptap-stub-emit-conflict'))
+    await screen.findByTestId('save-conflict-banner')
+
+    await rerender({ section: 'Moved' })
+    await waitFor(() =>
+      expect(screen.queryByTestId('save-conflict-banner')).toBeNull()
+    )
+    expect(
+      screen.getByText(/Save conflict cleared — this page was renamed or moved/)
+    ).toBeTruthy()
+    expect(ResolveExternalConflict).not.toHaveBeenCalled()
+  })
+
+  // #1005 iter-3: the cross-surface arm looks the mounted editor up
+  // non-reactively; when the child's registration effect flushes after the
+  // parent's arm effect (order not contractual), the missed arm must
+  // re-attempt after tick instead of silently never arming.
+  it('arms the standing conflict hold when the editor registers after the arm effect ran', async () => {
+    const forceExternalReload = vi.fn()
+    const { rerender } = render(VirtualScrollContainer, {
+      props: { ...baseProps(), viewMode: 'source' }
+    })
+    await fireEvent.click(screen.getByTestId('msv-stub-emit-refused'))
+    await screen.findByTestId('save-conflict-banner')
+
+    // rerender flushes synchronously: the arm effect has already run and
+    // missed. The handle appears within the same tick — the re-attempt
+    // must find it.
+    rerender({ ...baseProps(), viewMode: 'edit' })
+    registerEditor({
+      key: editorKey('NB', '', 'PG'),
+      isDirty: () => false,
+      flush: async () => true,
+      forceExternalReload,
+      clearExternalReload: () => {},
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
+    })
+    await waitFor(() =>
+      expect(forceExternalReload).toHaveBeenCalledWith({ conflictHold: true })
+    )
   })
 })
 

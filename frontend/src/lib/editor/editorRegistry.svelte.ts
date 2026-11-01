@@ -34,8 +34,11 @@ export interface EditorHandle {
    *  used when a cross-surface conflict resolution made the buffer stale and
    *  discardable, so a keystroke cannot void the armed reload. */
   forceExternalReload: (opts?: { conflictHold?: boolean }) => void
-  /** Drop a pending forceExternalReload if the out-of-band write failed. */
-  clearExternalReload: () => void
+  /** Drop a pending forceExternalReload if the out-of-band write failed.
+   *  `conflict: true` is reserved for the resolution-failure path that
+   *  armed a conflict-grade hold — the plain clear deliberately cannot
+   *  strip one (#1005). */
+  clearExternalReload: (opts?: { conflict?: boolean }) => void
   /** Move focus into the owning editor surface (ProseMirror or the Source
    *  textarea). Returns false when the surface has nothing focusable, so
    *  callers can fall back (#1005: post-resolution focus must land in the
