@@ -1,0 +1,2 @@
+- GTK3 compatibility/removal timeline added (docs/decisions/0004-wails-v3-migration.md:31) — fixed in 983f6467
+- Fresh Go/Wails release and advisory evidence recorded (.review/pr-1001/revalidation.md:1) — fixed in 983f6467
