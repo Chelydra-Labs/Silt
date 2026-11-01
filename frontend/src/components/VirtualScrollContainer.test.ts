@@ -99,6 +99,11 @@ vi.mock('../lib/editor/search/findBarState.svelte', () => ({
 }))
 
 import VirtualScrollContainer from './VirtualScrollContainer.svelte'
+import {
+  editorKey,
+  registerEditor,
+  _resetEditorRegistryForTests
+} from '../lib/editor/editorRegistry.svelte'
 
 // Common props: viewMode is now a required prop owned by App.svelte's
 // TabEntry (#195). onToggleViewMode is the callback the floating button fires.
@@ -125,8 +130,12 @@ describe('VirtualScrollContainer editor chrome', () => {
     mocks.settings.config.editor.show_word_count = false
     // Reset the hotkey (one test remaps it) so test order can't bleed.
     mocks.settings.config.hotkeys = { toggle_view_mode: 'Ctrl+Shift+V' }
+    _resetEditorRegistryForTests()
   })
-  afterEach(() => cleanup())
+  afterEach(() => {
+    cleanup()
+    _resetEditorRegistryForTests()
+  })
 
   /**
    * jsdom does not apply :hover/:focus-within styles, so collapsed-tray
@@ -570,6 +579,41 @@ describe('VirtualScrollContainer editor chrome', () => {
     // Toggle to edit: the latch (and its single banner) survive the switch.
     await rerender({ ...baseProps(), viewMode: 'edit' })
     expect(screen.getByTestId('save-conflict-banner')).toBeTruthy()
+  })
+
+  // #1005 cross-surface stash ownership: while a SOURCE-origin latch is up,
+  // the mounted EDIT surface must be armed conflict-grade — its buffer is a
+  // different payload, and letting it save would re-refuse and blindly
+  // replace the stashed Source text (its only copy outside the backend).
+  it('arms a conflict-grade hold on the edit surface for a source-origin latch', async () => {
+    const forceExternalReload = vi.fn()
+    registerEditor({
+      key: editorKey('NB', '', 'PG'),
+      isDirty: () => false,
+      flush: async () => true,
+      forceExternalReload,
+      clearExternalReload: () => {},
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
+    })
+    const { rerender } = render(VirtualScrollContainer, {
+      props: { ...baseProps(), viewMode: 'source' }
+    })
+    await fireEvent.click(screen.getByTestId('msv-stub-emit-refused'))
+    await screen.findByTestId('save-conflict-banner')
+    expect(forceExternalReload).not.toHaveBeenCalled()
+
+    // Toggle to edit with the latch still up: the mounted surface gets the
+    // conflict-grade arm so its buffer cannot replace the Source stash.
+    await rerender({ ...baseProps(), viewMode: 'edit' })
+    await waitFor(() =>
+      expect(forceExternalReload).toHaveBeenCalledWith({
+        conflictHold: true
+      })
+    )
   })
 
   // #1005: a rename/move repoints the container at a new locator while the

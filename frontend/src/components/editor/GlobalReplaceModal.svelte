@@ -148,11 +148,11 @@
    *  clean_text → SaveFileBlocks. Records originals for the Undo action. */
   /** Human copy for a SaveFileBlocks refusal inside apply/undo (#1005): the
    *  external-edit refusal arrives as raw JSON otherwise, and the resolution
-   *  surface is the page's own conflict banner — the modal can only point at
-   *  it. */
+   *  surface is the page's own conflict banner — which only appears when the
+   *  page was already open, so lead with the actionable part. */
   function replaceSaveFailureText(e: unknown): string {
     if (coerceIPCError(e).code === IPCErrorCode.CodeExternalEditConflict) {
-      return 'that page changed on disk since Silt opened it, so the write was held. Open the page and use its save-conflict banner to keep both versions, then try again'
+      return 'that page changed on disk since Silt opened it, so the write was held — try again, and use the page’s save-conflict banner if it shows one'
     }
     return String(e)
   }
@@ -268,7 +268,16 @@
             openPagesTouched++
           }
           failedPage = grp.page
-          await SaveFileBlocks(grp.notebook, grp.section, grp.page, blocks)
+          try {
+            await SaveFileBlocks(grp.notebook, grp.section, grp.page, blocks)
+          } catch (e) {
+            // The write never landed, so no block:changed will consume the
+            // arm — drop it here or the next unrelated blocks change bypasses
+            // the focused-edit guard and setContents over unsaved edits (the
+            // exact leak the arming comment above warns about, #345).
+            editor?.clearExternalReload()
+            throw e
+          }
           // Record the page only after it has persisted, so a mid-batch
           // failure leaves newLog holding exactly the written pages.
           newLog.push({

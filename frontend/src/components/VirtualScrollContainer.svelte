@@ -173,6 +173,24 @@
     conflictError = null
   }
 
+  // Cross-surface hold (#1005): the stashed payload belongs to the surface
+  // that was refused. The Source surface is held by its conflictActive prop,
+  // but TipTapEditor never learns the latch is up — so while a SOURCE-origin
+  // latch is live and the EDIT surface is the mounted one, arm a
+  // conflict-grade hold on it. Its buffer is a different payload; a save
+  // here would re-refuse and blindly replace the stashed Source text (its
+  // only copy). Only the resolution's armed reload releases the hold.
+  $effect(() => {
+    if (!saveConflict || conflictOrigin !== 'source') return
+    if (viewMode === 'source') return
+    const nb = notebook,
+      sec = section,
+      pg = page
+    getEditorForLocator(nb, sec, pg)?.forceExternalReload({
+      conflictHold: true
+    })
+  })
+
   async function handleResolveConflict(
     resolution: ExternalConflictResolution
   ): Promise<void> {
@@ -214,11 +232,19 @@
       saveError = null
       conflictAnnouncement = conflictPage
         ? `Conflict resolved. The other version was saved as ${conflictPage}.md.`
-        : 'Conflict resolved. The kept-apart version is in the same folder as this page.'
-      // The banner just unmounted and took focus with it — park focus on
-      // the page title so keyboard users are not dropped to <body>.
+        : resolution === 'keep_theirs'
+          ? // "" from keep_theirs means the stash was already gone and the
+            // on-disk version was settled as-is — no copy was written.
+            'Conflict resolved. The version on disk was kept.'
+          : 'Conflict resolved. The kept-apart version is in the same folder as this page.'
+      // The banner just unmounted and took focus with it — return focus to
+      // the surface that owns the buffer (Source textarea / edit editor),
+      // falling back to the page title when the mounted surface has nothing
+      // focusable, so keyboard users are not dropped to <body>.
       await tick()
-      titleEl?.focus()
+      if (!getEditorForLocator(notebook, section, page)?.focusEditor?.()) {
+        titleEl?.focus()
+      }
     } catch (e) {
       conflictError = e instanceof Error ? e.message : String(e)
     } finally {

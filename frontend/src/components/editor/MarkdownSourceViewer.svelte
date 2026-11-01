@@ -500,6 +500,11 @@
         forcedSeed = false
         seedSeq++
       },
+      focusEditor: () => {
+        if (!textareaEl) return false
+        textareaEl.focus()
+        return true
+      },
       setProposedEdit: () => false,
       clearProposedEdit: () => {},
       hasProposal: () => false,
@@ -515,21 +520,16 @@
   // external version. `inherited` marks a latch this viewer did not raise
   // itself; when it clears, the save-hold clears and the buffer re-seeds,
   // keeping dirty edits for the honest "external change detected" offer.
+  // The latch key distinguishes HOW it cleared: same locator means a
+  // resolution (the owning surface settles its own state); a different
+  // locator means the parent superseded it after a rename/move — the backend
+  // stash stays keyed to the OLD path, so nothing can resolve it and the
+  // hold must release without discarding the user's dirty buffer.
   let conflictLatchInherited = false
   let conflictLatchWasActive = false
-  $effect(() => {
-    if (conflictActive) {
-      if (!conflictLatchWasActive) {
-        conflictLatchWasActive = true
-        conflictLatchInherited = !untrack(() => saveRefused)
-        saveRefused = true
-      }
-      return
-    }
-    if (!conflictLatchWasActive) return
-    conflictLatchWasActive = false
-    if (!conflictLatchInherited) return
-    conflictLatchInherited = false
+  let conflictLatchKey = ''
+
+  function releaseLatchHold(): void {
     saveRefused = false
     refusedBuffer = null
     saveError = null
@@ -538,6 +538,33 @@
       clearTimeout(saveTimer)
       saveTimer = null
     }
+  }
+
+  $effect(() => {
+    if (conflictActive) {
+      if (!conflictLatchWasActive) {
+        conflictLatchWasActive = true
+        conflictLatchInherited = !untrack(() => saveRefused)
+        conflictLatchKey = editorKey(notebook, section, page)
+        saveRefused = true
+      }
+      return
+    }
+    if (!conflictLatchWasActive) return
+    conflictLatchWasActive = false
+    const superseded = conflictLatchKey !== editorKey(notebook, section, page)
+    const inherited = conflictLatchInherited
+    conflictLatchInherited = false
+    if (superseded) {
+      // Rename/move repointed the tab: the offer the next blocks change
+      // raises ("External change detected") has reachable actions — unlike
+      // a kept saveRefused, whose only actions live behind the latch that
+      // just vanished (#1005 dead-lock).
+      releaseLatchHold()
+      return
+    }
+    if (!inherited) return
+    releaseLatchHold()
     void seedFromDiskOrBlocks(blocks)
   })
 
@@ -635,7 +662,12 @@
   async function resolveSaveConflict(
     resolution: ExternalConflictResolution
   ): Promise<string> {
-    const typedPastRefusal = refusedBuffer !== null && buffer !== refusedBuffer
+    // The refused snapshot dies with the surface that raised it: a fresh
+    // mount inheriting the latch (refusedBuffer === null) that is dirty has
+    // typed past the refusal HERE — flush that text, never discard it
+    // (#1005 swap-back regression).
+    const typedPastRefusal =
+      refusedBuffer === null ? dirty : buffer !== refusedBuffer
     const conflictPage = await resolveExternalConflict(
       notebook,
       section,

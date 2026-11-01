@@ -523,6 +523,169 @@ describe('MarkdownSourceViewer', () => {
     }
   })
 
+  // #1005 swap-back: a fresh mount inheriting the latch has refusedBuffer
+  // === null; text typed during the latch is NOT in the backend stash (that
+  // holds the pre-toggle refusal). keep_mine must flush it instead of
+  // silently discarding it via dirty = false.
+  it('keep_mine after a toggle flushes typed-during-latch text instead of discarding it', async () => {
+    vi.useFakeTimers()
+    mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
+    mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Heading')])
+    try {
+      render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page',
+          conflictActive: true
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
+      const ta = screen.getByRole('textbox', { name: /markdown source/i })
+      await fireEvent.input(ta, {
+        target: { value: '# Typed during the latch' }
+      })
+      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(mocks.savePageMarkdown).not.toHaveBeenCalled()
+
+      const handle = getEditorForLocator('Work', 'Sec', 'Page')
+      expect(handle?.resolveExternalConflict).toBeTruthy()
+      await handle!.resolveExternalConflict!('keep_mine')
+      await waitFor(() =>
+        expect(mocks.resolveExternalConflict).toHaveBeenCalledWith(
+          'Work',
+          'Sec',
+          'Page',
+          'keep_mine'
+        )
+      )
+      // The typed-past text is flushed on top of the replayed stash — the
+      // resolution refreshed the baseline, so the save passes.
+      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() =>
+        expect(mocks.savePageMarkdown).toHaveBeenCalledWith(
+          'Work',
+          'Sec',
+          'Page',
+          '# Typed during the latch'
+        )
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // #1005 rename/move: the parent supersedes the latch when the locator
+  // changes (the backend stash stays keyed to the OLD path). An owner-raised
+  // refusal must then release its hold and keep the dirty buffer — the
+  // honest "external change detected" offer has reachable actions, unlike a
+  // dead-locked action-less held state.
+  it('a superseded source refusal releases the hold and raises the offer instead of dead-locking', async () => {
+    vi.useFakeTimers()
+    mocks.savePageMarkdown.mockImplementation(() =>
+      Promise.reject(
+        new Error(
+          '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
+        )
+      )
+    )
+    mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
+    try {
+      const { rerender } = render(MarkdownSourceViewer, {
+        props: {
+          blocks: BLOCKS,
+          filePath: 'Work/Page.md',
+          notebook: 'Work',
+          section: 'Sec',
+          page: 'Page'
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
+      const ta = screen.getByRole('textbox', { name: /markdown source/i })
+      // The owner refusal: this surface's own save is refused first…
+      await fireEvent.input(ta, { target: { value: '# My refused text' } })
+      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(
+        screen.getByText(/Save held — this file changed on disk/)
+      ).toBeTruthy()
+
+      // …then the parent latches the page-level banner (conflictActive).
+      await rerender({ conflictActive: true })
+
+      // Rename: the tab repoints (page prop changes, latch superseded and
+      // cleared by the parent) and the new page's blocks arrive.
+      mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Heading')])
+      await rerender({
+        blocks: [mkBlock('# Renamed page body')],
+        filePath: 'Work/Renamed.md',
+        page: 'Renamed',
+        conflictActive: false
+      })
+      await vi.advanceTimersByTimeAsync(0)
+
+      // The held state is gone and the offer with reachable actions shows.
+      await waitFor(() =>
+        expect(
+          screen.queryByText(/Save held — this file changed on disk/)
+        ).toBeNull()
+      )
+      expect(screen.getByText(/External change detected/)).toBeTruthy()
+      const useMine = screen.getByRole('button', { name: 'Use my text' })
+      const reload = screen.getByRole('button', { name: 'Reload file' })
+      expect(useMine).toBeTruthy()
+      expect(reload).toBeTruthy()
+      // And the surface is not dead-locked: Reload reseeds and saves work.
+      await fireEvent.click(reload)
+      await waitFor(() =>
+        expect(screen.queryByText(/External change detected/)).toBeNull()
+      )
+      await fireEvent.input(ta, { target: { value: '# Edit after rename' } })
+      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() =>
+        expect(mocks.savePageMarkdown).toHaveBeenCalledWith(
+          'Work',
+          'Sec',
+          'Renamed',
+          '# Edit after rename'
+        )
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // #1005 D4: post-resolution focus must land in the owning surface — the
+  // registry handle's focusEditor targets the textarea, not the page title.
+  it('focusEditor moves focus into the source textarea', async () => {
+    mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
+    render(MarkdownSourceViewer, {
+      props: {
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    await waitFor(() => expect(mocks.fetchPageMarkdown).toHaveBeenCalled())
+    const ta = screen.getByRole('textbox', {
+      name: /markdown source/i
+    }) as HTMLTextAreaElement
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
+    const handle = getEditorForLocator('Work', 'Sec', 'Page')
+    expect(handle?.focusEditor).toBeTruthy()
+    expect(handle!.focusEditor!()).toBe(true)
+    expect(document.activeElement).toBe(ta)
+  })
+
   it('blocks auto-save on external blocks change until Keep mine; Reload resets (#660)', async () => {
     vi.useFakeTimers()
     mocks.savePageMarkdown.mockResolvedValue([mkBlock('# Heading')])

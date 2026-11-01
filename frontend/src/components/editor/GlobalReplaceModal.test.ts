@@ -355,6 +355,61 @@ describe('GlobalReplaceModal apply/undo/stale-guard', () => {
     )
   })
 
+  // #1005/#345: when a page's write is refused (external edit), no
+  // block:changed ever lands to consume the just-armed reload — the arm must
+  // be dropped on the failed page or it leaks and the next unrelated blocks
+  // change setContents over the user's unsaved edits.
+  it('clears the armed reload when a page write is refused', async () => {
+    mocks.SearchBlocksPaged.mockResolvedValue({
+      results: [
+        {
+          id: 'b1',
+          source: 'vault',
+          notebook: 'vault',
+          section: 'notes',
+          page: 'page1',
+          snippet: 'foo bar'
+        }
+      ],
+      total: 1,
+      offset: 0,
+      limit: 200,
+      has_more: false
+    })
+    mocks.FetchPageBlocks.mockResolvedValue([block('b1', 'foo bar')])
+    mocks.SaveFileBlocks.mockRejectedValue(
+      new Error(
+        '{"code":"external_edit_conflict","message":"this page changed on disk since it was opened"}'
+      )
+    )
+
+    const order: string[] = []
+    registerEditor({
+      key: 'vault\x00notes\x00page1',
+      isDirty: () => false,
+      flush: async () => true,
+      forceExternalReload: () => order.push('arm'),
+      clearExternalReload: () => order.push('clear'),
+      setProposedEdit: () => false,
+      clearProposedEdit: () => {},
+      hasProposal: () => false,
+      acceptProposedEdit: () => false,
+      verifySelectionText: () => false
+    })
+
+    await renderAndPreview('foo', 'qux')
+    await fireEvent.click(screen.getByRole('button', { name: /^Replace/ }))
+
+    await waitFor(
+      () => {
+        expect(order).toEqual(['arm', 'clear'])
+      },
+      { timeout: 2000 }
+    )
+    // The refusal surfaces as held-write copy, not raw JSON.
+    expect(screen.getByText(/the write was held/i)).toBeTruthy()
+  })
+
   it('flushes a dirty open editor before applying, then force-reloads it (#345)', async () => {
     mocks.SearchBlocksPaged.mockResolvedValue({
       results: [
