@@ -59,6 +59,10 @@ func (a *App) teardownVaultServices() {
 	}
 	a.coordinator = nil
 	a.vaultPath = ""
+	// Stashes + baselines are vault-scoped session state keyed by absolute
+	// path: a stash into a closed vault can never resolve and would hijack a
+	// same-named page after a reopen (#1005).
+	a.clearConflictState()
 	// Drop Dev Mode menu enablement unless SILT_DEBUG keeps it on (#684).
 	a.syncOpenDevToolsMenuItemEnabled(strings.EqualFold(os.Getenv("SILT_DEBUG"), "1"))
 	// Session security aggregates are vault-scoped in practice; clear on

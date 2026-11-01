@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"silt/backend/core"
 	"silt/backend/parser"
 	"silt/backend/plugins"
 	"sort"
@@ -338,22 +339,18 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 				}
 			}
 		}
-		if err := a.saveFileBlocksWithGate(first.notebook, first.section, first.page, mutated, reason, gateStashOnly); err != nil {
+		if err := a.saveFileBlocksWithGate(first.notebook, first.section, first.page, mutated, reason, gateStashOnly, funnelProgrammatic); err != nil {
 			return fmt.Errorf("save page %s/%s/%s: %w", first.notebook, first.section, first.page, err)
 		}
 		// For cross-page moves, remove the block from its source page.
 		//
-		// The source-page block list is read from the DB (FetchPageBlocks), NOT
-		// from the file. The first-pass SaveFileBlocks already re-indexed the
-		// moved block into the TARGET page, so the DB no longer lists it under
-		// the source page. Reading the file instead would see stale content
-		// (the file hasn't been rewritten yet) and IndexFileBlocks would
-		// re-insert the block under the source page, stealing it back from the
-		// target — silent data loss under concurrency.
-		//
-		// LockFileWrite serializes concurrent source-page writes so the file
-		// never has a torn write. Errors are NOT swallowed — a failed
-		// source-removal would leave the block duplicated.
+		// The source rewrite is a read-modify-write anchored on CURRENT disk
+		// bytes inside LockFileWrite (see removeBlockFromSourcePage): an
+		// external edit the watcher has not re-indexed yet survives it, and a
+		// pending refused-write stash refuses it outright. LockFileWrite
+		// serializes concurrent source-page writes so the file never has a
+		// torn write. Errors are NOT swallowed — a failed source-removal
+		// would leave the block duplicated.
 		for _, r := range pageOps {
 			if r.op.Kind == "move" && r.origNotebook != "" &&
 				(r.origNotebook != r.notebook ||
@@ -415,29 +412,39 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 // being moved, so concurrent cross-page moves from the same source page are
 // safe.
 //
-// The file is rewritten with the remaining blocks (filtered from the DB
-// snapshot). The DB gets a single-row delete for the moved block only.
+// The caller MUST hold LockFileWrite for filePath. The file rewrite is
+// anchored on the CURRENT disk bytes read inside that lock (the same anchor
+// MutateBlock uses): rendering from the DB snapshot would revert an external
+// edit the watcher has not re-indexed yet — the exact loss class #1005
+// exists to prevent — and the pending-stash gate below refuses the rewrite
+// outright while a refused save awaits resolution.
 func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, page, blockID, reason string) error {
+	// A pending refused-write stash IS the conflict state: rewriting under it
+	// would revert external bytes, and a later keep_mine would replay the
+	// stashed pre-move buffer, resurrecting the moved block on both pages
+	// (#1005). Same refusal every gated funnel applies.
+	if err := a.externalEditStashRefusalKey(core.NormalizeFileLockPath(filePath), filePath); err != nil {
+		return err
+	}
 	// NOTE: the file write and DB delete are not atomic together — the file is
 	// rewritten first, then the DB row is deleted. If the process crashes
 	// between, the file won't have the block but the DB will still list it.
 	// This is acceptable: the DB is a re-derivable cache (§0 rule 4), so the
 	// next index rebuild (or the next SaveFileBlocks for this page) reconciles
 	// the file↔DB state automatically.
-	// Read current blocks from the DB (fresh snapshot). captureNone: this
-	// runs inside LockFileWrite for a Silt-owned rewrite; the write below
-	// re-baselines any pre-existing fingerprint itself.
-	srcBlocks, err := a.fetchPageBlocks(notebook, section, page, captureNone)
-	if err != nil {
-		return fmt.Errorf("fetch source %s/%s/%s: %w", notebook, section, page, err)
-	}
-	filtered := removeByID(srcBlocks, blockID)
-
-	// Rewrite the file with the remaining blocks (no re-index).
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read source file: %w", err)
 	}
+	fileDate := fileOrDefaultDate(filePath)
+	srcBlocks, _, _, _, parseErr := parser.ParseFileContent(string(contentBytes),
+		notebook, section, page, fileDate, a.spacesPerTab)
+	if parseErr != nil {
+		return fmt.Errorf("parse source %s/%s/%s: %w", notebook, section, page, parseErr)
+	}
+	filtered := removeByID(srcBlocks, blockID)
+
+	// Rewrite the file with the remaining blocks (no re-index).
 	frontmatter, body := parser.SplitFrontmatter(string(contentBytes))
 	if frontmatter == "" {
 		frontmatter = fmt.Sprintf("---\nnotebook: %q\nsection: %q\npage: %q\ndate: %q\ntags: []\n---\n",
@@ -449,14 +456,9 @@ func (a *App) removeBlockFromSourcePage(filePath, source, notebook, section, pag
 		reason = historyReasonPlugin
 	}
 	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
-	a.tracker.RegisterWrite(filePath)
-	if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+	if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
 		return fmt.Errorf("write source file: %w", err)
 	}
-	// Re-baseline to the bytes just written (only refreshes a baseline an
-	// editor load already created): otherwise the next whole-page save
-	// false-conflicts against this Silt-owned rewrite (#1005).
-	a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
 
 	// Targeted DB delete: remove ONLY the moved block from the SOURCE page.
 	// Page-scoped so it doesn't delete the block from the TARGET page where

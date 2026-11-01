@@ -107,6 +107,11 @@ func (a *App) renameSingleFile(prepare func() (renameSingleFileStrategy, error))
 		// Sweep residual inbound links that landed after the under-lock
 		// re-collect but before rewrite (narrow residual TOCTOU window).
 		s.staleSweep()
+		// The page now lives at the new path: re-key its pending conflict
+		// stash and drop the old path's baseline so resolution stays
+		// reachable and a recreated page at the old path inherits nothing
+		// (#1005).
+		a.migrateConflictStateAcrossRename(s.oldFile, s.newFile)
 		// File is already at the new path; history must follow even if
 		// nav reconcile fails (no rollback after renameStep).
 		if s.relocateHistory != nil {
@@ -249,6 +254,10 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 			for _, file := range files {
 				newPath := filepath.Join(s.newDir, file.relPath)
 				a.tracker.RegisterWrite(newPath)
+				// Direct write (renameWriteFileAtomic): the renameHooks test
+				// seam must intercept the forward write, and the path is
+				// brand-new post-rename — conflict-state migration is owned
+				// by renameTree's success path (#1005).
 				if err := a.renameWriteFileAtomic(newPath, file.updatedContent); err != nil {
 					runErr = fmt.Errorf("%s: write %s: %w", s.label, file.relPath, err)
 					if rollbackErr := a.rollbackRename(s.oldDir, s.newDir, files, s.rollbackSource, linkJournal, configSnapshot, false); rollbackErr != nil {
@@ -289,6 +298,11 @@ func (a *App) renameTree(prepare func() (renameTreeStrategy, error)) error {
 		// Residual inbound sweep for each renamed page (post-unlock TOCTOU).
 		for _, file := range files {
 			s.staleSweepFile(file)
+		}
+		// Every page moved old→new: re-key stashes and drop old-path
+		// baselines so conflicts stay resolvable at the new paths (#1005).
+		for _, file := range files {
+			a.migrateConflictStateAcrossRename(file.oldPath, filepath.Join(s.newDir, file.relPath))
 		}
 		if s.relocateHistory != nil {
 			s.relocateHistory(files)

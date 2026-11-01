@@ -33,22 +33,46 @@ import (
 	"silt/backend/parser"
 )
 
+// refusedWriteFunnel identifies which save funnel stashed a refused payload
+// (#1005). The stash's replacement policy depends on it: same-funnel
+// newest-wins, and an editor-owned stash is never evicted by a programmatic
+// (MCP/plugin) refusal — see storeRefusedWrite.
+type refusedWriteFunnel int
+
+const (
+	// funnelEditorBlocks: SaveFileBlocks — the webview's block editor.
+	funnelEditorBlocks refusedWriteFunnel = iota
+	// funnelEditorMarkdown: SavePageMarkdown — the webview's Source mode.
+	funnelEditorMarkdown
+	// funnelProgrammatic: whole-page writes from non-editor callers (MCP
+	// update_blocks/set_blocks). Their payload already received its refusal
+	// error and is re-derivable by the caller; it must never displace a
+	// stashed editor buffer, which is user typing whose only backend-side
+	// copy is the stash.
+	funnelProgrammatic
+)
+
+func (f refusedWriteFunnel) isEditorFunnel() bool {
+	return f != funnelProgrammatic
+}
+
 // refusedPageWrite remembers one editor save the external-edit gate refused,
 // so ResolveExternalConflict can replay it after preserving the external
-// version. A later refusal through the SAME funnel replaces an earlier one —
-// the newest buffer is the version worth keeping. A refusal through the
-// OTHER funnel (Edit blocks vs Source markdown) never does: the two surfaces
-// hold different buffers, and the first stashed payload is the one the
-// conflict latch's owning surface can settle.
+// version. Replacement policy is funnel-based (see refusedWriteFunnel):
+// same-funnel newest-wins (the newest buffer is the version worth keeping),
+// cross-funnel editor refusals keep the first stash (the two surfaces hold
+// different buffers, and the first stashed payload is the one the conflict
+// latch's owning surface can settle), and a programmatic refusal never
+// evicts an editor-owned stash.
 type refusedPageWrite struct {
-	source     string
-	notebook   string // safe (sanitized) locator, as the save funnels compute it
-	section    string
-	page       string
-	blocks     []parser.ParsedBlock // SaveFileBlocks payload; nil for a markdown save
-	markdown   string               // SavePageMarkdown payload
-	isMarkdown bool
-	reason     string
+	source   string
+	notebook string // safe (sanitized) locator, as the save funnels compute it
+	section  string
+	page     string
+	blocks   []parser.ParsedBlock // SaveFileBlocks payload; nil for a markdown save
+	markdown string               // SavePageMarkdown payload
+	funnel   refusedWriteFunnel
+	reason   string
 }
 
 // FileFingerprint is the load-time snapshot of one page file. Mtime/Ctime are
@@ -315,16 +339,28 @@ func isExternalEditConflict(err error) bool {
 func (a *App) storeRefusedWrite(key string, rw refusedPageWrite) {
 	a.refusedWritesMu.Lock()
 	defer a.refusedWritesMu.Unlock()
+	if prev, exists := a.refusedWrites[key]; exists {
+		// A programmatic payload (MCP whole-page write) never evicts an
+		// editor-owned stash (#1005): the editor buffer is user typing whose
+		// only backend-side copy is the stash, while the programmatic caller
+		// already received its refusal error and can re-derive its payload.
+		if prev.funnel.isEditorFunnel() && !rw.funnel.isEditorFunnel() {
+			return
+		}
+		// Cross-funnel editor refusals keep the first stash: the two surfaces
+		// hold different buffers, and the first stashed payload is the one
+		// the conflict latch's owning surface can settle — replacing it would
+		// silently destroy the other surface's only backend-side copy.
+		if prev.funnel.isEditorFunnel() &&
+			rw.funnel.isEditorFunnel() &&
+			prev.funnel != rw.funnel {
+			return
+		}
+		// Otherwise (same funnel, or a programmatic stash being superseded by
+		// an editor refusal): newest-wins.
+	}
 	if a.refusedWrites == nil {
 		a.refusedWrites = make(map[string]refusedPageWrite)
-	}
-	if prev, exists := a.refusedWrites[key]; exists && prev.isMarkdown != rw.isMarkdown {
-		// Cross-funnel refusal (#1005): the stashed payload belongs to the
-		// latch's owning surface. Letting this one replace it would silently
-		// destroy the other surface's buffer — its only copy outside the
-		// backend. Keep the first stash; the refused save still errors
-		// identically for its own surface.
-		return
 	}
 	a.refusedWrites[key] = rw
 }

@@ -213,7 +213,7 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 		// My (stashed) version becomes the conflict copy; theirs stays on the
 		// original path. The copy is written through the same funnels so it is
 		// registered, indexed, and fingerprint-refreshed like any Silt page.
-		if rw.isMarkdown {
+		if rw.funnel == funnelEditorMarkdown {
 			_, werr := a.writePageMarkdownLocked(sibling, rw.source, rw.notebook, rw.section, conflictPage,
 				rw.notebook, rw.section, conflictPage, nil, rw.markdown, rw.reason, false)
 			if werr != nil {
@@ -315,7 +315,7 @@ func (a *App) adoptOriginalBytesLocked(filePath, source, notebook, section, page
 // replayMineLocked writes my stashed save onto the original path — the
 // keep_mine / keep_both winner.
 func (a *App) replayMineLocked(rw refusedPageWrite, filePath string, theirs []byte) error {
-	if rw.isMarkdown {
+	if rw.funnel == funnelEditorMarkdown {
 		_, werr := a.writePageMarkdownLocked(filePath, rw.source, rw.notebook, rw.section, rw.page,
 			rw.notebook, rw.section, rw.page, theirs, rw.markdown, rw.reason, false)
 		return werr
@@ -331,8 +331,7 @@ func (a *App) replayMineLocked(rw refusedPageWrite, filePath string, theirs []by
 // so a copy of a frontmatter-less external version indexes under the same
 // notebook/section as its sibling instead of a junk `notebook=”` row.
 func (a *App) writeConflictCopyLocked(siblingPath, source, notebook, section string, content []byte) error {
-	a.tracker.RegisterWrite(siblingPath)
-	if err := atomicPageWrite(siblingPath, content); err != nil {
+	if err := a.trackedPageWrite(siblingPath, content); err != nil {
 		return fmt.Errorf("write conflict copy: %w", err)
 	}
 	conflictPage := strings.TrimSuffix(filepath.Base(siblingPath), ".md")

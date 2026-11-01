@@ -216,6 +216,10 @@ func (a *App) writePageFrontmatterEdit(filePath, source, notebook, section, page
 			return
 		}
 		a.maybeCapturePageVersion(historyLoc(source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
+		// Direct write (not trackedPageWrite): the frontmatterWriteAtomic
+		// fault-injection seam must intercept exactly this write in the
+		// rollback tests; the register+refresh contract trackedPageWrite
+		// owns is honored inline below.
 		a.tracker.RegisterWrite(filePath)
 		writeFn := parser.WriteFileAtomic
 		if a.frontmatterWriteAtomic != nil {

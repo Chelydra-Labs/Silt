@@ -284,16 +284,10 @@ func (a *App) updateBlockStateWithReason(blockID string, newState, reason string
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 
 			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
-			a.tracker.RegisterWrite(filePath)
-
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+			if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
 				writeErr = err
 				return
 			}
-			// Silt's own write is never an external edit — re-baseline in the
-			// same lock (#1005) so an autosave in the write→reload window does
-			// not false-conflict against this rewrite.
-			a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
 
 			// Re-parse with the sanitized metadata so the re-indexed row
 			// uses the same cleaned values that went into the file path.
@@ -624,15 +618,10 @@ func (a *App) writeBlockText(blockID, reason string, transform func(currentClean
 			newContent := parser.RenderFileContent(parsedBlocks, body, frontmatter, a.spacesPerTab)
 
 			a.maybeCapturePageVersion(historyLoc(loc.Source, safeNotebook, safeSection, safePage), contentBytes, []byte(newContent), reason)
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(newContent)); err != nil {
+			if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
 				writeErr = err
 				return
 			}
-			// Silt's own write is never an external edit — re-baseline in the
-			// same lock (#1005) so an autosave in the write→reload window does
-			// not false-conflict against this rewrite.
-			a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
 
 			// Re-parse the rendered output and reindex so the cache reflects the
 			// canonical on-disk state (RenderFileContent may have normalized the
@@ -690,14 +679,9 @@ func (a *App) writePageFileLocked(filePath, source, notebook, section, page stri
 
 	newContent := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
 
-	a.tracker.RegisterWrite(filePath)
-
-	if err := atomicPageWrite(filePath, []byte(newContent)); err != nil {
+	if err := a.trackedPageWrite(filePath, []byte(newContent)); err != nil {
 		return err
 	}
-	// Silt's own write is never an external edit — re-baseline inside the
-	// same lock so the next save's fast path matches (#1005).
-	a.refreshFingerprintAfterWrite(filePath, []byte(newContent))
 	a.maybeCapturePageVersion(historyLoc(source, notebook, section, page), contentBytes, []byte(newContent), reason)
 
 	parsedBlocks, meta, _, _, err := parser.ParseFileContent(newContent, notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
@@ -716,8 +700,8 @@ type externalEditGateMode int
 
 const (
 	// gateLoadBaseline: whole-page editor renders (SaveFileBlocks, MCP
-	// set_blocks) — refuse when disk drifted from the editor's load
-	// baseline, and when a refused-write stash is pending.
+	// set_blocks) — refuse when disk drifted from the load baseline, and
+	// when a refused-write stash is pending.
 	gateLoadBaseline externalEditGateMode = iota
 	// gateStashOnly: read-modify-write saves whose block list was fetched
 	// from CURRENT disk immediately before the save (plugin block ops).
@@ -735,10 +719,19 @@ func (a *App) SaveFileBlocks(notebook, section, page string, blocks []parser.Par
 }
 
 func (a *App) saveFileBlocksWithSource(notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
-	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateLoadBaseline)
+	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateLoadBaseline, funnelEditorBlocks)
 }
 
-func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []parser.ParsedBlock, reason string, gate externalEditGateMode) error {
+// saveFileBlocksProgrammatic is the whole-page blocks save for non-editor
+// callers (MCP update_blocks): the load-baseline gate still applies (the
+// payload renders a caller-held buffer over the loaded base), but a refusal
+// stashes with the programmatic funnel so it can never evict an editor-owned
+// stash (see refusedWriteFunnel).
+func (a *App) saveFileBlocksProgrammatic(notebook, section, page string, blocks []parser.ParsedBlock, reason string) error {
+	return a.saveFileBlocksWithGate(notebook, section, page, blocks, reason, gateLoadBaseline, funnelProgrammatic)
+}
+
+func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []parser.ParsedBlock, reason string, gate externalEditGateMode, funnel refusedWriteFunnel) error {
 	if err := validateTaskBlockPriorities(blocks); err != nil {
 		return err
 	}
@@ -815,12 +808,13 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 				return
 			}
 			// Whole-page save funnel: refuse to clobber an external edit
-			// (#1005). gateLoadBaseline (editor renders) also compares the
-			// load baseline; the stash half runs in both modes. Stash the
-			// refused payload so the resolution IPC can replay it after
+			// (#1005). gateLoadBaseline (editor/MCP renders) also compares
+			// the load baseline; the stash half runs in both modes. Stash
+			// the refused payload so the resolution IPC can replay it after
 			// preserving the on-disk version — except in gateStashOnly,
 			// where a plugin payload must not evict the user's stashed
-			// editor buffer.
+			// editor buffer. The funnel tags the stash so a programmatic
+			// (MCP) refusal can never displace an editor-owned one.
 			var gateErr error
 			if gate == gateLoadBaseline {
 				gateErr = a.checkExternalEditConflict(filePath)
@@ -835,6 +829,7 @@ func (a *App) saveFileBlocksWithGate(notebook, section, page string, blocks []pa
 						section:  safeSection,
 						page:     safePage,
 						blocks:   blocks,
+						funnel:   funnel,
 						reason:   reason,
 					})
 				}
@@ -997,13 +992,13 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 			if err := a.checkExternalEditConflict(filePath); err != nil {
 				if isExternalEditConflict(err) {
 					a.storeRefusedWrite(core.NormalizeFileLockPath(filePath), refusedPageWrite{
-						source:     source,
-						notebook:   safeNotebook,
-						section:    safeSection,
-						page:       safePage,
-						markdown:   markdown,
-						isMarkdown: true,
-						reason:     historyReasonSource,
+						source:   source,
+						notebook: safeNotebook,
+						section:  safeSection,
+						page:     safePage,
+						markdown: markdown,
+						funnel:   funnelEditorMarkdown,
+						reason:   historyReasonSource,
 					})
 				}
 				writeErr = err

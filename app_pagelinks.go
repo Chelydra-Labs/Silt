@@ -159,13 +159,9 @@ func (a *App) rewriteStaleInboundAfterRename(oldNB, oldSec, oldPage, newNB, newS
 			if total == 0 {
 				return
 			}
-			a.tracker.RegisterWrite(filePath)
-			if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
+			if err := a.trackedPageWrite(filePath, []byte(content)); err != nil {
 				return
 			}
-			// Silt's own write is never an external edit — re-baseline inside
-			// the same lock (#1005), like the save funnels.
-			a.refreshFingerprintAfterWrite(filePath, []byte(content))
 			writeOK = true
 		})
 		if writeOK {
@@ -304,7 +300,6 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldSource, oldNB, oldSec, oldPa
 			if total == 0 {
 				return
 			}
-			a.tracker.RegisterWrite(filePath)
 			if journal != nil {
 				if _, exists := journal[filePath]; !exists {
 					journal[filePath] = renameLinkJournalEntry{
@@ -313,13 +308,10 @@ func (a *App) rewriteInboundPageLinksWithJournal(oldSource, oldNB, oldSec, oldPa
 					}
 				}
 			}
-			if err := parser.WriteFileAtomic(filePath, []byte(content)); err != nil {
+			if err := a.trackedPageWrite(filePath, []byte(content)); err != nil {
 				log.Printf("rewriteInboundPageLinks: write %s: %v", filePath, err)
 				return
 			}
-			// Same-lock re-baseline (#1005): this rewrite is Silt's own write,
-			// never an external edit.
-			a.refreshFingerprintAfterWrite(filePath, []byte(content))
 			writeOK = true
 		}
 		held := heldPaths != nil && heldPaths[core.NormalizeFileLockPath(filePath)]

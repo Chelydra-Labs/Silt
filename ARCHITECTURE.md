@@ -523,12 +523,22 @@ so a client reading externally edited bytes cannot disarm the editor's gate.
 The backend, not the UI latch, is authoritative about conflict state: a
 refused save stashes its payload keyed by path, and while that stash is live
 the funnels keep refusing — even after a later load re-captured the
-fingerprint — re-stashing same-funnel newest-wins and never replacing a stash
-from the other funnel, until the user resolves. The fingerprint never derives
+fingerprint — re-stashing same-funnel newest-wins, never replacing a stash
+from the other editor funnel, and never letting a programmatic (MCP/plugin)
+refusal evict an editor-owned stash, until the user resolves. The stash is
+funnel-tagged for exactly that policy. The fingerprint never derives
 from parsed block IDs, so block-ID rewrites inside files cannot invalidate it
 (and an external ID-only rewrite is still detected). Every successful Silt
-write re-baselines the fingerprint in the same lock — the save funnels and the
-line-mutating setter funnels alike. Resolution is refuse-first and keeps both
+page write re-baselines the fingerprint in the same lock: in-lock page
+writers go through one choke point (`trackedPageWrite` in
+`app_tracked_write.go` — register with the write tracker, atomic write,
+re-baseline), so a writer family cannot forget the re-baseline at its call
+site; the few direct atomic writes that remain carry an inline justification.
+The stash and baselines have a lifecycle: rename/move re-keys a pending
+stash to the page's new path and drops the old-path baseline, page/section/
+notebook delete drops both at the deleted paths, and vault teardown clears
+them — a stale stash must never dead-end resolution or hijack a page later
+recreated at the same path. Resolution is refuse-first and keeps both
 versions: `ResolveExternalConflict` writes the losing version to a sibling
 `<page>.conflict-<YYYYMMDD-HHMMSS>.md` (registered with the `WriteTracker`
 and explicitly indexed, so it surfaces as a real page rather than a watcher
@@ -539,17 +549,23 @@ rename/move path (`renameWriteFileAtomic`) bypasses the gate by design: moves
 are not content rewrites. Known caveats: `LockFileWrite` serializes only
 Silt's own writers — an external write landing between the in-lock stat check
 and the atomic rename is still clobbered; closing that micro-race requires
-cross-process file locking, which is out of scope. Stat matches are also
+cross-process file locking, which is out of scope (and under the
+stash-authoritative gate, any false refusal — e.g. the same ms-race on the
+capture side — creates a sticky stash the user must resolve; the refresh
+choke point is what keeps Silt's own writes from ever minting one). Stat matches are also
 distrusted for ~3s after a baseline capture (git's "racily clean" rule), so
 same-size rewrites on coarse-timestamp filesystems (FAT/SMB) fall through to
 the hash arbiter; on NFS, attribute caching (default `actimeo` 3–60s) can
 serve stale stat past that window — mount vault-bearing roots with `noac` or
 a low `actimeo`. Plugin whole-page saves split by shape: the MCP/plugin
-`UpdateBlocks` whole-page render runs the full gate, while the plugin
-block-ops read-modify-write (fetch current disk → mutate → save) is exempt
-from the load-baseline half by design — its base is current disk and
-`writePageFileLocked` re-anchors on disk inside the lock — but a pending
-refused-write stash still refuses it.
+`UpdateBlocks` whole-page render runs the full gate (a refusal stashes with
+the programmatic funnel so it cannot evict an editor-owned stash), while the
+plugin block-ops read-modify-write (read current disk → mutate → save) is
+exempt from the load-baseline half by design — its base is current disk and
+the rewrite re-anchors on disk inside the lock — but a pending refused-write
+stash still refuses it, on both halves of a cross-page move (the source-page
+rewrite consults the stash and reads-modify-writes from current disk bytes,
+never from the DB snapshot).
 
 Destructive-operation asymmetry (Tier 0 obligation). Page/section delete inside
 a linked notebook removes the file in place and Silt never copies linked content

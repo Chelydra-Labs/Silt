@@ -66,14 +66,13 @@ func (a *App) ensureStandaloneTasksFile() (string, error) {
 		scaffold := fmt.Sprintf("---\nnotebook: %s\nsection: %s\npage: %s\ndate: %s\ntags: []\n---\n",
 			strconv.Quote(standaloneTasksNotebook), strconv.Quote(standaloneTasksSection),
 			strconv.Quote(standaloneTasksPage), strconv.Quote(today))
-		a.tracker.RegisterWrite(filePath)
-		if err := parser.WriteFileAtomic(filePath, []byte(scaffold)); err != nil {
+		// trackedPageWrite (no LockFileWrite here: creation of a known-absent
+		// file cannot race a same-path writer) keeps any existing absent-file
+		// baseline honest — the editor's next save must not false-conflict
+		// against the scaffold (#1005).
+		if err := a.trackedPageWrite(filePath, []byte(scaffold)); err != nil {
 			return "", fmt.Errorf("create standalone tasks file: %w", err)
 		}
-		// Silt's own write is never an external edit — keep any existing
-		// baseline honest (#1005); the append path rewrites through
-		// writePageFileLocked, which refreshes on its own.
-		a.refreshFingerprintAfterWrite(filePath, []byte(scaffold))
 	} else if err != nil {
 		return "", fmt.Errorf("stat standalone tasks file: %w", err)
 	}

@@ -171,8 +171,9 @@ func (a *App) DuplicatePage(notebook, section, page, targetName string) error {
 		duplicate := parser.RenderFileContent(blocks, body, frontmatter, a.spacesPerTab)
 
 		duplicatePageBeforeWrite()
-		a.tracker.RegisterWrite(targetPath)
-		if writeErr := parser.WriteFileAtomic(targetPath, []byte(duplicate)); writeErr != nil {
+		// trackedPageWrite: creation keeps an absent-file baseline honest
+		// (#1005), same as CreatePage's scaffold.
+		if writeErr := a.trackedPageWrite(targetPath, []byte(duplicate)); writeErr != nil {
 			runErr = pageActionError(CodeNavigationDuplicate, "duplicate page cannot be written", writeErr)
 			return
 		}
