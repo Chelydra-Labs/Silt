@@ -35,8 +35,11 @@ import (
 
 // refusedPageWrite remembers one editor save the external-edit gate refused,
 // so ResolveExternalConflict can replay it after preserving the external
-// version. A later refusal for the same path replaces an earlier one — the
-// newest buffer is the version worth keeping.
+// version. A later refusal through the SAME funnel replaces an earlier one —
+// the newest buffer is the version worth keeping. A refusal through the
+// OTHER funnel (Edit blocks vs Source markdown) never does: the two surfaces
+// hold different buffers, and the first stashed payload is the one the
+// conflict latch's owning surface can settle.
 type refusedPageWrite struct {
 	source     string
 	notebook   string // safe (sanitized) locator, as the save funnels compute it
@@ -294,6 +297,14 @@ func (a *App) storeRefusedWrite(key string, rw refusedPageWrite) {
 	defer a.refusedWritesMu.Unlock()
 	if a.refusedWrites == nil {
 		a.refusedWrites = make(map[string]refusedPageWrite)
+	}
+	if prev, exists := a.refusedWrites[key]; exists && prev.isMarkdown != rw.isMarkdown {
+		// Cross-funnel refusal (#1005): the stashed payload belongs to the
+		// latch's owning surface. Letting this one replace it would silently
+		// destroy the other surface's buffer — its only copy outside the
+		// backend. Keep the first stash; the refused save still errors
+		// identically for its own surface.
+		return
 	}
 	a.refusedWrites[key] = rw
 }

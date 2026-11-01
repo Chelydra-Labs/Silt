@@ -21,6 +21,7 @@ package main
 // path, so settling means indexing it and re-baselining — nothing to guess.
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
@@ -133,6 +134,11 @@ func (a *App) ResolveExternalConflict(notebook, section, page, resolution string
 	if theirsSettled {
 		// Nothing was written ("" per the IPC contract); theirs was already
 		// the on-disk version, only the index and baseline caught up.
+		// Still emit the whole-page signal: the frontend armed a
+		// conflict-grade reload before the IPC, and only this emit lands
+		// it — without one the armed editor holds its writes forever
+		// (#1005).
+		a.emitBlockChanged("", safeNotebook, safeSection, safePage, "")
 		return "", nil
 	}
 
@@ -169,7 +175,9 @@ func uniqueConflictSibling(dir, page string, now time.Time) string {
 // name of the conflict copy it created. The caller holds LockFileWrite for
 // filePath. Precondition failures happen before any write; a failure in the
 // original-path replay (after the sibling landed) rolls the sibling back, so
-// an error still leaves disk (and the stash) without a half-applied state.
+// an error still leaves disk (and the stash) without a half-applied state —
+// unless the replay provably landed despite its error, in which case the
+// resolution is treated as the success it actually achieved.
 func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resolution string) (string, error) {
 	theirs, err := os.ReadFile(filePath)
 	if err != nil {
@@ -196,6 +204,10 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 			}
 		}
 		if err := a.settleTheirsOnOriginalLocked(filePath, rw.source, rw.notebook, rw.section, rw.page); err != nil {
+			// The copy holds my stashed version and the caller restores the
+			// stash, so removing the copy loses nothing — and a retry must
+			// not mint -2, -3… siblings.
+			a.rollbackConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section)
 			return "", err
 		}
 		return conflictPage, nil
@@ -204,16 +216,35 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 	// keep_mine / keep_both: archive theirs to the conflict copy, then replay
 	// my stashed save onto the original path.
 	archived := []byte(conflictCopyContent(theirs, conflictPage, rw.notebook, rw.section))
-	siblingBlocks, err := a.writeConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section, archived)
-	if err != nil {
+	if err := a.writeConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section, archived); err != nil {
 		return "", err
 	}
 	if err := a.replayMineLocked(rw, filePath, theirs); err != nil {
-		// The sibling is already on disk and indexed, but the original-path
-		// write failed — remove it again so the reported error leaves no ghost
-		// duplicate and a retry does not mint -2, -3… siblings.
-		a.rollbackConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section, conflictPage, siblingBlocks)
-		return "", err
+		// The sibling holds theirs' only surviving copy, so removing it is
+		// only safe when the replay provably never landed. WriteFileAtomic
+		// swaps content via a single rename but can still return an error
+		// AFTER the rename committed (POSIX directory fsync); under this
+		// lock the replay is the only writer, so a re-read that no longer
+		// equals theirs proves mine landed and the resolution actually
+		// succeeded — rolling back then would delete theirs for good (#1005).
+		current, readErr := os.ReadFile(filePath)
+		switch {
+		case readErr == nil && !bytes.Equal(current, theirs):
+			// Landed despite the reported error: adopt the on-disk bytes
+			// (index + re-baseline — the funnel's post-write steps were
+			// skipped) and report success; theirs survives in the sibling.
+			a.adoptOriginalBytesLocked(filePath, rw.source, rw.notebook, rw.section, rw.page, current)
+			return conflictPage, nil
+		case readErr == nil:
+			// Still theirs — the replay never landed; remove the ghost copy.
+			a.rollbackConflictCopyLocked(sibling, rw.source, rw.notebook, rw.section)
+			return "", err
+		default:
+			// Unreadable: cannot prove the replay did not land — never delete
+			// theirs' only copy on a guess. Keep the sibling (a retry may
+			// mint a duplicate, never a loss) and surface the original error.
+			return "", err
+		}
 	}
 	return conflictPage, nil
 }
@@ -222,24 +253,32 @@ func (a *App) resolveExternalConflictLocked(rw refusedPageWrite, filePath, resol
 // re-baselines the fingerprint to it. The external edit was never indexed
 // (that is what made it "external"), so after keep_theirs the index and the
 // baseline must both adopt theirs or the next save would re-refuse forever.
-// Indexing is best-effort: the file is kept either way and the next scan
-// indexes it.
 func (a *App) settleTheirsOnOriginalLocked(filePath, source, notebook, section, page string) error {
 	theirs, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("read current page version: %w", err)
 	}
-	blocks, meta, _, _, perr := parser.ParseFileContent(string(theirs),
+	a.adoptOriginalBytesLocked(filePath, source, notebook, section, page, theirs)
+	return nil
+}
+
+// adoptOriginalBytesLocked indexes content as the page's current on-disk
+// version and re-baselines the fingerprint to those exact bytes — the
+// post-write steps a save funnel performs, for outcomes that reached disk
+// without completing them (the keep_theirs settle; a replay whose atomic
+// write landed but reported a durability error). Indexing is best-effort;
+// the baseline refresh is what keeps the next save honest.
+func (a *App) adoptOriginalBytesLocked(filePath, source, notebook, section, page string, content []byte) {
+	blocks, meta, _, _, perr := parser.ParseFileContent(string(content),
 		notebook, section, page, fileOrDefaultDate(filePath), a.spacesPerTab)
 	if perr != nil {
-		log.Printf("resolve conflict: parse theirs for %s/%s/%s failed (file kept; next scan indexes it): %v",
+		log.Printf("resolve conflict: parse settled version for %s/%s/%s failed (file kept; next scan indexes it): %v",
 			notebook, section, page, perr)
 	} else if idxErr := a.indexFile(source, meta.Notebook, meta.Section, meta.Page, blocks, meta, meta.Warnings...); idxErr != nil {
-		log.Printf("resolve conflict: index theirs for %s/%s/%s failed (file kept; next scan indexes it): %v",
+		log.Printf("resolve conflict: index settled version for %s/%s/%s failed (file kept; next scan indexes it): %v",
 			notebook, section, page, idxErr)
 	}
-	a.refreshFingerprintAfterWrite(filePath, theirs)
-	return nil
+	a.refreshFingerprintAfterWrite(filePath, content)
 }
 
 // replayMineLocked writes my stashed save onto the original path — the
@@ -253,18 +292,17 @@ func (a *App) replayMineLocked(rw refusedPageWrite, filePath string, theirs []by
 	return a.writePageFileLocked(filePath, rw.source, rw.notebook, rw.section, rw.page, rw.blocks, rw.reason)
 }
 
-// writeConflictCopyLocked writes + indexes one conflict copy and returns the
-// blocks it indexed (nil when nothing was indexed). The content is
+// writeConflictCopyLocked writes + indexes one conflict copy. The content is
 // user content (not Silt state), so it is registered with the tracker and
 // explicitly indexed — it must surface as a page immediately, not wait for
 // the watcher. notebook/section are the ORIGINAL page's safe locator: they
 // are the ParseFileContent defaults (and the minted frontmatter fallback),
 // so a copy of a frontmatter-less external version indexes under the same
 // notebook/section as its sibling instead of a junk `notebook=”` row.
-func (a *App) writeConflictCopyLocked(siblingPath, source, notebook, section string, content []byte) ([]parser.ParsedBlock, error) {
+func (a *App) writeConflictCopyLocked(siblingPath, source, notebook, section string, content []byte) error {
 	a.tracker.RegisterWrite(siblingPath)
 	if err := atomicPageWrite(siblingPath, content); err != nil {
-		return nil, fmt.Errorf("write conflict copy: %w", err)
+		return fmt.Errorf("write conflict copy: %w", err)
 	}
 	conflictPage := strings.TrimSuffix(filepath.Base(siblingPath), ".md")
 	blocks, meta, _, _, perr := parser.ParseFileContent(string(content),
@@ -273,20 +311,35 @@ func (a *App) writeConflictCopyLocked(siblingPath, source, notebook, section str
 		// The copy is safely on disk; a parse failure only delays indexing
 		// until the next scan. Never fail the resolution after the write.
 		log.Printf("resolve conflict: parse copy %s failed: %v", siblingPath, perr)
-		return nil, nil
+		return nil
 	}
 	if idxErr := a.indexFile(source, meta.Notebook, meta.Section, meta.Page, blocks, meta, meta.Warnings...); idxErr != nil {
 		log.Printf("resolve conflict: index copy %s failed: %v", siblingPath, idxErr)
 	}
-	return blocks, nil
+	return nil
 }
 
-// rollbackConflictCopyLocked removes a conflict copy this resolution just
-// wrote + indexed, after the original-path replay failed underneath it — a
-// reported failure must not leave a persisted ghost. Best-effort: a removal
-// failure logs and leaves the copy (a duplicate page, never data loss); the
-// next vault scan reconciles the index with disk.
-func (a *App) rollbackConflictCopyLocked(sibling, source, notebook, section, conflictPage string, blocks []parser.ParsedBlock) {
+// rollbackConflictCopyLocked removes a conflict copy a resolution wrote +
+// indexed after the original-path settle failed underneath it — a reported
+// failure must not leave a persisted ghost. Index rows are deleted under the
+// locator the copy was ACTUALLY indexed with (its own frontmatter keys,
+// recovered by re-parsing the sibling bytes), not the original page's: an
+// external edit may have changed notebook/section, and deleting under the
+// wrong locator matches zero rows. Best-effort: a removal failure logs and
+// leaves the copy (a duplicate page, never data loss); the next vault scan
+// reconciles the index with disk.
+func (a *App) rollbackConflictCopyLocked(sibling, source, defNotebook, defSection string) {
+	var blocks []parser.ParsedBlock
+	metaNotebook, metaSection := defNotebook, defSection
+	conflictPage := strings.TrimSuffix(filepath.Base(sibling), ".md")
+	if content, err := os.ReadFile(sibling); err != nil {
+		log.Printf("resolve conflict: rollback read %s failed (index rows may linger until the next scan): %v", sibling, err)
+	} else if parsed, meta, _, _, perr := parser.ParseFileContent(string(content),
+		defNotebook, defSection, conflictPage, fileOrDefaultDate(sibling), a.spacesPerTab); perr != nil {
+		log.Printf("resolve conflict: rollback parse %s failed: %v", sibling, perr)
+	} else {
+		blocks, metaNotebook, metaSection = parsed, meta.Notebook, meta.Section
+	}
 	if rmErr := os.Remove(sibling); rmErr != nil && !os.IsNotExist(rmErr) {
 		log.Printf("resolve conflict: rollback copy %s failed: %v", sibling, rmErr)
 		return
@@ -296,7 +349,7 @@ func (a *App) rollbackConflictCopyLocked(sibling, source, notebook, section, con
 			continue
 		}
 		a.coordinator.WithDBWrite(func() {
-			if err := a.db.DeleteBlockFromPage(b.ID, source, notebook, section, conflictPage); err != nil {
+			if err := a.db.DeleteBlockFromPage(b.ID, source, metaNotebook, metaSection, conflictPage); err != nil {
 				log.Printf("resolve conflict: rollback index for copy %s: %v", sibling, err)
 			}
 		})
