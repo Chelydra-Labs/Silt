@@ -15,6 +15,8 @@
     getEditor
   } from '../../lib/editor/editorRegistry.svelte'
   import { pushNotification } from '../../notifications/store.svelte'
+  import { coerceIPCError } from '../../lib/ipcError'
+  import { IPCErrorCode } from '../../generated/enums'
 
   interface Props {
     onClose: () => void
@@ -144,6 +146,17 @@
 
   /** Apply approved replacements: per affected page, FetchPageBlocks → replace in
    *  clean_text → SaveFileBlocks. Records originals for the Undo action. */
+  /** Human copy for a SaveFileBlocks refusal inside apply/undo (#1005): the
+   *  external-edit refusal arrives as raw JSON otherwise, and the resolution
+   *  surface is the page's own conflict banner — the modal can only point at
+   *  it. */
+  function replaceSaveFailureText(e: unknown): string {
+    if (coerceIPCError(e).code === IPCErrorCode.CodeExternalEditConflict) {
+      return 'that page changed on disk since Silt opened it, so the write was held. Open the page and use its save-conflict banner to keep both versions, then try again'
+    }
+    return String(e)
+  }
+
   async function apply(): Promise<void> {
     applying = true
     statusMessage = ''
@@ -195,6 +208,9 @@
     const skippedUnflushable: string[] = []
     const skippedLinked: string[] = []
     const newLog: BatchEntry[] = []
+    // Names the page a mid-batch failure stopped on, so the failure copy can
+    // point the user at the right page's conflict surface (#1005).
+    let failedPage = ''
     try {
       for (const grp of groups) {
         const acceptedMatches = grp.matches.filter((m) => m.accepted)
@@ -251,6 +267,7 @@
             editor.forceExternalReload()
             openPagesTouched++
           }
+          failedPage = grp.page
           await SaveFileBlocks(grp.notebook, grp.section, grp.page, blocks)
           // Record the page only after it has persisted, so a mid-batch
           // failure leaves newLog holding exactly the written pages.
@@ -304,7 +321,7 @@
         })
       }
     } catch (e) {
-      statusMessage = `Apply failed: ${String(e)}`
+      statusMessage = `Apply failed${failedPage ? ` on "${failedPage}"` : ''}: ${replaceSaveFailureText(e)}`
     } finally {
       // Commit the batch (full or partial) before clearing applying. If
       // SaveFileBlocks threw mid-loop, newLog already holds the pages that
@@ -319,9 +336,11 @@
   async function undo(): Promise<void> {
     if (revertLog.length === 0) return
     applying = true
+    let failedPage = ''
     try {
       const lastBatch = revertLog[revertLog.length - 1]
       for (const entry of lastBatch) {
+        failedPage = entry.page
         await SaveFileBlocks(
           entry.notebook,
           entry.section,
@@ -334,7 +353,7 @@
         lastBatch.length === 1 ? '' : 's'
       }).`
     } catch (e) {
-      statusMessage = `Undo failed: ${String(e)}`
+      statusMessage = `Undo failed${failedPage ? ` on "${failedPage}"` : ''}: ${replaceSaveFailureText(e)}`
     } finally {
       applying = false
     }
