@@ -246,9 +246,42 @@ describe('AutosaveManager', () => {
     await vi.advanceTimersByTimeAsync(150)
     expect(SaveFileBlocks).toHaveBeenCalledTimes(1) // only the refused call
 
-    // The editor's post-reload effect releases writes (simulated here).
-    autosave.releaseWrites()
+    // The editor's post-reload effect releases writes (simulated here). The
+    // conflict hold only lifts via the explicit reload path.
+    autosave.forceReleaseWrites()
     expect(autosave.areWritesHeld()).toBe(false)
+  })
+
+  // #1005: the keep_theirs hold is conflict-grade — a keystroke (which calls
+  // releaseWrites to make the buffer authoritative per #345) must NOT void
+  // it, and neither must the 8s safety valve, or the stale buffer would save
+  // over the version the user just chose to keep.
+  it('a keep_theirs hold survives keystroke releases and the safety valve', async () => {
+    const { SaveFileBlocks } = await import('$silt-app')
+    vi.mocked(SaveFileBlocks).mockRejectedValueOnce(conflictError())
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(0)
+    await autosave.resolveExternalConflict('keep_theirs')
+
+    expect(autosave.holdsForConflict()).toBe(true)
+    // Keystroke-shaped release: no-op while the conflict hold is active.
+    autosave.releaseWrites()
+    expect(autosave.areWritesHeld()).toBe(true)
+    // Far past the plain-hold valve horizon: still held.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(autosave.areWritesHeld()).toBe(true)
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(SaveFileBlocks).toHaveBeenCalledTimes(1) // only the refused call
+
+    // The armed reload landing is the one legitimate release.
+    autosave.forceReleaseWrites()
+    expect(autosave.areWritesHeld()).toBe(false)
+    expect(autosave.holdsForConflict()).toBe(false)
   })
 
   it('propagates a failed resolution so the banner keeps its actions', async () => {

@@ -84,6 +84,11 @@ export class AutosaveManager {
   /** When set, trigger/flush/save no-op so a post-restore keystroke cannot
    *  write the pre-reload buffer. Cleared after setContent + markClean. */
   private writesHeld = false
+  /** A conflict-grade hold (keep_theirs / cross-surface resolution): the
+   *  buffer was explicitly declared discardable, so a keystroke must NOT
+   *  void it (#1005) — only the armed reload landing (or an explicit clear /
+   *  resolution failure) may release it. */
+  private conflictHold = false
   private deps: AutosaveDeps
 
   constructor(deps: AutosaveDeps) {
@@ -161,6 +166,7 @@ export class AutosaveManager {
   /** Suppress new saves until releaseWrites (armed external reload). */
   holdWrites(timeoutMs = 8000): void {
     this.writesHeld = true
+    this.conflictHold = false
     this.cancelPending()
     this.clearHoldTimer()
     this.holdTimer = setTimeout(() => {
@@ -169,13 +175,43 @@ export class AutosaveManager {
     }, timeoutMs)
   }
 
+  /** Conflict-grade hold (#1005): writes stay suppressed until the armed
+   *  reload lands, an explicit clearExternalReload, or a failed resolution —
+   *  never a user keystroke and never a timer. The buffer was just declared
+   *  discardable (keep_theirs), so releasing early would let a stale-buffer
+   *  save clobber the version the user chose to keep; if the reload event
+   *  is dropped the hold simply persists until teardown, which is safe. */
+  holdWritesForConflict(): void {
+    this.writesHeld = true
+    this.conflictHold = true
+    this.cancelPending()
+    this.clearHoldTimer()
+  }
+
+  /** Release a plain (#345-style) hold. A conflict hold is deliberately
+   *  kept: see holdWritesForConflict. */
   releaseWrites(): void {
+    if (this.conflictHold) return
+    this.forceReleaseWrites()
+  }
+
+  /** Release any hold, including a conflict hold. Callers must be the armed
+   *  reload landing, the explicit clear, or the resolution failure path. */
+  forceReleaseWrites(): void {
     this.clearHoldTimer()
     this.writesHeld = false
+    this.conflictHold = false
   }
 
   areWritesHeld(): boolean {
     return this.writesHeld
+  }
+
+  /** True while a conflict-grade hold is active — the editor's onUpdate
+   *  uses this to keep the armed reload (and the hold) alive across
+   *  keystrokes instead of voiding it (#1005). */
+  holdsForConflict(): boolean {
+    return this.conflictHold
   }
 
   private clearHoldTimer(): void {
@@ -357,9 +393,11 @@ export class AutosaveManager {
     resolution: ExternalConflictResolution
   ): Promise<string> {
     if (resolution === 'keep_theirs') {
-      // Held before the IPC: the backend's block:changed triggers a reload
-      // that must not race a stale debounce firing mid-resolution.
-      this.holdWrites()
+      // Conflict-grade hold BEFORE the IPC: the backend's block:changed
+      // triggers a reload that must not race a stale debounce firing
+      // mid-resolution, and a keystroke in the reload window must not void
+      // the arm (#1005) — the buffer is now explicitly discardable.
+      this.holdWritesForConflict()
     }
     let conflictPage: string
     try {
@@ -370,7 +408,7 @@ export class AutosaveManager {
         resolution
       )
     } catch (e) {
-      if (resolution === 'keep_theirs') this.releaseWrites()
+      if (resolution === 'keep_theirs') this.forceReleaseWrites()
       throw e
     }
     this.markClean()

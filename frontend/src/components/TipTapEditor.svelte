@@ -440,11 +440,21 @@
     content: initialDoc,
     onUpdate: () => {
       if (suppressUpdate) return
-      // The user typed: any stale "force reload on next external change" flag
-      // is voided — a user edit makes the buffer authoritative again and must
-      // never be clobbered by a leaked pendingExternalReload (#345).
-      pendingExternalReload = false
-      autosave.releaseWrites()
+      if (autosave.holdsForConflict()) {
+        // A keep_theirs/cross-surface resolution armed a reload of this
+        // buffer-as-discardable. The #345 "user edit makes the buffer
+        // authoritative" rule must NOT apply while that hold is active —
+        // voiding the arm here would let the stale buffer save over the
+        // version the user just chose to keep (#1005). The armed reload will
+        // replace this keystroke when it lands; until then writes stay held.
+      } else {
+        // The user typed: any stale "force reload on next external change"
+        // flag is voided — a user edit makes the buffer authoritative again
+        // and must never be clobbered by a leaked pendingExternalReload
+        // (#345).
+        pendingExternalReload = false
+        autosave.releaseWrites()
+      }
       slash.detectSlashCommand()
       isLastBlock = editorInstance
         ? editorInstance.state.doc.childCount <= 1
@@ -747,7 +757,7 @@
     if (key === lastSyncedBlocksKey) {
       if (pendingExternalReload) {
         pendingExternalReload = false
-        autosave.releaseWrites()
+        autosave.forceReleaseWrites()
       }
       return
     }
@@ -768,7 +778,7 @@
     autosave.markClean()
     if (reloading) {
       pendingExternalReload = false
-      autosave.releaseWrites()
+      autosave.forceReleaseWrites()
     }
   })
 
@@ -815,13 +825,21 @@
         await autosave.flush()
         return !unsavedChanges
       },
-      forceExternalReload: () => {
+      forceExternalReload: (opts?: { conflictHold?: boolean }) => {
         pendingExternalReload = true
-        autosave.holdWrites()
+        if (opts?.conflictHold) {
+          // Cross-surface conflict resolution (#1005): the mounted editor's
+          // buffer is stale against the resolution outcome and must not be
+          // savable until the armed reload replaces it — conflict-grade, so
+          // a keystroke cannot void the arm.
+          autosave.holdWritesForConflict()
+        } else {
+          autosave.holdWrites()
+        }
       },
       clearExternalReload: () => {
         pendingExternalReload = false
-        autosave.releaseWrites()
+        autosave.forceReleaseWrites()
       },
       setProposedEdit: (opts) => {
         if (!editorInstance || editorInstance.isDestroyed) return false

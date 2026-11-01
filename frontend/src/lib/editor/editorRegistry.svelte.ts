@@ -29,8 +29,11 @@ export interface EditorHandle {
   flush: () => Promise<boolean>
   /** Force the editor to reload from its blocks prop on the next external
    *  block update, bypassing the focused-edit guard. Only safe right after a
-   *  flush synced the editor to disk, so there is nothing unsaved to clobber. */
-  forceExternalReload: () => void
+   *  flush synced the editor to disk, so there is nothing unsaved to clobber.
+   *  `conflictHold: true` grades the write hold as conflict-grade (#1005) —
+   *  used when a cross-surface conflict resolution made the buffer stale and
+   *  discardable, so a keystroke cannot void the armed reload. */
+  forceExternalReload: (opts?: { conflictHold?: boolean }) => void
   /** Drop a pending forceExternalReload if the out-of-band write failed. */
   clearExternalReload: () => void
   /** Show an in-editor proposed-edit preview over a selection range (#543).
