@@ -152,9 +152,19 @@ vi.mock('./properties/pageTypeState.svelte', () => ({
   })
 }))
 
+// Runtime Events.On callbacks captured by name (mirrors App.menu-save.test)
+// so a test can fire a registered Wails handler — e.g. vault:moved, which
+// drives the tab teardown that must release the conflict-busy map.
+const eventHandlers = new Map<string, (...args: unknown[]) => void>()
+
 vi.mock('@wailsio/runtime', () => ({
   Events: {
-    On: vi.fn(() => () => {}),
+    On: vi.fn((name: string, cb: (...args: unknown[]) => void) => {
+      eventHandlers.set(name, cb)
+      return () => {
+        eventHandlers.delete(name)
+      }
+    }),
     Off: vi.fn()
   },
   Call: { ByID: vi.fn(), ByName: vi.fn() },
@@ -725,6 +735,44 @@ describe('global hotkey dispatch table (golden master)', () => {
     // Settled: the same plugin event may leave the notes region again.
     click('vsc-report-idle')
     window.dispatchEvent(new CustomEvent('switch-view', { detail: 'tags' }))
+    await new Promise((r) => setTimeout(r, 100))
+    expect(notesPressed()).toBe('false')
+  })
+
+  // #1005: the busy map's release-on-unmount is load-bearing — a non-gated
+  // teardown (vault move → resetTabs) destroys a resolving surface, and its
+  // effect teardown must release the tab's busy id or every notes-region exit
+  // stays gated forever. Pin the wedge-free lifecycle at the App level.
+  it('releases the shell nav gates when a busy surface unmounts (vault move)', async () => {
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountWithTabs()
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeTruthy()
+    )
+    const click = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.click()
+    const notesPressed = () =>
+      document
+        .querySelector('[aria-label="Notes"]')
+        ?.getAttribute('aria-pressed')
+
+    // Busy: cycling out of the notes region is refused.
+    click('vsc-report-busy')
+    press(C.cycle_view_layout)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(notesPressed()).toBe('true')
+
+    // vault:moved tears every tab down without consulting the gates — the
+    // surface's unmount must still release its busy id.
+    const vaultMoved = eventHandlers.get('vault:moved')
+    expect(vaultMoved).toBeTruthy()
+    vaultMoved!({ data: {} })
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="vsc-stub"]')).toBeNull()
+    )
+
+    // Settled by teardown alone (no idle report): navigation is live again.
+    press(C.cycle_view_layout)
     await new Promise((r) => setTimeout(r, 100))
     expect(notesPressed()).toBe('false')
   })
