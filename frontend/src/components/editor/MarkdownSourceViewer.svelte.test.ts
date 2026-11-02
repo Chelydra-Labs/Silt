@@ -2203,3 +2203,43 @@ describe('MarkdownSourceViewer editor registry (#884)', () => {
     }
   })
 })
+
+// #1005: forceExternalReload({ conflictHold: true }) declares this surface's
+// buffer discardable — the handle must honor the option (it previously
+// dropped it, silently downgrading to a plain valve-expiring arm): read-only
+// with a notice until the armed reload lands or the failed-resolution clear.
+describe('MarkdownSourceViewer conflict-grade reload hold (#1005)', () => {
+  it('honors conflictHold: read-only + notice, released only by the conflict clear', async () => {
+    mocks.fetchPageMarkdown.mockResolvedValue(FETCH_BODY)
+    render(MarkdownSourceViewer, {
+      props: {
+        blocks: BLOCKS,
+        filePath: 'Work/Page.md',
+        notebook: 'Work',
+        section: 'Sec',
+        page: 'Page'
+      }
+    })
+    const ta = (await waitFor(() =>
+      screen.getByRole('textbox', { name: /markdown source/i })
+    )) as HTMLTextAreaElement
+    await waitFor(() => expect(ta.value).toBe(FETCH_BODY))
+    expect(ta.readOnly).toBe(false)
+
+    const handle = getEditor(editorKey('Work', 'Sec', 'Page'))!
+    handle.forceExternalReload({ conflictHold: true })
+    await tick()
+    expect(ta.readOnly).toBe(true)
+    expect(screen.getByText(/unresolved change conflict/i)).toBeInTheDocument()
+
+    // A plain clear must NOT void the conflict-grade arm.
+    handle.clearExternalReload()
+    await tick()
+    expect(ta.readOnly).toBe(true)
+
+    // The failed-resolution clear is the explicit release.
+    handle.clearExternalReload({ conflict: true })
+    await tick()
+    expect(ta.readOnly).toBe(false)
+  })
+})

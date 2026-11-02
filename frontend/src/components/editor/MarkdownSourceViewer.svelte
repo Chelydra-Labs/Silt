@@ -290,6 +290,9 @@
       conflictPending = false
       saveError = null
       dirty = false
+      // The armed reload landed — a conflict-grade hold's only release
+      // besides the failed-resolution clear (#1005).
+      conflictHoldArmed = false
       if (saveTimer) {
         clearTimeout(saveTimer)
         saveTimer = null
@@ -494,7 +497,7 @@
         if (!dirty) return true
         return await flushSave()
       },
-      forceExternalReload: () => {
+      forceExternalReload: (opts?: { conflictHold?: boolean }) => {
         pendingExternalReload = true
         forcedSeed = true
         saveGeneration++
@@ -502,10 +505,16 @@
           clearTimeout(saveTimer)
           saveTimer = null
         }
+        if (opts?.conflictHold) conflictHoldArmed = true
       },
-      clearExternalReload: () => {
+      clearExternalReload: (opts?: { conflict?: boolean }) => {
+        // A conflict-grade arm outlives a plain clear: only the armed reload
+        // landing or a failed resolution may release it — mirroring the
+        // TipTap handle's hold grades (#1005).
+        if (conflictHoldArmed && !opts?.conflict) return
         pendingExternalReload = false
         forcedSeed = false
+        conflictHoldArmed = false
         seedSeq++
       },
       focusEditor: () => {
@@ -546,6 +555,13 @@
   let conflictLatchInherited = $state(false)
   let conflictLatchWasActive = false
   let conflictLatchKey = ''
+  // Self-armed conflict-grade reload hold (#1005): forceExternalReload with
+  // conflictHold: true declares this surface's buffer discardable (keep_theirs
+  // / cross-surface resolution). Same contract as the inherited latch —
+  // read-only with a notice — but owned here and released only by the armed
+  // reload landing or clearExternalReload({ conflict: true }) (the failed
+  // resolution path); a plain clear must not void it.
+  let conflictHoldArmed = $state(false)
 
   function releaseLatchHold(): void {
     saveRefused = false
@@ -767,11 +783,12 @@
     selection: SourceHistorySelection,
     opts: { coalesce?: boolean } = {}
   ): void {
-    if (conflictLatchInherited) {
-      // Read-only while another surface owns the conflict latch: a save from
-      // here would be refused cross-funnel and the text destroyed on unmount
-      // (#1005). The textarea is readonly for typing; FindBar edits route
-      // through here and must honor the same contract.
+    if (conflictLatchInherited || conflictHoldArmed) {
+      // Read-only while another surface owns the conflict latch, or while a
+      // conflict-grade armed reload holds this buffer (#1005): a save from
+      // here would be refused cross-funnel and the text destroyed on unmount.
+      // The textarea is readonly for typing; FindBar edits route through
+      // here and must honor the same contract.
       return
     }
     buffer = nextValue
@@ -1188,7 +1205,7 @@
       {/if}
     </div>
   </div>
-  {#if editable && conflictLatchInherited}
+  {#if editable && (conflictLatchInherited || conflictHoldArmed)}
     <!-- The non-owning surface under a live conflict: typing here cannot be
          saved (the owning surface's stash is kept cross-funnel), so the
          surface is read-only and says why, instead of accepting text it
@@ -1214,7 +1231,7 @@
         class="source-code source-textarea"
         value={buffer}
         wrap="off"
-        readonly={conflictLatchInherited}
+        readonly={conflictLatchInherited || conflictHoldArmed}
         onbeforeinput={onBeforeInput}
         oninput={onInput}
         onkeydown={onKeyDown}
