@@ -314,7 +314,9 @@ func (a *App) RestorePageVersion(notebook, section, page, versionID string) erro
 			// because trackedPageWrite refreshes the baseline to the restored
 			// bytes and the EventPageExternalReload emit below makes the
 			// editor recapture; the epoch bump only converts IN-FLIGHT saves
-			// (already past their fingerprint check) into reload-and-retry.
+			// (they acquire the lock after the bump, i.e. before their
+			// in-lock epoch/fingerprint checks run) into page_write_stale
+			// reload-and-retry.
 			result, writeErr = a.writePageMarkdownLocked(filePath, source, safeNotebook, safeSection, safePage, notebook, section, page, contentBytes, restoreBody, historyReasonRestore, false)
 			if writeErr == nil {
 				a.bumpPageWriteEpoch(safeNotebook, safeSection, safePage)
