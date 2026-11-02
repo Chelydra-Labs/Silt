@@ -117,6 +117,9 @@ func (a *App) ResolveExternalConflict(notebook, section, page, resolution string
 			if resolution == conflictResolutionKeepTheirs {
 				theirsSettled = true
 				resolveErr = a.settleTheirsOnOriginalLocked(filePath, source, safeNotebook, safeSection, safePage)
+				if resolveErr == nil {
+					a.bumpPageWriteEpoch(safeNotebook, safeSection, safePage)
+				}
 				return
 			}
 			noStash = true
@@ -130,7 +133,17 @@ func (a *App) ResolveExternalConflict(notebook, section, page, resolution string
 			// its partial writes). Only-if-absent: a newer refusal must
 			// never be clobbered by this older buffer.
 			a.restoreRefusedWriteIfAbsent(key, rw)
+			return
 		}
+		// Same conversion restore got (app_page_history.go): the settle
+		// refreshed the baseline to the settled bytes, so a pre-resolution
+		// in-flight save that acquires this lock afterwards would pass both
+		// gates and write its stale buffer over the outcome — for keep_theirs
+		// that erases the chosen external version on its only path. The bump
+		// converts those saves to page_write_stale reload-and-retry; a save
+		// starting after the bump snapshots the new epoch and passes
+		// legitimately.
+		a.bumpPageWriteEpoch(safeNotebook, safeSection, safePage)
 	})
 	if noStash {
 		return "", wrapSentinelAsIPCError(CodeExternalEditConflict,

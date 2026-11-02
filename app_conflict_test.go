@@ -471,6 +471,56 @@ func TestResolveExternalConflict_RejectsUnknownResolution(t *testing.T) {
 	}
 }
 
+// TestResolveExternalConflict_InFlightSaveAbortedAfterResolve pins the
+// resolve-side conversion restore already has (#1005): an editor autosave
+// dispatched before the user clicked a resolution, whose backend handler
+// acquires LockFileWrite only after the resolve settles, must convert to
+// page_write_stale — never write its pre-resolution buffer over the settled
+// outcome. Without the epoch bump the racing save snapshots the unchanged
+// epoch, the settle has already refreshed the baseline to the settled bytes,
+// and BOTH gates pass: for keep_theirs the chosen external version is
+// overwritten on its only path.
+func TestResolveExternalConflict_InFlightSaveAbortedAfterResolve(t *testing.T) {
+	app := newTestApp(t)
+	notebook, section, page := "RaceKT", "", "RaceKT"
+	blockID := "cccccc5c-cccc-4ccc-8ccc-cccccccccccc"
+	blocks := seedConflictPage(t, app, notebook, section, page, blockID, "my original")
+	filePath := conflictPagePath(app, notebook, section, page)
+
+	if _, err := app.FetchPageBlocks(notebook, section, page); err != nil {
+		t.Fatalf("FetchPageBlocks: %v", err)
+	}
+	external := "---\nnotebook: \"RaceKT\"\npage: \"RaceKT\"\ntags: []\n---\nexternal wins\n"
+	if err := os.WriteFile(filePath, []byte(external), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	requireConflict(t, app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "my refused edit")))
+
+	// The resolve runs while the racing save sits between its epoch snapshot
+	// and LockFileWrite — it pops the stash and settles theirs first.
+	afterPageWriteEpochSnapshot = func() {
+		if _, rerr := app.ResolveExternalConflict(notebook, section, page, "keep_theirs"); rerr != nil {
+			t.Errorf("resolve during in-flight save: %v", rerr)
+		}
+	}
+	t.Cleanup(func() { afterPageWriteEpochSnapshot = nil })
+
+	err := app.SaveFileBlocks(notebook, section, page,
+		editBlocks(blocks, blockID, "stale in-flight buffer"))
+	var ipc *IPCError
+	if !errors.As(err, &ipc) || ipc.Code != CodePageWriteStale {
+		t.Fatalf("in-flight save after resolve must convert to page_write_stale, got: %v", err)
+	}
+	got, _ := os.ReadFile(filePath)
+	if strings.Contains(string(got), "stale in-flight buffer") {
+		t.Fatalf("stale buffer committed over the resolution outcome:\n%s", got)
+	}
+	if !strings.Contains(string(got), "external wins") {
+		t.Fatalf("keep_theirs winner missing from disk:\n%s", got)
+	}
+}
+
 // Racily-clean regression (#1005): a same-size external rewrite written
 // moments after the baseline capture cannot be distinguished from the baseline
 // by stat alone on coarse-timestamp filesystems (FAT/SMB 1–2s, ext3/tmpfs
