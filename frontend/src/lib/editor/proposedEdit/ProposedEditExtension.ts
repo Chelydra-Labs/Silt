@@ -438,7 +438,12 @@ export const ProposedEdit = Extension.create({
         },
       acceptProposedEdit:
         (): Command =>
-        ({ state, dispatch }) => {
+        ({ editor, state, dispatch }) => {
+          // Choke point for every accept caller (widget button, Ctrl+Enter
+          // keymap, the AI drawer handle): a conflict-held editor is
+          // non-editable and the accepted rewrite must not mutate the held
+          // buffer (#1005).
+          if (!editor.isEditable) return false
           const st = key.getState(state)
           if (!st?.proposal) return false
           const { from, to, markdown, onAccept, fileDate } = st.proposal

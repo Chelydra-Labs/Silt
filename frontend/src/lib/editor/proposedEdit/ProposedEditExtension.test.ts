@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import {
@@ -140,6 +140,35 @@ describe('ProposedEdit extension (#543)', () => {
     ed.commands.acceptProposedEdit()
     expect(hasProposedEdit(ed)).toBe(false)
     expect(ed.getText()).toBe('Hi world')
+  })
+
+  // #1005: a conflict-held editor is non-editable, yet the widget's Accept
+  // button stays clickable (stopEvent + contenteditable=false wrapper). The
+  // command is the one choke point shared by the widget button, the
+  // Ctrl+Enter keymap, and the AI drawer handle — it must refuse there so no
+  // caller can mutate the held buffer.
+  it('accept is refused while the editor is non-editable (conflict hold)', () => {
+    const ed = track(makeEditor())
+    const onAccept = vi.fn()
+    ed.commands.setProposedEdit({ from: 1, to: 6, markdown: 'Hi', onAccept })
+    const before = ed.getJSON()
+    ed.setEditable(false)
+
+    // Command path: refused, nothing applied, proposal preserved.
+    expect(ed.commands.acceptProposedEdit()).toBe(false)
+    expect(ed.getJSON()).toEqual(before)
+    expect(hasProposedEdit(ed)).toBe(true)
+
+    // Widget path (the found trigger): the button still renders and clicks
+    // through to the same command — doc must stay untouched.
+    const acceptBtn = ed.view.dom.querySelector<HTMLButtonElement>(
+      '.silt-proposed-edit-accept'
+    )
+    expect(acceptBtn).toBeTruthy()
+    acceptBtn!.click()
+    expect(ed.getJSON()).toEqual(before)
+    expect(hasProposedEdit(ed)).toBe(true)
+    expect(onAccept).not.toHaveBeenCalled()
   })
 
   it('accept preserves inline markdown marks (bold)', () => {
