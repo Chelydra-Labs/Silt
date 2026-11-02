@@ -15,6 +15,7 @@
   import { FocusLockManager } from '../lib/editor/useFocusLock'
   import { BlockIndentOnDrop } from '../lib/editor/dragIndentDrop'
   import { gateBubbleCoords } from '../lib/editor/selectionBubbleGate'
+  import { resetUndoHistory } from '../lib/editor/historyReset'
   import { SiltInlineDragHandle } from '../lib/editor/siltInlineDragHandle'
   import { PlainPaste } from '../lib/editor/plainPaste'
   import { Search } from '../lib/editor/search/searchExtension'
@@ -783,6 +784,12 @@
       emitUpdate: false
     })
     suppressUpdate = false
+    // The replacement is a history boundary (source-viewer parity):
+    // setContent is an ordinary undoable replace, so one undo would
+    // resurrect the pre-replacement buffer — after keep_theirs that is the
+    // refused-era doc, and its undo-driven autosave would clobber the
+    // version the user chose to keep (#1005).
+    resetUndoHistory(editorInstance)
     // Reset save state — new content loaded, nothing is dirty (#167).
     autosave.markClean()
     if (reloading) {

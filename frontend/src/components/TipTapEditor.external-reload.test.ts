@@ -483,4 +483,55 @@ describe('TipTapEditor same-ID external reload', () => {
     })
     view.unmount()
   })
+
+  // #1005 history boundary: the armed reload (keep_theirs settle) must reset
+  // the undo history — TipTap's setContent is an undoable replace, so one
+  // Ctrl+Z would resurrect the refused-era buffer and its undo-driven
+  // autosave would clobber the kept version on the re-baselined page.
+  it('armed reload is a history boundary: undo cannot resurrect the refused buffer', async () => {
+    // Earlier tests in this file override the resolve mock with deferred
+    // promises; vi.clearAllMocks does not restore implementations, so pin it.
+    mocks.resolveExternalConflict.mockResolvedValue(
+      'Journal-2026-06-22.conflict-20260622-090000'
+    )
+    const first = [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'my text' })]
+    const view = render(TipTapEditor, {
+      props: {
+        notebook: 'Work',
+        section: 'Journal',
+        page: 'Daily',
+        blocks: first,
+        onUpdate: () => {}
+      }
+    })
+    await waitFor(() => {
+      expect(view.container.querySelector('.ProseMirror')).toBeTruthy()
+    })
+    const pmEl = view.container.querySelector('.ProseMirror') as HTMLElement
+    await fireEvent.focus(pmEl)
+    const editor = getActiveEditor()
+    expect(editor).toBeTruthy()
+    // Refused-era typing: one undo step away from resurrection after the
+    // reload if the boundary is missing.
+    editor!.commands.insertContent('refused-era typing')
+
+    const handle = getEditor(editorKey('Work', 'Journal', 'Daily'))
+    await handle!.resolveExternalConflict!('keep_theirs')
+    await view.rerender({
+      notebook: 'Work',
+      section: 'Journal',
+      page: 'Daily',
+      blocks: [mkBlock('NOTE', { id: STABLE_ID, clean_text: 'their text' })],
+      onUpdate: () => {}
+    })
+    await waitFor(() => {
+      expect(pmText(view.container)).toContain('their text')
+    })
+
+    expect(editor!.can().undo()).toBe(false)
+    // Belt-and-braces: even a forced undo command must not bring the text back.
+    editor!.commands.undo()
+    expect(pmText(view.container)).not.toContain('refused-era typing')
+    view.unmount()
+  })
 })
