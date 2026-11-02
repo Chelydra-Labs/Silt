@@ -19,6 +19,19 @@ describe('useKatex with the installed KaTeX renderer', () => {
     )
   })
 
+  it('renders an escaped percent in block mode as valid KaTeX', async () => {
+    const result = await renderKatex(String.raw`\text{100\% complete}`, true)
+
+    expect(result.error).toBeNull()
+    const output = document.createElement('div')
+    output.innerHTML = result.html
+    expect(output.querySelector('.katex-display')).not.toBeNull()
+    expect(output.querySelector('.katex-error')).toBeNull()
+    expect(output.textContent?.replace(/\u00a0/g, ' ')).toContain(
+      '100% complete'
+    )
+  })
+
   it('preserves KaTeX error markup for a raw percent that comments out the closing brace', async () => {
     const result = await renderKatex(String.raw`\text{100% complete}`, false)
 
@@ -36,6 +49,21 @@ describe('useKatex with the installed KaTeX renderer', () => {
 
     expect(result.error).toBeNull()
     expect(result.html).toContain('katex')
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('No character metrics')
+    )
+  })
+
+  it('warns about an unavailable glyph metric in block mode without throwing', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const result = await renderKatex('🧌', true)
+
+    expect(result.error).toBeNull()
+    const output = document.createElement('div')
+    output.innerHTML = result.html
+    expect(output.querySelector('.katex-display')).not.toBeNull()
+    expect(output.querySelector('.katex-error')).toBeNull()
     expect(warning).toHaveBeenCalledWith(
       expect.stringContaining('No character metrics')
     )

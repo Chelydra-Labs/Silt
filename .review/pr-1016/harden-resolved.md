@@ -1,1 +1,0 @@
-- Actual renderer edge cases verified against installed KaTeX (frontend/src/lib/editor/useKatex.integration.test.ts:4) — fixed in 06db3911
