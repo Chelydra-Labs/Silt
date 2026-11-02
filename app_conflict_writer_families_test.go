@@ -714,7 +714,10 @@ func TestMigrateConflictStateAcrossRename_OrphanedTargetStashIsDropped(t *testin
 // the file's state could not be verified (stat ok / read failure — here a
 // directory squatting on the page path) must not mint a refused-write stash:
 // a transient error would otherwise phantom-hold the page behind a manual
-// resolution that outlives the error (#1005).
+// resolution that outlives the error (#1005). BOTH production stash funnels
+// are driven through the same scenario — the policy lives in the blocks
+// funnel and the markdown (Source mode) funnel alike; the latter regressed
+// first because the exclusion was applied to only one gate branch.
 func TestUnverifiedConflictRefusal_DoesNotStash(t *testing.T) {
 	app := newTestApp(t)
 	notebook, section := "UnverifiedNB", ""
@@ -744,6 +747,17 @@ func TestUnverifiedConflictRefusal_DoesNotStash(t *testing.T) {
 		t.Fatalf("read-failure refusal must carry the unverified marker, got %v", err)
 	}
 	if app.refusedWritePending(core.NormalizeFileLockPath(filePath)) {
-		t.Fatal("an unverifiable conflict must not mint a refused-write stash")
+		t.Fatal("an unverifiable conflict must not mint a refused-write stash (blocks funnel)")
+	}
+
+	// Same scenario through the markdown (Source mode) funnel: the refusal
+	// must stay unverified and stash-free there too.
+	_, err = app.SavePageMarkdown(notebook, section, page, "source-mode edit\n")
+	requireConflict(t, err)
+	if !errors.Is(err, errExternalEditUnverified) {
+		t.Fatalf("markdown-funnel read-failure refusal must carry the unverified marker, got %v", err)
+	}
+	if app.refusedWritePending(core.NormalizeFileLockPath(filePath)) {
+		t.Fatal("an unverifiable conflict must not mint a refused-write stash (markdown funnel)")
 	}
 }

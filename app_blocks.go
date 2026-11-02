@@ -1055,9 +1055,13 @@ func (a *App) SavePageMarkdown(notebook, section, page, markdown string) ([]pars
 				return
 			}
 			// Editor-derived whole-page save (Source mode): same external-edit
-			// refusal as the blocks funnel (#1005).
+			// refusal as the blocks funnel (#1005) — including the
+			// no-sticky-stash policy for unverified refusals: a transient
+			// stat/read error must not mint a manually-resolvable stash that
+			// outlives the error (mirrors the blocks funnel above).
 			if err := a.checkExternalEditConflict(filePath); err != nil {
-				if isExternalEditConflict(err) {
+				if isExternalEditConflict(err) &&
+					!errors.Is(err, errExternalEditUnverified) {
 					a.storeRefusedWrite(core.NormalizeFileLockPath(filePath), refusedPageWrite{
 						source:   source,
 						notebook: safeNotebook,
