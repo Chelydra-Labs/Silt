@@ -144,6 +144,28 @@ func (a *App) PluginApplyBlocks(pluginID, sessionToken string, ops []PluginCreat
 	return a.applyBlocksOps(ops, historyReasonPlugin)
 }
 
+// resolvedBlockOp is one PluginApplyBlocks op resolved to a concrete
+// (source, notebook, section, page) target — plus, for cross-page moves, the
+// block's original location before the target overwrite (kept so the
+// pre-flight stash check and the post-target source rewrite address the same
+// file, and so the first pass can fetch the block's content for insertion
+// into the target).
+type resolvedBlockOp struct {
+	op       PluginCreateBlockOp
+	source   string
+	notebook string
+	section  string
+	page     string
+
+	origSource   string
+	origNotebook string
+	origSection  string
+	origPage     string
+	newID        string
+	blockType    parser.BlockType
+	text         string
+}
+
 // applyBlocksOps is the shared engine for create/delete/move (single + bulk).
 // It groups ops by target page and writes each affected page exactly once.
 // The rendered base is reconstructed from CURRENT disk bytes inside the file
@@ -157,25 +179,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 	defer a.wg.Done()
 
 	// 1. Resolve every op to a concrete (source, notebook, section, page).
-	type resolved struct {
-		op       PluginCreateBlockOp
-		source   string
-		notebook string
-		section  string
-		page     string
-		// For cross-page moves: the block's original location before the
-		// target overwrite. Preserved so the second pass can find/remove it
-		// from the source page, and so the first pass can fetch the block's
-		// content for insertion into the target.
-		origSource   string
-		origNotebook string
-		origSection  string
-		origPage     string
-		newID        string
-		blockType    parser.BlockType
-		text         string
-	}
-	var resolvedOps []resolved
+	var resolvedOps []resolvedBlockOp
 
 	// Resolve block locations for afterID / blockID lookups.
 	locOf := func(id string) (source, nb, sec, pg string, ok bool) {
@@ -199,7 +203,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 	}
 
 	for i, op := range ops {
-		r := resolved{op: op}
+		r := resolvedBlockOp{op: op}
 		switch op.Kind {
 		case "create":
 			r.blockType = parser.BlockType(strings.ToUpper(op.Type))
@@ -260,7 +264,7 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 	}
 
 	// 2. Group by target page (same-page ops coalesce into one write).
-	pagesByKey := map[string][]resolved{}
+	pagesByKey := map[string][]resolvedBlockOp{}
 	for _, r := range resolvedOps {
 		key := fmt.Sprintf("%s|%s/%s/%s", r.source, r.notebook, r.section, r.page)
 		pagesByKey[key] = append(pagesByKey[key], r)
@@ -325,6 +329,31 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 			}
 		}
 		var createdIDs []string
+		// Pre-flight the cross-page moves' SOURCE stash gate before the
+		// target half commits (#1005): a pending refused-write stash on a
+		// source page refuses its rewrite outright (see
+		// removeBlockFromSourcePage), and refusing only AFTER the target
+		// save leaves the block duplicated on both pages — with a retry
+		// degrading to a same-page no-op that reports success while the
+		// stale copy survives. Refusing up front fails the whole op
+		// atomically; the in-lock check remains as the TOCTOU backstop.
+		for _, r := range pageOps {
+			if r.op.Kind != "move" || r.origNotebook == "" {
+				continue
+			}
+			if r.origNotebook == r.notebook &&
+				r.origSection == r.section &&
+				r.origPage == r.page {
+				continue
+			}
+			origPath, sn, ss, sp, err := a.crossPageMoveSourcePath(r)
+			if err != nil {
+				return err
+			}
+			if err := a.externalEditStashRefusalKey(core.NormalizeFileLockPath(origPath), origPath); err != nil {
+				return fmt.Errorf("cross-page move: save source %s/%s/%s: %w", sn, ss, sp, err)
+			}
+		}
 		// applyPageOps re-applies the page's ops to a block base: once to
 		// the DB snapshot (lock/validation input for the save) and again,
 		// inside LockFileWrite, to the CURRENT disk bytes — the base that
@@ -387,19 +416,9 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 				(r.origNotebook != r.notebook ||
 					r.origSection != r.section ||
 					r.origPage != r.page) {
-				sn := sanitizePathSegment(r.origNotebook)
-				ss, secErr := validateSectionPath(r.origSection, true)
-				if secErr != nil {
-					return fmt.Errorf("cross-page move: invalid source section: %w", secErr)
-				}
-				sp := sanitizePathSegment(r.origPage)
-				origDir, dirErr := a.resolveNotebookDir(sn, r.origSource)
-				if dirErr != nil {
-					return fmt.Errorf("cross-page move: resolve source dir %s: %w", sn, dirErr)
-				}
-				origPath := filepath.Join(origDir, ss, sp+".md")
-				if !isPathWithinRoot(origPath, origDir) {
-					return fmt.Errorf("cross-page move: source path escapes notebook root")
+				origPath, sn, ss, sp, err := a.crossPageMoveSourcePath(r)
+				if err != nil {
+					return err
 				}
 				// Remove the moved block from the source page. We do a TARGETED
 				// delete (DELETE WHERE id = ?) instead of re-indexing the whole
@@ -432,6 +451,29 @@ func (a *App) applyBlocksOps(ops []PluginCreateBlockOp, reason string) error {
 	}
 
 	return nil
+}
+
+// crossPageMoveSourcePath resolves a cross-page move's source page to its
+// file path plus sanitized locator. Shared by the pre-flight stash check and
+// the post-target source rewrite so the two can never disagree about which
+// file a move's source half addresses.
+func (a *App) crossPageMoveSourcePath(r resolvedBlockOp) (origPath, sn, ss, sp string, err error) {
+	sn = sanitizePathSegment(r.origNotebook)
+	var secErr error
+	ss, secErr = validateSectionPath(r.origSection, true)
+	if secErr != nil {
+		return "", "", "", "", fmt.Errorf("cross-page move: invalid source section: %w", secErr)
+	}
+	sp = sanitizePathSegment(r.origPage)
+	origDir, dirErr := a.resolveNotebookDir(sn, r.origSource)
+	if dirErr != nil {
+		return "", "", "", "", fmt.Errorf("cross-page move: resolve source dir %s: %w", sn, dirErr)
+	}
+	origPath = filepath.Join(origDir, ss, sp+".md")
+	if !isPathWithinRoot(origPath, origDir) {
+		return "", "", "", "", fmt.Errorf("cross-page move: source path escapes notebook root")
+	}
+	return origPath, sn, ss, sp, nil
 }
 
 // removeBlockFromSourcePage removes a single block from the source page FILE

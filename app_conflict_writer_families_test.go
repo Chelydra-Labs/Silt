@@ -226,6 +226,16 @@ func TestPluginCrossPageMove_RefusesWhileStashPendingOnSource(t *testing.T) {
 	if string(got) != external {
 		t.Fatalf("refused move still rewrote the source file:\n got: %q\nwant: %q", string(got), external)
 	}
+
+	// The refusal must fire BEFORE the target half commits (#1005): a target
+	// write followed by a source refusal leaves the block duplicated on both
+	// pages, and a retry then degrades to a same-page no-op that reports
+	// success while the stale source copy survives.
+	dstPath := filepath.Join(app.vaultPath, notebook, section, dstPage+".md")
+	dstGot, _ := os.ReadFile(dstPath)
+	if strings.Contains(string(dstGot), "moved block") {
+		t.Fatalf("refused cross-page move still committed the target half, got %q", string(dstGot))
+	}
 }
 
 // TestPluginCrossPageMove_SourceRewriteAnchorsOnDiskBytes pins the RMW anchor
