@@ -180,14 +180,26 @@
     }
     editor.on('selectionUpdate', bump)
     editor.on('transaction', bump)
+    // 'update' also fires on setEditable — that is how the conflict hold
+    // (#1005) re-evaluates the disabled state: a non-editable editor must
+    // show every format affordance disabled, not just refuse the dispatch.
+    editor.on('update', bump)
     return () => {
       editor.off('selectionUpdate', bump)
       editor.off('transaction', bump)
+      editor.off('update', bump)
     }
   })
 
-  function canToggleMark(mark: string): boolean {
+  /** Format affordances refuse a conflict-held (non-editable) editor: the
+   *  command would render, then the armed reload destroys it (#1005). */
+  function formatBlocked(): boolean {
     void selTick
+    return !editor || !editor.isEditable
+  }
+
+  function canToggleMark(mark: string): boolean {
+    if (formatBlocked()) return false
     if (!editor) return false
     try {
       const can = editor.can() as {
@@ -208,6 +220,7 @@
 
   function canLink(): boolean {
     void selTick
+    if (formatBlocked()) return false
     if (!editor) return false
     if (editor.isActive('link')) return true
     return !editor.state.selection.empty
@@ -224,11 +237,13 @@
   }
 
   function handleClear(): void {
+    if (formatBlocked()) return
     if (!editor) return
     editor.chain().focus().unsetAllMarks().run()
   }
 
   function handleAlign(align: string): void {
+    if (formatBlocked()) return
     if (!editor) return
     window.dispatchEvent(
       new CustomEvent('silt:set-block-align', { detail: align })
@@ -402,6 +417,7 @@
 
   function canToggleList(): boolean {
     void selTick
+    if (formatBlocked()) return false
     if (!editor || editor.isDestroyed) return false
     try {
       if (

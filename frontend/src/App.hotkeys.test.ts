@@ -586,6 +586,8 @@ describe('global hotkey dispatch table (golden master)', () => {
     spies.boldRun.mockReset()
     const editor = {
       isDestroyed: false,
+      // Editable (no conflict hold) so the format chain is allowed (#1005).
+      isEditable: true,
       view: { dom },
       chain: spies.boldChain
     }

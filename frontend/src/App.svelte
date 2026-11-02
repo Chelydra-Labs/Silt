@@ -510,6 +510,11 @@
     applyFormatBold: () => {
       const editor = getActiveEditor() ?? getLastActiveEditor()
       if (!editor || editor.isDestroyed) return
+      // A conflict-held editor is non-editable (#1005): commands still
+      // dispatch (TipTap does not gate them on isEditable), the mutation
+      // would render, then the armed reload destroys it — a visibly applied
+      // edit silently lost. Refuse instead.
+      if (!editor.isEditable) return
       const dom = editor.view?.dom as HTMLElement | null
       const isAnyDialogOpen = !!document.activeElement?.closest(
         'dialog, [role="dialog"]'
