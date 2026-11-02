@@ -502,6 +502,16 @@ describe('VirtualScrollContainer editor chrome', () => {
     )
     // Actions stay offered for a retry.
     expect(screen.getByRole('button', { name: 'Keep my changes' })).toBeTruthy()
+    // The failure must not dump keyboard focus to <body>: busy disabled the
+    // clicked button, so the catch path returns focus to the banner's first
+    // re-enabled action (#1005 a11y, parity with the success path).
+    await waitFor(() => {
+      const active = document.activeElement as HTMLElement | null
+      expect(
+        active?.closest('[data-testid="save-conflict-banner"]')
+      ).toBeTruthy()
+      expect(active?.tagName).toBe('BUTTON')
+    })
   })
 
   // D1 regression: the banner is latched in VSC (like MSV's saveRefused), so

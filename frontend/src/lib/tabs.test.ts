@@ -301,6 +301,32 @@ describe('openPage — preview/pin state machine', () => {
       expect(result.activeId).toBe(opened.id)
     })
 
+    it('slot reuse prefers the most-recently-used non-busy preview so beside-opens converge back to one slot', () => {
+      // After a busy-skip beside-open there are two preview slots; the
+      // module contract says the SAME slot is reused. Reusing the first in
+      // array order pinned the older slot for the session — MRU reuse lets
+      // the beside-opened (newest) slot carry the next open so the stale
+      // one LRU-evicts instead of squatting on capacity.
+      const stalePreview = mkTab(PAGE_A, {
+        preview: true,
+        lastActivatedAt: 100,
+        id: 'stale-preview'
+      })
+      const freshPreview = mkTab(PAGE_B, {
+        preview: true,
+        lastActivatedAt: 900,
+        id: 'fresh-preview'
+      })
+      const st = state([stalePreview, freshPreview], freshPreview.id)
+      const result = openPage(st, PAGE_C, 'preview')
+      expect(result.tabs).toHaveLength(2)
+      // The FRESH (MRU) slot was retargeted; the stale one is untouched.
+      expect(findTab(result.tabs, PAGE_A)?.id).toBe('stale-preview')
+      const retargeted = result.tabs.find((t) => t.id === 'fresh-preview')!
+      expect(retargeted.page).toBe(PAGE_C.page)
+      expect(result.activeId).toBe('fresh-preview')
+    })
+
     it('pickEvictionVictim never returns a busy tab from either pool', () => {
       const busyPreview = mkTab(PAGE_A, { preview: true, lastActivatedAt: 1 })
       const pinned = mkTab(PAGE_B, { preview: false, lastActivatedAt: 500 })

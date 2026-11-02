@@ -222,6 +222,29 @@ describe('AutosaveManager', () => {
     expect(after).toEqual({ phase: 'idle', dirty: false, error: null })
   })
 
+  it('resolving cancels a queued debounce so a stale refusal cannot re-latch', async () => {
+    const { SaveFileBlocks, ResolveExternalConflict } =
+      await import('$silt-app')
+    vi.mocked(SaveFileBlocks).mockRejectedValueOnce(conflictError())
+    const deps = makeDeps()
+    const autosave = new AutosaveManager(deps)
+
+    autosave.trigger()
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Type again (queues a fresh debounce), then resolve before it fires:
+    // the resolve must drop it, or its later refusal would mint a fresh
+    // stash and re-latch the just-resolved conflict (#1005).
+    autosave.trigger()
+    await autosave.resolveExternalConflict('keep_mine')
+    expect(ResolveExternalConflict).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(150)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(SaveFileBlocks).toHaveBeenCalledTimes(1) // only the original refusal
+  })
+
   it('holds writes for keep_theirs until the reload releases them', async () => {
     const { SaveFileBlocks, ResolveExternalConflict } =
       await import('$silt-app')

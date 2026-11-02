@@ -214,13 +214,23 @@ export function openPage(
   const now = Date.now()
 
   if (mode === 'preview') {
-    // Rule 4: reuse the existing preview slot if one exists (showing a
+    // Rule 4: reuse an existing preview slot if one exists (showing a
     // different page). Replace its content. A conflict-busy preview slot is
     // skipped (#1005): retargeting it mid-resolution unmounts/supersedes a
     // resolving surface — open a fresh tab instead (transiently two preview
-    // slots; the busy one is exempt from eviction until it settles).
-    const existingPreview = state.tabs.find(
-      (t) => t.preview && !busyTabIds?.has(t.id)
+    // slots; the busy one is exempt from eviction until it settles). The
+    // MOST-RECENTLY-ACTIVATED non-busy preview wins: beside-opens leave a
+    // second slot behind, and reusing the first-in-array one would pin it
+    // for the session, violating the module contract that a single preview
+    // slot is reused — MRU converges back to one slot as the older previews
+    // evict LRU.
+    const existingPreview = state.tabs.reduce<TabEntry | undefined>(
+      (best, t) => {
+        if (!t.preview || busyTabIds?.has(t.id)) return best
+        if (!best || t.lastActivatedAt > best.lastActivatedAt) return t
+        return best
+      },
+      undefined
     )
     if (existingPreview) {
       const tabs = state.tabs.map((t) =>

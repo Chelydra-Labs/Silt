@@ -403,6 +403,12 @@ export class AutosaveManager {
   async resolveExternalConflict(
     resolution: ExternalConflictResolution
   ): Promise<string> {
+    // Invalidate any queued debounce / in-flight save first (#1005): a save
+    // completing after the stash was popped re-stashes and re-latches a
+    // just-resolved conflict (a phantom second banner). The generation bump
+    // drops its result; the backend write itself lands on the settled state
+    // or refuses on its own gates.
+    this.cancelPending()
     if (resolution === 'keep_theirs') {
       // Conflict-grade hold BEFORE the IPC: the backend's block:changed
       // triggers a reload that must not race a stale debounce firing

@@ -165,6 +165,23 @@
   let conflictOriginKey = ''
   let conflictBusy = $state(false)
   let conflictError = $state<string | null>(null)
+  // Set by a failed resolution: return focus to the banner's first action
+  // once the busy flag re-enables them (#1005 a11y — see the effect below).
+  let conflictFocusRestore = $state(false)
+
+  // A failed resolution disables the clicked banner button for the IPC
+  // window, and the browser drops focus to <body> exactly when the error
+  // needs attention. Once the actions re-enable, put focus back on the
+  // first one — the same "don't strand keyboard users" contract the success
+  // path's focus return upholds.
+  $effect(() => {
+    if (!conflictFocusRestore || conflictBusy) return
+    conflictFocusRestore = false
+    const firstAction = containerEl?.querySelector<HTMLButtonElement>(
+      '[data-testid="save-conflict-banner"] button:not([disabled])'
+    )
+    firstAction?.focus()
+  })
   /** Polite success announcement naming the created conflict copy (#1005). */
   let conflictAnnouncement = $state('')
   // THIS container's mounted surface handle, reported by the surface on
@@ -297,6 +314,12 @@
       }
     } catch (e) {
       conflictError = e instanceof Error ? e.message : String(e)
+      // The failed resolution must not dump keyboard focus (#1005 a11y):
+      // `busy` disabled the clicked button (the browser moves focus to
+      // <body>) and the banner stays mounted offering the actions. The
+      // actual refocus waits for the busy flag to release (see the effect
+      // below) — the actions are still disabled inside this catch.
+      conflictFocusRestore = true
     } finally {
       conflictBusy = false
     }
