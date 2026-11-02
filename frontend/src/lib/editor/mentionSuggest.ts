@@ -160,6 +160,10 @@ function textOffsetToDocPos(
 // owner via an inline `[owner:: name]` token (single transaction = one undo).
 // Returns false (and changes nothing) when no context is active.
 export function applyMentionSuggestion(editor: Editor, name: string): boolean {
+  // Conflict-held editor (#1005): suggestions dispatch through
+  // view.dispatch, which isEditable never gates.
+  if (!editor.isEditable) return false
+
   const ctx = getMentionContext(editor.state)
   if (!ctx) return false
   const mentionType = editor.schema.nodes.mentionNode

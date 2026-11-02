@@ -895,6 +895,9 @@
       },
       acceptProposedEdit: () => {
         if (!editorInstance || editorInstance.isDestroyed) return false
+        // A conflict-held editor is non-editable (#1005): applying the
+        // proposal would render into the buffer the armed reload destroys.
+        if (!editorInstance.isEditable) return false
         return editorInstance.commands.acceptProposedEdit()
       },
       verifySelectionText: (from: number, to: number, expected: string) => {

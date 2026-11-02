@@ -11,11 +11,13 @@ import { createSlashMenuHarness } from './useSlashMenuHarness.svelte'
 import { ASSIGN_PAGE_TYPE_EVENT } from '../../shell/pageTypeEvents'
 
 // Minimal editor stub: handleSlashSelect('type') only touches isDestroyed,
-// state.selection.$from (start/parentOffset), and commands.deleteRange before
-// dispatching the event — no live TipTap editor is needed to reach that branch.
+// isEditable (#1005 conflict-hold gate), state.selection.$from
+// (start/parentOffset), and commands.deleteRange before dispatching the
+// event — no live TipTap editor is needed to reach that branch.
 function makeStubEditor(): unknown {
   return {
     isDestroyed: false,
+    isEditable: true,
     state: {
       selection: {
         $from: { start: () => 1, parentOffset: 0 }

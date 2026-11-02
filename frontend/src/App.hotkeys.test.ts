@@ -384,6 +384,35 @@ describe('global hotkey dispatch table (golden master)', () => {
     await waitFor(() => expect(spies.toggleDateGlance).toHaveBeenCalledTimes(1))
   })
 
+  // #1005: a conflict-held editor is setEditable(false) — the glance may open
+  // (copy mode), but a held editor must never become its insert target.
+  it('opens the date glance without an insert target while the editor is conflict-held', async () => {
+    const dom = document.createElement('div')
+    document.body.appendChild(dom)
+    Object.defineProperty(dom, 'offsetParent', {
+      configurable: true,
+      value: document.body
+    })
+    const heldEditor = {
+      isDestroyed: false,
+      isEditable: false,
+      view: { dom },
+      chain: vi.fn()
+    }
+    spies.getActiveEditor.mockReturnValue(heldEditor as never)
+
+    bindings.IsVaultInitialized.mockResolvedValue(true)
+    await mountApp()
+    press(C.open_date_glance)
+    await waitFor(() =>
+      expect(spies.toggleDateGlance).toHaveBeenCalledWith(null)
+    )
+
+    document.body.removeChild(dom)
+    spies.getActiveEditor.mockReset()
+    spies.getActiveEditor.mockReturnValue(null as never)
+  })
+
   // --- view/navigation actions (observe via DOM state) ---
   // These assert on activity-bar / sidebar affordances that only render in the
   // main shell, so the vault must report as initialized.

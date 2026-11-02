@@ -68,6 +68,12 @@
       menuOpen = false
       return
     }
+    // A conflict-held editor is non-editable (#1005): the attribute update
+    // would render and the armed reload would destroy it.
+    if (editor && !editor.isEditable) {
+      menuOpen = false
+      return
+    }
     // Prefer updateAttributes from the NodeView host; fall back to commands.
     if (typeof updateAttributes === 'function') {
       updateAttributes({ variant: next })

@@ -29,6 +29,26 @@
 
   let menuOpen = $state(false)
 
+  // Conflict-hold tick (#1005): a conflict-held editor is setEditable(false),
+  // and color marks must not dispatch against the buffer the armed reload
+  // will replace. 'update' fires on setEditable, keeping the disabled
+  // trigger honest.
+  let editableTick = $state(0)
+  $effect(() => {
+    if (!editor) return
+    const bump = (): void => {
+      editableTick++
+    }
+    editor.on('update', bump)
+    return () => {
+      editor.off('update', bump)
+    }
+  })
+  let formatBlocked = $derived.by(() => {
+    void editableTick
+    return !editor || !editor.isEditable
+  })
+
   $effect(() => {
     onMenuOpenChange?.(menuOpen)
   })
@@ -59,7 +79,7 @@
   })
 
   function applyColor(entry: ColorEntry): void {
-    if (!editor) return
+    if (!editor || formatBlocked) return
     const hex = resolveColor(entry, isDark)
     editor.chain().focus().setMark(markType, { color: hex }).run()
     menuOpen = false
@@ -67,14 +87,14 @@
 
   function applyCustom(event: Event): void {
     const input = event.target as HTMLInputElement
-    if (input.value && editor) {
+    if (input.value && editor && !formatBlocked) {
       editor.chain().focus().setMark(markType, { color: input.value }).run()
     }
     menuOpen = false
   }
 
   function removeColor(): void {
-    if (!editor) return
+    if (!editor || formatBlocked) return
     editor.chain().focus().unsetMark(markType).run()
     menuOpen = false
   }
@@ -108,6 +128,7 @@
     title={triggerLabel}
     data-tb
     tabindex={toolbarTabIndex}
+    disabled={formatBlocked}
     onclick={() => (menuOpen = !menuOpen)}
     onfocus={() => onToolbarFocus?.()}
   >
@@ -195,6 +216,11 @@
     transition:
       background 0.1s,
       color 0.1s;
+  }
+
+  .color-trigger:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 
   .color-trigger:hover {

@@ -153,3 +153,19 @@ describe('applyBlockRefSuggestion', () => {
     editor.destroy()
   })
 })
+
+// #1005: a conflict-held editor is setEditable(false) — suggestions dispatch
+// through view.dispatch, which isEditable never gates, so the apply helper
+// must refuse instead of rendering an edit the armed reload destroys.
+describe('applyBlockRefSuggestion conflict hold (#1005)', () => {
+  it('refuses to dispatch on a non-editable editor', () => {
+    const editor = makeEditor()
+    editor.commands.setContent(noteDoc('See ((design notes'))
+    editor.commands.setTextSelection(19)
+    editor.setEditable(false)
+    const dispatch = vi.spyOn(editor.view, 'dispatch')
+
+    expect(applyBlockRefSuggestion(editor, 'block-123')).toBe(false)
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+})

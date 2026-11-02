@@ -138,6 +138,8 @@
     icon: string
     run: () => void
   }
+  // Insert affordances dispatch directly (no event-bus receiver that already
+  // checks isEditable), so each run() refuses a conflict-held editor itself.
   const INSERT_BUTTONS: InsertButton[] = [
     {
       id: 'quote',
@@ -170,6 +172,12 @@
       run: () => editor && insertTable(editor, 3, 3)
     }
   ]
+
+  /** Every Insert item needs only a live editor — the dispatch-level
+   *  isEditable refusal lives in canInsert(). */
+  function canInsert(): boolean {
+    return !formatBlocked()
+  }
 
   // Tick so can() / align reflect the live selection.
   let selTick = $state(0)
@@ -696,6 +704,7 @@
               role="menuitemradio"
               aria-checked={currentAlign() === btn.id}
               aria-label={btn.label}
+              disabled={formatBlocked()}
               title={hk(btn.hotkey)
                 ? `${btn.label} (${hk(btn.hotkey)})`
                 : btn.label}
@@ -744,7 +753,9 @@
               class="menu-item"
               role="menuitem"
               aria-label={btn.label}
+              disabled={!canInsert()}
               onclick={() => {
+                if (!canInsert()) return
                 btn.run()
                 insertOpen = false
               }}
@@ -791,6 +802,7 @@
       aria-label="Clear formatting"
       data-tb
       data-clear
+      disabled={formatBlocked()}
       tabindex={rovingIdx === clearIdx ? 0 : -1}
       onclick={handleClear}
       onfocus={() => onTbFocus(clearIdx)}

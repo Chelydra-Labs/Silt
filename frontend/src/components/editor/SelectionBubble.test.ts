@@ -36,6 +36,11 @@ function makeEditor(
     focus: () => ({ toggleMark, unsetLink, run })
   }))
   return {
+    // Editable by default; the #1005 conflict-hold cases flip it to false.
+    isDestroyed: false,
+    isEditable: true,
+    on: vi.fn(),
+    off: vi.fn(),
     isActive: vi.fn((mark: string) =>
       mark === 'link' ? !!opts.linkActive : false
     ),
@@ -85,7 +90,7 @@ describe('SelectionBubble', () => {
   it('renders when selection is non-empty with coords', () => {
     const { container } = render(SelectionBubble, {
       props: {
-        editor: null,
+        editor: makeEditor() as never,
         activeMarks: new Set<string>(),
         selectionEmpty: false,
         selectionCoords: coords
@@ -99,7 +104,7 @@ describe('SelectionBubble', () => {
       SelectionBubble,
       {
         props: {
-          editor: null,
+          editor: makeEditor() as never,
           activeMarks: new Set<string>(),
           selectionEmpty: false,
           selectionCoords: coords,
@@ -128,7 +133,7 @@ describe('SelectionBubble', () => {
   it('hides color pickers when colorEnabled is false', () => {
     const { queryByLabelText } = render(SelectionBubble, {
       props: {
-        editor: null,
+        editor: makeEditor() as never,
         activeMarks: new Set<string>(),
         selectionEmpty: false,
         selectionCoords: coords,
@@ -143,7 +148,7 @@ describe('SelectionBubble', () => {
   it('uses toolbar + aria-pressed toggle semantics', () => {
     const { getByRole, getByLabelText } = render(SelectionBubble, {
       props: {
-        editor: null,
+        editor: makeEditor() as never,
         activeMarks: new Set<string>(['bold']),
         selectionEmpty: false,
         selectionCoords: coords
@@ -157,7 +162,7 @@ describe('SelectionBubble', () => {
   it('uses bubble-btn hit targets sized for touch (≥32×32 in CSS)', () => {
     const { getByLabelText } = render(SelectionBubble, {
       props: {
-        editor: null,
+        editor: makeEditor() as never,
         activeMarks: new Set<string>(),
         selectionEmpty: false,
         selectionCoords: coords
@@ -175,7 +180,7 @@ describe('SelectionBubble', () => {
   it('positions via flipOrClamp above the selection so text stays visible', async () => {
     const { container } = render(SelectionBubble, {
       props: {
-        editor: null,
+        editor: makeEditor() as never,
         activeMarks: new Set<string>(),
         selectionEmpty: false,
         selectionCoords: coords
@@ -194,7 +199,7 @@ describe('SelectionBubble', () => {
     vi.useFakeTimers()
     const { container } = render(SelectionBubble, {
       props: {
-        editor: null,
+        editor: makeEditor() as never,
         activeMarks: new Set<string>(),
         selectionEmpty: false,
         selectionCoords: coords
@@ -214,7 +219,7 @@ describe('SelectionBubble', () => {
   it('dismisses on resize until selection changes', async () => {
     const { container } = render(SelectionBubble, {
       props: {
-        editor: null,
+        editor: makeEditor() as never,
         activeMarks: new Set<string>(),
         selectionEmpty: false,
         selectionCoords: coords
@@ -396,6 +401,47 @@ describe('SelectionBubble', () => {
     const toolbar = getByRole('toolbar', { name: 'Format selection' })
     await fireEvent.keyDown(toolbar, { key: 'Escape' })
     expect(queryByLabelText('Edit link')).toBeNull()
+    expect(editor._run).not.toHaveBeenCalled()
+  })
+})
+
+// #1005: a conflict-held editor is setEditable(false) — the bubble must not
+// appear for a read-only surface, and if the hold arms while it is open the
+// mutating affordances must refuse dispatch (TipTap does not gate chain() on
+// isEditable; the armed reload would destroy the rendered edit).
+describe('SelectionBubble conflict hold (#1005)', () => {
+  it('hides the bubble on a non-editable editor', () => {
+    const editor = makeEditor()
+    editor.isEditable = false
+    const { container } = render(SelectionBubble, {
+      props: {
+        editor: editor as never,
+        activeMarks: new Set<string>(),
+        selectionEmpty: false,
+        selectionCoords: coords
+      }
+    })
+    expect(container.querySelector('.selection-bubble')).toBeNull()
+  })
+
+  it('unmounts the open bubble when the hold arms mid-session', async () => {
+    const editor = makeEditor({ linkActive: true })
+    const { container } = render(SelectionBubble, {
+      props: {
+        editor: editor as never,
+        activeMarks: new Set<string>(),
+        selectionEmpty: false,
+        selectionCoords: coords
+      }
+    })
+    expect(container.querySelector('.selection-bubble')).toBeTruthy()
+    // Hold arms while the bubble is open: setEditable fires 'update'.
+    editor.isEditable = false
+    const updateCbs = editor.on.mock.calls as Array<[string, () => void]>
+    for (const [ev, cb] of updateCbs) if (ev === 'update') cb()
+    await tick()
+    // The bubble disappears, so no mark/list/link dispatch can fire at all.
+    expect(container.querySelector('.selection-bubble')).toBeNull()
     expect(editor._run).not.toHaveBeenCalled()
   })
 })

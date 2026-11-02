@@ -111,6 +111,13 @@ export function createPopoversController(deps: PopoversDeps) {
   function applyLinkInput(): void {
     const editorInstance = getEditor()
     if (!editorInstance || editorInstance.isDestroyed) return
+    // A conflict-held surface is non-editable (#1005): setLink would render
+    // into the buffer the armed reload replaces.
+    if (!editorInstance.isEditable) {
+      showLinkInput = false
+      linkInputValue = ''
+      return
+    }
     const url = linkInputValue.trim()
     if (url) {
       // setLink updates an existing mark or applies a new one without toggle
@@ -141,6 +148,8 @@ export function createPopoversController(deps: PopoversDeps) {
     tableSizeCoords = null
     const editorInstance = getEditor()
     if (editorInstance && !editorInstance.isDestroyed) {
+      // Conflict-held surface (#1005): refuse the insert, close the picker.
+      if (!editorInstance.isEditable) return
       insertTable(editorInstance, rows, cols)
     }
   }
@@ -195,6 +204,10 @@ export function createPopoversController(deps: PopoversDeps) {
   function applyColorFromPopover(color: string | null): void {
     const editorInstance = getEditor()
     if (!editorInstance || editorInstance.isDestroyed) return
+    showColorPicker = false
+    // Conflict-held surface (#1005): the mark would render into the buffer
+    // the armed reload replaces.
+    if (!editorInstance.isEditable) return
     if (color && HEX_COLOR_RE.test(color)) {
       editorInstance
         .chain()
@@ -204,7 +217,6 @@ export function createPopoversController(deps: PopoversDeps) {
     } else if (!color) {
       editorInstance.chain().focus().unsetMark(colorPickerMarkType).run()
     }
-    showColorPicker = false
     editorInstance.chain().focus().run()
   }
 
@@ -219,6 +231,8 @@ export function createPopoversController(deps: PopoversDeps) {
     showEmbedPicker = false
     const editorInstance = getEditor()
     if (!editorInstance || editorInstance.isDestroyed) return
+    // Conflict-held surface (#1005): refuse the embed insert.
+    if (!editorInstance.isEditable) return
     editorInstance.commands.insertContent({
       type: 'embedNode',
       attrs: { id: crypto.randomUUID(), uuid: blockId, bullet: '' }

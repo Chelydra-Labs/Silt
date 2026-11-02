@@ -465,7 +465,15 @@
       manuallyCollapsed = collapsed
     },
     toggleShortcutHelp: () => toggleShortcutHelp(),
-    toggleDateGlance: () => toggleDateGlance(getActiveEditor()),
+    toggleDateGlance: () => {
+      // A conflict-held editor is non-editable (#1005, same refusal as
+      // applyFormatBold): the glance still opens, but in copy mode — never
+      // as an insert target for a buffer the armed reload would destroy.
+      const editor = getActiveEditor()
+      toggleDateGlance(
+        editor && !editor.isDestroyed && editor.isEditable ? editor : null
+      )
+    },
     openFind: () => findBarState.openFind(),
     openReplace: () => findBarState.openReplace(),
     cycleView: () => cycleView(),

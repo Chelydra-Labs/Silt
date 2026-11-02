@@ -3,6 +3,28 @@ import { render, fireEvent } from '@testing-library/svelte'
 import { tick } from 'svelte'
 import FormatToolbar from './FormatToolbar.svelte'
 
+// Spy on the Insert helpers so the #1005 hold tests can prove the dispatch
+// never reaches lib/editor (the Insert items call these directly — there is
+// no event-bus receiver to gate them).
+const insertMocks = vi.hoisted(() => ({
+  insertTable: vi.fn(),
+  insertCodeBlock: vi.fn(),
+  insertCallout: vi.fn(),
+  insertDetails: vi.fn(),
+  toggleBlockQuote: vi.fn()
+}))
+vi.mock('../../lib/editor', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/editor')>()
+  return {
+    ...actual,
+    insertTable: insertMocks.insertTable,
+    insertCodeBlock: insertMocks.insertCodeBlock,
+    insertCallout: insertMocks.insertCallout,
+    insertDetails: insertMocks.insertDetails,
+    toggleBlockQuote: insertMocks.toggleBlockQuote
+  }
+})
+
 // Mock editor with the minimal interface FormatToolbar uses.
 function makeMockEditor(
   opts: {
@@ -437,5 +459,50 @@ describe('FormatToolbar conflict hold (#1005)', () => {
     await fireEvent.click(getByLabelText('Bold'))
     await fireEvent.click(getByLabelText('Bullet list'))
     expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('disables Insert menu items and refuses their direct dispatch', async () => {
+    const editor = makeMockEditor({ editable: false })
+    const { getByLabelText } = render(FormatToolbar, {
+      props: { editor: editor as never, ...baseProps }
+    })
+    await fireEvent.click(getByLabelText('Insert'))
+    for (const label of [
+      'Quote',
+      'Code block',
+      'Callout',
+      'Foldable section',
+      'Table'
+    ]) {
+      expect((getByLabelText(label) as HTMLButtonElement).disabled, label).toBe(
+        true
+      )
+    }
+    // The Insert items call the lib/editor helpers directly (no event-bus
+    // receiver): a forced click past the disabled affordance must still not
+    // reach them.
+    await fireEvent.click(getByLabelText('Table'))
+    expect(insertMocks.insertTable).not.toHaveBeenCalled()
+  })
+
+  it('disables Align menu items and Clear formatting (no enabled-but-silent no-ops)', async () => {
+    const editor = makeMockEditor({ editable: false })
+    const { getByLabelText } = render(FormatToolbar, {
+      props: { editor: editor as never, ...baseProps }
+    })
+    await fireEvent.click(getByLabelText('Alignment'))
+    for (const label of [
+      'Align left',
+      'Align center',
+      'Align right',
+      'Align justify'
+    ]) {
+      expect((getByLabelText(label) as HTMLButtonElement).disabled, label).toBe(
+        true
+      )
+    }
+    expect(
+      (getByLabelText('Clear formatting') as HTMLButtonElement).disabled
+    ).toBe(true)
   })
 })

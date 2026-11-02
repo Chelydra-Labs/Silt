@@ -75,7 +75,32 @@
     { id: 'remove', icon: 'link_off', label: 'Remove link' }
   ]
 
-  let show = $derived(!selectionEmpty && selectionCoords !== null)
+  // Conflict-hold tick (#1005): a read-only ProseMirror view still reports
+  // selections, so the bubble's visibility and every mutating affordance in
+  // it must track isEditable. 'update' fires on setEditable, mirroring the
+  // FormatToolbar's tick.
+  let editableTick = $state(0)
+  $effect(() => {
+    if (!editor) return
+    const bump = (): void => {
+      editableTick++
+    }
+    editor.on('update', bump)
+    return () => {
+      editor.off('update', bump)
+    }
+  })
+  let formatBlocked = $derived.by(() => {
+    void editableTick
+    return !editor || !editor.isEditable
+  })
+
+  // Hidden while a conflict hold has the surface read-only (#1005): the
+  // selection still exists, but every affordance here mutates the buffer the
+  // armed reload would destroy — a fully-disabled bubble is noise.
+  let show = $derived(
+    !selectionEmpty && selectionCoords !== null && !formatBlocked
+  )
   let focusIdx = $state(0)
   let menuEl = $state<HTMLDivElement | null>(null)
   let pos = $state({ left: -9999, top: -9999 })
@@ -104,7 +129,7 @@
   })
 
   function toggleMark(mark: string): void {
-    if (!editor) return
+    if (!editor || formatBlocked) return
     editor.chain().focus().toggleMark(mark).run()
   }
 
@@ -124,7 +149,7 @@
         return
       }
       linkMenuOpen = false
-      openLinkInput()
+      if (!formatBlocked) openLinkInput()
       return
     }
     linkMenuOpen = false
@@ -141,13 +166,13 @@
   }
 
   function handleBulletList(): void {
-    if (!editor || editor.isDestroyed) return
+    if (!editor || editor.isDestroyed || formatBlocked) return
     linkMenuOpen = false
     toggleUnorderedList(editor)
   }
 
   function handleOrderedList(): void {
-    if (!editor || editor.isDestroyed) return
+    if (!editor || editor.isDestroyed || formatBlocked) return
     linkMenuOpen = false
     toggleOrderedList(editor)
   }
@@ -184,6 +209,7 @@
       return
     }
     if (action.id === 'remove') {
+      if (formatBlocked) return
       editor.chain().focus().unsetLink().run()
       linkMenuOpen = false
     }

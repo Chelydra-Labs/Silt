@@ -222,6 +222,9 @@
       return
     }
     if (!editor) return
+    // A conflict-held editor is non-editable (#1005): a replace would render
+    // into the buffer the armed reload destroys.
+    if (!editor.isEditable) return
     editor.commands.replaceNextInPage()
     refreshCounts()
     inputEl?.focus()
@@ -246,6 +249,8 @@
       return
     }
     if (!editor) return
+    // Same conflict-hold refusal as doReplace (#1005).
+    if (!editor.isEditable) return
     const before = matchCount
     editor.commands.replaceAllInPage()
     refreshCounts()

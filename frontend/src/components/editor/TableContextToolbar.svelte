@@ -32,7 +32,10 @@
 
   // Each op's disabled state depends on the live editor selection.
   // `editor.can()` is not reactive, so a tick on selection/transaction keeps
-  // disabled attributes honest while the cursor stays in the table.
+  // disabled attributes honest while the cursor stays in the table. 'update'
+  // also fires on setEditable — a conflict-held editor (#1005) must show
+  // every op disabled: chain() dispatches are NOT gated on isEditable and
+  // the mutation would render, then the armed reload destroys it.
   let selTick = $state(0)
   $effect(() => {
     const handler = (): void => {
@@ -40,11 +43,21 @@
     }
     editor.on('selectionUpdate', handler)
     editor.on('transaction', handler)
+    editor.on('update', handler)
     return () => {
       editor.off('selectionUpdate', handler)
       editor.off('transaction', handler)
+      editor.off('update', handler)
     }
   })
+
+  // Dispatch-level refusal for a conflict-held (non-editable) editor
+  // (#1005): the disabled attribute is the UX half, this is the guarantee.
+  function runIfEditable(run: () => void): void {
+    void selTick
+    if (!editor.isEditable) return
+    run()
+  }
 
   const groups = $derived.by<Group[]>(() => {
     void selTick
@@ -59,8 +72,9 @@
             shortLabel: 'Row ↑',
             label: 'Insert row above',
             hotkey: 'table_insert_row_above',
-            can: () => !!editor.can().addRowBefore?.(),
-            run: () => editor.chain().focus().addRowBefore().run()
+            can: () => editor.isEditable && !!editor.can().addRowBefore?.(),
+            run: () =>
+              runIfEditable(() => editor.chain().focus().addRowBefore().run())
           },
           {
             id: 'row-below',
@@ -68,8 +82,9 @@
             shortLabel: 'Row ↓',
             label: 'Insert row below',
             hotkey: 'table_insert_row_below',
-            can: () => !!editor.can().addRowAfter?.(),
-            run: () => editor.chain().focus().addRowAfter().run()
+            can: () => editor.isEditable && !!editor.can().addRowAfter?.(),
+            run: () =>
+              runIfEditable(() => editor.chain().focus().addRowAfter().run())
           },
           {
             id: 'del-row',
@@ -77,8 +92,9 @@
             shortLabel: 'Del row',
             label: 'Delete row',
             danger: true,
-            can: () => !!editor.can().deleteRow?.(),
-            run: () => editor.chain().focus().deleteRow().run()
+            can: () => editor.isEditable && !!editor.can().deleteRow?.(),
+            run: () =>
+              runIfEditable(() => editor.chain().focus().deleteRow().run())
           }
         ]
       },
@@ -92,8 +108,11 @@
             shortLabel: 'Col ←',
             label: 'Insert column left',
             hotkey: 'table_insert_col_left',
-            can: () => !!editor.can().addColumnBefore?.(),
-            run: () => editor.chain().focus().addColumnBefore().run()
+            can: () => editor.isEditable && !!editor.can().addColumnBefore?.(),
+            run: () =>
+              runIfEditable(() =>
+                editor.chain().focus().addColumnBefore().run()
+              )
           },
           {
             id: 'col-right',
@@ -101,8 +120,9 @@
             shortLabel: 'Col →',
             label: 'Insert column right',
             hotkey: 'table_insert_col_right',
-            can: () => !!editor.can().addColumnAfter?.(),
-            run: () => editor.chain().focus().addColumnAfter().run()
+            can: () => editor.isEditable && !!editor.can().addColumnAfter?.(),
+            run: () =>
+              runIfEditable(() => editor.chain().focus().addColumnAfter().run())
           },
           {
             id: 'del-col',
@@ -110,8 +130,9 @@
             shortLabel: 'Del col',
             label: 'Delete column',
             danger: true,
-            can: () => !!editor.can().deleteColumn?.(),
-            run: () => editor.chain().focus().deleteColumn().run()
+            can: () => editor.isEditable && !!editor.can().deleteColumn?.(),
+            run: () =>
+              runIfEditable(() => editor.chain().focus().deleteColumn().run())
           }
         ]
       }

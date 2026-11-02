@@ -39,6 +39,9 @@
   }
 
   function apply(suggestion: string): void {
+    // A conflict-held editor is non-editable (#1005): the replace would
+    // render and the armed reload would destroy it.
+    if (!editor.isEditable) return
     // Replace the misspelled word with the chosen suggestion in one tx.
     editor
       .chain()
@@ -174,6 +177,7 @@
           class="menu-item"
           role="menuitem"
           aria-label="Replace with {s}"
+          disabled={!editor.isEditable}
           onclick={() => apply(s)}>{s}</button
         >
       {/each}

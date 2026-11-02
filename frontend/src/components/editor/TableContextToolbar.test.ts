@@ -51,6 +51,8 @@ function makeMockEditor(overrides: Record<string, boolean> = {}) {
 
   return {
     isDestroyed: false,
+    // Editable by default; the #1005 conflict-hold case flips it to false.
+    isEditable: true,
     on: vi.fn((event: string, handler: () => void) => {
       ;(handlers[event] ||= []).push(handler)
     }),
@@ -263,5 +265,46 @@ describe('TableContextToolbar', () => {
     expect((getByLabelText('Delete row') as HTMLButtonElement).disabled).toBe(
       true
     )
+  })
+})
+
+// #1005: a conflict-held editor is setEditable(false) — table ops dispatch
+// through chain(), which isEditable never gates; the mutation would render
+// and the armed reload would destroy it.
+describe('TableContextToolbar conflict hold (#1005)', () => {
+  it('disables every op and refuses dispatch on a non-editable editor', async () => {
+    const editor = makeMockEditor()
+    editor.isEditable = false
+    const dispatch = vi.fn()
+    editor.chain = () => ({
+      focus: () => ({
+        addRowBefore: () => ({ run: dispatch }),
+        addRowAfter: () => ({ run: dispatch }),
+        addColumnBefore: () => ({ run: dispatch }),
+        addColumnAfter: () => ({ run: dispatch }),
+        deleteRow: () => ({ run: dispatch }),
+        deleteColumn: () => ({ run: dispatch }),
+        run: dispatch
+      })
+    })
+    const { getAllByLabelText } = render(TableContextToolbar, {
+      props: { editor: editor as never }
+    })
+    await tick()
+    const labels = [
+      'Insert row above',
+      'Insert row below',
+      'Delete row',
+      'Insert column left',
+      'Insert column right',
+      'Delete column'
+    ]
+    for (const label of labels) {
+      const btn = getAllByLabelText(label)[0] as HTMLButtonElement
+      expect(btn.disabled, label).toBe(true)
+    }
+    // Defense-in-depth: even a forced click cannot dispatch.
+    await fireEvent.click(getAllByLabelText('Insert row above')[0])
+    expect(dispatch).not.toHaveBeenCalled()
   })
 })

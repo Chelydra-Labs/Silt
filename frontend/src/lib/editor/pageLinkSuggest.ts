@@ -136,6 +136,10 @@ export async function applyPageLinkSuggestion(
   resolve: PageLinkResolver,
   alias: string | null = null
 ): Promise<boolean> {
+  // Conflict-held editor (#1005): suggestions dispatch through
+  // view.dispatch, which isEditable never gates (defense-in-depth: the popup's pick site checks too).
+  if (!editor.isEditable) return false
+
   const target = await resolvePageLinkTarget(item, resolve)
   return insertPageLinkSuggestion(editor, target, alias)
 }

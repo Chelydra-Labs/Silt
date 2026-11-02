@@ -198,7 +198,10 @@
   async function pickDay(day: Date): Promise<void> {
     const dateStr = formatDate(day, configuredFormat)
     const editor = dateGlance.insertEditor
-    if (editor && !editor.isDestroyed) {
+    // A conflict-held editor is non-editable (#1005): inserting the date
+    // would render into the buffer the armed reload destroys — fall through
+    // to the copy-to-clipboard path instead.
+    if (editor && !editor.isDestroyed && editor.isEditable) {
       try {
         const ok = editor.chain().focus().insertContent(dateStr).run()
         if (ok) {

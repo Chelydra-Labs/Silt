@@ -34,6 +34,8 @@ function setup() {
   chain.insertContentAt.mockReturnValue(chain)
 
   const editor = {
+    // Editable by default; the #1005 conflict-hold case flips it to false.
+    isEditable: true,
     chain: vi.fn(() => chain),
     commands: { focus: vi.fn() }
   }
@@ -166,5 +168,49 @@ describe('SpellcheckMenu keyboard focus', () => {
     expect(container.contains(menu)).toBe(false)
     expect(menu.style.left).toBe('20px')
     expect(menu.style.top).toBe('30px')
+  })
+})
+
+// #1005: a conflict-held editor is setEditable(false) — the suggestion
+// replace dispatches through chain(), which isEditable never gates; the
+// applied fix would render and the armed reload would destroy it.
+describe('SpellcheckMenu conflict hold (#1005)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.suggest.mockReturnValue(['misplaced'])
+    mocks.add.mockResolvedValue(undefined)
+  })
+
+  it('disables suggestions and refuses the replace dispatch', async () => {
+    // Build the surface against a held (non-editable) editor directly.
+    const chain = {
+      focus: vi.fn(),
+      deleteRange: vi.fn(),
+      insertContentAt: vi.fn(),
+      run: vi.fn()
+    }
+    chain.focus.mockReturnValue(chain)
+    chain.deleteRange.mockReturnValue(chain)
+    chain.insertContentAt.mockReturnValue(chain)
+    const editor = {
+      isEditable: false,
+      chain: vi.fn(() => chain),
+      commands: { focus: vi.fn() }
+    }
+    const { getByRole } = render(SpellcheckMenu, {
+      props: {
+        editor: editor as never,
+        word: 'mispelt',
+        range: { from: 2, to: 9 },
+        anchor: { x: 20, y: 30 },
+        onClose: vi.fn()
+      }
+    })
+    const item = getByRole('menuitem', {
+      name: 'Replace with misplaced'
+    }) as HTMLButtonElement
+    expect(item.disabled).toBe(true)
+    await fireEvent.click(item)
+    expect(editor.chain).not.toHaveBeenCalled()
   })
 })

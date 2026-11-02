@@ -115,3 +115,37 @@ describe('TaskBlockView pencil button (#781)', () => {
     cleanup()
   })
 })
+
+// #1005: a conflict-held editor is setEditable(false) — updateAttributes
+// dispatches regardless of isEditable, and the visible status flip would be
+// destroyed by the armed reload. The checkbox must refuse.
+describe('TaskBlockView conflict hold (#1005)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('refuses the status cycle on a non-editable editor', async () => {
+    const blocks = [
+      mkBlock('TASK', {
+        id: 'task-held-1',
+        clean_text: 'Held task',
+        status: 'TODO'
+      })
+    ]
+    const { editor, container, cleanup } = await mountNodeViewEditor(blocks)
+    editor.setEditable(false)
+
+    const btn = container.querySelector(
+      'button[aria-label="Mark task as doing"]'
+    ) as HTMLElement
+    btn.click()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(editor.getJSON()).toBeTruthy()
+    // The attribute dispatch was refused: the doc still carries TODO.
+    const json = JSON.stringify(editor.getJSON())
+    expect(json).toContain('TODO')
+    expect(json).not.toContain('DOING')
+
+    cleanup()
+  })
+})
